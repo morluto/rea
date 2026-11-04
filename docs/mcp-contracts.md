@@ -218,6 +218,12 @@ Malformed provider replies return `unreadable_output` for
 `resolve_containing_procedure` before successful-result projection;
 cancellation and incomplete cleanup remain errors.
 
+For a procedure match, `procedure_references` with `direction: "incoming"` can
+provide the selected provider's reference kinds when supported. Its scope covers
+the procedure body, so compare target addresses when selecting references to the
+exact entry. It is a separate observation and does not establish runtime use or
+complete reference discovery.
+
 REA prepares complete MCP results within the pinned stdio client's 10 MiB
 receive-buffer budget, including both text and structured representations and
 room for the JSON-RPC envelope. Tool errors omit `structuredContent` from the
@@ -325,6 +331,17 @@ unknown. Exhausted pages describe the recorded observations and do not establish
 complete native discovery. The same views work through the CLI with historical
 Evidence files or bundles and require no live provider.
 
+For retained `inspect_native_instruction` Evidence, use
+`view: {"kind":"native-instruction-references","collection":"incoming_references","offset":0,"limit":64}`
+to page typed references to the exact code or data address. Select `references`
+for outgoing instruction references. Rows preserve their original indices and
+provider-reported kind and provenance. `items.state` distinguishes available,
+unavailable, and not-recorded collections; coverage is null in the latter two
+cases. The fixed 1 MiB page projection allowance leaves room for Evidence and
+MCP encoding. An oversized single row remains in the complete parent, which
+can be exported. Page exhaustion describes retained rows, not discovery or
+runtime access.
+
 For oversized native function Evidence, `details.reported_limits.continuation`
 contains a ready-to-call `inspect_analysis_view` request for the retained
 pseudocode's first page. Use its `name` and `arguments` directly, then follow
@@ -387,6 +404,12 @@ inline response, supply `offset` and `limit`, then follow `next_offset` until it
 is null. `total` counts all matching heads; each page preserves complete records
 in stable unknown ID order. Filters apply before paging. Pages reflect current
 session state, so keep the unknown ledger unchanged while traversing it.
+
+`list_unknowns` only lists registered heads. Import restores the Unknown records
+present in a bundle; it does not turn residual question text embedded in Evidence
+into registry entries. An empty registry therefore does not establish that
+retained Evidence has no open questions. Inspect the relevant Evidence or its
+analysis view for its residual questions.
 
 Automatically retained workflow questions include their immutable result
 Evidence ID. Distinct results retain independent questions and source links;
@@ -976,6 +999,15 @@ concrete version, selection source, and complete analysis profile through
 `analysis_provider_binding`. Ambiguity and unknown, unavailable, or unsupported
 choices return typed selection details. A selected provider is never replaced
 automatically after a runtime failure.
+
+When an admitted `open_binary` attempt fails, `error.details.selection_at_failure`
+records the canonical binary path and SHA-256, resource root (including its
+caller-selected path), or absence of selection at
+the end of that serialized attempt. This is a past observation: a queued or
+later operation may already have changed the selection. No selection does not
+establish that cleanup is complete. Call `binary_session` for current state
+and cleanup status. Validation failures that do not enter the session have no
+such receipt. The original error and any cleanup recovery remain authoritative.
 
 `open_binary` resolves an Apple bundle directory (`.app`, `.appex`,
 `.framework`, `.xpc`, `.systemextension`, `.bundle` or `.plugin`, compared
