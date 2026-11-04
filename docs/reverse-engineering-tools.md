@@ -175,7 +175,9 @@ closes, so a stalled close also reaches the deadline. A call that returns while
 work it left behind is still running keeps its place among the eight
 concurrent objdump and rizin operations until that work returns; a call that
 only waited for another call's work does not. The capacity error counts such
-calls as `operations_awaiting_file_work`.
+calls as `operations_awaiting_file_work`. Closing the service does not wait for
+that work: it fails with a cleanup error that names the held
+`file_system_work` and counts the calls, and a later close checks again.
 
 Captured stdout and stderr are retained up to a 16 MiB combined limit; `output_truncated` marks output beyond that limit. One-shot commands use the `command_timeout_ms` budget described above. That 16 MiB cap has no runtime override. A typed failure's `captured_output` marks a stream that held invalid UTF-8 with `stdout_invalid_utf8` or `stderr_invalid_utf8`.
 

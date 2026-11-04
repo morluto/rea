@@ -230,7 +230,12 @@ export class ReverseEngineeringService {
     return failure === undefined ? ok(null) : err(failure);
   }
 
-  /** Retry cleanup for provider process groups retained after an incomplete stop. */
+  /**
+   * Retry cleanup for provider process groups retained after an incomplete
+   * stop. File work that calls left behind cannot be cancelled, so close
+   * reports it instead of waiting for a mount that may never answer; a later
+   * close checks again.
+   */
   close(): Promise<void> {
     this.#closing = true;
     this.#closePromise ??= this.#closeActiveOperationsAndCleanup().catch(
@@ -249,6 +254,16 @@ export class ReverseEngineeringService {
 
     const cleanup = await this.retryCleanup();
     if (!cleanup.ok) throw cleanup.error;
+    const awaiting = this.#awaitingFileWork.size;
+    if (awaiting > 0) {
+      const reason = `${String(awaiting)} reverse-engineering ${awaiting === 1 ? "call still holds" : "calls still hold"} file-system work that an unresponsive mount has not returned, which REA cannot cancel.`;
+      throw new AnalysisOutputError("reverse_engineering_cleanup", reason, {
+        cleanup: { reason, resources: ["file_system_work"] },
+        diagnostics: { operations_awaiting_file_work: awaiting },
+        remediationAction:
+          "Close again once the mount answers; the file work ends when its system call returns.",
+      });
+    }
   }
 
   async inspectWithObjdump(

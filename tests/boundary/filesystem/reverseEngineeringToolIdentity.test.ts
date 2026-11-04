@@ -534,6 +534,7 @@ posix.each(["cancellation", "deadline"] as const)(
     const { executable, path } = await rizinExecutableFixture();
     const lookupStarted = gate();
     const release = gate();
+    let stalled: Promise<unknown> | undefined;
     const run = versionProbeRunner(() => "rizin 0.9.1 @ linux-x86-64");
     const service = new TestReverseEngineeringService({
       run,
@@ -541,12 +542,12 @@ posix.each(["cancellation", "deadline"] as const)(
       lookup: (command, directory, searchPath, bounds) =>
         lookupExecutable(command, directory, searchPath, {
           ...bounds,
-          stat: async (target) => {
-            if (target === executable) {
-              lookupStarted.open();
-              await release.opened;
-            }
-            return stat(target);
+          stat: (target) => {
+            if (target !== executable) return stat(target);
+            lookupStarted.open();
+            const check = release.opened.then(() => stat(target));
+            stalled = check;
+            return check;
           },
         }),
       environment: { REA_RIZIN_COMMAND: "rizin", PATH: dirname(executable) },
@@ -587,12 +588,23 @@ posix.each(["cancellation", "deadline"] as const)(
         artifact_sha256: await sha256Of(path),
       });
       expect(run).not.toHaveBeenCalled();
-      // Closing does not wait for the abandoned file-system call.
-      await within(service.close(), "service close");
+      // Closing does not wait for the abandoned file-system call, but it
+      // reports that the call still holds it.
+      await expect(
+        within(service.close(), "service close"),
+      ).rejects.toMatchObject({
+        cleanup: { resources: ["file_system_work"] },
+        diagnostics: { operations_awaiting_file_work: 1 },
+      });
+      release.open();
+      await stalled;
+      await new Promise((resolve) => setImmediate(resolve));
+      await within(service.close(), "service close after the mount answers");
     } finally {
       release.open();
       caller.abort("test cleanup");
-      await Promise.allSettled(pending);
+      await Promise.allSettled([...pending, stalled]);
+      await new Promise((resolve) => setImmediate(resolve));
       await service.close();
     }
   },
@@ -1099,18 +1111,19 @@ posix.each(["deadline", "cancellation"] as const)(
     const { executable, path } = await rizinExecutableFixture();
     const digestStarted = gate();
     const release = gate();
+    let stalled: Promise<unknown> | undefined;
     const run = versionProbeRunner(() => "rizin 0.9.1 @ linux-x86-64");
     const service = new TestReverseEngineeringService({
       run,
       lookup: lookupExecutable,
       environment: { REA_RIZIN_COMMAND: "rizin", PATH: dirname(executable) },
       // Only the executable's digest stalls, past the call's deadline.
-      stat: async (target) => {
-        if (target === executable) {
-          digestStarted.open();
-          await release.opened;
-        }
-        return stat(target);
+      stat: (target) => {
+        if (target !== executable) return stat(target);
+        digestStarted.open();
+        const check = release.opened.then(() => stat(target));
+        stalled = check;
+        return check;
       },
     });
     const caller = new AbortController();
@@ -1151,7 +1164,9 @@ posix.each(["deadline", "cancellation"] as const)(
     } finally {
       release.open();
       caller.abort("test cleanup");
-      await Promise.allSettled(pending);
+      // The service holds the stalled stat until it returns.
+      await Promise.allSettled([...pending, stalled]);
+      await new Promise((resolve) => setImmediate(resolve));
       await service.close();
     }
   },
