@@ -1,6 +1,6 @@
 import { dirname, isAbsolute, join, resolve, win32 } from "node:path";
 import { fileURLToPath } from "node:url";
-import { lstatSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync } from "node:fs";
 import { err, ok, type Result } from "../domain/result.js";
 import {
   HermesClientPathError,
@@ -59,6 +59,7 @@ export interface SetupClient {
     | "omp"
     | "pi"
     | "kimi"
+    | "lm_studio"
     | "hermes"
     | "zcode_fallback"
     | "zcode"
@@ -192,6 +193,40 @@ const codexDirectory = ({ home, env }: ClientPathContext): string =>
 /** Kimi Code stores MCP declarations beside the rest of its home data. */
 const kimiDirectory = ({ home, env }: ClientPathContext): string =>
   env.KIMI_CODE_HOME || join(home, ".kimi-code");
+
+/** Clients registered with the compact input-schema profile unless one is selected. */
+export const compactInputSchemaByDefault = ({
+  name,
+}: Pick<SetupClient, "name">): boolean =>
+  name === "kimi" || name === "lm_studio";
+
+/**
+ * LM Studio's findLMStudioHome, read-only: a home pointer file wins, then an
+ * existing ~/.cache/lm-studio, then ~/.lmstudio. Setup never writes the pointer.
+ */
+const lmStudioLocation = ({
+  home,
+}: ClientPathContext): Result<ClientLocation, ClientPathFailure> => {
+  const pointerPath = join(home, ".lmstudio-home-pointer");
+  let directory: string;
+  try {
+    directory = readFileSync(pointerPath, "utf8").trim();
+  } catch (cause: unknown) {
+    if (!(cause instanceof Error && "code" in cause && cause.code === "ENOENT"))
+      return err({
+        path: pointerPath,
+        message: `${pointerPath} could not be read, so REA cannot establish which LM Studio home holds mcp.json: ${cause instanceof Error ? cause.message : String(cause)}. Repair access to that file, then rerun.`,
+      });
+    const cache = join(home, ".cache", "lm-studio");
+    directory = existsSync(cache) ? cache : join(home, ".lmstudio");
+  }
+  if (!isAbsolute(directory))
+    return err({
+      path: pointerPath,
+      message: `${pointerPath} does not hold an absolute LM Studio home path. Correct or remove that file, then rerun.`,
+    });
+  return ok({ configPath: join(directory, "mcp.json"), markerPath: directory });
+};
 
 const qoderDirectory = ({ home, env }: ClientPathContext): string =>
   env.QODER_CONFIG_DIR || join(home, ".qoder");
@@ -651,6 +686,12 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
     configPath: [".workbuddy", "mcp.json"],
     markerPath: [".workbuddy"],
     format: "json",
+  },
+  {
+    name: "lm_studio",
+    displayName: "LM Studio",
+    location: lmStudioLocation,
+    format: "lm_studio",
   },
   {
     name: "grok_build",

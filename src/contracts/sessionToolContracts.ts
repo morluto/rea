@@ -173,7 +173,7 @@ export const SESSION_TOOL_CONTRACTS = [
   ),
   session(
     "get_evidence_bundle",
-    "Return every retained Evidence record and residual unknown as a complete canonical bundle by default. detail=summary discovers retained records without copying or transferring their payloads; optionally filter by exact Evidence ID, operation, target SHA-256, analysis-profile digest or canonical native procedure address. Metadata distinguishes complete record retention from native value-flow truncation or unavailable/unknown coverage. detail=records returns a page (offset, limit) of the matching complete records with unchanged IDs and their missing direct evidence_links; it is not an importable bundle. Use a discovered evidence_id with inspect_analysis_view without restarting a provider. Filters apply to summary and records delivery.",
+    "Return every retained Evidence record and residual unknown as a complete canonical bundle by default. detail=summary discovers retained records without copying or transferring their payloads; optionally filter by exact Evidence ID, operation, target SHA-256, analysis-profile digest or canonical native procedure address. Metadata distinguishes complete record retention from native value-flow truncation or unavailable/unknown coverage. detail=records returns a page (offset, limit) of the matching complete records with unchanged IDs and their missing direct evidence_links; it is not an importable bundle. detail=links reads which evidence_links of the selected records this session or bundle retains, without their payloads: traversal retained-closure also follows retained links, the walk composed workflows require, and rows default to missing links. Use a discovered evidence_id with inspect_analysis_view without restarting a provider. Filters apply to summary, records and links delivery.",
     getEvidenceBundleInputSchema,
   ),
   {
@@ -184,9 +184,12 @@ export const SESSION_TOOL_CONTRACTS = [
     ),
     requiresActiveTarget: true,
   },
-  session(
-    "inspect_address_context",
-    "Inspect one explicit reproducible address for its analyzed name, containing procedure, regular and inline comments, and matching bookmarks. Each unsupported facet returns a typed unavailable outcome. A facet rejected for invalid input retains its canonical error and issues alongside any successful facets. Use xrefs, assembly, or pseudocode for those deeper views.",
-    addressContextInputSchema,
-  ),
+  {
+    ...session(
+      "inspect_address_context",
+      "Inspect one explicit reproducible address for its analyzed name, containing procedure, regular and inline comments, and matching bookmarks. Each unsupported facet returns a typed unavailable outcome. A facet rejected for invalid input retains its canonical error and issues alongside any successful facets. Use xrefs, assembly, or pseudocode for those deeper views.",
+      addressContextInputSchema,
+    ),
+    requiresActiveTarget: true,
+  },
 ] as const satisfies readonly ToolContract[];

@@ -13,6 +13,7 @@ import { readFunctionInventory } from "../../domain/native/functionInventory.js"
 import {
   nativeFunctionMatchingSchema,
   nativeFunctionByteSourceGuidance,
+  NATIVE_FUNCTION_MATCHING_PREDICATE,
 } from "../../domain/native/functionMatching.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
@@ -23,7 +24,6 @@ import { resolveNativeMatchingSources } from "./NativeMatchingSources.js";
 import type { ExecutionOptions } from "../AnalysisProvider.js";
 import type { NativeMatchingAllowance } from "../../config/nativeMatchingAllowance.js";
 import { FUNCTION_COMPARISON_PROVIDER } from "../../domain/comparisonEvidenceIdentity.js";
-import { NATIVE_FUNCTION_MATCHING_PREDICATE } from "../../domain/native/functionMatching.js";
 
 const OPERATION = "match_native_functions";
 

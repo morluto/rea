@@ -43,6 +43,7 @@ export const harmonyApplicationProjectionResultSchema = z.strictObject({
     javascript: z.array(projectedComponentSchema),
     signing: z.array(projectedComponentSchema),
   }),
+  unclassified_components: z.array(projectedComponentSchema),
   unavailable_components: z.array(unavailableComponentSchema),
   app_pack_children: z.array(
     z.union([projectedComponentSchema, unavailableComponentSchema]),
@@ -97,6 +98,10 @@ export const projectHarmonyInventory = (
   }
   const manifests = classifyManifests(fileEntries);
   const classified = classify(all, manifests.components);
+  const classifiedFiles = new Set([
+    ...Object.values(classified).flat(),
+    ...children,
+  ]);
   const bridgeProjection = bridgeCandidates(
     classified.bytecode,
     classified.native_libraries,
@@ -138,6 +143,9 @@ export const projectHarmonyInventory = (
       .sort(compareUnicodeCodePoints),
     packaging_model: manifests.packagingModel,
     components: classified,
+    unclassified_components: all.filter(
+      (component) => !classifiedFiles.has(component),
+    ),
     unavailable_components: unavailable,
     app_pack_children: children,
     runtime_families: runtimeFamilies(all, classified),

@@ -1,4 +1,3 @@
-import { Readable, Transform, pipeline } from "node:stream";
 import type { FileHandle } from "node:fs/promises";
 
 import type { EspFlashImageMetadata } from "../domain/artifactFormatMetadata.js";
@@ -21,18 +20,7 @@ import {
 import { offsetText } from "../domain/firmware/espImageStructures.js";
 import { ESP_OTA_SELECT_ENTRY_BYTES } from "../domain/firmware/espOtaData.js";
 import { isEspAppPartition } from "../domain/firmware/espPartitionTable.js";
-import {
-  ArtifactReaderFailure,
-  copyArtifactEntry,
-  sameArtifactEntry,
-  type ArtifactEntry,
-  type ArtifactReader,
-  type ArtifactReaderTraversal,
-  type ArtifactTraversalOptions,
-} from "./ArtifactReader.js";
-import { ArtifactResourceScope } from "./ArtifactResourceScope.js";
-import { assertArtifactReadActive } from "./ArtifactFileOperation.js";
-import { ArtifactFileSource } from "./ArtifactFileSource.js";
+import { ArtifactReaderFailure } from "./ArtifactReader.js";
 import {
   decodeEspFlashImage,
   firstUnerasedInRange,
@@ -40,7 +28,11 @@ import {
   writtenExtents,
   type EspFlashReadContext,
 } from "./EspFlashRegionReads.js";
-import { readFileHandleChunks } from "../filesystem/readFileHandleChunks.js";
+import {
+  PositionalArtifactReader,
+  type PositionalArtifactEntries,
+  type PositionalArtifactEntry,
+} from "./PositionalArtifactReader.js";
 import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
 
 const LABEL = "ESP flash image";
@@ -62,18 +54,11 @@ type EspFlashImageFacts = NonNullable<
  * each entry is a positional read of the carrier, rechecked against its
  * identity.
  */
-export class EspFlashImageArtifactReader implements ArtifactReader {
-  readonly format = "esp-flash-image" as const;
-  readonly #scope = new ArtifactResourceScope();
-  readonly #entries = new Map<string, ArtifactEntry>();
-  readonly #streams = new Set<Readable>();
-  readonly #source: ArtifactFileSource;
+export class EspFlashImageArtifactReader extends PositionalArtifactReader {
+  override readonly format = "esp-flash-image" as const;
   readonly #located: EspFlashLocation | undefined;
   readonly #selection: EspFlashSelection;
-  #prepared: Promise<void> | undefined;
   #metadata: EspFlashImageMetadata | undefined;
-  #coverage: ArtifactReaderTraversal | undefined;
-  #closing = false;
 
   constructor(
     path: string,
@@ -82,7 +67,7 @@ export class EspFlashImageArtifactReader implements ArtifactReader {
   ) {
     const admission =
       admitted !== undefined && "kind" in admitted ? admitted : undefined;
-    this.#source = new ArtifactFileSource(
+    super(
       path,
       LABEL,
       admission?.source ??
@@ -98,143 +83,10 @@ export class EspFlashImageArtifactReader implements ArtifactReader {
       : structuredClone(this.#metadata);
   }
 
-  async prepareContainer(
-    expectedSha256: string,
+  protected override async prepareEntries(
     signal?: AbortSignal,
-  ): Promise<void> {
-    await this.#scope.run(async () => {
-      this.#assertOpen(signal);
-      await this.#source.bindSha256(expectedSha256, signal);
-    });
-  }
-
-  async *entries(
-    signal?: AbortSignal,
-    options?: ArtifactTraversalOptions,
-  ): AsyncIterable<ArtifactEntry> {
-    await this.#scope.run(async () => {
-      this.#assertOpen(signal);
-      this.#prepared ??= this.#prepare(signal);
-      await this.#prepared;
-      await this.#source.read(signal);
-    });
-    this.#assertOpen(signal);
-    if (this.#coverage !== undefined)
-      options?.onCoverage?.({
-        ...this.#coverage,
-        limitations: [...this.#coverage.limitations],
-      });
-    for (const entry of this.#entries.values()) {
-      this.#assertOpen(signal);
-      yield copyArtifactEntry(entry);
-    }
-    this.#assertOpen(signal);
-  }
-
-  async open(entry: ArtifactEntry, signal?: AbortSignal): Promise<Readable> {
-    return this.#scope.run(async () => {
-      this.#assertOpen(signal);
-      const stored = this.#entries.get(entry.adapterKey);
-      if (
-        stored === undefined ||
-        !sameArtifactEntry(entry, stored) ||
-        stored.byteOffset === null ||
-        stored.declaredSize === null
-      )
-        throw new ArtifactReaderFailure(
-          "integrity",
-          `${LABEL} entry does not match its owning inventory`,
-        );
-      const { handle } = await this.#source.read(signal);
-      this.#assertOpen(signal);
-      const source =
-        stored.declaredSize === 0
-          ? Readable.from([])
-          : readFileHandleChunks(handle, {
-              start: stored.byteOffset,
-              end: stored.byteOffset + stored.declaredSize - 1,
-              signal,
-              cancellationFailure: (reason) =>
-                new ArtifactReaderFailure(
-                  "cancelled",
-                  `${LABEL} read cancelled`,
-                  { cause: reason },
-                ),
-            });
-      const output = this.#entryStream(stored, signal);
-      // Retirement can destroy the stream before its consumer listens.
-      output.on("error", () => undefined);
-      this.#streams.add(output);
-      let producerComplete = false;
-      const onAbort = (): void => {
-        // Preserve active read/validation errors; after production, the caller
-        // still owns buffered bytes and cancellation must retire that result.
-        if (!producerComplete || output.destroyed) return;
-        output.destroy(
-          new ArtifactReaderFailure("cancelled", `${LABEL} read cancelled`, {
-            cause: signal?.reason,
-          }),
-        );
-      };
-      const retired = new Promise<void>((resolve) => {
-        output.once("close", () => {
-          this.#streams.delete(output);
-          signal?.removeEventListener("abort", onAbort);
-          resolve();
-        });
-      });
-      signal?.addEventListener("abort", onAbort, { once: true });
-      if (signal?.aborted) onAbort();
-      void this.#scope
-        .run(async () => {
-          await Promise.all([
-            new Promise<void>((resolve) => {
-              pipeline(source, output, () => {
-                producerComplete = true;
-                if (signal?.aborted) onAbort();
-                resolve();
-              });
-            }),
-            retired,
-          ]);
-        })
-        .catch((cause: unknown) =>
-          output.destroy(
-            cause instanceof Error
-              ? cause
-              : new Error(`${LABEL} stream ownership failed`, { cause }),
-          ),
-        );
-      return output;
-    });
-  }
-
-  async close(): Promise<void> {
-    this.#closing = true;
-    for (const stream of this.#streams)
-      stream.destroy(
-        new ArtifactReaderFailure("unavailable", `${LABEL} reader closed`),
-      );
-    await this.#scope.close();
-    await this.#source.close();
-    this.#entries.clear();
-  }
-
-  provenance(): readonly [] {
-    return [];
-  }
-
-  #assertOpen(signal?: AbortSignal): void {
-    assertArtifactReadActive(signal);
-    if (this.#closing)
-      throw new ArtifactReaderFailure(
-        "unavailable",
-        `${LABEL} reader is closed`,
-      );
-  }
-
-  async #prepare(signal?: AbortSignal): Promise<void> {
-    const { handle, initial } = await this.#source.read(signal);
+  ): Promise<PositionalArtifactEntries> {
+    const { handle, initial } = await this.verifyCarrier(signal);
     const fileSize = initial.size;
     const location =
       this.#located ?? (await this.#locate(handle, fileSize, signal));
@@ -251,11 +103,7 @@ export class EspFlashImageArtifactReader implements ArtifactReader {
     const images = await this.#decodeImages(context, plan);
     const written = await this.#readWritten(context, plan);
     // A changed carrier is an identity failure, not a different layout.
-    await this.#source.read(signal);
-    for (const region of plan.regions) {
-      const entry = regionEntry(region, written.get(region), fileSize);
-      this.#entries.set(entry.adapterKey, entry);
-    }
+    await this.verifyCarrier(signal);
     this.#metadata = layoutMetadata(location, plan, facts, images);
     const limitations = [
       ...location.limitations,
@@ -267,8 +115,15 @@ export class EspFlashImageArtifactReader implements ArtifactReader {
       ...facts.limitations,
       ...erasedSlotLimitations(images, written),
     ];
-    if (facts.coverage === "unknown" || limitations.length > 0)
-      this.#coverage = { status: facts.coverage, limitations };
+    return {
+      entries: plan.regions.map((region) =>
+        regionEntry(region, written.get(region), fileSize),
+      ),
+      coverage:
+        facts.coverage === "unknown" || limitations.length > 0
+          ? { status: facts.coverage, limitations }
+          : undefined,
+    };
   }
 
   async #locate(
@@ -308,12 +163,12 @@ export class EspFlashImageArtifactReader implements ArtifactReader {
       );
     const gapFirstUnerased: (number | undefined)[] = [];
     for (const gap of plan.gaps) {
-      this.#assertOpen(context.signal);
+      this.assertOpen(context.signal);
       gapFirstUnerased.push(
         await firstUnerasedInRange(
           context,
           { start: gap.offset, length: gap.length },
-          () => this.#assertOpen(context.signal),
+          () => this.assertOpen(context.signal),
         ),
       );
     }
@@ -332,14 +187,14 @@ export class EspFlashImageArtifactReader implements ArtifactReader {
     const held = plan.regions.filter(
       ({ partition, available }) => partition !== undefined && available > 0,
     );
-    this.#assertOpen(context.signal);
+    this.assertOpen(context.signal);
     const extents = await writtenExtents(
       context,
       held.map(({ fileOffset, available }) => ({
         start: fileOffset,
         length: available,
       })),
-      () => this.#assertOpen(context.signal),
+      () => this.assertOpen(context.signal),
     );
     return new Map(held.map((region, index) => [region, extents[index]!]));
   }
@@ -360,14 +215,14 @@ export class EspFlashImageArtifactReader implements ArtifactReader {
         region.role === "bootloader" ||
         (region.partition !== undefined && isEspAppPartition(region.partition));
       if (!image || region.available === 0) continue;
-      this.#assertOpen(context.signal);
+      this.assertOpen(context.signal);
       const range = `${String(region.fileOffset)}+${String(region.available)}`;
       let facts = decoded.get(range);
       if (facts === undefined) {
         facts = await decodeEspFlashImage(
           context,
           { start: region.fileOffset, length: region.available },
-          () => this.#assertOpen(context.signal),
+          () => this.assertOpen(context.signal),
         );
         decoded.set(range, facts);
       }
@@ -375,35 +230,6 @@ export class EspFlashImageArtifactReader implements ArtifactReader {
       images.set(region, structuredClone(facts));
     }
     return images;
-  }
-
-  #entryStream(entry: ArtifactEntry, signal?: AbortSignal): Transform {
-    let bytes = 0;
-    const check = async (): Promise<void> => {
-      if (bytes !== entry.declaredSize)
-        throw new ArtifactReaderFailure(
-          "integrity",
-          `${LABEL} entry ended early: ${entry.path}`,
-        );
-      await this.#source.read(signal);
-    };
-    return new Transform({
-      transform(chunk: Buffer, _encoding, callback) {
-        bytes += chunk.length;
-        callback(null, chunk);
-      },
-      flush(callback) {
-        void check().then(
-          () => callback(),
-          (cause: unknown) =>
-            callback(
-              cause instanceof Error
-                ? cause
-                : new Error(`${LABEL} read failed`, { cause }),
-            ),
-        );
-      },
-    });
   }
 }
 
@@ -428,7 +254,7 @@ const regionEntry = (
   region: EspFlashRegion,
   written: EspFlashWrittenExtent | undefined,
   fileSize: number,
-): ArtifactEntry => ({
+): PositionalArtifactEntry => ({
   path: region.path,
   ...(region.partition?.label === null || region.partition === undefined
     ? {}
@@ -440,7 +266,8 @@ const regionEntry = (
   // The table's encrypted flag says how a device stores the partition, not
   // that these bytes are ciphertext.
   encrypted: false,
-  // A partition past the end holds no bytes; its entry sits at the end.
+  // A partition past the end holds no bytes: its entry is the empty range
+  // at the end of the file, which opens as an empty stream without a read.
   byteOffset: Math.min(region.fileOffset, fileSize),
   declaredIntegrity: null,
   unpacked: false,
