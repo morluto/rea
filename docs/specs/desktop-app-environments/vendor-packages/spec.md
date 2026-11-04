@@ -21,8 +21,9 @@ that key, with those libraries, and starts it.
   or else its Codename, from the same index target.
 - The repository's key is the candidate that verifies the release beside the
   index in apt's lists folder (`InRelease`, or `Release` with `Release.gpg`,
-  named from the target's `Base-URI`) with `gpgv --status-fd 1 --keyring
-  <binary keyring>`, run through the inventory's query runner without a shell.
+  named from the target's `Base-URI`) with
+  `gpgv --status-fd 1 --keyring KEYRING`, where KEYRING is the candidate as a
+  binary keyring, run through the inventory's query runner without a shell.
   A VALIDSIG counts whatever gpgv's exit status, unless a BADSIG, EXPSIG,
   EXPKEYSIG, REVKEYSIG or ERRSIG names the same key. Candidates are the
   entry's Signed-By keyrings, or every `.gpg` and `.asc` key in
