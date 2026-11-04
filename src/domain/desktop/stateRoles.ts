@@ -1,4 +1,7 @@
-import type { DesktopApplicationCapture } from "./desktopCapture.js";
+import type {
+  DesktopApplicationCapture,
+  DesktopStateChange,
+} from "./desktopCapture.js";
 import { isWithinAny } from "./desktopStateDiff.js";
 
 /** Why a path is, or is not, treated as the application's state. */
@@ -68,57 +71,91 @@ export const isApplicationDconfGroup = (
 const homePath = (path: string, home: string) =>
   path.startsWith(`${home}/`) ? path.slice(home.length + 1) : null;
 
-/** Whether an application window title spells the file's name or home path. */
-const namedInTitle = (
-  path: string,
-  home: string,
-  titles: readonly string[],
-): boolean => {
-  const name = path.split("/").at(-1) ?? "";
-  const relative = homePath(path, home);
-  const spellings = [
-    ...(name.length >= 3 ? [name] : []),
-    ...(relative === null ? [] : [`~/${relative}`]),
-  ];
-  return titles.some((title) =>
-    spellings.some((spelling) => title.includes(spelling)),
-  );
+/**
+ * A state directory relative to whatever home spells it: from its first
+ * hidden segment, such as `.config/app`. The capture keeps content roots in
+ * their physical spelling but state directories as the environment spelled
+ * them, so this compares them when a link sits in between.
+ */
+const hiddenTail = (path: string): string | null => {
+  const index = path.indexOf("/.");
+  return index < 0 ? null : path.slice(index + 1);
 };
 
-/** Evidence the capture holds about one path. */
-export const stateReasons = (
+/** Facts about the whole capture that every path's reasons draw on. */
+export interface DesktopRoleFacts {
+  readonly home: string;
+  readonly stateDirectories: readonly string[];
+  readonly stateTails: readonly string[];
+  readonly selectedRoots: readonly string[];
+  readonly titles: readonly string[];
+  readonly openedFiles: ReadonlySet<string>;
+}
+
+/** Compute the shared role facts once per capture. */
+export const roleFacts = (
   capture: DesktopApplicationCapture,
-  path: string,
-  dconfApplicationKeys: boolean,
-): readonly DesktopStateReason[] => {
+): DesktopRoleFacts => {
   const { application, session, state, host } = capture;
   const stateDirectories = application.state_directories.map(
     (entry) => entry.path,
   );
-  const changes = state.checkpoints.flatMap((checkpoint) =>
-    checkpoint.changes.filter((change) => change.path === path),
+  const stateTails = stateDirectories
+    .map(hiddenTail)
+    .filter((tail): tail is string => tail !== null);
+  return {
+    home: host.home,
+    stateDirectories,
+    stateTails,
+    selectedRoots: state.content_roots.filter((root) => {
+      const relative = homePath(root, host.home);
+      return (
+        !stateDirectories.includes(root) &&
+        (relative === null || !stateTails.includes(relative))
+      );
+    }),
+    titles: session.windows
+      .filter((window) => window.application)
+      .flatMap((window) => window.titles),
+    openedFiles: new Set(session.opened_files.map((file) => file.path)),
+  };
+};
+
+/** Whether an application window title spells the file's name or home path. */
+const namedInTitle = (path: string, facts: DesktopRoleFacts): boolean => {
+  const name = path.split("/").at(-1) ?? "";
+  const relative = homePath(path, facts.home);
+  const spellings = [
+    ...(name.length >= 3 ? [name] : []),
+    ...(relative === null ? [] : [`~/${relative}`]),
+  ];
+  return facts.titles.some((title) =>
+    spellings.some((spelling) => title.includes(spelling)),
   );
-  const titles = session.windows
-    .filter((window) => window.application)
-    .flatMap((window) => window.titles);
-  const selected = state.content_roots.filter(
-    (root) => !stateDirectories.includes(root),
-  );
-  const relative = homePath(path, host.home);
+};
+
+/** Evidence the capture holds about one path, given its own changes. */
+export const stateReasons = (
+  facts: DesktopRoleFacts,
+  path: string,
+  changes: readonly DesktopStateChange[],
+  dconfApplicationKeys: boolean,
+): readonly DesktopStateReason[] => {
+  const relative = homePath(path, facts.home);
   const reasons: DesktopStateReason[] = [];
   if (
     changes.some((change) => change.in_state_directory) ||
-    isWithinAny(path, stateDirectories)
+    isWithinAny(path, facts.stateDirectories) ||
+    (relative !== null && isWithinAny(relative, facts.stateTails))
   )
     reasons.push("state_directory");
   if (
     changes.some((change) => change.opened_by_application) ||
-    session.opened_files.some((file) => file.path === path)
+    facts.openedFiles.has(path)
   )
     reasons.push("opened_by_application");
-  if (namedInTitle(path, host.home, titles))
-    reasons.push("named_in_window_title");
-  if (isWithinAny(path, selected)) reasons.push("selected_path");
+  if (namedInTitle(path, facts)) reasons.push("named_in_window_title");
+  if (isWithinAny(path, facts.selectedRoots)) reasons.push("selected_path");
   if (dconfApplicationKeys) reasons.push("dconf_application_keys");
   if (relative !== null && isWithinAny(relative, SHARED_DESKTOP_PATHS))
     reasons.push("desktop_service");

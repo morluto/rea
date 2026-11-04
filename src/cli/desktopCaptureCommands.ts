@@ -4,12 +4,12 @@ import { z } from "incur";
 import type { Logger } from "pino";
 
 import { captureDesktopApplication } from "../application/desktop/DesktopApplicationCapture.js";
-import { inspectDesktopApplicationState } from "../application/desktop/DesktopApplicationState.js";
-import { readSqliteStateView } from "../application/desktop/DesktopSqliteState.js";
-import { createSqliteDatabaseService } from "../composition/sqlite.js";
-import { dumpDconfDatabase } from "../desktop/DconfDatabaseReader.js";
+import type { DesktopStateReaders } from "../application/desktop/DesktopApplicationState.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
-import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import type { Evidence } from "../domain/evidence.js";
+import { err, ok } from "../domain/result.js";
+import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
+import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { logCliCommand } from "../cliLogging.js";
@@ -106,6 +106,44 @@ export const parseSessionRequest = (line: string): SessionRequest => {
   return { kind: "checkpoint", name: name.length === 0 ? undefined : name };
 };
 
+/**
+ * Run a desktop operation with SQLite and dconf readers, finishing through
+ * the shared command owner so the result, cancellation and the SQLite
+ * service's cleanup are all kept. The readers load here, so registering the
+ * command catalog never loads them.
+ */
+const withStateReaders = async (
+  environment: NodeJS.ProcessEnv,
+  signal: AbortSignal,
+  run: (readers: DesktopStateReaders) => Promise<Evidence | AnalysisError>,
+) => {
+  const [
+    { createSqliteDatabaseService },
+    { readSqliteStateView },
+    { dumpDconfDatabase },
+  ] = await Promise.all([
+    import("../composition/sqlite.js"),
+    import("../application/desktop/DesktopSqliteState.js"),
+    import("../desktop/DconfDatabaseReader.js"),
+  ]);
+  const sqlite = createSqliteDatabaseService(environment);
+  return finishAnalysisCommand(
+    async () => {
+      const result = await run({
+        sqlite: (database, writeAheadLog, readSignal) =>
+          readSqliteStateView(sqlite, database, writeAheadLog, readSignal),
+        dconf: (database, readSignal) =>
+          dumpDconfDatabase(database, environment, readSignal),
+      });
+      return result instanceof AnalysisError ? err(result) : ok(result);
+    },
+    sqlite,
+    "rea-desktop",
+    CLI_COMMANDS.inspectDesktopApplicationState,
+    signal,
+  ).then(projectCliAnalysisResult);
+};
+
 /** Register the state view over a capture folder. */
 const registerDesktopStateCommand = (
   cli: CliInstance,
@@ -126,32 +164,15 @@ const registerDesktopStateCommand = (
           logger,
           CLI_COMMANDS.inspectDesktopApplicationState,
           async () => {
-            const sqlite = createSqliteDatabaseService(environment);
-            try {
-              const result = await inspectDesktopApplicationState(
+            const { inspectDesktopApplicationState } =
+              await import("../application/desktop/DesktopApplicationState.js");
+            return withStateReaders(environment, signal, (readers) =>
+              inspectDesktopApplicationState(
                 absoluteCallerPath(args.capture),
-                {
-                  sqlite: (database, writeAheadLog, readSignal) =>
-                    readSqliteStateView(
-                      sqlite,
-                      database,
-                      writeAheadLog,
-                      readSignal,
-                    ),
-                  dconf: (database, readSignal) =>
-                    dumpDconfDatabase(database, environment, readSignal),
-                },
+                readers,
                 signal,
-              );
-              return result instanceof AnalysisError
-                ? {
-                    error: "Desktop state view failed",
-                    ...projectAnalysisError(result),
-                  }
-                : result;
-            } finally {
-              await sqlite.close();
-            }
+              ),
+            );
           },
         ),
       ),

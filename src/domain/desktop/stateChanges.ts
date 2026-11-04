@@ -12,6 +12,8 @@ export interface DesktopStateDifference {
   readonly added_count: number;
   readonly removed_count: number;
   readonly changed_count: number;
+  /** False when either view was truncated, so absences may be outside the sample. */
+  readonly complete: boolean;
 }
 
 const isRecord = (
@@ -28,11 +30,12 @@ const flatten = (
   pointer = "",
   leaves = new Map<string, string>(),
 ): Map<string, string> => {
-  if (Array.isArray(value))
+  // Empty containers are leaves, so `{}`, `[]` and their changes stay visible.
+  if (Array.isArray(value) && value.length > 0)
     value.forEach((item, index) =>
       flatten(item, `${pointer}/${String(index)}`, leaves),
     );
-  else if (isRecord(value))
+  else if (isRecord(value) && Object.keys(value).length > 0)
     for (const [key, item] of Object.entries(value))
       flatten(item, `${pointer}/${escapePointer(key)}`, leaves);
   else leaves.set(pointer, JSON.stringify(value));
@@ -61,6 +64,7 @@ const compareMaps = (
     added_count: added.length,
     removed_count: removed.length,
     changed_count: changed.length,
+    complete: true,
   };
 };
 
@@ -92,6 +96,7 @@ const lineDifference = (
     added_count: added.length,
     removed_count: removed.length,
     changed_count: 0,
+    complete: true,
   };
 };
 
@@ -137,8 +142,31 @@ const rowEntries = (view: JsonValue): Map<string, string> => {
   return entries;
 };
 
+/** Whether a view says it holds only part of its file. */
+const truncatedView = (view: JsonValue): boolean => {
+  if (!isRecord(view)) return false;
+  if (view.truncated === true || view.tables_truncated === true) return true;
+  return (
+    isRecord(view.tables) &&
+    Object.values(view.tables).some(
+      (table) => isRecord(table) && table.truncated === true,
+    )
+  );
+};
+
 /** Describe how one state file changed between two readable versions. */
 export const diffStateViews = (
+  format: DesktopStateFormat,
+  before: JsonValue,
+  after: JsonValue,
+): DesktopStateDifference => {
+  const difference = compareViews(format, before, after);
+  return truncatedView(before) || truncatedView(after)
+    ? { ...difference, complete: false }
+    : difference;
+};
+
+const compareViews = (
   format: DesktopStateFormat,
   before: JsonValue,
   after: JsonValue,

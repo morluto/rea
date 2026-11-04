@@ -71,6 +71,10 @@ export const textView = (text: string): JsonValue => {
   };
 };
 
+/** A dictionary without inherited properties, so captured keys such as `__proto__` stay plain data. */
+export const plainRecord = <Value>(): Record<string, Value> =>
+  Object.create(null) as Record<string, Value>;
+
 /**
  * An INI-style key file (desktop entries, GLib key files, `dconf dump`) as
  * groups of string values. Keys before the first group sit in group "".
@@ -78,7 +82,7 @@ export const textView = (text: string): JsonValue => {
 export const keyfileView = (
   text: string,
 ): Record<string, Record<string, string>> => {
-  const groups: Record<string, Record<string, string>> = {};
+  const groups = plainRecord<Record<string, string>>();
   let group = "";
   for (const raw of text.split(/\r?\n/u)) {
     const line = raw.trim();
@@ -87,35 +91,58 @@ export const keyfileView = (
     const header = /^\[(?<name>[^\]]+)\]$/u.exec(line)?.groups?.name;
     if (header !== undefined) {
       group = header;
-      groups[group] ??= {};
+      groups[group] ??= plainRecord();
       continue;
     }
     const equals = line.indexOf("=");
     if (equals <= 0) continue;
-    (groups[group] ??= {})[line.slice(0, equals).trim()] = line
+    (groups[group] ??= plainRecord())[line.slice(0, equals).trim()] = line
       .slice(equals + 1)
       .trim();
   }
   return groups;
 };
 
+interface XmlBudget {
+  remaining: number;
+  truncated: boolean;
+}
+
+/** Whitespace-only text is formatting unless `xml:space="preserve"` applies. */
+const preservesSpace = (node: Node): boolean => {
+  for (
+    let current: Node | null = node;
+    current !== null;
+    current = current.parentNode
+  )
+    if (current.nodeType === current.ELEMENT_NODE) {
+      const space = (current as Element).getAttribute("xml:space");
+      if (space === "preserve") return true;
+      if (space === "default") return false;
+    }
+  return false;
+};
+
 const xmlNode = (
   node: Node,
   depth: number,
-  budget: { remaining: number },
+  budget: XmlBudget,
 ): JsonValue | undefined => {
-  if (budget.remaining <= 0 || depth > MAX_XML_DEPTH) return undefined;
+  if (budget.remaining <= 0 || depth > MAX_XML_DEPTH) {
+    budget.truncated = true;
+    return undefined;
+  }
   budget.remaining -= 1;
   if (
     node.nodeType === node.TEXT_NODE ||
     node.nodeType === node.CDATA_SECTION_NODE
   ) {
-    const text = node.nodeValue?.trim() ?? "";
-    return text.length === 0 ? undefined : text;
+    const text = node.nodeValue ?? "";
+    return text.trim().length === 0 && !preservesSpace(node) ? undefined : text;
   }
   if (node.nodeType !== node.ELEMENT_NODE) return undefined;
   const element = node as Element;
-  const attributes: Record<string, string> = {};
+  const attributes = plainRecord<string>();
   for (let index = 0; index < element.attributes.length; index += 1) {
     const attribute = element.attributes.item(index);
     if (attribute !== null) attributes[attribute.name] = attribute.value;
@@ -140,9 +167,9 @@ export const xmlView = (text: string): JsonValue | undefined => {
   });
   const root = parsed.ok ? parsed.value.documentElement : null;
   if (root === null) return undefined;
-  const budget = { remaining: MAX_XML_NODES };
+  const budget: XmlBudget = { remaining: MAX_XML_NODES, truncated: false };
   const tree = xmlNode(root, 0, budget);
   return tree === undefined
     ? undefined
-    : { root: tree, truncated: budget.remaining <= 0 };
+    : { root: tree, truncated: budget.truncated };
 };

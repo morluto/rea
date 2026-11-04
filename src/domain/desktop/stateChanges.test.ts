@@ -80,3 +80,40 @@ describe("diffStateViews", () => {
     });
   });
 });
+
+describe("diffStateViews fidelity", () => {
+  it("keeps empty containers as values", () => {
+    expect(diffStateViews("json", {}, { items: [] })).toMatchObject({
+      added: ["/items"],
+      removed: [""],
+    });
+    expect(diffStateViews("json", { items: [] }, { items: {} })).toMatchObject({
+      changed: ["/items"],
+    });
+  });
+
+  it("marks comparisons of truncated views as incomplete", () => {
+    expect(
+      diffStateViews(
+        "text",
+        { lines: ["a"], truncated: true },
+        { lines: ["b"], truncated: false },
+      ).complete,
+    ).toBe(false);
+    expect(
+      diffStateViews(
+        "sqlite",
+        {
+          tables: {
+            t: { columns: [], primary_key: [], rows: [], truncated: true },
+          },
+        },
+        {
+          tables: {
+            t: { columns: [], primary_key: [], rows: [], truncated: false },
+          },
+        },
+      ).complete,
+    ).toBe(false);
+  });
+});

@@ -1,234 +1,29 @@
-import { createHash } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { join } from "node:path";
-
 import { describe, expect, it } from "vitest";
 
-import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
-import type { DesktopApplicationCapture } from "../../domain/desktop/desktopCapture.js";
 import { desktopApplicationStateSchema } from "../../domain/desktop/desktopState.js";
-import { createEvidence } from "../../domain/evidence.js";
+import { inspectDesktopApplicationState } from "./DesktopApplicationState.js";
 import {
-  inspectDesktopApplicationState,
-  type DesktopStateReaders,
-} from "./DesktopApplicationState.js";
-import {
-  DESKTOP_OPERATION,
-  DESKTOP_PROVIDER,
-} from "./DesktopCaptureRefusals.js";
+  HOME,
+  capture,
+  change,
+  readers,
+  retained,
+  writeCaptureFolder,
+} from "./desktopCapture.fixture.js";
 
-const HOME = "/home/ada";
-const sha256 = (text: string) =>
-  createHash("sha256").update(text).digest("hex");
-const facts = (text: string) => ({
-  type: "file" as const,
-  size: text.length,
-  mode: 0o644,
-  mtime_ns: "1",
-  sha256: sha256(text),
-});
-const change = (
-  path: string,
-  versions: { readonly before?: string; readonly after: string },
-  marks: { readonly state?: boolean } = {},
-) => ({
-  path,
-  kind:
-    versions.before === undefined
-      ? ("created" as const)
-      : ("modified" as const),
-  before: versions.before === undefined ? null : facts(versions.before),
-  after: facts(versions.after),
-  in_state_directory: marks.state === true,
-  opened_by_application: false,
-});
-const retained = (path: string, text: string) => ({
-  path,
-  sha256: sha256(text),
-  size: text.length,
-});
-const checkpoint = (
-  name: string,
-  trigger: "baseline" | "request" | "exit",
-  changes: ReturnType<typeof change>[],
-  kept: ReturnType<typeof retained>[],
-) => ({
-  name,
-  trigger,
-  at_ms: 0,
-  entries: 10,
-  truncated: false,
-  unreadable_directories: 0,
-  unconfirmed_changes: 0,
-  changes,
-  retained: kept,
-});
-
-const SETTINGS = `${HOME}/.config/notes/settings.ini`;
-const NOTE = `${HOME}/Documents/today.txt`;
-const DATABASE = `${HOME}/.local/share/notes/notes.db`;
-
-const capture = (): DesktopApplicationCapture => ({
-  host: { platform: "linux", architecture: "x64", display: ":0", home: HOME },
-  application: {
-    desktop_entry: null,
-    argv: ["notes"],
-    working_directory: HOME,
-    executable: {
-      path: "/usr/bin/notes",
-      resolved_path: "/usr/bin/notes",
-      electron_markers: [],
-    },
-    package: {
-      kind: "deb",
-      name: "notes",
-      version: "1",
-      architecture: "amd64",
-      sources: [],
-      package_lists_present: true,
-    },
-    state_directories: [
-      { path: `${HOME}/.config/notes`, exists_at_start: true },
-      { path: `${HOME}/.local/share/notes`, exists_at_start: true },
-    ],
-  },
-  session: {
-    started_at: "2026-11-04T00:00:00.000Z",
-    duration_ms: 1000,
-    end_reason: "stop_requested",
-    launch_pid: 10,
-    exit: { code: 0, signal: null },
-    first_window_ms: 100,
-    window_match: { class: "Notes", instance: "notes" },
-    processes: [],
-    windows: [
-      {
-        id: "0x1",
-        instance: "notes",
-        class: "Notes",
-        titles: ["today.txt - Notes"],
-        pid: 10,
-        window_type: "normal",
-        application: true,
-        first_seen_ms: 100,
-        last_seen_ms: 900,
-      },
-    ],
-    opened_files: [],
-    stderr: "",
-    stderr_truncated: false,
-    cleanup: { verified: true, reason: null },
-  },
-  state: {
-    roots: [HOME],
-    content_roots: [`${HOME}/.config/notes`, `${HOME}/.local/share/notes`],
-    checkpoints: [
-      checkpoint(
-        "baseline",
-        "baseline",
-        [],
-        [
-          retained(SETTINGS, "[ui]\nwrap=false\n"),
-          retained(DATABASE, "SQLite format 3\0v1"),
-        ],
-      ),
-      checkpoint(
-        "edited",
-        "request",
-        [
-          change(
-            SETTINGS,
-            { before: "[ui]\nwrap=false\n", after: "[ui]\nwrap=true\n" },
-            { state: true },
-          ),
-          change(NOTE, { after: "milk\n" }),
-          change(
-            DATABASE,
-            { before: "SQLite format 3\0v1", after: "SQLite format 3\0v2" },
-            { state: true },
-          ),
-        ],
-        [
-          retained(SETTINGS, "[ui]\nwrap=true\n"),
-          retained(NOTE, "milk\n"),
-          retained(DATABASE, "SQLite format 3\0v2"),
-        ],
-      ),
-    ],
-    content_files: 5,
-    content_bytes: 80,
-    omitted_content: [],
-    unretained_opened_directories: [],
-  },
-  limitations: [],
-});
-
-const writeCaptureFolder = async (
-  result: DesktopApplicationCapture,
-  operation = DESKTOP_OPERATION,
-) => {
-  const folder = await createTestTempDirectory("desktop-state-");
-  await mkdir(join(folder, "content"));
-  for (const text of [
-    "[ui]\nwrap=false\n",
-    "[ui]\nwrap=true\n",
-    "milk\n",
-    "SQLite format 3\0v1",
-    "SQLite format 3\0v2",
-  ])
-    await writeFile(join(folder, "content", sha256(text)), text);
-  const evidence = createEvidence(undefined, DESKTOP_PROVIDER, {
-    predicateType: "rea.desktop-application-capture",
-    operation,
-    parameters: {},
-    result,
-    confidence: "observed",
-    authority: "controlled-replay",
-  });
-  await writeFile(join(folder, "capture.json"), JSON.stringify(evidence));
-  return folder;
-};
-
-/** A SQLite reader that reports one row per retained version's last byte. */
-const readers: DesktopStateReaders = {
-  sqlite: async (database) => {
-    const version = (await readFile(database, "latin1")).slice(-2);
-    return {
-      ok: true,
-      view: {
-        tables: {
-          notes: {
-            columns: ["id", "body"],
-            primary_key: ["id"],
-            rows:
-              version === "v1"
-                ? [[1, "a"]]
-                : [
-                    [1, "a"],
-                    [2, "b"],
-                  ],
-            truncated: false,
-          },
-        },
-      },
-    };
-  },
-  dconf: async () => ({ ok: false, error: "unused" }),
+/** Inspect a capture folder and index its state paths by home path. */
+const statePathsOf = async (folder: string) => {
+  const evidence = await inspectDesktopApplicationState(folder, readers);
+  if (!("normalized_result" in evidence)) throw evidence;
+  const state = desktopApplicationStateSchema.parse(evidence.normalized_result);
+  return new Map(state.paths.map((entry) => [entry.home_path, entry]));
 };
 
 describe("inspectDesktopApplicationState", () => {
   it("assigns roles and reads each version into typed views and changes", async () => {
     const folder = await writeCaptureFolder(capture());
 
-    const evidence = await inspectDesktopApplicationState(folder, readers);
-
-    if (!("normalized_result" in evidence)) throw evidence;
-    const state = desktopApplicationStateSchema.parse(
-      evidence.normalized_result,
-    );
-    const byPath = new Map(
-      state.paths.map((entry) => [entry.home_path, entry]),
-    );
+    const byPath = await statePathsOf(folder);
     expect(byPath.get(".config/notes/settings.ini")).toMatchObject({
       role: "application_state",
       format: "keyfile",
@@ -262,5 +57,66 @@ describe("inspectDesktopApplicationState", () => {
     expect(String(refused instanceof Error ? refused.message : "")).toContain(
       "inspect_desktop_application_state",
     );
+  });
+
+  it("reads JSON null as a value and follows a database's write-ahead log", async () => {
+    const base = capture();
+    const json = `${HOME}/.config/notes/state.json`;
+    const database = `${HOME}/.config/notes/log.db`;
+    const [first, second] = base.state.checkpoints;
+    if (first === undefined || second === undefined) throw new Error("fixture");
+    const folder = await writeCaptureFolder(
+      {
+        ...base,
+        state: {
+          ...base.state,
+          checkpoints: [
+            {
+              ...first,
+              retained: [
+                ...first.retained,
+                retained(json, "null"),
+                retained(database, "SQLite format 3\0v1"),
+                retained(`${database}-wal`, "wal v1"),
+              ],
+            },
+            {
+              ...second,
+              changes: [
+                ...second.changes,
+                change(
+                  json,
+                  { before: "null", after: '{"a":1}' },
+                  { state: true },
+                ),
+                change(`${database}-wal`, {
+                  before: "wal v1",
+                  after: "wal v2",
+                }),
+              ],
+              retained: [
+                ...second.retained,
+                retained(json, '{"a":1}'),
+                retained(`${database}-wal`, "wal v2"),
+              ],
+            },
+          ],
+        },
+      },
+      undefined,
+      ["null", '{"a":1}', "wal v1", "wal v2"],
+    );
+
+    const byPath = await statePathsOf(folder);
+    expect(byPath.get(".config/notes/state.json")).toMatchObject({
+      versions: [{ view: null, view_error: null }, { view: { a: 1 } }],
+      changes: [{ kind: "values", added: ["/a"], removed: [""] }],
+    });
+    expect(byPath.get(".config/notes/log.db")).toMatchObject({
+      versions: [{ checkpoint_index: 0 }, { checkpoint_index: 1 }],
+      changes: [
+        { kind: "rows", added: ["notes:[2]"], from_index: 0, to_index: 1 },
+      ],
+    });
   });
 });

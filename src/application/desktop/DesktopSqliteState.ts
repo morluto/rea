@@ -10,6 +10,7 @@ import {
   sqliteValueSchema,
   type SqliteDatabase,
 } from "../../domain/sqlite/sqliteDatabase.js";
+import { plainRecord } from "../../domain/desktop/stateFormats.js";
 import type { SqliteDatabaseService } from "../sqlite/SqliteDatabaseService.js";
 
 const ROW_LIMIT = 500;
@@ -22,19 +23,25 @@ export type SqliteStateView =
 
 type Cell = z.infer<typeof sqliteValueSchema>;
 
-/** SQLite cells as plain JSON: safe integers as numbers, blobs as hex. */
+/**
+ * SQLite cells as JSON. Values that plain JSON would conflate keep a tagged
+ * form: integers beyond the safe range, text whose bytes did not decode
+ * cleanly, and blobs.
+ */
 const cellValue = (cell: Cell): JsonValue => {
   switch (cell.type) {
     case "null":
       return null;
     case "integer": {
       const value = Number(cell.value);
-      return Number.isSafeInteger(value) ? value : cell.value;
+      return Number.isSafeInteger(value) ? value : { integer: cell.value };
     }
     case "real":
       return cell.value;
     case "text":
-      return cell.value;
+      return cell.value.includes("\uFFFD")
+        ? { text: cell.value, bytes_hex: cell.bytes_hex }
+        : cell.value;
     case "blob":
       return { blob_hex: cell.hex };
   }
@@ -78,7 +85,7 @@ export const readSqliteStateView = async (
       signal,
     );
     if (typeof inventory === "string") return { ok: false, error: inventory };
-    const tables: Record<string, JsonValue> = {};
+    const tables = plainRecord<JsonValue>();
     const ordinary = inventory.schema.tables.filter(
       (table) => table.kind === "table",
     );
