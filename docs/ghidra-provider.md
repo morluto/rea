@@ -172,6 +172,11 @@ have no file backing. ELF mappings are observed
 without independent format-specific load-image verification, as the result's
 status and limitations state.
 
+Relocation rows retain Ghidra's `symbol` value, including an empty string or
+null when returned by Ghidra. It is a provider observation, not proof of the
+runtime-resolved address. Older Evidence may not have recorded this field;
+a relocation page requesting it reports that uncertainty.
+
 For large relocation inventories, select MCP `inspect_native_load_image` with
 `detail: "summary"`. It returns verification state, observed identity and counts,
 while retaining complete Evidence. Use `normalized_result.parent_evidence_id`

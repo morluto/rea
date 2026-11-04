@@ -186,9 +186,19 @@ const decodeDirectoryString = (
       return decodeUtf32Be(node.content, budget);
     case 0x1e:
       return decodeBmpString(node.content, budget);
-    case 0x0c:
-    case 0x13:
+    case 0x13: {
+      const decoded = decodeUtf8(node.content, budget);
+      if (/[^A-Za-z0-9 '()+,\-./:=?]/u.test(decoded))
+        return fail("PrintableString holds a character outside its alphabet.");
+      return decoded;
+    }
     case 0x16:
+      chargeDecodedName(budget, node.content.length);
+      if (node.content.some((byte) => byte > 0x7f))
+        return fail("IA5String holds a non-ASCII character.");
+      // Validated ASCII needs no UTF-8 round trip or second budget charge.
+      return node.content.toString("ascii");
+    case 0x0c:
     case 0x17:
     case 0x18:
       return decodeUtf8(node.content, budget);
@@ -204,7 +214,22 @@ const decodeDirectoryString = (
   }
 };
 
-const integerHex = (content: Buffer, budget: DecodedNameBudget): string => {
+// X.690 8.3.1 and 8.3.2 hold for BER as well as DER: an INTEGER has at least
+// one content octet, and its first nine bits are never all zeros or all ones.
+// Padded encodings would otherwise collapse onto the minimal serial's hex.
+const integerHex = (
+  content: Buffer,
+  budget: DecodedNameBudget,
+  label: string,
+): string => {
+  if (content.length === 0) return fail(`${label} INTEGER is empty.`);
+  const second = content[1];
+  if (
+    second !== undefined &&
+    ((content[0] === 0x00 && second < 0x80) ||
+      (content[0] === 0xff && second >= 0x80))
+  )
+    return fail(`${label} INTEGER is not minimally encoded.`);
   let start = 0;
   while (start < content.length - 1 && content[start] === 0) start += 1;
   chargeDecodedName(budget, (content.length - start) * 2);
@@ -294,12 +319,51 @@ const decodeName = (
   return { text, attributes };
 };
 
+// RFC 5280 4.1.2.5 and X.690 11.7-11.8: UTC with seconds, a final "Z", and
+// no fractional seconds. UTCTime years 50-99 are 1950-1999, 00-49 are 2000-2049.
+const VALIDITY_TIMES = {
+  0x17: {
+    label: "UTCTime",
+    layout: "YYMMDDHHMMSSZ",
+    form: /^(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})Z$/u,
+  },
+  0x18: {
+    label: "GeneralizedTime",
+    layout: "YYYYMMDDHHMMSSZ",
+    form: /^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})Z$/u,
+  },
+} as const;
+
+const isCalendarInstant = (
+  year: number,
+  [month = 0, day = 0, hour = 24, minute = 60, second = 60]: number[],
+): boolean => {
+  const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const days = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  return (
+    day >= 1 &&
+    day <= (days[month - 1] ?? 0) &&
+    hour <= 23 &&
+    minute <= 59 &&
+    second <= 59
+  );
+};
+
 const validityTime = (node: Asn1BerNode, budget: DecodedNameBudget): string => {
   if (node.tag !== 0x17 && node.tag !== 0x18)
     return fail("Validity instant is not UTCTime or GeneralizedTime.");
   // A zero byte becomes "\u0000" (six characters) in the hashed evidence JSON.
   chargeDecodedName(budget, node.content.length * 6);
-  return node.content.toString("utf8");
+  const { label, layout, form } = VALIDITY_TIMES[node.tag];
+  // Latin-1 maps each byte to one character, so no invalid byte can match.
+  const text = node.content.toString("latin1");
+  const [year = 0, ...rest] = form.exec(text)?.slice(1).map(Number) ?? [];
+  if (rest.length === 0)
+    return fail(`${label} validity instant is not ${layout}.`);
+  const fullYear = node.tag === 0x17 ? year + (year < 50 ? 2000 : 1900) : year;
+  if (!isCalendarInstant(fullYear, rest))
+    return fail(`${label} validity instant is not a calendar time.`);
+  return text;
 };
 
 export interface ParsedCertificate {
@@ -434,7 +498,11 @@ export const parseCertificate = (
   return {
     start: node.start,
     end: node.end,
-    serial_hex: integerHex(serial.content, names),
+    serial_hex: integerHex(
+      serial.content,
+      names,
+      "TBSCertificate serialNumber",
+    ),
     issuer: decodeName(issuer, names),
     subject: decodeName(subject, names),
     not_before: validityTime(notBefore, names),
@@ -474,7 +542,11 @@ const signerIdentifier = (
       return fail("SignerInfo issuerAndSerialNumber is truncated.");
     return {
       issuer: decodeName(name, names),
-      serial_hex: integerHex(serial.content, names),
+      serial_hex: integerHex(
+        serial.content,
+        names,
+        "SignerInfo issuerAndSerialNumber serialNumber",
+      ),
       subject_key_identifier_hex: null,
     };
   }

@@ -116,7 +116,7 @@ export const excludeDeclaredSensitiveArguments = (
       command.options instanceof z.ZodObject &&
       Object.hasOwn(command.options.shape, OPTION)
     )
-      // Outermost, so later command middleware failures are covered as well
+      // Outside the command middleware, so its failures are covered as well
       // as the parsing and run that Incur executes inside the chain.
       command.middleware = [excludeFromFailures, ...(command.middleware ?? [])];
   });

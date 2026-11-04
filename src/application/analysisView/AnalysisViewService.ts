@@ -225,6 +225,7 @@ const projectResolvedAnalysisView = (
   const projected = projection.project({
     evidenceId: parent.evidence_id,
     operation: parent.operation,
+    predicateType: parent.predicate_type,
     provider: parent.provider,
     analysisProfile: parent.analysis_profile,
     authority: parent.authority,
