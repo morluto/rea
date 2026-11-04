@@ -246,7 +246,7 @@ export class AnalysisSnapshotCache {
         queryId,
         ambiguous.has(queryId)
           ? null
-          : snapshotReplayBinding(evidence, records),
+          : snapshotReplayBinding(evidence, (id) => records.get(id)),
       );
     }
     for (const entry of snapshot.workflow_entries) {
@@ -535,21 +535,30 @@ export class AnalysisSnapshotCache {
   }
 
   /** Record one successful immutable call unless the cache is full. */
-  record(input: {
-    readonly target: BinaryTarget;
-    readonly profile: AnalysisProfileCommitment;
-    readonly operation: AnalysisOperation;
-    readonly parameters: Readonly<Record<string, JsonValue>>;
-    readonly execution: AnalysisExecution;
-  }): void {
+  record(
+    input: {
+      readonly target: BinaryTarget;
+      readonly profile: AnalysisProfileCommitment;
+      readonly operation: AnalysisOperation;
+      readonly parameters: Readonly<Record<string, JsonValue>>;
+      readonly execution: AnalysisExecution;
+    },
+    lookup?: (id: string) => Evidence | undefined,
+  ): void {
     const { target, profile, operation, parameters, execution } = input;
     this.select(target, profile);
     // The snapshot format does not carry reference truncation; a replay would
     // present a capped read as complete, so it is not recorded.
     if (execution.referencesTruncated === true) return;
-    // Provider snapshot entries do not carry execution source records. Replay
-    // must not discard the source closure that supplies the parent's Evidence links.
-    if ((execution.sourceEvidence?.length ?? 0) > 0) return;
+    let sourceBinding: SnapshotReplayBinding | undefined;
+    if ((execution.sourceEvidence?.length ?? 0) > 0) {
+      if (execution.evidenceId === undefined || lookup === undefined) return;
+      const parent = lookup(execution.evidenceId);
+      if (parent === undefined) return;
+      const closed = snapshotReplayBinding(parent, lookup);
+      if (closed === null) return;
+      sourceBinding = closed;
+    }
     const queryId = analysisQueryId(
       snapshotTarget(target),
       snapshotBinding(profile),
@@ -581,9 +590,10 @@ export class AnalysisSnapshotCache {
     if (execution.evidenceId === undefined)
       this.#replayBindings.delete(entry.query_id);
     else
-      this.#replayBindings.set(entry.query_id, {
-        evidenceId: execution.evidenceId,
-      });
+      this.#replayBindings.set(
+        entry.query_id,
+        sourceBinding ?? { evidenceId: execution.evidenceId },
+      );
   }
 
   /** Forget all target-bound entries. */

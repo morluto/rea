@@ -330,7 +330,7 @@ export abstract class BinarySessionRecords {
     input: Parameters<AnalysisSnapshotCache["record"]>[0],
   ): void {
     if (this.#snapshotInvalidated) return;
-    this.#snapshot.record(input);
+    this.#snapshot.record(input, (id) => this.evidenceForAnalysis(id));
     this.#emitSnapshotChanged();
   }
 

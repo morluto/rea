@@ -22,6 +22,7 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createAnalysisProfile } from "../../../src/domain/analysisProfile.js";
+import { createEvidence } from "../../../src/domain/evidence.js";
 import { readAnalysisSnapshot } from "../../../src/application/binary/AnalysisSnapshotFiles.js";
 import { ok } from "../../../src/domain/result.js";
 import { evidenceBundleSchema } from "../../../src/domain/evidenceBundle.js";
@@ -575,6 +576,121 @@ describe("MCP investigation history snapshot replay", () => {
       });
     },
   );
+});
+
+it("replays a source-bearing observation through an exported MCP snapshot", async () => {
+  const { targetPaths, snapshotPath } = await createWorkflowFiles(
+    "rea-mcp-source-replay-",
+    ["fixture.hop"],
+  );
+  const targetPath = targetPaths[0];
+  if (targetPath === undefined) throw new Error("Expected a fixture target");
+  const starts: string[] = [];
+  const calls: string[] = [];
+  const base = makeProvider(starts, calls);
+  const provider: AnalysisProvider = {
+    ...base,
+    createClient: (target, selectedProfile, context) => {
+      const client = base.createClient(target, selectedProfile, context);
+      return {
+        ...client,
+        execute: async (...args) => {
+          const result = await client.execute(...args);
+          if (!result.ok || args[0] !== "list_strings") return result;
+          return ok({
+            ...result.value,
+            sourceEvidence: [
+              createEvidence(target, identity, {
+                operation: "health",
+                parameters: {},
+                result: "historical source",
+              }),
+            ],
+          });
+        },
+      };
+    },
+  };
+  const { mcp } = await connectWorkflowMcp(
+    createWorkflowSession(provider),
+    "source-replay",
+  );
+  await openWorkflowTarget(mcp, targetPath);
+  const read = (client: Client) =>
+    client.callTool({
+      name: "list_strings",
+      arguments: { document: "fixture" },
+    });
+  const first = await read(mcp);
+  const firstEvidence = toolContract("list_strings").outputSchema.parse(
+    first.structuredContent,
+  );
+  expect(firstEvidence.evidence_links).toHaveLength(1);
+  const second = await read(mcp);
+  const secondEvidence = toolContract("list_strings").outputSchema.parse(
+    second.structuredContent,
+  );
+  expect(secondEvidence.evidence_links).toEqual(firstEvidence.evidence_links);
+  expect(secondEvidence.limitations).toEqual(
+    expect.arrayContaining([
+      expect.stringContaining("did not re-run the provider"),
+    ]),
+  );
+  expect(
+    calls.filter((operation) => operation === "list_strings"),
+  ).toHaveLength(1);
+  expect(
+    (
+      await mcp.callTool({
+        name: "close_binary",
+        arguments: { snapshot_path: snapshotPath },
+      })
+    ).isError,
+  ).not.toBe(true);
+  const { mcp: reopened } = await connectWorkflowMcp(
+    createWorkflowSession(provider),
+    "source-replay-import",
+  );
+  expect(
+    (
+      await reopened.callTool({
+        name: "open_binary",
+        arguments: { path: targetPath, snapshot_path: snapshotPath },
+      })
+    ).isError,
+  ).not.toBe(true);
+  const replayed = toolContract("list_strings").outputSchema.parse(
+    (await read(reopened)).structuredContent,
+  );
+  expect(replayed.evidence_links).toEqual(firstEvidence.evidence_links);
+  expect(replayed.limitations).toEqual(
+    expect.arrayContaining([
+      expect.stringContaining("did not re-run the provider"),
+    ]),
+  );
+  expect(
+    calls.filter((operation) => operation === "list_strings"),
+  ).toHaveLength(1);
+  const bundle = await reopened.callTool({
+    name: "get_evidence_bundle",
+    arguments: {
+      detail: "records",
+      filters: { evidence_id: firstEvidence.evidence_links[0] },
+    },
+  });
+  expect(bundle.isError).not.toBe(true);
+  expect(
+    toolContract("get_evidence_bundle").outputSchema.parse(
+      bundle.structuredContent,
+    ).result,
+  ).toMatchObject({
+    records: [
+      {
+        evidence_id: firstEvidence.evidence_links[0],
+        normalized_result: "historical source",
+      },
+    ],
+  });
 });
 
 const createWorkflowFiles = async (
