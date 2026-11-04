@@ -1,4 +1,4 @@
-import { chmod, mkdir, writeFile } from "node:fs/promises";
+import { chmod, mkdir, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
@@ -98,6 +98,72 @@ describe.skipIf(process.platform === "win32")("inspectLinuxApplication", () => {
       "today.md",
     ]);
     expect(inspected.value.inventory.working_directory).toBe(bin);
+  });
+
+  it("finds a desktop entry installed as a link to the file", async () => {
+    const { home, environment } = await fixture();
+    const exports = join(home, ".local/share/flatpak/exports/share");
+    await mkdir(join(exports, "applications"), { recursive: true });
+    await writeFile(
+      join(exports, "applications/org.example.linked.desktop"),
+      "[Desktop Entry]\nType=Application\nName=Linked\nExec=notes-app\n",
+    );
+    await mkdir(join(home, ".local/share/applications"), { recursive: true });
+    await symlink(
+      join(exports, "applications/org.example.linked.desktop"),
+      join(home, ".local/share/applications/org.example.linked.desktop"),
+    );
+
+    const inspected = await inspectLinuxApplication({
+      desktopEntry: "org.example.linked",
+      executable: undefined,
+      arguments: [],
+      environment,
+      home,
+      callerDirectory: home,
+    });
+
+    if (!inspected.ok) throw new Error(inspected.error.reason);
+    expect(inspected.value.inventory.desktop_entry).toMatchObject({
+      id: "org.example.linked",
+      name: "Linked",
+    });
+  });
+
+  it("names a flatpak's state after its application id, not the flatpak launcher", async () => {
+    const { home, bin, environment } = await fixture();
+    await writeFile(join(bin, "flatpak"), "#!/bin/sh\nexit 0\n");
+    await chmod(join(bin, "flatpak"), 0o755);
+    await mkdir(join(home, ".local/share/applications"), { recursive: true });
+    await writeFile(
+      join(home, ".local/share/applications/org.example.Notes.desktop"),
+      [
+        "[Desktop Entry]",
+        "Type=Application",
+        "Name=Notes",
+        "Exec=flatpak run --branch=stable --command=notes org.example.Notes @@u %U @@",
+      ].join("\n"),
+    );
+
+    const inspected = await inspectLinuxApplication({
+      desktopEntry: "org.example.Notes",
+      executable: undefined,
+      arguments: [],
+      environment,
+      home,
+      callerDirectory: home,
+    });
+
+    if (!inspected.ok) throw new Error(inspected.error.reason);
+    const { inventory } = inspected.value;
+    expect(inventory.package).toMatchObject({
+      kind: "flatpak",
+      name: "org.example.Notes",
+    });
+    const paths = inventory.state_directories.map((entry) => entry.path);
+    expect(paths).toContain(join(home, ".var/app/org.example.Notes"));
+    expect(paths).toContain(join(home, ".config/org.example.Notes"));
+    expect(paths.filter((path) => /flatpak/iu.test(path))).toEqual([]);
   });
 
   it("refuses an unknown entry and an executable that is not on PATH", async () => {

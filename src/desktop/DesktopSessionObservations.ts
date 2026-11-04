@@ -14,15 +14,73 @@ import { readProcessRunId } from "../process/ProcessOwnership.js";
 import type { ObservedWindow } from "./X11WindowObserver.js";
 
 const COMMAND_TEXT_LIMIT = 512;
+/** Parent links followed when deciding whether the capture started a process. */
+const ANCESTOR_LIMIT = 64;
 
 type TrackedProcess = Omit<DesktopProcess, "started_by_capture"> & {
   alive: boolean;
-  started: boolean;
+  readonly started: boolean;
+  /** Kernel start time; the same pid with another start time is another process. */
+  readonly startTime: string | undefined;
 };
+
+/** How a window is recognised as the application's. */
+export interface WindowMatching {
+  /** Class or instance names, lowercase. */
+  readonly names: ReadonlySet<string>;
+  /** False when window pids live in another pid namespace, as in a flatpak sandbox. */
+  readonly byPid: boolean;
+}
+
+/** The procfs reads that follow the application's processes; replaceable in tests. */
+export interface SessionProcfs {
+  /** Parent and kernel start time, or undefined when the process is gone. */
+  stat(
+    pid: number,
+    signal: AbortSignal,
+  ): Promise<
+    { readonly parentPid: number; readonly startTime: string } | undefined
+  >;
+  children(pid: number, signal: AbortSignal): Promise<readonly number[]>;
+  /** The run token in the environment, undefined when absent or unreadable. */
+  runId(pid: number, signal: AbortSignal): Promise<string | undefined>;
+  command(pid: number): Promise<string>;
+}
+
+const systemProcfs: SessionProcfs = {
+  async stat(pid, signal) {
+    const stat = (await readLinuxProcessStat(pid, signal)).value;
+    return stat?.startTime === undefined
+      ? undefined
+      : { parentPid: stat.parent_pid, startTime: stat.startTime };
+  },
+  async children(pid, signal) {
+    return (await readLinuxChildren(pid, signal)).value ?? [];
+  },
+  runId: (pid, signal) =>
+    readProcessRunId(pid, undefined, signal).catch(() => undefined),
+  async command(pid) {
+    const text = await readFile(`/proc/${String(pid)}/cmdline`, "utf8").catch(
+      () => "",
+    );
+    return text.replaceAll("\0", " ").trim().slice(0, COMMAND_TEXT_LIMIT);
+  },
+};
+
+/** Whether a window's class or instance names the application. */
+export const matchesWindowNames = (
+  window: Pick<ObservedWindow, "class" | "instance">,
+  names: ReadonlySet<string>,
+): boolean =>
+  (window.class !== null && names.has(window.class.toLowerCase())) ||
+  (window.instance !== null && names.has(window.instance.toLowerCase()));
 
 /** Mutable observations folded into the session record at the end. */
 export class SessionObservations {
-  readonly processes = new Map<number, TrackedProcess>();
+  /** Every process generation seen, in discovery order. */
+  readonly #processes: TrackedProcess[] = [];
+  /** The latest generation seen under each pid. */
+  readonly #byPid = new Map<number, TrackedProcess>();
   readonly windows = new Map<string, DesktopWindow & { titles: string[] }>();
   readonly openedFiles = new Map<string, number>();
   firstWindowMs: number | null = null;
@@ -30,60 +88,108 @@ export class SessionObservations {
 
   constructor(
     readonly startedAt: number,
-    readonly runId: string,
-    readonly windowNames: ReadonlySet<string>,
+    readonly run: { readonly runId: string; readonly launchPid: number },
+    readonly matching: WindowMatching,
+    readonly procfs: SessionProcfs = systemProcfs,
   ) {}
 
   now(): number {
     return Math.max(0, Math.round(performance.now() - this.startedAt));
   }
 
-  /** Live processes; with `startedOnly`, only those carrying the run token. */
+  get processes(): readonly TrackedProcess[] {
+    return this.#processes;
+  }
+
+  /** The latest generation recorded under a pid. */
+  tracked(pid: number): TrackedProcess | undefined {
+    return this.#byPid.get(pid);
+  }
+
+  record(entry: TrackedProcess): void {
+    this.#processes.push(entry);
+    this.#byPid.set(entry.pid, entry);
+  }
+
+  /** Live processes; with `startedOnly`, only those the capture started. */
   liveProcessIds(startedOnly = false): readonly number[] {
-    return [...this.processes.values()]
+    return [...this.#byPid.values()]
       .filter((entry) => entry.alive && (entry.started || !startedOnly))
       .map((entry) => entry.pid);
   }
 
-  /** A window is the application's by owner pid or by class name. */
+  /** A window is the application's by live owner pid or by class name. */
   belongs(window: Pick<ObservedWindow, "pid" | "class" | "instance">): boolean {
     return (
-      (window.pid !== null && this.processes.has(window.pid)) ||
-      (window.class !== null &&
-        this.windowNames.has(window.class.toLowerCase())) ||
-      (window.instance !== null &&
-        this.windowNames.has(window.instance.toLowerCase()))
+      (this.matching.byPid &&
+        window.pid !== null &&
+        this.tracked(window.pid)?.alive === true) ||
+      matchesWindowNames(window, this.matching.names)
     );
   }
 }
 
-const processCommand = async (pid: number): Promise<string> => {
-  const text = await readFile(`/proc/${String(pid)}/cmdline`, "utf8").catch(
-    () => "",
-  );
-  return text.replaceAll("\0", " ").trim().slice(0, COMMAND_TEXT_LIMIT);
+/**
+ * Whether the parent chain reaches a live process the capture started. Each
+ * link is read again, so a reused pid does not count as its earlier process.
+ */
+const startedByAncestor = async (
+  observations: SessionObservations,
+  parentPid: number,
+  signal: AbortSignal,
+): Promise<boolean> => {
+  let pid = parentPid;
+  for (let depth = 0; depth < ANCESTOR_LIMIT && pid > 1; depth += 1) {
+    const stat = await observations.procfs.stat(pid, signal);
+    if (stat === undefined) return false;
+    const known = observations.tracked(pid);
+    if (
+      known?.alive === true &&
+      known.started &&
+      known.startTime === stat.startTime
+    )
+      return true;
+    pid = stat.parentPid;
+  }
+  return false;
 };
 
-/** Record a process once; it counts as started when it carries the run token. */
+/**
+ * Record a process generation once. It counts as started by the capture when
+ * it is the launched process, carries the run token, or descends from a
+ * process the capture started; a zombie or sandboxed process whose
+ * environment cannot be read is still recognised by its parents.
+ */
 export const trackProcess = async (
   observations: SessionObservations,
   pid: number,
-  parentPid: number,
   signal: AbortSignal,
 ): Promise<void> => {
-  if (observations.processes.has(pid)) return;
+  const { procfs } = observations;
+  const stat = await procfs.stat(pid, signal);
+  const known = observations.tracked(pid);
+  if (known?.alive === true) {
+    if (known.startTime === stat?.startTime) return;
+    known.alive = false;
+  }
+  // Only the first generation under the launched pid is the launched process.
+  const launched = pid === observations.run.launchPid && known === undefined;
+  if (stat === undefined && !launched) return;
   const at = observations.now();
-  const runId = await readProcessRunId(pid, undefined, signal).catch(
-    () => undefined,
-  );
-  observations.processes.set(pid, {
+  const parentPid = stat?.parentPid ?? (launched ? process.pid : 0);
+  const runId = await procfs.runId(pid, signal);
+  observations.record({
     pid,
     parent_pid: parentPid,
-    command: await processCommand(pid),
+    command: await procfs.command(pid),
     first_seen_ms: at,
     last_seen_ms: at,
-    alive: true,
-    started: runId === observations.runId,
+    alive: stat !== undefined,
+    started:
+      launched ||
+      runId === observations.run.runId ||
+      (await startedByAncestor(observations, parentPid, signal)),
+    startTime: stat?.startTime,
   });
 };
 
@@ -93,17 +199,16 @@ export const sampleProcesses = async (
   signal: AbortSignal,
 ): Promise<void> => {
   for (const pid of observations.liveProcessIds()) {
-    const entry = observations.processes.get(pid);
+    const entry = observations.tracked(pid);
     if (entry === undefined) continue;
-    const stat = await readLinuxProcessStat(pid, signal);
-    if (stat.value === undefined) {
+    const stat = await observations.procfs.stat(pid, signal);
+    if (stat === undefined || stat.startTime !== entry.startTime) {
       entry.alive = false;
       continue;
     }
     entry.last_seen_ms = observations.now();
-    const children = await readLinuxChildren(pid, signal);
-    for (const child of children.value ?? [])
-      await trackProcess(observations, child, pid, signal);
+    for (const child of await observations.procfs.children(pid, signal))
+      await trackProcess(observations, child, signal);
   }
 };
 
@@ -142,8 +247,8 @@ export const recordWindows = async (
   const at = observations.now();
   for (const window of windows) {
     const belongs = observations.belongs(window);
-    if (belongs && window.pid !== null)
-      await trackProcess(observations, window.pid, 0, signal);
+    if (belongs && window.pid !== null && observations.matching.byPid)
+      await trackProcess(observations, window.pid, signal);
     const record = observations.windows.get(window.id) ?? {
       id: window.id,
       instance: window.instance,
@@ -209,8 +314,8 @@ export const observedSession = (
   return {
     first_window_ms: observations.firstWindowMs,
     window_match: windowMatch(windows),
-    processes: [...observations.processes.values()].map(
-      ({ alive: _alive, started, ...entry }) => ({
+    processes: observations.processes.map(
+      ({ alive: _alive, started, startTime: _startTime, ...entry }) => ({
         ...entry,
         started_by_capture: started,
       }),

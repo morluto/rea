@@ -66,6 +66,43 @@ export const parseAptPolicySources = (output: string): readonly string[] => {
   return sources;
 };
 
+const GLOBAL_POLICY_SOURCE = /^ -?\d+ (?<source>.+)$/u;
+const GLOBAL_POLICY_RELEASE = /^ +release (?<fields>.*)$/u;
+
+/**
+ * The `o=` origin of each package file `apt-cache policy` (with no package)
+ * lists, keyed by the source text `parseAptPolicySources` returns; null when
+ * the file's release line names no origin.
+ */
+export const parseAptPolicyOrigins = (
+  output: string,
+): ReadonlyMap<string, string | null> => {
+  const origins = new Map<string, string | null>();
+  let source: string | undefined;
+  for (const line of output.split("\n")) {
+    if (line.startsWith("Pinned packages:")) break;
+    const listed = GLOBAL_POLICY_SOURCE.exec(line)?.groups?.source?.trim();
+    if (listed !== undefined) {
+      source = listed;
+      if (!origins.has(source)) origins.set(source, null);
+      continue;
+    }
+    const fields = GLOBAL_POLICY_RELEASE.exec(line)?.groups?.fields;
+    if (fields === undefined || source === undefined) continue;
+    const origin = fields
+      .split(",")
+      .find((field) => field.startsWith("o="))
+      ?.slice(2);
+    if (
+      origin !== undefined &&
+      origin.length > 0 &&
+      origins.get(source) === null
+    )
+      origins.set(source, origin);
+  }
+  return origins;
+};
+
 /** Packaging recognised from an executable's location before asking dpkg. */
 export type PathPackage =
   | {

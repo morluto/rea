@@ -58,6 +58,7 @@ const fixture = async () => {
     [
       "#!/bin/sh",
       `if [ -f "${join(root, "display-broken")}" ]; then exit 1; fi`,
+      `if [ "$1" = "-root" ] && [ -f "${join(root, "no-client-list")}" ]; then echo "_NET_CLIENT_LIST:  not found."; exit 0; fi`,
       'if [ "$1" = "-root" ]; then',
       `  if [ -f "${windowFile}" ]; then echo "_NET_CLIENT_LIST: window id # 0x100001"; else echo "_NET_CLIENT_LIST: window id # "; fi`,
       "else",
@@ -77,6 +78,27 @@ const fixture = async () => {
       DISPLAY: ":99",
     },
   };
+};
+
+/**
+ * Replace the fake application with one that also starts a child in its
+ * process group and a child in a new session; each records SIGTERM.
+ */
+const installProcessFamily = async (root: string, path: string) => {
+  const windowFile = join(root, "window-open");
+  const loop = "while :; do sleep 0.1; done";
+  await executable(
+    join(path.split(":")[0] ?? "", "fakeapp"),
+    [
+      "#!/bin/sh",
+      `trap 'rm -f "${windowFile}"; exit 0' TERM`,
+      `touch "${windowFile}"`,
+      `( trap 'touch "${join(root, "group-term")}"; exit 0' TERM; ${loop} ) &`,
+      `setsid sh -c 'trap "touch ${join(root, "setsid-term")}; exit 0" TERM; ${loop}' &`,
+      'printf "count=1\\n" > "$HOME/.config/fakeapp/state.ini"',
+      loop,
+    ].join("\n"),
+  );
 };
 
 const host = (
@@ -134,6 +156,38 @@ describe("captureDesktopApplication refusals", () => {
         await captureDesktopApplication(request(output), host(environment)),
       ),
     ).toContain("is not empty");
+  });
+
+  it("refuses a window manager that does not publish its client list", async () => {
+    const { root, environment } = await fixture();
+    await writeFile(join(root, "no-client-list"), "");
+    const output = join(root, "out");
+
+    const refused = await captureDesktopApplication(
+      request(output),
+      host(environment),
+    );
+
+    expect(refused).toMatchObject({
+      details: { reason: "window_manager_unsupported" },
+    });
+    expect(JSON.stringify(refused)).toContain("_NET_CLIENT_LIST");
+    await expect(readdir(output)).rejects.toThrow();
+  });
+
+  it("removes the content it retained when it fails before writing the capture", async () => {
+    const { root, environment } = await fixture();
+    const output = join(root, "out");
+
+    const failed = await captureDesktopApplication(request(output), {
+      ...host(environment),
+      report: async (message) => {
+        if (message.startsWith("Launching")) throw new Error("report failed");
+      },
+    });
+
+    expect(JSON.stringify(failed)).toContain("report failed");
+    expect(await readdir(output)).toEqual([]);
   });
 });
 
@@ -294,6 +348,64 @@ describe.skipIf(process.platform !== "linux")(
           after: expect.objectContaining({ sha256: sha256("count=2\n") }),
         }),
       ]);
+    }, 30_000);
+  },
+);
+
+describe.skipIf(process.platform !== "linux")(
+  "captureDesktopApplication process release on Linux",
+  () => {
+    it("asks the process group and token carriers outside it to exit before killing them", async () => {
+      const { root, home, environment } = await fixture();
+      await installProcessFamily(root, environment.PATH);
+      const statePath = join(home, ".config/fakeapp/state.ini");
+      let writtenAt: number | undefined;
+      const nextRequest = (): SessionRequest | undefined => {
+        if (readFileSyncSafe(statePath) !== "count=1\n") return undefined;
+        writtenAt ??= performance.now();
+        return performance.now() - writtenAt > 1500
+          ? { kind: "stop" }
+          : undefined;
+      };
+
+      const evidence = await captureDesktopApplication(
+        request(join(root, "out")),
+        host(environment, nextRequest),
+      );
+
+      if ("error" in evidence) throw new Error(JSON.stringify(evidence));
+      expect(
+        desktopApplicationCaptureSchema.parse(evidence.normalized_result)
+          .session.cleanup,
+      ).toEqual({ verified: true, reason: null });
+      expect(await readdir(root)).toEqual(
+        expect.arrayContaining(["group-term", "setsid-term"]),
+      );
+    }, 30_000);
+
+    it("stops the application gracefully and removes retained content when the session fails", async () => {
+      const { root, home, environment } = await fixture();
+      await installProcessFamily(root, environment.PATH);
+      const statePath = join(home, ".config/fakeapp/state.ini");
+      const output = join(root, "out");
+      const nextRequest = (): SessionRequest | undefined =>
+        readFileSyncSafe(statePath) === "count=1\n"
+          ? { kind: "checkpoint", name: "written" }
+          : undefined;
+
+      const failed = await captureDesktopApplication(request(output), {
+        ...host(environment, nextRequest),
+        report: async (message) => {
+          if (message.startsWith("Recording checkpoint"))
+            throw new Error("checkpoint report failed");
+        },
+      });
+
+      expect(JSON.stringify(failed)).toContain("checkpoint report failed");
+      expect(await readdir(output)).toEqual([]);
+      expect(await readdir(root)).toEqual(
+        expect.arrayContaining(["group-term", "setsid-term"]),
+      );
     }, 30_000);
   },
 );

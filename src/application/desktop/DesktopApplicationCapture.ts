@@ -1,7 +1,6 @@
 import { arch } from "node:os";
-import { basename, dirname, isAbsolute } from "node:path";
+import { dirname } from "node:path";
 
-import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
 import {
   projectAnalysisError,
@@ -9,13 +8,10 @@ import {
 } from "../../domain/analysisErrorProjection.js";
 import type {
   DesktopApplicationCapture,
-  DesktopApplicationInventory,
   DesktopSession,
 } from "../../domain/desktop/desktopCapture.js";
 import { isWithinAny } from "../../domain/desktop/desktopStateDiff.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
-import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
-import { describeValidationFailure } from "../../domain/validationFailure.js";
 import { DesktopContentStore } from "../../desktop/DesktopContentStore.js";
 import {
   runDesktopSession,
@@ -23,10 +19,13 @@ import {
   type SessionRequest,
 } from "../../desktop/DesktopApplicationSession.js";
 import { inspectLinuxApplication } from "../../desktop/LinuxApplicationInventory.js";
+import { X11WindowObserver } from "../../desktop/X11WindowObserver.js";
 import {
-  X11WindowObserver,
-  XpropUnavailableError,
-} from "../../desktop/X11WindowObserver.js";
+  cleanupFailure,
+  discardFailedCapture,
+  failedCaptureError,
+  projectFailure,
+} from "./DesktopCaptureFailure.js";
 import {
   canonicalPath,
   prepareOutputDirectory,
@@ -38,14 +37,16 @@ import {
   alreadyOpen,
   applicationRefusal,
   checkDesktopCaptureHost,
+  clientListMissing,
   outputRefusal,
-  unavailable,
   windowsUnreadable,
 } from "./DesktopCaptureRefusals.js";
 import {
-  CheckpointRecorder,
-  type CheckpointScope,
-} from "./DesktopCheckpointRecorder.js";
+  applicationWindowMatching,
+  captureScope,
+  type CaptureScope,
+} from "./DesktopCaptureScope.js";
+import { CheckpointRecorder } from "./DesktopCheckpointRecorder.js";
 
 const POLL_INTERVAL_MS = 500;
 
@@ -80,63 +81,20 @@ export interface DesktopCaptureErrorOutput extends AnalysisErrorProjection {
 
 const unique = (paths: readonly string[]) => [...new Set(paths)];
 
-/** Paths in their physical spelling, so walks and exclusions agree. */
-const checkpointScope = async (
-  request: DesktopCaptureRequest,
-  inventory: DesktopApplicationInventory,
-  home: string,
-  output: string,
-): Promise<CheckpointScope> => {
-  const canonical = (paths: readonly string[]) =>
-    Promise.all(paths.map((path) => canonicalPath(path)));
-  const stateDirectories = await canonical(
-    inventory.state_directories.map((entry) => entry.path),
-  );
-  const contentRoots = unique([
-    ...stateDirectories,
-    ...(await canonical(request.statePaths)),
-    ...(await canonical(
-      request.arguments.filter((value) => isAbsolute(value)),
-    )),
-  ]);
-  return {
-    roots: unique([
-      home,
-      ...contentRoots.filter((path) => !isWithinAny(path, [home])),
-    ]),
-    contentRoots,
-    stateDirectories,
-    excluded: unique([output, ...(await canonical(request.excludes))]),
-    maxEntries: request.maxEntries,
-  };
-};
-
-/** Window class and instance names that mark a window as the application's. */
-const applicationWindowNames = (
-  inventory: DesktopApplicationInventory,
-): ReadonlySet<string> =>
-  new Set(
-    [
-      inventory.desktop_entry?.startup_wm_class,
-      basename(inventory.executable.path),
-      inventory.desktop_entry?.id?.split(".").at(-1),
-    ]
-      .filter(
-        (name): name is string => typeof name === "string" && name.length > 0,
-      )
-      .map((name) => name.toLowerCase()),
-  );
-
 const limitationsFor = (
   session: DesktopSession,
   recorder: CheckpointRecorder,
-  unretained: readonly string[],
+  facts: {
+    readonly unretained: readonly string[];
+    readonly broadArguments: readonly string[];
+  },
 ): string[] => {
   const limitations = [
     "File changes are compared by size, modification time, inode and mode at each checkpoint, so a change undone between two checkpoints is not seen.",
     "Changes are not attributed to a writer: a path is marked when it lies in one of the application's state directories or an application process held it open during a sample.",
   ];
   const checkpoints = recorder.checkpoints;
+  const mountPoints = [...recorder.mountPoints];
   const add = (condition: boolean, text: string) => {
     if (condition) limitations.push(text);
   };
@@ -156,13 +114,21 @@ const limitationsFor = (
     checkpoints.some((checkpoint) => checkpoint.unconfirmed_changes > 0),
     "Some paths appeared or disappeared under directories a walk could not list completely; they are counted as unconfirmed, not reported.",
   );
+  add(
+    mountPoints.length > 0,
+    `Walks did not enter directories on another filesystem, so changes inside them are not recorded: ${mountPoints.join(", ")}.`,
+  );
+  add(
+    facts.broadArguments.length > 0,
+    `The argument ${facts.broadArguments.join(", ")} is / or contains the home directory, so it was not walked or retained as a content root.`,
+  );
   add(session.first_window_ms === null, "No application window was seen.");
   add(
     session.processes.some((process) => !process.started_by_capture),
     "An application window belonged to a process the capture did not start; that process was left running.",
   );
   add(
-    unretained.length > 0,
+    facts.unretained.length > 0,
     "The application held files open in directories whose starting content was not retained; pass them with --state-path to retain it.",
   );
   return limitations;
@@ -213,13 +179,18 @@ const admit = async (
   if (!inspected.ok) throw applicationRefusal(inspected.error);
   const { inventory, limitations } = inspected.value;
   const windows = new X11WindowObserver(xprop, host.environment);
-  const windowNames = applicationWindowNames(inventory);
-  const running = await runningApplicationWindows(windows, windowNames, signal);
-  if (running === undefined) throw windowsUnreadable();
-  if (running.length > 0)
+  const windowMatching = applicationWindowMatching(inventory);
+  const running = await runningApplicationWindows(
+    windows,
+    windowMatching.names,
+    signal,
+  );
+  if (running.state === "no_client_list") throw clientListMissing();
+  if (running.state === "display_unreadable") throw windowsUnreadable();
+  if (running.windows.length > 0)
     throw alreadyOpen(
       request.desktopEntry === undefined ? "executable" : "desktop_entry",
-      running,
+      running.windows,
     );
   signal?.throwIfAborted();
   const prepared = await prepareOutputDirectory(request.output);
@@ -232,62 +203,26 @@ const admit = async (
     inventory,
     limitations,
     windows,
-    windowNames,
+    windowMatching,
   };
 };
 
-/**
- * One cleanup error for everything left unresolved after the capture was
- * written: launched processes, retained-file handles, or both.
- */
-const cleanupFailure = (
-  published: string,
-  output: string,
-  unresolved: {
-    readonly processes:
-      | { readonly reason: string; readonly resources: readonly string[] }
-      | undefined;
-    readonly handles: boolean;
-  },
-) => {
-  const { processes, handles } = unresolved;
-  const reasons = [
-    ...(processes === undefined ? [] : [processes.reason]),
-    ...(handles
-      ? ["a retained file's handle could not be closed after a retry"]
-      : []),
-  ];
-  return new ProviderAdapterError(DESKTOP_PROVIDER.id, DESKTOP_OPERATION, {
-    userMessage: `The capture was written to ${published}, but cleanup is incomplete: ${reasons.join("; ")}.`,
-    remediationAction:
-      processes === undefined
-        ? "Retry the command in a new capture folder; the written capture is complete."
-        : "Check for processes still carrying the listed run token and stop them before capturing again.",
-    cleanup: {
-      reason: reasons.join("; "),
-      resources: [
-        ...(processes?.resources ?? []),
-        ...(handles ? [output] : []),
-      ],
-    },
-    diagnostics: { capture_file: published },
-  });
-};
+type Admitted = Awaited<ReturnType<typeof admit>>;
 
-const runCapture = async (
+/** Record the baseline, run the session and publish `capture.json`. */
+const recordCapture = async (
   request: DesktopCaptureRequest,
   host: DesktopCaptureHost,
+  context: {
+    readonly admitted: Admitted;
+    readonly scope: CaptureScope;
+    readonly store: DesktopContentStore;
+  },
   signal: AbortSignal | undefined,
-): Promise<Evidence> => {
-  const admitted = await admit(request, host, signal);
+) => {
+  const { admitted, store } = context;
+  const { scope } = context.scope;
   const { inventory, output, home } = admitted;
-  const scope = await checkpointScope(request, inventory, home, output);
-  const store = new DesktopContentStore(
-    output,
-    request.maxFileBytes,
-    request.maxContentBytes,
-  );
-  await store.prepare();
   const recorder = new CheckpointRecorder(scope, store);
   await host.report("Recording the starting state.");
   await recorder.record("baseline", "baseline", 0, signal);
@@ -297,7 +232,7 @@ const runCapture = async (
     workingDirectory: inventory.working_directory,
     environment: host.environment,
     windows: admitted.windows,
-    windowNames: admitted.windowNames,
+    windowMatching: admitted.windowMatching,
     roots: scope.roots,
     maxDurationMs: request.maxDurationSeconds * 1000,
     pollIntervalMs: POLL_INTERVAL_MS,
@@ -335,11 +270,47 @@ const runCapture = async (
     },
     limitations: [
       ...admitted.limitations,
-      ...limitationsFor(session, recorder, unretained),
+      ...limitationsFor(session, recorder, {
+        unretained,
+        broadArguments: context.scope.broadArguments,
+      }),
     ],
   };
   const evidence = captureEvidence(request, capture);
   const published = await writeCaptureFile(output, evidence);
+  return { evidence, published, session, cleanupResources };
+};
+
+const runCapture = async (
+  request: DesktopCaptureRequest,
+  host: DesktopCaptureHost,
+  signal: AbortSignal | undefined,
+): Promise<Evidence> => {
+  const admitted = await admit(request, host, signal);
+  const { inventory, output, home } = admitted;
+  const scope = await captureScope(request, inventory, home, output);
+  const store = new DesktopContentStore(
+    output,
+    request.maxFileBytes,
+    request.maxContentBytes,
+  );
+  await store.prepare();
+  let recorded: Awaited<ReturnType<typeof recordCapture>>;
+  try {
+    recorded = await recordCapture(
+      request,
+      host,
+      { admitted, scope, store },
+      signal,
+    );
+  } catch (cause: unknown) {
+    // A cancelled capture keeps what it recorded; any other failure removes it.
+    throw failedCaptureError(
+      cause,
+      signal?.aborted === true ? [] : await discardFailedCapture(store, output),
+    );
+  }
+  const { evidence, published, session, cleanupResources } = recorded;
   const handlesClosed = await store.close().then(
     () => true,
     () => false,
@@ -360,25 +331,6 @@ const runCapture = async (
       cause: signal.reason,
     });
   return evidence;
-};
-
-const projectFailure = (cause: unknown, signal: AbortSignal | undefined) => {
-  if (cause instanceof AnalysisError) return cause;
-  if (signal?.aborted === true)
-    return new AnalysisCancelledError(DESKTOP_OPERATION, {
-      cause: signal.reason,
-    });
-  if (cause instanceof XpropUnavailableError)
-    return unavailable(
-      "executable_missing",
-      cause.message,
-      "Install x11-utils, or set REA_XPROP_COMMAND to an xprop executable.",
-    );
-  return new ProviderAdapterError(DESKTOP_PROVIDER.id, DESKTOP_OPERATION, {
-    cause,
-    diagnostics: { phase: "desktop_capture" },
-    userMessage: `Desktop capture could not complete: ${describeValidationFailure(cause)}`,
-  });
 };
 
 /**

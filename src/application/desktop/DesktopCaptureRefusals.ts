@@ -95,6 +95,14 @@ export const windowsUnreadable = () =>
     "Check that DISPLAY names the running X11 session and that this user may connect to it (XAUTHORITY), then retry.",
   );
 
+/** The window manager does not list client windows, so none can be observed. */
+export const clientListMissing = () =>
+  unavailable(
+    "window_manager_unsupported",
+    "The window manager does not publish _NET_CLIENT_LIST, so REA cannot list the application's windows. Desktop capture requires an EWMH-compliant window manager.",
+    "Run the capture in a desktop session whose window manager supports EWMH, such as xfwm4, Mutter, KWin or Openbox.",
+  );
+
 /** Explain why the output folder cannot hold a private capture. */
 export const outputRefusal = (
   output: string,

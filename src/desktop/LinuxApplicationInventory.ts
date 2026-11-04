@@ -1,5 +1,5 @@
 import { constants } from "node:fs";
-import { access, lstat, readdir, realpath } from "node:fs/promises";
+import { access, lstat, readdir, realpath, stat } from "node:fs/promises";
 import {
   basename,
   delimiter,
@@ -21,6 +21,7 @@ import {
   DPKG_STATUS_FORMAT,
   isAppImageHeader,
   packageFromPath,
+  parseAptPolicyOrigins,
   parseAptPolicySources,
   parseDpkgOwners,
   parseDpkgStatus,
@@ -120,7 +121,8 @@ const locateDesktopEntry = async (
   const searched = desktopEntryDirectories(request.environment, request.home);
   for (const directory of searched) {
     const path = join(directory, id);
-    if ((await lstat(path).catch(() => undefined))?.isFile() === true)
+    // Flatpak exports and Nix profiles install entries as links to the file.
+    if ((await stat(path).catch(() => undefined))?.isFile() === true)
       return ok({ path, id: id.slice(0, -".desktop".length) });
   }
   return err({ reason: "desktop_entry_not_found", searched });
@@ -207,6 +209,20 @@ const ownershipCandidates = (paths: readonly string[]): readonly string[] => [
   ),
 ];
 
+/** The apt origin of each source by index; omitted when apt could not be asked. */
+const sourceOrigins = async (
+  sources: readonly string[],
+  signal: AbortSignal | undefined,
+): Promise<Pick<Package, "source_origins">> => {
+  if (sources.length === 0) return { source_origins: [] };
+  const policy = await runQuery("apt-cache", ["policy"], signal);
+  if (typeof policy !== "object") return {};
+  const origins = parseAptPolicyOrigins(policy.stdout);
+  return {
+    source_origins: sources.map((source) => origins.get(source) ?? null),
+  };
+};
+
 const packageListsPresent = async (): Promise<boolean> =>
   (await readdir("/var/lib/apt/lists").catch(() => [] as string[])).some(
     (name) => /_Packages(?:\.[a-z0-9]+)?$/u.test(name),
@@ -249,15 +265,17 @@ const debianPackage = async (
       limitations.push(
         "No apt package lists are present, so whether the installed version comes from a package archive is unknown.",
       );
+    const sources =
+      typeof policy === "object"
+        ? [...parseAptPolicySources(policy.stdout)]
+        : [];
     return {
       kind: "deb",
       name: parsed?.name ?? name,
       version: parsed?.version ?? null,
       architecture: parsed?.architecture ?? null,
-      sources:
-        typeof policy === "object"
-          ? [...parseAptPolicySources(policy.stdout)]
-          : [],
+      sources,
+      ...(await sourceOrigins(sources, signal)),
       package_lists_present: listsPresent,
     };
   }
@@ -448,6 +466,24 @@ const launchCommand = async (
   });
 };
 
+/**
+ * Names the application's state folders may carry. The executable is null for
+ * a `flatpak run` launch, whose `flatpak` launcher names flatpak's own folders.
+ */
+const stateNames = (
+  package_: Package,
+  executable: string | null,
+  entry: DesktopApplicationInventory["desktop_entry"],
+): readonly (string | null)[] => [
+  package_.kind === "deb"
+    ? (package_.name?.split(":")[0] ?? null)
+    : package_.name,
+  executable === null ? null : basename(executable),
+  entry?.id?.split(".").at(-1) ?? null,
+  entry?.startup_wm_class ?? null,
+  entry?.name ?? null,
+];
+
 /** Resolve what the request launches, where it came from and where it may keep state. */
 export const inspectLinuxApplication = async (
   request: LinuxApplicationRequest,
@@ -477,15 +513,11 @@ export const inspectLinuxApplication = async (
       ? [join(request.home, ".var/app", package_.name)]
       : []),
   ];
-  const names = [
-    package_.kind === "deb"
-      ? (package_.name?.split(":")[0] ?? null)
-      : package_.name,
-    basename(path),
-    entry?.id?.split(".").at(-1) ?? null,
-    entry?.startup_wm_class ?? null,
-    entry?.name ?? null,
-  ];
+  const names = stateNames(
+    package_,
+    wrapper.kind === "flatpak" ? null : path,
+    entry,
+  );
   return ok({
     inventory: {
       desktop_entry: entry,

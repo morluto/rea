@@ -1,4 +1,4 @@
-import { createInterface, type Interface } from "node:readline";
+import { createInterface } from "node:readline";
 
 import { z } from "incur";
 import type { Logger } from "pino";
@@ -7,7 +7,7 @@ import { captureDesktopApplication } from "../application/desktop/DesktopApplica
 import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { logCliCommand } from "../cliLogging.js";
 import { DESKTOP_CAPTURE_DEFAULTS } from "../domain/desktop/desktopCapture.js";
-import type { SessionRequest } from "../desktop/DesktopApplicationSession.js";
+import { SessionRequestQueue } from "../desktop/DesktopSessionRequests.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 import type { CliInstance } from "./types.js";
 
@@ -55,49 +55,6 @@ const captureOptions = z.object({
     "Total retained content",
   ),
 });
-
-const QUEUE_PAUSE = 16;
-const QUEUE_RESUME = 4;
-
-/**
- * Requests read from stdin. Reading pauses while many are queued, so a fast
- * driver cannot grow the queue without bound.
- */
-class SessionRequestQueue {
-  readonly #requests: SessionRequest[] = [];
-  #paused = false;
-
-  constructor(readonly lines: Interface) {
-    lines.on("line", (line) => {
-      this.#requests.push(parseSessionRequest(line));
-      if (!this.#paused && this.#requests.length >= QUEUE_PAUSE) {
-        this.#paused = true;
-        lines.pause();
-      }
-    });
-  }
-
-  next(): SessionRequest | undefined {
-    const request = this.#requests.shift();
-    if (this.#paused && this.#requests.length <= QUEUE_RESUME) {
-      this.#paused = false;
-      this.lines.resume();
-    }
-    return request;
-  }
-
-  close(): void {
-    this.lines.close();
-  }
-}
-
-/** `stop` ends the session; any other line, empty or not, names a checkpoint. */
-export const parseSessionRequest = (line: string): SessionRequest => {
-  const text = line.trim();
-  if (text === "stop") return { kind: "stop" };
-  const name = text.replace(/^checkpoint\b\s*/u, "");
-  return { kind: "checkpoint", name: name.length === 0 ? undefined : name };
-};
 
 /** Register the interactive Linux desktop application capture. */
 export const registerDesktopCaptureCommands = (

@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdir, rename, writeFile } from "node:fs/promises";
+import { mkdir, rename, rm, rmdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import type { DesktopApplicationCapture } from "../domain/desktop/desktopCapture.js";
@@ -40,9 +40,12 @@ export class DesktopContentStore {
   readonly #directory: string;
   readonly #maxFileBytes: number;
   readonly #stored = new Map<string, number>();
+  readonly #storedSizes = new Set<number>();
   readonly #omissions: Omission[] = [];
   /** Handles whose close failed; kept owned so `close` can retry them. */
   readonly #unclosed: OwnedFileHandle[] = [];
+  /** The partial file being written, removed by `discard` if it was left. */
+  #writing: string | undefined;
   #remainingBytes: number;
 
   constructor(
@@ -72,6 +75,11 @@ export class DesktopContentStore {
     return this.#omissions;
   }
 
+  /** Where retained content is stored. */
+  get directory(): string {
+    return this.#directory;
+  }
+
   /** Retry every handle whose close failed during a read; rejects if one still fails. */
   async close(): Promise<void> {
     while (this.#unclosed.length > 0) {
@@ -81,8 +89,27 @@ export class DesktopContentStore {
   }
 
   /**
+   * Remove every file this store wrote, then its content directory. Rejects
+   * when the directory holds anything else or a removal fails.
+   */
+  async discard(): Promise<void> {
+    if (this.#writing !== undefined) await rm(this.#writing, { force: true });
+    this.#writing = undefined;
+    for (const sha256 of this.#stored.keys()) {
+      await rm(join(this.#directory, sha256), { force: true });
+      this.#stored.delete(sha256);
+    }
+    this.#storedSizes.clear();
+    await rmdir(this.#directory).catch((cause: unknown) => {
+      if ((cause as NodeJS.ErrnoException).code !== "ENOENT") throw cause;
+    });
+  }
+
+  /**
    * Copy one regular file if it is still the version the walk recorded and it
-   * holds still while read. Content already stored costs no budget.
+   * holds still while read. Content already stored costs no budget; a file
+   * larger than the remaining budget is read only when stored content of the
+   * same size could make it a duplicate.
    */
   async retain(
     path: string,
@@ -103,9 +130,12 @@ export class DesktopContentStore {
     }
     const target = join(this.#directory, sha256);
     const partial = `${target}.partial`;
+    this.#writing = partial;
     await writeFile(partial, read.bytes, { mode: 0o600, flag: "wx" });
     await rename(partial, target);
+    this.#writing = undefined;
     this.#stored.set(sha256, size);
+    this.#storedSizes.add(size);
     this.#remainingBytes -= size;
     return { kind: "retained", sha256, size };
   }
@@ -122,6 +152,12 @@ export class DesktopContentStore {
       return { kind: "omitted", reason: "unreadable" };
     if (expected.size > this.#maxFileBytes)
       return { kind: "omitted", reason: "too_large" };
+    // Over budget, only a size some stored content has can still be a duplicate.
+    if (
+      expected.size > this.#remainingBytes &&
+      !this.#storedSizes.has(expected.size)
+    )
+      return { kind: "omitted", reason: "budget_exhausted" };
     const options = {
       symlinks: "reject" as const,
       retainFailedClose: (owner: OwnedFileHandle) => {

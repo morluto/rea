@@ -45,6 +45,8 @@ const sameVersion = (left: DesktopPathState, right: DesktopPathState) =>
 /** Walks, diffs and retains state for each checkpoint in turn. */
 export class CheckpointRecorder {
   readonly checkpoints: DesktopCheckpoint[] = [];
+  /** Mount points any walk recorded without entering. */
+  readonly mountPoints = new Set<string>();
   #previous: DesktopWalk = EMPTY_WALK;
   /** Digests keyed by path, valid only for the file version they were read from. */
   readonly #hashes = new Map<
@@ -115,6 +117,7 @@ export class CheckpointRecorder {
   ): Promise<void> {
     const { roots, excluded, maxEntries, contentRoots } = this.scope;
     const walk = await walkHomeState(roots, excluded, maxEntries, signal);
+    for (const mountPoint of walk.mountPoints) this.mountPoints.add(mountPoint);
     const retained: DesktopCheckpoint["retained"] = [];
     let changes: DesktopCheckpoint["changes"] = [];
     let unconfirmed = 0;

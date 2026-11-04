@@ -16,8 +16,11 @@ as private data and keep it local.
 
 Capture runs on Linux with an X11 display: `DISPLAY` must be set, and `xprop`
 (from `x11-utils`) must be installed, or `REA_XPROP_COMMAND` must name it.
-Applications that run under XWayland are visible; native Wayland windows are
-not. Other hosts are refused before anything is launched.
+The window manager must publish the EWMH client list (`_NET_CLIENT_LIST`), as
+xfwm4, Mutter, KWin and Openbox do; without it the capture is refused, because
+no window could be seen. Applications that run under XWayland are visible;
+native Wayland windows are not. Other hosts are refused before anything is
+launched.
 
 ## Capture an application
 
@@ -30,7 +33,8 @@ rea capture-desktop-application --executable gnucash --argument /home/ada/books.
 ```
 
 Desktop entries are looked up in `$XDG_DATA_HOME/applications` and then each
-`$XDG_DATA_DIRS` directory. The entry's `Exec` line is expanded with no files;
+`$XDG_DATA_DIRS` directory; an entry installed as a symbolic link, as flatpak
+and Nix do, is followed to its file. The entry's `Exec` line is expanded with no files;
 `--argument` values are appended in its place, and the application runs in the
 entry's `Path` or the home directory. An `--executable` runs from the current
 directory, as it would from a shell, and a relative path to it is resolved
@@ -47,7 +51,12 @@ environment, and reads commands from stdin, one per line:
 | ------------------------------------------- | ----------------------------------------------------------- |
 | empty, `checkpoint`, or `checkpoint <name>` | Record the current state as a checkpoint                    |
 | any other text except `stop`                | Record a checkpoint named by that text                      |
-| `stop`                                      | Record a final checkpoint, close the application and finish |
+| `stop`, or the end of stdin                 | Record a final checkpoint, close the application and finish |
+
+An unnamed checkpoint is named `checkpoint-<ms>` after its time in the
+session. A name that repeats an earlier checkpoint, or is one of the capture's
+own names (`baseline`, `stop`, `time-limit`, `exit`), is refused with a
+progress line on stderr; no checkpoint is taken and the session continues.
 
 The session also finishes when the launched process has exited and the
 application's processes and windows are all gone, or when
@@ -55,19 +64,27 @@ application's processes and windows are all gone, or when
 and reading stdin pauses while 16 lines wait. Progress lines on stderr say when
 the window has opened and when each checkpoint is taken.
 
-When the session ends the capture sends SIGTERM to the launched process, waits
-up to five seconds, and then removes every process that still carries the run
-token, whether or not it stayed in the process group. If that cleanup cannot be
-verified after a second attempt, the capture is still written, and the command
-then fails, naming the run token and process group that may remain.
-Interrupting the command
-(Ctrl-C) ends the session the same way without a further checkpoint; the
-capture is still written with end reason `cancelled`, and the command exits
-with status 130.
+When the session ends the capture sends SIGTERM to the launched process, its
+process group and every process that carries the run token, waits up to five
+seconds for them to exit, and then removes every process that still carries
+the token, whether or not it stayed in the process group. If that cleanup
+cannot be verified after a second attempt, the capture is still written, and
+the command then fails, naming the run token and process group that may
+remain. Interrupting the command (Ctrl-C) ends the session the same way
+without a further checkpoint; the capture is still written with end reason
+`cancelled`, and the command exits with status 130.
+
+If the capture fails for any other reason before `capture.json` is written,
+the application is closed the same way and the content already retained is
+removed from the capture folder. The error names any process or file that
+could not be removed.
 
 A person types these lines in the terminal. An agent can drive the
 application with a tool such as `xdotool` and write the lines to a FIFO that
-it passes as stdin.
+it passes as stdin. Because the end of stdin stops the session, the driver
+must keep the FIFO open for writing between checkpoints, for example with
+`exec 3>capture.fifo` in a shell, rather than open and close it for each
+line.
 
 | Option                   | Default | Meaning                                                                                   |
 | ------------------------ | ------- | ----------------------------------------------------------------------------------------- |
@@ -94,14 +111,19 @@ is `rea.desktop-application-capture`. Its result has four parts.
 `StartupWMClass`, categories, MIME types), the launch command and working
 directory, the executable as found on `PATH` and after resolving links, and the
 package that installed it. A Debian package records its name, version,
-architecture and the apt sources that list the installed version; an empty
+architecture and the apt sources that list the installed version, with the
+origin (`o=`) apt reports for each source in `source_origins`, such as `Ubuntu`
+for the Ubuntu archive and its mirrors or `LP-PPA-<name>` for a PPA; an empty
 source list means the version came from a local `.deb` or the package lists
 are missing, which `package_lists_present` tells apart. Snaps, flatpaks and
-AppImages are recognised from their paths. Electron applications are marked by
+AppImages are recognised from their paths, and flatpaks also from a
+`flatpak run` launch. Electron applications are marked by
 the fuse sentinel in their binary or a `resources/app.asar` beside it. State
 directories are the XDG config, data, state and cache folders and the
 dot-folder named after the package, the executable, the desktop entry id and
-name, with whether each existed at the start.
+name, with whether each existed at the start. A `flatpak run` launch is named
+after its application id rather than the `flatpak` launcher, and adds
+`~/.var/app/<id>`.
 
 **Session.** When it started, how long it ran and why it ended; the launched
 process's exit status; every process seen in the application's tree; every
@@ -110,11 +132,17 @@ belongs to the application; when the first application window appeared; the
 most common class pair of the application's windows, for matching its window
 later; files the application's processes held open under the walked roots; the first
 8 KiB of the launched process's stderr; and whether cleanup was verified. Each
-process records whether it carries the capture's run token.
+process records whether the capture started it: the launched process, a
+process carrying the capture's run token, or a descendant of one, even when
+its environment cannot be read, as for a zombie or a sandboxed renderer.
+Processes are told apart by their start time, so a pid reused by another
+process is not counted as the application's.
 
 A window belongs to the application when its owner pid is one of the
-application's processes or its class matches the desktop entry's
-`StartupWMClass`, the executable's name or the last part of the entry id.
+application's live processes or its class matches the desktop entry's
+`StartupWMClass`, the executable's name, the entry's full id or its last part,
+or a flatpak's application id. A flatpak's windows report pids from its
+sandbox, so they are matched by class only.
 Ownership is checked again at every sample, because a window can appear before
 the process that owns it is found. A matching window's pid joins the
 application's processes, so a launch handed to a process the capture did not
@@ -124,7 +152,9 @@ running.
 
 **State.** The walked roots (the home directory plus any content root
 outside it), the content roots (state directories, `--state-path` values and
-absolute `--argument` values), and the checkpoints in order: `baseline` before
+absolute `--argument` values, except `/` or a directory that contains the home
+directory, which are named in the limitations instead), and the checkpoints
+in order: `baseline` before
 launch, each requested checkpoint, `stop` or `time-limit`, and `exit` after the
 application has gone. Each checkpoint records how many paths its walk saw,
 whether it was truncated, which paths were created, modified, deleted or
@@ -132,13 +162,17 @@ changed type since the previous checkpoint, and which files it retained. A
 path counts as created or deleted only where the walk listed its nearest
 existing directory completely; differences under a directory that could not be
 listed, or that a truncated walk did not reach, are counted as unconfirmed
-instead. The
+instead. A walk does not enter a directory on another filesystem than its
+root, such as an NFS, sshfs or other FUSE mount under the home directory; the
+limitations list each such mount point. The
 baseline retains every file under the content roots; later checkpoints retain
 every changed file. A change records the file's type, size, mode,
 modification time and, when known, the SHA-256 of its content before and
 after, plus whether it lies in a state directory and whether the application
 held it open. A file is retained only if it is still the version the walk
-recorded and does not change while it is read. Files that could not be
+recorded and does not change while it is read. A file larger than the
+remaining content budget is not read, unless stored content of the same size
+could make it a duplicate. Files that could not be
 retained are listed with the reason: too large, over the content budget,
 changed since the walk, changed during the read, or unreadable.
 Directories the application held files open in, but whose starting content was
