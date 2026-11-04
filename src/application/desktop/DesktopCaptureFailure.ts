@@ -1,12 +1,26 @@
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import {
+  AnalysisCleanupLease,
+  AnalysisCleanupLeaseGroup,
+} from "../../artifacts/AnalysisCleanupLease.js";
+import {
+  ArtifactResourceRetryFailure,
+  ArtifactResourceScope,
+} from "../../artifacts/ArtifactResourceScope.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
-import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
+import {
+  ProviderAdapterError,
+  type ProviderAdapterErrorOptions,
+} from "../../domain/providerAdapterError.js";
 import { describeValidationFailure } from "../../domain/validationFailure.js";
-import { DesktopSessionCleanupError } from "../../desktop/DesktopApplicationSession.js";
+import {
+  DesktopSessionCleanupError,
+  type UnresolvedCleanup,
+} from "../../desktop/DesktopApplicationSession.js";
 import type { DesktopContentStore } from "../../desktop/DesktopContentStore.js";
 import { XpropUnavailableError } from "../../desktop/X11WindowObserver.js";
-import { discardCaptureFile } from "./DesktopCaptureOutput.js";
+import type { CaptureFile } from "./DesktopCaptureOutput.js";
 import {
   DESKTOP_OPERATION,
   DESKTOP_PROVIDER,
@@ -14,87 +28,125 @@ import {
   unavailable,
 } from "./DesktopCaptureRefusals.js";
 
-/** One resource left behind and why. */
-interface Unresolved {
-  readonly reason: string;
-  readonly resources: readonly string[];
-}
+/** The parts of the content store its cleanup uses. */
+type ContentOwner = Pick<
+  DesktopContentStore,
+  "close" | "discard" | "directory"
+>;
 
 const HANDLES_UNCLOSED =
   "a retained file's handle could not be closed after a retry";
 const PROCESS_REMEDIATION =
   "Check for processes still carrying the listed run token and stop them before capturing again.";
 
-const cleanupFacts = (unresolved: readonly Unresolved[]) => ({
-  reason: unresolved.map((entry) => entry.reason).join("; "),
-  resources: unresolved.flatMap((entry) => entry.resources),
-});
+/**
+ * Retry the store's failed handle closes. Handles that fail again stay bound
+ * through their exact leases; the store itself backs any other failure.
+ */
+const closeHandles = async (
+  store: ContentOwner,
+): Promise<readonly UnresolvedCleanup[]> =>
+  store.close().then(
+    () => [],
+    (cause: unknown) => [
+      {
+        reason: HANDLES_UNCLOSED,
+        leases:
+          cause instanceof ArtifactResourceRetryFailure
+            ? cause.cleanupLeases
+            : [AnalysisCleanupLease.forCloseOwner(store, store.directory)],
+      },
+    ],
+  );
 
 /**
- * One cleanup error for everything left unresolved after the capture was
- * written: launched processes, retained-file handles, or both.
+ * One cleanup error for every unresolved owner. The error stays incomplete,
+ * and lists their current resources, until each owner releases.
  */
-export const cleanupFailure = (
+const cleanupError = (
+  unresolved: readonly [UnresolvedCleanup, ...UnresolvedCleanup[]],
+  options: (reason: string) => ProviderAdapterErrorOptions,
+): ProviderAdapterError => {
+  const leases = unresolved.flatMap((entry) => entry.leases);
+  const cleanup = {
+    reason: unresolved.map((entry) => entry.reason).join("; "),
+    resources: [
+      ...new Set(leases.flatMap((lease) => lease.cleanupResources ?? [])),
+    ],
+  };
+  const error = new ProviderAdapterError(
+    DESKTOP_PROVIDER.id,
+    DESKTOP_OPERATION,
+    {
+      ...options(cleanup.reason),
+      cleanup,
+    },
+  );
+  new AnalysisCleanupLeaseGroup(error, leases);
+  return error;
+};
+
+const nonEmpty = <T>(items: readonly T[]): items is readonly [T, ...T[]] =>
+  items.length > 0;
+
+/**
+ * Close the store's retained-file handles after `capture.json` was written.
+ * Returns the cleanup error for anything still owned, together with the
+ * session's unreleased processes, or undefined when everything was released.
+ */
+export const publishedCaptureCleanup = async (
   published: string,
-  output: string,
-  unresolved: {
-    readonly processes: Unresolved | undefined;
-    readonly handles: boolean;
-  },
-) => {
-  const { processes, handles } = unresolved;
-  const cleanup = cleanupFacts([
+  store: ContentOwner,
+  processes: UnresolvedCleanup | undefined,
+): Promise<ProviderAdapterError | undefined> => {
+  const unresolved = [
     ...(processes === undefined ? [] : [processes]),
-    ...(handles ? [{ reason: HANDLES_UNCLOSED, resources: [output] }] : []),
-  ]);
-  return new ProviderAdapterError(DESKTOP_PROVIDER.id, DESKTOP_OPERATION, {
-    userMessage: `The capture was written to ${published}, but cleanup is incomplete: ${cleanup.reason}.`,
+    ...(await closeHandles(store)),
+  ];
+  if (!nonEmpty(unresolved)) return undefined;
+  return cleanupError(unresolved, (reason) => ({
+    userMessage: `The capture was written to ${published}, but cleanup is incomplete: ${reason}.`,
     remediationAction:
       processes === undefined
         ? "Retry the command in a new capture folder; the written capture is complete."
         : PROCESS_REMEDIATION,
-    cleanup,
     diagnostics: { capture_file: published },
-  });
+  }));
 };
 
 /**
  * Remove what a capture that failed before publishing `capture.json` wrote,
  * each through the owner that wrote it, and close its retained-file handles.
- * Returns what could not be cleaned up.
+ * Returns what could not be cleaned up, with the owners that still hold it.
  */
 export const discardFailedCapture = async (
-  store: DesktopContentStore,
-  output: string,
-): Promise<readonly Unresolved[]> => {
-  const removed = await store.discard().then(
-    () => true,
-    () => false,
-  );
-  const partial = await discardCaptureFile(output);
-  const closed = await store.close().then(
-    () => true,
-    () => false,
-  );
+  store: ContentOwner,
+  captureFile: Pick<CaptureFile, "discard" | "partial">,
+): Promise<readonly UnresolvedCleanup[]> => {
+  const resources = new ArtifactResourceScope();
+  const removals = [
+    {
+      reason: "the content the failed capture retained could not be removed",
+      attempt: await resources.release({
+        kind: "lease",
+        resource: store.directory,
+        lease: { release: () => store.discard() },
+      }),
+    },
+    {
+      reason: "the unpublished capture file could not be removed",
+      attempt: await resources.release({
+        kind: "lease",
+        resource: captureFile.partial,
+        lease: { release: () => captureFile.discard() },
+      }),
+    },
+  ];
   return [
-    ...(removed
-      ? []
-      : [
-          {
-            reason:
-              "the content the failed capture retained could not be removed",
-            resources: [store.directory],
-          },
-        ]),
-    ...(partial === undefined
-      ? []
-      : [
-          {
-            reason: "the unpublished capture file could not be removed",
-            resources: [partial],
-          },
-        ]),
-    ...(closed ? [] : [{ reason: HANDLES_UNCLOSED, resources: [output] }]),
+    ...removals.flatMap(({ reason, attempt }) =>
+      attempt.kind === "failed" ? [{ reason, leases: [attempt.lease] }] : [],
+    ),
+    ...(await closeHandles(store)),
   ];
 };
 
@@ -110,7 +162,7 @@ const describe = (cause: unknown): string =>
  */
 export const failedCaptureError = (
   cause: unknown,
-  discarded: readonly Unresolved[],
+  discarded: readonly UnresolvedCleanup[],
 ): unknown => {
   const session =
     cause instanceof DesktopSessionCleanupError ? cause.cleanup : undefined;
@@ -118,21 +170,19 @@ export const failedCaptureError = (
     ...(session === undefined ? [] : [session]),
     ...discarded,
   ];
-  if (unresolved.length === 0) return cause;
+  if (!nonEmpty(unresolved)) return cause;
   const primary =
     cause instanceof DesktopSessionCleanupError ? cause.primary : cause;
-  const cleanup = cleanupFacts(unresolved);
-  return new ProviderAdapterError(DESKTOP_PROVIDER.id, DESKTOP_OPERATION, {
+  return cleanupError(unresolved, (reason) => ({
     cause: primary,
     ...(primary instanceof AnalysisError ? { cleanupPrimary: primary } : {}),
-    userMessage: `Desktop capture could not complete: ${describe(primary)}; cleanup is incomplete: ${cleanup.reason}.`,
+    userMessage: `Desktop capture could not complete: ${describe(primary)}; cleanup is incomplete: ${reason}.`,
     remediationAction:
       session === undefined
         ? "Remove the listed paths, then retry the command in a new capture folder."
         : PROCESS_REMEDIATION,
-    cleanup,
     diagnostics: { phase: "desktop_capture" },
-  });
+  }));
 };
 
 /** Project any capture failure into a typed analysis error. */

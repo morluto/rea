@@ -5,6 +5,8 @@ import {
   PYTHON_IMPORTS,
   PYTHON_MODULE_NAMES,
 } from "./appExportPython.js";
+import type { DesktopApplicationCapture } from "./desktopCapture.js";
+import type { DesktopApplicationState } from "./desktopState.js";
 import { isWithinAny } from "./desktopStateDiff.js";
 
 /** agentenv-framework release the exported class was checked against. */
@@ -117,6 +119,71 @@ export const ownedPaths = (
     (folder) =>
       !sorted.some((other) => other !== folder && isWithinAny(folder, [other])),
   );
+};
+
+/** A captured path's home-relative path, in the innermost walked state directory's own spelling unless that leaves the home. */
+export const capturedHomePath = (
+  capture: DesktopApplicationCapture,
+): ((path: string) => string | null) => {
+  const { home } = capture.host;
+  const relative = (path: string) =>
+    path.startsWith(`${home}/`) ? path.slice(home.length + 1) : null;
+  const logical = capture.application.state_directories;
+  const walked = capture.state.state_directories ?? [];
+  // The capture records one walked spelling per state directory, in order; lists of other lengths cannot be paired.
+  const renamed = (walked.length === logical.length ? walked : [])
+    .flatMap((physical, index) => {
+      const path = logical[index]?.path;
+      return path === undefined || path === physical
+        ? []
+        : [{ physical, logical: path }];
+    })
+    .sort((left, right) => right.physical.length - left.physical.length);
+  return (path) => {
+    const directory = renamed.find(({ physical }) =>
+      isWithinAny(path, [physical]),
+    );
+    const respelled =
+      directory === undefined
+        ? null
+        : relative(
+            `${directory.logical}${path.slice(directory.physical.length)}`,
+          );
+    return respelled ?? relative(path);
+  };
+};
+
+type StatePath = DesktopApplicationState["paths"][number];
+
+/** A state view file left out because another has the same home path. */
+export interface HomePathCollision {
+  readonly home: string;
+  readonly kept: string;
+  readonly dropped: string;
+}
+
+/** The state view's files by home path, dconf databases aside; of files sharing one, the first present before the capture is kept. */
+export const stateFilesByHomePath = (
+  paths: readonly StatePath[],
+  homePath: (path: string) => string | null,
+): {
+  readonly files: ReadonlyMap<string, StatePath>;
+  readonly collisions: readonly HomePathCollision[];
+} => {
+  const absent = (path: StatePath) =>
+    path.versions[0]?.present === true ? 0 : 1;
+  const files = new Map<string, StatePath>();
+  const collisions: HomePathCollision[] = [];
+  for (const path of [...paths].sort(
+    (left, right) => absent(left) - absent(right),
+  )) {
+    const home = homePath(path.path);
+    if (home === null || path.format === "dconf") continue;
+    const kept = files.get(home);
+    if (kept === undefined) files.set(home, path);
+    else collisions.push({ home, kept: kept.path, dropped: path.path });
+  }
+  return { files, collisions };
 };
 
 /** Text safe inside a Python triple-quoted docstring. */

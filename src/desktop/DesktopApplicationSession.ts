@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 
+import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
 import {
   checkpointNameRefusal,
   type DesktopSession,
@@ -28,21 +29,23 @@ import type { WindowSample, X11WindowObserver } from "./X11WindowObserver.js";
 const STDERR_BYTES = 8 * 1024;
 const TERMINATION_GRACE_MS = 5_000;
 
+/** A cleanup that could not be confirmed, and the exact owners that can retry it. */
+export interface UnresolvedCleanup {
+  readonly reason: string;
+  readonly leases: readonly AnalysisCleanupLease[];
+}
+
 /** The session record and, when cleanup was not verified, what remains owned. */
 export interface DesktopSessionOutcome {
   readonly session: DesktopSession;
-  /** Run token, launcher pid and process group still owned after cleanup failed. */
-  readonly cleanupResources: readonly string[];
+  readonly unreleased: UnresolvedCleanup | undefined;
 }
 
 /** A session failed, and the processes it launched could not all be removed. */
 export class DesktopSessionCleanupError extends Error {
   constructor(
     readonly primary: unknown,
-    readonly cleanup: {
-      readonly reason: string;
-      readonly resources: readonly string[];
-    },
+    readonly cleanup: UnresolvedCleanup,
   ) {
     super(`desktop session cleanup is incomplete: ${cleanup.reason}`, {
       cause: primary,
@@ -211,6 +214,28 @@ const release = async (
     : { verified: true, reason: null };
 };
 
+/**
+ * Keep the supervisor owning processes whose release was not verified; its
+ * lease stops them again and is labelled with the run token, pid and group.
+ */
+const unreleased = (
+  spawned: SpawnedOwnedProviderProcess,
+  supervisor: ProviderProcessSupervisor,
+  cleanup: DesktopSession["cleanup"],
+): UnresolvedCleanup | undefined =>
+  cleanup.verified
+    ? undefined
+    : {
+        reason: cleanup.reason ?? "cleanup was not verified",
+        leases: [
+          new AnalysisCleanupLease(async () => {
+            const stopped = await supervisor.stop();
+            if (stopped.status === "incomplete")
+              throw new Error(stopped.reason);
+          }, ownedCommandResources(spawned.ownership)),
+        ],
+      };
+
 const launch = async (
   plan: DesktopSessionPlan,
   runId: string,
@@ -261,6 +286,9 @@ export const runDesktopSession = async (
   );
   let endReason: DesktopSession["end_reason"];
   let cleanup: DesktopSession["cleanup"];
+  // Released at most once: a second release would signal the processes again.
+  let released: Promise<DesktopSession["cleanup"]> | undefined;
+  const releaseOnce = () => (released ??= release(spawned, supervisor));
   try {
     await trackProcess(observations, spawned.ownership.leaderPid, signal);
     endReason = await watch(plan, observations, supervisor, signal);
@@ -271,16 +299,14 @@ export const runDesktopSession = async (
         endReason === "stop_requested" ? "stop" : "time-limit",
         "stop",
       );
-    cleanup = await release(spawned, supervisor);
+    cleanup = await releaseOnce();
     await checkpointNow(plan, observations, "exit", "exit");
   } catch (cause: unknown) {
-    cleanup = await release(spawned, supervisor);
+    cleanup = await releaseOnce();
     if (!signal.aborted) {
-      if (cleanup.verified) throw cause;
-      throw new DesktopSessionCleanupError(cause, {
-        reason: cleanup.reason ?? "cleanup was not verified",
-        resources: ownedCommandResources(spawned.ownership),
-      });
+      const left = unreleased(spawned, supervisor, cleanup);
+      if (left === undefined) throw cause;
+      throw new DesktopSessionCleanupError(cause, left);
     }
     endReason = "cancelled";
   }
@@ -297,10 +323,5 @@ export const runDesktopSession = async (
     stderr_truncated: snapshot.stderr.bytes < snapshot.stderr.observedBytes,
     cleanup,
   };
-  return {
-    session,
-    cleanupResources: cleanup.verified
-      ? []
-      : ownedCommandResources(spawned.ownership),
-  };
+  return { session, unreleased: unreleased(spawned, supervisor, cleanup) };
 };

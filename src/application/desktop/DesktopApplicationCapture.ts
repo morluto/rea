@@ -21,15 +21,15 @@ import {
 import { inspectLinuxApplication } from "../../desktop/LinuxApplicationInventory.js";
 import { X11WindowObserver } from "../../desktop/X11WindowObserver.js";
 import {
-  cleanupFailure,
   discardFailedCapture,
   failedCaptureError,
   projectFailure,
+  publishedCaptureCleanup,
 } from "./DesktopCaptureFailure.js";
 import {
+  CaptureFile,
   canonicalPath,
   prepareOutputDirectory,
-  writeCaptureFile,
 } from "./DesktopCaptureOutput.js";
 import {
   DESKTOP_OPERATION,
@@ -219,12 +219,13 @@ const recordCapture = async (
     readonly admitted: Admitted;
     readonly scope: CaptureScope;
     readonly store: DesktopContentStore;
+    readonly captureFile: CaptureFile;
   },
   signal: AbortSignal | undefined,
 ) => {
   const { admitted, store } = context;
   const { scope } = context.scope;
-  const { inventory, output, home } = admitted;
+  const { inventory, home } = admitted;
   const application = await retainSigningKeys(
     inventory,
     admitted.signingKeys,
@@ -234,7 +235,7 @@ const recordCapture = async (
   await host.report("Recording the starting state.");
   await recorder.record("baseline", "baseline", 0, signal);
   await host.report(`Launching ${inventory.argv.join(" ")}.`);
-  const { session, cleanupResources } = await runDesktopSession({
+  const { session, unreleased } = await runDesktopSession({
     argv: inventory.argv,
     workingDirectory: inventory.working_directory,
     environment: host.environment,
@@ -285,8 +286,8 @@ const recordCapture = async (
     ],
   };
   const evidence = captureEvidence(request, capture);
-  const published = await writeCaptureFile(output, evidence);
-  return { evidence, published, session, cleanupResources };
+  const published = await context.captureFile.publish(evidence);
+  return { evidence, published, session, unreleased };
 };
 
 const runCapture = async (
@@ -303,36 +304,25 @@ const runCapture = async (
     request.maxContentBytes,
   );
   await store.prepare();
+  const captureFile = new CaptureFile(output);
   let recorded: Awaited<ReturnType<typeof recordCapture>>;
   try {
     recorded = await recordCapture(
       request,
       host,
-      { admitted, scope, store },
+      { admitted, scope, store, captureFile },
       signal,
     );
   } catch (cause: unknown) {
-    // A cancelled capture keeps what it recorded; any other failure removes it.
+    // Nothing was published, so a failure or cancellation removes what was written.
     throw failedCaptureError(
       cause,
-      signal?.aborted === true ? [] : await discardFailedCapture(store, output),
+      await discardFailedCapture(store, captureFile),
     );
   }
-  const { evidence, published, session, cleanupResources } = recorded;
-  const handlesClosed = await store.close().then(
-    () => true,
-    () => false,
-  );
-  if (!handlesClosed || !session.cleanup.verified)
-    throw cleanupFailure(published, output, {
-      processes: session.cleanup.verified
-        ? undefined
-        : {
-            reason: session.cleanup.reason ?? "cleanup was not verified",
-            resources: cleanupResources,
-          },
-      handles: !handlesClosed,
-    });
+  const { evidence, published, session, unreleased } = recorded;
+  const cleanup = await publishedCaptureCleanup(published, store, unreleased);
+  if (cleanup !== undefined) throw cleanup;
   // A cancellation that arrives during publication must not read as success.
   if (signal?.aborted === true && session.end_reason !== "cancelled")
     throw new AnalysisCancelledError(DESKTOP_OPERATION, {

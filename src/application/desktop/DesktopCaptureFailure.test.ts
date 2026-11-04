@@ -1,10 +1,163 @@
-import { describe, expect, it } from "vitest";
+import { mkdir, readdir, rm, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
+import { AnalysisCleanupLease } from "../../artifacts/AnalysisCleanupLease.js";
 import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { DesktopSessionCleanupError } from "../../desktop/DesktopApplicationSession.js";
-import { failedCaptureError, projectFailure } from "./DesktopCaptureFailure.js";
+import { DesktopContentStore } from "../../desktop/DesktopContentStore.js";
+import { walkHomeState } from "../../desktop/HomeStateWalker.js";
+import { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
+import { CaptureFile } from "./DesktopCaptureOutput.js";
+import {
+  discardFailedCapture,
+  failedCaptureError,
+  projectFailure,
+  publishedCaptureCleanup,
+} from "./DesktopCaptureFailure.js";
+
+const PROCESS_REASON = "token-owned process remained after cleanup";
+const PROCESS_RESOURCES = ["run-1", "pid:10", "process-group:10"];
+const HANDLE_REASON =
+  "a retained file's handle could not be closed after a retry";
+
+/** Processes whose release fails `failures` times before it succeeds. */
+const unreleasedProcesses = (failures: number) => {
+  let attempts = 0;
+  const lease = new AnalysisCleanupLease(async () => {
+    attempts += 1;
+    if (attempts <= failures) throw new Error("still running");
+  }, PROCESS_RESOURCES);
+  return { reason: PROCESS_REASON, leases: [lease] };
+};
+
+/**
+ * A store that retained one file whose handle close failed during the read;
+ * the close fails `closeFailures` times in all before it succeeds.
+ */
+const storeWithFailedClose = async (closeFailures: number) => {
+  const root = await createTestTempDirectory("desktop-failure-");
+  const path = join(root, "files/state.ini");
+  await mkdir(join(root, "files"));
+  await mkdir(join(root, "capture"));
+  await writeFile(path, "count=0\n");
+  const { entries } = await walkHomeState([join(root, "files")], [], 100);
+  const store = new DesktopContentStore(join(root, "capture"), 1024, 1024);
+  await store.prepare();
+  const close = vi.spyOn(OwnedFileHandle.prototype, "close");
+  for (let failure = 0; failure < closeFailures; failure += 1)
+    close.mockRejectedValueOnce(new Error("close denied"));
+  const state = entries.get(path);
+  if (state === undefined) throw new Error("state.ini was not walked");
+  expect(await store.retain(path, state)).toEqual({
+    kind: "omitted",
+    reason: "unreadable",
+  });
+  return { root, path, store };
+};
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
+describe("publishedCaptureCleanup", () => {
+  it.each([
+    { processes: "released", closeFailures: 1, incomplete: [] },
+    { processes: "released", closeFailures: 2, incomplete: ["handles"] },
+    { processes: "unreleased", closeFailures: 1, incomplete: ["processes"] },
+    {
+      processes: "unreleased",
+      closeFailures: 2,
+      incomplete: ["processes", "handles"],
+    },
+  ])(
+    "reports only what stays owned: processes $processes, handle close failing $closeFailures times",
+    async ({ processes, closeFailures, incomplete }) => {
+      const { path, store } = await storeWithFailedClose(closeFailures);
+
+      const error = await publishedCaptureCleanup(
+        "/out/capture.json",
+        store,
+        processes === "released" ? undefined : unreleasedProcesses(0),
+      );
+
+      const expected = {
+        processes: { reason: PROCESS_REASON, resources: PROCESS_RESOURCES },
+        handles: { reason: HANDLE_REASON, resources: [path] },
+      };
+      const left = incomplete.map(
+        (owner) => expected[owner as keyof typeof expected],
+      );
+      expect(error?.cleanup).toEqual(
+        left.length === 0
+          ? undefined
+          : {
+              reason: left.map((entry) => entry.reason).join("; "),
+              resources: left.flatMap((entry) => entry.resources),
+            },
+      );
+      expect(error?.userMessage).toEqual(
+        left.length === 0
+          ? undefined
+          : expect.stringContaining("The capture was written to"),
+      );
+      await store.close();
+    },
+  );
+
+  it("keeps the error incomplete until every retained owner releases", async () => {
+    const { path, store } = await storeWithFailedClose(2);
+    const processes = unreleasedProcesses(1);
+
+    const error = await publishedCaptureCleanup(
+      "/out/capture.json",
+      store,
+      processes,
+    );
+
+    expect(error?.cleanupResources).toEqual([...PROCESS_RESOURCES, path]);
+    await store.close();
+    expect(error?.cleanupIncomplete).toBe(true);
+    expect(error?.cleanupResources).toEqual(PROCESS_RESOURCES);
+    await expect(processes.leases[0]?.release()).rejects.toThrow(
+      "still running",
+    );
+    expect(error?.cleanupIncomplete).toBe(true);
+    await processes.leases[0]?.release();
+    expect(error?.cleanupIncomplete).toBe(false);
+    expect(error?.cleanupResources).toEqual([]);
+  });
+});
+
+describe("discardFailedCapture", () => {
+  it("keeps each owner whose removal or close failed and releases it on retry", async () => {
+    const { root, path, store } = await storeWithFailedClose(2);
+    const foreign = join(store.directory, "foreign");
+    await writeFile(foreign, "kept");
+    const captureFile = new CaptureFile(join(root, "capture"));
+
+    const discarded = await discardFailedCapture(store, captureFile);
+    const error = failedCaptureError(
+      new Error("walk failed"),
+      discarded,
+    ) as ProviderAdapterError;
+
+    expect(error.cleanup).toEqual({
+      reason: `the content the failed capture retained could not be removed; ${HANDLE_REASON}`,
+      resources: [store.directory, path],
+    });
+    await rm(foreign);
+    await discarded[0]?.leases[0]?.release();
+    expect(error.cleanupResources).toEqual([path]);
+    await store.close();
+    expect(error.cleanupIncomplete).toBe(false);
+    expect(await readdir(join(root, "capture"))).toEqual([]);
+  });
+});
 
 describe("failedCaptureError", () => {
   it("returns the failure itself when everything was cleaned up", () => {
@@ -15,15 +168,12 @@ describe("failedCaptureError", () => {
   it("reports the processes a failed session left with the failure as its cause", () => {
     const failure = new Error("checkpoint failed");
     const error = failedCaptureError(
-      new DesktopSessionCleanupError(failure, {
-        reason: "token-owned process remained after cleanup",
-        resources: ["run-1", "pid:10", "process-group:10"],
-      }),
+      new DesktopSessionCleanupError(failure, unreleasedProcesses(0)),
       [
         {
           reason:
             "the content the failed capture retained could not be removed",
-          resources: ["/out/content"],
+          leases: [new AnalysisCleanupLease(async () => {}, ["/out/content"])],
         },
       ],
     );
@@ -32,9 +182,8 @@ describe("failedCaptureError", () => {
     const adapter = error as ProviderAdapterError;
     expect(adapter.cause).toBe(failure);
     expect(adapter.cleanup).toEqual({
-      reason:
-        "token-owned process remained after cleanup; the content the failed capture retained could not be removed",
-      resources: ["run-1", "pid:10", "process-group:10", "/out/content"],
+      reason: `${PROCESS_REASON}; the content the failed capture retained could not be removed`,
+      resources: [...PROCESS_RESOURCES, "/out/content"],
     });
     expect(adapter.userMessage).toContain("checkpoint failed");
   });
@@ -46,7 +195,10 @@ describe("failedCaptureError", () => {
       [],
     );
     const error = failedCaptureError(failure, [
-      { reason: "unpublished capture file remained", resources: ["/out/x"] },
+      {
+        reason: "unpublished capture file remained",
+        leases: [new AnalysisCleanupLease(async () => {}, ["/out/x"])],
+      },
     ]) as ProviderAdapterError;
 
     expect(error.cleanupPrimary).toBe(failure);

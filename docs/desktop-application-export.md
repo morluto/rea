@@ -95,7 +95,11 @@ The class declares:
   the shared `.config`, `.local`, `.local/share`, `.local/state` and `.cache`
   folders are never owned whole: a file directly in one is owned as itself.
   Files the capture recorded under a symlinked state directory's physical
-  spelling are mapped back to the state directory's home spelling.
+  spelling are mapped back to the innermost such directory's home spelling,
+  unless that spelling is outside the captured home, as when the home itself is
+  a symbolic link. When two files map to one home path, the export uses the one
+  present before the capture, else the first by path, and a limitation names
+  the other.
 - Data hooks, because declaring any hook switches off agentenv's default data
   plane: the class seeds the home once per boot and keeps it as the initial
   state with `keep_initial`, `data/add` and `data/reset` call agentenv's `add`

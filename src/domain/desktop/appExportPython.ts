@@ -21,8 +21,6 @@ from agentenv_protocol.types import DataPart
 /** Python helpers the class uses to seed the home, load dconf keys and read typed views. */
 export const PYTHON_HELPERS = String.raw`
 XML_SUFFIXES = (".xml", ".xbel", ".plist", ".svg", ".ui")
-KEYFILE_SUFFIXES = (".ini", ".conf", ".cfg", ".desktop", ".keyfile", ".rc")
-KEYFILE_GROUP = re.compile(r"^\[[^\]\n]+\]\s*$", re.MULTILINE)
 GROUP_HEADER = re.compile(r"^\[([^\]]+)\]$")
 LINE_BREAK = re.compile(r"\r?\n")
 SQLITE_HEADER = b"SQLite format 3\x00"
@@ -133,19 +131,32 @@ def _text(text: str) -> dict:
     return {"format": "text", "view": view, "truncated": view["truncated"]}
 
 
+def _keyfile_line(raw: str) -> tuple:
+    """A key file line as REA reads it: skip (blank or comment), group, entry or other."""
+    line = raw.strip()
+    if not line or line[0] in "#;":
+        return ("skip",)
+    header = GROUP_HEADER.match(line)
+    if header:
+        return ("group", header.group(1))
+    key, equals, value = line.partition("=")
+    return ("entry", key.strip(), value.strip()) if equals and key else ("other",)
+
+
+def _is_keyfile(text: str) -> bool:
+    """REA's rule: at least one group, and nothing a key file view would drop."""
+    kinds = {_keyfile_line(line)[0] for line in LINE_BREAK.split(text)}
+    return "group" in kinds and "other" not in kinds
+
+
 def _keyfile(text: str) -> dict:
     groups, group = {}, ""
-    for raw in LINE_BREAK.split(text):
-        line = raw.strip()
-        if not line or line[0] in "#;":
-            continue
-        header = GROUP_HEADER.match(line)
-        if header:
-            group = header.group(1)
+    for line in map(_keyfile_line, LINE_BREAK.split(text)):
+        if line[0] == "group":
+            group = line[1]
             groups.setdefault(group, {})
-        elif line.find("=") > 0:
-            key, _, value = line.partition("=")
-            groups.setdefault(group, {})[key.strip()] = value.strip()
+        elif line[0] == "entry":
+            groups.setdefault(group, {})[line[1]] = line[2]
     return groups
 
 
@@ -216,7 +227,7 @@ def _text_view(name: str, text: str) -> dict:
     if lowered.endswith(XML_SUFFIXES) or trimmed.startswith("<?xml"):
         view = _xml_view(text)
         return _text(text) if view is None else {"format": "xml", "view": view, "truncated": view["truncated"]}
-    if lowered.endswith(KEYFILE_SUFFIXES) or KEYFILE_GROUP.search(text):
+    if _is_keyfile(text):
         return {"format": "keyfile", "view": {"groups": _keyfile(text)}, "truncated": False}
     return _text(text)
 

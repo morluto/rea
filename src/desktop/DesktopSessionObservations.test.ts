@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import type { ProcessLifecycle } from "../process/ProcessLifecycle.js";
 import {
   SessionObservations,
   observedSession,
@@ -15,6 +16,7 @@ interface FakeProcess {
   readonly startTime: string;
   /** Undefined models a zombie or a process whose environment is unreadable. */
   readonly runId?: string;
+  readonly lifecycle?: ProcessLifecycle;
 }
 
 const procfs = (table: Map<number, FakeProcess>): SessionProcfs => ({
@@ -22,7 +24,11 @@ const procfs = (table: Map<number, FakeProcess>): SessionProcfs => ({
     const entry = table.get(pid);
     return entry === undefined
       ? undefined
-      : { parentPid: entry.parentPid, startTime: entry.startTime };
+      : {
+          parentPid: entry.parentPid,
+          startTime: entry.startTime,
+          lifecycle: entry.lifecycle ?? "non-zombie",
+        };
   },
   children: async (pid) =>
     [...table]
@@ -132,6 +138,32 @@ describe("SessionObservations", () => {
       [101, true],
       [101, false],
     ]);
+  });
+
+  it("does not keep a zombie child alive, whether first seen as one or exiting later", async () => {
+    const table = new Map<number, FakeProcess>([
+      [100, { parentPid: 1, startTime: "10", runId: "run" }],
+      [101, { parentPid: 100, startTime: "11", lifecycle: "zombie" }],
+      [102, { parentPid: 100, startTime: "12" }],
+    ]);
+    const observations = observe(table);
+    await trackProcess(observations, 100, signal);
+    await sampleProcesses(observations, signal);
+    await sampleProcesses(observations, signal);
+    expect(observations.liveProcessIds(true)).toEqual([100, 102]);
+
+    table.delete(100);
+    table.set(102, { parentPid: 1, startTime: "12", lifecycle: "zombie" });
+    await sampleProcesses(observations, signal);
+    await recordWindows(observations, [window("0x7", 102, "Other")], signal);
+
+    expect(observations.liveProcessIds(true)).toEqual([]);
+    expect(startedBy(observations)).toEqual({
+      100: true,
+      101: true,
+      102: true,
+    });
+    expect(observedSession(observations).processes).toHaveLength(3);
   });
 
   it("matches windows by name only when their pids are sandbox pids", async () => {
