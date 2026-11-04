@@ -3,6 +3,7 @@ import {
   NATIVE_OBSERVATION_OPERATIONS,
 } from "../native/nativeObservation.js";
 import { projectNativeObservationView } from "./nativeObservationView.js";
+import { projectNativeValueTraceView } from "./nativeValueTraceView.js";
 import { projectDevicetreeView } from "./devicetreeView.js";
 import { projectApkSignatureView } from "./apkSignatureView.js";
 import { byteEntropySchema } from "../native/byteEntropy.js";
@@ -18,6 +19,7 @@ import { projectJavaScriptRoutesView } from "./javascriptRoutesView.js";
 import { projectWebBundleView } from "./webBundleView.js";
 import { projectSourceToBundleView } from "./sourceToBundleView.js";
 import { projectFeatureTraceView } from "./featureTraceView.js";
+import { projectBatchDecompileView } from "./batchDecompileView.js";
 import { projectGpuCodeObjectsView } from "./gpuCodeObjectsView.js";
 import { projectModelArtifactView } from "./modelArtifactView.js";
 import { projectCommandObservationView } from "./commandObservationView.js";
@@ -149,6 +151,7 @@ import {
   sourceToBundleSummaryViewResultSchema,
   sourceToBundlePageViewResultSchema,
   featureTraceSummaryViewResultSchema,
+  batchDecompileSummaryViewResultSchema,
   featureTraceViewResultSchema,
   analysisViewResultSchema,
   type AnalysisViewResult,
@@ -215,6 +218,7 @@ export {
   sourceToBundleSummaryViewResultSchema,
   sourceToBundlePageViewResultSchema,
   featureTraceSummaryViewResultSchema,
+  batchDecompileSummaryViewResultSchema,
   featureTraceViewResultSchema,
   analysisViewResultSchema,
   type AnalysisViewResult,
@@ -300,6 +304,7 @@ const retainedViewProjectors = new Map<string, RetainedViewProjector>([
   ...NATIVE_OBSERVATION_OPERATIONS.map((operation) =>
     retain(operation, projectNativeObservationView),
   ),
+  retain("trace_native_values", projectNativeValueTraceView),
   retain("inspect_erlang_beam", projectErlangBeamView),
   retain("inspect_devicetree", projectDevicetreeView),
   retain("inspect_native_exports", projectNativeExportsView),
@@ -333,6 +338,7 @@ const retainedViewProjectors = new Map<string, RetainedViewProjector>([
   retain("match_native_functions", projectNativeFunctionMatchingView),
   retain("compare_source_to_bundle", projectSourceToBundleView),
   retain("trace_application_feature", projectFeatureTraceView),
+  retain("batch_decompile", projectBatchDecompileView),
   retain("inspect_artifact", projectArtifactInventoryView),
   retain("inventory_artifact", projectArtifactInventoryView),
   retain("analyze_web_bundle", projectWebBundleView),
@@ -432,6 +438,7 @@ export const projectAnalysisView = (
     parent.operation === "match_native_functions"
       ? NATIVE_FUNCTION_MATCHING_PREDICATE
       : parent.operation === "analyze_function" ||
+          parent.operation === "batch_decompile" ||
           isNativeObservationOperation(parent.operation) ||
           isNativeInventoryOperation(parent.operation)
         ? ANALYSIS_EVIDENCE_PREDICATE
