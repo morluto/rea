@@ -416,3 +416,48 @@ it("keeps the socket acquisition for a coerced usable port", () => {
     { kind: "acquire", method: "connect" },
   ]);
 });
+
+/**
+ * Four review findings, each confirmed against Node 24.22.1 before fixing.
+ *
+ * A `tls` options object is merged over the first argument, so its own `port` is
+ * validated too. A `socket` member only supplies an existing socket when it is
+ * readable and non-falsy. An options `port` coerces a `typeof` result rather than
+ * reading it as a Unix path. A `__proto__` member can supply `path` by inheritance.
+ */
+it.each([
+  ["a later invalid tls options port", `tls.connect(443, { port: -1 })`],
+  [
+    "a null tls socket with an invalid port",
+    `tls.connect({ socket: null, port: -1 })`,
+  ],
+  [
+    "a false tls socket with an invalid port",
+    `tls.connect({ socket: false, port: -1 })`,
+  ],
+  ["a typeof options port", `net.connect({ port: typeof 1 })`],
+] as const)("emits no socket for %s", (_name, call) => {
+  expect(socketAcquisitionsFor(call)).toEqual([]);
+});
+
+it.each([
+  [
+    "an options port that replaces the argument",
+    `tls.connect(-1, { port: 443 })`,
+  ],
+  ["an existing tls socket", `tls.connect({ socket: server })`],
+  [
+    "a positional type name as a Unix path",
+    `net.connect(typeof 1, "127.0.0.1")`,
+  ],
+  // `__proto__` supplies the path by inheritance, so Node connects to that socket
+  // and the fact must be kept even though `port` is not usable.
+  [
+    "an inherited socket path",
+    `net.connect({ __proto__: { path: "/tmp/x.sock" }, port: -1 })`,
+  ],
+] as const)("keeps the socket for %s", (_name, call) => {
+  expect(socketAcquisitionsFor(call)).toEqual([
+    { kind: "acquire", method: call.startsWith("tls") ? "connect" : "connect" },
+  ]);
+});

@@ -67,7 +67,7 @@ export const collectJavaScriptSemanticResources = (
   const acquisitions = collectAcquisitions(program, context).filter(
     (candidate) =>
       !socketPortInFirstArgument(candidate) ||
-      (!tlsOptionsRejectCall(candidate) &&
+      (!tlsOptionsRejectCall(candidate, context) &&
         (tlsOptionsReplaceFirstArgument(candidate, context) ||
           !rejectsSocketPortLiteral(candidate, context))),
   );
@@ -285,9 +285,10 @@ const rejectsPortValue = (
     return true;
   // A unary operator is judged by its result, not by its operand.
   if (t.isUnaryExpression(value)) {
-    // `typeof` yields a non-empty type name, which Node reads as a Unix socket
-    // path rather than a port.
-    if (value.operator === "typeof") return false;
+    // `typeof` yields a non-empty type name. In a positional slot Node reads it as a
+    // Unix socket path, but an options `port` is coerced and validated, so
+    // `net.connect({ port: typeof 1 })` throws `ERR_SOCKET_BAD_PORT`.
+    if (value.operator === "typeof") return !stringIsPath;
     // `void` yields `undefined` and `!` yields a boolean; both throw before a
     // socket exists.
     if (value.operator === "void" || value.operator === "!") return true;
@@ -327,10 +328,29 @@ const rejectsPortValue = (
  * readable, because JavaScript uses the last matching member and a later spread
  * or computed key can add or override one.
  */
+/** A literal whose value Node treats as absent in an options slot. */
+const isFalsyLiteral = (value: t.Node): boolean =>
+  t.isNullLiteral(value) ||
+  (t.isBooleanLiteral(value) && !value.value) ||
+  (t.isNumericLiteral(value) && value.value === 0) ||
+  (t.isStringLiteral(value) && value.value === "");
+
 const lastMemberValue = (
   object: t.ObjectExpression,
   name: string,
 ): t.Node | null | undefined => {
+  // A `__proto__` member installs a prototype, so a member this object does not
+  // spell may still exist through inheritance. Node reads it, so the absence is not
+  // provable: `{ __proto__: { path: "/tmp/x" }, port: -1 }` connects to that path.
+  if (
+    object.properties.some(
+      (property) =>
+        t.isObjectProperty(property) &&
+        !property.computed &&
+        semanticStaticPropertyName(property.key, false) === "__proto__",
+    )
+  )
+    return null;
   for (let index = object.properties.length - 1; index >= 0; index -= 1) {
     const property = object.properties[index];
     if (property === undefined) continue;
@@ -402,11 +422,14 @@ const rejectsSocketPortLiteral = (
   if (t.isObjectExpression(value)) {
     // `tls.connect` wraps an existing socket and never connects, so it also
     // never validates `port`; `net.connect` still rejects the same object.
-    if (
-      candidate.specifier === "tls" &&
-      lastMemberValue(value, "socket") !== undefined
-    )
-      return false;
+    if (candidate.specifier === "tls") {
+      const socket = lastMemberValue(value, "socket");
+      // Only a readable non-falsy `socket` supplies an existing socket. `socket:
+      // null` and `socket: false` leave `port` to be validated, so
+      // `tls.connect({ socket: null, port: -1 })` throws `ERR_SOCKET_BAD_PORT`.
+      if (socket === null) return false;
+      if (socket !== undefined && !isFalsyLiteral(socket)) return false;
+    }
     const intent = socketOptionsIntent(value);
     if (intent === "socket" || intent === "unknown") return false;
     if (intent === "invalid") return true;
@@ -429,11 +452,23 @@ const socketPortInFirstArgument = (
  * argument or any `port`. `net.connect` accepts the same object, so this
  * rejection applies to `tls` only.
  */
-const tlsOptionsRejectCall = (candidate: ResourceCandidate): boolean => {
+const tlsOptionsRejectCall = (
+  candidate: ResourceCandidate,
+  context: DataEffectTraversalContext,
+): boolean => {
   if (candidate.specifier !== "tls") return false;
   const options = candidate.node.arguments[1];
   if (options === undefined || !t.isObjectExpression(options)) return false;
-  return socketOptionsIntent(options) === "invalid";
+  const intent = socketOptionsIntent(options);
+  if (intent === "invalid" || intent === "socket") return intent === "invalid";
+  // The options object is merged over the first argument, so its own `port` is
+  // validated too: `tls.connect(443, { port: -1 })` throws even though 443 is valid.
+  const port = lastMemberValue(options, "port");
+  return (
+    port !== undefined &&
+    port !== null &&
+    rejectsPortValue(port, context, false)
+  );
 };
 
 /**
