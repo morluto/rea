@@ -5,10 +5,8 @@ import type { FileHandle } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import {
-  AnalysisAccessDeniedError,
-  AnalysisCancelledError,
-} from "../domain/analysisErrorCore.js";
+import { AnalysisAccessDeniedError } from "../domain/analysisErrorCore.js";
+import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { elfFuseImage } from "../../tests/fixtures/electron/fuseImage.js";
