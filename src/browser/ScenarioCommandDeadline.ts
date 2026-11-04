@@ -1,5 +1,6 @@
 import { createRequire } from "node:module";
 import { BrowserObservationError } from "../domain/browserObservationError.js";
+import type { JsonValue } from "../domain/jsonValue.js";
 import {
   browserDeadlineRetry,
   cdpCommandDeadlineRecovery,
@@ -114,6 +115,7 @@ export const withScenarioCommandDeadline = async <T>(
   phase: ScenarioCommandDeadlinePhase,
   method?: string,
   launchExecutablePath?: string,
+  additionalDiagnostics: Readonly<Record<string, JsonValue>> = {},
 ): Promise<T> => {
   const startedAt = performance.now();
   const elapsedMs = (): number =>
@@ -134,6 +136,7 @@ export const withScenarioCommandDeadline = async <T>(
       remediationAction: deadline.remediationAction,
       cause,
       diagnostics: {
+        ...additionalDiagnostics,
         phase,
         command_timeout_ms: timeoutMs,
         elapsed_ms: elapsedMs(),

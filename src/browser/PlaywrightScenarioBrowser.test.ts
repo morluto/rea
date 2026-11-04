@@ -99,6 +99,7 @@ it("reports elapsed time and settles a browser launch that exceeds its deadline"
   vi.useFakeTimers();
   try {
     const launch = deferred<BrowserContext>();
+    const launchStarted = deferred<boolean>();
     const closeContext = vi.fn(async () => undefined);
     const scenario = browserScenarioSchema.parse({
       browser: { mode: "launch", executable_path: process.execPath },
@@ -116,7 +117,10 @@ it("reports elapsed time and settles a browser launch that exceeds its deadline"
           connectOverCDP: async () => {
             throw new Error("Unexpected connection");
           },
-          launchPersistentContext: async () => launch.promise,
+          launchPersistentContext: async () => {
+            launchStarted.resolve(true);
+            return launch.promise;
+          },
         },
       },
     );
@@ -127,6 +131,7 @@ it("reports elapsed time and settles a browser launch that exceeds its deadline"
       (cause: unknown) => cause,
     );
 
+    await launchStarted.promise;
     await vi.advanceTimersByTimeAsync(100);
     await vi.advanceTimersByTimeAsync(150);
     launch.resolve({ close: closeContext } as unknown as BrowserContext);
