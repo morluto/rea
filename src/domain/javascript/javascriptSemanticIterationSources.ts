@@ -13,7 +13,7 @@ import {
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 
 import { semanticCopiedReferencePath } from "./javascriptSemanticCopiedReferencePaths.js";
-import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
+import { childNodes } from "./javascriptSemanticTraversal.js";
 import type {
   IterationSourceValue,
   SemanticIterationSource,
@@ -276,20 +276,47 @@ const emptySourceFacts: SemanticSourceFacts = {
   iterations: [],
   propertyReads: [],
 };
+// Immutable AST subtree summaries are reused by enclosing and nested catches.
+// Property reads can invoke getters; tags and coercions can execute user code.
+const guardedExecutions = new WeakMap<t.Node, boolean>();
 const guardedBodyMayCall = (body: t.BlockStatement): boolean => {
-  let mayCall = false;
-  traverseJavaScriptAst(body, {
-    skip: (node) => t.isFunction(node),
-    enter: (node) => {
-      if (
+  const pending = [{ node: body as t.Node, finish: false }];
+  while (pending.length > 0) {
+    const frame = pending.pop();
+    if (frame === undefined || guardedExecutions.has(frame.node)) continue;
+    const node = frame.node;
+    if (t.isFunction(node)) {
+      guardedExecutions.set(node, false);
+      continue;
+    }
+    if (!frame.finish) {
+      pending.push({ node, finish: true });
+      for (const child of childNodes(node))
+        pending.push({ node: child, finish: false });
+    } else {
+      const direct =
         t.isCallExpression(node) ||
         t.isOptionalCallExpression(node) ||
-        t.isNewExpression(node)
-      )
-        mayCall = true;
-    },
-  });
-  return mayCall;
+        t.isNewExpression(node) ||
+        t.isTaggedTemplateExpression(node) ||
+        t.isMemberExpression(node) ||
+        t.isOptionalMemberExpression(node) ||
+        t.isBinaryExpression(node) ||
+        t.isUnaryExpression(node) ||
+        t.isUpdateExpression(node) ||
+        t.isSpreadElement(node) ||
+        t.isForOfStatement(node) ||
+        t.isAwaitExpression(node);
+      guardedExecutions.set(
+        node,
+        direct ||
+          [...childNodes(node)].some(
+            (child) => guardedExecutions.get(child) === true,
+          ),
+      );
+    }
+  }
+  return guardedExecutions.get(body) === true;
 };
 const sourceFacts = new WeakMap<
   t.Node,

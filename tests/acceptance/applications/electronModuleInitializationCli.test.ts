@@ -239,6 +239,18 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
       "rea-electron-prototype-parameters-",
     );
     const activations = {
+      numericPrototype:
+        "Object.assign(Object.prototype, globalThis); (0).createWindow();",
+      booleanPrototype:
+        "Object.assign(Object.prototype, globalThis); true.createWindow();",
+      regexpPrototype:
+        "Object.assign(Object.prototype, globalThis); /x/.createWindow();",
+      nestedGlobalPrototype:
+        "Object.setPrototypeOf(globalThis.window.Array.prototype, globalThis); [].createWindow();",
+      taggedCatch:
+        "function fail() { throw globalThis; } try { fail``; } catch ({createWindow:start}) { start(); }",
+      getterCatch:
+        "const box = { get value() { throw globalThis; } }; try { box.value; } catch ({createWindow:start}) { start(); }",
       reflectedApply:
         "const args = [globalThis, 'createWindow']; Reflect.get.apply(Reflect, args)();",
       projectedReceiver:
@@ -296,7 +308,7 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
     const windows = result.graph.nodes.filter(
       ({ kind }) => kind === "browser-window",
     );
-    expect(windows).toHaveLength(34);
+    expect(windows).toHaveLength(46);
     for (const source of Object.keys(files).filter((name) =>
       name.endsWith(".js"),
     )) {

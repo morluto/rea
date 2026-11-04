@@ -1472,6 +1472,7 @@ function* indexPrototypeUncertaintySteps(
 ): Generator<void, void> {
   let effectSite: t.Node = program;
   const seen = new Map<PrototypeOwner, WeakSet<t.Node>>();
+  const possiblePrototypeReferences = createAmbientPathResolver(state, false);
   const taint = (owner: PrototypeOwner, inherited = true): void => {
     let sites = seen.get(owner);
     if (sites === undefined) {
@@ -1487,15 +1488,9 @@ function* indexPrototypeUncertaintySteps(
   };
   const globalOwner = (node: t.Node): PrototypeOwner | undefined => {
     const value = unwrapJavaScriptExpression(node).node;
-    // A builtin owner is a bare name or one property on a global namespace.
-    // Reject deeper paths before the shared matcher walks their entire spine.
+    // Reject non-owner terminal keys before resolving a namespace spine.
     if (!t.isIdentifier(value)) {
-      if (
-        (!t.isMemberExpression(value) &&
-          !t.isOptionalMemberExpression(value)) ||
-        (!t.isIdentifier(unwrapJavaScriptExpression(value.object).node) &&
-          !t.isThisExpression(unwrapJavaScriptExpression(value.object).node))
-      )
+      if (!t.isMemberExpression(value) && !t.isOptionalMemberExpression(value))
         return undefined;
       const key = semanticStaticPropertyKey(value.property, value.computed);
       if (!prototypeOwners.some((owner) => owner === key)) return undefined;
@@ -1514,6 +1509,14 @@ function* indexPrototypeUncertaintySteps(
       )
         return owner;
       if (isUnmodifiedGlobalReference(value, state, owner)) return owner;
+      if (
+        (t.isMemberExpression(value) || t.isOptionalMemberExpression(value)) &&
+        possiblePrototypeReferences(value).paths.some(
+          (path) =>
+            path.length === 2 && path[0] === "global" && path[1] === owner,
+        )
+      )
+        return owner;
       if (
         t.isIdentifier(value, { name: owner }) &&
         resolveSemanticBindingState(state, value, owner) === undefined

@@ -2,6 +2,9 @@ import { runInNewContext } from "node:vm";
 import { describe, expect, it } from "vitest";
 
 import { parseJavaScriptSource } from "./javascriptSourceParser.js";
+import * as t from "@babel/types";
+import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
+import { semanticPropertyReadSources } from "./javascriptSemanticIterationSources.js";
 import {
   analyzeParsedJavaScriptStaticSource,
   analyzeJavaScriptStaticSource,
@@ -342,7 +345,70 @@ it.each([
   },
 );
 
+it("keeps class-owned this separate from a global activation", () => {
+  const source = `const { BrowserWindow } = require("electron");
+    class Other { static createWindow() {} static value = this.createWindow(); }
+    const webPreferences = { nodeIntegration: true };
+    function createWindow() { return new BrowserWindow({webPreferences}); }
+    createWindow();`;
+  expect(() =>
+    runInNewContext(source, { require: () => ({ BrowserWindow: class {} }) }),
+  ).not.toThrow();
+  expect(
+    analyzeJavaScriptStaticSource(source).electron.browser_windows[0],
+  ).toMatchObject({
+    web_preferences_status: "object-literal",
+    web_preferences: [
+      { name: "nodeIntegration", value: { status: "literal", value: true } },
+    ],
+  });
+});
+
+it.each([32, 64])(
+  "shares guarded subtree summaries across %i nested catches",
+  (size) => {
+    const source =
+      "try {".repeat(size) +
+      "invoke();" +
+      "} catch ({createWindow: start}) {}".repeat(size);
+    const parsed = parseJavaScriptSource(source);
+    expect(parsed).not.toBeNull();
+    if (parsed === null) return;
+    const catches: { node: t.CatchClause; parent: t.TryStatement }[] = [];
+    const blocks: t.BlockStatement[] = [];
+    traverseJavaScriptAst(parsed.program, {
+      enter(node, parent) {
+        if (t.isBlockStatement(node)) blocks.push(node);
+        if (t.isCatchClause(node) && t.isTryStatement(parent))
+          catches.push({ node, parent });
+      },
+    });
+    let reads = 0;
+    for (const block of blocks) {
+      const body = block.body;
+      Object.defineProperty(block, "body", {
+        configurable: true,
+        get() {
+          reads++;
+          return body;
+        },
+      });
+    }
+    for (const { node, parent } of catches)
+      expect(semanticPropertyReadSources(node, parent).length).toBeGreaterThan(
+        0,
+      );
+    expect(reads).toBeLessThanOrEqual(size * 8);
+  },
+);
+
 const CLASSIC_GLOBAL_ACTIVATIONS = [
+  "Object.assign(Object.prototype, globalThis); (0).createWindow();",
+  "Object.assign(Object.prototype, globalThis); true.createWindow();",
+  "Object.assign(Object.prototype, globalThis); /x/.createWindow();",
+  "Object.setPrototypeOf(globalThis.window.Array.prototype, globalThis); [].createWindow();",
+  "function fail() { throw globalThis; } try { fail``; } catch ({ createWindow: start }) { start(); }",
+  "const box = { get value() { throw globalThis; } }; try { box.value; } catch ({ createWindow: start }) { start(); }",
   "const { root } = { root: globalThis, createWindow() {} }; const early = root.createWindow; early();",
   "let root; ({ root } = { root: globalThis, createWindow() {} }); const early = root.createWindow; early();",
   "const { nested: { root } } = { nested: { root: globalThis }, createWindow() {} }; root.createWindow();",

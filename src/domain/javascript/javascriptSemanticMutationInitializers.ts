@@ -4,7 +4,10 @@ import {
   traverseJavaScriptAst,
 } from "./javascriptSemanticTraversal.js";
 import { isTypeOnlyExportDeclaration } from "./javascriptModuleDeclaration.js";
-import { javaScriptRuntimeContext } from "./javascriptSourceParser.js";
+import {
+  javaScriptRuntimeContext,
+  javaScriptTopLevelThisMayBeGlobal,
+} from "./javascriptSourceParser.js";
 import { semanticPropertyReadSources } from "./javascriptSemanticIterationSources.js";
 
 import {
@@ -1009,8 +1012,18 @@ const moduleFunctionFirstRead = (
         else if (t.isObjectExpression(node)) fact.owners.add("Object");
         else if (t.isStringLiteral(node) || t.isTemplateLiteral(node))
           fact.owners.add("String");
+        else if (
+          t.isNumericLiteral(node) ||
+          t.isBooleanLiteral(node) ||
+          t.isRegExpLiteral(node) ||
+          t.isBigIntLiteral(node)
+        )
+          fact.owners.add("Object");
         if (node !== current) fact.dependencies.push(node);
-        else if (t.isThisExpression(node)) fact.global = true;
+        else if (t.isThisExpression(node))
+          fact.global =
+            t.isProgram(program) &&
+            javaScriptTopLevelThisMayBeGlobal(node, program, parents);
         else if (t.isIdentifier(node)) {
           const binding =
             state === undefined
