@@ -350,6 +350,33 @@ describe("Electron module interop helper results", () => {
       { channel: "ping", side: "main" },
     ]);
   });
+
+  it("does not infer Electron identity through an alias when the target binding was modified", () => {
+    const analysis = analyzeJavaScriptStaticSource(`
+      ${ROLLDOWN_MODULE_INTEROP}
+      function identity(mod) { return mod; }
+      let electron = identity(require("electron"));
+      eval("electron = { BrowserWindow: class {} }");
+      const api = electron;
+      new api.BrowserWindow({webPreferences:{preload:"./p.js"}});
+    `);
+    expect(analysis.electron.browser_windows).toEqual([]);
+  });
+
+  it("resolves Electron identity across long alias chains without stack overflow", () => {
+    const lines = [
+      ROLLDOWN_MODULE_INTEROP,
+      'const a0 = __toESM(require("electron"), 1);',
+    ];
+    for (let i = 1; i <= 2000; i++) {
+      lines.push(`const a${i} = a${i - 1};`);
+    }
+    lines.push('new a2000.BrowserWindow({webPreferences:{preload:"./p.js"}});');
+    const analysis = analyzeJavaScriptStaticSource(lines.join("\n"));
+    expect(analysis.electron.browser_windows).toMatchObject([
+      { preload_path: "./p.js" },
+    ]);
+  });
 });
 
 describe("Electron module interop pattern writes", () => {
