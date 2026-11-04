@@ -32,6 +32,7 @@ import {
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
 import type { ZodSafeParseResult } from "zod";
 import { bindCliEvidenceCallerPath } from "./cliEvidenceCallerPath.js";
+import type { AnalysisResultWithSources } from "../application/investigation/recordEvidenceSources.js";
 
 export const analysisEvidenceDeliveryOptions = {
   detail: z
@@ -203,9 +204,7 @@ const withUndeliveredSourceClosure = (
 
 /** Publish already finalized CLI analysis without opening a second provider/session. */
 export const publishCliAnalysisEvidence = async (
-  result: Result<Evidence, JsonValue> & {
-    readonly sourceEvidence?: readonly Evidence[];
-  },
+  result: AnalysisResultWithSources<Evidence, JsonValue>,
   input: CliEvidenceDelivery,
 ): Promise<JsonValue> => {
   input = {

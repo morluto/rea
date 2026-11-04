@@ -18,7 +18,10 @@ import { silentLogger } from "../logger.js";
 import type { Logger } from "pino";
 import { withEvidenceCallerInputPath } from "../domain/evidence.js";
 import { createImmutableEvidenceBundle } from "../domain/evidenceBundle.js";
-import { retainAnalysisResultSources } from "./investigation/recordEvidenceSources.js";
+import {
+  retainAnalysisResultSources,
+  type AnalysisResultWithSources,
+} from "./investigation/recordEvidenceSources.js";
 import {
   createInvestigationEvidenceClosureChecker,
   resolveInvestigationEvidenceClosure,
@@ -145,11 +148,7 @@ export const runDirectAnalysis = async (
     readonly espFlash?: EspFlashSelection;
     readonly includeEvidenceSources?: boolean;
   } = {},
-): Promise<
-  Result<Evidence, JsonValue> & {
-    readonly sourceEvidence?: readonly Evidence[];
-  }
-> =>
+): Promise<AnalysisResultWithSources<Evidence, JsonValue>> =>
   withProcessCancellation(options.signal, (signal) =>
     runAnalysis(dependencies, path, tool, arguments_, {
       logger: options.logger ?? silentLogger,
@@ -384,11 +383,7 @@ const runAnalysis = async (
     readonly entryPoint?: string;
     readonly espFlash?: EspFlashSelection;
   },
-): Promise<
-  Result<Evidence, JsonValue> & {
-    readonly sourceEvidence?: readonly Evidence[];
-  }
-> => {
+): Promise<AnalysisResultWithSources<Evidence, JsonValue>> => {
   const { logger, signal, snapshotPath } = options;
   const evidenceParameters = options.evidenceParameters ?? arguments_;
   let session: BinarySession;

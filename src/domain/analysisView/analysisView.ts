@@ -18,6 +18,7 @@ import { projectJavaScriptRoutesView } from "./javascriptRoutesView.js";
 import { projectWebBundleView } from "./webBundleView.js";
 import { projectSourceToBundleView } from "./sourceToBundleView.js";
 import { projectFeatureTraceView } from "./featureTraceView.js";
+import { projectNativeFeatureTraceView } from "./nativeFeatureTraceView.js";
 import { projectBatchDecompileView } from "./batchDecompileView.js";
 import { projectGpuCodeObjectsView } from "./gpuCodeObjectsView.js";
 import { projectModelArtifactView } from "./modelArtifactView.js";
@@ -144,6 +145,7 @@ import {
   modelArtifactPageViewResultSchema,
   il2cppMetadataSummaryViewResultSchema,
   nativeInventorySummaryViewResultSchema,
+  nativeFeatureTraceSummaryViewResultSchema,
   nativeLoadImageSummaryViewResultSchema,
   nativeFunctionMatchingSummaryViewResultSchema,
   nativeFunctionSummaryViewResultSchema,
@@ -165,6 +167,7 @@ export {
 };
 export {
   nativeObservationSummaryViewResultSchemas,
+  nativeFeatureTraceSummaryViewResultSchema,
   byteEntropySummaryViewResultSchema,
   nativeExportsSummaryViewResultSchema,
   devicetreeSummaryViewResultSchema,
@@ -300,6 +303,7 @@ const retain = (
 ): readonly [string, RetainedViewProjector] => [operation, project];
 
 const retainedViewProjectors = new Map<string, RetainedViewProjector>([
+  retain("trace_feature", projectNativeFeatureTraceView),
   ...NATIVE_OBSERVATION_OPERATIONS.map((operation) =>
     retain(operation, projectNativeObservationView),
   ),
@@ -436,6 +440,7 @@ export const projectAnalysisView = (
     parent.operation === "match_native_functions"
       ? NATIVE_FUNCTION_MATCHING_PREDICATE
       : parent.operation === "analyze_function" ||
+          parent.operation === "trace_feature" ||
           parent.operation === "batch_decompile" ||
           isNativeObservationOperation(parent.operation) ||
           isNativeInventoryOperation(parent.operation)
