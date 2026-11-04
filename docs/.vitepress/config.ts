@@ -65,6 +65,10 @@ export default defineConfig({
             text: "Desktop application capture",
             link: "/desktop-application-capture",
           },
+          {
+            text: "Desktop application state",
+            link: "/desktop-application-state",
+          },
           { text: ".NET assemblies", link: "/managed-code-analysis" },
           {
             text: "Python packaged applications",

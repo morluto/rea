@@ -35,7 +35,6 @@ const changeSchema = z.strictObject({
   removed_count: z.int().min(0),
   changed_count: z.int().min(0),
 });
-export type DesktopStateChangeKind = z.infer<typeof changeSchema>;
 
 /** One path the capture observed, with its role, versions and changes. */
 export const desktopStatePathSchema = z.strictObject({

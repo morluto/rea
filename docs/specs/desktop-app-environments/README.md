@@ -11,8 +11,8 @@ The work lands as one PR per step:
    the computer application contract.
 2. [Capture](capture/spec.md): launch the application on the user's desktop
    and record its inventory, windows and home-directory state at checkpoints.
-3. State view: decide which paths are the application's state and read their
-   formats into a typed JSON view.
+3. [State view](state-view/spec.md): decide which paths are the application's
+   state and read their formats into a typed JSON view.
 4. Export: write the computer application class, environment card, skill and
    seed.
 5. Verification inside an agent environment computer: put, boot, ready, reset

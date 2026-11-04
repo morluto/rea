@@ -1,0 +1,67 @@
+import { describe, expect, it } from "vitest";
+
+import {
+  detectStateFormat,
+  keyfileView,
+  textView,
+  xmlView,
+} from "./stateFormats.js";
+
+const bytes = (text: string) => new TextEncoder().encode(text);
+
+describe("detectStateFormat", () => {
+  it("recognises SQLite and dconf headers before decoding text", () => {
+    expect(detectStateFormat("/h/a.db", bytes("SQLite format 3\0rest"))).toBe(
+      "sqlite",
+    );
+    expect(detectStateFormat("/h/user", bytes("GVariant\0\0\0\0"))).toBe(
+      "dconf",
+    );
+    expect(detectStateFormat("/h/blob", Uint8Array.of(1, 0, 2))).toBe("binary");
+  });
+
+  it("tells JSON, XML, key files and plain text apart", () => {
+    expect(detectStateFormat("/h/a.json", bytes('{"a":1}'))).toBe("json");
+    expect(detectStateFormat("/h/notes", bytes("{not json"))).toBe("text");
+    expect(
+      detectStateFormat("/h/a.xbel", bytes("<?xml version='1.0'?><x/>")),
+    ).toBe("xml");
+    expect(
+      detectStateFormat("/h/settings", bytes("[General]\nwrap=true\n")),
+    ).toBe("keyfile");
+    expect(detectStateFormat("/h/todo.txt", bytes("milk\neggs\n"))).toBe(
+      "text",
+    );
+  });
+});
+
+describe("views", () => {
+  it("splits text into lines without a trailing empty line", () => {
+    expect(textView("a\nb\n")).toEqual({
+      lines: ["a", "b"],
+      line_count: 2,
+      truncated: false,
+    });
+  });
+
+  it("reads key file groups, keeping keys before the first group", () => {
+    expect(
+      keyfileView("top=1\n# note\n[org/app]\nwrap = true\nfont='Mono 10'\n"),
+    ).toEqual({
+      "": { top: "1" },
+      "org/app": { wrap: "true", font: "'Mono 10'" },
+    });
+  });
+
+  it("reads XML into an element tree and refuses a DOCTYPE", () => {
+    expect(xmlView('<a x="1"><b>text</b></a>')).toEqual({
+      root: {
+        name: "a",
+        attributes: { x: "1" },
+        children: [{ name: "b", attributes: {}, children: ["text"] }],
+      },
+      truncated: false,
+    });
+    expect(xmlView('<!DOCTYPE a [<!ENTITY e "x">]><a>&e;</a>')).toBeUndefined();
+  });
+});

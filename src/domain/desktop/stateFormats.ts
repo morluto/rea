@@ -43,8 +43,11 @@ export const detectStateFormat = (
   const text = decodeStateText(bytes);
   if (text === undefined) return "binary";
   const trimmed = text.trimStart();
-  if (path.endsWith(".json") || /^[[{]/u.test(trimmed))
-    return safeParseJson(text).ok ? "json" : "text";
+  if (
+    (path.endsWith(".json") || /^[[{]/u.test(trimmed)) &&
+    safeParseJson(text).ok
+  )
+    return "json";
   if (XML_EXTENSIONS.test(path) || trimmed.startsWith("<?xml"))
     return parseXmlDocument(text, {
       doctype: "reject",
