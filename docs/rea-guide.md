@@ -549,8 +549,8 @@ All of the following must appear in the manifest and exist in the Evidence bundl
 1. **Unique owner binding**: module path, symbol, and SHA-256 of the owner.
 2. **Parser / schema / domain type**: required only when `requires_parser_type` is true.
 3. **Original cases**: authenticated Evidence (`evidence_id`) for every value in `required_case_kinds` (positive, negative, malformed, cancellation, …), with authority comparable to `required_original_authority`.
-4. **Fixtures**: one per required case kind, each with its own `fixture_id`, `case_kind`, and Evidence IDs. At least one fixture for that case must declare an `authority` that satisfies `required_fixture_authority` (`proofAuthoritySatisfies`), and every Evidence ID on that fixture must pass `evidenceAuthoritySupportsProof` for that declared authority: `confidence` is `observed`, `predicate_type` is `rea.reconstruction-proof`, `operation` is `verify_reconstruction_obligations`, `normalized_result.passed` is `true`, and `obligation_ids`, `fixture_ids`, and `case_kinds` contain this obligation, fixture, and case. The Evidence `authority` must be one accepted for the fixture authority (the table in [Authority rules](#authority-rules)). An existing Evidence ID without that envelope is `weak-fixture-authority`.
-5. **Passing verifier**: the binding's `verifier` is present, `status` is `"pass"`, `enumerated_obligation_ids` includes the obligation, and the verifier's declared `authority` satisfies `required_verifier_authority`. `nondeterminism` is required on every verifier object, not only when behavior varies: `{ "mode": "total-order" | "partial-order" | "finite-traces", "specification": "…" }`, with a non-empty `specification`. `result_evidence_id` must be in the bundle and must be the same observed reconstruction-proof Evidence, with `passed: true` and `obligation_ids`, `verifier_ids`, and `claim_ids` containing this obligation, `verifier_id`, and `claim_id`. Otherwise evaluation reports `weak-verifier-authority`, `missing-verifier-result`, or `verifier-failed`.
+4. **Fixtures**: every required case kind needs at least one fixture, and every fixture for that case must qualify. Each fixture has its own `fixture_id`, `case_kind`, declared `authority`, and Evidence IDs. The declared `authority` must satisfy `required_fixture_authority` (`proofAuthoritySatisfies`). Every Evidence ID on that fixture must be observed `rea.reconstruction-proof` from `verify_reconstruction_obligations`, and its Evidence `authority` must be one accepted for the fixture authority (the table in [Authority rules](#authority-rules)). `normalized_result` is `{ "bindings": [{ "obligation_id", "obligation_version", "owner_sha256", "fixtures": [{ "fixture_id", "case_kind", "passed" }], "verifiers": [{ "verifier_id", "claim_id", "passed" }] }] }`. `qualifyReconstructionProof` accepts a binding only when `obligation_id`, `obligation_version`, and `owner_sha256` match this obligation and the manifest owner, and a nested fixture has this `fixture_id`, `case_kind`, and `passed: true`. A declared authority that is too weak is `weak-fixture-authority`. A nested `passed: false` is `fixture-failed`. A proof that does not parse, or that does not match this obligation, owner, revision, or fixture, is `inapplicable-fixture-proof`.
+5. **Passing verifier**: the binding's `verifier` is present, `status` is `"pass"`, `enumerated_obligation_ids` includes the obligation, and the verifier's declared `authority` satisfies `required_verifier_authority`. `nondeterminism` is required on every verifier object, not only when behavior varies: `{ "mode": "total-order" | "partial-order" | "finite-traces", "specification": "…" }`, with a non-empty `specification`. `result_evidence_id` must be in the bundle. It is a separate Evidence lookup from the fixture proofs, so it may be a different record, and it uses the same `bindings` envelope. `qualifyReconstructionProof` accepts it when a nested verifier has this `verifier_id`, `claim_id`, and `passed: true`, on a binding whose `obligation_id`, `obligation_version`, and `owner_sha256` match. Otherwise evaluation reports `weak-verifier-authority`, `missing-verifier-result`, `verifier-failed` (nested `passed: false`, or verifier `status` `"fail"`), or `inapplicable-verifier-proof`.
 
 If any item is missing, contradictory, or under-authorized, the obligation does not reach `verified`; its status and `diagnostics` say why.
 
@@ -598,19 +598,19 @@ There is no `closed` status: the closed state is `verified`.
 
 The whole ledger gets one `status`, checked top to bottom (source: `reconstructionObligationLedgerStatus`):
 
-| Status    | When                                                                                        |
-| --------- | ------------------------------------------------------------------------------------------- |
-| `unknown` | No obligations (checked first)                                                              |
-| `failed`  | A required, non-verified obligation is `contradicted` or has a `verifier-failed` diagnostic |
-| `unknown` | Otherwise, any `limitations`, or a required open obligation with status `unknown`           |
-| `open`    | Required obligations remain non-verified, none of the above                                 |
-| `ready`   | Every required obligation is `verified`                                                     |
+| Status    | When                                                                                                            |
+| --------- | --------------------------------------------------------------------------------------------------------------- |
+| `unknown` | No obligations (checked first)                                                                                  |
+| `failed`  | A required, non-verified obligation is `contradicted` or has a `verifier-failed` or `fixture-failed` diagnostic |
+| `unknown` | Otherwise, any `limitations`, or a required open obligation with status `unknown`                               |
+| `open`    | Required obligations remain non-verified, none of the above                                                     |
+| `ready`   | Every required obligation is `verified`                                                                         |
 
 `failed` exists only at ledger level; no individual obligation is ever `failed`.
 
 #### Authority rules
 
-Authority must be comparable: a unit-authority fixture can't close a packaged-process obligation, and static-only evidence can't close a process or runtime claim. Fixture and verifier Evidence must be observed `rea.reconstruction-proof` records from `verify_reconstruction_obligations`, with `passed: true` and identity arrays that match the binding, as in [What must be present to close an obligation](#what-must-be-present-to-close-an-obligation). `evidenceAuthoritySupportsProof` accepts these Evidence authorities for the binding's declared proof authority:
+Authority must be comparable: a unit-authority fixture can't close a packaged-process obligation, and static-only evidence can't close a process or runtime claim. Fixture and verifier Evidence are separate lookups and may be different records. Each must be an observed `rea.reconstruction-proof` record from `verify_reconstruction_obligations`, with the `bindings` envelope in [What must be present to close an obligation](#what-must-be-present-to-close-an-obligation). `qualifyReconstructionProof` accepts these Evidence authorities for the binding's declared proof authority:
 
 | Declared proof authority | Evidence `authority` that can authenticate it |
 | ------------------------ | --------------------------------------------- |
