@@ -9,6 +9,8 @@ import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import {
   createRustImage,
   createRustHashOverflowImage,
+  createRustWasmModule,
+  createWasmSectionFlood,
 } from "../../fixtures/rust/image.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { mcpTest, type TestMcp } from "../../support/mcp/mcpFixture.js";
@@ -72,6 +74,26 @@ mcpTest(
         rustBinarySchema.parse(absentEvidence.normalized_result)
           .auditable_metadata,
       ).toBeNull();
+      // The listed tools let the client check WebAssembly's null word size
+      // against the advertised output schema, not only the source contract.
+      const module = join(root, "sample.wasm");
+      await writeFile(module, createRustWasmModule());
+      const wasm = await client.callTool({
+        name: "inspect_rust_binary",
+        arguments: { path: module },
+      });
+      expect(wasm.isError, JSON.stringify(wasm.content)).not.toBe(true);
+      expect(
+        rustBinarySchema.parse(
+          toolContract("inspect_rust_binary").outputSchema.parse(
+            wasm.structuredContent,
+          ).normalized_result,
+        ),
+      ).toMatchObject({
+        format: "wasm",
+        bits: null,
+        auditable_metadata: { section_name: ".dep-v0", root_package_index: 1 },
+      });
     } finally {
       await session.close();
     }
@@ -99,7 +121,7 @@ mcpTest(
 );
 
 mcpTest(
-  "preserves rustc hash capacity units through the public error contract",
+  "preserves Rust resource units through the public error contract",
   async ({ mcp }) => {
     const { client, session } = await connect(mcp);
     try {
@@ -121,6 +143,25 @@ mcpTest(
       });
       expect(parseMcpToolError(response).error.details).not.toHaveProperty(
         "reported_limits.maximum_bytes",
+      );
+      const flood = join(root, "many-sections.wasm");
+      await writeFile(flood, createWasmSectionFlood(65_537));
+      const walk = await client.callTool({
+        name: "inspect_rust_binary",
+        arguments: { path: flood },
+      });
+      expect(walk.isError).toBe(true);
+      const walkError = parseMcpToolError(walk).error;
+      expect(walkError).toMatchObject({
+        code: "resource_constraint",
+        retryable: false,
+        details: {
+          resource: "cpu",
+          reported_limits: { maximum_wasm_sections: 65_536 },
+        },
+      });
+      expect(walkError.remediation.action).toContain(
+        "The WebAssembly section-walk allowance is a fixed work allowance.",
       );
     } finally {
       await session.close();

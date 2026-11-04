@@ -10,6 +10,7 @@ import { machoImageWithUnknownCommand } from "../../src/artifacts/apple/MachoIma
 import {
   compressRustElfSectionNames,
   createRustImage,
+  createRustWasmModule,
   createRustImageWithGoSection,
   RUSTC_HASH,
   rustDependencyPayload,
@@ -99,6 +100,60 @@ cliTest(
         { name: "itoa", version: "1.0.18" },
         { name: "sample", version: "0.1.0", root: true },
       ],
+    });
+  },
+);
+
+cliTest(
+  "reports cargo-auditable packages from a WebAssembly module",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-rust-cli-wasm-");
+    const path = join(root, "sample.wasm");
+    await writeFile(path, createRustWasmModule());
+    const result = await cli.run({
+      arguments: ["inspect-rust-binary", path, "--json"],
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    const evidence = toolContract("inspect_rust_binary").outputSchema.parse(
+      result.json,
+    );
+    expect(evidence.subject?.format).toBe("file");
+    expect(evidence.normalized_result).toMatchObject({
+      format: "wasm",
+      architecture: "wasm",
+      bits: null,
+      byte_order: "little",
+      auditable_metadata: {
+        section_name: ".dep-v0",
+        root_package_index: 1,
+        packages: [
+          { name: "itoa", version: "1.0.18" },
+          { name: "sample", version: "0.1.0", root: true },
+        ],
+      },
+    });
+    expect(evidence.normalized_result.limitations.join("\n")).toContain(
+      "WebAssembly declares no container word size",
+    );
+  },
+);
+
+cliTest(
+  "refuses a WebAssembly component as an unsupported target",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-rust-cli-component-");
+    const path = join(root, "component.wasm");
+    await writeFile(path, Buffer.from("0061736d0d000100", "hex"));
+    const result = await cli.run({
+      arguments: ["inspect-rust-binary", path, "--json"],
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.json).toMatchObject({
+      code: "unsupported_target",
+      details: {
+        operation: "inspect_rust_binary",
+        reason: expect.stringContaining("components are unsupported"),
+      },
     });
   },
 );

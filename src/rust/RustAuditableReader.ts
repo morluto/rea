@@ -64,6 +64,10 @@ export type RustAuditableConstraint =
   | {
       readonly resource: "capacity";
       readonly reported_limits: { readonly maximum_rustc_hashes: number };
+    }
+  | {
+      readonly resource: "cpu";
+      readonly reported_limits: { readonly maximum_wasm_sections: number };
     };
 
 /** Admission refused before retained output or graph expansion. */
