@@ -1,3 +1,4 @@
+import { EvidenceIntegrityError } from "../../../src/domain/evidenceErrors.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
@@ -1844,5 +1845,100 @@ it("preserves captured sources when a transitive source is missing", async () =>
   expect(failure.details.source_closure.omitted).toEqual([
     { evidence_id: `ev_${"0".repeat(64)}`, reason: "not_captured" },
   ]);
+  await expect(readFile(outputPath)).rejects.toMatchObject({ code: "ENOENT" });
+});
+
+it("retains completed function sources when cancellation arrives as execution returns", async () => {
+  const fixture = await createSnapshotReplayFixture(
+    "rea-direct-cancel-source-",
+  );
+  const provider = fixture.createProvider({
+    supportedOperations: ["analyze_function"],
+    sourceEvidence: true,
+  });
+  const session = createTestBinarySession(provider);
+  const execute = session.execute.bind(session);
+  const controller = new AbortController();
+  session.execute = async (...args) => {
+    const result = await execute(...args);
+    if (args[0] === "analyze_function") controller.abort();
+    return result;
+  };
+  const dependencies = {
+    ...fixture.dependencies(provider),
+    createBinarySession: () => session,
+  };
+  const result = await runDirectAnalysis(
+    dependencies,
+    fixture.path,
+    "analyze_function",
+    { procedure: "0x1000" },
+    { signal: controller.signal, includeEvidenceSources: true },
+  );
+  expect(result.ok).toBe(false);
+  const outputPath = join(dirname(fixture.snapshotPath), "cancelled.json");
+  const output = await publishCliAnalysisEvidence(result, {
+    providerId: IDENTITY.id,
+    operation: "analyze_function",
+    signal: controller.signal,
+    detail: "complete",
+    evidenceOutput: outputPath,
+  });
+  const failure = output as {
+    code: string;
+    details: {
+      partial_observation: Evidence;
+      source_closure: { records: Evidence[]; complete: boolean };
+    };
+  };
+  expect(failure.code).toBe("cancelled");
+  expect(failure.details.source_closure.complete).toBe(true);
+  expect(
+    failure.details.source_closure.records.map((record) => record.evidence_id),
+  ).toEqual(failure.details.partial_observation.evidence_links);
+  await expect(readFile(outputPath)).rejects.toMatchObject({ code: "ENOENT" });
+});
+
+it("retains function sources when completed parent admission fails", async () => {
+  const fixture = await createSnapshotReplayFixture(
+    "rea-direct-parent-admission-",
+  );
+  const provider = fixture.createProvider({
+    supportedOperations: ["analyze_function"],
+    sourceEvidence: true,
+  });
+  const session = createTestBinarySession(provider);
+  session.importEvidenceBundle = () =>
+    err(new EvidenceIntegrityError("controlled parent admission failure"));
+  const dependencies = {
+    ...fixture.dependencies(provider),
+    createBinarySession: () => session,
+  };
+  const result = await runDirectAnalysis(
+    dependencies,
+    fixture.path,
+    "analyze_function",
+    { procedure: "0x1000" },
+    { includeEvidenceSources: true },
+  );
+  expect(result.ok).toBe(false);
+  const outputPath = join(dirname(fixture.snapshotPath), "refused.json");
+  const output = await publishCliAnalysisEvidence(result, {
+    providerId: IDENTITY.id,
+    operation: "analyze_function",
+    signal: new AbortController().signal,
+    detail: "complete",
+    evidenceOutput: outputPath,
+  });
+  const failure = output as {
+    details: {
+      partial_observation: Evidence;
+      source_closure: { records: Evidence[]; complete: boolean };
+    };
+  };
+  expect(failure.details.source_closure.complete).toBe(true);
+  expect(
+    failure.details.source_closure.records.map((record) => record.evidence_id),
+  ).toEqual(failure.details.partial_observation.evidence_links);
   await expect(readFile(outputPath)).rejects.toMatchObject({ code: "ENOENT" });
 });

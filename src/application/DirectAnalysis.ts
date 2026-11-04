@@ -16,12 +16,15 @@ import {
 import type { ResolvedSessionOpen } from "./binary/BinarySessionOpen.js";
 import { silentLogger } from "../logger.js";
 import type { Logger } from "pino";
-import { withEvidenceCallerInputPath } from "../domain/evidence.js";
+import {
+  tryParseEvidence,
+  withEvidenceCallerInputPath,
+} from "../domain/evidence.js";
 import { createImmutableEvidenceBundle } from "../domain/evidenceBundle.js";
 import { retainAnalysisResultSources } from "./investigation/recordEvidenceSources.js";
 import {
   createInvestigationEvidenceClosureChecker,
-  resolveInvestigationEvidenceClosure,
+  collectInvestigationEvidenceClosure,
 } from "./investigation/InvestigationEvidence.js";
 import type { Evidence } from "../domain/evidence.js";
 import type { NativeToolName } from "../contracts/native/nativeToolContracts.js";
@@ -413,19 +416,15 @@ const runAnalysis = async (
     const records = new Map(
       supplied.map((record) => [record.evidence_id, record]),
     );
-    const captured = new Map<string, Evidence>();
-    const closure = resolveInvestigationEvidenceClosure(
+    const collected = collectInvestigationEvidenceClosure(
       {
-        evidenceForAnalysis: (id) => {
-          const record = records.get(id) ?? session.evidenceForAnalysis(id);
-          if (record !== undefined) captured.set(id, record);
-          return record;
-        },
+        evidenceForAnalysis: (id) =>
+          records.get(id) ?? session.evidenceForAnalysis(id),
       },
       evidence.evidence_links,
     );
-    sourceEvidence = [...captured.values()];
-    return closure.ok ? ok(null) : closure;
+    sourceEvidence = collected.records;
+    return collected.result;
   };
   const execute = async (): Promise<Result<Evidence, AnalysisError>> => {
     let isDirectory = false;
@@ -546,20 +545,30 @@ const runAnalysis = async (
       signal,
       evidenceProfile,
     });
-    if (!executed.ok) return executed;
+    if (!executed.ok) {
+      if (options.includeEvidenceSources) {
+        const partial = tryParseEvidence(executed.error.partialObservation);
+        if (partial !== undefined) {
+          const captured = captureSources(partial);
+          if (!captured.ok)
+            executed.error.retainSecondaryFailure(captured.error);
+        }
+      }
+      return executed;
+    }
     const { cachePolicy } = executed.value;
     const evidence = withEvidenceCallerInputPath(executed.value.evidence, path);
     // Provider execution may have already recorded the same semantic Evidence
     // without this invocation's request path. Import replaces that metadata
     // while retaining the authenticated result and snapshot binding.
+    const captured = captureSources(evidence);
+    if (!captured.ok)
+      return err(captured.error.retainPartialObservation(evidence));
     const recorded = session.importEvidenceBundle(
       createImmutableEvidenceBundle([evidence]),
     );
     if (!recorded.ok)
       return err(recorded.error.retainPartialObservation(evidence));
-    const captured = captureSources(evidence);
-    if (!captured.ok)
-      return err(captured.error.retainPartialObservation(evidence));
     if (isWorkflowEvidenceTool(tool)) {
       const unknowns = recordWorkflowUnknowns({
         name: tool,
