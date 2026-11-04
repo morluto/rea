@@ -446,6 +446,7 @@ export const projectAnalysisView = (
     parent.operation === "match_native_functions"
       ? NATIVE_FUNCTION_MATCHING_PREDICATE
       : parent.operation === "analyze_function" ||
+          parent.operation === "procedure_references" ||
           parent.operation === "trace_feature" ||
           parent.operation === "batch_decompile" ||
           isNativeObservationOperation(parent.operation) ||

@@ -126,7 +126,7 @@ it.each(["full", "compact"] as const)(
             {
               source_index: 0,
               source_procedure: { kind: "selected-procedure" },
-              target_procedure: { kind: "inline", value: other },
+              target_procedure: { kind: "shared", index: 0 },
               kind: edge.kind,
             },
           ],

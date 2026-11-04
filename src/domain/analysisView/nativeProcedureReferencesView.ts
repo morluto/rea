@@ -62,7 +62,10 @@ export const nativeProcedureReferencesViewRequestSchema = z.discriminatedUnion(
 const endpointSchema = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("null") }),
   z.strictObject({ kind: z.literal("selected-procedure") }),
-  z.strictObject({ kind: z.literal("inline"), value: procedureIdentitySchema }),
+  z.strictObject({
+    kind: z.literal("shared"),
+    index: z.int().nonnegative(),
+  }),
 ]);
 const rowSchema = referenceEdgeSchema.extend({
   source_procedure: endpointSchema,
@@ -72,6 +75,7 @@ const rowSchema = referenceEdgeSchema.extend({
 export const procedureReferenceViewItems = {
   references: z.strictObject({
     collection: z.literal("references"),
+    endpoints: z.array(procedureIdentitySchema),
     rows: z.array(rowSchema),
   }),
   unresolved_calls: z.strictObject({
@@ -198,12 +202,10 @@ export const projectNativeProcedureReferencesView = (
     source_index: number;
     value: z.infer<typeof unresolvedCallSchema>;
   }[] = [];
-  let total = 0;
   let byteLimited = false;
-  const offer = (row: JsonValue) => {
+  const offer = (row: JsonValue, accepted: number) => {
     const size =
-      jsonValueByteLength(row, PAGE_BYTES - bytes) +
-      (total > view.offset ? 1 : 0);
+      jsonValueByteLength(row, PAGE_BYTES - bytes) + (accepted > 0 ? 1 : 0);
     if (bytes + size > PAGE_BYTES) {
       byteLimited = true;
       return false;
@@ -212,16 +214,14 @@ export const projectNativeProcedureReferencesView = (
     return true;
   };
   if (view.collection === "unresolved_calls") {
-    for (const [index, value] of source.unresolved_calls.entries()) {
-      if (
-        total >= view.offset &&
-        unresolvedRows.length < view.limit &&
-        !byteLimited
-      ) {
-        const row = { source_index: index, value };
-        if (offer(row)) unresolvedRows.push(row);
-      }
-      total++;
+    const calls = source.unresolved_calls;
+    const end = Math.min(calls.length, view.offset + view.limit);
+    for (let index = view.offset; index < end; index += 1) {
+      const value = calls[index];
+      if (value === undefined) break;
+      const row = { source_index: index, value };
+      if (!offer(row, unresolvedRows.length)) break;
+      unresolvedRows.push(row);
     }
     if (byteLimited && unresolvedRows.length === 0) return tooLarge();
     return ok({
@@ -229,46 +229,100 @@ export const projectNativeProcedureReferencesView = (
       view,
       items: { collection: "unresolved_calls" as const, rows: unresolvedRows },
       byte_limited: byteLimited,
-      coverage: pageViewCoverage(view.offset, unresolvedRows.length, total),
+      coverage: pageViewCoverage(
+        view.offset,
+        unresolvedRows.length,
+        calls.length,
+      ),
     });
   }
   const selected = canonicalJson(source.procedure);
-  const endpoint = (value: z.infer<typeof procedureIdentitySchema> | null) =>
-    value === null
-      ? { kind: "null" as const }
-      : jsonValueByteLength(value as JsonValue, PAGE_BYTES) <= PAGE_BYTES &&
-          canonicalJson(value) === selected
-        ? { kind: "selected-procedure" as const }
-        : { kind: "inline" as const, value };
-  for (const [index, reference] of source.references.entries()) {
-    if (
-      (view.source_address !== undefined &&
-        reference.source_address !== view.source_address) ||
-      (view.target_address !== undefined &&
-        reference.target_address !== view.target_address)
-    )
-      continue;
-    if (
-      total >= view.offset &&
-      referenceRows.length < view.limit &&
-      !byteLimited
-    ) {
-      const row = {
-        ...reference,
-        source_index: index,
-        source_procedure: endpoint(reference.source_procedure),
-        target_procedure: endpoint(reference.target_procedure),
-      };
-      if (offer(row as JsonValue)) referenceRows.push(row);
+  const endpoints: z.infer<typeof procedureIdentitySchema>[] = [];
+  const endpointIndexes = new Map<string, number>();
+  const endpoint = (value: z.infer<typeof procedureIdentitySchema> | null) => {
+    if (value === null) return { kind: "null" as const };
+    if (canonicalJson(value) === selected)
+      return { kind: "selected-procedure" as const };
+    const key = canonicalJson(value);
+    const existing = endpointIndexes.get(key);
+    if (existing !== undefined)
+      return { kind: "shared" as const, index: existing };
+    const size = jsonValueByteLength(value as JsonValue, PAGE_BYTES - bytes);
+    if (bytes + size > PAGE_BYTES) {
+      byteLimited = true;
+      return undefined;
     }
-    total++;
+    bytes += size;
+    const index = endpoints.length;
+    endpoints.push(value);
+    endpointIndexes.set(key, index);
+    return { kind: "shared" as const, index };
+  };
+  const filtered =
+    view.source_address !== undefined || view.target_address !== undefined;
+  const references = source.references;
+  const visit = function* () {
+    if (!filtered) {
+      const end = Math.min(references.length, view.offset + view.limit);
+      for (let index = view.offset; index < end; index += 1) {
+        const reference = references[index];
+        if (reference !== undefined) yield [index, reference] as const;
+      }
+      return;
+    }
+    let seen = 0;
+    for (const [index, reference] of references.entries()) {
+      if (
+        (view.source_address !== undefined &&
+          reference.source_address !== view.source_address) ||
+        (view.target_address !== undefined &&
+          reference.target_address !== view.target_address)
+      )
+        continue;
+      if (seen >= view.offset && seen < view.offset + view.limit)
+        yield [index, reference] as const;
+      seen += 1;
+    }
+  };
+  let filteredTotal = 0;
+  if (filtered) {
+    for (const reference of references) {
+      if (
+        (view.source_address === undefined ||
+          reference.source_address === view.source_address) &&
+        (view.target_address === undefined ||
+          reference.target_address === view.target_address)
+      )
+        filteredTotal += 1;
+    }
+  }
+  for (const [index, reference] of visit()) {
+    const sourceProcedure = endpoint(reference.source_procedure);
+    const targetProcedure = endpoint(reference.target_procedure);
+    if (sourceProcedure === undefined || targetProcedure === undefined) break;
+    const row = {
+      ...reference,
+      source_index: index,
+      source_procedure: sourceProcedure,
+      target_procedure: targetProcedure,
+    };
+    if (!offer(row as JsonValue, referenceRows.length)) break;
+    referenceRows.push(row);
   }
   if (byteLimited && referenceRows.length === 0) return tooLarge();
   return ok({
     ...common,
     view,
-    items: { collection: "references" as const, rows: referenceRows },
+    items: {
+      collection: "references" as const,
+      endpoints,
+      rows: referenceRows,
+    },
     byte_limited: byteLimited,
-    coverage: pageViewCoverage(view.offset, referenceRows.length, total),
+    coverage: pageViewCoverage(
+      view.offset,
+      referenceRows.length,
+      filtered ? filteredTotal : references.length,
+    ),
   });
 };
