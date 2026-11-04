@@ -194,8 +194,13 @@ export class ToolResultDelivery {
   toErrorToolResult(
     error: AnalysisError,
     targetContent: boolean,
+    details?: Readonly<Record<string, JsonValue>>,
   ): CallToolResult {
-    const projected = projectAnalysisError(error);
+    const base = projectAnalysisError(error);
+    const projected =
+      details === undefined
+        ? base
+        : { ...base, details: { ...base.details, ...details } };
     if (
       error instanceof NoBinaryOpenError &&
       this.noTargetRecovery !== undefined

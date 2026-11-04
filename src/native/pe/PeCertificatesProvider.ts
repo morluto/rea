@@ -1,5 +1,6 @@
 import {
   projectStableArtifactFailure,
+  stableArtifactInputRecovery,
   projectArtifactCloseFailure,
 } from "../../artifacts/StableArtifactFailure.js";
 import { isSelectedRegularFileError } from "../../filesystem/RegularFile.js";
@@ -176,13 +177,17 @@ const peCertificatesFailurePrimary = (
         },
       );
     if (cause.reason === "path" || cause.reason === "format")
-      return new AnalysisInputError(OPERATION, { cause }, [
-        {
-          path: ["path"],
-          reason: "invalid_format",
-          message: cause.message,
-        },
-      ]);
+      return new AnalysisInputError(
+        OPERATION,
+        { cause, ...stableArtifactInputRecovery(cause) },
+        [
+          {
+            path: ["path"],
+            reason: "invalid_format",
+            message: cause.message,
+          },
+        ],
+      );
   }
   if (cause instanceof Error && "code" in cause) {
     if (cause.code === "EACCES" || cause.code === "EPERM")
