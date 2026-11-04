@@ -78,8 +78,16 @@ export const createIl2cppMetadataAdmission = (
       for (const [key, value] of Object.entries(row)) {
         bytes += (first ? 0 : 1) + text(key) + 1;
         first = false;
+        // A number serializes to its decimal digits; a wasm row's u32 table
+        // and function indices take up to ten each.
         bytes +=
-          typeof value === "string" ? text(value) : value === null ? 4 : 1;
+          typeof value === "string"
+            ? text(value)
+            : value === null
+              ? 4
+              : typeof value === "number" || typeof value === "boolean"
+                ? String(value).length
+                : 1;
         if (used + bytes > limit) exceed();
       }
       used += bytes;
