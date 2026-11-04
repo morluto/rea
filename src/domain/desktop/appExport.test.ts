@@ -4,7 +4,6 @@ import {
   appModuleFile,
   className,
   environmentName,
-  fromUbuntuNobleArchive,
   launchCommand,
   ownedPaths,
   renderAppClass,
@@ -19,6 +18,9 @@ const plan: DesktopAppExportPlan = {
   title: "Mousepad",
   aptPackage: "mousepad",
   packageVersion: "0.6.1",
+  libraryPackages: [],
+  aptSources: [],
+  electron: false,
   command: ["mousepad"],
   windowClass: "Mousepad",
   paths: [".config/Mousepad", "Documents"],
@@ -173,40 +175,41 @@ describe("renderers", () => {
       }),
     ).toContain('TEXT_SEEDS = frozenset(["b.txt"])');
   });
-});
 
-describe("fromUbuntuNobleArchive", () => {
-  const mirror = "http://mirror.local/ubuntu noble/universe amd64 Packages";
-  const ports =
-    "http://ports.ubuntu.com/ubuntu-ports noble/universe arm64 Packages";
+  it("declares a vendor repository with its key, and library packages after the app's", () => {
+    const typora: DesktopAppExportPlan = {
+      ...plan,
+      name: "typora",
+      aptPackage: "typora",
+      libraryPackages: ["libgbm1", "libnss3"],
+      aptSources: [
+        {
+          uri: "https://downloads.typora.io/linux",
+          suite: "./",
+          components: [],
+          keyFile: "apt-keys/typora.gpg",
+          keySha256: "a".repeat(64),
+        },
+      ],
+      electron: true,
+      dconf: "[org/app]\n",
+    };
 
-  it("trusts apt's origin, so mirrors count and other repositories do not", () => {
-    expect(fromUbuntuNobleArchive([mirror], ["Ubuntu"])).toBe(true);
-    expect(
-      fromUbuntuNobleArchive(
-        [
-          "https://ppa.launchpadcontent.net/a/b/ubuntu noble/main amd64 Packages",
-        ],
-        ["LP-PPA-a-b"],
-      ),
-    ).toBe(false);
-    expect(
-      fromUbuntuNobleArchive(
-        ["https://dl.winehq.org/wine-builds/ubuntu noble/main amd64 Packages"],
-        [null],
-      ),
-    ).toBe(false);
-    expect(
-      fromUbuntuNobleArchive(
-        ["http://archive.ubuntu.com/ubuntu jammy/universe amd64 Packages"],
-        ["Ubuntu"],
-      ),
-    ).toBe(false);
-  });
+    const module = renderAppClass(typora);
 
-  it("accepts only Canonical's hosts when the capture recorded no origins", () => {
-    expect(fromUbuntuNobleArchive([ports], undefined)).toBe(true);
-    expect(fromUbuntuNobleArchive([mirror], undefined)).toBe(false);
-    expect(fromUbuntuNobleArchive([], [])).toBe(false);
+    expect(module).toContain(
+      'packages=Packages(apt=["typora", "libgbm1", "libnss3", "dconf-cli"]),\n    sources=[AptSource(apt="https://downloads.typora.io/linux", suite="./", components=[], key="apt-keys/typora.gpg")],',
+    );
+    expect(module).toContain(
+      "from agentenv_protocol.computer import AptSource,",
+    );
+    const readme = renderReadme(typora);
+    expect(readme).toContain(
+      "from the apt repository `https://downloads.typora.io/linux` (suite `./`), trusting `apt-keys/typora.gpg`",
+    );
+    expect(readme).toContain("`libgbm1`, `libnss3`");
+    expect(readme).toContain("Chromium's sandbox is off (`--no-sandbox`)");
+    expect(renderReadme(plan)).toContain("from the distribution archive");
+    expect(renderReadme(plan)).not.toContain("sandbox");
   });
 });

@@ -24,6 +24,17 @@ export const parseDpkgOwners = (
   return [...owners];
 };
 
+/** `/bin/x` and `/usr/bin/x` name the same file on merged-/usr systems, and dpkg may know either. */
+export const ownershipCandidates = (
+  paths: readonly string[],
+): readonly string[] => [
+  ...new Set(
+    paths.flatMap((path) =>
+      path.startsWith("/usr/") ? [path, path.slice(4)] : [path, `/usr${path}`],
+    ),
+  ),
+];
+
 /** Parse one `dpkg-query -W -f DPKG_STATUS_FORMAT` line. */
 export const parseDpkgStatus = (
   output: string,

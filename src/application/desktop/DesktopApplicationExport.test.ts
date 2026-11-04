@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { access, readFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -5,7 +6,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import { SafeOutputTree } from "../../artifacts/SafeOutputTree.js";
-import type { DesktopApplicationCapture } from "../../domain/desktop/desktopCapture.js";
+import type {
+  AptRepository,
+  DesktopApplicationCapture,
+} from "../../domain/desktop/desktopCapture.js";
 import { exportDesktopApplication } from "./DesktopApplicationExport.js";
 import {
   HOME,
@@ -195,6 +199,119 @@ describe("exportDesktopApplication", () => {
       unseeded_files: [".local/share/notes/cache.bin"],
     });
     expect(result.limitations.join("\n")).toContain("/media/usb");
+  });
+});
+
+const TYPORA_SOURCE = "https://downloads.typora.io/linux ./ Packages";
+const TYPORA_KEY = "typora public keyring\n";
+
+/** The fixture app installed as Typora is: Electron, from its flat vendor repository. */
+const vendorCapture = (
+  signingKey: AptRepository["signing_key"],
+): DesktopApplicationCapture => {
+  const local = capture();
+  return {
+    ...local,
+    application: {
+      ...local.application,
+      argv: ["typora", `${HOME}/Documents/today.txt`],
+      executable: {
+        path: "/usr/bin/typora",
+        resolved_path: "/usr/share/typora/Typora",
+        electron_markers: ["fuse-sentinel"],
+      },
+      package: {
+        kind: "deb",
+        name: "typora",
+        version: "1.14.9-1",
+        architecture: "arm64",
+        sources: [TYPORA_SOURCE],
+        source_origins: ["typora.io"],
+        package_lists_present: true,
+        apt_repositories: [
+          {
+            source: TYPORA_SOURCE,
+            sources_file: "/etc/apt/sources.list.d/typora.list",
+            uri: "https://downloads.typora.io/linux",
+            suite: "./",
+            components: [],
+            signing_key: signingKey,
+            ...(signingKey === null
+              ? { signing_key_reason: "gpgv is not installed" }
+              : {}),
+          },
+        ],
+        library_packages: ["libgbm1", "libnss3"],
+        missing_libraries: [],
+        unpackaged_libraries: [],
+      },
+    },
+  };
+};
+
+const exportVendorCapture = async (local: DesktopApplicationCapture) => {
+  const folder = await writeCaptureFolder(local, undefined, [TYPORA_KEY]);
+  const directory = join(
+    await createTestTempDirectory("desktop-export-"),
+    "bundle",
+  );
+  const result = await exportDesktopApplication(
+    { capture: folder, directory, name: undefined },
+    readers,
+  );
+  return { result, directory };
+};
+
+describe("exportDesktopApplication from a vendor repository", () => {
+  it("copies the verified key, declares the repository and library packages, and turns the sandbox off", async () => {
+    const { result, directory } = await exportVendorCapture(
+      vendorCapture({
+        path: "/etc/apt/trusted.gpg.d/typora.gpg",
+        sha256: createHash("sha256").update(TYPORA_KEY).digest("hex"),
+        format: "binary",
+        fingerprint: "4AC441BE68B4ADAB7439FBF9BA300B7755AFCFAE",
+      }),
+    );
+
+    if (result instanceof Error) throw result;
+    expect(result.normalized_result).toMatchObject({
+      environment: "typora",
+      files: expect.arrayContaining(["envs/typora/apt-keys/typora.gpg"]),
+    });
+    expect(
+      await readFile(
+        join(directory, "envs/typora/apt-keys/typora.gpg"),
+        "utf8",
+      ),
+    ).toBe(TYPORA_KEY);
+    const module = await readFile(
+      join(directory, "envs/typora/typora_app.py"),
+      "utf8",
+    );
+    expect(module).toContain(
+      'packages=Packages(apt=["typora", "libgbm1", "libnss3"]),\n    sources=[AptSource(apt="https://downloads.typora.io/linux", suite="./", components=[], key="apt-keys/typora.gpg")],',
+    );
+    expect(module).toContain(
+      `command=["sh", "-c", "exec 'typora' '--no-sandbox' \\"$HOME\\"/'Documents/today.txt'"]`,
+    );
+    expect(result.limitations.join("\n")).toContain(
+      "Chromium's sandbox is off inside the computer",
+    );
+    expect(await readFile(join(directory, "README.md"), "utf8")).toContain(
+      "trusting `apt-keys/typora.gpg`",
+    );
+  });
+
+  it("refuses a vendor repository whose key the capture did not verify", async () => {
+    const { result, directory } = await exportVendorCapture(
+      vendorCapture(null),
+    );
+
+    expect(result).toBeInstanceOf(Error);
+    expect(JSON.stringify(result)).toContain(
+      "https://downloads.typora.io/linux ./: gpgv is not installed",
+    );
+    expect(await exists(directory)).toBe(false);
   });
 });
 

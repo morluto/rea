@@ -58,6 +58,31 @@ const desktopEntrySchema = z.strictObject({
   terminal: z.boolean(),
 });
 
+/** A repository key whose signature over the repository's index gpgv verified; its bytes are retained. */
+const aptSigningKeySchema = z.strictObject({
+  path: z.string().min(1),
+  sha256,
+  format: z.enum(["binary", "armored"]),
+  /** Primary key fingerprint from gpgv's VALIDSIG status. */
+  fingerprint: z.string().min(1),
+});
+
+/** A non-Ubuntu apt repository listing the installed version, with the entry that configures it. */
+const aptRepositorySchema = z.strictObject({
+  /** The source as `apt-cache policy` lists it. */
+  source: z.string().min(1),
+  /** Null when no sources file entry matches the source. */
+  sources_file: z.string().nullable(),
+  uri: z.string().nullable(),
+  suite: z.string().nullable(),
+  /** Empty for a flat repository. */
+  components: z.array(z.string()),
+  signing_key: aptSigningKeySchema.nullable(),
+  /** Why no signing key was verified. */
+  signing_key_reason: z.string().optional(),
+});
+export type AptRepository = z.infer<typeof aptRepositorySchema>;
+
 const packageSchema = z.strictObject({
   kind: z.enum(["deb", "snap", "flatpak", "appimage", "unknown"]),
   name: z.string().nullable(),
@@ -68,6 +93,16 @@ const packageSchema = z.strictObject({
   /** The `o=` origin apt reports for each entry of `sources`, by index; null when it reports none. */
   source_origins: z.array(z.string().nullable()).optional(),
   package_lists_present: z.boolean().nullable(),
+  /** Sources whose origin is not Ubuntu; absent from captures written before they were recorded. */
+  apt_repositories: z.array(aptRepositorySchema).optional(),
+  /** Packages owning the shared libraries the executable loads, without the application's own package. */
+  library_packages: z.array(z.string()).optional(),
+  /** Sonames the executable needs that the host's dynamic linker cache does not list. */
+  missing_libraries: z.array(z.string()).optional(),
+  /** Libraries found on the host that no package owns. */
+  unpackaged_libraries: z.array(z.string()).optional(),
+  /** Why the library lists are incomplete; absent when they are complete. */
+  library_packages_reason: z.string().optional(),
 });
 
 /** What REA found out about the application before launching it. */
@@ -91,6 +126,7 @@ export const desktopApplicationInventorySchema = z.strictObject({
 export type DesktopApplicationInventory = z.infer<
   typeof desktopApplicationInventorySchema
 >;
+export type DesktopPackage = DesktopApplicationInventory["package"];
 
 const windowSchema = z.strictObject({
   id: z.string().regex(/^0x[0-9a-f]+$/u),

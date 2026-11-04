@@ -3,9 +3,9 @@
 `rea export-desktop-application <capture-folder> <directory>` turns a folder
 written by [desktop application capture](desktop-application-capture.md) into an
 agentenv bundle holding one computer app environment: the real application,
-installed from the distribution archive on the `ubuntu-24.04` computer base,
-launched at boot, seeded with the user's state and serving that state through
-agentenv's data operations.
+installed from the distribution archive or its vendor's apt repository on the
+`ubuntu-24.04` computer base, launched at boot, seeded with the user's state and
+serving that state through agentenv's data operations.
 
 ```sh
 rea export-desktop-application ./mousepad-capture ./mousepad-bundle
@@ -34,6 +34,7 @@ Evidence; the bundle itself is complete.
 | `envs/<name>/<file>.py` | The `ComputerAppEnvironment` class                                                                 |
 | `envs/<name>/SKILL.md`  | What the app is, its window class and where its files live                                         |
 | `envs/<name>/seed/`     | The application's files from before the capture, by home-relative path                             |
+| `envs/<name>/apt-keys/` | The signing key of each vendor apt repository the app installs from                                |
 | `tasks/smoke.json`      | A task that deploys the app                                                                        |
 | `README.md`             | What was exported, from which capture, and what to keep in mind                                    |
 
@@ -45,12 +46,23 @@ an `App` suffix.
 
 The class declares:
 
-- `Packages(apt=[...])` with the package the capture found. The export refuses
-  applications not installed from the Ubuntu 24.04 archive or a mirror of it
-  (local `.deb`, a PPA or other third-party repository, snap, flatpak,
-  AppImage), since the computer could not install them by name. A source counts
+- `Packages(apt=[...])` with the package the capture found. For a vendor
+  package its library packages follow, so a package that leaves out
+  dependencies on the libraries it loads, as Typora's Electron package does,
+  still starts; an archive package's declared dependencies are trusted as they
+  are. The package must come from the
+  Ubuntu 24.04 archive or a mirror of it, or from a vendor apt repository whose
+  signing key the capture verified and retained. A source counts as the archive
   when apt reports its origin as `Ubuntu` for a noble suite; a capture made
   before origins were recorded counts only Canonical's own archive hosts.
+- For a vendor repository, `sources=[AptSource(apt=..., suite=...,
+  components=[...], key="apt-keys/<name>.gpg")]`, with the retained key copied
+  to that path (`.asc` when it is armored, which agentenv tells by its
+  content). A repository whose key the capture did not verify is refused with
+  its reason; when another verified repository lists the same version it is
+  left out instead, with a limitation. The export also refuses local `.deb`
+  files, snaps, flatpaks, AppImages and captures that recorded no repositories,
+  since the computer could not install them by name.
 - A launch at boot with the captured command, ready when a window of the
   captured class appears. Arguments that are the captured home or under it, and
   `<option>=<path>` values under it, are respelled under the computer user's
@@ -58,6 +70,11 @@ The class declares:
   relative the command first changes to the captured working directory
   (`"$HOME"` when that was the home), and still starts if that folder is
   missing. The export refuses a capture that saw no application window.
+- For an Electron application (the capture found its fuse sentinel or a
+  `resources/app.asar`), `--no-sandbox` right after the program unless the
+  command already has it: Chromium's sandbox needs user namespaces the
+  computer's container does not grant, and Electron exits without them. The
+  README and the result's limitations say the sandbox is off.
 - `paths`: the state directories holding the application's state files and the
   folders holding its documents, nested folders collapsed. The home itself and
   the shared `.config`, `.local`, `.local/share`, `.local/state` and `.cache`

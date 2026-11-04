@@ -1,3 +1,4 @@
+import type { ExportAptSource } from "./appExportInstall.js";
 import {
   PYTHON_DATA_HOOKS,
   PYTHON_HELPERS,
@@ -5,29 +6,6 @@ import {
   PYTHON_MODULE_NAMES,
 } from "./appExportPython.js";
 import { isWithinAny } from "./desktopStateDiff.js";
-
-const NOBLE_SUITE =
-  / noble(?:-updates|-security|-backports)?\/(?:main|restricted|universe|multiverse) /u;
-/** Canonical's own archive hosts, for captures made before apt origins were recorded. */
-const CANONICAL_ARCHIVE =
-  /^https?:\/\/(?:[a-z]{2}\.)?(?:archive|ports|security)\.ubuntu\.com\//u;
-
-/**
- * Whether apt installed the package from the Ubuntu 24.04 archive, which the
- * computer installs from by name: a noble suite whose apt origin is Ubuntu,
- * so mirrors count and PPAs or other repositories do not.
- */
-export const fromUbuntuNobleArchive = (
-  sources: readonly string[],
-  origins: readonly (string | null)[] | undefined,
-): boolean =>
-  sources.some(
-    (source, index) =>
-      NOBLE_SUITE.test(source) &&
-      (origins === undefined
-        ? CANONICAL_ARCHIVE.test(source)
-        : origins[index] === "Ubuntu"),
-  );
 
 /** agentenv-framework release the exported class was checked against. */
 export const DESKTOP_EXPORT_FRAMEWORK_VERSION = "0.9.1431";
@@ -40,6 +18,12 @@ export interface DesktopAppExportPlan {
   readonly title: string;
   readonly aptPackage: string;
   readonly packageVersion: string | null;
+  /** Packages of the libraries the executable loads, installed after the app's own. */
+  readonly libraryPackages: readonly string[];
+  /** Vendor repositories to install from; empty for the Ubuntu archive. */
+  readonly aptSources: readonly ExportAptSource[];
+  /** Whether the app is Electron, whose launch then runs without Chromium's sandbox. */
+  readonly electron: boolean;
   readonly command: readonly string[];
   readonly windowClass: string;
   /** Home-relative paths the app owns for data add, get and reset. */
@@ -229,6 +213,25 @@ ${PYTHON_DATA_HOOKS}`;
   return `    """${title}, launched at boot. No state was observed, so it serves no data operations."""\n`;
 };
 
+/** The app's package, its library packages and dconf-cli when settings are loaded. */
+const aptPackages = (plan: DesktopAppExportPlan): readonly string[] => [
+  ...new Set([
+    plan.aptPackage,
+    ...plan.libraryPackages,
+    ...(plan.dconf.length === 0 ? [] : ["dconf-cli"]),
+  ]),
+];
+
+const aptSources = (plan: DesktopAppExportPlan): string =>
+  plan.aptSources.length === 0
+    ? ""
+    : `\n    sources=[${plan.aptSources
+        .map(
+          (source) =>
+            `AptSource(apt=${py(source.uri)}, suite=${py(source.suite)}, components=${pyList(source.components)}, key=${py(source.keyFile)})`,
+        )
+        .join(", ")}],`;
+
 /** The computer app class: install, launch, owned paths, seed and data hooks. */
 export const renderAppClass = (plan: DesktopAppExportPlan): string => {
   const hooks = classBody(plan);
@@ -248,7 +251,7 @@ ${PYTHON_HELPERS}
 
 @computer_app(supports=[{"os": {"type": "linux", "display": ["x11"]}, "arch": ["amd64", "arm64"]}])
 @linux(
-    packages=Packages(apt=${pyList(plan.dconf.length === 0 ? [plan.aptPackage] : [plan.aptPackage, "dconf-cli"])}),
+    packages=Packages(apt=${pyList(aptPackages(plan))}),${aptSources(plan)}
     launch=Launch(at="boot", command=${pyList(plan.command)}, window={"class": ${py(plan.windowClass)}}, ready=Ready(window=True)),
     paths=PATHS,
     skill="SKILL.md",
@@ -275,6 +278,33 @@ window and dialogs; the result is read from those files.
 `
 }`;
 
+const installedFrom = (plan: DesktopAppExportPlan): string =>
+  plan.aptSources.length === 0
+    ? "the distribution archive"
+    : plan.aptSources
+        .map(
+          (source) =>
+            `the apt repository \`${source.uri}\` (suite \`${source.suite}\`${source.components.length === 0 ? "" : `, components \`${source.components.join(" ")}\``}), trusting \`${source.keyFile}\`, the key that verified its release on the capture host`,
+        )
+        .join(" and ");
+
+const installNotes = (plan: DesktopAppExportPlan): string =>
+  [
+    ...(plan.libraryPackages.length === 0
+      ? []
+      : [
+          `- Library packages, which own the shared libraries the executable loaded on the capture host, are installed with it:
+  ${plan.libraryPackages.map((name) => `\`${name}\``).join(", ")}.`,
+        ]),
+    ...(plan.electron
+      ? [
+          "- Chromium's sandbox is off (`--no-sandbox`): it needs user namespaces the computer's container does not grant,\n  and Electron exits without them.",
+        ]
+      : []),
+  ]
+    .map((line) => `\n${line}`)
+    .join("");
+
 /** The bundle README: what was exported, how to run it, and what to keep in mind. */
 export const renderReadme = (plan: DesktopAppExportPlan): string =>
   `# ${plan.title} computer app
@@ -284,8 +314,8 @@ Exported by REA's \`export-desktop-application\` from a capture of the \`${plan.
 ${DESKTOP_EXPORT_FRAMEWORK_VERSION}.
 
 - \`envs/${plan.name}/\` is a computer app on the \`ubuntu-24.04\` base with the \`reference\` driver. It installs
-  \`${plan.aptPackage}\` from the distribution archive, launches \`${plan.command.join(" ")}\` at boot and is ready
-  when a window of class \`${plan.windowClass}\` appears.
+  \`${plan.aptPackage}\` from ${installedFrom(plan)}, launches \`${plan.command.join(" ")}\` at boot and is ready
+  when a window of class \`${plan.windowClass}\` appears.${installNotes(plan)}
 - Owned paths: ${plan.paths.length === 0 ? "none" : plan.paths.map((path) => `\`~/${path}\``).join(", ")}.
   \`data/get\` returns their files and a typed JSON view of each; \`data/reset\` restores the seed.
 - Seed: ${plan.seedFiles.length} file(s) from the user's home before the capture, with the captured home path

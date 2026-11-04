@@ -11,9 +11,7 @@ import {
 import { outputDirectoryAdmissionRefusal } from "../../artifacts/SafeOutputTreeAdmission.js";
 import { SafeOutputTreeCreationFailure } from "../../artifacts/SafeOutputTreeCreationFailure.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
 import {
-  fromUbuntuNobleArchive,
   DESKTOP_EXPORT_FRAMEWORK_VERSION,
   appModuleFile,
   className,
@@ -27,6 +25,10 @@ import {
   renderSmokeTask,
   type DesktopAppExportPlan,
 } from "../../domain/desktop/appExport.js";
+import {
+  electronLaunchArguments,
+  installLimitations,
+} from "../../domain/desktop/appExportInstall.js";
 import type { DesktopApplicationCapture } from "../../domain/desktop/desktopCapture.js";
 import {
   desktopApplicationStateSchema,
@@ -46,6 +48,7 @@ import {
   DESKTOP_PROVIDER,
   desktopOperationFailure,
 } from "./DesktopCaptureRefusals.js";
+import { admitApplication, refuse } from "./DesktopExportInstall.js";
 import {
   withRetainedContent,
   type RetainedContent,
@@ -75,17 +78,6 @@ export interface DesktopExportResult {
   readonly files: readonly string[];
   readonly limitations: readonly string[];
 }
-
-const refuse = (
-  userMessage: string,
-  field: string,
-  remediationAction: string,
-) =>
-  new AnalysisInputError(
-    OPERATION,
-    { userMessage, remediationAction, conformsToInputContract: true },
-    [{ path: [field], reason: "invalid_value", message: userMessage }],
-  );
 
 const isRecord = (
   value: JsonValue | null | undefined,
@@ -185,32 +177,6 @@ const unseededFiles = (
   return [...new Set([...listed, ...omitted])].sort();
 };
 
-/** Refuse what v1 cannot install or tell ready; the apt package and window class to declare. */
-const admitApplication = (capture: DesktopApplicationCapture) => {
-  const installed = capture.application.package;
-  if (
-    installed.kind !== "deb" ||
-    installed.name === null ||
-    !fromUbuntuNobleArchive(installed.sources, installed.source_origins)
-  )
-    throw refuse(
-      `The application is not installed from the Ubuntu 24.04 package archive (${installed.kind}${installed.name === null ? "" : ` ${installed.name}`}; sources: ${installed.sources.join(", ") || "none"}; apt origins: ${installed.source_origins?.map((origin) => origin ?? "none").join(", ") ?? "not recorded"}), so the computer cannot install it.`,
-      "capture",
-      "Capture an application installed with apt from the Ubuntu 24.04 archive.",
-    );
-  const window = capture.session.window_match;
-  if (window === null)
-    throw refuse(
-      "The capture saw no application window, so the export cannot match the app's window to tell when it is ready.",
-      "capture",
-      "Capture again and wait for the application window to open.",
-    );
-  return {
-    aptPackage: installed.name.split(":")[0] ?? installed.name,
-    windowClass: window.class,
-  };
-};
-
 /** Decide the bundle from the capture and its state view, with each seed's digest. */
 const planExport = (
   request: DesktopExportRequest,
@@ -220,9 +186,9 @@ const planExport = (
 ): {
   readonly plan: DesktopAppExportPlan;
   readonly seeds: ReadonlyMap<string, string>;
+  readonly limitations: readonly string[];
 } => {
   const { application, host } = capture;
-  const { aptPackage, windowClass } = admitApplication(capture);
   const source =
     request.name ??
     environmentName(
@@ -237,6 +203,8 @@ const planExport = (
       "name",
       "Pass --name with lowercase letters, digits and hyphens.",
     );
+  const { install, windowClass } = admitApplication(capture, source);
+  const electron = application.executable.electron_markers.length > 0;
   const files = filesByHomePath(capture, state);
   const withRole = (role: string) =>
     [...files].filter(([, path]) => path.role === role).map(([home]) => home);
@@ -260,10 +228,13 @@ const planExport = (
     name: source,
     className: className(source),
     title: application.desktop_entry?.name ?? source,
-    aptPackage,
+    aptPackage: install.aptPackage,
     packageVersion: application.package.version,
+    libraryPackages: install.libraryPackages,
+    aptSources: install.sources,
+    electron,
     command: launchCommand(
-      application.argv,
+      electronLaunchArguments(application.argv, electron),
       host.home,
       application.working_directory,
     ),
@@ -276,12 +247,16 @@ const planExport = (
     dconf: baselineDconf(state).text,
     captureEvidenceId: evidenceId,
   };
-  return { plan, seeds };
+  const limitations = installLimitations(
+    install,
+    application.package,
+    electron,
+  );
+  return { plan, seeds, limitations };
 };
 
 const EXPORT_LIMITATIONS = [
   "The seed is the user's real state before the capture; keep the bundle local.",
-  "The application is installed from the distribution archive by name, so the computer may install a different version than the one captured.",
   "Binary state files are seeded as captured; only text files have the captured home path respelled.",
 ];
 
@@ -337,20 +312,47 @@ const writeBundle = async (
   return undefined;
 };
 
-/** The generated files, and the digest of each seed by its home path. */
+/** A bundle file copied from retained content: a seed or an apt key. */
+interface RetainedCopy {
+  readonly path: string;
+  readonly digest: string;
+  readonly name: string;
+}
+
+/** The generated files and the retained files copied after them. */
 interface ExportBundle {
-  readonly plan: DesktopAppExportPlan;
-  readonly seeds: ReadonlyMap<string, string>;
   readonly generated: readonly {
     readonly path: string;
     readonly bytes: Buffer;
   }[];
+  readonly copies: readonly RetainedCopy[];
 }
 
 const seedPath = (plan: DesktopAppExportPlan, seed: string) =>
   `envs/${plan.name}/seed/${seed}`;
 
-/** Write the generated files, then each seed as it is read, so one seed at a time is in memory. */
+/** Each seed by its home path, then each distinct apt key in the environment folder. */
+const retainedCopies = (
+  plan: DesktopAppExportPlan,
+  seeds: ReadonlyMap<string, string>,
+): readonly RetainedCopy[] => [
+  ...[...seeds].map(([seed, digest]) => ({
+    path: seedPath(plan, seed),
+    digest,
+    name: `~/${seed}`,
+  })),
+  ...[
+    ...new Map(
+      plan.aptSources.map((source) => [source.keyFile, source.keySha256]),
+    ),
+  ].map(([keyFile, digest]) => ({
+    path: `envs/${plan.name}/${keyFile}`,
+    digest,
+    name: `the apt key ${keyFile}`,
+  })),
+];
+
+/** Write the generated files, then each retained file as it is read, so one at a time is in memory. */
 const writeFiles = async (
   tree: SafeOutputTree,
   content: RetainedContent,
@@ -366,19 +368,19 @@ const writeFiles = async (
       signal,
     );
   }
-  for (const [seed, digest] of bundle.seeds) {
+  for (const copy of bundle.copies) {
     signal?.throwIfAborted();
-    const bytes = await content.read(digest, signal);
+    const bytes = await content.read(copy.digest, signal);
     if (!bytes.ok)
       throw refuse(
-        `The retained content of ~/${seed} ${bytes.error}.`,
+        `The retained content of ${copy.name} ${bytes.error}.`,
         "capture",
-        "Capture the application again, or leave the file out of its state paths.",
+        "Capture the application again, leaving a seed file out of its state paths if it cannot be retained.",
       );
     await tree.write(
-      seedPath(bundle.plan, seed),
+      copy.path,
       Readable.from([bytes.value]),
-      { bytes: bytes.value.length, sha256: digest },
+      { bytes: bytes.value.length, sha256: copy.digest },
       signal,
     );
   }
@@ -402,12 +404,13 @@ const runExport = async (
   const state = desktopApplicationStateSchema.parse(
     stateEvidence.normalized_result,
   );
-  const { plan, seeds } = planExport(
+  const { plan, seeds, ...install } = planExport(
     request,
     capture,
     state,
     evidence.evidence_id,
   );
+  const copies = retainedCopies(plan, seeds);
   const environment = `envs/${plan.name}`;
   const text = (path: string, content: string) => ({
     path,
@@ -425,7 +428,7 @@ const runExport = async (
     (content) =>
       writeBundle(
         request.directory,
-        (tree) => writeFiles(tree, content, { plan, seeds, generated }, signal),
+        (tree) => writeFiles(tree, content, { generated, copies }, signal),
         signal,
       ),
     SEED_MAX_BYTES,
@@ -433,6 +436,7 @@ const runExport = async (
   const opened = capture.state.unretained_opened_directories;
   const limitations = [
     ...EXPORT_LIMITATIONS,
+    ...install.limitations,
     ...(plan.unseededFiles.length === 0
       ? []
       : [
@@ -454,7 +458,7 @@ const runExport = async (
     dconf_groups: baselineDconf(state).groups,
     files: [
       ...generated.map((file) => file.path),
-      ...plan.seedFiles.map((seed) => seedPath(plan, seed)),
+      ...copies.map((copy) => copy.path),
     ],
     limitations,
   };

@@ -1,5 +1,5 @@
 import { constants } from "node:fs";
-import { access, lstat, readdir, realpath, stat } from "node:fs/promises";
+import { access, lstat, realpath, stat } from "node:fs/promises";
 import {
   basename,
   delimiter,
@@ -18,44 +18,27 @@ import {
   type DesktopEntry,
 } from "../domain/desktop/desktopEntry.js";
 import {
-  DPKG_STATUS_FORMAT,
   isAppImageHeader,
   packageFromPath,
-  parseAptPolicyOrigins,
-  parseAptPolicySources,
-  parseDpkgOwners,
-  parseDpkgStatus,
 } from "../domain/desktop/linuxPackages.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { readElectronFuseImage } from "../electron/ElectronFuseReader.js";
 import { withOwnedRegularFile } from "../filesystem/OwnedRegularFile.js";
 import {
-  NonRegularFileReadError,
-  RegularFileChangedError,
-  isSelectedRegularFileError,
-} from "../filesystem/RegularFile.js";
-import {
   RegularFileCapacityError,
   readStableFileBytes,
   readStableFilePrefix,
 } from "../filesystem/readStableFileBytes.js";
+import { APT_LOCATIONS } from "./AptRepositoryInventory.js";
 import {
-  execFileOutput,
-  execFileOutputFailure,
-} from "../process/ExecFileOutput.js";
+  debianPackage,
+  type DebianPackageHost,
+  type InventoryContext,
+} from "./DebianPackageInventory.js";
+import { isRefusedRead } from "./HostFileRead.js";
+import { runHostQuery } from "./HostQuery.js";
 
 const DESKTOP_ENTRY_MAX_BYTES = 1024 * 1024;
-const DENIED_CODES = new Set(["EACCES", "EPERM"]);
-
-/** A read the inventory reports as unreadable rather than failing on. */
-const isRefusedRead = (cause: unknown): boolean =>
-  cause instanceof RegularFileCapacityError ||
-  cause instanceof RegularFileChangedError ||
-  cause instanceof NonRegularFileReadError ||
-  isSelectedRegularFileError(cause) ||
-  DENIED_CODES.has((cause as NodeJS.ErrnoException).code ?? "");
-const COMMAND_TIMEOUT_MS = 30_000;
-const COMMAND_MAX_BUFFER = 4 * 1024 * 1024;
 
 /** Which application to launch, as the caller named it. */
 export interface LinuxApplicationRequest {
@@ -81,7 +64,17 @@ export type LinuxApplicationRefusal =
 export interface LinuxApplicationFacts {
   readonly inventory: DesktopApplicationInventory;
   readonly limitations: readonly string[];
+  /** Verified apt signing keys' bytes by sha256, for the capture to retain. */
+  readonly signingKeys: ReadonlyMap<string, Buffer>;
 }
+
+/** The host commands and apt folders the inventory reads; replaceable in tests. */
+export type LinuxInventoryHost = DebianPackageHost;
+
+const LINUX_INVENTORY_HOST: LinuxInventoryHost = {
+  runQuery: runHostQuery,
+  apt: APT_LOCATIONS,
+};
 
 type Package = DesktopApplicationInventory["package"];
 
@@ -180,108 +173,6 @@ export const resolveProgram = async (
   return undefined;
 };
 
-const runQuery = async (
-  command: string,
-  arguments_: readonly string[],
-  signal: AbortSignal | undefined,
-): Promise<{ readonly stdout: string } | "missing" | "failed"> => {
-  try {
-    const { stdout } = await execFileOutput(command, arguments_, {
-      timeout: COMMAND_TIMEOUT_MS,
-      maxBuffer: COMMAND_MAX_BUFFER,
-      ...(signal === undefined ? {} : { signal }),
-    });
-    return { stdout };
-  } catch (cause: unknown) {
-    signal?.throwIfAborted();
-    return execFileOutputFailure(cause)?.code === "ENOENT"
-      ? "missing"
-      : "failed";
-  }
-};
-
-/** `/bin/x` and `/usr/bin/x` name the same file on merged-/usr systems. */
-const ownershipCandidates = (paths: readonly string[]): readonly string[] => [
-  ...new Set(
-    paths.flatMap((path) =>
-      path.startsWith("/usr/") ? [path, path.slice(4)] : [path, `/usr${path}`],
-    ),
-  ),
-];
-
-/** The apt origin of each source by index; omitted when apt could not be asked. */
-const sourceOrigins = async (
-  sources: readonly string[],
-  signal: AbortSignal | undefined,
-): Promise<Pick<Package, "source_origins">> => {
-  if (sources.length === 0) return { source_origins: [] };
-  const policy = await runQuery("apt-cache", ["policy"], signal);
-  if (typeof policy !== "object") return {};
-  const origins = parseAptPolicyOrigins(policy.stdout);
-  return {
-    source_origins: sources.map((source) => origins.get(source) ?? null),
-  };
-};
-
-const packageListsPresent = async (): Promise<boolean> =>
-  (await readdir("/var/lib/apt/lists").catch(() => [] as string[])).some(
-    (name) => /_Packages(?:\.[a-z0-9]+)?$/u.test(name),
-  );
-
-const debianPackage = async (
-  paths: readonly string[],
-  signal: AbortSignal | undefined,
-  limitations: string[],
-): Promise<Package> => {
-  const unknown: Package = {
-    kind: "unknown",
-    name: null,
-    version: null,
-    architecture: null,
-    sources: [],
-    package_lists_present: null,
-  };
-  for (const path of ownershipCandidates(paths)) {
-    const owners = await runQuery("dpkg-query", ["-S", path], signal);
-    if (owners === "missing") {
-      limitations.push(
-        "dpkg-query is not installed, so the package that owns the executable is unknown.",
-      );
-      return unknown;
-    }
-    if (owners === "failed") continue;
-    const [name] = parseDpkgOwners(owners.stdout, path);
-    if (name === undefined) continue;
-    const status = await runQuery(
-      "dpkg-query",
-      ["-W", `-f=${DPKG_STATUS_FORMAT}`, name],
-      signal,
-    );
-    const parsed =
-      typeof status === "object" ? parseDpkgStatus(status.stdout) : undefined;
-    const policy = await runQuery("apt-cache", ["policy", name], signal);
-    const listsPresent = await packageListsPresent();
-    if (!listsPresent)
-      limitations.push(
-        "No apt package lists are present, so whether the installed version comes from a package archive is unknown.",
-      );
-    const sources =
-      typeof policy === "object"
-        ? [...parseAptPolicySources(policy.stdout)]
-        : [];
-    return {
-      kind: "deb",
-      name: parsed?.name ?? name,
-      version: parsed?.version ?? null,
-      architecture: parsed?.architecture ?? null,
-      sources,
-      ...(await sourceOrigins(sources, signal)),
-      package_lists_present: listsPresent,
-    };
-  }
-  return unknown;
-};
-
 const readHeader = async (
   path: string,
   signal: AbortSignal | undefined,
@@ -313,8 +204,7 @@ interface ProgramLocation {
 
 const identifyPackage = async (
   { program, resolved, flatpak }: ProgramLocation,
-  signal: AbortSignal | undefined,
-  limitations: string[],
+  context: InventoryContext,
 ): Promise<Package> => {
   const base = {
     version: null,
@@ -331,13 +221,13 @@ const identifyPackage = async (
     return { kind: "flatpak", name: fromPath.name, ...base };
   if (
     fromPath?.kind === "appimage" ||
-    isAppImageHeader(await readHeader(resolved ?? program, signal))
+    isAppImageHeader(await readHeader(resolved ?? program, context.signal))
   )
     return { kind: "appimage", name: basename(resolved ?? program), ...base };
   return debianPackage(
     [program, ...(resolved === null ? [] : [resolved])],
-    signal,
-    limitations,
+    resolved ?? program,
+    context,
   );
 };
 
@@ -488,6 +378,7 @@ const stateNames = (
 export const inspectLinuxApplication = async (
   request: LinuxApplicationRequest,
   signal?: AbortSignal,
+  host: LinuxInventoryHost = LINUX_INVENTORY_HOST,
 ): Promise<Result<LinuxApplicationFacts, LinuxApplicationRefusal>> => {
   const command = await launchCommand(request, signal);
   if (!command.ok) return command;
@@ -498,12 +389,17 @@ export const inspectLinuxApplication = async (
   if (path === undefined)
     return err({ reason: "executable_not_found", program });
   const resolved = await realpath(path).catch(() => null);
-  const limitations: string[] = [];
+  const context: InventoryContext = {
+    host,
+    signal,
+    limitations: [],
+    signingKeys: new Map(),
+  };
+  const { limitations, signingKeys } = context;
   const flatpak = wrapper.kind === "flatpak" ? wrapper.application_id : null;
   const package_ = await identifyPackage(
     { program: path, resolved, flatpak },
-    signal,
-    limitations,
+    context,
   );
   const sandboxDirectories = [
     ...(package_.kind === "snap" && package_.name !== null
@@ -536,5 +432,6 @@ export const inspectLinuxApplication = async (
       ),
     },
     limitations,
+    signingKeys,
   });
 };

@@ -116,7 +116,39 @@ architecture and the apt sources that list the installed version, with the
 origin (`o=`) apt reports for each source in `source_origins`, such as `Ubuntu`
 for the Ubuntu archive and its mirrors or `LP-PPA-<name>` for a PPA; an empty
 source list means the version came from a local `.deb` or the package lists
-are missing, which `package_lists_present` tells apart. Snaps, flatpaks and
+are missing, which `package_lists_present` tells apart.
+
+Each source whose origin is not `Ubuntu` is also recorded in
+`apt_repositories`, with the sources file entry that configures it
+(`sources_file`, `uri`, `suite` and `components`; no components for a flat
+repository such as Typora's `deb https://downloads.typora.io/linux ./`) and
+the key that signs it. The key is found by verification, not by name: the
+candidates are the entry's `signed-by` keyrings, or else every `.gpg` and
+`.asc` key in `/etc/apt/trusted.gpg.d` and `/etc/apt/trusted.gpg`, and each is
+checked with `gpgv` against the repository's signed release in
+`/var/lib/apt/lists` (`InRelease`, or `Release` with `Release.gpg`). Each
+candidate is copied, an armored key decoded to a binary keyring, into a
+private temporary folder that is removed afterwards. The key that verifies is
+recorded in `signing_key` with its path, SHA-256, format (`binary` or
+`armored`) and fingerprint, and its bytes are retained under `content/`. When
+no candidate verifies, `gpgv` is missing, apt holds no signed release, no
+sources entry matches, or the entry's `Signed-By` holds the key itself,
+`signing_key` is null and `signing_key_reason` says why.
+
+`library_packages` lists the packages that own the shared libraries the
+executable loads at start. REA reads DT_NEEDED from the resolved executable
+and from each library it finds, looks each soname up in the needing image's
+RUNPATH or RPATH (with `$ORIGIN` expanded) and then in the `ldconfig -p` cache
+entries for the executable's machine, and asks `dpkg-query -S` for each
+library's package. Libraries in the executable's own folder belong to the
+application: they are walked but not listed, and neither is the application's
+own package. Sonames found nowhere are listed in `missing_libraries`, and
+libraries no package owns in `unpackaged_libraries`. `library_packages_reason`
+says why the lists are incomplete: the executable is not an ELF image (a
+launcher script, for example), `ldconfig` or `dpkg-query` is missing, a
+library could not be read, or the walk stopped after 512 libraries.
+
+Snaps, flatpaks and
 AppImages are recognised from their paths, and flatpaks also from a
 `flatpak run` launch. Electron applications are marked by
 the fuse sentinel in their binary or a `resources/app.asar` beside it. State

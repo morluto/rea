@@ -47,6 +47,7 @@ import {
   type CaptureScope,
 } from "./DesktopCaptureScope.js";
 import { CheckpointRecorder } from "./DesktopCheckpointRecorder.js";
+import { retainSigningKeys } from "./DesktopSigningKeys.js";
 
 const POLL_INTERVAL_MS = 500;
 
@@ -177,7 +178,7 @@ const admit = async (
     signal,
   );
   if (!inspected.ok) throw applicationRefusal(inspected.error);
-  const { inventory, limitations } = inspected.value;
+  const { inventory, limitations, signingKeys } = inspected.value;
   const windows = new X11WindowObserver(xprop, host.environment);
   const windowMatching = applicationWindowMatching(inventory);
   const running = await runningApplicationWindows(
@@ -202,6 +203,7 @@ const admit = async (
     output: prepared.path,
     inventory,
     limitations,
+    signingKeys,
     windows,
     windowMatching,
   };
@@ -223,6 +225,11 @@ const recordCapture = async (
   const { admitted, store } = context;
   const { scope } = context.scope;
   const { inventory, output, home } = admitted;
+  const application = await retainSigningKeys(
+    inventory,
+    admitted.signingKeys,
+    store,
+  );
   const recorder = new CheckpointRecorder(scope, store);
   await host.report("Recording the starting state.");
   await recorder.record("baseline", "baseline", 0, signal);
@@ -257,7 +264,7 @@ const recordCapture = async (
       display: admitted.display,
       home,
     },
-    application: inventory,
+    application,
     session,
     state: {
       roots: [...scope.roots],

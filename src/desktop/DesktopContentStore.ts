@@ -121,17 +121,23 @@ export class DesktopContentStore {
       this.#omissions.push({ path, reason: read.reason });
       return read;
     }
-    const sha256 = createHash("sha256").update(read.bytes).digest("hex");
-    const size = read.bytes.byteLength;
+    const stored = await this.retainBytes(read.bytes);
+    if (stored.kind === "omitted")
+      this.#omissions.push({ path, reason: stored.reason });
+    return stored;
+  }
+
+  /** Store bytes already read, such as a verified apt key; over the remaining budget they are omitted. */
+  async retainBytes(bytes: Buffer): Promise<RetainOutcome> {
+    const sha256 = createHash("sha256").update(bytes).digest("hex");
+    const size = bytes.byteLength;
     if (this.#stored.has(sha256)) return { kind: "retained", sha256, size };
-    if (size > this.#remainingBytes) {
-      this.#omissions.push({ path, reason: "budget_exhausted" });
+    if (size > this.#remainingBytes)
       return { kind: "omitted", reason: "budget_exhausted" };
-    }
     const target = join(this.#directory, sha256);
     const partial = `${target}.partial`;
     this.#writing = partial;
-    await writeFile(partial, read.bytes, { mode: 0o600, flag: "wx" });
+    await writeFile(partial, bytes, { mode: 0o600, flag: "wx" });
     await rename(partial, target);
     this.#writing = undefined;
     this.#stored.set(sha256, size);

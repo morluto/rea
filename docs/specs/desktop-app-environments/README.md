@@ -21,6 +21,9 @@ The work lands as one PR per step:
    rate.
 7. Three applications end to end: Mousepad (plain files), GnuCash saving to
    SQLite, and Joplin (Electron, SQLite).
+8. [Vendor packages](vendor-packages/spec.md): closed-source applications from
+   a vendor apt repository, with its verified signing key and the packages of
+   the libraries they load, starting with Typora.
 
 Version 1 covers Linux with X11, applications whose state lives in files or
 SQLite under the home directory, and real applications from public packages.

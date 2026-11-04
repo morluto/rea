@@ -1,0 +1,176 @@
+import { realpath, stat } from "node:fs/promises";
+
+import type { DesktopPackage } from "../domain/desktop/desktopCapture.js";
+import {
+  readElfDependencies,
+  type ElfDependencies,
+} from "../domain/desktop/elfDependencies.js";
+import {
+  libraryClosure,
+  libraryPackageNames,
+  parseLinkerCache,
+} from "../domain/desktop/libraryPackages.js";
+import {
+  ownershipCandidates,
+  parseDpkgOwners,
+} from "../domain/desktop/linuxPackages.js";
+import { err, ok, type Result } from "../domain/result.js";
+import { withOwnedRegularFile } from "../filesystem/OwnedRegularFile.js";
+import { readFileHandleRange } from "../filesystem/readFileHandleRange.js";
+import { isRefusedRead } from "./HostFileRead.js";
+import { succeeded, type QueryRunner } from "./HostQuery.js";
+
+/** The library fields of a Debian package's inventory. */
+export type LibraryPackages = Required<
+  Pick<
+    DesktopPackage,
+    "library_packages" | "missing_libraries" | "unpackaged_libraries"
+  >
+> &
+  Pick<DesktopPackage, "library_packages_reason">;
+
+/** Libraries resolved per executable; an Electron app loads about a hundred. */
+const MAX_LIBRARIES = 512;
+const OWNER_BATCH = 200;
+
+const elfDependencies = async (
+  path: string,
+  signal: AbortSignal | undefined,
+): Promise<Result<ElfDependencies, string>> => {
+  const options = {
+    symlinks: "follow" as const,
+    ...(signal === undefined ? {} : { signal }),
+  };
+  try {
+    return await withOwnedRegularFile(path, options, ({ handle, initial }) =>
+      readElfDependencies(
+        (offset, length) => readFileHandleRange(handle, offset, length),
+        initial.size,
+      ),
+    );
+  } catch (cause: unknown) {
+    signal?.throwIfAborted();
+    if (!isRefusedRead(cause)) throw cause;
+    return err("the file could not be read");
+  }
+};
+
+const isFile = async (path: string): Promise<boolean> =>
+  (await stat(path).catch(() => undefined))?.isFile() === true;
+
+/** `ldconfig -p`, which a user's PATH may not reach in /sbin. */
+const linkerCache = async (
+  runQuery: QueryRunner,
+  signal: AbortSignal | undefined,
+): Promise<string | undefined> => {
+  for (const command of ["ldconfig", "/sbin/ldconfig"]) {
+    const outcome = await runQuery(command, ["-p"], signal);
+    if (outcome !== "missing") return succeeded(outcome);
+  }
+  return undefined;
+};
+
+/** Owners of each path from batched `dpkg-query -S`, which exits 1 when some path has none. */
+const packageOwners = async (
+  paths: readonly string[],
+  runQuery: QueryRunner,
+  signal: AbortSignal | undefined,
+): Promise<Result<ReadonlyMap<string, readonly string[]>, string>> => {
+  // dpkg-query reads an argument with glob characters as a pattern.
+  const literal = paths.filter((path) => !/[*?[\\]/u.test(path));
+  const owners = new Map<string, readonly string[]>();
+  for (let start = 0; start < literal.length; start += OWNER_BATCH) {
+    const batch = literal.slice(start, start + OWNER_BATCH);
+    const outcome = await runQuery("dpkg-query", ["-S", ...batch], signal);
+    if (outcome === "missing") return err("dpkg-query is not installed");
+    if (outcome === "failed") return err("dpkg-query -S did not finish");
+    for (const path of batch) {
+      const names = parseDpkgOwners(outcome.stdout, path);
+      if (names.length > 0) owners.set(path, names);
+    }
+  }
+  return ok(owners);
+};
+
+const incompleteReason = (
+  closure: Awaited<ReturnType<typeof libraryClosure>>,
+): string | undefined => {
+  const [first] = closure.unreadable;
+  const reasons = [
+    ...(closure.truncated
+      ? [`REA stopped after ${String(MAX_LIBRARIES)} libraries`]
+      : []),
+    ...(first === undefined
+      ? []
+      : [
+          `the dependencies of ${String(closure.unreadable.length)} libraries could not be read, such as ${first.path}: ${first.reason}`,
+        ]),
+  ];
+  return reasons.length === 0 ? undefined : reasons.join("; ");
+};
+
+/**
+ * The packages owning the shared libraries an executable loads, from its
+ * DT_NEEDED closure resolved through RUNPATH, RPATH and `ldconfig -p`, with
+ * `dpkg-query -S` naming each library's package.
+ */
+export const inspectLibraryPackages = async (
+  executable: string,
+  ownPackage: string,
+  runQuery: QueryRunner,
+  signal: AbortSignal | undefined,
+): Promise<LibraryPackages> => {
+  const none = (reason: string): LibraryPackages => ({
+    library_packages: [],
+    missing_libraries: [],
+    unpackaged_libraries: [],
+    library_packages_reason: reason,
+  });
+  const root = await elfDependencies(executable, signal);
+  if (!root.ok)
+    return none(`the libraries of ${executable} were not read: ${root.error}`);
+  const cache = await linkerCache(runQuery, signal);
+  if (cache === undefined)
+    return none("ldconfig -p did not list the dynamic linker cache");
+  const closure = await libraryClosure(
+    { path: executable, dependencies: root.value },
+    parseLinkerCache(cache),
+    { dependencies: (path) => elfDependencies(path, signal), isFile },
+    MAX_LIBRARIES,
+  );
+  const located = await Promise.all(
+    closure.libraries.map(async ({ path }) => ({
+      path,
+      candidates: ownershipCandidates([
+        path,
+        ...(await realpath(path).then(
+          (physical) => [physical],
+          () => [],
+        )),
+      ]),
+    })),
+  );
+  const owners = await packageOwners(
+    located.flatMap((library) => library.candidates),
+    runQuery,
+    signal,
+  );
+  if (!owners.ok)
+    return { ...none(owners.error), missing_libraries: [...closure.missing] };
+  const names: string[] = [];
+  const unpackaged: string[] = [];
+  for (const library of located) {
+    const found = library.candidates
+      .map((candidate) => owners.value.get(candidate))
+      .find((owner) => owner !== undefined);
+    if (found === undefined) unpackaged.push(library.path);
+    else names.push(...found);
+  }
+  const reason = incompleteReason(closure);
+  return {
+    library_packages: [...libraryPackageNames(names, ownPackage)],
+    missing_libraries: [...closure.missing].sort(),
+    unpackaged_libraries: unpackaged.sort(),
+    ...(reason === undefined ? {} : { library_packages_reason: reason }),
+  };
+};
