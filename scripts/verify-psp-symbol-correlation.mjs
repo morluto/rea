@@ -185,11 +185,14 @@ try {
       subject: { digest: { sha256: targetSha256 } },
     }),
   );
-  await writeFile(labelsPath, JSON.stringify({
-    operation: "list_names",
-    normalized_result: inventory,
-    subject: { digest: { sha256: targetSha256 } },
-  }));
+  await writeFile(
+    labelsPath,
+    JSON.stringify({
+      operation: "list_names",
+      normalized_result: inventory,
+      subject: { digest: { sha256: targetSha256 } },
+    }),
+  );
   await writeFile(
     invalidSymbolsPath,
     Buffer.concat([
@@ -249,7 +252,10 @@ try {
   const wrongOperation = run(labelsPath);
   assert.notEqual(wrongOperation.status, 0);
   assert.equal(wrongOperation.stdout, "");
-  assert.match(wrongOperation.stderr, /Evidence inventory must come from list_procedures/u);
+  assert.match(
+    wrongOperation.stderr,
+    /Evidence inventory must come from list_procedures/u,
+  );
 
   const rejectedDigest = run(evidencePath, ["--target-sha256", "b".repeat(64)]);
   assert.notEqual(rejectedDigest.status, 0);
@@ -303,28 +309,48 @@ try {
   // Unbounded Unix devices report size zero to stat(), like pipes.
   // Enforce the limit on bytes read, before UTF-8 decoding or JSON parsing.
   if (process.platform !== "win32") {
-    const symbolsPipe = spawnSync(process.execPath, [
-      command,
-      "--symbols", "/dev/zero",
-      "--inventory", rawInventoryPath,
-      "--format", "sym",
-      "--source-base", settings.sourceBase,
-      "--analysis-base", settings.analysisBase,
-      "--target-sha256", targetSha256,
-    ], { encoding: "utf8" });
+    const symbolsPipe = spawnSync(
+      process.execPath,
+      [
+        command,
+        "--symbols",
+        "/dev/zero",
+        "--inventory",
+        rawInventoryPath,
+        "--format",
+        "sym",
+        "--source-base",
+        settings.sourceBase,
+        "--analysis-base",
+        settings.analysisBase,
+        "--target-sha256",
+        targetSha256,
+      ],
+      { encoding: "utf8" },
+    );
     assert.notEqual(symbolsPipe.status, 0);
     assert.equal(symbolsPipe.stdout, "");
     assert.match(symbolsPipe.stderr, /Input exceeds size limit/u);
 
-    const inventoryPipe = spawnSync(process.execPath, [
-      command,
-      "--symbols", symbolsPath,
-      "--inventory", "/dev/zero",
-      "--format", "sym",
-      "--source-base", settings.sourceBase,
-      "--analysis-base", settings.analysisBase,
-      "--target-sha256", targetSha256,
-    ], { encoding: "utf8" });
+    const inventoryPipe = spawnSync(
+      process.execPath,
+      [
+        command,
+        "--symbols",
+        symbolsPath,
+        "--inventory",
+        "/dev/zero",
+        "--format",
+        "sym",
+        "--source-base",
+        settings.sourceBase,
+        "--analysis-base",
+        settings.analysisBase,
+        "--target-sha256",
+        targetSha256,
+      ],
+      { encoding: "utf8" },
+    );
     assert.notEqual(inventoryPipe.status, 0);
     assert.equal(inventoryPipe.stdout, "");
     assert.match(inventoryPipe.stderr, /Input exceeds size limit/u);
