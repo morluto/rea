@@ -377,6 +377,12 @@ is null. `total` counts all matching heads; each page preserves complete records
 in stable unknown ID order. Filters apply before paging. Pages reflect current
 session state, so keep the unknown ledger unchanged while traversing it.
 
+`list_unknowns` only lists registered heads. Import restores the Unknown records
+present in a bundle; it does not turn residual question text embedded in Evidence
+into registry entries. An empty registry therefore does not establish that
+retained Evidence has no open questions. Inspect the relevant Evidence or its
+analysis view for its residual questions.
+
 Automatically retained workflow questions include their immutable result
 Evidence ID. Distinct results retain independent questions and source links;
 repeating the same result does not create another unknown. Workflow Evidence
