@@ -110,3 +110,26 @@ it("keeps a read stream whose flags option is invalid", () => {
     { kind: "acquire", method: "createReadStream" },
   ]);
 });
+
+/**
+ * Review finding: a no-expression template literal is exactly readable, so it is the
+ * same flag string Node receives.
+ *
+ *   fs.openSync(p, `rb`)  -> THREW ERR_INVALID_ARG_VALUE
+ *   fs.openSync(p, `r`)   -> ok
+ */
+it.each([
+  ["a rejected template flag", 'openSync("x", `rb`)'],
+  ["another rejected template flag", 'openSync("x", `bad`)'],
+] as const)("emits no fs acquisition for %s", (_name, call) => {
+  expect(acquisitionsFor(call)).toEqual([]);
+});
+
+it.each([
+  ["an accepted template flag", 'openSync("x", `r`)'],
+  ["an interpolated template flag", 'openSync("x", `${flag}`)'],
+] as const)("keeps the fs acquisition for %s", (_name, call) => {
+  expect(acquisitionsFor(call)).toEqual([
+    { kind: "acquire", method: "openSync" },
+  ]);
+});

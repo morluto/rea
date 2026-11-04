@@ -93,7 +93,15 @@ const rejectsOpenFlagLiteral = (
   const flag = node.arguments[1];
   if (flag === undefined || t.isSpreadElement(flag)) return false;
   const value = unwrapJavaScriptExpression(flag).node;
-  if (t.isStringLiteral(value)) return !FS_OPEN_FLAGS.has(value.value);
+  // A no-expression template literal is exactly readable, so it is the same flag
+  // string Node receives.
+  const flagText = t.isStringLiteral(value)
+    ? value.value
+    : t.isTemplateLiteral(value) && value.expressions.length === 0
+      ? value.quasis[0]?.value.cooked
+      : undefined;
+  if (flagText !== undefined && flagText !== null)
+    return !FS_OPEN_FLAGS.has(flagText);
   // A non-integer or out-of-int32 value is not a usable bitmask. The sign alone
   // does not decide: Node accepts some signed bitmasks such as `-2147483648` and
   // rejects others such as `-1`, so an in-range negative is left undecided.
