@@ -64,6 +64,13 @@ export const fileWorkDeadline = (
 
 const ignore = (): void => undefined;
 
+/** Work left behind on one path, and the calls waiting for it to settle. */
+interface LeftWork {
+  readonly steps: Set<Promise<void>>;
+  /** Each wakes one waiting call, which removes it when it stops waiting. */
+  readonly waiters: Set<() => void>;
+}
+
 /**
  * The owner of file-system work that its caller cannot cancel. A stalled mount
  * holds a `stat`, an `access` or a stream's open, read or close, and a libuv
@@ -78,11 +85,11 @@ const ignore = (): void => undefined;
  */
 export class FileWork {
   /** Work left behind, by path, shared by every scope of one owner. */
-  readonly #left: Map<string, Set<Promise<void>>>;
+  readonly #left: Map<string, LeftWork>;
   /** Work this scope left behind. */
   readonly #own = new Set<Promise<void>>();
 
-  constructor(left = new Map<string, Set<Promise<void>>>()) {
+  constructor(left = new Map<string, LeftWork>()) {
     this.#left = left;
   }
 
@@ -106,7 +113,15 @@ export class FileWork {
       earlier !== undefined;
       earlier = this.#left.get(path)
     ) {
-      const waited = await deadline.race(Promise.all(earlier));
+      // A waiter the call removes, since a reaction on the left-behind work
+      // would stay attached after the call stops waiting.
+      let wake!: () => void;
+      const settled = new Promise<void>((resolve) => {
+        wake = resolve;
+      });
+      earlier.waiters.add(wake);
+      const waited = await deadline.race(settled);
+      earlier.waiters.delete(wake);
       if (waited.status === "interrupted") return waited;
     }
     if (deadline.ended !== undefined)
@@ -131,15 +146,19 @@ export class FileWork {
 
   #leave(path: string, step: Promise<unknown>): void {
     const settled = step.then(ignore, ignore);
-    const held = this.#left.get(path) ?? new Set<Promise<void>>();
+    const held = this.#left.get(path) ?? {
+      steps: new Set(),
+      waiters: new Set(),
+    };
     this.#left.set(path, held);
-    held.add(settled);
+    held.steps.add(settled);
     this.#own.add(settled);
     void settled.then(() => {
-      held.delete(settled);
+      held.steps.delete(settled);
       this.#own.delete(settled);
-      if (held.size === 0 && this.#left.get(path) === held)
-        this.#left.delete(path);
+      if (held.steps.size > 0) return;
+      if (this.#left.get(path) === held) this.#left.delete(path);
+      for (const wake of held.waiters) wake();
     });
   }
 }
