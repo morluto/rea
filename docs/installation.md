@@ -368,8 +368,14 @@ registration, the installed skill and optional analysis engines; its overall
 `healthy` value can be false while your chosen workflow works.
 
 Doctor's `providerInspections` are host-level engine and registration checks,
-not a readiness row for every advertised MCP adapter surface. `tools/list`
-remains the complete stable catalog. Call `binary_session` with `{}` before
+not a readiness row for every advertised MCP adapter surface. They cover the
+bring-your-own deep-analysis engines that doctor can inspect: currently Ghidra,
+IDA, JADX and Kuna, with Hopper reported through its own doctor checks. Counts
+such as `identity.catalog.counts.mcp_tools` and each tool's `surface` describe
+the advertised catalog, not host readiness. A surface with no
+`providerInspections` row, such as `adb-provider` or `browser-provider`, is not
+inspected by doctor; its absence is not a failure. `tools/list` remains the
+complete stable catalog. Call `binary_session` with `{}` before
 choosing an operation; it works before a target is opened, and
 `result.tool_availability` reports per-operation availability, reasons and
 client requirements for the current session state. It does not guarantee that
