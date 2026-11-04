@@ -389,7 +389,8 @@ export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
     return super.registerPrompt(name, config, callback);
   }
   private readonly compactPresentation:
-    CompactInputSchemaPresentation | undefined;
+    | CompactInputSchemaPresentation
+    | undefined;
   private readonly maximumInputElements: number;
   private readonly evidenceReferenceAlternatives = new Set<string>();
 
@@ -406,7 +407,8 @@ export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
     private readonly outputSchemaProfile: McpOutputSchemaProfile = "full",
     identity?: ReturnType<typeof createCatalogIdentity>,
     readonly advertisedToolFamilies:
-      ReadonlySet<string> | undefined = undefined,
+      | ReadonlySet<string>
+      | undefined = undefined,
   ) {
     const maximumInputElements =
       options.maxToolInputElements ?? DEFAULT_MCP_MAX_INPUT_ELEMENTS;
@@ -602,7 +604,8 @@ class ErrorEvidenceTransport implements Transport {
   constructor(
     private readonly transport: Transport,
     private readonly currentEvidenceWriter: () =>
-      EvidenceWriter["recordEvidence"] | undefined,
+      | EvidenceWriter["recordEvidence"]
+      | undefined,
     private readonly currentDelivery: () => ToolResultDelivery,
     private readonly currentAdmission: () => WithAdmittedAnalysis | undefined,
     private readonly outputSchemaProfile: McpOutputSchemaProfile,

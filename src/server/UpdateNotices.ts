@@ -61,7 +61,8 @@ export class UpdateNotices {
   private controller: AbortController | undefined;
   private checkedAt: number | undefined;
   private latest:
-    { readonly version: string; readonly observedAt: number } | undefined;
+    | { readonly version: string; readonly observedAt: number }
+    | undefined;
   private readonly announced = new Set<string>();
   private closed = false;
 
