@@ -28,21 +28,22 @@ import { err, ok } from "../../../src/domain/result.js";
 
 type DeclaredOperation = Exclude<AnalysisOperation, "health">;
 
+it("rejects provider identity and operation-family collisions at composition", () => {
+  const alpha = deepProvider("alpha");
+  const registry = new AnalysisProviderRegistry([alpha.provider]);
+  expect(() =>
+    SessionProviderRouter.selectable(registry, [auxiliaryProvider("alpha")]),
+  ).toThrow(/Duplicate configured provider ID: alpha/u);
+  expect(() =>
+    SessionProviderRouter.selectable(registry, [
+      auxiliaryProvider("auxiliary", "address_name"),
+    ]),
+  ).toThrow(
+    /Deep and auxiliary providers both declare operation address_name/u,
+  );
+});
+
 describe("target-bound provider routing", () => {
-  it("rejects provider identity and operation-family collisions at composition", () => {
-    const alpha = deepProvider("alpha");
-    const registry = new AnalysisProviderRegistry([alpha.provider]);
-    expect(() =>
-      SessionProviderRouter.selectable(registry, [auxiliaryProvider("alpha")]),
-    ).toThrow(/Duplicate configured provider ID: alpha/u);
-    expect(() =>
-      SessionProviderRouter.selectable(registry, [
-        auxiliaryProvider("auxiliary", "address_name"),
-      ]),
-    ).toThrow(
-      /Deep and auxiliary providers both declare operation address_name/u,
-    );
-  });
   it("binds one overlapping provider, preserves provenance, and never falls back", async () => {
     const target = await databaseTarget();
     const alpha = deepProvider("alpha");

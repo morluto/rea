@@ -632,7 +632,7 @@ const expectQueuedOpenReceipt = async (
   }
 };
 
-it("reports confirmed snapshot binding differences and keeps the active session", async () => {
+const writeSnapshotMismatchTargets = async () => {
   const testDirectory = await createTestTempDirectory(
     "rea-snapshot-mismatch-mcp-",
   );
@@ -641,6 +641,12 @@ it("reports confirmed snapshot binding differences and keeps the active session"
   const snapshotPath = join(testDirectory, "analysis.json");
   await writeFile(first, "first fixture");
   await writeFile(second, "second fixture");
+  return { testDirectory, first, second, snapshotPath };
+};
+
+it("reports confirmed snapshot binding differences and keeps the active session", async () => {
+  const { testDirectory, first, second, snapshotPath } =
+    await writeSnapshotMismatchTargets();
   const sha = (value: string) =>
     createHash("sha256").update(value).digest("hex");
   let revision = 1;
