@@ -590,6 +590,7 @@
 * **mcp:** bound validation work before tool dispatch ([#7905](https://github.com/morluto/rea/issues/7905)) ([f60e42a](https://github.com/morluto/rea/commit/f60e42a9aece5119719e554715b012b5630735c0))
 * **mcp:** distinguish unavailable batch pseudocode ([#8737](https://github.com/morluto/rea/issues/8737)) ([d896ab7](https://github.com/morluto/rea/commit/d896ab7bd78331efa15e35337c1f8eff45a21623))
 * **mcp:** distinguish validation from connection loss ([#7761](https://github.com/morluto/rea/issues/7761)) ([df7119a](https://github.com/morluto/rea/commit/df7119aeede60f9f81a74f29d6606c49adb79d8e))
+* **mcp:** expose bounded parameter type view ([#8782](https://github.com/morluto/rea/issues/8782)) ([1951cdc](https://github.com/morluto/rea/commit/1951cdc98038fe16cb6c1981c3a14bca936d13b8))
 * **mcp:** fit every advertised input schema within the 64 KiB client limit ([#7119](https://github.com/morluto/rea/issues/7119)) ([7336a56](https://github.com/morluto/rea/commit/7336a566ace2f9d1412f78b0c56c2651b9b169cd))
 * **mcp:** guide address context recovery ([#8766](https://github.com/morluto/rea/issues/8766)) ([5a1f754](https://github.com/morluto/rea/commit/5a1f75461ac843f32423afd49c9e8b69a116b879))
 * **mcp:** guide oversized unknown recovery ([#7876](https://github.com/morluto/rea/issues/7876)) ([2aa0d45](https://github.com/morluto/rea/commit/2aa0d45e1382435669fa82e97f839640f8699780))
