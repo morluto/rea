@@ -363,8 +363,10 @@ export function* readWasmModuleImageSteps(
   let low = Infinity;
   let high = 0;
   for (const { base, functions } of elements) {
-    // Instantiation traps when a segment ends past the initial table.
-    if (base + functions.length > minimum!)
+    // Instantiation traps when a segment ends past the initial table. An
+    // imported table may be larger than its declared minimum, so only a
+    // defined one is judged here; the caller refuses imported tables.
+    if (!tableImported && base + functions.length > minimum!)
       throw malformed(
         `element segment at slot ${base} ends past the ${minimum} initial table slots`,
       );

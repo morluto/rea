@@ -2157,6 +2157,51 @@ it("refuses a wasm module that imports its function table", () => {
   });
 });
 
+it("refuses an imported table as unsupported even when a segment passes its declared minimum", () => {
+  // env.table declares minimum 4; the host may supply more, so a segment
+  // at slot 6 is not damage but a table the module does not determine.
+  const name = (text: string) => [text.length, ...Buffer.from(text)];
+  const imports = [1, ...name("env"), ...name("table"), 0x01, 0x70, 0x00, 4];
+  const types = [1, 0x60, 0, 0];
+  const functions = [1, 0];
+  const elements = [1, 0x00, 0x41, 6, 0x0b, 1, 0];
+  const code = [1, 2, 0, 0x0b];
+  const section = (id: number, body: number[]) => [id, body.length, ...body];
+  const bytes = Buffer.from([
+    0x00,
+    0x61,
+    0x73,
+    0x6d,
+    1,
+    0,
+    0,
+    0,
+    ...section(1, types),
+    ...section(2, imports),
+    ...section(3, functions),
+    ...section(9, elements),
+    ...section(10, code),
+  ]);
+  expect(failure(bytes)).toEqual({
+    reason: "unsupported-container",
+    kind: "unsupported",
+  });
+});
+
+it("names wasm32 among the formats IL2CPP links when the binary is none of them", () => {
+  try {
+    link(Buffer.from("not a binary at all"));
+  } catch (cause) {
+    expect(cause).toBeInstanceOf(Il2cppBinaryFormatFailure);
+    expect((cause as Il2cppBinaryFormatFailure).reason).toBe(
+      "unsupported-container",
+    );
+    expect((cause as Error).message).toMatch(/WebAssembly \(wasm32\)/);
+    return;
+  }
+  throw new Error("expected a link failure");
+});
+
 it("covers a wasm pointer array that runs from the last segment into zero fill", () => {
   // The only segment ends at 0x201 (16 + 497 bytes); 20 slots from 0x200 reach 0x250.
   const image = drain(

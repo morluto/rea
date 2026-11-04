@@ -242,7 +242,10 @@ export function* openImageSteps(
         cause.kind === "unsupported"
           ? "unsupported-container"
           : "malformed-container",
-        cause.message,
+        // The shared reader names native formats only; IL2CPP also links wasm32.
+        cause.kind === "unsupported"
+          ? `${cause.message}; IL2CPP linking also reads uncompressed WebAssembly (wasm32) modules`
+          : cause.message,
       );
     throw cause;
   }
