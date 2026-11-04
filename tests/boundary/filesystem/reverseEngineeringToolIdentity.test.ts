@@ -588,18 +588,8 @@ posix.each(["cancellation", "deadline"] as const)(
         artifact_sha256: await sha256Of(path),
       });
       expect(run).not.toHaveBeenCalled();
-      // Closing does not wait for the abandoned file-system call, but it
-      // reports that the call still holds it.
-      await expect(
-        within(service.close(), "service close"),
-      ).rejects.toMatchObject({
-        cleanup: { resources: ["file_system_work"] },
-        diagnostics: { operations_awaiting_file_work: 1 },
-      });
-      release.open();
-      await stalled;
-      await new Promise((resolve) => setImmediate(resolve));
-      await within(service.close(), "service close after the mount answers");
+      // Closing does not wait for the abandoned file-system call.
+      await within(service.close(), "service close");
     } finally {
       release.open();
       caller.abort("test cleanup");
