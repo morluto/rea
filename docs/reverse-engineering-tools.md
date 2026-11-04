@@ -185,10 +185,11 @@ a retryable capacity error (`file_steps_held`, `max_held_file_steps`) and starts
 nothing, which keeps file access working for REA's other tools. A retry on a
 path that already has stalled work waits and takes no thread. Process capture's
 executable lookup has no deadline, so it could not give up a share of the budget
-and stays outside it. Closing the service does not wait for that work, which a mount that
-never answers would hold forever. An MCP server's process cannot end on its own
-until the work returns. The CLI writes its result and then exits explicitly; a
-system call the kernel treats as uninterruptible can still hold the process.
+and stays outside it. Closing the service does not wait for that work, which a
+mount that never answers would hold forever. The process cannot exit until that
+work returns, even through `process.exit()`, because Node joins its pool threads
+at exit. A CLI command therefore prints its result and then stays alive until
+the mount answers.
 
 Captured stdout and stderr are retained up to a 16 MiB combined limit; `output_truncated` marks output beyond that limit. One-shot commands use the `command_timeout_ms` budget described above. That 16 MiB cap has no runtime override. A typed failure's `captured_output` marks a stream that held invalid UTF-8 with `stdout_invalid_utf8` or `stderr_invalid_utf8`.
 
