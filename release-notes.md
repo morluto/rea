@@ -7,6 +7,8 @@
 
 ### ⚠ BREAKING CHANGES
 
+* **browser:** hosts where Chromium cannot create its sandbox, such as root users and Linux containers without user namespaces or a setuid sandbox, now fail to launch until REA_BROWSER_NO_SANDBOX=true is set.
+* **analysis-view:** distinguish unavailable native collections ([#8291](https://github.com/morluto/rea/issues/8291))
 * **objdump:** preserve unknown executable identity ([#8824](https://github.com/morluto/rea/issues/8824))
 * **kuna:** separate verification policy from analysis identity ([#8699](https://github.com/morluto/rea/issues/8699))
 * Strict clients that cached the previous full inspect_address_context output schema must refresh tools/list and accept the typed error field on unavailable facets.
@@ -125,6 +127,7 @@
 * **adb:** retain output on command failures ([6de6099](https://github.com/morluto/rea/commit/6de60993b861266e63a4e70d5c6d9a8073f7cd92))
 * **adb:** validate screen capture PNG headers ([#7962](https://github.com/morluto/rea/issues/7962)) ([f7cd4e5](https://github.com/morluto/rea/commit/f7cd4e5256441f69ddb7a3e78167b200460a6601))
 * **adb:** verify pushes to long device paths ([#8047](https://github.com/morluto/rea/issues/8047)) ([1da304b](https://github.com/morluto/rea/commit/1da304b28213ca7a50f6787eae716abe73c4e628))
+* **analysis-view:** distinguish unavailable native collections ([#8291](https://github.com/morluto/rea/issues/8291)) ([b1b6cb6](https://github.com/morluto/rea/commit/b1b6cb64c2c9b0765e0ff6d6f48740140767d5fd))
 * **analysis-view:** keep inferred confidence on views of inferred Evidence ([#8099](https://github.com/morluto/rea/issues/8099)) ([bfa082f](https://github.com/morluto/rea/commit/bfa082f77774a33f4a7d72ed6570429d9d294dc7)), closes [#8098](https://github.com/morluto/rea/issues/8098)
 * **analysis:** interpret provider and ELF inputs once ([248133d](https://github.com/morluto/rea/commit/248133d784522488b01296391a0eea3eabbd7567))
 * **analysis:** preserve bookmark address uncertainty ([2b85a4a](https://github.com/morluto/rea/commit/2b85a4a2bafc82e3d8c8b4024f00216e9f9e8ff7))
@@ -201,6 +204,7 @@
 * **browser:** isolate unrepresentable script export paths ([e23cb3b](https://github.com/morluto/rea/commit/e23cb3b240c6af779f6dd75429dda515bbdbbdf4))
 * **browser:** keep negative script columns Chrome reports ([#8684](https://github.com/morluto/rea/issues/8684)) ([8db538a](https://github.com/morluto/rea/commit/8db538a7ca85318d320e83fd8d4d714cfd978c14))
 * **browser:** keep opaque cookie partitions unaligned ([#7203](https://github.com/morluto/rea/issues/7203)) ([6749bd0](https://github.com/morluto/rea/commit/6749bd090dc1b5a31ad60a8932e8fbad48f814e6))
+* **browser:** keep the Chromium sandbox for REA-launched browsers ([#8738](https://github.com/morluto/rea/issues/8738)) ([30a11af](https://github.com/morluto/rea/commit/30a11af92362ff34d716eefd34658ce49b3beca7))
 * **browser:** normalize discovery wire facts at the shared boundary ([#7204](https://github.com/morluto/rea/issues/7204)) ([1cd8259](https://github.com/morluto/rea/commit/1cd82597da9711454415f2702c7e44ea153c4438))
 * **browser:** parse HTTP Link whitespace correctly ([b989e3c](https://github.com/morluto/rea/commit/b989e3c3a38fef51968b2706f8fb94c335f83190))
 * **browser:** preserve comparison evidence identity ([76441ed](https://github.com/morluto/rea/commit/76441ed31b282e5b0f31c0679764277c71884400))
