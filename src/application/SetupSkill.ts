@@ -20,6 +20,7 @@ import { preserveCurrentRecoveryBackup } from "./SetupRecoveryBackup.js";
 import {
   SkillFilePublication,
   SkillFilePreparationFailure,
+  SkillDestinationChangedError,
   type SkillFileSnapshot,
   type SkillPublicationCleanupOwner,
 } from "./SkillFilePublication.js";
@@ -42,21 +43,27 @@ export const isManagedSkillManifest = (content: string): boolean =>
 export const readSkillFile = (
   path: string,
   resources?: ArtifactResourceScope,
+  maxBytes = Number.MAX_SAFE_INTEGER,
 ): Promise<string> =>
-  readSkillFileSnapshot(path, resources).then(({ bytes }) =>
+  readSkillFileSnapshot(path, resources, maxBytes).then(({ bytes }) =>
     bytes.toString("utf8"),
   );
 
 const readSkillFileSnapshot = async (
   path: string,
   resources?: ArtifactResourceScope,
+  maxBytes = Number.MAX_SAFE_INTEGER,
 ): Promise<SkillFileSnapshot> =>
   withRegularFile(
     path,
     async (handle, stats) => {
-      const bytes = await readBoundedFileBytes(handle, stats.size, {
-        expectedSize: stats.size,
-      });
+      const bytes = await readBoundedFileBytes(
+        handle,
+        Math.min(stats.size, maxBytes),
+        {
+          expectedSize: stats.size,
+        },
+      );
       if (bytes === undefined || bytes.length !== stats.size)
         throw new RegularFileChangedError(path);
       return { bytes, mode: stats.mode & 0o7777, state: stats };
@@ -102,6 +109,7 @@ export class SetupSkillInstallError extends Error {
   readonly rollbackFailures: readonly SkillInstallRollbackFailure[];
   readonly recoveryBackupPaths: readonly string[];
   readonly cleanupOwners: readonly SkillPublicationCleanupOwner[];
+  readonly remediationAction: string;
 
   /** Retry only retained staging cleanup; never reapply a pathname rollback. */
   async retryCleanup(): Promise<readonly SkillInstallRollbackFailure[]> {
@@ -115,10 +123,12 @@ export class SetupSkillInstallError extends Error {
     readonly rollbackFailures: readonly SkillInstallRollbackFailure[];
     readonly recoveryBackupPaths: readonly string[];
     readonly cleanupOwners?: readonly SkillPublicationCleanupOwner[];
+    readonly remediationAction?: string;
     readonly cause: unknown;
   }) {
     const message = [
-      `REA skill ${input.stage} failed at ${input.path}: ${input.reason}.`,
+      `REA skill ${input.stage} failed at ${input.path}.`,
+      `Reason: ${input.reason}`,
       ...(input.rollbackFailures.length === 0
         ? []
         : [
@@ -129,7 +139,7 @@ export class SetupSkillInstallError extends Error {
         : [
             `Existing-file backups remain at ${input.recoveryBackupPaths.join(", ")}.`,
           ]),
-    ].join(" ");
+    ].join("\n");
     super(message, { cause: input.cause });
     this.path = input.path;
     this.stage = input.stage;
@@ -137,10 +147,15 @@ export class SetupSkillInstallError extends Error {
     this.rollbackFailures = input.rollbackFailures;
     this.recoveryBackupPaths = input.recoveryBackupPaths;
     this.cleanupOwners = input.cleanupOwners ?? [];
+    this.remediationAction =
+      input.remediationAction ??
+      "Correct the reported skill installation failure and rerun setup.";
   }
 
   get remediation(): string {
-    return `${this.message} Check permissions and rerun setup.`;
+    if (this.cause instanceof SkillDestinationChangedError)
+      return `${this.message}\nStop concurrent setup activity, inspect the destination and any reported rollback failures, then retry setup.`;
+    return `${this.message}\n${this.remediationAction}`;
   }
 }
 
@@ -318,6 +333,12 @@ const inspectSkillDirectory = async (
   } catch (cause: unknown) {
     if (cause instanceof Error && "code" in cause && cause.code === "ENOENT")
       return ok(undefined);
+    if (cause instanceof Error && "code" in cause && cause.code === "ENOTDIR")
+      return err({
+        path,
+        kind: "not_directory",
+        detail: "A component of the skill path is not a directory (ENOTDIR).",
+      });
     return err({
       path,
       kind: "unreadable",
@@ -350,7 +371,16 @@ const skillDirectoryFailure = (
   new SetupSkillInstallError({
     path: issues[0]?.path ?? "skill bundle",
     stage: "prepare",
-    reason: `${issues.map(({ path, detail }) => `${detail} (${path})`).join(" ")} Use a regular skill directory, or run setup with --skill=false to configure the client without installing the skill`,
+    reason: issues
+      .map(({ path, detail }, index) =>
+        index === 0 ? detail : `${path}: ${detail}`,
+      )
+      .join("\n"),
+    remediationAction: issues.some(
+      ({ kind }) => kind === "unreadable" || kind === "unresolved",
+    )
+      ? "Resolve the reported skill directory inspection failure, or run setup with --skill=false to configure the client without installing the skill."
+      : "Use a regular skill directory, or run setup with --skill=false to configure the client without installing the skill.",
     rollbackFailures: [],
     recoveryBackupPaths: [],
     cause: issues,

@@ -12,6 +12,53 @@ import { AnalysisCapabilityUnavailableError } from "../../../src/domain/analysis
 import { FridaInstrumentationManager } from "../../../src/frida/FridaInstrumentationManager.js";
 
 it.each([
+  {
+    option: "--device-id",
+    value: "missing-device",
+    error: "Device not found",
+    field: "device_id",
+    code: "provider_timeout",
+  },
+  {
+    option: "--remote-address",
+    value: "127.0.0.1:27042",
+    error: "Unable to connect to remote frida-server",
+    field: "remote_address",
+    code: "capability_unavailable",
+  },
+])(
+  "retains selected Frida endpoint in CLI discovery failures: $field",
+  async ({ option, value, error, field, code }) => {
+    const bindings = {
+      getDeviceById: async () => {
+        throw new Error(error);
+      },
+      addRemoteDevice: async () => {
+        throw new Error(error);
+      },
+    } as unknown as DeviceManager;
+    const provider = new FridaInstrumentationManager({
+      deviceManager: bindings,
+    });
+    let stdout = "";
+    await createCli({}, undefined, provider).serve(
+      ["list-frida-processes", option, value, "--json"],
+      {
+        env: {},
+        exit: () => {},
+        stdout: (text) => {
+          stdout += text;
+        },
+      },
+    );
+    expect(JSON.parse(stdout)).toMatchObject({
+      code,
+      details: { diagnostics: { [field]: value } },
+    });
+  },
+);
+
+it.each([
   { devices: [], cleanupError: null },
   {
     devices: [
@@ -360,7 +407,6 @@ it("keeps Frida script-file identity in original bytes when UTF-8 decoding repla
         .update(decodedSource, "utf8")
         .digest("hex");
       const outputText = JSON.stringify(output);
-      expect(outputText).toContain(rawDigest);
       if (name === "ff.js" || name === "fe.js") {
         expect(rawDigest).not.toBe(loadedSourceDigest);
         expect(output).toMatchObject({
@@ -372,10 +418,10 @@ it("keeps Frida script-file identity in original bytes when UTF-8 decoding repla
               loaded_source_sha256: loadedSourceDigest,
             },
           },
+          limitations: expect.arrayContaining([
+            expect.stringMatching(/replacement|original bytes/iu),
+          ]),
         });
-        expect(outputText).toMatch(
-          /limitations.*(?:replacement|original bytes)/iu,
-        );
       } else {
         expect(output).toMatchObject({
           normalized_result: { source_sha256: rawDigest },

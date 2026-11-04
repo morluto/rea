@@ -158,12 +158,12 @@ assigned by the app.
 
 Use the report's hints to decide what to record next:
 
-| Reason                          | Next step                                                                                |
-| ------------------------------- | ---------------------------------------------------------------------------------------- |
-| `unconfirmed`                   | Read the item and its list after the change.                                             |
-| `no-state-target`               | Record reads of the collection or item the operation changes.                            |
-| `no-observation`                | Read back a created item. For an edit or delete, also read it before changing it.        |
-| `contradicted` or `side-effect` | Inspect the reported disagreement. The operation may need behavior REA cannot model yet. |
+| Reason                          | Next step                                                                                                                   |
+| ------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `unconfirmed`                   | Read the item and its list after the change.                                                                                |
+| `no-state-target`               | Check the path template and recorded views; record missing reads. The route form may not be supported as a mutation target. |
+| `no-observation`                | Read back a created item. For an edit or delete, also read it before changing it.                                           |
+| `contradicted` or `side-effect` | Inspect the reported disagreement. The operation may need behavior REA cannot model yet.                                    |
 
 See the [full reason table](agent-environments.md#build-a-bundle-in-one-step)
 for the other cases. Rebuild from the new recording and check the report

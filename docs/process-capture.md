@@ -224,7 +224,30 @@ child output. Child output remains in the capture Evidence on stdout.
 resource limits, and normalization settings have defaults; see
 `processScenarioSchema` for the exact contract. Event times are milliseconds
 from launch, must be ordered, and must fall within `timeout_ms`. Inputs marked
-`sensitive` are sent to the process but persisted as a byte-count placeholder.
+`sensitive` are sent to the process but persisted with empty `data`,
+`sensitive: true`, and `input_bytes`. Exact nonempty CR/LF-separated input
+literals are removed from retained terminal text, including cross-chunk and
+VT-styled echoes. Rendering uses that redacted stream, so intermediate terminal
+states and serialized state cannot restore removed bytes. Normalized text is
+checked again. Encoded, transformed, or arbitrarily edited values are not a
+secret-detection contract; their privacy remains unknown. Unmarked inputs and
+caller-selected environment values remain evidence.
+
+The capture-local matcher admits at most 65,536 prefix states and 8,388,608
+construction work units. Projection uses at most 32 MiB of reusable position
+indexes and 67,108,864 work units across one capture. Capacity failures return a
+non-retryable resource error and withhold terminal text in partial observations.
+If output admission leaves gaps, the sensitive capture withholds retained
+terminal text rather than interpreting separated fragments as a complete stream.
+`raw_terminal.redacted_bytes` reports bytes removed from admitted original
+chunks; these bytes still consume `output_bytes` alongside retained safe bytes.
+Private display effects remain unknown, with frame order and provenance retained.
+
+This changes the sensitive-input Evidence representation: consumers of the old
+`<redacted-input:N-bytes>` placeholder must read `input_bytes` instead. Existing
+saved captures remain readable and are not rewritten; old files may still
+contain previously echoed input. A private-input comparison policy version
+separates old and new captures; reacquire both sides for comparable observations.
 Environment overrides are recorded in the scenario commitment; inherited
 values are not copied into Evidence.
 
@@ -234,7 +257,9 @@ A bare executable name uses the scenario's `PATH` override, then the inherited
 An explicitly empty `PATH` searches only the working directory. Executable,
 working-directory, and observation paths preserve native `symlink/..` traversal.
 
-Terminal dimensions must satisfy `columns × (rows + scrollback) ≤ 1,000,000`.
+Terminal width must be at least two columns: the pinned xterm renderer cannot
+represent a one-column screen. This applies to the initial size and every resize.
+Terminal dimensions must also satisfy `columns × (rows + scrollback) ≤ 1,000,000`.
 Every scheduled resize uses the same selected scrollback and must fit this
 working-buffer budget. REA rejects oversized scenarios before launching the
 command; it never clamps the requested dimensions. This limit is independent
@@ -294,7 +319,8 @@ own classification until its exact resources are released.
 
 Terminal frame `data` is the comparison text after the selected normalization.
 New captures also preserve `raw_data` when normalization changes a PTY chunk;
-otherwise `data` is already the original text. Older captures may lack the
+otherwise `data` is already that text. For sensitive captures, both fields
+contain only the safe projection; no unredacted backup is retained. Older captures may lack the
 original text for changed chunks. Both values participate in Evidence identity,
 while comparisons and trace assertions use the normalized text. Retaining the
 original adds at most `limits.output_bytes` of text, because it comes from the
@@ -329,9 +355,12 @@ recapture both sides with the same observation version before comparison.
 When path normalization is enabled, aliases apply to selected path identities
 at clear text delimiters. A selected executable path does not alias a longer
 sibling filename such as `tool-helper`; selected parent directories still
-normalize within descendant paths. The comparison contract records these rules as
-`path-component-boundaries-v2`, so captures made with the earlier prefix rules
-cannot be compared as if the text had the same meaning.
+normalize within descendant paths, including when the working directory or an
+observation path is spelled with a trailing `/` or `/.`. A selected filesystem
+root `/` also aliases descendant paths, without rewriting URL separators or
+HTML closing tags. The comparison contract
+records these rules as `path-component-boundaries-v3`, so captures made with the
+earlier rules cannot be compared as if the text had the same meaning.
 
 Rendered frame `lines` hold the visible rows after normalization, with trailing
 U+0020 spaces removed. Blank rows and internal spaces remain. `columns` records
@@ -622,6 +651,33 @@ Objective-C header modules the helper builds land there too. REA never removes
 that directory: it outlives each run, so the first compilation into a new
 directory pays a cold-cache build and later runs reuse it. An absent or empty
 value keeps the shared default.
+
+With the default `xcrun` compiler and module cache, REA also keeps one verified
+copy of the compiled helper in `~/Library/Caches/rea/process-helper/`, so later
+REA processes skip both the compile and macOS's first-launch assessment of a
+new executable. Each entry is keyed by the helper source, the `swiftc` and SDK
+that `xcrun --find swiftc` and `xcrun --show-sdk-path` resolve (their real
+paths, sizes and modification times, so `DEVELOPER_DIR`, `TOOLCHAINS`,
+`xcode-select` and in-place toolchain updates all select a new entry), the CPU
+architecture and the Darwin release. Before running an entry, REA requires the
+cache directory, the entry and its files to be owned by the current user and
+not writable by group or others, every real parent directory to be owned by
+the current user or root and not writable by others (sticky root-owned
+directories excepted), no ACL on any of them to allow another principal a
+write-class right (the default `deny delete` entries are fine), the helper and
+manifest to be regular files rather than
+links or FIFOs, and the helper's SHA-256 to match the manifest. Anything else is
+never executed and never removed, because another REA process may still be
+verifying or running that path; REA then compiles a per-process helper as
+before. A published entry is never replaced. If the cache is unavailable, for
+example under a read-only home directory, the ownership operation proceeds
+with the per-process compile. These checks reject corruption, loosened
+permissions and other users, but they do not defend against another process
+running as the same user, which could already modify REA itself. Setting
+`REA_DARWIN_SWIFTC_PATH` or `REA_DARWIN_MODULE_CACHE_PATH` keeps the per-process
+compile and writes nothing to this cache. REA does not prune old entries; each
+is about 240 KiB. Delete the directory while no REA process is running, or run
+`rea uninstall --purge-data`, to remove them.
 
 `xcrun` also maintains a separate tool-lookup cache. Its `--no-cache` option
 refreshes entries and does not guarantee a write-free lookup. To avoid that

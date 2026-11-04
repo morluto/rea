@@ -48,7 +48,7 @@ import {
 
 import { PRODUCT_IDENTITY } from "../identity.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
-import { npxRegistrationCommand } from "./ClientRegistrationIdentity.js";
+import { currentClientRegistrationCommand } from "./ClientRegistrationIdentity.js";
 import { resolveClientConfigTransactionPath } from "./ClientConfigPath.js";
 import { packageReadTargetChanged } from "./MsixPackageStorage.js";
 import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
@@ -93,9 +93,16 @@ export class ClientConfigurationCleanupRollbackFailure extends RegularFileCleanu
 export const configureClientConfiguration = async (
   client: SetupClient,
   environment: SetupProviderEnvironment = {},
-  command: readonly string[] = npxRegistrationCommand(),
+  command: readonly string[] = currentClientRegistrationCommand(),
   resolveProviderRequestBudget?: ProviderRequestBudgetResolver,
 ): Promise<ClientConfigurationResult> => {
+  if (command.length === 0)
+    return {
+      status: "failed",
+      reason: "registration_ownership",
+      detail:
+        "The running REA entrypoint could not be identified; run setup from an installed REA command.",
+    };
   if (client.configPathError !== undefined)
     return { status: "failed", reason: "path" };
   const transactionPath = await resolveClientConfigTransactionPath(
@@ -372,7 +379,6 @@ const persistClientConfiguration = async ({
       transactionPath,
       serialized.value,
       original,
-      0o600,
       { requestedPath: client.configPath, state: snapshot?.state },
     );
   } catch (cause: unknown) {

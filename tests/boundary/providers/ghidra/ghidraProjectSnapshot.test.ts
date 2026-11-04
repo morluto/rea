@@ -114,6 +114,22 @@ it("parses an opt-in project once for shared CLI/MCP configuration and rejects i
   );
 });
 
+it("accepts a blank analyzer override beside an existing project and rejects a named one", () => {
+  const environment = {
+    REA_GHIDRA_PROJECT_PATH: join(process.cwd(), "existing.gpr"),
+  };
+  for (const blank of ["", " ", ", ,"])
+    expect(
+      parseConfig({ ...environment, REA_GHIDRA_DISABLED_ANALYZERS: blank }).ok,
+    ).toBe(true);
+  expect(
+    parseConfig({
+      ...environment,
+      REA_GHIDRA_DISABLED_ANALYZERS: "Decompiler Parameter ID",
+    }).ok,
+  ).toBe(false);
+});
+
 it("reports an invalid derived program name at its selection boundary", async () => {
   const { source } = await fixture();
   await expect(
@@ -195,6 +211,21 @@ it.skipIf(process.platform === "win32")(
     ).rejects.toMatchObject({ diagnostics: { system_code: "ENOTDIR" } });
   },
 );
+
+it("reports a missing project marker as an invalid REA_GHIDRA_PROJECT_PATH selection", async () => {
+  const root = await createTestTempDirectory("rea-ghidra-project-missing-");
+  await expect(
+    resolveGhidraProject(
+      { path: join(root, "missing", "app.gpr") },
+      { path: join(root, "target") },
+      resources,
+    ),
+  ).rejects.toMatchObject({
+    _tag: "ConfigurationError",
+    settings: [{ setting: "REA_GHIDRA_PROJECT_PATH" }],
+    diagnostics: { system_code: "ENOENT" },
+  });
+});
 
 it.skipIf(process.platform === "win32")(
   "follows native parent symlinks and preserves missing marker failures",

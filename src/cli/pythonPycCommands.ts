@@ -51,6 +51,7 @@ export const registerPythonPycCommands = (
           if (!delivery.ok) return projectAnalysisError(delivery.error);
           const service = createPythonPycService();
           return deliverCliAnalysisEvidence({
+            callerInputPath: args.path,
             run: () =>
               service.inspect(
                 {

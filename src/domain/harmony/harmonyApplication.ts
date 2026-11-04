@@ -81,11 +81,11 @@ export const projectHarmonyInventory = (
   const { entries, limitations: unresolved } =
     projectedInventoryEntries(inventory);
   const all = projectedFileComponents(entries);
-  const unavailable = entries.flatMap(({ unavailable }) =>
-    unavailable === undefined ? [] : [unavailable],
-  );
   const fileEntries = entries.filter(
     ({ kind }) => kind === "file" || kind === "slice",
+  );
+  const unavailable = fileEntries.flatMap(({ unavailable }) =>
+    unavailable === undefined ? [] : [unavailable],
   );
   const children: HarmonyApplicationProjectionResult["app_pack_children"] = [];
   if (rootFormat === "app-pack") {
@@ -109,7 +109,7 @@ export const projectHarmonyInventory = (
       : []),
     ...(unavailable.length > 0
       ? [
-          "Some inventoried occurrences have no authenticated content identity. Their paths and limitations are retained in unavailable_components; component and runtime absence is unknown.",
+          "Some inventoried files or slices have no authenticated content identity. Their paths and limitations are retained in unavailable_components; component and runtime absence is unknown.",
         ]
       : []),
     "Manifest, module, resource, and signing semantics require a dedicated HarmonyOS provider; this projection reports exact inventory paths and hashes only.",

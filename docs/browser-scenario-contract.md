@@ -411,8 +411,10 @@ data you may change. This scenario creates one item:
 - Request steps follow no redirects: a redirect answer fails the step, and
   nothing is sent to the location it names, though a write the redirect
   answered may already have been applied. `expected_status` cannot name a 3xx
-  status. Give the path the redirect names; with header values selected, the
-  capture records its `Location`.
+  status. Manual redirects can be opaque to the page and may not produce a
+  response event; their status and `Location` can therefore be unavailable even
+  when network events and header values were selected. Such captures report
+  incomplete event coverage.
 - Header values are literals, declared secrets, a cookie the browser holds for
   the request URL (`{"source": "cookie", "name"}`, HttpOnly cookies included,
   whose value the page's scripts can then see while the request runs), or a

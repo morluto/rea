@@ -16,6 +16,7 @@ import {
   identityCandidates,
   isObject,
   isQueryPost,
+  isSafeHttpMethod,
   stateValueRetentionBytes,
   lastSegmentValue,
   STATE_BODY_LIMIT_BYTES,
@@ -331,7 +332,7 @@ export class EnvironmentStateExtraction {
     this.#views.set(tool.name, { tool: tool.name, shape: "recorded", reason });
   }
 
-  /** GET tools may render from state; query POSTs stay recorded. */
+  /** GET tools may render from state; other safe methods and query POSTs replay. */
   #candidates(): Candidate[] {
     const candidates: Candidate[] = [];
     for (const tool of this.#tools) {
@@ -340,6 +341,8 @@ export class EnvironmentStateExtraction {
         this.#readOnly.has(tool.name)
       )
         this.#recorded(tool, "query-body");
+      else if (tool.method !== "GET" && isSafeHttpMethod(tool.method))
+        this.#recorded(tool, "method-replay");
       if (tool.method !== "GET") continue;
       candidates.push({ tool, ...readType(tool.path_template) });
     }

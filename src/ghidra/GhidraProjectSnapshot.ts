@@ -24,6 +24,7 @@ import {
 } from "../filesystem/RegularFile.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
+import type { JsonValue } from "../domain/jsonValue.js";
 import type { GhidraProjectSelection } from "../config/ghidraExistingProject.js";
 import { ghidraProgramNameSchema } from "../config/ghidraExistingProject.js";
 
@@ -59,9 +60,11 @@ export type GhidraProjectCommitment = z.infer<
 const selectionFailure = (
   message: string,
   setting = "REA_GHIDRA_PROJECT_PATH",
+  diagnostics?: Readonly<Record<string, JsonValue>>,
 ): ConfigurationError =>
   new ConfigurationError(message, {
     settings: [{ setting, constraint: message }],
+    ...(diagnostics === undefined ? {} : { diagnostics }),
   });
 const entriesFor = (name: string) => [`${name}.gpr`, `${name}.rep`] as const;
 
@@ -176,7 +179,14 @@ export const resolveGhidraProject = async (
       // Admit the caller's exact marker before canonicalizing its parent.
       // Darwin realpath(file/..) can succeed despite native lookup rejecting
       // that traversal; hashing the canonical sibling would select a new input.
-      if (!(await lstat(selection.path)).isFile())
+      const marker = await lstat(selection.path).catch(absentProjectEntry);
+      if (marker === undefined)
+        throw selectionFailure(
+          `Existing Ghidra project marker does not exist: ${selection.path}`,
+          "REA_GHIDRA_PROJECT_PATH",
+          { system_code: "ENOENT", syscall: "lstat" },
+        );
+      if (!marker.isFile())
         throw selectionFailure(
           `Existing Ghidra project marker must be a regular file: ${selection.path}`,
         );

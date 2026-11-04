@@ -24,7 +24,6 @@ import {
   inspectClientRegistrationCommand,
   type ClientRegistrationCommandFacts,
   type ClientRegistrationCommandIdentity,
-  packageRunnerRegistrationCommand,
 } from "./ClientRegistrationIdentity.js";
 import {
   clientEvidencePaths,
@@ -35,8 +34,14 @@ import {
 import type { SetupClient } from "./SupportedClients.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 import { dshDocument } from "./DshCordisPatch.js";
-import { clientRegistrationEnvironmentDetailsWithBudget } from "./ClientRegistrationEnvironment.js";
-import type { ProviderRequestBudgetResolver } from "./ClientRegistrationEnvironment.js";
+import {
+  clientRegistrationEnvironmentDetailsWithBudget,
+  recordedProviderSettings,
+} from "./ClientRegistrationEnvironment.js";
+import type {
+  ProviderRequestBudgetResolver,
+  RecordedProviderSettings,
+} from "./ClientRegistrationEnvironment.js";
 import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 
 import {
@@ -53,6 +58,8 @@ interface ClientRegistrationStatusBase {
   readonly package_reference?: string;
   /** Non-blocking timeout guidance; caller-selected values remain aligned. */
   readonly advisory?: string;
+  /** Provider settings this process selected that the registration's file does not carry. */
+  readonly provider_settings?: RecordedProviderSettings;
 }
 
 type RegistrationCommand = readonly [string, ...string[]];
@@ -100,6 +107,8 @@ interface ClientRegistrationReadOptions {
    */
   readonly evidence?: "readiness" | "ownership";
   readonly resolveProviderRequestBudget?: ProviderRequestBudgetResolver;
+  /** Settings to compare with each registration's file; omitted skips that read. */
+  readonly providerSettings?: Readonly<Record<string, string>>;
 }
 
 /** Registration facts shared by diagnostics and update maintenance. */
@@ -363,6 +372,13 @@ export const readClientRegistrationInspections = async (
                 registrationEnvironment.value.timeoutInputs,
               )
             : undefined,
+          options.providerSettings === undefined
+            ? undefined
+            : recordedProviderSettings(
+                parsed,
+                options.providerSettings,
+                options.platform,
+              ),
         ),
         activation,
         commandFacts.identity,
@@ -470,17 +486,7 @@ const registrationAligned = ({
     (registration.serverName !== "rea" || registration.transport !== "stdio")
   )
     return "stale";
-  if (
-    (["npx", "bunx"] as const).some((runner) => {
-      const expected = packageRunnerRegistrationCommand(runner, platform);
-      return (
-        command.length === expected.length &&
-        command.every((argument, index) => argument === expected[index])
-      );
-    })
-  )
-    return "aligned";
-  // Other owned package references remain stale until pinned to this version.
+  // Legacy package runners remain owned, but setup migrates them to the selected installation.
   if (commandFacts.package !== undefined) return "stale";
   // Owning the script does not establish how its shebang interpreter resolves
   // in the client. Setup migrates these launchers without losing ownership.
@@ -505,6 +511,7 @@ const configuredStatus = (
   policyRemediation?: string,
   packageReference?: string,
   advisory?: string,
+  providerSettings?: RecordedProviderSettings,
 ): ClientRegistrationStatus =>
   state === "aligned"
     ? {
@@ -517,6 +524,9 @@ const configuredStatus = (
         state,
         remediation: null,
         ...(advisory === undefined ? {} : { advisory }),
+        ...(providerSettings === undefined
+          ? {}
+          : { provider_settings: providerSettings }),
       }
     : {
         client: client.name,
@@ -527,6 +537,9 @@ const configuredStatus = (
           : { package_reference: packageReference }),
         state,
         remediation: policyRemediation ?? remediation(client),
+        ...(providerSettings === undefined
+          ? {}
+          : { provider_settings: providerSettings }),
       };
 
 const timeoutAdvisory = (

@@ -407,10 +407,9 @@ it("rejects invalid tool input before reaching the provider", async () => {
         operation: "inspect_adb_device",
         issues: [
           {
-            path: [],
-            reason: "invalid_value",
-            message:
-              "serial: Device serial cannot contain whitespace or quotes",
+            path: ["serial"],
+            reason: "invalid_format",
+            expected: "regex",
           },
         ],
       },

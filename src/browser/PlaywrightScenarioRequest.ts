@@ -292,6 +292,7 @@ export const performScenarioRequest = async (input: {
   readonly secrets: BrowserScenarioSecrets;
   readonly startOrigin: string;
   readonly signal?: AbortSignal | undefined;
+  readonly onOpaqueRedirect?: (() => void) | undefined;
 }): Promise<void> => {
   const { page, action, secrets, startOrigin, signal } = input;
   const deadline =
@@ -434,10 +435,12 @@ export const performScenarioRequest = async (input: {
       throw new ScenarioRequestError(
         `Request step ${action.step_id} runs from a page on the start origin ${startOrigin}; the page moved before the request was sent.`,
       );
-    if ("redirected" in response)
+    if ("redirected" in response) {
+      input.onOpaqueRedirect?.();
       throw new ScenarioRequestError(
-        `Request step ${action.step_id} was answered with a redirect, which request steps do not follow; a write may already have been applied. The capture records the redirect and, with header values selected, its Location.`,
+        `Request step ${action.step_id} was answered with a redirect, which request steps do not follow; a write may already have been applied. The browser may withhold the redirect status and Location from network capture.`,
       );
+    }
     if (
       action.expected_status !== undefined &&
       !action.expected_status.includes(response.status)
