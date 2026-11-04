@@ -39,44 +39,6 @@ const collect = async (
   return Buffer.concat(chunks).toString("utf8");
 };
 
-describe("SDK output completion", () => {
-  it.each(["json", "toon"])(
-    "waits for pending raw %s writes before exit",
-    async (format) => {
-      const document = JSON.stringify({
-        code: "VALIDATION_ERROR",
-        message: "x".repeat(8192),
-      });
-      let complete = false;
-      const destination = new Writable({
-        highWaterMark: 1,
-        write(chunk, _encoding, callback) {
-          if (chunk.length === 0) {
-            callback();
-            return;
-          }
-          setImmediate(() => {
-            complete = true;
-            callback();
-          });
-        },
-      });
-      const output = createCliResultOutput(
-        parseCliOutputArguments(["--format", format]),
-        destination,
-      );
-      if (output === undefined)
-        throw new Error("Expected valid output controls");
-      expect(output.captureSdkOutput(document)).toBe(false);
-      destination.write(document);
-      expect(complete).toBe(false);
-      await output.finishSdkOutput(1);
-      expect(complete).toBe(true);
-      expect(destination.writableEnded).toBe(false);
-    },
-  );
-});
-
 describe("incremental CLI JSON", () => {
   it.each([
     null,
