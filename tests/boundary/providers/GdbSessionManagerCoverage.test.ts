@@ -28,10 +28,14 @@ import type {
 import {
   DEBUGGER_COMMAND_DEADLINE_SETTING,
   DEBUGGER_MAX_COMMAND_OUTPUT_BYTES_SETTING,
+  DEFAULT_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES_LIMIT,
 } from "../../../src/config/debuggerSessionLimits.js";
 import { DEFAULT_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES } from "../../../src/domain/analysisResourceLimits.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
-import { stopOwnedDebuggerProcess } from "../../../src/process/ownedDebuggerSession.js";
+import {
+  debuggerAdmissionRecovery,
+  stopOwnedDebuggerProcess,
+} from "../../../src/process/ownedDebuggerSession.js";
 import { parseLinuxProcessStat } from "../../../src/process/LinuxProcessStat.js";
 import { expectGdbSessionStarted } from "./gdbTestHelpers.js";
 
@@ -3672,6 +3676,10 @@ it("keeps the session usable after an oversized stream record is dropped", async
     expect(executed.value.result.console).toContain("before");
     expect(executed.value.result.completion_status).toBe("complete");
     expect(executed.value.result.output_truncated).toBe(true);
+    const output = DEFAULT_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES_LIMIT;
+    expect(executed.value.evidence.limitations.join(" ")).toContain(
+      `Retained MI records reached the ${String(output.value)} byte command-output cap or the 16384 record cap. ${debuggerAdmissionRecovery(output)} The record cap has no separate setting. Output completeness is unknown.`,
+    );
     const limitations = executed.value.evidence.limitations.join(" ");
     expect(limitations).toContain(
       "Retained MI records reached the 16777216 byte command-output cap or the 16384 record cap.",
