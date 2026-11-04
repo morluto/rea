@@ -178,6 +178,7 @@ interface Answer {
   readonly locations: readonly EvidenceLocation[];
   readonly limitations: readonly string[];
   readonly referenceSource?: JsonValue;
+  readonly requiresSourceEvidence?: true;
   readonly stringSource?: JsonValue;
   readonly relationshipCoverage?: RelationshipCoverage;
   readonly referenceClassifications?: AnalysisExecution["referenceClassifications"];
@@ -672,6 +673,9 @@ export class KunaSessionClient implements AnalysisClient {
         ...(answer.relationshipCoverage === undefined
           ? {}
           : { relationshipCoverage: answer.relationshipCoverage }),
+        ...(answer.requiresSourceEvidence === undefined
+          ? {}
+          : { requiresSourceEvidence: answer.requiresSourceEvidence }),
         ...(answer.referenceCoverageGaps === undefined
           ? {}
           : { referenceCoverageGaps: answer.referenceCoverageGaps }),
@@ -1003,6 +1007,7 @@ export class KunaSessionClient implements AnalysisClient {
                   width: pointer.width,
                 })),
             }),
+        requiresSourceEvidence: true,
         referenceSource: {
           kind: "kuna-xrefs",
           direction: "to",

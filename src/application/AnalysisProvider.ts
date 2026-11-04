@@ -67,6 +67,8 @@ export interface AnalysisExecution extends AnalysisObservation {
    * output.
    */
   readonly referencesTruncated?: boolean;
+  /** The producer needs this observation retained as source Evidence for composed workflows. */
+  readonly requiresSourceEvidence?: true;
   /** Known reference-discovery gaps; absent means coverage was not reported. */
   readonly referenceCoverageGaps?: readonly {
     readonly code: string;
@@ -90,6 +92,7 @@ interface CreateAnalysisExecutionOptions {
   readonly limitations?: readonly string[];
   readonly relationshipCoverage?: RelationshipCoverage;
   readonly referencesTruncated?: boolean;
+  readonly requiresSourceEvidence?: true;
   readonly referenceClassifications?: AnalysisExecution["referenceClassifications"];
   readonly referenceCoverageGaps?: AnalysisExecution["referenceCoverageGaps"];
   readonly locations?: readonly EvidenceLocation[];
@@ -143,6 +146,9 @@ export function createAnalysisExecution(
     ...(options.referencesTruncated === undefined
       ? {}
       : { referencesTruncated: options.referencesTruncated }),
+    ...(options.requiresSourceEvidence === undefined
+      ? {}
+      : { requiresSourceEvidence: options.requiresSourceEvidence }),
     ...(options.referenceCoverageGaps === undefined
       ? {}
       : { referenceCoverageGaps: options.referenceCoverageGaps }),

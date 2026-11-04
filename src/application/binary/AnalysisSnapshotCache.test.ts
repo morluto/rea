@@ -832,7 +832,7 @@ describe("analysis snapshot cache policy", () => {
   });
 });
 
-it("retains explicit xrefs without making a filesystem-writing query replayable", () => {
+it("retains producer-required xrefs without replaying a filesystem-writing query", () => {
   const descriptor: CapabilityDescriptor = {
     operation: "xrefs",
     provider: ANALYSIS_SNAPSHOT_PROVIDER,
@@ -852,7 +852,7 @@ it("retains explicit xrefs without making a filesystem-writing query replayable"
   const xrefs = descriptor;
   expect(
     isSourceEvidenceRetainable("xrefs", xrefs, { address: "0x1000" }),
-  ).toBe(true);
+  ).toBe(false);
   expect(isSnapshotCacheable("xrefs", xrefs, { address: "0x1000" })).toBe(
     false,
   );
@@ -863,7 +863,34 @@ it("retains explicit xrefs without making a filesystem-writing query replayable"
   };
   expect(
     isSourceEvidenceRetainable("xrefs", writingXrefs, { address: "0x1000" }),
+  ).toBe(false);
+  expect(
+    isSourceEvidenceRetainable(
+      "xrefs",
+      writingXrefs,
+      { address: "0x1000" },
+      { requiresSourceEvidence: true },
+    ),
   ).toBe(true);
+  expect(
+    isSourceEvidenceRetainable(
+      "xrefs",
+      writingXrefs,
+      {},
+      { requiresSourceEvidence: true },
+    ),
+  ).toBe(false);
+  expect(
+    isSourceEvidenceRetainable(
+      "xrefs",
+      {
+        ...writingXrefs,
+        effects: { ...writingXrefs.effects, mutatesArtifact: true },
+      },
+      { address: "0x1000" },
+      { requiresSourceEvidence: true },
+    ),
+  ).toBe(false);
   expect(
     isSnapshotCacheable("xrefs", writingXrefs, {
       address: "0x1000",
@@ -1321,7 +1348,7 @@ it("revises the trace_feature workflow profile so earlier results are not replay
   expect(
     workflowAnalysisProfile(profile, "trace_feature").parameters
       .workflow_revision,
-  ).toBe(6);
+  ).toBe(7);
 
   expect(workflowAnalysisProfile(profile, "trace_feature")).not.toEqual(
     workflowAnalysisProfile(profile),

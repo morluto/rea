@@ -95,33 +95,35 @@ const replayDocumentSelected = (
   typeof parameters.document === "string";
 
 /**
- * Caller, callee and explicit-address reference walks omit `document`. Their
- * observations are still Evidence. Other document-scoped reads, including `procedure_pseudo_code`
+ * Caller and callee walks omit `document`. Their observations are still
+ * Evidence. Other document-scoped reads, including `procedure_pseudo_code`
  * from `decompile_all`, already keep each body in the file-backed export.
  * Copying those bodies into the in-memory ledger would retain the export.
  */
 const DOCUMENTLESS_SOURCE_EVIDENCE_OPERATIONS: ReadonlySet<AnalysisOperation> =
-  new Set(["procedure_callers", "procedure_callees", "xrefs"]);
+  new Set(["procedure_callers", "procedure_callees"]);
 
 /**
  * Whether a source observation is safe to retain as Evidence.
- * A missing document selector blocks snapshot replay. Caller, callee and
- * explicit-address reference walks stay in the ledger without one.
+ * A missing document selector blocks snapshot replay. A producer can require
+ * its observation as Evidence independently of whether it can be replayed.
  */
 export const isSourceEvidenceRetainable = (
   operation: AnalysisOperation,
   descriptor: CapabilityDescriptor | undefined,
   parameters: Readonly<Record<string, JsonValue>>,
+  options: { readonly requiresSourceEvidence?: boolean } = {},
 ): descriptor is CapabilityDescriptor =>
   !STATEFUL_OPERATIONS.has(operation) &&
   !RESOURCE_SCOPED_OPERATIONS.has(operation) &&
   (!DOCUMENT_SCOPED_OPERATIONS.has(operation) ||
     typeof parameters.document === "string" ||
-    DOCUMENTLESS_SOURCE_EVIDENCE_OPERATIONS.has(operation)) &&
+    DOCUMENTLESS_SOURCE_EVIDENCE_OPERATIONS.has(operation) ||
+    options.requiresSourceEvidence === true) &&
   (!CURSOR_DEFAULT_OPERATIONS.has(operation) ||
     typeof parameters.address === "string") &&
   descriptor?.effects.mutatesArtifact === false &&
-  (operation === "xrefs" ||
+  (options.requiresSourceEvidence === true ||
     descriptor.cachePolicy === "snapshot" ||
     descriptor.effects.mayWriteFilesystem === false) &&
   descriptor.effects.changesPermissions === false;
@@ -134,8 +136,6 @@ export const isSnapshotCacheable = (
 ): descriptor is CapabilityDescriptor =>
   isSourceEvidenceRetainable(operation, descriptor, parameters) &&
   replayDocumentSelected(operation, parameters) &&
-  (descriptor.cachePolicy === "snapshot" ||
-    descriptor.effects.mayWriteFilesystem === false) &&
   descriptor.cachePolicy !== "live";
 
 /** Windows Ghidra must admit the selected source through its native snapshot owner. */

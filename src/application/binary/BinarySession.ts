@@ -1479,7 +1479,9 @@ export class BinarySession
     }
     if (
       execution.ok &&
-      isSourceEvidenceRetainable(name, capability, arguments_) &&
+      isSourceEvidenceRetainable(name, capability, arguments_, {
+        requiresSourceEvidence: execution.value.requiresSourceEvidence === true,
+      }) &&
       profile !== undefined
     ) {
       const evidence = createAnalysisExecutionEvidence(
