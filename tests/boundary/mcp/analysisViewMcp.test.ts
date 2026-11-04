@@ -2036,3 +2036,31 @@ it("pages retained raw array rows without losing the parent and refuses an overs
   expect(oversized.remediation.action).toContain("1,048,576-byte");
   expect((await call(0, 1)).isError).not.toBe(true);
 });
+
+it("directs oversized inline Evidence to a usable file source", async () => {
+  const { client } = await connect(undefined, undefined, 32);
+  const parent = analysisViewNativeEvidence();
+  const view = { kind: "native", facet: "procedure", offset: 0, limit: 1 };
+  const inline = await client.callTool({
+    name: "inspect_analysis_view",
+    arguments: { source: { kind: "inline", evidence: parent }, view },
+  });
+  const error = parseMcpToolError(inline).error;
+  expect(error.code).toBe("resource_constraint");
+  expect(error.remediation.action).toContain("evidence-file");
+
+  const root = await createTestTempDirectory("rea-view-input-capacity-");
+  const path = join(root, "evidence.json");
+  await writeFile(path, JSON.stringify(parent));
+  const fromFile = await client.callTool({
+    name: "inspect_analysis_view",
+    arguments: { source: { kind: "evidence-file", path }, view },
+  });
+  expect(fromFile.isError).not.toBe(true);
+  const parsed = toolContract("inspect_analysis_view").outputSchema.parse(
+    fromFile.structuredContent,
+  );
+  expect(parsed.normalized_result).toMatchObject({
+    parent_evidence_id: parent.evidence_id,
+  });
+});
