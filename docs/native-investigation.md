@@ -235,7 +235,9 @@ pseudocode limitations for that function. Header values are abbreviated to
 the index retains the complete selected names, addresses, provider facts and
 caveats. Failure details retain at most 32 rows within 2,048 JSON-encoded
 UTF-8 bytes; names may be omitted to keep complete addresses and reasons. The
-index retains every failure and its complete observed name.
+index retains every failure and its complete observed name. When a completed
+call reports failures, its manifest directs you to `index_path` for the full
+records and any provider limitations recorded for each function.
 Each function's `decompile-index.json` record, whatever its status, keeps the
 complete limitations of the observations it used.
 When available, `provider_source` records the source of that attempt's
