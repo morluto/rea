@@ -233,6 +233,8 @@ export function* readWasmModuleImageSteps(
   let at = 8;
   let lastOrder = -1;
   while (at < bytes.length) {
+    // Skipped custom sections still cost a header read each, so they count as work.
+    if (tick()) yield;
     const head = new Cursor(bytes, at, bytes.length);
     const id = head.byte();
     const size = head.u32();

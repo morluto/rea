@@ -577,6 +577,14 @@ describe("table types and yielding", () => {
     const steps = readWasmModuleImageSteps(module(functions(5000)));
     expect(steps.next().done).toBe(false);
   });
+  it("yields while skipping many empty custom sections", () => {
+    // Each custom section is a name of length 0 and nothing else.
+    const custom = Array<number[]>(5000)
+      .fill(section(0, [0]))
+      .flat();
+    const steps = readWasmModuleImageSteps(module(custom));
+    expect(steps.next().done).toBe(false);
+  });
 });
 
 describe("table source", () => {
