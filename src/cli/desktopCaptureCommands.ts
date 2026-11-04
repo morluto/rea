@@ -4,10 +4,7 @@ import { z } from "incur";
 import type { Logger } from "pino";
 
 import { captureDesktopApplication } from "../application/desktop/DesktopApplicationCapture.js";
-import { inspectDesktopApplicationState } from "../application/desktop/DesktopApplicationState.js";
-import { readSqliteStateView } from "../application/desktop/DesktopSqliteState.js";
-import { createSqliteDatabaseService } from "../composition/sqlite.js";
-import { dumpDconfDatabase } from "../desktop/DconfDatabaseReader.js";
+import type { DesktopStateReaders } from "../application/desktop/DesktopApplicationState.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
@@ -106,6 +103,90 @@ export const parseSessionRequest = (line: string): SessionRequest => {
   return { kind: "checkpoint", name: name.length === 0 ? undefined : name };
 };
 
+/**
+ * Run with SQLite and dconf readers for the state view and the export. They
+ * are loaded here, so registering the command catalog never loads them.
+ */
+const withStateReaders = async <Value>(
+  environment: NodeJS.ProcessEnv,
+  run: (readers: DesktopStateReaders) => Promise<Value>,
+): Promise<Value> => {
+  const [
+    { createSqliteDatabaseService },
+    { readSqliteStateView },
+    { dumpDconfDatabase },
+  ] = await Promise.all([
+    import("../composition/sqlite.js"),
+    import("../application/desktop/DesktopSqliteState.js"),
+    import("../desktop/DconfDatabaseReader.js"),
+  ]);
+  const sqlite = createSqliteDatabaseService(environment);
+  try {
+    return await run({
+      sqlite: (database, writeAheadLog, signal) =>
+        readSqliteStateView(sqlite, database, writeAheadLog, signal),
+      dconf: (database, signal) =>
+        dumpDconfDatabase(database, environment, signal),
+    });
+  } finally {
+    await sqlite.close();
+  }
+};
+
+/** Register the export of a capture folder as a computer app bundle. */
+const registerDesktopExportCommand = (
+  cli: CliInstance,
+  logger: Logger,
+  environment: NodeJS.ProcessEnv,
+): void => {
+  cli.command(CLI_COMMANDS.exportDesktopApplication, {
+    description:
+      "Export a desktop application capture folder as an agentenv computer app bundle: class, env.toml, skill and seed",
+    args: z.object({
+      capture: z
+        .string()
+        .describe("Folder written by capture-desktop-application"),
+      directory: z.string().describe("New or empty bundle directory"),
+    }),
+    options: z.object({
+      name: z
+        .string()
+        .optional()
+        .describe(
+          "Environment name; defaults to one derived from the application",
+        ),
+    }),
+    run: ({ args, options }) =>
+      withCommandCancellation((signal) =>
+        logCliCommand(
+          logger,
+          CLI_COMMANDS.exportDesktopApplication,
+          async () => {
+            const { exportDesktopApplication } =
+              await import("../application/desktop/DesktopApplicationExport.js");
+            const result = await withStateReaders(environment, (readers) =>
+              exportDesktopApplication(
+                {
+                  capture: absoluteCallerPath(args.capture),
+                  directory: absoluteCallerPath(args.directory),
+                  name: options.name,
+                },
+                readers,
+                signal,
+              ),
+            );
+            return result instanceof AnalysisError
+              ? {
+                  error: "Desktop export failed",
+                  ...projectAnalysisError(result),
+                }
+              : result;
+          },
+        ),
+      ),
+  });
+};
+
 /** Register the state view over a capture folder. */
 const registerDesktopStateCommand = (
   cli: CliInstance,
@@ -126,32 +207,21 @@ const registerDesktopStateCommand = (
           logger,
           CLI_COMMANDS.inspectDesktopApplicationState,
           async () => {
-            const sqlite = createSqliteDatabaseService(environment);
-            try {
-              const result = await inspectDesktopApplicationState(
+            const { inspectDesktopApplicationState } =
+              await import("../application/desktop/DesktopApplicationState.js");
+            const result = await withStateReaders(environment, (readers) =>
+              inspectDesktopApplicationState(
                 absoluteCallerPath(args.capture),
-                {
-                  sqlite: (database, writeAheadLog, readSignal) =>
-                    readSqliteStateView(
-                      sqlite,
-                      database,
-                      writeAheadLog,
-                      readSignal,
-                    ),
-                  dconf: (database, readSignal) =>
-                    dumpDconfDatabase(database, environment, readSignal),
-                },
+                readers,
                 signal,
-              );
-              return result instanceof AnalysisError
-                ? {
-                    error: "Desktop state view failed",
-                    ...projectAnalysisError(result),
-                  }
-                : result;
-            } finally {
-              await sqlite.close();
-            }
+              ),
+            );
+            return result instanceof AnalysisError
+              ? {
+                  error: "Desktop state view failed",
+                  ...projectAnalysisError(result),
+                }
+              : result;
           },
         ),
       ),
@@ -165,6 +235,7 @@ export const registerDesktopCaptureCommands = (
   environment: NodeJS.ProcessEnv,
 ): void => {
   registerDesktopStateCommand(cli, logger, environment);
+  registerDesktopExportCommand(cli, logger, environment);
   cli.command(CLI_COMMANDS.captureDesktopApplication, {
     description:
       "Launch a Linux desktop application, watch it while it is used and record its windows and state at checkpoints read from stdin",

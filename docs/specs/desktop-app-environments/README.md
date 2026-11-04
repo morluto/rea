@@ -13,8 +13,8 @@ The work lands as one PR per step:
    and record its inventory, windows and home-directory state at checkpoints.
 3. [State view](state-view/spec.md): decide which paths are the application's
    state and read their formats into a typed JSON view.
-4. Export: write the computer application class, environment card, skill and
-   seed.
+4. [Export](export/spec.md): write the computer application class, environment
+   card, skill and seed.
 5. Verification inside an agent environment computer: put, boot, ready, reset
    equals the seed, grader checks.
 6. Tasks from the observed kinds of change, with a reference agent's solve

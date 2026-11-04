@@ -936,6 +936,7 @@ Choose the guide for the target and intended interaction:
 - [Process capture](process-capture.md): run an executable and compare terminal, exit and filesystem observations.
 - [Desktop application capture](desktop-application-capture.md): launch a Linux desktop application and record its windows and home-directory state at checkpoints while it is used.
 - [Desktop application state](desktop-application-state.md): read a capture folder into the application's state files, typed views of each version and kinds of change.
+- [Desktop application export](desktop-application-export.md): write a capture folder as an agentenv computer app bundle with its class, skill and seed.
 
 Runtime requests name the target and actions. Launched targets run with your
 user permissions; consult the chosen guide for host requirements and effects.
@@ -1285,7 +1286,8 @@ the command's signal handling. Commands routed through the shared
 `143` for SIGTERM after their operation settles. Current source registrations
 use that handler for process capture and comparison (`capture-process`,
 `compare-process-captures`), desktop application capture and state
-(`capture-desktop-application`, `inspect-desktop-application-state`), JavaScript application analysis (`analyze` when it
+(`capture-desktop-application`, `inspect-desktop-application-state`,
+`export-desktop-application`), JavaScript application analysis (`analyze` when it
 selects the JavaScript lane, and `analyze-javascript-application`), selected
 browser, web and Electron commands (including `analyze-web-bundle`,
 `observe-web-execution`, `capture-browser-scenario` and

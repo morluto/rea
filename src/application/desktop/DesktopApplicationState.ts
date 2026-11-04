@@ -2,10 +2,7 @@ import { createHash } from "node:crypto";
 import { join } from "node:path";
 
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
-import {
-  AnalysisCancelledError,
-  AnalysisInputError,
-} from "../../domain/analysisErrorCore.js";
+import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
 import {
   desktopApplicationCaptureSchema,
   type DesktopApplicationCapture,
@@ -33,7 +30,6 @@ import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import { safeParseEvidence } from "../../domain/evidenceValidation.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
 import { safeParseJson } from "../../domain/safeJson.js";
-import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { describeValidationFailure } from "../../domain/validationFailure.js";
 import { withOwnedRegularFile } from "../../filesystem/OwnedRegularFile.js";
 import { readStableFileBytes } from "../../filesystem/readStableFileBytes.js";
@@ -42,6 +38,7 @@ import { readJsonFile } from "../JsonFiles.js";
 import {
   DESKTOP_OPERATION,
   DESKTOP_PROVIDER,
+  desktopOperationFailure,
 } from "./DesktopCaptureRefusals.js";
 
 const OPERATION = "inspect_desktop_application_state";
@@ -68,7 +65,7 @@ const inputError = (userMessage: string, remediationAction: string) =>
   ]);
 
 /** Admit `capture.json` only as complete desktop capture Evidence. */
-const readCapture = async (
+export const readDesktopCapture = async (
   folder: string,
   signal: AbortSignal | undefined,
 ): Promise<{ evidence: Evidence; capture: DesktopApplicationCapture }> => {
@@ -114,7 +111,7 @@ const readCapture = async (
 };
 
 /** Retained bytes, checked against the digest that names them. */
-const readContent = async (
+export const readRetainedContent = async (
   folder: string,
   sha256: string,
   signal: AbortSignal | undefined,
@@ -303,7 +300,7 @@ const describePath = async (
       if (version.present) version.view_error = "content not retained";
       continue;
     }
-    const bytes = await readContent(
+    const bytes = await readRetainedContent(
       context.folder,
       version.sha256,
       context.signal,
@@ -360,7 +357,7 @@ const inspectState = async (
   readers: DesktopStateReaders,
   signal: AbortSignal | undefined,
 ): Promise<Evidence> => {
-  const { evidence, capture } = await readCapture(folder, signal);
+  const { evidence, capture } = await readDesktopCapture(folder, signal);
   const names = applicationNames(capture);
   const context: ViewContext = {
     folder,
@@ -404,13 +401,11 @@ export const inspectDesktopApplicationState = async (
   try {
     return await inspectState(folder, readers, signal);
   } catch (cause: unknown) {
-    if (cause instanceof AnalysisError) return cause;
-    if (signal?.aborted === true)
-      return new AnalysisCancelledError(OPERATION, { cause: signal.reason });
-    return new ProviderAdapterError(DESKTOP_PROVIDER.id, OPERATION, {
+    return desktopOperationFailure(
       cause,
-      diagnostics: { phase: "desktop_state" },
-      userMessage: `Desktop state view could not complete: ${describeValidationFailure(cause)}`,
-    });
+      signal,
+      OPERATION,
+      "Desktop state view",
+    );
   }
 };

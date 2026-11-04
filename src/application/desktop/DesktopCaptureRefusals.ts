@@ -1,10 +1,14 @@
 import { readdir } from "node:fs/promises";
 import { isAbsolute } from "node:path";
 
+import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
+  AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
 } from "../../domain/analysisErrorCore.js";
+import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
+import { describeValidationFailure } from "../../domain/validationFailure.js";
 import {
   resolveProgram,
   type LinuxApplicationRefusal,
@@ -166,4 +170,21 @@ export const checkDesktopCaptureHost = async (
   });
   if (existing.length > 0) throw outputRefusal(request.output, "not_empty");
   return { display, xprop, home };
+};
+
+/** Keep typed failures, report cancellation, and wrap anything else for one desktop operation. */
+export const desktopOperationFailure = (
+  cause: unknown,
+  signal: AbortSignal | undefined,
+  operation: string,
+  label: string,
+): AnalysisError => {
+  if (cause instanceof AnalysisError) return cause;
+  if (signal?.aborted === true)
+    return new AnalysisCancelledError(operation, { cause: signal.reason });
+  return new ProviderAdapterError(DESKTOP_PROVIDER.id, operation, {
+    cause,
+    diagnostics: { phase: operation },
+    userMessage: `${label} could not complete: ${describeValidationFailure(cause)}`,
+  });
 };
