@@ -2482,6 +2482,30 @@ describe("ReleaseExposureReader unexpanded package PE reads", () => {
     }
   });
 
+  it("leaves member coverage unknown when an unclassified packaged member cannot be read", async () => {
+    const root = await bundled([
+      { path: "payload.bin", bytes: Buffer.from([0x7f, 0x45, 0x4c, 0x46]) },
+    ]);
+    createdReaders.wrap = (reader, path) => {
+      if (!path.endsWith("app.dll")) return reader;
+      const open = reader.open.bind(reader);
+      reader.open = (entry, signal) =>
+        entry.path.endsWith("payload.bin")
+          ? Promise.reject(new Error("member read failed"))
+          : open(entry, signal);
+      return reader;
+    };
+    try {
+      const scanned = await inspect(root);
+      expect(scanned.coverage).toBe("unknown");
+      expect(scanned.limitations).toContain(
+        `Could not read ${join(root, "app.dll", "payload.bin")} to rule out a native image or package.`,
+      );
+    } finally {
+      createdReaders.wrap = undefined;
+    }
+  });
+
   it("leaves member coverage unknown when a package cannot be listed", async () => {
     const root = await bundled([{ path: "app.js", bytes: Buffer.from("1") }]);
     createdReaders.wrap = (reader, path) => {

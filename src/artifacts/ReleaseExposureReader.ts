@@ -1011,9 +1011,10 @@ const noteUnreadMember = (state: ScanState, member: MemberView): void => {
 /**
  * A member whose bytes were not read. A native one may carry a package that
  * nothing here can clear, so member coverage stays unknown, as it does for a
- * packaged image the embedded-package probe could not read. A caller that
- * counts the failed read itself passes `countUnreadable: false`, so the member
- * is counted once.
+ * packaged image the embedded-package probe could not read. An unclassified
+ * one whose header was never read may be such an image too, so it leaves
+ * coverage unknown as well. A caller that counts the failed read itself passes
+ * `countUnreadable: false`, so the member is counted once.
  */
 const noteUnreadBinary = (
   state: ScanState,
@@ -1029,7 +1030,14 @@ const noteUnreadBinary = (
       state,
       `Did not probe ${member.location} for an embedded package.`,
     );
-  } else state.skippedText += 1;
+  } else {
+    state.skippedText += 1;
+    state.coverageUnknown = true;
+    pushLimitation(
+      state,
+      `Could not read ${member.location} to rule out a native image or package.`,
+    );
+  }
   if (native === "pe" || PE_MEMBER_NAME.test(member.logical))
     notePeNotExamined(state, member.location);
 };
