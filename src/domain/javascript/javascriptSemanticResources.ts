@@ -366,6 +366,9 @@ const objectPrototype = (
 const lastMemberValue = (
   object: t.ObjectExpression,
   name: string,
+  // `net.connect` reads an object argument through the prototype chain; `tls.connect`
+  // copies only own fields, so an inherited one is absent for it.
+  inherit = true,
 ): t.Node | null | undefined => {
   // A `__proto__` member installs a prototype, so a member this object does not spell
   // may still exist through inheritance: `{ __proto__: { path: "/tmp/x" }, port: -1 }`
@@ -378,6 +381,7 @@ const lastMemberValue = (
     if (semanticStaticPropertyName(property.key, false) !== name) continue;
     return unwrapJavaScriptExpression(property.value).node;
   }
+  if (!inherit) return undefined;
   const prototype = objectPrototype(object);
   if (prototype === false) return null;
   if (prototype === null || prototype === undefined) return undefined;
@@ -398,8 +402,9 @@ type SocketOptionsIntent = "socket" | "port" | "invalid" | "unknown";
 
 const socketOptionsIntent = (
   object: t.ObjectExpression,
+  inherit = true,
 ): SocketOptionsIntent => {
-  const path = lastMemberValue(object, "path");
+  const path = lastMemberValue(object, "path", inherit);
   if (path === null) return "unknown";
   if (path === undefined) return "port";
   if (t.isStringLiteral(path)) return path.value === "" ? "port" : "socket";
@@ -419,7 +424,7 @@ const optionsSupplyPort = (
   object: t.ObjectExpression,
   context: DataEffectTraversalContext,
 ): boolean | null => {
-  const port = lastMemberValue(object, "port");
+  const port = lastMemberValue(object, "port", false);
   if (port === undefined) return false;
   if (port === null) return null;
   return !rejectsPortValue(port, context, false);
@@ -446,17 +451,20 @@ const rejectsSocketPortLiteral = (
     // `tls.connect` wraps an existing socket and never connects, so it also
     // never validates `port`; `net.connect` still rejects the same object.
     if (candidate.specifier === "tls") {
-      const socket = lastMemberValue(value, "socket");
+      const socket = lastMemberValue(value, "socket", false);
       // Only a readable non-falsy `socket` supplies an existing socket. `socket:
       // null` and `socket: false` leave `port` to be validated, so
       // `tls.connect({ socket: null, port: -1 })` throws `ERR_SOCKET_BAD_PORT`.
       if (socket === null) return false;
       if (socket !== undefined && !isFalsyLiteral(socket)) return false;
     }
-    const intent = socketOptionsIntent(value);
+    // `tls.connect` copies only own fields from the object it receives, while
+    // `net.connect` reads it through the prototype chain.
+    const ownFieldsOnly = candidate.specifier === "tls";
+    const intent = socketOptionsIntent(value, !ownFieldsOnly);
     if (intent === "socket" || intent === "unknown") return false;
     if (intent === "invalid") return true;
-    const member = lastMemberValue(value, "port");
+    const member = lastMemberValue(value, "port", !ownFieldsOnly);
     return member === undefined || member === null
       ? false
       : rejectsPortValue(member, context, false);
@@ -489,14 +497,14 @@ const tlsOptionsRejectCall = (
   if (candidate.specifier !== "tls") return false;
   const options = candidate.node.arguments[1];
   if (options === undefined || !t.isObjectExpression(options)) return false;
-  const intent = socketOptionsIntent(options);
+  const intent = socketOptionsIntent(options, false);
   if (intent === "invalid" || intent === "socket") return intent === "invalid";
   // A non-empty string first argument is a Unix socket path, and Node keeps it while
   // ignoring `port`, so the merged options cannot reject the call.
   if (isUnixSocketPathArgument(candidate.node.arguments[0])) return false;
   // The options object is merged over the first argument, so its own `port` is
   // validated too: `tls.connect(443, { port: -1 })` throws even though 443 is valid.
-  const port = lastMemberValue(options, "port");
+  const port = lastMemberValue(options, "port", false);
   return (
     port !== undefined &&
     port !== null &&
@@ -519,7 +527,7 @@ const tlsOptionsReplaceFirstArgument = (
   if (candidate.specifier !== "tls") return false;
   const options = candidate.node.arguments[1];
   if (options === undefined || !t.isObjectExpression(options)) return false;
-  const intent = socketOptionsIntent(options);
+  const intent = socketOptionsIntent(options, false);
   // A socket path or an unreadable member set may replace the argument; a
   // readable non-socket path throws on its own, so the first argument still
   // decides.

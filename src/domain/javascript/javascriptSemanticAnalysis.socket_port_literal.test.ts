@@ -494,3 +494,38 @@ it("reads an inherited socket path through __proto__", () => {
     ),
   ).toEqual([{ kind: "acquire", method: "connect" }]);
 });
+
+/**
+ * Review finding: `tls.connect` copies only own fields from the object it receives,
+ * while `net.connect` reads it through the prototype chain. Following inheritance for
+ * both was wrong in each direction.
+ *
+ * Measured on Node 24.22.1:
+ *
+ *   tls.connect(443, { __proto__: { port: -1 } })                      -> ok
+ *   tls.connect({ __proto__: { path: "/tmp/x.sock" }, port: -1 })      -> THREW ERR_SOCKET_BAD_PORT
+ *   net.connect({ __proto__: { path: "/tmp/x.sock" }, port: -1 })      -> ok
+ */
+it.each([
+  [
+    "an inherited tls path",
+    `tls.connect({ __proto__: { path: "/tmp/x.sock" }, port: -1 })`,
+  ],
+] as const)("emits no socket for %s", (_name, call) => {
+  expect(socketAcquisitionsFor(call)).toEqual([]);
+});
+
+it.each([
+  [
+    "an inherited tls port that TLS discards",
+    `tls.connect(443, { __proto__: { port: -1 } })`,
+  ],
+  [
+    "an inherited net path",
+    `net.connect({ __proto__: { path: "/tmp/x.sock" }, port: -1 })`,
+  ],
+] as const)("keeps the socket for %s", (_name, call) => {
+  expect(socketAcquisitionsFor(call)).toEqual([
+    { kind: "acquire", method: "connect" },
+  ]);
+});
