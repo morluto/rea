@@ -1,5 +1,6 @@
 import { readFile, readdir } from "node:fs/promises";
 import { parseLinuxProcessStat } from "../LinuxProcessStat.js";
+import type { ProcessLifecycle } from "../ProcessLifecycle.js";
 import {
   mergeSamplingDiagnostics,
   readProcSamplingSource,
@@ -18,6 +19,8 @@ export interface SampledProcessRow {
   readonly session_id: number | null;
   readonly command: string;
   readonly startTime: string | undefined;
+  /** Native lifecycle from the stat record; undefined when ps supplied the row. */
+  readonly lifecycle: ProcessLifecycle | undefined;
 }
 
 export interface SampledProcessNode extends SampledProcessRow {
@@ -53,6 +56,7 @@ export const readLinuxProcessStat = async (
       session_id: parsed.sessionId,
       command: "",
       startTime: parsed.startTime,
+      lifecycle: parsed.lifecycle,
     },
     read.diagnostics,
   );

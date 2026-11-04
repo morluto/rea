@@ -10,6 +10,7 @@ import {
   readLinuxChildren,
   readLinuxProcessStat,
 } from "../process/capture/LinuxProcessSampling.js";
+import type { ProcessLifecycle } from "../process/ProcessLifecycle.js";
 import { readProcessRunId } from "../process/ProcessOwnership.js";
 import type { ObservedWindow } from "./X11WindowObserver.js";
 
@@ -32,27 +33,40 @@ export interface WindowMatching {
   readonly byPid: boolean;
 }
 
+/** One process's stat facts, or undefined when the process is gone. */
+type ProcessStat =
+  | {
+      readonly parentPid: number;
+      readonly startTime: string;
+      readonly lifecycle: ProcessLifecycle | undefined;
+    }
+  | undefined;
+
 /** The procfs reads that follow the application's processes; replaceable in tests. */
 export interface SessionProcfs {
-  /** Parent and kernel start time, or undefined when the process is gone. */
-  stat(
-    pid: number,
-    signal: AbortSignal,
-  ): Promise<
-    { readonly parentPid: number; readonly startTime: string } | undefined
-  >;
+  stat(pid: number, signal: AbortSignal): Promise<ProcessStat>;
   children(pid: number, signal: AbortSignal): Promise<readonly number[]>;
   /** The run token in the environment, undefined when absent or unreadable. */
   runId(pid: number, signal: AbortSignal): Promise<string | undefined>;
   command(pid: number): Promise<string>;
 }
 
+/** A zombie keeps its stat record until reaped, but it no longer runs. */
+const running = (stat: ProcessStat): stat is NonNullable<ProcessStat> =>
+  stat !== undefined &&
+  stat.lifecycle !== "zombie" &&
+  stat.lifecycle !== "dead";
+
 const systemProcfs: SessionProcfs = {
   async stat(pid, signal) {
     const stat = (await readLinuxProcessStat(pid, signal)).value;
     return stat?.startTime === undefined
       ? undefined
-      : { parentPid: stat.parent_pid, startTime: stat.startTime };
+      : {
+          parentPid: stat.parent_pid,
+          startTime: stat.startTime,
+          lifecycle: stat.lifecycle,
+        };
   },
   async children(pid, signal) {
     return (await readLinuxChildren(pid, signal)).value ?? [];
@@ -158,7 +172,8 @@ const startedByAncestor = async (
  * Record a process generation once. It counts as started by the capture when
  * it is the launched process, carries the run token, or descends from a
  * process the capture started; a zombie or sandboxed process whose
- * environment cannot be read is still recognised by its parents.
+ * environment cannot be read is still recognised by its parents. A zombie is
+ * recorded as exited, so it cannot keep the session open.
  */
 export const trackProcess = async (
   observations: SessionObservations,
@@ -168,10 +183,11 @@ export const trackProcess = async (
   const { procfs } = observations;
   const stat = await procfs.stat(pid, signal);
   const known = observations.tracked(pid);
-  if (known?.alive === true) {
-    if (known.startTime === stat?.startTime) return;
-    known.alive = false;
+  if (known !== undefined && stat?.startTime === known.startTime) {
+    known.alive = running(stat);
+    return;
   }
+  if (known !== undefined) known.alive = false;
   // Only the first generation under the launched pid is the launched process.
   const launched = pid === observations.run.launchPid && known === undefined;
   if (stat === undefined && !launched) return;
@@ -184,7 +200,7 @@ export const trackProcess = async (
     command: await procfs.command(pid),
     first_seen_ms: at,
     last_seen_ms: at,
-    alive: stat !== undefined,
+    alive: running(stat),
     started:
       launched ||
       runId === observations.run.runId ||
@@ -202,7 +218,7 @@ export const sampleProcesses = async (
     const entry = observations.tracked(pid);
     if (entry === undefined) continue;
     const stat = await observations.procfs.stat(pid, signal);
-    if (stat === undefined || stat.startTime !== entry.startTime) {
+    if (!running(stat) || stat.startTime !== entry.startTime) {
       entry.alive = false;
       continue;
     }
