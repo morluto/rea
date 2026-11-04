@@ -3,7 +3,6 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { deflateSync } from "node:zlib";
 import { createHash } from "node:crypto";
-import { encode } from "@msgpack/msgpack";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { gpuCodeObjectsPartialSchema } from "../../../src/domain/gpu/gpuCodeObjects.js";
 import { GpuCodeObjectsProvider } from "../../../src/gpu/GpuCodeObjectsProvider.js";
@@ -17,6 +16,7 @@ import {
   elfFixture,
   ptxFixture,
   amdFixture,
+  amdMetadataNoteFixture,
   amdNoteFixture,
   llvmBitcodeFixture,
 } from "../../fixtures/gpu/codeObjects.js";
@@ -572,18 +572,6 @@ it("bounds standalone AMD note discovery before retaining metadata", async () =>
   );
   expect(result.value.kernels).toEqual([]);
 });
-const amdMetadataNote = (metadata: Record<string, unknown>): Buffer => {
-  const descriptor = Buffer.from(
-    encode({ "amdhsa.version": [1, 1], "amdhsa.kernels": [], ...metadata }),
-  );
-  const note = Buffer.alloc(20 + Math.ceil(descriptor.length / 4) * 4);
-  note.writeUInt32LE(7, 0);
-  note.writeUInt32LE(descriptor.length, 4);
-  note.writeUInt32LE(32, 8);
-  note.write("AMDGPU ", 12);
-  descriptor.copy(note, 20);
-  return note;
-};
 it.each([
   {
     container: "65,536-element array",
@@ -610,7 +598,7 @@ it.each([
 ])(
   "classifies a valid AMDGPU note with a $container as $inspection",
   async ({ metadata, inspection }) => {
-    const result = await inspect(amdFixture(false, amdMetadataNote(metadata)), {
+    const result = await inspect(amdFixture(false, amdMetadataNoteFixture(metadata)), {
       analysis: "inventory",
     });
     if (!result.ok) throw result.error;

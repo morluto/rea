@@ -21,6 +21,7 @@ import {
   ptxFixture,
   amdFixture,
   amdNoteFixture,
+  amdMetadataNoteFixture,
   cubinFixture,
   hipFixture,
   elfFixture,
@@ -1364,3 +1365,37 @@ it("does not interpret non-AMD ELF flags as AMD processor declarations through M
   expect(report.kernels).toEqual([]);
   expect(report.coverage.payloads).toBe("partial");
 });
+
+it.each([
+  { container: "65,536-element array", length: 65536, map: false, inspection: "inventory" },
+  { container: "65,537-element array", length: 65537, map: false, inspection: "capacity" },
+  { container: "65,537-pair map", length: 65537, map: true, inspection: "capacity" },
+])(
+  "reports a valid AMDGPU note with a $container as $inspection through MCP",
+  async ({ length, map, inspection }) => {
+    const root = await createTestTempDirectory("rea-amd-container-capacity-"),
+      path = join(root, "amd");
+    const extra = map
+      ? Object.fromEntries(
+          Array.from({ length }, (_, index) => [`k${String(index)}`, null]),
+        )
+      : Array.from({ length }, () => null);
+    await writeFile(
+      path,
+      amdFixture(false, amdMetadataNoteFixture({ "amdhsa.extra": extra })),
+    );
+    const { call } = await connectLocalToolsMcp();
+    const reply = await call("inspect_gpu_code_objects", {
+      path,
+      analysis: "inventory",
+      detail: "complete",
+    });
+    expect(reply.isError, JSON.stringify(reply)).not.toBe(true);
+    const report = gpuCodeObjectsSchema.parse(
+      parseEvidence(reply.structuredContent).normalized_result,
+    );
+    const rows = report.objects.filter(({ kind }) => kind === "amdgpu");
+    expect(rows.map((row) => row.inspection)).toContain(inspection);
+    expect(rows.map((row) => row.inspection)).not.toContain("malformed");
+  },
+);
