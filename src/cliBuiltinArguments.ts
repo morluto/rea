@@ -46,8 +46,8 @@ export interface IncurBuiltinArgumentSplit {
 
 /**
  * Mirror Incur's builtin pass over normalized arguments without stopping at a
- * rejected value, so callers can still see every later token. REA's boolean
- * timing global follows the same valueless pass; no config flag is registered.
+ * rejected value, so callers can still see every later token. Then mirror the
+ * boolean timing global pass over the remaining tokens; no config is registered.
  */
 export const splitIncurBuiltinArguments = (
   arguments_: readonly string[],
@@ -59,7 +59,7 @@ export const splitIncurBuiltinArguments = (
     const argument = arguments_[index]!;
     const next = arguments_[index + 1];
     if (
-      INCUR_BUILTIN_FLAGS.has(argument) ||
+      (INCUR_BUILTIN_FLAGS.has(argument) && argument !== "--timings") ||
       // A following value belongs to a command-local `--version` option.
       (argument === "--version" && (next === undefined || next.startsWith("-")))
     ) {
@@ -73,7 +73,24 @@ export const splitIncurBuiltinArguments = (
     }
     command.push(argument);
   }
-  return { command, flags, outputValues };
+  // Incur extracts builtin output values first, then parses globals until `--`.
+  // A timing-shaped output value is data; a command option's value is still
+  // subject to this global pass before the registration builtin consumes it.
+  let globalsEnded = false;
+  const remaining = command.filter((token) => {
+    if (token === "--") globalsEnded = true;
+    if (
+      !globalsEnded &&
+      (token === "--timings" ||
+        token === "--no-timings" ||
+        token.startsWith("--timings="))
+    ) {
+      flags.add(token);
+      return false;
+    }
+    return true;
+  });
+  return { command: remaining, flags, outputValues };
 };
 
 /**
