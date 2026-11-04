@@ -786,6 +786,44 @@ it("rejects a UTF8String name that is not valid UTF-8", () => {
   ).toBe("commonName=é");
 });
 
+it("accepts only RFC 5280 UTC validity instants", () => {
+  const name = directoryName(der(0x0c, Buffer.from("Fixture")));
+  const certificate = (notBefore: Buffer) =>
+    readAsn1(
+      derSeq(
+        derSeq(
+          derInt(1),
+          SHA256_ALG,
+          name,
+          derSeq(notBefore, der(0x17, Buffer.from("260101000000Z"))),
+          name,
+          spki,
+        ),
+        SHA256_ALG,
+        der(0x03, Buffer.from([0])),
+      ),
+    );
+  for (const [tag, content] of [
+    [0x17, Buffer.from([0xff, 0xfe])],
+    [0x17, Buffer.from("2501010000Z")],
+    [0x17, Buffer.from("250101000000+0800")],
+    [0x17, Buffer.from("250229000000Z")],
+    [0x18, Buffer.from("20250101000000.5Z")],
+    [0x18, Buffer.from("20250101240000Z")],
+  ] as const)
+    expect(() => parseCertificate(certificate(der(tag, content)))).toThrow(
+      PeCertificateAsn1Failure,
+    );
+  // UTCTime 00 is 2000, a leap year; GeneralizedTime carries 2050 onward.
+  for (const [tag, time] of [
+    [0x17, "000229235959Z"],
+    [0x18, "20500101000000Z"],
+  ] as const)
+    expect(
+      parseCertificate(certificate(der(tag, Buffer.from(time)))).not_before,
+    ).toBe(time);
+});
+
 it.each([
   ["GeneralString", 0x1b, Buffer.from("name")],
   ["OCTET STRING", 0x04, Buffer.from("name")],
@@ -997,3 +1035,28 @@ it.each([
     expect(certificate.subject.attributes[0]?.value).toBe(value);
   },
 );
+
+it("rejects a certificate whose signatureAlgorithm differs from its TBS signature", () => {
+  const name = directoryName(der(0x0c, Buffer.from("Fixture")));
+  const certificate = (outer: Buffer) =>
+    readAsn1(
+      derSeq(
+        derSeq(derInt(1), SHA256_ALG, name, validity, name, spki),
+        outer,
+        der(0x03, Buffer.from([0])),
+      ),
+    );
+  const sha1 = derSeq(der(0x06, Buffer.from([0x2b, 0x0e, 0x03, 0x02, 0x1a])));
+  // The same OID with explicit NULL parameters is still a different identifier.
+  const sha256WithNull = der(
+    0x30,
+    Buffer.concat([SHA256_ALG.subarray(2), der(0x05, Buffer.alloc(0))]),
+  );
+  for (const outer of [sha1, sha256WithNull])
+    expect(() => parseCertificate(certificate(outer))).toThrow(
+      /signatureAlgorithm differs from the TBSCertificate signature/u,
+    );
+  expect(
+    parseCertificate(certificate(SHA256_ALG)).signature_algorithm_oid,
+  ).toBe("2.16.840.1.101.3.4.2.1");
+});

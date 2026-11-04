@@ -73,7 +73,7 @@ export const registerAnalysisViewCommands = (
   });
   cli.command(CLI_COMMANDS.inspectAnalysisView, {
     description:
-      "Project a selected view of completed Evidence JSON for a supported analysis operation",
+      "Project a selected view of completed Evidence JSON for a supported analysis operation. For inventory rows, use --format csv or --format tsv with --filter-output normalized_result.items and --columns logical_path,artifact_id (if those fields are included in the view).",
     args: z.object({
       inputJson: z.string().describe("Inline workflow JSON or JSON file path"),
     }),

@@ -227,7 +227,17 @@ caveats. Failure details retain at most 32 rows within 2,048 JSON-encoded
 UTF-8 bytes; names may be omitted to keep complete addresses and reasons. The
 index retains every failure and its complete observed name.
 Each function's `decompile-index.json` record, whatever its status, keeps the
-complete limitations of the observations it used. The returned Evidence keeps
+complete limitations of the observations it used.
+When available, `provider_source` records the source of that attempt's
+pseudocode observation: a file path, SHA-256 and byte range, or a
+single-function decompile. The latter describes the method, not a unique run. A file
+descriptor records the source as observed; the file may since have changed or
+been removed, so compare its current digest before using it. The descriptor
+does not authenticate the journal. `status: "unknown"` distinguishes
+an unavailable source from an existing matching output whose original producer
+is unknown. Older journal records can omit this field; omission is unknown.
+Failed attempts retain their source in the append-only journal when the
+provider supplied one, even if a later attempt succeeds. The returned Evidence keeps
 at most eight first-observed distinct per-function provider limitations within an 8,000-byte JSON-encoded UTF-8 text budget and counts omitted observations. Repeated omitted text is counted per observation, not as a distinct caveat. This summary does not retain every omitted string in memory. A fresh output directory must not already exist. `--resume`
 continues an export for the same target SHA-256, provider, analysis profile,
 and layout; it requires the directory to exist, and an export without a known
@@ -434,6 +444,18 @@ nodes and edges. Node payloads are bounded to 8 MiB and serialized results to
 32 MiB. Pagination returns edges whose source is on the node page and preserves
 stable IDs for endpoints outside that page.
 
+Procedure, node and edge `evidence_id` values identify the source function
+observations used by the trace. In an MCP session, retrieve them from the
+Evidence bundle for inspection or export. A replayed source keeps the original
+observation's identity; the trace also reports that replay occurred. Older
+cached value traces are not replayed under the revised workflow profile, while
+their historical Evidence remains available.
+
+The one-shot CLI accepts `--evidence_output <new-path>` to save the trace and
+the transitive source Evidence closure named by its links. The destination is
+never overwritten. `--detail summary` requires `--evidence_output`; the bundle
+still retains the complete trace and source Evidence.
+
 Within one value trace, each exact procedure selector is attempted at most once,
 including failed analyses. A failed seed returns the provider's original typed
 failure and corrective guidance; it cannot establish a trace or target identity.
@@ -444,8 +466,10 @@ resources it owns stops the trace: the result is that provider's own
 `cleanup_incomplete` failure with its resources and any bound cleanup retry, and the work
 admitted before the stop is retained as partial Evidence with a located unknown
 at the stopping read. A successful seed without a native def-use
-model still returns its procedure and an explicit coverage unknown. A new trace
-can retry failed selectors.
+model still returns its procedure and an explicit coverage unknown. An unrecorded
+facet stays unknown; when the provider explicitly reports unavailability, the trace
+retains its reason. REA's Kuna provider explicitly reports that it does not supply
+native def-use observations. A new trace can retry failed selectors.
 
 Paging and traversal completeness are separate facts. `page_truncated` means the
 page omits retained nodes, and the edges they source, before `offset` or after
@@ -1399,7 +1423,7 @@ procedures. The CLI equivalent is
 Use `start`/`end` to constrain the inclusive address window, and continue with
 `next_cursor` until `complete` is true. Inspect `searched` for page coverage and
 skipped uninitialized blocks. A missing match does not establish absence from
-uninitialized memory or across block boundaries. See
+uninitialized or excluded memory. See
 [Ghidra byte search](ghidra-provider.md#masked-byte-search) for mask and coverage
 semantics. This query never executes or modifies target bytes.
 
