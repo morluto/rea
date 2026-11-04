@@ -667,6 +667,7 @@ it("keeps answering pseudocode one function at a time when the export fails", as
       userMessage: expect.stringContaining(
         "not in recognized object file format",
       ),
+      diagnostics: { failed_project_records: "not_exposed" },
     },
   });
   const pseudocode = await run(client, "procedure_pseudo_code", {
@@ -674,8 +675,14 @@ it("keeps answering pseudocode one function at a time when the export fails", as
   });
   expect(pseudocode.rawResult).toMatchObject({
     source: { kind: "single-function" },
+    project_export: { state: "failed", failure_records: "not_exposed" },
   });
-  expect(pseudocode.limitations.at(-1)).toContain("The project export failed");
+  expect(pseudocode.limitations).toEqual(
+    expect.arrayContaining([
+      expect.stringContaining("The project export failed"),
+      "REA does not expose per-function records from a failed project export.",
+    ]),
+  );
   const fresh = await run(client, "procedure_pseudo_code", {
     procedure: "main",
     analysis: "independent_fresh",

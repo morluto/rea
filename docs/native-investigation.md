@@ -128,6 +128,16 @@ rea inspect-native-data-type <binary> --type /MyStruct --provider ghidra
 rea inspect-native-data-type <binary> --address <typed-data-address> --provider ghidra
 ```
 
+Ghidra bit-field components may have a `type_id` that is not a registered
+database type. When `bit_field` is present, `base_type_id` is the provider's
+base type and the lookup fields report whether the manager resolves equivalent
+types at those exact paths. `bit_size` is the effective width;
+`declared_bit_size` can be larger. `bit_offset` is the least-significant-bit
+offset within the base type, not a byte-order-independent offset from the start
+of the containing structure. Account for the component's storage size and byte
+order before applying that offset to a larger word. Missing `bit_field` details
+are unreported, not proof that a component is not a bit-field.
+
 Instruction facts include bytes, length, decoder text, ordered register/scalar/
 address tokens, typed references and flow destinations. Mid-instruction, data,
 outside-memory and unlisted addresses have separate outcomes. For Ghidra,
@@ -310,6 +320,20 @@ relationships but reports their completeness as unknown. In particular, a resolv
 tail call observed in one direction does not prove that the reverse inventory is
 complete. An empty Hopper inventory cannot establish that no such call exists.
 No whole-binary reverse scan is performed.
+
+For large native traces, `trace_feature` accepts `detail: "summary"`. It retains
+the complete trace and returns counts and its parent Evidence ID. Use
+`inspect_analysis_view` with that ID and `view: {kind: "native-feature-trace",
+collection: "references", offset: 0, limit: 64}` to page the original rows;
+`matches` and `unknowns` are separate collections. Matches accept an exact
+`address`; references accept exact `source_address` and `target_address`
+filters. Row indices refer to the retained collection, and page coverage does not establish provider discovery
+completeness. `list_unknowns` pages the independently managed question heads.
+In the one-shot CLI, `rea trace ... --detail summary --evidence_output PATH`
+stores the trace and its linked source Evidence for later
+`inspect-analysis-view` calls. This bundle does not include the CLI session's
+Unknown registry; its original question texts remain available in the trace's
+`unknowns` pages.
 Regex searches use ECMAScript Unicode syntax in a cancellable worker with a
 matching deadline and a worker old-generation heap. Deadline or cancellation
 stops matching while leaving the Hopper API available. The deadline is
