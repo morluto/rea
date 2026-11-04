@@ -9,6 +9,7 @@ import {
   coreFileNote,
   corePrpsinfoNote,
   coreSiginfoNote,
+  elfNote,
   elfNoteFixture,
 } from "../../src/native/elf/ElfNotes.fixture.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
@@ -180,6 +181,88 @@ cliTest(
         },
       });
       assertCoreEntries(report.entries);
+    }
+  },
+);
+
+const mipsPrpsinfoDescriptor = (little: boolean): Buffer => {
+  const descriptor = Buffer.alloc(128);
+  descriptor[0] = 1;
+  const write = little
+    ? descriptor.writeUInt32LE.bind(descriptor)
+    : descriptor.writeUInt32BE.bind(descriptor);
+  write(70001, 8);
+  write(90002, 12);
+  write(1234, 16);
+  write(12, 20);
+  write(4321, 24);
+  write(5678, 28);
+  descriptor.write("core-probe", 32, "latin1");
+  descriptor.write("core-probe --flag", 48, "latin1");
+  return descriptor;
+};
+
+cliTest.for(["little", "big"] as const)(
+  "decodes Linux ELF32 MIPS process identity through CLI and MCP (%s endian)",
+  async (byteOrder, { cli }) => {
+    const root = await createTestTempDirectory("rea-elf-mips-core-");
+    const path = join(root, "core.elf");
+    const little = byteOrder === "little";
+    const descriptor = mipsPrpsinfoDescriptor(little);
+    const bytes = elfNoteFixture({
+      bits: 32,
+      machine: 8,
+      little,
+      type: 4,
+      ownership: "program",
+      notes: Buffer.concat([
+        elfNote("CORE", 3, descriptor, little),
+        elfNote("CORE", 3, descriptor.subarray(0, 124), little),
+      ]),
+    });
+    await writeFile(path, bytes);
+
+    const output = await cli.sharedCliRun!({
+      arguments: ["inspect-elf-notes", path, "--json"],
+    });
+    expect(output.exitCode, output.stderr).toBe(0);
+    const call = await cli.sharedMcpCall!();
+    const response = await call("inspect_elf_notes", { path });
+    expect(response.isError, JSON.stringify(response.content)).not.toBe(true);
+
+    const schema = toolContract("inspect_elf_notes").outputSchema;
+    for (const raw of [output.json, response.structuredContent]) {
+      const evidence = schema.parse(raw);
+      expect(evidence.subject).toMatchObject({
+        local_path: path,
+        digest: { sha256: descriptorHash(bytes) },
+      });
+      const report = evidence.normalized_result;
+      expect(report).toMatchObject({
+        format: "elf32",
+        byte_order: byteOrder,
+        machine: 8,
+        coverage: { status: "complete", examined_entries: 2 },
+      });
+      expect(report.entries[0]?.core?.prpsinfo).toEqual({
+        state: 1,
+        uid: 70001,
+        gid: 90002,
+        pid: 1234,
+        ppid: 12,
+        pgrp: 4321,
+        sid: 5678,
+        filename: "core-probe",
+        psargs: "core-probe --flag",
+      });
+      expect(report.entries[1]).toMatchObject({
+        type_name: "core_prpsinfo",
+        descriptor: {
+          bytes: 124,
+          sha256: descriptorHash(descriptor.subarray(0, 124)),
+        },
+        core: null,
+      });
     }
   },
 );

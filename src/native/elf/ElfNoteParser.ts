@@ -321,10 +321,17 @@ const decodeCorePrpsinfo = (
   descriptor: Buffer,
   little: boolean,
   wide: boolean,
+  machine: number,
   text: TextBudget,
 ): ElfNotes["entries"][number]["core"] => {
-  const minLen = wide ? 136 : 124;
-  if (descriptor.length < minLen) return null;
+  // Linux ELF32 EM_MIPS uses 32-bit UID and GID with a 32-bit pr_flag.
+  const idSize = wide || machine === 8 ? 4 : 2;
+  const uidOff = wide ? 16 : 8;
+  const gidOff = uidOff + idSize;
+  const pidOff = gidOff + idSize;
+  const fnameOff = pidOff + 16;
+  const psargsOff = fnameOff + 16;
+  if (descriptor.length < psargsOff + 80) return null;
   const u8 = (off: number) => descriptor.readUInt8(off);
   const u16 = (off: number) =>
     little ? descriptor.readUInt16LE(off) : descriptor.readUInt16BE(off);
@@ -334,14 +341,14 @@ const decodeCorePrpsinfo = (
     little ? descriptor.readInt32LE(off) : descriptor.readInt32BE(off);
 
   const state = u8(0);
-  const uid = wide ? u32(16) : u16(8);
-  const gid = wide ? u32(20) : u16(10);
-  const pid = wide ? i32(24) : i32(12);
-  const ppid = wide ? i32(28) : i32(16);
-  const pgrp = wide ? i32(32) : i32(20);
-  const sid = wide ? i32(36) : i32(24);
+  const readId = idSize === 4 ? u32 : u16;
+  const uid = readId(uidOff);
+  const gid = readId(gidOff);
+  const pid = i32(pidOff);
+  const ppid = i32(pidOff + 4);
+  const pgrp = i32(pidOff + 8);
+  const sid = i32(pidOff + 12);
 
-  const fnameOff = wide ? 40 : 28;
   const fnameBytes = descriptor.subarray(fnameOff, fnameOff + 16);
   const fnameEnd = fnameBytes.indexOf(0);
   const fname = (
@@ -349,7 +356,6 @@ const decodeCorePrpsinfo = (
   ).toString("latin1");
   chargeText(text, fname.length);
 
-  const psargsOff = wide ? 56 : 44;
   const psargsBytes = descriptor.subarray(psargsOff, psargsOff + 80);
   const psargsEnd = psargsBytes.indexOf(0);
   const psargs = (
@@ -597,7 +603,8 @@ const decodeCore = (
   text: TextBudget,
 ): ElfNotes["entries"][number]["core"] => {
   if (owner !== "CORE") return null;
-  if (type === 3) return decodeCorePrpsinfo(descriptor, little, wide, text);
+  if (type === 3)
+    return decodeCorePrpsinfo(descriptor, little, wide, machine, text);
   if (type === 0x46494c45)
     return decodeCoreFile(descriptor, little, wide, text);
   if (type === 0x53494749)
