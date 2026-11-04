@@ -413,19 +413,19 @@ const runAnalysis = async (
     const records = new Map(
       supplied.map((record) => [record.evidence_id, record]),
     );
+    const captured = new Map<string, Evidence>();
     const closure = resolveInvestigationEvidenceClosure(
       {
         evidenceForAnalysis: (id) => {
           const record = records.get(id) ?? session.evidenceForAnalysis(id);
-          if (record !== undefined) records.set(id, record);
+          if (record !== undefined) captured.set(id, record);
           return record;
         },
       },
       evidence.evidence_links,
     );
-    if (!closure.ok) return closure;
-    sourceEvidence = closure.value.map((id) => records.get(id) as Evidence);
-    return ok(null);
+    sourceEvidence = [...captured.values()];
+    return closure.ok ? ok(null) : closure;
   };
   const execute = async (): Promise<Result<Evidence, AnalysisError>> => {
     let isDirectory = false;

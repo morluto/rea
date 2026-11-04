@@ -160,6 +160,7 @@ interface SnapshotProviderOptions {
   readonly supportedOperations?: readonly CapabilityDescriptor["operation"][];
   readonly limitations?: readonly string[];
   readonly sourceEvidence?: boolean;
+  readonly sourceMissingLink?: boolean;
 }
 
 const makeProvider = (
@@ -264,6 +265,9 @@ const makeProvider = (
                         operation: "health",
                         parameters: {},
                         result: "fixture source",
+                        ...(options.sourceMissingLink
+                          ? { evidenceLinks: [`ev_${"0".repeat(64)}`] }
+                          : {}),
                       }),
                     ],
                   }
@@ -1796,4 +1800,49 @@ it("replays source-bearing direct analysis only while snapshot source Evidence i
       (record) => record.evidence_id === sourceId,
     ),
   ).toBe(true);
+});
+
+it("preserves captured sources when a transitive source is missing", async () => {
+  const fixture = await createSnapshotReplayFixture(
+    "rea-direct-partial-source-",
+  );
+  const provider = fixture.createProvider({
+    supportedOperations: ["procedure_pseudo_code"],
+    sourceEvidence: true,
+    sourceMissingLink: true,
+  });
+  const result = await runDirectAnalysis(
+    fixture.dependencies(provider),
+    fixture.path,
+    "procedure_pseudo_code",
+    { procedure: "0x1000", document: "fixture" },
+    { includeEvidenceSources: true },
+  );
+  expect(result.ok).toBe(false);
+  expect(result.sourceEvidence).toHaveLength(1);
+  const outputPath = join(dirname(fixture.snapshotPath), "missing-source.json");
+  const output = await publishCliAnalysisEvidence(result, {
+    providerId: IDENTITY.id,
+    operation: "procedure_pseudo_code",
+    signal: new AbortController().signal,
+    detail: "complete",
+    evidenceOutput: outputPath,
+  });
+  const failure = output as {
+    details: {
+      source_closure: {
+        records: Evidence[];
+        omitted: { evidence_id: string }[];
+        complete: boolean;
+      };
+    };
+  };
+  expect(failure.details.source_closure.complete).toBe(false);
+  expect(
+    failure.details.source_closure.records.map((record) => record.evidence_id),
+  ).toEqual(result.sourceEvidence?.map((record) => record.evidence_id));
+  expect(failure.details.source_closure.omitted).toEqual([
+    { evidence_id: `ev_${"0".repeat(64)}`, reason: "not_captured" },
+  ]);
+  await expect(readFile(outputPath)).rejects.toMatchObject({ code: "ENOENT" });
 });
