@@ -7,6 +7,7 @@ import { Readable } from "node:stream";
 import { expect, it } from "vitest";
 
 import { digestFile } from "../../src/application/reverse/ReverseEngineeringService.js";
+import { FileWork } from "../../src/process/FileWork.js";
 import { TestReverseEngineeringService } from "../support/reverseEngineeringService.js";
 
 it("bounds concurrent reverse-engineering provider calls", async () => {
@@ -126,6 +127,8 @@ it.each(["stat", "open"] as const)(
     };
     const service = new TestReverseEngineeringService({
       run: async () => ({ stdout: "", stderr: "" }),
+      // A budget above the concurrent calls, so the calls' places are the limit.
+      fileWork: new FileWork(9),
       stat: (path) =>
         hold(stalls === "stat" ? answered.then(() => stat(path)) : stat(path)),
       digest: (path, bounds) =>
@@ -190,6 +193,64 @@ it.each(["stat", "open"] as const)(
     }
   },
 );
+
+it("refuses new file work while stalled steps hold the budget, then admits it", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "rea-reverse-budget-"));
+  const paths = ["stalled-a", "stalled-b", "healthy"].map((name) =>
+    join(directory, name),
+  );
+  await Promise.all(paths.map((path) => writeFile(path, "fixture")));
+  const [first, second, healthy] = paths as [string, string, string];
+  let answer!: () => void;
+  const answered = new Promise<void>((resolve) => {
+    answer = resolve;
+  });
+  const stats: string[] = [];
+  const held: Promise<unknown>[] = [];
+  const service = new TestReverseEngineeringService({
+    run: async () => ({ stdout: "", stderr: "" }),
+    stat: (path) => {
+      stats.push(path);
+      if (path === healthy) return stat(path);
+      const check = answered.then(() => stat(path));
+      held.push(check);
+      return check;
+    },
+  });
+  const inspect = (path: string, command_timeout_ms?: number) =>
+    service.inspectWithObjdump({
+      path,
+      operation: "file_headers",
+      ...(command_timeout_ms === undefined ? {} : { command_timeout_ms }),
+    });
+  try {
+    for (const path of [first, second])
+      await expect(inspect(path, 50)).resolves.toMatchObject({
+        ok: false,
+        error: { _tag: "AnalysisTimeoutError" },
+      });
+    await expect(inspect(healthy)).resolves.toMatchObject({
+      ok: false,
+      error: {
+        _tag: "AnalysisResourceConstraintError",
+        resource: "capacity",
+        reportedLimits: { file_steps_held: 2, max_held_file_steps: 2 },
+        diagnostics: { phase: "target_preflight" },
+      },
+    });
+    // The refused call started no step, so it holds no thread.
+    expect(stats).toEqual([first, second]);
+    answer();
+    await Promise.allSettled(held);
+    await new Promise((resolve) => setImmediate(resolve));
+    await expect(inspect(healthy)).resolves.toMatchObject({ ok: true });
+  } finally {
+    answer();
+    await Promise.allSettled(held);
+    await service.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
 
 it("preserves the exact caller reason when objdump admission is already aborted", async () => {
   const directory = await mkdtemp(join(tmpdir(), "rea-reverse-preabort-"));

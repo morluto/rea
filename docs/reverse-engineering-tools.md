@@ -175,9 +175,15 @@ closes, so a stalled close also reaches the deadline. A call that returns while
 work it left behind is still running keeps its place among the eight
 concurrent objdump and rizin operations until that work returns; a call that
 only waited for another call's work does not. The capacity error counts such
-calls as `operations_awaiting_file_work`. Closing the service does not wait for
-that work, which a mount that never answers would hold forever; the process
-itself cannot exit until it returns.
+calls as `operations_awaiting_file_work`. Each stalled step holds a thread of
+Node's four-thread file pool, so the process holds at most 2. Past that, a call
+that needs a new file step is refused with a retryable capacity error
+(`file_steps_held`, `max_held_file_steps`) and starts nothing, which keeps file
+access working for REA's other tools; process capture's executable lookup obeys
+the same budget. A retry on a path that already has stalled work waits and takes
+no thread. Closing the service does not wait for that work, which a mount that
+never answers would hold forever; the process itself cannot exit until it
+returns.
 
 Captured stdout and stderr are retained up to a 16 MiB combined limit; `output_truncated` marks output beyond that limit. One-shot commands use the `command_timeout_ms` budget described above. That 16 MiB cap has no runtime override. A typed failure's `captured_output` marks a stream that held invalid UTF-8 with `stdout_invalid_utf8` or `stderr_invalid_utf8`.
 

@@ -7,7 +7,7 @@ import {
   absoluteCallerPath,
   appendCallerPath,
 } from "../filesystem/callerPath.js";
-import { FileWork, fileWorkDeadline } from "./FileWork.js";
+import { type FileWork, fileWorkDeadline, HOST_FILE_WORK } from "./FileWork.js";
 
 /** Where a command resolves through an effective PATH, or why it does not. */
 export type ExecutableLookup =
@@ -46,6 +46,14 @@ export type ExecutableLookup =
       readonly by: "cancellation" | "deadline";
       /** The path being checked when the lookup stopped. */
       readonly candidate: string;
+    }
+  /** The file-work owner already held its budget of stalled steps. */
+  | {
+      readonly status: "saturated";
+      /** The path the lookup would have checked next. */
+      readonly candidate: string;
+      readonly held: number;
+      readonly budget: number;
     };
 
 /** Optional bounds for one lookup. */
@@ -55,7 +63,7 @@ export interface ExecutableLookupBounds {
   readonly timeoutMs?: number | undefined;
   readonly stat?: (path: string) => Promise<Stats>;
   readonly access?: (path: string, mode: number) => Promise<void>;
-  /** Owns the checks the lookup stops waiting for; defaults to its own. */
+  /** Owns the checks the lookup stops waiting for; defaults to the process's. */
   readonly fileWork?: FileWork;
 }
 
@@ -78,7 +86,8 @@ export interface ExecutableLookupBounds {
  * `workingDirectory` must name the process's working directory whenever it
  * can fail. A file-system call cannot itself be cancelled, so an interrupted
  * lookup leaves it with `bounds.fileWork`, whose later work on the same path
- * waits for it instead of starting another.
+ * waits for it instead of starting another. When that owner already holds its
+ * budget of stalled steps, the lookup stops with `saturated`.
  */
 export const lookupExecutable = async (
   command: string,
@@ -91,7 +100,7 @@ export const lookupExecutable = async (
     timeoutMs,
     stat = statPath,
     access = accessPath,
-    fileWork = new FileWork(),
+    fileWork = HOST_FILE_WORK,
   } = bounds;
   let cwd: string | undefined;
   const readCwd = (): string => (cwd ??= workingDirectory());
@@ -157,7 +166,8 @@ export const lookupExecutable = async (
       const metadata = await fileWork.run(candidate, deadline, () =>
         stat(candidate),
       );
-      if (metadata.status === "interrupted") return { ...metadata, candidate };
+      if (metadata.status === "interrupted" || metadata.status === "saturated")
+        return { ...metadata, candidate };
       if (metadata.status === "rejected") {
         const code = systemErrorCode(metadata.cause);
         if (explicit && (code === "EACCES" || code === "EPERM"))
@@ -178,7 +188,10 @@ export const lookupExecutable = async (
       const executable = await fileWork.run(candidate, deadline, () =>
         access(candidate, fsConstants.X_OK),
       );
-      if (executable.status === "interrupted")
+      if (
+        executable.status === "interrupted" ||
+        executable.status === "saturated"
+      )
         return { ...executable, candidate };
       // A launch by name would run a match under an unnamed working
       // directory, so the search stops there without a path to report.

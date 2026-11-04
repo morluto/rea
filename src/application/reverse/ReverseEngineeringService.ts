@@ -56,9 +56,11 @@ import {
   searchMovesPast,
 } from "../../process/ExecutableLookup.js";
 import {
-  FileWork,
+  type FileWork,
   fileWorkDeadline,
   type FileWorkOutcome,
+  FileWorkSaturatedError,
+  HOST_FILE_WORK,
 } from "../../process/FileWork.js";
 import { absoluteCallerPath } from "../../filesystem/callerPath.js";
 import { parseAnalysisInput } from "../AnalysisInput.js";
@@ -78,6 +80,8 @@ export interface ReverseEngineeringServiceOptions {
   readonly processes?: ReverseEngineeringProcesses;
   readonly digest?: typeof digestFile;
   readonly stat?: (path: string) => Promise<Stats>;
+  /** Defaults to the process's owner, which budgets libuv's pool. */
+  readonly fileWork?: FileWork;
 }
 
 /**
@@ -163,7 +167,7 @@ export class ReverseEngineeringService {
     Promise<Result<Evidence, AnalysisError>>
   >();
   /** Owns the file work that calls stop waiting for. */
-  readonly #fileWork = new FileWork();
+  readonly #fileWork: FileWork;
   /** Calls that returned while file work they left behind was still running. */
   readonly #awaitingFileWork = new Set<AbortController>();
   #closing = false;
@@ -185,6 +189,7 @@ export class ReverseEngineeringService {
         : processes.run;
     this.#digest = options.digest ?? digestFile;
     this.#stat = options.stat ?? statPath;
+    this.#fileWork = options.fileWork ?? HOST_FILE_WORK;
   }
 
   /** Ask retained process owners to settle cleanup before admitting more work. */
@@ -442,6 +447,10 @@ export class ReverseEngineeringService {
           new AnalysisCancelledError(operation, {
             cause: callerCancellationCause(signal, cause),
           }),
+        );
+      if (cause instanceof FileWorkSaturatedError)
+        return err(
+          fileWorkSaturated(operation, cause, { phase: "target_preflight" }),
         );
       if (code === "EACCES" || code === "EPERM") {
         const deniedPath = absolutePath === undefined ? command : absolutePath;
@@ -970,6 +979,13 @@ export class ReverseEngineeringService {
             }),
       );
     }
+    if (lookup.status === "saturated")
+      return err(
+        fileWorkSaturated(operation, lookup, {
+          phase: "executable_lookup",
+          executable_lookup_candidate: lookup.candidate,
+        }),
+      );
     // The command runs the path the host refused to inspect, so a launch
     // failure keeps where access must be granted.
     if (lookup.status === "denied")
@@ -1029,6 +1045,8 @@ export class ReverseEngineeringService {
             diagnostics,
           }),
         );
+      if (cause instanceof FileWorkSaturatedError)
+        return err(fileWorkSaturated(operation, cause, diagnostics));
       // Hashing past the deadline ends the call, as the lookup's deadline does.
       if (code === "ETIMEDOUT")
         return err(
@@ -1546,7 +1564,7 @@ export interface FileDigestBounds {
   readonly timeoutMs?: number | undefined;
   readonly stat?: (path: string) => Promise<Stats>;
   readonly open?: (path: string) => ReturnType<typeof createReadStream>;
-  /** Owns the file work the hash stops waiting for; defaults to its own. */
+  /** Owns the file work the hash stops waiting for; defaults to the process's. */
   readonly fileWork?: FileWork;
 }
 
@@ -1566,12 +1584,13 @@ export const digestFile = async (
     timeoutMs = DEFAULT_REVERSE_COMMAND_TIMEOUT_MS,
     stat = statPath,
     open = createReadStream,
-    fileWork = new FileWork(),
+    fileWork = HOST_FILE_WORK,
   } = bounds;
   const deadline = fileWorkDeadline(signal, timeoutMs);
   try {
     const info = digestStep(
       await fileWork.run(path, deadline, () => stat(path)),
+      path,
       signal,
     );
     if (!info.isFile())
@@ -1584,7 +1603,7 @@ export const digestFile = async (
       readDigest((stream = open(path))),
     );
     if (read.status === "interrupted") stream?.destroy();
-    return digestStep(read, signal);
+    return digestStep(read, path, signal);
   } finally {
     deadline.release();
   }
@@ -1616,10 +1635,13 @@ const readDigest = (
 /** The value of one hash step, or the error its failure or interruption reports. */
 const digestStep = <Value>(
   outcome: FileWorkOutcome<Value>,
+  path: string,
   signal: AbortSignal | undefined,
 ): Value => {
   if (outcome.status === "fulfilled") return outcome.value;
   if (outcome.status === "rejected") throw outcome.cause;
+  if (outcome.status === "saturated")
+    throw new FileWorkSaturatedError(path, outcome.held, outcome.budget);
   if (outcome.by === "cancellation")
     throw new AnalysisCancelledError("artifact_digest", {
       cause: signal?.reason,
@@ -1628,6 +1650,25 @@ const digestStep = <Value>(
     code: "ETIMEDOUT",
   });
 };
+
+/** A call refused because stalled file steps hold the process's budget. */
+const fileWorkSaturated = (
+  operation: ReverseEngineeringOperation,
+  { held, budget }: { readonly held: number; readonly budget: number },
+  diagnostics: Readonly<Record<string, JsonValue>>,
+): AnalysisResourceConstraintError =>
+  new AnalysisResourceConstraintError(
+    operation,
+    "capacity",
+    `${String(held)} file-system steps that an unresponsive mount has not returned hold REA's budget of ${String(budget)}, so this call started no more.`,
+    { file_steps_held: held, max_held_file_steps: budget },
+    {
+      diagnostics,
+      remediationAction:
+        "Retry once the unresponsive mount answers. REA cannot cancel these steps, and the budget keeps file access working for its other tools.",
+      retryable: true,
+    },
+  );
 
 const PHYSICAL_FAILURE_CODES = new Set([
   "EACCES",

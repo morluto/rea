@@ -5,6 +5,12 @@ export type FileWorkOutcome<Value> =
   | {
       readonly status: "interrupted";
       readonly by: "cancellation" | "deadline";
+    }
+  /** The owner already holds its budget of stalled steps; nothing started. */
+  | {
+      readonly status: "saturated";
+      readonly held: number;
+      readonly budget: number;
     };
 
 /** One deadline and abort listener shared by every step of a file task. */
@@ -64,11 +70,27 @@ export const fileWorkDeadline = (
 
 const ignore = (): void => undefined;
 
+/**
+ * Stalled steps one process holds before it refuses new file work. Each holds
+ * a thread of libuv's pool, which Node sizes at 4 and REA does not resize, so
+ * two stay free for every other file, DNS and compression call.
+ */
+export const MAX_HELD_FILE_STEPS = 2;
+
 /** Work left behind on one path, and the calls waiting for it to settle. */
 interface LeftWork {
   readonly steps: Set<Promise<void>>;
   /** Each wakes one waiting call, which removes it when it stops waiting. */
   readonly waiters: Set<() => void>;
+}
+
+/** What every scope of one owner shares. */
+interface Owner {
+  /** Work left behind, by path. */
+  readonly left: Map<string, LeftWork>;
+  readonly budget: number;
+  /** Left-behind steps that have not returned. */
+  held: number;
 }
 
 /**
@@ -77,25 +99,32 @@ interface LeftWork {
  * worker with it, until the mount answers. A caller that stops waiting leaves
  * that work behind, and later work on the same path waits for it to settle
  * instead of starting more, so stalled work stays bounded by the paths. Work
- * that was not left behind never makes other work wait.
+ * that was not left behind never makes other work wait. Once the owner holds
+ * `budget` stalled steps, it refuses to start more until one returns.
  *
  * Each scope shares its owner's record of left-behind work and also keeps
  * the work it left itself, so a caller can hold resources, such as its place
  * among concurrent operations, until that work settles.
  */
 export class FileWork {
-  /** Work left behind, by path, shared by every scope of one owner. */
-  readonly #left: Map<string, LeftWork>;
+  #owner: Owner;
   /** Work this scope left behind. */
   readonly #own = new Set<Promise<void>>();
 
-  constructor(left = new Map<string, LeftWork>()) {
-    this.#left = left;
+  constructor(budget = MAX_HELD_FILE_STEPS) {
+    this.#owner = { left: new Map(), budget, held: 0 };
   }
 
   /** A scope that waits for, and is waited for by, this owner's other scopes. */
   scope(): FileWork {
-    return new FileWork(this.#left);
+    const scope = new FileWork(this.#owner.budget);
+    scope.#owner = this.#owner;
+    return scope;
+  }
+
+  /** Stalled steps this owner holds. */
+  get held(): number {
+    return this.#owner.held;
   }
 
   /**
@@ -109,9 +138,9 @@ export class FileWork {
     start: () => Promise<Value>,
   ): Promise<FileWorkOutcome<Value>> {
     for (
-      let earlier = this.#left.get(path);
+      let earlier = this.#owner.left.get(path);
       earlier !== undefined;
-      earlier = this.#left.get(path)
+      earlier = this.#owner.left.get(path)
     ) {
       // A waiter the call removes, since a reaction on the left-behind work
       // would stay attached after the call stops waiting.
@@ -126,6 +155,8 @@ export class FileWork {
     }
     if (deadline.ended !== undefined)
       return { status: "interrupted", by: deadline.ended };
+    const { held, budget } = this.#owner;
+    if (held >= budget) return { status: "saturated", held, budget };
     let step: Promise<Value>;
     try {
       step = start();
@@ -146,19 +177,40 @@ export class FileWork {
 
   #leave(path: string, step: Promise<unknown>): void {
     const settled = step.then(ignore, ignore);
-    const held = this.#left.get(path) ?? {
+    const held = this.#owner.left.get(path) ?? {
       steps: new Set(),
       waiters: new Set(),
     };
-    this.#left.set(path, held);
+    this.#owner.left.set(path, held);
     held.steps.add(settled);
     this.#own.add(settled);
+    this.#owner.held += 1;
     void settled.then(() => {
       held.steps.delete(settled);
       this.#own.delete(settled);
+      this.#owner.held -= 1;
       if (held.steps.size > 0) return;
-      if (this.#left.get(path) === held) this.#left.delete(path);
+      if (this.#owner.left.get(path) === held) this.#owner.left.delete(path);
       for (const wake of held.waiters) wake();
     });
+  }
+}
+
+/** The process's one owner, since libuv's pool belongs to the process. */
+export const HOST_FILE_WORK = new FileWork();
+
+/** A step refused because the owner holds its budget of stalled steps. */
+export class FileWorkSaturatedError extends Error {
+  readonly _tag = "FileWorkSaturatedError";
+
+  constructor(
+    readonly path: string,
+    readonly held: number,
+    readonly budget: number,
+  ) {
+    super(
+      `${String(held)} file-system steps that an unresponsive mount has not returned already hold REA's budget of ${String(budget)}`,
+    );
+    this.name = "FileWorkSaturatedError";
   }
 }

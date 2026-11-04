@@ -22,6 +22,11 @@ import {
   resolveProcessScenarioRuntimePaths,
 } from "./ProcessScenarioRuntimeValidation.js";
 import { processScenarioSchema } from "../../domain/process/processScenario.js";
+import {
+  fileWorkDeadline,
+  HOST_FILE_WORK,
+  MAX_HELD_FILE_STEPS,
+} from "../FileWork.js";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 
 it.skipIf(process.platform === "win32")(
@@ -409,3 +414,35 @@ it.skipIf(process.platform === "win32")(
     ).rejects.toBeInstanceOf(AnalysisInputError);
   },
 );
+
+it("refuses executable resolution while stalled steps hold the process's budget", async () => {
+  let answer!: () => void;
+  const stalled = new Promise<void>((resolve) => {
+    answer = resolve;
+  });
+  const controller = new AbortController();
+  const deadline = fileWorkDeadline(controller.signal, undefined);
+  const leaving = Array.from({ length: MAX_HELD_FILE_STEPS }, (_, index) =>
+    HOST_FILE_WORK.run(`/stalled/${String(index)}`, deadline, () => stalled),
+  );
+  controller.abort();
+  await Promise.all(leaving);
+  deadline.release();
+  try {
+    await expect(
+      resolveExecutable("/bin/sh", "/", undefined),
+    ).rejects.toMatchObject({
+      _tag: "AnalysisResourceConstraintError",
+      resource: "capacity",
+      reportedLimits: {
+        file_steps_held: MAX_HELD_FILE_STEPS,
+        max_held_file_steps: MAX_HELD_FILE_STEPS,
+      },
+    });
+  } finally {
+    answer();
+    await stalled;
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  expect(HOST_FILE_WORK.held).toBe(0);
+});
