@@ -278,6 +278,17 @@ to `/absolute/view-request.json`, then run
 `rea inspect-analysis-view /absolute/view-request.json --json`. This also reads
 pre-summary source records without changing their identity; no live provider is started.
 
+Unavailable or inapplicable native collections keep `items.rows: null` and
+report `coverage: {"status":"unavailable","examined":0,"total":null,"next_offset":null,"exhausted":false}`.
+This applies to unrecorded `native-load-image` checks/sections and inapplicable
+`native-context` result limitations. Their total is unknown; no continuation is
+offered. Stop paging that collection and inspect the returned unknowns rather
+than treating it as an observed empty set or retrying a null offset. Recorded
+empty collections, empty selections and offsets past the end retain numeric
+totals and exhausted page coverage. Clients upgrading from the earlier
+zero-total representation must handle the new `unavailable` status and nullable
+total; historical saved views remain valid.
+
 `procedure_address`, `procedure_callees`, `procedure_callers`,
 `resolve_containing_procedure` and `get_call_graph` also accept `detail: "summary"`
 (complete remains the default). The summary includes the first 64 recorded

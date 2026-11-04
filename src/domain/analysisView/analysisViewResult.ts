@@ -1,4 +1,7 @@
-import { analysisViewCoverageSchema } from "./analysisViewCoverage.js";
+import {
+  analysisViewCoverageSchema,
+  nullableCollectionViewCoverageSchema,
+} from "./analysisViewCoverage.js";
 import {
   javaScriptRouteInventorySourceSchema,
   javaScriptRouteInventorySchema,
@@ -447,7 +450,9 @@ const nativeContextViewResultSchema = z.discriminatedUnion("facet", [
   nativeContextFor("overview"),
   nativeContextFor("analysis-profile"),
   nativeContextFor("limitations"),
-  nativeContextFor("result-limitations"),
+  nativeContextFor("result-limitations").extend({
+    coverage: nullableCollectionViewCoverageSchema,
+  }),
 ]);
 
 export const byteEntropySummaryViewResultSchema = z.strictObject({
@@ -1202,6 +1207,7 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
   z.strictObject({
     ...viewResultBase,
     kind: z.literal("native-load-image"),
+    coverage: nullableCollectionViewCoverageSchema,
     ...nativeViewSourceContext,
     verification_status: z.enum(["unsupported", "verified", "mismatch"]),
     parent_operation: z.literal("inspect_native_load_image"),
