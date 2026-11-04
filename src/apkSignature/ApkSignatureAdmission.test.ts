@@ -1,3 +1,5 @@
+import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
+import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { expect, it } from "vitest";
 import { apkSignatureAdmission } from "./ApkSignatureAdmission.js";
 import { APK_SIGNATURE_LIMITS } from "./ApkSignatureRelease.js";
@@ -21,9 +23,19 @@ it("bounds process-wide scans and waiting requests, cancels queued work and reco
     () => apkSignatureAdmission.acquire(),
   );
   try {
-    await expect(apkSignatureAdmission.acquire()).rejects.toMatchObject({
-      _tag: "AnalysisResourceConstraintError",
-      resource: "capacity",
+    const refused = await apkSignatureAdmission
+      .acquire()
+      .catch((cause: unknown) => {
+        if (!(cause instanceof AnalysisResourceConstraintError)) throw cause;
+        return projectAnalysisError(cause);
+      });
+    expect(refused).toMatchObject({
+      code: "resource_constraint",
+      retryable: true,
+      remediation: {
+        action:
+          "Wait for an active analysis to complete, then retry within the reported admission limits.",
+      },
     });
     expect(granted).toBe(false);
     controller.abort(reason);

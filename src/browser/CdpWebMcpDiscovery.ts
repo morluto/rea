@@ -37,7 +37,10 @@ import {
   walkFrameTrees,
 } from "./CdpCaptureDocuments.js";
 import { optionalCdpCommand } from "./CdpOptionalCommand.js";
-import { topCallFrame } from "./CdpCaptureEventHelpers.js";
+import {
+  cdpSourceCoordinates,
+  topCallFrame,
+} from "./CdpCaptureEventHelpers.js";
 
 interface DiscoveryContext {
   readonly connection: CdpConnection;
@@ -519,7 +522,10 @@ const normalizeTool = (
     completeness.exclude("webmcp_tools", "invalid_protocol_value");
   const schema = declaration?.success === true ? declaration.data : null;
   const registrationFrame = topCallFrame(value.stackTrace);
-  if (!registrationFrame.ok)
+  const coordinates = cdpSourceCoordinates(
+    registrationFrame.ok ? registrationFrame.value : undefined,
+  );
+  if (!registrationFrame.ok || coordinates.invalid)
     completeness.exclude("webmcp_tools", "invalid_protocol_value");
   return {
     tool_key: toolKey(frame.url, frameId, name),
@@ -542,7 +548,9 @@ const normalizeTool = (
       autosubmit: annotation("autosubmit"),
     },
     registration_source: registrationSource(
-      registrationFrame.ok ? registrationFrame.value : undefined,
+      registrationFrame.ok && !coordinates.invalid
+        ? registrationFrame.value
+        : undefined,
       new Set(input.allowed_origins),
     ),
     trust: "page-declared-untrusted",
@@ -554,12 +562,13 @@ const registrationSource = (
   allowedOrigins: ReadonlySet<string>,
 ): WebMcpDiscovery["tools"]["items"][number]["registration_source"] => {
   const url = allowedSanitizedUrl(frame?.url, allowedOrigins);
+  const coordinates = cdpSourceCoordinates(frame);
   return frame === undefined || url === undefined
     ? null
     : {
         url: url.url,
-        line: integerOrNull(frame.lineNumber),
-        column: integerOrNull(frame.columnNumber),
+        line: coordinates.line,
+        column: coordinates.column,
       };
 };
 
@@ -609,8 +618,3 @@ const toolKey = (frameUrl: string, frameId: string, name: string): string =>
   `webmcp_${createHash("sha256")
     .update(compositeKey([frameUrl, frameId, name]))
     .digest("hex")}`;
-
-const integerOrNull = (value: unknown): number | null => {
-  const number = numberValue(value);
-  return number === undefined ? null : Math.max(0, Math.trunc(number));
-};

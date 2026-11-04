@@ -17,6 +17,7 @@ import { extractArtifact } from "./extraction/ArtifactExtraction.js";
 import {
   NODE_SEA_BAD_MAGIC,
   NODE_SEA_DUPLICATE_BLOB,
+  NODE_SEA_ELF_NOTES_REPEATED,
   NODE_SEA_FUSE_CONFLICT,
   NODE_SEA_FUSE_ABSENT,
   NODE_SEA_FUSE_UNSET,
@@ -32,7 +33,7 @@ import {
   nodeSeaPe,
   nodeSeaUniversal,
 } from "./nodeSea/NodeSea.fixture.js";
-import { elfNoteFixture } from "../native/elf/ElfNotes.fixture.js";
+import { elfNote, elfNoteFixture } from "../native/elf/ElfNotes.fixture.js";
 import { peResourceFixture } from "../native/pe/PeResources.fixture.js";
 import { locateNodeSea } from "./nodeSea/NodeSeaLocation.js";
 import { MAX_INSPECT_PE_FILE_BYTES } from "../domain/native/peResources.js";
@@ -411,6 +412,69 @@ it("keeps one blob when the same bytes are declared twice", async () => {
   expect(
     snapshot.occurrences.filter((row) => row.logical_path === "sea.js"),
   ).toHaveLength(1);
+});
+
+/** ELF64 whose `count` PT_NOTE program headers all declare the same notes. */
+const repeatedNoteElf = (count: number, notes: Buffer): Buffer => {
+  const noteOffset = 64 + count * 56;
+  const bytes = Buffer.alloc(noteOffset + notes.length);
+  bytes.writeUInt32LE(0x464c457f, 0);
+  bytes[4] = 2;
+  bytes[5] = 1;
+  bytes[6] = 1;
+  bytes.writeUInt16LE(3, 0x10);
+  bytes.writeUInt16LE(62, 0x12);
+  bytes.writeUInt32LE(1, 0x14);
+  bytes.writeBigUInt64LE(64n, 0x20);
+  bytes.writeUInt16LE(64, 0x34);
+  bytes.writeUInt16LE(56, 0x36);
+  bytes.writeUInt16LE(count, 0x38);
+  bytes.writeUInt16LE(64, 0x3a);
+  for (let index = 0; index < count; index += 1) {
+    const at = 64 + index * 56;
+    bytes.writeUInt32LE(4, at);
+    bytes.writeBigUInt64LE(BigInt(noteOffset), at + 8);
+    bytes.writeBigUInt64LE(BigInt(notes.length), at + 32);
+    bytes.writeBigUInt64LE(BigInt(notes.length), at + 40);
+    bytes.writeBigUInt64LE(4n, at + 48);
+  }
+  notes.copy(bytes, noteOffset);
+  return bytes;
+};
+
+it("reads repeated PT_NOTE declarations at most once per note the file holds", async () => {
+  // 4 KiB of zero bytes is 341 empty 12-byte notes.
+  const empty = Buffer.alloc(4096);
+  const unconfirmed = repeatedNoteElf(64, empty);
+  const handle = await open(
+    await writeCarrier("repeated-notes", unconfirmed),
+    "r",
+  );
+  const read = vi.spyOn(handle, "read");
+  try {
+    await expect(
+      locateNodeSea(handle, unconfirmed.length),
+    ).resolves.toBeUndefined();
+    // The prefix, the ELF header and 64 program headers, then the notes.
+    expect(read.mock.calls.length).toBeLessThanOrEqual(
+      2 + 64 + Math.floor(unconfirmed.length / 12),
+    );
+  } finally {
+    await handle.close();
+  }
+  const blob = buildNodeSeaBlob({ main: script, codePath: "sea.js" });
+  const confirmed = repeatedNoteElf(
+    64,
+    Buffer.concat([elfNote("NODE_SEA_BLOB", 0, blob), empty]),
+  );
+  await expect(
+    scanCanonicalArtifactInventory(
+      await writeCarrier("repeated-sea-notes", confirmed),
+    ),
+  ).rejects.toMatchObject({
+    reason: "format",
+    message: NODE_SEA_ELF_NOTES_REPEATED,
+  });
 });
 
 it("extracts the main script and assets without executing them", async () => {

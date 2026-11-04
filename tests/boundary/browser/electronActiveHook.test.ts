@@ -3305,6 +3305,188 @@ process.stdout.write(JSON.stringify({
   },
 );
 
+it("preserves warning-only rejections and records later blocked shell rejections", async () => {
+  const root = await createTestTempDirectory(
+    "rea-electron-hook-rejection-warn-",
+  );
+  temporary.push(root);
+  await writeElectronFixture(root);
+  const script = join(root, "warnings.cjs");
+  await writeFile(
+    script,
+    `const { shell } = require("electron");
+Promise.reject(new Error("controlled rejection"));
+setImmediate(() => {
+  shell.openExternal("https://example.invalid");
+  setImmediate(() => {
+    console.log(JSON.stringify({
+      listeners: process.listenerCount("unhandledRejection"),
+      events: globalThis.__reaElectronActiveSnapshot().events.filter(event =>
+        event.kind === "process-lifecycle" && event.event === "unhandled-rejection").map(event => ({
+          phase: event.phase, argument_shapes: event.argument_shapes, error: event.error,
+        })),
+    }));
+  });
+});
+`,
+  );
+  const result = await runNode(script, root, undefined, [
+    "--unhandled-rejections=warn",
+  ]);
+  expect(result.code, result.stderr).toBe(0);
+  expect(result.stderr).toContain("UnhandledPromiseRejectionWarning");
+  expect(JSON.parse(result.stdout)).toEqual({
+    listeners: 0,
+    events: Array.from({ length: 2 }, () => ({
+      phase: "observed",
+      argument_shapes: ["object", "object"],
+      error: true,
+    })),
+  });
+});
+
+it("preserves application rejection listeners and borrowed process emit behavior", async () => {
+  const root = await createTestTempDirectory(
+    "rea-electron-hook-rejection-listener-",
+  );
+  temporary.push(root);
+  await writeElectronFixture(root);
+  const script = join(root, "listeners.cjs");
+  await writeFile(
+    script,
+    `const { EventEmitter } = require("node:events");
+const reason = new Error("controlled listener reason");
+const promise = Promise.resolve();
+const sentinel = new Error("controlled listener throw");
+let calls = 0;
+process.on("unhandledRejection", (actualReason, actualPromise) => {
+  if (actualReason !== reason || actualPromise !== promise) throw new Error("identity changed");
+  calls++;
+  if (calls === 2) throw sentinel;
+});
+const returned = process.emit("unhandledRejection", reason, promise);
+let sameThrow = false;
+try { process.emit("unhandledRejection", reason, promise); } catch (cause) { sameThrow = cause === sentinel; }
+const borrowed = process.emit.call(new EventEmitter(), "unhandledRejection", reason, promise);
+console.log(JSON.stringify({ calls, returned, sameThrow, borrowed,
+  listeners: process.listenerCount("unhandledRejection"),
+  observed: globalThis.__reaElectronActiveSnapshot().events.filter(event => event.kind === "process-lifecycle" && event.event === "unhandled-rejection").length,
+}));
+`,
+  );
+  const result = await runNode(script, root);
+  expect(result.code, result.stderr).toBe(0);
+  expect(JSON.parse(result.stdout)).toEqual({
+    calls: 2,
+    returned: true,
+    sameThrow: true,
+    borrowed: false,
+    listeners: 1,
+    observed: 2,
+  });
+});
+
+it("delivers revoked proxy rejections to the application's original handler", async () => {
+  const root = await createTestTempDirectory(
+    "rea-electron-hook-revoked-rejection-",
+  );
+  temporary.push(root);
+  await writeElectronFixture(root);
+  const script = join(root, "revoked-rejections.cjs");
+  await writeFile(
+    script,
+    `const entries = [{}, [], () => undefined, []].map((target, index) => {
+  const { proxy, revoke } = Proxy.revocable(target, {});
+  if (index < 3) revoke();
+  return { reason: proxy, promise: undefined };
+});
+const received = [];
+process.on("unhandledRejection", (reason, promise) => {
+  received.push(entries.some(entry => entry.reason === reason && entry.promise === promise));
+});
+for (const entry of entries) entry.promise = Promise.reject(entry.reason);
+setImmediate(() => console.log(JSON.stringify({
+  received,
+  listeners: process.listenerCount("unhandledRejection"),
+  shapes: globalThis.__reaElectronActiveSnapshot().events.filter(event =>
+    event.kind === "process-lifecycle" && event.event === "unhandled-rejection").map(event => event.argument_shapes),
+})));
+`,
+  );
+  const result = await runNode(script, root);
+  expect(result.code, result.stderr).toBe(0);
+  expect(JSON.parse(result.stdout)).toEqual({
+    received: [true, true, true, true],
+    listeners: 1,
+    shapes: [
+      ["object", "object"],
+      ["object", "object"],
+      ["function", "object"],
+      ["array", "object"],
+    ],
+  });
+});
+
+it("preserves an Electron-style uncaught exception listener policy", async () => {
+  const root = await createTestTempDirectory(
+    "rea-electron-hook-uncaught-policy-",
+  );
+  temporary.push(root);
+  await writeElectronFixture(
+    root,
+    electronModuleSource +
+      `
+process.on("uncaughtException", () => {
+  if (process.listenerCount("uncaughtException") > 1) return;
+  console.log(JSON.stringify({ listeners: process.listenerCount("uncaughtException"),
+    kinds: globalThis.__reaElectronActiveSnapshot().events.filter(event => event.kind === "process-lifecycle").map(event => event.event),
+  }));
+});
+`,
+  );
+  const script = join(root, "uncaught.cjs");
+  await writeFile(script, 'throw new Error("controlled uncaught");\n');
+  const result = await runNode(script, root);
+  expect(result.code, result.stderr).toBe(0);
+  expect(JSON.parse(result.stdout)).toEqual({
+    listeners: 1,
+    kinds: ["uncaught-exception"],
+  });
+});
+
+it.each(["throw", "strict"])(
+  "preserves fatal rejection policy in %s mode",
+  async (mode) => {
+    const root = await createTestTempDirectory(
+      "rea-electron-hook-rejection-fatal-",
+    );
+    temporary.push(root);
+    await writeElectronFixture(root);
+    const script = join(root, "fatal-rejection.cjs");
+    await writeFile(
+      script,
+      `process.on("exit", () => console.log(JSON.stringify({
+  listeners: process.listenerCount("uncaughtException"),
+  kinds: globalThis.__reaElectronActiveSnapshot().events.filter(event => event.kind === "process-lifecycle").map(event => event.event),
+})));
+Promise.reject(new Error("controlled fatal rejection"));
+`,
+    );
+    const result = await runNode(script, root, undefined, [
+      "--unhandled-rejections=" + mode,
+    ]);
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain("controlled fatal rejection");
+    expect(JSON.parse(result.stdout)).toEqual({
+      listeners: 0,
+      kinds:
+        mode === "throw"
+          ? ["unhandled-rejection", "uncaught-exception"]
+          : ["uncaught-exception"],
+    });
+  },
+);
+
 it("preserves fatal process termination after recording uncaught exceptions", async () => {
   const root = await createTestTempDirectory("rea-electron-hook-fatal-");
   temporary.push(root);
@@ -3322,6 +3504,101 @@ it("preserves fatal process termination after recording uncaught exceptions", as
   expect(result.code).not.toBe(0);
   expect(result.stdout.trim()).toBe("true");
   expect(result.stderr).toContain("fatal-hook-secret");
+});
+
+it.each([{ sandboxPrefix: [] }, { sandboxPrefix: ["--no-sandbox"] }])(
+  "restores the exact application argv with Playwright prefix %j",
+  async ({ sandboxPrefix }) => {
+    const root = await createTestTempDirectory("rea-electron-argv-");
+    temporary.push(root);
+    await writeElectronFixture(root);
+    const hook = join(root, "electron-active-hook.cjs");
+    const callerArguments = [
+      "--",
+      "/caller/plugin.asar",
+      "--config=/caller/app.asar/settings",
+      "-r",
+      hook,
+      `--require=${hook}`,
+      "--inspect=0",
+      "--remote-debugging-port=0",
+      "/caller/electron-active-hook.cjs",
+      "",
+      "中文",
+    ];
+    const plan = ["-r", hook, "/selected/app.asar", ...callerArguments];
+    const script = join(root, "argv.cjs");
+    await writeFile(
+      script,
+      `
+      const argv = ["/runner/electron", ...${JSON.stringify(sandboxPrefix)},
+        "--inspect=0", "--remote-debugging-port=0", ...${JSON.stringify(plan)}];
+      process.argv = argv;
+      const plan = ${JSON.stringify(plan)};
+      process.env.REA_ELECTRON_CAPTURE_ARGV = JSON.stringify({ length: plan.length,
+        sha256: require("node:crypto").createHash("sha256").update(JSON.stringify(plan)).digest("hex") });
+      require("./electron-active-hook.cjs");
+      console.log(JSON.stringify({ argv: process.argv, same: process.argv === argv,
+        handoff_present: "REA_ELECTRON_CAPTURE_ARGV" in process.env,
+        hook_error: globalThis.__reaElectronActiveSnapshot().hook_error }));
+    `,
+    );
+    // The bootstrap script establishes Electron's observed argv before loading the hook.
+    const result = await runNode(script, root, undefined, [], false);
+    expect(result.code, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout.trim())).toEqual({
+      argv: ["/runner/electron", "/selected/app.asar", ...callerArguments],
+      same: true,
+      handoff_present: false,
+      hook_error: false,
+    });
+  },
+);
+
+it.each([
+  "absent",
+  "invalid-json",
+  "mismatch",
+  "foreign-hook",
+  "unknown-prefix",
+  "no-entry",
+])("preserves observed argv for an %s capture handoff", async (mode) => {
+  const root = await createTestTempDirectory("rea-electron-argv-guard-");
+  temporary.push(root);
+  await writeElectronFixture(root);
+  const hook = join(root, "electron-active-hook.cjs");
+  const plan = ["-r", hook, "/selected/app", "caller-document"];
+  const script = join(root, "guard.cjs");
+  await writeFile(
+    script,
+    `
+      const mode = ${JSON.stringify(mode)};
+      const plan = ${JSON.stringify(plan)};
+      const argv = ["/runner/electron", "--inspect=0", "--remote-debugging-port=0", ...plan];
+      process.argv = argv;
+      if (mode === "unknown-prefix") argv[1] = "--inspect=1234";
+      if (mode === "mismatch") argv[argv.length - 1] = "another-document";
+      if (mode === "foreign-hook") plan[1] = "/other/electron-active-hook.cjs";
+      if (mode === "no-entry") plan.length = 2;
+      if (mode === "absent") delete process.env.REA_ELECTRON_CAPTURE_ARGV;
+      else process.env.REA_ELECTRON_CAPTURE_ARGV = mode === "invalid-json" ? "{" : JSON.stringify({
+        length: plan.length,
+        sha256: require("node:crypto").createHash("sha256").update(JSON.stringify(plan)).digest("hex") });
+      const before = JSON.stringify(argv);
+      require("./electron-active-hook.cjs");
+      console.log(JSON.stringify({ unchanged: JSON.stringify(process.argv) === before,
+        same: process.argv === argv, handoff_present: "REA_ELECTRON_CAPTURE_ARGV" in process.env,
+        hook_error: globalThis.__reaElectronActiveSnapshot().hook_error }));
+    `,
+  );
+  const result = await runNode(script, root, undefined, [], false);
+  expect(result.code, result.stderr).toBe(0);
+  expect(JSON.parse(result.stdout.trim())).toEqual({
+    unchanged: true,
+    same: true,
+    handoff_present: false,
+    hook_error: mode !== "absent",
+  });
 });
 
 const writeElectronFixture = async (
@@ -3359,6 +3636,8 @@ const runNode = async (
   script: string,
   root: string,
   sourceHook?: string,
+  nodeArguments: readonly string[] = [],
+  preloadHook = true,
 ): Promise<{
   readonly code: number | null;
   readonly stdout: string;
@@ -3366,11 +3645,15 @@ const runNode = async (
 }> => {
   const hook = await stageHook(root, sourceHook);
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, ["-r", hook, script], {
-      cwd: root,
-      env: process.env,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
+    const child = spawn(
+      process.execPath,
+      [...nodeArguments, ...(preloadHook ? ["-r", hook] : []), script],
+      {
+        cwd: root,
+        env: process.env,
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    );
     const stdout: Buffer[] = [];
     const stderr: Buffer[] = [];
     child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));

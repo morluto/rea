@@ -29,7 +29,6 @@ const PACK_DIR_ENCRYPTED = 1;
 const PACK_REL_FILEBASE = 2;
 const PACK_SPARSE_BUNDLE = 4;
 const PACK_FILE_ENCRYPTED = 1;
-const MINIMUM_ENTRY_BYTES = 40;
 const DIRECTORY_CHUNK_BYTES = 64 * 1024;
 /** Encoded retained entry metadata, including escaped paths and source facts. */
 const MAX_DIRECTORY_METADATA_BYTES = 64 * 1024 * 1024;
@@ -222,13 +221,19 @@ export class GodotPckArtifactReader implements ArtifactReader {
       const offset = await cursor.uint64();
       const size = await cursor.uint64();
       const md5 = (await cursor.bytes(16)).toString("hex");
-      const flags = await cursor.uint32();
+      // Godot 3's format 1 has neither per-file flags nor a file-base field.
+      const flags = header.format_version === 1 ? 0 : await cursor.uint32();
       if ((flags & ~PACK_FILE_ENCRYPTED) !== 0)
         throw new ArtifactReaderFailure(
           "unavailable",
           `Godot patch or unknown member flags are unsupported: 0x${flags.toString(16)}`,
         );
       const sourcePath = pckMemberPath(rawPath);
+      if (header.format_version === 1 && offset === 0n)
+        throw new ArtifactReaderFailure(
+          "unavailable",
+          `Godot PCK patch removal entry is unsupported: ${sourcePath}`,
+        );
       const start = toSafeOffset(
         offset,
         header.file_base,
@@ -329,12 +334,12 @@ const readGodotPckHeader = async (
   const fixed = await readArtifactFileBytes(handle, start, 40, end, signal);
   const header = readGodotPckHeaderFacts(fixed);
   const version = header.formatVersion;
-  if (![2, 3, 4].includes(version))
+  if (![1, 2, 3, 4].includes(version))
     throw new ArtifactReaderFailure(
       "unavailable",
-      `Godot PCK format ${String(version)} is unsupported; plain formats 2, 3 and 4 are supported`,
+      `Godot PCK format ${String(version)} is unsupported; plain formats 1, 2, 3 and 4 are supported`,
     );
-  const flags = fixed.readUInt32LE(20);
+  const flags = version === 1 ? 0 : fixed.readUInt32LE(20);
   if (
     (flags & ~(PACK_DIR_ENCRYPTED | PACK_REL_FILEBASE | PACK_SPARSE_BUNDLE)) !==
     0
@@ -343,16 +348,19 @@ const readGodotPckHeader = async (
       "unavailable",
       `Godot PCK declares unknown pack flags 0x${flags.toString(16)}`,
     );
-  const fileBase = toSafeOffset(
-    fixed.readBigUInt64LE(24),
-    version >= 3 || (flags & PACK_REL_FILEBASE) !== 0 ? start : 0,
-    end,
-    "file base",
-  );
+  const fileBase =
+    version === 1
+      ? 0
+      : toSafeOffset(
+          fixed.readBigUInt64LE(24),
+          version >= 3 || (flags & PACK_REL_FILEBASE) !== 0 ? start : 0,
+          end,
+          "file base",
+        );
   const directory =
     version >= 3
       ? toSafeOffset(fixed.readBigUInt64LE(32), start, end, "directory")
-      : start + 96;
+      : start + (version === 1 ? 84 : 96);
   const count = (
     await readArtifactFileBytes(handle, directory, 4, end, signal)
   ).readUInt32LE(0);
@@ -364,7 +372,7 @@ const readGodotPckHeader = async (
         : "available";
   if (
     status === "available" &&
-    count * MINIMUM_ENTRY_BYTES > end - directory - 4
+    count * (version === 1 ? 36 : 40) > end - directory - 4
   )
     throw formatFailure("declared member count cannot fit in the directory");
   return {

@@ -14,6 +14,7 @@ import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
+import { finishCliEvidenceCommand } from "./cliEvidenceCallerPath.js";
 import { localPathStringSchema } from "../domain/localPath.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 export const registerSignalCommands = (
@@ -106,7 +107,8 @@ export const registerSignalCommands = (
     run: ({ args, options: { all_lines, ...options } }) =>
       withCommandCancellation((signal) =>
         logCliCommand(logger, CLI_COMMANDS.decodeSignalRecording, async () => {
-          return finishAnalysisCommand(
+          return finishCliEvidenceCommand(
+            args.path,
             () =>
               service.decode(
                 {

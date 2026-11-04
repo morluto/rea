@@ -10,6 +10,7 @@ import { AnalysisInputError } from "./analysisErrorCore.js";
 import { analysisInputErrorFromIssues } from "./inputIssueProjection.js";
 import { readEvidencePayload } from "./evidenceValidation.js";
 import { nativeAddressInputSchema } from "./native/nativeAddress.js";
+import { functionCoordinateContextsEqual } from "./native/functionCoordinateContext.js";
 import {
   parseFunctionEvidence,
   type FunctionSnapshot,
@@ -218,6 +219,17 @@ const assertCompatible = (
       throw invalidCallPathSelection(
         ["functions"],
         "Call-path Evidence mixes providers",
+      );
+    const firstProfile = first.evidence.analysis_profile;
+    const profile = snapshot.evidence.analysis_profile;
+    if (
+      (firstProfile?.parameters.function_coordinate_context !== undefined ||
+        profile?.parameters.function_coordinate_context !== undefined) &&
+      !functionCoordinateContextsEqual(firstProfile, profile)
+    )
+      throw invalidCallPathSelection(
+        ["functions"],
+        "Call-path Evidence has incompatible or unestablished function coordinate contexts",
       );
   }
 };

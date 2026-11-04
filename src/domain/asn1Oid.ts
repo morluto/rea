@@ -2,7 +2,7 @@ import { err, ok, type Result } from "./result.js";
 
 /** Format owners choose their admission bounds; the shared decoder owns BER arcs. */
 export type Asn1OidError =
-  | { readonly kind: "empty" | "truncated" }
+  | { readonly kind: "empty" | "truncated" | "non-minimal" }
   | { readonly kind: "byte-limit" | "arc-limit"; readonly limit: number };
 
 /** Decode OBJECT IDENTIFIER content without narrowing arbitrary-size base-128 arcs. */
@@ -20,6 +20,8 @@ export const decodeAsn1Oid = (
     arcBytes += 1;
     if (arcBytes > limits.arcBytes)
       return err({ kind: "arc-limit", limit: limits.arcBytes });
+    // X.690 8.19.2 requires minimal base-128 subidentifiers even in BER.
+    if (arcBytes === 1 && byte === 0x80) return err({ kind: "non-minimal" });
     value = (value << 7n) | BigInt(byte & 0x7f);
     if ((byte & 0x80) !== 0) continue;
     if (arcs.length === 0) {

@@ -87,6 +87,32 @@ export interface MipsElfMetadata extends ElfFamilyMetadata {
     | { readonly status: "unavailable"; readonly reason: string };
 }
 
+/** Raw ELF facts; family recognition does not establish ISA or ABI support. */
+export interface RiscvElfMetadata extends ElfFamilyMetadata {
+  /** Undefined until `.riscv.attributes` is inspected. */
+  readonly isa?: RiscvIsaDeclaration;
+}
+
+/** The ISA an image declares in `.riscv.attributes`; not proof of every instruction. */
+export type RiscvIsaDeclaration =
+  | {
+      readonly status: "declared";
+      /** `Tag_RISCV_arch` exactly as declared. */
+      readonly arch: string;
+      readonly xlen: 32 | 64;
+      readonly base: "i" | "e";
+      /** Extension names in declaration order, without versions. */
+      readonly extensions: readonly string[];
+    }
+  /** Every section header was examined and none declares `Tag_RISCV_arch`. */
+  | { readonly status: "absent" }
+  | {
+      readonly status: "unavailable";
+      readonly reason: string;
+      /** The declared string, when one was read but not understood. */
+      readonly arch?: string;
+    };
+
 /** Declared fields of the 24-byte MIPS ABI flags record, not inferred semantics. */
 export interface MipsAbiFlags {
   readonly version: number;
@@ -114,6 +140,12 @@ export interface MipsGnuAttributes {
 export interface UniversalMachOSlice {
   readonly offset: number;
   readonly size: number;
+}
+
+/** FAT-table identity; CPU family alone cannot identify a universal slice. */
+export interface UniversalMachOSliceIdentity extends UniversalMachOSlice {
+  readonly cpuType: number;
+  readonly cpuSubtype: number;
 }
 
 interface BinaryTargetIdentity {
@@ -158,8 +190,7 @@ export type BinaryTarget =
       readonly format: "elf";
       readonly architecture: "riscv";
       readonly availableArchitectures: readonly "riscv"[];
-      /** ISA extensions in `.riscv.attributes` are not inspected by the header parser. */
-      readonly riscv: ElfFamilyMetadata;
+      readonly riscv: RiscvElfMetadata;
       readonly executableRole?: never;
       readonly managed?: never;
     })
@@ -200,6 +231,8 @@ export type BinaryTarget =
       readonly format: "mach-o-universal";
       /** Selected slice range a provider must analyze instead of the container. */
       readonly universalSlice: UniversalMachOSlice;
+      /** Exact validated FAT declarations, when supplied by target admission. */
+      readonly universalSlices?: readonly UniversalMachOSliceIdentity[];
       readonly executableRole?: never;
       readonly managed?: never;
     })
@@ -257,18 +290,41 @@ export type BinaryTarget =
         readonly format:
           | ZipPackageFormat
           | "asar"
+          | "ines"
           | "godot-pck"
           | "unityfs"
+          | "uimage"
           | "dmg"
           | "pkg"
           | "intel-hex"
-          | "srec";
+          | "srec"
+          | "esp-image"
+          | "uf2"
+          | "dfuse"
+          | "fit";
+      })
+  | (BinaryTargetIdentity &
+      NonExecutableMetadata & {
+        readonly kind: "archive";
+        readonly format: "esp-flash-image";
+        /** How the dump is read; null inputs take their defaults. */
+        readonly espFlash: EspFlashTargetSelection;
       })
   | (BinaryTargetIdentity &
       NonExecutableMetadata & {
         readonly kind: "artifact";
         readonly format: "plist" | "javascript" | "source-map";
       });
+
+/** Caller inputs that select how an ESP flash dump is read. */
+export interface EspFlashTargetSelection {
+  /** The caller selected the format, so the table scan runs without a bootloader. */
+  readonly selected: boolean;
+  /** Flash address of the dump's first byte. */
+  readonly flashOffset: number | null;
+  /** Flash address of the partition table. */
+  readonly partitionTableOffset: number | null;
+}
 
 /** Whether an executable target contains a thin or universal Mach-O image. */
 export const isMachOFormat = (

@@ -10,7 +10,10 @@ import {
 } from "../../contracts/native/functionMatchingContracts.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import { readFunctionInventory } from "../../domain/native/functionInventory.js";
-import { nativeFunctionMatchingSchema } from "../../domain/native/functionMatching.js";
+import {
+  nativeFunctionMatchingSchema,
+  NATIVE_FUNCTION_MATCHING_PREDICATE,
+} from "../../domain/native/functionMatching.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
 import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
@@ -144,7 +147,7 @@ const matchWithAdmission = async (
   await checkpoint();
   const evidence = createEvidence(undefined, FUNCTION_COMPARISON_PROVIDER, {
     operation: OPERATION,
-    predicateType: "rea.native-function-matching",
+    predicateType: NATIVE_FUNCTION_MATCHING_PREDICATE,
     confidence: "derived",
     authority: "analyst-inference",
     parameters: {

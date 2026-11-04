@@ -86,7 +86,10 @@ credentials and resets it between sequences.
   environment refused the call), `not-served`, `no-tool` and `unmapped-id`, each with a JSON pointer and short values.
 - The report gives agreement overall, per probe and per tool, agreement ignoring item order beside it, the counts per
   category, the ids mapped and the values normalised, the records left uncompared, and each step's differences (at most
-  20 per step).
+  20 per step). Each step gives `differences_total` before that cap, `differences_omitted`, and
+  `differences_truncated`, true when entries were omitted. Equality and categories use all differences.
+  Omitted entries are not retained and `--full-output` cannot recover them; further investigation uses the original
+  capture and probe Evidence.
 
 ## Non-goals
 

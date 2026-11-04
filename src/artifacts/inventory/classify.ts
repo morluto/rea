@@ -1,14 +1,29 @@
+import {
+  nesContainerFormat,
+  parseInesLayout,
+} from "../../domain/inesContainer.js";
 import type { GodotPckAdmission } from "../GodotPckLocation.js";
 import type { PyInstallerAdmission } from "../pyinstaller/PyInstallerAdmission.js";
+import type {
+  ArtifactReaderAdmission,
+  ArtifactFormatAdmission,
+} from "../ArtifactReaderAdmission.js";
+import {
+  locateEspFlashLayout,
+  type EspFlashSelection,
+} from "../../domain/firmware/espFlashLocation.js";
 import { assertArtifactSelectedSource } from "../ArtifactSelectedSource.js";
 import { artifactNameForClassification } from "../../domain/artifactNameSelection.js";
-import type { NodeSeaAdmission } from "../nodeSea/NodeSeaAdmission.js";
 import type { AsarHeaderAdmission } from "../../config/asarHeaderAdmission.js";
 import {
   ArtifactEmbeddedFormatProbes,
   type ArtifactEmbeddedFormatProbeFacts,
 } from "../ArtifactEmbeddedFormatProbes.js";
-import { sameRegularFileState } from "../../filesystem/RegularFile.js";
+import {
+  assertStableRegularFileIdentity,
+  RegularFileChangedError,
+  sameRegularFileState,
+} from "../../filesystem/RegularFile.js";
 import type { FileHandle } from "node:fs/promises";
 import type { Stats } from "node:fs";
 import type { StableRegularFileDescriptor } from "../../filesystem/RegularFile.js";
@@ -24,9 +39,9 @@ import type { ArtifactOccurrence } from "../../domain/artifactGraph.js";
 import {
   hasZipSignature,
   locateTrailingZipArchive,
-  isZipPackageFormat,
   zipRootPackageFormat,
 } from "../../domain/zipPackageFormat.js";
+import { artifactFormatDescriptor } from "../artifactFormats.js";
 import { ArtifactReaderFailure } from "../ArtifactReader.js";
 import type { HashResult } from "../ArtifactHash.js";
 import {
@@ -37,6 +52,10 @@ import {
 import type { ArtifactInventoryOptions } from "./types.js";
 import { readMachoHeaderPrefixFacts } from "../../domain/apple/machoContainer.js";
 import { hasDiskImageSignature } from "../../domain/apple/diskImageFormat.js";
+import {
+  DFUSE_SUFFIX_BYTES,
+  hasDfuSePrefix,
+} from "../../domain/firmware/dfuse.js";
 import {
   observeMzWindowsHeader,
   type MzWindowsHeaderSignatureEvidence,
@@ -50,12 +69,7 @@ interface RootClassification {
 
 type RootInventoryClassification = RootClassification & {
   readonly rootSource: RootInventorySource | undefined;
-  readonly readerAdmission:
-    | StableRegularFileDescriptor
-    | NodeSeaAdmission
-    | PyInstallerAdmission
-    | GodotPckAdmission
-    | undefined;
+  readonly readerAdmission: ArtifactReaderAdmission | undefined;
 };
 
 /** The admitted descriptor and the single owner that can confirm its close. */
@@ -75,6 +89,7 @@ export const classifyAndHashRootForInventory = async (
     | "asarHeaderAdmission"
     | "selectedPath"
     | "expectedRootSha256"
+    | "espFlashSelection"
   >,
   probeFacts?: ArtifactEmbeddedFormatProbeFacts,
 ): Promise<RootInventoryClassification> => {
@@ -150,6 +165,7 @@ export const classifyAndHashRootForInventory = async (
       options.signal,
       options.asarHeaderAdmission,
       options.selectedPath,
+      options.espFlashSelection,
     );
     const format =
       typeof classified === "string" ? classified : classified.kind;
@@ -162,14 +178,7 @@ export const classifyAndHashRootForInventory = async (
         options.signal,
       ));
     const retainSource =
-      isZipPackageFormat(format) ||
-      format === "mach-o-universal" ||
-      format === "godot-pck" ||
-      format === "unityfs" ||
-      format === "pyinstaller" ||
-      format === "node-sea" ||
-      format === "intel-hex" ||
-      format === "srec";
+      artifactFormatDescriptor(format)?.retainClassifiedSource === true;
     outcome = {
       kind: "completed",
       value: {
@@ -209,12 +218,8 @@ const classifyRootFormat = async (
   signal?: AbortSignal,
   asarHeaderAdmission?: AsarHeaderAdmission,
   selectedPath?: string,
-): Promise<
-  | ArtifactOccurrence["artifact_format"]
-  | NodeSeaAdmission
-  | PyInstallerAdmission
-  | GodotPckAdmission
-> => {
+  espFlashSelection?: EspFlashSelection,
+): Promise<ArtifactOccurrence["artifact_format"] | ArtifactFormatAdmission> => {
   const { handle } = source;
   const probe = createArtifactClassificationProbe(asarHeaderAdmission);
   const chunk = Buffer.alloc(64 * 1024);
@@ -233,17 +238,21 @@ const classifyRootFormat = async (
   const archiveBytes = (await handle.stat()).size;
   const evidence = probe.finish(archiveBytes);
   abortIfNeeded(signal);
-  const classificationPath = artifactNameForClassification(
-    selectedPath ?? path,
-    path,
-  );
-  const lower = classificationPath.toLowerCase();
-  if (hasZipSignature(evidence.prefix)) return zipRootPackageFormat(lower);
-  if (
-    lower.endsWith(".pkg") &&
-    evidence.prefix.subarray(0, 4).equals(Buffer.from("xar!"))
-  )
-    return "pkg";
+  try {
+    await assertStableRegularFileIdentity(handle, path, source.initial, {
+      symlinks: "reject",
+      ...(signal === undefined ? {} : { signal }),
+    });
+  } catch (cause: unknown) {
+    abortIfNeeded(signal);
+    if (cause instanceof RegularFileChangedError)
+      throw new ArtifactReaderFailure(
+        "integrity",
+        `Root artifact changed during classification: ${path}`,
+        { cause: cause.cause ?? cause },
+      );
+    throw cause;
+  }
   // Fill each range: a short result is end of file, not a partial host read.
   const read = async (position: number, length: number): Promise<Buffer> => {
     const bytes = Buffer.alloc(length);
@@ -262,6 +271,37 @@ const classifyRootFormat = async (
     }
     return bytes.subarray(0, filled);
   };
+  const locateFlash = (selection: EspFlashSelection, explicit: boolean) =>
+    locateEspFlashLayout(archiveBytes, read, selection, {
+      explicit,
+      ...(signal === undefined ? {} : { signal }),
+    });
+  // The caller's format selection decides before any other signature.
+  if (espFlashSelection !== undefined) {
+    const selected = await locateFlash(espFlashSelection, true);
+    if (!selected.ok)
+      throw new ArtifactReaderFailure(
+        "unavailable",
+        `ESP flash image layout is not recognized: ${selected.error}`,
+      );
+    return { kind: "esp-flash-image", source, location: selected.value };
+  }
+  if (nesContainerFormat(evidence.prefix) !== undefined) {
+    const parsed = parseInesLayout(evidence.prefix, archiveBytes);
+    if (!parsed.ok) throw new ArtifactReaderFailure("format", parsed.error);
+    return "ines";
+  }
+  const classificationPath = artifactNameForClassification(
+    selectedPath ?? path,
+    path,
+  );
+  const lower = classificationPath.toLowerCase();
+  if (hasZipSignature(evidence.prefix)) return zipRootPackageFormat(lower);
+  if (
+    lower.endsWith(".pkg") &&
+    evidence.prefix.subarray(0, 4).equals(Buffer.from("xar!"))
+  )
+    return "pkg";
   if (
     lower.endsWith(".dmg") &&
     (await hasDiskImageSignature(archiveBytes, read))
@@ -269,6 +309,11 @@ const classifyRootFormat = async (
     return "dmg";
   const pck = await embeddedProbes.godotPck(evidence.prefix);
   if (pck !== undefined) return { kind: "godot-pck", source, location: pck };
+  // A C3 or S3 dump begins with its bootloader, so the layout is located
+  // before the bytes are read as one ESP image.
+  const flash = await locateFlash({}, false);
+  if (flash.ok)
+    return { kind: "esp-flash-image", source, location: flash.value };
   const fatEvidence = await readRootFatSliceHeaders(handle, evidence, signal);
   const mzWindowsHeaderSignature = await readRootMzWindowsHeaderSignature(
     handle,
@@ -276,10 +321,21 @@ const classifyRootFormat = async (
     archiveBytes,
     signal,
   );
-  const classificationEvidence =
-    mzWindowsHeaderSignature === undefined
-      ? fatEvidence
-      : { ...fatEvidence, mzWindowsHeaderSignature };
+  // The probe stops at its bounded prefix, so a DfuSe trailer is read from
+  // the file's own end unless the probe already observed every byte.
+  const suffix =
+    fatEvidence.suffix === undefined &&
+    archiveBytes >= DFUSE_SUFFIX_BYTES &&
+    hasDfuSePrefix(evidence.prefix)
+      ? await read(archiveBytes - DFUSE_SUFFIX_BYTES, DFUSE_SUFFIX_BYTES)
+      : fatEvidence.suffix;
+  const classificationEvidence = {
+    ...fatEvidence,
+    ...(suffix === undefined ? {} : { suffix }),
+    ...(mzWindowsHeaderSignature === undefined
+      ? {}
+      : { mzWindowsHeaderSignature }),
+  };
   const format = classifyArtifactContent(
     classificationPath,
     classificationEvidence,
@@ -303,8 +359,16 @@ const classifyRootFormat = async (
       );
       return { kind: "node-sea", source, location: sea, decoded };
     }
+    const bun = await embeddedProbes.bunStandalone();
+    if (bun.status === "present")
+      return { kind: "bun-standalone", source, probe: bun };
     const packaged = await embeddedProbes.pyInstaller();
     abortIfNeeded(signal);
+    if (format !== "mach-o-universal") {
+      const headerOffset = await embeddedProbes.dotnetBundle();
+      if (headerOffset !== undefined)
+        return { kind: "dotnet-bundle", source, headerOffset };
+    }
     // A valid cookie also proves enough bytes for a thin Mach-O identity;
     // PE and universal Mach-O classification already require stronger proof.
     if (packaged !== undefined)

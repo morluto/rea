@@ -3,7 +3,10 @@ import { posix } from "node:path";
 
 import { compactStringIdentityKey } from "../../domain/compactStringIdentity.js";
 import type { ApplicationNode } from "../../domain/javascript/javascriptApplicationGraphSchemas.js";
-import type { JavaScriptStaticAnalysis } from "../../domain/javascript/javascriptStaticAnalysisTypes.js";
+import {
+  VITE_OUTPUT_DEPENDENCY_PREFIX,
+  type JavaScriptStaticAnalysis,
+} from "../../domain/javascript/javascriptStaticAnalysisTypes.js";
 import type { JavaScriptArtifactFile } from "../../domain/javascript/javascriptArtifactFiles.js";
 import {
   addStaticInferenceEdge,
@@ -33,6 +36,7 @@ import {
 import {
   moduleResolutionModeForJavaScriptReference,
   isJsonModuleTarget,
+  isNativeAddonModuleTarget,
 } from "../../domain/javascript/javascriptModuleResolutionMode.js";
 
 type StaticReference = JavaScriptStaticAnalysis["references"][number];
@@ -306,7 +310,8 @@ const addReference = (
     coverage: input.coverage,
     relation:
       input.value.operation === "load" &&
-      resolved?.file?.kind === "native-addon"
+      resolved?.path != null &&
+      isNativeAddonModuleTarget(resolved.path, resolved.file?.kind)
         ? "loads"
         : "imports",
     properties: {
@@ -665,9 +670,13 @@ const resolveReference = (
           posix.join(posix.dirname(sourcePath), reference.resolution_base_path),
         )
       : sourcePath;
-  const chunk = isWorker
-    ? null
-    : resolveBundlerChunkReference(context, sourcePath, reference);
+  const viteDependency = specifier.startsWith(VITE_OUTPUT_DEPENDENCY_PREFIX)
+    ? specifier.slice(VITE_OUTPUT_DEPENDENCY_PREFIX.length)
+    : undefined;
+  const chunk =
+    isWorker || viteDependency !== undefined
+      ? null
+      : resolveBundlerChunkReference(context, sourcePath, reference);
   if (chunk !== null) return chunk;
   const module =
     isWorker || reference.module_runtime === undefined
@@ -687,35 +696,38 @@ const resolveReference = (
         };
   }
   // Worker scripts are URLs relative to the script, not module specifiers.
-  const resolution = isWorker
-    ? resolveArtifactPathByContext({
-        declaredPath: specifier,
-        sourcePath,
-        context: "url-reference",
-        files: context.filesByPath,
-        jsonDocuments: context.analysis.jsonDocuments,
-        directoryPaths: context.directoryPaths,
-        unanalyzedFiles: context.unanalyzedFiles,
-      })
-    : resolveArtifactPathByContext({
-        declaredPath: specifier,
-        sourcePath: resolutionSourcePath,
-        context: "module-specifier",
-        files: context.filesByPath,
-        jsonDocuments: context.analysis.jsonDocuments,
-        directoryPaths: context.directoryPaths,
-        unanalyzedFiles: context.unanalyzedFiles,
-        ...("require" === reference.kind ||
-        "static-import" === reference.kind ||
-        "dynamic-import" === reference.kind
-          ? {
-              moduleKind: moduleResolutionModeForJavaScriptReference(
-                resolutionSourcePath,
-                reference.kind,
-              ),
-            }
-          : {}),
-      });
+  const resolution =
+    viteDependency !== undefined
+      ? resolveViteOutputDependency(context, sourcePath, viteDependency)
+      : isWorker
+        ? resolveArtifactPathByContext({
+            declaredPath: specifier,
+            sourcePath,
+            context: "url-reference",
+            files: context.filesByPath,
+            jsonDocuments: context.analysis.jsonDocuments,
+            directoryPaths: context.directoryPaths,
+            unanalyzedFiles: context.unanalyzedFiles,
+          })
+        : resolveArtifactPathByContext({
+            declaredPath: specifier,
+            sourcePath: resolutionSourcePath,
+            context: "module-specifier",
+            files: context.filesByPath,
+            jsonDocuments: context.analysis.jsonDocuments,
+            directoryPaths: context.directoryPaths,
+            unanalyzedFiles: context.unanalyzedFiles,
+            ...("require" === reference.kind ||
+            "static-import" === reference.kind ||
+            "dynamic-import" === reference.kind
+              ? {
+                  moduleKind: moduleResolutionModeForJavaScriptReference(
+                    resolutionSourcePath,
+                    reference.kind,
+                  ),
+                }
+              : {}),
+          });
   const path = resolution.resolved_path;
   const targetPath = path ?? resolution.candidate_path;
   const targetKind =
@@ -731,7 +743,8 @@ const resolveReference = (
     targetPath !== undefined && isJsonModuleTarget(targetPath, targetKind);
   const targetImportsUnexamined =
     !targetIsJson &&
-    (resolution.resolution_status === "unavailable" ||
+    (resolution.unexamined_module_imports === true ||
+      resolution.resolution_status === "unavailable" ||
       (path !== null &&
         !context.applicationModuleReferencesRetained.has(path)));
   if (path === null) {
@@ -771,6 +784,80 @@ const resolveReference = (
           : {}),
         resolution,
       };
+};
+
+/**
+ * Vite's preload helper prefixes the configured base to a path under the
+ * build output directory, which is an ancestor of the importing chunk. Only
+ * one ancestor holding the file establishes that directory.
+ */
+const resolveViteOutputDependency = (
+  context: JavaScriptArtifactGraphContext,
+  sourcePath: string,
+  dependency: string,
+): ArtifactPathResolution => {
+  const resolutions = ancestorDirectories(sourcePath).map((directory) =>
+    resolveArtifactPathByContext({
+      declaredPath: dependency,
+      sourcePath: posix.join(directory, posix.basename(sourcePath)),
+      context: "url-reference",
+      files: context.filesByPath,
+      jsonDocuments: context.analysis.jsonDocuments,
+      directoryPaths: context.directoryPaths,
+      unanalyzedFiles: context.unanalyzedFiles,
+    }),
+  );
+  // An ancestor whose candidate exists but was not analyzed, or whose absence
+  // is unknown, may still be the build output directory. Keep it.
+  const candidates = resolutions.filter(
+    ({ resolution_status: status }) =>
+      status === "resolved" || status === "unavailable",
+  );
+  const [single] = candidates;
+  if (candidates.length === 1 && single !== undefined) return single;
+  const root = resolutions.at(-1);
+  if (root === undefined)
+    throw new TypeError("A source path has at least the root directory");
+  if (candidates.length > 1) {
+    const { candidate_path: _rootCandidate, ...rootFacts } = root;
+    const paths = candidates.map(
+      (candidate) => candidate.resolved_path ?? candidate.candidate_path,
+    );
+    return {
+      ...rootFacts,
+      resolved_path: null,
+      resolution_status: "unavailable",
+      limitations: [
+        ...new Set([
+          ...candidates.flatMap(({ limitations }) => limitations),
+          `Several ancestors of the importing file may hold this Vite build-output path (${paths.join(", ")}); the build output directory is not established.`,
+        ]),
+      ],
+    };
+  }
+  return {
+    ...root,
+    resolved_path: null,
+    resolution_status:
+      root.resolution_status === "resolved"
+        ? "not-found"
+        : root.resolution_status,
+    limitations: [
+      ...root.limitations,
+      "A Vite preload dependency is relative to the build output directory, and no ancestor of the importing file holds it. Select the build output directory, which holds index.html and the assets directory.",
+    ],
+  };
+};
+
+/** The source's directory and each ancestor up to the selected root. */
+const ancestorDirectories = (sourcePath: string): string[] => {
+  const directories: string[] = [];
+  for (let directory = posix.dirname(sourcePath); ;) {
+    directories.push(directory === "." ? "" : directory);
+    if (directory === "." || directory === "/" || directory === "") break;
+    directory = posix.dirname(directory);
+  }
+  return directories;
 };
 
 const resolveBundlerChunkReference = (

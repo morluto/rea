@@ -111,6 +111,99 @@ it.each([false, true])(
 
 const provider = { id: "fixture", name: "Fixture", version: "1" };
 
+it("retains requested live observations and links their original producer sources", async () => {
+  const upstream = createEvidence(undefined, provider, {
+    operation: "health",
+    parameters: {},
+    result: "source",
+  });
+  const result = await executeComposedWorkflow(
+    {
+      execute: async () =>
+        ok(
+          createAnalysisExecution("live observation", provider, {
+            cachePolicy: "live",
+            sourceEvidence: [upstream],
+          }),
+        ),
+    },
+    async (observed) => {
+      const value = await observed.execute(
+        "analyze_function",
+        { procedure: "0x1" },
+        {
+          retainEvidence: true,
+        },
+      );
+      return value.ok ? ok({ source: value.value.evidenceId ?? null }) : value;
+    },
+  );
+  if (!result.ok) throw result.error;
+  const source = result.sourceEvidence?.find(
+    (record) => record.operation === "analyze_function",
+  );
+  expect(source).toBeDefined();
+  expect(source?.evidence_links).toEqual([upstream.evidence_id]);
+  expect(result.value.result).toEqual({ source: source?.evidence_id });
+  expect(result.value.evidenceLinks).toContain(source?.evidence_id);
+  expect(result.value.cachePolicy).toBe("live");
+});
+
+it("keeps an existing session-issued source identity on replay", async () => {
+  const original = createEvidence(undefined, provider, {
+    operation: "analyze_function",
+    parameters: { procedure: "0x1" },
+    result: "original",
+  });
+  const result = await executeComposedWorkflow(
+    {
+      execute: async () =>
+        ok({
+          ...createAnalysisExecution("original", provider, {
+            limitations: ["replayed"],
+          }),
+          evidenceId: original.evidence_id,
+        }),
+    },
+    async (observed) => {
+      const value = await observed.execute(
+        "analyze_function",
+        { procedure: "0x1" },
+        {
+          retainEvidence: true,
+        },
+      );
+      return value.ok ? ok({ source: value.value.evidenceId ?? null }) : value;
+    },
+  );
+  if (!result.ok) throw result.error;
+  expect(result.value.result).toEqual({ source: original.evidence_id });
+  expect(result.value.evidenceLinks).toEqual([original.evidence_id]);
+  expect(result.sourceEvidence).toBeUndefined();
+});
+
+it("retains a completed requested source if the composed workflow is cancelled", async () => {
+  const result = await executeComposedWorkflow(
+    {
+      execute: async () => ok(createAnalysisExecution("observed", provider)),
+    },
+    async (observed) => {
+      await observed.execute(
+        "analyze_function",
+        { procedure: "0x1" },
+        {
+          retainEvidence: true,
+        },
+      );
+      return err(new AnalysisCancelledError("trace_native_values"));
+    },
+  );
+  expect(result.ok).toBe(false);
+  expect(result.sourceEvidence?.map((record) => record.operation)).toEqual([
+    "analyze_function",
+  ]);
+});
+
 it("keeps Evidence identity stable when dependent branches finish in opposite orders", async () => {
   const run = async (order: readonly number[]) => {
     const gate = () => {
@@ -188,7 +281,8 @@ it("retains unique upstream limits in canonical order across concurrent observat
   const analysis: AnalysisOperationPort = {
     execute: async (operation, parameters, forwarded) => {
       expect(parameters).toEqual({ marker: true });
-      expect(forwarded).toBe(options);
+      expect(forwarded).toMatchObject(options);
+      expect(forwarded?.workScope).toBeDefined();
       const call = calls++;
       if (call === 0) await gate;
       else release();
@@ -621,3 +715,60 @@ it.each([
     });
   },
 );
+
+it("shares temporary provider state only within a single completed workflow", async () => {
+  const owner = {};
+  const scopes: Array<
+    NonNullable<import("./AnalysisProvider.js").ExecutionOptions["workScope"]>
+  > = [];
+  const provider = { id: "fixture", name: "Fixture", version: "1" };
+  const analysis: AnalysisOperationPort = {
+    execute: async (_operation, _parameters, options) => {
+      const scope = options?.workScope;
+      if (scope === undefined) throw new Error("workflow scope missing");
+      scopes.push(scope);
+      scope.set(owner, (scope.get<number>(owner) ?? 0) + 1);
+      return ok(createAnalysisExecution(null, provider));
+    },
+  };
+  const run = () =>
+    executeComposedWorkflow(analysis, async (observed) => {
+      await observed.execute("health", {});
+      await observed.execute("health", {});
+      expect(scopes.at(-1)?.get(owner)).toBe(2);
+      return ok(null);
+    });
+  await run();
+  expect(scopes[0]?.get(owner)).toBeUndefined();
+  scopes[0]?.set(owner, "late completion");
+  expect(scopes[0]?.get(owner)).toBeUndefined();
+  await run();
+  expect(scopes[0]).toBe(scopes[1]);
+  expect(scopes[0]).not.toBe(scopes[2]);
+  expect(scopes[2]).toBe(scopes[3]);
+});
+
+it("clears workflow state when its callback throws", async () => {
+  const owner = {};
+  let captured: import("./AnalysisProvider.js").ExecutionOptions["workScope"];
+  const analysis: AnalysisOperationPort = {
+    execute: async (_operation, _parameters, options) => {
+      captured = options?.workScope;
+      captured?.set(owner, "in flight");
+      return ok(
+        createAnalysisExecution(null, {
+          id: "fixture",
+          name: "Fixture",
+          version: "1",
+        }),
+      );
+    },
+  };
+  await expect(
+    executeComposedWorkflow(analysis, async (observed) => {
+      await observed.execute("health", {});
+      throw new Error("failed workflow");
+    }),
+  ).rejects.toThrow("failed workflow");
+  expect(captured?.get(owner)).toBeUndefined();
+});

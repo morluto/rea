@@ -716,6 +716,7 @@ const captureDom = async (
   context: ElectronContext,
   completeness: CdpCaptureCompleteness,
 ): Promise<ElectronPageInspection["dom"]> => {
+  const nodeValueLengthUnit = "utf8-bytes";
   const result = requiredRecord(
     await context.connection.send(
       "DOMSnapshot.captureSnapshot",
@@ -728,7 +729,11 @@ const captureDom = async (
     completeness.exclude("dom", "invalid_protocol_value", count);
   if (!Array.isArray(result.strings)) {
     invalid(null);
-    return { total_nodes: 0, nodes: [] };
+    return {
+      total_nodes: 0,
+      node_value_length_unit: nodeValueLengthUnit,
+      nodes: [],
+    };
   }
   const strings = result.strings.map(cdpStringValue);
   const nodes: ElectronPageInspection["dom"]["nodes"] = [];
@@ -779,7 +784,11 @@ const captureDom = async (
       });
     }
   }
-  return { total_nodes: total, nodes };
+  return {
+    total_nodes: total,
+    node_value_length_unit: nodeValueLengthUnit,
+    nodes,
+  };
 };
 
 const mainFilePath = async (
