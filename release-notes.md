@@ -117,6 +117,7 @@
 
 ### Bug Fixes
 
+* **adb:** admit completed path probes after daemon startup ([#8858](https://github.com/morluto/rea/issues/8858)) ([33e0bf1](https://github.com/morluto/rea/commit/33e0bf101ab2afddc35da6dba985ab308dc504c9))
 * **adb:** align CLI selector schemas with canonical inputs ([#7722](https://github.com/morluto/rea/issues/7722)) ([3142f7b](https://github.com/morluto/rea/commit/3142f7b0dd91a07c7fe7989a4295cfe5d929682a))
 * **adb:** preserve process names and pin fixture interpreters ([ab44487](https://github.com/morluto/rea/commit/ab44487ff86d064e924fd2c44b02f5a5430f57f3))
 * **adb:** preserve selected environment through provider execution ([b7e76a5](https://github.com/morluto/rea/commit/b7e76a57cd29853e796b05a770cb14a0c435f35c))
@@ -160,6 +161,7 @@
 * **artifacts:** distinguish incomplete PyInstaller probes ([abc1351](https://github.com/morluto/rea/commit/abc135150628ab62d271324682426fe7ec5fed3a))
 * **artifacts:** explain recovery for existing DMG attachments ([#7221](https://github.com/morluto/rea/issues/7221)) ([4767970](https://github.com/morluto/rea/commit/47679701051dc207533bde5e516e5a77583d52c5))
 * **artifacts:** extract readable inventoried entries ([#7827](https://github.com/morluto/rea/issues/7827)) ([2dd9a30](https://github.com/morluto/rea/commit/2dd9a3092e597bf05d0409a3c901b4e96b4ff310))
+* **artifacts:** keep inventorying an ASAR whose member declares an invalid size ([#8719](https://github.com/morluto/rea/issues/8719)) ([61bb02d](https://github.com/morluto/rea/commit/61bb02d3df18b4271e283760b02c84c9c20a0358))
 * **artifacts:** name every U-Boot uImage type in the pinned image.h ([#8007](https://github.com/morluto/rea/issues/8007)) ([95637a3](https://github.com/morluto/rea/commit/95637a3d703d0b72150d1790fe28062940707c63))
 * **artifacts:** preserve cancellation during inventory cleanup ([5cd61aa](https://github.com/morluto/rea/commit/5cd61aac8ea28ce8a2c3a76d3706077c8cfdaacc))
 * **artifacts:** preserve completed caller reads through finalization ([939009f](https://github.com/morluto/rea/commit/939009f6f9ca178840f8ec5616c694c7e09dec25))
@@ -269,6 +271,8 @@
 * **cli:** preserve literal evidence in Markdown output ([6d7e627](https://github.com/morluto/rea/commit/6d7e6277835448bcdc830d00ebced2ff76a74c92))
 * **cli:** preserve literal Markdown rendering ([#7938](https://github.com/morluto/rea/issues/7938)) ([e124bdf](https://github.com/morluto/rea/commit/e124bdfc54707da138a58ae61b901f0bf93a9bac))
 * **cli:** preserve Markdown table edge spaces ([#7506](https://github.com/morluto/rea/issues/7506)) ([423d190](https://github.com/morluto/rea/commit/423d190026a48a94aef70c90eb6970f54b75d7ca))
+* **cli:** preserve markdown validation error cells ([e416ce1](https://github.com/morluto/rea/commit/e416ce1983a2276fb7fef4412c29c45b8c7a35c1))
+* **cli:** preserve Markdown validation error cells ([#7978](https://github.com/morluto/rea/issues/7978)) ([e416ce1](https://github.com/morluto/rea/commit/e416ce1983a2276fb7fef4412c29c45b8c7a35c1))
 * **cli:** preserve missing-selection Markdown token windows ([#7726](https://github.com/morluto/rea/issues/7726)) ([0e4b806](https://github.com/morluto/rea/commit/0e4b806db14f2cbdf4a31a6268fe1a3514401677))
 * **cli:** preserve native value input diagnostics ([#7889](https://github.com/morluto/rea/issues/7889)) ([76c7698](https://github.com/morluto/rea/commit/76c7698ac913e670b5fc1448be1d5a47a84c0973))
 * **cli:** preserve script export evidence through shared finalization ([991a240](https://github.com/morluto/rea/commit/991a2406060ae200ee5db260e486e68c1f5bb4bd))
@@ -395,6 +399,7 @@
 * **firmware:** admit caller-selected source directly ([c1e0f53](https://github.com/morluto/rea/commit/c1e0f531e600c7899d51f675d6fa2fef6f3aebb9))
 * **firmware:** preserve report metadata before semantic validation ([a7aad91](https://github.com/morluto/rea/commit/a7aad91320213f136062668110bf5c1e63606d0d))
 * **firmware:** recommend the operation-specific engine ([#8668](https://github.com/morluto/rea/issues/8668)) ([510e83e](https://github.com/morluto/rea/commit/510e83eadc5251ee5cc9469b894c7895ffe36ef2))
+* **firmware:** reject staged files cut off at the per-file limit ([#4430](https://github.com/morluto/rea/issues/4430)) ([064bb3f](https://github.com/morluto/rea/commit/064bb3f713f6e948c28b40ac3bc2bbe8526085e6))
 * **firmware:** retain completed command failures ([ecd22c4](https://github.com/morluto/rea/commit/ecd22c42ac55287bef0f3e70561773cd4b6ba74c))
 * **firmware:** retain nested dependency diagnostics ([b7be0d9](https://github.com/morluto/rea/commit/b7be0d90a907b5e66711df938ef092c59658ba09))
 * **firmware:** validate Intel HEX start-record offsets ([#7806](https://github.com/morluto/rea/issues/7806)) ([9ac9f91](https://github.com/morluto/rea/commit/9ac9f91ab579d562950cc3ac8590ea097fa6f121))
