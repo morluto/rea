@@ -23,10 +23,15 @@ import {
   RegularFileChangedError,
 } from "../filesystem/RegularFile.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
+import { AnalysisArtifactChangedError } from "../domain/analysisErrorCore.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { GhidraProjectSelection } from "../config/ghidraExistingProject.js";
 import { ghidraProgramNameSchema } from "../config/ghidraExistingProject.js";
+
+/** Reason for a selected project whose content no longer matches its committed profile. */
+export const GHIDRA_PROJECT_PROFILE_MISMATCH =
+  "Selected Ghidra project content no longer matches the profile committed by open_binary; when it changed is not established";
 
 /** Classify file cancellation/cleanup before the generic provider boundary. */
 const projectFileOperation = async <Value>(
@@ -296,7 +301,13 @@ export const copyExistingGhidraProject = async (
           signal,
         )) !== expectedSha256
       )
-        throw new RegularFileChangedError(sourcePath);
+        // A digest mismatch shows only that the project differs from its
+        // committed profile, not when it changed relative to this copy.
+        throw new AnalysisArtifactChangedError(
+          "open_binary",
+          sourcePath,
+          GHIDRA_PROJECT_PROFILE_MISMATCH,
+        );
     }
   });
 };

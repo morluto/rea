@@ -2407,7 +2407,7 @@ export class AdbProvider {
           signal,
         );
         if (!directoryProbe.ok) return directoryProbe;
-        const devicePath = directoryProbe.value
+        const devicePath = directoryProbe.value.matches
           ? `${input.device_path}${input.device_path.endsWith("/") ? "" : "/"}${basename(localPath)}`
           : input.device_path;
         const existsProbe = await probeAdbPathExistence(
@@ -2419,7 +2419,7 @@ export class AdbProvider {
           signal,
         );
         if (!existsProbe.ok) return existsProbe;
-        const deviceExists = existsProbe.value;
+        const deviceExists = existsProbe.value.matches;
         if (deviceExists && !input.overwrite)
           return err(
             new AnalysisOutputError(
@@ -2440,6 +2440,17 @@ export class AdbProvider {
           signal,
         );
         if (!pushed.ok) return pushed;
+        const observedProbeStartup =
+          directoryProbe.value.capturedOutput.stderr !== "" ||
+          existsProbe.value.capturedOutput.stderr !== "";
+        const probeOutput = observedProbeStartup
+          ? {
+              device_path_probes: {
+                directory: { ...directoryProbe.value.capturedOutput },
+                existence: { ...existsProbe.value.capturedOutput },
+              },
+            }
+          : undefined;
         const receipt = (
           deviceDigest: AdbDeviceDigest,
           rawResult?: {
@@ -2463,7 +2474,9 @@ export class AdbProvider {
             },
             provider,
             {
-              ...(rawResult === undefined ? {} : { rawResult }),
+              ...(rawResult === undefined && probeOutput === undefined
+                ? {}
+                : { rawResult: { ...rawResult, ...probeOutput } }),
               limitations: [
                 "Push writes a private snapshot of the caller's file to the device",
                 ...(deviceDigest.device_digest_source === "unavailable"
