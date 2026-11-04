@@ -112,22 +112,299 @@ it("keeps a read stream whose flags option is invalid", () => {
 });
 
 /**
- * Review finding: a no-expression template literal is exactly readable, so it is the
- * same flag string Node receives.
+ * Node validates the `mode` in slot 2 before touching the filesystem. A numeric
+ * mode must be an unsigned 32-bit integer and a string mode must be a canonical
+ * octal digit string; anything else throws synchronously and no descriptor
+ * exists. `null`, `undefined` and `void <expr>` default the mode, and a computed
+ * value may still be valid, so those are kept.
  *
- *   fs.openSync(p, `rb`)  -> THREW ERR_INVALID_ARG_VALUE
- *   fs.openSync(p, `r`)   -> ok
+ *   fs.openSync(p, "r", -1)        -> THREW ERR_OUT_OF_RANGE
+ *   fs.openSync(p, "r", 1.5)       -> THREW ERR_OUT_OF_RANGE
+ *   fs.openSync(p, "r", true)      -> THREW ERR_INVALID_ARG_TYPE
+ *   fs.openSync(p, "r", "8")       -> THREW ERR_INVALID_ARG_VALUE
+ *   fs.openSync(p, "r", "")        -> THREW ERR_INVALID_ARG_VALUE
+ *   fs.openSync(p, "r", 0o644)     -> ok
+ *   fs.openSync(p, "r", "0644")    -> ok
+ *   fs.openSync(p, "r", null)      -> ok
  */
 it.each([
-  ["a rejected template flag", 'openSync("x", `rb`)'],
-  ["another rejected template flag", 'openSync("x", `bad`)'],
+  ["a negative mode", `openSync("x", "r", -1)`],
+  ["a fractional mode", `openSync("x", "r", 1.5)`],
+  ["a NaN mode", `openSync("x", "r", NaN)`],
+  ["an Infinity mode", `openSync("x", "r", Infinity)`],
+  ["an overflowing mode", `openSync("x", "r", 1e21)`],
+  ["a boolean mode", `openSync("x", "r", true)`],
+  ["a BigInt mode", `openSync("x", "r", 0n)`],
+  ["an object mode", `openSync("x", "r", {})`],
+  ["an array mode", `openSync("x", "r", [])`],
+  ["a non-octal mode string", `openSync("x", "r", "8")`],
+  ["an empty mode string", `openSync("x", "r", "")`],
+  ["a prefixed mode string", `openSync("x", "r", "0o644")`],
+  ["a padded mode string", `openSync("x", "r", " 644 ")`],
+  ["a rejected fs/promises mode", `openPromise("x", "r", -1)`],
 ] as const)("emits no fs acquisition for %s", (_name, call) => {
   expect(acquisitionsFor(call)).toEqual([]);
 });
 
 it.each([
-  ["an accepted template flag", 'openSync("x", `r`)'],
-  ["an interpolated template flag", 'openSync("x", `${flag}`)'],
+  ["a zero mode", `openSync("x", "r", 0)`, "openSync"],
+  ["an octal numeric mode", `openSync("x", "r", 0o644)`, "openSync"],
+  ["the largest usable mode", `openSync("x", "r", 2147483647)`, "openSync"],
+  ["a negated zero mode", `openSync("x", "r", -0)`, "openSync"],
+  ["an octal mode string", `openSync("x", "r", "644")`, "openSync"],
+  ["a zero-padded mode string", `openSync("x", "r", "0644")`, "openSync"],
+  ["a null mode", `openSync("x", "r", null)`, "openSync"],
+  ["an undefined mode", `openSync("x", "r", undefined)`, "openSync"],
+  ["a void mode", `openSync("x", "r", void 0)`, "openSync"],
+  ["an omitted mode", `openSync("x", "r")`, "openSync"],
+  ["a computed mode", `openSync("x", "r", mode)`, "openSync"],
+] as const)("keeps the fs acquisition for %s", (_name, call, method) => {
+  expect(acquisitionsFor(call)).toEqual([
+    { kind: "acquire", method: method ?? "openSync" },
+  ]);
+});
+
+/**
+ * Review findings on the mode guard.
+ *
+ * A no-expression template literal is exactly readable, so it is the same string
+ * Node receives:
+ *
+ *   fs.openSync(p, `bad`)        -> THREW ERR_INVALID_ARG_VALUE
+ *   fs.openSync(p, `r`)          -> ok
+ *   fs.openSync(p, "r", `644`)   -> ok
+ *   fs.openSync(p, "r", `8`)     -> THREW ERR_INVALID_ARG_VALUE
+ *
+ * An octal mode string above the uint32 maximum throws ERR_OUT_OF_RANGE, while the
+ * maximum itself belongs to the range that aborts the process and so stays
+ * undecided:
+ *
+ *   fs.openSync(p, "r", "37777777777")  -> 4294967295, abort, kept
+ *   fs.openSync(p, "r", "40000000000")  -> 4294967296, THREW ERR_OUT_OF_RANGE
+ *   fs.openSync(p, "r", "0644")         -> ok
+ */
+it.each([
+  ["a rejected template flag", `openSync("x", ` + "`bad`" + `)`],
+  ["a rejected template mode", `openSync("x", "r", ` + "`8`" + `)`],
+  ["an octal mode above uint32", `openSync("x", "r", "40000000000")`],
+  ["an octal mode far above uint32", `openSync("x", "r", "777777777777")`],
+  ["a mode above uint32", `openSync("x", "r", 4294967296)`],
+] as const)("emits no fs acquisition for %s", (_name, call) => {
+  expect(acquisitionsFor(call)).toEqual([]);
+});
+
+it.each([
+  ["an accepted template flag", `openSync("x", ` + "`r`" + `)`, "openSync"],
+  [
+    "an interpolated template flag",
+    `openSync("x", ` + "`${flag}`" + `)`,
+    "openSync",
+  ],
+  [
+    "an accepted template mode",
+    `openSync("x", "r", ` + "`644`" + `)`,
+    "openSync",
+  ],
+  [
+    "an interpolated template mode",
+    `openSync("x", "r", ` + "`${mode}`" + `)`,
+    "openSync",
+  ],
+  ["the uint32 mode boundary", `openSync("x", "r", 2147483647)`, "openSync"],
+  [
+    "the process-abort mode boundary",
+    `openSync("x", "r", 2147483648)`,
+    "openSync",
+  ],
+  [
+    "the uint32 octal boundary",
+    `openSync("x", "r", "37777777777")`,
+    "openSync",
+  ],
+] as const)("keeps the fs acquisition for %s", (_name, call, method) => {
+  expect(acquisitionsFor(call)).toEqual([{ kind: "acquire", method }]);
+});
+
+/**
+ * Two further review findings.
+ *
+ * Leading zeros pad an octal mode without changing its value, so the range bound
+ * must read the significant digits:
+ *
+ *   fs.openSync(p, "r", "00000000000000644") -> ok  (420)
+ *   fs.openSync(p, "r", "0000040000000000")  -> THREW ERR_OUT_OF_RANGE (2^32)
+ *
+ * A unary operator over a BigInt literal is still a BigInt, which Node rejects in
+ * both slots:
+ *
+ *   fs.openSync(p, -1n)      -> THREW ERR_INVALID_ARG_TYPE
+ *   fs.openSync(p, "r", -1n) -> THREW ERR_INVALID_ARG_TYPE
+ */
+it.each([
+  [
+    "a zero-padded octal mode above uint32",
+    `openSync("x", "r", "0000040000000000")`,
+  ],
+  ["a negated BigInt flag", `openSync("x", -1n)`],
+  ["a unary-plus BigInt flag", `openSync("x", +1n)`],
+  ["a negated BigInt mode", `openSync("x", "r", -1n)`],
+  ["a unary-plus BigInt mode", `openSync("x", "r", +1n)`],
+] as const)("emits no fs acquisition for %s", (_name, call) => {
+  expect(acquisitionsFor(call)).toEqual([]);
+});
+
+it.each([
+  [
+    "a zero-padded octal mode",
+    `openSync("x", "r", "00000000000000644")`,
+    "openSync",
+  ],
+  [
+    "a shorter zero-padded octal mode",
+    `openSync("x", "r", "00000000644")`,
+    "openSync",
+  ],
+] as const)("keeps the fs acquisition for %s", (_name, call, method) => {
+  expect(acquisitionsFor(call)).toEqual([{ kind: "acquire", method }]);
+});
+
+/**
+ * Two review findings.
+ *
+ * A regex literal is an object, which Node rejects in both slots, and a unary
+ * operator applied to an unshadowed `NaN` or `Infinity` is the same non-finite
+ * number the bare global is:
+ *
+ *   fs.openSync(p, /r/)          -> THREW ERR_INVALID_ARG_TYPE
+ *   fs.openSync(p, -NaN)         -> THREW ERR_OUT_OF_RANGE
+ *   fs.openSync(p, "r", -Infinity) -> THREW ERR_OUT_OF_RANGE
+ *   --- accepted ---
+ *   fs.openSync(p, void 0)       -> ok
+ *   fs.openSync(p, -0)           -> ok
+ */
+it.each([
+  ["a regex flag", `openSync("x", /r/)`],
+  ["a regex mode", `openSync("x", "r", /644/)`],
+  ["a negated NaN flag", `openSync("x", -NaN)`],
+  ["a unary-plus Infinity flag", `openSync("x", +Infinity)`],
+  ["a negated Infinity mode", `openSync("x", "r", -Infinity)`],
+] as const)("emits no fs acquisition for %s", (_name, call) => {
+  expect(acquisitionsFor(call)).toEqual([]);
+});
+
+it("keeps the fs acquisition for a shadowed NaN flag", () => {
+  expect(acquisitionsFor(`const NaN = 0o644; openSync("x", NaN)`)).toEqual([
+    { kind: "acquire", method: "openSync" },
+  ]);
+});
+
+/**
+ * Review finding: a unary operator over an exact non-numeric primitive is coerced
+ * by JavaScript, so the result is decidable rather than unknown:
+ *
+ *   fs.openSync(p, "r", -true)   -> mode -1, THREW ERR_OUT_OF_RANGE
+ *   fs.openSync(p, "r", +"bad")  -> mode NaN, THREW ERR_OUT_OF_RANGE
+ *   fs.openSync(p, +"bad")       -> flag NaN, THREW ERR_INVALID_ARG_VALUE
+ */
+it.each([
+  ["a negated boolean mode", `openSync("x", "r", -true)`],
+  ["a unary-plus bad string mode", `openSync("x", "r", +"bad")`],
+  ["a bitwise-not null mode", `openSync("x", "r", ~null)`],
+  ["a negated octal-looking string mode", `openSync("x", "r", -"644")`],
+  ["a unary-plus bad string flag", `openSync("x", +"bad")`],
+] as const)("emits no fs acquisition for %s", (_name, call) => {
+  expect(acquisitionsFor(call)).toEqual([]);
+});
+
+/**
+ * A nested unary chain resolves through its innermost readable operand, so the
+ * conversion branch is actually exercised. Measured on Node 24.22.1:
+ *
+ *   ~-1       =  0   -> ok, `0` is the O_RDONLY bitmask
+ *   ~~NaN     =  0   -> ok
+ *   ~NaN      = -1   -> in-range negative, left undecided (some signed bitmasks and
+ *                       `~NaN` itself return a descriptor on Linux)
+ *   -(-1.5)   =  1.5 -> THREW ERR_OUT_OF_RANGE as a mode
+ *   -(~NaN)   =  1   -> ok as a mode
+ *   ~(-1.5)   = -1   -> in-range negative, left undecided
+ */
+it.each([
+  ["a negated fractional mode", `openSync("x", "r", -(-1.5))`],
+  ["a double-negated fractional flag", `openSync("x", -(-1.5))`],
+] as const)("emits no fs acquisition for %s", (_name, call) => {
+  expect(acquisitionsFor(call)).toEqual([]);
+});
+
+it.each([
+  ["a nested bitwise-not flag", `openSync("x", ~-1)`],
+  ["a doubly nested bitwise-not flag", `openSync("x", ~~NaN)`],
+  ["a coerced valid mode", `openSync("x", "r", -(~NaN))`],
+] as const)("keeps the fs acquisition for %s", (_name, call) => {
+  expect(acquisitionsFor(call)).toEqual([
+    { kind: "acquire", method: "openSync" },
+  ]);
+});
+
+it("leaves a bitwise-not NaN flag undecided", () => {
+  // `~NaN` is `-1`: in range, and a negative bitmask is accepted on Linux, so the
+  // guard must not claim it throws.
+  expect(acquisitionsFor(`openSync("x", ~NaN)`)).toEqual([
+    { kind: "acquire", method: "openSync" },
+  ]);
+});
+
+/**
+ * Review finding: `staticFlagBits` reports "not a bitmask" for `!`, `typeof` and
+ * `delete` as `Number.NaN`. Recursing into that marker treated it as an operand value,
+ * so `openSync(p, "r", +!0)` was rejected although it receives mode `1`.
+ *
+ * A nested boolean or string result is left undecided instead: `+!0` is `1` at
+ * runtime, but deciding it needs the operand's truthiness rather than a bitmask read.
+ */
+it.each([
+  ["a unary-plus boolean mode", `openSync("x", "r", +!0)`],
+  ["a unary-plus false mode", `openSync("x", "r", +!1)`],
+  ["a unary-plus boolean flag", `openSync("x", +!1)`],
+] as const)("keeps the fs acquisition for %s", (_name, call) => {
+  expect(acquisitionsFor(call)).toEqual([
+    { kind: "acquire", method: "openSync" },
+  ]);
+});
+
+it("leaves a negated boolean mode undecided", () => {
+  // `-!0` is `-1`, which Node rejects, but the outer operator cannot be decided from
+  // a boolean marker, so the guard must not claim a throw.
+  expect(acquisitionsFor(`openSync("x", "r", -!0)`)).toEqual([
+    { kind: "acquire", method: "openSync" },
+  ]);
+});
+
+/**
+ * Review finding: a real `NaN` result and the "not a bitmask" answer must not share a
+ * return slot. `staticFlagBits` reports a boolean or string operand as `Number.NaN`,
+ * and `unaryOperandNumber` used `Object.is(nested, NaN)` to exclude it — which also
+ * discarded an actual numeric `NaN`, so `-(-NaN)` kept a rejected acquisition.
+ *
+ * Measured on Node 24.22.1:
+ *
+ *   -(-NaN)  = NaN  -> THREW ERR_OUT_OF_RANGE
+ *   +(~NaN)  = -1   -> THREW ERR_OUT_OF_RANGE
+ *   ~~NaN    = 0    -> ok
+ */
+it.each([
+  ["a double-negated NaN mode", `openSync("x", "r", -(-NaN))`],
+  ["a unary-plus bitwise-not NaN mode", `openSync("x", "r", +(~NaN))`],
+  ["a negated fractional mode", `openSync("x", "r", -(-1.5))`],
+  ["a negated Infinity mode", `openSync("x", "r", -Infinity)`],
+] as const)("emits no fs acquisition for %s", (_name, call) => {
+  expect(acquisitionsFor(call)).toEqual([]);
+});
+
+it.each([
+  ["a doubly nested bitwise-not mode", `openSync("x", "r", ~~NaN)`],
+  ["a unary-plus boolean mode", `openSync("x", "r", +!0)`],
+  ["a negated boolean mode", `openSync("x", "r", -!0)`],
+  ["a bitwise-not NaN flag", `openSync("x", ~NaN)`],
 ] as const)("keeps the fs acquisition for %s", (_name, call) => {
   expect(acquisitionsFor(call)).toEqual([
     { kind: "acquire", method: "openSync" },
