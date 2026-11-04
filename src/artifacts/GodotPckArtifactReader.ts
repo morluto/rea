@@ -390,6 +390,12 @@ const readGodotPckHeader = async (
   };
 };
 
+const isRootOnlyPckPath = (path: string): boolean => {
+  if (!path.startsWith("res:")) return false;
+  const segments = path.slice(4).split("/");
+  return segments.every((segment) => segment === "" || segment === ".");
+};
+
 const pckMemberPath = (raw: Buffer): string => {
   let end = raw.length;
   while (end > 0 && raw[end - 1] === 0) end--;
@@ -403,11 +409,7 @@ const pckMemberPath = (raw: Buffer): string => {
       { cause },
     );
   }
-  if (
-    path.length === 0 ||
-    /^res:\/*(?:\.\/*)*$/u.test(path) ||
-    path.includes("\0")
-  )
+  if (path.length === 0 || isRootOnlyPckPath(path) || path.includes("\0"))
     throw formatFailure("empty or NUL-containing member path");
   return path;
 };

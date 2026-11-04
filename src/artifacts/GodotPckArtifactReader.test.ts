@@ -314,6 +314,7 @@ describe("GodotPckArtifactReader member paths and extraction", () => {
       { path: "res://./config.cfg", data: "[section]\nkey=1\n" },
       { path: "res://.//settings.cfg", data: "[settings]\nready=true\n" },
       { path: "res:///.//scripts/player.gd", data: "class_name Player\n" },
+      { path: "res://...", data: "ellipsis file\n" },
       { path: "plain/resource.dat", data: "bytes" },
     ];
     await withReader(buildGodotPck(4, variedMembers), async (reader) => {
@@ -323,6 +324,7 @@ describe("GodotPckArtifactReader member paths and extraction", () => {
         "res://./config.cfg",
         "res://.//settings.cfg",
         "res:///.//scripts/player.gd",
+        "res://...",
         "plain/resource.dat",
       ]);
       expect(entries.map(({ path }) => path)).toEqual([
@@ -330,6 +332,7 @@ describe("GodotPckArtifactReader member paths and extraction", () => {
         "config.cfg",
         "settings.cfg",
         "scripts/player.gd",
+        "...",
         "plain/resource.dat",
       ]);
     });
@@ -339,6 +342,7 @@ describe("GodotPckArtifactReader member paths and extraction", () => {
     const variedMembers: readonly GodotPckMember[] = [
       { path: "res:///scenes/main.gd", data: "extends Node\n" },
       { path: "res://./config.cfg", data: "[section]\nkey=1\n" },
+      { path: "res://...", data: "ellipsis file\n" },
     ];
     const pckPath = await writePck(buildGodotPck(4, variedMembers));
     const outDir = join(
@@ -356,6 +360,7 @@ describe("GodotPckArtifactReader member paths and extraction", () => {
         resourceScope: scope,
       });
       expect(extracted.artifacts.map((a) => a.relative_path).sort()).toEqual([
+        "...",
         "config.cfg",
         "scenes/main.gd",
       ]);
@@ -364,6 +369,9 @@ describe("GodotPckArtifactReader member paths and extraction", () => {
       );
       expect(await readFile(join(outDir, "config.cfg"), "utf8")).toBe(
         "[section]\nkey=1\n",
+      );
+      expect(await readFile(join(outDir, "..."), "utf8")).toBe(
+        "ellipsis file\n",
       );
     } finally {
       await scope.close();
