@@ -971,6 +971,8 @@
 * **ida:** document migration from legacy attached registrations ([d60b2ca](https://github.com/morluto/rea/commit/d60b2cab65c3c9119b25ede4d2b99928ff815fbf))
 * include Kuna in native provider guidance ([#7929](https://github.com/morluto/rea/issues/7929)) ([1631dcb](https://github.com/morluto/rea/commit/1631dcb09a34380f36b34e217efe4e98d96b203f))
 * **installation:** list every engine accepted by doctor --provider ([#4767](https://github.com/morluto/rea/issues/4767)) ([578e4bb](https://github.com/morluto/rea/commit/578e4bb71ae8ff66fdbc7f3ade62638fb965528d))
+* **limits:** say setup forwards the selected MCP response budget ([#8342](https://github.com/morluto/rea/issues/8342)) ([67552d5](https://github.com/morluto/rea/commit/67552d56cce45a4fedffa544f9f6e3bbcc418fcd)), closes [#7420](https://github.com/morluto/rea/issues/7420)
+* **mcp:** list every tool that omits the untrusted-content marker ([#8837](https://github.com/morluto/rea/issues/8837)) ([52ff312](https://github.com/morluto/rea/commit/52ff3123cbe07afbbadb3c5d24955cbba2d1835d))
 * prioritize product contracts over skill guidance ([293db94](https://github.com/morluto/rea/commit/293db94dd00e1ee084dd0fcc7a8a9e4b49f671a1))
 * **providers:** verify prerequisite recovery and sibling failures ([d684125](https://github.com/morluto/rea/commit/d684125eedc75ea3ea6061d086ae9c530da198a4))
 * **readme:** add Join us on Discord button ([#8754](https://github.com/morluto/rea/issues/8754)) ([4f7c4cc](https://github.com/morluto/rea/commit/4f7c4cc21834b1183655b532df104990180c66f6))
