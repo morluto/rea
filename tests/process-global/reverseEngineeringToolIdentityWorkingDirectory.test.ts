@@ -47,6 +47,34 @@ posix(
   },
 );
 
+posix(
+  "keeps why the lookup needed the working directory when the launch by name fails",
+  async () => {
+    const { executable, path } = await rizinExecutableFixture();
+    const reachable = relative(process.cwd(), dirname(executable));
+    const run = vi.fn(async (): Promise<never> => {
+      throw Object.assign(new Error("spawn ENOENT"), { code: "ENOENT" });
+    });
+    const service = new TestReverseEngineeringService({
+      run,
+      lookup: lookupExecutable,
+      environment: { REA_RIZIN_COMMAND: "rizin", PATH: reachable },
+    });
+    const cwd = unreadableWorkingDirectory();
+    try {
+      const result = await service.executeRizinCommand({ path, command: "iI" });
+      if (result.ok) throw new Error("Expected the launch to fail");
+      expect(result.error.diagnostics).toMatchObject({
+        provider_executable: "rizin",
+        executable_lookup_outcome: "no-working-directory",
+        executable_lookup_code: "ENOENT",
+      });
+    } finally {
+      cwd.mockRestore();
+    }
+  },
+);
+
 posix.each([
   ["before", false],
   ["after", true],

@@ -7,7 +7,10 @@ import { Readable } from "node:stream";
 import { expect, it } from "vitest";
 
 import { digestFile } from "../../src/application/reverse/ReverseEngineeringService.js";
-import { FileWork } from "../../src/process/FileWork.js";
+import {
+  FileWork,
+  FileWorkSaturatedError,
+} from "../../src/process/FileWork.js";
 import { TestReverseEngineeringService } from "../support/reverseEngineeringService.js";
 
 it("bounds concurrent reverse-engineering provider calls", async () => {
@@ -248,6 +251,44 @@ it("refuses new file work while stalled steps hold the budget, then admits it", 
   } finally {
     answer();
     await Promise.allSettled(held);
+    await service.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+it("keeps command Evidence and says why when the budget refuses the post-run digest", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "rea-reverse-after-"));
+  const path = join(directory, "fixture.bin");
+  await writeFile(path, "fixture");
+  let digests = 0;
+  const service = new TestReverseEngineeringService({
+    run: async () => ({ stdout: "headers", stderr: "" }),
+    digest: async (target) => {
+      digests += 1;
+      if (digests === 1) return "0".repeat(64);
+      throw new FileWorkSaturatedError(target, 2, 2);
+    },
+  });
+  try {
+    const result = await service.inspectWithObjdump({
+      path,
+      operation: "file_headers",
+    });
+    if (!result.ok) throw result.error;
+    expect(result.value.raw_result).toMatchObject({
+      stdout: "headers",
+      artifact_sha256_after: null,
+    });
+    expect(result.value.parameters).toMatchObject({
+      artifact_digest_after_refused: {
+        file_steps_held: 2,
+        max_held_file_steps: 2,
+      },
+    });
+    const limitations = result.value.limitations.join("\n");
+    expect(limitations).toContain("the artifact was not read");
+    expect(limitations).not.toContain("could not be read");
+  } finally {
     await service.close();
     await rm(directory, { recursive: true, force: true });
   }

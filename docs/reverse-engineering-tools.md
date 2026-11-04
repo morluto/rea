@@ -186,7 +186,10 @@ long hashes can make another call's file steps wait within its deadline. Once
 stalled steps fill the budget, a call that needs a new file step is refused with
 a retryable capacity error (`file_steps_held`, `max_held_file_steps`) and starts
 nothing, which keeps file access working for REA's other tools. A retry on a
-path that already has stalled work waits and takes no thread. Process capture's
+path that already has stalled work waits and takes no thread. A post-run hash
+that the budget refuses keeps the command's Evidence, with
+`artifact_digest_after_refused` and a limitation saying the artifact was not
+read. Process capture's
 executable lookup has no deadline, so it could not give up a share of the budget
 and stays outside it. Closing the service does not wait for that work, which a
 mount that never answers would hold forever. The process cannot exit until that

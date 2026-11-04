@@ -762,6 +762,8 @@ export class ReverseEngineeringService {
     if (failure !== undefined && cleanupOwner !== undefined)
       failure = this.#registerCleanupFailure(failure, cleanupOwner);
     let digestAfter: string | null = null;
+    // A refusal says nothing about the artifact, so it stays apart from a failed read.
+    let digestAfterRefused: FileWorkSaturatedError | undefined;
     if (absolutePath === undefined) {
       digestAfter = null;
     } else if (cleanupIncomplete) {
@@ -769,8 +771,9 @@ export class ReverseEngineeringService {
     } else {
       try {
         digestAfter = await hash(absolutePath);
-      } catch {
+      } catch (cause) {
         // Preserve the provider's collected observations if the artifact vanished or became unreadable.
+        if (cause instanceof FileWorkSaturatedError) digestAfterRefused = cause;
       }
     }
     if (signal?.aborted && failure === undefined) {
@@ -873,7 +876,9 @@ export class ReverseEngineeringService {
               ? "The post-run artifact digest was not captured because owned provider cleanup was incomplete at observation time; artifact changes during the command remain unquantified."
               : signal?.aborted
                 ? "The post-run artifact digest is unknown because cancellation interrupted the digest."
-                : "The post-run artifact digest is unknown because the artifact could not be read after the provider call.",
+                : digestAfterRefused !== undefined
+                  ? `The post-run artifact digest is unknown because ${String(digestAfterRefused.held)} file-system steps that an unresponsive mount has not returned hold REA's budget of ${String(digestAfterRefused.budget)}; the artifact was not read, so artifact changes during the command remain unquantified. Retry once the mount answers.`
+                  : "The post-run artifact digest is unknown because the artifact could not be read after the provider call.",
           ]
         : []),
     ];
@@ -896,6 +901,14 @@ export class ReverseEngineeringService {
             : parameters),
           provider_executable: command,
           ...identification.parameters,
+          ...(digestAfterRefused === undefined
+            ? {}
+            : {
+                artifact_digest_after_refused: {
+                  file_steps_held: digestAfterRefused.held,
+                  max_held_file_steps: digestAfterRefused.budget,
+                },
+              }),
           command_arguments: [...args],
         },
         rawResult: result,
@@ -1006,7 +1019,19 @@ export class ReverseEngineeringService {
     if (lookup.status !== "found") {
       const missing = lookup.status === "missing" ? lookup : undefined;
       const stopped = missing?.stoppedAt;
+      const cwdCode =
+        lookup.status === "no-working-directory"
+          ? commandFailureCode(lookup.cause)
+          : undefined;
       const observed = {
+        ...(lookup.status === "no-working-directory"
+          ? {
+              executable_lookup_outcome: lookup.status,
+              ...(cwdCode === undefined
+                ? {}
+                : { executable_lookup_code: String(cwdCode) }),
+            }
+          : {}),
         ...(missing?.selectedPath === undefined
           ? {}
           : { provider_executable_path: missing.selectedPath }),
