@@ -330,9 +330,11 @@ Without bounds, loaded memory blocks are eligible, in Ghidra address order.
 Blocks that are not loaded (file parts such as `.symtab`) and overlay blocks are
 listed in `searched.skipped_not_loaded` and are not searched; pass `start` or
 `end` in their address space to search them.
-Overlapping matches are included; matches never cross block boundaries.
-Each match reports its address, segment, unique source file offset (or null),
-and containing procedure (or null).
+Overlapping matches are included, including across adjacent eligible initialized
+blocks in the same address space. Gaps and excluded or uninitialized blocks break
+a search run. Each match reports its address, starting segment, unique source file
+offset for that starting address (or null), and containing procedure (or null).
+A starting offset does not imply the full match is contiguous in the file.
 
 Pages default to 100 matches and accept 1 to 1000. Pass `next_cursor` as `cursor`
 with the same target, profile, pattern, mask and bounds to continue. `complete`

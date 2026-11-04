@@ -784,6 +784,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
         return result;
     }
 
+    private record ByteSearchBlock(MemoryBlock block, Address low, Address high) {}
+
     private JsonObject searchMemoryBytes(JsonObject params, SessionDescriptor descriptor) throws Exception {
         // mask, start, end, and cursor are omitted when absent; JSON encoding drops those keys.
         Set<String> keys = params.keySet();
@@ -844,16 +846,13 @@ public final class ReaGhidraBridge extends HeadlessScript {
         JsonArray blocks = new JsonArray();
         JsonArray skipped = new JsonArray();
         JsonArray notLoaded = new JsonArray();
-        long covered = 0;
-        String next = null;
+        List<ByteSearchBlock> eligible = new ArrayList<>();
         for (MemoryBlock block : ordered) {
             monitor.checkCancelled();
             Address low = block.getStart();
             Address high = block.getEnd();
             Address bound = start == null ? end : start;
             if (bound != null && !bound.getAddressSpace().equals(low.getAddressSpace())) continue;
-            // Without bounds, search loaded memory only. Non-loaded file parts
-            // (such as .symtab) and overlays stay reachable through explicit bounds.
             if (bound == null && (!block.isLoaded() || block.isOverlay())) {
                 notLoaded.add(byteSearchCoverage(block, low, high));
                 continue;
@@ -865,40 +864,66 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 skipped.add(byteSearchCoverage(block, low, high));
                 continue;
             }
-            if (next != null) continue;
-            if (resume != null && low.compareTo(resume) < 0) low = resume;
-            if (low.compareTo(high) > 0 || !low.getAddressSpace().equals(high.getAddressSpace())) continue;
-            Address at = low;
-            Address examinedEnd = high;
-            while (at != null && at.compareTo(high) <= 0 && high.subtract(at) >= bytes.length - 1L) {
+            eligible.add(new ByteSearchBlock(block, low, high));
+        }
+        long covered = 0;
+        String next = null;
+        for (int first = 0; first < eligible.size() && next == null;) {
+            monitor.checkCancelled();
+            int last = first;
+            while (last + 1 < eligible.size()) {
                 monitor.checkCancelled();
-                // Ghidra's end address bounds candidate starts, not the final matched byte.
-                Address found = currentProgram.getMemory().findBytes(at, high.subtract(bytes.length - 1L), bytes, masks, true, monitor);
-                monitor.checkCancelled();
-                if (found == null || high.subtract(found) < bytes.length - 1L) break;
-                if (matches.size() == limit) {
-                    next = binding + ":" + canonicalAddress(found);
-                    examinedEnd = found.addNoWrap(bytes.length - 1L);
-                    break;
-                }
-                JsonObject match = new JsonObject();
-                match.addProperty("address", canonicalAddress(found));
-                match.addProperty("segment", block.getName());
-                Long offset = targetFileOffset(block, found).offset();
-                match.add("file_offset", offset == null ? JsonNull.INSTANCE : GSON.toJsonTree(offset));
-                Function function = currentProgram.getFunctionManager().getFunctionContaining(found);
-                JsonObject procedure = new JsonObject();
-                if (function != null) {
-                    procedure.addProperty("address", canonicalAddress(function.getEntryPoint()));
-                    procedure.addProperty("name", function.getName(true));
-                }
-                match.add("procedure", function == null ? JsonNull.INSTANCE : procedure);
-                matches.add(match);
-                at = found.next();
+                ByteSearchBlock previous = eligible.get(last);
+                ByteSearchBlock following = eligible.get(last + 1);
+                if (!previous.high().getAddressSpace().equals(following.low().getAddressSpace()) ||
+                    previous.high().next() == null || !previous.high().next().equals(following.low())) break;
+                last++;
             }
-            JsonObject coverage = byteSearchCoverage(block, low, examinedEnd);
-            covered = Math.addExact(covered, coverage.get("bytes").getAsLong());
-            blocks.add(coverage);
+            Address low = eligible.get(first).low();
+            Address high = eligible.get(last).high();
+            if (resume != null && low.compareTo(resume) < 0) low = resume;
+            if (low.compareTo(high) <= 0 && low.getAddressSpace().equals(high.getAddressSpace())) {
+                Address at = low;
+                Address examinedEnd = high;
+                while (at != null && at.compareTo(high) <= 0 && high.subtract(at) >= bytes.length - 1L) {
+                    monitor.checkCancelled();
+                    // findBytes bounds candidate starts. The entire candidate remains in this eligible run.
+                    Address found = currentProgram.getMemory().findBytes(at, high.subtract(bytes.length - 1L), bytes, masks, true, monitor);
+                    monitor.checkCancelled();
+                    if (found == null || high.subtract(found) < bytes.length - 1L) break;
+                    if (matches.size() == limit) {
+                        next = binding + ":" + canonicalAddress(found);
+                        examinedEnd = found.addNoWrap(bytes.length - 1L);
+                        break;
+                    }
+                    MemoryBlock matchBlock = currentProgram.getMemory().getBlock(found);
+                    JsonObject match = new JsonObject();
+                    match.addProperty("address", canonicalAddress(found));
+                    match.addProperty("segment", matchBlock.getName());
+                    Long offset = targetFileOffset(matchBlock, found).offset();
+                    match.add("file_offset", offset == null ? JsonNull.INSTANCE : GSON.toJsonTree(offset));
+                    Function function = currentProgram.getFunctionManager().getFunctionContaining(found);
+                    JsonObject procedure = new JsonObject();
+                    if (function != null) {
+                        procedure.addProperty("address", canonicalAddress(function.getEntryPoint()));
+                        procedure.addProperty("name", function.getName(true));
+                    }
+                    match.add("procedure", function == null ? JsonNull.INSTANCE : procedure);
+                    matches.add(match);
+                    at = found.next();
+                }
+                for (int index = first; index <= last; index++) {
+                    monitor.checkCancelled();
+                    ByteSearchBlock item = eligible.get(index);
+                    Address coveredLow = item.low().compareTo(low) < 0 ? low : item.low();
+                    Address coveredHigh = item.high().compareTo(examinedEnd) > 0 ? examinedEnd : item.high();
+                    if (coveredLow.compareTo(coveredHigh) > 0) continue;
+                    JsonObject coverage = byteSearchCoverage(item.block(), coveredLow, coveredHigh);
+                    covered = Math.addExact(covered, coverage.get("bytes").getAsLong());
+                    blocks.add(coverage);
+                }
+            }
+            first = last + 1;
         }
         JsonObject searched = new JsonObject();
         searched.add("blocks", blocks);
