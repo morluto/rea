@@ -1,10 +1,11 @@
 /** Compare binary hardening rows with host toolchains when they exist. */
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
 import { importVerifierSource } from "./lib/verifier-source-loader.mjs";
+import { createVerifierCommands } from "./lib/verify-commands.mjs";
 
 const { readElfHardening } = await importVerifierSource(
   "../src/native/hardening/ElfHardening.ts",
@@ -27,13 +28,42 @@ const { hasMachoMagic } = await importVerifierSource(
   import.meta.url,
 );
 
-const which = (command) => {
-  const result = spawnSync("which", [command], { encoding: "utf8" });
+/**
+ * Every probe and compiler driver runs as an owned process tree, so a timeout
+ * or close also stops the children a driver starts. Close it before removing
+ * the compiled outputs.
+ */
+const commands = await createVerifierCommands();
+
+/** Report an exit status the way the probes read it; other failures propagate. */
+const run = async (command, args) => {
+  try {
+    const { stdout, stderr } = await commands.exec(command, args, {
+      maxBuffer: 16 * 1024 * 1024,
+      timeout: 120_000,
+    });
+    return { status: 0, stdout, stderr };
+  } catch (failure) {
+    if (typeof failure?.code === "number" && failure.code !== 0)
+      return {
+        status: failure.code,
+        stdout: failure.snapshot.stdout.text,
+        stderr: failure.snapshot.stderr.text,
+      };
+    // A probe for an absent tool, such as xcrun off macOS, is not a failure.
+    if (failure?.code === "ENOENT")
+      return { status: null, stdout: "", stderr: String(failure.message) };
+    throw failure;
+  }
+};
+
+const which = async (command) => {
+  const result = await run("which", [command]);
   return result.status === 0 ? result.stdout.trim() : null;
 };
 
-const xcrunFind = (name) => {
-  const result = spawnSync("xcrun", ["--find", name], { encoding: "utf8" });
+const xcrunFind = async (name) => {
+  const result = await run("xcrun", ["--find", name]);
   return {
     name,
     status: result.status,
@@ -42,85 +72,97 @@ const xcrunFind = (name) => {
   };
 };
 
-const findTool = (name) => which(name) ?? xcrunFind(name).path;
+const findTool = async (name) =>
+  (await which(name)) ?? (await xcrunFind(name)).path;
 
-const versionLine = (command, args = ["--version"]) => {
-  const result = run(command, args);
+const versionLine = async (command, args = ["--version"]) => {
+  const result = await run(command, args);
   return `${result.stdout ?? ""}\n${result.stderr ?? ""}`
     .trim()
     .split("\n")[0]
     ?.slice(0, 240);
 };
 
-const run = (command, args, options = {}) =>
-  spawnSync(command, args, {
-    encoding: "utf8",
-    timeout: 120000,
-    ...options,
-  });
-
 const statesOf = (rows) =>
   Object.fromEntries(rows.map((row) => [row.property, row.state]));
 
-const report = {
-  host: `${process.platform} ${process.arch}`,
-  node: process.version,
-  npm: versionLine("npm", ["-v"]),
-  xcrun: ["readelf", "llvm-readelf", "clang", "gcc", "cc", "ld"].map(xcrunFind),
-  unavailable: [],
-  checks: [],
-};
+// The root holds every compiled image. Remove it only after the owned
+// commands have settled, and keep it when their cleanup failed.
+let root;
+let commandsClosed = false;
+await withVerifierCleanup(async () => {
+  const report = {
+    host: `${process.platform} ${process.arch}`,
+    node: process.version,
+    npm: await versionLine("npm", ["-v"]),
+    xcrun: await Promise.all(
+      ["readelf", "llvm-readelf", "clang", "gcc", "cc", "ld"].map(xcrunFind),
+    ),
+    unavailable: [],
+    checks: [],
+  };
 
-const synthetic = peHardeningImage();
-const peImage = await readPeHardening(synthetic, {
-  path: "/artifacts/synthetic.exe",
-  sha256: "a".repeat(64),
-  bytes: synthetic.length,
-});
-const peStates = statesOf(peImage.rows);
-assert.equal(peStates.dynamic_base, "enabled");
-assert.equal(peStates.high_entropy_va, "enabled");
-assert.equal(peStates.nx_compat, "enabled");
-assert.equal(peStates.force_integrity, "disabled");
-assert.equal(peStates.no_seh, "disabled");
-assert.equal(peStates.guard_cf, "enabled");
-assert.equal(peStates.cfg_instrumented, "enabled");
-assert.equal(peStates.authenticode_present, "disabled");
-assert.equal(peStates.debug_record_present, "disabled");
-report.checks.push({
-  kind: "synthetic-pe",
-  bits: peImage.bits,
-  states: peStates,
-});
+  const synthetic = peHardeningImage();
+  const peImage = await readPeHardening(synthetic, {
+    path: "/artifacts/synthetic.exe",
+    sha256: "a".repeat(64),
+    bytes: synthetic.length,
+  });
+  const peStates = statesOf(peImage.rows);
+  assert.equal(peStates.dynamic_base, "enabled");
+  assert.equal(peStates.high_entropy_va, "enabled");
+  assert.equal(peStates.nx_compat, "enabled");
+  assert.equal(peStates.force_integrity, "disabled");
+  assert.equal(peStates.no_seh, "disabled");
+  assert.equal(peStates.guard_cf, "enabled");
+  assert.equal(peStates.cfg_instrumented, "enabled");
+  assert.equal(peStates.authenticode_present, "disabled");
+  assert.equal(peStates.debug_record_present, "disabled");
+  report.checks.push({
+    kind: "synthetic-pe",
+    bits: peImage.bits,
+    states: peStates,
+  });
 
-const source = `int main(void) {
-  volatile char buf[64];
-  buf[0] = 1;
-  return (int)buf[0];
-}
-`;
+  const source = `int main(void) {
+    volatile char buf[64];
+    buf[0] = 1;
+    return (int)buf[0];
+  }
+  `;
 
-const root = await mkdtemp(join(tmpdir(), "rea-binary-hardening-"));
-try {
+  root = await mkdtemp(join(tmpdir(), "rea-binary-hardening-"));
   const cFile = join(root, "sample.c");
   await writeFile(cFile, source);
   await verifyElf(root, cFile, report);
   await verifyMacho(root, cFile, report);
-} finally {
-  await rm(root, { recursive: true, force: true });
-}
+  console.log(JSON.stringify(report, null, 2));
+}, [
+  async () => {
+    await commands.close();
+    commandsClosed = true;
+  },
+  async () => {
+    if (commandsClosed && root !== undefined)
+      await rm(root, { recursive: true, force: true });
+  },
+]);
 
-console.log(JSON.stringify(report, null, 2));
-
-function compilerCandidate(name, command, prefix, versionArgs = ["--version"]) {
-  const located = findTool(command);
+async function compilerCandidate(
+  name,
+  command,
+  prefix,
+  versionArgs = ["--version"],
+) {
+  const located = await findTool(command);
   if (located === null) return null;
   return { name, command: located, prefix, versionArgs };
 }
 
 async function verifyElf(directory, cFile, output) {
-  const readelf = findTool("readelf") ?? findTool("llvm-readelf");
-  const compilers = [
+  const readelf =
+    (await findTool("readelf")) ?? (await findTool("llvm-readelf"));
+  const candidates = await Promise.all([
     compilerCandidate("x86_64-linux-gnu-gcc", "x86_64-linux-gnu-gcc", []),
     compilerCandidate("aarch64-linux-gnu-gcc", "aarch64-linux-gnu-gcc", []),
     compilerCandidate("musl-gcc", "musl-gcc", []),
@@ -143,17 +185,20 @@ async function verifyElf(directory, cFile, output) {
       ["cc", "-target", "x86_64-linux-musl"],
       ["version"],
     ),
-  ].filter((candidate) => candidate !== null);
+  ]);
+  const compilers = candidates.filter((candidate) => candidate !== null);
   output.tools = {
-    ...(output.tools ?? {}),
+    ...output.tools,
     readelf,
     readelfVersion:
-      readelf === null ? null : versionLine(readelf, ["--version"]),
-    compilers: compilers.map((compiler) => ({
-      name: compiler.name,
-      command: compiler.command,
-      version: versionLine(compiler.command, compiler.versionArgs),
-    })),
+      readelf === null ? null : await versionLine(readelf, ["--version"]),
+    compilers: await Promise.all(
+      compilers.map(async (compiler) => ({
+        name: compiler.name,
+        command: compiler.command,
+        version: await versionLine(compiler.command, compiler.versionArgs),
+      })),
+    ),
   };
   if (compilers.length === 0) {
     output.unavailable.push({
@@ -193,7 +238,7 @@ async function verifyElf(directory, cFile, output) {
       const binary = join(directory, `${compiler.name}-${variant.name}`);
       const compiled = variant.twoNeeded
         ? await compileTwoNeeded(compiler, directory, binary)
-        : run(compiler.command, [
+        : await run(compiler.command, [
             ...compiler.prefix,
             ...variant.flags,
             cFile,
@@ -225,7 +270,7 @@ async function verifyElf(directory, cFile, output) {
       let needed = observed.needed;
       let buildId = observed.buildId;
       if (readelf !== null) {
-        const dumped = run(readelf, [
+        const dumped = await run(readelf, [
           "--wide",
           "-h",
           "-l",
@@ -287,7 +332,7 @@ async function compileTwoNeeded(compiler, directory, binary) {
   );
   const liba = join(directory, "liba.so");
   const libb = join(directory, "libb.so");
-  const first = run(compiler.command, [
+  const first = await run(compiler.command, [
     ...compiler.prefix,
     "-shared",
     "-fPIC",
@@ -296,7 +341,7 @@ async function compileTwoNeeded(compiler, directory, binary) {
     liba,
   ]);
   if (first.status !== 0) return first;
-  const second = run(compiler.command, [
+  const second = await run(compiler.command, [
     ...compiler.prefix,
     "-shared",
     "-fPIC",
@@ -305,7 +350,7 @@ async function compileTwoNeeded(compiler, directory, binary) {
     libb,
   ]);
   if (second.status !== 0) return second;
-  return run(compiler.command, [
+  return await run(compiler.command, [
     ...compiler.prefix,
     "-fPIE",
     "-pie",
@@ -462,8 +507,8 @@ function assertElf(actual, expected, label) {
 }
 
 async function verifyMacho(directory, cFile, output) {
-  const cc = findTool("cc") ?? findTool("clang");
-  const otool = findTool("otool");
+  const cc = (await findTool("cc")) ?? (await findTool("clang"));
+  const otool = await findTool("otool");
   if (cc === null) {
     output.unavailable.push({
       kind: "mach-o",
@@ -472,7 +517,7 @@ async function verifyMacho(directory, cFile, output) {
     return;
   }
   const binary = join(directory, "macho");
-  const compiled = run(cc, [
+  const compiled = await run(cc, [
     "-arch",
     process.arch === "arm64" ? "arm64" : "x86_64",
     cFile,
@@ -501,17 +546,17 @@ async function verifyMacho(directory, cFile, output) {
   const pie = statesOf(images[0].rows).pie;
   let otoolPie = null;
   if (otool !== null) {
-    const dumped = run(otool, ["-hv", binary]);
+    const dumped = await run(otool, ["-hv", binary]);
     if (dumped.status === 0) {
       otoolPie = /\bPIE\b/.test(dumped.stdout);
       if (otoolPie) assert.equal(pie, "enabled", "otool PIE");
     }
   }
-  const otoolVersion = otool === null ? null : run(otool, ["-version"]);
+  const otoolVersion = otool === null ? null : await run(otool, ["-version"]);
   output.checks.push({
     kind: "mach-o",
     compiler: cc,
-    ccVersion: versionLine(cc, ["--version"]),
+    ccVersion: await versionLine(cc, ["--version"]),
     otool,
     otoolVersionStatus: otoolVersion?.status ?? null,
     otoolVersion:
@@ -526,7 +571,7 @@ async function verifyMacho(directory, cFile, output) {
     hardened_runtime: statesOf(images[0].rows).hardened_runtime,
   });
   const fat = join(directory, "fat");
-  const universal = run(cc, [
+  const universal = await run(cc, [
     "-arch",
     "x86_64",
     "-arch",
