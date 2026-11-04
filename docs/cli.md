@@ -705,6 +705,10 @@ results and Evidence. These are cached observations, not a saved provider
 database: only eligible exact queries can reuse a result, and new or live
 queries can still require provider startup. The CLI uses the same snapshot
 format and preserves these records when loading and updating it.
+When an MCP session replays a provider observation, its delivered Evidence identifies
+the original observation through `evidence_links` and reports that the
+provider was not rerun. The original and its available source records remain
+in the investigation bundle.
 
 ## Import, export and compare Evidence
 
