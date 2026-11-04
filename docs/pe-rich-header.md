@@ -29,7 +29,8 @@ one of:
   footer, or `partial_entry` when the record ends inside an entry.
 - `absent`: no `Rich` footer precedes the PE signature. Other linkers omit the
   record, and it can be stripped after linking, so absence does not show how
-  the image was built.
+  the image was built. A PE header that starts inside the 64-byte DOS header
+  leaves no room for a record, so it is `absent` too.
 
 Evidence locations include the record's file range, or only the footer for a
 malformed record.

@@ -89,6 +89,18 @@ it("locates the whole record in observed Evidence", async () => {
   });
 });
 
+it("reports no record when the PE header overlaps the DOS header", async () => {
+  // e_lfanew 0x30 is a valid image that leaves no room for a Rich footer.
+  const report = await parsedReport({ block: false, peOffset: 0x30 });
+  expect(report).toMatchObject({
+    pe_header_offset: 0x30,
+    rich_header: { state: "absent" },
+  });
+  const result = await serviceFor(report).inspect({ path });
+  if (!result.ok) throw result.error;
+  expect(result.value.normalized_result).toEqual(report);
+});
+
 it.each([
   ["absent", { block: false }, null],
   ["malformed", { omitStart: true }, { start: 0xa8, end: 0xb0 }],

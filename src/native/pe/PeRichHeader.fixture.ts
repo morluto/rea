@@ -82,6 +82,12 @@ export interface RichFixtureOptions {
   readonly block?: boolean;
   readonly omitStart?: boolean;
   readonly extraDword?: boolean;
+  /**
+   * Put the PE signature here instead of after the stub and record. Below
+   * 0x40 it overlaps the DOS header and no stub is written; use it with
+   * `block: false`. At 0x30, e_lfanew doubles as PointerToSymbolTable.
+   */
+  readonly peOffset?: number;
 }
 
 /**
@@ -98,14 +104,14 @@ export const peRichHeaderImage = (options: RichFixtureOptions = {}): Buffer => {
     options.block === false
       ? 0
       : 16 + entries.length * 8 + (options.extraDword === true ? 4 : 0) + 8;
-  const peOffset = Math.ceil((start + blockBytes) / 8) * 8;
+  const peOffset = options.peOffset ?? Math.ceil((start + blockBytes) / 8) * 8;
   const optionalSize = plus ? 240 : 224;
   const headerBytes =
     Math.ceil((peOffset + 24 + optionalSize + 40) / 0x200) * 0x200;
   const bytes = Buffer.alloc(headerBytes);
   bytes.writeUInt16LE(0x5a4d, 0);
   bytes.writeUInt32LE(peOffset, 0x3c);
-  stub.copy(bytes, DOS_HEADER_BYTES);
+  if (peOffset >= DOS_HEADER_BYTES) stub.copy(bytes, DOS_HEADER_BYTES);
   if (options.block !== false) {
     const key =
       options.key ?? richFixtureChecksum(bytes.subarray(0, start), entries);

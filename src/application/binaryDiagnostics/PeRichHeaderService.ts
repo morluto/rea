@@ -102,10 +102,11 @@ const validReport = (
   report: PeRichHeader,
   input: { max_entries: number; max_file_bytes: number },
 ): boolean => {
+  // A PE header may start inside the DOS header. It then leaves no room for a
+  // footer, and the footer checks below reject any record reported there.
   const pe = report.pe_header_offset;
   if (
     report.artifact.bytes > input.max_file_bytes ||
-    pe < DOS_HEADER_BYTES ||
     pe > report.artifact.bytes - 24
   )
     return false;
