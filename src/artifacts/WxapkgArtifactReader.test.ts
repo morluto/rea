@@ -271,7 +271,9 @@ describe("WxapkgArtifactReader data region", () => {
       },
     );
   });
+});
 
+describe("WxapkgArtifactReader index length", () => {
   it("reads a one-byte member when indexLength counts only the rows", async () => {
     const bytes = buildWxapkg([{ path: "a", data: "Z" }]);
     expect(bytes).toHaveLength(32);
@@ -310,6 +312,34 @@ describe("WxapkgArtifactReader data region", () => {
     });
   });
 
+  it("reads a count-inclusive member when exactly four bytes trail the package", async () => {
+    const bytes = Buffer.concat([
+      buildWxapkg([{ path: "a", data: "Z" }], {
+        indexLengthIncludesFileCount: true,
+      }),
+      Buffer.alloc(4, 0xee),
+    ]);
+    expect(bytes).toHaveLength(36);
+    await withReader(bytes, async (reader) => {
+      const [entry] = await list(reader);
+      expect(entry).toMatchObject({ byteOffset: 31, declaredSize: 1 });
+      expect(await text(await reader.open(entry!))).toBe("Z");
+    });
+  });
+
+  it("rejects a count-inclusive member that covers trailing bytes", async () => {
+    const bytes = Buffer.concat([
+      buildWxapkg([{ path: "a", data: "Z" }], {
+        indexLengthIncludesFileCount: true,
+      }),
+      Buffer.alloc(4, 0xee),
+    ]);
+    bytes.writeUInt32BE(5, 27);
+    await withReader(bytes, async (reader) => {
+      await expect(list(reader)).rejects.toMatchObject({ reason: "format" });
+    });
+  });
+
   it("keeps a count-inclusive member inside the data region when bytes trail the package", async () => {
     const bytes = Buffer.concat([
       buildWxapkg([{ path: "a", data: "Z" }], {
@@ -334,7 +364,9 @@ describe("WxapkgArtifactReader data region", () => {
       },
     );
   });
+});
 
+describe("WxapkgArtifactReader damaged packages", () => {
   it("keeps a damaged package's format identity as a typed failure", async () => {
     // Marks hold but the declared count cannot fit the declared table.
     const bytes = buildWxapkg(members, {

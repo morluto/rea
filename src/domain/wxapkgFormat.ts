@@ -133,9 +133,8 @@ const indexLayout = (
 
 /**
  * Admit every index-length convention whose index and declared data region
- * both lie inside the carrier. A carrier that ends on one convention's data
- * region selects that convention; otherwise the caller distinguishes them
- * with the parsed row length.
+ * both lie inside the carrier. Trailing bytes can make both fit, so callers
+ * keep every candidate until the parsed rows and member ranges decide.
  */
 export const resolveWxapkgIndexLayouts = (
   facts: WxapkgHeaderFacts,
@@ -155,22 +154,43 @@ export const resolveWxapkgIndexLayouts = (
         ? "DataRegionExceedsFile"
         : "IndexExceedsFile",
     });
-  const exact = admissible.filter((layout) => layout.dataEnd === fileSize);
-  return ok(exact.length > 0 ? exact : admissible);
+  return ok(admissible);
+};
+
+const memberFitsIndex = (
+  layout: WxapkgIndexLayout,
+  member: { readonly offset: number; readonly size: number },
+): boolean => {
+  const extentEnd = member.offset + member.size;
+  return (
+    member.offset >= layout.dataStart &&
+    extentEnd <= layout.dataEnd &&
+    extentEnd >= member.offset
+  );
 };
 
 /**
- * Choose the shortest admitted index that still contains the parsed rows.
- * Callers pass only the layouts {@link resolveWxapkgIndexLayouts} returned,
- * so an exact carrier end has already dropped the other convention.
+ * Choose the admitted index that contains the parsed rows and every member
+ * range. An index that ends on the last parsed row wins a tie. Neither the
+ * carrier end nor the shorter table is enough on its own: four trailing bytes
+ * can make the other convention land on EOF.
  */
 export const selectWxapkgIndexLayout = (
   layouts: readonly WxapkgIndexLayout[],
   consumedRowBytes: number,
+  members: readonly { readonly offset: number; readonly size: number }[],
 ): WxapkgIndexLayout | undefined => {
+  const fitting = layouts.filter(
+    (layout) =>
+      layout.tableBytes >= consumedRowBytes &&
+      members.every((member) => memberFitsIndex(layout, member)),
+  );
+  const exactRows = fitting.filter(
+    (layout) => layout.tableBytes === consumedRowBytes,
+  );
+  const pool = exactRows.length > 0 ? exactRows : fitting;
   let selected: WxapkgIndexLayout | undefined;
-  for (const layout of layouts) {
-    if (layout.tableBytes < consumedRowBytes) continue;
+  for (const layout of pool) {
     if (selected === undefined || layout.tableBytes < selected.tableBytes)
       selected = layout;
   }

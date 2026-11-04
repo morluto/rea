@@ -190,22 +190,25 @@ export const readWxapkgFileTable = async (
       throw wxapkgFormatFailure("member name has no package-relative path");
     members.push({ offset, size: sizeMember, path, declaredPath });
   }
-  const index = selectWxapkgIndexLayout(indexLayouts, cursor);
-  if (index === undefined)
+  const candidates = indexLayouts.filter((index) => index.tableBytes >= cursor);
+  if (candidates.length === 0)
     throw wxapkgFormatFailure("member table is truncated");
-  // The declared data region was admitted against the carrier. Member bytes
-  // have to sit inside it, which excludes the header, the index, and anything
-  // past the declared end.
-  for (const member of members) {
-    const extentEnd = member.offset + member.size;
-    if (
-      member.offset < index.dataStart ||
-      extentEnd > index.dataEnd ||
-      extentEnd < member.offset
-    )
-      throw wxapkgFormatFailure(
-        `member exceeds the data region: ${member.path}`,
+  // Rows and member ranges choose the convention. EOF is not a signal: four
+  // trailing bytes can make the other convention end on the carrier.
+  const index = selectWxapkgIndexLayout(candidates, cursor, members);
+  if (index === undefined) {
+    const outside = members.find((member) => {
+      const extentEnd = member.offset + member.size;
+      return candidates.every(
+        (candidate) =>
+          member.offset < candidate.dataStart ||
+          extentEnd > candidate.dataEnd ||
+          extentEnd < member.offset,
       );
+    });
+    throw wxapkgFormatFailure(
+      `member exceeds the data region: ${outside?.path ?? ""}`,
+    );
   }
   return { members };
 };
