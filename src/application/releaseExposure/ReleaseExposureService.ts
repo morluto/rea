@@ -984,16 +984,37 @@ const goRelativeFlagPaths = (flags: string[], pathFlag: RegExp): string[] =>
  * rooted value is read by `flagPaths` with that structure kept.
  */
 const GO_PATH_LIST_FLAG = /^-{1,2}trimpath(?:=|\s+|$)/u;
+/**
+ * `go tool link -r` sets the dynamic linker search path, `dir1:dir2:...`, so
+ * it is read entry by entry like a forwarded `-rpath`.
+ */
+const GO_LINKER_SEARCH_LIST_FLAG = /^-{1,2}r(?:=|\s+|$)/u;
+
+/**
+ * A runtime search list's build-host entries. Only the ELF loader splits a
+ * list at `:`; dyld reads each argument as one directory. An entry the image's
+ * loader expands, such as `$ORIGIN` on ELF, drops only itself.
+ */
+const searchListEntries = (
+  list: string,
+  format: NativeImageFormat,
+): string[] => {
+  const token = LINKER_RUNTIME_TOKENS[format];
+  return (format === "elf" ? list.split(LINKER_SEARCH_LIST_SEPARATOR) : [list])
+    .map((entry) => entry.trimEnd())
+    .filter((entry) => entry.length > 0 && token?.test(entry) !== true);
+};
 
 /**
  * A Go tool path flag's whole argument, rooted or relative, attached after `=`
  * or in the next field, with the fields it was read from. The tool takes the
  * argument as one path, so a `,` or `=` in it is a literal character.
- * `-trimpath` is the one list among them.
+ * `-trimpath` and the linker's `-r` search list are the lists among them.
  */
 const goToolFlagPaths = (
   flags: string[],
   pathFlag: RegExp,
+  format: NativeImageFormat,
 ): { paths: string[]; fields: Set<string> } => {
   const paths: string[] = [];
   const fields = new Set<string>();
@@ -1007,7 +1028,9 @@ const goToolFlagPaths = (
     if (argument.length === 0) continue;
     const list = GO_PATH_LIST_FLAG.test(flag);
     if (list && filesystemPath(argument) !== null) continue;
-    paths.push(argument);
+    if (GO_LINKER_SEARCH_LIST_FLAG.test(flag))
+      paths.push(...searchListEntries(argument, format));
+    else paths.push(argument);
     // A rewrite list's rooted parts are still read by `flagPaths`.
     if (list) continue;
     fields.add(flag);
@@ -1056,12 +1079,7 @@ const compilerPaths = (value: string, format: NativeImageFormat): string[] => {
   const { compiler, linker } = splitForwardedLinkerFlags(flags);
   const lists = linkerSearchLists(linker);
   const whole = new Set(lists);
-  const token = LINKER_RUNTIME_TOKENS[format];
-  const entries = lists.flatMap((list) =>
-    (format === "elf" ? list.split(LINKER_SEARCH_LIST_SEPARATOR) : [list])
-      .map((entry) => entry.trimEnd())
-      .filter((entry) => entry.length > 0 && token?.test(entry) !== true),
-  );
+  const entries = lists.flatMap((list) => searchListEntries(list, format));
   return [
     ...flagPaths(flags).filter((path) => !whole.has(path)),
     ...goRelativeFlagPaths(compiler, GO_COMPILER_PATH_FLAG),
@@ -1087,7 +1105,7 @@ const goSettingPaths = (
   const whole =
     pathFlag === undefined
       ? { paths: [], fields: new Set<string>() }
-      : goToolFlagPaths(flags, pathFlag);
+      : goToolFlagPaths(flags, pathFlag, format);
   return [
     ...flagPaths(
       own.filter(

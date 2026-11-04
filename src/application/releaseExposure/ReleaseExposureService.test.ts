@@ -1437,6 +1437,44 @@ describe("ReleaseExposureService Go linker path options", () => {
   });
 });
 
+describe("ReleaseExposureService Go linker -r search list", () => {
+  it.each([["-r=$ORIGIN/../lib -s -w"], ["-r ${ORIGIN}/lib:$ORIGIN"]])(
+    "does not read the ELF loader-expanded entries in %s as build paths",
+    async (value) => {
+      const report = await goReport(goModule([{ key: "-ldflags", value }]));
+      const check = report.checks.find((item) => item.id === "go.build_paths");
+      expect(check?.status).toBe("not_observed");
+    },
+  );
+
+  it.each([
+    ["-r=$ORIGIN/../lib:/opt/private-runtime", ["/opt/private-runtime"]],
+    ["-r /opt/a:$ORIGIN/lib:vendor/lib", ["/opt/a", "vendor/lib"]],
+  ])("reads each ELF entry of the search list in %s", async (value, paths) => {
+    const report = await goReport(goModule([{ key: "-ldflags", value }]));
+    const check = report.checks.find((item) => item.id === "go.build_paths");
+    expect(check?.status).toBe("exposed");
+    expect(check?.observation.samples).toEqual(paths);
+  });
+
+  it.each([
+    ["-r=@loader_path/lib:extra", "not_observed", []],
+    ["-r=$ORIGIN/../lib", "exposed", ["$ORIGIN/../lib"]],
+  ])(
+    "reads a Mach-O search path in %s as one directory",
+    async (value, status, paths) => {
+      const report = await goReport(
+        goModule([{ key: "-ldflags", value }]),
+        [],
+        "mach-o",
+      );
+      const check = report.checks.find((item) => item.id === "go.build_paths");
+      expect(check?.status).toBe(status);
+      expect(check?.observation.samples ?? []).toEqual(paths);
+    },
+  );
+});
+
 describe("ReleaseExposureService Go rooted linker flag paths", () => {
   it.each([
     [`-L "/tmp/private,sdk" -s -w`, "/tmp/private,sdk"],
