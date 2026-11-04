@@ -294,6 +294,55 @@ const waitForExit = async (child: ProviderProcessHandle): Promise<void> => {
   });
 };
 
+it("transfers XHR identity uncertainty through the real worker protocol", async () => {
+  const worker = new WebBundleAnalysisWorker(
+    WEB_BUNDLE_WORKER_LIMITS.heapMb,
+    launcherFor({ kind: "source" }),
+  );
+  try {
+    const result = await worker.analyze(
+      makeScript(
+        "XMLHttpRequest.prototype.open=custom; new XMLHttpRequest().open('GET','/candidate');",
+      ),
+      10_000,
+    );
+    if (!result.ok) throw result.error;
+    expect(result.value).toMatchObject({
+      status: "analyzed",
+      uncertain_xhr_identity: true,
+    });
+  } finally {
+    await worker.close();
+  }
+});
+
+it("transfers unresolved request-target coverage through the real worker protocol", async () => {
+  const worker = new WebBundleAnalysisWorker(
+    WEB_BUNDLE_WORKER_LIMITS.heapMb,
+    launcherFor({ kind: "source" }),
+  );
+  try {
+    const result = await worker.analyze(
+      makeScript(
+        "const endpoint='/known'; fetch(endpoint); fetch(dynamicTarget);",
+      ),
+      10_000,
+    );
+    if (!result.ok) throw result.error;
+    expect(result.value).toMatchObject({
+      status: "analyzed",
+      unresolved_network_target: true,
+    });
+    if (result.value.status !== "analyzed")
+      throw new Error("Expected analyzed script");
+    expect(result.value.observations.endpoints).toContainEqual(
+      expect.objectContaining({ value: "/known" }),
+    );
+  } finally {
+    await worker.close();
+  }
+});
+
 it("reuses one real owned worker for completed facts from consecutive scripts", async () => {
   const children: ProviderProcessHandle[] = [];
   const worker = new WebBundleAnalysisWorker(

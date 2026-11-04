@@ -22,6 +22,10 @@ import type {
   ScenarioRedactionScope,
 } from "../BrowserScenarioSecrets.js";
 import { withPlaywrightExecutionBoundary } from "../PlaywrightExecutionBoundary.js";
+import {
+  recoverCharsetlessUtf8,
+  type CharsetlessTextRecovery,
+} from "./CharsetlessTextBody.js";
 
 /** The producer seam for ordered, duplicate-preserving HTTP headers. */
 export interface NetworkHeadersSource {
@@ -142,23 +146,33 @@ export const captureNetworkBody = async (
   protection?: { readonly request: object; readonly retainBody: boolean },
 ): Promise<NetworkBodyCapture> => {
   try {
-    const observed = await withPlaywrightExecutionBoundary(
+    const exposed = await withPlaywrightExecutionBoundary(
       read,
       options.timeoutMs,
       options.signal,
     );
-    if (observed === null) return { state: "not_exposed" };
+    if (exposed === null) return { state: "not_exposed" };
     // This bounds subsequent redaction, base64 and validation copies, but the
     // Playwright API itself has already materialized the body (see PR limits).
     const maxBodyBytes = options.maxBodyBytes;
-    if (observed.length > maxBodyBytes)
+    if (exposed.length > maxBodyBytes)
       return {
         state: "unavailable",
         reason: "body-size-limit",
         message: `Playwright materialized the body before its ${String(maxBodyBytes)}-byte retained-body budget was checked.`,
         limit_bytes: maxBodyBytes,
-        observed_bytes: observed.length,
+        observed_bytes: exposed.length,
       };
+    const contentType = source.headers()["content-type"];
+    // Playwright hands back a windows-1252 fallback decode for charset-less
+    // text; recover the UTF-8 wire bytes before redaction and hashing.
+    const recovered =
+      phase === "response"
+        ? recoverCharsetlessUtf8(exposed, contentType)
+        : undefined;
+    const observed = recovered?.bytes ?? exposed;
+    const textDecoding: CharsetlessTextRecovery | undefined =
+      recovered?.recovery;
     let sourceBody = observed;
     if (protection !== undefined) {
       sourceBody = secrets.admitResponseSecrets(
@@ -173,7 +187,6 @@ export const captureNetworkBody = async (
       );
       if (!protection.retainBody) return { state: "not_requested" };
     }
-    const contentType = source.headers()["content-type"];
     const bodyAllocationCost = secrets.redactionAllocationCost(
       Math.max(observed.length, sourceBody.length),
       options.redactionScope,
@@ -273,6 +286,7 @@ export const captureNetworkBody = async (
               .redactBytes(Buffer.from(contentType), options.redactionScope)
               .toString("utf8"),
       redacted: !retained.equals(observed),
+      ...(textDecoding === undefined ? {} : { text_decoding: textDecoding }),
     };
   } catch (cause: unknown) {
     return {

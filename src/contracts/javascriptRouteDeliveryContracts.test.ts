@@ -17,6 +17,18 @@ const cases = [
   ],
 ] as const;
 
+it("describes accepted application formats in the published input schema", () => {
+  const contract = toolContract("analyze_javascript_application");
+  const projected = toolInputSchemaWithMetadata(contract)[
+    "~standard"
+  ].jsonSchema.input({
+    target: "draft-2020-12",
+  });
+  expect(JSON.stringify(projected)).toContain(
+    "Input format: auto (default), asar, or directory.",
+  );
+});
+
 describe.each(cases)("%s delivery contract", (name, base) => {
   it.each(["draft-2020-12", "draft-07"] as const)(
     "advertises the canonical combinations in %s",

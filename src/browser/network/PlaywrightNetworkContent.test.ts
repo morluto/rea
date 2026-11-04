@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { expect, it, vi } from "vitest";
 import { browserScenarioSchema } from "../../domain/browserScenario.js";
 import { resolveScenarioSecrets } from "../../../tests/fixtures/browserScenarioSecrets.js";
@@ -161,3 +162,71 @@ it.each(['{"token":"private-token-729d"}', 'A","B'])(
     expect(JSON.stringify(captured)).not.toContain(secret);
   },
 );
+
+// Exact text Chromium 156 mangled over TLS/h2 (verified against a live probe):
+// raw UTF-8 wire bytes decoded as windows-1252, then re-encoded by Playwright.
+const WIRE_MARKDOWN = Buffer.from(
+  "# T\n\n“ ” — é Á \u{1F468}‍\u{1F469}‍\u{1F467} \u{1F60F} │\n",
+  "utf8",
+);
+const playwrightMangled = (wire: Buffer): Buffer =>
+  Buffer.from(new TextDecoder("windows-1252").decode(wire), "utf8");
+const sha = (bytes: Buffer): string =>
+  createHash("sha256").update(bytes).digest("hex");
+const captureWith = async (body: Buffer, contentType: string) =>
+  captureNetworkBody(
+    async () => body,
+    "response",
+    {
+      headers: () => ({ "content-type": contentType }),
+      headersArray: async () => [],
+    },
+    secrets,
+    { ...options, maxBodyBytes: 4096 },
+  );
+
+it("recovers UTF-8 wire bytes of charset-less text/markdown from Playwright's windows-1252 fallback decode", async () => {
+  const mangled = playwrightMangled(WIRE_MARKDOWN);
+  expect(mangled.length).toBeGreaterThan(WIRE_MARKDOWN.length);
+  const captured = await captureWith(mangled, "text/markdown");
+  if (captured.state !== "captured") throw new Error("Expected capture");
+  expect(Buffer.from(captured.content, "base64").equals(WIRE_MARKDOWN)).toBe(
+    true,
+  );
+  expect(captured.bytes).toBe(WIRE_MARKDOWN.length);
+  expect(captured.sha256).toBe(sha(WIRE_MARKDOWN));
+  expect(captured.redacted).toBe(false);
+  expect(captured.text_decoding).toEqual({
+    declared_charset: null,
+    decoded_as: "utf-8",
+    method: "reversed-windows-1252-decode",
+    observed_bytes: mangled.length,
+    observed_sha256: sha(mangled),
+  });
+});
+
+it("leaves exact UTF-8 text, declared charsets, HTML and ASCII unchanged", async () => {
+  for (const [body, type] of [
+    [Buffer.from("“q” — é\n"), "text/markdown"],
+    [WIRE_MARKDOWN, "text/markdown"],
+    [playwrightMangled(WIRE_MARKDOWN), "text/markdown; charset=utf-8"],
+    [playwrightMangled(WIRE_MARKDOWN), 'text/markdown; Charset="UTF-8"'],
+    [playwrightMangled(WIRE_MARKDOWN), "text/html"],
+    [playwrightMangled(WIRE_MARKDOWN), "application/octet-stream"],
+    [Buffer.from("plain ascii\n"), "text/markdown"],
+    [Buffer.from([0xe9, 0x0a]), "text/plain"],
+  ] as const) {
+    const captured = await captureWith(body, type);
+    if (captured.state !== "captured") throw new Error("Expected capture");
+    expect(Buffer.from(captured.content, "base64").equals(body)).toBe(true);
+    expect(captured.sha256).toBe(sha(body));
+    expect(captured).not.toHaveProperty("text_decoding");
+  }
+});
+
+it("recovers the undefined windows-1252 bytes (0x81, 0x8d, 0x8f, 0x90, 0x9d) exactly", async () => {
+  const wire = Buffer.from("Á ‍ ” Ð Ý \u{1F60F}\n");
+  const captured = await captureWith(playwrightMangled(wire), "text/plain");
+  if (captured.state !== "captured") throw new Error("Expected capture");
+  expect(captured.sha256).toBe(sha(wire));
+});

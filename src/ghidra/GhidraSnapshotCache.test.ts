@@ -314,8 +314,33 @@ describe("Ghidra snapshot profile admission", () => {
     },
     {
       parameter: "function_boundary_observations",
-      current: "ghidra-function-boundary-limitations-v4",
+      current: "ghidra-function-boundary-limitations-v5",
       legacy: "ghidra-function-boundary-limitations-v3",
+    },
+    {
+      parameter: "function_boundary_observations",
+      current: "ghidra-function-boundary-limitations-v5",
+      legacy: "ghidra-function-boundary-limitations-v4",
+    },
+    {
+      parameter: "call_relationship_coverage",
+      current: "function-body-call-coverage-v9",
+      legacy: "function-body-call-coverage-v5",
+    },
+    {
+      parameter: "call_relationship_coverage",
+      current: "function-body-call-coverage-v9",
+      legacy: "function-body-call-coverage-v6",
+    },
+    {
+      parameter: "call_relationship_coverage",
+      current: "function-body-call-coverage-v9",
+      legacy: "function-body-call-coverage-v7",
+    },
+    {
+      parameter: "call_relationship_coverage",
+      current: "function-body-call-coverage-v9",
+      legacy: "function-body-call-coverage-v8",
     },
     {
       parameter: "instruction_references",
@@ -329,22 +354,22 @@ describe("Ghidra snapshot profile admission", () => {
     },
     {
       parameter: "call_relationship_coverage",
-      current: "function-body-call-coverage-v5",
+      current: "function-body-call-coverage-v9",
       legacy: "resolved-call-reference-diagnostics-v1",
     },
     {
       parameter: "call_relationship_coverage",
-      current: "function-body-call-coverage-v5",
+      current: "function-body-call-coverage-v9",
       legacy: "decoded-call-target-coverage-v2",
     },
     {
       parameter: "call_relationship_coverage",
-      current: "function-body-call-coverage-v5",
+      current: "function-body-call-coverage-v9",
       legacy: "decoded-call-target-coverage-v3",
     },
     {
       parameter: "call_relationship_coverage",
-      current: "function-body-call-coverage-v5",
+      current: "function-body-call-coverage-v9",
       legacy: "function-body-call-coverage-v4",
     },
   ])(

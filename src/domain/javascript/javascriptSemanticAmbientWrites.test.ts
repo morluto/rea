@@ -10,8 +10,70 @@ import {
   completeSemanticSteps,
   traverseJavaScriptAst,
 } from "./javascriptSemanticTraversal.js";
-import { createGlobalReferenceReader } from "./javascriptSemanticAmbientWrites.js";
+import {
+  createGlobalReferenceReader,
+  retainSemanticAmbientEffect,
+  semanticAmbientPathMayHaveChangedAt,
+} from "./javascriptSemanticAmbientWrites.js";
 import { parseJavaScriptSource } from "./javascriptSourceParser.js";
+
+it("refreshes timed ambient effect caches when writes and escapes are retained", () => {
+  const parsed = parseJavaScriptSource("before(); read(); after();", "app.cjs");
+  if (parsed === null) throw new Error("Expected fixture");
+  const state = completeSemanticSteps(
+    indexJavaScriptBindingsSteps(parsed.program),
+  );
+  const calls: t.CallExpression[] = [];
+  traverseJavaScriptAst(parsed.program, {
+    enter(node) {
+      if (t.isCallExpression(node)) calls.push(node);
+    },
+  });
+  const [before, read, after] = calls;
+  if (!before || !read || !after) throw new Error("Expected call sites");
+  const path = ["global", "XMLHttpRequest", "prototype", "open"];
+  retainSemanticAmbientEffect(state, "write", path, after);
+  expect(semanticAmbientPathMayHaveChangedAt(state, path, read)).toBe(false);
+  retainSemanticAmbientEffect(state, "write", path, before);
+  expect(semanticAmbientPathMayHaveChangedAt(state, path, read)).toBe(true);
+  const escaped = ["global", "Other", "prototype", "open"];
+  retainSemanticAmbientEffect(
+    state,
+    "escape",
+    ["global", "Other", "prototype"],
+    after,
+  );
+  expect(semanticAmbientPathMayHaveChangedAt(state, escaped, read)).toBe(false);
+  retainSemanticAmbientEffect(
+    state,
+    "escape",
+    ["global", "Other", "prototype"],
+    before,
+  );
+  expect(semanticAmbientPathMayHaveChangedAt(state, escaped, read)).toBe(true);
+});
+
+it("excludes only the caller-selected write from ambient identity reads", () => {
+  const parsed = parseJavaScriptSource(
+    `window.location = first; window.location = second;`,
+    "app.cjs",
+  );
+  if (parsed === null) throw new Error("Expected global-reference fixture");
+  const state = completeSemanticSteps(
+    indexJavaScriptBindingsSteps(parsed.program),
+  );
+  const read = createGlobalReferenceReader(state, ["location"]);
+  const writes: t.AssignmentExpression[] = [];
+  traverseJavaScriptAst(parsed.program, {
+    enter(node) {
+      if (t.isAssignmentExpression(node)) writes.push(node);
+    },
+  });
+  expect(writes).toHaveLength(2);
+  expect(read(writes[0]!.left, writes[0]).status).toBe("unmodified");
+  expect(read(writes[1]!.left, writes[1]).status).toBe("replacement");
+  expect(read(writes[1]!.left).status).not.toBe("unmodified");
+});
 
 it("keeps wrapper module aliases distinct from global-object module properties", () => {
   const parsed = parseJavaScriptSource(

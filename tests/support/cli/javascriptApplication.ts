@@ -6,6 +6,7 @@ import { z } from "zod";
 
 import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/javascript/javascriptApplicationAnalysis.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { INLINE_EVIDENCE_MCP_ENVIRONMENT } from "../../../scripts/lib/mcp-verification-environment.mjs";
 import type { SharedMcpCall, TestCli } from "./cliFixture.js";
 
@@ -56,6 +57,7 @@ export const analyzeJavaScriptDirectory = async (
   let document: unknown;
   if (surface === "CLI") {
     const run = cli.sharedCliRun ?? ((invocation) => cli.run(invocation));
+    const home = await createTestTempDirectory("rea-javascript-cli-home-");
     const response = await run({
       arguments: [
         "analyze-javascript-application",
@@ -64,7 +66,8 @@ export const analyzeJavaScriptDirectory = async (
         "--format",
         "json",
       ],
-      environment: { REA_LOG_LEVEL: "silent" },
+      // The CLI resolves home on import. Keep it outside the analyzed artifact.
+      environment: { REA_LOG_LEVEL: "silent", HOME: home },
     });
     expect(response.exitCode, response.stderr).toBe(0);
     document = response.json;

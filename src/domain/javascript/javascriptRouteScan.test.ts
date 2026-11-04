@@ -336,6 +336,398 @@ it("excludes generic config paths and SVG data while retaining navigation candid
     facts.candidates.some(({ path }) => path.includes("state/items")),
   ).toBe(false);
 });
+
+it("recovers History API URL arguments without mistaking state and title for routes", () => {
+  const facts = analyze(`
+    const target = '/profile?tab=info';
+    window.history.pushState({ path: '/decoy', nested: { path: '/decoy-child', component: View } }, '/title', '/checkout?step=1');
+    globalThis.history.replaceState(null, '', target);
+    history.pushState(null, '', '/help#contact');
+  `);
+  expect(
+    facts.candidates
+      .filter(({ mechanism }) => mechanism === "navigation-target")
+      .map(({ path }) => path),
+  ).toEqual(["/checkout", "/profile", "/help"]);
+  expect(
+    facts.candidates.some(
+      ({ path }) =>
+        path === "/decoy" || path === "/decoy-child" || path === "/title",
+    ),
+  ).toBe(false);
+});
+
+it("resolves History API identity at the call site", () => {
+  for (const method of ["pushState", "replaceState"]) {
+    const before = analyze(
+      `history.${method}(null, '', '/early'); history.${method}=custom;`,
+    );
+    expect(before.candidates).toContainEqual(
+      expect.objectContaining({
+        path: "/early",
+        mechanism: "navigation-target",
+      }),
+    );
+    const after = analyze(
+      `history.${method}=custom; history.${method}(null, '', '/late');`,
+    );
+    expect(
+      after.candidates.filter(
+        ({ mechanism }) => mechanism === "navigation-target",
+      ),
+    ).toEqual([]);
+    const conditional = analyze(
+      `if (flag) history.${method}=custom; history.${method}(null, '', '/maybe');`,
+    );
+    expect(
+      conditional.candidates.filter(
+        ({ mechanism }) => mechanism === "navigation-target",
+      ),
+    ).toEqual([]);
+    expect(conditional.unresolved).toContainEqual(
+      expect.objectContaining({ mechanism: "navigation-target" }),
+    );
+    const nested = analyze(
+      `function f(){ history.${method}(null, '', '/nested'); } history.${method}=custom;`,
+    );
+    expect(
+      nested.candidates.filter(
+        ({ mechanism }) => mechanism === "navigation-target",
+      ),
+    ).toEqual([]);
+    expect(nested.unresolved).toContainEqual(
+      expect.objectContaining({ mechanism: "navigation-target" }),
+    );
+    for (const source of [
+      `globalThis = replacement; globalThis.history.${method}(null, '', '/wrong');`,
+      `globalThis.history = replacement; globalThis.history.${method}(null, '', '/wrong');`,
+    ]) {
+      const result = analyze(source);
+      expect(
+        result.candidates.filter(
+          ({ mechanism }) => mechanism === "navigation-target",
+        ),
+      ).toEqual([]);
+    }
+  }
+});
+
+it("preserves ambient Navigation API identity across replacements and opaque effects", () => {
+  const early = analyze(
+    "navigation.navigate('/early'); navigation.navigate=custom; navigation.navigate('/late');",
+  );
+  expect(early.candidates.map(({ path }) => path)).toEqual(["/early"]);
+  expect(
+    analyze("navigation.navigate=custom; navigation.navigate('/after');")
+      .candidates,
+  ).toEqual([]);
+  expect(analyze("window.navigation.navigate('/window');").candidates).toEqual(
+    expect.arrayContaining([expect.objectContaining({ path: "/window" })]),
+  );
+  for (const source of [
+    "if (flag) navigation.navigate=custom; navigation.navigate('/conditional');",
+    "eval('navigation.navigate=custom'); navigation.navigate('/opaque');",
+    "function f(){navigation.navigate('/nested');} navigation.navigate=custom;",
+    "navigation.navigate(target);",
+    "navigation.navigate('../relative');",
+    "navigation.navigate(...targets);",
+  ]) {
+    const result = analyze(source);
+    expect(result.candidates).toEqual([]);
+    expect(result.unresolved.length).toBeGreaterThan(0);
+  }
+  expect(
+    analyze("navigation.navigate('https://elsewhere.example/path');")
+      .candidates,
+  ).toEqual([]);
+  expect(
+    analyze("function f(router){router.navigate('/local');}").candidates,
+  ).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ path: "/local", confidence: "low" }),
+    ]),
+  );
+  expect(
+    analyze("function f(navigation){navigation.navigate('/local');}")
+      .candidates,
+  ).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ path: "/local", confidence: "low" }),
+    ]),
+  );
+});
+
+it("recovers direct browser location assignment destinations", () => {
+  const facts = analyze(
+    `window.location.href = '/checkout?step=1'; location.href = '/account#top';`,
+  );
+  expect(
+    facts.candidates
+      .filter(({ mechanism }) => mechanism === "navigation-target")
+      .map(({ path }) => path),
+  ).toEqual(["/checkout", "/account"]);
+});
+
+it("recovers browser pathname and document location href writes", () => {
+  const facts = analyze(
+    `window.location.pathname='/products'; document.location.href='/account?view=one';`,
+  );
+  expect(
+    facts.candidates
+      .filter(({ mechanism }) => mechanism === "navigation-target")
+      .map(({ path }) => path),
+  ).toEqual(["/products", "/account"]);
+});
+
+it("keeps ambiguous pathname setters and local document objects out of routes", () => {
+  for (const source of [
+    `window.location.pathname='/foo?bar';`,
+    `window.location.pathname='/foo#bar';`,
+    `window.location.pathname=target;`,
+    `const target='/foo?bar'; window.location.pathname=target;`,
+    `window.location.pathname='../relative';`,
+  ])
+    expect(analyze(source).unresolved).toContainEqual(
+      expect.objectContaining({ mechanism: "navigation-target" }),
+    );
+  for (const source of [
+    `function f(document) { document.location.href='/local'; }`,
+    `function f(window) { window.location.pathname='/local'; }`,
+    `document.location=other; document.location.href='/patched';`,
+  ])
+    expect(
+      analyze(source).candidates.filter(
+        ({ mechanism }) => mechanism === "navigation-target",
+      ),
+    ).toEqual([]);
+});
+
+it("does not interpret shadowed or overwritten location assignments as browser navigation", () => {
+  for (const source of [
+    `function f(location) { location.href = '/local'; }`,
+    `function f(window) { window.location.href = '/local'; }`,
+    `window.location = other; window.location.href = '/patched';`,
+    `location.href += '/suffix';`,
+  ])
+    expect(
+      analyze(source).candidates.filter(
+        ({ mechanism }) => mechanism === "navigation-target",
+      ),
+    ).toEqual([]);
+});
+
+it("does not mistake shadowed location.replace for browser navigation", () => {
+  expect(
+    analyze(
+      `function f(location) { location.replace('/local'); }`,
+    ).candidates.filter(({ mechanism }) => mechanism === "navigation-target"),
+  ).toEqual([]);
+});
+
+it("retains real browser location.replace and dynamic href uncertainty", () => {
+  const facts = analyze(
+    `const dest='/checkout'; window.location.replace(dest); location.href = target;`,
+  );
+  expect(facts.candidates).toContainEqual(
+    expect.objectContaining({
+      mechanism: "navigation-target",
+      path: "/checkout",
+    }),
+  );
+  expect(facts.unresolved).toContainEqual(
+    expect.objectContaining({ mechanism: "navigation-target" }),
+  );
+});
+
+it("recovers direct global location assignment while preserving uncertainty", () => {
+  for (const source of [
+    `window.location = '/direct';`,
+    `location = '/direct';`,
+    `document.location = '/direct';`,
+    `window.document.location = '/direct';`,
+  ]) {
+    expect(analyze(source).candidates).toContainEqual(
+      expect.objectContaining({
+        mechanism: "navigation-target",
+        path: "/direct",
+      }),
+    );
+  }
+  for (const source of [
+    `window.location = target;`,
+    `window.location = '../relative';`,
+    `window.location = custom; window.location = '/later';`,
+    `window = other; window.location = '/later';`,
+    `if (condition) window.location = custom; window.location = '/later';`,
+    `location.href += '/suffix';`,
+    `window.location.pathname += '/suffix';`,
+    `document.location.href += '/suffix';`,
+    `document.location.pathname += '/suffix';`,
+    `window.location += '/suffix';`,
+    `document.location += '/suffix';`,
+    `document.location = custom; document.location = '/later';`,
+    `document = other; document.location = '/later';`,
+    `document.location = (document = other, '/later');`,
+    `document.location = (eval('document=other'), '/later');`,
+  ])
+    expect(analyze(source).unresolved).toContainEqual(
+      expect.objectContaining({ mechanism: "navigation-target" }),
+    );
+  for (const source of [
+    `window.location = custom; window.location = '/later';`,
+    `window = other; window.location = '/later';`,
+    `if (condition) window.location = custom; window.location = '/later';`,
+    `document.location = custom; document.location = '/later';`,
+    `document = other; document.location = '/later';`,
+    `document.location = (document = other, '/later');`,
+    `document.location = (eval('document=other'), '/later');`,
+  ])
+    expect(
+      analyze(source).candidates.some(({ path }) => path === "/later"),
+    ).toBe(false);
+  expect(
+    analyze(`function f(window){window.location='/local'}`).candidates,
+  ).toEqual([]);
+  expect(
+    analyze(`function f(document){document.location='/local'}`).candidates,
+  ).toEqual([]);
+  expect(
+    analyze(`function f(document){document.location.pathname += '/local'}`)
+      .unresolved,
+  ).toEqual([]);
+});
+
+it("keeps browser navigation uncertain after opaque global mutation", () => {
+  for (const source of [
+    `eval('window.location = custom'); window.location.assign('/false');`,
+    `eval('history.pushState = custom'); history.pushState(null, '', '/false');`,
+    `eval('location = custom'); window.location.href = '/false';`,
+    `eval('location = custom'); window.location = '/false';`,
+    `eval('document.location = custom'); document.location.assign('/false');`,
+  ]) {
+    const facts = analyze(source);
+    expect(
+      facts.candidates.filter(
+        (candidate) => candidate.mechanism === "navigation-target",
+      ),
+    ).toEqual([]);
+    expect(
+      facts.unresolved.some((item) => item.mechanism === "navigation-target"),
+    ).toBe(true);
+  }
+  const earlier = analyze(
+    `window.location.assign('/early'); eval('location = custom');`,
+  );
+  expect(earlier.candidates.some((item) => item.path === "/early")).toBe(true);
+});
+
+it("preserves Location calls before later replacements without trusting modified globals", () => {
+  for (const target of [
+    "location",
+    "window.location",
+    "document.location",
+    "window.document.location",
+  ]) {
+    for (const method of ["assign", "replace"]) {
+      const facts = analyze(
+        `${target}.${method}('/early'); ${target}.${method} = custom; ${target}.${method}('/late');`,
+      );
+      expect(
+        facts.candidates
+          .filter(({ mechanism }) => mechanism === "navigation-target")
+          .map(({ path }) => path),
+      ).toEqual(["/early"]);
+    }
+  }
+  for (const source of [
+    "if (flag) window.location.assign = custom; window.location.assign('/maybe');",
+    "function run(){ document.location.replace('/maybe'); } document.location.replace = custom;",
+    "eval('location.assign=custom'); location.assign('/maybe');",
+  ]) {
+    const facts = analyze(source);
+    expect(
+      facts.candidates.filter(
+        ({ mechanism }) => mechanism === "navigation-target",
+      ),
+    ).toEqual([]);
+    expect(facts.unresolved).toContainEqual(
+      expect.objectContaining({ mechanism: "navigation-target" }),
+    );
+  }
+  const local = analyze(
+    "function f(location) { location.replace('/local'); } router.replace('/router');",
+  );
+  expect(local.candidates.some(({ path }) => path === "/local")).toBe(false);
+  expect(local.candidates.some(({ path }) => path === "/router")).toBe(true);
+});
+
+it("recovers browser location.assign destinations without trusting local lookalikes", () => {
+  const facts = analyze(`
+    window.location.assign('/checkout?step=1');
+    globalThis.location.assign('/account#details');
+    document.location.assign('/document');
+    function local(location) { location.assign('/shadowed'); }
+  `);
+  expect(
+    facts.candidates
+      .filter(({ mechanism }) => mechanism === "navigation-target")
+      .map(({ path }) => path),
+  ).toEqual(["/checkout", "/account", "/document"]);
+});
+
+it("preserves uncertainty for dynamic or modified Location.assign calls", () => {
+  for (const source of [
+    `location.assign = custom; location.assign('/patched');`,
+    `window.location = other; window.location.assign('/patched');`,
+    `function f(window) { window.location.assign('/shadowed'); }`,
+    `const other = {assign(){}}; other.assign('/not-location');`,
+  ]) {
+    expect(
+      analyze(source).candidates.filter(
+        ({ mechanism }) => mechanism === "navigation-target",
+      ),
+    ).toEqual([]);
+  }
+  const dynamic = analyze(
+    `location.assign(target); location.assign('../relative');`,
+  );
+  expect(
+    dynamic.unresolved.filter(
+      ({ mechanism }) => mechanism === "navigation-target",
+    ),
+  ).toHaveLength(2);
+});
+
+it("does not infer History API routes from shadowed or overwritten globals", () => {
+  for (const source of [
+    `function f(history) { history.pushState(null, '', '/shadowed'); }`,
+    `function f(window) { window.history.pushState(null, '', '/shadowed'); }`,
+    `history.pushState = custom; history.pushState(null, '', '/patched');`,
+    `window.history = other; window.history.pushState(null, '', '/patched');`,
+  ]) {
+    expect(
+      analyze(source).candidates.filter(
+        ({ mechanism }) => mechanism === "navigation-target",
+      ),
+    ).toEqual([]);
+  }
+});
+
+it("keeps dynamic and relative History API destinations unresolved", () => {
+  const facts = analyze(
+    `history.pushState(null, '', target); history.replaceState(null, '', '../edit'); history.pushState(...args, '', '/not-known');`,
+  );
+  expect(
+    facts.candidates.filter(
+      ({ mechanism }) => mechanism === "navigation-target",
+    ),
+  ).toEqual([]);
+  expect(
+    facts.unresolved.filter(
+      ({ mechanism }) => mechanism === "navigation-target",
+    ),
+  ).toHaveLength(3);
+});
 it.each([
   ["/_next/static/chunks/app/page-123.js", "/"],
   ["https://example.test/app/_next/static/chunks/app/page.tsx", "/"],

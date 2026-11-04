@@ -27,7 +27,10 @@ const countSchema = z.int().min(0);
 /** Public target-free request for static JavaScript application analysis. */
 export const analyzeJavaScriptApplicationInputSchema = z.strictObject({
   input_path: localPathStringSchema,
-  format: z.enum(["auto", "asar", "directory"]).default("auto"),
+  format: z
+    .enum(["auto", "asar", "directory"])
+    .default("auto")
+    .describe("Input format: auto (default), asar, or directory."),
   integrity_policy: artifactIntegrityPolicySchema,
   source_paths: javaScriptSourcePathsSchema.optional(),
   ...javaScriptAnalysisResourceControlsSchema.shape,

@@ -1,4 +1,5 @@
 import {
+  browserNetworkReferenceStatus,
   isBrowserNetworkRequest,
   isFetchCall,
 } from "./javascriptNetworkRequests.js";
@@ -56,6 +57,7 @@ import {
   evaluateSemanticExpressionProvenance,
 } from "./javascriptSemanticValues.js";
 import { semanticTopLevelEffectFollowsCapture } from "./javascriptSemanticMutationInitializers.js";
+import { semanticOpaqueGlobalMayHaveChanged } from "./javascriptSemanticOpaqueEffects.js";
 import {
   semanticFactoryLoaderMemberAt,
   semanticRequireCallAt,
@@ -523,6 +525,7 @@ const requestConstructorUrl = (
   const target = unwrapJavaScriptExpression(node).node;
   if (
     t.isNewExpression(target) &&
+    !semanticOpaqueGlobalMayHaveChanged(target.callee, bindings) &&
     isUnmodifiedGlobalReference(target.callee, bindings, "Request")
   )
     return stringValue(target.arguments[0]);
@@ -557,6 +560,7 @@ const inspectEndpointCall = (
     const unwrapped = unwrapJavaScriptExpression(reference).node;
     if (
       t.isIdentifier(unwrapped) ||
+      t.isNewExpression(unwrapped) ||
       t.isMemberExpression(unwrapped) ||
       t.isOptionalMemberExpression(unwrapped)
     ) {
@@ -568,7 +572,20 @@ const inspectEndpointCall = (
   }
   // A local or shadowed function with a familiar network name is not a known
   // browser request API. Do not let the literal fallback turn it into one.
-  if (isNetworkRequestSpelling(name)) return;
+  if (
+    t.isCallExpression(node) ||
+    t.isOptionalCallExpression(node) ||
+    t.isNewExpression(node)
+  ) {
+    const status = browserNetworkReferenceStatus(node, bindings);
+    if (status === "unknown") context.accumulator.unknownFindings++;
+    // A recognized global with a known replacement is not the browser API.
+    // Do not reinterpret it through the generic endpoint-name fallback.
+    if (status !== "unrelated") return;
+  }
+  if (isNetworkRequestSpelling(name)) {
+    return;
+  }
   if (first !== undefined && /(?:^|\.)(?:get|delete)$/u.test(name)) {
     // Apply existing literal exclusions before requesting whole-source alias
     // mutation facts. Inline receivers and unbound names need no such index.
@@ -596,6 +613,17 @@ const inspectLiteralEndpointCall = (
   name: string,
   context: FindingContext,
 ): void => {
+  // A spread can occupy any number of argument slots. A literal after it
+  // cannot be identified as the URL argument of an XHR open call.
+  if (
+    (name === "open" || name.endsWith(".open")) &&
+    node.arguments.slice(0, 2).some((argument) => t.isSpreadElement(argument))
+  ) {
+    const xhr = context.xhrOpenRequest?.(node);
+    if (xhr === true || xhr === "unknown")
+      context.accumulator.unknownFindings++;
+    return;
+  }
   const receiverFact = context.openReceiverFacts?.get(node.start ?? -1);
   const endpoint = endpointArgumentHelper(
     name,
@@ -603,17 +631,41 @@ const inspectLiteralEndpointCall = (
     node.callee,
     receiverFact,
   );
-  if (endpoint !== undefined)
+  if (endpoint === undefined) {
+    const xhr = context.xhrOpenRequest?.(node);
+    if (xhr === true || xhr === "unknown") {
+      if (xhr === "unknown") context.accumulator.unknownFindings++;
+      const target = argumentNode(node.arguments[1]);
+      if (target === undefined) return;
+      const value = stringValue(target);
+      if (value === undefined) {
+        addPartialNetworkEndpoint(context, node, name, target);
+      } else {
+        addEndpoint(context, {
+          node,
+          kind: "network",
+          value,
+          mechanism: `call:${name}`,
+          ...(xhr === "unknown" ? { interpretation: "candidate" } : {}),
+        });
+      }
+    }
+    return;
+  }
+  if (endpoint !== undefined) {
+    const xhr =
+      endpoint.kind === "candidate" ? context.xhrOpenRequest?.(node) : false;
+    if (xhr === "unknown") context.accumulator.unknownFindings++;
     addEndpoint(context, {
       node,
       kind: "network",
       value: endpoint.value,
       mechanism: `call:${name}`,
-      ...(endpoint.kind === "candidate" &&
-      context.xhrOpenRequest?.(node) !== true
+      ...(endpoint.kind === "candidate" && xhr !== true
         ? { interpretation: "candidate" }
         : {}),
     });
+  }
 };
 
 const isNetworkRequestSpelling = (name: string): boolean =>
@@ -689,12 +741,23 @@ const addPartialNetworkEndpoint = (
     resolution: "partial",
   });
 
-const resolvedRequestTarget = (
+export const resolvedRequestTarget = (
   node: t.Node,
   site: t.Node,
   bindings: JavaScriptSemanticAnalysisState,
   index: JavaScriptBindingIndex,
 ): string | undefined => {
+  const direct = unwrapJavaScriptExpression(node).node;
+  if (
+    t.isNewExpression(direct) &&
+    direct.arguments.length === 1 &&
+    isFetchCall(site, bindings)
+  ) {
+    const requestUrl = requestConstructorUrl(direct, bindings);
+    if (requestUrl !== undefined) return requestUrl;
+  }
+  if (t.isNewExpression(direct))
+    return literalUrlObjectTarget(direct, bindings);
   const reference = requestReferenceNode(node);
   // A toString result is selected before the enclosing request invocation.
   const expression = unwrapJavaScriptExpression(node).node;
@@ -799,6 +862,15 @@ const urlObjectRequestTarget = (
     if (requestUrl !== undefined) return requestUrl;
   }
   if (!t.isNewExpression(initialized)) return undefined;
+  return literalUrlObjectTarget(initialized, bindings);
+};
+
+const literalUrlObjectTarget = (
+  initialized: t.NewExpression,
+  bindings: JavaScriptSemanticAnalysisState,
+): string | undefined => {
+  if (semanticOpaqueGlobalMayHaveChanged(initialized.callee, bindings))
+    return undefined;
   if (!isUnmodifiedGlobalReference(initialized.callee, bindings, "URL"))
     return undefined;
   if (

@@ -34,6 +34,12 @@ import {
 import { semanticProjectedSourcesAtRead } from "./javascriptSemanticProjectedSources.js";
 import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
 import {
+  globalReferenceNamespace,
+  isUnmodifiedGlobalReference,
+} from "./javascriptSemanticGlobalReference.js";
+import { createGlobalReferenceReader } from "./javascriptSemanticAmbientWrites.js";
+import { semanticOpaqueGlobalMayHaveChanged } from "./javascriptSemanticOpaqueEffects.js";
+import {
   semanticObjectPropertyReferences,
   semanticArrayPropertyReferences,
   type JavaScriptSemanticObjectReference,
@@ -151,6 +157,21 @@ const navigationRecognition = (
     ? (name !== "push" && name !== "replace") ||
       navigationReceivers.has(receiver)
     : undefined;
+/** Recognize writes to ambient browser location properties, not local lookalikes. */
+const locationPropertyWrite = (
+  node: t.AssignmentExpression,
+  index: JavaScriptBindingIndex,
+): boolean =>
+  node.operator === "=" &&
+  t.isMemberExpression(node.left) &&
+  ["href", "pathname"].includes(
+    semanticStaticPropertyName(node.left.property, node.left.computed) ?? "",
+  ) &&
+  (isUnmodifiedGlobalReference(node.left.object, index.bindings, "location") ||
+    isUnmodifiedGlobalReference(node.left.object, index.bindings, [
+      "document",
+      "location",
+    ]));
 const localNavigationFields = new Set(["pathname", "query", "search", "hash"]);
 const nextNames = new Set(["TURBOPACK", "webpackChunk_N_E", "__NEXT_DATA__"]);
 const isRouteChildKey = (key: string, typed: boolean): boolean =>
@@ -267,12 +288,44 @@ export class JavaScriptRouteScan {
   #nextRuntime = false;
   #factBytes: number;
   #workBytes = 0;
+  readonly #locationReader: ReturnType<typeof createGlobalReferenceReader>;
+  readonly #documentLocationReader: ReturnType<
+    typeof createGlobalReferenceReader
+  >;
+  readonly #historyPushReader: ReturnType<typeof createGlobalReferenceReader>;
+  readonly #historyReplaceReader: ReturnType<
+    typeof createGlobalReferenceReader
+  >;
+  readonly #navigationReader: ReturnType<typeof createGlobalReferenceReader>;
+  readonly #locationMethodReaders = new Map<
+    string,
+    ReturnType<typeof createGlobalReferenceReader>
+  >();
 
   private constructor(
     private readonly index: JavaScriptBindingIndex,
     readonly onLegacyRoute?: (fact: LegacyRoute) => void,
     readonly factByteBudget = JAVASCRIPT_STATIC_FACT_BYTES,
   ) {
+    this.#locationReader = createGlobalReferenceReader(index.bindings, [
+      "location",
+    ]);
+    this.#documentLocationReader = createGlobalReferenceReader(index.bindings, [
+      "document",
+      "location",
+    ]);
+    this.#historyPushReader = createGlobalReferenceReader(index.bindings, [
+      "history",
+      "pushState",
+    ]);
+    this.#historyReplaceReader = createGlobalReferenceReader(index.bindings, [
+      "history",
+      "replaceState",
+    ]);
+    this.#navigationReader = createGlobalReferenceReader(index.bindings, [
+      "navigation",
+      "navigate",
+    ]);
     this.#factBytes = jsonValueByteLength({
       candidates: [],
       unresolved: [],
@@ -290,6 +343,38 @@ export class JavaScriptRouteScan {
       throw new RangeError(
         "Route accounting budget must fit its coverage metadata",
       );
+  }
+
+  #historyStatus(node: t.CallExpression | t.OptionalCallExpression) {
+    const name = calleeName(node.callee).split(".").at(-1);
+    if (name === "pushState")
+      return this.#historyPushReader(node.callee).status;
+    if (name === "replaceState")
+      return this.#historyReplaceReader(node.callee).status;
+    return "unrelated";
+  }
+
+  #locationMethodStatus(node: t.CallExpression | t.OptionalCallExpression) {
+    const name = calleeName(node.callee).split(".").at(-1);
+    if (name !== "assign" && name !== "replace") return "unrelated";
+    for (const path of [
+      ["location", name],
+      ["document", "location", name],
+    ] as const) {
+      if (
+        globalReferenceNamespace(node.callee, this.index.bindings, path) ===
+        undefined
+      )
+        continue;
+      const key = path.join(".");
+      let reader = this.#locationMethodReaders.get(key);
+      if (reader === undefined) {
+        reader = createGlobalReferenceReader(this.index.bindings, path);
+        this.#locationMethodReaders.set(key, reader);
+      }
+      return reader(node.callee).status;
+    }
+    return "unrelated";
   }
 
   /** Establish navigation data ownership before either adapter interprets syntax. */
@@ -318,10 +403,31 @@ export class JavaScriptRouteScan {
       {
         skip: () => this.#result.capacity !== null,
         enter: (node) => {
+          if (
+            t.isAssignmentExpression(node) &&
+            locationPropertyWrite(node, this.index)
+          ) {
+            remember(node.right, node);
+            return;
+          }
           if (t.isCallExpression(node) || t.isOptionalCallExpression(node)) {
+            if (this.#historyStatus(node) === "unmodified") {
+              const url = node.arguments[2];
+              if (
+                url !== undefined &&
+                !node.arguments
+                  .slice(0, 3)
+                  .some((argument) => t.isSpreadElement(argument)) &&
+                !t.isArgumentPlaceholder(url)
+              )
+                remember(url, node);
+              return;
+            }
             const parts = calleeName(node.callee).split(".");
             if (
-              navigationRecognition(parts.at(-1)!, parts.at(-2) ?? "") !== true
+              navigationRecognition(parts.at(-1)!, parts.at(-2) ?? "") !==
+                true &&
+              this.#locationMethodStatus(node) !== "unmodified"
             )
               return;
             const first = node.arguments[0];
@@ -509,6 +615,130 @@ export class JavaScriptRouteScan {
     if (this.#result.capacity !== null) return;
     if (
       t.isAssignmentExpression(node) &&
+      (globalReferenceNamespace(node.left, this.index.bindings, [
+        "location",
+      ]) !== undefined ||
+        globalReferenceNamespace(node.left, this.index.bindings, [
+          "document",
+          "location",
+        ]) !== undefined ||
+        (t.isMemberExpression(node.left) &&
+          ["href", "pathname"].includes(
+            semanticStaticPropertyName(
+              node.left.property,
+              node.left.computed,
+            ) ?? "",
+          ) &&
+          (globalReferenceNamespace(node.left.object, this.index.bindings, [
+            "location",
+          ]) !== undefined ||
+            globalReferenceNamespace(node.left.object, this.index.bindings, [
+              "document",
+              "location",
+            ]) !== undefined))) &&
+      semanticOpaqueGlobalMayHaveChanged(node, this.index.bindings)
+    ) {
+      this.#ownDynamicValue(node.right, true, true, true);
+      this.#unknown(
+        "navigation-target",
+        node,
+        "An earlier opaque global effect makes the navigation identity uncertain.",
+      );
+      return;
+    }
+    if (
+      t.isAssignmentExpression(node) &&
+      locationPropertyWrite(node, this.index)
+    ) {
+      const property = t.isMemberExpression(node.left)
+        ? semanticStaticPropertyName(node.left.property, node.left.computed)
+        : undefined;
+      const value = stringValue(unwrapJavaScriptExpression(node.right).node);
+      if (
+        property === "pathname" &&
+        (value === undefined || /[?#]/u.test(value))
+      ) {
+        this.#ownDynamicValue(node.right, true, true, true);
+        this.#unknown(
+          "navigation-target",
+          node,
+          "The pathname setter needs a literal path without query or fragment delimiters.",
+        );
+      } else this.#navigation(node.right);
+      return;
+    }
+    if (
+      t.isAssignmentExpression(node) &&
+      node.operator !== "=" &&
+      t.isMemberExpression(node.left) &&
+      ["href", "pathname"].includes(
+        semanticStaticPropertyName(node.left.property, node.left.computed) ??
+          "",
+      ) &&
+      (globalReferenceNamespace(node.left.object, this.index.bindings, [
+        "location",
+      ]) !== undefined ||
+        globalReferenceNamespace(node.left.object, this.index.bindings, [
+          "document",
+          "location",
+        ]) !== undefined)
+    ) {
+      this.#ownDynamicValue(node.right, true, true, true);
+      this.#unknown(
+        "navigation-target",
+        node,
+        "Compound location property assignment depends on the current destination.",
+      );
+      return;
+    }
+    if (
+      t.isAssignmentExpression(node) &&
+      node.operator !== "=" &&
+      (globalReferenceNamespace(node.left, this.index.bindings, [
+        "location",
+      ]) !== undefined ||
+        globalReferenceNamespace(node.left, this.index.bindings, [
+          "document",
+          "location",
+        ]) !== undefined)
+    ) {
+      this.#ownDynamicValue(node.right, true, true, true);
+      this.#unknown(
+        "navigation-target",
+        node,
+        "Compound location assignment depends on the current destination.",
+      );
+      return;
+    }
+    if (
+      t.isAssignmentExpression(node, { operator: "=" }) &&
+      (globalReferenceNamespace(node.left, this.index.bindings, [
+        "location",
+      ]) !== undefined ||
+        globalReferenceNamespace(node.left, this.index.bindings, [
+          "document",
+          "location",
+        ]) !== undefined)
+    ) {
+      const identity =
+        globalReferenceNamespace(node.left, this.index.bindings, [
+          "location",
+        ]) !== undefined
+          ? this.#locationReader(node.left, node)
+          : this.#documentLocationReader(node.left, node);
+      if (identity.status === "unmodified") this.#navigation(node.right);
+      else {
+        this.#ownDynamicValue(node.right, true, true, true);
+        this.#unknown(
+          "navigation-target",
+          node,
+          "Assignment to global location may navigate; its ambient identity is uncertain.",
+        );
+      }
+      return;
+    }
+    if (
+      t.isAssignmentExpression(node) &&
       t.isMemberExpression(node.left) &&
       isRouteSegmentKey(
         semanticStaticPropertyName(node.left.property, node.left.computed),
@@ -635,6 +865,114 @@ export class JavaScriptRouteScan {
         this.onLegacyRoute?.({ node, value, mechanism: `call:${fullName}` });
     }
     if (this.#result.capacity !== null || t.isNewExpression(node)) return;
+    if (
+      ["pushState", "replaceState", "assign", "replace", "navigate"].includes(
+        name,
+      ) &&
+      [
+        ["history", "pushState"],
+        ["history", "replaceState"],
+        ["location", "assign"],
+        ["location", "replace"],
+        ["document", "location", "assign"],
+        ["navigation", "navigate"],
+      ].some(
+        (path) =>
+          globalReferenceNamespace(
+            node.callee,
+            this.index.bindings,
+            path as [string, ...string[]],
+          ) !== undefined,
+      ) &&
+      semanticOpaqueGlobalMayHaveChanged(node, this.index.bindings)
+    ) {
+      for (const argument of node.arguments) {
+        if (!t.isSpreadElement(argument) && !t.isArgumentPlaceholder(argument))
+          this.#ownDynamicValue(argument, true, true, true);
+      }
+      this.#unknown(
+        "navigation-target",
+        node,
+        "An earlier opaque global effect makes the navigation identity uncertain.",
+      );
+      return;
+    }
+    const historyStatus = this.#historyStatus(node);
+    if (historyStatus === "unknown") {
+      for (const argument of node.arguments) {
+        if (!t.isSpreadElement(argument) && !t.isArgumentPlaceholder(argument))
+          this.#ownDynamicValue(argument, true, true, true);
+      }
+      this.#unknown(
+        "navigation-target",
+        node,
+        "The History API identity may have been replaced before this call.",
+      );
+      return;
+    }
+    if (name === "navigate") {
+      const status = this.#navigationReader(node.callee).status;
+      if (status === "unknown") {
+        if (
+          first !== undefined &&
+          !t.isSpreadElement(first) &&
+          !t.isArgumentPlaceholder(first)
+        )
+          this.#ownDynamicValue(first, true, true, true);
+        this.#unknown(
+          "navigation-target",
+          node,
+          "The Navigation API identity may have been replaced before this call.",
+        );
+        return;
+      }
+      if (status !== "unrelated" && status !== "unmodified") {
+        if (
+          first !== undefined &&
+          !t.isSpreadElement(first) &&
+          !t.isArgumentPlaceholder(first)
+        )
+          this.#ownDynamicValue(first, true, true, true);
+        return;
+      }
+      if (
+        status === "unmodified" &&
+        (first === undefined ||
+          t.isSpreadElement(first) ||
+          t.isArgumentPlaceholder(first))
+      ) {
+        this.#unknown(
+          "navigation-target",
+          node,
+          "The Navigation API destination is unavailable or supplied through a spread argument.",
+        );
+        return;
+      }
+    }
+    if (historyStatus === "unmodified") {
+      // The state and title are data, not navigation destinations.
+      for (const argument of node.arguments.slice(0, 2)) {
+        if (t.isSpreadElement(argument) || t.isArgumentPlaceholder(argument))
+          continue;
+        this.#propertyValues.add(unwrapJavaScriptExpression(argument).node);
+        this.#ownDynamicValue(argument, false, true, true);
+      }
+      const url = node.arguments[2];
+      if (
+        node.arguments
+          .slice(0, 3)
+          .some((argument) => t.isSpreadElement(argument))
+      ) {
+        this.#unknown(
+          "navigation-target",
+          node,
+          "Spread arguments leave the History API destination unknown.",
+        );
+      } else if (url !== undefined && !t.isArgumentPlaceholder(url)) {
+        this.#navigation(url);
+      }
+      return;
+    }
     if (structuredCalls.has(name)) {
       if (this.#queue(node))
         this.#calls.push({
@@ -643,14 +981,42 @@ export class JavaScriptRouteScan {
         });
       return;
     }
+    const locationStatus = this.#locationMethodStatus(node);
     if (
       first === undefined ||
       t.isSpreadElement(first) ||
       t.isArgumentPlaceholder(first)
-    )
+    ) {
+      if (locationStatus === "unmodified" || locationStatus === "unknown") {
+        if (t.isSpreadElement(first))
+          this.#ownDynamicValue(first.argument, true, true, true);
+        this.#unknown(
+          "navigation-target",
+          node,
+          "The Location API destination is unavailable or supplied through a spread argument.",
+        );
+      }
       return;
-    const recognized = navigationRecognition(name, parts.at(-2) ?? "");
-    if (recognized === true) this.#navigation(first);
+    }
+    if (locationStatus === "unknown") {
+      this.#ownDynamicValue(first, true, true, true);
+      this.#unknown(
+        "navigation-target",
+        node,
+        "The Location API identity may have been replaced before this call.",
+      );
+      return;
+    }
+    if (locationStatus === "replacement") {
+      this.#ownDynamicValue(first, true, true, true);
+      return;
+    }
+    const recognized =
+      name === "replace" && parts.at(-2) === "location"
+        ? locationStatus === "unmodified"
+        : navigationRecognition(name, parts.at(-2) ?? "");
+    if (recognized === true || locationStatus === "unmodified")
+      this.#navigation(first);
     else if (recognized === false) {
       // Method spelling alone does not make array/string data a destination.
       const value = this.#resolve(first, undefined, this.index);

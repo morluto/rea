@@ -97,6 +97,12 @@ export const buildCapturedWebBundleAnalysis = (
     accumulator.failedScripts.length > 0 ||
     accumulator.recoveredScripts.length > 0 ||
     accumulator.widenedScripts.length > 0 ||
+    accumulator.uncertainXhrScripts.length > 0 ||
+    accumulator.uncertainNetworkScripts.length > 0 ||
+    accumulator.unresolvedNetworkTargetScripts.length > 0 ||
+    accumulator.uncollectedNetworkTargetScripts.length > 0 ||
+    accumulator.uncollectedNetworkScripts.length > 0 ||
+    accumulator.uncollectedXhrScripts.length > 0 ||
     unavailable.length > 0 ||
     unavailableAnalyses.length > 0 ||
     sourceMapIncomplete ||
@@ -185,6 +191,14 @@ export const buildCapturedWebBundleAnalysis = (
       failedScripts: accumulator.failedScripts,
       recoveredScripts: accumulator.recoveredScripts,
       widenedScripts: accumulator.widenedScripts,
+      uncertainXhrScripts: accumulator.uncertainXhrScripts,
+      uncertainNetworkScripts: accumulator.uncertainNetworkScripts,
+      unresolvedNetworkTargetScripts:
+        accumulator.unresolvedNetworkTargetScripts,
+      uncollectedNetworkTargetScripts:
+        accumulator.uncollectedNetworkTargetScripts,
+      uncollectedNetworkScripts: accumulator.uncollectedNetworkScripts,
+      uncollectedXhrScripts: accumulator.uncollectedXhrScripts,
       unavailableAnalyses,
       sourceMaps,
       omittedScripts,
@@ -219,6 +233,18 @@ const mergeScriptResults = (
       accumulator.recoveredScripts.push(result.script_key);
     if (result.widened_return_references)
       accumulator.widenedScripts.push(result.script_key);
+    if (result.uncertain_network_identity === true)
+      accumulator.uncertainNetworkScripts.push(result.script_key);
+    else if (result.uncertain_network_identity === undefined)
+      accumulator.uncollectedNetworkScripts.push(result.script_key);
+    if (result.unresolved_network_target === true)
+      accumulator.unresolvedNetworkTargetScripts.push(result.script_key);
+    else if (result.unresolved_network_target === undefined)
+      accumulator.uncollectedNetworkTargetScripts.push(result.script_key);
+    if (result.uncertain_xhr_identity === true)
+      accumulator.uncertainXhrScripts.push(result.script_key);
+    else if (result.uncertain_xhr_identity === undefined)
+      accumulator.uncollectedXhrScripts.push(result.script_key);
     accumulator.edges.push(...result.observations.edges);
     accumulator.routes.push(...result.observations.routes);
     accumulator.endpoints.push(...result.observations.endpoints);
@@ -268,6 +294,12 @@ interface UnknownsInput {
   readonly failedScripts: readonly string[];
   readonly recoveredScripts: readonly string[];
   readonly widenedScripts: readonly string[];
+  readonly uncertainXhrScripts: readonly string[];
+  readonly uncertainNetworkScripts: readonly string[];
+  readonly unresolvedNetworkTargetScripts: readonly string[];
+  readonly uncollectedNetworkTargetScripts: readonly string[];
+  readonly uncollectedNetworkScripts: readonly string[];
+  readonly uncollectedXhrScripts: readonly string[];
   readonly unavailableAnalyses: readonly Extract<
     WebBundleScriptAnalysis,
     { readonly status: "unavailable" }
@@ -279,6 +311,66 @@ interface UnknownsInput {
 }
 
 const buildUnknowns = (input: UnknownsInput): WebBundleAnalysis["unknowns"] => [
+  ...(input.unresolvedNetworkTargetScripts.length === 0
+    ? []
+    : [
+        {
+          dimension: "network_target",
+          reason:
+            "A recognized network request target could not be resolved statically",
+          affected_script_keys: [...input.unresolvedNetworkTargetScripts],
+        },
+      ]),
+  ...(input.uncollectedNetworkTargetScripts.length === 0
+    ? []
+    : [
+        {
+          dimension: "network_target",
+          reason:
+            "Network request target coverage was not collected by the script analyzer",
+          affected_script_keys: [...input.uncollectedNetworkTargetScripts],
+        },
+      ]),
+  ...(input.uncollectedNetworkScripts.length === 0
+    ? []
+    : [
+        {
+          dimension: "network_identity",
+          reason:
+            "Browser network identity coverage was not collected by the script analyzer",
+          affected_script_keys: [...input.uncollectedNetworkScripts],
+        },
+      ]),
+  ...(input.uncertainNetworkScripts.length === 0
+    ? []
+    : [
+        {
+          dimension: "network_identity",
+          reason:
+            "Browser network API identity may have changed; request findings are unconfirmed",
+          affected_script_keys: [...input.uncertainNetworkScripts],
+        },
+      ]),
+  ...(input.uncollectedXhrScripts.length === 0
+    ? []
+    : [
+        {
+          dimension: "network_identity",
+          reason:
+            "XHR identity coverage was not collected by the script analyzer",
+          affected_script_keys: [...input.uncollectedXhrScripts],
+        },
+      ]),
+  ...(input.uncertainXhrScripts.length === 0
+    ? []
+    : [
+        {
+          dimension: "network_identity",
+          reason:
+            "XHR request identity may have changed; endpoint candidates are unconfirmed",
+          affected_script_keys: [...input.uncertainXhrScripts],
+        },
+      ]),
   ...(input.omittedScripts === undefined
     ? []
     : [

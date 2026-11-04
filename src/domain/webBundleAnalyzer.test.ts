@@ -115,7 +115,6 @@ it.each([
     true,
   ],
   ["client.get('/accounts');", true],
-  ["eval('Map.prototype.get = fetch'); new Map().get('/accounts');", true],
 ] as const)(
   "shares Map receiver certainty with application analysis: %s",
   (source, candidate) => {
@@ -144,6 +143,26 @@ it.each([
     );
   },
 );
+
+it("keeps requests after opaque eval unconfirmed in both analyzers", () => {
+  const source =
+    "eval('Map.prototype.get = fetch'); new Map().get('/accounts'); fetch('/network');";
+  const web = analyzeWebBundleFixture(inspection(source));
+  expect(web.observations.endpoints).toEqual([]);
+  expect(
+    web.inferences
+      .filter(({ kind }) => kind === "endpoint_candidate")
+      .map(({ value }) => value)
+      .sort(),
+  ).toEqual(["/accounts", "/network"]);
+  const app = analyzeJavaScriptStaticSource(source);
+  expect(
+    app.endpoints.map(({ value, interpretation }) => [
+      value,
+      interpretation ?? null,
+    ]),
+  ).toEqual([["/accounts", "candidate"]]);
+});
 
 it("discloses widened returned-reference effects only for the affected script", () => {
   const captured = inspection(`
@@ -1209,6 +1228,270 @@ const inspection = (source: string) =>
       cdpHash: "hash",
     },
   ]);
+
+it("resolves stable request aliases and reports dynamic targets without inventing URLs", () => {
+  const report = analyzeWebBundleFixture(
+    inspection(`
+    const first = '/api/one';
+    fetch(first);
+    const second = '/api/two';
+    const xhr = new XMLHttpRequest();
+    xhr.open('GET', second);
+    fetch(dynamicTarget);
+    xhr.open('GET', anotherTarget);
+    fetch(...args);
+    function local(fetch) { fetch('/shadowed'); }
+  `),
+  );
+  expect(
+    report.observations.endpoints.map(({ value }) => value).sort(),
+  ).toEqual(["/api/one", "/api/two"]);
+  expect(report.completeness.status).toBe("partial");
+  expect(report.unknowns).toContainEqual(
+    expect.objectContaining({ dimension: "network_target" }),
+  );
+  expect(JSON.stringify(report.observations.endpoints)).not.toContain(
+    "dynamicTarget",
+  );
+});
+
+it("resolves a direct Request passed to fetch while preserving constructor identity", () => {
+  const direct = analyzeWebBundleFixture(
+    inspection("fetch(new Request('/direct'));"),
+  );
+  expect(direct.observations.endpoints).toContainEqual(
+    expect.objectContaining({ value: "/direct" }),
+  );
+  expect(direct.completeness.status).toBe("complete");
+  for (const source of [
+    "function f(Request) { fetch(new Request('/shadowed')); }",
+    "Request=custom; fetch(new Request('/replaced'));",
+    "eval('Request=custom'); fetch(new Request('/opaque'));",
+  ]) {
+    const report = analyzeWebBundleFixture(inspection(source));
+    expect(report.observations.endpoints).toEqual([]);
+    expect(report.completeness.status).toBe("partial");
+    expect(report.unknowns).toContainEqual(
+      expect.objectContaining({ dimension: "network_target" }),
+    );
+  }
+});
+
+it("resolves direct URL objects only when their construction and coercion are known", () => {
+  const report = analyzeWebBundleFixture(
+    inspection("fetch(new URL('/path?x=1','https://example.com/base'));"),
+  );
+  expect(report.observations.endpoints).toContainEqual(
+    expect.objectContaining({ value: "https://example.com/path?x=1" }),
+  );
+  expect(report.completeness.status).toBe("complete");
+  for (const source of [
+    "function f(URL) { fetch(new URL('/x','https://example.com')); }",
+    "URL=custom; fetch(new URL('/x','https://example.com'));",
+    "eval('URL=custom'); fetch(new URL('/x','https://example.com'));",
+    "URL.prototype.toString=custom; fetch(new URL('/x','https://example.com'));",
+    "fetch(new URL(...args));",
+    "fetch(new URL('/x',base));",
+  ]) {
+    const unknown = analyzeWebBundleFixture(inspection(source));
+    expect(unknown.observations.endpoints).toEqual([]);
+    expect(unknown.completeness.status).toBe("partial");
+    expect(unknown.unknowns).toContainEqual(
+      expect.objectContaining({ dimension: "network_target" }),
+    );
+  }
+});
+
+it("does not promote mutated, conditional or shadowed request targets", () => {
+  for (const source of [
+    `let target = '/old'; target = '/new'; fetch(target);`,
+    `const target = flag ? '/a' : '/b'; fetch(target);`,
+    `fetch(target); const target = '/later';`,
+    `function f(fetch) { const target = '/local'; fetch(target); }`,
+    `function f(fetch) { fetch('/shadowed'); }`,
+  ]) {
+    const report = analyzeWebBundleFixture(inspection(source));
+    expect(report.observations.endpoints).toEqual([]);
+  }
+});
+
+it("does not mistake values after a spread for an XHR URL", () => {
+  const report = analyzeWebBundleFixture(
+    inspection(`
+    const xhr = new XMLHttpRequest();
+    xhr.open(...args, '/not-necessarily-the-url');
+  `),
+  );
+  expect(report.observations.endpoints).toEqual([]);
+  expect(
+    report.inferences.filter(({ kind }) => kind === "endpoint_candidate"),
+  ).toEqual([]);
+  expect(report.completeness.status).toBe("partial");
+  expect(report.unknowns).toContainEqual(
+    expect.objectContaining({ dimension: "network_target" }),
+  );
+});
+
+it("does not assume historical network-target coverage was collected", () => {
+  const captured = inspection("fetch('/known')");
+  const script = captured.scripts.items.find(isIncludedScript);
+  if (script === undefined) throw new Error("Missing script");
+  const facts = analyzeCapturedWebScript(script);
+  if (facts.status !== "analyzed") throw new Error("Expected analyzed script");
+  const { unresolved_network_target: _omitted, ...historical } = facts;
+  const report = buildCapturedWebBundleAnalysis(
+    captured,
+    { status: "not_requested", requested: 0, processed: 0, items: [] },
+    [historical],
+  );
+  expect(report.completeness.status).toBe("partial");
+  expect(report.unknowns).toContainEqual(
+    expect.objectContaining({
+      dimension: "network_target",
+      reason: expect.stringContaining("not collected"),
+    }),
+  );
+});
+
+it("retains XHR identity uncertainty and exact inline destinations per script", () => {
+  const captured = inspection(`
+    new XMLHttpRequest().open('GET', '/first');
+    XMLHttpRequest.prototype.open = custom;
+    new XMLHttpRequest().open('GET', '/second');
+    new XMLHttpRequest().open('GET', dynamicTarget);
+  `);
+  const script = captured.scripts.items.find(isIncludedScript);
+  if (script === undefined) throw new Error("Missing included script fixture");
+  const serialized = JSON.parse(
+    JSON.stringify(analyzeCapturedWebScript(script)),
+  );
+  const workerFacts = webBundleScriptAnalysisSchema.parse(serialized);
+  expect(workerFacts).toMatchObject({ uncertain_xhr_identity: true });
+  const report = analyzeWebBundleFixture(captured);
+  expect(report.completeness.status).toBe("partial");
+  expect(report.unknowns).toContainEqual({
+    dimension: "network_identity",
+    reason: expect.stringContaining("XHR request identity"),
+    affected_script_keys: [script.script_key],
+  });
+  expect(report.observations.endpoints.map(({ value }) => value)).toContain(
+    "/first",
+  );
+  expect(report.observations.endpoints.map(({ value }) => value)).not.toContain(
+    "/second",
+  );
+  expect(report.inferences).toContainEqual(
+    expect.objectContaining({
+      kind: "endpoint_candidate",
+      value: "/second",
+    }),
+  );
+  expect(JSON.stringify(report)).not.toContain('"value":"dynamicTarget"');
+});
+
+it("does not mark unrelated open methods as uncertain XHR", () => {
+  const report = analyzeWebBundleFixture(
+    inspection("client.open('GET','/candidate');"),
+  );
+  expect(
+    report.unknowns.some(({ dimension }) => dimension === "network_identity"),
+  ).toBe(false);
+});
+
+it.each([
+  "fetch('/endpoint')",
+  "fetch(target)",
+  "new WebSocket('wss://example.test/socket')",
+  "new EventSource('/events')",
+  "navigator.sendBeacon('/beacon')",
+])(
+  "reports uncertain browser network identity after opaque code: %s",
+  (call) => {
+    const report = analyzeWebBundleFixture(inspection(`eval(code); ${call};`));
+    expect(report.completeness.status).toBe("partial");
+    expect(report.unknowns).toContainEqual(
+      expect.objectContaining({
+        dimension: "network_identity",
+        reason: expect.stringContaining("Browser network API identity"),
+      }),
+    );
+  },
+);
+
+it("does not report uncertain browser network identity for an intact or replaced API", () => {
+  for (const source of [
+    "fetch('/before');",
+    "fetch = custom; fetch('/after');",
+    "client.fetch('/other');",
+  ]) {
+    const report = analyzeWebBundleFixture(inspection(source));
+    expect(
+      report.unknowns.some(({ reason }) =>
+        reason.includes("Browser network API identity"),
+      ),
+    ).toBe(false);
+  }
+});
+
+it("does not reclassify a replaced browser API as a generic candidate", () => {
+  const result = analyzeWebBundleFixture(
+    inspection(`
+      globalThis.navigator.sendBeacon('/first', '');
+      globalThis.navigator.sendBeacon = custom;
+      globalThis.navigator.sendBeacon('/second', '');
+      client.sendBeacon('/candidate', '');
+    `),
+  );
+  expect(result.observations.endpoints.map(({ value }) => value)).toEqual([
+    "/first",
+  ]);
+  expect(
+    result.inferences
+      .filter(({ kind }) => kind === "endpoint_candidate")
+      .map(({ value }) => value),
+  ).toEqual(["/candidate"]);
+});
+
+it("marks missing browser network identity coverage uncollected", () => {
+  const captured = inspection("fetch('/independent');");
+  const script = captured.scripts.items.find(isIncludedScript);
+  if (script === undefined) throw new Error("Missing included script fixture");
+  const facts = analyzeCapturedWebScript(script);
+  if (facts.status !== "analyzed") throw new Error("Expected analyzed script");
+  const { uncertain_network_identity: _omitted, ...historical } = facts;
+  const report = buildCapturedWebBundleAnalysis(
+    captured,
+    { status: "not_requested", requested: 0, processed: 0, items: [] },
+    [historical],
+  );
+  expect(report.completeness.status).toBe("partial");
+  expect(report.unknowns).toContainEqual({
+    dimension: "network_identity",
+    reason:
+      "Browser network identity coverage was not collected by the script analyzer",
+    affected_script_keys: [script.script_key],
+  });
+});
+
+it("preserves missing historical XHR identity coverage as uncollected", () => {
+  const captured = inspection("fetch('/independent');");
+  const script = captured.scripts.items.find(isIncludedScript);
+  if (script === undefined) throw new Error("Missing included script fixture");
+  const facts = analyzeCapturedWebScript(script);
+  if (facts.status !== "analyzed") throw new Error("Expected analyzed script");
+  const { uncertain_xhr_identity: _omitted, ...historical } = facts;
+  const report = buildCapturedWebBundleAnalysis(
+    captured,
+    { status: "not_requested", requested: 0, processed: 0, items: [] },
+    [historical],
+  );
+  expect(report.completeness.status).toBe("partial");
+  expect(report.unknowns).toContainEqual({
+    dimension: "network_identity",
+    reason: "XHR identity coverage was not collected by the script analyzer",
+    affected_script_keys: [script.script_key],
+  });
+});
 
 describe("per-script web bundle analysis", () => {
   it("keeps parser failures as analyzed outcomes with their own coverage", () => {

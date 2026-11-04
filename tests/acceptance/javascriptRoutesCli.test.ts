@@ -23,6 +23,251 @@ const expectAccountRoutes = (items: unknown[]) => {
   );
 };
 
+it("keeps Navigation API routes before a later replacement through MCP", async () => {
+  const path = await createTestTempDirectory("rea-navigation-api-");
+  await writeFile(
+    join(path, "app.js"),
+    "navigation.navigate('/early'); navigation.navigate=custom; navigation.navigate('/late');",
+  );
+  const { call } = await connectLocalToolsMcp();
+  const response = await call("analyze_javascript_application", {
+    input_path: path,
+    detail: "summary",
+    view: { kind: "javascript-routes", collection: "routes", fields: ["path"] },
+  });
+  expect(response.isError).not.toBe(true);
+  expect(routeViewFromEvidence(response.structuredContent).items).toEqual([
+    expect.objectContaining({ path: "/early" }),
+  ]);
+});
+
+cliTest(
+  "keeps Navigation API routes before replacement through CLI",
+  async ({ cli }) => {
+    const path = await createTestTempDirectory("rea-navigation-api-cli-");
+    const home = await createTestTempDirectory("rea-navigation-api-home-");
+    const output = join(
+      await createTestTempDirectory("rea-navigation-evidence-"),
+      "evidence.json",
+    );
+    await writeFile(
+      join(path, "app.js"),
+      "navigation.navigate('/early'); navigation.navigate=custom; navigation.navigate('/late');",
+    );
+    const response = await cli.run({
+      environment: { HOME: home },
+      arguments: [
+        "analyze-javascript-application",
+        path,
+        "--detail",
+        "summary",
+        "--view",
+        JSON.stringify({
+          kind: "javascript-routes",
+          collection: "routes",
+          fields: ["path"],
+        }),
+        "--evidence_output",
+        output,
+        "--json",
+      ],
+    });
+    expect(response.exitCode, response.stderr).toBe(0);
+    const view = routeViewFromEvidence(
+      (response.json as { summary: unknown }).summary,
+    );
+    expect(view.items).toEqual([expect.objectContaining({ path: "/early" })]);
+  },
+);
+
+it("reports opaque global navigation as uncertain through MCP", async () => {
+  const path = await createTestTempDirectory("rea-opaque-navigation-");
+  await writeFile(
+    join(path, "app.js"),
+    `eval('location = custom'); window.location.assign('/untrusted');`,
+  );
+  const { call } = await connectLocalToolsMcp();
+  const response = await call("analyze_javascript_application", {
+    input_path: path,
+    detail: "summary",
+    view: { kind: "javascript-routes", collection: "unknowns" },
+  });
+  expect(response.isError).not.toBe(true);
+  const view = routeViewFromEvidence(response.structuredContent);
+  expect(view.source_coverage.candidate_enumeration).toBe("partial");
+  expect(view.items.length).toBeGreaterThan(0);
+});
+
+it("retains History routes before a later replacement through MCP", async () => {
+  const path = await createTestTempDirectory("rea-history-timing-");
+  await writeFile(
+    join(path, "app.js"),
+    `history.pushState(null, '', '/early'); history.pushState=custom; history.pushState(null, '', '/late');`,
+  );
+  const { call } = await connectLocalToolsMcp();
+  const response = await call("analyze_javascript_application", {
+    input_path: path,
+    detail: "summary",
+    view: { kind: "javascript-routes", collection: "routes", fields: ["path"] },
+  });
+  expect(response.isError).not.toBe(true);
+  const view = routeViewFromEvidence(response.structuredContent);
+  expect(view.items).toEqual([expect.objectContaining({ path: "/early" })]);
+});
+
+it("recovers History API paths through the public MCP workflow", async () => {
+  const path = await createTestTempDirectory("rea-history-routes-");
+  await writeFile(
+    join(path, "app.js"),
+    `window.history.pushState({path:'/decoy'}, '/title', '/checkout?step=1');
+     history.replaceState(null, '', '/account#details');
+     function local(history) { history.pushState(null, '', '/shadowed'); }`,
+  );
+  const { call } = await connectLocalToolsMcp();
+  const response = await call("analyze_javascript_application", {
+    input_path: path,
+    detail: "summary",
+    view: { kind: "javascript-routes", collection: "routes", fields: ["path"] },
+  });
+  expect(response.isError).not.toBe(true);
+  const view = routeViewFromEvidence(response.structuredContent);
+  expect(view.items).toHaveLength(2);
+  expect(view.items).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ path: "/account" }),
+      expect.objectContaining({ path: "/checkout" }),
+    ]),
+  );
+});
+
+it("recovers Location.href paths and excludes shadowed replacements through MCP", async () => {
+  const path = await createTestTempDirectory("rea-location-href-");
+  await writeFile(
+    join(path, "app.js"),
+    `window.location.href = '/checkout?step=1';
+     location.href = '/account#details';
+     function local(location) { location.replace('/shadowed'); }`,
+  );
+  const { call } = await connectLocalToolsMcp();
+  const response = await call("analyze_javascript_application", {
+    input_path: path,
+    detail: "summary",
+    view: { kind: "javascript-routes", collection: "routes", fields: ["path"] },
+  });
+  expect(response.isError).not.toBe(true);
+  const view = routeViewFromEvidence(response.structuredContent);
+  expect(view.items).toHaveLength(2);
+  expect(view.items).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ path: "/account" }),
+      expect.objectContaining({ path: "/checkout" }),
+    ]),
+  );
+});
+
+it("recovers pathname and document location routes through MCP", async () => {
+  const path = await createTestTempDirectory("rea-location-properties-");
+  await writeFile(
+    join(path, "app.js"),
+    `window.location.pathname='/products'; document.location.href='/account?tab=one'; function f(document){document.location.href='/shadowed';}`,
+  );
+  const { call } = await connectLocalToolsMcp();
+  const response = await call("analyze_javascript_application", {
+    input_path: path,
+    detail: "summary",
+    view: { kind: "javascript-routes", collection: "routes", fields: ["path"] },
+  });
+  expect(response.isError).not.toBe(true);
+  const view = routeViewFromEvidence(response.structuredContent);
+  expect(view.items).toHaveLength(2);
+  expect(view.items).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ path: "/products" }),
+      expect.objectContaining({ path: "/account" }),
+    ]),
+  );
+});
+
+it("recovers document location and reports compound pathname uncertainty through MCP", async () => {
+  const path = await createTestTempDirectory("rea-document-location-");
+  await writeFile(
+    join(path, "app.js"),
+    `document.location = '/document'; window.location.pathname += '/suffix'; window.location += '/other';`,
+  );
+  const { call } = await connectLocalToolsMcp();
+  const response = await call("analyze_javascript_application", {
+    input_path: path,
+    detail: "summary",
+    view: { kind: "javascript-routes", collection: "routes", fields: ["path"] },
+  });
+  expect(response.isError).not.toBe(true);
+  const view = routeViewFromEvidence(response.structuredContent);
+  expect(view.items).toContainEqual(
+    expect.objectContaining({ path: "/document" }),
+  );
+  expect(view.source_coverage.candidate_enumeration).toBe("partial");
+});
+
+it("recovers direct global location assignment through MCP", async () => {
+  const path = await createTestTempDirectory("rea-location-direct-");
+  await writeFile(join(path, "app.js"), `window.location = '/direct';`);
+  const { call } = await connectLocalToolsMcp();
+  const response = await call("analyze_javascript_application", {
+    input_path: path,
+    detail: "summary",
+    view: { kind: "javascript-routes", collection: "routes" },
+  });
+  expect(response.isError).not.toBe(true);
+  const view = routeViewFromEvidence(response.structuredContent);
+  expect(view.items).toContainEqual(
+    expect.objectContaining({
+      path: "/direct",
+    }),
+  );
+});
+
+it("retains Location routes before a later replacement through MCP", async () => {
+  const path = await createTestTempDirectory("rea-location-timing-");
+  await writeFile(
+    join(path, "app.js"),
+    `window.location.assign('/early'); window.location.assign = custom; window.location.assign('/late');`,
+  );
+  const { call } = await connectLocalToolsMcp();
+  const response = await call("analyze_javascript_application", {
+    input_path: path,
+    detail: "summary",
+    view: { kind: "javascript-routes", collection: "routes", fields: ["path"] },
+  });
+  expect(response.isError).not.toBe(true);
+  const view = routeViewFromEvidence(response.structuredContent);
+  expect(view.items).toEqual([expect.objectContaining({ path: "/early" })]);
+});
+
+it("recovers Location.assign paths through the public MCP workflow", async () => {
+  const path = await createTestTempDirectory("rea-location-routes-");
+  await writeFile(
+    join(path, "app.js"),
+    `window.location.assign('/checkout?step=1');
+     globalThis.location.assign('/account#details');
+     function local(location) { location.assign('/shadowed'); }`,
+  );
+  const { call } = await connectLocalToolsMcp();
+  const response = await call("analyze_javascript_application", {
+    input_path: path,
+    detail: "summary",
+    view: { kind: "javascript-routes", collection: "routes", fields: ["path"] },
+  });
+  expect(response.isError).not.toBe(true);
+  const view = routeViewFromEvidence(response.structuredContent);
+  expect(view.items).toHaveLength(2);
+  expect(view.items).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ path: "/account" }),
+      expect.objectContaining({ path: "/checkout" }),
+    ]),
+  );
+});
+
 const interceptedSource = "export default function Photo(){return null;}";
 const independentPaths = [
   "/checks/independent",
@@ -54,12 +299,14 @@ const fixture = async () => {
 cliTest(
   "exports complete route Evidence and queries it after source removal",
   async ({ cli }) => {
+    const home = await createTestTempDirectory("rea-route-cli-home-");
     const path = await fixture(),
       output = join(
         await createTestTempDirectory("rea-route-evidence-"),
         "routes.json",
       );
     const response = await cli.run({
+      environment: { HOME: home },
       arguments: [
         "analyze-javascript-application",
         path,
@@ -104,6 +351,7 @@ cliTest(
     );
     await writeFile(evidenceFile, JSON.stringify(record));
     const repeated = await cli.run({
+      environment: { HOME: home },
       arguments: [
         "inspect-analysis-view",
         JSON.stringify({
@@ -135,6 +383,7 @@ cliTest(
 cliTest(
   "rejects invalid route delivery before accessing the application",
   async ({ cli }) => {
+    const home = await createTestTempDirectory("rea-route-cli-home-");
     for (const args of [
       ["--view", "{"],
       [
@@ -145,6 +394,7 @@ cliTest(
       ],
     ]) {
       const response = await cli.run({
+        environment: { HOME: home },
         arguments: [
           "analyze-javascript-application",
           "/not-opened",
@@ -312,6 +562,7 @@ it.each(["full", "compact"] as const)(
 cliTest(
   "projects captured route facts through both browser adapters",
   async ({ cli }) => {
+    const home = await createTestTempDirectory("rea-route-cli-home-");
     const { startFakeCdpBrowser } =
       await import("../fixtures/fakeCdpBrowser.js");
     const browser = await startFakeCdpBrowser({
@@ -361,6 +612,7 @@ cliTest(
         "routes.json",
       );
       const response = await cli.run({
+        environment: { HOME: home },
         arguments: [
           "analyze-web-bundle",
           browser.endpoint,

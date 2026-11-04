@@ -1122,7 +1122,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 currentProgram.getListing().getInstructions(function.getBody(), true)
             ));
             observation.add("relationship_coverage", callRelationshipCoverage(null,
-                unrepresentedIncomingCalls(function, observed)));
+                incomingCallerObservation(function, observed)));
             monitor.checkCancelled();
             return observation;
         }
@@ -1723,12 +1723,14 @@ public final class ReaGhidraBridge extends HeadlessScript {
         result.add("limitations", limitations);
         monitor.checkCancelled();
         int missingCallers = 0;
+        int incomingJumps = 0;
         for (Reference reference : bodyIncoming) {
             monitor.checkCancelled();
             if (unrepresentedCaller(reference, callerFunctions)) missingCallers++;
+            if (unrepresentedIncomingJump(function, reference, callerFunctions)) incomingJumps++;
         }
         return new FunctionAnalysisObservation(result, calls.limitations(),
-            callRelationshipCoverage(calls, missingCallers), decompilerFailure != null);
+            callRelationshipCoverage(calls, new IncomingCallerObservation(missingCallers, incomingJumps)), decompilerFailure != null);
     }
 
     private JsonObject nativeValueFlow(DecompileResults decompilation) throws Exception {
@@ -2466,7 +2468,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
         // Retain legacy bare-hex address input only when no symbol matches.
         Address address = explicitAddress ? parseReaAddress(value) : tryParseAddress(value);
         if (address == null)
-            throw new RequestFailure("not_found", "Unknown Ghidra procedure name or address: " + value);
+            throw new RequestFailure("not_found", "Unknown Ghidra procedure name or address: " + value +
+                "; use list_names to inspect symbols, including entry aliases, or select an entry address");
         Function function = functionAtOrContaining(address);
         if (function == null)
             // Other procedure operations retain their analysis-address semantics.
@@ -3638,11 +3641,13 @@ public final class ReaGhidraBridge extends HeadlessScript {
     }
 
     private static JsonObject callRelationshipCoverage(
-            CallBoundaryObservation calls, Integer missingCallers) {
+            CallBoundaryObservation calls, IncomingCallerObservation incoming) {
+        Integer missingCallers = incoming == null ? null : incoming.missingCalls();
+        int incomingJumps = incoming == null ? 0 : incoming.unrepresentedJumps();
         JsonObject coverage = completeResolvedCallCoverage();
         Integer omitted = calls == null ? null : calls.unrepresentedCalleeCalls();
         JsonArray directions = new JsonArray();
-        if (missingCallers != null && missingCallers > 0) directions.add("callers");
+        if ((missingCallers != null && missingCallers > 0) || incomingJumps > 0) directions.add("callers");
         String callerLimitation = missingCallers != null && missingCallers > 0
             ? "Ghidra's caller inventory omits sources of " + missingCallers +
                 " call reference(s) into this function's body." : null;
@@ -3658,10 +3663,34 @@ public final class ReaGhidraBridge extends HeadlessScript {
         }
         JsonArray limitations = new JsonArray();
         if (callerLimitation != null) limitations.add(callerLimitation);
+        if (incomingJumps > 0) {
+            limitations.add("Ghidra observed " + incomingJumps +
+                " incoming jump(s) from outside this function not represented by its caller inventory; whether they are tail calls remains unknown.");
+        }
         if (omitted != null && omitted > 0) {
             limitations.add("Ghidra's callee inventory omits targets of " + omitted +
                 " call reference(s) or decoded call(s) without destinations.");
             directions.add("callees");
+        }
+        if (calls != null && calls.unresolvedComputedJumps() > 0) {
+            limitations.add("Ghidra decoded " + calls.unresolvedComputedJumps() +
+                " targetless computed jump(s); their destinations and whether they transfer to another function remain unknown.");
+            if (!directions.contains(new com.google.gson.JsonPrimitive("callees"))) directions.add("callees");
+        }
+        if (calls != null && calls.computedJumpsWithKnownDestinations() > 0) {
+            limitations.add("Ghidra decoded " + calls.computedJumpsWithKnownDestinations() +
+                " computed jump(s) with known destinations; their exhaustive destination coverage and possible transfers to other functions remain unknown.");
+            if (!directions.contains(new com.google.gson.JsonPrimitive("callees"))) directions.add("callees");
+        }
+        if (calls != null && calls.unrepresentedExternalJumps() > 0) {
+            limitations.add("Ghidra decoded " + calls.unrepresentedExternalJumps() +
+                " unconditional jump(s) outside this function without an established callee; whether they are tail calls remains unknown.");
+            if (!directions.contains(new com.google.gson.JsonPrimitive("callees"))) directions.add("callees");
+        }
+        if (calls != null && calls.unrepresentedConditionalExternalJumps() > 0) {
+            limitations.add("Ghidra decoded " + calls.unrepresentedConditionalExternalJumps() +
+                " conditional jump(s) outside this function without an established callee; whether they transfer to another function remains unknown.");
+            if (!directions.contains(new com.google.gson.JsonPrimitive("callees"))) directions.add("callees");
         }
         if (!limitations.isEmpty()) {
             coverage.addProperty("status", "partial");
@@ -3688,13 +3717,23 @@ public final class ReaGhidraBridge extends HeadlessScript {
         return caller == null || !callers.contains(caller);
     }
 
-    private int unrepresentedIncomingCalls(Function function, Set<Function> callers)
+    private record IncomingCallerObservation(int missingCalls, int unrepresentedJumps) {}
+
+    private boolean unrepresentedIncomingJump(Function function, Reference reference, Set<Function> callers) {
+        if (!reference.getReferenceType().isJump() ||
+                function.getBody().contains(reference.getFromAddress())) return false;
+        Function source = functionAtOrContaining(reference.getFromAddress());
+        return source == null || !callers.contains(source);
+    }
+
+    private IncomingCallerObservation incomingCallerObservation(Function function, Set<Function> callers)
             throws Exception {
-        int[] omitted = { 0 };
+        int[] counts = { 0, 0 };
         visitReferences(function, "incoming", reference -> {
-            if (unrepresentedCaller(reference, callers)) omitted[0]++;
+            if (unrepresentedCaller(reference, callers)) counts[0]++;
+            if (unrepresentedIncomingJump(function, reference, callers)) counts[1]++;
         });
-        return omitted[0];
+        return new IncomingCallerObservation(counts[0], counts[1]);
     }
 
     private List<String> functionBoundaryLimitations(
@@ -3718,6 +3757,32 @@ public final class ReaGhidraBridge extends HeadlessScript {
         }
         for (Instruction instruction : instructions) {
             boundary.observe(instruction);
+            if (instruction.getFlowType().isJump() && instruction.getFlowType().isComputed() &&
+                instruction.getFlows().length == 0) {
+                boundary.unresolvedComputedJumps++;
+            }
+            if (instruction.getFlowType().isJump() && instruction.getFlowType().isComputed() &&
+                instruction.getFlows().length > 0) {
+                boundary.computedJumpsWithKnownDestinations++;
+            }
+            if (instruction.getFlowType().isJump() && !instruction.getFlowType().isConditional()) {
+                for (Address target : instruction.getFlows()) {
+                    if (!function.getBody().contains(target) &&
+                        (returnedCallees == null || !returnedCallees.contains(functionAtOrContaining(target)))) {
+                        boundary.unrepresentedExternalJumps++;
+                        break;
+                    }
+                }
+            }
+            if (instruction.getFlowType().isJump() && instruction.getFlowType().isConditional()) {
+                for (Address target : instruction.getFlows()) {
+                    if (!function.getBody().contains(target) &&
+                        (returnedCallees == null || !returnedCallees.contains(functionAtOrContaining(target)))) {
+                        boundary.unrepresentedConditionalExternalJumps++;
+                        break;
+                    }
+                }
+            }
             if (!instruction.getFlowType().isCall()) continue;
             boolean destination = false;
             for (Reference reference : instruction.getReferencesFrom()) {
@@ -3732,12 +3797,19 @@ public final class ReaGhidraBridge extends HeadlessScript {
             }
         }
         return new CallBoundaryObservation(boundary.values(),
-            returnedCallees == null ? null : calls.unrepresented, calls.unresolvedCalls());
+            returnedCallees == null ? null : calls.unrepresented, calls.unresolvedCalls(),
+            boundary.unresolvedComputedJumps, boundary.computedJumpsWithKnownDestinations,
+            boundary.unrepresentedExternalJumps,
+            boundary.unrepresentedConditionalExternalJumps);
     }
 
     private final class FunctionBoundaryLimitations {
         private final Function function;
         private final List<String> limitations = new ArrayList<>();
+        private int unresolvedComputedJumps;
+        private int computedJumpsWithKnownDestinations;
+        private int unrepresentedExternalJumps;
+        private int unrepresentedConditionalExternalJumps;
         private Instruction beforePrevious;
         private Instruction previous;
 
@@ -3759,7 +3831,16 @@ public final class ReaGhidraBridge extends HeadlessScript {
         }
 
         private List<String> values() {
-            return List.copyOf(limitations);
+            List<String> result = new ArrayList<>(limitations);
+            if (unresolvedComputedJumps > 0) result.add(
+                "Ghidra decoded " + unresolvedComputedJumps +
+                " targetless computed jump(s); their destinations and whether they transfer to another function remain unknown."
+            );
+            if (unrepresentedExternalJumps > 0) result.add(
+                "Ghidra decoded " + unrepresentedExternalJumps +
+                " unconditional jump(s) outside this function without an established callee; whether they are tail calls remains unknown."
+            );
+            return List.copyOf(result);
         }
     }
 
@@ -5178,7 +5259,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
         }
     }
     private record FunctionAnalysisObservation(JsonObject dossier, List<String> limitations, JsonObject relationshipCoverage, boolean decompilerFailed) {}
-    private record CallBoundaryObservation(List<String> limitations, Integer unrepresentedCalleeCalls, JsonArray unresolvedCalls) {}
+    private record CallBoundaryObservation(List<String> limitations, Integer unrepresentedCalleeCalls, JsonArray unresolvedCalls, int unresolvedComputedJumps, int computedJumpsWithKnownDestinations, int unrepresentedExternalJumps, int unrepresentedConditionalExternalJumps) {}
     private record SwiftStringLiteralDecode(JsonArray literals, JsonArray omissions) {}
     private record SwiftLiteralLayout(
         String representation,
