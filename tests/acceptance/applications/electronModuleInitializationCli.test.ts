@@ -233,12 +233,19 @@ cliTest.for([
 );
 
 cliTest.for(["CLI", "stdio MCP"] as const)(
-  "preserves aliased prototype and unresolved parameter activation through %s",
+  "preserves aliased prototype, reflected and parameter activation through %s",
   async (surface, { cli }) => {
     const root = await createTestTempDirectory(
       "rea-electron-prototype-parameters-",
     );
     const activations = {
+      reflectedOptional: "Reflect.get?.(globalThis, 'createWindow')();",
+      reflectedNamespace:
+        "const R = Reflect; R.get(globalThis, 'createWindow')();",
+      reflectedMethod:
+        "const read = Reflect.get; read(globalThis, 'createWindow')();",
+      reflectedBound:
+        "const read = Reflect.get.bind(Reflect); read(globalThis, 'createWindow')();",
       array:
         "const receiver = []; const alias = receiver; Object.setPrototypeOf(Array.prototype, globalThis); alias.createWindow();",
       function:
@@ -269,7 +276,7 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
     const windows = result.graph.nodes.filter(
       ({ kind }) => kind === "browser-window",
     );
-    expect(windows).toHaveLength(6);
+    expect(windows).toHaveLength(14);
     for (const source of Object.keys(files).filter((name) =>
       name.endsWith(".js"),
     )) {

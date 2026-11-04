@@ -1126,7 +1126,8 @@ function* collectDefinitionsSteps(
     scope: JavaScriptSemanticScopeState;
   }[] = [];
   let needsPrototypeFacts = false;
-  const implicitReadCalls: t.CallExpression[] = [];
+  const implicitReadCalls: (t.CallExpression | t.OptionalCallExpression)[] = [];
+  let mayReferenceReflect = false;
   const functionBodies: {
     readonly body: t.BlockStatement;
     readonly scope: JavaScriptSemanticScopeState;
@@ -1221,14 +1222,13 @@ function* collectDefinitionsSteps(
       });
       bindInnerDeclaration(node, parent, scope, state);
       if (
-        t.isCallExpression(node) &&
-        (t.isMemberExpression(node.callee) ||
-          t.isOptionalMemberExpression(node.callee)) &&
-        semanticStaticPropertyKey(
-          node.callee.property,
-          node.callee.computed,
-        ) === "get"
+        t.isIdentifier(node, { name: "Reflect" }) ||
+        t.isStringLiteral(node, { value: "Reflect" })
       )
+        mayReferenceReflect = true;
+      // Aliases and optional/call/apply/bind forms share the intrinsic owner;
+      // callee spelling alone cannot identify the property-read operation.
+      if (t.isCallExpression(node) || t.isOptionalCallExpression(node))
         implicitReadCalls.push(node);
       if (t.isThrowStatement(node))
         thrownValues.push({ node, ancestors: readAncestors() });
@@ -1429,10 +1429,17 @@ function* collectDefinitionsSteps(
         if (t.isIdentifier(identifier))
           copyParameterToBody({ identifier, body, scope, state });
   }
-  for (const node of implicitReadCalls) {
-    if (!isUnmodifiedGlobalReference(node.callee, state, ["Reflect", "get"]))
+  const readInterop = mayReferenceReflect
+    ? createSemanticModuleInterop(state)
+    : undefined;
+  for (const node of readInterop === undefined ? [] : implicitReadCalls) {
+    const invocation = readInterop?.intrinsicInvocation(node);
+    if (
+      invocation?.kind !== "known" ||
+      invocation.path.join(".") !== "intrinsic.Reflect.get"
+    )
       continue;
-    const [receiver, key] = node.arguments;
+    const [receiver, key] = invocation.arguments ?? [];
     if (!t.isExpression(receiver)) continue;
     const selected =
       t.isStringLiteral(key) || t.isNumericLiteral(key) ? key.value : null;
