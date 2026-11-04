@@ -1066,6 +1066,11 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
   z.strictObject({
     ...viewResultBase,
     ...nativeViewSourceContext,
+    source_parameters: jsonObjectSchema
+      .nullable()
+      .describe(
+        "Null means source parameters were omitted to fit the page; retrieve the parent Evidence.",
+      ),
     parent_operation: z.string(),
     artifact: artifactSchema.nullable(),
     kind: z.literal("recorded-array"),

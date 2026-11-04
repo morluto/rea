@@ -2067,3 +2067,60 @@ it("directs oversized inline Evidence to a usable file source", async () => {
     parent_evidence_id: parent.evidence_id,
   });
 });
+
+it.each([
+  { queryBytes: 1024 * 1024, rowBytes: 0 },
+  { queryBytes: 600_000, rowBytes: 600_000 },
+])(
+  "pages a recorded row when its parent parameters do not fit",
+  async ({ queryBytes, rowBytes }) => {
+    const { client, session } = await connect();
+    const { ajv, outputSchema } = await advertisedMcpToolSchemas(
+      client,
+      "inspect_analysis_view",
+      schemaValidation.assertions,
+    );
+    const parent = createEvidence(
+      {
+        path: "/fixtures/large-context",
+        format: "elf",
+        sha256: "f".repeat(64),
+      },
+      { id: "fixture", name: "Fixture", version: "1" },
+      {
+        operation: "xrefs",
+        parameters: { query: "x".repeat(queryBytes) },
+        result: ["0x10"],
+        rawResult: {
+          values: [{ address: "0x10", data: "y".repeat(rowBytes) }],
+        },
+      },
+    );
+    expect(session.recordEvidence(parent).ok).toBe(true);
+    const response = await client.callTool({
+      name: "inspect_analysis_view",
+      arguments: {
+        source: { kind: "retained-evidence", evidence_id: parent.evidence_id },
+        view: { kind: "recorded-array", path: ["values"], offset: 0, limit: 1 },
+      },
+    });
+    expect(response.isError).not.toBe(true);
+    expect(
+      ajv.validate(outputSchema, response.structuredContent),
+      JSON.stringify(ajv.errors),
+    ).toBe(true);
+    const parsed = toolContract("inspect_analysis_view").outputSchema.parse(
+      response.structuredContent,
+    );
+    expect(parsed.normalized_result).toMatchObject({
+      kind: "recorded-array",
+      parent_evidence_id: parent.evidence_id,
+      source_provider: { id: "fixture", name: "Fixture", version: "1" },
+      source_parameters: null,
+      limitations: expect.arrayContaining([
+        expect.stringContaining("omitted to fit the page allowance"),
+      ]),
+      rows: [{ address: "0x10", data: "y".repeat(rowBytes) }],
+    });
+  },
+);

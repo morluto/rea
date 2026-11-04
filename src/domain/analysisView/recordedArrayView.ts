@@ -46,13 +46,16 @@ export const projectRecordedArrayView = (
       ]),
     );
   const rows: JsonValue[] = [];
-  const result = {
+  let result = {
     parent_evidence_id: parent.evidenceId,
     parent_operation: parent.operation,
     parent_digest: parent.evidenceId.slice(3),
     source_provider: parent.provider ?? null,
     source_analysis_profile_digest: parent.analysisProfile?.digest ?? null,
-    source_parameters: (parent.parameters ?? {}) as JsonValue,
+    source_parameters: (parent.parameters ?? {}) as Record<
+      string,
+      JsonValue
+    > | null,
     artifact: parent.artifact ?? null,
     kind: "recorded-array" as const,
     view,
@@ -65,20 +68,36 @@ export const projectRecordedArrayView = (
   };
   // Include the sealed digest and reserve the longest numeric coverage fields
   // before adding rows. Output transport may impose a smaller separate limit.
-  let bytes = jsonValueByteLength(
-    {
-      ...result,
-      view_digest: "0".repeat(64),
-      coverage: {
-        status: "complete-within-view",
-        examined: Number.MAX_SAFE_INTEGER,
-        total: Number.MAX_SAFE_INTEGER,
-        next_offset: Number.MAX_SAFE_INTEGER,
-        exhausted: false,
+  const estimateBase = () =>
+    jsonValueByteLength(
+      {
+        ...result,
+        view_digest: "0".repeat(64),
+        coverage: {
+          status: "complete-within-view",
+          examined: Number.MAX_SAFE_INTEGER,
+          total: Number.MAX_SAFE_INTEGER,
+          next_offset: Number.MAX_SAFE_INTEGER,
+          exhausted: false,
+        },
       },
-    },
-    PAGE_BYTES,
-  );
+      PAGE_BYTES,
+    );
+  const omitParameters = () => {
+    result = {
+      ...result,
+      source_parameters: null,
+      limitations: [
+        ...result.limitations,
+        "Source parameters were omitted to fit the page allowance; retrieve the parent Evidence for their complete values.",
+      ],
+    };
+  };
+  let bytes = estimateBase();
+  if (bytes > PAGE_BYTES) {
+    omitParameters();
+    bytes = estimateBase();
+  }
   const tooLarge = () =>
     err(
       new AnalysisResourceConstraintError(
@@ -98,7 +117,17 @@ export const projectRecordedArrayView = (
   for (let i = view.offset; i < end; i++) {
     const row = value[i] as JsonValue;
     const comma = rows.length === 0 ? 0 : 1;
-    const size = jsonValueByteLength(row, PAGE_BYTES - bytes - comma);
+    let size = jsonValueByteLength(row, PAGE_BYTES - bytes - comma);
+    if (
+      bytes + comma + size > PAGE_BYTES &&
+      rows.length === 0 &&
+      result.source_parameters !== null
+    ) {
+      omitParameters();
+      bytes = estimateBase();
+      if (bytes > PAGE_BYTES) return tooLarge();
+      size = jsonValueByteLength(row, PAGE_BYTES - bytes);
+    }
     if (bytes + comma + size > PAGE_BYTES) {
       if (rows.length === 0) return tooLarge();
       break;
