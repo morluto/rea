@@ -299,6 +299,11 @@ case in an [issue](https://github.com/morluto/rea/issues) or a
 [pull request](https://github.com/morluto/rea/pulls), including the target,
 your question, how REA helped, and what you found.
 
+For ready-to-use REA prompts, see [Made with REA](https://madewithrea.com/prompts),
+an independent, community-run collection of prompts and a directory of builds
+made with REA and other AI-assisted reverse-engineering tools. It is not
+affiliated with the REA project.
+
 ## Build RL environments
 
 Give an AI agent a local environment to practice tasks such as finding an issue or creating a folder, without running the original app. Use it for reinforcement learning (RL) or to test how well an agent completes tasks.
