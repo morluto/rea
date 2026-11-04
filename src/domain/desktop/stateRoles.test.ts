@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { isApplicationDconfGroup, stateRole } from "./stateRoles.js";
+import {
+  isApplicationDconfGroup,
+  stateReasons,
+  stateRole,
+  type DesktopRoleFacts,
+} from "./stateRoles.js";
 
 describe("stateRole", () => {
   it("ranks application evidence above documents and shared desktop files", () => {
@@ -14,6 +19,42 @@ describe("stateRole", () => {
     expect(stateRole(["named_in_window_title"])).toBe("document");
     expect(stateRole(["desktop_service"])).toBe("shared_desktop");
     expect(stateRole([])).toBe("unrelated");
+  });
+
+  it("treats a file the application holds open as a document when a title or the caller names it", () => {
+    expect(stateRole(["opened_by_application", "named_in_window_title"])).toBe(
+      "document",
+    );
+    expect(stateRole(["opened_by_application", "selected_path"])).toBe(
+      "document",
+    );
+    expect(stateRole(["opened_by_application"])).toBe("application_state");
+    expect(stateRole(["opened_by_application", "desktop_service"])).toBe(
+      "shared_desktop",
+    );
+  });
+});
+
+describe("stateReasons", () => {
+  it("matches a window title only where the file name stands on its own", () => {
+    const facts: DesktopRoleFacts = {
+      home: "/home/ada",
+      stateDirectories: [],
+      stateTails: [],
+      selectedRoots: [],
+      titles: ["*today.txt (~/Documents/plan.md) - Notes"],
+      openedFiles: new Set(),
+    };
+    const reasons = (path: string) => stateReasons(facts, path, [], false);
+
+    expect(reasons("/home/ada/Documents/today.txt")).toEqual([
+      "named_in_window_title",
+    ]);
+    expect(reasons("/home/ada/Documents/plan.md")).toEqual([
+      "named_in_window_title",
+    ]);
+    expect(reasons("/home/ada/Documents/day.txt")).toEqual([]);
+    expect(reasons("/home/ada/Documents/today.tx")).toEqual([]);
   });
 });
 

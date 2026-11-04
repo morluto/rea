@@ -20,9 +20,11 @@ generation reads the kinds of change.
   location) and one role derived from them.
 - Each version is the baseline or the file after a checkpoint that changed it.
   Formats: SQLite through REA's worker on a private copy with any retained
-  `-wal` beside it; dconf through `dconf dump /` on a private file profile,
-  keeping only groups whose path names the application; JSON; XML through the
-  shared strict parser with DOCTYPEs refused; key files; text; binary.
+  `-wal` or `-journal` beside it (a hot journal is refused by the worker),
+  refused when either existed but was not retained; dconf through `dconf dump /` on a private file profile, keeping only
+  groups whose path names the application; JSON up to 4 MiB and 500 levels
+  with exact numbers; XML through the shared strict parser with DOCTYPEs
+  refused; key files up to 4 MiB whose every line parses; text; binary.
 - Changes between versions are created, deleted, or lines, values, keys or
   rows with added, removed and changed lists (100 each, with counts); content
   for binary files and unreadable when a view is missing.

@@ -1,6 +1,5 @@
-import { copyFile, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 
 import {
   execFileOutput,
@@ -16,21 +15,21 @@ export type DconfDump =
   | { readonly ok: false; readonly error: string };
 
 /**
- * Dump a copied dconf user database with `dconf dump /`. A private profile
- * names the copy as a file database, so neither the user's live database nor
- * the dconf service is involved.
+ * Dump a staged dconf user database with `dconf dump /`. A profile written
+ * beside it, in the caller's private directory, names it as a file database,
+ * so neither the user's live database nor the dconf service is involved.
  */
 export const dumpDconfDatabase = async (
   database: string,
   environment: NodeJS.ProcessEnv,
   signal?: AbortSignal,
 ): Promise<DconfDump> => {
-  const directory = await mkdtemp(join(tmpdir(), "rea-dconf-"));
   try {
-    const copy = join(directory, "user");
-    const profile = join(directory, "profile");
-    await copyFile(database, copy);
-    await writeFile(profile, `file-db:${copy}\n`, { mode: 0o600 });
+    const profile = join(dirname(database), "profile");
+    await writeFile(profile, `file-db:${database}\n`, {
+      mode: 0o600,
+      flag: "wx",
+    });
     const command = environment.REA_DCONF_COMMAND ?? "dconf";
     const { stdout } = await execFileOutput(command, ["dump", "/"], {
       env: { PATH: environment.PATH ?? "", DCONF_PROFILE: profile },
@@ -51,7 +50,5 @@ export const dumpDconfDatabase = async (
       ok: false,
       error: failure === undefined ? String(cause) : failure.stderr.trim(),
     };
-  } finally {
-    await rm(directory, { recursive: true, force: true });
   }
 };

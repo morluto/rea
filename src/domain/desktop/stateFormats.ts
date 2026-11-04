@@ -1,6 +1,8 @@
 import type { Element, Node } from "@xmldom/xmldom";
 
-import type { JsonValue } from "../jsonValue.js";
+import { isExactJsonNumber } from "../exactJsonNumber.js";
+import { MAX_JSON_DEPTH, type JsonValue } from "../jsonValue.js";
+import { err, ok, type Result } from "../result.js";
 import { safeParseJson } from "../safeJson.js";
 import { parseXmlDocument } from "../xmlDocument.js";
 
@@ -16,11 +18,43 @@ export type DesktopStateFormat =
 
 const SQLITE_HEADER = "SQLite format 3\0";
 const GVDB_HEADER = "GVariant";
-const KEYFILE_EXTENSIONS = /\.(?:ini|conf|cfg|desktop|keyfile|rc)$/iu;
 const XML_EXTENSIONS = /\.(?:xml|xbel|plist|svg|ui)$/iu;
 const MAX_TEXT_LINES = 5000;
 const MAX_XML_NODES = 5000;
 const MAX_XML_DEPTH = 64;
+/** Half of Evidence's nesting limit, leaving room for the result around a view. */
+const MAX_JSON_VIEW_DEPTH = MAX_JSON_DEPTH / 2;
+
+type KeyfileLine =
+  | { readonly kind: "skip" }
+  | { readonly kind: "group"; readonly name: string }
+  | { readonly kind: "entry"; readonly key: string; readonly value: string }
+  | { readonly kind: "other" };
+
+/** One key file line: blank or comment, `[group]`, `key=value`, or anything else. */
+const keyfileLine = (raw: string): KeyfileLine => {
+  const line = raw.trim();
+  if (line.length === 0 || line.startsWith("#") || line.startsWith(";"))
+    return { kind: "skip" };
+  const name = /^\[(?<name>[^\]]+)\]$/u.exec(line)?.groups?.name;
+  if (name !== undefined) return { kind: "group", name };
+  const equals = line.indexOf("=");
+  return equals <= 0
+    ? { kind: "other" }
+    : {
+        kind: "entry",
+        key: line.slice(0, equals).trim(),
+        value: line.slice(equals + 1).trim(),
+      };
+};
+
+/** A key file has at least one group and nothing a key file view would drop. */
+const isKeyfile = (text: string): boolean => {
+  const kinds = new Set(
+    text.split(/\r?\n/u).map((line) => keyfileLine(line).kind),
+  );
+  return kinds.has("group") && !kinds.has("other");
+};
 
 /** Decode bytes as UTF-8 text, or undefined for binary content. */
 export const decodeStateText = (bytes: Uint8Array): string | undefined => {
@@ -55,9 +89,40 @@ export const detectStateFormat = (
     }).ok
       ? "xml"
       : "text";
-  if (KEYFILE_EXTENSIONS.test(path) || /^\[[^\]\n]+\]\s*$/mu.test(text))
-    return "keyfile";
-  return "text";
+  return isKeyfile(text) ? "keyfile" : "text";
+};
+
+/** Whether a parsed JSON value nests deeper than a limit, checked without recursion. */
+const deeperThan = (root: JsonValue, limit: number): boolean => {
+  const pending: [JsonValue, number][] = [[root, 0]];
+  for (let next = pending.pop(); next !== undefined; next = pending.pop()) {
+    const [value, depth] = next;
+    if (depth > limit) return true;
+    if (typeof value === "object" && value !== null)
+      for (const item of Object.values(value)) pending.push([item, depth + 1]);
+  }
+  return false;
+};
+
+/** A JSON file's value, refused when a number would be rounded or it nests too deeply. */
+export const jsonView = (text: string): Result<JsonValue, string> => {
+  let rounded = false;
+  const parsed = safeParseJson(text, (_key, value, context) => {
+    if (typeof value === "number" && !isExactJsonNumber(value, context?.source))
+      rounded = true;
+    return value;
+  });
+  if (!parsed.ok) return err(parsed.error);
+  if (rounded)
+    return err(
+      "a number in it cannot be read exactly, such as an integer above 2^53",
+    );
+  const value = parsed.value as JsonValue;
+  return deeperThan(value, MAX_JSON_VIEW_DEPTH)
+    ? err(
+        `nested deeper than the ${String(MAX_JSON_VIEW_DEPTH)} levels a JSON view keeps`,
+      )
+    : ok(value);
 };
 
 /** A text file as lines, bounded. */
@@ -85,20 +150,12 @@ export const keyfileView = (
   const groups = plainRecord<Record<string, string>>();
   let group = "";
   for (const raw of text.split(/\r?\n/u)) {
-    const line = raw.trim();
-    if (line.length === 0 || line.startsWith("#") || line.startsWith(";"))
-      continue;
-    const header = /^\[(?<name>[^\]]+)\]$/u.exec(line)?.groups?.name;
-    if (header !== undefined) {
-      group = header;
+    const line = keyfileLine(raw);
+    if (line.kind === "group") {
+      group = line.name;
       groups[group] ??= plainRecord();
-      continue;
-    }
-    const equals = line.indexOf("=");
-    if (equals <= 0) continue;
-    (groups[group] ??= plainRecord())[line.slice(0, equals).trim()] = line
-      .slice(equals + 1)
-      .trim();
+    } else if (line.kind === "entry")
+      (groups[group] ??= plainRecord())[line.key] = line.value;
   }
   return groups;
 };

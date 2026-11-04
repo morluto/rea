@@ -35,7 +35,11 @@ const SHARED_DESKTOP_PATHS = [
   ".ICEauthority",
 ];
 
-/** Lowercase names that identify the application in paths and dconf keys. */
+/**
+ * Lowercase names that identify the application in dconf keys. The desktop
+ * entry's display name is left out: generic names such as "Settings" would
+ * claim other applications' groups.
+ */
 export const applicationNames = (
   capture: DesktopApplicationCapture,
 ): ReadonlySet<string> => {
@@ -47,7 +51,6 @@ export const applicationNames = (
       application.executable.path.split("/").at(-1),
       entryId?.split(".").at(-1),
       application.desktop_entry?.startup_wm_class,
-      application.desktop_entry?.name,
       session.window_match?.class,
       session.window_match?.instance,
     ]
@@ -123,6 +126,26 @@ export const roleFacts = (
   };
 };
 
+const FILENAME_CHARACTER = /[\p{L}\p{M}\p{N}._~-]/u;
+
+/** Whether a title holds a spelling not joined to other file name characters. */
+const spelledIn = (title: string, spelling: string): boolean => {
+  for (
+    let at = title.indexOf(spelling);
+    at >= 0;
+    at = title.indexOf(spelling, at + 1)
+  ) {
+    const before = title[at - 1];
+    const after = title[at + spelling.length];
+    if (
+      (before === undefined || !FILENAME_CHARACTER.test(before)) &&
+      (after === undefined || !FILENAME_CHARACTER.test(after))
+    )
+      return true;
+  }
+  return false;
+};
+
 /** Whether an application window title spells the file's name or home path. */
 const namedInTitle = (path: string, facts: DesktopRoleFacts): boolean => {
   const name = path.split("/").at(-1) ?? "";
@@ -132,7 +155,7 @@ const namedInTitle = (path: string, facts: DesktopRoleFacts): boolean => {
     ...(relative === null ? [] : [`~/${relative}`]),
   ];
   return facts.titles.some((title) =>
-    spellings.some((spelling) => title.includes(spelling)),
+    spellings.some((spelling) => spelledIn(title, spelling)),
   );
 };
 
@@ -164,15 +187,17 @@ export const stateReasons = (
   return reasons;
 };
 
-/** The role that follows from a path's reasons, strongest first. */
+/**
+ * The role that follows from a path's reasons, strongest first. A file the
+ * application holds open is a document when a title or the caller names it.
+ */
 export const stateRole = (
   reasons: readonly DesktopStateReason[],
 ): DesktopStateRole => {
+  const shared = reasons.includes("desktop_service");
   if (
     reasons.includes("dconf_application_keys") ||
-    ((reasons.includes("state_directory") ||
-      reasons.includes("opened_by_application")) &&
-      !reasons.includes("desktop_service"))
+    (reasons.includes("state_directory") && !shared)
   )
     return "application_state";
   if (
@@ -180,6 +205,8 @@ export const stateRole = (
     reasons.includes("selected_path")
   )
     return "document";
-  if (reasons.includes("desktop_service")) return "shared_desktop";
+  if (reasons.includes("opened_by_application") && !shared)
+    return "application_state";
+  if (shared) return "shared_desktop";
   return "unrelated";
 };

@@ -193,11 +193,12 @@ export const writeCaptureFolder = async (
 
 /** A SQLite reader that reports one row per retained version's last byte. */
 export const readers: DesktopStateReaders = {
-  sqlite: async (database, writeAheadLog) => {
+  sqlite: async (database) => {
     // A staged write-ahead log, when present, decides the version instead.
-    const version = (await readFile(writeAheadLog ?? database, "latin1")).slice(
-      -2,
+    const log = await readFile(`${database}-wal`, "latin1").catch(
+      () => undefined,
     );
+    const version = (log ?? (await readFile(database, "latin1"))).slice(-2);
     return {
       ok: true,
       view: {

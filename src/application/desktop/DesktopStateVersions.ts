@@ -6,56 +6,61 @@ import type { DesktopStatePath } from "../../domain/desktop/desktopState.js";
 
 type Version = DesktopStatePath["versions"][number];
 
-/** The changes of each path in checkpoint order, built once per capture. */
-export type ChangeIndex = ReadonlyMap<
+/** The changes of each path in checkpoint order. */
+type ChangeIndex = ReadonlyMap<
   string,
   readonly { readonly index: number; readonly change: DesktopStateChange }[]
 >;
 
-export const indexChanges = (
-  capture: DesktopApplicationCapture,
-): ChangeIndex => {
-  const index = new Map<
+/** What the capture records about each path, built once per capture. */
+export interface StateIndex {
+  readonly changes: ChangeIndex;
+  /** The retained digest of each path at the baseline. */
+  readonly baseline: ReadonlyMap<string, string>;
+  /** Paths a walk saw as files whose bytes were not retained. */
+  readonly omitted: ReadonlySet<string>;
+  readonly checkpoints: number;
+}
+
+export const indexState = (capture: DesktopApplicationCapture): StateIndex => {
+  const changes = new Map<
     string,
     { readonly index: number; readonly change: DesktopStateChange }[]
   >();
   capture.state.checkpoints.forEach((checkpoint, position) => {
     for (const change of checkpoint.changes) {
-      const entries = index.get(change.path) ?? [];
+      const entries = changes.get(change.path) ?? [];
       entries.push({ index: position, change });
-      index.set(change.path, entries);
+      changes.set(change.path, entries);
     }
   });
-  return index;
+  return {
+    changes,
+    baseline: new Map(
+      (capture.state.checkpoints[0]?.retained ?? []).map((file) => [
+        file.path,
+        file.sha256,
+      ]),
+    ),
+    omitted: new Set(capture.state.omitted_content.map((entry) => entry.path)),
+    checkpoints: capture.state.checkpoints.length,
+  };
 };
-
-/** The retained digest of a path at the baseline. */
-export const baselineDigests = (
-  capture: DesktopApplicationCapture,
-): ReadonlyMap<string, string> =>
-  new Map(
-    (capture.state.checkpoints[0]?.retained ?? []).map((file) => [
-      file.path,
-      file.sha256,
-    ]),
-  );
 
 /** A path's digest after each checkpoint: null when absent or not retained. */
 export const digestsAt = (
   path: string,
-  changes: ChangeIndex,
-  baseline: ReadonlyMap<string, string>,
-  checkpoints: number,
+  index: StateIndex,
 ): readonly (string | null)[] => {
-  const digests: (string | null)[] = [baseline.get(path) ?? null];
+  const digests: (string | null)[] = [index.baseline.get(path) ?? null];
   const byIndex = new Map(
-    (changes.get(path) ?? []).map((entry) => [entry.index, entry.change]),
+    (index.changes.get(path) ?? []).map((entry) => [entry.index, entry.change]),
   );
-  for (let index = 1; index < checkpoints; index += 1) {
-    const change = byIndex.get(index);
+  for (let position = 1; position < index.checkpoints; position += 1) {
+    const change = byIndex.get(position);
     digests.push(
       change === undefined
-        ? (digests[index - 1] ?? null)
+        ? (digests[position - 1] ?? null)
         : change.after?.type === "file"
           ? (change.after.sha256 ?? null)
           : null,
@@ -67,67 +72,65 @@ export const digestsAt = (
 /** Whether a path existed after each checkpoint, whether or not it was retained. */
 export const presenceAt = (
   path: string,
-  changes: ChangeIndex,
-  baseline: ReadonlyMap<string, string>,
-  checkpoints: number,
+  index: StateIndex,
 ): readonly boolean[] => {
-  const own = changes.get(path) ?? [];
+  const own = index.changes.get(path) ?? [];
   const byIndex = new Map(own.map((entry) => [entry.index, entry.change]));
+  const first = own[0]?.change;
+  // An omission without a change of its own was made at the baseline walk.
   const presence = [
-    baseline.has(path) || own[0]?.change.before?.type === "file",
+    index.baseline.has(path) ||
+      (first === undefined
+        ? index.omitted.has(path)
+        : first.before?.type === "file"),
   ];
-  for (let index = 1; index < checkpoints; index += 1) {
-    const change = byIndex.get(index);
+  for (let position = 1; position < index.checkpoints; position += 1) {
+    const change = byIndex.get(position);
     presence.push(
       change === undefined
-        ? (presence[index - 1] ?? false)
+        ? (presence[position - 1] ?? false)
         : change.after?.type === "file",
     );
   }
   return presence;
 };
 
+/** Files whose changes alter what a SQLite database holds. */
+const SIDECARS = ["-wal", "-journal"];
+
 /**
  * Versions of one path: its baseline, then its state after each checkpoint
- * where it, or its write-ahead log, changed.
+ * where it, its write-ahead log or its rollback journal changed. A checkpoint
+ * that leaves an absent file absent adds no version.
  */
 export const pathVersions = (
   capture: DesktopApplicationCapture,
   path: string,
-  changes: ChangeIndex,
-  baseline: ReadonlyMap<string, string>,
+  index: StateIndex,
 ): Version[] => {
   const checkpoints = capture.state.checkpoints;
-  const own = changes.get(path) ?? [];
-  const log = changes.get(`${path}-wal`) ?? [];
-  const first = own[0]?.change;
-  const present =
-    baseline.has(path) ||
-    (first === undefined ? true : first.before?.type === "file");
-  const digests = digestsAt(path, changes, baseline, checkpoints.length);
-  const versions: Version[] = [
-    {
-      checkpoint_index: 0,
-      checkpoint: checkpoints[0]?.name ?? "baseline",
-      present,
-      sha256: digests[0] ?? null,
-      format: null,
-      view: null,
-      view_error: null,
-    },
-  ];
-  const indexes = [...new Set([...own, ...log].map((entry) => entry.index))]
-    .filter((index) => index > 0)
+  const presence = presenceAt(path, index);
+  const digests = digestsAt(path, index);
+  const positions = [
+    ...new Set(
+      [path, ...SIDECARS.map((suffix) => `${path}${suffix}`)].flatMap((name) =>
+        (index.changes.get(name) ?? []).map((entry) => entry.index),
+      ),
+    ),
+  ]
+    .filter((position) => position > 0)
     .sort((left, right) => left - right);
-  let exists = present;
-  for (const index of indexes) {
-    const change = own.find((entry) => entry.index === index)?.change;
-    if (change !== undefined) exists = change.after?.type === "file";
+  const versions: Version[] = [];
+  for (const position of [0, ...positions]) {
+    const present = presence[position] ?? false;
+    if (!present && versions.at(-1)?.present === false) continue;
     versions.push({
-      checkpoint_index: index,
-      checkpoint: checkpoints[index]?.name ?? String(index),
-      present: exists,
-      sha256: exists ? (digests[index] ?? null) : null,
+      checkpoint_index: position,
+      checkpoint:
+        checkpoints[position]?.name ??
+        (position === 0 ? "baseline" : String(position)),
+      present,
+      sha256: present ? (digests[position] ?? null) : null,
       format: null,
       view: null,
       view_error: null,
@@ -137,14 +140,9 @@ export const pathVersions = (
 };
 
 /** Files the state view covers: retained at baseline or changed later. */
-export const statePaths = (
-  capture: DesktopApplicationCapture,
-  changes: ChangeIndex,
-): readonly string[] => {
-  const paths = new Set<string>();
-  for (const file of capture.state.checkpoints[0]?.retained ?? [])
-    paths.add(file.path);
-  for (const [path, entries] of changes)
+export const statePaths = (index: StateIndex): readonly string[] => {
+  const paths = new Set(index.baseline.keys());
+  for (const [path, entries] of index.changes)
     if (
       entries.some(
         ({ change }) =>
