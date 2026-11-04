@@ -255,6 +255,7 @@
 * **ci:** consolidate shared timer limit export ([ebfef27](https://github.com/morluto/rea/commit/ebfef27b4682ed6ed47843bad641a6200bc1942b))
 * **ci:** enforce architecture guards before dependency setup ([#8027](https://github.com/morluto/rea/issues/8027)) ([cac6e06](https://github.com/morluto/rea/commit/cac6e0613e314238999ce4cc0249107ae936e8d3))
 * **ci:** include hidden VitePress configuration in CodeQL ([#8486](https://github.com/morluto/rea/issues/8486)) ([e5e0dc5](https://github.com/morluto/rea/commit/e5e0dc5542f6a63b790881ac906dc9fcd6d46659))
+* **ci:** own source-map captures and honor browser startup budget ([9031adf](https://github.com/morluto/rea/commit/9031adf0b06cd2f02f4ef813d2e97a51375c3dad))
 * **ci:** preserve lint diagnostics without source locations ([b45a833](https://github.com/morluto/rea/commit/b45a83368c11d02b9ed2acfeb04a19cac747b611))
 * **ci:** preserve release proposal overflow notes ([2cb2969](https://github.com/morluto/rea/commit/2cb29693c3d574c4898832047fe309ac1ad00e9d))
 * **ci:** preserve the package verifier HTTP boundary ([#8483](https://github.com/morluto/rea/issues/8483)) ([7174635](https://github.com/morluto/rea/commit/71746351d322c847cb6b8bc8e1b21e80491a878e))
