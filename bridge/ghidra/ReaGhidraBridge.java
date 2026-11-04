@@ -4929,7 +4929,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
             // without retaining its cause. This producer reason is not bad syntax.
             if (exception.getDescription().equals("Stack overflow during pattern compilation"))
                 throw regexStackExhausted(expression, "compiling");
-            throw new RequestFailure("invalid_request", "Invalid regex pattern " + expression + ": " + exception.getDescription() + " at index " + exception.getIndex());
+            throw new RequestFailure("invalid_regex_pattern", "Invalid regex pattern " + expression + ": " + exception.getDescription() + " at index " + exception.getIndex());
         }
         catch (StackOverflowError exhausted) {
             throw regexStackExhausted(expression, "compiling");
