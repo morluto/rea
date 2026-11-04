@@ -196,7 +196,7 @@ it.skipIf(process.platform === "win32")(
     });
     expect(switched.ok).toBe(true);
     expect(session.providerIdentity().id).toBe("ghidra");
-    expect(session.status()).toMatchObject({ open: true });
+    expect(await session.status()).toMatchObject({ open: true });
     expect(external.fixture.requests.map(({ method }) => method)).toEqual([
       "health",
       "address_name",

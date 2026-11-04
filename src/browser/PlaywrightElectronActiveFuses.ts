@@ -1,3 +1,7 @@
+import { assertArtifactReadActive } from "../artifacts/ArtifactFileOperation.js";
+import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { electronFuseFailure } from "../electron/ElectronFuseFailures.js";
 import { basename, dirname } from "node:path";
 
 import { AnalysisUnsupportedTargetError } from "../domain/analysisErrorCore.js";
@@ -9,6 +13,7 @@ const NODE_CLI_INSPECT_ARGUMENTS_FUSE_INDEX = 3;
 
 export interface InspectArgumentsPreflightOptions {
   readonly signal?: AbortSignal;
+  readonly resources?: ArtifactResourceScope;
   readonly readFuseImage?: typeof readElectronFuseImage;
   readonly resolveFuseTarget?: typeof resolveElectronFuseTarget;
 }
@@ -40,7 +45,7 @@ export const assertNodeCliInspectArgumentsSupported = async (
   executablePath: string,
   options?: InspectArgumentsPreflightOptions,
 ): Promise<void> => {
-  options?.signal?.throwIfAborted();
+  assertArtifactReadActive(options?.signal);
   const reader = options?.readFuseImage ?? readElectronFuseImage;
   const resolver = options?.resolveFuseTarget ?? resolveElectronFuseTarget;
   try {
@@ -56,10 +61,12 @@ export const assertNodeCliInspectArgumentsSupported = async (
       }
     }
 
-    const image = await reader(
-      targetPath,
-      options?.signal !== undefined ? { signal: options.signal } : undefined,
-    );
+    const image = await reader(targetPath, {
+      ...(options?.signal === undefined ? {} : { signal: options.signal }),
+      ...(options?.resources === undefined
+        ? {}
+        : { resources: options.resources }),
+    });
     if (image.slices.length === 0) return;
 
     const hostArchitecture = process.arch === "x64" ? "x86_64" : process.arch;
@@ -90,7 +97,12 @@ export const assertNodeCliInspectArgumentsSupported = async (
     }
   } catch (cause: unknown) {
     if (cause instanceof AnalysisUnsupportedTargetError) throw cause;
-    options?.signal?.throwIfAborted();
+    if (
+      cause instanceof ArtifactReaderFailure &&
+      (cause.cleanup !== undefined || cause.reason === "cancelled")
+    )
+      throw electronFuseFailure(cause, executablePath, OPERATION);
+    assertArtifactReadActive(options?.signal);
     // Missing sentinels, format failures, or unreadable fuses leave inspection capability unknown; proceed with launch.
   }
 };

@@ -1,15 +1,22 @@
-import type {
-  CapabilityDescriptor,
-  ProviderIdentity,
-} from "../application/AnalysisProvider.js";
+import { NATIVE_MACOS_PROVIDER_IDENTITY } from "./NativeMacosProviderIdentity.js";
+import type { CapabilityDescriptor } from "../application/AnalysisProvider.js";
+import { createAnalysisProfile } from "../domain/analysisProfile.js";
 import { NATIVE_TOOL_CONTRACTS } from "../contracts/native/nativeToolContracts.js";
+import { APPLE_DISPATCH_TARGET_APPLICABILITY } from "../domain/native/objcSwiftMetadata.js";
 
-/** Public identity committed by macOS-native inspection observations. */
-export const NATIVE_MACOS_PROVIDER_IDENTITY: ProviderIdentity = Object.freeze({
-  id: "native-macos",
-  name: "macOS native inspection utilities",
-  version: null,
-});
+/** Source-owned commitment for the pure Apple dispatch metadata reader. */
+export const APPLE_DISPATCH_METADATA_ANALYSIS_PROFILE = createAnalysisProfile(
+  {
+    id: NATIVE_MACOS_PROVIDER_IDENTITY.id,
+    name: NATIVE_MACOS_PROVIDER_IDENTITY.name,
+    version: "apple-metadata-reader-2",
+  },
+  {
+    operation: "inspect_native_dispatch_metadata",
+    reader: "apple-dispatch-metadata",
+    revision: 2,
+  },
+);
 /** Operations whose target process can show UI, use the network and write files. */
 const OWNED_PROCESS_OPERATIONS: ReadonlySet<string> = new Set([
   "capture_native_ui_scenario",
@@ -36,6 +43,12 @@ export const nativeMacOSCapabilities = (
       return Object.freeze({
         provider: NATIVE_MACOS_PROVIDER_IDENTITY,
         operation: contract.name,
+        ...(contract.name === "inspect_native_dispatch_metadata"
+          ? {
+              analysisProfile: APPLE_DISPATCH_METADATA_ANALYSIS_PROFILE,
+              targetApplicability: APPLE_DISPATCH_TARGET_APPLICABILITY,
+            }
+          : {}),
         ...availability,
         effects: Object.freeze({
           mutatesArtifact: false,
@@ -44,7 +57,8 @@ export const nativeMacOSCapabilities = (
           mayAccessNetwork: OWNED_PROCESS_OPERATIONS.has(contract.name),
           mayWriteFilesystem:
             OWNED_PROCESS_OPERATIONS.has(contract.name) ||
-            contract.name === "observe_native_ui",
+            contract.name === "observe_native_ui" ||
+            contract.name === "inspect_signature",
           changesPermissions: false,
           requiresRoot: false,
         }),

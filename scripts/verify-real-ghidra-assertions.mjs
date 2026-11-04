@@ -1,6 +1,6 @@
 import { hasTypedSwitchEvidence } from "./verify-real-ghidra-switch-assertions.mjs";
 
-import { access } from "node:fs/promises";
+import { lstat } from "node:fs/promises";
 
 import { parseBinaryTarget } from "../dist/application/BinaryTargetResolver.js";
 import { SUPPORTED_GHIDRA_VERSION } from "../dist/ghidra/GhidraReleasePolicy.js";
@@ -245,11 +245,7 @@ export function dossierSummary(dossier) {
   };
 }
 
-export async function assertSession(
-  session,
-  expectedDigest,
-  expectedTargetSha256,
-) {
+export function assertSession(session, expectedDigest, expectedTargetSha256) {
   if (
     session.provider.id !== "ghidra" ||
     session.provider.version !== SUPPORTED_GHIDRA_VERSION ||
@@ -441,10 +437,11 @@ export function summary(observed) {
 
 async function exists(path) {
   try {
-    await access(path);
+    await lstat(path);
     return true;
-  } catch {
-    return false;
+  } catch (cause) {
+    if (cause?.code === "ENOENT") return false;
+    throw cause;
   }
 }
 

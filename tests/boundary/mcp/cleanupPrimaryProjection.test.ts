@@ -67,7 +67,7 @@ it("restores the primary error after exact cleanup retry through the same MCP co
   expect(await call()).toMatchObject({
     code: "invalid_request",
     category: "invalid_input",
-    retryable: true,
+    retryable: false,
     details: {
       issues: [{ path: ["serial"], reason: "invalid_value" }],
       cleanup_history: {

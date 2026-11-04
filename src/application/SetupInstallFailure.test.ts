@@ -20,16 +20,30 @@ describe("macOS Hopper setup failure projection", () => {
         "The mounted package did not contain the expected Hopper application bundle. Retry setup; if it repeats, update REA before installing.",
     });
   });
+
+  it("keeps a host below the release minimum distinct from an unsupported host", () => {
+    const incompatible = setupInstallFailure("incompatible_host_version");
+    expect(incompatible).toMatchObject({
+      status: "failed",
+      code: "incompatible_host_version",
+    });
+    expect(incompatible.remediation).toContain("HOPPER_LAUNCHER_PATH");
+    const unsupported = setupInstallFailure("unsupported_host");
+    expect(unsupported.code).toBe("unsupported_host");
+    expect(incompatible.remediation).not.toBe(unsupported.remediation);
+  });
 });
 
 describe("Linux package-manager setup failure projection", () => {
   it("quotes the failing command and a sanitized bounded diagnostic", () => {
     const result = setupInstallFailure("authorization_or_package_manager", {
-      command: 'pkexec pacman -U "/tmp/hopper package.pkg.tar.xz"',
-      exitCode: 1,
-      stdout: "",
-      stderr: "\u001b[31merror:\u001b[0m package conflict\nrefused",
-      outputTruncated: false,
+      packageFailure: {
+        command: 'pkexec pacman -U "/tmp/hopper package.pkg.tar.xz"',
+        exitCode: 1,
+        stdout: "",
+        stderr: "\u001b[31merror:\u001b[0m package conflict\nrefused",
+        outputTruncated: false,
+      },
     });
     expect(result).toMatchObject({
       status: "failed",
@@ -55,11 +69,13 @@ describe("Linux package-manager setup failure projection", () => {
 
   it("keeps truncated package output within its excerpt budget", () => {
     const result = setupInstallFailure("authorization_or_package_manager", {
-      command: "pacman -U hopper.pkg.tar.xz",
-      exitCode: 1,
-      stdout: "",
-      stderr: `${"warning ".repeat(100)}final package conflict`,
-      outputTruncated: true,
+      packageFailure: {
+        command: "pacman -U hopper.pkg.tar.xz",
+        exitCode: 1,
+        stdout: "",
+        stderr: `${"warning ".repeat(100)}final package conflict`,
+        outputTruncated: true,
+      },
     });
     if (result.status !== "failed") throw new Error("expected failure");
     const excerpt = result.remediation
@@ -68,4 +84,12 @@ describe("Linux package-manager setup failure projection", () => {
     expect(excerpt).toContain("output truncated");
     expect(excerpt?.length).toBeLessThanOrEqual(400);
   });
+});
+
+it.each([
+  ["destination_inspection", "destination_inspection_failed"],
+  ["archive_write", "archive_write_failed"],
+  ["launcher_inspection", "launcher_inspection_failed"],
+] as const)("retains %s as a distinct setup failure", (reason, code) => {
+  expect(setupInstallFailure(reason).code).toBe(code);
 });

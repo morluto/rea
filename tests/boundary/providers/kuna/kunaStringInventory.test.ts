@@ -5,7 +5,10 @@ import * as v8 from "node:v8";
 
 import { expect, it, vi } from "vitest";
 
-import { KunaStringInventoryReader } from "../../../../src/kuna/KunaStringInventory.js";
+import {
+  KunaStringInventoryReader,
+  kunaStringsAtAddress,
+} from "../../../../src/kuna/KunaStringInventory.js";
 
 vi.mock("node:v8", { spy: true });
 
@@ -107,6 +110,13 @@ it.each([
     { strings: [{ ...row, functions: [{ name: "main" }] }] },
   ],
   ["duplicate identity", { count: 2, strings: [row, row] }],
+  [
+    "nonadjacent duplicate identity",
+    {
+      count: 3,
+      strings: [row, { ...row, address: "@16", address_hex: "0x10" }, row],
+    },
+  ],
 ])(
   "rejects inconsistent %s before publishing any strings",
   async (_label, changes) => {
@@ -117,6 +127,75 @@ it.each([
     });
   },
 );
+
+it("indexes canonical u64 addresses and keeps each encoding at the same address", async () => {
+  const entry = (
+    address: bigint,
+    encoding: "ascii" | "utf8" | "utf16" = "ascii",
+  ) => ({
+    ...row,
+    address: `@${address}`,
+    address_hex: `0x${address.toString(16)}`,
+    text: "hello",
+    length: 5,
+    byte_length: encoding === "utf16" ? 12 : 6,
+    encoding,
+  });
+  const rows = [
+    entry(0xffffffffffffffffn),
+    entry(16n, "utf16"),
+    entry(15n),
+    entry(16n),
+    entry(0x20000000000001n, "utf8"),
+    entry(0n),
+    entry(16n, "utf8"),
+    entry(17n),
+  ];
+  const { result } = await read(
+    wire({ ...document(), count: rows.length, strings: rows }),
+    3,
+  );
+  expect(result.ok).toBe(true);
+  if (!result.ok) throw result.error;
+  expect(result.value.items.map(({ address }) => address)).toEqual([
+    "0x0",
+    "0xf",
+    "0x10",
+    "0x10",
+    "0x10",
+    "0x11",
+    "0x20000000000001",
+    "0xffffffffffffffff",
+  ]);
+  for (const address of [
+    "0x0",
+    "0x1",
+    "0xe",
+    "0xf",
+    "0x10",
+    "0x11",
+    "0x12",
+    "0x20000000000000",
+    "0x20000000000001",
+    "0x20000000000002",
+    "0xffffffffffffffff",
+  ])
+    expect(kunaStringsAtAddress(result.value, address)).toEqual(
+      result.value.items.filter((item) => item.address === address),
+    );
+  expect(
+    kunaStringsAtAddress(result.value, "0x10").map(
+      (item) => item.string?.encoding,
+    ),
+  ).toEqual(["ascii", "utf16", "utf8"]);
+});
+
+it("looks up an empty validated inventory", async () => {
+  const { result } = await read(wire({ ...document(), count: 0, strings: [] }));
+  expect(result.ok).toBe(true);
+  if (!result.ok) throw result.error;
+  expect(kunaStringsAtAddress(result.value, "0x0")).toEqual([]);
+});
 
 it.each([
   ["truncated", wire(document()).slice(0, -2)],
@@ -202,7 +281,11 @@ it("bounds keys and numbers: overlong keys match no field, overlong kept numbers
   const kept = wire({ ...document(), count: "@1" + "0".repeat(64) });
   expect((await read(kept)).result).toMatchObject({
     ok: false,
-    error: { reason: "count is not a number Kuna writes" },
+    error: {
+      _tag: "AnalysisOutputError",
+      reason: "not_kuna_number",
+      diagnostics: { code: "not_kuna_number", field: "count" },
+    },
   });
 });
 

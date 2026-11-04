@@ -5,6 +5,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 const fault = vi.hoisted(() => ({
   failure: new Error("controlled manifest failure"),
+  failManifest: true,
 }));
 vi.mock("write-file-atomic", async (importOriginal) => {
   const actual = await importOriginal<{
@@ -12,7 +13,11 @@ vi.mock("write-file-atomic", async (importOriginal) => {
   }>();
   return {
     default: async (...args: Parameters<typeof actual.default>) => {
-      if (typeof args[0] === "string" && args[0].endsWith("/ownership.json"))
+      if (
+        fault.failManifest &&
+        typeof args[0] === "string" &&
+        args[0].endsWith("/ownership.json")
+      )
         throw fault.failure;
       return actual.default(...args);
     },
@@ -25,6 +30,7 @@ import {
   type GhidraLaunchSession,
 } from "../../src/ghidra/GhidraLauncher.js";
 import { bindGhidraSessionFailure } from "../../src/ghidra/GhidraSessionError.js";
+import { AnalysisCancelledError } from "../../src/domain/analysisErrorCore.js";
 import { GhidraClient } from "../../src/ghidra/GhidraClient.js";
 import {
   spawnOwnedProviderProcess,
@@ -42,6 +48,7 @@ const clients: GhidraClient[] = [];
 let denyCleanup = true;
 beforeEach(() => {
   denyCleanup = true;
+  fault.failManifest = true;
 });
 afterEach(async () => {
   denyCleanup = false;
@@ -64,7 +71,10 @@ const incomplete: ProcessCleanupFailure = {
   ],
   unverified: [{ pid: 456, diagnostic: "controlled observation unavailable" }],
 };
-const fixture = async (rollback: () => Promise<ProcessCleanupFailure>) => {
+const fixture = async (
+  rollback: () => Promise<ProcessCleanupFailure>,
+  afterSpawn?: () => void,
+) => {
   const root = await createTestTempDirectory("rea-launch-rollback-");
   const launcher = new GhidraHeadlessLauncher({
     configurationDirectoryName: "ghidra_12.1.4_PUBLIC",
@@ -81,6 +91,7 @@ const fixture = async (rollback: () => Promise<ProcessCleanupFailure>) => {
     spawnProcess: async (options) => {
       const spawned = await spawnOwnedProviderProcess(options);
       owners.push(spawned);
+      afterSpawn?.();
       return {
         ...spawned,
         cleanup: () =>
@@ -215,9 +226,10 @@ it.skipIf(process.platform === "win32")(
     expect(result.error.cause).toBeInstanceOf(AggregateError);
     if (!(result.error.cause instanceof AggregateError))
       throw new Error("Expected composite failure");
-    expect(result.error.cause.errors[0]).toMatchObject({
-      cause: fault.failure,
-    });
+    const primary: unknown = result.error.cause.errors[0];
+    expect(primary).toBeInstanceOf(GhidraLaunchError);
+    if (!(primary instanceof GhidraLaunchError)) throw primary;
+    expect(primary.cause).toBe(fault.failure);
     expect(result.error.cause.errors[1]).toBeUndefined();
     expect(result.error.partialLaunch).toBeDefined();
     denyCleanup = false;
@@ -302,3 +314,64 @@ it("bounds aggregate member evidence and retains complete producer facts", () =>
   );
   expect(launch.rollbackFailure).toEqual({ kind: "incomplete", result });
 });
+
+it.skipIf(process.platform === "win32").each([null, "stop after spawn"])(
+  "retains producer cancellation and exact process cleanup through failed rollback %j",
+  async (reason) => {
+    fault.failManifest = false;
+    const controller = new AbortController();
+    const { launcher, session } = await fixture(
+      async () => incomplete,
+      () => controller.abort(reason),
+    );
+    const result = await launcher.launch(session, {
+      signal: controller.signal,
+    });
+    if (result.ok || !(result.error instanceof GhidraLaunchError))
+      throw new Error("Expected incomplete rollback");
+    expect(result.error.primaryFailure).toBeInstanceOf(AnalysisCancelledError);
+    expect(result.error.primaryFailure?.cause).toBe(reason);
+    expect(result.error.rollbackFailure).toEqual({
+      kind: "incomplete",
+      result: incomplete,
+    });
+    expect(result.error.partialLaunch).toBeDefined();
+    denyCleanup = false;
+    expect(await result.error.partialLaunch?.cleanup?.()).toMatchObject({
+      cleaned: true,
+    });
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "client preserves an earlier manifest failure when the final caller cancels during rollback",
+  async () => {
+    const controller = new AbortController();
+    const { launcher } = await fixture(async () => {
+      controller.abort(null);
+      return incomplete;
+    });
+    const target = await readFile(ghidraFixturePath);
+    const client = new GhidraClient({
+      launcher,
+      targetPath: ghidraFixturePath,
+      targetSha256: createHash("sha256").update(target).digest("hex"),
+      providerVersion: "test",
+      profileDigest: "b".repeat(64),
+      startupTimeoutMs: 5000,
+    });
+    clients.push(client);
+    const result = await client.start(controller.signal);
+    expect(result).toMatchObject({
+      ok: false,
+      error: { kind: "start", cleanupFailure: { cleanupIncomplete: true } },
+    });
+    if (result.ok) throw new Error("Expected original startup failure");
+    expect(JSON.stringify(result.error.diagnostics)).toContain(
+      fault.failure.message,
+    );
+    denyCleanup = false;
+    expect(await client.close()).toMatchObject({ ok: true });
+    expect(result.error.cleanupFailure?.cleanupIncomplete).toBe(false);
+  },
+);

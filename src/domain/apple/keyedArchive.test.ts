@@ -1,8 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { z } from "zod";
-
-import { MAX_JSON_DEPTH } from "../jsonValue.js";
+import { MAX_PLIST_DEPTH, plistNestingLimitMessage } from "./plistValue.js";
 import { projectKeyedArchive } from "./keyedArchive.js";
+import { UnknownPlistScalar } from "./unknownPlistScalar.js";
 
 const deepValue = (depth: number): unknown => {
   let value: unknown = 1;
@@ -10,19 +9,44 @@ const deepValue = (depth: number): unknown => {
   return value;
 };
 
+it("preserves an own root named __proto__ through selection and UID edge projection", () => {
+  const input = {
+    $archiver: "NSKeyedArchiver",
+    $objects: ["$null", { ["__proto__"]: { CF$UID: 0 } }],
+    $top: { ["__proto__"]: { CF$UID: 1 }, ordinary: { CF$UID: 1 } },
+  };
+  const result = projectKeyedArchive(input, {
+    root: "__proto__",
+    offset: 0,
+    limit: 2,
+  });
+  expect(result.roots).toEqual({ ["__proto__"]: { CF$UID: 1 } });
+  expect(result.references).toContainEqual(
+    expect.objectContaining({
+      source: null,
+      path: ["__proto__"],
+      target: 1,
+      status: "resolved",
+    }),
+  );
+  expect(result.references).toContainEqual(
+    expect.objectContaining({
+      source: 1,
+      path: ["__proto__"],
+      target: 0,
+      status: "nil",
+    }),
+  );
+});
+
 describe("projectKeyedArchive input bound", () => {
-  it("rejects an over-deep archive value with a validation error instead of crashing", () => {
-    let error: unknown;
-    try {
-      projectKeyedArchive(deepValue(MAX_JSON_DEPTH + 1), {
+  it("rejects over-deep decoded input at the plist projection limit", () => {
+    expect(() =>
+      projectKeyedArchive(deepValue(MAX_PLIST_DEPTH + 1), {
         offset: 0,
         limit: 1,
-      });
-    } catch (caught) {
-      error = caught;
-    }
-    expect(error).toBeInstanceOf(z.ZodError);
-    expect(error).not.toBeInstanceOf(RangeError);
+      }),
+    ).toThrow(plistNestingLimitMessage());
   });
 });
 
@@ -55,7 +79,7 @@ describe("projectKeyedArchive root reference projection", () => {
         $objects: ["$null", "target"],
         $top: {
           UID: { CF$UID: 1 },
-          CF$UID: { UID: 1 },
+          CF$UID: { CF$UID: 1 },
         },
       },
       { offset: 0, limit: 2 },
@@ -66,7 +90,7 @@ describe("projectKeyedArchive root reference projection", () => {
         source: null,
         path: ["CF$UID"],
         target: 1,
-        raw: { UID: 1 },
+        raw: { CF$UID: 1 },
         status: "resolved",
       },
       {
@@ -91,5 +115,45 @@ describe("projectKeyedArchive root reference projection", () => {
         { offset: 0, limit: 1 },
       ),
     ).toThrow(RangeError);
+  });
+});
+
+it("keeps generated unknown scalar wrappers scalar and lookalike dictionaries ordinary", () => {
+  const result = projectKeyedArchive(
+    {
+      $archiver: "NSKeyedArchiver",
+      $objects: [
+        "$null",
+        new UnknownPlistScalar(
+          "false",
+          "false<!-- value -->",
+          "unsupported-markup",
+        ),
+        {
+          $plist_type: "unknown",
+          element: "false",
+          literal: "false<!-- value -->",
+          reason: "unsupported-markup",
+        },
+      ],
+      $top: { root: { CF$UID: 1 } },
+    },
+    { offset: 0, limit: 3 },
+  );
+  expect(result.unknownScalarCount).toBe(1);
+  expect(result.objects[1]).toMatchObject({
+    kind: "scalar",
+    status: "observed",
+    value: {
+      $plist_type: "unknown",
+      element: "false",
+      literal: "false<!-- value -->",
+      reason: "unsupported-markup",
+    },
+  });
+  expect(result.objects[2]).toMatchObject({
+    kind: "dictionary",
+    status: "observed",
+    value: { $plist_type: "unknown" },
   });
 });

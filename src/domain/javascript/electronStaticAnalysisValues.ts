@@ -5,8 +5,8 @@ import type { ElectronStaticValue } from "./electronStaticAnalysisTypes.js";
 import {
   readExactJavaScriptLiteral,
   semanticStaticPropertyKey,
-  semanticStaticPropertyName,
 } from "./javascriptAstValues.js";
+import { electronMemberPath } from "./javascriptElectronMemberWrites.js";
 import { sourceSlice } from "./javascriptStaticAnalysisHelpers.js";
 import type { JavaScriptFindingContext } from "./javascriptStaticAnalysisState.js";
 
@@ -15,18 +15,11 @@ export const electronCalleePath = (
   callee: t.Node,
   context: JavaScriptFindingContext,
 ): readonly string[] | undefined => {
-  const members: string[] = [];
-  let root = callee;
-  while (t.isMemberExpression(root) || t.isOptionalMemberExpression(root)) {
-    const member = semanticStaticPropertyName(root.property, root.computed);
-    if (member === "" || !t.isNode(root.object)) return undefined;
-    members.push(member);
-    root = root.object;
-  }
+  const { root, members } = electronMemberPath(callee);
+  if (!members.every((member): member is string => member !== null))
+    return undefined;
   const exported = context.electronBindings?.get(root.start ?? -1);
-  return exported === undefined
-    ? undefined
-    : [...exported, ...members.toReversed()];
+  return exported === undefined ? undefined : [...exported, ...members];
 };
 
 /** Preserve one literal value or the exact inert expression. */
@@ -54,27 +47,6 @@ export const boundedExpression = (
   return expression === "" ? `[${node.type}]` : expression;
 };
 
-/** Find the effective explicit property, preserving unresolved overrides. */
-export const objectProperty = (
-  object: t.Node | undefined,
-  name: string,
-):
-  | { readonly status: "missing" | "dynamic" }
-  | { readonly status: "explicit"; readonly property: t.ObjectProperty } => {
-  if (object === undefined) return { status: "missing" };
-  if (!t.isObjectExpression(object)) return { status: "dynamic" };
-  for (const property of object.properties.toReversed()) {
-    if (t.isSpreadElement(property)) return { status: "dynamic" };
-    const key = semanticStaticPropertyKey(property.key, property.computed);
-    if (key === null) return { status: "dynamic" };
-    if (key !== name) continue;
-    return t.isObjectProperty(property)
-      ? { status: "explicit", property }
-      : { status: "dynamic" };
-  }
-  return { status: "missing" };
-};
-
 type PresentHandlerKind =
   | "inline-function"
   | "identifier"
@@ -99,6 +71,12 @@ export function handlerKind(
     return "member-expression";
   return "dynamic-expression";
 }
+
+/**
+ * Nesting bound for dotted contextBridge member paths. Deeper objects count as
+ * one unknown member rather than being enumerated.
+ */
+export const contextBridgeMemberPathDepth = 8;
 
 /** Collect statically visible dotted keys from one literal contextBridge API object. */
 export const collectContextBridgeMembers = (
@@ -138,7 +116,7 @@ const collectMembersAt = (
   prefix: readonly string[],
   state: { members: string[]; unknown: number },
 ): void => {
-  if (prefix.length >= 8) {
+  if (prefix.length >= contextBridgeMemberPathDepth) {
     state.unknown += 1;
     return;
   }

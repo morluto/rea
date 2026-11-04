@@ -18,6 +18,10 @@ export type ReferenceSourceExclusionKind = ReferenceSourceEntryKind | "unknown";
 
 export interface ReferenceSourceReaderOptions {
   readonly signal?: AbortSignal;
+  /** Prepare policy after identity admission and opening, before enumeration; refusal closes the owned handle. */
+  readonly beforeDirectory?: (
+    path: string,
+  ) => Promise<ReferenceSourceResult<undefined>>;
   readonly shouldExclude?: (
     path: string,
     kind: ReferenceSourceExclusionKind,
@@ -58,11 +62,20 @@ export type ReferenceSourceEntry =
       readonly path: string;
       readonly code: ReferenceSourceFailureCode;
       readonly message: string;
+      /** Exact filesystem presentation; may contain the selected local root path. */
+      readonly localDiagnostic?: string;
       readonly size?: number;
     };
 
+/** A failure enumerating an already admitted root, separate from its children. */
+export interface ReferenceSourceRootFailure {
+  readonly code: ReferenceSourceFailureCode;
+  readonly message: string;
+}
+
 export interface ReferenceSourceRead {
   readonly root: string;
+  readonly rootFailure?: ReferenceSourceRootFailure;
   readonly entries: readonly ReferenceSourceEntry[];
   readonly bytesRead: number;
   /** Node exposes no portable openat traversal; pathname identity is checked around each operation. */
@@ -73,6 +86,7 @@ export interface ReferenceSourceReaderError {
   readonly tag: "reference-source-reader";
   readonly code: "cancelled" | "invalid-root" | "io" | "unsupported";
   readonly message: string;
+  readonly remediationAction?: string;
   readonly cleanup?: AnalysisCleanupObservation;
   /** Captured entries before failure; this does not establish complete tree coverage. */
   readonly partial?: ReferenceSourceRead;
@@ -88,6 +102,10 @@ export type TraversalState = {
   readonly root: string;
   readonly rootIdentity: BigIntStats;
   readonly signal?: AbortSignal;
+  /** Prepare policy after identity admission and opening, before enumeration; refusal closes the owned handle. */
+  readonly beforeDirectory?: (
+    path: string,
+  ) => Promise<ReferenceSourceResult<undefined>>;
   readonly shouldExclude?: (
     path: string,
     kind: ReferenceSourceExclusionKind,
@@ -98,6 +116,7 @@ export type TraversalState = {
     readonly kind: ReferenceSourceExclusionKind;
   }>;
   readonly pending: PendingDirectory[];
+  rootFailure?: ReferenceSourceRootFailure;
   bytesRead: number;
 };
 

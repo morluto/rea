@@ -1,41 +1,74 @@
-import type { SpawnSyncReturns } from "node:child_process";
-import { mkdir, writeFile } from "node:fs/promises";
+import { probeGhidraJava } from "../../../src/ghidra/GhidraJavaProbe.js";
+import { spawnOwnedProviderProcess } from "../../../src/process/ProviderProcess.js";
+import { createInspectionResources } from "../../fixtures/inspectionResources.js";
+
+import { mkdir, writeFile, readFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, expect, it } from "vitest";
 
 import {
   inspectGhidraInstallation,
+  systemGhidraInstallationHost,
   ghidraInstallationDiagnostics,
 } from "../../../src/ghidra/GhidraInstallation.js";
 import { SUPPORTED_GHIDRA_VERSION } from "../../../src/ghidra/GhidraReleasePolicy.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
-const { mockSpawnSync } = vi.hoisted(() => ({ mockSpawnSync: vi.fn() }));
+let inspectionResources = createInspectionResources();
+afterEach(async () => {
+  await inspectionResources.close();
+  inspectionResources = createInspectionResources();
+});
 
-vi.mock("node:child_process", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("node:child_process")>()),
-  spawnSync: mockSpawnSync,
-}));
-
-afterEach(() => mockSpawnSync.mockReset());
-
-/** Match the production probe's raw-byte spawn contract at this fixture boundary. */
-const probeOutput = (
+/** Controlled Java-shaped command exercising the real process owner, not a JVM. */
+const writeJavaProbe = async (
+  home: string,
   stderrText: string,
-  error?: Error,
-): SpawnSyncReturns<Buffer> => {
-  const stdout = Buffer.alloc(0);
-  const stderr = Buffer.from(stderrText, "utf8");
-  return {
-    pid: 1,
-    output: [null, stdout, stderr],
-    stdout,
-    stderr,
-    status: error === undefined ? 0 : null,
-    signal: null,
-    ...(error === undefined ? {} : { error }),
-  };
+  outputBytes?: number,
+) => {
+  const executable = join(
+    home,
+    "bin",
+    process.platform === "win32" ? "java.exe" : "java",
+  );
+  await mkdir(join(home, "bin"), { recursive: true });
+  await writeFile(
+    process.platform === "win32" ? `${executable}.cjs` : executable,
+    `#!${process.execPath}\nconst fs = require('node:fs');\nfs.writeFileSync(${JSON.stringify(join(home, "probe-arguments.json"))}, JSON.stringify(process.argv.slice(2)));\nconst prefix = ${JSON.stringify(stderrText)};\nprocess.stderr.write(prefix${outputBytes === undefined ? "" : ` + 'X'.repeat(${outputBytes} - Buffer.byteLength(prefix))`});\n`,
+    { mode: 0o700 },
+  );
 };
+
+// Windows executes the controlled JS prerequisite with the real owned Node exe;
+// POSIX executes its selected shebang path. Neither fixture is a real JVM.
+const probeHost =
+  process.platform !== "win32"
+    ? undefined
+    : {
+        ...systemGhidraInstallationHost(),
+        probeJava: (
+          command: string,
+          environment: NodeJS.ProcessEnv,
+          options: Parameters<typeof probeGhidraJava>[2],
+        ) =>
+          probeGhidraJava(command, environment, {
+            ...options,
+            launcher: (spawn) =>
+              spawnOwnedProviderProcess({
+                ...spawn,
+                command: process.execPath,
+                arguments: [`${command}.cjs`, ...spawn.arguments],
+                // The controlled Node prerequisite needs Windows runtime state.
+                hostEnvironment: {
+                  SystemRoot: process.env.SystemRoot,
+                  TEMP: tmpdir(),
+                  TMP: tmpdir(),
+                  ...spawn.hostEnvironment,
+                },
+              }),
+          }),
+      };
 
 it.each([
   { major: 17, fullJdk: true, vmName: "Java HotSpot(TM) 64-Bit Server VM" },
@@ -66,17 +99,20 @@ it.each([
       );
     }
     const version = `${String(major)}.0.11`;
-    mockSpawnSync.mockReturnValue(
-      probeOutput(
-        `    java.version = ${version}\n    java.home = ${reportedHome}\n    sun.arch.data.model = 64\n${vmName === undefined ? "" : `    java.vm.name = ${vmName}\n`}`,
-      ),
+    await writeJavaProbe(
+      configuredHome,
+      `    java.version = ${version}\n    java.home = ${reportedHome}\n    sun.arch.data.model = 64\n${vmName === undefined ? "" : `    java.vm.name = ${vmName}\n`}`,
     );
 
-    const inspection = inspectGhidraInstallation({
-      environment: {},
-      installDir,
-      javaHome: configuredHome,
-    });
+    const inspection = await inspectGhidraInstallation(
+      {
+        resourceOwner: inspectionResources.owner,
+        environment: {},
+        installDir,
+        javaHome: configuredHome,
+      },
+      probeHost,
+    );
 
     expect(inspection.javaHome).toBe(reportedHome);
     expect(inspection.javaVersion).toBe(version);
@@ -90,19 +126,17 @@ it.each([
         detail: expect.stringContaining(fullJdk ? "; JDK;" : "; runtime only;"),
       },
     );
-    expect(mockSpawnSync).toHaveBeenCalledExactlyOnceWith(
-      join(
-        configuredHome,
-        "bin",
-        process.platform === "win32" ? "java.exe" : "java",
+    expect(
+      JSON.parse(
+        await readFile(join(configuredHome, "probe-arguments.json"), "utf8"),
       ),
+    ).toEqual(
       expect.arrayContaining([
         "-Dstdout.encoding=UTF-8",
         "-Dstderr.encoding=UTF-8",
         "-Dsun.stdout.encoding=UTF-8",
         "-Dsun.stderr.encoding=UTF-8",
       ]),
-      expect.objectContaining({ encoding: "buffer" }),
     );
   },
 );
@@ -111,8 +145,13 @@ it.each([
   { label: "omitted", property: "", shown: "bitness unknown" },
   {
     label: "empty",
-    property: "sun.arch.data.model =\n",
+    property: "sun.arch.data.model = \n",
     shown: 'bitness unknown (sun.arch.data.model = "")',
+  },
+  {
+    label: "nonstandard framing",
+    property: "sun.arch.data.model =\n",
+    shown: "bitness unknown",
   },
   {
     label: "malformed",
@@ -146,17 +185,20 @@ it.each([
     join(installDir, "Ghidra", "application.properties"),
     `application.version=${SUPPORTED_GHIDRA_VERSION}\napplication.java.min=17\n`,
   );
-  mockSpawnSync.mockReturnValue(
-    probeOutput(
-      `    java.version = 21.0.11\n    java.home = ${reportedHome}\n${property}`,
-    ),
+  await writeJavaProbe(
+    configuredHome,
+    `    java.version = 21.0.11\n    java.home = ${reportedHome}\n${property}`,
   );
 
-  const inspection = inspectGhidraInstallation({
-    environment: {},
-    installDir,
-    javaHome: configuredHome,
-  });
+  const inspection = await inspectGhidraInstallation(
+    {
+      resourceOwner: inspectionResources.owner,
+      environment: {},
+      installDir,
+      javaHome: configuredHome,
+    },
+    probeHost,
+  );
 
   expect(inspection.status).toBe("unavailable");
   expect(inspection.checks.find(({ name }) => name === "java")).toMatchObject({
@@ -191,17 +233,20 @@ it("keeps a known 32-bit Java report classified as unsupported", async () => {
     join(installDir, "Ghidra", "application.properties"),
     `application.version=${SUPPORTED_GHIDRA_VERSION}\napplication.java.min=17\n`,
   );
-  mockSpawnSync.mockReturnValue(
-    probeOutput(
-      `    java.version = 21.0.11\n    java.home = ${reportedHome}\n    sun.arch.data.model = 32\n`,
-    ),
+  await writeJavaProbe(
+    configuredHome,
+    `    java.version = 21.0.11\n    java.home = ${reportedHome}\n    sun.arch.data.model = 32\n`,
   );
 
-  const inspection = inspectGhidraInstallation({
-    environment: {},
-    installDir,
-    javaHome: configuredHome,
-  });
+  const inspection = await inspectGhidraInstallation(
+    {
+      resourceOwner: inspectionResources.owner,
+      environment: {},
+      installDir,
+      javaHome: configuredHome,
+    },
+    probeHost,
+  );
 
   expect(inspection.checks.find(({ name }) => name === "java")).toMatchObject({
     status: "failed",
@@ -219,27 +264,23 @@ it("bounds the Java version probe and reports an over-budget probe as a failed J
     join(installDir, "Ghidra", "application.properties"),
     `application.version=${SUPPORTED_GHIDRA_VERSION}\napplication.java.min=17\n`,
   );
-  // A chatty or hostile JVM that overruns the capture budget: spawnSync reports
-  // ENOBUFS, which the probe already treats as a failed observation.
-  mockSpawnSync.mockReturnValue(
-    probeOutput(
-      "java.version = 21.0.11\n",
-      Object.assign(new Error("spawnSync /java ENOBUFS"), { code: "ENOBUFS" }),
-    ),
+  // The real command owner observes output beyond its one-MiB aggregate budget.
+  await writeJavaProbe(
+    configuredHome,
+    "java.version = 21.0.11\n",
+    1024 * 1024 + 1,
   );
 
-  const inspection = inspectGhidraInstallation({
-    environment: {},
-    installDir,
-    javaHome: configuredHome,
-  });
+  const inspection = await inspectGhidraInstallation(
+    {
+      resourceOwner: inspectionResources.owner,
+      environment: {},
+      installDir,
+      javaHome: configuredHome,
+    },
+    probeHost,
+  );
 
-  const [, , options] = mockSpawnSync.mock.calls[0] as [
-    string,
-    readonly string[],
-    { readonly maxBuffer?: number },
-  ];
-  expect(options.maxBuffer).toBe(1024 * 1024);
   expect(inspection.javaVersion).toBeNull();
   expect(inspection.javaHome).toBe(configuredHome);
   expect(inspection.checks.find(({ name }) => name === "java")).toMatchObject({
@@ -252,7 +293,7 @@ it("bounds the Java version probe and reports an over-budget probe as a failed J
     code: "runtime_unavailable",
     process_error_code: "ENOBUFS",
     output: {
-      stderr: "java.version = 21.0.11\n",
+      stderr: expect.stringContaining("java.version = 21.0.11\n"),
       truncated: true,
       signal: null,
     },

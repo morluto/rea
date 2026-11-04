@@ -10,14 +10,17 @@ import {
   nativeInvestigationCoverageSchema,
   nativeInvestigationEdgeSchema,
   nativeInvestigationNodeSchema,
+  nativeInvestigationProviderSchema,
 } from "../native/nativeInvestigationGraph.js";
 import { err, ok, type Result } from "../result.js";
-import { parseAnalysisViewResult } from "./analysisViewParent.js";
-import type {
-  AnalysisViewParent,
-  AnalysisViewRequest,
-  UnsignedAnalysisView,
-} from "./analysisView.js";
+import { createAnalysisViewResultReader } from "./analysisViewParent.js";
+import { selectViewRows } from "./selectViewRows.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
+import {
+  ownedView,
+  type AdmittedView,
+  type SummaryAnalysisView,
+} from "./analysisViewShape.js";
 import {
   completeWithinViewCoverage,
   pageViewCoverage,
@@ -25,8 +28,8 @@ import {
 
 const page = {
   kind: z.literal("interface-builder"),
-  offset: z.number().int().nonnegative().default(0),
-  limit: z.number().int().positive().default(64),
+  offset: z.int().nonnegative().default(0),
+  limit: z.int().positive().default(64),
 } as const;
 
 /** Original decoded rows; graph rows can be narrowed to one decoded document. */
@@ -63,23 +66,26 @@ export const interfaceBuilderViewContextSchema = z.strictObject({
   source_truncated: z.boolean(),
 });
 
-const countsSchema = z.record(z.string(), z.number().int().positive());
+const countsSchema = z.record(z.string(), z.int().positive());
 
 /** Every decoded document with graph counts; rows and evidence stay retained. */
 export const interfaceBuilderSummarySchema = z.strictObject({
-  target_sha256: interfaceBuilderAnalysisSchema.shape.target_sha256,
-  provider: interfaceBuilderAnalysisSchema.shape.graph.shape.provider,
-  documents: interfaceBuilderAnalysisSchema.shape.documents,
+  target_sha256: z
+    .string()
+    .regex(/^[a-f0-9]{64}$/u)
+    .nullable(),
+  provider: nativeInvestigationProviderSchema,
+  documents: interfaceBuilderDocumentSchema.array().max(64),
   available_counts: z.strictObject({
-    nodes: z.number().int().nonnegative(),
-    edges: z.number().int().nonnegative(),
-    coverage: z.number().int().nonnegative(),
+    nodes: z.int().nonnegative(),
+    edges: z.int().nonnegative(),
+    coverage: z.int().nonnegative(),
   }),
   node_kinds: countsSchema,
   edge_relations: countsSchema,
   coverage_statuses: countsSchema,
   truncated: z.boolean(),
-  limitation_count: z.number().int().nonnegative(),
+  limitation_count: z.int().nonnegative(),
 });
 
 const tally = (values: readonly string[]): Record<string, number> => {
@@ -91,15 +97,39 @@ const tally = (values: readonly string[]): Record<string, number> => {
 };
 
 type InterfaceBuilderReport = z.output<typeof interfaceBuilderAnalysisSchema>;
+type InterfaceBuilderPage = z.output<typeof interfaceBuilderViewRequestSchema>;
+
+const pageRows = <Row>(rows: readonly Row[], view: InterfaceBuilderPage) => ({
+  rows: rows.slice(view.offset, view.offset + view.limit),
+  total: rows.length,
+});
+
+const selectDocumentRows = <
+  Row extends { readonly evidence: readonly { artifact_path: unknown }[] },
+>(
+  rows: readonly Row[],
+  view: InterfaceBuilderPage,
+  document: string | undefined,
+) =>
+  document === undefined
+    ? pageRows(rows, view)
+    : selectViewRows(
+        rows,
+        view,
+        (row) =>
+          row.evidence.some((evidence) => evidence.artifact_path === document),
+        (row) => row,
+      );
+
+const readReport = createAnalysisViewResultReader(
+  interfaceBuilderAnalysisSchema,
+);
 
 /** Admit a well-formed report bound to its recorded target, if one exists. */
 const parseInterfaceBuilderReport = (
   parent: AnalysisViewParent,
 ): Result<InterfaceBuilderReport, AnalysisError> => {
-  const parsed = parseAnalysisViewResult(
-    interfaceBuilderAnalysisSchema,
-    parent,
-  );
+  const parsed = readReport(parent);
   if (!parsed.ok) return parsed;
   const report = parsed.value;
   if (
@@ -117,7 +147,7 @@ const parseInterfaceBuilderReport = (
         },
       ]),
     );
-  return ok(report);
+  return parsed;
 };
 
 /** Every decoded document with graph tallies; rows stay in the retained parent. */
@@ -132,7 +162,7 @@ const summarizeInterfaceBuilder = (
     graph.edges.length +
     graph.coverage.length;
   return {
-    summary: {
+    summary: interfaceBuilderSummarySchema.parse({
       target_sha256: report.target_sha256,
       provider: graph.provider,
       documents: report.documents,
@@ -146,7 +176,7 @@ const summarizeInterfaceBuilder = (
       coverage_statuses: tally(graph.coverage.map((row) => row.status)),
       truncated: graph.truncated,
       limitation_count: limitationCount,
-    },
+    }),
     coverage: completeWithinViewCoverage(total, total),
   };
 };
@@ -154,9 +184,12 @@ const summarizeInterfaceBuilder = (
 /** Project retained decode_interface_builder Evidence without reopening archives. */
 export const projectInterfaceBuilderView = (
   parent: AnalysisViewParent,
-  view: AnalysisViewRequest,
-): Result<UnsignedAnalysisView, AnalysisError> => {
-  if (view.kind !== "summary" && view.kind !== "interface-builder")
+  admitted: AdmittedView,
+) => {
+  const view = ownedView<
+    SummaryAnalysisView | z.output<typeof interfaceBuilderViewRequestSchema>
+  >(admitted, "summary", "interface-builder");
+  if (view === undefined)
     return err(
       analysisViewInputError([
         {
@@ -180,9 +213,15 @@ export const projectInterfaceBuilderView = (
     parent_operation: "decode_interface_builder" as const,
     parent_digest: parent.evidenceId.slice(3),
     artifact: {
-      path: parent.subject?.local_path ?? "",
+      path:
+        parent.subject?.local_path ??
+        report.resource_root?.canonical_path ??
+        "",
       sha256: report.target_sha256,
     },
+    ...(report.resource_root === undefined
+      ? {}
+      : { resource_root: report.resource_root }),
     limitations,
     unknowns: [
       "Rows describe recognized archive objects and connections only; unrecognized classes, fields and runtime-created UI remain unknown.",
@@ -195,7 +234,7 @@ export const projectInterfaceBuilderView = (
   };
   if (view.kind === "summary")
     return ok({
-      kind: "summary",
+      kind: "summary" as const,
       view,
       ...shared,
       ...summarizeInterfaceBuilder(report, limitations.length),
@@ -218,31 +257,24 @@ export const projectInterfaceBuilderView = (
         },
       ]),
     );
-  const inDocument = <
-    Row extends { readonly evidence: readonly { artifact_path: unknown }[] },
-  >(
-    candidates: readonly Row[],
-  ): readonly Row[] =>
-    document === undefined
-      ? candidates
-      : candidates.filter((row) =>
-          row.evidence.some((evidence) => evidence.artifact_path === document),
-        );
-  const rows =
+  const selected =
     view.collection === "documents"
-      ? report.documents
+      ? pageRows(report.documents, view)
       : view.collection === "coverage"
-        ? graph.coverage
+        ? pageRows(graph.coverage, view)
         : view.collection === "nodes"
-          ? inDocument(graph.nodes)
-          : inDocument(graph.edges);
-  const items = rows.slice(view.offset, view.offset + view.limit);
+          ? selectDocumentRows(graph.nodes, view, document)
+          : selectDocumentRows(graph.edges, view, document);
   return ok({
-    kind: "interface-builder",
+    kind: "interface-builder" as const,
     view,
-    items,
+    items: selected.rows,
     ...shared,
     source_truncated: graph.truncated,
-    coverage: pageViewCoverage(view.offset, items.length, rows.length),
+    coverage: pageViewCoverage(
+      view.offset,
+      selected.rows.length,
+      selected.total,
+    ),
   });
 };

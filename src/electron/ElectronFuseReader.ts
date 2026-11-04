@@ -1,11 +1,17 @@
+import { observeMzWindowsHeader } from "../domain/dosMz.js";
+import { readPeCoffHeader } from "../domain/peCoffHeader.js";
+import { readElfFixedHeader } from "../domain/elfFixedHeader.js";
+import { decodePeMachine } from "../domain/peMachine.js";
 import type { ResolvedElectronFuseFile } from "./ElectronFusePath.js";
 import { createHash } from "node:crypto";
-import { lstat } from "node:fs/promises";
+import { lstat, type FileHandle } from "node:fs/promises";
 
+import { readMachoImage } from "../artifacts/apple/MachoLoadCommandReader.js";
+import { readFileHandleRange } from "../filesystem/readFileHandleRange.js";
 import {
   hasMachoMagic,
-  readMachoImage,
-} from "../artifacts/apple/MachoLoadCommandReader.js";
+  readFatHeaderPrefix,
+} from "../domain/apple/machoContainer.js";
 import type { ReadAt } from "../artifacts/apple/MachoLoadCommandReader.js";
 import {
   electronFuseName,
@@ -14,11 +20,16 @@ import {
   type ElectronFuseSentinel,
   type ElectronFuseSlice,
 } from "../domain/electron/electronFuses.js";
+import { machoImageSlices } from "../domain/apple/dylibResolution.js";
 import {
-  openRegularFile,
   RegularFileChangedError,
   sameRegularFileState,
 } from "../filesystem/RegularFile.js";
+import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import {
+  assertArtifactReadActive,
+  withArtifactRegularFile,
+} from "../artifacts/ArtifactFileOperation.js";
 
 /** Admission and search bounds for one Electron executable. */
 export const ELECTRON_FUSE_LIMITS = {
@@ -29,7 +40,6 @@ export const ELECTRON_FUSE_LIMITS = {
 } as const;
 
 const SENTINEL = Buffer.from(ELECTRON_FUSE_SENTINEL, "ascii");
-const FAT_MAGICS = new Set([0xcafebabe, 0xcafebabf, 0xbebafeca, 0xbfbafeca]);
 
 /** Container identity and per-slice fuse wires. Offsets are file-absolute. */
 export interface ElectronFuseImage {
@@ -46,6 +56,7 @@ interface SliceRange {
   readonly fileOffset: number;
   readonly size: number;
   readonly architecture: string | null;
+  readonly hidden?: boolean;
 }
 
 /** The selected container is malformed or outside the supported formats. */
@@ -80,16 +91,17 @@ export const readElectronFuseImage = async (
     readonly signal?: AbortSignal;
     readonly chunkBytes?: number;
     readonly selection?: ResolvedElectronFuseFile;
+    readonly resources?: ArtifactResourceScope;
   },
 ): Promise<ElectronFuseImage> => {
   const signal = options?.signal;
-  signal?.throwIfAborted();
+  assertArtifactReadActive(signal);
   const selection = options?.selection;
   const recheckPath = async (candidate: string) => {
-    signal?.throwIfAborted();
+    assertArtifactReadActive(signal);
     try {
       const metadata = await lstat(candidate, { bigint: true });
-      signal?.throwIfAborted();
+      assertArtifactReadActive(signal);
       return metadata;
     } catch (cause: unknown) {
       if (selection !== undefined && isMissingPath(cause))
@@ -138,35 +150,37 @@ export const readElectronFuseImage = async (
     throw new TypeError(
       `chunkBytes must be an integer between 1 and ${ELECTRON_FUSE_LIMITS.chunkBytes}.`,
     );
-  const handle = await openRegularFile(path, { symlinks: "reject", signal });
-  try {
-    const opened = await handle.stat({ bigint: true });
-    if (!sameRegularFileState(before, opened))
-      throw new RegularFileChangedError(path);
-    await assertPathNodes();
-    const readAt = readerFor(handle, size, path, signal);
-    const container = await identifyContainer(readAt, size, path);
-    const scanned = await scanSlices(
-      handle,
-      path,
-      size,
-      container.slices,
-      chunkBytes,
-      signal,
-    );
-    const current = await recheckPath(path);
-    if (!sameRegularFileState(before, current))
-      throw new RegularFileChangedError(path);
-    await assertPathNodes();
-    return {
-      sha256: scanned.sha256,
-      bytes: size,
-      format: container.format,
-      slices: scanned.slices,
-    };
-  } finally {
-    await handle.close();
-  }
+  return withArtifactRegularFile(
+    path,
+    options?.resources ?? new ArtifactResourceScope(),
+    signal,
+    async ({ handle: owned }) => {
+      const opened = await owned.stat({ bigint: true });
+      if (!sameRegularFileState(before, opened))
+        throw new RegularFileChangedError(path);
+      await assertPathNodes();
+      const readAt = readerFor(owned, size, path, signal);
+      const container = await identifyContainer(readAt, size, path);
+      const scanned = await scanSlices(
+        owned,
+        path,
+        size,
+        container.slices,
+        chunkBytes,
+        signal,
+      );
+      const current = await recheckPath(path);
+      if (!sameRegularFileState(before, current))
+        throw new RegularFileChangedError(path);
+      await assertPathNodes();
+      return {
+        sha256: scanned.sha256,
+        bytes: size,
+        format: container.format,
+        slices: scanned.slices,
+      };
+    },
+  );
 };
 
 /** Sentence describing the file and sentinel bounds enforced by this reader. */
@@ -175,19 +189,20 @@ export const electronFuseReadLimitation = (): string =>
 
 const readerFor =
   (
-    handle: Awaited<ReturnType<typeof openRegularFile>>,
+    handle: FileHandle,
     size: number,
     path: string,
     signal: AbortSignal | undefined,
   ): ReadAt =>
   async (offset, length) => {
-    signal?.throwIfAborted();
+    assertArtifactReadActive(signal);
     if (length <= 0 || offset < 0 || offset >= size) return new Uint8Array();
     const bounded = Math.min(length, size - offset);
-    const buffer = Buffer.alloc(bounded);
-    const read = await handle.read(buffer, 0, bounded, offset);
-    if (read.bytesRead !== bounded) throw new RegularFileChangedError(path);
-    return buffer.subarray(0, read.bytesRead);
+    const buffer = await readFileHandleRange(handle, offset, bounded, () =>
+      assertArtifactReadActive(signal),
+    );
+    if (buffer.length !== bounded) throw new RegularFileChangedError(path);
+    return buffer;
   };
 
 const identifyContainer = async (
@@ -200,15 +215,28 @@ const identifyContainer = async (
 }> => {
   const head = await readAt(0, Math.min(size, 8));
   if (hasMachoMagic(head)) return identifyMacho(readAt, size, head, path);
-  if (isElf(head))
+  if (isElf(head)) {
+    const header = await readAt(0, 64);
+    const parsed = readElfFixedHeader(Buffer.from(header), size);
     return {
       format: "elf",
-      slices: [{ index: 0, fileOffset: 0, size, architecture: null }],
+      slices: [
+        {
+          index: 0,
+          fileOffset: 0,
+          size,
+          architecture: parsed.ok ? parsed.value.architecture : null,
+        },
+      ],
     };
-  if (await isPe(readAt, size))
+  }
+  const pe = await identifyPe(readAt, size);
+  if (pe !== undefined)
     return {
       format: "pe",
-      slices: [{ index: 0, fileOffset: 0, size, architecture: null }],
+      slices: [
+        { index: 0, fileOffset: 0, size, architecture: pe.architecture },
+      ],
     };
   throw new ElectronFuseFormatFailure(
     "unsupported",
@@ -236,42 +264,26 @@ const identifyMacho = async (
       reason,
     );
   }
-  const format = isFat(head) ? "mach-o-universal" : "mach-o";
-  const slices = facts.slices.map((slice, index) => ({
+  const fat = readFatHeaderPrefix(head);
+  const format =
+    fat.state === "parsed" || fat.state === "incomplete"
+      ? "mach-o-universal"
+      : "mach-o";
+  const slices = machoImageSlices(facts).map((slice, index) => ({
     index,
     fileOffset: slice.slice_offset,
     size: slice.slice_size,
     architecture: slice.architecture,
+    ...(slice.hidden === undefined ? {} : { hidden: slice.hidden }),
   }));
-  assertNonOverlappingSlices(slices);
   return {
     format,
     slices,
   };
 };
 
-/** A FAT architecture owns a distinct byte range; overlap is malformed. */
-const assertNonOverlappingSlices = (ranges: readonly SliceRange[]): void => {
-  const ordered = [...ranges].sort(
-    (left, right) => left.fileOffset - right.fileOffset,
-  );
-  for (let index = 1; index < ordered.length; index += 1) {
-    const previous = ordered[index - 1];
-    const current = ordered[index];
-    if (
-      previous !== undefined &&
-      current !== undefined &&
-      current.fileOffset < previous.fileOffset + previous.size
-    )
-      throw new ElectronFuseFormatFailure(
-        "malformed",
-        `Mach-O slices ${previous.index} and ${current.index} overlap.`,
-      );
-  }
-};
-
 const scanSlices = async (
-  handle: Awaited<ReturnType<typeof openRegularFile>>,
+  handle: FileHandle,
   path: string,
   size: number,
   ranges: readonly SliceRange[],
@@ -290,14 +302,15 @@ const scanSlices = async (
   const chunk = Buffer.allocUnsafe(chunkBytes);
   let position = 0;
   while (position < size) {
-    signal?.throwIfAborted();
+    assertArtifactReadActive(signal);
     const length = Math.min(chunkBytes, size - position);
     const read = await handle.read(chunk, 0, length, position);
-    if (read.bytesRead !== length) throw new RegularFileChangedError(path);
-    const piece = chunk.subarray(0, length);
+    if (read.bytesRead === 0) throw new RegularFileChangedError(path);
+    assertArtifactReadActive(signal);
+    const piece = chunk.subarray(0, read.bytesRead);
     hash.update(piece);
     absorbChunk(states, piece, position);
-    position += length;
+    position += read.bytesRead;
   }
   if (position !== size) throw new RegularFileChangedError(path);
   const slices: ElectronFuseSlice[] = [];
@@ -318,6 +331,9 @@ const scanSlices = async (
       file_offset: state.slice.fileOffset,
       size: state.slice.size,
       architecture: state.slice.architecture,
+      ...(state.slice.hidden === undefined
+        ? {}
+        : { hidden: state.slice.hidden }),
       sentinel_count: sentinels.length,
       sentinels,
     });
@@ -368,7 +384,7 @@ const absorbChunk = (
 };
 
 const parseWire = async (
-  handle: Awaited<ReturnType<typeof openRegularFile>>,
+  handle: FileHandle,
   path: string,
   sentinelOffset: number,
   sliceEnd: number,
@@ -421,16 +437,17 @@ const parseWire = async (
 };
 
 const readExact = async (
-  handle: Awaited<ReturnType<typeof openRegularFile>>,
+  handle: FileHandle,
   path: string,
   offset: number,
   length: number,
   signal: AbortSignal | undefined,
 ): Promise<Buffer> => {
-  signal?.throwIfAborted();
-  const buffer = Buffer.alloc(length);
-  const read = await handle.read(buffer, 0, length, offset);
-  if (read.bytesRead !== length) throw new RegularFileChangedError(path);
+  assertArtifactReadActive(signal);
+  const buffer = await readFileHandleRange(handle, offset, length, () =>
+    assertArtifactReadActive(signal),
+  );
+  if (buffer.length !== length) throw new RegularFileChangedError(path);
   return buffer;
 };
 
@@ -441,37 +458,44 @@ const isElf = (head: Uint8Array): boolean =>
   head[2] === 0x4c &&
   head[3] === 0x46;
 
-const isFat = (head: Uint8Array): boolean => {
-  if (head.length < 4) return false;
-  const magic = Buffer.from(head.buffer, head.byteOffset, 4).readUInt32BE(0);
-  return FAT_MAGICS.has(magic);
-};
-
-const isPe = async (readAt: ReadAt, size: number): Promise<boolean> => {
-  if (size < 64) return false;
+const identifyPe = async (
+  readAt: ReadAt,
+  size: number,
+): Promise<{ readonly architecture: string | null } | undefined> => {
+  if (size < 64) return undefined;
   const header = await readAt(0, 64);
   if (header.length < 64 || header[0] !== 0x4d || header[1] !== 0x5a)
-    return false;
-  const offset = Buffer.from(
+    return undefined;
+  const prefix = Buffer.from(
     header.buffer,
     header.byteOffset,
     header.byteLength,
-  ).readUInt32LE(0x3c);
+  );
+  const observed = observeMzWindowsHeader(prefix, size);
+  if (observed.state !== "signature-needed" && observed.state !== "declared")
+    return undefined;
+  const offset = observed.offset;
   if (
-    !Number.isSafeInteger(offset) ||
     offset < 64 ||
     offset > ELECTRON_FUSE_LIMITS.maximumPeHeaderOffset ||
     offset > size - 4
   )
-    return false;
-  const signature = await readAt(offset, 4);
-  return (
-    signature.length === 4 &&
-    signature[0] === 0x50 &&
-    signature[1] === 0x45 &&
-    signature[2] === 0 &&
-    signature[3] === 0
-  );
+    return undefined;
+  const bytes = Buffer.from(await readAt(offset, 24));
+  const confirmed = observeMzWindowsHeader(prefix, size, { offset, bytes });
+  if (confirmed.state !== "declared" || confirmed.signature !== "PE")
+    return undefined;
+  // A signature establishes the existing scan boundary; only a complete COFF
+  // header establishes its machine. Managed OS overrides need separate proof.
+  const coff = readPeCoffHeader(bytes.subarray(4));
+  const machine =
+    bytes.length === 24 && coff.ok
+      ? decodePeMachine(coff.value.machine)
+      : undefined;
+  return {
+    architecture:
+      machine?.nativeOsOverride === false ? machine.architecture : null,
+  };
 };
 
 const isMissingPath = (cause: unknown): boolean =>

@@ -2,18 +2,25 @@ import { z } from "zod";
 import type {
   AnalysisError,
   AnalysisErrorOptions,
+  AnalysisPartialObservation,
 } from "../domain/analysisErrorBase.js";
 import {
   AnalysisCancelledError,
-  AnalysisInputError,
+  AnalysisOutputError,
 } from "../domain/analysisErrorCore.js";
-import { createEvidence, type Evidence } from "../domain/evidence.js";
-import { jsonObjectSchema } from "../domain/jsonValue.js";
+import type { Evidence } from "../domain/evidence.js";
+import {
+  freezeJsonSnapshot,
+  isImmutableJsonSnapshot,
+} from "../domain/immutableJson.js";
+import { jsonValueSchema } from "../domain/jsonValue.js";
+import { analysisOperationInputErrorFromIssues } from "../domain/inputIssueProjection.js";
 import { err, ok, type Result } from "../domain/result.js";
 import type {
   AnalysisExecution,
   ExecutionOptions,
 } from "./AnalysisProvider.js";
+import { createAnalysisExecutionEvidence } from "../domain/analysisObservation.js";
 
 /** Validated caller-selected request carrying its operation input. */
 export interface ProviderOperationRequest {
@@ -52,22 +59,21 @@ export const executeProviderOperation = async <
     );
   const request = schema.safeParse({ operation, input });
   if (!request.success)
-    return err(new AnalysisInputError(operation, { cause: request.error }));
+    return err(
+      analysisOperationInputErrorFromIssues(
+        operation,
+        request.error.issues,
+        input,
+        request.error,
+      ),
+    );
   const executed = await provider.execute(request.data, options);
   if (!executed.ok) return executed;
-  const execution = executed.value;
-  const evidence = createEvidence(
-    execution.subject ?? undefined,
-    execution.provider,
-    {
-      operation,
-      parameters: jsonObjectSchema.parse(request.data.input),
-      result: execution.result,
-      rawResult: execution.rawResult,
-      limitations: execution.limitations,
-      locations: execution.locations,
-      confidence,
-    },
+  const evidence = createAnalysisExecutionEvidence(
+    operation,
+    request.data.input,
+    executed.value,
+    confidence,
   );
   return completeProviderEvidence(evidence, options?.signal);
 };
@@ -87,4 +93,50 @@ export const completeProviderEvidence = (
       }),
     );
   return ok(evidence);
+};
+
+/**
+ * Retain an incomplete observation when projection can serialize it.
+ * A JSON partial is replaced by one frozen snapshot, so a later mutation
+ * cannot make projection throw and projection does not copy it again.
+ * A partial that is not JSON is cleared from the returned error and from
+ * every cleanup primary projection can select later. Each cleared error
+ * records an output failure, leaving cancellation or timeout primary.
+ */
+export const keepIncompleteObservation = (
+  error: AnalysisError,
+  operation: string,
+  reason: string,
+): AnalysisError => {
+  const seen = new Set<AnalysisError>();
+  // One source object can sit on a wrapper and its cleanup primary.
+  const judged = new Map<object, AnalysisPartialObservation | undefined>();
+  let current: AnalysisError | undefined = error;
+  while (current !== undefined && !seen.has(current)) {
+    seen.add(current);
+    const partial = current.partialObservation;
+    if (
+      partial !== undefined &&
+      !isImmutableJsonSnapshot(partial) &&
+      typeof partial === "object"
+    ) {
+      // safeParse clones only after validation succeeds. Freeze that copy once.
+      let snapshot = judged.get(partial);
+      if (!judged.has(partial)) {
+        const parsed = jsonValueSchema.safeParse(partial);
+        snapshot = parsed.success
+          ? (freezeJsonSnapshot(parsed.data) as AnalysisPartialObservation)
+          : undefined;
+        judged.set(partial, snapshot);
+      }
+      if (snapshot === undefined) {
+        current.partialObservation = undefined;
+        current.retainSecondaryFailure(
+          new AnalysisOutputError(operation, reason),
+        );
+      } else current.partialObservation = snapshot;
+    }
+    current = current.cleanupPrimary;
+  }
+  return error;
 };

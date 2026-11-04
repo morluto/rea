@@ -11,6 +11,8 @@ import { importReferenceSource } from "../../support/referenceSourceResourceScop
 it("resolves require calls by lexical binding and source mode", async () => {
   const root = await createTestTempDirectory("rea-reference-require-scope-");
   const sources: Record<string, string> = {
+    "global-wrapper.cjs":
+      "globalThis; console.log(require.resolve('./loaded.cjs'));",
     "parameter.cjs": [
       "function load(require) { return require('./throwing.cjs'); }",
       "console.log(load(() => 'local'));",
@@ -115,6 +117,7 @@ it("resolves require calls by lexical binding and source mode", async () => {
       .sort((left, right) => (left[0] ?? "").localeCompare(right[0] ?? "")),
   ).toEqual([
     ["create-require-esm.mjs", "loaded.cjs"],
+    ["global-wrapper.cjs", "loaded.cjs"],
     ["nested.cjs", "loaded.cjs"],
     ["top-level-var.cjs", "loaded.cjs"],
   ]);
@@ -329,7 +332,10 @@ it("does not attribute overwritten require members to Node's resolver", async ()
   if (!result.ok) throw result.error;
   expect(
     result.value.relationships
-      .filter(({ kind }) => kind === "requires")
+      .filter(
+        ({ kind, resolution }) =>
+          kind === "requires" && resolution === "internal",
+      )
       .map(({ from_path, to }) => [from_path, to])
       .sort((left, right) => (left[0] ?? "").localeCompare(right[0] ?? "")),
   ).toEqual([
@@ -338,4 +344,17 @@ it("does not attribute overwritten require members to Node's resolver", async ()
     ["local-loader.cjs", "loaded.cjs"],
     ["optional-call.cjs", "loaded.cjs"],
   ]);
+  expect(
+    result.value.relationships.filter(
+      ({ kind, resolution }) => kind === "requires" && resolution === "unknown",
+    ),
+  ).toEqual(
+    ["assigned.cjs", "computed.cjs", "defined.cjs"].map((from_path) => ({
+      from_path,
+      to: "./loaded.cjs",
+      kind: "requires",
+      resolution: "unknown",
+      parse_state: "partial",
+    })),
+  );
 });

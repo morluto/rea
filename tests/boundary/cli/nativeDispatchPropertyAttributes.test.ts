@@ -10,6 +10,35 @@ import { cliTest } from "../../support/cli/cliFixture.js";
 describe.skipIf(process.platform !== "darwin")(
   "native dispatch property attributes",
   () => {
+    cliTest(
+      "preserves a leading U+FEFF in a binary property name",
+      async ({ cli }) => {
+        const directory = await createTestTempDirectory("rea-objc-property-");
+        const path = join(directory, "fixture.bin");
+        await writeFile(
+          path,
+          machoWithPropertyAttributes("Tq,N", { firstName: "\ufefffirst" }),
+        );
+        const output = await cli.run({
+          arguments: ["inspect-native-dispatch-metadata", path, "--json"],
+          environment: { REA_LOG_LEVEL: "silent" },
+        });
+        expect(output.exitCode, `${output.stdout}\n${output.stderr}`).toBe(0);
+        expect(output.json).toMatchObject({
+          normalized_result: {
+            result: {
+              objc_classes: [
+                {
+                  name: "Fixture",
+                  properties: [{ name: "\ufefffirst" }, { name: "second" }],
+                },
+              ],
+            },
+          },
+        });
+      },
+    );
+
     cliTest.for([
       ["complete nonatomic", "Tq,N", "nonatomic", false, "complete"],
       ["complete default", 'T@"NSString",C', "atomic", false, "complete"],

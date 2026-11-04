@@ -63,6 +63,10 @@ export class WindowsPrivateRuntime {
   #pending: Promise<unknown> | undefined;
   #closed = false;
   #closePromise: Promise<void> | undefined;
+  // Admitted files whose close failed. Removal retries these wrappers before
+  // the native tree walk. Dropping them leaves ancestor handles until GC, and
+  // those handles can make runtime_close fail with a sharing violation.
+  #unreleasedFiles: object[] = [];
   private constructor(
     readonly observation: z.infer<typeof runtimeSchema>,
     private readonly authority: WindowsNativeAuthority,
@@ -151,6 +155,8 @@ export class WindowsPrivateRuntime {
         relativePath,
       ]),
     );
+    let text: string;
+    let closeFailure: unknown;
     try {
       const chunks: Buffer[] = [];
       for (let offset = 0; offset < file.size;) {
@@ -170,10 +176,17 @@ export class WindowsPrivateRuntime {
         offset += value.length;
         chunks.push(value);
       }
-      return Buffer.concat(chunks).toString("utf8");
+      text = Buffer.concat(chunks).toString("utf8");
     } finally {
-      this.authority.call("close", [file.handle]);
+      try {
+        this.authority.call("close", [file.handle]);
+      } catch (cause: unknown) {
+        this.#unreleasedFiles.push(file.handle);
+        closeFailure = cause;
+      }
     }
+    if (closeFailure !== undefined) throw closeFailure;
+    return text;
   }
 
   /** Remove owned objects by handle, unlinking reparse entries without traversal. */
@@ -195,9 +208,25 @@ export class WindowsPrivateRuntime {
     runtimes.delete(windowsRuntimeIdentityKey(this.observation));
   }
 
+  /** Close admitted files that survived readFile before walking the tree. */
+  #releaseAdmittedFiles(): void {
+    const pending = this.#unreleasedFiles.splice(0);
+    let failure: unknown;
+    for (const handle of pending) {
+      try {
+        this.authority.call("close", [handle]);
+      } catch (cause: unknown) {
+        this.#unreleasedFiles.push(handle);
+        failure ??= cause;
+      }
+    }
+    if (failure !== undefined) throw failure;
+  }
+
   async #closeRuntime(): Promise<void> {
     for (let attempt = 1; ; attempt++) {
       try {
+        this.#releaseAdmittedFiles();
         this.authority.call("runtime_close", [this.observation.handle]);
         return;
       } catch (cause: unknown) {

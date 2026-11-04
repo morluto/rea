@@ -7,7 +7,7 @@ import { createElectronObservationProvider } from "../../../src/composition/elec
 import { silentLogger } from "../../../src/logger.js";
 import { startMcpTransport } from "../../../src/main/transport.js";
 import type { RuntimeDependencies } from "../../../src/main/types.js";
-import { ToolResultDelivery } from "../../../src/server/toolResult.js";
+import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 
 it("keeps the shared browser scenario provider open when the SDK discards its discovery probe", async () => {
@@ -22,7 +22,7 @@ it("keeps the shared browser scenario provider open when the SDK discards its di
   const browserClose = vi
     .spyOn(browserObservation, "close")
     .mockResolvedValue(undefined);
-  const electronObservation = createElectronObservationProvider();
+  const electronObservation = createElectronObservationProvider({});
   const electronClose = vi
     .spyOn(electronObservation, "close")
     .mockResolvedValue(undefined);
@@ -36,6 +36,21 @@ it("keeps the shared browser scenario provider open when the SDK discards its di
       throw new Error("Unexpected scenario capture");
     },
     close: scenarioClose,
+  };
+  const activeClose = vi
+    .fn<() => Promise<void>>()
+    .mockRejectedValueOnce(new Error("Fuse preflight cleanup failed"))
+    .mockResolvedValue(undefined);
+  const electronActiveObservation = {
+    identity: () => ({
+      id: "active-electron",
+      name: "Active Electron",
+      version: "1",
+    }),
+    capture: async () => {
+      throw new Error("Unexpected Electron capture");
+    },
+    close: activeClose,
   };
   const factories: Parameters<RuntimeDependencies["serve"]>[0][] = [];
   const runtime: RuntimeDependencies = {
@@ -52,11 +67,12 @@ it("keeps the shared browser scenario provider open when the SDK discards its di
     logger: silentLogger,
     serverLogger: silentLogger,
     environment: runtime.env,
-    delivery: new ToolResultDelivery(STDIO_DEFAULT_MAX_BUFFER_SIZE),
+    delivery: createToolResultDelivery(STDIO_DEFAULT_MAX_BUFFER_SIZE),
     loadOptionalProviders: async () => ({
       browserObservation,
       browserScenarioCapture,
       electronObservation,
+      electronActiveObservation,
     }),
   });
   if (!transport.ok) throw new Error("Transport failed");
@@ -70,17 +86,23 @@ it("keeps the shared browser scenario provider open when the SDK discards its di
     expect(browserClose).not.toHaveBeenCalled();
     expect(scenarioClose).not.toHaveBeenCalled();
     expect(electronClose).not.toHaveBeenCalled();
+    expect(activeClose).not.toHaveBeenCalled();
 
     await expect(transport.closeOptionalProviders()).rejects.toMatchObject({
-      errors: [expect.objectContaining({ message: "Scenario cleanup failed" })],
+      errors: [
+        expect.objectContaining({ message: "Scenario cleanup failed" }),
+        expect.objectContaining({ message: "Fuse preflight cleanup failed" }),
+      ],
     });
     expect(browserClose).toHaveBeenCalledTimes(1);
     expect(scenarioClose).toHaveBeenCalledTimes(1);
+    expect(activeClose).toHaveBeenCalledTimes(1);
     expect(electronClose).toHaveBeenCalledTimes(1);
     await transport.closeOptionalProviders();
     await transport.closeOptionalProviders();
     expect(browserClose).toHaveBeenCalledTimes(1);
     expect(scenarioClose).toHaveBeenCalledTimes(2);
+    expect(activeClose).toHaveBeenCalledTimes(2);
     expect(electronClose).toHaveBeenCalledTimes(1);
   } finally {
     await transport.closeAndroid();
@@ -97,7 +119,7 @@ it("closes optional providers when MCP server startup throws", async () => {
   const browserClose = vi
     .spyOn(browserObservation, "close")
     .mockResolvedValue(undefined);
-  const electronObservation = createElectronObservationProvider();
+  const electronObservation = createElectronObservationProvider({});
   const electronClose = vi
     .spyOn(electronObservation, "close")
     .mockResolvedValue(undefined);
@@ -126,7 +148,7 @@ it("closes optional providers when MCP server startup throws", async () => {
       logger: silentLogger,
       serverLogger: silentLogger,
       environment: runtime.env,
-      delivery: new ToolResultDelivery(STDIO_DEFAULT_MAX_BUFFER_SIZE),
+      delivery: createToolResultDelivery(STDIO_DEFAULT_MAX_BUFFER_SIZE),
       loadOptionalProviders: async () => ({
         browserObservation,
         browserScenarioCapture,
@@ -134,7 +156,17 @@ it("closes optional providers when MCP server startup throws", async () => {
       }),
     });
 
-    expect(transport).toEqual({ ok: false });
+    expect(transport).toMatchObject({
+      ok: false,
+      cancelled: false,
+      handle: { close: expect.any(Function) },
+      closeAndroid: expect.any(Function),
+      closeOptionalProviders: expect.any(Function),
+    });
+    // Failed admission still returns partial owners for idempotent retries.
+    await transport.handle.close();
+    await transport.closeOptionalProviders();
+    await transport.closeAndroid();
     expect(browserClose).toHaveBeenCalledTimes(1);
     expect(scenarioClose).toHaveBeenCalledTimes(1);
     expect(electronClose).toHaveBeenCalledTimes(1);

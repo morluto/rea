@@ -1,5 +1,8 @@
 import { afterEach, expect, it } from "vitest";
+import { access, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { evidenceSchema } from "../../../src/domain/evidence.js";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { rizinTestInferiorTty } from "./RizinTestInferiorTty.js";
 import {
   createRizinCoverageHarness,
@@ -70,6 +73,12 @@ it.skipIf(process.platform === "win32")(
     const result = await manager.execute(started.value.session_id, "large");
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.value.result.output_truncated).toBe(true);
+    expect(manager.status(started.value.session_id)).toMatchObject({
+      recent_output_truncated: true,
+      recent_output: expect.arrayContaining([
+        "a".repeat(16384) + "[recent frame truncated]",
+      ]),
+    });
   },
 );
 
@@ -85,17 +94,107 @@ it.skipIf(process.platform === "win32")(
   },
 );
 
-it.skipIf(process.platform === "win32")(
-  "preserves unsolicited history and marks oversized recent frames",
-  async () => {
-    const provider = await makeProvider(
-      'process.stdout.write("\\0"); process.stdin.resume(); setTimeout(() => process.stdout.write("x".repeat(17000) + "\\0"), 20);',
+it.skipIf(process.platform === "win32").each([
+  { name: "empty", bytes: Buffer.alloc(0), prefix: "", truncated: false },
+  {
+    name: "short CJK",
+    bytes: Buffer.from("雪".repeat(10)),
+    prefix: "雪".repeat(10),
+    truncated: false,
+  },
+  {
+    name: "exact ASCII budget",
+    bytes: Buffer.from("a".repeat(16384)),
+    prefix: "a".repeat(16384),
+    truncated: false,
+  },
+  {
+    name: "oversized ASCII",
+    bytes: Buffer.from("a".repeat(17000)),
+    prefix: "a".repeat(16384),
+    truncated: true,
+  },
+  {
+    name: "two-byte boundary",
+    bytes: Buffer.from("a".repeat(16383) + "é"),
+    prefix: "a".repeat(16383),
+    truncated: true,
+  },
+  {
+    name: "oversized CJK",
+    bytes: Buffer.from("雪".repeat(20000)),
+    prefix: "雪".repeat(5461),
+    truncated: true,
+  },
+  {
+    name: "split emoji boundary",
+    bytes: Buffer.from("a".repeat(16383) + "😀" + "x".repeat(100)),
+    prefix: "a".repeat(16383),
+    truncated: true,
+  },
+  {
+    name: "complete emoji boundary",
+    bytes: Buffer.from("a".repeat(16380) + "😀" + "x"),
+    prefix: "a".repeat(16380) + "😀",
+    truncated: true,
+  },
+  {
+    name: "invalid UTF-8 expansion below the wire budget",
+    bytes: Buffer.alloc(6000, 0xff),
+    prefix: "\uFFFD".repeat(5461),
+    truncated: true,
+    invalidUtf8: true,
+  },
+])(
+  "bounds $name history while preserving complete command Evidence",
+  async ({ bytes, prefix, truncated, ...flags }) => {
+    const injected = createInjectedProcess({
+      onWrite: (text, control) => {
+        const marker = /!echo (.+)\n/u.exec(text)?.[1];
+        if (marker === undefined) return;
+        setImmediate(() => {
+          control.output(bytes);
+          control.output(Buffer.from([0]));
+          control.output(`${marker}\0`);
+        });
+      },
+    });
+    const { manager, started } = await startInjected(injected.spawnProcess);
+    expect(started.ok).toBe(true);
+    if (!started.ok) return;
+
+    const result = await manager.execute(
+      started.value.session_id,
+      "history-fixture",
     );
-    const { manager, sessionId } = await start(provider);
-    await new Promise((resolve) => setTimeout(resolve, 100));
-    const status = manager.status(sessionId);
-    expect(status?.recent_output_truncated).toBe(true);
-    expect(status?.recent_output.at(-1)).toContain("[recent frame truncated]");
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const expected = {
+      output: bytes.toString("utf8"),
+      output_truncated: false,
+      completion_status: "complete",
+    };
+    expect(result.value.evidence).toMatchObject({
+      normalized_result: expected,
+      raw_result: expected,
+    });
+    expect(result.value.result.output_invalid_utf8).toBe(
+      "invalidUtf8" in flags ? true : undefined,
+    );
+
+    // Exercise unsolicited frames too, without relying on child scheduling.
+    injected.control.output(bytes);
+    injected.control.output(Buffer.from([0]));
+    const status = manager.status(started.value.session_id);
+    expect(status?.recent_output_truncated).toBe(truncated);
+    expect(status?.output_invalid_utf8).toBe("invalidUtf8" in flags);
+    const retained = status?.recent_output.at(-1);
+    expect(retained).toBe(
+      prefix + (truncated ? "[recent frame truncated]" : ""),
+    );
+    expect(Buffer.byteLength(retained ?? "", "utf8")).toBeLessThanOrEqual(
+      16 * 1024 + 24,
+    );
   },
 );
 
@@ -137,12 +236,15 @@ it.skipIf(process.platform === "win32")(
   "cancels a command after sending it and stops its owned session",
   async () => {
     const provider = await makeProvider(
-      'process.stdout.write("\\0"); process.stdin.resume();',
+      'process.stdout.write("\\0"); process.stdin.on("data", () => process.stdout.write("slow-started\\0"));',
     );
     const { manager, sessionId } = await start(provider);
     const abort = new AbortController();
     const execution = manager.execute(sessionId, "slow", abort.signal);
-    setTimeout(() => abort.abort(), 30);
+    await expect
+      .poll(() => manager.status(sessionId)?.recent_output)
+      .toContain("slow-started");
+    abort.abort();
     expect((await execution).ok).toBe(false);
     expect(manager.status(sessionId)?.state).toBe("closed");
   },
@@ -216,26 +318,40 @@ it.skipIf(process.platform === "win32")(
   "preserves the cleanup uncertainty when cancellation cannot confirm process stop",
   async () => {
     const provider = await makeProvider(
-      'process.stdout.write("\\0"); process.stdin.resume();',
+      'process.stdout.write("\\0"); process.stdin.on("data", () => process.stdout.write("slow-started\\0"));',
     );
     const { manager, sessionId } = await start(provider, {
       stopProcess: incompleteStop,
     });
     const abort = new AbortController();
     const execution = manager.execute(sessionId, "slow", abort.signal);
-    setTimeout(() => abort.abort(), 30);
+    await expect
+      .poll(() => manager.status(sessionId)?.recent_output)
+      .toContain("slow-started");
+    abort.abort();
     const result = await execution;
     expect(result.ok).toBe(false);
-    if (!result.ok)
-      expect(result.error.message).toContain("injected stop uncertainty");
+    if (!result.ok) {
+      expect(result.error._tag).toBe("AnalysisCancelledError");
+      expect(result.error.cause).toBe(abort.signal.reason);
+      expect(result.error.cleanup?.reason).toContain(
+        "injected stop uncertainty",
+      );
+    }
   },
 );
 
 it.skipIf(process.platform === "win32")(
   "cancels a queued command without sending it after the prior command completes",
   async () => {
+    const release = join(
+      await createTestTempDirectory("rea-rizin-queue-"),
+      "release",
+    );
+    const unexpected = `${release}-second`;
     const provider = await makeProvider(
       `process.stdout.write("\\0");
+import * as fs from "node:fs";
 let input = "";
 process.stdin.setEncoding("utf8");
 process.stdin.on("data", (chunk) => {
@@ -244,19 +360,36 @@ process.stdin.on("data", (chunk) => {
     const end = input.indexOf("\\n");
     if (end < 0) break;
     const line = input.slice(0, end); input = input.slice(end + 1);
-    if (line === "first") setTimeout(() => {}, 100);
-    else if (line.startsWith("!echo ")) setTimeout(() => process.stdout.write(line.slice(6) + "\\0"), 100);
+    if (line === "first") process.stdout.write("first-started\\0");
+    else if (line === "second") fs.writeFileSync(${JSON.stringify(unexpected)}, "sent");
+    else if (line.startsWith("!echo ")) {
+      const timer = setInterval(() => {
+        if (!fs.existsSync(${JSON.stringify(release)})) return;
+        clearInterval(timer);
+        process.stdout.write(line.slice(6) + "\\0");
+      }, 10);
+    }
   }
 });`,
     );
     const { manager, sessionId } = await start(provider, {
-      frameTimeoutMs: 300,
+      frameTimeoutMs: 5_000,
     });
     const first = manager.execute(sessionId, "first");
+    await expect
+      .poll(() => manager.status(sessionId)?.recent_output)
+      .toContain("first-started");
     const abort = new AbortController();
     const queued = manager.execute(sessionId, "second", abort.signal);
-    setTimeout(() => abort.abort(), 20);
-    expect((await queued).ok).toBe(false);
+    const reason = { stage: "queued command" };
+    abort.abort(reason);
+    expect(await queued).toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisCancelledError", cause: reason },
+    });
+    await writeFile(release, "release");
     expect((await first).ok).toBe(true);
+    await expect(access(unexpected)).rejects.toMatchObject({ code: "ENOENT" });
+    expect(manager.status(sessionId)?.state).toBe("ready");
   },
 );

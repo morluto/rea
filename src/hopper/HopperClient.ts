@@ -1,3 +1,4 @@
+import { analysisSettingLimit } from "../domain/analysisSettingDefinitions.js";
 import { randomBytes, randomUUID } from "node:crypto";
 import { access } from "node:fs/promises";
 import type { Socket } from "node:net";
@@ -6,9 +7,11 @@ import { join } from "node:path";
 import writeFileAtomic from "write-file-atomic";
 
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisClientFailureContext } from "../providers/AnalysisClientFailure.js";
 import { AnalysisCapabilityUnavailableError } from "../domain/analysisErrorCore.js";
 import {
-  HopperCancelledError,
+  hopperCancelledBySignal,
+  type HopperCancelledError,
   type HopperError,
   type HopperLauncherOutcome,
   HopperProcessError,
@@ -31,6 +34,7 @@ import {
 import { err, ok, type Result } from "../domain/result.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import type { JsonValue } from "../domain/jsonValue.js";
+import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
 import type { ProgressReporter } from "../application/ProgressReporter.js";
 import { silentLogger } from "../logger.js";
 import type { Logger } from "pino";
@@ -70,7 +74,13 @@ import {
   hopperLauncherReportedApplicationNotFound,
   nativeHopperLaunchWasDenied,
 } from "./HopperProcessDiagnostic.js";
-import { DEFAULT_HOPPER_STARTUP_TIMEOUT_MS } from "../config/providerStartupTimeout.js";
+import { DEFAULT_HOPPER_STARTUP_TIMEOUT_MS } from "../domain/analysisResourceLimits.js";
+import {
+  bridgeRequestLimitMismatchError,
+  bridgeRequestOversizeError,
+  DEFAULT_BRIDGE_MAX_REQUEST,
+  type BridgeMaxRequestBytes,
+} from "../config/bridgeMaxRequestBytes.js";
 import {
   HopperRequestQueue,
   type HopperRequestActivity,
@@ -92,12 +102,22 @@ export interface HopperClientOptions {
   readonly launcher: BridgeLauncher;
   readonly runId?: string;
   readonly startupTimeoutMs?: number;
+  readonly readStartupTimeoutMs?: () => number;
+  /** Effective request ceiling. Omitted uses the 16 MiB default. */
+  readonly bridgeMaxRequestBytes?: BridgeMaxRequestBytes;
   readonly onDiagnostic?: (event: HopperDiagnostic) => void;
   readonly logger?: Logger;
 }
 
 type HopperStartupResult = Result<HopperServerInfo, AnalysisError>;
 type HopperStartupAttempt = SharedStartupAttempt<HopperStartupResult>;
+type HopperStartupOutcome =
+  | { readonly kind: "interrupted" }
+  | {
+      readonly kind: "launcher-exit";
+      readonly exitCode: number | null;
+      readonly ownsProviderLifetime: boolean;
+    };
 
 type HopperClientCloseOptions = {
   readonly progress?: ProgressReporter;
@@ -113,7 +133,9 @@ type HopperClientCloseOptions = {
  * Hopper launcher does not confer ownership of the GUI application.
  */
 export class HopperClient {
-  readonly #options: Required<Pick<HopperClientOptions, "startupTimeoutMs">> &
+  readonly #options: Required<
+    Pick<HopperClientOptions, "startupTimeoutMs" | "bridgeMaxRequestBytes">
+  > &
     HopperClientOptions;
   readonly #requests: HopperRequestQueue;
   readonly #responses: HopperResponseStream;
@@ -132,6 +154,8 @@ export class HopperClient {
   #closing = false;
   #launcherExitCode: number | null | undefined;
   #launcherFailureDiagnostic: HopperStartupFailureDiagnostic | undefined;
+  #startupOutcome: HopperStartupOutcome | undefined;
+  #startupSignal: AbortSignal | undefined;
   #operationFailure: OperationFailureRecord | undefined;
   #startupFailureResult: AnalysisError | undefined;
   #runId: string | undefined;
@@ -186,6 +210,8 @@ export class HopperClient {
       ...options,
       startupTimeoutMs:
         options.startupTimeoutMs ?? DEFAULT_HOPPER_STARTUP_TIMEOUT_MS,
+      bridgeMaxRequestBytes:
+        options.bridgeMaxRequestBytes ?? DEFAULT_BRIDGE_MAX_REQUEST,
     };
     this.#requests = new HopperRequestQueue(
       ({ id, method, params }, failed) => {
@@ -195,12 +221,39 @@ export class HopperClient {
           failed();
           return;
         }
-        socket.write(
-          `${JSON.stringify({ id, token, method, params })}\n`,
-          (cause) => {
-            if (cause !== undefined && cause !== null) failed();
-          },
-        );
+        // The FIFO keeps the caller's params. The encoded frame exists only
+        // for the request that has reached the wire.
+        const payloadValue = { id, token, method, params };
+        let payload: string;
+        try {
+          payload = JSON.stringify(payloadValue);
+        } catch (cause: unknown) {
+          this.#requests.accept(
+            id,
+            err(
+              new HopperProtocolError("Hopper socket write failed", { cause }),
+            ),
+          );
+          return;
+        }
+        const payloadBytes = Buffer.byteLength(payload);
+        if (payloadBytes > this.#options.bridgeMaxRequestBytes.maximumBytes) {
+          this.#requests.accept(
+            id,
+            err(
+              bridgeRequestOversizeError(
+                method,
+                this.#options.bridgeMaxRequestBytes,
+                payloadBytes,
+                "Hopper",
+              ),
+            ),
+          );
+          return;
+        }
+        socket.write(`${payload}\n`, (cause) => {
+          if (cause !== undefined && cause !== null) failed();
+        });
       },
     );
     this.#responses = new HopperResponseStream({
@@ -312,11 +365,11 @@ export class HopperClient {
   /** Launch the bridge once while each caller retains its own cancellation. */
   start(signal?: AbortSignal): Promise<HopperStartupResult> {
     if (isAborted(signal))
-      return Promise.resolve(err(new HopperCancelledError()));
+      return Promise.resolve(err(hopperCancelledBySignal(signal)));
     if (this.#closePromise !== undefined)
       return waitForAbortable(this.#closePromise, signal).then((closed) =>
         closed === ABORTED
-          ? err(new HopperCancelledError())
+          ? err(hopperCancelledBySignal(signal))
           : closed.ok
             ? this.start(signal)
             : closed,
@@ -354,7 +407,7 @@ export class HopperClient {
     const waited = await attempt.wait(signal);
     if (waited.status === "completed") return waited.value;
     if (waited.status === "stopped" && !waited.value.ok) return waited.value;
-    return err(new HopperCancelledError());
+    return err(hopperCancelledBySignal(signal));
   }
 
   /** Cleanup belongs to the abandoned attempt, never to a prospective retry. */
@@ -364,7 +417,7 @@ export class HopperClient {
   ): Promise<HopperStartupResult> {
     const waited = await waitForAbortable(attempt.promise, signal);
     if (waited === ABORTED || (waited.ok && isAborted(signal)))
-      return err(new HopperCancelledError());
+      return err(hopperCancelledBySignal(signal));
     if (waited.ok || waited.error.cleanupIncomplete) return waited;
     return this.start(signal);
   }
@@ -372,7 +425,7 @@ export class HopperClient {
   async #start(
     signal?: AbortSignal,
   ): Promise<Result<HopperServerInfo, AnalysisError>> {
-    if (isAborted(signal)) return err(new HopperCancelledError());
+    if (isAborted(signal)) return err(hopperCancelledBySignal(signal));
     if (
       this.#socket !== undefined ||
       this.#resources.launch !== undefined ||
@@ -389,15 +442,25 @@ export class HopperClient {
     this.#resources.shutdownConfirmed = false;
     this.#resources.externalApplication = undefined;
     const deadline = new ProviderStartupDeadline(
-      this.#options.startupTimeoutMs,
+      this.#options.readStartupTimeoutMs?.() ?? this.#options.startupTimeoutMs,
       signal,
     );
+    this.#startupOutcome = undefined;
+    this.#startupSignal = deadline.signal;
+    const onStartupAbort = (): void => {
+      if (this.#startupOutcome === undefined)
+        this.#startupOutcome = { kind: "interrupted" };
+    };
+    deadline.signal.addEventListener("abort", onStartupAbort, { once: true });
     try {
       const result = await this.#startWithin(deadline);
       return result.ok && deadline.signal.aborted
-        ? this.#startupFailure(await this.#startupInterruption(deadline))
+        ? await this.#startupFailure(await this.#interruptionFailure(deadline))
         : result;
     } finally {
+      deadline.signal.removeEventListener("abort", onStartupAbort);
+      if (this.#startupSignal === deadline.signal)
+        this.#startupSignal = undefined;
       deadline.dispose();
     }
   }
@@ -471,7 +534,7 @@ export class HopperClient {
     }
     const remainingMs = deadline.remainingMs();
     if (remainingMs <= 0) {
-      return this.#startupFailure(await this.#startupInterruption(deadline));
+      return this.#startupFailure(await this.#interruptionFailure(deadline));
     }
     const health = await this.#request(
       "health",
@@ -484,23 +547,35 @@ export class HopperClient {
     if (!health.ok) {
       return this.#startupFailure(
         deadline.signal.aborted || health.error instanceof HopperTimeoutError
-          ? await this.#startupInterruption(deadline)
+          ? await this.#interruptionFailure(deadline)
           : health.error,
       );
     }
     const parsed = await this.#authenticateServerInfo(health.value, runId);
     if (!parsed.ok) return this.#startupFailure(parsed.error);
+    if (
+      parsed.value.maxRequestBytes !==
+      this.#options.bridgeMaxRequestBytes.maximumBytes
+    )
+      return this.#startupFailure(
+        bridgeRequestLimitMismatchError(
+          "hopper_bridge",
+          this.#options.bridgeMaxRequestBytes,
+          parsed.value.maxRequestBytes,
+          "Hopper",
+        ),
+      );
     try {
       await this.#lineage.observe(this.#resources.launch);
     } catch (cause: unknown) {
       return this.#startupFailure(
         deadline.signal.aborted
-          ? await this.#startupInterruption(deadline)
+          ? await this.#interruptionFailure(deadline)
           : new HopperStartError({ cause }),
       );
     }
     if (deadline.signal.aborted)
-      return this.#startupFailure(await this.#startupInterruption(deadline));
+      return this.#startupFailure(await this.#interruptionFailure(deadline));
     return parsed;
   }
 
@@ -608,17 +683,24 @@ export class HopperClient {
     name: string,
     result: Result<JsonValue, AnalysisError>,
   ): Result<JsonValue, AnalysisError> {
-    return !result.ok &&
-      result.error instanceof HopperRemoteError &&
-      result.error.diagnosticType === "capability_unavailable"
-      ? err(
-          new AnalysisCapabilityUnavailableError(
-            "hopper",
-            name,
-            result.error.safeMessage,
-          ),
-        )
-      : result;
+    if (
+      result.ok ||
+      !(result.error instanceof HopperRemoteError) ||
+      result.error.diagnosticType !== "capability_unavailable"
+    )
+      return result;
+    const source = result.error;
+    const failure = new AnalysisCapabilityUnavailableError(
+      "hopper",
+      name,
+      source.safeMessage,
+      analysisClientFailureContext(source, "hopper", name),
+    );
+    return err(
+      source.cleanupIncomplete
+        ? failure.bindCleanupDependencies([source])
+        : failure,
+    );
   }
 
   /** Stop the bridge and report whether every owned resource was verified clean. */
@@ -779,31 +861,36 @@ export class HopperClient {
     deadline: ProviderStartupDeadline,
   ): Promise<Result<undefined, HopperError>> {
     while (deadline.remainingMs() > 0) {
-      if (deadline.signal.aborted)
-        return err(await this.#startupInterruption(deadline));
-      if (this.#closing) return err(new HopperProcessError(null));
-      if (
-        this.#launcherExitCode !== undefined &&
-        this.#resources.launch !== undefined &&
-        (this.#resources.launch.providerLifetime === "launcher-process" ||
-          this.#launcherExitCode !== 0)
-      ) {
-        const failure = await this.#launcherStartupFailure(
-          this.#resources.launch.providerLifetime === "launcher-process",
-          this.#launcherExitCode,
-          deadline,
+      const observedExit =
+        this.#startupOutcome?.kind === "launcher-exit"
+          ? this.#startupOutcome
+          : this.#startupOutcome?.kind === "interrupted"
+            ? undefined
+            : this.#observedLauncherExit();
+      // A launcher exit the owned process already holds is a physical startup
+      // failure; a cancellation that arrives afterwards must not replace it.
+      if (deadline.signal.aborted && observedExit === undefined)
+        return err(
+          this.#startupOutcome?.kind === "interrupted"
+            ? await this.#startupInterruption(deadline)
+            : await this.#interruptionFailure(deadline),
         );
-        return deadline.interruption === "cancelled"
-          ? err(await this.#startupInterruption(deadline))
-          : err(failure);
-      }
+      if (this.#closing) return err(new HopperProcessError(null));
+      if (observedExit !== undefined)
+        return err(
+          await this.#launcherStartupFailure(
+            observedExit.ownsProviderLifetime,
+            observedExit.exitCode,
+            deadline,
+          ),
+        );
       try {
         await access(socketPath);
       } catch (cause: unknown) {
         // best-effort cleanup: socket polling; absence means keep waiting.
         void cause;
         if ((await deadline.wait(50)) === "aborted")
-          return err(await this.#startupInterruption(deadline));
+          return err(await this.#interruptionFailure(deadline));
         continue;
       }
       const attempt = await connectHopperSocketOnce(
@@ -816,9 +903,46 @@ export class HopperClient {
         return ok(undefined);
       }
       if ((await deadline.wait(50)) === "aborted")
-        return err(await this.#startupInterruption(deadline));
+        return err(await this.#interruptionFailure(deadline));
     }
-    return err(await this.#startupInterruption(deadline));
+    return err(await this.#interruptionFailure(deadline));
+  }
+
+  /** A launcher exit the owned process already holds, when it is a failure. */
+  #observedLauncherExit():
+    | {
+        readonly exitCode: number | null;
+        readonly ownsProviderLifetime: boolean;
+      }
+    | undefined {
+    const launch = this.#resources.launch;
+    if (launch === undefined) return undefined;
+    const exit = this.#resources.processSupervisor?.observedExit();
+    if (exit === undefined) return undefined;
+    const exitCode = exit.code;
+    const ownsProviderLifetime = launch.providerLifetime === "launcher-process";
+    return ownsProviderLifetime || exitCode === null || exitCode !== 0
+      ? { exitCode, ownsProviderLifetime }
+      : undefined;
+  }
+
+  /** Project an interruption, keeping an exit the owner already observed. */
+  async #interruptionFailure(
+    deadline: ProviderStartupDeadline,
+  ): Promise<HopperError> {
+    const observed =
+      this.#startupOutcome?.kind === "launcher-exit"
+        ? this.#startupOutcome
+        : this.#startupOutcome?.kind === "interrupted"
+          ? undefined
+          : this.#observedLauncherExit();
+    return observed === undefined
+      ? this.#startupInterruption(deadline)
+      : this.#launcherStartupFailure(
+          observed.ownsProviderLifetime,
+          observed.exitCode,
+          deadline,
+        );
   }
 
   async #startupInterruption(
@@ -827,7 +951,7 @@ export class HopperClient {
     if (deadline.signal.reason === STARTUP_OWNER_CLOSED)
       return new HopperProtocolError("Hopper session closed during startup");
     if (deadline.interruption === "cancelled")
-      return new HopperCancelledError();
+      return hopperCancelledBySignal(deadline.signal);
     return new HopperTimeoutError(
       deadline.timeoutMs,
       undefined,
@@ -838,6 +962,13 @@ export class HopperClient {
         (await this.#resources.processSupervisor?.waitForOutputClose(0)) ??
           false,
       ),
+      {
+        limit: analysisSettingLimit(
+          "hopper.startup_timeout_ms",
+          deadline.timeoutMs,
+          undefined,
+        ),
+      },
     );
   }
 
@@ -928,7 +1059,7 @@ export class HopperClient {
       readonly timeoutMs?: number;
       readonly progress?: ProgressReporter;
     },
-  ): Promise<Result<JsonValue, HopperError>> {
+  ): Promise<Result<JsonValue, AnalysisError>> {
     const id = this.#nextId++;
     if (
       this.#resources.launch?.providerLifetime === "launcher-process" &&
@@ -961,7 +1092,24 @@ export class HopperClient {
       );
     }
     if (options.signal?.aborted === true)
-      return err(new HopperCancelledError());
+      return err(hopperCancelledBySignal(options.signal));
+    const payloadValue = { id, token, method, params };
+    // Count escaped JSON before the request can wait in the FIFO. A rejected
+    // payload is not serialized, and an admitted one is serialized only when
+    // it reaches the wire.
+    const measured = jsonValueByteLength(
+      payloadValue,
+      this.#options.bridgeMaxRequestBytes.maximumBytes,
+    );
+    if (measured > this.#options.bridgeMaxRequestBytes.maximumBytes)
+      return err(
+        bridgeRequestOversizeError(
+          method,
+          this.#options.bridgeMaxRequestBytes,
+          measured,
+          "Hopper",
+        ),
+      );
     const startedAt = performance.now();
     const result = await this.#requests.run(id, method, params, {
       ...(options.signal === undefined ? {} : { signal: options.signal }),
@@ -1061,6 +1209,19 @@ export class HopperClient {
     if (event.type !== "exit") return;
     this.#launcherExitCode = event.code;
     this.#launcherFailureDiagnostic = hopperLauncherFailureDiagnostic(event);
+    if (
+      this.#startupSignal !== undefined &&
+      this.#startupOutcome === undefined
+    ) {
+      const ownsProviderLifetime =
+        launch.providerLifetime === "launcher-process";
+      if (ownsProviderLifetime || event.code === null || event.code !== 0)
+        this.#startupOutcome = {
+          kind: "launcher-exit",
+          exitCode: event.code,
+          ownsProviderLifetime,
+        };
+    }
     this.#options.onDiagnostic?.({
       type: "launcher-exit",
       code: event.code,

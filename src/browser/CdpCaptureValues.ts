@@ -3,6 +3,7 @@ import { BrowserObservationError } from "../domain/browserObservationError.js";
 import type { BrowserObservationOperation } from "../domain/browserObservationErrors.js";
 import { sanitizeBrowserUrl } from "../domain/browserObservation.js";
 import { createWebTextArtifact } from "../domain/webContentArtifact.js";
+import { err, ok, type Result } from "../domain/result.js";
 
 export type UnknownRecord = Readonly<Record<string, unknown>>;
 
@@ -30,23 +31,15 @@ export const cdpStringValue = (value: unknown): string | undefined =>
 export const numberValue = (value: unknown): number | undefined =>
   typeof value === "number" && Number.isFinite(value) ? value : undefined;
 
-/** Preserve partial script declarations; omitted or invalid fields remain unknown. */
-export const scriptMetadataValues = (
-  value: UnknownRecord | undefined,
-): {
-  readonly hash: string | null;
-  readonly length: number | null;
-  readonly isModule: boolean | null;
-} => {
-  const length = numberValue(value?.length);
-  return {
-    hash: cdpStringValue(value?.hash) ?? null,
-    length:
-      length !== undefined && Number.isSafeInteger(length) && length >= 0
-        ? length
-        : null,
-    isModule: typeof value?.isModule === "boolean" ? value.isModule : null,
-  };
+/** An omitted resource size is unknown; a supplied invalid size is malformed. */
+export const resourceContentSize = (
+  value: unknown,
+): Result<number | null, { readonly _tag: "InvalidCdpResourceSize" }> => {
+  if (value === undefined) return ok(null);
+  const size = numberValue(value);
+  return size !== undefined && size >= 0
+    ? ok(size)
+    : err({ _tag: "InvalidCdpResourceSize" });
 };
 
 export const requiredRecord = (value: unknown): UnknownRecord => {
@@ -113,7 +106,8 @@ export const delayWithCancellation = async (
   const maximumTimerDelay = 2_147_483_647;
   let remaining = durationMs;
   while (remaining > 0) {
-    if (signal?.aborted === true) throw new AnalysisCancelledError(operation);
+    if (signal?.aborted === true)
+      throw new AnalysisCancelledError(operation, { cause: signal.reason });
     const delay = Math.min(remaining, maximumTimerDelay);
     await new Promise<void>((resolve, reject) => {
       const timer = setTimeout(() => {
@@ -123,7 +117,9 @@ export const delayWithCancellation = async (
       const onAbort = (): void => {
         clearTimeout(timer);
         signal?.removeEventListener("abort", onAbort);
-        reject(new AnalysisCancelledError(operation));
+        reject(
+          new AnalysisCancelledError(operation, { cause: signal?.reason }),
+        );
       };
       signal?.addEventListener("abort", onAbort, { once: true });
       if (signal?.aborted === true) onAbort();

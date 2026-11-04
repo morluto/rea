@@ -1,3 +1,4 @@
+import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import { z } from "incur";
 import { createWebModuleTraceService } from "../composition/webModules.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
@@ -66,7 +67,8 @@ export const registerWebModuleCommands = (
             service,
             "web-module-trace",
             "trace_web_module_imports",
-          ),
+            signal,
+          ).then(projectCliAnalysisResult),
         ),
       ),
   });

@@ -151,6 +151,100 @@ describe("Windows private runtime cleanup retry", () => {
   });
 });
 
+const admittedFile = {
+  requestedPath: "C:\\rea-private\\endpoint",
+  finalPath: "C:\\rea-private\\endpoint",
+  filesystem: "NTFS" as const,
+  volumeSerial: "0123456789abcdef",
+  fileId: "fedcba9876543210fedcba9876543210",
+  size: 2,
+  directory: false,
+  handle: { kind: "admitted-file" },
+};
+
+describe("Windows private runtime admitted file close", () => {
+  it("retries the same file wrapper before the runtime tree walk", async () => {
+    const failure = nativeFailure(5);
+    const operations: string[] = [];
+    let fileCloses = 0;
+    nativeCall.mockImplementation((operation: string) => {
+      operations.push(operation);
+      if (operation === "runtime_create") return observation;
+      if (operation === "runtime_open") return admittedFile;
+      if (operation === "read") return Buffer.from("ok");
+      if (operation === "close" && fileCloses++ === 0) throw failure;
+      return null;
+    });
+    const runtime = WindowsPrivateRuntime.create("C:\\", "rea-");
+    const readFailure: unknown = (() => {
+      try {
+        runtime.readFile("endpoint");
+        return undefined;
+      } catch (cause: unknown) {
+        return cause;
+      }
+    })();
+    expect(readFailure).toBe(failure);
+    await runtime.close();
+
+    expect(fileCloses).toBe(2);
+    expect(operations).toEqual([
+      "runtime_create",
+      "runtime_open",
+      "read",
+      "close",
+      "close",
+      "runtime_close",
+    ]);
+  });
+
+  it("does not walk the runtime while the admitted file close is still failing", async () => {
+    const denied = nativeFailure(5);
+    const operations: string[] = [];
+    nativeCall.mockImplementation((operation: string) => {
+      operations.push(operation);
+      if (operation === "runtime_create") return observation;
+      if (operation === "runtime_open") return admittedFile;
+      if (operation === "read") return Buffer.from("ok");
+      if (operation === "close") throw denied;
+      return null;
+    });
+    const runtime = WindowsPrivateRuntime.create("C:\\", "rea-");
+    const readFailure: unknown = (() => {
+      try {
+        runtime.readFile("endpoint");
+        return undefined;
+      } catch (cause: unknown) {
+        return cause;
+      }
+    })();
+    expect(readFailure).toBe(denied);
+
+    await expect(runtime.close()).rejects.toBe(denied);
+
+    expect(operations).toEqual([
+      "runtime_create",
+      "runtime_open",
+      "read",
+      "close",
+      "close",
+    ]);
+    expect(windowsPrivateRuntime(observation.path)).toBe(runtime);
+    nativeCall.mockImplementation((operation: string) => {
+      operations.push(operation);
+      if (operation === "runtime_create") return observation;
+      if (operation === "runtime_open") return admittedFile;
+      if (operation === "read") return Buffer.from("ok");
+      return null;
+    });
+    await runtime.close();
+    expect(operations.slice(-2)).toEqual(["close", "runtime_close"]);
+    expect(() => windowsPrivateRuntime(observation.path)).toThrow(
+      /No native private runtime/u,
+    );
+  });
+});
+
 it.each([995, 5])(
   "classifies native snapshot code %i independently of a late abort",
   async (code) => {

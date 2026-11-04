@@ -17,10 +17,11 @@ const inventory = (
 ) => {
   const sha = digit.repeat(64);
   const artifactId = artifactIdForContent(sha);
+  const rootEntryKind = format === "directory" ? "directory" : "file";
   const occurrenceId = occurrenceIdForLocation({
     rootArtifactId: artifactId,
     logicalPath: ".",
-    entryKind: "file",
+    entryKind: rootEntryKind,
   });
   const nodes: ArtifactNode[] = [
     {
@@ -40,7 +41,7 @@ const inventory = (
       artifact_id: artifactId,
       parent_occurrence_id: null,
       logical_path: ".",
-      entry_kind: "file",
+      entry_kind: rootEntryKind,
       artifact_kind: "resource",
       artifact_format: format,
       declared_size: 1,

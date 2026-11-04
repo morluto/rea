@@ -12,7 +12,7 @@ export const nativeDataTypeInputSchema = z
     (value) => (value.type === undefined) !== (value.address === undefined),
     "Supply exactly one of type or address",
   );
-/** Types remain analysis database observations; child identities can be inspected separately. */
+/** Types and component identities remain analysis database observations. */
 export const nativeDataTypeSchema = z.strictObject({
   status: z.enum(["available", "unavailable"]),
   reason: z.string().nullable(),
@@ -32,27 +32,42 @@ export const nativeDataTypeSchema = z.strictObject({
   source: z.literal("analysis-database"),
   source_archive: z.string().nullable(),
   address: z.string().nullable(),
-  size_bytes: z.number().int().nonnegative().nullable(),
-  alignment_bytes: z.number().int().positive().nullable(),
+  size_bytes: z.int().nonnegative().nullable(),
+  alignment_bytes: z.int().positive().nullable(),
   packing_enabled: z.boolean().nullable(),
   referenced_type: z.string().nullable(),
-  array_count: z.number().int().nonnegative().nullable(),
-  array_stride_bytes: z.number().int().nonnegative().nullable(),
+  array_count: z.int().nonnegative().nullable(),
+  array_stride_bytes: z.int().nonnegative().nullable(),
   fields: z.array(
     z.strictObject({
-      ordinal: z.number().int().nonnegative(),
+      ordinal: z.int().nonnegative(),
       name: z.string().nullable(),
-      offset_bytes: z.number().int().nonnegative(),
-      size_bytes: z.number().int().nonnegative().nullable(),
+      offset_bytes: z.int().nonnegative(),
+      size_bytes: z.int().nonnegative().nullable(),
       type_id: z.string(),
-      bit_size: z.number().int().nonnegative().nullable(),
-      bit_offset: z.number().int().nonnegative().nullable(),
+      bit_size: z.int().nonnegative().nullable(),
+      bit_offset: z.int().nonnegative().nullable(),
+      bit_field: z
+        .strictObject({
+          base_type_id: z.string(),
+          declared_bit_size: z.int().nonnegative(),
+          component_type_lookup: z.enum([
+            "equivalent",
+            "different",
+            "not-found",
+          ]),
+          base_type_lookup: z.enum(["equivalent", "different", "not-found"]),
+        })
+        .optional()
+        .describe(
+          "Observed bit-field base and exact manager lookups. bit_size is the effective width; bit_offset is the least-significant-bit offset within the base type. Omission means bit-field details were not reported.",
+        ),
       status: z.enum(["observed", "unsupported"]),
       flexible_tail: z.literal("unknown"),
     }),
   ),
   members: z.array(z.strictObject({ name: z.string(), value: z.string() })),
-  total_fields: z.number().int().nonnegative(),
+  total_fields: z.int().nonnegative(),
   truncated: z.boolean(),
   limitations: z.array(z.string()),
   metadata_recovery: nativeMetadataRecoverySchema.optional(),

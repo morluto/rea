@@ -3,20 +3,21 @@ import { isDeepStrictEqual } from "node:util";
 import { join } from "node:path";
 import { TextReader, Uint8ArrayWriter, ZipWriter } from "@zip.js/zip.js";
 
-import { json, run } from "./lib/verify-package-core.mjs";
-
 /** Run artifact and JavaScript application analysis against packaged fixtures. */
 export async function verifyPackageArtifactAndElectron({
+  commands,
   cli,
   workspace,
   environment,
 }) {
   const artifactArchive = await verifyPackagedArtifact({
+    commands,
     cli,
     workspace,
     environment,
   });
   await verifyPackagedElectronApplication({
+    commands,
     cli,
     workspace,
     environment,
@@ -24,20 +25,25 @@ export async function verifyPackageArtifactAndElectron({
   return { artifactArchive };
 }
 
-const verifyPackagedArtifact = async ({ cli, workspace, environment }) => {
+const verifyPackagedArtifact = async ({
+  commands,
+  cli,
+  workspace,
+  environment,
+}) => {
   const artifactArchive = join(workspace, "artifact.zip");
   const artifactWriter = new ZipWriter(new Uint8ArrayWriter());
   await artifactWriter.add("app/main.js", new TextReader("main();"));
   await writeFile(artifactArchive, await artifactWriter.close());
-  const artifactInspection = json(
-    await run(
+  const artifactInspection = JSON.parse(
+    await commands.run(
       cli,
       ["inspect-artifact", artifactArchive, "--json"],
       environment,
     ),
   );
-  const repeatedArtifactInspection = json(
-    await run(
+  const repeatedArtifactInspection = JSON.parse(
+    await commands.run(
       cli,
       ["inspect-artifact", artifactArchive, "--json"],
       environment,
@@ -57,6 +63,7 @@ const verifyPackagedArtifact = async ({ cli, workspace, environment }) => {
   )
     throw new Error("packaged artifact inventory CLI failed");
   await verifyPackagedArtifactExtraction({
+    commands,
     artifactArchive,
     artifactInventory,
     cli,
@@ -67,6 +74,7 @@ const verifyPackagedArtifact = async ({ cli, workspace, environment }) => {
 };
 
 const verifyPackagedElectronApplication = async ({
+  commands,
   cli,
   workspace,
   environment,
@@ -85,8 +93,8 @@ const verifyPackagedElectronApplication = async ({
     join(applicationRoot, "preload.js"),
     'const { contextBridge, ipcRenderer } = require("electron");\ncontextBridge.exposeInMainWorld("rea", { ping: () => ipcRenderer.invoke("rea:ping") });\n',
   );
-  const applicationAnalysis = json(
-    await run(
+  const applicationAnalysis = JSON.parse(
+    await commands.run(
       cli,
       ["analyze-javascript-application", applicationRoot, "--json"],
       environment,
@@ -100,8 +108,12 @@ const verifyPackagedElectronApplication = async ({
       ?.paired_renderer_transmissions !== 1
   )
     throw new Error("packaged JavaScript application analysis CLI failed");
-  const routedApplicationAnalysis = json(
-    await run(cli, ["analyze", applicationRoot, "--json"], environment),
+  const routedApplicationAnalysis = JSON.parse(
+    await commands.run(
+      cli,
+      ["analyze", applicationRoot, "--json"],
+      environment,
+    ),
   );
   assertRoutedApplicationAnalysis(routedApplicationAnalysis);
 };
@@ -113,6 +125,7 @@ const sameArtifactIdentity = (left, right) =>
   isDeepStrictEqual(left?.edges, right?.edges);
 
 const verifyPackagedArtifactExtraction = async ({
+  commands,
   artifactArchive,
   artifactInventory,
   cli,
@@ -123,8 +136,8 @@ const verifyPackagedArtifactExtraction = async ({
   );
   if (occurrence?.logical_path === undefined)
     throw new Error("packaged artifact inventory omitted the selected member");
-  const extraction = json(
-    await run(
+  const extraction = JSON.parse(
+    await commands.run(
       cli,
       ["extract-artifact", artifactArchive, "--json"],
       environment,

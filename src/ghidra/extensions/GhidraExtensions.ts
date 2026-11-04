@@ -1,3 +1,4 @@
+import { GhidraAdmissionError } from "../GhidraAdmissionError.js";
 import { createHash } from "node:crypto";
 import { realpath, mkdir } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
@@ -14,8 +15,8 @@ import { assertArtifactReadActive } from "../../artifacts/ArtifactFileOperation.
 import {
   readGhidraProfileArtifact,
   writeGhidraProfileArtifact,
-  ghidraProfileArtifactError,
-} from "../GhidraProfileArtifacts.js";
+  ghidraFileFailure,
+} from "../GhidraFileArtifacts.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { jsonObjectSchema } from "../../domain/jsonValue.js";
 import { err, ok, type Result } from "../../domain/result.js";
@@ -86,7 +87,7 @@ const readJar = (
     signal,
     (bytes) => {
       if (bytes.length < 4 || bytes.readUInt32LE(0) !== 0x04034b50)
-        throw new Error(`Ghidra extension is not a JAR: ${path}`);
+        throw new GhidraAdmissionError("not_jar", { path });
       return bytes;
     },
   );
@@ -125,7 +126,7 @@ export const resolveGhidraExtensions = async (
           });
         } catch (cause: unknown) {
           return err(
-            ghidraProfileArtifactError(cause, "resolve_analysis_profile", {
+            ghidraFileFailure(cause, "resolve_analysis_profile", {
               extension: adapter.id,
               path: configured,
             }),
@@ -139,7 +140,7 @@ export const resolveGhidraExtensions = async (
       return ok(extensions);
     })
     .catch((cause: unknown) =>
-      err(ghidraProfileArtifactError(cause, "resolve_analysis_profile")),
+      err(ghidraFileFailure(cause, "resolve_analysis_profile")),
     );
 
 /** Require explicit local configuration before admitting executable code from a profile. */
@@ -213,13 +214,13 @@ export const snapshotGhidraExtensions = async (
           adapter === undefined ||
           adapter.entryClass !== extension.entry_class
         )
-          throw new Error(
-            `Unregistered Ghidra extension identity: ${extension.id}`,
-          );
+          throw new GhidraAdmissionError("unregistered", {
+            id: extension.id,
+          });
         if ((await realpath(extension.configured_path)) !== extension.path)
-          throw new Error(
-            `Ghidra extension resolved path differs from explicit configuration: ${extension.id}`,
-          );
+          throw new GhidraAdmissionError("path_differs", {
+            id: extension.id,
+          });
       }
       const directory = join(runtimeRoot, "extensions");
       await mkdir(directory, { mode: 0o700 });
@@ -229,9 +230,10 @@ export const snapshotGhidraExtensions = async (
         if (
           createHash("sha256").update(bytes).digest("hex") !== extension.sha256
         )
-          throw new Error(
-            `Ghidra extension digest differs from committed profile: ${extension.id} (${extension.path})`,
-          );
+          throw new GhidraAdmissionError("digest_differs", {
+            id: extension.id,
+            path: extension.path,
+          });
         const path = join(directory, `${extension.id}.jar`);
         await writeGhidraProfileArtifact(path, bytes, resources, signal);
         result.push({ ...extension, path });
@@ -239,7 +241,7 @@ export const snapshotGhidraExtensions = async (
       return result;
     })
     .catch((cause: unknown) => {
-      throw ghidraProfileArtifactError(cause, "open_binary");
+      throw ghidraFileFailure(cause, "open_binary");
     });
 
 /** Require every configured producer result to match its artifact and registered ABI. */

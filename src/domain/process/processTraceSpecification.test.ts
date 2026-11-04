@@ -305,4 +305,50 @@ describe("finite trace specification validation", () => {
       }).success,
     ).toBe(false);
   });
+
+  it("rejects variants that accept the same traces as an earlier variant", () => {
+    const base = specification();
+    const result = processTraceSpecificationSchema.safeParse({
+      events: [
+        { ...base.events[0], cardinality: { kind: "exact", count: 2 } },
+        base.events[1],
+      ],
+      language: {
+        kind: "finite_traces",
+        variants: [
+          {
+            id: "repeated",
+            trace: [{ unordered: ["ready", "ready"] }, "worker"],
+          },
+          { id: "sequence", trace: ["ready", "ready", "worker"] },
+          {
+            id: "leading",
+            trace: [{ unordered: ["ready", "worker"] }, "ready"],
+          },
+          {
+            id: "trailing",
+            trace: ["ready", { unordered: ["worker", "ready"] }],
+          },
+          {
+            id: "merged",
+            trace: [{ unordered: ["worker", "ready", "ready"] }],
+          },
+          {
+            id: "swapped",
+            trace: ["ready", { unordered: ["ready", "worker"] }],
+          },
+        ],
+      },
+    });
+    expect(result.success).toBe(false);
+    if (result.success) throw new Error("Expected duplicate finite traces");
+    expect(
+      result.error.issues.map(({ path, message }) => ({ path, message })),
+    ).toEqual(
+      [1, 5].map((index) => ({
+        path: ["language", "variants", index, "trace"],
+        message: "finite trace variants must not duplicate a trace",
+      })),
+    );
+  });
 });

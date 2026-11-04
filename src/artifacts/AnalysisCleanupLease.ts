@@ -1,40 +1,83 @@
-import type { AnalysisError } from "../domain/analysisErrorBase.js";
+import type {
+  AnalysisError,
+  AnalysisCleanupResourceOwner,
+} from "../domain/analysisErrorBase.js";
 
 /** Link one resource's confirmed release to its originating analysis error. */
 export class AnalysisCleanupLease {
   #released = false;
-  #errors: WeakRef<AnalysisError>[] = [];
+  #releasePromise: Promise<void> | undefined;
   readonly #groups = new Set<AnalysisCleanupLeaseGroup>();
 
-  readonly cleanupResources: readonly string[] | undefined;
+  /** Whether this exact owner has confirmed release. */
+  get released(): boolean {
+    return this.#released;
+  }
+
+  readonly #resourceOwner: AnalysisCleanupResourceOwner | undefined;
+  readonly #resources: readonly string[] | undefined;
+
+  get cleanupResources(): readonly string[] | undefined {
+    return this.#resourceOwner === undefined
+      ? this.#resources
+      : this.#resourceOwner.cleanupResources;
+  }
+
+  /** Adopt exact close authority while retaining its live labels across retries. */
+  static forCloseOwner(
+    owner: {
+      close(): Promise<void>;
+      readonly cleanupResources?: readonly string[] | undefined;
+    },
+    resource: string,
+  ): AnalysisCleanupLease {
+    return new AnalysisCleanupLease(
+      () => owner.close(),
+      !("cleanupResources" in owner)
+        ? [resource]
+        : {
+            get cleanupResources() {
+              return owner.cleanupResources;
+            },
+          },
+    );
+  }
 
   constructor(
     private readonly cleanup: () => Promise<void>,
-    resources?: readonly string[],
+    resources?: readonly string[] | AnalysisCleanupResourceOwner,
   ) {
-    this.cleanupResources =
-      resources === undefined ? undefined : [...resources];
+    if (resources !== undefined && "cleanupResources" in resources) {
+      this.#resourceOwner = resources;
+      this.#resources = undefined;
+    } else {
+      this.#resourceOwner = undefined;
+      this.#resources = resources === undefined ? undefined : [...resources];
+    }
   }
 
-  async release(): Promise<void> {
-    if (this.#released) return;
-    await this.cleanup();
-    this.#released = true;
-    this.#resolveBoundErrors();
-    for (const group of this.#groups) group.ownerReleased(this);
-    this.#groups.clear();
+  release(): Promise<void> {
+    if (this.#released) return Promise.resolve();
+    if (this.#releasePromise !== undefined) return this.#releasePromise;
+    const attempt = Promise.resolve()
+      .then(async () => {
+        await this.cleanup();
+        this.#released = true;
+        for (const group of this.#groups) group.ownerReleased(this);
+        this.#groups.clear();
+      })
+      .finally(() => {
+        if (this.#releasePromise === attempt) this.#releasePromise = undefined;
+      });
+    this.#releasePromise = attempt;
+    return attempt;
   }
 
   /** Binding can follow a concurrent retry that already confirmed release. */
   bindCleanupError(error: AnalysisError): void {
-    if (this.#released) {
-      error.resolveCleanup();
-      return;
-    }
-    this.#errors = [
-      ...this.#errors.filter((reference) => reference.deref() !== undefined),
-      new WeakRef(error),
-    ];
+    new AnalysisCleanupLeaseGroup(error, [this], {
+      preserveResourceAttribution: true,
+    });
   }
 
   /** Bind one aggregate error to every exact lease in a failed retry set. */
@@ -47,11 +90,6 @@ export class AnalysisCleanupLease {
       if (!retained.hasLiveError) this.#groups.delete(retained);
     this.#groups.add(group);
   }
-
-  #resolveBoundErrors(): void {
-    for (const reference of this.#errors) reference.deref()?.resolveCleanup();
-    this.#errors = [];
-  }
 }
 
 /** Conjunctive cleanup binding for an error covering multiple exact owners. */
@@ -59,11 +97,17 @@ export class AnalysisCleanupLeaseGroup {
   readonly #error: WeakRef<AnalysisError>;
   readonly #pending: Set<AnalysisCleanupLease>;
 
-  constructor(error: AnalysisError, owners: readonly AnalysisCleanupLease[]) {
+  constructor(
+    error: AnalysisError,
+    owners: readonly AnalysisCleanupLease[],
+    options: { readonly preserveResourceAttribution?: boolean } = {},
+  ) {
     this.#error = new WeakRef(error);
     this.#pending = new Set(owners);
     if (this.#pending.size === 0) return;
-    error.bindCleanupResourceOwner(this);
+    if (options.preserveResourceAttribution === true)
+      error.bindCleanupCompletionOwner(this);
+    else error.bindCleanupResourceOwner(this);
     for (const owner of this.#pending) owner.bindCleanupGroup(this);
   }
 

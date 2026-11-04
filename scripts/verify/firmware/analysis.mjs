@@ -9,7 +9,12 @@ import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { firmwareResultSchemas } from "../../../dist/domain/firmware/firmwareAnalysis.js";
 import { parseEvidence } from "../../../dist/domain/evidence.js";
-import { hashFirmwareFile } from "../../../dist/firmware/FirmwareFiles.js";
+import { ArtifactResourceScope } from "../../../dist/artifacts/ArtifactResourceScope.js";
+import { hashVerifierFile } from "../../lib/verifier-file-resources.mjs";
+import {
+  closeVerifierResources,
+  withVerifierCleanup,
+} from "../../lib/verifier-cleanup.mjs";
 
 const execFileAsync = promisify(execFile);
 const { join, resolve, dirname } = nodePath;
@@ -79,7 +84,7 @@ const oracle = JSON.parse(
   await fs.readFile(join(FIXTURE_ROOT, "oracle.json"), "utf8"),
 );
 const firmwarePath = join(FIXTURE_ROOT, "firmware.bin");
-assert.equal(await hashFirmwareFile(firmwarePath), oracle.sha256);
+const fileResources = new ArtifactResourceScope();
 
 const workDir = await fs.mkdtemp(join(tmpdir(), "rea-real-firmware-"));
 const baseEnv = Object.fromEntries(
@@ -160,7 +165,10 @@ async function verifyFiles(evidence) {
     assert.ok(entry !== undefined, `Missing extracted ${suffix}`);
     assert.equal(entry.sha256, expected.sha256);
     assert.equal(entry.size, expected.size);
-    assert.equal(await hashFirmwareFile(entry.path), expected.sha256);
+    assert.equal(
+      (await hashVerifierFile(entry.path, fileResources)).sha256,
+      expected.sha256,
+    );
     assert.equal(entry.original_file_range, null);
     assert.equal(entry.runtime_address, null);
   }
@@ -346,6 +354,7 @@ async function stageGhidra(mcpFiles) {
 
   const dossierRaw = await callTool("analyze_function", {
     procedure: "firmware_probe",
+    detail: "complete",
   });
   const dossier = parseEvidence(dossierRaw);
   assert.equal(
@@ -371,7 +380,11 @@ async function stageGhidra(mcpFiles) {
 // Entry point
 // ---------------------------------------------------------------------------
 
-try {
+await withVerifierCleanup(async () => {
+  assert.equal(
+    (await hashVerifierFile(firmwarePath, fileResources)).sha256,
+    oracle.sha256,
+  );
   const cli = await stageCli();
   await connectMcp();
   const mcpFiles = await stageMcp(cli);
@@ -381,11 +394,16 @@ try {
     await stageGhidra(mcpFiles);
 
   assert.equal(
-    await hashFirmwareFile(firmwarePath),
+    (await hashVerifierFile(firmwarePath, fileResources)).sha256,
     oracle.sha256,
     "Original firmware bytes must remain unchanged",
   );
-} finally {
-  await mcpClient.close();
-  await fs.rm(workDir, { recursive: true, force: true });
-}
+}, [
+  async () => {
+    await closeVerifierResources([
+      () => mcpClient.close(),
+      () => fileResources.close(),
+    ]);
+    await fs.rm(workDir, { recursive: true, force: true });
+  },
+]);

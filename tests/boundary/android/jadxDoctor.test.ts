@@ -1,12 +1,22 @@
+import { createInspectionResources } from "../../fixtures/inspectionResources.js";
 import { chmod, mkdir, realpath, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { expect, it as test } from "vitest";
+import { expect, it as test, onTestFinished } from "vitest";
 
-import { inspectJadxProvider } from "../../../src/android/JadxDoctor.js";
+import { inspectJadxProvider as inspectProvider } from "../../../src/android/JadxDoctor.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { writeJadxJarInventory } from "../../fixtures/android/jadxJar.js";
 import { writeOrderedZip } from "../../fixtures/artifactEntryOrder.js";
+
+const inspectionOwner = () => {
+  const resources = createInspectionResources();
+  onTestFinished(() => resources.close());
+  return resources.owner;
+};
+const inspectJadxProvider = (
+  environment: Parameters<typeof inspectProvider>[0],
+) => inspectProvider(environment, inspectionOwner());
 
 const it = test.skipIf(process.platform === "win32");
 
@@ -121,6 +131,31 @@ it("publishes no registration environment when REA_JADX_MCP_JAR is unset", async
       },
     ],
   });
+});
+
+it("reports a relative REA_JADX_MCP_JAR as a rejected selection, not an unset one", async () => {
+  const inspection = await inspectJadxProvider({
+    REA_JADX_MCP_JAR: "tools/jadx-headless-mcp.jar",
+  });
+
+  expect(inspection).toMatchObject({
+    id: "jadx",
+    configured: true,
+    available: false,
+    registrationEnvironment: {},
+    checks: [
+      {
+        name: "configuration",
+        ok: false,
+        code: "open_options_invalid",
+        classification: "config_drift",
+      },
+    ],
+  });
+  expect(inspection.checks[0]?.detail).toContain(
+    'REA_JADX_MCP_JAR must be an absolute path; received "tools/jadx-headless-mcp.jar".',
+  );
+  expect(inspection.checks[0]?.remediation).toContain("REA_JADX_MCP_JAR");
 });
 
 it("publishes no registration environment when the configured JAR fails validation", async () => {

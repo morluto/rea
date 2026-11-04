@@ -1,5 +1,5 @@
 import type { CapabilityDescriptor } from "../application/AnalysisProvider.js";
-import { ARTIFACT_GRAPH_PROVIDER } from "../application/InvestigationProviders.js";
+import { ARTIFACT_GRAPH_PROVIDER } from "../domain/investigationProviders.js";
 import { ARTIFACT_ANALYSIS_OPERATIONS } from "../contracts/artifactToolContracts.js";
 
 /** Declare artifact coverage without constructing readers or acquiring resources. */

@@ -1,6 +1,10 @@
-import { afterEach, expect, it, vi } from "vitest";
+import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import { cleanupElectronProcesses } from "./ElectronProcessCleanup.js";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { createHash } from "node:crypto";
+import { fileURLToPath } from "node:url";
 
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import {
@@ -9,12 +13,12 @@ import {
 } from "../../tests/fixtures/electron/fuseImage.js";
 
 import * as processOwnership from "../process/ProcessOwnership.js";
+import { ProcessOwnershipEvidenceOwner } from "../process/ProcessOwnershipEvidence.js";
 import * as ownershipObservation from "../process/ProcessOwnershipObservation.js";
 import * as electronActions from "./PlaywrightElectronActiveActions.js";
 import { electronActiveObservationInputSchema } from "../domain/javascript/electronActiveObservation.js";
-import type { OwnedProcessGroup } from "../process/ProcessOwnership.js";
+import type { PersistentOwnedProcessGroup } from "../process/ProcessOwnership.js";
 import {
-  cleanupElectronProcesses,
   PlaywrightElectronActiveProvider,
   safeElectronEnvironment,
 } from "./PlaywrightElectronActiveProvider.js";
@@ -26,12 +30,38 @@ afterEach(() => {
 
 it("passes the selected environment and ownership token to Electron launch", async () => {
   vi.stubEnv("LANG", "ambient-language");
+  vi.stubEnv("XAUTHORITY", "/ambient/.Xauthority");
   let launchedEnvironment: unknown;
+  const callerArguments = [
+    "--",
+    "/caller/plugin.asar",
+    "-r",
+    "caller-hook.cjs",
+    "\\server\\share\\".repeat(150),
+  ];
+  const launchPlan = [
+    "-r",
+    fileURLToPath(
+      new URL("../../scripts/electron-active-hook.cjs", import.meta.url),
+    ),
+    process.execPath,
+    ...callerArguments,
+  ];
+  const handoff = JSON.stringify({
+    length: launchPlan.length,
+    sha256: createHash("sha256")
+      .update(JSON.stringify(launchPlan))
+      .digest("hex"),
+  });
   const provider = new PlaywrightElectronActiveProvider(
     {
       LANG: "selected-language",
       PATH: "/selected/bin",
+      DISPLAY: ":selected-display",
+      XAUTHORITY: "/selected/display-authorization",
+      WAYLAND_DISPLAY: "selected-wayland",
       REA_PRIVATE_VALUE: "not-a-launch-setting",
+      REA_ELECTRON_CAPTURE_ARGV: "forged ambient launch plan",
     },
     async (options) => {
       launchedEnvironment = options?.env;
@@ -42,6 +72,7 @@ it("passes the selected environment and ownership token to Electron launch", asy
     ...electronActiveObservationInputSchema.parse({
       executable_path: process.execPath,
       application_path: process.execPath,
+      args: callerArguments,
     }),
     application_root: dirname(process.execPath),
   });
@@ -50,8 +81,13 @@ it("passes the selected environment and ownership token to Electron launch", asy
   expect(launchedEnvironment).toEqual({
     LANG: "selected-language",
     PATH: "/selected/bin",
+    DISPLAY: ":selected-display",
+    XAUTHORITY: "/selected/display-authorization",
+    WAYLAND_DISPLAY: "selected-wayland",
     REA_PROCESS_RUN_ID: expect.any(String),
+    REA_ELECTRON_CAPTURE_ARGV: handoff,
   });
+  expect(handoff.length).toBeLessThan(128);
 });
 
 it("passes required Windows runtime variables without inheriting unrelated values", () => {
@@ -74,12 +110,17 @@ it("passes required Windows runtime variables without inheriting unrelated value
   });
 });
 
-const ownership = {
-  runId: "run",
-  leaderPid: 4242,
-  processGroupId: 4242,
-  expectedParentPid: 1,
-} satisfies OwnedProcessGroup;
+let ownership: PersistentOwnedProcessGroup;
+
+beforeEach(() => {
+  ownership = {
+    runId: "run",
+    leaderPid: 4242,
+    processGroupId: 4242,
+    expectedParentPid: 1,
+    evidenceOwner: new ProcessOwnershipEvidenceOwner(),
+  };
+});
 
 const emptyHookSnapshot = () => ({
   events: [],
@@ -105,6 +146,9 @@ it.each([
 ])(
   "does not signal a Windows Electron PID when lineage is unavailable: %s",
   async (reason) => {
+    vi.spyOn(processOwnership, "verifyNoTokenOwnedProcesses").mockResolvedValue(
+      { cleaned: false, reason: "authored census unavailable" },
+    );
     const terminateTree = vi.fn(async () => ({
       cleaned: true as const,
       signaled: true,
@@ -125,12 +169,18 @@ it.each([
     expect(terminateTree).not.toHaveBeenCalled();
     expect(result).toEqual({
       cleaned: false,
-      reason: `${reason}; helper cleanup was not proven`,
+      reason: expect.stringContaining(
+        `${reason}; helper cleanup was not proven`,
+      ),
     });
   },
 );
 
 it("does not signal an unobserved Windows Electron lineage", async () => {
+  vi.spyOn(processOwnership, "verifyNoTokenOwnedProcesses").mockResolvedValue({
+    cleaned: false,
+    reason: "authored census unavailable",
+  });
   const terminateTree = vi.fn();
   expect(
     await cleanupElectronProcesses(ownership, undefined, {
@@ -139,50 +189,49 @@ it("does not signal an unobserved Windows Electron lineage", async () => {
     }),
   ).toEqual({
     cleaned: false,
-    reason:
+    reason: expect.stringContaining(
       "owned Electron lineage was not observed; helper cleanup was not proven",
+    ),
   });
   expect(terminateTree).not.toHaveBeenCalled();
 });
 
-it.each([0, 1])(
-  "preserves a Windows termination failure at tree index %i",
-  async (failedIndex) => {
-    const failure = { cleaned: false as const, reason: "termination denied" };
-    const terminateTree = vi
-      .fn<typeof processOwnership.cleanupWindowsProcessTree>()
-      .mockResolvedValue({ cleaned: true, signaled: true });
-    terminateTree.mockImplementationOnce(async () =>
-      failedIndex === 0 ? failure : { cleaned: true, signaled: true },
-    );
-    if (failedIndex === 1) terminateTree.mockResolvedValueOnce(failure);
-    const result = await cleanupElectronProcesses(
-      ownership,
-      {
-        status: "verified",
-        observedAt: "2026-10-10T00:00:00.000Z",
-        lineage: {
-          runId: ownership.runId,
-          launcherPid: ownership.leaderPid,
-          launcherParentPid: 1,
-          processGroupId: ownership.processGroupId,
-          descendants: [
-            {
-              pid: 4343,
-              parentPid: ownership.leaderPid,
-              processGroupId: ownership.processGroupId,
-            },
-          ],
-        },
+it("preserves a Windows root termination failure without signaling cached descendants", async () => {
+  const failure = { cleaned: false as const, reason: "termination denied" };
+  const terminateTree = vi
+    .fn<typeof processOwnership.cleanupWindowsProcessTree>()
+    .mockResolvedValue({ cleaned: true, signaled: true });
+  terminateTree.mockResolvedValueOnce(failure);
+  const result = await cleanupElectronProcesses(
+    ownership,
+    {
+      status: "verified",
+      observedAt: "2026-10-10T00:00:00.000Z",
+      lineage: {
+        runId: ownership.runId,
+        launcherPid: ownership.leaderPid,
+        launcherParentPid: 1,
+        processGroupId: ownership.processGroupId,
+        descendants: [
+          {
+            pid: 4343,
+            parentPid: ownership.leaderPid,
+            processGroupId: ownership.processGroupId,
+          },
+        ],
       },
-      { platform: "win32", terminateTree },
-    );
-    expect(result).toBe(failure);
-    expect(terminateTree).toHaveBeenCalledTimes(failedIndex + 1);
-  },
-);
+    },
+    { platform: "win32", terminateTree },
+  );
+  expect(result).toBe(failure);
+  expect(terminateTree).toHaveBeenCalledOnce();
+});
 
 it("signals a Windows Electron tree only after lineage is verified", async () => {
+  vi.spyOn(processOwnership, "verifyNoTokenOwnedProcesses").mockResolvedValue({
+    cleaned: true,
+    signaled: false,
+  });
   const terminateTree = vi.fn(async () => ({
     cleaned: true as const,
     signaled: true,
@@ -210,7 +259,7 @@ it("signals a Windows Electron tree only after lineage is verified", async () =>
   );
 
   expect(terminateTree).toHaveBeenNthCalledWith(1, 4242);
-  expect(terminateTree).toHaveBeenNthCalledWith(2, 4343);
+  expect(terminateTree).toHaveBeenCalledOnce();
   expect(result).toEqual({ cleaned: true, signaled: true });
 });
 
@@ -227,6 +276,10 @@ it("retains the partial capture without taskkill when Windows lineage is unavail
     launcherPid: 424242,
     processGroupId: 424242,
     reason: "process table permission denied",
+  });
+  vi.spyOn(processOwnership, "verifyNoTokenOwnedProcesses").mockResolvedValue({
+    cleaned: false,
+    reason: "authored census unavailable",
   });
   const originalPlatform = Object.getOwnPropertyDescriptor(process, "platform");
   Object.defineProperty(process, "platform", { value: "win32" });
@@ -272,8 +325,9 @@ it("retains the partial capture without taskkill when Windows lineage is unavail
       _tag: "BrowserObservationError",
       reason: "cleanup_failed",
       cleanup: {
-        reason:
+        reason: expect.stringContaining(
           "process table permission denied; helper cleanup was not proven",
+        ),
       },
       partialObservation: {
         kind: "electron-active-observation",
@@ -468,6 +522,85 @@ it("cancels a windowless wait action and cleans up the owned application", async
     },
   });
   expect(result.error.cause).toBe(reason);
+});
+
+it("records actions after a failed action as not executed and keeps the capture", async () => {
+  stubVerifiedElectronCleanup();
+  const state = {
+    windows: [],
+    metrics: [],
+    electronVersion: "44.0.0",
+    hookSnapshot: emptyHookSnapshot(),
+  };
+  vi.spyOn(electronActions, "readApplicationState").mockResolvedValue(state);
+  vi.spyOn(electronActions, "readFinalApplicationState").mockResolvedValue(
+    state,
+  );
+  const click = vi.fn(async () => {
+    throw new Error("strict mode violation");
+  });
+  const waitForTimeout = vi.fn(async () => undefined);
+  const page = { locator: () => ({ click }), waitForTimeout };
+  const application = {
+    process: () => ({ pid: 424242 }),
+    close: vi.fn(async () => undefined),
+    windows: () => [page],
+    browserWindow: async () => ({
+      evaluate: async (read: (window: { id: number }) => unknown) =>
+        read({ id: 42 }),
+      dispose: async () => {},
+    }),
+    firstWindow: async () => page,
+  };
+
+  const result = await captureWithController(
+    new AbortController(),
+    application,
+    [
+      { step_id: "fail", kind: "click", selector: "#duplicate" },
+      { step_id: "settle", kind: "wait", duration_ms: 0, window_index: 0 },
+      {
+        step_id: "link",
+        kind: "deep-link",
+        delivery: "open-url",
+        url: "rea-test://open",
+      },
+    ],
+  );
+
+  if (!result.ok) throw result.error;
+  expect(click).toHaveBeenCalledOnce();
+  expect(waitForTimeout).not.toHaveBeenCalled();
+  expect(application.close).toHaveBeenCalledOnce();
+  expect(result.value.actions).toEqual([
+    {
+      step_id: "fail",
+      kind: "click",
+      window_index: 0,
+      target: "window:42",
+      status: "failed",
+      elapsed_ms: expect.any(Number),
+      error: "strict mode violation",
+    },
+    {
+      step_id: "settle",
+      kind: "wait",
+      window_index: 0,
+      target: null,
+      status: "cancelled",
+      elapsed_ms: 0,
+      error: "not executed after an earlier action failure",
+    },
+    {
+      step_id: "link",
+      kind: "deep-link",
+      window_index: null,
+      target: null,
+      status: "cancelled",
+      elapsed_ms: 0,
+      error: "not executed after an earlier action failure",
+    },
+  ]);
 });
 
 it("cancels a pending initial state read and cleans up the owned application", async () => {
@@ -680,8 +813,8 @@ it("cancels a completed capture when cancellation arrives during process cleanup
   stubCompletedCapture();
   const controller = new AbortController();
   const reason = new Error("SIGTERM during process cleanup");
-  // The POSIX path ends with the token sweep; Windows ends with tree termination.
-  vi.spyOn(processOwnership, "verifyNoTokenOwnedProcesses").mockImplementation(
+  // POSIX cleanup owns the final sweep; Windows uses tree termination.
+  vi.spyOn(processOwnership, "cleanupOwnedProcessGroup").mockImplementation(
     async () => {
       controller.abort(reason);
       return {
@@ -743,13 +876,15 @@ it("keeps cleanup failure precedence over cancellation observed during cleanup",
   expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected cleanup to fail");
   expect(result.error).toMatchObject({
-    _tag: "BrowserObservationError",
-    reason: "cleanup_failed",
-    cleanup: { reason: "process group still alive" },
+    cleanupIncomplete: true,
     partialObservation: {
       kind: "electron-active-observation",
       capture: { application: { cleanup: "unverified" } },
     },
+  });
+  expect(result.error.cleanupPrimary).toMatchObject({
+    _tag: "BrowserObservationError",
+    reason: "cancelled",
   });
 });
 
@@ -763,7 +898,7 @@ it.each(["process", "transport"] as const)(
     vi.spyOn(electronActions, "runElectronActions").mockImplementation(
       async () => {
         controller.abort(reason);
-        return [];
+        return { actions: [] };
       },
     );
     if (failure === "process") {
@@ -793,10 +928,8 @@ it.each(["process", "transport"] as const)(
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected incomplete cleanup");
     expect(result.error).toMatchObject({
-      _tag: "BrowserObservationError",
-      reason: "cleanup_failed",
-      userCategory: "cancelled",
-      cause: {
+      cleanupIncomplete: true,
+      cleanupPrimary: {
         _tag: "BrowserObservationError",
         reason: "cancelled",
         cause: reason,
@@ -805,11 +938,153 @@ it.each(["process", "transport"] as const)(
         kind: "electron-active-observation",
       },
     });
-    expect(result.error.userMessage).toContain(
+    expect(JSON.stringify(result.error.diagnostics)).toContain(
       failure === "process"
         ? "process group still alive"
         : "transport still connected",
     );
     expect(application.close).toHaveBeenCalledOnce();
+  },
+);
+
+it.each(["process", "transport", "both"] as const)(
+  "retains %s cleanup and blocks replacement capture until recovery",
+  async (failure) => {
+    stubVerifiedElectronCleanup();
+    stubCompletedCapture();
+    let denyProcess = failure !== "transport";
+    let denyTransport = failure !== "process";
+    const processCleanup = vi.fn(async () =>
+      denyProcess
+        ? { cleaned: false as const, reason: "authored process cleanup denial" }
+        : { cleaned: true as const, signaled: false },
+    );
+    vi.spyOn(processOwnership, "cleanupOwnedProcessGroup").mockImplementation(
+      processCleanup,
+    );
+    vi.spyOn(processOwnership, "cleanupWindowsProcessTree").mockImplementation(
+      processCleanup,
+    );
+    const application = {
+      process: () => ({ pid: 424242 }),
+      close: vi.fn(async () => {
+        if (denyTransport) throw new Error("authored transport cleanup denial");
+      }),
+      windows: () => [],
+    };
+    const launch = vi.fn(
+      async () =>
+        application as unknown as Awaited<
+          ReturnType<typeof import("playwright-core")._electron.launch>
+        >,
+    );
+    const provider = new PlaywrightElectronActiveProvider({}, launch);
+    const input = {
+      ...electronActiveObservationInputSchema.parse({
+        executable_path: process.execPath,
+        application_path: process.execPath,
+      }),
+      application_root: dirname(process.execPath),
+    };
+    try {
+      const first = await provider.capture(input);
+      expect(first).toMatchObject({
+        ok: false,
+        error: { cleanupIncomplete: true },
+      });
+      const blocked = await provider.capture(input);
+      expect(blocked).toMatchObject({
+        ok: false,
+        error: { cleanupIncomplete: true },
+      });
+      expect(launch).toHaveBeenCalledOnce();
+      denyProcess = false;
+      denyTransport = false;
+      expect((await provider.capture(input)).ok).toBe(true);
+      expect(first).toMatchObject({
+        error: { cleanupIncomplete: false, cleanupResources: [] },
+      });
+      expect(blocked).toMatchObject({
+        error: { cleanupIncomplete: false, cleanupResources: [] },
+      });
+      expect(launch).toHaveBeenCalledTimes(2);
+    } finally {
+      denyProcess = false;
+      denyTransport = false;
+      await provider.close();
+    }
+  },
+);
+
+it.each(["process", "transport"] as const)(
+  "retains cancellation first observed during failed %s cleanup through retry",
+  async (phase) => {
+    stubVerifiedElectronCleanup();
+    stubCompletedCapture();
+    const controller = new AbortController();
+    const reason = { caller: "during final cleanup", phase };
+    let denied = true;
+    const processCleanup = async () => {
+      if (phase === "process" && denied) {
+        controller.abort(reason);
+        return {
+          cleaned: false as const,
+          reason: "authored late process failure",
+        };
+      }
+      return { cleaned: true as const, signaled: false };
+    };
+    vi.spyOn(processOwnership, "cleanupOwnedProcessGroup").mockImplementation(
+      processCleanup,
+    );
+    vi.spyOn(processOwnership, "cleanupWindowsProcessTree").mockImplementation(
+      processCleanup,
+    );
+    const application = {
+      process: () => ({ pid: 424242 }),
+      windows: () => [],
+      close: vi.fn(async () => {
+        if (phase === "transport" && denied) {
+          controller.abort(reason);
+          throw new Error("authored late transport failure");
+        }
+      }),
+    };
+    const provider = new PlaywrightElectronActiveProvider(
+      {},
+      async () =>
+        application as unknown as Awaited<
+          ReturnType<typeof import("playwright-core")._electron.launch>
+        >,
+    );
+    try {
+      const result = await provider.capture(
+        {
+          ...electronActiveObservationInputSchema.parse({
+            executable_path: process.execPath,
+            application_path: process.execPath,
+          }),
+          application_root: dirname(process.execPath),
+        },
+        { signal: controller.signal },
+      );
+      if (result.ok)
+        throw new Error("Expected cleanup failure over cancellation");
+      expect(projectAnalysisError(result.error).code).toBe(
+        "cleanup_incomplete",
+      );
+      expect(result.error.cleanupPrimary?.cause).toBe(reason);
+      expect(result.error.partialObservation).toMatchObject({
+        kind: "electron-active-observation",
+      });
+      denied = false;
+      await provider.close();
+      expect(result.error.cleanupIncomplete).toBe(false);
+      expect(projectAnalysisError(result.error).code).toBe("cancelled");
+      expect(result.error.cleanupPrimary?.cause).toBe(reason);
+    } finally {
+      denied = false;
+      await provider.close();
+    }
   },
 );

@@ -1,7 +1,12 @@
 import { z } from "zod";
+import { bundleResourceBoundResultSchema } from "./bundleResourceRoot.js";
 
-import { jsonValueSchema } from "../jsonValue.js";
+import { jsonObjectSchema, jsonValueSchema } from "../jsonValue.js";
 import { AnalysisOutputError } from "../analysisErrorCore.js";
+import {
+  artifactInventoryCoverageSchema,
+  type ArtifactInventoryCoverage,
+} from "../artifactGraph.js";
 
 const RESOURCE_KEY_FIELDS = new Set([
   "image",
@@ -13,6 +18,7 @@ const RESOURCE_KEY_FIELDS = new Set([
   "asset_name",
   "UIImageName",
   "NSImageName",
+  "NSResourceName",
 ]);
 
 /** Recognized direct scalar resource fields; nested dictionaries are not inferred. */
@@ -28,24 +34,24 @@ export const appleResourceKeyFields = (
 
 /** Caller-controlled page bounds for compiled Apple asset metadata. */
 export const appleAssetCatalogInputSchema = z.strictObject({
-  offset: z.number().int().min(0).default(0),
-  limit: z.number().int().min(1).max(10_000).default(1_000),
+  offset: z.int().min(0).default(0),
+  limit: z.int().min(1).max(10_000).default(1_000),
 });
 
 const catalogSchema = z.strictObject({
   path: z.string().min(1),
   sha256: z.string().regex(/^[a-f0-9]{64}$/u),
-  record_count: z.number().int().nonnegative(),
+  record_count: z.int().nonnegative(),
 });
 
 const recordSchema = z.strictObject({
   catalog_path: z.string().min(1),
   catalog_sha256: z.string().regex(/^[a-f0-9]{64}$/u),
-  index: z.number().int().nonnegative(),
+  index: z.int().nonnegative(),
   kind: z.enum(["catalog", "rendition"]),
   asset_name: z.string().nullable(),
   rendition_name: z.string().nullable(),
-  metadata: z.record(z.string(), jsonValueSchema),
+  metadata: jsonObjectSchema,
 });
 
 const resourceKeyMatchSchema = z.strictObject({
@@ -59,25 +65,42 @@ const resourceKeyMatchSchema = z.strictObject({
     z.strictObject({
       catalog_path: z.string().min(1),
       catalog_sha256: z.string().regex(/^[a-f0-9]{64}$/u),
-      record_index: z.number().int().nonnegative(),
+      record_index: z.int().nonnegative(),
       rendition_name: z.string().nullable(),
     }),
   ),
 });
 
-/** Normalized result returned by asset catalog inspection. */
-export const appleAssetCatalogResultSchema = z.strictObject({
-  target_sha256: z.string().regex(/^[a-f0-9]{64}$/u),
-  catalogs: z.array(catalogSchema),
-  total_records: z.number().int().nonnegative(),
-  offset: z.number().int().nonnegative(),
-  limit: z.number().int().positive(),
-  records: z.array(recordSchema),
-  resource_key_matches: z.array(resourceKeyMatchSchema),
-  next_offset: z.number().int().nonnegative().nullable(),
-  truncated: z.boolean(),
-  limitations: z.array(z.string()),
+const analysisCoverageSchema = z.strictObject({
+  status: z.enum(["complete", "partial", "unknown"]),
+  reason: z.string().nullable(),
 });
+export type AppleAssetAnalysisCoverage = z.infer<typeof analysisCoverageSchema>;
+
+/** Normalized result returned by asset catalog inspection. */
+export const appleAssetCatalogResultSchema = bundleResourceBoundResultSchema(
+  z.string().regex(/^[a-f0-9]{64}$/u),
+  {
+    catalogs: z.array(catalogSchema),
+    inventory_coverage: artifactInventoryCoverageSchema,
+    catalog_coverage: analysisCoverageSchema.default({
+      status: "unknown",
+      reason: "catalog_coverage_not_reported",
+    }),
+    resource_key_coverage: analysisCoverageSchema.default({
+      status: "unknown",
+      reason: "resource_key_coverage_not_reported",
+    }),
+    total_records: z.int().nonnegative(),
+    offset: z.int().nonnegative(),
+    limit: z.int().positive(),
+    records: z.array(recordSchema),
+    resource_key_matches: z.array(resourceKeyMatchSchema),
+    next_offset: z.int().nonnegative().nullable(),
+    truncated: z.boolean(),
+    limitations: z.array(z.string()),
+  },
+);
 
 export type AppleAssetCatalogRecord = z.infer<typeof recordSchema>;
 
@@ -93,7 +116,7 @@ export const parseAppleAssetCatalogRecords = (
       "assetutil output must be a JSON array",
     );
   return value.map((record, index) => {
-    const parsed = z.record(z.string(), jsonValueSchema).safeParse(record);
+    const parsed = jsonObjectSchema.safeParse(record);
     if (!parsed.success)
       throw new AnalysisOutputError(
         "inspect_asset_catalog",
@@ -106,7 +129,11 @@ export const parseAppleAssetCatalogRecords = (
 
 /** Project catalog records and apply stable global pagination. */
 export const projectAppleAssetCatalogPage = (input: {
-  readonly targetSha256: string;
+  readonly inventoryCoverage?: ArtifactInventoryCoverage;
+  readonly catalogCoverage?: AppleAssetAnalysisCoverage;
+  readonly resourceKeyCoverage?: AppleAssetAnalysisCoverage;
+  readonly targetSha256: string | null;
+  readonly resourceRoot?: import("./bundleResourceRoot.js").BundleResourceRoot;
   readonly catalogs: readonly {
     readonly path: string;
     readonly sha256: string;
@@ -174,7 +201,22 @@ export const projectAppleAssetCatalogPage = (input: {
     };
   });
   return appleAssetCatalogResultSchema.parse({
+    inventory_coverage: input.inventoryCoverage ?? {
+      scope: "container-entries",
+      status: "unknown",
+    },
+    catalog_coverage: input.catalogCoverage ?? {
+      status: "unknown",
+      reason: "catalog_coverage_not_reported",
+    },
+    resource_key_coverage: input.resourceKeyCoverage ?? {
+      status: "unknown",
+      reason: "resource_key_coverage_not_reported",
+    },
     target_sha256: input.targetSha256,
+    ...(input.resourceRoot === undefined
+      ? {}
+      : { resource_root: input.resourceRoot }),
     catalogs: input.catalogs.map(
       ({ path, sha256, records: catalogRecords }) => ({
         path,
@@ -188,7 +230,7 @@ export const projectAppleAssetCatalogPage = (input: {
     records,
     resource_key_matches: resourceKeyMatches,
     next_offset: next < all.length ? next : null,
-    truncated: input.offset > 0 || next < all.length,
+    truncated: records.length !== all.length,
     limitations: [
       "Rendition metadata is reported as emitted by the installed assetutil version; private fields and platform-specific interpretations are not normalized.",
       "Asset catalog inspection does not decode or extract rendition image bytes.",

@@ -259,3 +259,43 @@ describe("trace path completion and cancellation", () => {
     });
   });
 });
+
+it.each([null, "", "0x1000"] as const)(
+  "validates the observed call-graph root and retains its limitations (%s)",
+  async (address) => {
+    const calls: string[] = [];
+    const tools = new EnhancedTools({
+      execute: async (operation) => {
+        calls.push(operation);
+        return ok(
+          createAnalysisExecution(
+            operation === "procedure_address" ? address : [],
+            provider,
+            {
+              limitations:
+                operation === "procedure_address"
+                  ? ["Root identity caveat"]
+                  : [],
+            },
+          ),
+        );
+      },
+    });
+    const result = await tools.execute("get_call_graph", { address: "main" });
+    if (address === "0x1000") {
+      expect(result).toMatchObject({
+        ok: true,
+        value: {
+          limitations: expect.arrayContaining(["Root identity caveat"]),
+        },
+      });
+      expect(calls).toEqual(["procedure_address", "procedure_callees"]);
+    } else {
+      expect(result).toMatchObject({
+        ok: false,
+        error: { _tag: "AnalysisOutputError", operation: "procedure_address" },
+      });
+      expect(calls).toEqual(["procedure_address"]);
+    }
+  },
+);

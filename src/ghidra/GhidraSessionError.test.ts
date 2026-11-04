@@ -7,6 +7,39 @@ import {
   bindGhidraSessionFailure,
 } from "./GhidraSessionError.js";
 import { GhidraLaunchError } from "./GhidraLauncher.js";
+import { createGhidraDiagnostics } from "./GhidraDiagnostics.js";
+
+it.each(["decompile_failed", "future_remote_failure"])(
+  "retains complete session diagnostics for non-input remote code %s",
+  (remoteCode) => {
+    const factory = bindGhidraSessionFailure((scope) =>
+      createGhidraDiagnostics({
+        scope,
+        targetPath: "/selected/target",
+        targetSha256: "a".repeat(64),
+        transport: "unix-socket",
+        providerVersion: "12.1.4",
+        profileDigest: "b".repeat(64),
+        runtimeRoot: "/owned/runtime",
+        snapshot: {
+          stdout: { text: "engine diagnostic", bytes: 17, observedBytes: 17 },
+          stderr: { text: "", bytes: 0, observedBytes: 0 },
+          exitCode: null,
+          signal: null,
+        },
+        previous: {},
+      }),
+    );
+    const failure = factory("remote", "Engine failed", undefined, {
+      remoteCode,
+    });
+    expect(failure.diagnostics).toMatchObject({
+      stdout: { text: "engine diagnostic" },
+      remote_code: remoteCode,
+    });
+    expect(failure.diagnostics).not.toHaveProperty("diagnostic_scope");
+  },
+);
 
 it("reports truncated cyclic causes in serializable diagnostics", () => {
   const cause = new Error("cyclic launcher failure");
@@ -19,7 +52,13 @@ it("reports truncated cyclic causes in serializable diagnostics", () => {
     cause,
   ).diagnostics;
 
-  expect(JSON.stringify(diagnostics)).toContain('"cause_truncated":true');
+  const serialized = JSON.parse(JSON.stringify(diagnostics)) as {
+    failure_cause: unknown;
+  };
+  let nested = serialized.failure_cause;
+  while (typeof nested === "object" && nested !== null && "cause" in nested)
+    nested = nested.cause;
+  expect(nested).toMatchObject({ cause_truncated: true });
 });
 
 it("keeps bounded compiler and nested launcher outcomes in diagnostics", () => {
@@ -134,6 +173,12 @@ it.each([null, undefined, new Error("original cause")])(
         remoteCode: "original",
         cancellation: { reason: null },
         cleanupFailure: cleanup,
+        partialObservation: {
+          kind: "file-snapshot-hash",
+          path: "/fixture/snapshot",
+          sha256: "a".repeat(64),
+          bytes: 17,
+        },
       },
     );
     const refreshed = original.withDiagnostics(
@@ -149,6 +194,12 @@ it.each([null, undefined, new Error("original cause")])(
       remoteCode: "original",
       cancellation: { reason: null },
       diagnostics: { stage: "last" },
+      partialObservation: {
+        kind: "file-snapshot-hash",
+        path: "/fixture/snapshot",
+        sha256: "a".repeat(64),
+        bytes: 17,
+      },
     });
     expect(refreshed.cleanupFailure).toBe(cleanup);
     cleanup.resolveCleanup();

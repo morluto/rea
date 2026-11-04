@@ -1,3 +1,6 @@
+import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import { analysisClientFailureForOperation } from "../providers/AnalysisClientFailure.js";
+import type { RetainedResourceScope } from "../application/AnalysisProvider.js";
 import type {
   DoctorProviderCheck,
   DoctorProviderInspection,
@@ -37,6 +40,7 @@ export const projectGhidraDoctorInspection = (
           check,
           inspection.installDir !== null,
           inspection.javaProbeFailure,
+          inspection.nativeDecompilerHeaderFailure,
         ),
       ),
       ...(readiness !== undefined
@@ -63,13 +67,17 @@ export const projectGhidraDoctorInspection = (
 };
 
 /** Inspect the process-configured BYO Ghidra installation for `rea doctor`. */
-export const inspectSystemGhidraProvider = (
+export const inspectSystemGhidraProvider = async (
   environment: Readonly<NodeJS.ProcessEnv>,
-): Promise<DoctorProviderInspection> =>
-  Promise.resolve(
-    projectGhidraDoctorInspection(
-      inspectGhidraInstallation({
+  resourceOwner: RetainedResourceScope,
+  signal?: AbortSignal,
+): Promise<DoctorProviderInspection> => {
+  try {
+    return projectGhidraDoctorInspection(
+      await inspectGhidraInstallation({
         environment,
+        resourceOwner,
+        ...(signal === undefined ? {} : { signal }),
         ...(environment.GHIDRA_INSTALL_DIR === undefined
           ? {}
           : { installDir: environment.GHIDRA_INSTALL_DIR }),
@@ -77,8 +85,11 @@ export const inspectSystemGhidraProvider = (
           ? {}
           : { javaHome: environment.JAVA_HOME }),
       }),
-    ),
-  );
+    );
+  } catch (cause: unknown) {
+    throw analysisClientFailureForOperation(cause, "ghidra", "doctor");
+  }
+};
 
 const selectedChecks = (
   inspection: GhidraInstallationInspection,
@@ -112,6 +123,7 @@ const projectCheck = (
   check: GhidraInstallationCheck,
   configured: boolean,
   javaFailure: GhidraInstallationInspection["javaProbeFailure"],
+  headerFailure: GhidraInstallationInspection["nativeDecompilerHeaderFailure"],
 ): DoctorProviderCheck => ({
   name: check.name,
   ok: check.status === "passed",
@@ -129,6 +141,9 @@ const projectCheck = (
             : { properties: { ...javaFailure.properties } }),
         },
       }
+    : {}),
+  ...(check.name === "native_decompiler" && headerFailure !== undefined
+    ? { details: { header_failure: projectAnalysisError(headerFailure) } }
     : {}),
   remediation: check.status === "failed" ? check.remediation : null,
   classification:

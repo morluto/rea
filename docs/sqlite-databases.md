@@ -54,11 +54,40 @@ reported. If a virtual table cannot be resolved, possible backing tables have
 ordinary tables remain selectable. Schema inventory does not execute views,
 triggers or arbitrary SQL.
 
+The exact table name `sqlite_schema` is also a supported read-only row source.
+SQLite's [`table_list`](https://www.sqlite.org/pragma.html#pragma_table_list)
+and `table_xinfo` pragmas establish its row-source type and columns. The
+[schema catalog](https://www.sqlite.org/schematab.html) has no self-entry for
+`sqlite_schema`, so REA does not invent a declaration, SQL statement or root
+page for it in `schema.tables`.
+
 Rows are optional. `table` selects one exact ordinary-table name. `columns`
 (CLI repeated `--column`) selects exact visible column names in the requested
 order; omission selects all visible columns, including generated columns.
-Unselected cells are not evaluated or projected. Column selection requires a
-table and at least one name; empty-string identifiers are valid. `row_limit`
+Unselected cells are not evaluated or projected. A selected virtual generated
+column whose expression needs a function REA's connection lacks (extensions and
+application functions are not loaded), or raises an SQL error for a sampled
+row, is refused as `capability_unavailable`. The error names the table and
+each failing selected column with SQLite's message, and recommends only columns
+whose sampled values were read; stored and other generated cells stay readable. Malformed column-name bytes
+cause a format refusal when all columns are requested. In inventory scope, an explicit valid subset can
+still be sampled without decoding unrelated malformed column names.
+
+An unavailable row source, including a `WITHOUT ROWID` primary key requiring an
+application collation, is also refused as `capability_unavailable`. The error
+retains the selected table and SQLite's reason without identifying unproven
+dependencies or diagnosing file corruption. Such a source does not provide
+readable-column recommendations. Omit `table` and select `schema_scope: "database"`
+to read stored declarations without requesting rows; the application's supported
+consistent export may be needed to obtain those values.
+
+Column selection requires a
+table and at least one name; empty-string identifiers are valid. SQLite counts
+every projected name, including a repeated name, against its native
+result-column capacity; a wider projection is refused as `resource_constraint`
+with `resource: "capacity"`, reporting the selected count and this connection's
+column limit. The selected database is readable and is not reported as
+malformed; request fewer columns per call instead. `row_limit`
 requires `table`, defaults to 20 and accepts positive safe integers. Samples
 remain subject to the byte and worker resource limits below, regardless of row count. The result reports
 the selected limit, returned count and whether more rows were observed. Row
@@ -99,8 +128,33 @@ bounds simultaneous input buffering and private snapshot/worker counts.
 
 The database and WAL together are limited to 256 MiB. SQLite values/records,
 SQL statements and the complete worker JSON reply each have a 16 MiB limit.
-The owned worker has a 256 MiB JavaScript heap limit and a 30-second inspection
-deadline. SQLite native allocations are separate from the JavaScript heap;
+Schema names count by their returned JSON text, including escaping, for UTF-8,
+UTF-16le and UTF-16be databases. Internal raw-byte lookup keys do not consume
+the reply allowance; exact name identity still comes from those stored bytes.
+Actual row byte/hex expansion still counts toward the reply.
+The owned worker has a 256 MiB JavaScript heap limit and defaults to a 30,000 ms
+deadline. Select optional MCP `worker_timeout_ms`, or CLI
+`--worker-timeout-ms <milliseconds>`, to change the budget for that call. Values
+must be integer milliseconds from 1 to 2,147,483,647 (the runtime timer range).
+It covers worker startup, queries and reply writing, **not** DB/WAL snapshot
+acquisition, final reply reads, cleanup or delivery. Allow corresponding headroom
+in the MCP client's whole-call deadline; increasing only that deadline does not
+change the worker budget. No server restart is needed.
+
+The result's `worker_timeout_ms` reports the actual parent-supervised budget,
+including the default. Historical Evidence without this field has unknown
+execution settings, not an inferred default. Explicit input selection is also
+retained in Evidence parameters; omission stays omitted. Completed observations
+retained under cancellation or cleanup failure keep the same budget facts.
+Timeout errors name the selected milliseconds, exact CLI/MCP controls, and
+cleanup-before-retry requirements. Incomplete cleanup remains a blocker even
+when a larger budget is available.
+
+For example, `rea inspect-sqlite-database ./application.sqlite
+--worker-timeout-ms 60000 --json` selects 60 seconds; equivalent MCP input is
+`{"path":"/artifacts/application.sqlite","worker_timeout_ms":60000}`.
+
+SQLite native allocations are separate from the JavaScript heap;
 overall native heap and total resident memory are not capped. Row limits do not
 override these byte and resource limits. Resource-limit failures do not return
 an incomplete schema as successful complete evidence.
@@ -130,9 +184,15 @@ retains the completed Evidence and the resource owner for cleanup retry. MCP
 records that Evidence before delivering the error, which carries its retained
 evidence ID for later retrieval or export.
 
+If a worker fails and cleanup remains incomplete, the error retains the original
+cancellation, timeout, diagnostic overflow or memory failure. Successful cleanup
+retry restores that failure's classification; it does not make the inspection
+successful.
+
 Changed input identities, special files, malformed databases, unsupported
 formats and resource failures are reported as errors with the selected path and
-meaningful reason. Encrypted databases, database repair, arbitrary SQL,
+meaningful reason. Worker resource refusals expose the caller-selected file in
+`details.diagnostics.selected_path`. Encrypted databases, database repair, arbitrary SQL,
 cross-database queries and live capture are outside this inspection's coverage.
 
 ## Compatibility verification

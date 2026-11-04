@@ -378,7 +378,12 @@ cliTest(
         input_path: directory,
         format: "directory",
       });
-      expect(response.isError, scenario.name).not.toBe(true);
+      expect(
+        response.isError,
+        response.isError
+          ? `${scenario.name}: ${JSON.stringify(response.content)}`
+          : scenario.name,
+      ).not.toBe(true);
       const evidence = contract.outputSchema.parse(response.structuredContent);
       verifyApplication(
         javascriptApplicationAnalysisResultSchema.parse(

@@ -2,23 +2,24 @@ import { z } from "zod";
 import type { ExecutionOptions } from "./AnalysisProvider.js";
 import type { WebRuntimePort } from "./WebRuntimePort.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
-import {
-  AnalysisCancelledError,
-  AnalysisOutputError,
-} from "../domain/analysisErrorCore.js";
+import { AnalysisOutputError } from "../domain/analysisErrorCore.js";
 import { createEvidence, type Evidence } from "../domain/evidence.js";
-import { jsonObjectSchema } from "../domain/jsonValue.js";
-import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
-import { err, ok, type Result } from "../domain/result.js";
+import { err, type Result } from "../domain/result.js";
 import {
   observeWebExecutionInputSchema,
   webExecutionSchema,
+  webExecutionObservationSchema,
 } from "../domain/webExecution.js";
 import {
   inspectWebEventListenersInputSchema,
   webEventListenersSchema,
+  webEventListenersObservationSchema,
 } from "../domain/webEventListeners.js";
-import { completeProviderEvidence } from "./ProviderOperationExecution.js";
+import {
+  completeProviderEvidence,
+  keepIncompleteObservation,
+} from "./ProviderOperationExecution.js";
+import { parseAnalysisInput } from "./AnalysisInput.js";
 
 /** Shared public workflows keep instrumentation and listener inspection independently selectable. */
 export class WebRuntimeService {
@@ -30,56 +31,30 @@ export class WebRuntimeService {
     options?: ExecutionOptions,
   ): Promise<Result<Evidence, AnalysisError>> {
     const operation = "observe_web_execution";
-    const parsed = parseInput(
-      observeWebExecutionInputSchema,
-      rawInput,
+    const parsed = parseAnalysisInput(
       operation,
-      options,
+      rawInput,
+      observeWebExecutionInputSchema,
+      options?.signal,
     );
     if (!parsed.ok) return parsed;
     const result = await this.provider.observeExecution(parsed.value, options);
-    if (!result.ok) {
-      const partial = result.error.partialObservation;
-      if (
-        partial !== undefined &&
-        !("evidence_id" in partial) &&
-        "instrumentation" in partial &&
-        "window" in partial
-      ) {
-        const verifiedPartial = webExecutionSchema.safeParse(partial);
-        if (verifiedPartial.success) {
-          const evidence = this.evidence(
-            operation,
-            parsed.value,
-            verifiedPartial.data,
-          );
-          if (evidence.ok) result.error.partialObservation = evidence.value;
-          else if (result.error instanceof AnalysisCancelledError)
-            return evidence;
-        } else if (result.error instanceof AnalysisCancelledError)
-          return err(
-            new AnalysisOutputError(
-              operation,
-              "Provider retained a malformed completed execution observation.",
-              { cause: verifiedPartial.error },
-            ),
-          );
-      }
-      return result;
-    }
+    if (!result.ok)
+      return this.retainRuntimePartial(
+        result.error,
+        operation,
+        "Provider retained a non-JSON incomplete execution observation.",
+        (partial) => {
+          if (!("instrumentation" in partial) || !("window" in partial))
+            return undefined;
+          const verified = webExecutionObservationSchema.safeParse(partial);
+          if (!verified.success) return undefined;
+          return this.evidence(operation, parsed.value, verified.data);
+        },
+      );
     const verified = webExecutionSchema.safeParse(result.value);
     if (!verified.success)
       return err(new AnalysisOutputError(operation, verified.error.message));
-    if (
-      verified.data.target.target_id !== parsed.value.target_id ||
-      verified.data.window.requested_ms !== parsed.value.observation_ms
-    )
-      return err(
-        new AnalysisOutputError(
-          operation,
-          "Provider changed the selected target or requested window.",
-        ),
-      );
     return this.evidence(operation, parsed.value, verified.data, options);
   }
 
@@ -89,60 +64,57 @@ export class WebRuntimeService {
     options?: ExecutionOptions,
   ): Promise<Result<Evidence, AnalysisError>> {
     const operation = "inspect_web_event_listeners";
-    const parsed = parseInput(
-      inspectWebEventListenersInputSchema,
-      rawInput,
+    const parsed = parseAnalysisInput(
       operation,
-      options,
+      rawInput,
+      inspectWebEventListenersInputSchema,
+      options?.signal,
     );
     if (!parsed.ok) return parsed;
     const result = await this.provider.inspectEventListeners(
       parsed.value,
       options,
     );
-    if (!result.ok) {
-      const partial = result.error.partialObservation;
-      if (
-        partial !== undefined &&
-        !("evidence_id" in partial) &&
-        "selected_node" in partial &&
-        "listeners" in partial
-      ) {
-        const verifiedPartial = webEventListenersSchema.safeParse(partial);
-        if (verifiedPartial.success) {
-          const evidence = this.evidence(
-            operation,
-            parsed.value,
-            verifiedPartial.data,
-          );
-          if (evidence.ok) result.error.partialObservation = evidence.value;
-          else if (result.error instanceof AnalysisCancelledError)
-            return evidence;
-        } else if (result.error instanceof AnalysisCancelledError)
-          return err(
-            new AnalysisOutputError(
-              operation,
-              "Provider retained malformed completed event-listener data.",
-              { cause: verifiedPartial.error },
-            ),
-          );
-      }
-      return result;
-    }
+    if (!result.ok)
+      return this.retainRuntimePartial(
+        result.error,
+        operation,
+        "Provider retained a non-JSON incomplete event-listener observation.",
+        (partial) => {
+          if (!("selected_node" in partial) || !("listeners" in partial))
+            return undefined;
+          const verified =
+            webEventListenersObservationSchema.safeParse(partial);
+          if (!verified.success) return undefined;
+          return this.evidence(operation, parsed.value, verified.data);
+        },
+      );
     const verified = webEventListenersSchema.safeParse(result.value);
     if (!verified.success)
       return err(new AnalysisOutputError(operation, verified.error.message));
-    if (
-      verified.data.target.target_id !== parsed.value.target_id ||
-      verified.data.selected_node.selector !== parsed.value.selector
-    )
-      return err(
-        new AnalysisOutputError(
-          operation,
-          "Provider changed the selected target or node selector.",
-        ),
-      );
     return this.evidence(operation, parsed.value, verified.data, options);
+  }
+
+  /** Promote a schema-valid partial, or keep a JSON snapshot of an incomplete one. */
+  private retainRuntimePartial(
+    error: AnalysisError,
+    operation: string,
+    nonJsonReason: string,
+    promote: (
+      partial: NonNullable<AnalysisError["partialObservation"]>,
+    ) => Result<Evidence, AnalysisError> | undefined,
+  ): Result<Evidence, AnalysisError> {
+    const partial = error.partialObservation;
+    if (partial !== undefined && !("evidence_id" in partial)) {
+      const evidence = promote(partial);
+      if (evidence !== undefined) {
+        if (evidence.ok) {
+          error.partialObservation = evidence.value;
+          return err(error);
+        }
+      }
+    }
+    return err(keepIncompleteObservation(error, operation, nonJsonReason));
   }
 
   private evidence(
@@ -151,10 +123,27 @@ export class WebRuntimeService {
       | z.infer<typeof observeWebExecutionInputSchema>
       | z.infer<typeof inspectWebEventListenersInputSchema>,
     result:
-      | z.infer<typeof webExecutionSchema>
-      | z.infer<typeof webEventListenersSchema>,
+      | z.infer<typeof webExecutionObservationSchema>
+      | z.infer<typeof webEventListenersObservationSchema>,
     options?: ExecutionOptions,
   ): Result<Evidence, AnalysisError> {
+    if (
+      result.target.target_id !== input.target_id ||
+      ("observation_ms" in input &&
+        (!("window" in result) ||
+          result.window.requested_ms !== input.observation_ms)) ||
+      ("selector" in input &&
+        (!("selected_node" in result) ||
+          result.selected_node.selector !== input.selector))
+    )
+      return err(
+        new AnalysisOutputError(
+          operation,
+          "observation_ms" in input
+            ? "Provider changed the selected target or requested window."
+            : "Provider changed the selected target or node selector.",
+        ),
+      );
     if (
       input.allowed_origins.length > 0 &&
       !input.allowed_origins.includes(result.target.origin)
@@ -169,7 +158,7 @@ export class WebRuntimeService {
       createEvidence(undefined, this.provider.identity(), {
         predicateType: `rea.${operation.replaceAll("_", "-")}`,
         operation,
-        parameters: jsonObjectSchema.parse(input),
+        parameters: input,
         result,
         confidence: "observed",
         authority: "external-service",
@@ -179,21 +168,3 @@ export class WebRuntimeService {
     );
   }
 }
-
-const parseInput = <T>(
-  schema: z.ZodType<T>,
-  rawInput: unknown,
-  operation: string,
-  options: ExecutionOptions | undefined,
-): Result<T, AnalysisError> => {
-  if (options?.signal?.aborted)
-    return err(new AnalysisCancelledError(operation));
-  const parsed = schema.safeParse(rawInput);
-  return parsed.success
-    ? ok(parsed.data)
-    : err(
-        analysisInputErrorFromIssues(operation, parsed.error.issues, rawInput, {
-          cause: parsed.error,
-        }),
-      );
-};

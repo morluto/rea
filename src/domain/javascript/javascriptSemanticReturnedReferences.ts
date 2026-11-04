@@ -4,16 +4,47 @@ import {
   semanticStaticPropertyKey,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
-import { semanticCallableResultExpressions } from "./javascriptSemanticCallableResults.js";
-import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
 import {
-  semanticArrayIndex,
+  semanticCallableResultExpressions,
+  semanticCallableResultKind,
+} from "./javascriptSemanticCallableResults.js";
+import {
+  javaScriptSourceInvocationContext,
+  javaScriptGenericInvocationMethod,
+  resolveJavaScriptGenericInvocation,
+  type JavaScriptSourceInvocationContext,
+} from "./javascriptIntrinsicInvocation.js";
+import {
+  semanticBindingAtRead,
+  semanticEffectTiming,
+} from "./javascriptSemanticMutationInitializers.js";
+import {
+  semanticReferenceSourcesInactive,
+  semanticKnownArrayIteration,
+  semanticKnownArrayIterationAt,
+  semanticSelectedReferenceSlot,
+} from "./javascriptSemanticReferenceSources.js";
+import { semanticArrayPropertyReferences } from "./javascriptSemanticObjectReferences.js";
+import {
+  semanticNormalizeCapturedSelections,
+  semanticProjectedSourcesAtRead,
+  semanticShiftCapturedSelections,
+  type SemanticCapturedSelection,
+} from "./javascriptSemanticProjectedSources.js";
+import { SEMANTIC_ALIAS_SELECTION_LIMIT } from "./javascriptSemanticResourceLimits.js";
+import {
+  semanticPropertyPathKeyMatches,
   type JavaScriptSemanticPropertyPath,
 } from "./javascriptSemanticPropertyPaths.js";
 import {
+  SemanticAliasSelections,
+  semanticAliasSelectionChoices,
+  type SemanticAliasSelectionPath,
+} from "./javascriptSemanticAliasSelections.js";
+import {
   resolveSemanticBindingState,
   type JavaScriptSemanticAnalysisState,
-  type JavaScriptSemanticInitializer,
+  type JavaScriptSemanticBindingState,
 } from "./javascriptSemanticState.js";
 
 /** A reference potentially handed to a caller or generator consumer. */
@@ -24,73 +55,25 @@ export interface SemanticReturnedReference {
 
 interface Candidate {
   readonly node: t.Node;
-  readonly path: readonly (string | number | null)[];
-  readonly initializers: ReadonlySet<JavaScriptSemanticInitializer>;
+  /** `undefined` means any projection depth after different projection depths merge. */
+  readonly path: SemanticAliasSelectionPath | undefined;
+  /** Member selection happens at its use, while a captured function keeps its read. */
+  readonly readAt?: t.Node;
+  readonly capturedSelections?:
+    | readonly SemanticCapturedSelection[]
+    | undefined;
+  readonly invocation?: JavaScriptSourceInvocationContext;
 }
 
-type InitializerContext = ReadonlySet<JavaScriptSemanticInitializer>;
-type CompletedExpansions = WeakMap<
-  t.Node,
-  Map<string, readonly InitializerContext[]>
->;
-
-interface ExpansionFrame {
-  readonly item: Candidate;
-  readonly node: t.Node;
-  readonly pathKey: string;
-  readonly parent: ExpansionFrame | null;
-  readonly blockers: Set<JavaScriptSemanticInitializer>;
+export interface SemanticReturnedReferenceResult {
+  readonly references: readonly SemanticReturnedReference[];
+  /** Source-local callable targets resolved by the same binding/projection owner. */
+  readonly callables: ReadonlySet<t.Function>;
+  /** A visible invocation-method mutation prevents a source-local result proof. */
+  readonly unresolvedInvocation?: boolean;
+  /** Both states close the supported source-local may-target graph. Widened joins projections without dropping represented targets; it does not claim runtime completeness. */
+  readonly precision: "exact" | "widened";
 }
-
-type ExpansionTask =
-  | {
-      readonly kind: "visit";
-      readonly item: Candidate;
-      readonly parent: ExpansionFrame | null;
-    }
-  | { readonly kind: "complete"; readonly frame: ExpansionFrame };
-
-const contextContains = (
-  context: InitializerContext,
-  required: InitializerContext,
-): boolean => {
-  for (const initializer of required)
-    if (!context.has(initializer)) return false;
-  return true;
-};
-
-const propagateBlockers = (
-  blockers: InitializerContext,
-  parent: ExpansionFrame | null,
-): void => {
-  if (parent === null) return;
-  for (const initializer of blockers)
-    if (parent.item.initializers.has(initializer))
-      parent.blockers.add(initializer);
-};
-
-const completeExpansion = (
-  frame: ExpansionFrame,
-  expanded: CompletedExpansions,
-): void => {
-  const paths =
-    expanded.get(frame.node) ??
-    new Map<string, readonly InitializerContext[]>();
-  const contexts = paths.get(frame.pathKey) ?? [];
-  const covered = contexts.find((context) =>
-    contextContains(frame.blockers, context),
-  );
-  if (covered === undefined) {
-    paths.set(frame.pathKey, [
-      ...contexts.filter(
-        (context) => !contextContains(context, frame.blockers),
-      ),
-      frame.blockers,
-    ]);
-    expanded.set(frame.node, paths);
-  }
-  propagateBlockers(covered ?? frame.blockers, frame.parent);
-};
 
 interface ObjectTargetIndex {
   readonly propertyByName: ReadonlyMap<
@@ -111,55 +94,302 @@ interface ObjectTargetUnknown {
 /** Resolve local result references conservatively, without claiming call execution. */
 export const createSemanticReturnedReferences = (
   state: JavaScriptSemanticAnalysisState,
-): ((callee: t.Node) => readonly SemanticReturnedReference[]) => {
-  const results = new WeakMap<t.Node, readonly SemanticReturnedReference[]>();
+  consumption:
+    | "potential-reference"
+    | "direct-call"
+    | "awaited-call" = "potential-reference",
+): ((
+  callee: t.Node,
+  invocation?: t.CallExpression | t.OptionalCallExpression,
+) => SemanticReturnedReferenceResult) => {
+  const results = new WeakMap<
+    t.Node,
+    {
+      readonly result: SemanticReturnedReferenceResult;
+      readonly invocation: t.Node | undefined;
+      readonly iterationUnknown: boolean;
+      readonly ambientWrites: number;
+      readonly dependencies: readonly {
+        readonly binding: JavaScriptSemanticBindingState;
+        readonly writes: number;
+        readonly escapes: number;
+      }[];
+    }
+  >();
   const objectTargets = new WeakMap<t.ObjectExpression, ObjectTargetIndex>();
-  return (callee) => {
+  return (callee, invocation) => {
     const existing = results.get(callee);
-    if (existing !== undefined) return existing;
-    const functions = new Set<t.Node>();
-    const work: ExpansionTask[] = [
-      {
-        kind: "visit",
-        item: { node: callee, path: [], initializers: new Set() },
-        parent: null,
-      },
-    ];
-    // Finish descendants before memoizing an expansion. Only actual external
-    // cycle blockers affect reuse; branch history is not a dependency. An
-    // acyclic expression/path is consequently expanded once across a diamond.
-    const expanded: CompletedExpansions = new WeakMap();
+    if (
+      existing !== undefined &&
+      existing.invocation === invocation &&
+      existing.iterationUnknown === state.arrayIterationUnknown &&
+      existing.ambientWrites === state.ambientWriteEffects.length &&
+      existing.dependencies.every(
+        ({ binding, writes, escapes }) =>
+          binding.memberWrites.length === writes &&
+          binding.escapedPaths.length === escapes,
+      )
+    )
+      return existing.result;
+    const dependencies = new Map<
+      JavaScriptSemanticBindingState,
+      { readonly writes: number; readonly escapes: number }
+    >();
+    const functions = new Set<t.Function>();
+    const work: Candidate[] = [];
+    // A transition depends on the source read and current projection, not the
+    // initializer history used to reach it. Keeping history out of the key lets
+    // shared diamonds and reassignment cycles converge to the graph fixed point.
+    const projectionDepths = new WeakMap<
+      t.Node,
+      Map<string, number | undefined>
+    >();
+    const expanded = new WeakMap<t.Node, Set<string>>();
+    let additionalContexts = 0;
+    let contextsWidened = false;
+    const result: {
+      references: readonly SemanticReturnedReference[];
+      callables: ReadonlySet<t.Function>;
+      precision: SemanticReturnedReferenceResult["precision"];
+      unresolvedInvocation?: boolean;
+    } = { references: [], callables: functions, precision: "exact" };
+    // The invocation owner retains the actual callable receiver. A bare alias
+    // of fn.call has lost that receiver and cannot execute fn by itself.
+    const nativeArrayIteration = (array: t.ArrayExpression) =>
+      semanticKnownArrayIterationAt(array, state);
+    const sourceInvocation =
+      invocation === undefined
+        ? undefined
+        : javaScriptSourceInvocationContext(invocation, nativeArrayIteration);
+    const sourceGenericInvocation =
+      invocation !== undefined &&
+      javaScriptGenericInvocationMethod(invocation.callee) !== undefined;
+    const inheritedInvocationChanged = (method: "call" | "apply"): boolean => {
+      if (invocation === undefined) return false;
+      const inheritedPath = ["global", "Function", "prototype", method];
+      return state.ambientWriteEffects.some(
+        (effect) =>
+          effect.path.length <= inheritedPath.length &&
+          effect.path.every(
+            (key, index) =>
+              key === null ||
+              semanticPropertyPathKeyMatches(key, inheritedPath[index] ?? ""),
+          ) &&
+          semanticEffectTiming(invocation, effect.node, state) !== "after",
+      );
+    };
+    // Exact finite alternatives retain unrelated keys and cross-path
+    // correlations. Growing/shrinking cycles still converge at any depth;
+    // selector-budget widening retains the complete may-target closure.
+    const selections = new SemanticAliasSelections(() => {
+      state.valueResourceLimits.add("alias-selections");
+      result.precision = "widened";
+    });
+    const enqueue = (
+      node: t.Node,
+      path: Candidate["path"],
+      readAt?: t.Node,
+      capturedSelections?: readonly SemanticCapturedSelection[],
+      invocationContext?: JavaScriptSourceInvocationContext,
+    ): void => {
+      const source = unwrapJavaScriptExpression(node).node;
+      if (contextsWidened) {
+        path = undefined;
+        capturedSelections = undefined;
+        invocationContext = undefined;
+      }
+      const invocationKey = () =>
+        invocationContext === undefined
+          ? null
+          : [
+              invocationContext.receiver?.start,
+              invocationContext.receiver?.end,
+              invocationContext.receiverUnknown,
+              invocationContext.arguments?.map((argument) => [
+                argument.start,
+                argument.end,
+              ]),
+            ];
+      let readKey = JSON.stringify([
+        readAt?.start ?? -1,
+        readAt?.end ?? -1,
+        invocationKey(),
+      ]);
+      const depths = projectionDepths.get(source) ?? new Map();
+      projectionDepths.set(source, depths);
+      if (!depths.has(readKey)) {
+        depths.set(readKey, path?.length);
+      } else {
+        const previous = depths.get(readKey);
+        if (previous === undefined || previous !== path?.length) {
+          if (previous !== undefined) result.precision = "widened";
+          depths.set(readKey, undefined);
+          path = undefined;
+        }
+      }
+      if (path !== undefined) path = selections.normalize(source, path);
+      capturedSelections =
+        path === undefined
+          ? undefined
+          : semanticNormalizeCapturedSelections(
+              capturedSelections,
+              path.length,
+            );
+      const expansionKey = () =>
+        JSON.stringify([
+          readKey,
+          path ?? null,
+          capturedSelections?.map(({ at, depth, ownEnumerable }) => [
+            at.start,
+            at.end,
+            depth,
+            ownEnumerable,
+          ]),
+        ]);
+      let key = expansionKey();
+      const paths = expanded.get(source) ?? new Set<string>();
+      if (paths.has(key)) return;
+      // Copy/invocation contexts add selector dimensions. Bound them by the
+      // same query budget, then visit the complete unknown-projection closure.
+      if (
+        !contextsWidened &&
+        (capturedSelections !== undefined || invocationContext !== undefined) &&
+        paths.size > 0 &&
+        ++additionalContexts > SEMANTIC_ALIAS_SELECTION_LIMIT
+      ) {
+        contextsWidened = true;
+        state.valueResourceLimits.add("alias-selections");
+        result.precision = "widened";
+        // Generic transitions select only the source receiver and authored
+        // argument values. Keep that complete finite source closure when their
+        // precise positional contexts merge, including later callable receivers.
+        if (sourceInvocation !== undefined) {
+          if (sourceInvocation.receiver !== undefined)
+            enqueue(sourceInvocation.receiver, undefined);
+          for (const argument of sourceInvocation.arguments ?? [])
+            if (t.isExpression(argument)) enqueue(argument, undefined);
+            else if (t.isSpreadElement(argument))
+              enqueue(argument.argument, undefined);
+        }
+      }
+      if (contextsWidened) {
+        path = undefined;
+        capturedSelections = undefined;
+        invocationContext = undefined;
+        readKey = JSON.stringify([
+          readAt?.start ?? -1,
+          readAt?.end ?? -1,
+          null,
+        ]);
+        if (sourceGenericInvocation) result.unresolvedInvocation = true;
+        depths.set(readKey, undefined);
+        key = expansionKey();
+        if (paths.has(key)) return;
+      }
+      paths.add(key);
+      expanded.set(source, paths);
+      work.push({
+        node: source,
+        path,
+        ...(readAt === undefined ? {} : { readAt }),
+        ...(capturedSelections === undefined ? {} : { capturedSelections }),
+        ...(invocationContext === undefined
+          ? {}
+          : { invocation: invocationContext }),
+      });
+    };
+    enqueue(callee, [], undefined, undefined, sourceInvocation);
     while (work.length > 0) {
-      const task = work.pop();
-      if (task === undefined) break;
-      if (task.kind === "complete") {
-        completeExpansion(task.frame, expanded);
+      const current = work.pop();
+      if (current === undefined) break;
+      const { node } = current;
+      // An exact empty selection with an invocation is the value being called,
+      // not a container whose callable children are potential escape targets.
+      // Ordinary objects and arrays cannot supply that callable receiver. An
+      // unknown projection still visits the full closure after budget widening.
+      if (
+        current.invocation !== undefined &&
+        current.path?.length === 0 &&
+        (t.isObjectExpression(node) || t.isArrayExpression(node))
+      )
         continue;
-      }
-      const { item, parent } = task;
-      const node = unwrapJavaScriptExpression(item.node).node;
-      const pathKey = JSON.stringify(item.path);
-      const covered = expanded
-        .get(node)
-        ?.get(pathKey)
-        ?.find((context) => contextContains(item.initializers, context));
-      if (covered !== undefined) {
-        // Cached cycle dependencies must reach the caller's proof too.
-        propagateBlockers(covered, parent);
-        continue;
-      }
-      const frame: ExpansionFrame = {
-        item,
-        node,
-        pathKey,
-        parent,
-        blockers: new Set(),
-      };
-      work.push({ kind: "complete", frame });
       const pending: Candidate[] = [];
       if (t.isIdentifier(node)) {
         const binding = resolveSemanticBindingState(state, node, node.name);
-        if (binding === undefined) continue;
+        if (binding === undefined) {
+          if (sourceGenericInvocation && current.path?.length === 0)
+            result.unresolvedInvocation = true;
+          continue;
+        }
+        dependencies.set(binding, {
+          writes: binding.memberWrites.length,
+          escapes: binding.escapedPaths.length,
+        });
+        if (current.path !== undefined) {
+          if (
+            sourceGenericInvocation &&
+            current.path.length > 0 &&
+            semanticProjectedSourcesAtRead(
+              binding,
+              node,
+              current.path,
+              state,
+              true,
+              // The current invocation receives its callee before its own
+              // opaque effects; earlier captured member reads keep their site.
+              invocation !== undefined &&
+                current.readAt ===
+                  unwrapJavaScriptExpression(invocation.callee).node
+                ? invocation
+                : (current.readAt ?? node),
+              current.capturedSelections,
+            ) === undefined
+          )
+            result.unresolvedInvocation = true;
+          const selectedSources = semanticProjectedSourcesAtRead(
+            binding,
+            node,
+            current.path,
+            state,
+            false,
+            current.readAt ?? node,
+            current.capturedSelections,
+          );
+          if (selectedSources !== undefined) {
+            for (const source of selectedSources) {
+              const capturedSelections = [
+                ...(semanticShiftCapturedSelections(
+                  current.capturedSelections,
+                  source.path.length - current.path.length,
+                ) ?? []),
+                ...(source.capturedSelections ?? []),
+              ];
+              pending.push({
+                ...source,
+                ...(current.path.length === 0
+                  ? {}
+                  : { readAt: current.readAt ?? node }),
+                ...(capturedSelections.length === 0
+                  ? {}
+                  : { capturedSelections }),
+              });
+            }
+            for (let index = pending.length - 1; index >= 0; index--) {
+              const child = pending[index];
+              if (child !== undefined)
+                enqueue(
+                  child.node,
+                  child.path,
+                  child.readAt,
+                  child.capturedSelections,
+                  child.invocation ?? current.invocation,
+                );
+            }
+            continue;
+          }
+          result.precision = "widened";
+          if (sourceGenericInvocation) result.unresolvedInvocation = true;
+        }
         const selected = semanticBindingAtRead(
           binding,
           node,
@@ -169,16 +399,31 @@ export const createSemanticReturnedReferences = (
           ...selected.initializers,
           ...selected.referenceInitializers,
         ]) {
-          if (item.initializers.has(initializer)) {
-            frame.blockers.add(initializer);
-            continue;
-          }
+          if (semanticReferenceSourcesInactive(initializer, state)) continue;
           pending.push({
             node: initializer.node,
-            path: [...initializer.projection, ...item.path],
-            initializers: new Set([...item.initializers, initializer]),
+            path:
+              current.path === undefined
+                ? undefined
+                : [...initializer.projection, ...current.path],
+            ...(current.path?.length === 0
+              ? {}
+              : { readAt: current.readAt ?? node }),
+            ...(current.capturedSelections === undefined
+              ? {}
+              : {
+                  capturedSelections: semanticShiftCapturedSelections(
+                    current.capturedSelections,
+                    initializer.projection.length,
+                  ),
+                }),
           });
         }
+        if (current.path === undefined)
+          for (const effect of binding.memberWrites)
+            for (const source of effect.assignedSources ?? [])
+              if (!semanticReferenceSourcesInactive(source, state))
+                pending.push({ node: source.node, path: undefined });
       } else if (
         t.isMemberExpression(node) ||
         t.isOptionalMemberExpression(node)
@@ -195,9 +440,21 @@ export const createSemanticReturnedReferences = (
           receiver = unwrapJavaScriptExpression(receiver.object).node;
         }
         pending.push({
-          ...item,
+          ...current,
           node: receiver,
-          path: [...path.reverse(), ...item.path],
+          readAt: current.readAt ?? node,
+          ...(current.capturedSelections === undefined
+            ? {}
+            : {
+                capturedSelections: semanticShiftCapturedSelections(
+                  current.capturedSelections,
+                  path.length,
+                ),
+              }),
+          path:
+            current.path === undefined
+              ? undefined
+              : [...path.reverse(), ...current.path],
         });
       } else if (
         t.isConditionalExpression(node) ||
@@ -205,90 +462,246 @@ export const createSemanticReturnedReferences = (
       ) {
         pending.push(
           {
-            ...item,
+            ...current,
             node: t.isConditionalExpression(node) ? node.consequent : node.left,
           },
           {
-            ...item,
+            ...current,
             node: t.isConditionalExpression(node) ? node.alternate : node.right,
           },
         );
       } else if (t.isSequenceExpression(node)) {
         const last = node.expressions.at(-1);
-        if (last !== undefined) pending.push({ ...item, node: last });
-      } else if (t.isFunction(node) && item.path.length === 0)
-        functions.add(node);
-      else if (t.isObjectExpression(node))
-        selectObjectTargets(node, item, pending, objectTargets);
+        if (last !== undefined) pending.push({ ...current, node: last });
+      } else if (t.isFunction(node)) {
+        if (current.path === undefined || current.path.length === 0)
+          functions.add(node);
+        else if (
+          current.invocation !== undefined &&
+          current.path.every((key) =>
+            semanticAliasSelectionChoices(key).every(
+              (choice) => choice === "call" || choice === "apply",
+            ),
+          )
+        ) {
+          // Own member writes have already selected their actual RHS above.
+          // Only a remaining inherited invocation member reaches this branch.
+          const methods = semanticAliasSelectionChoices(
+            current.path.at(-1)!,
+          ).filter(
+            (method): method is "call" | "apply" =>
+              method === "call" || method === "apply",
+          );
+          for (const method of methods) {
+            const selected = resolveJavaScriptGenericInvocation(
+              method,
+              current.invocation,
+              nativeArrayIteration,
+            );
+            if (selected !== undefined)
+              pending.push({
+                node: selected.callable,
+                path: [],
+                invocation: selected.context,
+              });
+            else if (current.invocation.receiverUnknown)
+              result.unresolvedInvocation = true;
+            if (inheritedInvocationChanged(method))
+              result.unresolvedInvocation = true;
+          }
+        }
+      } else if (t.isObjectExpression(node))
+        selectObjectTargets(node, current, pending, objectTargets);
       else if (t.isArrayExpression(node)) {
-        const [key, ...path] = item.path;
-        const index =
-          key === undefined || key === null ? null : semanticArrayIndex(key);
+        const [key, ...path] = current.path ?? [];
+        if (current.path !== undefined && key !== undefined) {
+          for (const choice of semanticAliasSelectionChoices(key))
+            for (const source of semanticArrayPropertyReferences(node, [
+              choice,
+            ])) {
+              let projection = source.path;
+              if (
+                source.capturedSelectionAt !== undefined &&
+                !semanticKnownArrayIteration(
+                  semanticSelectedReferenceSlot(
+                    { node: source.node, projection: [] },
+                    state,
+                    source.capturedSelectionAt,
+                  )?.value,
+                  state,
+                )
+              )
+                projection = [null, ...source.path.slice(1)];
+              const selectedPath = [...projection, ...path];
+              pending.push({
+                ...current,
+                node: source.node,
+                path: selectedPath,
+                capturedSelections: [
+                  ...(semanticShiftCapturedSelections(
+                    current.capturedSelections,
+                    selectedPath.length - current.path.length,
+                  ) ?? []),
+                  ...(source.capturedSelectionAt === undefined
+                    ? []
+                    : [{ at: source.capturedSelectionAt, depth: 1 }]),
+                ],
+              });
+            }
+          for (let index = pending.length - 1; index >= 0; index--) {
+            const child = pending[index];
+            if (child !== undefined)
+              enqueue(
+                child.node,
+                child.path,
+                child.readAt,
+                child.capturedSelections,
+                child.invocation ?? current.invocation,
+              );
+          }
+          continue;
+        }
         let uncertainOffset = false;
         node.elements.forEach((element, offset) => {
           if (element === null) return;
           if (t.isSpreadElement(element)) {
             uncertainOffset = true;
             pending.push({
-              ...item,
+              ...current,
               node: element.argument,
-              path: [null, ...path],
+              path: current.path === undefined ? undefined : [null, ...path],
+              capturedSelections: [
+                ...(current.capturedSelections ?? []),
+                { at: element.argument, depth: 1 },
+              ],
             });
-          } else if (index === null || uncertainOffset || index === offset)
-            pending.push({ ...item, node: element, path });
+          } else if (
+            current.path === undefined ||
+            key === undefined ||
+            uncertainOffset ||
+            semanticAliasSelectionChoices(key).some((choice) =>
+              semanticPropertyPathKeyMatches(choice, String(offset)),
+            )
+          )
+            pending.push({
+              ...current,
+              node: element,
+              path: current.path === undefined ? undefined : path,
+              capturedSelections:
+                semanticShiftCapturedSelections(
+                  current.capturedSelections,
+                  -1,
+                ) ?? [],
+            });
         });
       } else if (t.isNewExpression(node))
-        pending.push({ ...item, node: node.callee });
+        pending.push({ ...current, node: node.callee });
       else if (t.isClass(node)) {
-        const [key, ...path] = item.path;
+        const [key, ...path] = current.path ?? [];
         for (const member of node.body.body) {
           if (t.isClassMethod(member)) {
             if (
-              (item.path.length === 0 && member.kind === "constructor") ||
+              ((current.path === undefined || current.path.length === 0) &&
+                member.kind === "constructor") ||
+              current.path === undefined ||
               (key !== undefined &&
-                (key === null ||
-                  semanticStaticPropertyKey(member.key, member.computed) ===
-                    String(key)))
+                semanticAliasSelectionChoices(key).some((choice) => {
+                  const name = semanticStaticPropertyKey(
+                    member.key,
+                    member.computed,
+                  );
+                  return (
+                    name === null ||
+                    semanticPropertyPathKeyMatches(choice, name)
+                  );
+                }))
             )
-              pending.push({ ...item, node: member, path });
+              pending.push({
+                ...current,
+                node: member,
+                path: current.path === undefined ? undefined : path,
+                capturedSelections: semanticShiftCapturedSelections(
+                  current.capturedSelections,
+                  -1,
+                ),
+              });
           } else if (
             t.isClassProperty(member) &&
             member.value !== null &&
             member.value !== undefined &&
-            key !== undefined &&
-            (key === null ||
-              semanticStaticPropertyKey(member.key, member.computed) ===
-                String(key))
+            (key !== undefined || current.path === undefined) &&
+            (current.path === undefined ||
+              (key !== undefined &&
+                semanticAliasSelectionChoices(key).some((choice) => {
+                  const name = semanticStaticPropertyKey(
+                    member.key,
+                    member.computed,
+                  );
+                  return (
+                    name === null ||
+                    semanticPropertyPathKeyMatches(choice, name)
+                  );
+                })))
           )
-            pending.push({ ...item, node: member.value, path });
+            pending.push({
+              ...current,
+              node: member.value,
+              path: current.path === undefined ? undefined : path,
+              capturedSelections: semanticShiftCapturedSelections(
+                current.capturedSelections,
+                -1,
+              ),
+            });
         }
         if (node.superClass !== null && node.superClass !== undefined)
-          pending.push({ ...item, node: node.superClass });
+          pending.push({ ...current, node: node.superClass });
       }
       for (let index = pending.length - 1; index >= 0; index--) {
         const child = pending[index];
         if (child !== undefined)
-          work.push({ kind: "visit", item: child, parent: frame });
+          enqueue(
+            child.node,
+            child.path,
+            child.readAt,
+            child.capturedSelections,
+            child.invocation ?? current.invocation,
+          );
       }
     }
-    const output = [...functions].flatMap((node) => {
-      const callables = t.isClass(node)
-        ? node.body.body.filter(
-            (member) =>
-              t.isClassMethod(member) && member.kind === "constructor",
-          )
-        : [node];
-      return callables.flatMap((callable) =>
-        semanticCallableResultExpressions(callable).flatMap(
-          ({ node, delegated }) =>
-            node === null
-              ? []
-              : [{ node, projection: delegated ? [null] : [] }],
-        ),
+    const output = [...functions].flatMap((callable) => {
+      // A direct generator/async call produces a fresh iterator/Promise, not
+      // the yielded/resolved contents. Escape analysis still retains those
+      // potential references for their eventual consumers.
+      const resultKind = semanticCallableResultKind(callable);
+      if (
+        consumption !== "potential-reference" &&
+        (resultKind === "iterator" ||
+          resultKind === "async-iterator" ||
+          (consumption === "direct-call" && resultKind === "promise"))
+      )
+        return [];
+      return semanticCallableResultExpressions(callable).flatMap(
+        ({ node, delegated, kind }) =>
+          node === null ||
+          (consumption !== "potential-reference" && kind !== "return")
+            ? []
+            : [{ node, projection: delegated ? [null] : [] }],
       );
     });
-    results.set(callee, output);
-    return output;
+    result.references = output;
+    results.set(callee, {
+      result,
+      invocation,
+      iterationUnknown: state.arrayIterationUnknown,
+      ambientWrites: state.ambientWriteEffects.length,
+      dependencies: [...dependencies].map(([binding, counts]) => ({
+        binding,
+        ...counts,
+      })),
+    });
+    if (result.precision === "widened")
+      state.returnedReferenceWidenings.add(callee);
+    return result;
   };
 };
 
@@ -298,8 +711,19 @@ const selectObjectTargets = (
   pending: Candidate[],
   indexes: WeakMap<t.ObjectExpression, ObjectTargetIndex>,
 ): void => {
-  const [key, ...path] = item.path;
-  if (key !== null && key !== undefined) {
+  const [key, ...path] = item.path ?? [];
+  const childPath = item.path === undefined ? undefined : path;
+  if (key !== null && typeof key === "object" && "alternatives" in key) {
+    for (const choice of semanticAliasSelectionChoices(key))
+      selectObjectTargets(
+        node,
+        { ...item, path: [choice, ...path] },
+        pending,
+        indexes,
+      );
+    return;
+  }
+  if (key !== null && key !== undefined && typeof key !== "object") {
     const index = objectTargetIndex(node, indexes);
     const property = index.propertyByName.get(String(key));
     if (property !== undefined) {
@@ -318,12 +742,21 @@ const selectObjectTargets = (
             : t.isObjectProperty(unknown)
               ? unknown.value
               : unknown,
-          ...(t.isSpreadElement(unknown) ? {} : { path }),
+          ...(t.isSpreadElement(unknown) ? {} : { path: childPath }),
+          capturedSelections: t.isSpreadElement(unknown)
+            ? [
+                ...(item.capturedSelections ?? []),
+                { at: unknown.argument, depth: 1, ownEnumerable: true },
+              ]
+            : (semanticShiftCapturedSelections(item.capturedSelections, -1) ??
+              []),
         });
       pending.push({
         ...item,
         node: t.isObjectProperty(property) ? property.value : property,
-        path,
+        path: childPath,
+        capturedSelections:
+          semanticShiftCapturedSelections(item.capturedSelections, -1) ?? [],
       });
       return;
     }
@@ -332,7 +765,14 @@ const selectObjectTargets = (
   for (const property of [...node.properties].reverse()) {
     if (replaced) break;
     if (t.isSpreadElement(property)) {
-      pending.push({ ...item, node: property.argument });
+      pending.push({
+        ...item,
+        node: property.argument,
+        capturedSelections: [
+          ...(item.capturedSelections ?? []),
+          { at: property.argument, depth: 1, ownEnumerable: true },
+        ],
+      });
       continue;
     }
     const name = semanticStaticPropertyKey(property.key, property.computed);
@@ -340,13 +780,31 @@ const selectObjectTargets = (
       key !== null &&
       key !== undefined &&
       name !== null &&
-      name !== String(key)
+      !semanticPropertyPathKeyMatches(key, name)
     )
       continue;
     if (t.isObjectProperty(property))
-      pending.push({ ...item, node: property.value, path });
-    else pending.push({ ...item, node: property, path });
-    if (key !== null && key !== undefined && name === String(key))
+      pending.push({
+        ...item,
+        node: property.value,
+        path: childPath,
+        capturedSelections:
+          semanticShiftCapturedSelections(item.capturedSelections, -1) ?? [],
+      });
+    else
+      pending.push({
+        ...item,
+        node: property,
+        path: childPath,
+        capturedSelections:
+          semanticShiftCapturedSelections(item.capturedSelections, -1) ?? [],
+      });
+    if (
+      key !== null &&
+      key !== undefined &&
+      typeof key !== "object" &&
+      name === String(key)
+    )
       replaced = true;
   }
 };

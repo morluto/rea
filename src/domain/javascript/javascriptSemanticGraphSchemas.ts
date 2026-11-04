@@ -1,13 +1,14 @@
 import { z } from "zod";
 
+import { javascriptSourceRangeSchema } from "./javascriptSourceCoordinates.js";
+
 import {
   applicationGraphEvidenceContextSchema,
   applicationGraphEvidenceLocationSchema,
   applicationGraphEvidenceSchema,
 } from "./javascriptApplicationEvidenceSchemas.js";
 import { jsonValueSchema } from "../jsonValue.js";
-import { digestSchema } from "../digests.js";
-import { prefixedDigestSchema } from "../digests.js";
+import { digestSchema, prefixedDigestSchema } from "../digests.js";
 
 const boundedTextSchema = z.string().min(1);
 const semanticNodeIdSchema = prefixedDigestSchema("jsrg_node");
@@ -99,6 +100,7 @@ export const JAVASCRIPT_SEMANTIC_RELATIONS = [
   "detaches-task",
   "dispatches-candidate",
   "forwards-signal",
+  "influences",
   "listens-error",
   "listens-exit",
   "owns",
@@ -147,6 +149,7 @@ export const JAVASCRIPT_SEMANTIC_RELATION_FAMILY = {
   "detaches-task": "promise-ownership",
   "dispatches-candidate": "event",
   "forwards-signal": "child-process",
+  influences: "data-flow",
   "listens-error": "child-process",
   "listens-exit": "child-process",
   owns: "promise-ownership",
@@ -188,32 +191,12 @@ const relativePathSchema = z
     "Expected a normalized relative POSIX path without traversal",
   );
 
-const sourcePointSchema = z.strictObject({
-  line: z.number().int().min(1),
-  column: z.number().int().min(0),
-});
-
-const sourceRangeSchema = z
-  .strictObject({ start: sourcePointSchema, end: sourcePointSchema })
-  .superRefine((range, context) => {
-    if (
-      range.end.line < range.start.line ||
-      (range.end.line === range.start.line &&
-        range.end.column < range.start.column)
-    )
-      context.addIssue({
-        code: "custom",
-        path: ["end"],
-        message: "Source range end must not precede its start",
-      });
-  });
-
 const semanticPropertiesSchema = z.record(z.string().min(1), jsonValueSchema);
 
 const semanticNodeIdentitySchema = z.strictObject({
   artifact_sha256: digestSchema,
   module_path: relativePathSchema,
-  source_range: sourceRangeSchema.nullable(),
+  source_range: javascriptSourceRangeSchema.nullable(),
   role_key: z.string().min(1),
 });
 
@@ -271,6 +254,24 @@ export const JAVASCRIPT_SEMANTIC_UNKNOWN_REASONS = [
   "unsupported-syntax",
 ] as const;
 
+/** Counts examined emission occurrences, including repeats, without retaining discarded IDs. */
+export const javaScriptSemanticUnknownOmissionSchema = z.strictObject({
+  family: z.enum(JAVASCRIPT_SEMANTIC_RELATION_FAMILIES),
+  reason: z.enum(JAVASCRIPT_SEMANTIC_UNKNOWN_REASONS),
+  occurrences: z.int().positive(),
+});
+/** At most one summary row for each finite family/reason pair. */
+export const javaScriptSemanticUnknownOmissionsSchema = z
+  .array(javaScriptSemanticUnknownOmissionSchema)
+  .min(1)
+  .max(
+    JAVASCRIPT_SEMANTIC_RELATION_FAMILIES.length *
+      JAVASCRIPT_SEMANTIC_UNKNOWN_REASONS.length,
+  );
+export type JavaScriptSemanticUnknownOmission = z.infer<
+  typeof javaScriptSemanticUnknownOmissionSchema
+>;
+
 /** One unresolved semantic frontier before its ID is derived. */
 export const javaScriptSemanticUnknownInputSchema = z.strictObject({
   node_id: semanticNodeIdSchema.nullable(),
@@ -290,7 +291,7 @@ export const javaScriptSemanticUnknownSchema =
   });
 
 const fingerprintComponentsSchema = z.strictObject({
-  parameter_arity: z.number().int().min(0),
+  parameter_arity: z.int().min(0),
   normalized_ast_sha256: digestSchema,
   control_flow_sha256: digestSchema,
   relation_shape_sha256: digestSchema,
@@ -329,20 +330,22 @@ export const javaScriptSemanticFingerprintSchema =
 const familyCoverageSchema = z.strictObject({
   family: z.enum(JAVASCRIPT_SEMANTIC_RELATION_FAMILIES),
   status: z.enum(["complete", "partial", "unknown", "unsupported"]),
-  retained_relations: z.number().int().min(0),
-  omitted_relations: z.number().int().min(0).nullable(),
+  retained_relations: z.int().min(0),
+  omitted_relations: z.int().min(0).nullable(),
   unknown_ids: z.array(semanticUnknownIdSchema),
 });
 
 const graphCoverageSchema = z.strictObject({
   status: z.enum(["complete", "partial", "unknown", "unavailable"]),
   truncated: z.boolean(),
-  omitted_nodes: z.number().int().min(0).nullable(),
-  omitted_relations: z.number().int().min(0).nullable(),
+  omitted_unknown_occurrences:
+    javaScriptSemanticUnknownOmissionsSchema.exactOptional(),
+  omitted_nodes: z.int().min(0).nullable(),
+  omitted_relations: z.int().min(0).nullable(),
   limits: z.array(
     z.strictObject({
       name: z.string().min(1),
-      value: z.number().int().min(0),
+      value: z.int().min(0),
       unit: z.enum(["items", "bytes", "milliseconds", "depth", "other"]),
     }),
   ),

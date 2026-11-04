@@ -1,3 +1,9 @@
+import { readElfSectionHeader } from "../domain/elfSectionHeader.js";
+import {
+  readElfProgramHeader,
+  type ElfProgramHeader,
+} from "../domain/elfProgramHeader.js";
+import { readElfRawTableDeclarations } from "../domain/elfRawTableDeclarations.js";
 import type { FileHandle } from "node:fs/promises";
 import type {
   MipsAbiFlags,
@@ -83,47 +89,44 @@ export const readMipsElfMetadata = async (
   if (
     fixedHeader.value.elfClass !== 32 ||
     fixedHeader.value.byteOrder !== metadata.byteOrder ||
-    u16(bytes, 18) !== 8 ||
-    u16(bytes, 16) !== metadata.type ||
-    u32(bytes, 36) !== metadata.flags
+    fixedHeader.value.machine !== 8 ||
+    fixedHeader.value.type !== metadata.type ||
+    fixedHeader.value.flags !== metadata.flags
   )
     return err("MIPS ELF header no longer matches the resolved identity");
   if (fixedHeader.value.headerSize !== 52)
     return err("invalid MIPS ELF32 version or header size");
 
+  const raw = readElfRawTableDeclarations(bytes, fixedHeader.value);
+  if (!raw.ok) return err(raw.error.message);
+  const { programs, sections } = raw.value;
   const tables = [
     {
       label: "program header table",
-      offset: u32(bytes, 28),
-      count: u16(bytes, 44),
-      stride: u16(bytes, 42),
+      offset: Number(programs.offset),
+      count: programs.count,
+      stride: programs.width,
       entrySize: 32,
-      typeOffset: 0,
-      dataOffset: 4,
-      sizeOffset: 16,
       recordType: 0x70000003, // PT_MIPS_ABIFLAGS
       optional: false,
     },
     {
       label: "section header table",
-      offset: u32(bytes, 32),
-      count: u16(bytes, 48),
-      stride: u16(bytes, 46),
+      offset: Number(sections.offset),
+      count: sections.count,
+      stride: sections.width,
       entrySize: 40,
-      typeOffset: 4,
-      dataOffset: 16,
-      sizeOffset: 20,
       recordType: 0x7000002a, // SHT_MIPS_ABIFLAGS
       optional: true,
     },
   ];
   // Extended numbering needs a separate section-zero reader. Refuse it rather
   // than silently treating an unexamined table as having no ABI declarations.
-  if (u16(bytes, 44) === 0xffff || u16(bytes, 48) >= 0xff00)
+  if (programs.count === 0xffff || sections.count >= 0xff00)
     return err("extended or reserved MIPS ELF table numbering is unsupported");
   let record: Buffer | undefined;
   let sharedLoad: MipsElfMetadata["sharedLoad"];
-  let programHeaders: Buffer | undefined;
+  let programHeaders: ElfProgramHeader[] | undefined;
   const relocationSections: MipsElfRelocationSection[] = [];
   const limitations: string[] = [];
   let gnuAttributes: MipsGnuAttributes | null = null;
@@ -154,22 +157,40 @@ export const readMipsElfMetadata = async (
       table.label,
     );
     if (!contents.ok) return contents;
-    if (!table.optional && metadata.type === 3) programHeaders = contents.value;
+    if (!table.optional && metadata.type === 3) programHeaders = [];
     let found = false;
     for (let i = 0; i < count; i += 1) {
       checkCancelled();
       const position = i * table.entrySize;
-      const type = u32(contents.value, position + table.typeOffset);
+      const parsedRecord = table.optional
+        ? readElfSectionHeader(
+            contents.value.subarray(position, position + table.entrySize),
+            32,
+            little,
+          )
+        : readElfProgramHeader(
+            contents.value.subarray(position, position + table.entrySize),
+            32,
+            little,
+          );
+      if (!parsedRecord.ok) return err(parsedRecord.error.message);
+      const declaration = parsedRecord.value;
+      if ("fileSize" in declaration) programHeaders?.push(declaration);
+      const { type } = declaration;
+      const declaredOffset = Number(declaration.offset);
+      const declaredSize = Number(
+        "fileSize" in declaration ? declaration.fileSize : declaration.size,
+      );
       if (table.optional && type === SHT_GNU_ATTRIBUTES) {
         if (gnuAttributes !== null)
           return err("duplicate MIPS GNU attribute sections");
-        const size = u32(contents.value, position + 20);
+        const size = declaredSize;
         if (size === 0 || size > MIPS_GNU_ATTRIBUTES_MAX_BYTES)
           return err(
             `MIPS GNU attribute section size ${size} is outside REA's inspected bound of ${MIPS_GNU_ATTRIBUTES_MAX_BYTES} bytes`,
           );
         const section = await read(
-          u32(contents.value, position + 16),
+          declaredOffset,
           size,
           "GNU attribute section",
         );
@@ -179,18 +200,22 @@ export const readMipsElfMetadata = async (
         gnuAttributes = parsed.value;
         continue;
       }
-      if (metadata.type === 3 && table.optional && (type === 4 || type === 9))
+      if (
+        metadata.type === 3 &&
+        "entrySize" in declaration &&
+        (type === 4 || type === 9 || type === 19)
+      )
         relocationSections.push({
           type,
-          offset: u32(contents.value, position + 16),
-          size: u32(contents.value, position + 20),
-          entrySize: u32(contents.value, position + 36),
+          offset: declaredOffset,
+          size: declaredSize,
+          entrySize: Number(declaration.entrySize),
         });
       if (type !== table.recordType) continue;
       if (found) return err(`duplicate MIPS ABI records in ${table.label}`);
       found = true;
-      const offset = u32(contents.value, position + table.dataOffset);
-      const size = u32(contents.value, position + table.sizeOffset);
+      const offset = declaredOffset;
+      const size = declaredSize;
       if (size !== 24)
         return err("unsupported MIPS ABI record size; expected 24 bytes");
       const candidate = await read(offset, 24, "ABI record");

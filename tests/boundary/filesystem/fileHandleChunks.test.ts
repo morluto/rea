@@ -1,6 +1,8 @@
 import type { FileHandle } from "node:fs/promises";
 import { buffer } from "node:stream/consumers";
 import { expect, it, vi } from "vitest";
+import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
+import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 import {
   FileReadCancelled,
   readFileHandleChunks,
@@ -36,21 +38,29 @@ it.each(["complete", "fail"])(
       .finally(() => {
         settled = true;
       });
-    await entered;
-    controller.abort(null);
-    await new Promise<void>((resolve) => setImmediate(resolve));
-    expect(settled).toBe(false);
-    expect(source.destroyed).toBe(false);
-    const failure = new Error("controlled native read failure");
-    if (outcome === "fail") reject(failure);
-    else release({ bytesRead: 0, buffer: Buffer.alloc(0) });
-    const error = await result;
-    if (outcome === "fail") expect(error).toBe(failure);
-    else {
-      expect(error).toBeInstanceOf(FileReadCancelled);
-      if (error instanceof FileReadCancelled) expect(error.reason).toBeNull();
-    }
-    expect(read).toHaveBeenCalledTimes(1);
+    await withVerifierCleanup(async () => {
+      await awaitAcknowledgement(entered, result, "descriptor read");
+      controller.abort(null);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(settled).toBe(false);
+      expect(source.destroyed).toBe(false);
+      const failure = new Error("controlled native read failure");
+      if (outcome === "fail") reject(failure);
+      else release({ bytesRead: 0, buffer: Buffer.alloc(0) });
+      const error = await result;
+      if (outcome === "fail") expect(error).toBe(failure);
+      else {
+        expect(error).toBeInstanceOf(FileReadCancelled);
+        if (error instanceof FileReadCancelled) expect(error.reason).toBeNull();
+      }
+      expect(read).toHaveBeenCalledTimes(1);
+    }, [
+      () => controller.abort(null),
+      () => release({ bytesRead: 0, buffer: Buffer.alloc(0) }),
+      async () => {
+        await result;
+      },
+    ]);
   },
 );
 
@@ -84,7 +94,7 @@ it("removes cancellation observation after normal stream completion", async () =
     buffer: Buffer.alloc(0),
   })) as unknown as FileHandle["read"];
   const source = readFileHandleChunks({ read }, { signal: controller.signal });
-  expect(await buffer(source)).toEqual(Buffer.alloc(0));
+  expect(Buffer.compare(await buffer(source), Buffer.alloc(0))).toBe(0);
   expect(remove).toHaveBeenCalledWith("abort", expect.any(Function));
   controller.abort(null);
   expect(source.errored).toBeNull();
@@ -111,9 +121,12 @@ it.each(["range", "eof"])(
     }) as FileHandle["read"];
     const source = readFileHandleChunks({ read }, { start: 5, end: 7 });
     expect(source.readCoverage()).toEqual({ kind: "incomplete", bytes: 0n });
-    expect(await buffer(source)).toEqual(
-      Buffer.alloc(boundary === "range" ? 3 : 1, 0x61),
-    );
+    expect(
+      Buffer.compare(
+        await buffer(source),
+        Buffer.alloc(boundary === "range" ? 3 : 1, 0x61),
+      ),
+    ).toBe(0);
     const coverage = source.readCoverage();
     expect(coverage).toEqual({
       kind: "complete",

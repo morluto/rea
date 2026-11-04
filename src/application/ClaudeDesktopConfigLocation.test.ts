@@ -34,7 +34,8 @@ const privateConfig = join(
 const failure = (code: string): Error =>
   Object.assign(new Error(`${code}: injected`), { code });
 
-const file = { isFile: () => true };
+const file = { isFile: () => true, isDirectory: () => false };
+const folder = { isFile: () => false, isDirectory: () => true };
 const privateDirectory = dirname(privateConfig);
 const privatePreferences = join(privateDirectory, "Preferences");
 const appDataDirectory = dirname(appDataConfig);
@@ -45,6 +46,15 @@ it.each([undefined, ""])(
     expect(
       windowsAppDataRoots(home, { APPDATA: value, LOCALAPPDATA: value }),
     ).toEqual({ roaming: env.APPDATA, local: env.LOCALAPPDATA });
+  },
+);
+
+it.each([" root with trailing space ", "   "])(
+  "preserves a nonempty AppData root literally: %j",
+  (value) => {
+    expect(
+      windowsAppDataRoots(home, { APPDATA: value, LOCALAPPDATA: value }),
+    ).toEqual({ roaming: value, local: value });
   },
 );
 
@@ -162,7 +172,362 @@ describe("Claude Desktop MSIX process view", () => {
   });
 });
 
+const privateRoaming = dirname(privateDirectory);
+
+/**
+ * Package storage whose private roaming root holds `files` (paths under that
+ * root) and no Claude folder; `realpath` decides the process view and
+ * `unreadable` folders refuse to be listed.
+ */
+const roamingFileSystem = (
+  files: readonly string[],
+  realpath: ClaudeDesktopLocationFileSystem["realpath"],
+  unreadable: readonly string[] = [],
+): ClaudeDesktopLocationFileSystem => {
+  const absolute = files.map((path) => join(privateRoaming, path));
+  const within = (path: string) => (entry: string) =>
+    entry.startsWith(`${path}${sep}`);
+  return {
+    readdir: (path, limit) => {
+      if (path === packages) return [CLAUDE_DESKTOP_PACKAGE_FAMILY];
+      if (
+        unreadable.some(
+          (folderPath) => join(privateRoaming, folderPath) === path,
+        )
+      )
+        throw failure("EACCES");
+      const below = absolute.filter(within(path));
+      if (path !== privateRoaming && below.length === 0)
+        throw failure("ENOENT");
+      return [
+        ...new Set(
+          below.map(
+            (entry) => entry.slice(path.length + 1).split(sep)[0] ?? "",
+          ),
+        ),
+      ].slice(0, limit);
+    },
+    lstat: (path) => {
+      if (absolute.includes(path)) return file;
+      if (absolute.some(within(path))) return folder;
+      throw failure("ENOENT");
+    },
+    realpath,
+  };
+};
+
+/** The process view a resolver reports for `fileSystem`. */
+const viewOf = (fileSystem: ClaudeDesktopLocationFileSystem) => {
+  const location = resolveWindowsClaudeDesktopLocation(home, env, fileSystem);
+  return location.ok ? location.value.msixPackage?.processView : undefined;
+};
+
+describe("Claude Desktop MSIX process view from other roaming folders", () => {
+  const telemetry = join("turborepo", "telemetry.json");
+
+  it("compares a private file outside Claude Desktop's own folder", () => {
+    expect(viewOf(roamingFileSystem([telemetry], (path) => path))).toBe(
+      "direct",
+    );
+  });
+
+  it("recognizes a redirected view through that file", () => {
+    const fileSystem = roamingFileSystem([telemetry], (path) =>
+      path === join(env.APPDATA, telemetry)
+        ? join(privateRoaming, telemetry)
+        : path,
+    );
+    expect(viewOf(fileSystem)).toBe("redirected");
+  });
+
+  it("treats a private file missing at its AppData path as a direct view", () => {
+    const fileSystem = roamingFileSystem([telemetry], (path) => {
+      if (path === join(env.APPDATA, telemetry)) throw failure("ENOENT");
+      return path;
+    });
+    expect(viewOf(fileSystem)).toBe("direct");
+  });
+
+  it("skips a folder that cannot be listed and decides from another", () => {
+    const fileSystem = roamingFileSystem(
+      [join("Microsoft", "locked", "x"), telemetry],
+      (path) =>
+        path === join(env.APPDATA, telemetry)
+          ? join(privateRoaming, telemetry)
+          : path,
+      ["Microsoft"],
+    );
+    expect(viewOf(fileSystem)).toBe("redirected");
+  });
+
+  it("spreads its probes so a crowded folder cannot hide a redirected one", () => {
+    const crowded = Array.from({ length: 20 }, (_, index) =>
+      join("ghidra", `log-${String(index).padStart(2, "0")}`),
+    );
+    const compared: string[] = [];
+    const fileSystem = roamingFileSystem([...crowded, telemetry], (path) => {
+      compared.push(path);
+      return path === join(env.APPDATA, telemetry)
+        ? join(privateRoaming, telemetry)
+        : path;
+    });
+    expect(viewOf(fileSystem)).toBe("redirected");
+    expect(
+      compared.filter((path) =>
+        path.startsWith(join(privateRoaming, "ghidra")),
+      ),
+    ).toHaveLength(2);
+  });
+
+  it("stops after a bounded number of probes", () => {
+    const files = Array.from({ length: 30 }, (_, index) =>
+      join(`folder-${String(index).padStart(2, "0")}`, "file"),
+    );
+    const compared: string[] = [];
+    viewOf(
+      roamingFileSystem(files, (path) => {
+        compared.push(path);
+        return path;
+      }),
+    );
+    expect(
+      compared.filter((path) => path.startsWith(privateRoaming)),
+    ).toHaveLength(8);
+  });
+
+  it("keeps the view unknown when the roaming root has no private file", () => {
+    expect(viewOf(roamingFileSystem([], (path) => path))).toBe("unknown");
+  });
+});
+
+describe("Claude Desktop roaming enumeration budget", () => {
+  const entryLimit = 1024;
+  it("stops inspecting entries once its budget is spent", () => {
+    const folders = Array.from({ length: 1500 }, (_, index) =>
+      join(`folder-${String(index).padStart(4, "0")}`, "file"),
+    );
+    const fileSystem = roamingFileSystem(folders, (path) => path);
+    let enumerated = 0;
+    let inspected = 0;
+    const requested: (number | undefined)[] = [];
+    const view = viewOf({
+      ...fileSystem,
+      readdir: (path, limit) => {
+        if (path === privateRoaming) requested.push(limit);
+        const names = fileSystem.readdir(path, limit);
+        if (
+          path === privateRoaming ||
+          path.startsWith(`${privateRoaming}${sep}`)
+        )
+          enumerated += names.length;
+        return names;
+      },
+      lstat: (path) => {
+        if (dirname(path) === privateRoaming) inspected += 1;
+        return fileSystem.lstat(path);
+      },
+    });
+    // The root lists only folders, so the budget runs out before any file.
+    expect(view).toBe("unknown");
+    expect(enumerated).toBe(1024);
+    expect(inspected).toBe(1024);
+    // The listing itself stops at the budget instead of reading all 1500 names.
+    expect(requested).toEqual([1024]);
+  });
+
+  it("charges names materialized from an early queued leaf directory", () => {
+    const files = Array.from({ length: 64 * 1000 }, (_, index) =>
+      join(
+        `folder-${String(Math.floor(index / 1000)).padStart(2, "0")}`,
+        `file-${String(index % 1000).padStart(4, "0")}`,
+      ),
+    );
+    const base = roamingFileSystem(files, (path) => path);
+    let enumerated = 0;
+    const requests: Array<{ path: string; limit: number | undefined }> = [];
+    const view = viewOf({
+      ...base,
+      readdir: (path, limit) => {
+        const names = base.readdir(path, limit);
+        if (
+          path === privateRoaming ||
+          path.startsWith(`${privateRoaming}${sep}`)
+        ) {
+          enumerated += names.length;
+          requests.push({ path, limit });
+        }
+        return names;
+      },
+    });
+
+    expect(view).toBe("direct");
+    expect(enumerated).toBe(entryLimit);
+    expect(requests).toEqual([
+      { path: privateRoaming, limit: entryLimit },
+      {
+        path: join(privateRoaming, "folder-00"),
+        limit: entryLimit - 64,
+      },
+    ]);
+  });
+
+  it("bounds the preferred Claude folder before selecting its probes", () => {
+    const files = Array.from({ length: 1500 }, (_, index) =>
+      join("Claude", `file-${String(index).padStart(4, "0")}.log`),
+    );
+    const base = roamingFileSystem(files, (path) => path);
+    const listed: number[] = [];
+    let inspected = 0;
+    const view = viewOf({
+      ...base,
+      readdir: (path, limit) => {
+        if (path === join(privateRoaming, "Claude") && limit !== undefined)
+          listed.push(limit);
+        return base.readdir(path, limit);
+      },
+      lstat: (path) => {
+        if (
+          path.startsWith(`${join(privateRoaming, "Claude")}${sep}`) &&
+          !path.endsWith(join("Claude", "claude_desktop_config.json"))
+        )
+          inspected += 1;
+        return base.lstat(path);
+      },
+    });
+
+    expect(view).toBe("direct");
+    expect(listed).toEqual([1024]);
+    // Each selected candidate is inspected once while listing and again during
+    // the race-safe comparison; selection itself remains capped at eight.
+    expect(inspected).toBe(16);
+  });
+
+  it("shares the entry budget between the preferred folder and fallback walk", () => {
+    const folders = Array.from({ length: 1500 }, (_, index) =>
+      join("Claude", `folder-${String(index).padStart(4, "0")}`, "file"),
+    );
+    const files = [...folders, join("turborepo", "telemetry.json")];
+    const base = roamingFileSystem(files, (path) => path);
+    const listed: Array<{ path: string; limit: number | undefined }> = [];
+    let inspected = 0;
+    const view = viewOf({
+      ...base,
+      readdir: (path, limit) => {
+        listed.push({ path, limit });
+        return base.readdir(path, limit);
+      },
+      lstat: (path) => {
+        if (
+          path.startsWith(`${join(privateRoaming, "Claude")}${sep}`) &&
+          !path.endsWith(join("Claude", "claude_desktop_config.json"))
+        )
+          inspected += 1;
+        return base.lstat(path);
+      },
+    });
+
+    expect(view).toBe("unknown");
+    expect(inspected).toBe(1024);
+    expect(
+      listed.filter(({ path }) => path === join(privateRoaming, "Claude")),
+    ).toEqual([{ path: join(privateRoaming, "Claude"), limit: 1024 }]);
+    expect(listed.some(({ path }) => path === privateRoaming)).toBe(false);
+  });
+});
+
+describe("Claude Desktop MSIX process view when a probe changes during the comparison", () => {
+  const telemetry = join("turborepo", "telemetry.json");
+
+  it("does not count a private file deleted during the comparison as a direct view", () => {
+    const fileSystem = roamingFileSystem([telemetry], (path) => path);
+    let deleted = false;
+    const view = viewOf({
+      ...fileSystem,
+      realpath: (path) => {
+        if (path !== join(env.APPDATA, telemetry)) return path;
+        // A redirected view loses the file between the two comparisons.
+        deleted = true;
+        throw failure("ENOENT");
+      },
+      lstat: (path) => {
+        if (deleted && path === join(privateRoaming, telemetry))
+          throw failure("ENOENT");
+        return fileSystem.lstat(path);
+      },
+    });
+    expect(view).toBe("unknown");
+  });
+
+  it("does not count an ordinary copy reached after the private file was deleted as a direct view", () => {
+    const fileSystem = roamingFileSystem([telemetry], (path) => path);
+    let deleted = false;
+    const view = viewOf({
+      ...fileSystem,
+      realpath: (path) => {
+        // The redirected view falls through to the ordinary AppData copy.
+        if (path === join(env.APPDATA, telemetry)) deleted = true;
+        return path;
+      },
+      lstat: (path) => {
+        if (deleted && path === join(privateRoaming, telemetry))
+          throw failure("ENOENT");
+        return fileSystem.lstat(path);
+      },
+    });
+    expect(view).toBe("unknown");
+  });
+
+  it("recognizes a redirected view through a private file recreated during the comparison", () => {
+    const fileSystem = roamingFileSystem([telemetry], (path) => path);
+    let lookups = 0;
+    const view = viewOf({
+      ...fileSystem,
+      realpath: (path) => {
+        if (path !== join(env.APPDATA, telemetry)) return path;
+        lookups += 1;
+        // The first lookup lands while the file is being replaced.
+        if (lookups === 1) throw failure("ENOENT");
+        return join(privateRoaming, telemetry);
+      },
+    });
+    expect(view).toBe("redirected");
+  });
+
+  it("does not decide from a probe whose AppData lookups disagree", () => {
+    const fileSystem = roamingFileSystem([telemetry], (path) => path);
+    let lookups = 0;
+    const view = viewOf({
+      ...fileSystem,
+      realpath: (path) => {
+        if (path !== join(env.APPDATA, telemetry)) return path;
+        lookups += 1;
+        if (lookups === 1) throw failure("ENOENT");
+        return path;
+      },
+    });
+    expect(view).toBe("unknown");
+  });
+});
+
 describe("unresolved Claude Desktop package identity", () => {
+  it.each(["AnthropicPBC.Claude_fnn82j28hfe8t", "Claude_fnn82j28hfe8t"])(
+    "refuses an unrecognized package deployment %s instead of selecting AppData",
+    (name) => {
+      const location = resolveWindowsClaudeDesktopLocation(home, env, {
+        readdir: () => [name],
+        lstat: () => file,
+        realpath: (path) => path,
+      });
+      expect(location).toMatchObject({
+        ok: false,
+        error: {
+          path: join(packages, name),
+          message: expect.stringContaining("does not fall back"),
+        },
+      });
+    },
+  );
+
   it.each([
     "Notes.AnthropicPBC.Claude_fnn82j28hfe8t",
     "AnthropicPBC.Claude_fnn82j28hfe8t.backup",

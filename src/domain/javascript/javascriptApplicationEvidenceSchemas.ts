@@ -1,6 +1,6 @@
 import { z } from "zod";
-import { digestSchema } from "../digests.js";
-import { prefixedDigestSchema } from "../digests.js";
+import { javascriptSourceRangeSchema } from "./javascriptSourceCoordinates.js";
+import { digestSchema, prefixedDigestSchema } from "../digests.js";
 
 const boundedTextSchema = z.string().min(1);
 const boundedKeySchema = z.string().min(1);
@@ -87,37 +87,16 @@ const applicationArtifactReferenceSchema = z.discriminatedUnion("available", [
   unavailableFactSchema,
 ]);
 
-const sourceRangeSchema = z
-  .strictObject({
-    kind: z.literal("source-range"),
-    source: boundedTextSchema,
-    start: z.strictObject({
-      line: z.number().int().min(1),
-      column: z.number().int().min(0),
-    }),
-    end: z.strictObject({
-      line: z.number().int().min(1),
-      column: z.number().int().min(0),
-    }),
-  })
-  .superRefine((location, context) => {
-    if (
-      location.end.line < location.start.line ||
-      (location.end.line === location.start.line &&
-        location.end.column < location.start.column)
-    )
-      context.addIssue({
-        code: "custom",
-        path: ["end"],
-        message: "Source range end must not precede its start",
-      });
-  });
+const sourceRangeSchema = javascriptSourceRangeSchema.safeExtend({
+  kind: z.literal("source-range"),
+  source: boundedTextSchema,
+});
 
 const fileOffsetRangeSchema = z
   .strictObject({
     kind: z.literal("file-offset-range"),
-    start: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
-    end: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+    start: z.int().min(0).max(Number.MAX_SAFE_INTEGER),
+    end: z.int().min(0).max(Number.MAX_SAFE_INTEGER),
   })
   .superRefine((location, context) => {
     if (location.end < location.start)
@@ -159,14 +138,17 @@ const applicationLocationSchema = z.discriminatedUnion("kind", [
   }),
 ]);
 
-/** Explicit source-location availability for one graph fact. */
-const applicationLocationReferenceSchema = z.discriminatedUnion("available", [
-  z.strictObject({
-    available: z.literal(true),
-    value: applicationLocationSchema,
-  }),
-  unavailableFactSchema,
-]);
+/** Source-location availability and coordinates retained on each graph fact. */
+export const applicationGraphEvidenceLocationSchema = z.discriminatedUnion(
+  "available",
+  [
+    z.strictObject({
+      available: z.literal(true),
+      value: applicationLocationSchema,
+    }),
+    unavailableFactSchema,
+  ],
+);
 
 /** Versioned extractor coordinates attached to every graph fact. */
 const applicationExtractorSchema = z.strictObject({
@@ -178,7 +160,7 @@ const applicationExtractorSchema = z.strictObject({
 
 const applicationLimitSchema = z.strictObject({
   name: z.string().min(1),
-  value: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+  value: z.int().min(0).max(Number.MAX_SAFE_INTEGER),
   unit: z.enum([
     "items",
     "bytes",
@@ -192,7 +174,7 @@ const applicationLimitSchema = z.strictObject({
 
 /** Bounded collection coverage without treating omission as absence. */
 const coverageLimitsSchema = z.array(applicationLimitSchema);
-const omittedCountSchema = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
+const omittedCountSchema = z.int().min(0).max(Number.MAX_SAFE_INTEGER);
 
 export const applicationCoverageSchema = z.union([
   z.strictObject({
@@ -262,7 +244,7 @@ const applicationGraphEvidenceBaseSchema = z.strictObject({
   state: applicationFactStateSchema,
   confidence: applicationConfidenceSchema,
   artifact: applicationArtifactReferenceSchema,
-  location: applicationLocationReferenceSchema,
+  location: applicationGraphEvidenceLocationSchema,
   extractor: applicationExtractorSchema,
   coverage: applicationCoverageSchema,
   limitations: z.array(boundedTextSchema),
@@ -272,10 +254,6 @@ const applicationGraphEvidenceBaseSchema = z.strictObject({
 /** Shared provenance fields apart from the fact-specific evidence location. */
 export const applicationGraphEvidenceContextSchema =
   applicationGraphEvidenceBaseSchema.omit({ location: true });
-
-/** Exact coordinates retained on each graph fact. */
-export const applicationGraphEvidenceLocationSchema =
-  applicationLocationReferenceSchema;
 
 type EvidenceValue = z.infer<typeof applicationGraphEvidenceBaseSchema>;
 

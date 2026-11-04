@@ -1,19 +1,35 @@
+import { parseConfig } from "../../../../src/config/parseConfig.js";
+import { GhidraProvider } from "../../../../src/ghidra/GhidraProvider.js";
+import { fixtureDosLoadImage } from "../../../../src/ghidra/GhidraLoadImage.fixture.js";
+import { jsonValueSchema } from "../../../../src/domain/jsonValue.js";
+import { artifactFilePrimaryFacts } from "../../../../src/artifacts/ArtifactFileOperation.js";
+import { AnalysisCancelledError } from "../../../../src/domain/analysisErrorCore.js";
 import { spawn, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { readFileSync } from "node:fs";
-import { access, chmod, mkdir, writeFile } from "node:fs/promises";
+import {
+  access,
+  chmod,
+  mkdir,
+  writeFile,
+  open,
+  type FileHandle,
+} from "node:fs/promises";
 import { basename, join } from "node:path";
 import { PassThrough } from "node:stream";
 
 import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import pino from "pino";
+import { withVerifierCleanup } from "../../../../scripts/lib/verifier-cleanup.mjs";
+import { awaitAcknowledgement } from "../../../fixtures/lifecycleAcknowledgement.js";
 import type { Logger } from "pino";
 import type { ProgressUpdate } from "../../../../src/application/ProgressReporter.js";
 
 import { err, ok } from "../../../../src/domain/result.js";
 import * as GhidraTransport from "../../../../src/ghidra/GhidraTransport.js";
 import { GhidraClient } from "../../../../src/ghidra/GhidraClient.js";
+import { GhidraAdmissionError } from "../../../../src/ghidra/GhidraAdmissionError.js";
 import { ProviderRunLineage } from "../../../../src/process/ProviderRunLineage.js";
 import { PrivateRuntimeRoot } from "../../../../src/process/PrivateRuntimeRoot.js";
 import { OwnedFileHandle } from "../../../../src/filesystem/OwnedFileHandle.js";
@@ -231,6 +247,585 @@ it("keeps one shared startup despite a failed progress sink and stops reports af
   expect(reports).toBe(1);
 });
 
+it.each(["descriptor-close", "result-consumption"] as const)(
+  "preserves DOS cancellation at the actual snapshot %s boundary",
+  async (phase) => {
+    const fixture = fixtureDosLoadImage();
+    const directory = await createTestTempDirectory("rea-dos-cancel-");
+    const targetPath = join(directory, "fixture.exe");
+    await writeFile(targetPath, fixture.bytes);
+    const live = clientFor(new FixtureLauncher(), {
+      targetPath,
+      targetSha256: fixture.sha256,
+    });
+    const started = await live.start();
+    if (!started.ok) throw started.error;
+    const caller = new AbortController();
+    const reason = { caller: phase };
+    const config = parseConfig({
+      GHIDRA_INSTALL_DIR: "/controlled/ghidra_12.1.4_PUBLIC",
+    });
+    if (!config.ok) throw config.error;
+    const provider = new GhidraProvider(
+      config.value,
+      pino({ level: "silent" }),
+      {},
+      {
+        platform: "linux",
+        architecture: "x64",
+        readText: () => "application.version=12.1.4\napplication.java.min=21\n",
+        executable: () => true,
+        probeJava: () =>
+          ok({
+            osArch: "amd64",
+            osName: "Linux",
+            version: "21.0.11",
+            major: 21,
+            home: "/controlled/jdk21",
+            bits: 64,
+            runtime: "jdk",
+          }),
+      },
+      () => ({
+        start: () => live.start(),
+        callTool: async () => ok(jsonValueSchema.parse(fixture.observation)),
+        attestDosTargetSnapshot: async (observations, signal) => {
+          const result = await live.attestDosTargetSnapshot(
+            observations,
+            signal,
+          );
+          if (phase === "result-consumption" && result.ok) caller.abort(reason);
+          return result;
+        },
+        close: () => live.close(),
+      }),
+    );
+    const target = {
+      path: targetPath,
+      sha256: fixture.sha256,
+      kind: "executable" as const,
+      format: "dos-mz" as const,
+      architecture: "x86" as const,
+      availableArchitectures: ["x86" as const],
+    };
+    const profile = await provider.resolveAnalysisProfile(target);
+    if (!profile.ok || profile.value.profile === null)
+      throw new Error("Expected DOS profile");
+    const client = provider.createClient(target, profile.value.profile);
+    let closedOwner: OwnedFileHandle | undefined;
+    const original = OwnedFileHandle.prototype.close;
+    const close =
+      phase === "descriptor-close"
+        ? vi
+            .spyOn(OwnedFileHandle.prototype, "close")
+            .mockImplementationOnce(async function (this: OwnedFileHandle) {
+              closedOwner = this;
+              await original.call(this);
+              caller.abort(reason);
+            })
+        : undefined;
+    onTestFinished(async () => {
+      close?.mockRestore();
+      await client.close();
+    });
+    const result = await client.execute(
+      "inspect_native_load_image",
+      {},
+      { signal: caller.signal },
+    );
+    if (result.ok) throw new Error("Expected DOS cancellation");
+    expect(result.error._tag).toBe("AnalysisCancelledError");
+    expect(result.error.cause).toBe(reason);
+    if (phase === "descriptor-close") {
+      expect(closedOwner?.handle.fd).toBe(-1);
+      expect(result.error.partialObservation).toMatchObject({
+        kind: "native-load-image",
+        stage: "completed",
+        result: { status: "verified", observations: fixture.observation },
+      });
+      expect(result.error.diagnostics).toMatchObject({
+        load_image_observations: fixture.observation,
+      });
+    } else {
+      expect(result.error.partialObservation).toMatchObject({
+        kind: "native-load-image",
+        stage: "completed",
+        result: { status: "verified", observations: fixture.observation },
+      });
+    }
+    close?.mockRestore();
+    expect((await client.close()).ok).toBe(true);
+  },
+);
+
+it.each([false, true])(
+  "retains a completed bounded MZ comparison through failed close (cancel=%s)",
+  async (cancel) => {
+    const fixture = fixtureDosLoadImage();
+    const directory = await createTestTempDirectory("rea-mz-finalization-");
+    const targetPath = join(directory, "inert.exe");
+    await writeFile(targetPath, fixture.bytes);
+    const client = clientFor(new FixtureLauncher(), {
+      targetPath,
+      targetSha256: fixture.sha256,
+    });
+    const started = await client.start();
+    if (!started.ok) throw started.error;
+    const caller = new AbortController();
+    const reason = { stage: "MZ descriptor close" };
+    let allowClose = false;
+    const original = OwnedFileHandle.prototype.close;
+    const close = vi
+      .spyOn(OwnedFileHandle.prototype, "close")
+      .mockImplementation(function (this: OwnedFileHandle) {
+        if (allowClose) return original.call(this);
+        if (cancel) caller.abort(reason);
+        return Promise.reject(
+          new Error("controlled MZ descriptor close failure"),
+        );
+      });
+    onTestFinished(async () => {
+      allowClose = true;
+      await client.close();
+      close.mockRestore();
+    });
+    const result = await client.attestDosTargetSnapshot(
+      fixture.observation,
+      caller.signal,
+    );
+    if (result.ok) throw new Error("Expected finalization failure");
+    expect(result.error.kind).toBe(cancel ? "cancelled" : "protocol");
+    if (cancel) expect(result.error.cancellation?.reason).toBe(reason);
+    expect(result.error.partialObservation).toMatchObject({
+      kind: "native-load-image",
+      stage: "completed",
+      result: { status: "verified", observations: fixture.observation },
+    });
+    expect(result.error.cleanupFailure?.cleanupIncomplete).toBe(true);
+    const blocked = await client.attestDosTargetSnapshot(fixture.observation);
+    expect(blocked.ok).toBe(false);
+    expect(new Set(close.mock.contexts).size).toBe(1);
+    allowClose = true;
+    expect((await client.close()).ok).toBe(true);
+    expect(result.error.cleanupFailure?.cleanupIncomplete).toBe(false);
+    expect(result.error.cleanupFailure?.cleanupResources).toEqual([]);
+  },
+);
+
+it.each([false, true])(
+  "preserves an explicit MZ refusal through finalization (failed close=%s)",
+  async (failClose) => {
+    const fixture = fixtureDosLoadImage();
+    fixture.bytes[0] = 0;
+    const directory = await createTestTempDirectory("rea-mz-refusal-");
+    const targetPath = join(directory, "inert.exe");
+    await writeFile(targetPath, fixture.bytes);
+    const client = clientFor(new FixtureLauncher(), {
+      targetPath,
+      targetSha256: createHash("sha256").update(fixture.bytes).digest("hex"),
+    });
+    const started = await client.start();
+    if (!started.ok) throw started.error;
+    const close = failClose
+      ? vi
+          .spyOn(OwnedFileHandle.prototype, "close")
+          .mockRejectedValueOnce(new Error("controlled refusal close failure"))
+      : undefined;
+    onTestFinished(async () => {
+      close?.mockRestore();
+      await client.close();
+    });
+    const result = await client.attestDosTargetSnapshot(fixture.observation);
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        kind: "protocol",
+        message: "invalid or truncated DOS MZ header",
+        diagnostics: { failure_message: "invalid or truncated DOS MZ header" },
+      },
+    });
+    if (result.ok) throw new Error("Expected MZ refusal");
+    expect(result.error.cleanupFailure?.cleanupIncomplete ?? false).toBe(
+      failClose,
+    );
+  },
+);
+
+it("hashes snapshot section ranges in the same pass as the whole-file digest", async () => {
+  const client = clientFor(new FixtureLauncher());
+  const started = await client.start();
+  if (!started.ok) throw started.error;
+  onTestFinished(async () => {
+    await client.close();
+  });
+  const bytes = readFileSync(fixturePath);
+  const digest = (chunk: Buffer): string =>
+    createHash("sha256").update(chunk).digest("hex");
+  const result = await client.hashTargetSnapshotRanges([
+    { start: 0, end: 4 },
+    { start: 4, end: bytes.length },
+    { start: 2, end: 2 },
+  ]);
+  expect(result).toEqual({
+    ok: true,
+    value: {
+      sha256: digest(bytes),
+      bytes: bytes.length,
+      rangeSha256: [
+        digest(bytes.subarray(0, 4)),
+        digest(bytes.subarray(4)),
+        digest(Buffer.alloc(0)),
+      ],
+    },
+  });
+});
+
+it("reports snapshot descriptor cleanup immediately and resolves its exact error on retry", async () => {
+  const client = clientFor(new FixtureLauncher());
+  const started = await client.start();
+  if (!started.ok) throw started.error;
+  let allowClose = false;
+  const original = OwnedFileHandle.prototype.close;
+  const close = vi
+    .spyOn(OwnedFileHandle.prototype, "close")
+    .mockImplementation(function (this: OwnedFileHandle) {
+      return allowClose
+        ? original.call(this)
+        : Promise.reject(new Error("controlled snapshot close failure"));
+    });
+  onTestFinished(async () => {
+    allowClose = true;
+    close.mockRestore();
+    await client.close();
+  });
+  const result = await client.hashTargetSnapshot();
+  expect(result.ok).toBe(false);
+  if (result.ok) throw new Error("Expected snapshot final close failure");
+  expect(result.error.cleanupFailure?.cleanupIncomplete).toBe(true);
+  expect(result.error.partialObservation).toMatchObject({
+    sha256: TARGET_SHA256,
+    bytes: readFileSync(fixturePath).length,
+  });
+  const blocked = await client.hashTargetSnapshot();
+  expect(blocked.ok).toBe(false);
+  if (blocked.ok)
+    throw new Error("Expected cleanup to block snapshot admission");
+  expect(blocked.error.cleanupFailure?.cleanupIncomplete).toBe(true);
+  expect(new Set(close.mock.contexts).size).toBe(1);
+  const retry = await client.close();
+  expect(retry.ok).toBe(false);
+  allowClose = true;
+  expect((await client.close()).ok).toBe(true);
+  expect(result.error.cleanupFailure?.cleanupIncomplete).toBe(false);
+  expect(result.error.cleanupFailure?.cleanupResources).toEqual([]);
+  expect(blocked.error.cleanupFailure?.cleanupIncomplete).toBe(false);
+  if (!retry.ok) expect(retry.error.cleanupIncomplete).toBe(false);
+});
+
+it("preserves completed snapshot hashing and exact cancellation during descriptor close", async () => {
+  const client = clientFor(new FixtureLauncher());
+  const started = await client.start();
+  if (!started.ok) throw started.error;
+  const controller = new AbortController();
+  const reason = { phase: "snapshot-final-close" };
+  const original = OwnedFileHandle.prototype.close;
+  const close = vi
+    .spyOn(OwnedFileHandle.prototype, "close")
+    .mockImplementationOnce(async function (this: OwnedFileHandle) {
+      await original.call(this);
+      controller.abort(reason);
+    });
+  onTestFinished(() => close.mockRestore());
+  const result = await client.hashTargetSnapshot(controller.signal);
+  expect(result.ok).toBe(false);
+  if (result.ok) throw new Error("Expected final-close cancellation");
+  expect(result.error.kind).toBe("cancelled");
+  expect(result.error.cancellation?.reason).toBe(reason);
+  expect(result.error).toMatchObject({
+    partialObservation: {
+      sha256: TARGET_SHA256,
+      bytes: readFileSync(fixturePath).length,
+    },
+  });
+});
+
+it.each([undefined, 0])(
+  "retains completed snapshot capture facts through failed close (limit=%s)",
+  async (limit) => {
+    const client = clientFor(new FixtureLauncher());
+    const started = await client.start();
+    if (!started.ok) throw started.error;
+    const close = vi
+      .spyOn(OwnedFileHandle.prototype, "close")
+      .mockRejectedValueOnce(new Error("controlled capture close failure"));
+    onTestFinished(async () => {
+      close.mockRestore();
+      await client.close();
+    });
+    const result = await client.readTargetSnapshot(limit);
+    if (result.ok) throw new Error("Expected capture cleanup failure");
+    expect(result.error.partialObservation).toEqual({
+      kind: "file-snapshot-read",
+      path: expect.any(String),
+      admitted_sha256: TARGET_SHA256,
+      capture:
+        limit === undefined
+          ? { status: "captured", bytes: readFileSync(fixturePath).length }
+          : {
+              status: "over-capacity",
+              source_bytes_at_least: readFileSync(fixturePath).length,
+              maximum_bytes: limit,
+            },
+    });
+    expect(result.error.cleanupFailure?.cleanupIncomplete).toBe(true);
+    expect((await client.close()).ok).toBe(true);
+    expect(result.error.cleanupFailure?.cleanupIncomplete).toBe(false);
+  },
+);
+
+it("joins a snapshot read before closing its descriptor and runtime", async () => {
+  const launcher = new FixtureLauncher();
+  const client = clientFor(launcher);
+  const started = await client.start();
+  if (!started.ok) throw started.error;
+  const child = launcher.processes[0];
+  if (child === undefined) throw new Error("Missing bounded fixture child");
+  const childClosed = new Promise<void>((resolve) =>
+    child.once("close", () => resolve()),
+  );
+  const probe = await open(fixturePath, "r");
+  const prototype = Object.getPrototypeOf(probe) as FileHandle;
+  await probe.close();
+  let markRead!: () => void, resume!: () => void;
+  const reading = new Promise<void>((resolve) => {
+    markRead = resolve;
+  });
+  const gate = new Promise<void>((resolve) => {
+    resume = resolve;
+  });
+  let captured: FileHandle | undefined;
+  const original = prototype.read;
+  const read = vi
+    .spyOn(prototype, "read")
+    .mockImplementationOnce(async function (
+      this: FileHandle,
+      ...args: Parameters<FileHandle["read"]>
+    ) {
+      captured = this;
+      markRead();
+      await gate;
+      return Reflect.apply(original, this, args);
+    });
+  let pending: ReturnType<GhidraClient["hashTargetSnapshot"]> | undefined;
+  onTestFinished(async () => {
+    resume();
+    await pending;
+    read.mockRestore();
+    await client.close();
+  });
+  pending = client.hashTargetSnapshot();
+  await reading;
+  const closing = client.close();
+  await childClosed;
+  // Cross the event-loop phase after the owned child closed, rather than
+  // guessing shutdown progress from an elapsed dispatch delay.
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  expect(captured?.fd).toBeGreaterThanOrEqual(0);
+  const root = launcher.runtimeRoots[0];
+  if (root === undefined) throw new Error("Missing runtime root");
+  await expect(access(root)).resolves.toBeUndefined();
+  resume();
+  expect((await pending).ok).toBe(true);
+  expect((await closing).ok).toBe(true);
+  expect(captured?.fd).toBe(-1);
+  await expect(access(root)).rejects.toMatchObject({ code: "ENOENT" });
+});
+
+it("preserves snapshot cancellation and completed hash while final close also fails", async () => {
+  const client = clientFor(new FixtureLauncher());
+  const started = await client.start();
+  if (!started.ok) throw started.error;
+  const controller = new AbortController();
+  const reason = { phase: "snapshot-cancel-and-failed-close" };
+  let allowClose = false;
+  const original = OwnedFileHandle.prototype.close;
+  const close = vi
+    .spyOn(OwnedFileHandle.prototype, "close")
+    .mockImplementation(function (this: OwnedFileHandle) {
+      if (allowClose) return original.call(this);
+      controller.abort(reason);
+      return Promise.reject(new Error("controlled cancellation close failure"));
+    });
+  onTestFinished(async () => {
+    allowClose = true;
+    await client.close();
+    close.mockRestore();
+  });
+  const result = await client.hashTargetSnapshot(controller.signal);
+  expect(result.ok).toBe(false);
+  if (result.ok) throw new Error("Expected cancellation and cleanup failure");
+  expect(result.error.kind).toBe("cancelled");
+  expect(result.error.cancellation?.reason).toBe(reason);
+  expect(result.error.partialObservation).toMatchObject({
+    sha256: TARGET_SHA256,
+    bytes: readFileSync(fixturePath).length,
+  });
+  expect(result.error.cleanupFailure?.cleanupIncomplete).toBe(true);
+  allowClose = true;
+  expect((await client.close()).ok).toBe(true);
+  expect(result.error.cleanupFailure?.cleanupIncomplete).toBe(false);
+});
+
+it.each(
+  (["hash", "capture"] as const).flatMap((operation) =>
+    [null, "caller stopped", new Error("caller stopped")].flatMap((reason) =>
+      [false, true].map((failClose) => ({ operation, reason, failClose })),
+    ),
+  ),
+)(
+  "preserves active snapshot cancellation: $operation, $reason, failed close=$failClose",
+  async ({ operation, reason, failClose }) => {
+    const client = clientFor(new FixtureLauncher());
+    const started = await client.start();
+    if (!started.ok) throw started.error;
+    const controller = new AbortController();
+    const probe = await open(fixturePath, "r");
+    const prototype = Object.getPrototypeOf(probe) as FileHandle;
+    await probe.close();
+    const originalRead = prototype.read;
+    const read = vi
+      .spyOn(prototype, "read")
+      .mockImplementationOnce(async function (
+        this: FileHandle,
+        ...args: Parameters<FileHandle["read"]>
+      ) {
+        // Fulfill a real short read, then abort before the next checkpoint.
+        const result = await Reflect.apply(originalRead, this, [
+          args[0],
+          0,
+          1,
+          null,
+        ]);
+        controller.abort(reason);
+        return result;
+      });
+    let allowClose = !failClose;
+    const originalClose = OwnedFileHandle.prototype.close;
+    const close = vi
+      .spyOn(OwnedFileHandle.prototype, "close")
+      .mockImplementation(function (this: OwnedFileHandle) {
+        return allowClose
+          ? originalClose.call(this)
+          : Promise.reject(new Error("controlled active-read close failure"));
+      });
+    onTestFinished(async () => {
+      allowClose = true;
+      read.mockRestore();
+      await client.close();
+      close.mockRestore();
+    });
+    const result =
+      operation === "hash"
+        ? await client.hashTargetSnapshot(controller.signal)
+        : await client.readTargetSnapshot(undefined, controller.signal);
+    if (result.ok) throw new Error("Expected active read cancellation");
+    expect(result.error.kind).toBe("cancelled");
+    expect(result.error.cancellation?.reason).toBe(reason);
+    expect(result.error.partialObservation).toBeUndefined();
+    expect(result.error.cleanupFailure?.cleanupIncomplete ?? false).toBe(
+      failClose,
+    );
+    allowClose = true;
+    expect((await client.close()).ok).toBe(true);
+    expect(result.error.cleanupFailure?.cleanupIncomplete ?? false).toBe(false);
+  },
+);
+
+it("keeps a snapshot read failure primary across late cancellation and failed close", async () => {
+  const client = clientFor(new FixtureLauncher());
+  const started = await client.start();
+  if (!started.ok) throw started.error;
+  const controller = new AbortController();
+  const physical = new Error("controlled snapshot physical read failure");
+  const probe = await open(fixturePath, "r");
+  const prototype = Object.getPrototypeOf(probe) as FileHandle;
+  await probe.close();
+  const read = vi.spyOn(prototype, "read").mockRejectedValueOnce(physical);
+  let allowClose = false;
+  const original = OwnedFileHandle.prototype.close;
+  const close = vi
+    .spyOn(OwnedFileHandle.prototype, "close")
+    .mockImplementation(function (this: OwnedFileHandle) {
+      if (allowClose) return original.call(this);
+      controller.abort({ phase: "late-snapshot-close" });
+      return Promise.reject(
+        new Error("controlled close failure after read failure"),
+      );
+    });
+  onTestFinished(async () => {
+    allowClose = true;
+    read.mockRestore();
+    await client.close();
+    close.mockRestore();
+  });
+  const result = await client.hashTargetSnapshot(controller.signal);
+  expect(result.ok).toBe(false);
+  if (result.ok) throw new Error("Expected read and cleanup failure");
+  expect(result.error.kind).toBe("protocol");
+  expect(result.error.cancellation).toBeUndefined();
+  expect(artifactFilePrimaryFacts(result.error.cause)).toEqual({
+    cause: physical,
+    origin: "owned-or-classified",
+  });
+  expect(result.error.partialObservation).toBeUndefined();
+  expect(result.error.cleanupFailure?.cleanupIncomplete).toBe(true);
+  allowClose = true;
+  expect((await client.close()).ok).toBe(true);
+  expect(result.error.cleanupFailure?.cleanupIncomplete).toBe(false);
+});
+
+it("keeps runtime cleanup pending after a snapshot descriptor releases and shrinks live resources", async () => {
+  const launcher = new FixtureLauncher();
+  const client = clientFor(launcher);
+  const started = await client.start();
+  if (!started.ok) throw started.error;
+  let allowClose = false;
+  const original = OwnedFileHandle.prototype.close;
+  const close = vi
+    .spyOn(OwnedFileHandle.prototype, "close")
+    .mockImplementation(function (this: OwnedFileHandle) {
+      return allowClose
+        ? original.call(this)
+        : Promise.reject(new Error("controlled snapshot close failure"));
+    });
+  let restoreRoot: (() => void) | undefined;
+  onTestFinished(async () => {
+    allowClose = true;
+    close.mockRestore();
+    restoreRoot?.();
+    await client.close();
+  });
+  const result = await client.hashTargetSnapshot();
+  if (result.ok) throw new Error("Expected file cleanup failure");
+  const first = await client.close();
+  if (first.ok) throw new Error("Expected pending descriptor cleanup");
+  allowClose = true;
+  const rootClose = vi
+    .spyOn(PrivateRuntimeRoot.prototype, "close")
+    .mockRejectedValueOnce(new Error("controlled root removal failure"));
+  restoreRoot = () => rootClose.mockRestore();
+  const second = await client.close();
+  if (second.ok) throw new Error("Expected pending root cleanup");
+  expect(result.error.cleanupFailure?.cleanupIncomplete).toBe(false);
+  expect(result.error.cleanupFailure?.cleanupResources).toEqual([]);
+  expect(first.error.cleanupIncomplete).toBe(true);
+  expect(first.error.cleanupResources).toEqual([launcher.runtimeRoots[0]]);
+  expect(second.error.cleanupResources).toEqual([launcher.runtimeRoots[0]]);
+  expect((await client.close()).ok).toBe(true);
+  expect(first.error.cleanupIncomplete).toBe(false);
+  expect(second.error.cleanupIncomplete).toBe(false);
+});
+
 describe("GhidraClient captured source snapshot", () => {
   it("retains a snapshot descriptor whose close failed until session cleanup succeeds", async () => {
     const client = clientFor(new FixtureLauncher());
@@ -358,12 +953,121 @@ describe("GhidraClient captured source snapshot", () => {
   });
 });
 
+it("scopes authenticated input-failure diagnostics to the request while retaining session output", async () => {
+  const client = clientFor(new FixtureLauncher("remote_error"));
+
+  const result = await client.callTool("list_procedures", {
+    document: null,
+    offset: 0,
+    limit: 500,
+  });
+
+  expect(result).toMatchObject({
+    ok: false,
+    error: {
+      kind: "remote",
+      remoteCode: "not_found",
+      diagnostics: {
+        diagnostic_scope: "request",
+        remote_code: "not_found",
+        remote_message: "Unknown Ghidra procedure name",
+        failure_output: {
+          stdout: { text: "Fixture request rejected: missing procedure\n" },
+          complete: true,
+        },
+      },
+    },
+  });
+  if (result.ok) throw new Error("Expected remote lookup failure");
+  expect(result.error.diagnostics).not.toHaveProperty("stdout");
+  expect(result.error.diagnostics).not.toHaveProperty("stderr");
+  expect(result.error.diagnostics).not.toHaveProperty("launch_support");
+  expect(client.diagnostics()).toMatchObject({
+    stdout: {
+      text: "Fixture launcher startup output\nFixture request rejected: missing procedure\n",
+    },
+  });
+  expect(client.isReady()).toBe(true);
+  await expect(
+    client.callTool("list_strings", { document: null }),
+  ).resolves.toMatchObject({ ok: true });
+  await client.close();
+  expect(client.diagnostics()).toMatchObject({
+    stdout: {
+      text: expect.stringContaining("Fixture launcher startup output"),
+    },
+  });
+});
+
+it("retains launcher diagnostics when an input error rejects the startup handshake", async () => {
+  const client = clientFor(new FixtureLauncher("remote_startup_error"));
+  const result = await client.start();
+  expect(result).toMatchObject({
+    ok: false,
+    error: {
+      kind: "remote",
+      remoteCode: "invalid_request",
+      diagnostics: {
+        stdout: {
+          text: expect.stringContaining("Fixture launcher startup output"),
+        },
+      },
+    },
+  });
+  if (result.ok) throw new Error("Expected startup failure");
+  expect(result.error.diagnostics).not.toHaveProperty("diagnostic_scope");
+});
+
+it.each(
+  (
+    ["import_identity_unavailable", "import_identity_mismatch"] as const
+  ).flatMap((code) =>
+    (HOST_TRANSPORT === "unix-socket"
+      ? ([HOST_TRANSPORT, "authenticated-loopback-tcp"] as const)
+      : ([HOST_TRANSPORT] as const)
+    ).map((transport) => [code, transport] as const),
+  ),
+)(
+  "retains structured %s from %s startup and cleans the failed bridge",
+  async (code, transport) => {
+    const launcher = new FixtureLauncher(code);
+    const client = clientFor(launcher, { transport });
+    const result = await client.start();
+    if (result.ok) throw new Error("Expected identity admission failure");
+    expect(result.error.kind).toBe("admission");
+    expect(result.error.cause).toBeInstanceOf(GhidraAdmissionError);
+    expect(result.error.cause).toMatchObject({ code });
+    expect(client.isReady()).toBe(false);
+    await expect(waitForExit(launcher.processes[0])).resolves.toBe(true);
+    expect(launcher.requests).toEqual(["ping", "shutdown"]);
+    await expect(access(launcher.runtimeRoots[0] ?? "")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  },
+);
+
+it("does not classify a later remote error as an identity admission failure", async () => {
+  const client = clientFor(new FixtureLauncher("late_identity_failure"));
+  expect((await client.start()).ok).toBe(true);
+  const result = await client.callTool("list_strings", {});
+  if (result.ok) throw new Error("Expected the fixture's later remote failure");
+  expect(result.error.kind).toBe("remote");
+  expect(result.error.remoteCode).toBe("import_identity_mismatch");
+  expect(result.error.cause).not.toBeInstanceOf(GhidraAdmissionError);
+  expect(client.isReady()).toBe(true);
+});
+
 describe("GhidraClient", () => {
   it("completes an exact, fragmented post-analysis handshake", async () => {
     const launcher = new FixtureLauncher("fragmented");
     const client = clientFor(launcher);
 
     const started = await client.start();
+    const expectedCapabilities = GHIDRA_SESSION_CAPABILITIES.filter(
+      (value) =>
+        HOST_TRANSPORT === "unix-socket" ||
+        !GHIDRA_MUTATING_OPERATIONS.has(value),
+    );
     expect(started).toMatchObject({
       ok: true,
       value: {
@@ -372,18 +1076,22 @@ describe("GhidraClient", () => {
         read_only: HOST_TRANSPORT !== "unix-socket",
         analysis_complete: true,
         analysis_timed_out: false,
-        capabilities: GHIDRA_SESSION_CAPABILITIES.filter(
-          (value) =>
-            HOST_TRANSPORT === "unix-socket" ||
-            !GHIDRA_MUTATING_OPERATIONS.has(value),
-        ),
         target: {
           image_base: "0x1000",
           default_address_space: "ram",
         },
       },
     });
-    if (started.ok) expect(started.value).not.toHaveProperty("bridge_version");
+    if (started.ok) {
+      // Capability identity is an exact set; bridge declaration order is not a contract.
+      expect(new Set(started.value.capabilities)).toEqual(
+        new Set(expectedCapabilities),
+      );
+      expect(started.value.capabilities).toHaveLength(
+        expectedCapabilities.length,
+      );
+      expect(started.value).not.toHaveProperty("bridge_version");
+    }
     if (HOST_TRANSPORT === "unix-socket")
       expect(Buffer.byteLength(launcher.endpointPaths[0] ?? "")).toBeLessThan(
         108,
@@ -450,28 +1158,6 @@ describe("GhidraClient", () => {
     });
   });
 
-  it("preserves an authenticated operation failure code and diagnostics", async () => {
-    const client = clientFor(new FixtureLauncher("remote_error"));
-
-    const result = await client.callTool("list_procedures", {
-      document: null,
-      offset: 0,
-      limit: 500,
-    });
-
-    expect(result).toMatchObject({
-      ok: false,
-      error: {
-        kind: "remote",
-        remoteCode: "not_found",
-        diagnostics: {
-          remote_code: "not_found",
-          remote_message: "Unknown Ghidra procedure name",
-        },
-      },
-    });
-  });
-
   it.each([
     ["wrong_identity", "protocol"],
     ["malformed", "protocol"],
@@ -509,8 +1195,12 @@ it("reports owner closure to live startup callers without cancelling their signa
   });
   const controllers = [new AbortController(), new AbortController()];
   const waits = controllers.map(({ signal }) => client.start(signal));
-  try {
-    await pending;
+  await withVerifierCleanup(async () => {
+    await awaitAcknowledgement(
+      pending,
+      Promise.race(waits),
+      "startup observation",
+    );
     const closing = client.close();
     release?.();
     for (const wait of waits)
@@ -524,11 +1214,17 @@ it("reports owner closure to live startup callers without cancelling their signa
     await expect(closing).resolves.toEqual({ ok: true, value: null });
     expect(controllers.every(({ signal }) => !signal.aborted)).toBe(true);
     expect(client.isReady()).toBe(false);
-  } finally {
-    release?.();
-    await client.close();
-    observe.mockRestore();
-  }
+  }, [
+    () => release?.(),
+    async () => {
+      const result = await client.close();
+      if (!result.ok) throw result.error;
+    },
+    async () => {
+      await Promise.allSettled(waits);
+    },
+    () => observe.mockRestore(),
+  ]);
 });
 
 it.skipIf(process.platform === "win32")(
@@ -1417,10 +2113,73 @@ describe("GhidraClient shutdown diagnostics", () => {
   );
 });
 
-it("preserves failed startup and retained Ghidra cleanup capabilities until a verified retry", async () => {
-  const fixture = new FixtureLauncher("wrong_identity");
-  let cleanupAllowed = false;
-  let cleanupAttempts = 0;
+it.each([
+  ["wrong_identity", "protocol"],
+  ["import_identity_unavailable", "admission"],
+] as const)(
+  "preserves %s and retained Ghidra cleanup until a verified retry",
+  async (mode, kind) => {
+    const fixture = new FixtureLauncher(mode);
+    let cleanupAllowed = false;
+    let cleanupAttempts = 0;
+    const launcher: GhidraLauncher = {
+      launch: async (session) => {
+        const launched = await fixture.launch(session);
+        if (!launched.ok) return launched;
+        return ok({
+          ...launched.value,
+          cleanup: async () => {
+            cleanupAttempts += 1;
+            return cleanupAllowed
+              ? { cleaned: true as const, signaled: false }
+              : {
+                  cleaned: false as const,
+                  reason: "fixture process cleanup unconfirmed",
+                };
+          },
+        });
+      },
+    };
+    const client = clientFor(launcher);
+    onTestFinished(async () => {
+      cleanupAllowed = true;
+      await client.close();
+    });
+    const failed = await client.start();
+    expect(failed).toMatchObject({
+      ok: false,
+      error: { kind, cleanupFailure: { cleanupIncomplete: true } },
+    });
+    if (failed.ok) throw new Error("Expected failed startup");
+    if (mode === "import_identity_unavailable")
+      expect(failed.error.cause).toMatchObject({ code: mode });
+    const runtime = fixture.runtimeRoots[0];
+    if (runtime === undefined)
+      throw new Error("Fixture runtime was not captured");
+    await access(runtime);
+    expect(cleanupAttempts).toBe(1);
+    expect(await client.close()).toMatchObject({
+      ok: false,
+      error: { cleanupIncomplete: true },
+    });
+    cleanupAllowed = true;
+    expect(await client.close()).toEqual(ok(null));
+    expect(failed.error.cleanupFailure?.cleanupIncomplete).toBe(false);
+    expect(cleanupAttempts).toBe(3);
+    await expect(access(runtime)).rejects.toMatchObject({ code: "ENOENT" });
+  },
+);
+
+it("retains the identity refusal when cancellation arrives during final startup cleanup", async () => {
+  const fixture = new FixtureLauncher("import_identity_mismatch");
+  let entered: (() => void) | undefined;
+  let release: (() => void) | undefined;
+  const cleanupStarted = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
   const launcher: GhidraLauncher = {
     launch: async (session) => {
       const launched = await fixture.launch(session);
@@ -1428,39 +2187,40 @@ it("preserves failed startup and retained Ghidra cleanup capabilities until a ve
       return ok({
         ...launched.value,
         cleanup: async () => {
-          cleanupAttempts += 1;
-          return cleanupAllowed
-            ? { cleaned: true as const, signaled: false }
-            : {
-                cleaned: false as const,
-                reason: "fixture process cleanup unconfirmed",
-              };
+          entered?.();
+          await gate;
+          return { cleaned: true as const, signaled: false };
         },
       });
     },
   };
-  const client = clientFor(launcher);
-  onTestFinished(async () => {
-    cleanupAllowed = true;
-    await client.close();
-  });
-  expect(await client.start()).toMatchObject({
-    ok: false,
-    error: { kind: "protocol", cleanupFailure: { cleanupIncomplete: true } },
-  });
-  const runtime = fixture.runtimeRoots[0];
-  if (runtime === undefined)
-    throw new Error("Fixture runtime was not captured");
-  await access(runtime);
-  expect(cleanupAttempts).toBe(1);
-  expect(await client.close()).toMatchObject({
-    ok: false,
-    error: { cleanupIncomplete: true },
-  });
-  cleanupAllowed = true;
-  expect(await client.close()).toEqual(ok(null));
-  expect(cleanupAttempts).toBe(3);
-  await expect(access(runtime)).rejects.toMatchObject({ code: "ENOENT" });
+  const client = clientFor(launcher, { startupTimeoutMs: 10_000 });
+  const controller = new AbortController();
+  const started = client.start(controller.signal);
+  await withVerifierCleanup(async () => {
+    await awaitAcknowledgement(
+      cleanupStarted,
+      started,
+      "identity refusal cleanup",
+    );
+    controller.abort("cancel during final cleanup");
+    release?.();
+    const result = await started;
+    if (result.ok) throw new Error("Expected the earlier identity refusal");
+    expect(result.error.kind).toBe("admission");
+    expect(result.error.cause).toMatchObject({
+      code: "import_identity_mismatch",
+    });
+    expect(client.isReady()).toBe(false);
+    await expect(access(fixture.runtimeRoots[0] ?? "")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  }, [
+    () => release?.(),
+    async () => {
+      await client.close();
+    },
+  ]);
 });
 
 describe.skipIf(process.platform === "win32")(
@@ -1714,42 +2474,50 @@ it.each([null, "caller stopped", new Error("caller stopped")])(
   },
 );
 
-it("preserves a handshake protocol error observed before the final startup caller cancels", async () => {
-  const controller = new AbortController();
-  let cancelled = false;
-  const logger = pino(
-    {
-      level: "warn",
-      hooks: {
-        logMethod(args, method) {
-          const fields = args[0];
-          if (
-            typeof fields === "object" &&
-            fields !== null &&
-            "method" in fields &&
-            fields.method === "ping" &&
-            !cancelled
-          ) {
-            cancelled = true;
-            controller.abort(null);
-          }
-          method.apply(this, args);
+it.each([
+  ["malformed", "protocol"],
+  ["import_identity_unavailable", "admission"],
+] as const)(
+  "preserves %s observed before the final startup caller cancels",
+  async (mode, kind) => {
+    const controller = new AbortController();
+    let cancelled = false;
+    const logger = pino(
+      {
+        level: "warn",
+        hooks: {
+          logMethod(args, method) {
+            const fields = args[0];
+            if (
+              typeof fields === "object" &&
+              fields !== null &&
+              "method" in fields &&
+              fields.method === "ping" &&
+              !cancelled
+            ) {
+              cancelled = true;
+              controller.abort(null);
+            }
+            method.apply(this, args);
+          },
         },
       },
-    },
-    { write: () => {} },
-  );
-  const launcher = new FixtureLauncher("malformed");
-  const client = clientFor(launcher, { logger });
-  const result = await client.start(controller.signal);
-  expect(cancelled).toBe(true);
-  if (result.ok) throw new Error("Expected handshake protocol failure");
-  expect(result.error.kind).toBe("protocol");
-  expect(await waitForExit(launcher.processes[0])).toBe(true);
-  await expect(access(launcher.runtimeRoots[0] ?? "")).rejects.toMatchObject({
-    code: "ENOENT",
-  });
-});
+      { write: () => {} },
+    );
+    const launcher = new FixtureLauncher(mode);
+    const client = clientFor(launcher, { logger });
+    const result = await client.start(controller.signal);
+    expect(cancelled).toBe(true);
+    if (result.ok) throw new Error("Expected handshake protocol failure");
+    expect(result.error.kind).toBe(kind);
+    if (mode === "import_identity_unavailable")
+      expect(result.error.cause).toMatchObject({ code: mode });
+    expect(await waitForExit(launcher.processes[0])).toBe(true);
+    await expect(access(launcher.runtimeRoots[0] ?? "")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  },
+);
 
 it("redacts the transport credential when refreshing startup diagnostics", async () => {
   let token = "";
@@ -1766,3 +2534,119 @@ it("redacts the transport credential when refreshing startup diagnostics", async
   expect(result.error.message).not.toContain(token);
   expect(JSON.stringify(result.error.diagnostics)).not.toContain(token);
 });
+
+it("preserves a failed launcher result when the final caller aborts before consumption", async () => {
+  const controller = new AbortController();
+  const physical = new GhidraLaunchError("controlled earlier launch failure", {
+    cause: new Error("physical failure"),
+  });
+  const client = clientFor({
+    launch: async (_session, options) => {
+      controller.abort(null);
+      if (options?.signal?.aborted !== true)
+        await new Promise<void>((resolve) =>
+          options?.signal?.addEventListener("abort", () => resolve(), {
+            once: true,
+          }),
+        );
+      return err(physical);
+    },
+  });
+  const result = await client.start(controller.signal);
+  expect(result).toMatchObject({
+    ok: false,
+    error: { kind: "start", cause: physical },
+  });
+});
+
+it.each([null, "helper owner stopped"])(
+  "consumes a producer cancellation without an aborted client deadline %j",
+  async (reason) => {
+    const cancellation = new AnalysisCancelledError("open_binary", {
+      cause: reason,
+    });
+    const client = clientFor({
+      launch: async () =>
+        err(
+          new GhidraLaunchError("producer helper cancelled", {
+            primaryFailure: cancellation,
+          }),
+        ),
+    });
+    const result = await client.start();
+    expect(result).toMatchObject({ ok: false, error: { kind: "cancelled" } });
+    if (result.ok) throw new Error("Expected cancellation");
+    expect(result.error.cancellation?.reason).toBe(reason);
+  },
+);
+
+it("preserves a producer failure while its result waits for the startup deadline", async () => {
+  const physical = new GhidraLaunchError(
+    "controlled physical failure before finalization",
+  );
+  const client = clientFor(
+    {
+      launch: async (_session, options) => {
+        if (options?.signal === undefined)
+          throw new Error("Expected owned startup signal");
+        if (!options.signal.aborted)
+          await new Promise<void>((resolve) =>
+            options.signal?.addEventListener("abort", () => resolve(), {
+              once: true,
+            }),
+          );
+        return err(physical);
+      },
+    },
+    { startupTimeoutMs: 500 },
+  );
+  expect(await client.start()).toMatchObject({
+    ok: false,
+    error: { kind: "start", cause: physical },
+  });
+});
+
+it.each(["search_procedures", "search_strings"] as const)(
+  "%s retains native candidate rows for normal and ready-only dispatch",
+  async (operation) => {
+    const client = clientFor(new FixtureLauncher("unicode_search"));
+    const query = {
+      pattern: "source",
+      mode: "literal",
+      case_sensitive: false,
+      document: null,
+    };
+    const expected = {
+      ok: true,
+      value: [
+        { address: "0x1000", value: "ſource" },
+        { address: "0x1001", value: "SOURCE" },
+        { address: "0x1002", value: "İource" },
+        { address: "0x1003", value: "unrelated" },
+      ],
+    };
+    await expect(client.callTool(operation, query)).resolves.toEqual(expected);
+    await expect(client.callToolIfReady(operation, query)).resolves.toEqual(
+      expected,
+    );
+    for (const pattern of ["ſOURCE", "Σ"]) {
+      await expect(
+        client.callTool(operation, { ...query, pattern }),
+      ).resolves.toEqual(expected);
+      await expect(
+        client.callToolIfReady(operation, { ...query, pattern }),
+      ).resolves.toEqual(expected);
+    }
+    const regex = await client.callTool(operation, { ...query, mode: "regex" });
+    expect(regex.ok && Array.isArray(regex.value) && regex.value.length).toBe(
+      4,
+    );
+    const sensitive = await client.callTool(operation, {
+      ...query,
+      case_sensitive: true,
+    });
+    expect(
+      sensitive.ok && Array.isArray(sensitive.value) && sensitive.value.length,
+    ).toBe(4);
+  },
+);
