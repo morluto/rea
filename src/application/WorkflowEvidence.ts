@@ -233,6 +233,67 @@ export const createWorkflowEvidence = (
       : {}),
   });
 
+const admitWorkflowRecovery = (
+  observation: ComposedWorkflowObservation,
+  evidenceInput: Pick<
+    WorkflowEvidenceInput,
+    "target" | "operation" | "parameters" | "upstreamProfile"
+  >,
+  admitRecovery: RecoveryAdmission,
+) => {
+  const admissionInput = {
+    operation: evidenceInput.operation,
+    parameters: evidenceInput.parameters,
+    target:
+      evidenceInput.target === undefined
+        ? null
+        : {
+            path: evidenceInput.target.path,
+            sha256: evidenceInput.target.sha256,
+            format: evidenceInput.target.format,
+            architecture: evidenceInput.target.architecture ?? null,
+          },
+    profile: evidenceInput.upstreamProfile ?? null,
+    result: observation.result,
+    limitations: observation.limitations,
+    links: observation.evidenceLinks ?? [],
+  };
+  // The completed result can also generate a location per batch item and
+  // the workflow profile embeds the upstream profile. Admit these copies
+  // before constructing or hashing the recovery Evidence.
+  const shell = evidenceEnvelopeForAdmission(
+    evidenceInput.target,
+    REA_WORKFLOW_PROVIDER,
+    {
+      operation: evidenceInput.operation,
+      parameters: {},
+      result: null,
+      ...(evidenceInput.upstreamProfile === undefined
+        ? {}
+        : {
+            analysisProfile: {
+              provider: REA_WORKFLOW_PROVIDER,
+              parameters: workflowAnalysisProfileParameters(
+                null,
+                evidenceInput.operation,
+              ),
+              digest: "0".repeat(64),
+            },
+          }),
+      confidence: "derived",
+      limitations: [WORKFLOW_DERIVATION_LIMITATION],
+      locations: [],
+      evidenceLinks: [],
+    },
+  );
+  const additional = estimateJsonStorage([
+    observation.result,
+    evidenceInput.upstreamProfile ?? null,
+    shell,
+  ]);
+  return admitRecovery(admissionInput, evidenceInput.operation, additional);
+};
+
 /** Experimental shared recovery of a workflow that completed before source admission. */
 export const retainComposedWorkflowSources = (
   recordEvidence: Parameters<typeof retainAnalysisResultSources>[1],
@@ -258,60 +319,10 @@ export const retainComposedWorkflowSources = (
     result,
   );
   if (result.ok && !retained.ok) {
-    const admissionInput = {
-      operation: evidenceInput.operation,
-      parameters: evidenceInput.parameters,
-      target:
-        evidenceInput.target === undefined
-          ? null
-          : {
-              path: evidenceInput.target.path,
-              sha256: evidenceInput.target.sha256,
-              format: evidenceInput.target.format,
-              architecture: evidenceInput.target.architecture ?? null,
-            },
-      profile: evidenceInput.upstreamProfile ?? null,
-      result: result.value.result,
-      limitations: result.value.limitations,
-      links: result.value.evidenceLinks ?? [],
-    };
-    // The completed result can also generate a location per batch item and
-    // the workflow profile embeds the upstream profile. Admit these copies
-    // before constructing or hashing the recovery Evidence.
-    const shell = evidenceEnvelopeForAdmission(
-      evidenceInput.target,
-      REA_WORKFLOW_PROVIDER,
-      {
-        operation: evidenceInput.operation,
-        parameters: {},
-        result: null,
-        ...(evidenceInput.upstreamProfile === undefined
-          ? {}
-          : {
-              analysisProfile: {
-                provider: REA_WORKFLOW_PROVIDER,
-                parameters: workflowAnalysisProfileParameters(
-                  null,
-                  evidenceInput.operation,
-                ),
-                digest: "0".repeat(64),
-              },
-            }),
-        confidence: "derived",
-        limitations: [WORKFLOW_DERIVATION_LIMITATION],
-        locations: [],
-        evidenceLinks: [],
-      },
-    );
-    const additional = estimateJsonStorage([
-      result.value.result,
-      evidenceInput.upstreamProfile ?? null,
-      shell,
-    ]);
-    const admitted = admitRecovery(
-      admissionInput,
-      evidenceInput.operation,
-      additional,
+    const admitted = admitWorkflowRecovery(
+      result.value,
+      evidenceInput,
+      admitRecovery,
     );
     if (!admitted.ok) {
       retained.error.retainSourcePublication({
@@ -344,8 +355,30 @@ export const retainPartialWorkflowEvidence = (
     Parameters<typeof createWorkflowEvidence>[0],
     "target" | "operation" | "parameters" | "upstreamProfile"
   >,
+  admitRecovery: RecoveryAdmission = (input, operation, additional) =>
+    admitInvestigationAuthentication(input, operation, {}, additional),
 ): void => {
-  if (outcome.ok || outcome.partial === undefined) return;
+  if (
+    outcome.ok ||
+    outcome.partial === undefined ||
+    outcome.error.partialObservation !== undefined
+  )
+    return;
+  const admitted = admitWorkflowRecovery(
+    outcome.partial,
+    context,
+    admitRecovery,
+  );
+  if (!admitted.ok) {
+    outcome.error.retainPartialObservation({
+      kind: "omitted-observation",
+      reason:
+        admitted.error._tag === "AnalysisResourceConstraintError"
+          ? "insufficient-authentication-headroom"
+          : "recovery-input-invalid",
+    });
+    return;
+  }
   const evidence = createWorkflowEvidence({
     ...context,
     result: outcome.partial.result,

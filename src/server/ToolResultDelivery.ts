@@ -231,8 +231,22 @@ export class ToolResultDelivery {
     const partial = safeParseEvidence(error.partialObservation);
     if (!partial.ok) return this.toErrorToolResult(error, targetContent);
     const recorded = recordEvidence(partial.value);
-    if (!recorded.ok) return this.toErrorToolResult(error, targetContent);
     const projected = projectAnalysisError(error);
+    if (!recorded.ok)
+      return this.projectedErrorResult(
+        {
+          ...projected,
+          details: {
+            ...projected.details,
+            partial_observation: {
+              kind: "inline-evidence",
+              retention: "unknown",
+              evidence: partial.value,
+            },
+          },
+        },
+        targetContent,
+      );
     return this.projectedErrorResult(
       {
         ...projected,

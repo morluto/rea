@@ -6,6 +6,7 @@ import {
   createWorkflowEvidence,
   executeComposedWorkflow,
   retainComposedWorkflowSources,
+  retainPartialWorkflowEvidence,
   workflowSnapshotRecord,
 } from "./WorkflowEvidence.js";
 import { InvestigationRecords } from "./investigation/InvestigationRecords.js";
@@ -27,6 +28,46 @@ import { functionDossierSchema } from "../domain/native/functionDossier.js";
 import { ghidraFunctionDossier } from "../domain/ghidraValues.fixture.js";
 import { ANALYSIS_SNAPSHOT_PROFILE } from "../domain/analysisSnapshot.fixture.js";
 import { createEvidence } from "../domain/evidence.js";
+
+it("preserves cleanup and reports an omitted partial when authentication headroom is unavailable", () => {
+  const error = new AnalysisCancelledError("get_call_graph", {
+    cleanup: { reason: "close failed", resources: ["session:fixture"] },
+  });
+  const outcome = {
+    ...err(error),
+    partial: { result: { nodes: ["observed"] }, limitations: [] },
+    sourceEvidence: [],
+  };
+  retainPartialWorkflowEvidence(
+    outcome,
+    {
+      target: undefined,
+      operation: "get_call_graph",
+      parameters: {},
+      upstreamProfile: undefined,
+    },
+    () =>
+      err(
+        new AnalysisResourceConstraintError(
+          "get_call_graph",
+          "capacity",
+          "no headroom",
+          null,
+        ),
+      ),
+  );
+  expect(projectAnalysisError(error)).toMatchObject({
+    code: "cleanup_incomplete",
+    details: {
+      cleanup: "incomplete",
+      resources: ["session:fixture"],
+      partial_observation: {
+        kind: "omitted-observation",
+        reason: "insufficient-authentication-headroom",
+      },
+    },
+  });
+});
 
 it.each([0, 1, 100])(
   "admits enough recovery representation for %i completed batch items",
