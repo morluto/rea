@@ -116,4 +116,14 @@ describe("diffStateViews fidelity", () => {
       ).complete,
     ).toBe(false);
   });
+
+  it("treats truncated fields in JSON as data, not coverage", () => {
+    expect(
+      diffStateViews(
+        "json",
+        { truncated: true, count: 1 },
+        { truncated: true, count: 2 },
+      ).complete,
+    ).toBe(true);
+  });
 });

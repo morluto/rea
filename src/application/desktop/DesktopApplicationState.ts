@@ -32,16 +32,19 @@ import {
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import { safeParseEvidence } from "../../domain/evidenceValidation.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
-import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { safeParseJson } from "../../domain/safeJson.js";
 import { describeValidationFailure } from "../../domain/validationFailure.js";
 import { readJsonFile } from "../JsonFiles.js";
-import { RetainedContent } from "./DesktopRetainedContent.js";
+import {
+  withRetainedContent,
+  type RetainedContent,
+} from "./DesktopRetainedContent.js";
 import {
   baselineDigests,
   digestsAt,
   indexChanges,
   pathVersions,
+  presenceAt,
   statePaths,
   type ChangeIndex,
 } from "./DesktopStateVersions.js";
@@ -183,16 +186,32 @@ const toolView = async (
         ? { view: dconfView(dump.text, context.names), error: null }
         : failed(dump.error);
     });
-  const logDigest = digestsAt(
-    `${path}-wal`,
-    context.changes,
-    context.baseline,
-    context.checkpoints,
-  )[version.checkpoint_index];
+  const logPath = `${path}-wal`;
+  const at = (values: readonly (string | boolean | null)[]) =>
+    values[version.checkpoint_index];
+  const logPresent =
+    at(
+      presenceAt(
+        logPath,
+        context.changes,
+        context.baseline,
+        context.checkpoints,
+      ),
+    ) === true;
+  const logDigest = at(
+    digestsAt(logPath, context.changes, context.baseline, context.checkpoints),
+  );
+  // Reading the database without a log it had would hide committed rows.
+  if (logPresent && typeof logDigest !== "string")
+    return failed("the database's write-ahead log was not retained");
   const log =
-    logDigest === null || logDigest === undefined
-      ? undefined
-      : await context.content.read(logDigest, context.signal);
+    typeof logDigest === "string"
+      ? await context.content.read(logDigest, context.signal)
+      : undefined;
+  if (typeof logDigest === "string" && log === undefined)
+    return failed(
+      "the database's write-ahead log is missing or does not match its digest",
+    );
   const staged = [
     { name: "state.db", bytes },
     ...(log === undefined ? [] : [{ name: "state.db-wal", bytes: log }]),
@@ -314,6 +333,45 @@ const hasDconfGroups = (version: Version): boolean => {
   );
 };
 
+/** Read every version of one path and derive its role and changes. */
+const describePath = async (
+  capture: DesktopApplicationCapture,
+  path: string,
+  facts: ReturnType<typeof roleFacts>,
+  context: ViewContext,
+): Promise<DesktopStatePath> => {
+  const versions = pathVersions(
+    capture,
+    path,
+    context.changes,
+    context.baseline,
+  );
+  for (const version of versions) await readVersion(version, path, context);
+  const reasons = [
+    ...stateReasons(
+      facts,
+      path,
+      (context.changes.get(path) ?? []).map((entry) => entry.change),
+      versions.some(hasDconfGroups),
+    ),
+  ];
+  const home = capture.host.home;
+  return {
+    path,
+    home_path: path.startsWith(`${home}/`) ? path.slice(home.length + 1) : null,
+    role: stateRole(reasons),
+    reasons,
+    format:
+      versions.findLast((version) => version.format !== null)?.format ?? null,
+    versions,
+    changes: versions
+      .slice(1)
+      .map((version, index) =>
+        changeBetween(versions[index] ?? version, version),
+      ),
+  };
+};
+
 const STATE_LIMITATIONS = [
   "Roles are inferred from state directories, open files, window titles, selected paths and dconf key names; a path can be misattributed.",
   "Views cover retained content only; a file that existed before the capture but outside the content roots has no starting view.",
@@ -331,57 +389,25 @@ const inspectState = async (
   const names = applicationNames(capture);
   const facts = roleFacts(capture);
   const changes = indexChanges(capture);
-  const content = new RetainedContent(folder);
-  const context: ViewContext = {
-    content,
-    readers,
-    names,
-    signal,
-    changes,
-    baseline: baselineDigests(capture),
-    checkpoints: capture.state.checkpoints.length,
-  };
-  const paths: DesktopStatePath[] = [];
-  for (const path of statePaths(capture, changes)) {
-    const versions = pathVersions(capture, path, changes, context.baseline);
-    for (const version of versions) await readVersion(version, path, context);
-    const reasons = [
-      ...stateReasons(
-        facts,
-        path,
-        (changes.get(path) ?? []).map((entry) => entry.change),
-        versions.some(hasDconfGroups),
-      ),
-    ];
-    const home = capture.host.home;
-    paths.push({
-      path,
-      home_path: path.startsWith(`${home}/`)
-        ? path.slice(home.length + 1)
-        : null,
-      role: stateRole(reasons),
-      reasons,
-      format:
-        versions.findLast((version) => version.format !== null)?.format ?? null,
-      versions,
-      changes: versions
-        .slice(1)
-        .map((version, index) =>
-          changeBetween(versions[index] ?? version, version),
-        ),
-    });
-  }
-  await content.close().catch((cause: unknown) => {
-    throw new ProviderAdapterError(DESKTOP_PROVIDER.id, OPERATION, {
-      cause,
-      userMessage:
-        "A retained file read for the state view could not be closed.",
-      cleanup: {
-        reason: "a retained file's handle could not be closed after a retry",
-        resources: [folder],
-      },
-    });
-  });
+  const paths = await withRetainedContent(
+    folder,
+    OPERATION,
+    async (content) => {
+      const context: ViewContext = {
+        content,
+        readers,
+        names,
+        signal,
+        changes,
+        baseline: baselineDigests(capture),
+        checkpoints: capture.state.checkpoints.length,
+      };
+      const described: DesktopStatePath[] = [];
+      for (const path of statePaths(capture, changes))
+        described.push(await describePath(capture, path, facts, context));
+      return described;
+    },
+  );
   const result: DesktopApplicationState = {
     capture: {
       evidence_id: evidence.evidence_id,
