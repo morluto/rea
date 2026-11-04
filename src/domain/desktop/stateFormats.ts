@@ -48,12 +48,21 @@ const keyfileLine = (raw: string): KeyfileLine => {
       };
 };
 
-/** A key file has at least one group and nothing a key file view would drop. */
+/**
+ * A key file has at least one group and nothing a key file view would drop.
+ * Lines are read one at a time, stopping at the first that is neither.
+ */
 const isKeyfile = (text: string): boolean => {
-  const kinds = new Set(
-    text.split(/\r?\n/u).map((line) => keyfileLine(line).kind),
-  );
-  return kinds.has("group") && !kinds.has("other");
+  let group = false;
+  for (let start = 0; start <= text.length;) {
+    const end = text.indexOf("\n", start);
+    const kind = keyfileLine(text.slice(start, end < 0 ? undefined : end)).kind;
+    if (kind === "other") return false;
+    if (kind === "group") group = true;
+    if (end < 0) break;
+    start = end + 1;
+  }
+  return group;
 };
 
 /** Decode bytes as UTF-8 text, or undefined for binary content. */
