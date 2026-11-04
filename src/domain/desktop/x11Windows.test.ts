@@ -17,7 +17,26 @@ describe("parseX11ClientList", () => {
     expect(parseX11ClientList("_NET_CLIENT_LIST:  not found.\n")).toBe(
       undefined,
     );
+    expect(
+      parseX11ClientList(
+        "_NET_CLIENT_LIST:  no such atom on any window.\n_NET_SUPPORTED:  no such atom on any window.\n",
+      ),
+    ).toBe(undefined);
     expect(parseX11ClientList("")).toBe(undefined);
+  });
+
+  it("reads an unset list as no windows when the window manager supports it", () => {
+    // xfwm4 leaves _NET_CLIENT_LIST unset while it manages no windows.
+    expect(
+      parseX11ClientList(
+        "_NET_CLIENT_LIST:  not found.\n_NET_SUPPORTED = _NET_ACTIVE_WINDOW, _NET_CLIENT_LIST, _NET_CLIENT_LIST_STACKING\n",
+      ),
+    ).toEqual([]);
+    expect(
+      parseX11ClientList(
+        "_NET_CLIENT_LIST:  not found.\n_NET_SUPPORTED = _NET_ACTIVE_WINDOW, _NET_CLIENT_LIST_STACKING\n",
+      ),
+    ).toBe(undefined);
   });
 });
 

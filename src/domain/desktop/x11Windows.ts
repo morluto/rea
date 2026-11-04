@@ -19,6 +19,9 @@ export const X11_WINDOW_PROPERTY_NAMES = [
 const PROPERTY_LINE =
   /^(?<name>[A-Z_]+)(?:\([A-Z0-9_]+\))?(?<rest>:| =)(?<value>.*)$/u;
 
+/** What `xprop` prints for a property that is not set, or an atom never interned. */
+const UNSET = new Set(["not found.", "no such atom on any window."]);
+
 const propertyValues = (output: string): ReadonlyMap<string, string> => {
   const values = new Map<string, string>();
   for (const line of output.split("\n")) {
@@ -26,7 +29,7 @@ const propertyValues = (output: string): ReadonlyMap<string, string> => {
     if (match?.groups === undefined) continue;
     const { name, rest, value } = match.groups;
     if (name === undefined || value === undefined) continue;
-    if (rest === ":" && value.trim() === "not found.") continue;
+    if (rest === ":" && UNSET.has(value.trim())) continue;
     values.set(name, value.trim());
   }
   return values;
@@ -42,14 +45,21 @@ const quotedStrings = (value: string): readonly string[] => {
 };
 
 /**
- * Parse the `_NET_CLIENT_LIST` window ids from `xprop -root`; undefined when
- * the window manager does not publish the property.
+ * Parse the `_NET_CLIENT_LIST` window ids from `xprop -root`. An EWMH window
+ * manager leaves the list unset while it manages no windows, so a missing list
+ * is empty when `_NET_SUPPORTED` names it and undefined otherwise.
  */
 export const parseX11ClientList = (
   output: string,
 ): readonly string[] | undefined => {
-  const value = propertyValues(output).get("_NET_CLIENT_LIST");
-  if (value === undefined) return undefined;
+  const values = propertyValues(output);
+  const value = values.get("_NET_CLIENT_LIST");
+  if (value === undefined)
+    return (values.get("_NET_SUPPORTED") ?? "")
+      .split(",")
+      .some((atom) => atom.trim() === "_NET_CLIENT_LIST")
+      ? []
+      : undefined;
   return [...value.matchAll(/0x[0-9a-f]+/giu)].map((match) =>
     match[0].toLowerCase(),
   );
