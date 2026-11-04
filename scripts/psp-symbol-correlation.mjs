@@ -2,7 +2,8 @@
 // Read-only, explicit-base correlation of PPSSPP labels with a REA function inventory.
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { readFile, stat } from "node:fs/promises";
+import { createReadStream } from "node:fs";
+import { stat } from "node:fs/promises";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -195,11 +196,16 @@ export function correlatePspSymbols(source, inventory, options) {
 }
 
 async function readBounded(path, maxBytes) {
-  assert.ok(
-    (await stat(path)).size <= maxBytes,
-    "Input exceeds size limit: " + path,
-  );
-  return readFile(path);
+  const error = "Input exceeds size limit: " + path;
+  assert.ok((await stat(path)).size <= maxBytes, error);
+  const chunks = [];
+  let length = 0;
+  for await (const chunk of createReadStream(path)) {
+    length += chunk.length;
+    assert.ok(length <= maxBytes, error);
+    chunks.push(chunk);
+  }
+  return Buffer.concat(chunks, length);
 }
 
 async function main(args) {
@@ -242,6 +248,13 @@ async function main(args) {
       await readBounded(flags.get("--inventory"), 32 * 1024 * 1024),
     ),
   );
+  if (!Array.isArray(data)) {
+    assert.equal(
+      data?.operation,
+      "list_procedures",
+      "Evidence inventory must come from list_procedures",
+    );
+  }
   const inventory = Array.isArray(data) ? data : data.normalized_result;
   const claimedHash = data?.subject?.digest?.sha256;
   if (claimedHash !== undefined)
