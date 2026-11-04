@@ -114,7 +114,7 @@ try {
 
 const summary = {
   files: files.length,
-  rea_errors: [],
+  rejected_by_both: [],
   absent: 0,
   malformed: 0,
   present: 0,
@@ -146,7 +146,12 @@ for (const path of files) {
   const report = rea.get(path);
   const theirs = pefile.get(path);
   if (report === undefined || "error" in report) {
-    summary.rea_errors.push({ path, error: report?.error ?? "missing" });
+    const error = report?.error ?? "missing";
+    // Only an input both readers reject, such as an empty file, is set
+    // aside. A file pefile reads but REA rejects fails the run.
+    if (theirs !== undefined && theirs.error !== undefined)
+      summary.rejected_by_both.push({ path, rea: error, pefile: theirs.error });
+    else summary.disagree.push({ path, rea: error, pefile: "read" });
     continue;
   }
   const record = report.rich_header;

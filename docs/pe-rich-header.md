@@ -77,6 +77,7 @@ fails without partial success, as does a malformed PE header.
 `npm run verify:pe:rich-header -- PATH...` inspects each PE file under the given
 files and directories, then compares key and entries with pefile's
 `parse_rich_header` wherever pefile's layout assumption holds. Any other state
-difference fails the run, as does a run that compares no file. Set
+difference fails the run, as does a file only REA rejects or a run that
+compares no file. Set
 `REA_PEFILE_PYTHON` to a Python that imports pefile 2024.8.26. See the
 [2026-11-04 verification record](verification/pe-rich-header-2026-11-04.md).

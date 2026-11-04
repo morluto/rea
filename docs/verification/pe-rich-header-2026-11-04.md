@@ -22,19 +22,20 @@ The script walked 17,896 `.exe`, `.dll`, `.sys`, `.ocx`, `.cpl`, `.efi` and
 `.scr` files with `max_file_bytes` at its 512 MiB ceiling. A file is left out
 of the comparison only on pefile's own result: pefile warned that `0x80` is not
 `DanS`, or REA found a footer before `0x80`, where pefile never looks. Every
-other state difference counts as a disagreement and fails the run.
+other state difference counts as a disagreement and fails the run. A file REA
+rejects fails the run too, unless pefile also rejects it.
 
-| Result                                         | Files  |
-| ---------------------------------------------- | ------ |
-| Rich header present                            | 10,915 |
-| Checksum reproduces the stored key             | 10,901 |
-| Checksum does not reproduce the key            | 14     |
-| No Rich footer before the PE signature         | 6,980  |
-| Malformed record                               | 0      |
-| Rejected input (a 0-byte `eqnedt32.exe`)       | 1      |
-| Same key and entries as pefile, or both absent | 17,890 |
-| Different from pefile                          | 0      |
-| Outside pefile's `0x80` layout assumption      | 5      |
+| Result                                               | Files  |
+| ---------------------------------------------------- | ------ |
+| Rich header present                                  | 10,915 |
+| Checksum reproduces the stored key                   | 10,901 |
+| Checksum does not reproduce the key                  | 14     |
+| No Rich footer before the PE signature               | 6,980  |
+| Malformed record                                     | 0      |
+| Rejected by REA and pefile (a 0-byte `eqnedt32.exe`) | 1      |
+| Same key and entries as pefile, or both absent       | 17,890 |
+| Different from pefile                                | 0      |
+| Outside pefile's `0x80` layout assumption            | 5      |
 
 The 14 checksum mismatches are seven NVIDIA driver files in one DriverStore
 package, three `vk*.sys` drivers, three Riot Vanguard executables, and

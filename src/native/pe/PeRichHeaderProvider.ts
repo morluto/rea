@@ -27,6 +27,7 @@ import {
   MAX_INSPECT_PE_RICH_HEADER_FILE_BYTES,
   type InspectPeRichHeaderInput,
 } from "../../domain/native/peRichHeader.js";
+import type { FileSnapshotPartialObservation } from "../../domain/fileSnapshotObservation.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { err, ok } from "../../domain/result.js";
 import { PE_RICH_HEADER_PROVIDER } from "../../domain/investigationProviders.js";
@@ -52,6 +53,7 @@ export class PeRichHeaderProvider implements PeRichHeaderPort {
   }
 
   async inspect(input: InspectPeRichHeaderInput, options?: ExecutionOptions) {
+    const read: { completed?: FileSnapshotPartialObservation } = {};
     try {
       return await this.#resources.run(async () => {
         const snapshot = await readStableArtifact(
@@ -61,13 +63,15 @@ export class PeRichHeaderProvider implements PeRichHeaderPort {
           undefined,
           this.#resources,
         );
+        const artifact = {
+          path: input.path,
+          sha256: snapshot.sha256,
+          bytes: snapshot.bytes.length,
+        };
+        read.completed = { kind: "file-snapshot-hash", ...artifact };
         const report = await parsePeRichHeader(
           snapshot.bytes,
-          {
-            path: input.path,
-            sha256: snapshot.sha256,
-            bytes: snapshot.bytes.length,
-          },
+          artifact,
           input,
           options?.signal,
         );
@@ -75,7 +79,12 @@ export class PeRichHeaderProvider implements PeRichHeaderPort {
         return ok(report);
       });
     } catch (cause) {
-      return err(peRichHeaderFailure(cause, input));
+      const failure = peRichHeaderFailure(cause, input);
+      // The read completed before decoding failed or was cancelled; keep the
+      // exact file identity it established.
+      if (read.completed !== undefined)
+        failure.retainPartialObservation(read.completed);
+      return err(failure);
     }
   }
 }
