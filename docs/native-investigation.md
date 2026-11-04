@@ -434,6 +434,13 @@ nodes and edges. Node payloads are bounded to 8 MiB and serialized results to
 32 MiB. Pagination returns edges whose source is on the node page and preserves
 stable IDs for endpoints outside that page.
 
+Procedure, node and edge `evidence_id` values identify the source function
+observations used by the trace. In an MCP session, retrieve them from the
+Evidence bundle for inspection or export. A replayed source keeps the original
+observation's identity; the trace also reports that replay occurred. Older
+cached value traces are not replayed under the revised workflow profile, while
+their historical Evidence remains available.
+
 The one-shot CLI accepts `--evidence_output <new-path>` to save the trace and
 the transitive source Evidence closure named by its links. The destination is
 never overwritten. `--detail summary` requires `--evidence_output`; the bundle

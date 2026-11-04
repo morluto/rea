@@ -34,6 +34,8 @@ export interface ExecutionOptions {
   readonly snapshotContext?: "one-shot-target";
   readonly signal?: AbortSignal;
   readonly progress?: ProgressReporter;
+  /** The composed workflow will cite this observation and needs its Evidence. */
+  readonly retainEvidence?: true;
   /**
    * Set when a procedure selector came from provider output, such as a
    * revisited callee, rather than from the caller. A provider-derived
