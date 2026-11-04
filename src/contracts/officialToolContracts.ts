@@ -278,9 +278,10 @@ export const OFFICIAL_TOOL_CONTRACTS = [
   ),
   official(
     "trace_snap",
-    "Read processor-context register values at one snapshot. snap is inclusive within the trace's observed range; undefined registers are reported explicitly with defined=false.",
+    "Read processor-context register values at one snapshot. snap is inclusive within the trace's observed range; undefined registers are reported explicitly with defined=false. The selected thread's key and name are always returned; when several threads are live at the snapshot, pass thread (a key from trace_threads) to select one, otherwise the call is reported ambiguous. A single live thread is chosen automatically.",
     z.object({
       snap: z.number().int(),
+      thread: z.number().int().optional(),
     }),
   ),
   official(

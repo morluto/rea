@@ -150,6 +150,7 @@ export const traceImportResultSchema = z.strictObject({
   modules: z.number(),
   threads: z.number(),
   language: z.string().min(1),
+  binary_language_match: z.boolean(),
   image_base: z.string().min(1).nullable(),
   imported: z.boolean(),
 });
@@ -164,6 +165,9 @@ export const traceInfoResultSchema = z.strictObject({
 });
 export const traceSnapResultSchema = z.strictObject({
   snap: z.number(),
+  trace: z.string().min(1),
+  thread: z.number().nullable(),
+  thread_name: z.string().nullable(),
   registers: z.array(
     z.strictObject({
       name: z.string().min(1),
@@ -174,7 +178,10 @@ export const traceSnapResultSchema = z.strictObject({
 });
 export const traceByteSearchResultSchema = z.strictObject({
   pattern: z.string(),
+  trace: z.string().min(1),
   matches: z.number(),
+  total: z.number(),
+  truncated: z.boolean(),
   hits: z.array(
     z.strictObject({
       address: z.string().min(1),
@@ -184,6 +191,7 @@ export const traceByteSearchResultSchema = z.strictObject({
   ),
 });
 export const traceModulesResultSchema = z.strictObject({
+  trace: z.string().min(1),
   count: z.number(),
   modules: z.array(
     z.strictObject({
@@ -193,8 +201,9 @@ export const traceModulesResultSchema = z.strictObject({
   ),
 });
 export const traceThreadsResultSchema = z.strictObject({
+  trace: z.string().min(1),
   count: z.number(),
-  threads: z.array(z.strictObject({ name: z.string() })),
+  threads: z.array(z.strictObject({ name: z.string(), key: z.number() })),
 });
 
 /** Exact structured-content schemas shared by direct analysis providers. */

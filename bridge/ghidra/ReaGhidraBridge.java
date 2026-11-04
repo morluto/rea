@@ -224,6 +224,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
     private DecompInterface decompiler;
     /** The Timeless-Debugging trace imported for this session, or null when none is loaded. */
     private Trace currentTrace;
+    /** The project this bridge opened to host currentTrace, or null when none is owned. */
+    private Project traceProject;
     /** Cached ProjectManager service (independent of which project is active). */
     private ProjectManager projectManager;
     /** Per-function native decompiler limit from the session; 0 leaves it unbounded. */
@@ -446,6 +448,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
             try {
                 if (request.method.equals("shutdown")) {
                     requireKeys(request.params, Set.of());
+                    releaseTraceAttachment();
                     JsonObject result = new JsonObject();
                     result.addProperty("shutdown", true);
                     result.addProperty("project_ephemeral", true);
@@ -4785,6 +4788,26 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 "No trace is loaded; call import_trace first");
     }
 
+    /**
+     * Releases the trace attachment owned by this bridge: the consumer reference
+     * on the current trace and the project this bridge opened to host it. Called
+     * on shutdown so repeated attachments do not retain open databases.
+     */
+    private void releaseTraceAttachment() {
+        if (currentTrace != null) {
+            currentTrace.release(this);
+            currentTrace = null;
+        }
+        if (traceProject != null) {
+            try {
+                traceProject.close();
+            } catch (Exception ignored) {
+                // Best-effort cleanup on shutdown; the process is exiting.
+            }
+            traceProject = null;
+        }
+    }
+
     private static long requireLong(JsonObject object, String name) {
         JsonElement element = object.get(name);
         try {
@@ -4867,6 +4890,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
             }
             traceProject = projectManager().openProject(locator, true, false);
         }
+        this.traceProject = traceProject;
 
         DomainFile traceFile = traceProject.getProjectData().getFile(tracePath);
         if (traceFile == null) {
@@ -4880,8 +4904,18 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 "Failed to open trace: " + e.getClass().getSimpleName() + ": " + e.getMessage());
         }
         if (!(opened instanceof Trace)) {
+            // The rejected object was opened with this bridge as its consumer;
+            // release it so its database is not retained.
+            if (opened != null) {
+                opened.release(this);
+            }
             throw new RequestFailure("import_failed",
                 "Not a Trace: " + (opened == null ? "null" : opened.getClass().getName()));
+        }
+        // Replace the previous attachment: release its consumer reference so the
+        // old trace's database is not retained alongside the new one.
+        if (currentTrace != null) {
+            currentTrace.release(this);
         }
         currentTrace = (Trace) opened;
 
@@ -4893,6 +4927,12 @@ public final class ReaGhidraBridge extends HeadlessScript {
         result.addProperty("modules", currentTrace.getModuleManager().getAllModules().size());
         result.addProperty("threads", currentTrace.getThreadManager().getAllThreads().size());
         result.addProperty("language", currentTrace.getBaseLanguage().getLanguageID().toString());
+        // Report whether the trace's base architecture matches the selected
+        // binary's, so callers can see the attachment's relationship to the
+        // open_binary target instead of assuming the trace came from it.
+        result.addProperty("binary_language_match", currentProgram != null
+            && currentTrace.getBaseLanguage().getLanguageID().getIdAsString()
+                .equals(currentProgram.getLanguageID().getIdAsString()));
         // The address space's minimum address is not the executable's image base
         // (it is typically zero for a trace whose image loads at a nonzero
         // address), so report the base as explicitly unknown rather than a
@@ -4918,7 +4958,9 @@ public final class ReaGhidraBridge extends HeadlessScript {
     }
 
     private JsonObject traceSnap(JsonObject params) throws Exception {
-        requireKeys(params, Set.of("snap"));
+        Set<String> keys = params.keySet();
+        if (!keys.equals(Set.of("snap")) && !keys.equals(Set.of("snap", "thread")))
+            throw new RequestFailure("invalid_request", "Bridge request fields are invalid");
         requireTrace();
         long snap = requireLong(params, "snap");
         TraceTimeManager time = currentTrace.getTimeManager();
@@ -4930,17 +4972,18 @@ public final class ReaGhidraBridge extends HeadlessScript {
         // (TenetPlusPlusLoader writes via getMemoryRegisterSpace(frame).setValue).
         // The TraceMemoryManager.getValue(host, snap, reg) path resolves a null
         // address space (DBTraceMemoryManager.getSpace() returns null) and yields
-        // zeroed values, so read from the live thread's register space instead --
-        // the same pattern Ghidra's own trace RMI target uses (retrieveAndCombine).
+        // zeroed values, so read from the selected thread's register space instead
+        // -- the same pattern Ghidra's own trace RMI target uses (retrieveAndCombine).
         TracePlatform host = currentTrace.getPlatformManager().getHostPlatform();
-        TraceThread thread = null;
-        var live = currentTrace.getThreadManager().getLiveThreads(snap);
-        if (live != null && !live.isEmpty()) thread = live.iterator().next();
+        TraceThread thread = selectSnapThread(snap, params);
         TraceMemorySpace regSpace = (thread != null && host != null)
             ? memory.getMemoryRegisterSpace(thread, 0, true)
             : null;
         JsonObject result = new JsonObject();
         result.addProperty("snap", snap);
+        result.addProperty("trace", currentTrace.getName());
+        result.addProperty("thread", thread == null ? null : thread.getKey());
+        result.addProperty("thread_name", thread == null ? null : thread.getName(snap));
         JsonArray registers = new JsonArray();
         for (Register reg : lang.getRegisters()) {
             monitor.checkCancelled();
@@ -4969,6 +5012,33 @@ public final class ReaGhidraBridge extends HeadlessScript {
         }
         result.add("registers", registers);
         return result;
+    }
+
+    /**
+     * Selects the thread whose register space backs a snap read. An explicit
+     * thread key (from trace_threads) wins; otherwise exactly one live thread is
+     * used. Several live threads with no key is ambiguous and reported, never
+     * silently resolved; no live thread yields null (the caller falls back to the
+     * memory-manager register read).
+     */
+    private TraceThread selectSnapThread(long snap, JsonObject params) {
+        TraceThreadManager threads = currentTrace.getThreadManager();
+        // `thread` is a nullable default (null when the caller did not select a
+        // thread), so a present-but-null value means "not specified".
+        if (params.has("thread") && !params.get("thread").isJsonNull()) {
+            long key = requireLong(params, "thread");
+            for (TraceThread candidate : threads.getAllThreads()) {
+                if (candidate.getKey() == key) return candidate;
+            }
+            throw new RequestFailure("not_found", "Thread not found: " + key);
+        }
+        var live = threads.getLiveThreads(snap);
+        if (live == null || live.isEmpty()) return null;
+        if (live.size() > 1)
+            throw new RequestFailure("ambiguous",
+                "Multiple threads are live at snap " + snap
+                + "; select one by thread key (see trace_threads)");
+        return live.iterator().next();
     }
 
     private JsonObject traceDebugRegs(JsonObject params) throws Exception {
@@ -5087,7 +5157,10 @@ public final class ReaGhidraBridge extends HeadlessScript {
         }
         JsonObject result = new JsonObject();
         result.addProperty("pattern", bytesHex(bytes));
+        result.addProperty("trace", currentTrace.getName());
         result.addProperty("matches", count);
+        result.addProperty("total", hits.size());
+        result.addProperty("truncated", hits.size() > count);
         result.add("hits", matches);
         return result;
     }
@@ -5105,6 +5178,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
             modules.add(entry);
         }
         JsonObject result = new JsonObject();
+        result.addProperty("trace", currentTrace.getName());
         result.addProperty("count", modules.size());
         result.add("modules", modules);
         return result;
@@ -5119,9 +5193,11 @@ public final class ReaGhidraBridge extends HeadlessScript {
             monitor.checkCancelled();
             JsonObject entry = new JsonObject();
             entry.addProperty("name", thread.getName(snap));
+            entry.addProperty("key", thread.getKey());
             list.add(entry);
         }
         JsonObject result = new JsonObject();
+        result.addProperty("trace", currentTrace.getName());
         result.addProperty("count", list.size());
         result.add("threads", list);
         return result;

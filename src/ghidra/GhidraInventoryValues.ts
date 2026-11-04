@@ -92,7 +92,10 @@ const inputSchemas = {
     trace: z.string().min(1),
   }),
   trace_info: z.strictObject({}),
-  trace_snap: z.strictObject({ snap: z.number().int() }),
+  trace_snap: z.strictObject({
+    snap: z.number().int(),
+    thread: z.number().int().nullable().default(null),
+  }),
   trace_search_bytes: z.strictObject({
     pattern: z.string().min(1),
     limit: z.number().int().min(1).max(1000).default(1000),
