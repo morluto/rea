@@ -1149,7 +1149,12 @@ global conflict involving an equal pair is not used to normalize either pair; th
 
 A step agrees when the statuses and the normalised bodies are equal. The report gives agreement overall, per probe and
 per tool, `agreement_ignoring_order` for steps that differ only in item order, and each step's differences, at most 20,
-with a JSON pointer and both values cut short:
+with a JSON pointer and both values cut short. Each step reports `differences_total` before that cap,
+`differences_omitted`, and `differences_truncated` (true when entries were omitted). Agreement and categories use the
+complete comparison. Omitted entries are not retained, so `--full-output` cannot recover them; inspect the original
+capture and probe Evidence to investigate beyond the returned pointers.
+
+The difference categories are:
 
 | Category        | Meaning                                                                                                      |
 | --------------- | ------------------------------------------------------------------------------------------------------------ |
