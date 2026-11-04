@@ -258,8 +258,10 @@ type CapabilityAvailability =
       readonly available: false;
       readonly reason: string;
       readonly availabilityCode?: ProviderRejectionCode;
+      /** Provider-owned explanation and recovery for an attempted operation. */
+      readonly userMessage?: string;
       /**
-       * Repair instruction from the readiness owner that made this operation
+       * Recovery instruction from the owner that made this operation
        * unavailable. Static capability facts omit it.
        */
       readonly remediation?: string;
