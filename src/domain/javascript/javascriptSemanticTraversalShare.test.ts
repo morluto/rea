@@ -44,14 +44,23 @@ describe("shared AST child expansion", () => {
   });
 
   it("returns a list the caller can copy before mutating", () => {
-    const program = parse("const a = f(b, c);");
-    const declaration = program.body[0]!;
-    const children = childNodes(declaration);
+    // Two sibling statements give a multi-child list whose order is observable by
+    // source position, so a mutation of the shared list would be detected.
+    const program = parse("const a = 1;\nconst b = 2;");
+    const children = childNodes(program);
+    const originalStarts = children.map((node) => node.start);
+    expect(children.length).toBeGreaterThan(1);
+    expect(new Set(originalStarts).size).toBe(originalStarts.length);
 
-    // Traversal itself reverses a copy; the shared list must stay untouched.
-    const reversed = [...children].reverse();
-    expect(reversed.reverse()).toEqual([...children]);
-    expect(childNodes(declaration)).toBe(children);
+    // Traversal itself reverses a copy; the shared list must keep its own order.
+    const reversedCopy = [...children].reverse();
+    expect(reversedCopy.map((node) => node.start)).not.toEqual(originalStarts);
+    expect(reversedCopy.map((node) => node.start)).toEqual(
+      [...originalStarts].reverse(),
+    );
+    expect(childNodes(program).map((node) => node.start)).toEqual(
+      originalStarts,
+    );
   });
 });
 
