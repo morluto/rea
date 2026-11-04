@@ -935,6 +935,12 @@ const moduleFunctionFirstRead = (
     const classicScript =
       t.isProgram(program) && javaScriptRuntimeContext(program) === "unknown";
     const globalReceivers = new WeakMap<t.Node, boolean | null>();
+    type PrototypeOwner = "Array" | "Function";
+    const receiverPrototypeOwners = new WeakMap<
+      t.Node,
+      ReadonlySet<PrototypeOwner>
+    >();
+
     const bindingReceivers = new WeakMap<
       JavaScriptSemanticBindingState,
       t.Node
@@ -946,7 +952,12 @@ const moduleFunctionFirstRead = (
       const visiting = new Set<t.Node>();
       const origins = new WeakMap<
         t.Node,
-        { dependencies: t.Node[]; unknown: boolean; global: boolean }
+        {
+          dependencies: t.Node[];
+          unknown: boolean;
+          global: boolean;
+          owners: Set<PrototypeOwner>;
+        }
       >();
       while (pending.length > 0) {
         const frame = pending.pop();
@@ -958,10 +969,13 @@ const moduleFunctionFirstRead = (
           let global = fact.global;
           let unknown = fact.unknown;
           for (const dependency of fact.dependencies) {
+            for (const owner of receiverPrototypeOwners.get(dependency) ?? [])
+              fact.owners.add(owner);
             const answer = globalReceivers.get(dependency);
             if (answer === true) global = true;
             if (answer === null || answer === undefined) unknown = true;
           }
+          receiverPrototypeOwners.set(current, fact.owners);
           globalReceivers.set(current, global ? true : unknown ? null : false);
           visiting.delete(current);
           continue;
@@ -977,8 +991,11 @@ const moduleFunctionFirstRead = (
           dependencies: [] as t.Node[],
           unknown: false,
           global: false,
+          owners: new Set<PrototypeOwner>(),
         };
         const node = unwrapJavaScriptExpression(current).node;
+        if (t.isArrayExpression(node)) fact.owners.add("Array");
+        else if (t.isFunction(node)) fact.owners.add("Function");
         if (node !== current) fact.dependencies.push(node);
         else if (t.isThisExpression(node)) fact.global = true;
         else if (t.isIdentifier(node)) {
@@ -1154,13 +1171,9 @@ const moduleFunctionFirstRead = (
       prototypeBounds.set(owner, bound);
     }
     const receiverAtRead = (input: t.Node, read: t.Node): boolean | null => {
-      const literal = unwrapJavaScriptExpression(input).node;
-      const owner = t.isArrayExpression(literal)
-        ? "Array"
-        : t.isFunction(literal)
-          ? "Function"
-          : undefined;
-      if (owner !== undefined) {
+      // Allocation provenance follows the same initializer DAG as receiver identity.
+      const identity = globalReceiver(input);
+      for (const owner of receiverPrototypeOwners.get(input) ?? []) {
         const bound = prototypeBounds.get(owner);
         if (bound === null) return null;
         if (bound !== undefined && bound.index !== Infinity) {
@@ -1182,7 +1195,6 @@ const moduleFunctionFirstRead = (
             return null;
         }
       }
-      const identity = globalReceiver(input);
       if (identity !== false || state === undefined || !memberEffectsComplete)
         return identity;
       const root = unwrapJavaScriptExpression(input).node;

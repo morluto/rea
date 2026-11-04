@@ -343,6 +343,9 @@ it.each([
 );
 
 const CLASSIC_GLOBAL_ACTIVATIONS = [
+  "const root = []; Object.setPrototypeOf(Array.prototype, globalThis); root.createWindow();",
+  "const root = []; const alias = root; Object.setPrototypeOf(Array.prototype, globalThis); alias.createWindow();",
+  "const root = function(){}; const alias = root; Object.setPrototypeOf(Function.prototype, globalThis); alias.createWindow();",
   "globalThis.createWindow();",
   'globalThis["createWindow"]();',
   "const early = globalThis.createWindow; early();",
@@ -931,3 +934,36 @@ describe("Electron empty option keys", () => {
     },
   );
 });
+
+it.each([
+  "function boot({ createWindow: start }) { start(); } boot(globalThis);",
+  "function boot({ createWindow: start } = {}) { start(); } boot(globalThis);",
+])(
+  "retains unresolved caller-supplied parameter property reads: %s",
+  (activation) => {
+    for (const early of [true, false]) {
+      const source = `
+      const { BrowserWindow } = require("electron");
+      ${early ? activation : ""}
+      const webPreferences = { nodeIntegration: true };
+      function createWindow() { return new BrowserWindow({ webPreferences }); }
+      ${early ? "" : activation}
+      createWindow();
+    `;
+      const run = () =>
+        runInNewContext(source, {
+          require: () => ({ BrowserWindow: class {} }),
+        });
+      if (early) expect(run).toThrow(/before initialization/);
+      else expect(run).not.toThrow();
+      // No argument-source or interprocedural activation proof is established.
+      // A default value does not exclude a caller-supplied ambient receiver.
+      expect(
+        analyzeJavaScriptStaticSource(source).electron.browser_windows[0],
+      ).toMatchObject({
+        web_preferences_status: "dynamic",
+        web_preferences: [],
+      });
+    }
+  },
+);

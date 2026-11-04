@@ -231,3 +231,72 @@ cliTest.for([
     });
   },
 );
+
+cliTest.for(["CLI", "stdio MCP"] as const)(
+  "preserves aliased prototype and unresolved parameter activation through %s",
+  async (surface, { cli }) => {
+    const root = await createTestTempDirectory(
+      "rea-electron-prototype-parameters-",
+    );
+    const activations = {
+      array:
+        "const receiver = []; const alias = receiver; Object.setPrototypeOf(Array.prototype, globalThis); alias.createWindow();",
+      function:
+        "const receiver = function(){}; const alias = receiver; Object.setPrototypeOf(Function.prototype, globalThis); alias.createWindow();",
+      parameter:
+        "function boot({ createWindow: start } = {}) { start(); } boot(globalThis);",
+    };
+    const files: Record<string, string> = {};
+    for (const [kind, activation] of Object.entries(activations)) {
+      for (const early of [true, false]) {
+        files[`${kind}-${early ? "early" : "late"}.js`] = `
+          const { BrowserWindow } = require("electron");
+          ${early ? activation : ""}
+          const webPreferences = { nodeIntegration: true };
+          function createWindow() { return new BrowserWindow({ webPreferences }); }
+          ${early ? "" : activation}
+          createWindow();
+          throw new Error("must not execute source");
+        `;
+      }
+    }
+    files["index.html"] = Object.keys(files)
+      .map((name) => `<script src="${name}"></script>`)
+      .join("");
+    await writeFixtureFiles(root, files);
+    const result = await analyzeJavaScriptDirectory(surface, cli, root);
+    expect(result.statistics.parse_failures).toBe(0);
+    const windows = result.graph.nodes.filter(
+      ({ kind }) => kind === "browser-window",
+    );
+    expect(windows).toHaveLength(6);
+    for (const source of Object.keys(files).filter((name) =>
+      name.endsWith(".js"),
+    )) {
+      const observations = windows
+        .flatMap(({ observations }) => observations)
+        .filter(
+          ({ evidence }) =>
+            evidence.location.available &&
+            evidence.location.value.kind === "source-range" &&
+            evidence.location.value.source === source,
+        );
+      expect(observations).toHaveLength(1);
+      const definite =
+        source.endsWith("-late.js") && !source.startsWith("parameter-");
+      expect(observations[0]?.properties).toMatchObject(
+        definite
+          ? {
+              web_preferences_status: "object-literal",
+              web_preferences: [
+                {
+                  name: "nodeIntegration",
+                  value: { status: "literal", value: true },
+                },
+              ],
+            }
+          : { web_preferences_status: "dynamic", web_preferences: [] },
+      );
+    }
+  },
+);
