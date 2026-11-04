@@ -988,6 +988,70 @@ describe("Pi untrusted project uninstall fallback", () => {
   });
 });
 
+describe("Pi ambiguous trust uninstall fallback", () => {
+  it("conservatively refuses to remove an owned project registration when trust is malformed and user configuration defines an unowned rea server", async () => {
+    const { home, client } = await piClient();
+    const projectDir = await createTestTempDirectory(
+      "rea-pi-malformed-trust-unowned-",
+    );
+    vi.spyOn(process, "cwd").mockReturnValue(projectDir);
+
+    // User configuration has an unowned rea server
+    await writeFile(
+      client.configPath,
+      JSON.stringify({
+        mcpServers: {
+          rea: { command: "foreign-pi-server", args: [] },
+        },
+      }),
+    );
+
+    // Project configuration has an owned rea server
+    const projectConfigDir = join(projectDir, ".pi");
+    await mkdir(projectConfigDir, { recursive: true });
+    const projectConfigPath = resolve(projectConfigDir, "mcp.json");
+    await writeFile(
+      projectConfigPath,
+      JSON.stringify({
+        mcpServers: {
+          rea: {
+            command: command[0],
+            args: command.slice(1),
+          },
+        },
+      }),
+    );
+
+    // Malformed trust file
+    await mkdir(join(home, ".pi", "agent"), { recursive: true });
+    const trustPath = join(home, ".pi", "agent", "trust.json");
+    await writeFile(trustPath, "{ malformed_json");
+
+    const host = systemUninstallHost(home);
+    const clients = await host.clients();
+    const projectClient = clients.find(
+      (c) => c.name === "pi" && c.configPath === projectConfigPath,
+    );
+    if (projectClient === undefined) throw new Error("missing project client");
+
+    const preflight = await host.inspectClient(projectClient);
+    expect(preflight).toMatchObject({
+      status: "failed",
+      detail: expect.stringContaining("not REA-owned"),
+    });
+
+    const result = await host.removeClient(projectClient);
+    expect(result).toMatchObject({
+      name: "pi",
+      status: "failed",
+      detail: expect.stringContaining("not REA-owned"),
+    });
+
+    const contentAfter = JSON.parse(await readFile(projectConfigPath, "utf8"));
+    expect(contentAfter.mcpServers?.rea).toBeDefined();
+  });
+});
+
 describe("Pi project trust enforcement", () => {
   it("does not select project configuration when Pi project trust is untrusted or unknown", async () => {
     const { home, client } = await piClient();

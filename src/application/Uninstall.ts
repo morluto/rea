@@ -1003,7 +1003,7 @@ const unownedLowerLayerFallback = async (
   const currentIndex = allPaths.indexOf(client.configPath);
   if (currentIndex <= 0) return undefined;
   const trust = await isPiProjectTrusted(client.piSettings, resources);
-  if (!trust.ok || !trust.value) return undefined;
+  if (trust.ok && !trust.value) return undefined;
   const lowerPaths = allPaths.slice(0, currentIndex);
   const lowerSources: ClientConfigurationSource[] = [];
   for (const lowerPath of lowerPaths) {
