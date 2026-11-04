@@ -19,7 +19,10 @@ REA_PEFILE_PYTHON=<python with pefile> node scripts/verify-pe-rich-header.mjs \
 ```
 
 The script walked 17,896 `.exe`, `.dll`, `.sys`, `.ocx`, `.cpl`, `.efi` and
-`.scr` files with `max_file_bytes` at its 512 MiB ceiling.
+`.scr` files with `max_file_bytes` at its 512 MiB ceiling. A file is left out
+of the comparison only on pefile's own result: pefile warned that `0x80` is not
+`DanS`, or REA found a footer before `0x80`, where pefile never looks. Every
+other state difference counts as a disagreement and fails the run.
 
 | Result                                         | Files  |
 | ---------------------------------------------- | ------ |

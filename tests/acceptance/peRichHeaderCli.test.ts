@@ -1,7 +1,7 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
-import { toolContract } from "../../src/contracts/toolContracts.js";
+import { BINARY_DIAGNOSTICS_TOOL_CONTRACTS } from "../../src/contracts/native/binaryDiagnosticsToolContracts.js";
 import {
   peRichHeaderImage,
   RICH_FIXTURE_ENTRIES,
@@ -10,9 +10,21 @@ import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { parseMcpToolError } from "../fixtures/mcpToolError.js";
 import { cliTest } from "../support/cli/cliFixture.js";
 
-const report = (value: unknown) =>
-  toolContract("inspect_pe_rich_header").outputSchema.parse(value)
-    .normalized_result;
+type BinaryDiagnosticsContract =
+  (typeof BINARY_DIAGNOSTICS_TOOL_CONTRACTS)[number];
+const contract = BINARY_DIAGNOSTICS_TOOL_CONTRACTS.find(
+  (
+    candidate,
+  ): candidate is Extract<
+    BinaryDiagnosticsContract,
+    { name: "inspect_pe_rich_header" }
+  > => candidate.name === "inspect_pe_rich_header",
+);
+if (contract === undefined)
+  throw new Error("Missing inspect_pe_rich_header contract");
+const outputSchema = contract.outputSchema;
+
+const report = (value: unknown) => outputSchema.parse(value).normalized_result;
 
 cliTest(
   "reads the same Rich header through the CLI and MCP",
@@ -42,10 +54,7 @@ cliTest(
         })),
       });
     }
-    expect(
-      toolContract("inspect_pe_rich_header").outputSchema.parse(result.json)
-        .subject?.local_path,
-    ).toBe(path);
+    expect(outputSchema.parse(result.json).subject?.local_path).toBe(path);
     expect((await readFile(path)).equals(bytes)).toBe(true);
 
     await writeFile(path, Buffer.from("ZZ not a PE image"));

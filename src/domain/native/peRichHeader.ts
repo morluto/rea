@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { digestSchema } from "../digests.js";
+import { fixedTupleSchema } from "../fixedTupleSchema.js";
 import { absoluteLocalPathStringSchema } from "../localPath.js";
 
 const uint = z.number().int().min(0).max(0xffffffff);
@@ -74,7 +75,7 @@ const richHeaderSchema = z.discriminatedUnion("state", [
     key: uint,
     checksum: z.strictObject({ computed: uint, matches: z.boolean() }),
     /** The three DWORDs after `DanS`, decoded with the key. */
-    padding: z.tuple([uint, uint, uint]),
+    padding: fixedTupleSchema([uint, uint, uint]),
     entries: z.array(entrySchema),
   }),
 ]);

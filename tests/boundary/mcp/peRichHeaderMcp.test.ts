@@ -1,7 +1,7 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
-import { toolContract } from "../../../src/contracts/toolContracts.js";
+import { BINARY_DIAGNOSTICS_TOOL_CONTRACTS } from "../../../src/contracts/native/binaryDiagnosticsToolContracts.js";
 import { createServer } from "../../../src/server/createServer.js";
 import {
   peRichHeaderImage,
@@ -10,6 +10,19 @@ import {
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { mcpTest } from "../../support/mcp/mcpFixture.js";
+
+type BinaryDiagnosticsContract =
+  (typeof BINARY_DIAGNOSTICS_TOOL_CONTRACTS)[number];
+const contract = BINARY_DIAGNOSTICS_TOOL_CONTRACTS.find(
+  (
+    candidate,
+  ): candidate is Extract<
+    BinaryDiagnosticsContract,
+    { name: "inspect_pe_rich_header" }
+  > => candidate.name === "inspect_pe_rich_header",
+);
+if (contract === undefined)
+  throw new Error("Missing inspect_pe_rich_header contract");
 
 mcpTest(
   "advertises and reads a PE Rich header without executing or changing the image",
@@ -39,7 +52,7 @@ mcpTest(
         { toolDefinition: definition },
       );
       expect(response.isError, JSON.stringify(response.content)).not.toBe(true);
-      const report = toolContract("inspect_pe_rich_header").outputSchema.parse(
+      const report = contract.outputSchema.parse(
         response.structuredContent,
       ).normalized_result;
       expect(report.rich_header).toMatchObject({

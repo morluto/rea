@@ -122,6 +122,18 @@ it("ignores a Rich marker that is not DWORD aligned", async () => {
   });
 });
 
+it("yields while scanning a stub full of unaligned Rich markers", async () => {
+  const stub = Buffer.alloc(0x400000);
+  for (let index = 0; index < stub.length; index++)
+    stub[index] = "hRic".charCodeAt(index % 4);
+  const bytes = peRichHeaderImage({ stub, block: false });
+  expect((await parseBytes(bytes)).rich_header).toEqual({ state: "absent" });
+  const controller = new AbortController();
+  const pending = parseBytes(bytes, 1024, controller.signal);
+  controller.abort();
+  await expect(pending).rejects.toMatchObject({ reason: "cancelled" });
+});
+
 it("reads the record before the PE header, not one embedded in the stub", async () => {
   const inner = richFixtureBlock(
     [{ productId: 0x0093, build: 0x7809, count: 2 }],

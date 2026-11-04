@@ -120,10 +120,26 @@ const summary = {
   present: 0,
   checksum_matches: 0,
   checksum_mismatches: [],
+  pefile_errors: [],
   compared_with_pefile: 0,
   agree: 0,
   disagree: [],
   pefile_layout_differs: [],
+};
+
+const sameRecord = (record, other) => {
+  if (other === null) return record.state === "absent";
+  if (record.state !== "present" || record.location.offset !== 0x80)
+    return false;
+  const values = record.entries.flatMap(({ product_id, build, count }) => [
+    ((product_id << 16) | build) >>> 0,
+    count,
+  ]);
+  return (
+    other.key === record.key &&
+    other.values.length === values.length &&
+    other.values.every((value, index) => value === values[index])
+  );
 };
 
 for (const path of files) {
@@ -141,43 +157,34 @@ for (const path of files) {
     if (record.checksum.matches) summary.checksum_matches += 1;
     else summary.checksum_mismatches.push(path);
   }
-  const other = theirs?.rich ?? null;
-  // pefile assumes DanS at file offset 0x80 and takes the first footer.
-  const pefileLayout =
-    record.state === "present" &&
-    record.location.offset === 0x80 &&
-    other !== null &&
-    !other.warned;
-  if (
-    record.state === "absent" &&
-    other === null &&
-    theirs?.error === undefined
-  ) {
-    summary.compared_with_pefile += 1;
-    summary.agree += 1;
+  if (theirs === undefined || theirs.error !== undefined) {
+    summary.pefile_errors.push({ path, error: theirs?.error ?? "missing" });
     continue;
   }
-  if (!pefileLayout) {
-    if (record.state !== "absent" || other !== null)
-      summary.pefile_layout_differs.push({
-        path,
-        rea: record.state,
-        rea_offset: record.state === "present" ? record.location.offset : null,
-        pefile: theirs?.error ?? (other === null ? "none" : "warned"),
-      });
+  const other = theirs.rich;
+  // Exclusions come from pefile's own result, never from REA's. pefile warns
+  // when the DWORD at 0x80 is not DanS, and it never searches before 0x80.
+  const outsidePefileLayout =
+    other === null
+      ? record.state !== "absent" && record.footer_location.offset < 0x80
+      : other.warned;
+  if (outsidePefileLayout) {
+    summary.pefile_layout_differs.push({
+      path,
+      rea: record.state,
+      rea_offset: record.state === "present" ? record.location.offset : null,
+      pefile: other === null ? "none" : "warned",
+    });
     continue;
   }
   summary.compared_with_pefile += 1;
-  const values = record.entries.flatMap(({ product_id, build, count }) => [
-    ((product_id << 16) | build) >>> 0,
-    count,
-  ]);
-  const same =
-    other.key === record.key &&
-    other.values.length === values.length &&
-    other.values.every((value, index) => value === values[index]);
-  if (same) summary.agree += 1;
-  else summary.disagree.push(path);
+  if (sameRecord(record, other)) summary.agree += 1;
+  else
+    summary.disagree.push({
+      path,
+      rea: record.state,
+      pefile: other === null ? "none" : "present",
+    });
 }
 
 const firstPresent = files.find(
@@ -191,6 +198,8 @@ if (firstPresent !== undefined) {
         resolve("scripts/rea.mjs"),
         "inspect-pe-rich-header",
         firstPresent,
+        "--max-file-bytes",
+        String(MAX_INSPECT_PE_RICH_HEADER_FILE_BYTES),
         "--json",
       ],
       { encoding: "utf8", timeout: 60000 },
@@ -200,4 +209,8 @@ if (firstPresent !== undefined) {
 }
 
 console.log(JSON.stringify(summary, null, 2));
+assert.ok(
+  summary.compared_with_pefile > 0,
+  "No file was compared with pefile.",
+);
 assert.equal(summary.disagree.length, 0, "rea and pefile disagree");

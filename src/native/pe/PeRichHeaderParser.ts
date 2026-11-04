@@ -16,7 +16,8 @@ import { readPeHeaders } from "./PeResourceLayout.js";
 
 const DOS_HEADER_BYTES = 0x40;
 const E_LFANEW_OFFSET = 0x3c;
-const RICH_MARKER = Buffer.from("Rich", "latin1");
+/** `Rich` read as a little-endian DWORD. */
+const RICH = 0x68636952;
 /** `DanS` read as a little-endian DWORD before the key is applied. */
 const DANS = 0x536e6144;
 /** Bytes scanned or summed between event-loop yields and cancellation checks. */
@@ -33,39 +34,54 @@ const pause = async (signal: AbortSignal | undefined): Promise<void> => {
 };
 
 /**
- * The last DWORD-aligned `Rich` marker whose key ends at or before the PE
- * signature. A custom DOS stub can embed another image with its own footer;
- * the linker writes the image's record directly before the PE header.
+ * The nearest DWORD-aligned offset at or before `from`, and after the DOS
+ * header, that holds `value`. The scan yields and checks cancellation every
+ * `BYTES_PER_YIELD`, so a stub of any size cannot hold the event loop.
  */
-const footerOffset = (bytes: Buffer, peOffset: number): number | null => {
-  const last = peOffset - PE_RICH_HEADER_FOOTER_BYTES;
-  if (last < DOS_HEADER_BYTES) return null;
-  let at = bytes.lastIndexOf(RICH_MARKER, last);
-  while (at >= DOS_HEADER_BYTES && at % 4 !== 0)
-    at = bytes.lastIndexOf(RICH_MARKER, at - 1);
-  return at >= DOS_HEADER_BYTES ? at : null;
-};
-
-/** Walk back from the footer to the nearest `DanS` encoded with this key. */
-const startOffset = async (
+const lastAlignedDword = async (
   bytes: Buffer,
-  footer: number,
-  key: number,
+  from: number,
+  value: number,
   signal: AbortSignal | undefined,
 ): Promise<number | null> => {
-  const marker = (DANS ^ key) >>> 0;
   let scanned = 0;
-  for (
-    let at = footer - PE_RICH_HEADER_START_BYTES;
-    at >= DOS_HEADER_BYTES;
-    at -= 4
-  ) {
-    if (bytes.readUInt32LE(at) === marker) return at;
+  for (let at = from - (from % 4); at >= DOS_HEADER_BYTES; at -= 4) {
+    if (bytes.readUInt32LE(at) === value) return at;
     scanned += 4;
     if (scanned % BYTES_PER_YIELD === 0) await pause(signal);
   }
   return null;
 };
+
+/**
+ * The last DWORD-aligned `Rich` marker whose key ends at or before the PE
+ * signature. A custom DOS stub can embed another image with its own footer;
+ * the linker writes the image's record directly before the PE header.
+ */
+const footerOffset = (
+  bytes: Buffer,
+  peOffset: number,
+  signal: AbortSignal | undefined,
+): Promise<number | null> => {
+  const last = peOffset - PE_RICH_HEADER_FOOTER_BYTES;
+  return last < DOS_HEADER_BYTES
+    ? Promise.resolve(null)
+    : lastAlignedDword(bytes, last, RICH, signal);
+};
+
+/** Walk back from the footer to the nearest `DanS` encoded with this key. */
+const startOffset = (
+  bytes: Buffer,
+  footer: number,
+  key: number,
+  signal: AbortSignal | undefined,
+): Promise<number | null> =>
+  lastAlignedDword(
+    bytes,
+    footer - PE_RICH_HEADER_START_BYTES,
+    (DANS ^ key) >>> 0,
+    signal,
+  );
 
 /**
  * The linker's checksum: the record's offset, plus every byte before it
@@ -96,7 +112,7 @@ const richRecord = async (
   input: InspectPeRichHeaderInput,
   signal: AbortSignal | undefined,
 ): Promise<PeRichHeaderRecord> => {
-  const footer = footerOffset(bytes, peOffset);
+  const footer = await footerOffset(bytes, peOffset, signal);
   if (footer === null) return { state: "absent" };
   const key = bytes.readUInt32LE(footer + 4);
   const footerLocation = { offset: footer, bytes: PE_RICH_HEADER_FOOTER_BYTES };
