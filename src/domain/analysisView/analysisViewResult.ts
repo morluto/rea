@@ -1065,6 +1065,7 @@ const machoPageViewResultSchema = z
 export const analysisViewResultSchema = z.discriminatedUnion("kind", [
   z.strictObject({
     ...viewResultBase,
+    ...nativeViewSourceContext,
     parent_operation: z.string(),
     artifact: artifactSchema.nullable(),
     kind: z.literal("recorded-array"),

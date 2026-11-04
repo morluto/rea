@@ -2027,6 +2027,9 @@ it("pages retained raw array rows without losing the parent and refuses an overs
   expect(parsed.normalized_result).toMatchObject({
     kind: "recorded-array",
     parent_evidence_id: parent.evidence_id,
+    source_provider: { id: "fixture", name: "Fixture", version: "1" },
+    source_analysis_profile_digest: null,
+    source_parameters: { address: "0x20" },
     rows: rows.slice(0, 2),
     coverage: { examined: 2, total: 3, next_offset: 2 },
   });
