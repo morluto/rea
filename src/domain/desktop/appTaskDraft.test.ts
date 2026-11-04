@@ -260,6 +260,42 @@ describe("draftTaskFiles with partial evidence", () => {
     });
   });
 
+  it("leaves out a database with one version, so a changed state file keeps its suggestions", () => {
+    const cut = {
+      tables: {
+        notes: {
+          columns: ["id"],
+          primary_key: ["id"],
+          rows: [[1]],
+          truncated: true,
+        },
+      },
+      tables_truncated: false,
+    };
+    const files = draft({
+      "Documents/notes.db": {
+        ...path("document", "sqlite", null, null),
+        versions: [version(0, "sqlite", cut)],
+      },
+      ".config/app/state.txt": path(
+        "application_state",
+        "text",
+        text("a"),
+        text("b"),
+      ),
+    });
+
+    expect(files).toMatchObject([
+      {
+        file: ".config/app/state.txt",
+        suggested: [
+          { kind: "lines_present", lines: ["b"] },
+          { kind: "lines_absent", lines: ["a"] },
+        ],
+      },
+    ]);
+  });
+
   it("lists a file whose views match only because both leave its change out", () => {
     const cut = { lines: ["a"], line_count: 6000, truncated: true };
     const [long] = draft({

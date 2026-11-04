@@ -288,6 +288,8 @@ const suggestedChecks = (
 
 /** How a file changed from its baseline to its final version, or undefined when it ends as it began. */
 const netChange = (baseline: Version, final: Version) => {
+  // A file with one version never changed, however much of it its view holds.
+  if (baseline.checkpoint_index === final.checkpoint_index) return undefined;
   if (!baseline.present && !final.present) return undefined;
   // A database's hash leaves out its -wal sidecar, so equal hashes prove nothing about its rows.
   if (
