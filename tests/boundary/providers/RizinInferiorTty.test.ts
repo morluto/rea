@@ -478,6 +478,16 @@ it.skipIf(
     });
     expect(started.ok, started.ok ? "" : started.error.message).toBe(true);
     if (!started.ok) return;
+    for (const [command, expected] of [
+      ["e scr.color", "0"],
+      ["e scr.color=1; e scr.color", "1"],
+      ["e scr.color", "1"],
+    ] as const) {
+      const result = await manager.execute(started.value.session_id, command);
+      expect(result.ok, result.ok ? "" : result.error.message).toBe(true);
+      if (!result.ok) return;
+      expect(result.value.result.output.trim()).toBe(expected);
+    }
     const closing = manager.close(started.value.session_id);
     expect((await manager.execute(started.value.session_id, "dr")).ok).toBe(
       false,

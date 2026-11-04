@@ -29,7 +29,13 @@ describe.skipIf(process.platform === "win32")(
       directory = undefined;
     });
 
-    it("uses an absolute target path and waits for Rizin's completion marker", async () => {
+    it.each([
+      { command: "dr", output: "backend-event\nrax=0x1234" },
+      {
+        command: "e scr.color=1; dr",
+        output: "\u001b[32mrax=0x1234\u001b[0m",
+      },
+    ])("starts plain for $command", async ({ command, output }) => {
       directory = await mkdtemp(join(tmpdir(), "rea-rizin-manager-"));
       const provider = join(directory, "fake-rizin.mjs");
       const argsFile = join(directory, "args.json");
@@ -50,6 +56,7 @@ process.stdin.on("data", (chunk) => {
     const line = input.slice(0, boundary);
     input = input.slice(boundary + 1);
     if (line === "dr") process.stdout.write("backend-event\\0rax=0x1234\\0");
+    else if (line === "e scr.color=1; dr") process.stdout.write("\\u001b[32mrax=0x1234\\u001b[0m\\0");
     else if (line === "olj") process.stdout.write("[]\\0");
     else if (line.startsWith("!echo ")) process.stdout.write(line.slice(6) + "\\n\\0");
   }
@@ -67,7 +74,7 @@ process.stdin.on("data", (chunk) => {
         inferior_tty: await rizinTestInferiorTty(),
         backend: "test-backend",
       });
-      expect(started.ok).toBe(true);
+      expect(started.ok, started.ok ? "" : started.error.message).toBe(true);
       if (!started.ok) return;
       const providerArgs = await import("node:fs/promises").then(
         ({ readFile }) => readFile(argsFile, "utf8"),
@@ -75,6 +82,8 @@ process.stdin.on("data", (chunk) => {
       expect(JSON.parse(providerArgs)).toEqual([
         "-N",
         "-0",
+        "-e",
+        "scr.color=0",
         "-d",
         "-R",
         `stdout=${await rizinTestInferiorTty()}`,
@@ -87,10 +96,12 @@ process.stdin.on("data", (chunk) => {
         resolve("-target.bin"),
       ]);
 
-      const result = await manager.execute(started.value.session_id, "dr");
+      const result = await manager.execute(started.value.session_id, command);
       expect(result.ok).toBe(true);
       if (result.ok) {
-        expect(result.value.result.output).toBe("backend-event\nrax=0x1234");
+        expect(result.value.result.output).toBe(output);
+        expect(result.value.evidence.parameters.command).toBe(command);
+        expect(result.value.evidence.raw_result).toMatchObject({ output });
         expect(result.value.result.output_scope).toBe(
           "command_and_interleaved_session_output",
         );
