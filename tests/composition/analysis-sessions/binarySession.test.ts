@@ -309,7 +309,11 @@ it("reports an external cleanup blocker until its exact owner confirms release",
       (_value, error) => error,
     );
     expect(await session.status()).toMatchObject({ cleanup_pending: true });
-    expect(await session.open(target)).toEqual(err(failure));
+    expect(await session.open(target)).toEqual({
+      ok: false,
+      error: failure,
+      selection: { kind: "none" },
+    });
     await session.close({ cleanupRetry: { operation: "close_binary" } });
     expect(released).toBe(false);
     expect(await session.status()).toMatchObject({ cleanup_pending: true });
@@ -1862,7 +1866,11 @@ describe("no replacement start", () => {
     });
     expect((await session.open(first)).ok).toBe(true);
 
-    expect(await session.open(second)).toEqual(err(cleanupError));
+    expect(await session.open(second)).toEqual({
+      ok: false,
+      error: cleanupError,
+      selection: { kind: "none" },
+    });
     expect(created).toBe(1);
     expect(await session.status()).toMatchObject({ open: false });
   });
@@ -1921,7 +1929,11 @@ it("blocks analysis rebinding until the external writer cleanup settles", async 
   );
   expect(result).toEqual(resultOk(err(failure)));
   expect(session.activeTarget()).toBeUndefined();
-  expect(await session.open(target)).toEqual(err(failure));
+  expect(await session.open(target)).toEqual({
+    ok: false,
+    error: failure,
+    selection: { kind: "none" },
+  });
   const anotherMutation = vi.fn(async () => resultOk("unrelated command"));
   expect(
     await session.withAdmittedExternalMutation(

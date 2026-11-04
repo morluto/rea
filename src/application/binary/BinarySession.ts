@@ -35,6 +35,8 @@ import type {
 } from "../AnalysisProvider.js";
 import type {
   BinarySessionPort,
+  BinaryOpenResult,
+  OpenSelectionReceipt,
   SavedAnalysisSnapshot,
 } from "./BinarySessionPort.js";
 import {
@@ -478,7 +480,7 @@ export class BinarySession
   open(
     path: string,
     options: BinarySessionOpenOptions = {},
-  ): Promise<Result<BinaryTarget, AnalysisError>> {
+  ): Promise<BinaryOpenResult> {
     return this.#open(
       (admitted) =>
         resolveSessionOpen({
@@ -498,7 +500,7 @@ export class BinarySession
   openResolvedTarget(
     resolved: Pick<ResolvedSessionOpen, "target" | "route">,
     options: Pick<BinarySessionOpenOptions, "signal" | "snapshot"> = {},
-  ): Promise<Result<BinaryTarget, AnalysisError>> {
+  ): Promise<BinaryOpenResult> {
     return this.#open(
       () =>
         Promise.resolve(
@@ -519,18 +521,42 @@ export class BinarySession
       admitted: BinarySessionOpenOptions,
     ) => Promise<Result<ResolvedSessionOpen, AnalysisError>>,
     options: BinarySessionOpenOptions,
-  ): Promise<Result<BinaryTarget, AnalysisError>> {
+  ): Promise<BinaryOpenResult> {
     return this.#serialize(async (admittedThrough) => {
-      const refused = this.#targetAcquisitionRefused("open_binary");
-      if (refused !== undefined) return refused;
-      const admitted = await this.#withLoadedSnapshot(options);
-      if (!admitted.ok) return admitted;
-      return this.#openWithinTransition(
-        admittedThrough,
-        () => resolve(admitted.value),
-        admitted.value,
-      );
+      const attempt = async (): Promise<
+        Result<BinaryTarget, AnalysisError>
+      > => {
+        const refused = this.#targetAcquisitionRefused("open_binary");
+        if (refused !== undefined) return refused;
+        const admitted = await this.#withLoadedSnapshot(options);
+        if (!admitted.ok) return admitted;
+        return this.#openWithinTransition(
+          admittedThrough,
+          () => resolve(admitted.value),
+          admitted.value,
+        );
+      };
+      const result = await attempt();
+      return result.ok
+        ? result
+        : { ...result, selection: this.#openSelectionReceipt() };
     });
+  }
+
+  #openSelectionReceipt(): OpenSelectionReceipt {
+    if (this.#active !== undefined)
+      return {
+        kind: "binary",
+        path: this.#active.target.path,
+        sha256: this.#active.target.sha256,
+      };
+    if (this.#activeBundleResources !== undefined)
+      return {
+        kind: "resources",
+        path: this.#activeBundleResources.root.canonicalPath,
+        caller_path: this.#activeBundleResources.root.callerPath,
+      };
+    return { kind: "none" };
   }
 
   /** Read the staged snapshot only after earlier lifecycle transitions have settled. */
@@ -1511,6 +1537,7 @@ export class BinarySession
           operation: name,
           parameters: arguments_,
           execution: retained,
+          evidence: this.evidenceForAnalysis(evidence.evidence_id) ?? evidence,
         });
       return ok(retained);
     }
