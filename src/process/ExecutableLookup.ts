@@ -7,7 +7,7 @@ import {
   absoluteCallerPath,
   appendCallerPath,
 } from "../filesystem/callerPath.js";
-import { type FileWork, fileWorkDeadline, HOST_FILE_WORK } from "./FileWork.js";
+import { FileWork, fileWorkDeadline } from "./FileWork.js";
 
 /** Where a command resolves through an effective PATH, or why it does not. */
 export type ExecutableLookup =
@@ -63,7 +63,11 @@ export interface ExecutableLookupBounds {
   readonly timeoutMs?: number | undefined;
   readonly stat?: (path: string) => Promise<Stats>;
   readonly access?: (path: string, mode: number) => Promise<void>;
-  /** Owns the checks the lookup stops waiting for; defaults to the process's. */
+  /**
+   * Owns the checks the lookup stops waiting for. By default it joins no
+   * budget: a lookup without a deadline could never leave a stalled check, so
+   * it must not take a share that other calls wait for.
+   */
   readonly fileWork?: FileWork;
 }
 
@@ -100,7 +104,7 @@ export const lookupExecutable = async (
     timeoutMs,
     stat = statPath,
     access = accessPath,
-    fileWork = HOST_FILE_WORK,
+    fileWork = new FileWork(Number.POSITIVE_INFINITY),
   } = bounds;
   let cwd: string | undefined;
   const readCwd = (): string => (cwd ??= workingDirectory());

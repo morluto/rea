@@ -415,29 +415,26 @@ it.skipIf(process.platform === "win32")(
   },
 );
 
-it("refuses executable resolution while stalled steps hold the process's budget", async () => {
+it("resolves an executable while stalled steps hold the process's budget", async () => {
   let answer!: () => void;
   const stalled = new Promise<void>((resolve) => {
     answer = resolve;
   });
   const controller = new AbortController();
   const deadline = fileWorkDeadline(controller.signal, undefined);
-  const budget = fileStepBudget();
-  const leaving = Array.from({ length: budget }, (_, index) =>
+  const leaving = Array.from({ length: fileStepBudget() }, (_, index) =>
     HOST_FILE_WORK.run(`/stalled/${String(index)}`, deadline, () => stalled),
   );
   controller.abort();
   await Promise.all(leaving);
-  deadline.release();
   try {
+    // Without a deadline the lookup could never give a share of the budget
+    // back, so it stays outside it.
     await expect(
-      resolveExecutable("/bin/sh", "/", undefined),
-    ).rejects.toMatchObject({
-      _tag: "AnalysisResourceConstraintError",
-      resource: "capacity",
-      reportedLimits: { file_steps_held: budget, max_held_file_steps: budget },
-    });
+      resolveExecutable(process.execPath, process.cwd(), undefined),
+    ).resolves.toBe(process.execPath);
   } finally {
+    deadline.release();
     answer();
     await stalled;
     await new Promise((resolve) => setImmediate(resolve));

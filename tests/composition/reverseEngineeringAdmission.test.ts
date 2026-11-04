@@ -209,6 +209,7 @@ it("refuses new file work while stalled steps hold the budget, then admits it", 
   const held: Promise<unknown>[] = [];
   const service = new TestReverseEngineeringService({
     run: async () => ({ stdout: "", stderr: "" }),
+    fileWork: new FileWork(2),
     stat: (path) => {
       stats.push(path);
       if (path === healthy) return stat(path);
@@ -264,6 +265,7 @@ it("starts no more file steps than the budget when calls stall together", async 
   const held: Promise<unknown>[] = [];
   const service = new TestReverseEngineeringService({
     run: async () => ({ stdout: "", stderr: "" }),
+    fileWork: new FileWork(2),
     stat: (path) => {
       started.push(path);
       const check = answered.then(() => stat(path));

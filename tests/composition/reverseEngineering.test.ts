@@ -788,7 +788,7 @@ it("lets hashes of the same path read at the same time", async () => {
     >;
   };
   const path = "/tmp/rea-concurrent-digest";
-  const fileWork = new FileWork();
+  const fileWork = new FileWork(2);
   const digests = Promise.allSettled([
     digestFile(path, { stat, timeoutMs: 1_000, open, fileWork }),
     digestFile(path, { stat, timeoutMs: 1_000, open, fileWork }),

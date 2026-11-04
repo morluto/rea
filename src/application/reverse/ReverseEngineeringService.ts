@@ -56,7 +56,7 @@ import {
   searchMovesPast,
 } from "../../process/ExecutableLookup.js";
 import {
-  type FileWork,
+  FileWork,
   fileWorkDeadline,
   type FileWorkOutcome,
   FileWorkSaturatedError,
@@ -1567,7 +1567,7 @@ export interface FileDigestBounds {
   readonly timeoutMs?: number | undefined;
   readonly stat?: (path: string) => Promise<Stats>;
   readonly open?: (path: string) => ReturnType<typeof createReadStream>;
-  /** Owns the file work the hash stops waiting for; defaults to the process's. */
+  /** Owns the file work the hash stops waiting for; by default it joins no budget. */
   readonly fileWork?: FileWork;
 }
 
@@ -1587,7 +1587,7 @@ export const digestFile = async (
     timeoutMs = DEFAULT_REVERSE_COMMAND_TIMEOUT_MS,
     stat = statPath,
     open = createReadStream,
-    fileWork = HOST_FILE_WORK,
+    fileWork = new FileWork(Number.POSITIVE_INFINITY),
   } = bounds;
   const deadline = fileWorkDeadline(signal, timeoutMs);
   try {

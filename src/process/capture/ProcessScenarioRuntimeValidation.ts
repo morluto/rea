@@ -6,7 +6,6 @@ import type { ProcessScenario } from "../../domain/process/processScenario.js";
 import {
   AnalysisAccessDeniedError,
   AnalysisInputError,
-  AnalysisResourceConstraintError,
 } from "../../domain/analysisErrorCore.js";
 import { lookupExecutable } from "../ExecutableLookup.js";
 import { snapshotEnvironment } from "../snapshotEnvironment.js";
@@ -102,21 +101,8 @@ export const resolveExecutable = async (
       `working directory could not be read: ${workingDirectory}`,
       lookup.cause,
     );
-  // Other calls hold the process's budget of stalled file steps.
-  if (lookup.status === "saturated")
-    throw new AnalysisResourceConstraintError(
-      "capture_process_scenario",
-      "capacity",
-      `Checking ${lookup.candidate} would start a file-system step while ${String(lookup.held)} steps that an unresponsive mount has not returned hold REA's budget.`,
-      { file_steps_held: lookup.held, max_held_file_steps: lookup.budget },
-      {
-        remediationAction:
-          "Retry once the unresponsive mount answers; REA cannot cancel the steps it holds.",
-        retryable: true,
-      },
-    );
-  // An unbounded lookup cannot be interrupted.
-  if (lookup.status === "interrupted")
+  // A lookup without bounds or a budget can be neither interrupted nor refused.
+  if (lookup.status === "interrupted" || lookup.status === "saturated")
     throw invalidScenarioPath(
       "executable",
       `executable lookup was interrupted: ${command}`,
