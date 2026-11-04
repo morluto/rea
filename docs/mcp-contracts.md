@@ -218,6 +218,12 @@ Malformed provider replies return `unreadable_output` for
 `resolve_containing_procedure` before successful-result projection;
 cancellation and incomplete cleanup remain errors.
 
+For a procedure match, `procedure_references` with `direction: "incoming"` can
+provide the selected provider's reference kinds when supported. Its scope covers
+the procedure body, so compare target addresses when selecting references to the
+exact entry. It is a separate observation and does not establish runtime use or
+complete reference discovery.
+
 REA prepares complete MCP results within the pinned stdio client's 10 MiB
 receive-buffer budget, including both text and structured representations and
 room for the JSON-RPC envelope. Tool errors omit `structuredContent` from the
