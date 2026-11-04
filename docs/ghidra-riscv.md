@@ -298,6 +298,11 @@ reservation an uninitialized overlay instead:
   (source-derived).
 - Flash code therefore has its ELF address, for example `0x42002ab6` rather than
   `.flash.text:0x42002ab6`.
+- The reservation's overlay space takes the name that Ghidra's memory map gives
+  an overlay block: `:` and whitespace become `_`, and a name that another
+  address space already has gains `.1`, `.2` and so on. A reservation named
+  `ram`, the RISC-V default space's name, therefore gets the space `ram.1`.
+  Section names are display labels, so no name causes a refusal.
 
 Before it reports `moved`, the script checks that no symbol or reference
 remains in the code's old overlay space. It reports `canonical` when Ghidra
@@ -309,7 +314,10 @@ unless each address, size and file offset is the committed section's, and the
 spaces agree with the outcome: moved code goes from an overlay into the default
 space and the reservation out of it, and canonical code stays in the default
 space. Block names are display only and are not compared. The script refuses
-any other memory map, and REA refuses the session with the mismatch. If Ghidra
+any other memory map, and REA refuses the session with the mismatch. A refusal
+also turns off Ghidra's headless auto-analysis, so Ghidra does not analyze a
+program that REA discards; later pre-scripts and the bridge still run, so the
+session reports the reason. If Ghidra
 fails during the move, the session is also refused. Ghidra probably rolls back
 the failed script's changes, its refusal included, so the reason may be missing
 (inferred; not tested). Session Evidence states the preparation and its
@@ -371,7 +379,7 @@ REA_RISCV_OBJDUMP=/path/to/llvm/bin/llvm-objdump \
 npm run verify:ghidra:riscv
 ```
 
-The lane builds six `ET_EXEC` fixtures from committed freestanding C and
+The lane builds seven `ET_EXEC` fixtures from committed freestanding C and
 assembly sources:
 
 - RV32 and RV64 double-float builds (`rv{32,64}imafdc`) of `riscv.c`.
@@ -387,6 +395,8 @@ assembly sources:
   reservation's `_flash_rodata_dummy_start`.
 - The same objects linked with `esp32c6-reservation-first.ld`, which puts the
   reservation before the code in the section table.
+- The same objects linked with `esp32c6-reservation-named-ram.ld`, which names
+  the reservation `ram`, as the default address space is named.
 
 Independent LLVM readelf observations establish ELF declarations,
 `Tag_RISCV_arch` and symbol addresses. Public CLI and stdio MCP workflows verify
@@ -432,10 +442,13 @@ For the ESP layout build the lane checks:
   keeps it, and the reopened snapshot lists the same procedures.
 - A copy whose reservation is smaller than the code is refused over CLI and
   MCP, with the reservation named. `analyzeHeadless` with a code file offset one
-  byte off makes the pre-analysis script refuse.
+  byte off makes the pre-analysis script refuse, and Ghidra then runs no
+  auto-analysis.
 
 The reservation-first build reports `canonical`: Ghidra loads its code in the
-default space, and REA changes nothing. A copy of the RV32 double-float build
+default space, and REA changes nothing. In the build whose reservation is named
+`ram`, `analyzeHeadless` reports `moved`, with the reservation in the overlay
+space `ram.1`. A copy of the RV32 double-float build
 with a truncated section table is refused when REA opens it.
 
 Header-mutated copies check admission. The RV32 double-float image relabelled as

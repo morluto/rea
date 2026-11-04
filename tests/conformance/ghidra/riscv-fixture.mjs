@@ -46,6 +46,15 @@ const BUILDS = {
     entry: "rea_riscv_esp_entry",
     linkerScript: "../esp/esp32c6-reservation-first.ld",
   },
+  // The same image with the reservation named like the default address space.
+  "esp-reservation-named-ram": {
+    sources: ["../c/riscv-esp-layout.c"],
+    march: () => "rv32imac_zicsr_zifencei",
+    mabi: () => "ilp32",
+    flags: 1,
+    entry: "rea_riscv_esp_entry",
+    linkerScript: "../esp/esp32c6-reservation-named-ram.ld",
+  },
 };
 
 const readerOptions = {

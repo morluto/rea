@@ -1,8 +1,10 @@
 import com.google.gson.JsonObject;
-import ghidra.app.script.GhidraScript;
+import ghidra.app.script.ImproperUseException;
+import ghidra.app.util.headless.HeadlessScript;
 import ghidra.program.database.ProgramDB;
 import ghidra.program.database.mem.FileBytes;
 import ghidra.program.model.address.Address;
+import ghidra.program.model.address.AddressFactory;
 import ghidra.program.model.address.AddressIterator;
 import ghidra.program.model.address.AddressSet;
 import ghidra.program.model.address.AddressSpace;
@@ -26,9 +28,10 @@ import java.util.List;
  * overlap in favour of the later section, so ESP-IDF's .flash_rodata_dummy keeps the default space
  * and .flash.text lands in an overlay, which DWARF import, call-frame entries and default-space
  * references never reach. REA's TypeScript admission commits both sections, and the script refuses
- * any other memory map. The file bytes and their offsets do not change.
+ * any other memory map, and then turns off headless auto-analysis, since REA discards the session.
+ * The file bytes and their offsets do not change.
  */
-public final class ReaGhidraPrepareElfLoad extends GhidraScript {
+public final class ReaGhidraPrepareElfLoad extends HeadlessScript {
     static final String POLICY = "nobits-reservation-overlay-v1";
     static final String REPORT_KEY = "REA ELF load preparation";
     /** The handshake bounds a refusal; this leaves room for the context around a failure. */
@@ -212,7 +215,8 @@ public final class ReaGhidraPrepareElfLoad extends GhidraScript {
         displaced.setPermissions(reservationRead, reservationWrite, false);
         displaced.setComment(reservationComment);
         if (reservationSource != null) displaced.setSourceName(reservationSource);
-        currentProgram.renameOverlaySpace(overlayName, reservationName);
+        String reservationSpace = overlaySpaceName(reservationName, overlayName);
+        if (!reservationSpace.equals(overlayName)) currentProgram.renameOverlaySpace(overlayName, reservationSpace);
         canonical.setName(codeName);
         AddressSpace overlay = displaced.getStart().getAddressSpace();
         // The reservation holds no code, so its labels mark no entry points. An entry mark the
@@ -227,6 +231,23 @@ public final class ReaGhidraPrepareElfLoad extends GhidraScript {
         outcome.addProperty("entry_points", entryPoints(canonical).size());
         outcome.addProperty("reservation_labels", count(symbols.getSymbols(range(displaced), SymbolType.LABEL, true)));
         return outcome;
+    }
+
+    /**
+     * The overlay space name Ghidra 12.1.4's memory map derives from a block name, as for an
+     * overlay block it creates: `:` and characters up to space become `_`, and a name another
+     * address space has gains `.1`, `.2` and so on. Section names are display labels, so a
+     * reservation named like another address space, or with characters Ghidra rejects, still loads.
+     */
+    private String overlaySpaceName(String blockName, String current) {
+        StringBuilder fixed = new StringBuilder(blockName.length());
+        for (char c : blockName.toCharArray()) fixed.append(c == ':' || c <= 0x20 ? '_' : c);
+        AddressFactory factory = currentProgram.getAddressFactory();
+        String name = fixed.toString();
+        for (int index = 1; !name.equals(current) && factory.getAddressSpace(name) != null; index++) {
+            name = fixed + "." + index;
+        }
+        return name;
     }
 
     /** A block as the script left it, for the client to compare with the committed section. */
@@ -257,13 +278,17 @@ public final class ReaGhidraPrepareElfLoad extends GhidraScript {
         println("REA ELF load preparation: " + result);
     }
 
-    /** Written instead of an outcome: REA refuses the session with this reason. */
-    private void refuse(String reason) {
+    /**
+     * Written instead of an outcome: REA refuses the session with this reason, so the program is
+     * not analyzed. Later scripts still run, and the bridge reports the refusal.
+     */
+    private void refuse(String reason) throws ImproperUseException {
         JsonObject result = new JsonObject();
         result.addProperty("policy", POLICY);
         result.addProperty("refused", reason);
         currentProgram.getOptions(Program.PROGRAM_INFO).setString(REPORT_KEY, result.toString());
         println("REA ELF load preparation refused: " + reason);
+        enableHeadlessAnalysis(false);
     }
 
     private static boolean mapsFile(MemoryBlock block, FileBytes file, long offset) {

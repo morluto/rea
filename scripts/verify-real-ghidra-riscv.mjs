@@ -824,7 +824,8 @@ try {
       `${cause.stdout}\n${cause.stderr}`.includes(refusal),
   );
   // The pre-analysis script refuses a code block whose file mapping is not the
-  // committed one; REA's admission would never commit this plan.
+  // committed one; REA's admission would never commit this plan. Ghidra then
+  // skips auto-analysis of the program REA discards.
   const javaRefusal = join(workspace, "java-refusal");
   await mkdir(join(javaRefusal, "tmp"), { recursive: true });
   const headless = await execute(
@@ -838,7 +839,6 @@ try {
       "RISCV:LE:32:default",
       "-cspec",
       "gcc",
-      "-noanalysis",
       "-scriptPath",
       fileURLToPath(new URL("../bridge/ghidra/", import.meta.url)),
       "-preScript",
@@ -863,12 +863,66 @@ try {
     ),
     headless.stdout,
   );
+  assert.ok(
+    !`${headless.stdout}\n${headless.stderr}`.includes("ANALYZING"),
+    headless.stdout,
+  );
   assert.equal(
     createHash("sha256")
       .update(await readFile(esp.path))
       .digest("hex"),
     esp.sha256,
   );
+
+  // A reservation named like the default space still moves into an overlay
+  // space, named as Ghidra's memory map names overlay blocks.
+  const named = await buildRiscvFixture(
+    workspace,
+    32,
+    "esp-reservation-named-ram",
+  );
+  assert.equal(named.riscv.sectionOverlap.status, "code-reservation");
+  assert.equal(named.riscv.sectionOverlap.reservation.name, "ram");
+  const namedProject = join(workspace, "java-named-ram");
+  await mkdir(join(namedProject, "tmp"), { recursive: true });
+  const namedRun = await execute(
+    join(installation.installDir, "support", "analyzeHeadless"),
+    [
+      namedProject,
+      "named",
+      "-import",
+      named.path,
+      "-processor",
+      "RISCV:LE:32:default",
+      "-cspec",
+      "gcc",
+      "-noanalysis",
+      "-scriptPath",
+      fileURLToPath(new URL("../bridge/ghidra/", import.meta.url)),
+      "-preScript",
+      "ReaGhidraPrepareElfLoad.java",
+      plan.policy,
+      named.riscv.sectionOverlap.code.address,
+      named.riscv.sectionOverlap.code.size,
+      named.riscv.sectionOverlap.code.offset,
+      named.riscv.sectionOverlap.reservation.address,
+      named.riscv.sectionOverlap.reservation.size,
+      "-deleteProject",
+    ],
+    {
+      env: { ...env, TMPDIR: join(namedProject, "tmp") },
+      timeout: 300000,
+      maxBuffer: 16 * 1024 * 1024,
+    },
+  );
+  const namedReport = /REA ELF load preparation: (\{.*\})$/mu.exec(
+    namedRun.stdout,
+  );
+  assert.ok(namedReport !== null, namedRun.stdout);
+  const namedOutcome = JSON.parse(namedReport[1]);
+  assert.equal(namedOutcome.outcome, "moved", namedReport[1]);
+  assert.equal(namedOutcome.reservation.name, "ram");
+  assert.equal(namedOutcome.reservation.space_after, "ram.1");
 
   // With the reservation first, Ghidra already loads the code in the default
   // space, and the preparation changes nothing.
@@ -939,6 +993,12 @@ try {
       snapshot_replay: true,
       refused_short_reservation: true,
       refused_by_preparation_script: true,
+      refusal_skips_analysis: true,
+      reservation_named_ram: {
+        path: named.path,
+        sha256: named.sha256,
+        space_after: namedOutcome.reservation.space_after,
+      },
       reservation_first: {
         path: first.path,
         sha256: first.sha256,
