@@ -152,7 +152,9 @@ symbolic link loop, a stale network file handle or an I/O error, at least one
 of the searches of glibc, musl, Android and libuv stops, so the lookup stops
 there. The
 command then runs by name, with the version unknown, and the host's own search
-decides what runs. A found file that does not start with `ENOENT` or `EACCES`,
+decides what runs. A limitation names the file where the lookup stopped and its
+error, and Evidence or the launch failure keeps them as
+`executable_lookup_candidate` and `executable_lookup_code`. A found file that does not start with `ENOENT` or `EACCES`,
 as when a script's interpreter is missing or not executable, is one a native
 search moves past. At `ESTALE` or `ENODEV`, glibc's search moves past it and
 musl's stops, so the host decides. The command then also runs as selected,

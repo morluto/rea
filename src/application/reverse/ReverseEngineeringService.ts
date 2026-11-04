@@ -977,20 +977,33 @@ export class ReverseEngineeringService {
       );
     // The command launch reports an executable that cannot be selected. It
     // runs as the caller spelled it, which can launch where the absolute
-    // spelling of an explicit selection is too long to inspect, and a launch
-    // failure keeps where the lookup looked.
+    // spelling of an explicit selection is too long to inspect, and Evidence
+    // or a launch failure keeps where the lookup looked and where it stopped.
     if (lookup.status !== "found") {
-      const selected =
-        lookup.status === "missing" ? lookup.selectedPath : undefined;
+      const missing = lookup.status === "missing" ? lookup : undefined;
+      const stopped = missing?.stoppedAt;
+      const observed = {
+        ...(missing?.selectedPath === undefined
+          ? {}
+          : { provider_executable_path: missing.selectedPath }),
+        ...(stopped === undefined
+          ? {}
+          : {
+              executable_lookup_candidate: stopped.candidate,
+              ...(stopped.code === undefined
+                ? {}
+                : { executable_lookup_code: stopped.code }),
+            }),
+      };
       return ok(
         unidentified(
           lookup.status === "no-working-directory"
             ? "the executable could not be located: its lookup needed the working directory, which could not be read"
-            : "the executable could not be located",
+            : stopped === undefined
+              ? "the executable could not be located"
+              : `the executable lookup stopped at ${stopped.candidate}${stopped.code === undefined ? "" : ` (${stopped.code})`}, where at least one native search stops, so the host's own search decides what runs`,
           profile.executable,
-          selected === undefined
-            ? undefined
-            : { provider_executable_path: selected },
+          Object.keys(observed).length === 0 ? undefined : observed,
         ),
       );
     }

@@ -29,6 +29,14 @@ export type ExecutableLookup =
       readonly checked: readonly string[];
       /** The absolute path that an explicitly selected command names. */
       readonly selectedPath?: string;
+      /**
+       * The candidate whose error ended the lookup, where at least one native
+       * search stops; absent when every candidate was checked.
+       */
+      readonly stoppedAt?: {
+        readonly candidate: string;
+        readonly code?: string;
+      };
     }
   /** A relative command, or a match under a relative PATH entry, needed the working directory, which could not be read. */
   | { readonly status: "no-working-directory"; readonly cause: unknown }
@@ -107,10 +115,21 @@ export const lookupExecutable = async (
   try {
     const checked: string[] = [];
     let selectedPath: string | undefined;
-    const missing = (): ExecutableLookup => ({
+    const missing = (stoppedAt?: {
+      readonly candidate: string;
+      readonly code: string | undefined;
+    }): ExecutableLookup => ({
       status: "missing",
       checked,
       ...(selectedPath === undefined ? {} : { selectedPath }),
+      ...(stoppedAt === undefined
+        ? {}
+        : {
+            stoppedAt: {
+              candidate: stoppedAt.candidate,
+              ...(stoppedAt.code === undefined ? {} : { code: stoppedAt.code }),
+            },
+          }),
     });
     for (const entry of entries) {
       const entryBytes = Buffer.byteLength(entry);
@@ -150,7 +169,7 @@ export const lookupExecutable = async (
           };
         checked.push(`${candidate}${systemErrorSuffix(code)}`);
         if (searchMovesPast(code)) continue;
-        return missing();
+        return missing({ candidate, code });
       }
       if (!metadata.value.isFile()) {
         checked.push(`${candidate} (not a regular file)`);
@@ -173,7 +192,7 @@ export const lookupExecutable = async (
           : { status: "no-working-directory", cause: unnamed.cause };
       const code = systemErrorCode(executable.cause);
       checked.push(`${candidate}${systemErrorSuffix(code)}`);
-      if (!searchMovesPast(code)) return missing();
+      if (!searchMovesPast(code)) return missing({ candidate, code });
     }
     return missing();
   } finally {

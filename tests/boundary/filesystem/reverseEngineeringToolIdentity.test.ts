@@ -434,6 +434,7 @@ posix(
     expect(stopped).toEqual({
       status: "missing",
       checked: [`${join(looped, "rizin")} (ELOOP)`],
+      stoppedAt: { candidate: join(looped, "rizin"), code: "ELOOP" },
     });
     await expect(
       lookupExecutable("rizin", cwd, `${unexecutable}${delimiter}${directory}`),
@@ -453,7 +454,11 @@ posix(
           },
         },
       ),
-    ).resolves.toEqual({ status: "missing", checked: [`${failing} (EIO)`] });
+    ).resolves.toEqual({
+      status: "missing",
+      checked: [`${failing} (EIO)`],
+      stoppedAt: { candidate: failing, code: "EIO" },
+    });
     // Native searches differ at a stale NFS handle, so the lookup stops and
     // a launch by name lets the host's search decide.
     await expect(
@@ -471,7 +476,11 @@ posix(
           },
         },
       ),
-    ).resolves.toEqual({ status: "missing", checked: [`${failing} (ESTALE)`] });
+    ).resolves.toEqual({
+      status: "missing",
+      checked: [`${failing} (ESTALE)`],
+      stoppedAt: { candidate: failing, code: "ESTALE" },
+    });
   },
 );
 
@@ -494,6 +503,10 @@ posix(
         : {
             status: "missing",
             checked: [`${longEntry}/rizin (ENAMETOOLONG)`],
+            stoppedAt: {
+              candidate: `${longEntry}/rizin`,
+              code: "ENAMETOOLONG",
+            },
           },
     );
     // Within PATH_MAX, a 300-byte component fails as a launch by name does.
@@ -507,6 +520,10 @@ posix(
     ).resolves.toEqual({
       status: "missing",
       checked: [`${longComponent}/rizin (ENAMETOOLONG)`],
+      stoppedAt: {
+        candidate: `${longComponent}/rizin`,
+        code: "ENAMETOOLONG",
+      },
     });
   },
 );
@@ -711,6 +728,41 @@ posix.each([
     } finally {
       await service.close();
     }
+  },
+);
+
+posix(
+  "keeps where a stopped PATH search stopped when the command runs by name",
+  async () => {
+    const { executable, path } = await rizinExecutableFixture();
+    const looped = dirname((await rizinExecutableFixture()).executable);
+    await rm(join(looped, "rizin"));
+    await symlink("rizin", join(looped, "rizin"));
+    const run = versionProbeRunner(() => "rizin 0.9.1 @ linux-x86-64");
+    const service = new TestReverseEngineeringService({
+      run,
+      lookup: lookupExecutable,
+      environment: {
+        REA_RIZIN_COMMAND: "rizin",
+        PATH: `${looped}${delimiter}${dirname(executable)}`,
+      },
+    });
+    const result = await service.executeRizinCommand({ path, command: "iI" });
+    if (!result.ok) throw result.error;
+    // Nothing was probed; the host's search decides what runs by name.
+    expect(run.mock.calls.map(([command]) => command)).toEqual(["rizin"]);
+    expect(result.value.provider.version).toBeNull();
+    expect(result.value.parameters).toMatchObject({
+      executable_lookup_candidate: join(looped, "rizin"),
+      executable_lookup_code: "ELOOP",
+    });
+    expect(
+      result.value.limitations.some(
+        (limitation) =>
+          limitation.includes(join(looped, "rizin")) &&
+          limitation.includes("ELOOP"),
+      ),
+    ).toBe(true);
   },
 );
 
