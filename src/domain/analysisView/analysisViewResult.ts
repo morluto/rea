@@ -1,4 +1,7 @@
-import { analysisViewCoverageSchema } from "./analysisViewCoverage.js";
+import {
+  analysisViewCoverageSchema,
+  nullableCollectionViewCoverageSchema,
+} from "./analysisViewCoverage.js";
 import {
   javaScriptRouteInventorySourceSchema,
   javaScriptRouteInventorySchema,
@@ -16,6 +19,7 @@ import {
   NATIVE_OBSERVATION_OPERATIONS,
   type NativeObservationOperation,
 } from "../native/nativeObservation.js";
+import { nativeValueTraceSummarySchema } from "./nativeValueTraceView.js";
 import {
   devicetreeViewRequestSchema,
   devicetreeViewItemsSchema,
@@ -348,6 +352,7 @@ const viewResultBase = {
     "inspect_gpu_code_objects",
     ...NATIVE_INVENTORY_OPERATIONS,
     ...NATIVE_OBSERVATION_OPERATIONS,
+    "trace_native_values",
     "match_native_functions",
   ]),
   parent_digest: digestSchema,
@@ -388,6 +393,14 @@ export const nativeObservationSummaryViewResultSchemas = {
   ),
   get_call_graph: nativeObservationSummaryFor("get_call_graph"),
 };
+
+export const nativeValueTraceSummaryViewResultSchema = z.strictObject({
+  ...summaryViewResultBase,
+  artifact: artifactSchema.nullable(),
+  parent_operation: z.literal("trace_native_values"),
+  summary: nativeValueTraceSummarySchema,
+});
+
 const nativeObservationSummaryViewResultSchema = z.discriminatedUnion(
   "parent_operation",
   [
@@ -437,7 +450,9 @@ const nativeContextViewResultSchema = z.discriminatedUnion("facet", [
   nativeContextFor("overview"),
   nativeContextFor("analysis-profile"),
   nativeContextFor("limitations"),
-  nativeContextFor("result-limitations"),
+  nativeContextFor("result-limitations").extend({
+    coverage: nullableCollectionViewCoverageSchema,
+  }),
 ]);
 
 export const byteEntropySummaryViewResultSchema = z.strictObject({
@@ -1120,6 +1135,7 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
   }),
   z.discriminatedUnion("parent_operation", [
     nativeObservationSummaryViewResultSchema,
+    nativeValueTraceSummaryViewResultSchema,
     erlangBeamSummaryViewResultSchema,
     devicetreeSummaryViewResultSchema,
     pythonPycSummaryViewResultSchema,
@@ -1191,6 +1207,7 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
   z.strictObject({
     ...viewResultBase,
     kind: z.literal("native-load-image"),
+    coverage: nullableCollectionViewCoverageSchema,
     ...nativeViewSourceContext,
     verification_status: z.enum(["unsupported", "verified", "mismatch"]),
     parent_operation: z.literal("inspect_native_load_image"),
