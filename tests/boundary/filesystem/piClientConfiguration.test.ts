@@ -930,6 +930,64 @@ describe("Pi project-scoped uninstall", () => {
   });
 });
 
+describe("Pi untrusted project uninstall fallback", () => {
+  it("removes an owned project registration without blocking uninstall when project is untrusted and user configuration defines an unowned rea server", async () => {
+    const { home, client } = await piClient();
+    const projectDir = await createTestTempDirectory(
+      "rea-pi-untrusted-uninstall-",
+    );
+    vi.spyOn(process, "cwd").mockReturnValue(projectDir);
+
+    // User configuration has an unowned rea server
+    await writeFile(
+      client.configPath,
+      JSON.stringify({
+        mcpServers: {
+          rea: { command: "foreign-pi-server", args: [] },
+        },
+      }),
+    );
+
+    // Untrusted project configuration has an owned rea server
+    const projectConfigDir = join(projectDir, ".pi");
+    await mkdir(projectConfigDir, { recursive: true });
+    const projectConfigPath = resolve(projectConfigDir, "mcp.json");
+    await writeFile(
+      projectConfigPath,
+      JSON.stringify({
+        mcpServers: {
+          rea: {
+            command: command[0],
+            args: command.slice(1),
+          },
+        },
+      }),
+    );
+
+    const host = systemUninstallHost(home);
+    const clients = await host.clients();
+    const projectClient = clients.find(
+      (c) => c.name === "pi" && c.configPath === projectConfigPath,
+    );
+    if (projectClient === undefined) throw new Error("missing project client");
+
+    const preflight = await host.inspectClient(projectClient);
+    expect(preflight).toBeUndefined();
+
+    const result = await host.removeClient(projectClient);
+    expect(result).toMatchObject({
+      name: "pi",
+      status: "removed",
+    });
+
+    const contentAfter = JSON.parse(await readFile(projectConfigPath, "utf8"));
+    expect(contentAfter.mcpServers?.rea).toBeUndefined();
+    expect(
+      await readFile(`${projectConfigPath}.rea.backup`, "utf8"),
+    ).toBeDefined();
+  });
+});
+
 describe("Pi project trust enforcement", () => {
   it("does not select project configuration when Pi project trust is untrusted or unknown", async () => {
     const { home, client } = await piClient();

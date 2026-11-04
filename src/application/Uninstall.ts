@@ -17,6 +17,7 @@ import {
 } from "./ClientConfigurationDocument.js";
 import {
   effectiveClientConfiguration,
+  isPiProjectTrusted,
   type ClientConfigurationSource,
 } from "./ClientConfigurationFiles.js";
 import { err, ok, type Result } from "../domain/result.js";
@@ -613,6 +614,7 @@ export const systemUninstallHost = (
         const unownedFallback = await unownedLowerLayerFallback(
           client,
           fileSystem,
+          resources,
         );
         if (unownedFallback !== undefined)
           return item(client.name, "failed", unownedFallback);
@@ -991,6 +993,7 @@ const verifyOpenCodeLayeredRemoval = async (
 const unownedLowerLayerFallback = async (
   client: SetupClient,
   fileSystem: UninstallFileSystem,
+  resources?: ArtifactResourceScope,
 ): Promise<string | undefined> => {
   if (client.format !== "pi") return undefined;
   const allPaths = [
@@ -999,6 +1002,8 @@ const unownedLowerLayerFallback = async (
   ];
   const currentIndex = allPaths.indexOf(client.configPath);
   if (currentIndex <= 0) return undefined;
+  const trust = await isPiProjectTrusted(client.piSettings, resources);
+  if (!trust.ok || !trust.value) return undefined;
   const lowerPaths = allPaths.slice(0, currentIndex);
   const lowerSources: ClientConfigurationSource[] = [];
   for (const lowerPath of lowerPaths) {
@@ -1120,7 +1125,11 @@ const removeClient = async (
     preflightOwned,
   );
   if (layeredOpenCodeIssue !== undefined) return layeredOpenCodeIssue;
-  const unownedFallback = await unownedLowerLayerFallback(client, fileSystem);
+  const unownedFallback = await unownedLowerLayerFallback(
+    client,
+    fileSystem,
+    resources,
+  );
   if (unownedFallback !== undefined)
     return item(client.name, "failed", unownedFallback);
   const blocker = writeBlocker?.();
