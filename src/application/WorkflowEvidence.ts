@@ -7,9 +7,10 @@ import type {
   AnalysisOperation,
   AnalysisOperationPort,
 } from "./AnalysisProvider.js";
-import { ok } from "../domain/result.js";
+import { err, ok } from "../domain/result.js";
 import type { EnhancedResult } from "./EnhancedToolTypes.js";
 import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
+import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { WorkflowSnapshotRecordInput } from "./binary/BinarySessionRecords.js";
 import {
   analysisProfileSchema,
@@ -309,6 +310,8 @@ interface WorkflowUnknownInput {
   readonly result: JsonValue;
   readonly evidenceId: string;
   readonly recordUnknown: UnknownRegistryPort["recordUnknown"] | undefined;
+  /** The caller confirmed the completed Evidence is in its investigation. */
+  readonly evidenceRetained?: boolean;
 }
 
 /** Retain residual workflow questions using the shared investigation policy. */
@@ -317,6 +320,7 @@ export const recordWorkflowUnknowns = ({
   result,
   evidenceId,
   recordUnknown,
+  evidenceRetained,
 }: WorkflowUnknownInput):
   | ReturnType<UnknownRegistryPort["recordUnknown"]>
   | { readonly ok: true; readonly value: null } => {
@@ -331,7 +335,27 @@ export const recordWorkflowUnknowns = ({
     !Array.isArray(result.residual_unknowns)
   )
     return { ok: true, value: null };
-  for (const question of result.residual_unknowns) {
+  const questions = result.residual_unknowns;
+  const total = questions.reduce<number>(
+    (count, value) => count + (typeof value === "string" ? 1 : 0),
+    0,
+  );
+  let created = 0;
+  let existing = 0;
+  const stopped = (error: AnalysisError, index: number) =>
+    err(
+      error.retainWorkflowUnknownPublication({
+        evidence_id: evidenceId,
+        evidence_retention:
+          evidenceRetained === true ? "retained" : "unverified",
+        total_questions: total,
+        created_questions: created,
+        existing_questions: existing,
+        next_question_index: index,
+      }),
+    );
+  for (let index = 0; index < questions.length; index += 1) {
+    const question = questions[index];
     if (typeof question !== "string") continue;
     const input = workflowUnknownInput(evidenceId, {
       question,
@@ -351,16 +375,15 @@ export const recordWorkflowUnknowns = ({
       ],
       relationships: [],
     });
-    if (!input.ok) return input;
+    if (!input.ok) return stopped(input.error, index);
     const recorded = recordUnknown(input.value);
-    if (
-      !recorded.ok &&
-      !(
-        recorded.error instanceof UnknownRegistryError &&
-        recorded.error.reason === "already-exists"
-      )
+    if (recorded.ok) created += 1;
+    else if (
+      recorded.error instanceof UnknownRegistryError &&
+      recorded.error.reason === "already-exists"
     )
-      return recorded;
+      existing += 1;
+    else return stopped(recorded.error, index);
   }
   return { ok: true, value: null };
 };

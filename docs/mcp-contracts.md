@@ -386,6 +386,19 @@ Duplicate creation is a nonretryable `invalid_request`; use the existing head
 or update it with its current `expected_revision`. A stale update remains a
 retryable `revision_conflict`.
 
+If automatic question publication fails after a workflow completes,
+`details.workflow_unknown_publication` identifies the Evidence and states
+whether its retention was confirmed. `created_questions` and
+`existing_questions` count processed question occurrences; duplicate questions
+may share an Unknown identity. `total_questions` counts string questions, and
+`next_question_index` is the zero-based position in the workflow's original
+`residual_unknowns` array where publication stopped. It is not a resume token.
+For a retained record on the same MCP connection, retrieve the Evidence by ID
+with `get_evidence_bundle` and inspect committed heads with `list_unknowns`.
+Unprocessed questions remain in the completed Evidence; they were not checked
+by this attempt and may already exist from earlier work. A one-shot invocation identifies session-only retention
+as `invocation-only` and carries the completed Evidence in its failure when available.
+
 When `record_unknown` or `update_unknown` commits but its complete reply exceeds
 the response budget, `details.reported_limits.committed_unknown` identifies the
 exact unknown ID, committed revision and mutation Evidence IDs. Its retained

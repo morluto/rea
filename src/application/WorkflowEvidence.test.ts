@@ -13,7 +13,11 @@ import {
   createAnalysisExecution,
   type AnalysisOperationPort,
 } from "./AnalysisProvider.js";
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import {
+  AnalysisCancelledError,
+  AnalysisResourceConstraintError,
+} from "../domain/analysisErrorCore.js";
+import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { nativeApiBoundarySchema } from "../domain/native/nativeApiBoundary.js";
 import { projectNativeApiInspection } from "./native/NativeApiInspection.js";
 import { functionDossierSchema } from "../domain/native/functionDossier.js";
@@ -576,6 +580,71 @@ describe("workflow residual question retention", () => {
       }),
     ).toEqual(err(error));
   });
+});
+
+it("reports a retained workflow and the committed prefix when Unknown publication fails", () => {
+  const records = new InvestigationRecords();
+  const result = { residual_unknowns: ["First?", "First?", "Second?"] };
+  const evidence = createWorkflowEvidence({
+    target: undefined,
+    operation: "trace_feature",
+    parameters: {},
+    result,
+    upstreamProfile: undefined,
+    upstreamLimitations: [],
+  });
+  expect(records.recordEvidence(evidence).ok).toBe(true);
+  const failure = new AnalysisResourceConstraintError(
+    "record_unknown",
+    "capacity",
+    "full",
+    null,
+  );
+  const outcome = recordWorkflowUnknowns({
+    name: "trace_feature",
+    result,
+    evidenceId: evidence.evidence_id,
+    evidenceRetained: true,
+    recordUnknown: (input) =>
+      input.question.startsWith("Second?")
+        ? err(failure)
+        : records.recordUnknown(input),
+  });
+  expect(outcome.ok).toBe(false);
+  if (outcome.ok) throw new Error("expected failure");
+  const projected = projectAnalysisError(outcome.error);
+  expect(projected.details?.workflow_unknown_publication).toEqual({
+    evidence_id: evidence.evidence_id,
+    evidence_retention: "retained",
+    total_questions: 3,
+    created_questions: 1,
+    existing_questions: 1,
+    next_question_index: 2,
+  });
+  expect(projected.remediation.action).toContain("get_evidence_bundle");
+  const invocation = projectAnalysisError(
+    outcome.error.retainPartialObservation(evidence),
+    "invocation",
+  );
+  expect(invocation.details?.workflow_unknown_publication).toMatchObject({
+    evidence_retention: "invocation-only",
+  });
+  expect(invocation.details?.partial_observation).toEqual(evidence);
+  expect(invocation.remediation.action).not.toContain("get_evidence_bundle");
+  expect(records.listUnknowns()).toHaveLength(1);
+  expect(records.evidenceById(evidence.evidence_id)?.normalized_result).toEqual(
+    result,
+  );
+  expect(
+    recordWorkflowUnknowns({
+      name: "trace_feature",
+      result,
+      evidenceId: evidence.evidence_id,
+      evidenceRetained: true,
+      recordUnknown: (input) => records.recordUnknown(input),
+    }).ok,
+  ).toBe(true);
+  expect(records.listUnknowns()).toHaveLength(2);
 });
 
 it.each([
