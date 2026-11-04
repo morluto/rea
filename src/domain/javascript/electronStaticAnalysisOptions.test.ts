@@ -370,6 +370,8 @@ const CLASSIC_GLOBAL_ACTIVATIONS = [
   "({ [this.eval('createWindow()')]() {} });",
   "Function`createWindow()`();",
   "Object.setPrototypeOf(Array.prototype, globalThis); [].createWindow();",
+  "Object.extra=1; function unusedArrayRead(){[].createWindow;} Reflect.get(globalThis, 'createWindow')();",
+  "Object.extra=1; function unusedArrayRead(){[].createWindow;} try { throw globalThis; } catch ({ createWindow: start }) { start(); }",
   "Object.setPrototypeOf(Function.prototype, globalThis); (function(){}).createWindow();",
   "new Function('createWindow()')();",
   "this['Function']('createWindow()')();",
@@ -604,6 +606,12 @@ describe("Classic-script global receiver identity", () => {
 
   it.each([
     "String.prototype.extra = 1; [].createWindow;",
+    "const Reflect = { get() { return () => {}; } }; Reflect.get(globalThis, 'createWindow')();",
+    "Reflect.get({createWindow(){}}, 'createWindow')();",
+    "try { throw {createWindow(){}}; } catch ({createWindow:start}) { start(); }",
+    "Object.extra = 1; function unused() { [].createWindow; }",
+    "Array.extra = 1; function unused() { [].createWindow; }",
+    "Function.extra = 1; function unused() { (function(){}).createWindow; }",
     "[].createWindow; Object.setPrototypeOf(Array.prototype, globalThis);",
     "Function.prototype.extra = 1; [].createWindow;",
   ])("keeps unrelated or later prototype effects isolated: %s", (effect) => {

@@ -345,8 +345,28 @@ export const semanticIterationSources = (
 ): readonly SemanticIterationSource[] =>
   semanticSourceFacts(node, parent).iterations;
 
+/** Pattern reads from an explicitly retained source, including thrown values. */
+export const semanticPatternPropertyReadSources = (
+  pattern: t.Node,
+  source: IterationSourceValue,
+  mutation: t.Node,
+): readonly SemanticPropertyReadSource[] => {
+  const propertyReads: SemanticPropertyReadSource[] = [];
+  visit({ sources: [], propertyReads, mutation }, pattern, source);
+  return propertyReads;
+};
+
 export const semanticPropertyReadSources = (
   node: t.Node,
   parent: t.Node | null,
-): readonly SemanticPropertyReadSource[] =>
-  semanticSourceFacts(node, parent).propertyReads;
+  supplemental?: {
+    readonly implicitPropertyReads: WeakMap<
+      t.Node,
+      readonly SemanticPropertyReadSource[]
+    >;
+  },
+): readonly SemanticPropertyReadSource[] => {
+  const ordinary = semanticSourceFacts(node, parent).propertyReads;
+  const implicit = supplemental?.implicitPropertyReads.get(node);
+  return implicit === undefined ? ordinary : [...ordinary, ...implicit];
+};

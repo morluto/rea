@@ -118,6 +118,10 @@ cliTest.for([
   ["stdio MCP", "assignment-pattern"],
   ["CLI", "iteration-pattern"],
   ["stdio MCP", "iteration-pattern"],
+  ["CLI", "reflect-read"],
+  ["stdio MCP", "reflect-read"],
+  ["CLI", "catch-read"],
+  ["stdio MCP", "catch-read"],
   ["CLI", "heritage"],
   ["stdio MCP", "heritage"],
   ["CLI", "computed-key"],
@@ -127,53 +131,58 @@ cliTest.for([
   ["CLI", "array-prototype"],
   ["stdio MCP", "array-prototype"],
 ] as const)(
-  "preserves classic global initialization uncertainty through %s",
+  "preserves classic global initialization uncertainty through %s (%s)",
   async ([surface, alias], { cli }) => {
     const root = await createTestTempDirectory(
       "rea-electron-global-initialization-",
     );
     const activation =
-      alias === "heritage"
-        ? "class C extends (this.Function('createWindow()')(), Object) {}"
-        : alias === "computed-key"
-          ? "({ [this.eval('createWindow()')]() {} });"
-          : alias === "tagged-function"
-            ? "Function`createWindow()`();"
-            : alias === "array-prototype"
-              ? "Object.setPrototypeOf(Array.prototype, globalThis); [].createWindow();"
-              : alias === "this-constructor"
-                ? "this['Function']('createWindow()')();"
-                : alias === "alias-prototype"
-                  ? "const changed = {}; const indirect = changed; Object.setPrototypeOf(changed, globalThis); indirect.createWindow();"
-                  : alias === "alias-assign"
-                    ? "const changed = {}; const indirect = changed; Object.assign(changed, globalThis); indirect.createWindow();"
-                    : alias === "bound-constructor"
-                      ? "const F = Function.bind(null); new F('createWindow()')();"
-                      : alias === "reflect-constructor"
-                        ? "Reflect.construct(Function, ['createWindow()'])();"
-                        : alias === "prototype-effect"
-                          ? "const changed = {}; Object.setPrototypeOf(changed, globalThis); changed.createWindow();"
-                          : alias === "assign-effect"
-                            ? "const changed = {}; Object.assign(changed, globalThis); changed.createWindow();"
-                            : alias === "assignment-pattern"
-                              ? "let start; ({createWindow:start}=globalThis); start();"
-                              : alias === "iteration-pattern"
-                                ? "for(const {createWindow:start} of [globalThis]) start();"
-                                : alias === "module-eval"
-                                  ? "eval('createWindow()');"
-                                  : alias === "erased-type"
-                                    ? "globalThis.createWindow();"
-                                    : alias === "constructed-function"
-                                      ? "new Function('createWindow()')();"
-                                      : alias === "cached-eval"
-                                        ? "const noop = () => {}; function unused() { noop(); } (0, eval)('createWindow()');"
-                                        : alias
-                                          ? "root.createWindow();"
-                                          : "globalThis.createWindow();";
+      alias === "reflect-read"
+        ? "Reflect.get(globalThis, 'createWindow')();"
+        : alias === "catch-read"
+          ? "try { throw globalThis; } catch ({createWindow:start}) { start(); }"
+          : alias === "heritage"
+            ? "class C extends (this.Function('createWindow()')(), Object) {}"
+            : alias === "computed-key"
+              ? "({ [this.eval('createWindow()')]() {} });"
+              : alias === "tagged-function"
+                ? "Function`createWindow()`();"
+                : alias === "array-prototype"
+                  ? "Object.setPrototypeOf(Array.prototype, globalThis); [].createWindow();"
+                  : alias === "this-constructor"
+                    ? "this['Function']('createWindow()')();"
+                    : alias === "alias-prototype"
+                      ? "const changed = {}; const indirect = changed; Object.setPrototypeOf(changed, globalThis); indirect.createWindow();"
+                      : alias === "alias-assign"
+                        ? "const changed = {}; const indirect = changed; Object.assign(changed, globalThis); indirect.createWindow();"
+                        : alias === "bound-constructor"
+                          ? "const F = Function.bind(null); new F('createWindow()')();"
+                          : alias === "reflect-constructor"
+                            ? "Reflect.construct(Function, ['createWindow()'])();"
+                            : alias === "prototype-effect"
+                              ? "const changed = {}; Object.setPrototypeOf(changed, globalThis); changed.createWindow();"
+                              : alias === "assign-effect"
+                                ? "const changed = {}; Object.assign(changed, globalThis); changed.createWindow();"
+                                : alias === "assignment-pattern"
+                                  ? "let start; ({createWindow:start}=globalThis); start();"
+                                  : alias === "iteration-pattern"
+                                    ? "for(const {createWindow:start} of [globalThis]) start();"
+                                    : alias === "module-eval"
+                                      ? "eval('createWindow()');"
+                                      : alias === "erased-type"
+                                        ? "globalThis.createWindow();"
+                                        : alias === "constructed-function"
+                                          ? "new Function('createWindow()')();"
+                                          : alias === "cached-eval"
+                                            ? "const noop = () => {}; function unused() { noop(); } (0, eval)('createWindow()');"
+                                            : alias
+                                              ? "root.createWindow();"
+                                              : "globalThis.createWindow();";
     const source = (early: boolean) => `
       ${alias === "erased-type" ? "import type { T } from './types';" : alias === "module-eval" ? "export {};" : ""}
       ${alias === "module-eval" ? 'import { BrowserWindow } from "electron";' : 'const { BrowserWindow } = require("electron");'}
       ${alias ? "const root = globalThis;" : ""}
+      ${alias === "reflect-read" || alias === "catch-read" ? "Object.extra = 1; function unusedArrayRead() { [].createWindow; }" : ""}
       const unrelated = { createWindow() {} };
       function unusedReceiverRead() { unrelated.createWindow; }
       for (const ignored of [1, 2]) { unrelated.createWindow; }

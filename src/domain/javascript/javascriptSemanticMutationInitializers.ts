@@ -1269,7 +1269,11 @@ const moduleFunctionFirstRead = (
             opaquePositions.set(node, active.size > 0 ? null : index);
           }
           if (classicScript) {
-            for (const source of semanticPropertyReadSources(node, parent)) {
+            for (const source of semanticPropertyReadSources(
+              node,
+              parent,
+              state,
+            )) {
               const projected =
                 source.iterationSources !== undefined ||
                 source.projection.length > 1;

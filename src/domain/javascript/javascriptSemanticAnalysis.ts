@@ -1,3 +1,4 @@
+import { semanticPatternPropertyReadSources } from "./javascriptSemanticIterationSources.js";
 import {
   createSemanticOpaqueGlobalObserver,
   indexSemanticOpaqueEffects,
@@ -1066,6 +1067,7 @@ const createState = (
     prototypeRequireMutationObserved: false,
     prototypeEnumerationMayAffect: false,
     prototypeMutationSites: [],
+    implicitPropertyReads: new WeakMap(),
     callables: [],
     callableNodesById: new Map(),
     moduleLinks: [],
@@ -1124,6 +1126,7 @@ function* collectDefinitionsSteps(
     scope: JavaScriptSemanticScopeState;
   }[] = [];
   let needsPrototypeFacts = false;
+  const implicitReadCalls: t.CallExpression[] = [];
   const functionBodies: {
     readonly body: t.BlockStatement;
     readonly scope: JavaScriptSemanticScopeState;
@@ -1217,6 +1220,16 @@ function* collectDefinitionsSteps(
         state,
       });
       bindInnerDeclaration(node, parent, scope, state);
+      if (
+        t.isCallExpression(node) &&
+        (t.isMemberExpression(node.callee) ||
+          t.isOptionalMemberExpression(node.callee)) &&
+        semanticStaticPropertyKey(
+          node.callee.property,
+          node.callee.computed,
+        ) === "get"
+      )
+        implicitReadCalls.push(node);
       if (t.isThrowStatement(node))
         thrownValues.push({ node, ancestors: readAncestors() });
       // Every supported global-code origin starts with one of these decoded
@@ -1337,6 +1350,15 @@ function* collectDefinitionsSteps(
         parent.handler != null &&
         child === parent.block
       ) {
+        if (parent.handler.param != null)
+          state.implicitPropertyReads.set(
+            node,
+            semanticPatternPropertyReadSources(
+              parent.handler.param,
+              { node: node.argument, projection: [] },
+              node,
+            ),
+          );
         const scope = state.scopeByNode.get(parent.handler);
         if (scope !== undefined && parent.handler.param != null)
           bindPattern({
@@ -1407,6 +1429,22 @@ function* collectDefinitionsSteps(
         if (t.isIdentifier(identifier))
           copyParameterToBody({ identifier, body, scope, state });
   }
+  for (const node of implicitReadCalls) {
+    if (!isUnmodifiedGlobalReference(node.callee, state, ["Reflect", "get"]))
+      continue;
+    const [receiver, key] = node.arguments;
+    if (!t.isExpression(receiver)) continue;
+    const selected =
+      t.isStringLiteral(key) || t.isNumericLiteral(key) ? key.value : null;
+    state.implicitPropertyReads.set(node, [
+      {
+        node: receiver,
+        projection: [selected],
+        mutation: node,
+        lookup: "prototype",
+      },
+    ]);
+  }
   indexSemanticOpaqueEffects(opaqueCandidates, state);
   if (state.opaqueEffects.byScope.size > 0) clearSemanticValueCaches(state);
 }
@@ -1422,13 +1460,13 @@ function* indexPrototypeUncertaintySteps(
 ): Generator<void, void> {
   let effectSite: t.Node = program;
   const seen = new Map<PrototypeOwner, WeakSet<t.Node>>();
-  const taint = (owner: PrototypeOwner): void => {
+  const taint = (owner: PrototypeOwner, inherited = true): void => {
     let sites = seen.get(owner);
     if (sites === undefined) {
       sites = new WeakSet();
       seen.set(owner, sites);
     }
-    if (!sites.has(effectSite)) {
+    if (inherited && !sites.has(effectSite)) {
       sites.add(effectSite);
       state.prototypeMutationSites.push({ owner, node: effectSite });
     }
@@ -1437,6 +1475,18 @@ function* indexPrototypeUncertaintySteps(
   };
   const globalOwner = (node: t.Node): PrototypeOwner | undefined => {
     const value = unwrapJavaScriptExpression(node).node;
+    // A builtin owner is a bare name or one property on a global namespace.
+    // Reject deeper paths before the shared matcher walks their entire spine.
+    if (!t.isIdentifier(value)) {
+      if (
+        (!t.isMemberExpression(value) &&
+          !t.isOptionalMemberExpression(value)) ||
+        !t.isIdentifier(unwrapJavaScriptExpression(value.object).node)
+      )
+        return undefined;
+      const key = semanticStaticPropertyKey(value.property, value.computed);
+      if (!prototypeOwners.some((owner) => owner === key)) return undefined;
+    }
     for (const owner of prototypeOwners) {
       if (isUnmodifiedGlobalReference(value, state, owner)) return owner;
       if (
@@ -1480,9 +1530,15 @@ function* indexPrototypeUncertaintySteps(
             t.isMemberExpression(value) ||
             t.isOptionalMemberExpression(value)
           ) {
-            const owner =
-              prototypeOwner(value.object) ?? globalOwner(value.object);
-            if (owner !== undefined) taint(owner);
+            const prototype = prototypeOwner(value.object);
+            const owner = prototype ?? globalOwner(value.object);
+            if (owner !== undefined)
+              taint(
+                owner,
+                prototype !== undefined ||
+                  semanticStaticPropertyKey(value.property, value.computed) ===
+                    "prototype",
+              );
           } else {
             const owner = globalOwner(value);
             if (owner !== undefined) taint(owner);

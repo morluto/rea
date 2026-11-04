@@ -1648,7 +1648,7 @@ export function* collectSemanticMemberMutationsSteps(
           else if (node.init != null) markEscaped(node.init, exit);
         }
       }
-      for (const source of semanticPropertyReadSources(node, parent)) {
+      for (const source of semanticPropertyReadSources(node, parent, state)) {
         if (semanticReferenceSourcesInactive(source, state)) continue;
         for (const effect of getterEffects(
           source.node,

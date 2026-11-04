@@ -1,3 +1,4 @@
+import type { SemanticPropertyReadSource } from "./javascriptSemanticIterationSources.js";
 import * as t from "@babel/types";
 import {
   semanticStaticPropertyKey,
@@ -161,6 +162,10 @@ export interface JavaScriptSemanticAnalysisState {
   prototypeRequireMutationObserved: boolean | undefined;
   /** Source evidence that Object.prototype may add inherited enumerable keys. */
   prototypeEnumerationMayAffect: boolean | undefined;
+  readonly implicitPropertyReads: WeakMap<
+    t.Node,
+    readonly SemanticPropertyReadSource[]
+  >;
   readonly prototypeMutationSites: {
     readonly owner: "Object" | "Array" | "String" | "Function";
     readonly node: t.Node;
