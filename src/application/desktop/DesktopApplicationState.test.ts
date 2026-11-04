@@ -142,7 +142,7 @@ describe("inspectDesktopApplicationState", () => {
       state: {
         ...base.state,
         content_roots: [...base.state.content_roots, physical],
-        state_directories: [...base.state.state_directories, physical],
+        state_directories: [...(base.state.state_directories ?? []), physical],
       },
     });
 
@@ -152,6 +152,27 @@ describe("inspectDesktopApplicationState", () => {
       role: "application_state",
       reasons: ["state_directory"],
     });
+  });
+
+  it("opens a capture that predates recorded state directories and says so", async () => {
+    const base = capture();
+    const { state_directories: _omitted, ...state } = base.state;
+    const folder = await writeCaptureFolder({ ...base, state });
+
+    const evidence = await inspectDesktopApplicationState(folder, readers);
+    if (!("normalized_result" in evidence)) throw evidence;
+    const result = desktopApplicationStateSchema.parse(
+      evidence.normalized_result,
+    );
+
+    expect(result.limitations).toContain(
+      "The capture does not record its state directories as walked, so files in a symlinked state directory may be classed as documents.",
+    );
+    expect(
+      result.paths.find(
+        (entry) => entry.home_path === ".config/notes/settings.ini",
+      )?.role,
+    ).toBe("application_state");
   });
 
   it("refuses to read a database whose write-ahead log was not retained", async () => {

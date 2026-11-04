@@ -108,38 +108,19 @@ interface XmlBudget {
   truncated: boolean;
 }
 
-/** Whether `xml:space="preserve"` applies to a node. */
-const preservesSpace = (node: Node): boolean => {
-  for (
-    let current: Node | null = node;
-    current !== null;
-    current = current.parentNode
-  )
-    if (current.nodeType === current.ELEMENT_NODE) {
-      const space = (current as Element).getAttribute("xml:space");
-      if (space === "preserve") return true;
-      if (space === "default") return false;
-    }
-  return false;
-};
-
-/** Whitespace-only text between elements is formatting; a leaf's text is its value. */
-const isFormatting = (node: Node): boolean => {
-  if ((node.nodeValue ?? "").trim().length > 0 || preservesSpace(node))
-    return false;
-  for (
-    let sibling = node.parentNode?.firstChild ?? null;
-    sibling !== null;
-    sibling = sibling.nextSibling
-  )
-    if (sibling.nodeType === sibling.ELEMENT_NODE) return true;
-  return false;
-};
+/** What a node's parent establishes about whitespace, computed once per element. */
+interface XmlScope {
+  /** `xml:space="preserve"` applies. */
+  readonly preserve: boolean;
+  /** The parent holds child elements, so whitespace-only text between them is formatting. */
+  readonly elementContent: boolean;
+}
 
 const xmlNode = (
   node: Node,
   depth: number,
   budget: XmlBudget,
+  scope: XmlScope,
 ): JsonValue | undefined => {
   if (budget.remaining <= 0 || depth > MAX_XML_DEPTH) {
     budget.truncated = true;
@@ -150,7 +131,10 @@ const xmlNode = (
     node.nodeType === node.TEXT_NODE ||
     node.nodeType === node.CDATA_SECTION_NODE
   ) {
-    return isFormatting(node) ? undefined : (node.nodeValue ?? "");
+    const text = node.nodeValue ?? "";
+    return text.trim().length === 0 && scope.elementContent && !scope.preserve
+      ? undefined
+      : text;
   }
   if (node.nodeType !== node.ELEMENT_NODE) return undefined;
   const element = node as Element;
@@ -159,13 +143,26 @@ const xmlNode = (
     const attribute = element.attributes.item(index);
     if (attribute !== null) attributes[attribute.name] = attribute.value;
   }
+  const space = element.getAttribute("xml:space");
+  let elementContent = false;
+  for (
+    let child = element.firstChild;
+    child !== null && !elementContent;
+    child = child.nextSibling
+  )
+    elementContent = child.nodeType === child.ELEMENT_NODE;
+  const inner: XmlScope = {
+    preserve:
+      space === null || space === "" ? scope.preserve : space === "preserve",
+    elementContent,
+  };
   const children: JsonValue[] = [];
   for (
     let child = element.firstChild;
     child !== null;
     child = child.nextSibling
   ) {
-    const value = xmlNode(child, depth + 1, budget);
+    const value = xmlNode(child, depth + 1, budget, inner);
     if (value !== undefined) children.push(value);
   }
   return { name: element.tagName, attributes, children };
@@ -180,7 +177,10 @@ export const xmlView = (text: string): JsonValue | undefined => {
   const root = parsed.ok ? parsed.value.documentElement : null;
   if (root === null) return undefined;
   const budget: XmlBudget = { remaining: MAX_XML_NODES, truncated: false };
-  const tree = xmlNode(root, 0, budget);
+  const tree = xmlNode(root, 0, budget, {
+    preserve: false,
+    elementContent: false,
+  });
   return tree === undefined
     ? undefined
     : { root: tree, truncated: budget.truncated };
