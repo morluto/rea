@@ -4,6 +4,13 @@ import { z } from "incur";
 import type { Logger } from "pino";
 
 import { captureDesktopApplication } from "../application/desktop/DesktopApplicationCapture.js";
+import { inspectDesktopApplicationState } from "../application/desktop/DesktopApplicationState.js";
+import { readSqliteStateView } from "../application/desktop/DesktopSqliteState.js";
+import { createSqliteDatabaseService } from "../composition/sqlite.js";
+import { dumpDconfDatabase } from "../desktop/DconfDatabaseReader.js";
+import { AnalysisError } from "../domain/analysisErrorBase.js";
+import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { logCliCommand } from "../cliLogging.js";
 import { DESKTOP_CAPTURE_DEFAULTS } from "../domain/desktop/desktopCapture.js";
@@ -99,12 +106,65 @@ export const parseSessionRequest = (line: string): SessionRequest => {
   return { kind: "checkpoint", name: name.length === 0 ? undefined : name };
 };
 
+/** Register the state view over a capture folder. */
+const registerDesktopStateCommand = (
+  cli: CliInstance,
+  logger: Logger,
+  environment: NodeJS.ProcessEnv,
+): void => {
+  cli.command(CLI_COMMANDS.inspectDesktopApplicationState, {
+    description:
+      "Read a desktop application capture folder into the application's state: roles, typed JSON views of each version and kinds of change",
+    args: z.object({
+      capture: z
+        .string()
+        .describe("Folder written by capture-desktop-application"),
+    }),
+    run: ({ args }) =>
+      withCommandCancellation((signal) =>
+        logCliCommand(
+          logger,
+          CLI_COMMANDS.inspectDesktopApplicationState,
+          async () => {
+            const sqlite = createSqliteDatabaseService(environment);
+            try {
+              const result = await inspectDesktopApplicationState(
+                absoluteCallerPath(args.capture),
+                {
+                  sqlite: (database, writeAheadLog, readSignal) =>
+                    readSqliteStateView(
+                      sqlite,
+                      database,
+                      writeAheadLog,
+                      readSignal,
+                    ),
+                  dconf: (database, readSignal) =>
+                    dumpDconfDatabase(database, environment, readSignal),
+                },
+                signal,
+              );
+              return result instanceof AnalysisError
+                ? {
+                    error: "Desktop state view failed",
+                    ...projectAnalysisError(result),
+                  }
+                : result;
+            } finally {
+              await sqlite.close();
+            }
+          },
+        ),
+      ),
+  });
+};
+
 /** Register the interactive Linux desktop application capture. */
 export const registerDesktopCaptureCommands = (
   cli: CliInstance,
   logger: Logger,
   environment: NodeJS.ProcessEnv,
 ): void => {
+  registerDesktopStateCommand(cli, logger, environment);
   cli.command(CLI_COMMANDS.captureDesktopApplication, {
     description:
       "Launch a Linux desktop application, watch it while it is used and record its windows and state at checkpoints read from stdin",
