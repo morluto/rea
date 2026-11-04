@@ -110,7 +110,7 @@ def _table(db, name: str, primary_key: list) -> dict:
 
 def _sqlite(path: Path) -> dict:
     """The database's ordinary tables, in schema order, up to REA's table and row limits."""
-    with contextlib.closing(sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True)) as db:
+    with contextlib.closing(sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True, timeout=0)) as db:
         kinds = dict(db.execute("select name, type from pragma_table_list where schema = 'main'"))
         names = [name for (name,) in db.execute("select name from sqlite_schema where type = 'table'")
                  if kinds.get(name) == "table"]

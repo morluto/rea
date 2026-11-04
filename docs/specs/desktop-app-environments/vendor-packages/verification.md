@@ -57,10 +57,28 @@ plus the Electron runtime libraries and gnupg.
   InRelease, installed typora 1.14.9-1 with 125 packages, and `ldd` found
   every library of `/usr/share/typora/Typora`.
 
+## Typora in an agentenv computer
+
+The bundle from a recorded capture (Typora editing `~/Documents/trip.md`) ran
+unchanged with `agent-env run <bundle> --keep --no-emulate` on local Docker
+(agentenv-framework 0.9.1431, arm64):
+
+- The build fetched `https://downloads.typora.io/linux ./ InRelease` and
+  installed typora 1.14.9-1 from it with no signature warning; a control run
+  with an empty keyring failed with `NO_PUBKEY BA300B7755AFCFAE`, and with the
+  bundled key gpgv reported `VALIDSIG 4AC441BE68B4ADAB7439FBF9BA300B7755AFCFAE`.
+- Of the 85 library packages, the computer base lacked `libasound2t64`,
+  `libnspr4` and `libnss3`, which the build added; `ldd` on Typora then found
+  every library.
+- The app reached ready on its `typora` window. Launched without
+  `--no-sandbox` it exits 133 with Chromium's namespace error.
+- Driven through the computer's input operations (a task and a table row
+  added, then saved), `data/get` read `Documents/trip.md` as 8 lines before and
+  10 after; `data/reset` relaunched Typora and restored all 79 seeded files
+  byte for byte.
+
 ## Limits of this verification
 
-- The bundle was not deployed: no image was built and Typora did not boot in a
-  computer, so `--no-sandbox` inside the computer is untested here.
 - The export's own `--no-sandbox` insertion was checked in tests; the real
   capture already had it, since Typora does not start in the container
   without it.
