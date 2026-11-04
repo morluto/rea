@@ -1,0 +1,452 @@
+import { constants } from "node:fs";
+import { access, lstat, open, readdir, realpath } from "node:fs/promises";
+import { basename, delimiter, dirname, isAbsolute, join } from "node:path";
+
+import type { DesktopApplicationInventory } from "../domain/desktop/desktopCapture.js";
+import {
+  expandDesktopExec,
+  parseDesktopEntry,
+  tokenizeDesktopExec,
+  unwrapDesktopCommand,
+  type DesktopEntry,
+} from "../domain/desktop/desktopEntry.js";
+import {
+  DPKG_STATUS_FORMAT,
+  isAppImageHeader,
+  packageFromPath,
+  parseAptPolicySources,
+  parseDpkgOwners,
+  parseDpkgStatus,
+} from "../domain/desktop/linuxPackages.js";
+import { err, ok, type Result } from "../domain/result.js";
+import { readElectronFuseImage } from "../electron/ElectronFuseReader.js";
+import {
+  execFileOutput,
+  execFileOutputFailure,
+} from "../process/ExecFileOutput.js";
+
+const DESKTOP_ENTRY_MAX_BYTES = 1024 * 1024;
+const COMMAND_TIMEOUT_MS = 30_000;
+const COMMAND_MAX_BUFFER = 4 * 1024 * 1024;
+
+/** Which application to launch, as the caller named it. */
+export interface LinuxApplicationRequest {
+  readonly desktopEntry: string | undefined;
+  readonly executable: string | undefined;
+  readonly arguments: readonly string[];
+  readonly environment: Readonly<Record<string, string | undefined>>;
+  readonly home: string;
+}
+
+/** Why the request does not name a launchable application. */
+export type LinuxApplicationRefusal =
+  | {
+      readonly reason: "desktop_entry_not_found";
+      readonly searched: readonly string[];
+    }
+  | { readonly reason: "desktop_entry_invalid"; readonly detail: string }
+  | { readonly reason: "executable_not_found"; readonly program: string };
+
+/** The inventory plus limitations found while building it. */
+export interface LinuxApplicationFacts {
+  readonly inventory: DesktopApplicationInventory;
+  readonly limitations: readonly string[];
+}
+
+type Package = DesktopApplicationInventory["package"];
+
+const isExecutable = async (path: string): Promise<boolean> => {
+  try {
+    await access(path, constants.X_OK);
+    return (await lstat(path)).isDirectory() === false;
+  } catch {
+    return false;
+  }
+};
+
+/** Directories searched for desktop entries, most specific first. */
+export const desktopEntryDirectories = (
+  environment: LinuxApplicationRequest["environment"],
+  home: string,
+): readonly string[] => {
+  const dataHome = environment.XDG_DATA_HOME || join(home, ".local/share");
+  const dataDirectories = (
+    environment.XDG_DATA_DIRS || "/usr/local/share:/usr/share"
+  )
+    .split(":")
+    .filter((directory) => isAbsolute(directory));
+  return [dataHome, ...dataDirectories].map((directory) =>
+    join(directory, "applications"),
+  );
+};
+
+const locateDesktopEntry = async (
+  request: LinuxApplicationRequest,
+  selector: string,
+): Promise<
+  Result<{ path: string; id: string | null }, LinuxApplicationRefusal>
+> => {
+  if (isAbsolute(selector)) return ok({ path: selector, id: null });
+  const id = selector.endsWith(".desktop") ? selector : `${selector}.desktop`;
+  const searched = desktopEntryDirectories(request.environment, request.home);
+  for (const directory of searched) {
+    const path = join(directory, id);
+    if ((await lstat(path).catch(() => undefined))?.isFile() === true)
+      return ok({ path, id: id.slice(0, -".desktop".length) });
+  }
+  return err({ reason: "desktop_entry_not_found", searched });
+};
+
+const readDesktopEntry = async (
+  path: string,
+): Promise<Result<DesktopEntry, LinuxApplicationRefusal>> => {
+  const handle = await open(path, "r").catch(() => undefined);
+  if (handle === undefined)
+    return err({ reason: "desktop_entry_invalid", detail: "unreadable" });
+  try {
+    const buffer = Buffer.alloc(DESKTOP_ENTRY_MAX_BYTES + 1);
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+    if (bytesRead > DESKTOP_ENTRY_MAX_BYTES)
+      return err({
+        reason: "desktop_entry_invalid",
+        detail: "larger than 1 MiB",
+      });
+    const parsed = parseDesktopEntry(
+      buffer.subarray(0, bytesRead).toString("utf8"),
+    );
+    if (!parsed.ok)
+      return err({ reason: "desktop_entry_invalid", detail: parsed.error });
+    if (parsed.value.type !== "Application" || parsed.value.exec === null)
+      return err({
+        reason: "desktop_entry_invalid",
+        detail: "not an Application entry with an Exec key",
+      });
+    return ok(parsed.value);
+  } finally {
+    await handle.close();
+  }
+};
+
+/** Find a program the way a shell would, without running a shell. */
+export const resolveProgram = async (
+  program: string,
+  environment: LinuxApplicationRequest["environment"],
+): Promise<string | undefined> => {
+  if (program.includes("/"))
+    return (await isExecutable(program)) ? program : undefined;
+  for (const directory of (environment.PATH ?? "").split(delimiter)) {
+    if (!isAbsolute(directory)) continue;
+    const candidate = join(directory, program);
+    if (await isExecutable(candidate)) return candidate;
+  }
+  return undefined;
+};
+
+const runQuery = async (
+  command: string,
+  arguments_: readonly string[],
+  signal: AbortSignal | undefined,
+): Promise<{ readonly stdout: string } | "missing" | "failed"> => {
+  try {
+    const { stdout } = await execFileOutput(command, arguments_, {
+      timeout: COMMAND_TIMEOUT_MS,
+      maxBuffer: COMMAND_MAX_BUFFER,
+      ...(signal === undefined ? {} : { signal }),
+    });
+    return { stdout };
+  } catch (cause: unknown) {
+    signal?.throwIfAborted();
+    return execFileOutputFailure(cause)?.code === "ENOENT"
+      ? "missing"
+      : "failed";
+  }
+};
+
+/** `/bin/x` and `/usr/bin/x` name the same file on merged-/usr systems. */
+const ownershipCandidates = (paths: readonly string[]): readonly string[] => [
+  ...new Set(
+    paths.flatMap((path) =>
+      path.startsWith("/usr/") ? [path, path.slice(4)] : [path, `/usr${path}`],
+    ),
+  ),
+];
+
+const packageListsPresent = async (): Promise<boolean> =>
+  (await readdir("/var/lib/apt/lists").catch(() => [] as string[])).some(
+    (name) => /_Packages(?:\.[a-z0-9]+)?$/u.test(name),
+  );
+
+const debianPackage = async (
+  paths: readonly string[],
+  signal: AbortSignal | undefined,
+  limitations: string[],
+): Promise<Package> => {
+  const unknown: Package = {
+    kind: "unknown",
+    name: null,
+    version: null,
+    architecture: null,
+    sources: [],
+    package_lists_present: null,
+  };
+  for (const path of ownershipCandidates(paths)) {
+    const owners = await runQuery("dpkg-query", ["-S", path], signal);
+    if (owners === "missing") {
+      limitations.push(
+        "dpkg-query is not installed, so the package that owns the executable is unknown.",
+      );
+      return unknown;
+    }
+    if (owners === "failed") continue;
+    const [name] = parseDpkgOwners(owners.stdout, path);
+    if (name === undefined) continue;
+    const status = await runQuery(
+      "dpkg-query",
+      ["-W", `-f=${DPKG_STATUS_FORMAT}`, name],
+      signal,
+    );
+    const parsed =
+      typeof status === "object" ? parseDpkgStatus(status.stdout) : undefined;
+    const policy = await runQuery("apt-cache", ["policy", name], signal);
+    const listsPresent = await packageListsPresent();
+    if (!listsPresent)
+      limitations.push(
+        "No apt package lists are present, so whether the installed version comes from a package archive is unknown.",
+      );
+    return {
+      kind: "deb",
+      name: parsed?.name ?? name,
+      version: parsed?.version ?? null,
+      architecture: parsed?.architecture ?? null,
+      sources:
+        typeof policy === "object"
+          ? [...parseAptPolicySources(policy.stdout)]
+          : [],
+      package_lists_present: listsPresent,
+    };
+  }
+  return unknown;
+};
+
+const readHeader = async (path: string): Promise<Uint8Array> => {
+  const handle = await open(path, "r").catch(() => undefined);
+  if (handle === undefined) return new Uint8Array();
+  try {
+    const buffer = Buffer.alloc(16);
+    const { bytesRead } = await handle.read(buffer, 0, 16, 0);
+    return buffer.subarray(0, bytesRead);
+  } finally {
+    await handle.close();
+  }
+};
+
+/** The launched program as found on PATH and after resolving links. */
+interface ProgramLocation {
+  readonly program: string;
+  readonly resolved: string | null;
+  readonly flatpak: string | null;
+}
+
+const identifyPackage = async (
+  { program, resolved, flatpak }: ProgramLocation,
+  signal: AbortSignal | undefined,
+  limitations: string[],
+): Promise<Package> => {
+  const base = {
+    version: null,
+    architecture: null,
+    sources: [],
+    package_lists_present: null,
+  };
+  if (flatpak !== null) return { kind: "flatpak", name: flatpak, ...base };
+  const fromPath =
+    packageFromPath(resolved ?? program) ?? packageFromPath(program);
+  if (fromPath?.kind === "snap")
+    return { kind: "snap", name: fromPath.name, ...base };
+  if (fromPath?.kind === "flatpak")
+    return { kind: "flatpak", name: fromPath.name, ...base };
+  if (
+    fromPath?.kind === "appimage" ||
+    isAppImageHeader(await readHeader(resolved ?? program))
+  )
+    return { kind: "appimage", name: basename(resolved ?? program), ...base };
+  return debianPackage(
+    [program, ...(resolved === null ? [] : [resolved])],
+    signal,
+    limitations,
+  );
+};
+
+const electronMarkers = async (
+  resolved: string | null,
+  signal: AbortSignal | undefined,
+): Promise<DesktopApplicationInventory["executable"]["electron_markers"]> => {
+  if (resolved === null) return [];
+  const markers: DesktopApplicationInventory["executable"]["electron_markers"] =
+    [];
+  try {
+    const image = await readElectronFuseImage(
+      resolved,
+      signal === undefined ? {} : { signal },
+    );
+    if (image.slices.some((slice) => slice.sentinel_count > 0))
+      markers.push("fuse-sentinel");
+  } catch {
+    signal?.throwIfAborted();
+    // Scripts and other non-binary launchers carry no fuse wire.
+  }
+  const asar = join(dirname(resolved), "resources/app.asar");
+  if ((await lstat(asar).catch(() => undefined)) !== undefined)
+    markers.push("app-asar");
+  return markers;
+};
+
+/** Folder names under XDG and dot-directories where the application may keep state. */
+const stateDirectories = async (
+  names: readonly (string | null)[],
+  request: LinuxApplicationRequest,
+  extra: readonly string[],
+): Promise<DesktopApplicationInventory["state_directories"]> => {
+  const { environment, home } = request;
+  const bases = [
+    environment.XDG_CONFIG_HOME || join(home, ".config"),
+    environment.XDG_DATA_HOME || join(home, ".local/share"),
+    environment.XDG_STATE_HOME || join(home, ".local/state"),
+    environment.XDG_CACHE_HOME || join(home, ".cache"),
+  ];
+  const variants = new Set(
+    names
+      .filter(
+        (name): name is string =>
+          name !== null &&
+          /^[^/\0]+$/u.test(name) &&
+          name !== "." &&
+          name !== "..",
+      )
+      .flatMap((name) => [name, name.toLowerCase()]),
+  );
+  const paths = new Set([
+    ...[...variants].flatMap((name) => [
+      ...bases.map((base) => join(base, name)),
+      join(home, `.${name}`),
+    ]),
+    ...extra,
+  ]);
+  return Promise.all(
+    [...paths].map(async (path) => ({
+      path,
+      exists_at_start: (await lstat(path).catch(() => undefined)) !== undefined,
+    })),
+  );
+};
+
+const launchCommand = async (
+  request: LinuxApplicationRequest,
+): Promise<
+  Result<
+    {
+      argv: readonly string[];
+      workingDirectory: string;
+      entry: DesktopApplicationInventory["desktop_entry"];
+    },
+    LinuxApplicationRefusal
+  >
+> => {
+  if (request.desktopEntry === undefined)
+    return ok({
+      argv: [request.executable ?? "", ...request.arguments],
+      workingDirectory: request.home,
+      entry: null,
+    });
+  const located = await locateDesktopEntry(request, request.desktopEntry);
+  if (!located.ok) return located;
+  const entry = await readDesktopEntry(located.value.path);
+  if (!entry.ok) return entry;
+  const tokens = tokenizeDesktopExec(entry.value.exec ?? "");
+  if (!tokens.ok)
+    return err({ reason: "desktop_entry_invalid", detail: tokens.error });
+  const {
+    type: _type,
+    try_exec: _tryExec,
+    path: workingDirectory,
+    ...fields
+  } = entry.value;
+  return ok({
+    argv: expandDesktopExec(
+      tokens.value,
+      {
+        icon: entry.value.icon,
+        name: entry.value.name,
+        location: located.value.path,
+      },
+      request.arguments,
+    ),
+    workingDirectory: workingDirectory ?? request.home,
+    entry: {
+      id: located.value.id,
+      path: located.value.path,
+      ...fields,
+      categories: [...fields.categories],
+      mime_types: [...fields.mime_types],
+    },
+  });
+};
+
+/** Resolve what the request launches, where it came from and where it may keep state. */
+export const inspectLinuxApplication = async (
+  request: LinuxApplicationRequest,
+  signal?: AbortSignal,
+): Promise<Result<LinuxApplicationFacts, LinuxApplicationRefusal>> => {
+  const command = await launchCommand(request);
+  if (!command.ok) return command;
+  const { argv, workingDirectory, entry } = command.value;
+  const wrapper = unwrapDesktopCommand(argv);
+  const program = wrapper.kind === "direct" ? wrapper.program : (argv[0] ?? "");
+  const path = await resolveProgram(program, request.environment);
+  if (path === undefined)
+    return err({ reason: "executable_not_found", program });
+  const resolved = await realpath(path).catch(() => null);
+  const limitations: string[] = [];
+  const flatpak = wrapper.kind === "flatpak" ? wrapper.application_id : null;
+  const package_ = await identifyPackage(
+    { program: path, resolved, flatpak },
+    signal,
+    limitations,
+  );
+  const sandboxDirectories = [
+    ...(package_.kind === "snap" && package_.name !== null
+      ? [join(request.home, "snap", package_.name)]
+      : []),
+    ...(package_.kind === "flatpak" && package_.name !== null
+      ? [join(request.home, ".var/app", package_.name)]
+      : []),
+  ];
+  const names = [
+    package_.kind === "deb"
+      ? (package_.name?.split(":")[0] ?? null)
+      : package_.name,
+    basename(path),
+    entry?.id?.split(".").at(-1) ?? null,
+    entry?.startup_wm_class ?? null,
+    entry?.name ?? null,
+  ];
+  return ok({
+    inventory: {
+      desktop_entry: entry,
+      argv: [...argv],
+      working_directory: workingDirectory,
+      executable: {
+        path,
+        resolved_path: resolved,
+        electron_markers: await electronMarkers(resolved, signal),
+      },
+      package: package_,
+      state_directories: await stateDirectories(
+        names,
+        request,
+        sandboxDirectories,
+      ),
+    },
+    limitations,
+  });
+};
