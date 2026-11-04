@@ -139,7 +139,7 @@ const withStateReaders = async (
     },
     sqlite,
     "rea-desktop",
-    CLI_COMMANDS.inspectDesktopApplicationState,
+    "inspect_desktop_application_state",
     signal,
   ).then(projectCliAnalysisResult);
 };

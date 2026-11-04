@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
 
+import type {
+  DesktopApplicationCapture,
+  DesktopCheckpoint,
+} from "../../domain/desktop/desktopCapture.js";
 import { desktopApplicationStateSchema } from "../../domain/desktop/desktopState.js";
 import { inspectDesktopApplicationState } from "./DesktopApplicationState.js";
 import {
@@ -10,6 +14,31 @@ import {
   retained,
   writeCaptureFolder,
 } from "./desktopCapture.fixture.js";
+
+/** The fixture capture with extra files at the baseline and the second checkpoint. */
+const extended = (extra: {
+  readonly baseline?: DesktopCheckpoint["retained"];
+  readonly changes?: DesktopCheckpoint["changes"];
+  readonly later?: DesktopCheckpoint["retained"];
+}): DesktopApplicationCapture => {
+  const base = capture();
+  const [first, second] = base.state.checkpoints;
+  if (first === undefined || second === undefined) throw new Error("fixture");
+  return {
+    ...base,
+    state: {
+      ...base.state,
+      checkpoints: [
+        { ...first, retained: [...first.retained, ...(extra.baseline ?? [])] },
+        {
+          ...second,
+          changes: [...second.changes, ...(extra.changes ?? [])],
+          retained: [...second.retained, ...(extra.later ?? [])],
+        },
+      ],
+    },
+  };
+};
 
 /** Inspect a capture folder and index its state paths by home path. */
 const statePathsOf = async (folder: string) => {
@@ -60,49 +89,24 @@ describe("inspectDesktopApplicationState", () => {
   });
 
   it("reads JSON null as a value and follows a database's write-ahead log", async () => {
-    const base = capture();
     const json = `${HOME}/.config/notes/state.json`;
     const database = `${HOME}/.config/notes/log.db`;
-    const [first, second] = base.state.checkpoints;
-    if (first === undefined || second === undefined) throw new Error("fixture");
     const folder = await writeCaptureFolder(
-      {
-        ...base,
-        state: {
-          ...base.state,
-          checkpoints: [
-            {
-              ...first,
-              retained: [
-                ...first.retained,
-                retained(json, "null"),
-                retained(database, "SQLite format 3\0v1"),
-                retained(`${database}-wal`, "wal v1"),
-              ],
-            },
-            {
-              ...second,
-              changes: [
-                ...second.changes,
-                change(
-                  json,
-                  { before: "null", after: '{"a":1}' },
-                  { state: true },
-                ),
-                change(`${database}-wal`, {
-                  before: "wal v1",
-                  after: "wal v2",
-                }),
-              ],
-              retained: [
-                ...second.retained,
-                retained(json, '{"a":1}'),
-                retained(`${database}-wal`, "wal v2"),
-              ],
-            },
-          ],
-        },
-      },
+      extended({
+        baseline: [
+          retained(json, "null"),
+          retained(database, "SQLite format 3\0v1"),
+          retained(`${database}-wal`, "wal v1"),
+        ],
+        changes: [
+          change(json, { before: "null", after: '{"a":1}' }, { state: true }),
+          change(`${database}-wal`, { before: "wal v1", after: "wal v2" }),
+        ],
+        later: [
+          retained(json, '{"a":1}'),
+          retained(`${database}-wal`, "wal v2"),
+        ],
+      }),
       undefined,
       ["null", '{"a":1}', "wal v1", "wal v2"],
     );
@@ -117,6 +121,39 @@ describe("inspectDesktopApplicationState", () => {
       changes: [
         { kind: "rows", added: ["notes:[2]"], from_index: 0, to_index: 1 },
       ],
+    });
+  });
+
+  it("refuses to read a database whose write-ahead log was not retained", async () => {
+    const database = `${HOME}/.config/notes/log.db`;
+    const folder = await writeCaptureFolder(
+      extended({
+        baseline: [retained(database, "SQLite format 3\0v1")],
+        changes: [
+          {
+            path: `${database}-wal`,
+            kind: "created",
+            before: null,
+            // The log appeared but its bytes were not retained.
+            after: {
+              type: "file",
+              size: 6,
+              mode: 0o644,
+              mtime_ns: "1",
+              sha256: null,
+            },
+            in_state_directory: true,
+            opened_by_application: false,
+          },
+        ],
+      }),
+    );
+
+    const byPath = await statePathsOf(folder);
+
+    expect(byPath.get(".config/notes/log.db")?.versions[1]).toMatchObject({
+      view: null,
+      view_error: "the database's write-ahead log was not retained",
     });
   });
 });

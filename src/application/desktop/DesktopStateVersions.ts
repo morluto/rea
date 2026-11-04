@@ -64,6 +64,29 @@ export const digestsAt = (
   return digests;
 };
 
+/** Whether a path existed after each checkpoint, whether or not it was retained. */
+export const presenceAt = (
+  path: string,
+  changes: ChangeIndex,
+  baseline: ReadonlyMap<string, string>,
+  checkpoints: number,
+): readonly boolean[] => {
+  const own = changes.get(path) ?? [];
+  const byIndex = new Map(own.map((entry) => [entry.index, entry.change]));
+  const presence = [
+    baseline.has(path) || own[0]?.change.before?.type === "file",
+  ];
+  for (let index = 1; index < checkpoints; index += 1) {
+    const change = byIndex.get(index);
+    presence.push(
+      change === undefined
+        ? (presence[index - 1] ?? false)
+        : change.after?.type === "file",
+    );
+  }
+  return presence;
+};
+
 /**
  * Versions of one path: its baseline, then its state after each checkpoint
  * where it, or its write-ahead log, changed.

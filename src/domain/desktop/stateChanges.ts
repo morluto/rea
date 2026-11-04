@@ -161,7 +161,9 @@ export const diffStateViews = (
   after: JsonValue,
 ): DesktopStateDifference => {
   const difference = compareViews(format, before, after);
-  return truncatedView(before) || truncatedView(after)
+  // Only REA's own readers write coverage flags; JSON and key files are data.
+  const flagged = format === "text" || format === "xml" || format === "sqlite";
+  return flagged && (truncatedView(before) || truncatedView(after))
     ? { ...difference, complete: false }
     : difference;
 };
