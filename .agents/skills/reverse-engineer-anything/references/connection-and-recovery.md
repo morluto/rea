@@ -10,7 +10,10 @@ server's schemas and the installed CLI's help rather than assuming repository
 main and an older release expose the same arguments. Tool-name prefixes belong
 to the client: find the canonical REA operation in its actual tool listing and
 server association before concluding that it is absent. A shared prefix alone
-does not establish which server an approval wildcard covers. See
+does not establish which server an approval wildcard covers; allowlist only the
+names the client advertises for REA's server key, not a product-wide pattern such
+as `mcp__claude__*`. A healthy `rea doctor` registration does not prove the
+client exposes those names. See
 [client tool names and discovery](https://github.com/morluto/rea/blob/main/docs/getting-started/client-configuration.md#client-tool-names-and-discovery).
 
 ## Choose the remedy from the observed failure
