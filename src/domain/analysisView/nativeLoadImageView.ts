@@ -23,6 +23,7 @@ import {
   boundedViewMessages,
   completeWithinViewCoverage,
   pageViewCoverage,
+  unavailableViewCoverage,
 } from "./analysisViewCoverage.js";
 
 const observation = nativeLoadImageObservationSchema.shape;
@@ -290,12 +291,12 @@ export const projectNativeLoadImageView = (
           ? report.sections
           : undefined
         : observed[view.collection];
-  const page = selectRows(selected ?? [], view);
+  const page = selected === undefined ? undefined : selectRows(selected, view);
   const symbolUnrecorded =
     view.collection === "relocations" &&
     (view.fields === undefined ||
       view.fields.some((field: string) => field === "symbol")) &&
-    page.rows.some(({ record }) => !("symbol" in record));
+    (page?.rows.some(({ record }) => !("symbol" in record)) ?? false);
   return ok({
     ...shared,
     unknowns: symbolUnrecorded
@@ -309,8 +310,11 @@ export const projectNativeLoadImageView = (
     view,
     items: nativeLoadImageViewItemsSchema.parse({
       collection: view.collection,
-      rows: selected === undefined ? null : page.rows,
+      rows: page?.rows ?? null,
     }),
-    coverage: pageViewCoverage(view.offset, page.rows.length, page.total),
+    coverage:
+      page === undefined
+        ? unavailableViewCoverage()
+        : pageViewCoverage(view.offset, page.rows.length, page.total),
   });
 };

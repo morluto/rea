@@ -879,7 +879,14 @@ it.each([
   ["install.sh", { code: true, runtime: true, package: true, evm: false }],
   [
     ".agents/skills/reverse-engineer-anything/SKILL.md",
-    { code: true, runtime: true, docs: true, package: false, evm: false },
+    {
+      code: true,
+      runtime: true,
+      docs: true,
+      website: true,
+      package: false,
+      evm: false,
+    },
   ],
   [
     "scripts/verify-real-ghidra.mjs",
@@ -895,6 +902,18 @@ it.each([
   ],
   [
     "tests/boundary/cli/nativePlistCli.test.ts",
+    { code: true, apple: true, package: false, runtime: false },
+  ],
+  [
+    "tests/boundary/process/nativeUiVerifierLane.test.ts",
+    { code: true, apple: true, package: false, runtime: false },
+  ],
+  [
+    "tests/boundary/providers/native/nativeUiOffscreenWindow.test.ts",
+    { code: true, apple: true, package: false, runtime: false },
+  ],
+  [
+    "tests/conformance/native/ui-offscreen.swift",
     { code: true, apple: true, package: false, runtime: false },
   ],
   [
