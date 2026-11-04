@@ -19,7 +19,7 @@ import type { Logger } from "pino";
 import { withEvidenceCallerInputPath } from "../domain/evidence.js";
 import { createImmutableEvidenceBundle } from "../domain/evidenceBundle.js";
 import { retainAnalysisResultSources } from "./investigation/recordEvidenceSources.js";
-import { resolveInvestigationEvidenceClosure } from "./investigation/InvestigationEvidence.js";
+import { createInvestigationEvidenceClosureChecker } from "./investigation/InvestigationEvidence.js";
 import type { Evidence } from "../domain/evidence.js";
 import type { NativeToolName } from "../contracts/native/nativeToolContracts.js";
 import type { EnhancedToolName } from "../contracts/enhancedInputs.js";
@@ -468,11 +468,11 @@ const runAnalysis = async (
               record,
             ]),
           );
-          const closure = resolveInvestigationEvidenceClosure(
-            { evidenceForAnalysis: (id) => records.get(id) },
-            cached.evidence_links,
-          );
-          if (closure.ok) return ok(withEvidenceCallerInputPath(cached, path));
+          const checkClosure = createInvestigationEvidenceClosureChecker({
+            evidenceForAnalysis: (id) => records.get(id),
+          });
+          if (checkClosure(cached.evidence_links))
+            return ok(withEvidenceCallerInputPath(cached, path));
         }
       }
     }

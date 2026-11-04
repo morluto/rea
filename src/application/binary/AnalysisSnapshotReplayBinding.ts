@@ -1,5 +1,5 @@
 import type { Evidence } from "../../domain/evidence.js";
-import { resolveInvestigationEvidenceClosure } from "../investigation/InvestigationEvidence.js";
+import { createInvestigationEvidenceClosureChecker } from "../investigation/InvestigationEvidence.js";
 
 /** Authenticated observation identity and its immediate source records. */
 export interface SnapshotReplayBinding {
@@ -11,14 +11,13 @@ export interface SnapshotReplayBinding {
 export const snapshotReplayBinding = (
   evidence: Evidence,
   lookup: (id: string) => Evidence | undefined,
+  checkClosure = createInvestigationEvidenceClosureChecker({
+    evidenceForAnalysis: lookup,
+  }),
 ): SnapshotReplayBinding | null => {
   if (evidence.evidence_links.length === 0)
     return { evidenceId: evidence.evidence_id };
-  const closure = resolveInvestigationEvidenceClosure(
-    { evidenceForAnalysis: lookup },
-    evidence.evidence_links,
-  );
-  if (!closure.ok) return null;
+  if (!checkClosure(evidence.evidence_links)) return null;
   const sources: Evidence[] = [];
   for (const id of evidence.evidence_links) {
     const source = lookup(id);

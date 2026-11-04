@@ -45,6 +45,7 @@ import {
   snapshotReplayBinding,
   type SnapshotReplayBinding,
 } from "./AnalysisSnapshotReplayBinding.js";
+import { createInvestigationEvidenceClosureChecker } from "../investigation/InvestigationEvidence.js";
 
 const RELATIONSHIP_OPERATIONS: ReadonlySet<AnalysisOperation> = new Set([
   "procedure_callers",
@@ -221,6 +222,10 @@ export class AnalysisSnapshotCache {
         record,
       ]),
     );
+    const lookup = (id: string) => records.get(id);
+    const checkClosure = createInvestigationEvidenceClosureChecker({
+      evidenceForAnalysis: lookup,
+    });
     const ambiguous = new Set<string>();
     for (const evidence of snapshot.evidence_bundle.records) {
       const queryId = analysisQueryId(
@@ -251,7 +256,7 @@ export class AnalysisSnapshotCache {
       }
       this.#replayBindings.set(
         queryId,
-        snapshotReplayBinding(evidence, (id) => records.get(id)) ?? {
+        snapshotReplayBinding(evidence, lookup, checkClosure) ?? {
           pendingEvidenceId: evidence.evidence_id,
         },
       );
