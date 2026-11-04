@@ -5,6 +5,7 @@ import { Uint8ArrayReader, Uint8ArrayWriter, ZipWriter } from "@zip.js/zip.js";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { expect } from "vitest";
+import { artifactMcpCall } from "../../scripts/lib/artifact-e2e.mjs";
 import { parseEvidence } from "../../src/domain/evidence.js";
 import { artifactInspectionResultSchema } from "../../src/domain/artifactInspection.js";
 import { artifactInventoryResultSchema } from "../../src/domain/artifactGraph.js";
@@ -132,7 +133,7 @@ cliTest(
     });
     try {
       await client.connect(transport);
-      const opened = await client.callTool({
+      const opened = await artifactMcpCall(client, {
         name: "open_binary",
         arguments: { path },
       });
@@ -140,7 +141,7 @@ cliTest(
       expect(opened.structuredContent).toMatchObject({
         result: { kind: "archive", format: "cfb" },
       });
-      const inspected = await client.callTool({
+      const inspected = await artifactMcpCall(client, {
         name: "inspect_artifact",
         arguments: {},
       });
@@ -152,7 +153,7 @@ cliTest(
         root_format: "cfb",
         root_sha256: createHash("sha256").update(bytes).digest("hex"),
       });
-      const extracted = await client.callTool({
+      const extracted = await artifactMcpCall(client, {
         name: "extract_artifact",
         arguments: {},
       });
