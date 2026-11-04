@@ -142,9 +142,79 @@ const bookmarkFacetSchema = z.discriminatedUnion("state", [
   }),
 ]);
 
+export const traceImportResultSchema = z.strictObject({
+  trace: z.string().min(1),
+  min_snap: z.number(),
+  max_snap: z.number(),
+  snapshot_count: z.number(),
+  modules: z.number(),
+  threads: z.number(),
+  language: z.string().min(1),
+  binary_language_match: z.boolean(),
+  image_base: z.string().min(1).nullable(),
+  imported: z.boolean(),
+});
+export const traceInfoResultSchema = z.strictObject({
+  trace: z.string().min(1),
+  min_snap: z.number(),
+  max_snap: z.number(),
+  snapshot_count: z.number(),
+  modules: z.number(),
+  threads: z.number(),
+  language: z.string().min(1),
+});
+export const traceSnapResultSchema = z.strictObject({
+  snap: z.number(),
+  trace: z.string().min(1),
+  thread: z.number().nullable(),
+  thread_name: z.string().nullable(),
+  registers: z.array(
+    z.strictObject({
+      name: z.string().min(1),
+      defined: z.boolean(),
+      value: z.string().optional(),
+    }),
+  ),
+});
+export const traceByteSearchResultSchema = z.strictObject({
+  pattern: z.string(),
+  trace: z.string().min(1),
+  matches: z.number(),
+  total: z.number(),
+  truncated: z.boolean(),
+  hits: z.array(
+    z.strictObject({
+      address: z.string().min(1),
+      first_snap: z.number(),
+      last_snap: z.number(),
+    }),
+  ),
+});
+export const traceModulesResultSchema = z.strictObject({
+  trace: z.string().min(1),
+  count: z.number(),
+  modules: z.array(
+    z.strictObject({
+      name: z.string(),
+      path: z.string().nullable(),
+    }),
+  ),
+});
+export const traceThreadsResultSchema = z.strictObject({
+  trace: z.string().min(1),
+  count: z.number(),
+  threads: z.array(z.strictObject({ name: z.string(), key: z.number() })),
+});
+
 /** Exact structured-content schemas shared by direct analysis providers. */
 export const officialOutputSchemas = {
   search_bytes: evidenceResultOf(byteSearchResultSchema),
+  import_trace: evidenceResultOf(traceImportResultSchema),
+  trace_info: evidenceResultOf(traceInfoResultSchema),
+  trace_snap: evidenceResultOf(traceSnapResultSchema),
+  trace_search_bytes: evidenceResultOf(traceByteSearchResultSchema),
+  trace_modules: evidenceResultOf(traceModulesResultSchema),
+  trace_threads: evidenceResultOf(traceThreadsResultSchema),
   annotate_native_function: evidenceResultOf(nativeFunctionAnnotationsSchema),
   inspect_native_load_image: analysisDetailOutputSchemaOf(
     nativeLoadImageSchema,

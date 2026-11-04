@@ -65,6 +65,13 @@ const MCP_TOOLS_WITHOUT_DEDICATED_CLI = Object.freeze([
   "analyze_swift_types",
   "find_xrefs_to_name",
   "trace_call_path",
+  // Timeless Debugging trace queries (MCP-only; no dedicated CLI command).
+  "import_trace",
+  "trace_info",
+  "trace_snap",
+  "trace_modules",
+  "trace_threads",
+  "trace_search_bytes",
   "open_binary",
   "close_binary",
   // Investigation reset acts on the long-lived MCP server's retained history.

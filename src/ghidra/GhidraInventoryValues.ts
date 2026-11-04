@@ -30,6 +30,14 @@ import { procedureIdentitySchema } from "../domain/native/procedureInfo.js";
 import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
+import {
+  traceImportResultSchema,
+  traceInfoResultSchema,
+  traceSnapResultSchema,
+  traceByteSearchResultSchema,
+  traceModulesResultSchema,
+  traceThreadsResultSchema,
+} from "../contracts/toolOutputSchemaGroups.js";
 
 /** Inventory operations that write analyst names into the session database. */
 export const GHIDRA_NAMING_OPERATIONS = [
@@ -79,6 +87,21 @@ const inputSchemas = {
       cursor: z.string().min(1).optional(),
     })
     .superRefine(validateBytePattern),
+  import_trace: z.strictObject({
+    project: z.string().min(1),
+    trace: z.string().min(1),
+  }),
+  trace_info: z.strictObject({}),
+  trace_snap: z.strictObject({
+    snap: z.number().int(),
+    thread: z.number().int().nullable().default(null),
+  }),
+  trace_search_bytes: z.strictObject({
+    pattern: z.string().min(1),
+    limit: z.number().int().min(1).max(1000).default(1000),
+  }),
+  trace_modules: z.strictObject({}),
+  trace_threads: z.strictObject({}),
   inspect_native_load_image: z.strictObject({}),
   read_bytes: z.strictObject({
     document,
@@ -447,6 +470,12 @@ const resultSchemas = {
       skipped_not_loaded: z.array(canonicalByteCoverage),
     }),
   }),
+  import_trace: traceImportResultSchema,
+  trace_info: traceInfoResultSchema,
+  trace_snap: traceSnapResultSchema,
+  trace_search_bytes: traceByteSearchResultSchema,
+  trace_modules: traceModulesResultSchema,
+  trace_threads: traceThreadsResultSchema,
   inspect_native_load_image: nativeLoadImageObservationSchema,
   read_bytes: nativeByteReadSchema
     .safeExtend({ address: nativeAddressObservationSchema })

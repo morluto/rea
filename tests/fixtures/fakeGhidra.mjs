@@ -453,6 +453,12 @@ const sessionInfo = ({
     "read_function_instructions",
     "procedure_references",
     "xrefs",
+    "import_trace",
+    "trace_info",
+    "trace_snap",
+    "trace_search_bytes",
+    "trace_modules",
+    "trace_threads",
   ].filter(
     (value) =>
       transport === "unix-socket" ||

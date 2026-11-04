@@ -3,6 +3,7 @@
 
 import java.io.BufferedReader;
 import java.io.BufferedWriter;
+import java.io.File;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -66,7 +67,9 @@ import ghidra.program.model.address.Address;
 import ghidra.program.model.address.AddressIterator;
 import ghidra.program.model.address.AddressSet;
 import ghidra.program.model.address.AddressSpace;
+import ghidra.program.model.address.AddressFactory;
 import ghidra.program.model.address.AddressRange;
+import ghidra.program.model.address.AddressRangeImpl;
 import ghidra.program.model.address.AddressRangeIterator;
 import ghidra.program.model.block.BasicBlockModel;
 import ghidra.program.model.block.CodeBlock;
@@ -115,6 +118,40 @@ import ghidra.program.model.pcode.VarnodeAST;
 import ghidra.program.util.ContextEvaluatorAdapter;
 import ghidra.program.util.SymbolicPropogator;
 import ghidra.program.util.VarnodeContext;
+
+import ghidra.app.util.Option;
+import ghidra.app.util.bin.ByteProvider;
+import ghidra.app.util.bin.FileByteProvider;
+import ghidra.app.util.importer.MessageLog;
+import ghidra.app.util.importer.options.DomainFileOption;
+import ghidra.app.util.opinion.LoadResults;
+import ghidra.app.util.opinion.LoadSpec;
+import ghidra.app.util.opinion.Loader;
+import ghidra.app.util.opinion.TenetPlusPlusLoader;
+import ghidra.framework.model.DomainFile;
+import ghidra.framework.model.DomainObject;
+import ghidra.framework.model.Project;
+import ghidra.framework.model.ProjectLocator;
+import ghidra.framework.model.ProjectManager;
+import ghidra.program.model.lang.CompilerSpec;
+import ghidra.program.model.lang.Language;
+import ghidra.program.model.lang.LanguageCompilerSpecPair;
+import ghidra.program.model.lang.RegisterValue;
+import ghidra.program.model.mem.MemBuffer;
+import ghidra.trace.model.Lifespan;
+import ghidra.trace.model.Trace;
+import ghidra.trace.model.TraceAddressSnapRange;
+import ghidra.trace.model.context.TraceRegisterContextManager;
+import ghidra.trace.model.memory.TraceMemoryManager;
+import ghidra.trace.model.memory.TraceMemorySpace;
+import ghidra.trace.model.guest.TracePlatform;
+import ghidra.trace.model.guest.TracePlatformManager;
+import ghidra.trace.model.modules.TraceModule;
+import ghidra.trace.model.modules.TraceModuleManager;
+import ghidra.trace.model.thread.TraceThread;
+import ghidra.trace.model.thread.TraceThreadManager;
+import ghidra.trace.model.time.TraceTimeManager;
+import java.nio.file.AccessMode;
 
 public final class ReaGhidraBridge extends HeadlessScript {
     // At most 24 KiB after worst-case JSON escaping (six bytes per UTF-16 unit).
@@ -172,13 +209,25 @@ public final class ReaGhidraBridge extends HeadlessScript {
         "inspect_native_data_type",
         "resolve_native_call_targets",
         "procedure_references",
-        "xrefs"
+        "xrefs",
+        "import_trace",
+        "trace_info",
+        "trace_snap",
+        "trace_search_bytes",
+        "trace_modules",
+        "trace_threads"
     };
 
     private List<InventoryItem> nameInventory;
     private List<FunctionEntry> procedureInventory;
     private List<InventoryItem> stringInventory;
     private DecompInterface decompiler;
+    /** The Timeless-Debugging trace imported for this session, or null when none is loaded. */
+    private Trace currentTrace;
+    /** The project this bridge opened to host currentTrace, or null when none is owned. */
+    private Project traceProject;
+    /** Cached ProjectManager service (independent of which project is active). */
+    private ProjectManager projectManager;
     /** Per-function native decompiler limit from the session; 0 leaves it unbounded. */
     private int decompileTimeoutSeconds;
     // DecompileProcess converts seconds to an int millisecond timer delay.
@@ -399,6 +448,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
             try {
                 if (request.method.equals("shutdown")) {
                     requireKeys(request.params, Set.of());
+                    releaseTraceAttachment();
                     JsonObject result = new JsonObject();
                     result.addProperty("shutdown", true);
                     result.addProperty("project_ephemeral", true);
@@ -464,6 +514,13 @@ public final class ReaGhidraBridge extends HeadlessScript {
             case "inspect_native_instruction" -> inspectNativeInstruction(request.params, true);
             case "resolve_native_call_targets" -> resolveNativeCallTargets(request.params);
             case "xrefs" -> xrefs(request.params);
+            case "import_trace" -> importTrace(request.params);
+            case "trace_info" -> traceInfo(request.params);
+            case "trace_snap" -> traceSnap(request.params);
+            case "trace_search_bytes" -> traceSearchBytes(request.params);
+            case "trace_modules" -> traceModules(request.params);
+            case "trace_threads" -> traceThreads(request.params);
+            case "trace_debug_regs" -> traceDebugRegs(request.params);
             case "analyze_function" -> {
                 FunctionAnalysisObservation observation = analyzeFunctionObservation(request.params);
                 JsonObject result = functionObservation(observation.dossier(), observation.limitations());
@@ -4718,6 +4775,432 @@ public final class ReaGhidraBridge extends HeadlessScript {
             block.getStart().getAddressSpace(),
             start.add(BigInteger.valueOf(block.getSize()))
         );
+    }
+
+    // ---------------------------------------------------------------------
+    // Timeless Debugging (trace) methods. These operate on a Trace imported
+    // via import_trace. All trace queries are read-only.
+    // ---------------------------------------------------------------------
+
+    private void requireTrace() {
+        if (currentTrace == null)
+            throw new RequestFailure("trace_not_loaded",
+                "No trace is loaded; call import_trace first");
+    }
+
+    /**
+     * Releases the trace attachment owned by this bridge: the consumer reference
+     * on the current trace and the project this bridge opened to host it. Called
+     * on shutdown so repeated attachments do not retain open databases.
+     */
+    private void releaseTraceAttachment() {
+        if (currentTrace != null) {
+            currentTrace.release(this);
+            currentTrace = null;
+        }
+        if (traceProject != null) {
+            try {
+                traceProject.close();
+            } catch (Exception ignored) {
+                // Best-effort cleanup on shutdown; the process is exiting.
+            }
+            traceProject = null;
+        }
+    }
+
+    private static long requireLong(JsonObject object, String name) {
+        JsonElement element = object.get(name);
+        try {
+            if (element == null || !element.isJsonPrimitive() || !element.getAsJsonPrimitive().isNumber())
+                throw new IllegalArgumentException();
+            return element.getAsBigDecimal().longValueExact();
+        } catch (RuntimeException failure) {
+            throw new RequestFailure("invalid_request", name + " must be an integer");
+        }
+    }
+
+    /**
+     * Returns the shared ProjectManager service, caching it after first use. The
+     * service is independent of which project is active, so it remains valid after
+     * the session project is closed to make room for a trace project.
+     */
+    private ProjectManager projectManager() {
+        if (projectManager == null) {
+            Project p = getState().getProject();
+            if (p == null) {
+                throw new RequestFailure("internal_error", "No project available");
+            }
+            projectManager = p.getProjectManager();
+        }
+        return projectManager;
+    }
+
+    private JsonObject importTrace(JsonObject params) throws Exception {
+        requireKeys(params, Set.of("project", "trace"));
+        String projectArg = requireString(params, "project");
+        String tracePath = requireString(params, "trace");
+
+        // Resolve the project argument to a (dir, name) pair. Accepts either a project
+        // directory (containing exactly one .gpr) or a .gpr file path. The trace must
+        // already have been imported into that project (e.g. via analyzeHeadless -loader);
+        // this method attaches to the stored Trace domain object rather than re-importing,
+        // because the OSGi split-package layout makes TenetPlusPlusLoader uninstantiable
+        // inside the long-running bridge.
+        File argFile = new File(projectArg).getAbsoluteFile();
+        File projectDir;
+        String projectName;
+        if (argFile.isFile() && argFile.getName().endsWith(".gpr")) {
+            projectName = argFile.getName().substring(0, argFile.getName().length() - ".gpr".length());
+            projectDir = argFile.getParentFile();
+        } else if (argFile.isDirectory()) {
+            projectDir = argFile;
+            File[] gprFiles = argFile.listFiles((d, n) -> n.endsWith(".gpr"));
+            if (gprFiles == null || gprFiles.length != 1) {
+                throw new RequestFailure("invalid_request",
+                    "Project directory must contain exactly one .gpr file: " + projectArg);
+            }
+            projectName = gprFiles[0].getName().substring(0, gprFiles[0].getName().length() - ".gpr".length());
+        } else {
+            throw new RequestFailure("invalid_request", "Project not found: " + projectArg);
+        }
+
+        // Open the trace's project. Ghidra's ProjectManager enforces one active
+        // project per instance, so attaching to a trace in a different project
+        // means closing the currently-active project (the session project from
+        // open_binary, or a previously-attached trace project) and opening the
+        // trace project. The session Program and any prior Trace survive in
+        // memory; the trace project stays open so its DB-backed query methods
+        // (register reads, byte searches, module/thread listings) keep working.
+        Project traceProject;
+        Project active = projectManager().getActiveProject();
+        // Reuse the active project only when it is the SAME project (name AND
+        // directory), not merely one with the same name in another directory.
+        boolean sameProject = active != null
+            && active.getProjectLocator().getName().equals(projectName)
+            && active.getProjectLocator().getProjectDir().getAbsolutePath().equals(projectDir.getAbsolutePath());
+        if (sameProject) {
+            traceProject = active;
+        } else {
+            if (active != null) {
+                active.close();
+            }
+            ProjectLocator locator = new ProjectLocator(projectDir.getAbsolutePath(), projectName);
+            if (!locator.exists()) {
+                throw new RequestFailure("invalid_request", "Project not found: " + projectArg);
+            }
+            traceProject = projectManager().openProject(locator, true, false);
+        }
+        this.traceProject = traceProject;
+
+        DomainFile traceFile = traceProject.getProjectData().getFile(tracePath);
+        if (traceFile == null) {
+            throw new RequestFailure("not_found", "Trace not found in project: " + tracePath);
+        }
+        DomainObject opened;
+        try {
+            opened = traceFile.getDomainObject(this, false, false, monitor);
+        } catch (Exception e) {
+            throw new RequestFailure("import_failed",
+                "Failed to open trace: " + e.getClass().getSimpleName() + ": " + e.getMessage());
+        }
+        if (!(opened instanceof Trace)) {
+            // The rejected object was opened with this bridge as its consumer;
+            // release it so its database is not retained.
+            if (opened != null) {
+                opened.release(this);
+            }
+            throw new RequestFailure("import_failed",
+                "Not a Trace: " + (opened == null ? "null" : opened.getClass().getName()));
+        }
+        // Replace the previous attachment: release its consumer reference so the
+        // old trace's database is not retained alongside the new one.
+        if (currentTrace != null) {
+            currentTrace.release(this);
+        }
+        currentTrace = (Trace) opened;
+
+        JsonObject result = new JsonObject();
+        result.addProperty("trace", currentTrace.getName());
+        result.addProperty("min_snap", 0);
+        result.addProperty("max_snap", currentTrace.getTimeManager().getMaxSnap());
+        result.addProperty("snapshot_count", currentTrace.getTimeManager().getSnapshotCount());
+        result.addProperty("modules", currentTrace.getModuleManager().getAllModules().size());
+        result.addProperty("threads", currentTrace.getThreadManager().getAllThreads().size());
+        result.addProperty("language", currentTrace.getBaseLanguage().getLanguageID().toString());
+        // Report whether the trace's base architecture matches the selected
+        // binary's, so callers can see the attachment's relationship to the
+        // open_binary target instead of assuming the trace came from it.
+        result.addProperty("binary_language_match", currentProgram != null
+            && currentTrace.getBaseLanguage().getLanguageID().getIdAsString()
+                .equals(currentProgram.getLanguageID().getIdAsString()));
+        // The address space's minimum address is not the executable's image base
+        // (it is typically zero for a trace whose image loads at a nonzero
+        // address), so report the base as explicitly unknown rather than a
+        // misleading value callers could use to misrelate trace addresses.
+        result.addProperty("image_base", (String) null);
+        result.addProperty("imported", true);
+        return result;
+    }
+
+    private JsonObject traceInfo(JsonObject params) {
+        requireKeys(params, Set.of());
+        requireTrace();
+        JsonObject result = new JsonObject();
+        result.addProperty("trace", currentTrace.getName());
+        TraceTimeManager time = currentTrace.getTimeManager();
+        result.addProperty("min_snap", 0);
+        result.addProperty("max_snap", time.getMaxSnap());
+        result.addProperty("snapshot_count", time.getSnapshotCount());
+        result.addProperty("modules", currentTrace.getModuleManager().getAllModules().size());
+        result.addProperty("threads", currentTrace.getThreadManager().getAllThreads().size());
+        result.addProperty("language", currentTrace.getBaseLanguage().getLanguageID().toString());
+        return result;
+    }
+
+    private JsonObject traceSnap(JsonObject params) throws Exception {
+        Set<String> keys = params.keySet();
+        if (!keys.equals(Set.of("snap")) && !keys.equals(Set.of("snap", "thread")))
+            throw new RequestFailure("invalid_request", "Bridge request fields are invalid");
+        requireTrace();
+        long snap = requireLong(params, "snap");
+        TraceTimeManager time = currentTrace.getTimeManager();
+        if (snap < 0 || snap > time.getMaxSnap())
+            throw new RequestFailure("invalid_request", "Snap out of range: " + snap);
+        Language lang = currentTrace.getBaseLanguage();
+        TraceMemoryManager memory = currentTrace.getMemoryManager();
+        // Register values are stored per-thread in the thread's register space
+        // (TenetPlusPlusLoader writes via getMemoryRegisterSpace(frame).setValue).
+        // The TraceMemoryManager.getValue(host, snap, reg) path resolves a null
+        // address space (DBTraceMemoryManager.getSpace() returns null) and yields
+        // zeroed values, so read from the selected thread's register space instead
+        // -- the same pattern Ghidra's own trace RMI target uses (retrieveAndCombine).
+        TracePlatform host = currentTrace.getPlatformManager().getHostPlatform();
+        TraceThread thread = selectSnapThread(snap, params);
+        TraceMemorySpace regSpace = (thread != null && host != null)
+            ? memory.getMemoryRegisterSpace(thread, 0, true)
+            : null;
+        JsonObject result = new JsonObject();
+        result.addProperty("snap", snap);
+        result.addProperty("trace", currentTrace.getName());
+        result.addProperty("thread", thread == null ? null : thread.getKey());
+        result.addProperty("thread_name", thread == null ? null : thread.getName(snap));
+        JsonArray registers = new JsonArray();
+        for (Register reg : lang.getRegisters()) {
+            monitor.checkCancelled();
+            RegisterValue value;
+            if (regSpace != null) {
+                value = regSpace.getValue(host, snap, reg);
+            } else {
+                value = (host != null)
+                    ? memory.getValue(host, snap, reg)
+                    : memory.getValue(snap, reg);
+            }
+            boolean defined = value != null && value.hasValue();
+            // Processor-context registers are always reported; other registers
+            // (GPRs, SIMD) are reported only when the trace defined them at this
+            // snapshot, so the result stays focused on the architectural state.
+            if (!reg.isProcessorContext() && !defined) continue;
+            JsonObject entry = new JsonObject();
+            entry.addProperty("name", reg.getName());
+            if (!defined) {
+                entry.addProperty("defined", false);
+            } else {
+                entry.addProperty("defined", true);
+                entry.addProperty("value", "0x" + value.getUnsignedValue().toString(16));
+            }
+            registers.add(entry);
+        }
+        result.add("registers", registers);
+        return result;
+    }
+
+    /**
+     * Selects the thread whose register space backs a snap read. An explicit
+     * thread key (from trace_threads) wins; otherwise exactly one live thread is
+     * used. Several live threads with no key is ambiguous and reported, never
+     * silently resolved; no live thread yields null (the caller falls back to the
+     * memory-manager register read).
+     */
+    private TraceThread selectSnapThread(long snap, JsonObject params) {
+        TraceThreadManager threads = currentTrace.getThreadManager();
+        // `thread` is a nullable default (null when the caller did not select a
+        // thread), so a present-but-null value means "not specified".
+        if (params.has("thread") && !params.get("thread").isJsonNull()) {
+            long key = requireLong(params, "thread");
+            for (TraceThread candidate : threads.getAllThreads()) {
+                if (candidate.getKey() == key) return candidate;
+            }
+            throw new RequestFailure("not_found", "Thread not found: " + key);
+        }
+        var live = threads.getLiveThreads(snap);
+        if (live == null || live.isEmpty()) return null;
+        if (live.size() > 1)
+            throw new RequestFailure("ambiguous",
+                "Multiple threads are live at snap " + snap
+                + "; select one by thread key (see trace_threads)");
+        return live.iterator().next();
+    }
+
+    private JsonObject traceDebugRegs(JsonObject params) throws Exception {
+        requireTrace();
+        long snap = requireLong(params, "snap");
+        Trace trace = currentTrace;
+        Language lang = trace.getBaseLanguage();
+        TraceMemoryManager mm = trace.getMemoryManager();
+        TracePlatformManager pmgr = trace.getPlatformManager();
+        JsonObject result = new JsonObject();
+
+        // List all platforms (host + guests)
+        JsonArray platforms = new JsonArray();
+        TracePlatform host0 = pmgr.getHostPlatform();
+        if (host0 != null) {
+            JsonObject po = new JsonObject();
+            po.addProperty("lang", host0.getCompilerSpec().getLanguage().getLanguageID().getIdAsString());
+            po.addProperty("spec", host0.getCompilerSpec().getCompilerSpecID().toString());
+            po.addProperty("isHost", true);
+            platforms.add(po);
+        }
+        for (TracePlatform p : pmgr.getGuestPlatforms()) {
+            JsonObject po = new JsonObject();
+            po.addProperty("lang", p.getCompilerSpec().getLanguage().getLanguageID().getIdAsString());
+            po.addProperty("spec", p.getCompilerSpec().getCompilerSpecID().toString());
+            po.addProperty("isHost", false);
+            platforms.add(po);
+        }
+        result.add("platforms", platforms);
+        TracePlatform host = host0;
+        result.addProperty("host_lang", host == null ? null : host.getCompilerSpec().getLanguage().getLanguageID().getIdAsString());
+
+        // Key registers via platform-aware getValue + raw getBytes
+        JsonArray regs = new JsonArray();
+        String[] keyRegs = {"rip", "rsp", "rax", "rbx", "rcx", "rdx", "rsi", "rdi", "rflags"};
+        for (String rn : keyRegs) {
+            Register reg = lang.getRegister(rn);
+            if (reg == null) continue;
+            RegisterValue v = mm.getValue(host, snap, reg);
+            JsonObject ro = new JsonObject();
+            ro.addProperty("name", rn);
+            ro.addProperty("hasValue", v.hasValue());
+            ro.addProperty("hasAnyValue", v.hasAnyValue());
+            BigInteger uv = v.getUnsignedValue();
+            ro.addProperty("value", uv == null ? null : "0x" + uv.toString(16));
+            // Raw bytes via getBytes
+            ByteBuffer bb = ByteBuffer.allocate(reg.getNumBytes());
+            int n = mm.getBytes(host, snap, reg, bb);
+            StringBuilder sb = new StringBuilder();
+            for (int i = 0; i < n; i++) sb.append(String.format("%02x", bb.get(i)));
+            ro.addProperty("raw_bytes", sb.toString());
+            regs.add(ro);
+        }
+        result.add("key_registers", regs);
+
+        // Register space info per thread
+        JsonArray threadSpaces = new JsonArray();
+        for (TraceThread t : trace.getThreadManager().getAllThreads()) {
+            JsonObject to = new JsonObject();
+            to.addProperty("thread", t.getName(snap));
+            to.addProperty("thread_id", t.getKey());
+            TraceMemorySpace regSpace = mm.getMemoryRegisterSpace(t, false);
+            to.addProperty("reg_space_present", regSpace != null);
+            if (regSpace != null) {
+                AddressSpace as = regSpace.getAddressSpace();
+                to.addProperty("reg_space_name", as.getName());
+                to.addProperty("reg_space_min", "0x" + Long.toHexString(as.getMinAddress().getOffset()));
+                to.addProperty("reg_space_max", "0x" + Long.toHexString(as.getMaxAddress().getOffset()));
+                // Read first 128 bytes of the register space
+                ByteBuffer bb = ByteBuffer.allocate(128);
+                int n = regSpace.getBytes(snap, as.getMinAddress(), bb);
+                StringBuilder sb = new StringBuilder();
+                for (int i = 0; i < n; i++) sb.append(String.format("%02x", bb.get(i)));
+                to.addProperty("reg_space_bytes", sb.toString());
+                to.addProperty("bytes_read", n);
+            }
+            threadSpaces.add(to);
+        }
+        result.add("thread_register_spaces", threadSpaces);
+        return result;
+    }
+
+    private JsonObject traceSearchBytes(JsonObject params) throws Exception {
+        Set<String> keys = params.keySet();
+        if (!keys.equals(Set.of("pattern")) && !keys.equals(Set.of("pattern", "limit")))
+            throw new RequestFailure("invalid_request", "Bridge request fields are invalid");
+        requireTrace();
+        String pattern = requireString(params, "pattern").replaceAll("[\\s\\p{Z}\\uFEFF]", "");
+        if (pattern.isEmpty() || pattern.length() % 2 != 0)
+            throw new RequestFailure("invalid_request", "Pattern must be nonempty hex byte pairs");
+        byte[] bytes = new byte[pattern.length() / 2];
+        for (int index = 0; index < bytes.length; index++) {
+            String pair = pattern.substring(index * 2, index * 2 + 2);
+            if (!isHexadecimal(pair, 0, 2))
+                throw new RequestFailure("invalid_request", "Pattern must be hex byte pairs");
+            bytes[index] = (byte) Integer.parseInt(pair, 16);
+        }
+        AddressFactory af = currentTrace.getBaseAddressFactory();
+        AddressSpace space = af.getDefaultAddressSpace();
+        AddressRange range = new AddressRangeImpl(space.getMinAddress(), space.getMaxAddress());
+        int limit = params.has("limit") ? requireBoundedInteger(params, "limit", 1, 1000) : 1000;
+        List<TraceAddressSnapRange> hits = currentTrace.getMemoryManager()
+            .findBytesAcrossLifespan(Lifespan.ALL, range, bytes, monitor);
+        JsonArray matches = new JsonArray();
+        int count = 0;
+        for (TraceAddressSnapRange hit : hits) {
+            if (count >= limit) break;
+            monitor.checkCancelled();
+            JsonObject entry = new JsonObject();
+            entry.addProperty("address", canonicalAddress(hit.getRange().getMinAddress()));
+            Lifespan span = hit.getLifespan();
+            entry.addProperty("first_snap", span.min());
+            entry.addProperty("last_snap", span.max());
+            matches.add(entry);
+            count++;
+        }
+        JsonObject result = new JsonObject();
+        result.addProperty("pattern", bytesHex(bytes));
+        result.addProperty("trace", currentTrace.getName());
+        result.addProperty("matches", count);
+        result.addProperty("total", hits.size());
+        result.addProperty("truncated", hits.size() > count);
+        result.add("hits", matches);
+        return result;
+    }
+
+    private JsonObject traceModules(JsonObject params) throws Exception {
+        requireKeys(params, Set.of());
+        requireTrace();
+        long snap = 0;
+        JsonArray modules = new JsonArray();
+        for (TraceModule mod : currentTrace.getModuleManager().getAllModules()) {
+            monitor.checkCancelled();
+            JsonObject entry = new JsonObject();
+            entry.addProperty("name", mod.getName(snap));
+            entry.addProperty("path", mod.getPath());
+            modules.add(entry);
+        }
+        JsonObject result = new JsonObject();
+        result.addProperty("trace", currentTrace.getName());
+        result.addProperty("count", modules.size());
+        result.add("modules", modules);
+        return result;
+    }
+
+    private JsonObject traceThreads(JsonObject params) throws Exception {
+        requireKeys(params, Set.of());
+        requireTrace();
+        long snap = 0;
+        JsonArray list = new JsonArray();
+        for (TraceThread thread : currentTrace.getThreadManager().getAllThreads()) {
+            monitor.checkCancelled();
+            JsonObject entry = new JsonObject();
+            entry.addProperty("name", thread.getName(snap));
+            entry.addProperty("key", thread.getKey());
+            list.add(entry);
+        }
+        JsonObject result = new JsonObject();
+        result.addProperty("trace", currentTrace.getName());
+        result.addProperty("count", list.size());
+        result.add("threads", list);
+        return result;
     }
 
     private static String canonicalAddress(Address address) {
