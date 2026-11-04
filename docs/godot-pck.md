@@ -25,6 +25,33 @@ by default; `--integrity-policy record-and-continue` retains the observed bytes
 and an explicit untrusted contradiction. An all-zero MD5 is an unknown claim,
 not a verified digest.
 
+Artifact comparison pairs members by `logical_path`, the stored path without
+`res://`, and compares their bytes and occurrence facts. It does not compare
+`godot-pck-entry` metadata. Godot 4.3
+[stores `res://` paths](https://github.com/godotengine/godot/blob/77dcf97d82cbfe4e4615475fa52ca03da645dbd8/editor/export/editor_export_platform.cpp#L228)
+and [keys members by them](https://github.com/godotengine/godot/blob/77dcf97d82cbfe4e4615475fa52ca03da645dbd8/core/io/file_access_pack.cpp#L50-L52).
+Godot 4.4.1
+[stores paths without the prefix](https://github.com/godotengine/godot/blob/49a5bc7b616bd04689a2c89e89bda41f50241464/editor/export/editor_export_platform.cpp#L257-L260)
+and [removes it before keying](https://github.com/godotengine/godot/blob/49a5bc7b616bd04689a2c89e89bda41f50241464/core/io/file_access_pack.cpp#L48-L50).
+Each version finds `res://scenes/main.gd` in its own export, but comparing the
+stored `source_path` would mark every member changed between such exports.
+`logical_path` names the member Godot's lookup finds, except in two cases.
+REA normalizes Unicode to NFC, so a member renamed only between Unicode forms
+compares unchanged, although Godot treats it as another path. Godot reads `\`
+as `/` and REA keeps it literal, so a member spelled with backslashes compares
+as removed and added. Directory order and offsets are layout. The encryption
+bit, the only member flag REA admits, is the occurrence's `encrypted` field. A
+member whose encryption changes compares `unknown` in `metadata` and
+`availability`: the change is known, but REA does not read encrypted bytes,
+so whether the script changed is unknown. Godot's exporter
+[stores the MD5 of a member's original bytes](https://github.com/godotengine/godot/blob/a13da4feb8d8aefc283c3763d33a2f170a18d541/editor/export/editor_export_platform.cpp#L465-L468),
+as the 4.3 and 4.4.1 exporters do, so the declared MD5 does not depend on the
+encryption IV. Encrypted members whose declared MD5s differ therefore also
+compare `unknown` in `metadata` and `availability`: the MD5s declare
+different scripts, but REA cannot verify them, and equal MD5s add nothing for
+the same reason. An encrypted member with an MD5 on only one side stays
+`unknown`.
+
 ## CLI
 
 Start with a compact summary and keep the complete Evidence bundle:

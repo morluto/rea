@@ -876,8 +876,22 @@ and Evidence. If that expansion does not fit, the file node retains
 `static_analysis` and any admitted `semantic_module_analysis` observations,
 including their exact values and source locations. Use the public modules item
 view to read them. The graph marks those unexpanded relationships as unknown.
-If cumulative result capacity is exhausted, analysis stops; inventoried but
-unexamined files remain present with explicit unknown scopes.
+
+The parent charges everything it retains against the heap that was free when
+analysis started, less a transfer reserve. Semantic facts and expanded
+relationships stop at half of that capacity, and a source refused there keeps
+its static facts with the refusal reported. Static facts can continue to three
+quarters of it while the live heap also has room for another copy of what it
+holds, so results charged for earlier sources do not cost later sources their
+static facts when the heap can still hold them. When that share runs short,
+relationships that were reserved but not yet expanded are given up before any
+static facts, and each affected file reports the omission.
+
+If static facts themselves exhaust that share, or the parent's live heap cannot
+hold the next checkpoint, analysis stops; inventoried but unexamined files remain
+present with explicit unknown scopes. The failure reports the limit that applied
+in bytes, what was still available, the live heap in use and what the checkpoint
+needed.
 
 ### Large local JSON inputs
 

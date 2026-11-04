@@ -196,6 +196,54 @@ it("reports the active resource session's dispatch policy without limiting indep
   );
 });
 
+it("derives closed-session address and explicit-path APK availability from their contracts", () => {
+  expect(entry("inspect_address_context", status())).toMatchObject({
+    available: false,
+    reason: "target_required",
+    remediation: expect.any(String),
+  });
+  expect(entry("inspect_apk_signature", status())).toMatchObject({
+    available: true,
+    reason: "available",
+    remediation: null,
+  });
+  expect(
+    entry(
+      "inspect_address_context",
+      status({
+        open: true,
+        kind: "executable",
+        capabilities: [
+          {
+            operation: "inspect_address_context",
+            available: true,
+            reason: null,
+          },
+        ],
+      }),
+    ),
+  ).toMatchObject({ available: true, reason: "available" });
+  expect(entry("inspect_apk_signature", status({ open: true }))).toMatchObject({
+    available: true,
+    reason: "available",
+  });
+  for (const kind of ["artifact", "archive"] as const) {
+    expect(
+      entry("inspect_address_context", status({ open: true, kind })),
+    ).toMatchObject({
+      available: false,
+      reason: "target_unsupported",
+      remediation: expect.stringContaining("explicit document"),
+    });
+    expect(
+      entry("inspect_apk_signature", status({ open: true, kind })),
+    ).toMatchObject({
+      available: true,
+      reason: "available",
+    });
+  }
+});
+
 describe("ADB and Apktool host availability", () => {
   it("uses only their selected owner probes", () => {
     const ready = {
@@ -511,6 +559,31 @@ describe("compact tool availability", () => {
         expandToolAvailability(compact),
       );
   });
+});
+
+it("reports target restrictions for navigation modes even when providers are declared", () => {
+  const capabilities = [
+    "current_document",
+    "current_address",
+    "resolve_containing_procedure",
+  ].map((operation) => ({ operation, available: true, reason: null }));
+  for (const kind of ["artifact", "archive"] as const) {
+    const navigation = entry(
+      "get_navigation_context",
+      status({ open: true, kind, capabilities }),
+    );
+    expect(navigation).toMatchObject({
+      available: false,
+      reason: "target_unsupported",
+      default_mode_available: false,
+      modes: [
+        { name: "current_selection", available: false },
+        { name: "explicit_document", available: false },
+      ],
+    });
+    for (const mode of navigation.modes ?? [])
+      expect(mode.remediation).toBe(navigation.remediation);
+  }
 });
 
 describe("partial navigation availability", () => {
@@ -878,6 +951,62 @@ describe("trace_feature requirements", () => {
       ),
     ).toMatchObject({ available: false, reason: "provider_missing" });
   });
+});
+
+describe("firmware operation recovery", () => {
+  it.each([
+    [false, false],
+    [true, false],
+    [false, true],
+    [true, true],
+  ])(
+    "keeps inspection=%s and extraction=%s independent",
+    (inspection, extraction) => {
+      const inventory = buildCapabilityInventory(status(), {
+        processCaptureEnabled: false,
+        firmwareInspectionEnabled: inspection,
+        firmwareExtractionEnabled: extraction,
+      });
+      for (const [name, enabled, command, otherCommand] of [
+        [
+          "inspect_firmware_regions",
+          inspection,
+          "REA_BINWALK_COMMAND",
+          "REA_UNBLOB_COMMAND",
+        ],
+        [
+          "extract_firmware",
+          extraction,
+          "REA_UNBLOB_COMMAND",
+          "REA_BINWALK_COMMAND",
+        ],
+      ] as const) {
+        const tool = inventory.find((candidate) => candidate.name === name);
+        expect(tool).toMatchObject({
+          available: enabled,
+          reason: enabled ? "available" : "provider_missing",
+        });
+        if (enabled) {
+          expect(tool?.remediation).toBeNull();
+        } else {
+          expect(tool?.remediation).toContain(command);
+          expect(tool?.remediation).not.toContain(otherCommand);
+          expect(tool?.remediation).toContain("prlimit");
+          expect(tool?.remediation).toContain("procps ps");
+          expect(tool?.remediation?.includes("external extractor")).toBe(
+            name === "extract_firmware",
+          );
+        }
+      }
+      const byName = (left: ToolAvailability, right: ToolAvailability) =>
+        left.name.localeCompare(right.name);
+      expect(
+        expandToolAvailability(compactToolAvailability(inventory)).toSorted(
+          byName,
+        ),
+      ).toEqual(inventory.toSorted(byName));
+    },
+  );
 });
 
 const HOST_RESTRICTED_TOOLS = [

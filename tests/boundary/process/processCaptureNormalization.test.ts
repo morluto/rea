@@ -262,7 +262,7 @@ itWithCaptureCapability(
     ).toBe(original.replaceAll("\n", "\r\n"));
     expect(capture.manifest.comparison_contract).toHaveProperty(
       "path_normalization_version",
-      "path-component-boundaries-v3",
+      "path-component-boundaries-v4",
     );
     const legacyContract = { ...capture.manifest.comparison_contract };
     delete legacyContract.path_normalization_version;

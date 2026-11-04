@@ -3,6 +3,7 @@ import {
   type CapabilityServiceOptions,
 } from "../composition/capabilityServices.js";
 import { registerToolFamilies } from "../contracts/toolFamilyIds.js";
+import { SCOPED_NO_TARGET_RECOVERY } from "./recoveryInstructions.js";
 import { AnalysisSettings } from "../application/AnalysisSettings.js";
 import { parseMcpInputBudget } from "../config/mcpInputBudget.js";
 import { registerAnalysisSettingsTools } from "./registerAnalysisSettingsTools.js";
@@ -13,6 +14,7 @@ import { registerCaptureTools } from "./registerCaptureTools.js";
 import { registerSignalTools } from "./registerSignalTools.js";
 import { registerWasmTools } from "./registerWasmTools.js";
 import { registerApkSignatureTools } from "./registerApkSignatureTools.js";
+import { retainedDebuggerDiagnostics } from "../process/ownedDebuggerCleanupError.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { captureProviderEnvironment } from "./providerEnvironment.js";
 import { createByteEntropyService } from "../composition/binaryDiagnostics.js";
@@ -174,7 +176,13 @@ export const createServer = (
     options.providerEnvironment,
     environment,
   );
-  const delivery = selectToolResultDelivery(environment, options.delivery);
+  const baseDelivery = selectToolResultDelivery(environment, options.delivery);
+  const delivery =
+    session !== undefined &&
+    advertisedToolFamilies !== undefined &&
+    !advertisedToolFamilies.has("session")
+      ? baseDelivery.withNoTargetRecovery(SCOPED_NO_TARGET_RECOVERY)
+      : baseDelivery;
   const capabilities = createCapabilityServices({
     environment,
     providerEnvironment,
@@ -307,7 +315,10 @@ export const createServer = (
     previousOnclose?.();
     void closeProviders().catch((cause: unknown) => {
       logger.error(
-        { error: cause instanceof Error ? cause.message : String(cause) },
+        {
+          error: cause instanceof Error ? cause.message : String(cause),
+          ...retainedDebuggerDiagnostics(cause),
+        },
         "Provider cleanup failed during server shutdown",
       );
     });
