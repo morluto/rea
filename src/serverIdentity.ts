@@ -1,3 +1,4 @@
+import { statSync } from "node:fs";
 import { dirname, basename, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -24,6 +25,24 @@ const packageRoot = (): string => {
     : resolve(moduleDirectory, "..");
 };
 
+const compareServerPaths = (
+  expected: string,
+  observed: string,
+): "aligned" | "mismatch" | "unknown" => {
+  if (expected === observed) return "aligned";
+  if (process.platform === "win32")
+    return resolve(expected) === observed ? "aligned" : "mismatch";
+  try {
+    const selected = statSync(expected, { bigint: true });
+    const running = statSync(observed, { bigint: true });
+    return selected.dev === running.dev && selected.ino === running.ino
+      ? "aligned"
+      : "mismatch";
+  } catch {
+    return "unknown";
+  }
+};
+
 /** Build one runtime identity without claiming alignment from absent observations. */
 export const createServerIdentity = (input: {
   readonly startedAt: string;
@@ -35,6 +54,10 @@ export const createServerIdentity = (input: {
 }) => {
   const catalog = input.catalog;
   const serverPath = input.commandPath || undefined;
+  const pathComparison =
+    input.expected?.server_path === undefined || serverPath === undefined
+      ? "unknown"
+      : compareServerPaths(input.expected.server_path, serverPath);
   const reasons: string[] = [];
   if (
     input.expected?.package_version !== undefined &&
@@ -46,17 +69,12 @@ export const createServerIdentity = (input: {
     input.expected.catalog_digest !== catalog.digests.combined_sha256
   )
     reasons.push("catalog_digest_mismatch");
-  if (
-    input.expected?.server_path !== undefined &&
-    serverPath !== undefined &&
-    resolve(input.expected.server_path) !== serverPath
-  )
-    reasons.push("registration_path_mismatch");
+  if (pathComparison === "mismatch") reasons.push("registration_path_mismatch");
   const observedExpectation =
     input.expected !== undefined &&
     Object.values(input.expected).some((value) => value !== undefined);
   const pathComparable =
-    input.expected?.server_path === undefined || serverPath !== undefined;
+    input.expected?.server_path === undefined || pathComparison !== "unknown";
   return {
     package: {
       name: PRODUCT_IDENTITY.packageName,
@@ -105,7 +123,10 @@ export const createServerIdentity = (input: {
             : input.expected?.server_path !== undefined &&
                 serverPath === undefined
               ? "The server entrypoint path is unavailable, so registration identity cannot be compared."
-              : "Supply expected package, catalog, or registration identity to compare the live server.",
+              : input.expected?.server_path !== undefined &&
+                  pathComparison === "unknown"
+                ? "The expected or running server entrypoint could not be inspected, so registration identity cannot be compared."
+                : "Supply expected package, catalog, or registration identity to compare the live server.",
     },
   } as const;
 };
