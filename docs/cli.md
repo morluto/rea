@@ -39,6 +39,17 @@ pass an absolute path. REA reads and authenticates the file, then projects it
 like retained Evidence, so a large file is bounded by the file reader rather
 than charged as inline input.
 
+An argument that accepts inline JSON or a JSON file path also accepts `-`, which
+reads the request from standard input, so a generated request needs no
+temporary file:
+
+```bash
+jq -nc '{source: {kind: "evidence-file", path: "app-evidence.json"}, view: {kind: "summary"}}' | rea inspect-analysis-view -
+```
+
+Standard input is read once as a single UTF-8 JSON document without a
+byte-order mark, and it is limited to 8 MiB. Put a larger request in a file.
+
 Local file inspection commands reject empty paths and NUL bytes before resolving
 relative inputs, auxiliary files or output destinations. An empty string never
 selects the working directory; use an explicit `.` when selecting that directory
@@ -269,6 +280,17 @@ rea extract-artifact content.bundle --json
 Format versions 6 through 8 retain header, block and directory facts with
 none/LZ4/LZ4HC block decompression. See [UnityFS](unityfs.md) for encryption
 and LZMA coverage boundaries.
+
+Inspect a WeChat mini-program package without WeChat or an unpacker:
+
+```sh
+rea inspect-artifact app.wxapkg --detail summary --evidence_output evidence.json --json
+rea extract-artifact app.wxapkg --json
+```
+
+Plaintext packages retain header, table and member facts with verbatim member
+bytes. `V1MMWX` packages are detected as encrypted coverage and refused on
+extraction. See [wxapkg](wxapkg.md) for layout and coverage boundaries.
 
 Inspect an ESP32-family app or bootloader image without esptool:
 
@@ -626,6 +648,11 @@ rea analyze /absolute/path/to/program --provider ghidra --snapshot /absolute/pat
 ```
 
 An exact CLI cache hit is normally read before starting a provider process.
+`decompile --provider ghidra --snapshot ...` also retains its single selected
+Program's pseudocode result, even without an explicit document selector. Old
+snapshots that contain only the Evidence need one new query to add that replay
+entry. This does not retain every body from `decompile-all` or make a persistent
+session's implicit document replayable.
 On Windows, Ghidra first admits the selected source through its native snapshot
 owner, so replay can start that provider.
 In MCP, `open_binary` accepts `snapshot_path` to import a snapshot atomically
@@ -678,6 +705,10 @@ results and Evidence. These are cached observations, not a saved provider
 database: only eligible exact queries can reuse a result, and new or live
 queries can still require provider startup. The CLI uses the same snapshot
 format and preserves these records when loading and updating it.
+When an MCP session replays a provider observation, its delivered Evidence identifies
+the original observation through `evidence_links` and reports that the
+provider was not rerun. The original and its available source records remain
+in the investigation bundle.
 
 ## Import, export and compare Evidence
 
@@ -1187,9 +1218,12 @@ treated as malformed.
 exact array path with `--filter-output` and provide comma-separated direct
 scalar columns with `--columns`; column order is the output column order:
 
+For an artifact inventory request that selects the `occurrences` collection
+and includes `logical_path` and `artifact_id` in its view fields:
+
 ```bash
 rea inspect-analysis-view request.json --format csv \
-  --filter-output normalized_result.rows --columns name,address
+  --filter-output normalized_result.items --columns logical_path,artifact_id
 ```
 
 The first line is a REA metadata record,
