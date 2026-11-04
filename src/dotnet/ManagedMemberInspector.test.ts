@@ -12,6 +12,7 @@ import {
   type ManagedMetadataLayout,
 } from "./ManagedMetadataLayout.js";
 import { readManagedPeLayout } from "./ManagedPeReader.js";
+import { readTypeDefinitionRowFacts } from "./ManagedTypeDefinitionRows.js";
 import { memberListIndexSize } from "./ManagedMemberPointers.js";
 import { edges } from "./ManagedMemberRows.js";
 import { parseUserStrings } from "./ManagedUserStrings.js";
@@ -2213,6 +2214,66 @@ describe("managed TypeDef list ownership bounds", () => {
 });
 
 describe("managed TypeDef list ordering", () => {
+  it.each([
+    { starts: [2, 0, 1], owner: null, token: null, count: 0, issues: 4 },
+    {
+      starts: [1, 0, 1],
+      owner: "Fixture.Program",
+      token: "0x02000003",
+      count: 1,
+      issues: 2,
+    },
+  ])("checks known ordering across invalid starts $starts", (test) => {
+    const bytes = buildManagedPeFixture({ additionalEmptyTypes: 2 });
+    const pe = readManagedPeLayout(bytes);
+    if (pe.cli === null) throw new Error("fixture has no CLI header");
+    const { rva, size } = pe.cli.metadata;
+    const layout = readManagedMetadataLayout(
+      bytes,
+      pe.rvaToOffset(rva, size, "cli.metadata"),
+      size,
+    );
+    for (const [index, start] of test.starts.entries()) {
+      const row = readTypeDefinitionRowFacts(bytes, layout, index + 1);
+      bytes.writeUInt16LE(start, row.fieldListOffset);
+      bytes.writeUInt16LE(start, row.methodListOffset);
+    }
+    const result = inspectManagedMembersBytes(
+      bytes,
+      managedPeFixtureTarget(bytes),
+    );
+    expect(result.fields).toMatchObject([
+      {
+        token: "0x04000001",
+        declaring_type: test.owner,
+        declaring_type_token: test.token,
+      },
+    ]);
+    expect(result.methods).toMatchObject([
+      {
+        token: "0x06000001",
+        declaring_type: test.owner,
+        declaring_type_token: test.token,
+      },
+    ]);
+    expect(result.types[2]).toMatchObject({
+      field_list: { count: test.count },
+      method_list: { count: test.count },
+    });
+    expect(result.coverage.state).toBe("partial");
+    expect(result.coverage.issues).toHaveLength(test.issues);
+    if (test.owner === null)
+      expect(result.coverage.issues.slice(2)).toMatchObject(
+        ["FieldList", "MethodList"].map((list) => ({
+          code: "invalid-row",
+          scope: "metadata.TypeDef:0x02000003",
+          detail: expect.stringContaining(
+            `${list} start 1 decreases from preceding start 2`,
+          ),
+        })),
+      );
+  });
+
   it("leaves adjacent ownership unknown when valid list starts decrease", () => {
     const bytes = buildManagedPeFixture({
       additionalEmptyTypes: 1,
