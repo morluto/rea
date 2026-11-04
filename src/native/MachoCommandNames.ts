@@ -631,6 +631,7 @@ export const readMachoCommandNames = async (
       };
     }
     let fileset: MachoCommandNames["commands"][number]["fileset"];
+    let filesetStringEnd: number | undefined;
     if (frame.command === 0x80000035) {
       if (frame.size < 32)
         throw new MachoBinaryFormatError("Mach-O fileset command is truncated");
@@ -657,6 +658,7 @@ export const readMachoCommandNames = async (
         entryId: retain(value.subarray(0, end)),
         reserved: view.getUint32(20, table.littleEndian),
       };
+      filesetStringEnd = offset + end + 1;
     }
     let uuid: Uint8Array | undefined;
     if (frame.command === 0x1b) {
@@ -723,6 +725,15 @@ export const readMachoCommandNames = async (
       };
     }
     const fullyDecoded =
+      (linkerOptions !== undefined &&
+        frame.size ===
+          12 +
+            linkerOptions.reduce(
+              (total, option) => total + option.byteLength + 1,
+              0,
+            )) ||
+      (note !== undefined && frame.size === 40) ||
+      (fileset !== undefined && filesetStringEnd === frame.size) ||
       (fixedNames !== undefined && frame.size === 8 + fixedNames.length * 4) ||
       (uuid !== undefined && frame.size === 24) ||
       (entrypoint !== undefined && frame.size === 24) ||

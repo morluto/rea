@@ -2,6 +2,7 @@ import { expect, it } from "vitest";
 import { createHash } from "node:crypto";
 import { readMachoCommandNames } from "./MachoCommandNames.js";
 import { projectMachoBinary } from "./MachoBinaryProjection.js";
+import { machoImage, readerOf } from "../artifacts/apple/MachoImage.fixture.js";
 
 it("owns retained command bytes independently of Buffer-backed read windows", async () => {
   const paddedSize = 256 * 1024;
@@ -319,6 +320,73 @@ it("retains note and fileset records without treating names as framing", async (
   await expect(
     readMachoCommandNames(read, image.length, 32, 2),
   ).rejects.toThrow("offset is invalid");
+});
+
+it("distinguishes fully decoded linker-option, note and fileset extents", async () => {
+  const command = (code: number, size: number) => {
+    const bytes = Buffer.alloc(size);
+    bytes.writeUInt32LE(code, 0);
+    bytes.writeUInt32LE(size, 4);
+    return bytes;
+  };
+  const linkerOptions = (size: number) => {
+    const bytes = command(0x2d, size);
+    bytes.writeUInt32LE(1, 8);
+    bytes.write("-lz\0", 12, "ascii");
+    return bytes;
+  };
+  const note = (size: number) => command(0x31, size);
+  const fileset = (size: number) => {
+    const bytes = command(0x80000035, size);
+    bytes.writeUInt32LE(32, 24);
+    bytes.write("entryid\0", 32, "ascii");
+    return bytes;
+  };
+  const image = machoImage({
+    commands: [
+      linkerOptions(16),
+      linkerOptions(24),
+      note(40),
+      note(48),
+      fileset(40),
+      fileset(48),
+    ],
+  });
+  const binary = await readMachoCommandNames(
+    readerOf(image),
+    image.length,
+    1024,
+    8,
+  );
+
+  expect(binary.commands.map(({ fullyDecoded }) => fullyDecoded)).toEqual([
+    true,
+    false,
+    true,
+    false,
+    true,
+    false,
+  ]);
+  expect(binary.commands.map(({ rawSha256 }) => rawSha256 === null)).toEqual([
+    true,
+    false,
+    true,
+    false,
+    true,
+    false,
+  ]);
+  const projection = projectMachoBinary(binary);
+  expect(projection.commandLimitations).toEqual([
+    expect.stringContaining("payload fields are not decoded"),
+  ]);
+  for (const index of [0, 2, 4])
+    expect(projection.commands[index]?.fields).not.toHaveProperty(
+      "command_sha256",
+    );
+  for (const index of [1, 3, 5])
+    expect(projection.commands[index]?.fields.command_sha256).toMatch(
+      /^[a-f0-9]{64}$/u,
+    );
 });
 
 it("reads fixed command words in the selected slice byte order", async () => {
