@@ -915,7 +915,7 @@ try {
       maxBuffer: 16 * 1024 * 1024,
     },
   );
-  const namedReport = /REA ELF load preparation: (\{.*\})$/mu.exec(
+  const namedReport = /REA ELF load preparation: (\{.*\})/u.exec(
     namedRun.stdout,
   );
   assert.ok(namedReport !== null, namedRun.stdout);
