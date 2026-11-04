@@ -1,3 +1,4 @@
+import { FIRMWARE_OPERATION_ENGINES } from "../contracts/firmware/firmwareToolRequirements.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { assertArtifactCommandPath } from "../process/ArtifactCommandPath.js";
 import { join } from "node:path";
@@ -332,8 +333,7 @@ export class FirmwareProvider implements FirmwareAnalysisPort {
     const environment = snapshotEnvironment(this.environment);
     let root: PrivateRuntimeRoot | undefined;
     let rootLease: AnalysisCleanupLease | undefined;
-    const engineName =
-      request.operation === "inspect_firmware_regions" ? "binwalk" : "unblob";
+    const engineName = FIRMWARE_OPERATION_ENGINES[request.operation];
     const withCaller = (phase: FirmwareDeadline) =>
       options?.signal === undefined
         ? phase.signal
