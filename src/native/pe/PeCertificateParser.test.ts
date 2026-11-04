@@ -543,66 +543,71 @@ const serialName = derSeq(
   ),
 );
 
+const serialSignedData = (serial: readonly number[], certificate?: Buffer) =>
+  contentInfo(
+    derSeq(
+      derInt(1),
+      derSet(SHA256_ALG),
+      derSeq(DATA_OID),
+      ...(certificate === undefined ? [] : [der(0xa0, certificate)]),
+      derSet(
+        derSeq(
+          derInt(1),
+          derSeq(serialName, der(0x02, Buffer.from(serial))),
+          SHA256_ALG,
+          SHA256_ALG,
+          der(0x04, Buffer.from([1])),
+        ),
+      ),
+    ),
+  );
+
 it("rejects empty and non-minimal certificate serialNumber INTEGERs", () => {
   const certificate = (serial: readonly number[]) =>
-    readAsn1(
+    derSeq(
       derSeq(
-        derSeq(
-          der(0x02, Buffer.from(serial)),
-          SHA256_ALG,
-          serialName,
-          derSeq(
-            der(0x17, Buffer.from("250101000000Z")),
-            der(0x17, Buffer.from("260101000000Z")),
-          ),
-          serialName,
-          derSeq(SHA256_ALG, der(0x03, Buffer.from([0]))),
-        ),
+        der(0x02, Buffer.from(serial)),
         SHA256_ALG,
-        der(0x03, Buffer.from([0])),
+        serialName,
+        derSeq(
+          der(0x17, Buffer.from("250101000000Z")),
+          der(0x17, Buffer.from("260101000000Z")),
+        ),
+        serialName,
+        derSeq(SHA256_ALG, der(0x03, Buffer.from([0]))),
       ),
+      SHA256_ALG,
+      der(0x03, Buffer.from([0])),
     );
   for (const serial of malformedSerials)
     expect(
-      () => parseCertificate(certificate(serial)),
+      () => parseCertificate(readAsn1(certificate(serial))),
       JSON.stringify(serial),
     ).toThrow(/TBSCertificate serialNumber INTEGER is (empty|not minimally)/u);
-  for (const [serial, hex, negative] of minimalSerials)
-    expect(parseCertificate(certificate(serial))).toMatchObject({
+  for (const [serial, hex, negative] of minimalSerials) {
+    const payload = serialSignedData(serial, certificate(serial));
+    const report = peCertificatesSchema.parse(
+      parse(peCertificateFixture(false, payload)),
+    );
+    expect(report.entries[0]?.pkcs7?.certificates[0]).toMatchObject({
       serial_hex: hex,
       serial_negative: negative,
     });
+  }
 });
 
 it("rejects empty and non-minimal SignerInfo serialNumber INTEGERs", () => {
-  const payload = (serial: readonly number[]) =>
-    contentInfo(
-      derSeq(
-        derInt(1),
-        derSet(SHA256_ALG),
-        derSeq(DATA_OID),
-        derSet(
-          derSeq(
-            derInt(1),
-            derSeq(serialName, der(0x02, Buffer.from(serial))),
-            SHA256_ALG,
-            SHA256_ALG,
-            der(0x04, Buffer.from([1])),
-          ),
-        ),
-      ),
-    );
   for (const serial of malformedSerials)
     expect(
-      () => parse(peCertificateFixture(false, payload(serial))),
+      () => parse(peCertificateFixture(false, serialSignedData(serial))),
       JSON.stringify(serial),
     ).toThrow(
       /SignerInfo issuerAndSerialNumber serialNumber INTEGER is (empty|not minimally)/u,
     );
   for (const [serial, hex, negative] of minimalSerials)
     expect(
-      parse(peCertificateFixture(false, payload(serial))).entries[0]?.pkcs7
-        ?.signers[0],
+      parse(peCertificateFixture(false, serialSignedData(serial))).entries[0]
+        ?.pkcs7?.signers[0],
     ).toMatchObject({ serial_hex: hex, serial_negative: negative });
 });
 
