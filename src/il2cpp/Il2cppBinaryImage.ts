@@ -24,6 +24,7 @@ import {
 import {
   WASM_PAGE_BYTES,
   WasmModuleFailure,
+  type WasmTableSlots,
   readInitialLinearMemorySteps,
   readWasmModuleImageSteps,
 } from "../wasm/WasmModuleImage.js";
@@ -98,7 +99,7 @@ export interface WasmImageContainer {
 
 /** Table 0 of a wasm32 module: slot to function index, and how many functions are imports. */
 export interface WasmFunctionTable {
-  readonly slots: ReadonlyMap<number, number>;
+  readonly slots: WasmTableSlots;
   readonly importedFunctionCount: number;
 }
 

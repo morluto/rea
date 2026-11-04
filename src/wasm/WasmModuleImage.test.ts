@@ -401,6 +401,57 @@ describe("code bodies and segment counts", () => {
   });
 });
 
+describe("table representation", () => {
+  const bigTable = (min: number) =>
+    section(4, vec([[0x70, 0x00, ...u32(min)]]));
+  it("keeps a high-base segment without allocating the slots below it", () => {
+    const base = 1_000_000;
+    const image = readWasmModuleImage(
+      module(functions(1), bigTable(base + 1), elements(base, [0])),
+    );
+    expect(image.table.get(base)).toBe(0);
+    expect(image.table.get(base - 1)).toBeUndefined();
+    expect([...image.table]).toEqual([[base, 0]]);
+  });
+  it("refuses filled slots spread wider than the slot allowance as capacity", () => {
+    const far = WASM_MODULE_LIMITS.tableSlots;
+    const bytes = module(
+      functions(1),
+      bigTable(far + 1),
+      section(
+        9,
+        vec([
+          [0x00, ...offset(0), ...vec([u32(0)])],
+          [0x00, ...offset(far), ...vec([u32(0)])],
+        ]),
+      ),
+    );
+    expect(failure(bytes)).toEqual([
+      "capacity",
+      `element segments span ${far + 1} table slots, above ${far}`,
+    ]);
+  });
+  it("lets a later segment overwrite an earlier one's slot", () => {
+    const image = readWasmModuleImage(
+      module(
+        functions(2),
+        table,
+        section(
+          9,
+          vec([
+            [0x00, ...offset(1), ...vec([u32(0), u32(0)])],
+            [0x00, ...offset(2), ...vec([u32(1)])],
+          ]),
+        ),
+      ),
+    );
+    expect([...image.table]).toEqual([
+      [1, 0],
+      [2, 1],
+    ]);
+  });
+});
+
 describe("table types and yielding", () => {
   it("refuses a table whose elements are not funcref", () => {
     const externref = section(4, vec([[0x6f, 0x00, 4]]));

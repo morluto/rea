@@ -49,13 +49,41 @@ export interface WasmDataSegment {
   readonly bytes: Buffer;
 }
 
+/** Function index per filled slot of table 0. */
+export interface WasmTableSlots {
+  get(slot: number): number | undefined;
+  /** Filled slots in slot order. */
+  [Symbol.iterator](): Iterator<[slot: number, functionIndex: number]>;
+}
+
+const EMPTY_SLOT = 0xffffffff;
+
+/**
+ * Slots from the lowest filled one to the end of the highest, four bytes each.
+ * A function index is below the module's u32 function count, so the all-ones
+ * word never names a function and marks an unfilled slot.
+ */
+class DenseWasmTable implements WasmTableSlots {
+  constructor(
+    readonly low: number,
+    readonly words: Uint32Array,
+  ) {}
+  get(slot: number): number | undefined {
+    const value = this.words[slot - this.low];
+    return value === undefined || value === EMPTY_SLOT ? undefined : value;
+  }
+  *[Symbol.iterator](): Iterator<[number, number]> {
+    for (let i = 0; i < this.words.length; i++)
+      if (this.words[i] !== EMPTY_SLOT) yield [this.low + i, this.words[i]!];
+  }
+}
+
 export interface WasmModuleImage {
   readonly importedFunctionCount: number;
   /** Imported plus defined functions. */
   readonly functionCount: number;
   readonly memory: WasmMemory | null;
-  /** Function index per slot of table 0. */
-  readonly table: ReadonlyMap<number, number>;
+  readonly table: WasmTableSlots;
   /** Table 0 comes from an import, so the host may fill slots no element segment writes. */
   readonly tableImported: boolean;
   readonly dataSegments: readonly WasmDataSegment[];
@@ -178,7 +206,7 @@ export function* readWasmModuleImageSteps(
   let tables = 0;
   let tableMinimum: number | null = null;
   let tableImported = false;
-  const elements: { base: number; functions: number[] }[] = [];
+  const elements: { base: number; functions: Uint32Array }[] = [];
   const dataSegments: WasmDataSegment[] = [];
   let slots = 0;
   let codeBodies: number | null = null;
@@ -274,9 +302,10 @@ export function* readWasmModuleImageSteps(
             "capacity",
             `element segments fill more than ${WASM_MODULE_LIMITS.tableSlots} slots`,
           );
-        const functions: number[] = [];
+        // Typed storage keeps a retained slot at four bytes.
+        const functions = new Uint32Array(length);
         for (let slot = 0; slot < length; slot++) {
-          functions.push(body.u32());
+          functions[slot] = body.u32();
           if (tick()) yield;
         }
         // An empty segment still traps past the table, so its base is kept.
@@ -326,16 +355,30 @@ export function* readWasmModuleImageSteps(
       `module declares ${definedFunctionCount} functions but has ${codeBodies ?? 0} code bodies`,
     );
   const functionCount = importedFunctionCount + definedFunctionCount;
-  const table = new Map<number, number>();
   const minimum = tableMinimum as number | null;
   if (elements.length > 0 && minimum === null)
     throw malformed("element segments name a table the module does not have");
+  // The table spans the filled slots only, so a high base costs nothing, and
+  // the span shares the slot allowance, which bounds it to four bytes a slot.
+  let low = Infinity;
+  let high = 0;
   for (const { base, functions } of elements) {
     // Instantiation traps when a segment ends past the initial table.
     if (base + functions.length > minimum!)
       throw malformed(
         `element segment at slot ${base} ends past the ${minimum} initial table slots`,
       );
+    if (functions.length === 0) continue;
+    low = Math.min(low, base);
+    high = Math.max(high, base + functions.length);
+  }
+  if (high - low > WASM_MODULE_LIMITS.tableSlots)
+    throw new WasmModuleFailure(
+      "capacity",
+      `element segments span ${high - low} table slots, above ${WASM_MODULE_LIMITS.tableSlots}`,
+    );
+  const words = new Uint32Array(high > low ? high - low : 0).fill(EMPTY_SLOT);
+  for (const { base, functions } of elements) {
     for (let slot = 0; slot < functions.length; slot++) {
       const index = functions[slot]!;
       // The function and import sections state the count; a slot past it is damage.
@@ -343,7 +386,7 @@ export function* readWasmModuleImageSteps(
         throw malformed(
           `table slot ${base + slot} names function ${index}, but the module has ${functionCount}`,
         );
-      table.set(base + slot, index);
+      words[base + slot - low] = index;
       if (tick()) yield;
     }
   }
@@ -363,7 +406,7 @@ export function* readWasmModuleImageSteps(
     importedFunctionCount,
     functionCount,
     memory,
-    table,
+    table: new DenseWasmTable(high > low ? low : 0, words),
     tableImported,
     dataSegments,
   };
