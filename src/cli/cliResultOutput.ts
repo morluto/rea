@@ -303,7 +303,16 @@ export const createCliResultOutput = (
       streaming = true;
     },
     captureSdkOutput(text) {
-      if ((format !== "jsonl" && !sdkDocumentControls) || streaming || handled)
+      // JSONL always buffers for framing. Piped/redirected JSON also buffers so
+      // Incur's always-indented Formatter output can be rewritten compactly.
+      // Terminal JSON stays with Incur, which already matches the indent contract.
+      // sdkDocumentControls also buffers one-shot SDK documents for token windows.
+      const captureJson = format === "json" && !isTerminalOutput(destination);
+      if (
+        (format !== "jsonl" && !sdkDocumentControls && !captureJson) ||
+        streaming ||
+        handled
+      )
         return false;
       // Incur already materializes one-shot documents. Retain references only;
       // generator events bypass this buffer and remain incremental.
@@ -319,6 +328,39 @@ export const createCliResultOutput = (
             // A write callback runs after earlier queued writes have completed,
             // so the launcher's explicit exit cannot discard a pending pipe tail.
             await writeOutputText(destination, "");
+            return;
+          }
+          if (format === "json") {
+            const text = parts.join("");
+            let result: unknown;
+            try {
+              result = JSON.parse(text);
+            } catch {
+              // Preserve non-JSON SDK output (e.g. completion hooks). Token-count
+              // only for SDK documents that opted into sdkDocumentControls.
+              if (exitCode === 0 && options.tokenCount && sdkDocumentControls) {
+                await writeOutputText(
+                  destination,
+                  `${estimateTokenCount(text)}\n`,
+                );
+                return;
+              }
+              await writeOutputText(destination, text);
+              return;
+            }
+            // Compact rewrite must not skip token controls for SDK documents
+            // (`--llms` / `--schema` with --token-count on a pipe).
+            if (exitCode === 0 && options.tokenCount) {
+              const compact = [...jsonOutputParts(result, "json", false)].join(
+                "",
+              );
+              await writeOutputText(
+                destination,
+                `${estimateTokenCount(compact)}\n`,
+              );
+              return;
+            }
+            await writeJsonOutput(result, destination, "json");
             return;
           }
           if (exitCode === 0) {

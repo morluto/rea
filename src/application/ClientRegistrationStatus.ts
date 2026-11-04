@@ -33,6 +33,7 @@ import {
 import {
   clientEvidencePaths,
   clientOwnershipEvidencePaths,
+  compactInputSchemaByDefault,
   manualRegistrationRemediation,
   supportedClients,
 } from "./SupportedClients.js";
@@ -312,12 +313,14 @@ export const readClientRegistrationInspections = async (
       }
       const registration = parsedRegistration.value;
       const registrationEnvironment =
-        client.name === "kimi" || client.name === "codex"
+        compactInputSchemaByDefault(client) || client.name === "codex"
           ? await clientRegistrationEnvironmentDetailsWithBudget(
               parsed,
               {},
               "effective",
-              options.resolveProviderRequestBudget,
+              client.name === "kimi" || client.name === "codex"
+                ? options.resolveProviderRequestBudget
+                : undefined,
               options.platform,
             )
           : undefined;
@@ -355,7 +358,7 @@ export const readClientRegistrationInspections = async (
         command,
         commandFacts,
         platform: options.platform ?? process.platform,
-        kimiInputSchemaProfileSelected:
+        inputSchemaProfileSelected:
           registrationEnvironment?.ok === true &&
           snapshotEnvironment(
             registrationEnvironment.value.values,
@@ -497,14 +500,14 @@ const registrationAligned = ({
   command,
   commandFacts,
   platform,
-  kimiInputSchemaProfileSelected,
+  inputSchemaProfileSelected,
 }: {
   readonly registration: ClientRegistration;
   readonly client: SetupClient;
   readonly command: readonly string[];
   readonly commandFacts: ClientRegistrationCommandFacts;
   readonly platform: NodeJS.Platform;
-  readonly kimiInputSchemaProfileSelected: boolean;
+  readonly inputSchemaProfileSelected: boolean;
 }): "aligned" | "stale" | "unknown" => {
   const { identity } = commandFacts;
   if (identity === "unknown") return "unknown";
@@ -526,7 +529,8 @@ const registrationAligned = ({
       registration.toolTimeoutMs === undefined)
   )
     return "stale";
-  if (client.name === "kimi" && !kimiInputSchemaProfileSelected) return "stale";
+  if (compactInputSchemaByDefault(client) && !inputSchemaProfileSelected)
+    return "stale";
   // A Harness registration only connects as the rea stdio server; another
   // server name or transport leaves the session without REA tools.
   if (

@@ -644,3 +644,30 @@ it.each(["full", "compact"] as const)(
     expect(calls).toBe(1);
   },
 );
+
+it("keeps root detail guidance so callers can choose bounded summaries", async () => {
+  const full = fullServer();
+  const compact = compactServer();
+  registerCatalog(full);
+  registerCatalog(compact);
+  const [fullTools, compactTools] = await Promise.all([
+    listToolsThroughTransport(full),
+    listToolsThroughTransport(compact),
+  ]);
+  const detailGuidance = (tools: readonly AdvertisedTool[]) =>
+    Object.fromEntries(
+      tools.flatMap(({ name, inputSchema }) => {
+        const detail = (
+          inputSchema.properties as Record<string, Record<string, unknown>>
+        )?.detail;
+        return typeof detail?.description === "string"
+          ? [[name, detail.description]]
+          : [];
+      }),
+    );
+  const expected = detailGuidance(fullTools);
+  expect(Object.keys(expected)).toEqual(
+    expect.arrayContaining(["inspect_artifact", "inspect_macho"]),
+  );
+  expect(detailGuidance(compactTools)).toEqual(expected);
+});
