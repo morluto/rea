@@ -5,7 +5,9 @@ import ghidra.program.model.data.AbstractComplexDataType;
 import ghidra.program.model.data.AbstractFloatDataType;
 import ghidra.program.model.data.Array;
 import ghidra.program.model.data.BitFieldDataType;
+import ghidra.program.model.data.ByteDataType;
 import ghidra.program.model.data.Composite;
+import ghidra.program.model.data.DWordDataType;
 import ghidra.program.model.data.DataType;
 import ghidra.program.model.data.DataTypeComponent;
 import ghidra.program.model.data.DoubleDataType;
@@ -15,11 +17,13 @@ import ghidra.program.model.data.FunctionDefinition;
 import ghidra.program.model.data.IntegerDataType;
 import ghidra.program.model.data.ParameterDefinition;
 import ghidra.program.model.data.Pointer;
+import ghidra.program.model.data.QWordDataType;
 import ghidra.program.model.data.Structure;
 import ghidra.program.model.data.StructureDataType;
 import ghidra.program.model.data.TypeDef;
 import ghidra.program.model.data.Union;
 import ghidra.program.model.data.VoidDataType;
+import ghidra.program.model.data.WordDataType;
 import ghidra.program.model.lang.CompilerSpec;
 import ghidra.program.model.lang.Language;
 import ghidra.program.model.lang.PrototypeModel;
@@ -100,7 +104,9 @@ public final class ReaGhidraRiscvCallingConvention extends GhidraScript {
     FLOAT,
     FLOAT_PAIR,
     FLOAT_INTEGER,
-    OTHER
+    OTHER,
+    /** The psABI's class cannot be known, so it matches no storage the prototype gives. */
+    UNKNOWN
   }
 
   private final Map<DataType, Kind> psabiKinds = new HashMap<>();
@@ -411,6 +417,7 @@ public final class ReaGhidraRiscvCallingConvention extends GhidraScript {
 
   /** The psABI's storage class for a first argument or return of this type, after flattening. */
   private static Kind psabiKind(DataType type) {
+    if (type.getLength() <= 8 && untyped(type)) return Kind.UNKNOWN;
     List<Boolean> fields = new ArrayList<>();
     // C passes no array by value, so an array here is a GNU vector, which Ghidra imports as one.
     DataType value = strip(type);
@@ -421,6 +428,26 @@ public final class ReaGhidraRiscvCallingConvention extends GhidraScript {
       if (fields.size() == 2 && floats == 1) return Kind.FLOAT_INTEGER;
     }
     return type.getLength() > 8 ? Kind.REFERENCE : Kind.INTEGER;
+  }
+
+  /**
+   * Whether a value holds a field Ghidra left untyped. Ghidra's DWARF import uses these types for
+   * an encoding it does not map, so `float _Complex`, which takes two float registers, shows as a
+   * `qword`. Values over 8 bytes pass by reference whatever they hold, and so do not reach this.
+   */
+  private static boolean untyped(DataType type) {
+    type = strip(type);
+    if (type instanceof Structure structure) {
+      for (DataTypeComponent component : structure.getDefinedComponents())
+        if (untyped(component.getDataType())) return true;
+      return false;
+    }
+    if (type instanceof Array array)
+      return array.getNumElements() > 0 && untyped(array.getDataType());
+    return type instanceof ByteDataType
+        || type instanceof WordDataType
+        || type instanceof DWordDataType
+        || type instanceof QWordDataType;
   }
 
   /**

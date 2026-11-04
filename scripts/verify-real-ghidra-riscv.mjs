@@ -137,13 +137,14 @@ const verifyUnmodelledRefusal = async () => {
   assert.deepEqual(resolved.value.riscv, fixture.riscv);
   const reasons = [
     "policy ilp32f-prototype-v1 refused this image",
-    "6 functions and 1 function-pointer type pass by-value types whose psABI storage __rea_ilp32f cannot express",
+    "7 functions and 1 function-pointer type pass by-value types whose psABI storage __rea_ilp32f cannot express",
     "rea_riscv_abi_spread (returns rea_riscv_abi_spread, rea_riscv_abi_spread)",
     "rea_riscv_abi_half (returns _Float16, _Float16)",
     "rea_riscv_abi_empties (returns rea_riscv_abi_empties, rea_riscv_abi_empties)",
     "rea_riscv_abi_flexible (rea_riscv_abi_flexible)",
     "rea_riscv_abi_padded (rea_riscv_abi_padded)",
     "rea_riscv_abi_vector (rea_riscv_abi_lanes)",
+    "rea_riscv_abi_complex (complex, rea_riscv_abi_wrapped)",
     "function-pointer type _func_void_rea_riscv_abi_spread_int (rea_riscv_abi_spread)",
   ];
   const lifecycle = async (name, args = {}) =>

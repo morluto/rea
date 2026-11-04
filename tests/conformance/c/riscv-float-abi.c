@@ -205,6 +205,18 @@ __attribute__((noinline)) float rea_riscv_abi_vector(rea_riscv_abi_lanes value)
     return value[1];
 }
 
+/* Ghidra imports float _Complex as an untyped qword, but compilers use fa0 and
+ * fa1, alone and as the only member of a structure. */
+struct rea_riscv_abi_wrapped {
+    float _Complex value;
+};
+
+__attribute__((noinline)) float rea_riscv_abi_complex(float _Complex value, struct rea_riscv_abi_wrapped wrapped)
+{
+    rea_riscv_abi_sink = *(volatile unsigned int *)&wrapped;
+    return __imag__ value;
+}
+
 /* Shapes __rea_ilp32f does express, which the refusal must not name. An array
  * in a structure flattens, so these floats take fa0 and fa1. */
 struct rea_riscv_abi_elements {

@@ -358,11 +358,11 @@ export const GHIDRA_RISCV_HIDDEN_REFERENCE_LIMITATION =
 
 /**
  * Ghidra's DWARF import erases what these types' ilp32f storage depends on: it
- * reads `float _Complex` as a `qword`, keeps no vector marker on an array, and
- * resolves `_Atomic`, which GCC ignores and Clang does not, to its base type.
+ * keeps no vector marker on an array, and resolves `_Atomic`, which GCC ignores
+ * and Clang does not, to its base type.
  */
 export const GHIDRA_RISCV_ERASED_TYPE_LIMITATION =
-  "Ghidra's DWARF import erases three ilp32f distinctions, and REA does not refuse them, so their storage is unverified. `float _Complex` shows as an integer, although compilers use float registers. A GNU vector in a structure shows as an array of floats, although compilers use integer registers. `_Atomic(float)` shows as a `float`, which matches GCC, although Clang uses integer registers.";
+  "Ghidra's DWARF import erases two ilp32f distinctions, and REA does not refuse them, so their storage is unverified. A GNU vector in a structure shows as an array of floats, although compilers use integer registers. `_Atomic(float)` shows as a `float`, which matches GCC, although Clang uses integer registers.";
 
 /** State the prototype REA applies, and its outcome once the bridge reports it. */
 export const ghidraRiscvCallingConventionLimitations = (
