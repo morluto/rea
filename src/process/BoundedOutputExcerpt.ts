@@ -1,3 +1,5 @@
+import { StringDecoder } from "node:string_decoder";
+
 /** Byte-bounded head and tail diagnostics, decoded after stream chunks are joined. */
 export class BoundedOutputExcerpt {
   #head: Buffer = Buffer.alloc(0);
@@ -39,8 +41,20 @@ export class BoundedOutputExcerpt {
   }
 
   get text(): string {
-    return this.truncated
-      ? `${this.#head.toString("utf8")} … [output omitted] … ${this.#tail.toString("utf8")}`
-      : Buffer.concat([this.#head, this.#tail]).toString("utf8");
+    if (!this.truncated)
+      return Buffer.concat([this.#head, this.#tail]).toString("utf8");
+
+    // Do not flush an incomplete code point at the cut edge of the head.
+    const head = new StringDecoder("utf8").write(this.#head);
+    let tailStart = 0;
+    while (
+      tailStart < this.#tail.length &&
+      (this.#tail[tailStart]! & 0xc0) === 0x80
+    )
+      tailStart += 1;
+    // A valid cut can leave at most three continuation bytes. Longer runs
+    // are malformed output, so retain their decoding evidence.
+    if (tailStart > 3) tailStart = 0;
+    return `${head} … [output omitted] … ${this.#tail.subarray(tailStart).toString("utf8")}`;
   }
 }
