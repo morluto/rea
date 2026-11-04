@@ -166,6 +166,7 @@
 * **artifacts:** distinguish incomplete PyInstaller probes ([abc1351](https://github.com/morluto/rea/commit/abc135150628ab62d271324682426fe7ec5fed3a))
 * **artifacts:** explain recovery for existing DMG attachments ([#7221](https://github.com/morluto/rea/issues/7221)) ([4767970](https://github.com/morluto/rea/commit/47679701051dc207533bde5e516e5a77583d52c5))
 * **artifacts:** extract readable inventoried entries ([#7827](https://github.com/morluto/rea/issues/7827)) ([2dd9a30](https://github.com/morluto/rea/commit/2dd9a3092e597bf05d0409a3c901b4e96b4ff310))
+* **artifacts:** give Godot PCK and Node SEA readers the ESP member lifecycle ([#8395](https://github.com/morluto/rea/issues/8395)) ([0a99c2a](https://github.com/morluto/rea/commit/0a99c2a5809fb1db8ca3ed58ece6ce69cbb8afe5))
 * **artifacts:** guide retries for symlinked files ([#8725](https://github.com/morluto/rea/issues/8725)) ([85be0f7](https://github.com/morluto/rea/commit/85be0f70a69a3a0ae7ea3a965f9c3621ebdb4b9e))
 * **artifacts:** keep inventorying an ASAR whose member declares an invalid size ([#8719](https://github.com/morluto/rea/issues/8719)) ([61bb02d](https://github.com/morluto/rea/commit/61bb02d3df18b4271e283760b02c84c9c20a0358))
 * **artifacts:** name every U-Boot uImage type in the pinned image.h ([#8007](https://github.com/morluto/rea/issues/8007)) ([95637a3](https://github.com/morluto/rea/commit/95637a3d703d0b72150d1790fe28062940707c63))
