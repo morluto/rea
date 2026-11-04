@@ -885,10 +885,13 @@ export class JavaScriptRouteScan {
         yield;
         const raw = pending.pop()!;
         const resolved = this.#resolve(raw, parent, index);
-        // An unisolated program variable can be replaced wholesale, so its
-        // source array cannot establish stable ancestry.
-        const node =
-          resolved?.unproven === undefined ? resolved?.node : undefined;
+        // The shared resolver keeps the source value when an unisolated program
+        // variable makes its runtime identity unknown. Route ancestry is
+        // unproven in that case, but the child records are still source-owned:
+        // the literal paths inside them do not need the parent proof, and the
+        // walker already reports the incomplete interpretation. Dropping them
+        // here would lose routes that the previous behaviour reported.
+        const node = resolved?.node;
         if (
           node === undefined ||
           (!t.isArrayExpression(node) && !t.isObjectExpression(node))

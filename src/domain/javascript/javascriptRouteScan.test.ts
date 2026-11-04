@@ -183,6 +183,24 @@ it.each([
   },
 );
 
+it("keeps literal child routes that an unisolated children array carries", () => {
+  // The parent proof is unknown, but the child records are still source-owned.
+  // Only the ancestry is in doubt, so the literal paths must stay reported next
+  // to the interpretation gap instead of disappearing with the parent.
+  const facts = analyze(
+    "var children=[{path:'/kept',Component:View}];const config={path:'/parent',children};",
+  );
+  expect(facts.candidates.map(({ path }) => path)).toEqual([
+    "/parent",
+    "/kept",
+  ]);
+  expect(facts.unresolved.map(({ reason }) => reason)).toEqual(
+    expect.arrayContaining([
+      expect.stringContaining("unisolated program variable"),
+    ]),
+  );
+});
+
 it.each([
   "var TARGET='/t';globalThis.TARGET='/u';router.push(TARGET);",
   "var NAV={pathname:'/x'};globalThis.NAV={pathname:'/y'};router.push(NAV);",
