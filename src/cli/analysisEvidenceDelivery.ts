@@ -250,13 +250,24 @@ export const publishCliAnalysisEvidence = async (
   input: CliEvidenceDelivery,
 ): Promise<JsonValue> => {
   const { operation, signal, detail, evidenceOutput } = input;
+  // Failure reporting uses the same captured sources as publication. A trace
+  // carries them on the result, while other commands pass them on the input.
+  const capturedSources = [
+    ...(input.sourceEvidence ?? []),
+    ...(result.sourceEvidence ?? []),
+  ];
+  const closureInput =
+    capturedSources.length === 0
+      ? input
+      : { ...input, sourceEvidence: capturedSources };
   const projectFailure = (error: AnalysisError) =>
     projectAnalysisError(
       redactExplicitFailure(error, input.sensitiveValues ?? []),
     );
   const undelivered = (error: AnalysisError) =>
-    withUndeliveredSourceClosure(projectFailure(error), input);
-  if (!result.ok) return withUndeliveredSourceClosure(result.error, input);
+    withUndeliveredSourceClosure(projectFailure(error), closureInput);
+  if (!result.ok)
+    return withUndeliveredSourceClosure(result.error, closureInput);
   const complete = parseEvidence(result.value);
   const inputError = cliEvidenceDeliveryInputError(input);
   if (inputError !== undefined) {
@@ -285,11 +296,10 @@ export const publishCliAnalysisEvidence = async (
   if (!inspectionSources.ok) return undelivered(inspectionSources.error);
   const records = [
     ...new Map(
-      [
-        ...(input.sourceEvidence ?? []),
-        ...(result.sourceEvidence ?? []),
-        ...inspectionSources.value,
-      ].map((record) => [record.evidence_id, record]),
+      [...capturedSources, ...inspectionSources.value].map((record) => [
+        record.evidence_id,
+        record,
+      ]),
     ).values(),
   ];
   // Only skip the writer's heap check when every record is already sealed.
