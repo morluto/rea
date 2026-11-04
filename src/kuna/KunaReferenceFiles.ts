@@ -224,6 +224,32 @@ const xrefRow = z.object({
   to_function: xrefFunction.nullable(),
   instruction: z.string(),
 });
+const xrefPointer = z.object({
+  kind: z.literal("pointer"),
+  from_address: address,
+  from_address_hex: address,
+  from_name: z.string().nullable(),
+  to_address: address,
+  to_address_hex: address,
+  to_name: z.string().nullable(),
+  width: z.int().positive(),
+  source: z.string().min(1),
+});
+const xrefWalkCoverage = z.object({
+  decoded: z.boolean(),
+  section: z.string().nullable(),
+  code_section: z.boolean().nullable(),
+  executable: z.boolean().nullable(),
+  unwalked: z.array(
+    z.object({
+      name: z.string().nullable(),
+      address,
+      address_hex: address,
+      section: z.string(),
+    }),
+  ),
+  notes: z.array(z.string()),
+});
 const xrefsDocument = z.object({
   binary: z.string(),
   direction: z.literal("to"),
@@ -235,6 +261,10 @@ const xrefsDocument = z.object({
     aliases: z.array(xrefFunction),
   }),
   xrefs: z.array(z.unknown()),
+  coverage: xrefWalkCoverage.optional(),
+  data_refs_coverage: z.string().optional(),
+  data_refs_count: count.optional(),
+  data_refs: z.array(xrefPointer).optional(),
 });
 
 export interface KunaIncomingReferences {
@@ -243,6 +273,11 @@ export interface KunaIncomingReferences {
   readonly bytes: number;
   readonly rows: number;
   readonly excludedAliasRows: number;
+  readonly walkCoverage: z.infer<typeof xrefWalkCoverage> | null;
+  readonly pointerCoverage: string | null;
+  readonly pointers: Array<
+    Omit<z.infer<typeof xrefPointer>, "from_address_hex" | "to_address_hex">
+  > | null;
 }
 
 /** Code from incoming-reference admission, plus the address field when one failed. */
@@ -275,8 +310,34 @@ export const parseKunaIncomingReferences = (
         throw new KunaDocumentError("xref_alias_hex");
       aliases.add(alias.address);
     }
+    if (
+      (document.data_refs === undefined) !==
+      (document.data_refs_count === undefined)
+    )
+      throw new KunaDocumentError("xref_count");
+    if (
+      document.data_refs !== undefined &&
+      document.data_refs.length !== document.data_refs_count
+    )
+      throw new KunaDocumentError("xref_count");
+    for (const item of document.coverage?.unwalked ?? [])
+      if (item.address !== item.address_hex)
+        throw new KunaDocumentError("xref_endpoints");
+    for (const pointer of document.data_refs ?? []) {
+      if (
+        pointer.from_address !== pointer.from_address_hex ||
+        pointer.to_address !== pointer.to_address_hex
+      )
+        throw new KunaDocumentError("xref_endpoints");
+      if (!aliases.has(pointer.to_address))
+        throw new KunaDocumentError("xref_target");
+    }
     const addresses = new Set<string>();
     let excludedAliasRows = 0;
+    for (const pointer of document.data_refs ?? []) {
+      if (pointer.to_address === target) addresses.add(pointer.from_address);
+      else excludedAliasRows += 1;
+    }
     for (const raw of document.xrefs) {
       const row = xrefRow.parse(raw);
       if (
@@ -296,8 +357,15 @@ export const parseKunaIncomingReferences = (
     }
     return ok({
       addresses: [...addresses].sort(compareKunaAddresses),
-      rows: document.xrefs.length,
+      rows: document.xrefs.length + (document.data_refs?.length ?? 0),
       excludedAliasRows,
+      walkCoverage: document.coverage ?? null,
+      pointerCoverage: document.data_refs_coverage ?? null,
+      pointers:
+        document.data_refs?.map(
+          ({ from_address_hex: _from, to_address_hex: _to, ...pointer }) =>
+            pointer,
+        ) ?? null,
       bytes: Buffer.byteLength(text),
       sha256: createHash("sha256").update(text).digest("hex"),
     });

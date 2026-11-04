@@ -18,8 +18,7 @@ export interface PartialEnhancedFailure {
   readonly partialResult: JsonValue;
 }
 export type EnhancedOutcome =
-  | Result<JsonValue, AnalysisError>
-  | PartialEnhancedFailure;
+  Result<JsonValue, AnalysisError> | PartialEnhancedFailure;
 export type EnhancedResult = Promise<EnhancedOutcome>;
 
 /** Keep the stopping failure primary while retaining the admitted result. */
@@ -31,6 +30,12 @@ export type TraceReference = {
   readonly target_address: string;
   readonly source_address: string;
   readonly containing_procedure: TraceContainingProcedure;
+  /** Omission means the provider supplied no classification for this site. */
+  readonly source_classifications?: {
+    readonly kind: "stored_pointer";
+    readonly provenance: string;
+    readonly width: number;
+  }[];
 };
 
 /** One enhanced call whose input was parsed at its owning adapter boundary. */

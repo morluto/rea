@@ -67,6 +67,16 @@ export interface AnalysisExecution extends AnalysisObservation {
    * output.
    */
   readonly referencesTruncated?: boolean;
+  /** Known reference-discovery gaps; absent means coverage was not reported. */
+  readonly referenceCoverageGaps?: readonly string[];
+  /** Typed source facts for this live xref observation; absent means unreported. */
+  readonly referenceClassifications?: readonly {
+    readonly sourceAddress: string;
+    readonly targetAddress: string;
+    readonly kind: "stored_pointer";
+    readonly provenance: string;
+    readonly width: number;
+  }[];
 }
 
 interface CreateAnalysisExecutionOptions {
@@ -76,6 +86,8 @@ interface CreateAnalysisExecutionOptions {
   readonly limitations?: readonly string[];
   readonly relationshipCoverage?: RelationshipCoverage;
   readonly referencesTruncated?: boolean;
+  readonly referenceClassifications?: AnalysisExecution["referenceClassifications"];
+  readonly referenceCoverageGaps?: readonly string[];
   readonly locations?: readonly EvidenceLocation[];
   readonly sourceEvidence?: readonly Evidence[];
   readonly subject?: EvidenceSubjectTarget | null;
@@ -127,6 +139,12 @@ export function createAnalysisExecution(
     ...(options.referencesTruncated === undefined
       ? {}
       : { referencesTruncated: options.referencesTruncated }),
+    ...(options.referenceCoverageGaps === undefined
+      ? {}
+      : { referenceCoverageGaps: options.referenceCoverageGaps }),
+    ...(options.referenceClassifications === undefined
+      ? {}
+      : { referenceClassifications: options.referenceClassifications }),
     locations: [...(options.locations ?? [])],
     ...(options.sourceEvidence === undefined
       ? {}

@@ -154,6 +154,8 @@ const traceReferences = async (
         `References to ${match.address} were truncated by the provider; additional references may exist.`,
       );
     }
+    for (const gap of observed.value.referenceCoverageGaps ?? [])
+      residual.push(`References to ${match.address}: ${gap}`);
     const sources = observed.value.result;
     if (!Array.isArray(sources))
       return err(
@@ -162,6 +164,20 @@ const traceReferences = async (
           "provider returned a non-array result",
         ),
       );
+    const classifications = new Map<
+      string,
+      { kind: "stored_pointer"; provenance: string; width: number }[]
+    >();
+    for (const fact of observed.value.referenceClassifications ?? []) {
+      if (fact.targetAddress !== match.address) continue;
+      const values = classifications.get(fact.sourceAddress) ?? [];
+      values.push({
+        kind: fact.kind,
+        provenance: fact.provenance,
+        width: fact.width,
+      });
+      classifications.set(fact.sourceAddress, values);
+    }
     for (const source of sources) {
       if (typeof source !== "string")
         return err(
@@ -211,6 +227,9 @@ const traceReferences = async (
         target_address: match.address,
         source_address: source,
         containing_procedure: containingProcedure,
+        ...(classifications.has(source)
+          ? { source_classifications: classifications.get(source)! }
+          : {}),
       });
     }
   }

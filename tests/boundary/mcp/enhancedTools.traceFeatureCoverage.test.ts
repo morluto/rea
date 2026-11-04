@@ -140,6 +140,71 @@ const trace = async (analysis: AnalysisOperationPort) => {
   return result.structuredContent as { normalized_result: unknown };
 };
 
+it("reports known reference-discovery gaps without claiming truncation or a missing edge", async () => {
+  const baseline = provider();
+  const gap =
+    "An unwalked candidate may have outgoing references; its presence does not establish a reference to the selected target.";
+  const output = await trace({
+    execute: (operation, input, options) =>
+      operation === "xrefs" && input.address === "0x10"
+        ? Promise.resolve(
+            ok(
+              createAnalysisExecution([], PROVIDER, {
+                referenceCoverageGaps: [gap],
+              }),
+            ),
+          )
+        : baseline.execute(operation, input, options),
+  });
+  expect(output.normalized_result).toMatchObject({
+    truncated: false,
+    residual_unknowns: [`References to 0x10: ${gap}`],
+    references: [{ target_address: "0x11", source_address: "0x21" }],
+  });
+});
+
+it("carries reported pointer classifications without inferring other reference kinds", async () => {
+  const baseline = provider();
+  const output = await trace({
+    execute: (operation, input, options) =>
+      operation === "xrefs" && input.address === "0x10"
+        ? Promise.resolve(
+            ok(
+              createAnalysisExecution(["0x20"], PROVIDER, {
+                referenceClassifications: [
+                  {
+                    sourceAddress: "0x20",
+                    targetAddress: "0x10",
+                    kind: "stored_pointer",
+                    provenance: "chained-fixups",
+                    width: 8,
+                  },
+                  {
+                    sourceAddress: "0x20",
+                    targetAddress: "0x99",
+                    kind: "stored_pointer",
+                    provenance: "other",
+                    width: 4,
+                  },
+                ],
+              }),
+            ),
+          )
+        : baseline.execute(operation, input, options),
+  });
+  expect(output.normalized_result).toMatchObject({
+    references: [
+      {
+        source_address: "0x20",
+        source_classifications: [
+          { kind: "stored_pointer", provenance: "chained-fixups", width: 8 },
+        ],
+      },
+      { source_address: "0x21" },
+    ],
+  });
+});
+
 it("preserves references and explicitly unknown owners without claiming truncation", async () => {
   const baseline = provider();
   const output = await trace({

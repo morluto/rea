@@ -95,18 +95,18 @@ const replayDocumentSelected = (
   typeof parameters.document === "string";
 
 /**
- * Caller and callee walks omit `document`. Their observations are still
- * Evidence. Other document-scoped reads, including `procedure_pseudo_code`
+ * Caller, callee and explicit-address reference walks omit `document`. Their
+ * observations are still Evidence. Other document-scoped reads, including `procedure_pseudo_code`
  * from `decompile_all`, already keep each body in the file-backed export.
  * Copying those bodies into the in-memory ledger would retain the export.
  */
 const DOCUMENTLESS_SOURCE_EVIDENCE_OPERATIONS: ReadonlySet<AnalysisOperation> =
-  new Set(["procedure_callers", "procedure_callees"]);
+  new Set(["procedure_callers", "procedure_callees", "xrefs"]);
 
 /**
  * Whether a source observation is safe to retain as Evidence.
- * A missing document selector blocks snapshot replay. Only caller and callee
- * walks stay in the ledger without one.
+ * A missing document selector blocks snapshot replay. Caller, callee and
+ * explicit-address reference walks stay in the ledger without one.
  */
 export const isSourceEvidenceRetainable = (
   operation: AnalysisOperation,
@@ -121,7 +121,8 @@ export const isSourceEvidenceRetainable = (
   (!CURSOR_DEFAULT_OPERATIONS.has(operation) ||
     typeof parameters.address === "string") &&
   descriptor?.effects.mutatesArtifact === false &&
-  (descriptor.cachePolicy === "snapshot" ||
+  (operation === "xrefs" ||
+    descriptor.cachePolicy === "snapshot" ||
     descriptor.effects.mayWriteFilesystem === false) &&
   descriptor.effects.changesPermissions === false;
 
@@ -133,6 +134,8 @@ export const isSnapshotCacheable = (
 ): descriptor is CapabilityDescriptor =>
   isSourceEvidenceRetainable(operation, descriptor, parameters) &&
   replayDocumentSelected(operation, parameters) &&
+  (descriptor.cachePolicy === "snapshot" ||
+    descriptor.effects.mayWriteFilesystem === false) &&
   descriptor.cachePolicy !== "live";
 
 /** Windows Ghidra must admit the selected source through its native snapshot owner. */
@@ -544,9 +547,14 @@ export class AnalysisSnapshotCache {
   }): void {
     const { target, profile, operation, parameters, execution } = input;
     this.select(target, profile);
-    // The snapshot format does not carry reference truncation; a replay would
-    // present a capped read as complete, so it is not recorded.
-    if (execution.referencesTruncated === true) return;
+    // The snapshot format does not carry reference truncation or classifications.
+    // Replaying either would lose the source facts used by a composed trace.
+    if (
+      execution.referencesTruncated === true ||
+      execution.referenceClassifications !== undefined ||
+      execution.referenceCoverageGaps !== undefined
+    )
+      return;
     // Provider snapshot entries do not carry execution source records. Replay
     // must not discard the source closure that supplies the parent's Evidence links.
     if ((execution.sourceEvidence?.length ?? 0) > 0) return;
