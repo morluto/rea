@@ -462,7 +462,8 @@ applicable. gzip, xz, and zstd containers are unsupported and name
 utility, then inspect the decompressed file. See
 [Linux kernel modules](kernel-modules.md).
 
-Inspect a CPython 3.7–3.13 `.pyc` header and nested marshal code objects
+Inspect a CPython 3.7–3.13 `.pyc` header and nested marshal code objects (3.14 and
+3.15 headers are qualified but their marshal layout is not pinned)
 without executing bytecode or installing Python:
 
 ```bash

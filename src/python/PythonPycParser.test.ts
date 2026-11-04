@@ -157,12 +157,50 @@ it.each([
   },
 );
 
-it("keeps a known newer CPython identity outside standalone decoder coverage", () => {
-  expect(() => parse(pythonPycHeader(3627))).toThrow(
+it.each([
+  { magic: 3627, version: "3.14" },
+  { magic: 3666, version: "3.15" },
+] as const)(
+  "qualifies the recognized CPython $version header without a pinned code layout",
+  ({ magic, version }) => {
+    // The header is still a packed 16-byte 3.7+ header, so its identity and flags are
+    // reported even though no marshal layout is pinned for this version.
+    expect(() => parse(pythonPycHeader(magic))).toThrow(
+      expect.objectContaining({
+        kind: "unsupported",
+        message: expect.stringContaining(
+          `CPython ${version} header is recognized`,
+        ),
+      }),
+    );
+    expect(() => parse(pythonPycHeader(magic))).toThrow(
+      expect.objectContaining({
+        message: expect.stringContaining(`magic ${magic}, 16-byte header`),
+      }),
+    );
+    expect(() => parse(pythonPycHeader(magic))).toThrow(
+      expect.objectContaining({
+        message: expect.stringContaining(
+          "no marshal code layout is pinned for that version",
+        ),
+      }),
+    );
+    expect(() => parse(pythonPycHeader(magic))).toThrow(
+      expect.objectContaining({
+        message: expect.stringContaining(
+          "marshal decoding is pinned for CPython 3.7",
+        ),
+      }),
+    );
+  },
+);
+
+it("does not qualify a magic outside the pinned identity table", () => {
+  expect(() => parse(pythonPycHeader(1))).toThrow(
     expect.objectContaining({
       kind: "unsupported",
       message: expect.stringContaining(
-        "outside the pinned CPython 3.7–3.13 table",
+        "is not a pinned CPython identity, so its header cannot be qualified",
       ),
     }),
   );
