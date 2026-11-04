@@ -40,6 +40,8 @@ export interface NativeSection {
   readonly link: number;
   readonly info: number;
   readonly entry_size: bigint;
+  /** ELF `sh_addralign`; 0 for PE, whose sections declare none. */
+  readonly alignment: bigint;
   readonly file_backed: boolean;
 }
 /** Raw relevant program declarations; consumers own load/dynamic admission. */
@@ -268,6 +270,7 @@ export function* readElfSectionDirectory(
         link: section.link,
         info: section.info,
         entry_size: section.entrySize,
+        alignment: section.alignment,
         file_backed:
           type !== 8 && declaredFileRange(fileSize, offset, size).file_backed,
       });
@@ -366,6 +369,7 @@ export function* readPeSectionDirectory(
       link: 0,
       info: 0,
       entry_size: 0n,
+      alignment: 0n,
       file_backed: declaredFileRange(
         fileSize,
         BigInt(row.offset),

@@ -105,5 +105,5 @@ export const readXtensaElfInfo = async (
     });
   const contents = await read(Number(info.offset), Number(info.size));
   if (contents === undefined) return truncated;
-  return parseXtensaInfo(contents, directory.little);
+  return parseXtensaInfo(contents, directory.little, info.alignment);
 };

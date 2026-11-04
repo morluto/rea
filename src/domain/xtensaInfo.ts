@@ -4,7 +4,11 @@ import type {
   XtensaInfoUndeclared,
   XtensaLiteralDeclaration,
 } from "./binaryTargetTypes.js";
-import { isElfNotePadding, readElfNoteRecord } from "./native/elfNoteLayout.js";
+import {
+  elfNoteAlignment,
+  isElfNotePadding,
+  readElfNoteRecord,
+} from "./native/elfNoteLayout.js";
 
 /** Bound the section read before its declared size can drive allocation; binutils writes 56 bytes. */
 export const XTENSA_INFO_MAX_BYTES = 4096;
@@ -12,8 +16,6 @@ export const XTENSA_INFO_MAX_BYTES = 4096;
 /** binutils `XTINFO_NAME` with its NUL (`XTINFO_NAMESZ` 12) and `XTINFO_TYPE`. */
 const XTINFO_NAME = Buffer.from("Xtensa_Info\0", "latin1");
 const XTINFO_TYPE = 1;
-/** GNU as and ld pad the note's name and descriptor to 4-byte words. */
-const XTINFO_ALIGNMENT = 4;
 /** A value as binutils prints it with `%d`. */
 const DECLARED_INTEGER = /^-?\d{1,10}$/u;
 
@@ -62,21 +64,19 @@ const declaration = <Declared>(
  * Interpret the contents of a `.xtensa.info` section. GNU as and ld write one
  * `Xtensa_Info` note whose descriptor is `USE_ABSOLUTE_LITERALS=%d\nABI=%d\n`.
  * Other keys are not interpreted. Notes are located by the shared ELF note
- * rules that `inspect_elf_notes` also applies.
+ * rules that `inspect_elf_notes` also applies, with the padding the section's
+ * declared `sh_addralign` selects; GNU as and ld write 4-byte words.
  */
 export const parseXtensaInfo = (
   contents: Buffer,
   littleEndian: boolean,
+  declaredAlignment: bigint,
 ): XtensaInfoDeclarations => {
+  const alignment = elfNoteAlignment(declaredAlignment);
   let descriptor: Buffer | undefined;
   let at = 0;
   while (at + 12 <= contents.length) {
-    const record = readElfNoteRecord(
-      contents,
-      at,
-      littleEndian,
-      XTINFO_ALIGNMENT,
-    );
+    const record = readElfNoteRecord(contents, at, littleEndian, alignment);
     if (!record.ok)
       return undeclaredXtensaInfo(
         unavailable(`.xtensa.info is malformed: ${record.error.message}`),
