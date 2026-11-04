@@ -256,10 +256,13 @@ describe("tool effects", () => {
   });
 });
 
-it("advertises signature inspection's temporary snapshot filesystem writes", () => {
-  expect(TOOL_EFFECTS.inspect_signature).toMatchObject({
-    writesFilesystem: true,
-    mutatesTarget: false,
-    launchesProcess: true,
-  });
-});
+it.each(["inspect_macho", "inspect_signature"] as const)(
+  "advertises %s temporary filesystem writes",
+  (operation) => {
+    expect(TOOL_EFFECTS[operation]).toMatchObject({
+      writesFilesystem: true,
+      mutatesTarget: false,
+      launchesProcess: true,
+    });
+  },
+);
