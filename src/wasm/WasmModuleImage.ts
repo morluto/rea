@@ -83,6 +83,7 @@ export interface WasmModuleImage {
   /** Imported plus defined functions. */
   readonly functionCount: number;
   readonly memory: WasmMemory | null;
+  /** Empty when table 0 is imported: its slots are unknown, not unfilled. */
   readonly table: WasmTableSlots;
   /** Table 0 comes from an import, so the host may fill slots no element segment writes. */
   readonly tableImported: boolean;
