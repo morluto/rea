@@ -3633,6 +3633,85 @@ process.stdin.on('data', (chunk) => {
   expect(manager.status(started.value.session_id)?.state).toBe("closed");
 });
 
+it("keeps the session usable after an oversized stream record is dropped", async () => {
+  const fake = createFakeSpawner((child, token, command) => {
+    if (command === "-gdb-set auto-load off") {
+      child.stdout.write(`${token}^done\n`);
+      return;
+    }
+    if (command === '-interpreter-exec console "big-stream"') {
+      child.stdout.write('~"before"\n~"' + "x".repeat(16 * 1024 * 1024 + 1));
+      child.stdout.write('"\n' + token + "^done\n(gdb)\n");
+      return;
+    }
+    if (command === '-interpreter-exec console "after-drop"') {
+      child.stdout.write(token + "^done\n(gdb)\n");
+      return;
+    }
+    if (command === "-list-thread-groups --recurse 1") {
+      child.stdout.write(`${token}^done,groups=[]\n`);
+      return;
+    }
+    if (command === "-gdb-exit") {
+      child.stdout.write(`${token}^done\n`);
+      return;
+    }
+    child.stdout.write(token + '^error,msg="unmodeled request"\n');
+  });
+  const manager = managerWithFakeSpawner(fake.spawnProcess);
+  const started = await expectGdbSessionStarted(manager);
+
+  const executed = await manager.execute(
+    started.value.session_id,
+    "big-stream",
+  );
+
+  expect(executed.ok).toBe(true);
+  if (executed.ok) {
+    expect(executed.value.result.mi).toMatch(/^\d+\^done$/);
+    expect(executed.value.result.console).toContain("before");
+    expect(executed.value.result.completion_status).toBe("complete");
+    expect(executed.value.result.output_truncated).toBe(true);
+    expect(executed.value.evidence.limitations.join(" ")).toContain(
+      "Retained MI records reached the 16777216 byte or 16384 record cap. This release has no runtime override. Output completeness is unknown.",
+    );
+  }
+  const second = await manager.execute(started.value.session_id, "after-drop");
+  expect(second.ok).toBe(true);
+  if (second.ok) expect(second.value.result.mi).toMatch(/^\d+\^done$/);
+  await expect(manager.close(started.value.session_id)).resolves.toMatchObject({
+    ok: true,
+  });
+});
+
+it("still stops the session for an oversized result record", async () => {
+  const manager = await managerFor(`
+process.stdout.write('(gdb)\\n');
+let input = '';
+process.stdin.setEncoding('utf8');
+process.stdin.on('data', (chunk) => {
+  input += chunk;
+  for (;;) {
+    const end = input.indexOf('\\n');
+    if (end < 0) break;
+    const line = input.slice(0, end); input = input.slice(end + 1);
+    const match = /^(\\d+)(.*)/.exec(line);
+    if (!match) continue;
+    if (match[2] === '-gdb-set auto-load off') process.stdout.write(match[1] + '^done\\n');
+    else if (match[2] === '-interpreter-exec console "bad-value"') process.stdout.write(match[1] + '^done,value="' + 'x'.repeat(16 * 1024 * 1024 + 1) + '"\\n');
+    else process.stdout.write(match[1] + '^error,msg="unmodeled request"\\n');
+  }
+});
+`);
+  const started = await expectGdbSessionStarted(manager);
+
+  const failed = await manager.execute(started.value.session_id, "bad-value");
+
+  expect(failed.ok).toBe(false);
+  if (!failed.ok)
+    expect(failed.error._tag).toBe("AnalysisCapabilityUnavailableError");
+});
+
 it("caps the number of MI records retained for a single command", async () => {
   const recordCount = 16_385;
   const manager = await managerFor(`
