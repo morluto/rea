@@ -184,9 +184,12 @@ export const SESSION_TOOL_CONTRACTS = [
     ),
     requiresActiveTarget: true,
   },
-  session(
-    "inspect_address_context",
-    "Inspect one explicit reproducible address for its analyzed name, containing procedure, regular and inline comments, and matching bookmarks. Each unsupported facet returns a typed unavailable outcome. A facet rejected for invalid input retains its canonical error and issues alongside any successful facets. Use xrefs, assembly, or pseudocode for those deeper views.",
-    addressContextInputSchema,
-  ),
+  {
+    ...session(
+      "inspect_address_context",
+      "Inspect one explicit reproducible address for its analyzed name, containing procedure, regular and inline comments, and matching bookmarks. Each unsupported facet returns a typed unavailable outcome. A facet rejected for invalid input retains its canonical error and issues alongside any successful facets. Use xrefs, assembly, or pseudocode for those deeper views.",
+      addressContextInputSchema,
+    ),
+    requiresActiveTarget: true,
+  },
 ] as const satisfies readonly ToolContract[];

@@ -284,6 +284,17 @@ to `/absolute/view-request.json`, then run
 `rea inspect-analysis-view /absolute/view-request.json --json`. This also reads
 pre-summary source records without changing their identity; no live provider is started.
 
+Unavailable or inapplicable native collections keep `items.rows: null` and
+report `coverage: {"status":"unavailable","examined":0,"total":null,"next_offset":null,"exhausted":false}`.
+This applies to unrecorded `native-load-image` checks/sections and inapplicable
+`native-context` result limitations. Their total is unknown; no continuation is
+offered. Stop paging that collection and inspect the returned unknowns rather
+than treating it as an observed empty set or retrying a null offset. Recorded
+empty collections, empty selections and offsets past the end retain numeric
+totals and exhausted page coverage. Clients upgrading from the earlier
+zero-total representation must handle the new `unavailable` status and nullable
+total; historical saved views remain valid.
+
 `procedure_address`, `procedure_callees`, `procedure_callers`,
 `resolve_containing_procedure` and `get_call_graph` also accept `detail: "summary"`
 (complete remains the default). The summary includes the first 64 recorded
@@ -512,10 +523,12 @@ result's `_meta`, whether the call succeeded or failed:
 ```
 
 The marker is declared once per tool contract (`returnsTargetContent`) and is
-on by default: `export_evidence_bundle`, `record_unknown`, `search_guidance`,
-and `read_guidance_section` omit it. The first two contain only REA session
-state or caller-supplied values; the guidance tools return REA's own installed
-documentation, not text from an analysis target. Tools whose results or errors
+on by default: `inspect_analysis_settings`, `update_analysis_settings`,
+`export_evidence_bundle`, `record_unknown`, `guided_workflows`,
+`search_guidance`, and `read_guidance_section` omit it. The first four contain
+only REA session state or caller-supplied values; the workflow and guidance
+tools return REA's own installed workflows and documentation, not text from an
+analysis target. Tools whose results or errors
 can include provider, launcher, or device output stay marked, including
 `binary_session` (provider failure
 reasons and availability diagnostics), `close_binary` (provider cleanup
@@ -1574,6 +1587,49 @@ support for omitted historical values.
 known and differ. If only one value is known, storage comparison is unknown;
 when both are omitted, storage is not compared.
 
+<!-- BEGIN:compare-artifacts:compared-format-metadata-kinds -->
+
+`compare_artifacts` also compares the declarations in the `format_metadata`
+of UnityFS members (`unityfs-entry`), PyInstaller entries
+(`pyinstaller-entry`), Node SEA members (`node-sea-entry`),
+ESP image segments (`esp-image-segment`), DfuSe elements (`dfuse-element`),
+ESP flash partitions (`esp-flash-partition`) and FIT images (`fit-image`);
+each format's guide names the compared fields. A changed declaration is a
+metadata change, including when content is unavailable. A declaration that
+only one side records, or that the other side records as another kind, is
+unknown and adds a limitation. A field that either side could not read is
+unknown, and the other fields still compare. Other kinds are not compared:
+their fields record layout, come from the bytes of the artifact or its
+container or from caller options that identify the target, or repeat
+occurrence fields, except Godot PCK source paths, which
+[Godot PCK archives](godot-pck.md) explains.
+
+<!-- END:compare-artifacts:compared-format-metadata-kinds -->
+
+Every occurrence records `entry_kind`, `executable` and `encrypted`. A
+different entry kind, `encrypted` value or occurrence limitation text is a
+`metadata` difference, and a different `executable` value is an `executable`
+difference. A symlink's own permission bits never mark it `executable`,
+because running a symlink runs its target. When either side's content is
+unavailable, `compare_artifacts` lists the differences that it can still
+observe with `availability`, and the path compares `unknown` unless a
+declaration changed. REA does not read symlink targets or encrypted bytes,
+so a non-executable file that becomes a symlink compares `unknown` in
+`metadata` and `availability`, and so does a member that becomes encrypted.
+Declared sizes do not count without content: REA compares observed sizes.
+For a node-less metadata record with a compared declaration, only that
+declaration, these fields and any recorded ASAR storage decide the
+comparison, so a record that becomes encrypted compares `changed` in
+`metadata`. Such a record adds `availability` only when a declaration is
+unknown. REA does not compare the record's unread payload or its
+limitations, which describe the observation.
+
+When either side has no content, `compare_artifacts` also compares the
+occurrences' `declared_integrity` claims, which Godot PCK and ASAR readers
+record. Claims of one algorithm that differ add `metadata`. REA cannot verify
+them, so they do not make the path `changed`, and equal claims add nothing.
+With content on both sides, the observed bytes decide.
+
 POSIX letter-colon names such as `a:b` remain valid logical
 names; Windows extraction refuses names its filesystem cannot materialize.
 
@@ -1717,7 +1773,9 @@ JSON Schema:
 
 - Annotation prose leaves the advertised form: nested property descriptions,
   literal examples, defaults, and titles are dropped. The root keeps its
-  description because it states the accepted input groups.
+  description because it states the accepted input groups. A root `detail`
+  property keeps its description because it selects between complete Evidence
+  and a bounded summary.
 - Schema-local references are inlined within the budget. Kimi Code expands
   references before sending provider requests, so sharing definitions cannot
   establish the provider-facing size. Expansion stops at the budget before

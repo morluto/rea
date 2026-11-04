@@ -319,13 +319,23 @@ describe("Ghidra snapshot profile admission", () => {
     },
     {
       parameter: "instruction_references",
-      current: "exact-address-incoming-without-synthetic-entry-v2",
+      current: "exact-address-incoming-without-synthetic-entry-v3",
+      legacy: "exact-address-incoming-without-synthetic-entry-v2",
+    },
+    {
+      parameter: "instruction_references",
+      current: "exact-address-incoming-without-synthetic-entry-v3",
       legacy: "exact-address-incoming-v1",
     },
     {
       parameter: "instruction_references",
-      current: "exact-address-incoming-without-synthetic-entry-v2",
+      current: "exact-address-incoming-without-synthetic-entry-v3",
       legacy: undefined,
+    },
+    {
+      parameter: "function_references",
+      current: "complete-body-and-entry-reference-manager-v3",
+      legacy: "complete-body-and-entry-reference-manager-v2",
     },
     {
       parameter: "call_relationship_coverage",
