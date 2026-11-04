@@ -766,31 +766,6 @@ it("rejects a certificate missing subjectPublicKeyInfo or signatureValue", () =>
   ).toThrow(/trailing fields/u);
 });
 
-it("rejects a certificate whose signatureAlgorithm differs from its TBS signature", () => {
-  const name = directoryName(der(0x0c, Buffer.from("Fixture")));
-  const certificate = (outer: Buffer) =>
-    readAsn1(
-      derSeq(
-        derSeq(derInt(1), SHA256_ALG, name, validity, name, spki),
-        outer,
-        der(0x03, Buffer.from([0])),
-      ),
-    );
-  const sha1 = derSeq(der(0x06, Buffer.from([0x2b, 0x0e, 0x03, 0x02, 0x1a])));
-  // The same OID with explicit NULL parameters is still a different identifier.
-  const sha256WithNull = der(
-    0x30,
-    Buffer.concat([SHA256_ALG.subarray(2), der(0x05, Buffer.alloc(0))]),
-  );
-  for (const outer of [sha1, sha256WithNull])
-    expect(() => parseCertificate(certificate(outer))).toThrow(
-      /signatureAlgorithm differs from the TBSCertificate signature/u,
-    );
-  expect(
-    parseCertificate(certificate(SHA256_ALG)).signature_algorithm_oid,
-  ).toBe("2.16.840.1.101.3.4.2.1");
-});
-
 it("rejects a UTF8String name that is not valid UTF-8", () => {
   const certificate = readAsn1(
     namedCertificate(
@@ -1060,3 +1035,28 @@ it.each([
     expect(certificate.subject.attributes[0]?.value).toBe(value);
   },
 );
+
+it("rejects a certificate whose signatureAlgorithm differs from its TBS signature", () => {
+  const name = directoryName(der(0x0c, Buffer.from("Fixture")));
+  const certificate = (outer: Buffer) =>
+    readAsn1(
+      derSeq(
+        derSeq(derInt(1), SHA256_ALG, name, validity, name, spki),
+        outer,
+        der(0x03, Buffer.from([0])),
+      ),
+    );
+  const sha1 = derSeq(der(0x06, Buffer.from([0x2b, 0x0e, 0x03, 0x02, 0x1a])));
+  // The same OID with explicit NULL parameters is still a different identifier.
+  const sha256WithNull = der(
+    0x30,
+    Buffer.concat([SHA256_ALG.subarray(2), der(0x05, Buffer.alloc(0))]),
+  );
+  for (const outer of [sha1, sha256WithNull])
+    expect(() => parseCertificate(certificate(outer))).toThrow(
+      /signatureAlgorithm differs from the TBSCertificate signature/u,
+    );
+  expect(
+    parseCertificate(certificate(SHA256_ALG)).signature_algorithm_oid,
+  ).toBe("2.16.840.1.101.3.4.2.1");
+});
