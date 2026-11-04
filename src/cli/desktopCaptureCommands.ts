@@ -6,7 +6,10 @@ import type { Logger } from "pino";
 import { captureDesktopApplication } from "../application/desktop/DesktopApplicationCapture.js";
 import type { DesktopStateReaders } from "../application/desktop/DesktopApplicationState.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
-import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import type { Evidence } from "../domain/evidence.js";
+import { err, ok } from "../domain/result.js";
+import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
+import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { logCliCommand } from "../cliLogging.js";
@@ -104,13 +107,17 @@ export const parseSessionRequest = (line: string): SessionRequest => {
 };
 
 /**
- * Run with SQLite and dconf readers for the state view and the export. They
- * are loaded here, so registering the command catalog never loads them.
+ * Run a desktop operation with SQLite and dconf readers, finishing through
+ * the shared command owner so the result, cancellation and the SQLite
+ * service's cleanup are all kept. The readers load here, so registering the
+ * command catalog never loads them.
  */
-const withStateReaders = async <Value>(
+const withStateReaders = async (
   environment: NodeJS.ProcessEnv,
-  run: (readers: DesktopStateReaders) => Promise<Value>,
-): Promise<Value> => {
+  signal: AbortSignal,
+  operation: string,
+  run: (readers: DesktopStateReaders) => Promise<Evidence | AnalysisError>,
+) => {
   const [
     { createSqliteDatabaseService },
     { readSqliteStateView },
@@ -121,16 +128,21 @@ const withStateReaders = async <Value>(
     import("../desktop/DconfDatabaseReader.js"),
   ]);
   const sqlite = createSqliteDatabaseService(environment);
-  try {
-    return await run({
-      sqlite: (database, writeAheadLog, signal) =>
-        readSqliteStateView(sqlite, database, writeAheadLog, signal),
-      dconf: (database, signal) =>
-        dumpDconfDatabase(database, environment, signal),
-    });
-  } finally {
-    await sqlite.close();
-  }
+  return finishAnalysisCommand(
+    async () => {
+      const result = await run({
+        sqlite: (database, writeAheadLog, readSignal) =>
+          readSqliteStateView(sqlite, database, writeAheadLog, readSignal),
+        dconf: (database, readSignal) =>
+          dumpDconfDatabase(database, environment, readSignal),
+      });
+      return result instanceof AnalysisError ? err(result) : ok(result);
+    },
+    sqlite,
+    "rea-desktop",
+    operation,
+    signal,
+  ).then(projectCliAnalysisResult);
 };
 
 /** Register the export of a capture folder as a computer app bundle. */
@@ -164,23 +176,21 @@ const registerDesktopExportCommand = (
           async () => {
             const { exportDesktopApplication } =
               await import("../application/desktop/DesktopApplicationExport.js");
-            const result = await withStateReaders(environment, (readers) =>
-              exportDesktopApplication(
-                {
-                  capture: absoluteCallerPath(args.capture),
-                  directory: absoluteCallerPath(args.directory),
-                  name: options.name,
-                },
-                readers,
-                signal,
-              ),
+            return withStateReaders(
+              environment,
+              signal,
+              "export_desktop_application",
+              (readers) =>
+                exportDesktopApplication(
+                  {
+                    capture: absoluteCallerPath(args.capture),
+                    directory: absoluteCallerPath(args.directory),
+                    name: options.name,
+                  },
+                  readers,
+                  signal,
+                ),
             );
-            return result instanceof AnalysisError
-              ? {
-                  error: "Desktop export failed",
-                  ...projectAnalysisError(result),
-                }
-              : result;
           },
         ),
       ),
@@ -209,19 +219,17 @@ const registerDesktopStateCommand = (
           async () => {
             const { inspectDesktopApplicationState } =
               await import("../application/desktop/DesktopApplicationState.js");
-            const result = await withStateReaders(environment, (readers) =>
-              inspectDesktopApplicationState(
-                absoluteCallerPath(args.capture),
-                readers,
-                signal,
-              ),
+            return withStateReaders(
+              environment,
+              signal,
+              "inspect_desktop_application_state",
+              (readers) =>
+                inspectDesktopApplicationState(
+                  absoluteCallerPath(args.capture),
+                  readers,
+                  signal,
+                ),
             );
-            return result instanceof AnalysisError
-              ? {
-                  error: "Desktop state view failed",
-                  ...projectAnalysisError(result),
-                }
-              : result;
           },
         ),
       ),

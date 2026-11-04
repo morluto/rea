@@ -11,6 +11,8 @@ import {
   DESKTOP_PROVIDER,
 } from "./DesktopCaptureRefusals.js";
 
+export { change, checkpoint, retained };
+
 /** A synthetic capture of a notes app: a settings key file, a document and a SQLite database. */
 export const HOME = "/home/ada";
 const sha256 = (text: string) =>
@@ -163,6 +165,7 @@ export const capture = (): DesktopApplicationCapture => ({
 export const writeCaptureFolder = async (
   result: DesktopApplicationCapture,
   operation = DESKTOP_OPERATION,
+  extraContent: readonly string[] = [],
 ) => {
   const folder = await createTestTempDirectory("desktop-state-");
   await mkdir(join(folder, "content"));
@@ -172,6 +175,7 @@ export const writeCaptureFolder = async (
     "milk\n",
     "SQLite format 3\0v1",
     "SQLite format 3\0v2",
+    ...extraContent,
   ])
     await writeFile(join(folder, "content", sha256(text)), text);
   const evidence = createEvidence(undefined, DESKTOP_PROVIDER, {
@@ -188,8 +192,11 @@ export const writeCaptureFolder = async (
 
 /** A SQLite reader that reports one row per retained version's last byte. */
 export const readers: DesktopStateReaders = {
-  sqlite: async (database) => {
-    const version = (await readFile(database, "latin1")).slice(-2);
+  sqlite: async (database, writeAheadLog) => {
+    // A staged write-ahead log, when present, decides the version instead.
+    const version = (await readFile(writeAheadLog ?? database, "latin1")).slice(
+      -2,
+    );
     return {
       ok: true,
       view: {

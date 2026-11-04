@@ -65,3 +65,38 @@ describe("views", () => {
     expect(xmlView('<!DOCTYPE a [<!ENTITY e "x">]><a>&e;</a>')).toBeUndefined();
   });
 });
+
+describe("captured data safety and fidelity", () => {
+  it("keeps a __proto__ group as plain data without touching Object.prototype", () => {
+    const groups = keyfileView("[__proto__]\npolluted=yes\n");
+    expect(Object.keys(groups)).toEqual(["__proto__"]);
+    expect(groups["__proto__"]?.polluted).toBe("yes");
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+  });
+
+  it("keeps XML text exactly and preserved whitespace", () => {
+    expect(
+      xmlView('<a><b> x </b><c xml:space="preserve">  </c><d>\n  </d></a>'),
+    ).toEqual({
+      root: {
+        name: "a",
+        attributes: {},
+        children: [
+          { name: "b", attributes: {}, children: [" x "] },
+          {
+            name: "c",
+            attributes: { "xml:space": "preserve" },
+            children: ["  "],
+          },
+          { name: "d", attributes: {}, children: [] },
+        ],
+      },
+      truncated: false,
+    });
+  });
+
+  it("marks a tree cut at the depth limit as truncated", () => {
+    const deep = `${"<n>".repeat(70)}${"</n>".repeat(70)}`;
+    expect(xmlView(deep)).toMatchObject({ truncated: true });
+  });
+});

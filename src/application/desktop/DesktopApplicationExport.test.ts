@@ -26,7 +26,8 @@ describe("exportDesktopApplication", () => {
     );
 
     if (result instanceof Error) throw result;
-    expect(result).toMatchObject({
+    expect(result.operation).toBe("export_desktop_application");
+    expect(result.normalized_result).toMatchObject({
       environment: "notes",
       paths: [".config/notes", ".local/share/notes", "Documents"],
       seed_files: [".config/notes/settings.ini", ".local/share/notes/notes.db"],

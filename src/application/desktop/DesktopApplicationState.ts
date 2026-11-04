@@ -1,6 +1,8 @@
-import { createHash } from "node:crypto";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
 import {
@@ -16,25 +18,33 @@ import {
   decodeStateText,
   detectStateFormat,
   keyfileView,
+  plainRecord,
   textView,
   xmlView,
-  type DesktopStateFormat,
 } from "../../domain/desktop/stateFormats.js";
 import {
   applicationNames,
   isApplicationDconfGroup,
+  roleFacts,
   stateReasons,
   stateRole,
 } from "../../domain/desktop/stateRoles.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import { safeParseEvidence } from "../../domain/evidenceValidation.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
+import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { safeParseJson } from "../../domain/safeJson.js";
 import { describeValidationFailure } from "../../domain/validationFailure.js";
-import { withOwnedRegularFile } from "../../filesystem/OwnedRegularFile.js";
-import { readStableFileBytes } from "../../filesystem/readStableFileBytes.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import { readJsonFile } from "../JsonFiles.js";
+import { RetainedContent } from "./DesktopRetainedContent.js";
+import {
+  baselineDigests,
+  digestsAt,
+  indexChanges,
+  pathVersions,
+  statePaths,
+  type ChangeIndex,
+} from "./DesktopStateVersions.js";
 import {
   DESKTOP_OPERATION,
   DESKTOP_PROVIDER,
@@ -42,7 +52,6 @@ import {
 } from "./DesktopCaptureRefusals.js";
 
 const OPERATION = "inspect_desktop_application_state";
-const MAX_VIEW_BYTES = 64 * 1024 * 1024;
 
 /** Readers for formats that need a tool or worker, supplied by composition. */
 export interface DesktopStateReaders {
@@ -58,6 +67,7 @@ export interface DesktopStateReaders {
 }
 
 type Version = DesktopStatePath["versions"][number];
+type Change = DesktopStatePath["changes"][number];
 
 const inputError = (userMessage: string, remediationAction: string) =>
   new AnalysisInputError(OPERATION, { userMessage, remediationAction }, [
@@ -110,82 +120,19 @@ export const readDesktopCapture = async (
   }
 };
 
-/** Retained bytes, checked against the digest that names them. */
-export const readRetainedContent = async (
-  folder: string,
-  sha256: string,
-  signal: AbortSignal | undefined,
-): Promise<Buffer | undefined> => {
-  const path = join(folder, "content", sha256);
-  const options = {
-    symlinks: "reject" as const,
-    ...(signal === undefined ? {} : { signal }),
-  };
-  const bytes = await withOwnedRegularFile(path, options, ({ handle }) =>
-    readStableFileBytes(handle, path, MAX_VIEW_BYTES, options),
-  ).catch(() => undefined);
-  if (bytes === undefined) return undefined;
-  return createHash("sha256").update(bytes).digest("hex") === sha256
-    ? bytes
-    : undefined;
-};
-
-/** Versions of one path: its baseline, then its state after each change. */
-const pathVersions = (
-  capture: DesktopApplicationCapture,
-  path: string,
-): Version[] => {
-  const [baseline, ...later] = capture.state.checkpoints;
-  const retained = baseline?.retained.find((file) => file.path === path);
-  const firstChange = later
-    .flatMap((checkpoint) => checkpoint.changes)
-    .find((change) => change.path === path);
-  const versions: Version[] = [
-    {
-      checkpoint: baseline?.name ?? "baseline",
-      present: retained !== undefined || firstChange?.kind !== "created",
-      sha256: retained?.sha256 ?? null,
-      view: null,
-      view_error: null,
-    },
-  ];
-  for (const checkpoint of later)
-    for (const change of checkpoint.changes)
-      if (change.path === path)
-        versions.push({
-          checkpoint: checkpoint.name,
-          present: change.after?.type === "file",
-          sha256: change.after?.sha256 ?? null,
-          view: null,
-          view_error: null,
-        });
-  return versions;
-};
-
-/** Files the state view covers: retained at baseline or changed later. */
-const statePaths = (capture: DesktopApplicationCapture): readonly string[] => {
-  const paths = new Set<string>();
-  for (const checkpoint of capture.state.checkpoints) {
-    for (const file of checkpoint.retained) paths.add(file.path);
-    for (const change of checkpoint.changes)
-      if (change.before?.type === "file" || change.after?.type === "file")
-        paths.add(change.path);
-  }
-  return [...paths].sort();
-};
-
 interface ViewContext {
-  readonly folder: string;
+  readonly content: RetainedContent;
   readonly readers: DesktopStateReaders;
   readonly names: ReadonlySet<string>;
   readonly signal: AbortSignal | undefined;
-  /** Retained write-ahead logs by database path, latest version first. */
-  readonly writeAheadLogs: ReadonlyMap<string, string>;
+  readonly changes: ChangeIndex;
+  readonly baseline: ReadonlyMap<string, string>;
+  readonly checkpoints: number;
 }
 
 const dconfView = (text: string, names: ReadonlySet<string>) => {
   const groups = keyfileView(text);
-  const application: Record<string, JsonValue> = {};
+  const application = plainRecord<JsonValue>();
   const others: string[] = [];
   for (const [group, keys] of Object.entries(groups))
     if (isApplicationDconfGroup(group, names)) application[group] = keys;
@@ -193,79 +140,135 @@ const dconfView = (text: string, names: ReadonlySet<string>) => {
   return { groups: application, other_groups: others };
 };
 
-/** Read one retained version into JSON for its format. */
-const viewOf = async (
-  format: DesktopStateFormat,
-  path: string,
-  bytes: Buffer,
+/** Run a reader on verified bytes written to a private directory. */
+const withStaged = async <Value>(
+  files: readonly { readonly name: string; readonly bytes: Buffer }[],
+  read: (paths: readonly string[]) => Promise<Value>,
+): Promise<Value> => {
+  const directory = await mkdtemp(join(tmpdir(), "rea-desktop-state-"));
+  try {
+    const paths: string[] = [];
+    for (const file of files) {
+      const path = join(directory, file.name);
+      await writeFile(path, file.bytes, { mode: 0o600, flag: "wx" });
+      paths.push(path);
+    }
+    return await read(paths);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+};
+
+type ViewOutcome =
+  | { readonly view: JsonValue; readonly error: null }
+  | { readonly view: null; readonly error: string };
+
+const failed = (error: string): ViewOutcome => ({ view: null, error });
+
+/** One retained version's verified bytes, with its format already detected. */
+interface ReadInput {
+  readonly path: string;
+  readonly bytes: Buffer;
+  readonly version: Version;
+}
+
+const toolView = async (
+  { path, bytes, version }: ReadInput,
   context: ViewContext,
-): Promise<{ view: JsonValue | null; error: string | null }> => {
-  const text = decodeStateText(bytes) ?? "";
-  const content = (sha: string) => join(context.folder, "content", sha);
-  switch (format) {
+): Promise<ViewOutcome> => {
+  if (version.format === "dconf")
+    return withStaged([{ name: "user", bytes }], async ([database]) => {
+      const dump = await context.readers.dconf(database ?? "", context.signal);
+      return dump.ok
+        ? { view: dconfView(dump.text, context.names), error: null }
+        : failed(dump.error);
+    });
+  const logDigest = digestsAt(
+    `${path}-wal`,
+    context.changes,
+    context.baseline,
+    context.checkpoints,
+  )[version.checkpoint_index];
+  const log =
+    logDigest === null || logDigest === undefined
+      ? undefined
+      : await context.content.read(logDigest, context.signal);
+  const staged = [
+    { name: "state.db", bytes },
+    ...(log === undefined ? [] : [{ name: "state.db-wal", bytes: log }]),
+  ];
+  return withStaged(staged, async ([database, wal]) => {
+    const read = await context.readers.sqlite(
+      database ?? "",
+      wal,
+      context.signal,
+    );
+    return read.ok ? { view: read.view, error: null } : failed(read.error);
+  });
+};
+
+/** Read one retained version into JSON for its own format. */
+const viewOf = async (
+  input: ReadInput,
+  context: ViewContext,
+): Promise<ViewOutcome> => {
+  const text = decodeStateText(input.bytes) ?? "";
+  switch (input.version.format ?? "binary") {
     case "text":
       return { view: textView(text), error: null };
     case "json": {
       const parsed = safeParseJson(text);
       return parsed.ok
         ? { view: parsed.value as JsonValue, error: null }
-        : { view: null, error: parsed.error };
+        : failed(parsed.error);
     }
     case "keyfile":
       return { view: { groups: keyfileView(text) }, error: null };
     case "xml": {
       const tree = xmlView(text);
       return tree === undefined
-        ? { view: null, error: "not well-formed XML, or it declares a DOCTYPE" }
+        ? failed("not well-formed XML, or it declares a DOCTYPE")
         : { view: tree, error: null };
     }
-    case "dconf": {
-      const sha = createHash("sha256").update(bytes).digest("hex");
-      const dump = await context.readers.dconf(content(sha), context.signal);
-      return dump.ok
-        ? { view: dconfView(dump.text, context.names), error: null }
-        : { view: null, error: dump.error };
-    }
-    case "sqlite": {
-      const sha = createHash("sha256").update(bytes).digest("hex");
-      const wal = context.writeAheadLogs.get(path);
-      const read = await context.readers.sqlite(
-        content(sha),
-        wal === undefined ? undefined : content(wal),
-        context.signal,
-      );
-      return read.ok
-        ? { view: read.view, error: null }
-        : { view: null, error: read.error };
-    }
+    case "dconf":
+    case "sqlite":
+      return toolView(input, context);
     case "binary":
       return { view: null, error: null };
   }
 };
 
-const changeBetween = (
-  format: DesktopStateFormat | null,
-  before: Version,
-  after: Version,
-): DesktopStatePath["changes"][number] => {
-  const empty = {
-    added: [],
-    removed: [],
-    changed: [],
-    added_count: 0,
-    removed_count: 0,
-    changed_count: 0,
+const EMPTY_CHANGE = {
+  added: [],
+  removed: [],
+  changed: [],
+  added_count: 0,
+  removed_count: 0,
+  changed_count: 0,
+  complete: true,
+};
+
+const changeBetween = (before: Version, after: Version): Change => {
+  const ends = {
+    from_index: before.checkpoint_index,
+    to_index: after.checkpoint_index,
+    from: before.checkpoint,
+    to: after.checkpoint,
   };
-  const ends = { from: before.checkpoint, to: after.checkpoint };
-  if (!before.present) return { ...ends, kind: "created", ...empty };
-  if (!after.present) return { ...ends, kind: "deleted", ...empty };
-  if (format === null || before.view === null || after.view === null)
-    return {
-      ...ends,
-      kind: format === "binary" ? "content" : "unreadable",
-      ...empty,
-    };
-  const difference = diffStateViews(format, before.view, after.view);
+  if (!before.present) return { ...ends, kind: "created", ...EMPTY_CHANGE };
+  if (!after.present) return { ...ends, kind: "deleted", ...EMPTY_CHANGE };
+  if (
+    before.view_error !== null ||
+    after.view_error !== null ||
+    before.format === null ||
+    after.format === null
+  )
+    return { ...ends, kind: "unreadable", ...EMPTY_CHANGE };
+  if (before.format !== after.format)
+    return { ...ends, kind: "format", ...EMPTY_CHANGE };
+  if (before.format === "binary")
+    return { ...ends, kind: "content", ...EMPTY_CHANGE };
+  const difference = diffStateViews(before.format, before.view, after.view);
   return {
     ...ends,
     ...difference,
@@ -275,80 +278,47 @@ const changeBetween = (
   };
 };
 
-/** The latest retained write-ahead log of each database path. */
-const writeAheadLogs = (
-  capture: DesktopApplicationCapture,
-): ReadonlyMap<string, string> => {
-  const logs = new Map<string, string>();
-  for (const checkpoint of capture.state.checkpoints)
-    for (const file of checkpoint.retained)
-      if (file.path.endsWith("-wal"))
-        logs.set(file.path.slice(0, -"-wal".length), file.sha256);
-  return logs;
-};
-
-const describePath = async (
-  capture: DesktopApplicationCapture,
+const readVersion = async (
+  version: Version,
   path: string,
   context: ViewContext,
-): Promise<DesktopStatePath> => {
-  const versions = pathVersions(capture, path);
-  let format: DesktopStateFormat | null = null;
-  for (const version of versions) {
-    context.signal?.throwIfAborted();
-    if (!version.present || version.sha256 === null) {
-      if (version.present) version.view_error = "content not retained";
-      continue;
-    }
-    const bytes = await readRetainedContent(
-      context.folder,
-      version.sha256,
-      context.signal,
-    );
-    if (bytes === undefined) {
-      version.view_error =
-        "retained content is missing or does not match its digest";
-      continue;
-    }
-    format ??= detectStateFormat(path, bytes);
-    const { view, error } = await viewOf(format, path, bytes, context);
-    version.view = view;
-    version.view_error = error;
+): Promise<void> => {
+  context.signal?.throwIfAborted();
+  if (!version.present) return;
+  if (version.sha256 === null) {
+    version.view_error = "content not retained";
+    return;
   }
-  const dconfKeys =
-    format === "dconf" &&
-    versions.some((version) => {
-      const view = version.view;
-      return (
-        typeof view === "object" &&
-        view !== null &&
-        !Array.isArray(view) &&
-        typeof view.groups === "object" &&
-        view.groups !== null &&
-        Object.keys(view.groups).length > 0
-      );
-    });
-  const reasons = [...stateReasons(capture, path, dconfKeys)];
-  const home = capture.host.home;
-  return {
-    path,
-    home_path: path.startsWith(`${home}/`) ? path.slice(home.length + 1) : null,
-    role: stateRole(reasons),
-    reasons,
-    format,
-    versions,
-    changes: versions
-      .slice(1)
-      .map((version, index) =>
-        changeBetween(format, versions[index] ?? version, version),
-      ),
-  };
+  const bytes = await context.content.read(version.sha256, context.signal);
+  if (bytes === undefined) {
+    version.view_error =
+      "retained content is missing or does not match its digest";
+    return;
+  }
+  version.format = detectStateFormat(path, bytes);
+  const outcome = await viewOf({ path, bytes, version }, context);
+  version.view = outcome.view;
+  version.view_error = outcome.error;
+};
+
+const hasDconfGroups = (version: Version): boolean => {
+  const view = version.view;
+  return (
+    version.format === "dconf" &&
+    typeof view === "object" &&
+    view !== null &&
+    !Array.isArray(view) &&
+    typeof view.groups === "object" &&
+    view.groups !== null &&
+    Object.keys(view.groups).length > 0
+  );
 };
 
 const STATE_LIMITATIONS = [
   "Roles are inferred from state directories, open files, window titles, selected paths and dconf key names; a path can be misattributed.",
   "Views cover retained content only; a file that existed before the capture but outside the content roots has no starting view.",
-  "SQLite views list at most 500 rows of at most 64 ordinary tables; dconf views keep only groups whose path names the application.",
+  "SQLite views list at most 500 rows of at most 64 ordinary tables, text views at most 5,000 lines and XML views at most 5,000 nodes; changes between truncated views are marked incomplete.",
+  "dconf views keep only groups whose path names the application.",
 ];
 
 /** Read a capture folder into the application's state view. */
@@ -359,16 +329,59 @@ const inspectState = async (
 ): Promise<Evidence> => {
   const { evidence, capture } = await readDesktopCapture(folder, signal);
   const names = applicationNames(capture);
+  const facts = roleFacts(capture);
+  const changes = indexChanges(capture);
+  const content = new RetainedContent(folder);
   const context: ViewContext = {
-    folder,
+    content,
     readers,
     names,
     signal,
-    writeAheadLogs: writeAheadLogs(capture),
+    changes,
+    baseline: baselineDigests(capture),
+    checkpoints: capture.state.checkpoints.length,
   };
   const paths: DesktopStatePath[] = [];
-  for (const path of statePaths(capture))
-    paths.push(await describePath(capture, path, context));
+  for (const path of statePaths(capture, changes)) {
+    const versions = pathVersions(capture, path, changes, context.baseline);
+    for (const version of versions) await readVersion(version, path, context);
+    const reasons = [
+      ...stateReasons(
+        facts,
+        path,
+        (changes.get(path) ?? []).map((entry) => entry.change),
+        versions.some(hasDconfGroups),
+      ),
+    ];
+    const home = capture.host.home;
+    paths.push({
+      path,
+      home_path: path.startsWith(`${home}/`)
+        ? path.slice(home.length + 1)
+        : null,
+      role: stateRole(reasons),
+      reasons,
+      format:
+        versions.findLast((version) => version.format !== null)?.format ?? null,
+      versions,
+      changes: versions
+        .slice(1)
+        .map((version, index) =>
+          changeBetween(versions[index] ?? version, version),
+        ),
+    });
+  }
+  await content.close().catch((cause: unknown) => {
+    throw new ProviderAdapterError(DESKTOP_PROVIDER.id, OPERATION, {
+      cause,
+      userMessage:
+        "A retained file read for the state view could not be closed.",
+      cleanup: {
+        reason: "a retained file's handle could not be closed after a retry",
+        resources: [folder],
+      },
+    });
+  });
   const result: DesktopApplicationState = {
     capture: {
       evidence_id: evidence.evidence_id,
@@ -376,6 +389,8 @@ const inspectState = async (
       checkpoints: capture.state.checkpoints.map(
         (checkpoint) => checkpoint.name,
       ),
+      limitations: capture.limitations,
+      omitted_content: capture.state.omitted_content,
     },
     application_names: [...names],
     paths,
@@ -388,7 +403,7 @@ const inspectState = async (
     result,
     confidence: "inferred",
     authority: "analyst-inference",
-    limitations: STATE_LIMITATIONS,
+    limitations: [...STATE_LIMITATIONS, ...capture.limitations],
   });
 };
 

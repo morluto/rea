@@ -26,15 +26,19 @@ import {
   type DesktopApplicationState,
 } from "../../domain/desktop/desktopState.js";
 import { isWithinAny } from "../../domain/desktop/desktopStateDiff.js";
+import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
 import { isPortableBundleName } from "../environment/environmentBundle.js";
 import {
   inspectDesktopApplicationState,
   readDesktopCapture,
-  readRetainedContent,
   type DesktopStateReaders,
 } from "./DesktopApplicationState.js";
-import { desktopOperationFailure } from "./DesktopCaptureRefusals.js";
+import {
+  DESKTOP_PROVIDER,
+  desktopOperationFailure,
+} from "./DesktopCaptureRefusals.js";
+import { RetainedContent } from "./DesktopRetainedContent.js";
 
 const OPERATION = "export_desktop_application";
 
@@ -219,7 +223,7 @@ const runExport = async (
   request: DesktopExportRequest,
   readers: DesktopStateReaders,
   signal: AbortSignal | undefined,
-): Promise<DesktopExportResult> => {
+): Promise<DesktopExportResult & { readonly capture_evidence_id: string }> => {
   const { evidence, capture } = await readDesktopCapture(
     request.capture,
     signal,
@@ -234,6 +238,7 @@ const runExport = async (
     stateEvidence.normalized_result,
   );
   const plan = planExport(request, capture, state, evidence.evidence_id);
+  const content = new RetainedContent(request.capture);
   const environment = `envs/${plan.name}`;
   const text = (path: string, content: string) => ({
     path,
@@ -252,7 +257,7 @@ const runExport = async (
     const bytes =
       version?.sha256 === null || version?.sha256 === undefined
         ? undefined
-        : await readRetainedContent(request.capture, version.sha256, signal);
+        : await content.read(version.sha256, signal);
     if (bytes === undefined)
       throw refuse(
         `The retained content of ~/${seed} is missing or does not match its digest.`,
@@ -262,6 +267,7 @@ const runExport = async (
     files.push({ path: `${environment}/seed/${seed}`, bytes });
   }
   await writeBundle(request.directory, files, signal);
+  await content.close();
   return {
     directory: request.directory,
     environment: plan.name,
@@ -271,17 +277,37 @@ const runExport = async (
     dconf_groups: baselineDconf(state).groups,
     files: files.map((file) => file.path),
     limitations: EXPORT_LIMITATIONS,
+    capture_evidence_id: evidence.evidence_id,
   };
 };
 
-/** Export one capture folder as an agentenv computer app bundle. */
+/** Export one capture folder as an agentenv computer app bundle, reported as Evidence. */
 export const exportDesktopApplication = async (
   request: DesktopExportRequest,
   readers: DesktopStateReaders,
   signal?: AbortSignal,
-): Promise<DesktopExportResult | AnalysisError> => {
+): Promise<Evidence | AnalysisError> => {
   try {
-    return await runExport(request, readers, signal);
+    const { capture_evidence_id: captureEvidenceId, ...result } =
+      await runExport(request, readers, signal);
+    return createEvidence(undefined, DESKTOP_PROVIDER, {
+      predicateType: "rea.desktop-application-export",
+      operation: OPERATION,
+      parameters: {
+        capture_evidence_id: captureEvidenceId,
+        named: request.name !== undefined,
+      },
+      result: {
+        ...result,
+        paths: [...result.paths],
+        seed_files: [...result.seed_files],
+        files: [...result.files],
+        limitations: [...result.limitations],
+      },
+      confidence: "derived",
+      authority: "analyst-inference",
+      limitations: [...result.limitations],
+    });
   } catch (cause: unknown) {
     return desktopOperationFailure(cause, signal, OPERATION, "Desktop export");
   }

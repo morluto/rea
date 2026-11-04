@@ -17,6 +17,10 @@ it does not run the application. `--name` sets the environment name; otherwise
 it comes from the desktop entry id or the program. The output directory must be
 new or empty.
 
+The command returns Evidence with operation `export_desktop_application` and
+predicate type `rea.desktop-application-export`, listing the environment name,
+owned paths, seed files and written files.
+
 ## The bundle
 
 | Path                    | Contents                                                                                           |
