@@ -1,5 +1,3 @@
-import { StringDecoder } from "node:string_decoder";
-
 /** Byte-bounded head and tail diagnostics, decoded after stream chunks are joined. */
 export class BoundedOutputExcerpt {
   #head: Buffer = Buffer.alloc(0);
@@ -44,8 +42,7 @@ export class BoundedOutputExcerpt {
     if (!this.truncated)
       return Buffer.concat([this.#head, this.#tail]).toString("utf8");
 
-    // Do not flush an incomplete code point at the cut edge of the head.
-    const head = new StringDecoder("utf8").write(this.#head);
+    const head = decodeTruncatedHead(this.#head);
     let tailStart = 0;
     while (
       tailStart < this.#tail.length &&
@@ -58,3 +55,33 @@ export class BoundedOutputExcerpt {
     return `${head} … [output omitted] … ${this.#tail.subarray(tailStart).toString("utf8")}`;
   }
 }
+
+/** Omit only a suffix that could still form a valid UTF-8 code point. */
+const decodeTruncatedHead = (bytes: Buffer): string => {
+  let start = bytes.length - 1;
+  while (
+    start >= 0 &&
+    bytes.length - start < 4 &&
+    (bytes[start]! & 0xc0) === 0x80
+  )
+    start -= 1;
+  const first = bytes[start];
+  if (first === undefined) return bytes.toString("utf8");
+  const width =
+    first >= 0xc2 && first <= 0xdf
+      ? 2
+      : first >= 0xe0 && first <= 0xef
+        ? 3
+        : first >= 0xf0 && first <= 0xf4
+          ? 4
+          : 0;
+  const second = bytes[start + 1];
+  // Exclude overlong encodings, surrogates and values beyond U+10FFFF.
+  const minimumSecond = first === 0xe0 ? 0xa0 : first === 0xf0 ? 0x90 : 0x80;
+  const maximumSecond = first === 0xed ? 0x9f : first === 0xf4 ? 0x8f : 0xbf;
+  const incomplete =
+    bytes.length - start < width &&
+    (second === undefined ||
+      (second >= minimumSecond && second <= maximumSecond));
+  return bytes.toString("utf8", 0, incomplete ? start : bytes.length);
+};
