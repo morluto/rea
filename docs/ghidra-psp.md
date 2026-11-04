@@ -73,8 +73,10 @@ snapshot into a persistent Ghidra project.
 ## PPSSPP function labels (opt-in, read-only)
 
 An offline source-tree script compares caller-supplied function labels against an
-existing REA `list_procedures` JSON array (or a saved Evidence record's
-`normalized_result`). It does not import labels into Ghidra, rename functions,
+existing REA `list_procedures` JSON array (or a saved `list_procedures`
+Evidence record's `normalized_result`). Other Evidence operations such as
+`list_names` are refused, since data labels are not function observations.
+It does not import labels into Ghidra, rename functions,
 execute PSP code or change public REA CLI/MCP contracts. An Evidence record's
 selected target digest is checked for consistency when present; this standalone
 script does not independently authenticate an Evidence bundle.
@@ -122,7 +124,9 @@ binary. Verify module identity, residency, relocation and any CRC independently.
 Run the fast source-only and command controls with
 `node scripts/verify-psp-symbol-correlation.mjs`. They cover raw-array and
 Evidence-shaped inventory files, target-digest refusal, verbatim input paths,
-address-space filtering, UTF-8 refusal, and duplicate-heavy output.
+address-space filtering, UTF-8 refusal, and duplicate-heavy output. Both
+symbol and inventory file reads enforce their byte limits while streaming,
+including pipes whose filesystem metadata reports a zero length.
 The existing `--psp` real
 Ghidra lane additionally correlates export-shaped **source-owned** labels
 created from independent PSP GNU readelf symbols against the observed REA
