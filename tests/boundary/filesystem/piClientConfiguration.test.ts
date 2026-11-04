@@ -584,7 +584,7 @@ describe("Pi project-scoped inherited environment validation", () => {
             command: "npx",
             args: ["-y", "rea-agents@1.0.0", "mcp"],
             env: {
-              REA_GHIDRA_STARTUP_TIMEOUT_MS: "invalid-number",
+              REA_GHIDRA_PROGRAM_NAME: "sample",
             },
           },
         },

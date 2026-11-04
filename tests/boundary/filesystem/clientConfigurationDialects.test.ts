@@ -984,7 +984,7 @@ describe("OpenCode inherited environment error provenance", () => {
               type: "local",
               command: alignedCommand,
               environment: {
-                REA_GHIDRA_STARTUP_TIMEOUT_MS: "invalid-number",
+                REA_GHIDRA_PROGRAM_NAME: "sample",
               },
             },
           },
@@ -1046,7 +1046,7 @@ describe("OpenCode inherited environment error provenance", () => {
               type: "local",
               command: alignedCommand,
               environment: {
-                REA_GHIDRA_STARTUP_TIMEOUT_MS: "invalid-number",
+                REA_GHIDRA_PROGRAM_NAME: "sample",
               },
             },
           },
