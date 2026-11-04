@@ -310,15 +310,15 @@ export const createCli = (
       // Incur's `mcp add` silently skips a valued option with no value and
       // swallows the next flag as the value: the registration succeeds without
       // the requested agent or command. Reject a trailing --agent/--command/-c,
-      // a value position occupied by another flag, and an empty `--flag=` form
-      // up front.
+      // a value position occupied by another flag, an empty `--flag=` form,
+      // and a separate empty-string value up front.
       const valued = ["--agent", "--command", "-c"];
       let missingValue: string | undefined;
       for (let index = 0; index < command.length; index += 1) {
         const next = command[index + 1];
         if (
           valued.includes(command[index]!) &&
-          (next === undefined || next.startsWith("-"))
+          (next === undefined || next === "" || next.startsWith("-"))
         ) {
           missingValue = command[index];
           break;
