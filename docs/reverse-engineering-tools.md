@@ -65,10 +65,10 @@ Before a normal close, REA checks for live GDB thread groups. If one remains and
 
 ```text
 start_gdb_session {"inferior_tty":"/dev/pts/7"}
-gdb_console {"session_id":"��","command":"file ./program"}
-gdb_console {"session_id":"��","command":"info files"}
-gdb_session_status {"session_id":"��"}
-close_gdb_session {"session_id":"��"}
+gdb_console {"session_id":"…","command":"file ./program"}
+gdb_console {"session_id":"…","command":"info files"}
+gdb_session_status {"session_id":"…"}
+close_gdb_session {"session_id":"…"}
 ```
 
 ## Rizin
