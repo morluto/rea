@@ -250,11 +250,18 @@ export const projectNativeProcedureReferencesView = (
   ) => {
     const pending: z.infer<typeof procedureIdentitySchema>[] = [];
     const pendingKeys: string[] = [];
+    let extra = 0;
+    let overflow = false;
     const resolve = (value: z.infer<typeof procedureIdentitySchema> | null) => {
       if (value === null) return { kind: "null" as const };
-      if (canonicalJson(value) === selected)
-        return { kind: "selected-procedure" as const };
+      const comma = endpoints.length + pending.length > 0 ? 1 : 0;
+      const size =
+        jsonValueByteLength(
+          value as JsonValue,
+          Math.max(0, PAGE_BYTES - bytes - extra),
+        ) + comma;
       const key = canonicalJson(value);
+      if (key === selected) return { kind: "selected-procedure" as const };
       const existing = endpointIndexes.get(key);
       if (existing !== undefined)
         return { kind: "shared" as const, index: existing };
@@ -264,6 +271,11 @@ export const projectNativeProcedureReferencesView = (
           kind: "shared" as const,
           index: endpoints.length + pendingIndex,
         };
+      if (bytes + extra + size > PAGE_BYTES) {
+        overflow = true;
+        return undefined;
+      }
+      extra += size;
       pending.push(value);
       pendingKeys.push(key);
       return {
@@ -273,15 +285,20 @@ export const projectNativeProcedureReferencesView = (
     };
     const resolvedSource = resolve(sourceProcedure);
     const resolvedTarget = resolve(targetProcedure);
-    let extra = 0;
-    for (const [offset, value] of pending.entries()) {
-      extra += jsonValueByteLength(
-        value as JsonValue,
-        PAGE_BYTES - bytes - extra,
-      );
-      if (endpoints.length + offset > 0) extra += 1;
-    }
-    return { resolvedSource, resolvedTarget, pending, pendingKeys, extra };
+    if (
+      overflow ||
+      resolvedSource === undefined ||
+      resolvedTarget === undefined
+    )
+      return { overflow: true as const };
+    return {
+      overflow: false as const,
+      resolvedSource,
+      resolvedTarget,
+      pending,
+      pendingKeys,
+      extra,
+    };
   };
   const filtered =
     view.source_address !== undefined || view.target_address !== undefined;
@@ -326,6 +343,10 @@ export const projectNativeProcedureReferencesView = (
       reference.source_procedure,
       reference.target_procedure,
     );
+    if (planned.overflow) {
+      byteLimited = true;
+      break;
+    }
     const row = {
       ...reference,
       source_index: index,
