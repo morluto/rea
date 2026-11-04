@@ -47,8 +47,14 @@ environment, with local Docker for the computer run.
   at both ends whose count changed and suggests counts of `SECTION`, `ENDSEC`
   and `CIRCLE`. A task with `CIRCLE` equals 9 was exported: 5 on the seed, 9
   at the end.
-- Typora: the capture predates the vendor package fields and is refused as
-  malformed (`apt_repositories.0.architectures`), as expected.
+- Typora, captured again (`~/Documents/trip.md`, a to-do "Buy trail snacks"
+  and a table row "Sun | Lake swim" added): among about 25 changed files
+  under `.config/Typora`, the draft suggested only the document's two new
+  lines. A task checking both, with "- [ ] Book the cabin" kept, was exported
+  (`snacks` and `sunday` failing on the seed); tasks checking only the cabin
+  or a kayak to-do were refused. The capture made before the vendor package
+  fields is refused as malformed (`apt_repositories.0.architectures`), as
+  expected.
 - The generated verifiers, run under agentenv-protocol 0.9.1431 against homes
   holding the seed and the captured end state, read through the generated
   class's own `_views`: Mousepad and LibreCAD each fail on the seed and pass
@@ -81,6 +87,13 @@ input tools:
   only `one-milk` (2 lines), and after `data/reset` the checks read as on the
   seed again.
 - The sandbox was torn down with no container left.
+
+The Typora bundle ran the same way, its build installing Typora from the
+vendor repository: the probe's verifier step scored 0 (`snacks` and `sunday`
+false, `cabin-kept` true); the same input sequence as the capture (Control+Home,
+two ArrowDown, End, Enter, the to-do, Control+End, Control+Enter, the row,
+Control+S) made all three checks pass; and after `data/reset` they read as on
+the seed. That sandbox was torn down too.
 
 ## Limits of this verification
 
