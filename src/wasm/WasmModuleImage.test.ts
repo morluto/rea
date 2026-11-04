@@ -230,10 +230,6 @@ describe("readWasmModuleImage", () => {
       module(section(11, [1, 0x00, ...offset(0), 4, 1])),
     ],
     ["segment past memory", module(memory(1), data([65535, [1, 2]]))],
-    [
-      "segment past imported minimum",
-      module(section(2, vec([importMemory(1)])), data([65536, [1]])),
-    ],
     ["data without memory", module(data([0, [1]]))],
     ["slot past function count", module(functions(1), table, elements(0, [1]))],
   ] as [string, Buffer][])("refuses %s as malformed", (_, bytes) => {
@@ -377,6 +373,16 @@ describe("code bodies and segment counts", () => {
   });
 });
 
+describe("imported memory", () => {
+  it("leaves a segment past an imported memory's declared minimum to the caller", () => {
+    // The host may supply more than the declared page, so this is not damage.
+    const image = readWasmModuleImage(
+      module(section(2, vec([importMemory(1)])), data([65536, [1]])),
+    );
+    expect(image.memory?.imported).toBe(true);
+  });
+});
+
 describe("count checks against the section body", () => {
   it("refuses counts one byte short of their body as malformed", () => {
     // One byte short of the declared counts is already a damaged section.
@@ -476,6 +482,23 @@ describe("table representation", () => {
       [0, 0],
       [last, 0],
     ]);
+  });
+  it("does not widen the span for an empty segment far from the filled slots", () => {
+    const far = WASM_MODULE_LIMITS.tableSlots * 2;
+    const image = readWasmModuleImage(
+      module(
+        functions(1),
+        bigTable(far + 1),
+        section(
+          9,
+          vec([
+            [0x00, ...offset(0), ...vec([])],
+            [0x00, ...offset(far), ...vec([u32(0)])],
+          ]),
+        ),
+      ),
+    );
+    expect([...image.table]).toEqual([[far, 0]]);
   });
   it("lets a later segment overwrite an earlier one's slot", () => {
     const image = readWasmModuleImage(

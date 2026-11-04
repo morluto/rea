@@ -370,7 +370,9 @@ export function* readWasmModuleImageSteps(
       throw malformed(
         `element segment at slot ${base} ends past the ${minimum} initial table slots`,
       );
-    if (functions.length === 0) continue;
+    // An empty segment fills no slot, so it does not widen the span; an
+    // imported table's slots are not determined, so none are kept.
+    if (functions.length === 0 || tableImported) continue;
     low = Math.min(low, base);
     high = Math.max(high, base + functions.length);
   }
@@ -388,15 +390,18 @@ export function* readWasmModuleImageSteps(
         throw malformed(
           `table slot ${base + slot} names function ${index}, but the module has ${functionCount}`,
         );
-      words[base + slot - low] = index;
+      if (!tableImported) words[base + slot - low] = index;
       if (tick()) yield;
     }
   }
 
-  // Instantiation traps when a segment ends past the initial (or imported minimum) memory.
+  // Instantiation traps when a segment ends past the initial memory. An
+  // imported memory may be larger than its declared minimum, so only a
+  // defined one is judged here; the caller refuses imported memories.
   const limit =
     ((memory as WasmMemory | null)?.initialPages ?? 0) * WASM_PAGE_BYTES;
-  for (const segment of dataSegments) {
+  const memoryImported = (memory as WasmMemory | null)?.imported === true;
+  for (const segment of memoryImported ? [] : dataSegments) {
     const end = segment.offset + segment.bytes.length;
     if (end > limit)
       throw malformed(

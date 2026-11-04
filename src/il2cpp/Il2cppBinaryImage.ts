@@ -12,7 +12,10 @@ import {
   type BinaryContainer,
   type FileMappingIndex,
 } from "../native/metadata/BinaryContainer.js";
-import { readBinaryContainer } from "../native/metadata/readBinaryContainer.js";
+import {
+  readBinaryContainer,
+  UNRECOGNIZED_NATIVE_IMAGE,
+} from "../native/metadata/readBinaryContainer.js";
 import {
   parsePointerFixups,
   type PointerFixups,
@@ -214,6 +217,10 @@ function* openWasmImageSteps(bytes: Buffer): Generator<void, NativeImage> {
   };
 }
 
+/** The refusal for a binary that is none of the formats IL2CPP links. */
+export const IL2CPP_UNRECOGNIZED_BINARY =
+  "Only ELF, PE, thin Mach-O, and uncompressed WebAssembly (wasm32) images are supported";
+
 export function* openImageSteps(
   bytes: Buffer,
   architecture: string | undefined,
@@ -243,8 +250,8 @@ export function* openImageSteps(
           ? "unsupported-container"
           : "malformed-container",
         // The shared reader names native formats only; IL2CPP also links wasm32.
-        cause.kind === "unsupported"
-          ? `${cause.message}; IL2CPP linking also reads uncompressed WebAssembly (wasm32) modules`
+        cause.message === UNRECOGNIZED_NATIVE_IMAGE
+          ? IL2CPP_UNRECOGNIZED_BINARY
           : cause.message,
       );
     throw cause;

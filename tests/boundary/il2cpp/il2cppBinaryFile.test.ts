@@ -3,6 +3,7 @@ import { javaClassFile } from "../../fixtures/javaClassFile.js";
 import { Il2cppBinaryFormatFailure } from "../../../src/il2cpp/Il2cppBinaryFormat.js";
 import { readBinaryContainer } from "../../../src/native/metadata/readBinaryContainer.js";
 import {
+  IL2CPP_UNRECOGNIZED_BINARY,
   hasPointerArrayCoverage,
   openImageSteps,
   readPointer,
@@ -2196,10 +2197,85 @@ it("names wasm32 among the formats IL2CPP links when the binary is none of them"
     expect((cause as Il2cppBinaryFormatFailure).reason).toBe(
       "unsupported-container",
     );
-    expect((cause as Error).message).toMatch(/WebAssembly \(wasm32\)/);
+    expect((cause as Error).message).toBe(
+      `unsupported-container: ${IL2CPP_UNRECOGNIZED_BINARY}`,
+    );
     return;
   }
   throw new Error("expected a link failure");
+});
+
+it("keeps the native reader's own refusal for a format it recognizes", () => {
+  // A complete DOS MZ image: recognized, then refused by the PE reader.
+  const bytes = Buffer.alloc(128);
+  bytes.write("MZ", 0, "ascii");
+  bytes.writeUInt16LE(128, 2);
+  bytes.writeUInt16LE(1, 4);
+  bytes.writeUInt16LE(2, 6);
+  bytes.writeUInt16LE(4, 8);
+  bytes.writeUInt16LE(28, 24);
+  bytes.write("ABCD", 60, "ascii");
+  try {
+    link(bytes);
+  } catch (cause) {
+    expect(cause).toBeInstanceOf(Il2cppBinaryFormatFailure);
+    expect((cause as Error).message).not.toContain(IL2CPP_UNRECOGNIZED_BINARY);
+    expect((cause as Error).message).toContain("DOS MZ images");
+    return;
+  }
+  throw new Error("expected a link failure");
+});
+
+it("refuses an imported memory as unsupported even when a segment passes its declared minimum", () => {
+  // env.memory declares one page; the host may supply more.
+  const name = (text: string) => [text.length, ...Buffer.from(text)];
+  const imports = [1, ...name("env"), ...name("memory"), 0x02, 0x00, 1];
+  const data = [1, 0x00, 0x41, 0x80, 0x80, 0x04, 0x0b, 1, 7];
+  const section = (id: number, body: number[]) => [id, body.length, ...body];
+  const bytes = Buffer.from([
+    0x00,
+    0x61,
+    0x73,
+    0x6d,
+    1,
+    0,
+    0,
+    0,
+    ...section(2, imports),
+    ...section(11, data),
+  ]);
+  expect(failure(bytes)).toEqual({
+    reason: "unsupported-container",
+    kind: "unsupported",
+  });
+});
+
+it("refuses an imported table as unsupported rather than measuring its span", () => {
+  // Two slots 2^22 apart would pass the slot allowance in a defined table.
+  const name = (text: string) => [text.length, ...Buffer.from(text)];
+  const imports = [1, ...name("env"), ...name("table"), 0x01, 0x70, 0x00, 4];
+  const far = [0x41, 0x80, 0x80, 0x80, 0x02, 0x0b];
+  const elements = [2, 0x00, 0x41, 0, 0x0b, 1, 0, 0x00, ...far, 1, 0];
+  const section = (id: number, body: number[]) => [id, body.length, ...body];
+  const bytes = Buffer.from([
+    0x00,
+    0x61,
+    0x73,
+    0x6d,
+    1,
+    0,
+    0,
+    0,
+    ...section(1, [1, 0x60, 0, 0]),
+    ...section(2, imports),
+    ...section(3, [1, 0]),
+    ...section(9, elements),
+    ...section(10, [1, 2, 0, 0x0b]),
+  ]);
+  expect(failure(bytes)).toEqual({
+    reason: "unsupported-container",
+    kind: "unsupported",
+  });
 });
 
 it("covers a wasm pointer array that runs from the last segment into zero fill", () => {

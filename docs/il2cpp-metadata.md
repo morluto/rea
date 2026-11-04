@@ -463,25 +463,25 @@ Il2CppType byref flag in different bits, so a rendered name could gain or lose
 
 The builds checked are listed after the module search rules above.
 
-| Reason                                  | Category    | Meaning                                                                                                      |
-| --------------------------------------- | ----------- | ------------------------------------------------------------------------------------------------------------ |
-| `unsupported-container`                 | unsupported | Not a 64-bit little-endian Mach-O, PE or ELF image (ELF: AArch64 or x86-64 with dynamic section).            |
-| `slice-selection-required`              | unsupported | A universal Mach-O was given without `binary_architecture`.                                                  |
-| `ambiguous-slice-selection`             | unsupported | More than one universal slice matches the selected architecture label; select an exact subtype externally.   |
-| `slice-not-found`                       | unsupported | The requested slice is absent, or a thin binary was given an architecture.                                   |
-| `unsupported-pointer-encoding`          | unsupported | Mach-O chained fixups or Android packed (APS2) ELF relocations; pointers not decoded.                        |
-| `malformed-container`                   | input error | The container headers are damaged.                                                                           |
-| `code-gen-modules-not-found`            | input error | An image has no module record; often a binary from a different build.                                        |
-| `ambiguous-code-gen-module`             | input error | More than one module record matches an image.                                                                |
-| `code-registration-not-found`           | input error | No unique module table or executable-byte array candidate was resolved.                                      |
-| `invalid-method-token`                  | input error | A token is outside its module's method-pointer rows, or a MethodDef row is reused within one image.          |
-| `invalid-method-pointer`                | input error | A slot is unavailable or its nonzero address lacks unambiguous executable file coverage.                     |
-| `metadata-registration-not-found`       | input error | No single MetadataRegistration or code-loaded type-table candidate was resolved.                             |
-| `invalid-type`                          | input error | A type index or `Il2CppType` record is out of range, unmapped or malformed.                                  |
-| `unsupported-type-kind`                 | unsupported | A valid type kind has no implemented rendering.                                                              |
-| `generic-methods-unsupported`           | unsupported | Generic instances were requested for metadata version 24 or 39, or a build lacks either static registration. |
-| `generic-method-registration-not-found` | input error | No CodeRegistration layout bounds every genericMethodTable row, or the generic tables are unreadable.        |
-| `ambiguous-generic-method-registration` | input error | More than one CodeRegistration layout bounds every genericMethodTable row.                                   |
+| Reason                                  | Category    | Meaning                                                                                                                                                                |
+| --------------------------------------- | ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `unsupported-container`                 | unsupported | Not a 64-bit little-endian Mach-O, PE or ELF image (ELF: AArch64 or x86-64 with dynamic section), nor an uncompressed wasm32 module that defines its memory and table. |
+| `slice-selection-required`              | unsupported | A universal Mach-O was given without `binary_architecture`.                                                                                                            |
+| `ambiguous-slice-selection`             | unsupported | More than one universal slice matches the selected architecture label; select an exact subtype externally.                                                             |
+| `slice-not-found`                       | unsupported | The requested slice is absent, or a thin binary was given an architecture.                                                                                             |
+| `unsupported-pointer-encoding`          | unsupported | Mach-O chained fixups or Android packed (APS2) ELF relocations; pointers not decoded.                                                                                  |
+| `malformed-container`                   | input error | The container headers are damaged.                                                                                                                                     |
+| `code-gen-modules-not-found`            | input error | An image has no module record; often a binary from a different build.                                                                                                  |
+| `ambiguous-code-gen-module`             | input error | More than one module record matches an image.                                                                                                                          |
+| `code-registration-not-found`           | input error | No unique module table or executable-byte array candidate was resolved.                                                                                                |
+| `invalid-method-token`                  | input error | A token is outside its module's method-pointer rows, or a MethodDef row is reused within one image.                                                                    |
+| `invalid-method-pointer`                | input error | A slot is unavailable or its nonzero address lacks unambiguous executable file coverage.                                                                               |
+| `metadata-registration-not-found`       | input error | No single MetadataRegistration or code-loaded type-table candidate was resolved.                                                                                       |
+| `invalid-type`                          | input error | A type index or `Il2CppType` record is out of range, unmapped or malformed.                                                                                            |
+| `unsupported-type-kind`                 | unsupported | A valid type kind has no implemented rendering.                                                                                                                        |
+| `generic-methods-unsupported`           | unsupported | Generic instances were requested for metadata version 24 or 39, or a build lacks either static registration.                                                           |
+| `generic-method-registration-not-found` | input error | No CodeRegistration layout bounds every genericMethodTable row, or the generic tables are unreadable.                                                                  |
+| `ambiguous-generic-method-registration` | input error | More than one CodeRegistration layout bounds every genericMethodTable row.                                                                                             |
 
 Format and selection failures name `binary_path`; capacity refusals remain typed resource errors. Failed linking preserves the metadata source identity, validated counts, selected binary path/architecture and its SHA-256 when observed, plus prior producer observations. It never publishes an incomplete native table as complete. The binary input is bounded to 1 GiB.
 

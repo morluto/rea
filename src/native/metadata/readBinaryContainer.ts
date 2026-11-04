@@ -13,6 +13,10 @@ import { readPeImage } from "./PeImage.js";
 import { readMachoImage } from "./MachoImage.js";
 
 /** Identify an ELF, PE, or thin Mach-O image and its file sections. */
+/** The refusal for bytes that match none of the native image formats. */
+export const UNRECOGNIZED_NATIVE_IMAGE =
+  "Only ELF, PE, and thin Mach-O native images are supported";
+
 export const readBinaryContainer = (bytes: Buffer): BinaryContainer => {
   if (bytes.subarray(0, 4).equals(Buffer.from([0x7f, 0x45, 0x4c, 0x46])))
     return readElfImage(bytes);
@@ -43,8 +47,5 @@ export const readBinaryContainer = (bytes: Buffer): BinaryContainer => {
     if (readMachoHeaderPrefixFacts(bytes).format !== null)
       return readMachoImage(bytes);
   }
-  throw new BinaryFormatFailure(
-    "unsupported",
-    "Only ELF, PE, and thin Mach-O native images are supported",
-  );
+  throw new BinaryFormatFailure("unsupported", UNRECOGNIZED_NATIVE_IMAGE);
 };
