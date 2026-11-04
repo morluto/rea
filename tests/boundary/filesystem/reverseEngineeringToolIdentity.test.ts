@@ -582,7 +582,7 @@ posix.each(["cancellation", "deadline"] as const)(
 );
 
 posix(
-  "shares a stalled PATH check with later lookups instead of starting another",
+  "makes later lookups wait for a stalled PATH check instead of starting another",
   async () => {
     const { executable, path } = await rizinExecutableFixture();
     const release = gate();

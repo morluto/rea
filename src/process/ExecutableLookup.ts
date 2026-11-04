@@ -7,7 +7,7 @@ import {
   absoluteCallerPath,
   appendCallerPath,
 } from "../filesystem/callerPath.js";
-import { shareFileCall } from "./SharedFileCall.js";
+import { FileWork, fileWorkDeadline } from "./FileWork.js";
 
 /** Where a command resolves through an effective PATH, or why it does not. */
 export type ExecutableLookup =
@@ -47,6 +47,8 @@ export interface ExecutableLookupBounds {
   readonly timeoutMs?: number | undefined;
   readonly stat?: (path: string) => Promise<Stats>;
   readonly access?: (path: string, mode: number) => Promise<void>;
+  /** Owns the checks the lookup stops waiting for; defaults to its own. */
+  readonly fileWork?: FileWork;
 }
 
 /**
@@ -67,8 +69,8 @@ export interface ExecutableLookupBounds {
  * `no-working-directory`, since its absolute path cannot be named. So
  * `workingDirectory` must name the process's working directory whenever it
  * can fail. A file-system call cannot itself be cancelled, so an interrupted
- * lookup stops waiting for it, and a later lookup of the same path waits for
- * that call instead of starting another.
+ * lookup leaves it with `bounds.fileWork`, whose later work on the same path
+ * waits for it instead of starting another.
  */
 export const lookupExecutable = async (
   command: string,
@@ -76,7 +78,13 @@ export const lookupExecutable = async (
   searchPath: string | undefined,
   bounds: ExecutableLookupBounds = {},
 ): Promise<ExecutableLookup> => {
-  const { signal, timeoutMs, stat = statPath, access = accessPath } = bounds;
+  const {
+    signal,
+    timeoutMs,
+    stat = statPath,
+    access = accessPath,
+    fileWork = new FileWork(),
+  } = bounds;
   let cwd: string | undefined;
   const readCwd = (): string => (cwd ??= workingDirectory());
   // An empty PATH component selects the working directory. Windows resolves
@@ -95,7 +103,7 @@ export const lookupExecutable = async (
   const entries = explicit
     ? [command]
     : (searchPath ?? "/usr/bin:/bin").split(delimiter);
-  const interruption = lookupInterruption(signal, timeoutMs);
+  const deadline = fileWorkDeadline(signal, timeoutMs);
   try {
     const checked: string[] = [];
     let selectedPath: string | undefined;
@@ -127,8 +135,8 @@ export const lookupExecutable = async (
         unnamed = { cause };
       }
       if (explicit) selectedPath = candidate;
-      const metadata = await interruption.race(
-        shareFileCall(stat, candidate, () => stat(candidate)),
+      const metadata = await fileWork.run(candidate, deadline, () =>
+        stat(candidate),
       );
       if (metadata.status === "interrupted") return { ...metadata, candidate };
       if (metadata.status === "rejected") {
@@ -148,10 +156,8 @@ export const lookupExecutable = async (
         checked.push(`${candidate} (not a regular file)`);
         continue;
       }
-      const executable = await interruption.race(
-        shareFileCall(access, candidate, () =>
-          access(candidate, fsConstants.X_OK),
-        ),
+      const executable = await fileWork.run(candidate, deadline, () =>
+        access(candidate, fsConstants.X_OK),
       );
       if (executable.status === "interrupted")
         return { ...executable, candidate };
@@ -171,51 +177,8 @@ export const lookupExecutable = async (
     }
     return missing();
   } finally {
-    interruption.release();
+    deadline.release();
   }
-};
-
-type Raced<Value> =
-  | { readonly status: "fulfilled"; readonly value: Value }
-  | { readonly status: "rejected"; readonly cause: unknown }
-  | {
-      readonly status: "interrupted";
-      readonly by: "cancellation" | "deadline";
-    };
-
-/** One deadline and abort listener shared by every file-system call of a lookup. */
-const lookupInterruption = (
-  signal: AbortSignal | undefined,
-  timeoutMs: number | undefined,
-): {
-  readonly race: <Value>(operation: Promise<Value>) => Promise<Raced<Value>>;
-  readonly release: () => void;
-} => {
-  let interrupt: ((by: "cancellation" | "deadline") => void) | undefined;
-  const interrupted = new Promise<"cancellation" | "deadline">((resolve) => {
-    interrupt = resolve;
-  });
-  const cancel = (): void => interrupt?.("cancellation");
-  const timer =
-    timeoutMs === undefined
-      ? undefined
-      : setTimeout(() => interrupt?.("deadline"), timeoutMs);
-  if (signal?.aborted === true) cancel();
-  else signal?.addEventListener("abort", cancel, { once: true });
-  return {
-    race: <Value>(operation: Promise<Value>) =>
-      Promise.race([
-        operation.then(
-          (value): Raced<Value> => ({ status: "fulfilled", value }),
-          (cause: unknown): Raced<Value> => ({ status: "rejected", cause }),
-        ),
-        interrupted.then((by): Raced<Value> => ({ status: "interrupted", by })),
-      ]),
-    release: () => {
-      if (timer !== undefined) clearTimeout(timer);
-      signal?.removeEventListener("abort", cancel);
-    },
-  };
 };
 
 /**

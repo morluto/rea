@@ -1,9 +1,12 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { createReadStream } from "node:fs";
+import { mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Readable } from "node:stream";
 
 import { expect, it } from "vitest";
 
+import { digestFile } from "../../src/application/reverse/ReverseEngineeringService.js";
 import { TestReverseEngineeringService } from "../support/reverseEngineeringService.js";
 
 it("bounds concurrent reverse-engineering provider calls", async () => {
@@ -102,61 +105,91 @@ it("bounds concurrent reverse-engineering provider calls", async () => {
   }
 });
 
-it("keeps a call's place while a file its hash gave up on stays open", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "rea-reverse-abandoned-"));
-  const path = join(directory, "fixture.bin");
-  await writeFile(path, "fixture");
-  let answer!: () => void;
-  const closed = new Promise<void>((resolve) => {
-    answer = resolve;
-  });
-  let abandon = true;
-  const service = new TestReverseEngineeringService({
-    run: async () => ({ stdout: "", stderr: "" }),
-    // As a hash that reached its deadline while a stalled mount held its
-    // file; once the file closes, hashes complete without reading the disk.
-    digest: async (_target, _signal, _stat, _timeoutMs, _open, onAbandoned) => {
-      if (!abandon) return "0".repeat(64);
-      onAbandoned?.(closed);
-      throw Object.assign(new Error("Artifact digest timed out"), {
-        code: "ETIMEDOUT",
-      });
-    },
-  });
-  try {
-    const returned = await Promise.all(
-      Array.from({ length: 8 }, () =>
-        service.inspectWithObjdump({ path, operation: "file_headers" }),
-      ),
+it.each(["stat", "open"] as const)(
+  "keeps a call's place while a file %s it gave up on has not returned",
+  async (stalls) => {
+    const directory = await mkdtemp(join(tmpdir(), "rea-reverse-abandoned-"));
+    const paths = Array.from({ length: 8 }, (_, index) =>
+      join(directory, `fixture-${String(index)}.bin`),
     );
-    expect(returned.every((result) => !result.ok)).toBe(true);
-    // Each call returned, but its file is still open.
-    await expect(
-      service.inspectWithObjdump({ path, operation: "file_headers" }),
-    ).resolves.toMatchObject({
-      ok: false,
-      error: {
-        _tag: "AnalysisResourceConstraintError",
-        reportedLimits: {
-          max_concurrent_operations: 8,
-          active_operations: 8,
-          operations_awaiting_file_close: 8,
-        },
-      },
+    await Promise.all(paths.map((path) => writeFile(path, "fixture")));
+    let answer!: () => void;
+    const answered = new Promise<void>((resolve) => {
+      answer = resolve;
     });
-    abandon = false;
-    answer();
-    await closed;
-    await new Promise((resolve) => setImmediate(resolve));
-    await expect(
-      service.inspectWithObjdump({ path, operation: "file_headers" }),
-    ).resolves.toMatchObject({ ok: true });
-  } finally {
-    answer();
-    await service.close();
-    await rm(directory, { recursive: true, force: true });
-  }
-});
+    // As an unresponsive mount, the stat or open holds each file until the
+    // test answers it.
+    const held: Promise<unknown>[] = [];
+    const hold = <Value>(work: Promise<Value>): Promise<Value> => {
+      held.push(work);
+      return work;
+    };
+    const service = new TestReverseEngineeringService({
+      run: async () => ({ stdout: "", stderr: "" }),
+      stat: (path) =>
+        hold(stalls === "stat" ? answered.then(() => stat(path)) : stat(path)),
+      digest: (path, bounds) =>
+        digestFile(path, {
+          ...bounds,
+          open: (target) => {
+            if (stalls === "stat") return createReadStream(target);
+            const stream = new Readable({
+              construct(callback) {
+                void answered.then(() => callback());
+              },
+              read() {
+                this.push("fixture");
+                this.push(null);
+              },
+            });
+            hold(new Promise((resolve) => stream.once("close", resolve)));
+            return stream as unknown as ReturnType<typeof createReadStream>;
+          },
+        }),
+    });
+    const inspect = (path: string) =>
+      service.inspectWithObjdump({
+        path,
+        operation: "file_headers",
+        command_timeout_ms: 50,
+      });
+    try {
+      // A retry waits for the first call's file work instead of starting
+      // more, so it leaves nothing behind and gives its place back.
+      for (const path of [paths[0]!, ...paths])
+        await expect(inspect(path)).resolves.toMatchObject({
+          ok: false,
+          error: { _tag: "AnalysisTimeoutError" },
+        });
+      // Each of the eight files still holds the call that started its work.
+      await expect(inspect(paths[0]!)).resolves.toMatchObject({
+        ok: false,
+        error: {
+          _tag: "AnalysisResourceConstraintError",
+          reportedLimits: {
+            max_concurrent_operations: 8,
+            active_operations: 8,
+            operations_awaiting_file_work: 8,
+          },
+        },
+      });
+      answer();
+      await Promise.allSettled(held);
+      await new Promise((resolve) => setImmediate(resolve));
+      await expect(
+        service.inspectWithObjdump({
+          path: paths[0]!,
+          operation: "file_headers",
+        }),
+      ).resolves.toMatchObject({ ok: true });
+    } finally {
+      answer();
+      await Promise.allSettled(held);
+      await service.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);
 
 it("preserves the exact caller reason when objdump admission is already aborted", async () => {
   const directory = await mkdtemp(join(tmpdir(), "rea-reverse-preabort-"));

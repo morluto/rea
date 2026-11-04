@@ -8,6 +8,7 @@ import { PassThrough, Readable } from "node:stream";
 import { describe, expect, it } from "vitest";
 
 import { digestFile } from "../../src/application/reverse/ReverseEngineeringService.js";
+import { FileWork } from "../../src/process/FileWork.js";
 import {
   findsNoExecutable,
   TestReverseEngineeringService as ReverseEngineeringService,
@@ -582,7 +583,7 @@ it("shares one preflight deadline across stat and digest", async () => {
   };
   const started = performance.now();
   await expect(
-    digestFile("/tmp/rea-preflight-deadline", undefined, stat, 200, open),
+    digestFile("/tmp/rea-preflight-deadline", { stat, timeoutMs: 200, open }),
   ).rejects.toMatchObject({ code: "ETIMEDOUT" });
   expect(performance.now() - started).toBeLessThan(280);
 });
@@ -702,13 +703,12 @@ it.each(["deadline", "cancellation"] as const)(
       >;
     };
     try {
-      const digest = digestFile(
-        "/tmp/rea-stalled-open",
-        controller.signal,
+      const digest = digestFile("/tmp/rea-stalled-open", {
+        signal: controller.signal,
         stat,
-        interruption === "deadline" ? 50 : 10_000,
+        timeoutMs: interruption === "deadline" ? 50 : 10_000,
         open,
-      ).catch((cause: unknown) => cause);
+      }).catch((cause: unknown) => cause);
       if (interruption === "cancellation")
         setTimeout(() => controller.abort("stop the digest"), 20);
       let timer: ReturnType<typeof setTimeout> | undefined;
@@ -753,16 +753,17 @@ it.each([
       >;
     };
     const path = `/tmp/rea-unreturned-${operation}`;
+    const fileWork = new FileWork();
     try {
       for (const _attempt of [1, 2])
         await expect(
-          digestFile(path, undefined, stat, 50, open),
+          digestFile(path, { stat, timeoutMs: 50, open, fileWork }),
         ).rejects.toMatchObject({ code: "ETIMEDOUT" });
       // The second hash waited for the first stream instead of starting another.
       expect(opened).toHaveLength(1);
       stalled?.answer();
       await expect(
-        digestFile(path, undefined, stat, 1_000, open),
+        digestFile(path, { stat, timeoutMs: 1_000, open, fileWork }),
       ).resolves.toBe(createHash("sha256").update("x").digest("hex"));
       expect(opened).toHaveLength(2);
     } finally {
@@ -787,9 +788,10 @@ it("lets hashes of the same path read at the same time", async () => {
     >;
   };
   const path = "/tmp/rea-concurrent-digest";
+  const fileWork = new FileWork();
   const digests = Promise.allSettled([
-    digestFile(path, undefined, stat, 1_000, open),
-    digestFile(path, undefined, stat, 1_000, open),
+    digestFile(path, { stat, timeoutMs: 1_000, open, fileWork }),
+    digestFile(path, { stat, timeoutMs: 1_000, open, fileWork }),
   ]);
   try {
     // Neither hash waits for the other: both open the file before either
@@ -811,7 +813,7 @@ it("lets hashes of the same path read at the same time", async () => {
   }
 });
 
-it("shares a stalled stat between hashes of the same path", async () => {
+it("makes a hash wait for an earlier stat of the same path that has not returned", async () => {
   let stats = 0;
   let answer: (() => void) | undefined;
   const answered = new Promise<void>((resolve) => {
@@ -826,10 +828,16 @@ it("shares a stalled stat between hashes of the same path", async () => {
     Readable.from([Buffer.from("x")]) as unknown as ReturnType<
       typeof import("node:fs").createReadStream
     >;
+  const fileWork = new FileWork();
   try {
     for (const _attempt of [1, 2])
       await expect(
-        digestFile("/tmp/rea-stalled-stat", undefined, stat, 50, open),
+        digestFile("/tmp/rea-stalled-stat", {
+          stat,
+          timeoutMs: 50,
+          open,
+          fileWork,
+        }),
       ).rejects.toMatchObject({ code: "ETIMEDOUT" });
     expect(stats).toBe(1);
   } finally {
@@ -842,7 +850,7 @@ it("retains an explicit null reason when digest admission is already cancelled",
   const controller = new AbortController();
   controller.abort(null);
   await expect(
-    digestFile("/tmp/rea-cancelled-digest", controller.signal),
+    digestFile("/tmp/rea-cancelled-digest", { signal: controller.signal }),
   ).rejects.toMatchObject({
     _tag: "AnalysisCancelledError",
     cause: null,
@@ -860,13 +868,12 @@ it("retains an object reason when cancellation interrupts an active digest strea
       typeof import("node:fs").createReadStream
     >;
   };
-  const failure: unknown = await digestFile(
-    "/tmp/rea-cancelled-stream",
-    controller.signal,
+  const failure: unknown = await digestFile("/tmp/rea-cancelled-stream", {
+    signal: controller.signal,
     stat,
-    1_000,
+    timeoutMs: 1_000,
     open,
-  ).catch((cause: unknown) => cause);
+  }).catch((cause: unknown) => cause);
   expect(failure).toBeInstanceOf(AnalysisCancelledError);
   if (!(failure instanceof AnalysisCancelledError))
     throw new Error("Expected digest cancellation");

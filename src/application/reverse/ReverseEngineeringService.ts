@@ -55,7 +55,11 @@ import {
   searchesDiffer,
   searchMovesPast,
 } from "../../process/ExecutableLookup.js";
-import { shareFileCall } from "../../process/SharedFileCall.js";
+import {
+  FileWork,
+  fileWorkDeadline,
+  type FileWorkOutcome,
+} from "../../process/FileWork.js";
 import { absoluteCallerPath } from "../../filesystem/callerPath.js";
 import { parseAnalysisInput } from "../AnalysisInput.js";
 
@@ -158,8 +162,10 @@ export class ReverseEngineeringService {
     AbortController,
     Promise<Result<Evidence, AnalysisError>>
   >();
-  /** Calls that returned while a stream their hash gave up on stayed open. */
-  readonly #awaitingClose = new Set<AbortController>();
+  /** Owns the file work that calls stop waiting for. */
+  readonly #fileWork = new FileWork();
+  /** Calls that returned while file work they left behind was still running. */
+  readonly #awaitingFileWork = new Set<AbortController>();
   #closing = false;
   #closePromise: Promise<void> | undefined;
 
@@ -354,10 +360,10 @@ export class ReverseEngineeringService {
               max_concurrent_operations:
                 MAX_CONCURRENT_REVERSE_ENGINEERING_OPERATIONS,
               active_operations: this.#activeOperations.size,
-              operations_awaiting_file_close: this.#awaitingClose.size,
+              operations_awaiting_file_work: this.#awaitingFileWork.size,
             },
             {
-              remediationAction: `Wait for an active objdump or rizin command to finish, then retry. A call that returned while a file it was hashing stayed open, as on an unresponsive mount, keeps its place until that file closes. This capacity of ${String(MAX_CONCURRENT_REVERSE_ENGINEERING_OPERATIONS)} operations has no runtime override, and command_timeout_ms does not raise it.`,
+              remediationAction: `Wait for an active objdump or rizin command to finish, then retry. A call that returned while a file check or hash it gave up on was still running, as on an unresponsive mount, keeps its place until that work returns. This capacity of ${String(MAX_CONCURRENT_REVERSE_ENGINEERING_OPERATIONS)} operations has no runtime override, and command_timeout_ms does not raise it.`,
             },
           ),
         ),
@@ -372,9 +378,9 @@ export class ReverseEngineeringService {
       signal === undefined || signal instanceof AbortSignal
         ? controller.signal
         : signal;
-    // A stalled mount can hold a stream that a hash gave up on past the
-    // call's result, so the call keeps its place until those streams close.
-    const abandoned = new Set<Promise<void>>();
+    // A stalled mount can hold file work that the call gave up on past its
+    // result, so the call keeps its place until that work returns.
+    const fileWork = this.#fileWork.scope();
     const running = this.#observeProvider(
       operation,
       profile,
@@ -382,19 +388,18 @@ export class ReverseEngineeringService {
       parameters,
       operationSignal,
       timeoutMs,
-      (closed) => {
-        abandoned.add(closed);
-      },
+      fileWork,
     );
     const tracked = running.finally(() => {
       signal?.removeEventListener("abort", relayAbort);
-      if (abandoned.size === 0) {
+      const left = fileWork.left;
+      if (left === undefined) {
         this.#activeOperations.delete(controller);
         return;
       }
-      this.#awaitingClose.add(controller);
-      void Promise.all(abandoned).then(() => {
-        this.#awaitingClose.delete(controller);
+      this.#awaitingFileWork.add(controller);
+      void left.then(() => {
+        this.#awaitingFileWork.delete(controller);
         this.#activeOperations.delete(controller);
       });
     });
@@ -409,11 +414,11 @@ export class ReverseEngineeringService {
     parameters: Readonly<Record<string, JsonValue>>,
     signal: AbortSignal | undefined,
     timeoutMs: number,
-    onAbandoned: (closed: Promise<void>) => void,
+    fileWork: FileWork,
   ): Promise<Result<Evidence, AnalysisError>> {
     const { executable: command, arguments: args } = profile;
     const hash = (file: string): Promise<string> =>
-      this.#digest(file, signal, this.#stat, timeoutMs, undefined, onAbandoned);
+      this.#digest(file, { signal, timeoutMs, stat: this.#stat, fileWork });
     if (signal?.aborted)
       return err(
         new AnalysisCancelledError(operation, { cause: signal.reason }),
@@ -501,6 +506,7 @@ export class ReverseEngineeringService {
       environment,
       signal,
       timeoutMs,
+      fileWork,
       hash,
     );
     // An error before Evidence exists keeps the executable the caller
@@ -906,6 +912,7 @@ export class ReverseEngineeringService {
     environment: NodeJS.ProcessEnv,
     signal: AbortSignal | undefined,
     timeoutMs: number,
+    fileWork: FileWork,
     hash: (file: string) => Promise<string>,
   ): Promise<Result<ProviderIdentification, AnalysisError>> {
     const probe = profile.versionProbe;
@@ -938,7 +945,7 @@ export class ReverseEngineeringService {
       profile.executable,
       () => process.cwd(),
       environment.PATH,
-      { signal, timeoutMs },
+      { signal, timeoutMs, fileWork },
     );
     if (lookup.status === "interrupted") {
       // The path being checked names the PATH location that stalled.
@@ -1514,133 +1521,70 @@ const reverseCommandTimeoutGuidance = (
   } The new value applies on the next call; no restart is required. The ${String(MAX_COMBINED_OUTPUT_BYTES)} byte (16 MiB) combined output cap has no runtime override. Allow execution, cleanup and delivery headroom in the outer MCP client deadline. Confirm outstanding work and cleanup before retrying.`,
 });
 
-/**
- * Streams whose hash gave up while their open, a read or their close was
- * still pending, by stream factory and path. Destroying a stream cancels none
- * of these, which a stalled mount can hold, with a libuv worker,
- * indefinitely; the stream closes only after that operation returns. A later
- * hash of the same path waits for those streams to close instead of starting
- * another, so abandoned file work stays bounded by the paths, while hashes
- * that have not given up never wait for each other.
- */
-const abandonedStreams = new WeakMap<object, Map<string, Set<Promise<void>>>>();
+/** Optional bounds and file access for one hash. */
+export interface FileDigestBounds {
+  readonly signal?: AbortSignal | undefined;
+  /** Milliseconds for the whole hash. */
+  readonly timeoutMs?: number | undefined;
+  readonly stat?: (path: string) => Promise<Stats>;
+  readonly open?: (path: string) => ReturnType<typeof createReadStream>;
+  /** Owns the file work the hash stops waiting for; defaults to its own. */
+  readonly fileWork?: FileWork;
+}
 
 /**
  * Hash a regular file within one deadline. The hash completes once its stream
- * has closed, so the caller owns the file until then. `onAbandoned` receives
- * the close of a stream the hash gave up on, which a stalled mount can delay
- * past the hash's result.
+ * has closed, so a close that a stalled mount holds reaches the deadline as a
+ * stalled open or read does. Destroying a stream cancels none of these, so a
+ * hash that stops waiting destroys its stream and leaves the stream's close
+ * with `bounds.fileWork`.
  */
 export const digestFile = async (
   path: string,
-  signal?: AbortSignal,
-  stat: (path: string) => Promise<Stats> = statPath,
-  timeoutMs: number = DEFAULT_REVERSE_COMMAND_TIMEOUT_MS,
-  open: (
-    path: string,
-  ) => ReturnType<typeof createReadStream> = createReadStream,
-  onAbandoned?: (closed: Promise<void>) => void,
+  bounds: FileDigestBounds = {},
 ): Promise<string> => {
-  const startedAt = performance.now();
-  const remaining = (): number =>
-    Math.max(0, Math.ceil(timeoutMs - (performance.now() - startedAt)));
-  const info = await statWithDeadline(path, signal, stat, timeoutMs);
-  if (!info.isFile())
-    throw Object.assign(new Error("Artifact digest requires a regular file"), {
-      code: "EINVAL",
-    });
-  const abandoned =
-    abandonedStreams.get(open) ?? new Map<string, Set<Promise<void>>>();
-  abandonedStreams.set(open, abandoned);
-  for (
-    let earlier = abandoned.get(path);
-    earlier !== undefined;
-    earlier = abandoned.get(path)
-  ) {
-    const pending = Promise.all(earlier);
-    await settleWithDeadline(
-      () => pending,
+  const {
+    signal,
+    timeoutMs = DEFAULT_REVERSE_COMMAND_TIMEOUT_MS,
+    stat = statPath,
+    open = createReadStream,
+    fileWork = new FileWork(),
+  } = bounds;
+  const deadline = fileWorkDeadline(signal, timeoutMs);
+  try {
+    const info = digestStep(
+      await fileWork.run(path, deadline, () => stat(path)),
       signal,
-      remaining(),
-      "Artifact digest timed out",
     );
+    if (!info.isFile())
+      throw Object.assign(
+        new Error("Artifact digest requires a regular file"),
+        { code: "EINVAL" },
+      );
+    let stream: ReturnType<typeof open> | undefined;
+    const read = await fileWork.run(path, deadline, () =>
+      readDigest((stream = open(path))),
+    );
+    if (read.status === "interrupted") stream?.destroy();
+    return digestStep(read, signal);
+  } finally {
+    deadline.release();
   }
-  const remainingMs = remaining();
-  if (remainingMs === 0)
-    throw Object.assign(new Error("Artifact digest timed out"), {
-      code: "ETIMEDOUT",
-    });
-  return new Promise<string>((resolveDigest, rejectDigest) => {
+};
+
+/** The SHA-256 of a stream, once it has closed after its end. */
+const readDigest = (
+  stream: ReturnType<typeof createReadStream>,
+): Promise<string> =>
+  new Promise<string>((resolveDigest, rejectDigest) => {
     const hash = createHash("sha256");
-    const stream = open(path);
-    const closed = new Promise<void>((resolve) => {
-      stream.once("error", () => resolve());
-      stream.once("close", () => resolve());
-    });
-    // A stream destroyed while its open or a read is pending reports the
-    // error only after that operation returns, which a stalled mount can delay
-    // indefinitely. The deadline and cancellation therefore end the wait
-    // themselves, and later hashes of the path wait for the stream to close.
-    const abandon = (cause?: Error): void => {
-      cleanup();
-      stream.destroy(cause);
-      const held = abandoned.get(path) ?? new Set<Promise<void>>();
-      abandoned.set(path, held);
-      held.add(closed);
-      void closed.then(() => {
-        held.delete(closed);
-        if (held.size === 0 && abandoned.get(path) === held)
-          abandoned.delete(path);
-      });
-      onAbandoned?.(closed);
-    };
-    const stop = (cause: Error): void => {
-      abandon(cause);
-      rejectDigest(cause);
-    };
-    const timer = setTimeout(
-      () =>
-        stop(
-          Object.assign(new Error("Artifact digest timed out"), {
-            code: "ETIMEDOUT",
-          }),
-        ),
-      remainingMs,
-    );
-    const abort = (): void => {
-      stop(
-        new AnalysisCancelledError("artifact_digest", {
-          cause: signal?.reason,
-        }),
-      );
-    };
-    const cleanup = (): void => {
-      clearTimeout(timer);
-      signal?.removeEventListener("abort", abort);
-    };
-    if (signal?.aborted) {
-      abandon();
-      rejectDigest(
-        new AnalysisCancelledError("artifact_digest", {
-          cause: signal.reason,
-        }),
-      );
-      return;
-    }
-    signal?.addEventListener("abort", abort, { once: true });
-    stream.on("data", (chunk: Buffer | string) => hash.update(chunk));
-    stream.once("error", (cause: Error) => {
-      cleanup();
-      rejectDigest(cause);
-    });
-    // The hash completes when the stream closes after its end, so a close
-    // that a stalled mount holds reaches the deadline as a stalled read does.
     let digest: string | undefined;
+    stream.on("data", (chunk: Buffer | string) => hash.update(chunk));
     stream.once("end", () => {
       digest = hash.digest("hex");
     });
+    stream.once("error", rejectDigest);
     stream.once("close", () => {
-      cleanup();
       if (digest !== undefined) resolveDigest(digest);
       else
         rejectDigest(
@@ -1649,6 +1593,21 @@ export const digestFile = async (
           }),
         );
     });
+  });
+
+/** The value of one hash step, or the error its failure or interruption reports. */
+const digestStep = <Value>(
+  outcome: FileWorkOutcome<Value>,
+  signal: AbortSignal | undefined,
+): Value => {
+  if (outcome.status === "fulfilled") return outcome.value;
+  if (outcome.status === "rejected") throw outcome.cause;
+  if (outcome.by === "cancellation")
+    throw new AnalysisCancelledError("artifact_digest", {
+      cause: signal?.reason,
+    });
+  throw Object.assign(new Error("Artifact digest timed out"), {
+    code: "ETIMEDOUT",
   });
 };
 
@@ -1701,78 +1660,3 @@ const commandFailureCode = (cause: unknown): string | number | undefined => {
     ? code
     : undefined;
 };
-
-/**
- * Wait for one step of a hash within its deadline and cancellation. A step that
- * a stalled mount holds keeps running after the wait ends.
- */
-const settleWithDeadline = <Value>(
-  start: () => Promise<Value>,
-  signal: AbortSignal | undefined,
-  timeoutMs: number,
-  timeoutMessage: string,
-): Promise<Value> => {
-  if (signal?.aborted)
-    return Promise.reject(
-      new AnalysisCancelledError("artifact_digest", { cause: signal.reason }),
-    );
-  return new Promise<Value>((resolveValue, rejectValue) => {
-    let settled = false;
-    const finish = (outcome: Result<Value, unknown>): void => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      signal?.removeEventListener("abort", abort);
-      if (outcome.ok) resolveValue(outcome.value);
-      else rejectValue(outcome.error);
-    };
-    const abort = (): void =>
-      finish(
-        err(
-          new AnalysisCancelledError("artifact_digest", {
-            cause: signal?.reason,
-          }),
-        ),
-      );
-    const timer = setTimeout(
-      () =>
-        finish(
-          err(
-            Object.assign(new Error(timeoutMessage), {
-              code: "ETIMEDOUT",
-            }),
-          ),
-        ),
-      timeoutMs,
-    );
-    signal?.addEventListener("abort", abort, { once: true });
-    if (signal?.aborted) {
-      abort();
-      return;
-    }
-    // Promise handlers stay attached after timeout/cancellation so a delayed
-    // rejection is observed and cannot become an unhandled rejection.
-    try {
-      void start().then(
-        (value) => finish(ok(value)),
-        (cause: unknown) => finish(err(cause)),
-      );
-    } catch (cause) {
-      finish(err(cause));
-    }
-  });
-};
-
-// Later hashes of the path share a stat that a stalled mount holds.
-const statWithDeadline = (
-  path: string,
-  signal: AbortSignal | undefined,
-  stat: (path: string) => Promise<Stats>,
-  timeoutMs: number,
-): Promise<Stats> =>
-  settleWithDeadline(
-    () => shareFileCall(stat, path, () => stat(path)),
-    signal,
-    timeoutMs,
-    "Artifact stat timed out",
-  );

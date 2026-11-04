@@ -18,7 +18,10 @@ import {
   AnalysisCapabilityUnavailableError,
   AnalysisResourceConstraintError,
 } from "../../src/domain/analysisErrorCore.js";
-import { ReverseEngineeringService as CoreReverseEngineeringService } from "../../src/application/reverse/ReverseEngineeringService.js";
+import {
+  ReverseEngineeringService as CoreReverseEngineeringService,
+  type FileDigestBounds,
+} from "../../src/application/reverse/ReverseEngineeringService.js";
 import { createReverseEngineeringCommandPort } from "../../src/composition/reverseEngineering.js";
 import { objdumpCommand } from "../../src/objdump/ObjdumpCommand.js";
 import {
@@ -234,10 +237,11 @@ it("handles a synchronous stat provider throw as an artifact input failure", asy
   }
 });
 
-it("cancels an artifact stream when cancellation races with its listener registration", async () => {
+it("cancels a hash when the signal aborts while its listener is added", async () => {
   const { directory, path } = await createArtifact();
   let aborted = false;
-  let registrations = 0;
+  // A signal that aborts as the hash adds its listener, before it reports
+  // the abort through `aborted`.
   const signal = {
     get aborted() {
       return aborted;
@@ -246,12 +250,9 @@ it("cancels an artifact stream when cancellation races with its listener registr
       _type: string,
       listener: Parameters<EventTarget["addEventListener"]>[1],
     ) => {
-      registrations += 1;
-      if (registrations === 2) {
-        aborted = true;
-        if (typeof listener === "function") listener(new Event("abort"));
-        else listener.handleEvent(new Event("abort"));
-      }
+      aborted = true;
+      if (typeof listener === "function") listener(new Event("abort"));
+      else listener.handleEvent(new Event("abort"));
     },
     removeEventListener: () => {},
     dispatchEvent: () => true,
@@ -273,45 +274,33 @@ it("cancels an artifact stream when cancellation races with its listener registr
       ok: false,
       error: { _tag: "AnalysisCancelledError" },
     });
-    expect(registrations).toBe(2);
-    expect(stat).toHaveBeenCalledTimes(1);
+    expect(stat).not.toHaveBeenCalled();
     expect(run).not.toHaveBeenCalled();
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
 });
 
-it("cancels before stream listeners when the signal changes after stat", async () => {
+it("cancels a hash before it opens the file when the signal aborts during stat", async () => {
   const { directory, path } = await createArtifact();
-  let abortedReads = 0;
-  const signal = {
-    get aborted() {
-      abortedReads += 1;
-      return abortedReads >= 5;
-    },
-    addEventListener: () => {},
-    removeEventListener: () => {},
-    dispatchEvent: () => true,
-    onabort: null,
-    reason: undefined,
-    throwIfAborted: () => {},
-  } as AbortSignal;
-  const stat = vi.fn(async () => ({ isFile: () => true }) as unknown as Stats);
+  const controller = new AbortController();
+  const stat = vi.fn(async () => {
+    controller.abort("stop after stat");
+    return { isFile: () => true } as unknown as Stats;
+  });
   const run = vi.fn(async () => ({ stdout: "", stderr: "" }));
   const service = new ReverseEngineeringService({ stat, run });
 
   try {
     const result = await service.inspectWithObjdump(
       { path, operation: "file_headers" },
-      { signal },
+      { signal: controller.signal },
     );
 
     expect(result).toMatchObject({
       ok: false,
-      error: { _tag: "AnalysisCancelledError" },
+      error: { _tag: "AnalysisCancelledError", cause: "stop after stat" },
     });
-    // Cancellation checks may be repeated by the digest cleanup path.
-    expect(abortedReads).toBeGreaterThanOrEqual(5);
     expect(stat).toHaveBeenCalledTimes(1);
     expect(run).not.toHaveBeenCalled();
   } finally {
@@ -581,8 +570,8 @@ it("passes an AbortSignal-like caller value through without relaying it", async 
     }),
     removeEventListener: vi.fn(),
   } as unknown as AbortSignal;
-  const digest = vi.fn(async (_path: string, receivedSignal?: AbortSignal) => {
-    expect(receivedSignal).toBe(signal);
+  const digest = vi.fn(async (_path: string, bounds?: FileDigestBounds) => {
+    expect(bounds?.signal).toBe(signal);
     return "a".repeat(64);
   });
   const run = vi.fn(async (_command, _args, options) => {
