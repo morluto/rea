@@ -16,16 +16,16 @@ import { semanticRequireOrigin } from "./javascriptSemanticRequireOrigin.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import {
   completeSemanticSteps,
-  traverseJavaScriptAstSteps,
+  traverseJavaScriptValueAstSteps,
 } from "./javascriptSemanticTraversal.js";
 import {
   evaluateSemanticBinding,
+  evaluateSemanticExpression,
   evaluateSemanticProvenance,
 } from "./javascriptSemanticValues.js";
 import { range } from "./javascriptStaticAnalysisHelpers.js";
 import {
   propertyName,
-  semanticFinalObjectProperty,
   semanticStaticPropertyKey,
   semanticWrappedWriteSite,
   semanticWriteSiteReadsFirst,
@@ -33,6 +33,7 @@ import {
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import {
+  isErasedJavaScriptDeclaration,
   isTypeOnlyExportDeclaration,
   isTypeOnlyExportSpecifier,
   isTypeOnlyImportDeclaration,
@@ -40,11 +41,13 @@ import {
   semanticImportEqualsSpecifier,
 } from "./javascriptModuleDeclaration.js";
 import {
-  commonJsDefinedExport,
-  commonJsExportName,
+  commonJsRuntimeExportValues,
+  commonJsExportApplicability,
   type CommonJsExportReceiverEffect,
   type CommonJsExportSite,
 } from "./javascriptCommonJsExportReceivers.js";
+import type { JavaScriptSemanticPropertyPath } from "./javascriptSemanticPropertyPaths.js";
+import { semanticComputedMethodKey } from "./javascriptSemanticEvaluationOrder.js";
 
 interface CollectCallableInput {
   readonly node: t.Node;
@@ -71,6 +74,12 @@ export const collectSemanticCallable = (input: CollectCallableInput): void => {
         ? null
         : bodyScope.scopeId,
     location: range(node),
+    computedKeyLocation:
+      "key" in node &&
+      t.isNode(node.key) &&
+      semanticComputedMethodKey(node, node.key)
+        ? range(node.key)
+        : null,
     returnSites: [],
     returnCoverage: {
       status: "partial",
@@ -90,6 +99,16 @@ export const collectSemanticModuleLink = (
     CommonJsExportReceiverEffect
   >,
 ): void => {
+  // Import/export declarations also describe erased type links. Their nested
+  // expressions do not establish runtime require or CommonJS export links.
+  if (
+    state.erasedSyntaxNodes.has(node) &&
+    !t.isTSImportEqualsDeclaration(node) &&
+    !t.isImportDeclaration(node) &&
+    !t.isExportNamedDeclaration(node) &&
+    !t.isExportAllDeclaration(node)
+  )
+    return;
   if (t.isTSImportEqualsDeclaration(node)) collectImportEquals(node, state);
   else if (t.isImportDeclaration(node)) collectImports(node, state);
   else if (t.isExportAllDeclaration(node))
@@ -110,7 +129,9 @@ export const collectSemanticModuleLink = (
     addModuleLink(
       state,
       {
-        kind: "export",
+        kind: isErasedJavaScriptDeclaration(node.declaration)
+          ? "type-import"
+          : "export",
         specifier: null,
         importedName: null,
         localName: defaultExportLocalName(node.declaration),
@@ -124,7 +145,7 @@ export const collectSemanticModuleLink = (
   else if (t.isAssignmentExpression(node))
     collectCommonJsExport(node, state, commonJsReceivers.get(node));
   else if (t.isCallExpression(node)) {
-    collectDefinedCommonJsExport(node, state, commonJsReceivers.get(node));
+    collectCommonJsExport(node, state, commonJsReceivers.get(node));
     collectUnboundRequireLink(node, state);
   }
 };
@@ -172,20 +193,17 @@ export function* collectSemanticReferencesSteps(
 ): Generator<void, JavaScriptSemanticReference[]> {
   const output: JavaScriptSemanticReference[] = [];
   const seen = new Set<string>();
-  const patterns: t.Node[] = [];
-  yield* traverseJavaScriptAstSteps(program, {
+  yield* traverseJavaScriptValueAstSteps(program, state.erasedSyntaxNodes, {
     enter: (node, parent, readAncestors) => {
-      if (isPatternNode(node)) patterns.push(node);
       if (
         !t.isIdentifier(node) ||
         parent === null ||
-        (name !== undefined && node.name !== name) ||
-        (isNonReferenceKey(node, parent) &&
-          !patterns.some((pattern) => bindsIdentifier(pattern, parent, node)))
+        (name !== undefined && node.name !== name)
       )
         return;
-      const ancestors = readAncestors();
-      const role = semanticIdentifierRole(node, parent, ancestors);
+      let ancestors: readonly t.Node[] | undefined;
+      const ancestry = () => (ancestors ??= readAncestors());
+      const role = semanticIdentifierRole(node, parent, ancestry);
       if (role === null) return;
       // A compound assignment or update reads before it writes; emit both so
       // reference consumers see the read they actually execute.
@@ -193,7 +211,7 @@ export function* collectSemanticReferencesSteps(
         role === "write" &&
         semanticReadsBeforeWrite(
           node,
-          semanticWrappedWriteSite(node, parent, ancestors) ?? parent,
+          semanticWrappedWriteSite(node, parent, ancestry()) ?? parent,
         )
           ? (["read", "write"] as const)
           : ([role] as const);
@@ -218,9 +236,6 @@ export function* collectSemanticReferencesSteps(
                 : "unbound",
         });
       }
-    },
-    exit: (node) => {
-      if (isPatternNode(node)) patterns.pop();
     },
   });
   return output;
@@ -254,6 +269,17 @@ export const immutableSemanticBindings = (
       mutable: binding.mutable,
       definitions: binding.definitions,
       value: evaluateSemanticBinding(binding, state),
+      ...(binding.memberWrites.length > 0 &&
+      binding.initializers.length === 1 &&
+      binding.initializers[0]?.projection.length === 0
+        ? {
+            initializerValue: evaluateSemanticExpression(
+              binding.initializers[0].node,
+              state,
+              binding.initializers[0].node,
+            ),
+          }
+        : {}),
       provenance: evaluateSemanticProvenance(binding, state),
     }))
     .sort((left, right) =>
@@ -472,34 +498,25 @@ const requirePatternBindings = (
 };
 
 const collectCommonJsExport = (
-  node: t.AssignmentExpression,
+  node: CommonJsExportSite,
   state: JavaScriptSemanticAnalysisState,
   receiverEffect: CommonJsExportReceiverEffect | undefined,
 ): void => {
-  const exportedName = commonJsExportName(node.left, state);
-  if (exportedName === undefined) return;
-  if (receiverEffect === "detached") return;
-  // Compound and logical writes also depend on the previous value, so remain
-  // unknown.
-  const value =
-    node.operator === "=" && receiverEffect !== "uncertain" ? node.right : null;
-  addCommonJsExport(node, state, exportedName, value);
-};
-
-const collectDefinedCommonJsExport = (
-  node: t.CallExpression,
-  state: JavaScriptSemanticAnalysisState,
-  receiverEffect: CommonJsExportReceiverEffect | undefined,
-): void => {
-  const defined = commonJsDefinedExport(node, state);
-  if (defined === undefined || receiverEffect === "detached") return;
-  // A data descriptor exports its value; an accessor's result stays unknown.
-  const descriptor = unwrapJavaScriptExpression(defined.descriptor).node;
-  const value =
-    receiverEffect !== "uncertain" && t.isObjectExpression(descriptor)
-      ? (semanticFinalObjectProperty(descriptor, "value") ?? null)
-      : null;
-  addCommonJsExport(node, state, defined.exportedName, value);
+  // Compound and logical writes also depend on the previous value, so remain unknown.
+  for (const exported of commonJsRuntimeExportValues(node, state)) {
+    const applicability = commonJsExportApplicability(
+      receiverEffect,
+      exported.exportedName,
+    );
+    if (applicability === "detached") continue;
+    addCommonJsExport(
+      node,
+      state,
+      exported.exportedName,
+      applicability === "uncertain" ? null : exported.value,
+      exported.projection,
+    );
+  }
 };
 
 const addCommonJsExport = (
@@ -507,6 +524,7 @@ const addCommonJsExport = (
   state: JavaScriptSemanticAnalysisState,
   exportedName: string,
   exported: t.Node | null,
+  projection?: JavaScriptSemanticPropertyPath,
 ): void => {
   // Simple assignment chains yield their rightmost assigned value.
   let value = exported;
@@ -514,21 +532,41 @@ const addCommonJsExport = (
     value = value.right;
   const required =
     value === null ? undefined : semanticRequireOrigin(value, state);
-  const origin = required?.origin;
+  // Copies retain their module provenance, but do not export the source object
+  // itself. A wildcard with exclusions cannot express one module link.
+  const origin = projection?.some(
+    (key) =>
+      typeof key === "object" && key !== null && key.excludedKeys.length > 0,
+  )
+    ? undefined
+    : required?.origin;
+  const selectedName = projection?.at(-1);
   addModuleLink(
     state,
     {
       kind: "commonjs-export",
       specifier: origin?.specifier ?? null,
-      importedName: origin?.importedPath.at(-1) ?? null,
-      localName: value !== null && t.isIdentifier(value) ? value.name : null,
+      importedName:
+        origin === undefined
+          ? null
+          : typeof selectedName === "string" || typeof selectedName === "number"
+            ? String(selectedName)
+            : (origin.importedPath.at(-1) ?? null),
+      localName:
+        projection === undefined && value !== null && t.isIdentifier(value)
+          ? value.name
+          : null,
       exportedName,
-      callableId: value === null ? null : semanticCallableIdForNode(value),
+      callableId:
+        projection !== undefined || value === null
+          ? null
+          : semanticCallableIdForNode(value),
       location: range(node),
     },
     node,
   );
-  if (required !== undefined) state.linkedRequireCalls.add(required.call);
+  if (origin !== undefined && required !== undefined)
+    state.linkedRequireCalls.add(required.call);
 };
 
 const addModuleLink = (
@@ -626,8 +664,20 @@ export const semanticReadsBeforeWrite = (
 export const semanticIdentifierRole = (
   node: t.Identifier,
   parent: t.Node,
-  ancestors: readonly t.Node[],
+  readAncestors: () => readonly t.Node[],
 ): JavaScriptSemanticReference["role"] | null => {
+  // Member identifiers are either object/computed-key reads or fixed property
+  // names. None is a bound destructuring slot, so no ancestor snapshot is needed.
+  if (t.isMemberExpression(parent) || t.isOptionalMemberExpression(parent))
+    return semanticReferenceRole(node, parent);
+  if (
+    t.isObjectProperty(parent) &&
+    parent.key === node &&
+    !parent.computed &&
+    parent.value !== node
+  )
+    return null;
+  const ancestors = readAncestors();
   const patternAncestor = enclosingPatternAncestor(node, parent, ancestors);
   if (patternAncestor !== null) {
     if (isPatternOwnerDeclaration(patternAncestor)) return null;
@@ -635,7 +685,7 @@ export const semanticIdentifierRole = (
   }
   const site = semanticWrappedWriteSite(node, parent, ancestors);
   if (site !== null && site !== parent && !isDeleteSite(site)) return "write";
-  return semanticReferenceRole(node, parent);
+  return semanticReferenceRole(node, parent, ancestors.at(-2));
 };
 
 /**
@@ -713,9 +763,8 @@ const isPatternOwnerDeclaration = (node: t.Node): boolean =>
 export const semanticReferenceRole = (
   node: t.Identifier,
   parent: t.Node,
+  grandparent?: t.Node,
 ): JavaScriptSemanticReference["role"] | null => {
-  if (isDeclarationIdentifier(node, parent) || isNonReferenceKey(node, parent))
-    return null;
   if (
     (t.isAssignmentExpression(parent) && parent.left === node) ||
     t.isUpdateExpression(parent) ||
@@ -723,58 +772,22 @@ export const semanticReferenceRole = (
       parent.left === node)
   )
     return "write";
-  if (t.isExportSpecifier(parent) && parent.local === node) return "export";
-  return "read";
-};
-
-const isDeclarationIdentifier = (
-  node: t.Identifier,
-  parent: t.Node,
-): boolean => {
-  if (t.isTSImportEqualsDeclaration(parent)) return parent.id === node;
-  return (
+  // Babel owns syntax roles. These TS declaration forms are not covered by
+  // the installed Babel 8 isReferenced predicate.
+  if (
+    (t.isTSImportEqualsDeclaration(parent) && parent.id === node) ||
     (t.isTSParameterProperty(parent) &&
       patternContains(parent.parameter, node)) ||
-    (t.isVariableDeclarator(parent) && patternContains(parent.id, node)) ||
-    ((t.isFunctionDeclaration(parent) || t.isFunctionExpression(parent)) &&
-      parent.id === node) ||
-    (t.isFunction(parent) &&
-      parent.params.some((value) => patternContains(value, node))) ||
-    ((t.isClassDeclaration(parent) || t.isClassExpression(parent)) &&
-      parent.id === node) ||
-    (t.isImportSpecifier(parent) &&
-      (parent.local === node || parent.imported === node)) ||
-    (t.isImportDefaultSpecifier(parent) && parent.local === node) ||
-    (t.isImportNamespaceSpecifier(parent) && parent.local === node) ||
-    (t.isCatchClause(parent) && parent.param === node)
-  );
+    ((t.isTSDeclareMethod(parent) || t.isTSMethodSignature(parent)) &&
+      parent.key === node &&
+      !parent.computed)
+  )
+    return null;
+  if (!t.isReferenced(node, parent, grandparent)) return null;
+  return t.isExportSpecifier(parent) && parent.local === node
+    ? "export"
+    : "read";
 };
-
-const isNonReferenceKey = (node: t.Identifier, parent: t.Node): boolean =>
-  ((t.isMemberExpression(parent) || t.isOptionalMemberExpression(parent)) &&
-    parent.property === node &&
-    !parent.computed) ||
-  ((t.isObjectProperty(parent) || t.isObjectMethod(parent)) &&
-    parent.key === node &&
-    !parent.computed &&
-    !(t.isObjectProperty(parent) && parent.shorthand)) ||
-  isNoncomputedClassMemberKey(node, parent) ||
-  t.isPrivateName(parent) ||
-  (t.isExportSpecifier(parent) && parent.exported === node) ||
-  t.isLabeledStatement(parent) ||
-  t.isBreakStatement(parent) ||
-  t.isContinueStatement(parent);
-
-/** A noncomputed class member name is a property key, never a lexical read. */
-const isNoncomputedClassMemberKey = (
-  node: t.Identifier,
-  parent: t.Node,
-): boolean =>
-  (t.isClassMethod(parent) ||
-    t.isClassProperty(parent) ||
-    t.isTSDeclareMethod(parent)) &&
-  parent.key === node &&
-  !parent.computed;
 
 const patternNames = (pattern: t.Node): string[] => {
   if (t.isTSParameterProperty(pattern)) return patternNames(pattern.parameter);

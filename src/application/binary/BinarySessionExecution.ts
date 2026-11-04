@@ -1,5 +1,8 @@
 import type { AnalysisProfileCommitment } from "../../domain/analysisProfile.js";
-import type { BinaryTarget } from "../../domain/binaryTargetTypes.js";
+import {
+  artifactTargetSelectedPath,
+  type BinaryTarget,
+} from "../../domain/binaryTargetTypes.js";
 import { AnalysisCapabilityUnavailableError } from "../../domain/analysisErrorCore.js";
 import { NoBinaryOpenError } from "../../domain/configurationErrors.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
@@ -134,6 +137,7 @@ export const bindExecutionTarget = (
       : { architecture: target.architecture }),
   };
   if (
+    result.value.subject !== undefined &&
     result.value.subject !== null &&
     result.value.subject.sha256 !== target.sha256 &&
     !isArtifactBundleSubject(operation, result.value.subject, target)
@@ -144,7 +148,9 @@ export const bindExecutionTarget = (
         `${operation}:subject`,
       ),
     );
-  return ok({ ...result.value, subject: result.value.subject ?? subject });
+  return result.value.subject === undefined
+    ? ok({ ...result.value, subject })
+    : result;
 };
 
 const isArtifactBundleSubject = (
@@ -152,7 +158,8 @@ const isArtifactBundleSubject = (
   subject: EvidenceSubjectTarget,
   target: BinaryTarget,
 ): boolean =>
+  target.bundleInfoPlist !== undefined &&
   (operation === "inventory_artifact" ||
     operation === "inspect_artifact" ||
     operation === "extract_artifact") &&
-  subject.path === (target.sourcePath ?? target.path);
+  subject.path === artifactTargetSelectedPath(target);

@@ -19,7 +19,7 @@ import type { ApktoolWorkspace } from "./ApktoolWorkspace.js";
 const STRINGS_XML_MAX_BYTES = 8 * 1024 * 1024;
 type Selection = Pick<
   Extract<ApktoolRequest, { operation: "decode_android_resources" }>["input"],
-  "include_strings" | "locale" | "locales"
+  "include_strings" | "locale" | "locales" | "string_tables_only"
 >;
 type PresentTable = {
   readonly status: "present";
@@ -152,7 +152,8 @@ export const projectApktoolStringTables = async (
         "Aggregate string table projection stopped due to resource limits",
       );
     return {
-      strings: tables[0]?.strings ?? [],
+      strings:
+        input.string_tables_only === true ? [] : (tables[0]?.strings ?? []),
       tables,
       limitations: [...limitations],
       coverage: tables.some((table) => table.coverage === "partial")
@@ -223,9 +224,14 @@ export const projectApktoolStringTables = async (
         );
         continue;
       }
-      // Batch output includes the primary strings twice, in the legacy field and
-      // in string_tables. Charge that representation before selecting entries.
-      const copies = index === 0 && input.locales !== undefined ? 2 : 1;
+      // The default batch shape repeats primary entries in strings and tables;
+      // table-only output charges one copy. Account before selecting entries.
+      const copies =
+        index === 0 &&
+        input.locales !== undefined &&
+        input.string_tables_only !== true
+          ? 2
+          : 1;
       const remaining = Math.max(0, MAX_AGGREGATE_STRINGS - outputEntries);
       const selected = fact.entries.slice(0, Math.floor(remaining / copies));
       outputEntries += selected.length * copies;

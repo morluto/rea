@@ -1,17 +1,5 @@
+import { copyPlistUidIdentity, plistUidValue } from "./plistUid.js";
 import type { JsonValue } from "../jsonValue.js";
-
-/** XML numeric decoding could not establish a representable value identity. */
-export class UnknownPlistReal {}
-
-/** Exact decimal or signed hexadecimal XML integer text. */
-export const parsePlistIntegerLiteral = (text: string): bigint | undefined => {
-  const match = /^([+-]?)(?:0[xX]([\da-fA-F]+)|(\d+))$/u.exec(text.trim());
-  if (match === null) return undefined;
-  const magnitude = BigInt(
-    match[2] === undefined ? match[3]! : `0x${match[2]}`,
-  );
-  return match[1] === "-" ? -magnitude : magnitude;
-};
 
 /** Source element types needed to distinguish large integers from integral reals. */
 export interface PlistNumberLiterals {
@@ -31,7 +19,6 @@ export const createPlistNumberCollector = () => {
   const integers = new Map<number, Set<string>>();
   const reals = new Set<number>();
   let unsafeIntegerLiterals = 0;
-  let incompleteMetadata = false;
   return {
     integer: (exact: bigint) => {
       if (
@@ -49,16 +36,45 @@ export const createPlistNumberCollector = () => {
     real: (value: number) => {
       reals.add(value);
     },
-    markIncomplete: () => {
-      incompleteMetadata = true;
-    },
     result: (incomplete = false): PlistNumberLiterals => ({
       integers,
       reals,
       unsafeIntegerLiterals,
-      incomplete: incomplete || incompleteMetadata,
+      incomplete,
     }),
   };
+};
+
+/** One association established from source literals, before adapter projection. */
+type PlistNumberSource =
+  | { readonly kind: "integer"; readonly decimal: string }
+  | { readonly kind: "real" }
+  | { readonly kind: "unknown" };
+
+/**
+ * Associate a decoded number with its source type. A retained JSON literal can
+ * narrow integer candidates that otherwise collide after numeric rounding.
+ * Missing or incomplete metadata never establishes a source type.
+ */
+export const resolvePlistNumberSource = (
+  value: number,
+  literals: PlistNumberLiterals | undefined,
+  sourceDecimal?: string,
+): PlistNumberSource => {
+  if (literals === undefined || literals.incomplete) return { kind: "unknown" };
+  const decimals = literals.integers.get(value);
+  const real = literals.reals.has(value);
+  const integer =
+    sourceDecimal === undefined
+      ? decimals !== undefined
+      : decimals?.has(sourceDecimal) === true;
+  if (real) return { kind: integer ? "unknown" : "real" };
+  if (!integer) return { kind: "unknown" };
+  const decimal =
+    sourceDecimal ?? (decimals?.size === 1 ? [...decimals][0] : undefined);
+  return decimal === undefined
+    ? { kind: "unknown" }
+    : { kind: "integer", decimal };
 };
 
 /** Preserve unambiguous exact integers; disclose rounded or unclassified numbers. */
@@ -67,37 +83,20 @@ export const createPlistNumberProjection = (literals: PlistNumberLiterals) => {
   let ambiguousNumberCount = 0;
   const mapNumber = (item: number): JsonValue => {
     if (Number.isSafeInteger(item) || !Number.isInteger(item)) return item;
-    if (literals.incomplete) {
-      ambiguousNumberCount += 1;
-      return item;
-    }
-    const decimals = literals.integers.get(item);
-    if (decimals === undefined) {
-      if (!literals.reals.has(item)) ambiguousNumberCount += 1;
-      return item;
-    }
-    const [decimal] = decimals;
-    if (
-      decimals.size !== 1 ||
-      decimal === undefined ||
-      literals.reals.has(item)
-    ) {
-      ambiguousNumberCount += 1;
+    const source = resolvePlistNumberSource(item, literals);
+    if (source.kind !== "integer") {
+      if (source.kind === "unknown") ambiguousNumberCount += 1;
       return item;
     }
     exactIntegerCount += 1;
-    return { $plist_type: "integer", decimal };
+    return { $plist_type: "integer", decimal: source.decimal };
   };
   const map = (item: JsonValue): JsonValue => {
     if (typeof item === "number") return mapNumber(item);
     if (Array.isArray(item)) return item.map(map);
     if (item !== null && typeof item === "object") {
-      const keys = Object.keys(item);
-      const marker = item[keys[0] ?? ""];
-      const reference =
-        keys.length === 1 &&
-        (keys[0] === "UID" || keys[0] === "CF$UID") &&
-        typeof marker === "number";
+      const marker = plistUidValue(item);
+      const reference = marker !== undefined;
       if (reference) {
         // Keep malformed numeric reference markers recognizable by the graph reader.
         if (
@@ -108,9 +107,11 @@ export const createPlistNumberProjection = (literals: PlistNumberLiterals) => {
           ambiguousNumberCount += 1;
         return item;
       }
-      return Object.fromEntries(
+      const projected = Object.fromEntries(
         Object.entries(item).map(([key, child]) => [key, map(child)]),
       );
+      copyPlistUidIdentity(item, projected);
+      return projected;
     }
     return item;
   };
@@ -135,31 +136,4 @@ export const createPlistNumberProjection = (literals: PlistNumberLiterals) => {
           ]),
     ],
   };
-};
-
-/**
- * Read a whole `<real>` text as one of CFPropertyList's non-finite spellings.
- * Its parser compares the complete text case-insensitively and also accepts
- * `infinity`, `inf`, `+inf` and `-inf`; its writer emits `nan`, `+infinity`
- * and `-infinity`. Any other text, including surrounding whitespace, is not
- * a spelled non-finite real.
- */
-export const parsePlistNonFiniteRealLiteral = (
-  text: string,
-): number | undefined => {
-  if (text.length < 3 || text.length > 9) return undefined;
-  switch (text.toLowerCase()) {
-    case "nan":
-      return Number.NaN;
-    case "+infinity":
-    case "infinity":
-    case "+inf":
-    case "inf":
-      return Number.POSITIVE_INFINITY;
-    case "-infinity":
-    case "-inf":
-      return Number.NEGATIVE_INFINITY;
-    default:
-      return undefined;
-  }
 };

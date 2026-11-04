@@ -4,9 +4,21 @@ import type {
   AnalysisOperationPort,
 } from "./AnalysisProvider.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
-import { AnalysisOutputError } from "../domain/analysisErrorCore.js";
+import {
+  AnalysisCancelledError,
+  AnalysisInputError,
+  AnalysisOutputError,
+} from "../domain/analysisErrorCore.js";
+import {
+  projectAnalysisError,
+  type AnalysisErrorProjection,
+} from "../domain/analysisErrorProjection.js";
+import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
 import type { JsonValue } from "../domain/jsonValue.js";
-import { analysisBookmarkSchema } from "../domain/hopperValues.js";
+import { analysisBookmarkSchema } from "../domain/native/nativeInventory.js";
+import { parseContainingProcedureResolution } from "../domain/native/nativeObservation.js";
+import { nativeAddressCoordinateInputSchema } from "../domain/native/nativeAddress.js";
 import { resolveAnalysisDocument } from "./AnalysisDocument.js";
 import { err, ok, type Result } from "../domain/result.js";
 
@@ -16,6 +28,7 @@ type Facet =
       readonly state: "unavailable";
       readonly reason: string;
       readonly remediation: string;
+      readonly error?: AnalysisErrorProjection;
     };
 
 const parameters = (
@@ -66,18 +79,13 @@ export const getNavigationContext = async (
     parameters(documentName, address.value.result),
     executionOptions(signal),
   );
-  if (!procedure.ok) {
-    if (!isMissingCurrentProcedure(procedure.error)) return procedure;
-    return ok({
-      document: documentName,
-      address: address.value.result,
-      procedure: null,
-    });
-  }
+  if (!procedure.ok) return procedure;
+  const resolution = parseContainingProcedureResolution(procedure.value.result);
+  if (!resolution.ok) return resolution;
   return ok({
     document: documentName,
     address: address.value.result,
-    procedure: containingProcedureName(procedure.value.result),
+    procedure: resolution.value.found ? resolution.value.procedure.name : null,
   });
 };
 
@@ -101,20 +109,47 @@ export const inspectAddressContext = async (
     "inline_comment",
     "list_bookmarks",
   ] as const satisfies readonly AnalysisOperation[];
-  const results = await Promise.all(
-    operations.map((operation) =>
-      analysis.execute(
-        operation,
-        operation === "list_bookmarks" ? parameters(document.value) : args,
-        executionOptions(signal),
-      ),
-    ),
-  );
-  for (const result of results) {
-    if (!result.ok && isRequestLevelFailure(result.error)) return result;
+  const completed: Result<AnalysisExecution, AnalysisError>[] = [];
+  if (signal?.aborted === true)
+    return err(
+      new AnalysisCancelledError("inspect_address_context", {
+        cause: signal.reason,
+      }),
+    );
+  let signalCancellation: AnalysisCancelledError | undefined;
+  const cancelled = () => {
+    signalCancellation = new AnalysisCancelledError("inspect_address_context", {
+      cause: signal?.reason,
+    });
+    completed.push(err(signalCancellation));
+  };
+  signal?.addEventListener("abort", cancelled, { once: true });
+  let results: Result<AnalysisExecution, AnalysisError>[];
+  try {
+    results = await Promise.all(
+      operations.map(async (operation) => {
+        const result = await analysis.execute(
+          operation,
+          operation === "list_bookmarks" ? parameters(document.value) : args,
+          executionOptions(signal),
+        );
+        completed.push(result);
+        return result;
+      }),
+    );
+  } finally {
+    signal?.removeEventListener("abort", cancelled);
   }
+  const fatal = contextFailure(completed, signalCancellation);
+  if (fatal !== undefined) return err(fatal);
   const name = facet(results[0], operations[0]);
-  const procedure = facet(results[1], operations[1]);
+  const procedureResult = results[1];
+  const resolution = procedureResult?.ok
+    ? parseContainingProcedureResolution(procedureResult.value.result)
+    : procedureResult;
+  const procedure: Facet = resolution?.ok
+    ? { state: "available", value: resolution.value }
+    : unavailableFacet(resolution?.error, operations[1]);
   const comment = facet(results[2], operations[2]);
   const inlineComment = facet(results[3], operations[3]);
   const bookmarks = facet(results[4], operations[4]);
@@ -129,7 +164,7 @@ export const inspectAddressContext = async (
       bookmarks.state === "available"
         ? matchingBookmarks(
             bookmarks.value,
-            resolvedAddress(results[1], input.address),
+            resolution?.ok ? resolution.value.query_address : input.address,
           )
         : bookmarks,
   });
@@ -141,45 +176,85 @@ const facet = (
 ): Facet =>
   result?.ok === true
     ? { state: "available", value: result.value.result }
-    : {
-        state: "unavailable",
-        reason: result?.error.message ?? `${operation} returned no result`,
-        remediation: `Call ${operation} directly to inspect provider availability and diagnostics.`,
-      };
+    : unavailableFacet(result?.error, operation);
 
-const isMissingCurrentProcedure = (error: AnalysisError): boolean =>
-  /(?:no procedure exists|not in a procedure)/iu.test(error.message);
+const unavailableFacet = (
+  error: AnalysisError | undefined,
+  operation: AnalysisOperation,
+): Facet => {
+  if (error instanceof AnalysisInputError) {
+    const projected = projectAnalysisError(error);
+    if (projected.code === "invalid_request")
+      return {
+        state: "unavailable",
+        reason: projected.message,
+        remediation: projected.remediation.action,
+        error: projected,
+      };
+  }
+  return {
+    state: "unavailable",
+    reason: error?.message ?? `${operation} returned no result`,
+    remediation: `Call ${operation} directly to inspect provider availability and diagnostics.`,
+  };
+};
 
 const isRequestLevelFailure = (error: AnalysisError): boolean =>
   error._tag === "AnalysisCancelledError" ||
   error._tag === "AnalysisTimeoutError" ||
   error._tag === "NoBinaryOpenError";
 
-const containingProcedureName = (value: JsonValue): string | null => {
-  if (typeof value !== "object" || value === null || Array.isArray(value))
-    return null;
-  if (value.found !== true) return null;
-  const procedure = value.procedure;
-  if (
-    typeof procedure !== "object" ||
-    procedure === null ||
-    Array.isArray(procedure)
-  )
-    return null;
-  return typeof procedure.name === "string" ? procedure.name : null;
-};
-
-const resolvedAddress = (
-  result: Result<AnalysisExecution, AnalysisError> | undefined,
-  fallback: string,
-): string => {
-  if (result?.ok !== true) return fallback;
-  const value = result.value.result;
-  if (typeof value !== "object" || value === null || Array.isArray(value))
-    return fallback;
-  return typeof value.query_address === "string"
-    ? value.query_address
-    : fallback;
+/** Wait for all facets and retain every unresolved cleanup owner. */
+const contextFailure = (
+  results: readonly Result<AnalysisExecution, AnalysisError>[],
+  signalCancellation?: AnalysisCancelledError,
+): AnalysisError | undefined => {
+  const failures = [
+    ...new Set(results.flatMap((result) => (result.ok ? [] : [result.error]))),
+  ];
+  // A provider's cancellation for this exact signal carries its own diagnostic
+  // and cleanup facts. Attribute that returned error to the abort event rather
+  // than replacing it with our generic observation of the same signal.
+  const marker =
+    signalCancellation === undefined
+      ? -1
+      : failures.indexOf(signalCancellation);
+  if (marker >= 0) {
+    const reported = failures.findIndex(
+      (failure, index) =>
+        index > marker &&
+        failure instanceof AnalysisCancelledError &&
+        failure.cause === signalCancellation?.cause,
+    );
+    if (reported >= 0) {
+      failures[marker] = failures[reported]!;
+      failures.splice(reported, 1);
+    }
+  }
+  const first = failures.find(
+    (failure) => isRequestLevelFailure(failure) || failure.cleanupIncomplete,
+  );
+  if (first === undefined) return undefined;
+  let combined = first;
+  for (const failure of failures) {
+    if (failure === first) continue;
+    if (failure instanceof AnalysisCancelledError)
+      combined = analysisErrorWithCancellation(combined, failure);
+    if (failure.cleanupIncomplete) {
+      const previous = combined;
+      combined = analysisErrorWithCleanupFailure(
+        previous,
+        failure,
+        "inspect_address_context",
+      ).bindCleanupDependencies([previous, failure]);
+    } else if (
+      !(failure instanceof AnalysisCancelledError) &&
+      isRequestLevelFailure(failure)
+    ) {
+      combined.retainSecondaryFailure(failure);
+    }
+  }
+  return combined;
 };
 
 const matchingBookmarks = (value: JsonValue, address: string): Facet => {
@@ -199,8 +274,34 @@ const matchingBookmarks = (value: JsonValue, address: string): Facet => {
       remediation:
         "Retry list_bookmarks directly and report the provider output shape if it remains malformed.",
     };
-  return {
-    state: "available",
-    value: parsed.data.filter((bookmark) => bookmark.address === address),
-  };
+  const target = nativeAddressCoordinateInputSchema.safeParse(address);
+  const matching = [];
+  for (const bookmark of parsed.data) {
+    if (bookmark.address === address) {
+      matching.push(bookmark);
+      continue;
+    }
+    const candidate = nativeAddressCoordinateInputSchema.safeParse(
+      bookmark.address,
+    );
+    if (
+      !target.success ||
+      !candidate.success ||
+      (target.data.offset === candidate.data.offset &&
+        target.data.space !== candidate.data.space)
+    )
+      return {
+        state: "unavailable",
+        reason:
+          "Bookmark address identity could not be compared with the selected address.",
+        remediation:
+          "Call list_bookmarks directly to inspect the provider addresses.",
+      };
+    if (
+      target.data.offset === candidate.data.offset &&
+      target.data.space === candidate.data.space
+    )
+      matching.push(bookmark);
+  }
+  return { state: "available", value: matching };
 };

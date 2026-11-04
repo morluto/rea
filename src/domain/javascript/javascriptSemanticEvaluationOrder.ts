@@ -6,12 +6,23 @@ import {
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 
+import { childNodes } from "./javascriptSemanticTraversal.js";
+
 const preserveGrouping = { stopAtParentheses: true } as const;
 
 export type JavaScriptSemanticIterationCardinality =
   | "empty"
   | "nonempty"
   | "unknown";
+
+/** Whether a method's computed key executes in the enclosing environment. */
+export const semanticComputedMethodKey = (
+  parent: t.Node | undefined,
+  child: t.Node,
+): boolean =>
+  (t.isObjectMethod(parent) || t.isClassMethod(parent)) &&
+  parent.computed &&
+  parent.key === child;
 
 /** Exact source-only cardinality for literal loop heads. */
 export const semanticIterationCardinality = (
@@ -145,4 +156,95 @@ const optionalChainMayShortCircuit = (expression: t.Node): boolean => {
     } else if (t.isCallExpression(current)) current = current.callee;
     else return false;
   }
+};
+
+interface AbruptCompletionSummary {
+  readonly breaks: ReadonlySet<string | null>;
+  readonly continues: ReadonlySet<string | null>;
+}
+const emptyAbruptLabels: ReadonlySet<string | null> = new Set();
+const emptyAbruptSummary: AbruptCompletionSummary = {
+  breaks: emptyAbruptLabels,
+  continues: emptyAbruptLabels,
+};
+const abruptSummaries = new WeakMap<t.Node, AbruptCompletionSummary>();
+const abruptPrefixes = new WeakMap<
+  t.BlockStatement | t.Program,
+  ReadonlySet<t.Node>
+>();
+
+/** Loop and label exits crossing a statement boundary, excluding nested callables. */
+const abruptSummary = (root: t.Node): AbruptCompletionSummary => {
+  const pending: { node: t.Node; visited: boolean }[] = [
+    { node: root, visited: false },
+  ];
+  while (pending.length > 0) {
+    const { node, visited } = pending.pop()!;
+    if (abruptSummaries.has(node)) continue;
+    const children =
+      t.isFunction(node) || t.isClass(node)
+        ? []
+        : childNodes(node).filter(
+            (child) =>
+              t.isStatement(child) ||
+              t.isSwitchCase(child) ||
+              t.isCatchClause(child),
+          );
+    if (!visited) {
+      pending.push({ node, visited: true });
+      for (const child of children)
+        if (!abruptSummaries.has(child))
+          pending.push({ node: child, visited: false });
+      continue;
+    }
+    let breaks: Set<string | null> | undefined,
+      continues: Set<string | null> | undefined;
+    if (t.isBreakStatement(node))
+      (breaks ??= new Set()).add(node.label?.name ?? null);
+    if (t.isContinueStatement(node))
+      (continues ??= new Set()).add(node.label?.name ?? null);
+    for (const child of children) {
+      const summary = abruptSummaries.get(child)!;
+      for (const label of summary.breaks) (breaks ??= new Set()).add(label);
+      for (const label of summary.continues)
+        (continues ??= new Set()).add(label);
+    }
+    if (t.isLoop(node) || t.isSwitchStatement(node)) breaks?.delete(null);
+    if (t.isLoop(node)) continues?.delete(null);
+    if (t.isLabeledStatement(node)) {
+      breaks?.delete(node.label.name);
+      continues?.delete(node.label.name);
+    }
+    abruptSummaries.set(
+      node,
+      (breaks?.size ?? 0) > 0 || (continues?.size ?? 0) > 0
+        ? {
+            breaks: breaks ?? emptyAbruptLabels,
+            continues: continues ?? emptyAbruptLabels,
+          }
+        : emptyAbruptSummary,
+    );
+  }
+  return abruptSummaries.get(root)!;
+};
+
+/** An earlier sibling may leave this body before reaching the selected statement. */
+export const semanticPriorStatementMayExit = (
+  parent: t.Node,
+  child: t.Node,
+): boolean => {
+  if (!t.isBlockStatement(parent) && !t.isProgram(parent)) return false;
+  let skipped = abruptPrefixes.get(parent);
+  if (skipped === undefined) {
+    const prefixes = new Set<t.Node>();
+    let exits = false;
+    for (const statement of parent.body) {
+      if (exits) prefixes.add(statement);
+      const summary = abruptSummary(statement);
+      exits ||= summary.breaks.size > 0 || summary.continues.size > 0;
+    }
+    skipped = prefixes;
+    abruptPrefixes.set(parent, skipped);
+  }
+  return skipped.has(child);
 };

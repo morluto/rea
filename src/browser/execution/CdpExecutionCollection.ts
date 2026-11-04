@@ -40,8 +40,8 @@ export class CdpExecutionCollection {
         }
         this.window.ingest(event);
       }),
-      session.transport.connection.onDisconnect(() =>
-        this.window.end("target_terminated"),
+      session.transport.connection.onDisconnect((error) =>
+        this.window.fail(error),
       ),
       session.transport.connection.onProtocolFailure((error) =>
         this.window.fail(error),

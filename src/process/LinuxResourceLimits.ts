@@ -1,4 +1,6 @@
+import { ProcessAdmissionError } from "./ProcessAdmissionError.js";
 import { open } from "node:fs/promises";
+import { readFileHandleRange } from "../filesystem/readFileHandleRange.js";
 import { withArtifactFileHandle } from "../artifacts/ArtifactFileOperation.js";
 import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 
@@ -24,18 +26,25 @@ export const BOUNDED_PRODUCER_LIMITS = {
   cpu_seconds: 30,
 } as const;
 
-/** Pin soft and hard ceilings together, then hand the producer argv to the limiter. */
-export const prlimitArgumentVector = (
+/**
+ * Pin soft and hard ceilings together, ending at the prlimit option terminator.
+ * Callers that append the producer command themselves use this prefix.
+ */
+export const prlimitCeilingArguments = (
   limits: LinuxResourceLimits,
-  command: string,
 ): string[] => [
   `--as=${limits.address_space_bytes}:${limits.address_space_bytes}`,
   `--fsize=${limits.file_bytes}:${limits.file_bytes}`,
   `--cpu=${limits.cpu_seconds}:${limits.cpu_seconds}`,
   "--core=0:0",
   "--",
-  command,
 ];
+
+/** Pin soft and hard ceilings together, then hand the producer argv to the limiter. */
+export const prlimitArgumentVector = (
+  limits: LinuxResourceLimits,
+  command: string,
+): string[] => [...prlimitCeilingArguments(limits), command];
 
 /** Never raise either inherited soft policy or hard ceiling. */
 export const clampLinuxResourceLimits = (
@@ -49,12 +58,12 @@ export const clampLinuxResourceLimits = (
       .filter((line) => line.startsWith(`${rows[key]} `));
     const values = matches[0]?.slice(rows[key].length).trim().split(/\s+/u);
     if (matches.length !== 1 || values === undefined || values.length !== 3)
-      throw new Error(`Cannot establish inherited Linux limit: ${rows[key]}`);
+      throw new ProcessAdmissionError("limit_unreadable", { limit: key });
     let ceiling = BigInt(configured[key]);
     for (const token of values.slice(0, 2)) {
       if (token === "unlimited") continue;
       if (!/^[0-9]+$/u.test(token))
-        throw new Error(`Invalid inherited Linux limit: ${rows[key]}`);
+        throw new ProcessAdmissionError("limit_invalid", { limit: key });
       const value = BigInt(token);
       if (value < ceiling) ceiling = value;
     }
@@ -75,14 +84,13 @@ export const readLinuxResourceLimits = async (
     resourceScope,
     undefined,
     async (handle) => {
-      const buffer = Buffer.alloc(16 * 1024);
-      const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
-      if (bytesRead === buffer.length)
-        throw new Error("Inherited Linux limits exceed the report budget.");
-      return clampLinuxResourceLimits(
-        configured,
-        buffer.subarray(0, bytesRead).toString("utf8"),
-      );
+      const reportBudget = 16 * 1024;
+      const buffer = await readFileHandleRange(handle, 0, reportBudget);
+      if (buffer.length === reportBudget)
+        throw new ProcessAdmissionError("report_exceeds_budget", {
+          budget_bytes: reportBudget,
+        });
+      return clampLinuxResourceLimits(configured, buffer.toString("utf8"));
     },
   );
 };

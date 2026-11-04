@@ -10,6 +10,7 @@ import type {
 } from "../domain/browserScenarioCaptureValues.js";
 import type { BrowserScenarioSessionPort } from "./BrowserScenarioSessionPort.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
+import { browserCleanupObservation } from "../domain/browserObservationError.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
@@ -42,6 +43,11 @@ const browserScenarioLimitations = (
       : []),
     "Playwright scenario events do not expose request initiator stacks; receipt order does not prove causality.",
     "Storage values are hashed only after declared-secret redaction.",
+    ...(scenario.actions.some(({ action }) => action === "request")
+      ? [
+          "Request steps sent their declared requests through the page's own fetch with its cookies and session, following no redirects; they are REA-initiated, not user-interface activity, and header values of at least 8 characters they read from page cookies or local storage are redacted like declared secrets from records made after they were read.",
+        ]
+      : []),
     ...(scenario.storage.local_storage.length === 0 &&
     scenario.storage.session_storage.length === 0
       ? []
@@ -49,6 +55,7 @@ const browserScenarioLimitations = (
           "Non-cookie storage seeds use CDP pre-script instrumentation; only pauses in the scenario's private seed script are resumed by this observer.",
         ]),
     ...(session.eventLimitations?.() ?? []),
+    ...(session.storageLimitations?.() ?? []),
     ...(session.mode === "connect"
       ? [
           "CDP attachment cannot recover pre-attach events or guarantee launch-time context options.",
@@ -104,20 +111,6 @@ export const browserScenarioCaptureData = (input: {
   };
 };
 
-/** Describe the cleanup failure without discarding its resource evidence. */
-export const browserScenarioCleanupObservation = (
-  cause: unknown,
-): { readonly reason: string; readonly resources: readonly string[] } =>
-  cause instanceof AnalysisError && cause.cleanup !== undefined
-    ? cause.cleanup
-    : {
-        reason: cause instanceof Error ? cause.message : String(cause),
-        resources:
-          cause instanceof AnalysisError && cause.cleanupResources.length > 0
-            ? cause.cleanupResources
-            : ["browser_transport"],
-      };
-
 /** Retain operation diagnostics and capture data after cleanup settles. */
 export const browserScenarioOperationFailure = (
   cause: unknown,
@@ -134,7 +127,7 @@ export const browserScenarioOperationFailure = (
         );
   primary.retainPartialObservation(partialObservation);
   if (cleanupFailure === undefined) return primary;
-  const observation = browserScenarioCleanupObservation(cleanupFailure.cause);
+  const observation = browserCleanupObservation(cleanupFailure.cause);
   const cleanup =
     cleanupFailure.cause instanceof AnalysisError &&
     cleanupFailure.cause.cleanupIncomplete

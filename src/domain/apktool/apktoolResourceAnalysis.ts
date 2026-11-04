@@ -6,6 +6,10 @@ export const MAX_STRINGS = 2_000;
 export const MAX_SELECTED_LOCALES = 20;
 export const MAX_AGGREGATE_STRINGS = 10_000;
 export const AGGREGATE_STRINGS_XML_MAX_BYTES = 32 * 1024 * 1024;
+/** Decode wall clock used when decode_timeout_ms is omitted. */
+export const DEFAULT_APKTOOL_DECODE_TIMEOUT_MS = 600_000;
+/** Largest delay supported without overflowing Node timers. */
+export const MAX_APKTOOL_DECODE_TIMEOUT_MS = 2_147_483_647;
 const ANDROID_NON_LOCALE_QUALIFIERS = new Set([
   "car",
   "desk",
@@ -22,25 +26,26 @@ const ANDROID_NON_LOCALE_QUALIFIERS = new Set([
 // and variant has 8 bytes (BinaryResourceParser / ResConfig).
 const MAX_ANDROID_LOCALE_SUFFIX = 2 + 3 + (1 + 4) + (1 + 3) + (1 + 8);
 
-const localeQualifierSchema = z
+/** Locale language tags admitted by Android resource table selection. */
+export const androidLocaleQualifierSchema = z
   .string()
   .min(2)
   .max(MAX_ANDROID_LOCALE_SUFFIX)
+  // Legacy -r regions use two letters; numeric aliases select b+ tables.
   .regex(
-    /^(?:[a-z]{2,3}(?:-(?:r?[A-Z]{2}|r?[0-9]{3}))?|b\+[a-z]{2,3}(?:\+[A-Za-z0-9]{2,8})*)$/u,
-    "Locale must look like de, pt-BR, pt-rBR, or b+zh+Hans+CN",
+    /^(?:[a-z]{2,3}(?:-(?:r?[A-Z]{2}|[0-9]{3}))?|b\+[a-z]{2,3}(?:\+[A-Za-z0-9]{2,8})*)$/u,
+    "Locale must look like de, pt-BR, pt-rBR, es-419, or b+zh+Hans+CN",
   )
   .refine(
     (value) => !ANDROID_NON_LOCALE_QUALIFIERS.has(value.toLowerCase()),
     "Android resource configuration qualifiers are not locales",
   );
 
-/** Locale language tags admitted by Android resource table selection. */
-export const androidLocaleQualifierSchema = localeQualifierSchema;
-
 /** Normalize an admitted request alias at the locale-selection owner. */
 export const androidLocaleDirectorySuffix = (locale: string): string =>
-  locale.replace(/^([a-z]{2,3})-([A-Z]{2}|[0-9]{3})$/u, "$1-r$2");
+  locale
+    .replace(/^([a-z]{2,3})-([A-Z]{2})$/u, "$1-r$2")
+    .replace(/^([a-z]{2,3})-([0-9]{3})$/u, "b+$1+$2");
 
 /** Exact selectable table names are distinct from whole resource configurations. */
 export const classifyAndroidStringsTable = (
@@ -69,6 +74,12 @@ export const apktoolInputSchemas = {
       .describe(
         `Project res/values/strings.xml entries (bounded to ${String(MAX_STRINGS)} entries)`,
       ),
+    string_tables_only: z
+      .boolean()
+      .optional()
+      .describe(
+        "Return selected strings only in string_tables, leaving top-level strings empty. Omit to preserve the primary strings field.",
+      ),
     locale: androidLocaleQualifierSchema
       .optional()
       .describe(
@@ -81,6 +92,15 @@ export const apktoolInputSchemas = {
       .optional()
       .describe(
         `Project multiple localized string tables from res/values-<locale>/strings.xml alongside the default table (bounded to ${String(MAX_SELECTED_LOCALES)} locales)`,
+      ),
+    decode_timeout_ms: z
+      .number()
+      .int()
+      .min(1)
+      .max(MAX_APKTOOL_DECODE_TIMEOUT_MS)
+      .exactOptional()
+      .describe(
+        `Decode wall-clock budget in milliseconds (default ${String(DEFAULT_APKTOOL_DECODE_TIMEOUT_MS)}), from apktool d start through process exit. Omitted means ${String(DEFAULT_APKTOOL_DECODE_TIMEOUT_MS)}. Applies on the next decode. Does not raise the fixed output capture allowance or the version probe.`,
       ),
   }),
 } as const;
@@ -133,7 +153,6 @@ export const stringTableSchema = z.strictObject({
     }),
   ),
   total_count: z
-    .number()
     .int()
     .nonnegative()
     .nullable()
@@ -141,7 +160,6 @@ export const stringTableSchema = z.strictObject({
       "Total valid string entries before output limits, or null if the table was not examined or was malformed",
     ),
   unparsed_count: z
-    .number()
     .int()
     .nonnegative()
     .nullable()
@@ -162,7 +180,7 @@ export const apktoolResultSchemas = {
     client,
     target: z.strictObject({
       path: localPathStringSchema,
-      bytes: z.number().int().nonnegative(),
+      bytes: z.int().nonnegative(),
       sha256: digestSchema,
     }),
     metadata: z.strictObject({
@@ -178,16 +196,25 @@ export const apktoolResultSchemas = {
       package_name: z.string().nullable(),
     }),
     manifest: z.string().nullable(),
-    strings: z.array(
-      z.strictObject({
-        name: z.string().min(1),
-        value: z.string(),
-      }),
-    ),
+    strings: z
+      .array(
+        z.strictObject({
+          name: z.string().min(1),
+          value: z.string(),
+        }),
+      )
+      .describe(
+        "Primary string entries; empty when include_strings is false or string_tables_only is true. An unrequested field does not establish an empty table.",
+      ),
     locale: z.string().nullable(),
     locales: z.array(z.string().min(1)),
-    string_tables: z.array(stringTableSchema).optional(),
-    decoded_file_count: z.number().int().nonnegative(),
+    string_tables: z
+      .array(stringTableSchema)
+      .optional()
+      .describe(
+        "Selected table facts, included when locales is supplied or string_tables_only is true",
+      ),
+    decoded_file_count: z.int().nonnegative(),
     coverage: z.enum(["complete", "partial"]),
   }),
 } as const;

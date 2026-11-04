@@ -7,6 +7,7 @@ import { parseEvidence } from "../../../src/domain/evidence.js";
 import { ok } from "../../../src/domain/result.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
+import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { assertAdvertisedMcpContracts } from "./mcpContractHarness.js";
 
 const identity = { id: "adb", name: "Android Debug Bridge", version: null };
@@ -101,6 +102,7 @@ const results: Readonly<Record<string, unknown>> = {
     user_id: 10234,
     pkg_flags: "[ HAS_CODE ]",
     requested_permissions_count: 2,
+    numeric_issues: { sample: [], total: 0 },
     coverage: "complete",
   },
   pull_adb_file: {
@@ -190,6 +192,8 @@ const results: Readonly<Record<string, unknown>> = {
     override_size: null,
     physical_density: 420,
     override_density: null,
+    numeric_issues: { sample: [], total: 0 },
+    coverage: "complete",
   },
   inspect_adb_window: {
     client: clientIdentity,
@@ -241,6 +245,7 @@ const results: Readonly<Record<string, unknown>> = {
       },
     ],
     exact_match: true,
+    unparsed_lines: [],
     coverage: "complete",
   },
   install_adb_package: {
@@ -391,8 +396,23 @@ it("rejects invalid tool input before reaching the provider", async () => {
     arguments: { serial: "bad serial" },
   });
   expect(rejected.isError).toBe(true);
-  const text = (rejected.content as { readonly text?: string }[])
-    .map((part) => part.text ?? "")
-    .join("");
-  expect(text).toContain("Invalid arguments for tool inspect_adb_device");
+  expect(parseMcpToolError(rejected)).toMatchObject({
+    error: {
+      code: "invalid_request",
+      recovery: {
+        kind: "inspect_input_contract",
+        operation: "inspect_adb_device",
+      },
+      details: {
+        operation: "inspect_adb_device",
+        issues: [
+          {
+            path: ["serial"],
+            reason: "invalid_format",
+            expected: "regex",
+          },
+        ],
+      },
+    },
+  });
 });

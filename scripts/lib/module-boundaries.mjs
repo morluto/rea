@@ -1,13 +1,17 @@
-import { parse } from "@babel/parser";
-import { traverseFast } from "@babel/types";
 import { isAbsolute, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+
+import { readImportSpecifiers } from "./import-specifiers.mjs";
 
 const PURE_LAYERS = new Set(["domain", "contracts"]);
 const MIGRATED_PROVIDER_ROOTS = new Set([
   "sqlite",
   "evm",
   "go",
+  "il2cpp",
+  "model",
+  "gpu",
+  "python",
   "rust",
   "wasm",
   "captures",
@@ -20,32 +24,10 @@ const MIGRATED_PROVIDER_ROOTS = new Set([
   "inspector",
   "javascript",
 ]);
+const CENTRALIZED_CONSTRUCTOR_OWNER =
+  /^src\/(?:frida\/FridaInstrumentationManager|cutter\/CutterBridge(?:Client|Service)|gdb\/GdbSessionManager|rizin\/RizinDebugSessionManager)\.(?:js|ts)$/u;
 const repositoryPath = (root, path) =>
   relative(root, path).replaceAll("\\", "/");
-
-const literalValue = (node) => {
-  if (node?.type === "StringLiteral") return node.value;
-  if (node?.type === "TemplateLiteral" && node.expressions.length === 0)
-    return node.quasis[0]?.value.cooked ?? undefined;
-  return undefined;
-};
-
-const importSpecifier = (node) => {
-  switch (node.type) {
-    case "ImportDeclaration":
-    case "ExportNamedDeclaration":
-    case "ExportAllDeclaration":
-    case "ImportExpression":
-    case "TSImportType":
-      return literalValue(node.source);
-    case "TSImportEqualsDeclaration":
-      return node.moduleReference.type === "TSExternalModuleReference"
-        ? literalValue(node.moduleReference.expression)
-        : undefined;
-    default:
-      return undefined;
-  }
-};
 
 const sourceTarget = (file, specifier) => {
   if (specifier.startsWith("file:")) return fileURLToPath(specifier);
@@ -55,7 +37,7 @@ const sourceTarget = (file, specifier) => {
     : undefined;
 };
 
-const failedBoundary = (file, target) => {
+const failedBoundary = (file, target, typeOnly) => {
   if (!file.startsWith("src/") || !target.startsWith("src/")) return undefined;
   const layer = file.split("/")[1];
   const targetLayer = target.split("/")[1];
@@ -97,6 +79,12 @@ const failedBoundary = (file, target) => {
     return "application-composition";
   if (
     (layer === "application" || layer === "server") &&
+    !typeOnly &&
+    CENTRALIZED_CONSTRUCTOR_OWNER.test(target)
+  )
+    return "provider-construction";
+  if (
+    (layer === "application" || layer === "server") &&
     (MIGRATED_PROVIDER_ROOTS.has(targetLayer) ||
       /^src\/(?:artifacts\/ArtifactProvider|dotnet\/ManagedStaticProvider|native\/NativeMacOSProvider)\.[^/]+$/u.test(
         target,
@@ -111,26 +99,14 @@ const failedBoundary = (file, target) => {
 export const inspectModuleBoundaries = (file, source, root) => {
   const absoluteFile = resolve(root, file);
   const importer = repositoryPath(root, absoluteFile);
-  const tree = parse(source, {
-    sourceType: "module",
-    plugins: ["typescript"],
-  });
   const violations = [];
-  traverseFast(tree, (node) => {
-    const specifier = importSpecifier(node);
-    if (specifier === undefined) return;
+  for (const { specifier, line, typeOnly } of readImportSpecifiers(source)) {
     const resolved = sourceTarget(absoluteFile, specifier);
-    if (resolved === undefined) return;
+    if (resolved === undefined) continue;
     const target = repositoryPath(root, resolved);
-    const boundary = failedBoundary(importer, target);
+    const boundary = failedBoundary(importer, target, typeOnly);
     if (boundary !== undefined)
-      violations.push({
-        file: importer,
-        line: node.loc?.start.line ?? 1,
-        specifier,
-        target,
-        boundary,
-      });
-  });
+      violations.push({ file: importer, line, specifier, target, boundary });
+  }
   return violations;
 };

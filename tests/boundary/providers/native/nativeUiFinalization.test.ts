@@ -266,11 +266,11 @@ it.each([false, true])(
     });
     const result = await client.execute("observe_native_ui", input);
     expect(result.ok).toBe(false);
-    if (result.ok) throw new Error("Expected owned deadline cancellation");
+    if (result.ok) throw new Error("Expected owned deadline timeout");
     const primary = resolvedAnalysisError(
       result.error.cleanupPrimary ?? result.error,
     );
-    expect(primary._tag).toBe("AnalysisCancelledError");
+    expect(primary._tag).toBe("AnalysisTimeoutError");
     expect(primary.cause).toBe(reason);
     expect(result.error.partialObservation).toMatchObject({
       initial: snapshot,

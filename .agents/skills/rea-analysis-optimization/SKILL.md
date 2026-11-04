@@ -15,6 +15,11 @@ Follow the checkout's [performance priorities](../../../AGENTS.md#performance),
 workflow, not additional permission to execute targets, publish, or merge.
 Use the current contracts, provider prerequisites, and user authorization.
 
+Reserve performance measurements for changes that target performance or have a
+concrete regression concern. Routine cleanup uses correctness checks and does
+not require this optimization workflow or synthetic benchmarks merely because
+helper calls, imports, or representations change.
+
 Read [the Kuna case study](references/kuna-case-study.md) when selecting a
 reuse strategy or interpreting a benchmark. Its pinned observations illustrate
 tradeoffs; they are not current-provider guarantees or universal speedups.

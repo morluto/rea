@@ -4,9 +4,8 @@ import { join } from "node:path";
 
 import { onTestFinished } from "vitest";
 
+import { normalizeTestTemporaryPrefix } from "../../scripts/lib/test-temporary-ownership.mjs";
 import { removeTestWorkspace } from "../support/workspace/workspaceFixture.js";
-
-const TEMPORARY_PREFIX = /^[A-Za-z0-9][A-Za-z0-9._-]*-$/u;
 
 /**
  * Creates an empty canonical temporary directory owned by the current Vitest
@@ -22,14 +21,10 @@ const TEMPORARY_PREFIX = /^[A-Za-z0-9][A-Za-z0-9._-]*-$/u;
 export const createTestTempDirectory = async (
   prefix: string,
 ): Promise<string> => {
-  if (!TEMPORARY_PREFIX.test(prefix) || prefix.length > 80) {
-    throw new TypeError(
-      "Test temporary directory prefixes must be safe basenames ending in '-'",
-    );
-  }
-
   const canonicalDirectory = await realpath(
-    await mkdtemp(join(await realpath(tmpdir()), prefix)),
+    await mkdtemp(
+      join(await realpath(tmpdir()), normalizeTestTemporaryPrefix(prefix)),
+    ),
   );
   onTestFinished(async () => {
     await removeTestWorkspace(canonicalDirectory);

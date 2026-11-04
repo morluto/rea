@@ -173,12 +173,18 @@ cliTest(
         }),
       ]),
     });
-    expect(await readFile(join(selected, "SKILL.md"))).toEqual(
-      await readFile(join(source, "SKILL.md")),
-    );
-    expect(await readFile(join(managed, "native-and-artifacts.md"))).toEqual(
-      before,
-    );
+    expect(
+      Buffer.compare(
+        await readFile(join(selected, "SKILL.md")),
+        await readFile(join(source, "SKILL.md")),
+      ),
+    ).toBe(0);
+    expect(
+      Buffer.compare(
+        await readFile(join(managed, "native-and-artifacts.md")),
+        before,
+      ),
+    ).toBe(0);
     expect((await lstat(join(selected, "references"))).isSymbolicLink()).toBe(
       true,
     );
@@ -247,9 +253,12 @@ cliTest(
       })) {
         if (!entry.isFile()) continue;
         const path = relative(bundle, join(entry.parentPath, entry.name));
-        expect(await readFile(join(selected, path))).toEqual(
-          await readFile(join(bundle, path)),
-        );
+        expect(
+          Buffer.compare(
+            await readFile(join(selected, path)),
+            await readFile(join(bundle, path)),
+          ),
+        ).toBe(0);
       }
     };
     await assertAligned();

@@ -249,8 +249,7 @@ describe("raw-binary load rejection diagnostics", () => {
     expect(projected).toMatchObject({
       code: "invalid_request",
       category: "invalid_input",
-      // invalid_request is retryable: correcting the load argument succeeds.
-      retryable: true,
+      retryable: false,
       message:
         "Cannot open artifact: raw-binary arm entry_point 0x1 must be 4-byte aligned.",
       details: {
@@ -366,7 +365,7 @@ describe("caller-selected and inferred target interpretation", () => {
         ok: true,
         value: { kind: "database", format: "analysis-database" },
       });
-      expect(await readFile(databasePath)).toEqual(bytes);
+      expect(Buffer.compare(await readFile(databasePath), bytes)).toBe(0);
     },
   );
 

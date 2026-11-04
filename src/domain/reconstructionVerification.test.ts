@@ -1,11 +1,15 @@
 import { describe, expect, it } from "vitest";
 
 import { createEvidence, type Evidence } from "./evidence.js";
+import { AnalysisInputError } from "./analysisErrorCore.js";
 import { createEvidenceBundle } from "./evidenceBundle.js";
-import { reconstructionVerificationResultSchema } from "./reconstructionVerificationSchemas.js";
+import { EvidenceIntegrityError } from "./evidenceErrors.js";
+import {
+  reconstructionVerificationResultSchema,
+  reconstructionSpecificationSchema,
+} from "./reconstructionVerificationSchemas.js";
 import type { JsonValue } from "./jsonValue.js";
 import { EMPTY_PROCESS_CAPTURE_EXAMPLE } from "./process/processCaptureExample.js";
-import { reconstructionSpecificationSchema } from "./reconstructionVerificationSchemas.js";
 import { ARTIFACT_COMPARISON_EXAMPLE } from "../contracts/artifactComparisonExample.js";
 import { createResidualUnknown } from "./residualUnknown.js";
 
@@ -329,8 +333,33 @@ describe("reconstruction process capture input", () => {
         behavioralSpec(comparison),
         createEvidenceBundle([comparison, left, right]),
       ),
-    ).toThrow();
+    ).toThrow(EvidenceIntegrityError);
   });
+});
+
+it("reports a missing comparison reference as caller input with its claim path", () => {
+  const left = source("1", "controlled-replay");
+  const right = source("2", "controlled-replay");
+  const comparison = processComparison(left, right, processResult());
+  try {
+    verifyReconstruction(
+      behavioralSpec(comparison),
+      createEvidenceBundle([left, right]),
+    );
+    throw new Error("Expected a missing comparison reference to be rejected");
+  } catch (error: unknown) {
+    expect(error).toBeInstanceOf(AnalysisInputError);
+    expect(error).toMatchObject({
+      userMessage: `Missing comparison Evidence ${comparison.evidence_id}`,
+      issues: [
+        {
+          path: ["claims", 0, "comparison_evidence_id"],
+          reason: "invalid_value",
+          message: `Missing comparison Evidence ${comparison.evidence_id}`,
+        },
+      ],
+    });
+  }
 });
 
 describe("reconstruction verification outcomes", () => {
@@ -560,4 +589,27 @@ describe("reconstruction verification integrity", () => {
     expect(result.status).toBe("unknown");
     expect(result.claims.items[0]?.unknown_ids).toHaveLength(101);
   });
+});
+
+it("keeps a valid comparison selected for the wrong claim kind as caller input", () => {
+  const left = ARTIFACT_COMPARISON_EXAMPLE.left;
+  const right = ARTIFACT_COMPARISON_EXAMPLE.right;
+  const comparison = artifactComparison(left, right, false);
+  try {
+    verifyReconstruction(
+      behavioralSpec(comparison),
+      createEvidenceBundle([left, right, comparison]),
+    );
+    throw new Error("Expected a claim-selection error");
+  } catch (cause: unknown) {
+    expect(cause).toBeInstanceOf(AnalysisInputError);
+    expect(cause).toMatchObject({
+      operation: "verify_reconstruction",
+      issues: [
+        expect.objectContaining({
+          path: ["claims", 0, "comparison_evidence_id"],
+        }),
+      ],
+    });
+  }
 });

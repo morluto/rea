@@ -9,6 +9,7 @@ import { traverseDirectory } from "./ReferenceSourceReaderEntries.js";
 import type {
   ReferenceSourceReaderOptions,
   ReferenceSourceEntry,
+  ReferenceSourceRootFailure,
   ReferenceSourceRead,
   ReferenceSourceResult,
   TraversalState,
@@ -18,6 +19,7 @@ import {
   noFollowOpenSupported,
   prepareRoot,
 } from "./ReferenceSourceReaderValidate.js";
+import { referenceSourceResourceFailure } from "./ReferenceSourceReaderErrors.js";
 
 const PATH_RACE_LIMITATION =
   "Path identity is revalidated around operations; Node lacks portable descriptor-relative openat traversal, so a syscall-boundary pathname race remains.";
@@ -32,13 +34,7 @@ export const readReferenceSource = async (
     return await resources.run(() => readSource(root, resources, options));
   } catch (cause: unknown) {
     if (!(cause instanceof ArtifactReaderFailure)) throw cause;
-    return err({
-      tag: "reference-source-reader",
-      code: cause.reason === "cancelled" ? "cancelled" : "io",
-      message: cause.message,
-      ...(cause.cleanup === undefined ? {} : { cleanup: cause.cleanup }),
-      cause,
-    });
+    return err(referenceSourceResourceFailure(cause));
   }
 };
 
@@ -64,6 +60,9 @@ const readSource = async (
     ...(options.shouldExclude === undefined
       ? {}
       : { shouldExclude: options.shouldExclude }),
+    ...(options.beforeDirectory === undefined
+      ? {}
+      : { beforeDirectory: options.beforeDirectory }),
     entries: [],
     exclusions: [],
     pending: [{ path: canonicalRoot }],
@@ -78,16 +77,27 @@ const readSource = async (
       state.entries,
       state.exclusions,
       state.signal,
+      state.rootFailure,
     );
   state.entries.sort((left, right) =>
     compareUnicodeCodePoints(left.path, right.path),
   );
   const read: ReferenceSourceRead = {
     root: canonicalRoot,
+    ...(state.rootFailure === undefined
+      ? {}
+      : { rootFailure: state.rootFailure }),
     entries: state.entries,
     bytesRead: state.bytesRead,
     limitations: [PATH_RACE_LIMITATION],
   };
+  if (traversal.ok && state.rootFailure?.code === "io")
+    return err({
+      tag: "reference-source-reader",
+      code: "io",
+      message: state.rootFailure.message,
+      partial: read,
+    });
   return traversal.ok ? ok(read) : err({ ...traversal.error, partial: read });
 };
 
@@ -101,6 +111,7 @@ export const reconcileUnobservedSymlinkTargets = (
   entries: ReferenceSourceEntry[],
   exclusions: TraversalState["exclusions"] = [],
   signal?: AbortSignal,
+  rootFailure?: ReferenceSourceRootFailure,
 ): void => {
   const failedDirectories = new Map(
     entries.flatMap((entry) =>
@@ -111,7 +122,11 @@ export const reconcileUnobservedSymlinkTargets = (
         : [],
     ),
   );
-  if (failedDirectories.size === 0 || isAborted(signal)) return;
+  if (
+    (failedDirectories.size === 0 && rootFailure === undefined) ||
+    isAborted(signal)
+  )
+    return;
   const directoryEntries = entries.filter(
     (entry) => entry.kind === "directory",
   );
@@ -140,6 +155,7 @@ export const reconcileUnobservedSymlinkTargets = (
       failedDirectories,
       excludedPaths,
       signal,
+      rootFailure,
     );
     if (ancestor === undefined) continue;
     entries[index] = {
@@ -161,7 +177,8 @@ const nearestFailedAncestor = (
   >,
   excludedPaths: ReturnType<typeof createReferenceSourcePathLookup>,
   signal: AbortSignal | undefined,
-): Extract<ReferenceSourceEntry, { status: "failed" }> | undefined => {
+  rootFailure: ReferenceSourceRootFailure | undefined,
+): (ReferenceSourceRootFailure & { readonly path: string }) | undefined => {
   for (
     let candidate = posix.dirname(target);
     candidate !== "." && candidate !== "/";
@@ -175,10 +192,7 @@ const nearestFailedAncestor = (
   }
   if (isAborted(signal)) return undefined;
   if (excludedPaths.resolve(".") !== undefined) return undefined;
-  const observedRoot = directoryPaths.resolve(".");
-  return observedRoot === undefined
-    ? undefined
-    : failedDirectories.get(observedRoot);
+  return rootFailure === undefined ? undefined : { path: ".", ...rootFailure };
 };
 
 const traverse = async (

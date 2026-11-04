@@ -1,20 +1,36 @@
+import {
+  isBrowserNetworkRequest,
+  createXhrOpenRequestQuery,
+} from "./javascript/javascriptNetworkRequests.js";
+import type { JavaScriptSemanticAnalysisState } from "./javascript/javascriptSemanticState.js";
+import type {
+  AnalysisAccumulator,
+  IncludedScript,
+} from "./webBundleAnalyzerState.js";
 import * as t from "@babel/types";
+import { JavaScriptRouteScan } from "./javascript/javascriptRouteScan.js";
+import type { JavaScriptRouteSourceFacts } from "./javascript/javascriptRouteFacts.js";
 
 import { sanitizeEndpointCandidate } from "./browserObservation.js";
 import { compositeKey } from "./unicodeCodePointOrder.js";
-import type { WebPageInspection } from "./browserObservationSchemas.js";
 import type { WebBundleAnalysis } from "./webBundleAnalysis.js";
-import { traverseJavaScriptAst } from "./javascript/javascriptSemanticTraversal.js";
+import {
+  traverseJavaScriptAst,
+  completeSemanticSteps,
+} from "./javascript/javascriptSemanticTraversal.js";
 import { indexJavaScriptBindingsWithReceiversSteps } from "./javascript/javascriptSemanticAnalysis.js";
-import { completeSemanticSteps } from "./javascript/javascriptSemanticTraversal.js";
 import type { JavaScriptOpenReceiverFact } from "./javascript/javascriptSemanticAnalysis.js";
 import { isIntrinsicMapLookup } from "./javascript/javascriptSemanticMapOperations.js";
 import {
   semanticStaticPropertyKey,
   semanticStaticPropertyName,
+  isNullishJavaScriptSyntax,
+  staticObjectProperty,
+  staticObjectPropertyNames,
   unwrapJavaScriptExpression,
 } from "./javascript/javascriptAstValues.js";
 import {
+  STATIC_ROUTE_CALL_NAMES,
   calleeName,
   endpointArgument,
   stringValue,
@@ -23,11 +39,11 @@ import {
   location,
   locationFields,
   objectString,
-  objectValue,
   resolveSpecifier,
   isUrlLikeModuleSpecifier,
 } from "./webBundleAnalyzerAst.js";
 import { createJavaScriptRpcScan } from "./javascript/javascriptRpcEndpoints.js";
+import { semanticStaticModuleSource } from "./javascript/javascriptModuleDeclaration.js";
 import { parseJavaScriptSource } from "./javascript/javascriptSourceParser.js";
 
 type BundleObservations = WebBundleAnalysis["observations"];
@@ -35,33 +51,14 @@ type ChunkEdge = BundleObservations["chunks"]["edges"][number];
 type Finding = BundleObservations["routes"][number];
 type WebMcpDeclaration = BundleObservations["webmcp_declarations"][number];
 type Inference = WebBundleAnalysis["inferences"][number];
-type BrowserScript = WebPageInspection["scripts"]["items"][number];
-type IncludedSource = Extract<BrowserScript["source"], { included: true }>;
-export type IncludedScript = Omit<BrowserScript, "source"> & {
-  readonly source: IncludedSource;
-};
-
-export interface AnalysisAccumulator {
-  readonly edges: ChunkEdge[];
-  readonly routes: Finding[];
-  readonly endpoints: Finding[];
-  readonly webMcp: WebMcpDeclaration[];
-  readonly inferences: Inference[];
-  readonly seen: Set<string>;
-  visitedNodes: number;
-  parsedScripts: number;
-  readonly failedScripts: string[];
-  readonly recoveredScripts: string[];
-}
-
 export const analyzeScript = (
   script: IncludedScript,
   accumulator: AnalysisAccumulator,
-): void => {
+): JavaScriptRouteSourceFacts | null => {
   const file = parseJavaScriptSource(script.source.artifact.text);
   if (file === null) {
     accumulator.failedScripts.push(script.script_key);
-    return;
+    return null;
   }
   accumulator.parsedScripts += 1;
   if ((file.errors?.length ?? 0) > 0)
@@ -72,6 +69,18 @@ export const analyzeScript = (
   );
   completeSemanticSteps(index.indexAmbientWritesSteps());
   const { receivers } = index;
+  const routeScan = completeSemanticSteps(
+    JavaScriptRouteScan.createSteps(file, index, ({ node, value, mechanism }) =>
+      addFinding({
+        collection: accumulator.routes,
+        script,
+        rawValue: value,
+        mechanism,
+        node,
+        accumulator,
+      }),
+    ),
+  );
   const openReceiverFacts = receivers.openReceivers;
   let mutationFactsIndexed = false;
   const isMapLookup = (
@@ -85,15 +94,25 @@ export const analyzeScript = (
     }
     return isIntrinsicMapLookup(node, index.bindings, index) === true;
   };
+  const isXhrRequest = createXhrOpenRequestQuery(index);
   const rpc = createJavaScriptRpcScan(
     script.source.artifact.text,
     receivers.rpcClientRoots,
     index,
   );
   traverseJavaScriptAst(file, {
-    enter: (node) => {
+    enter: (node, parent) => {
       accumulator.visitedNodes += 1;
-      inspectNode(script, node, accumulator, openReceiverFacts, isMapLookup);
+      routeScan.inspect(node, parent);
+      inspectNode(
+        script,
+        node,
+        accumulator,
+        openReceiverFacts,
+        isMapLookup,
+        index.bindings,
+        isXhrRequest,
+      );
       const endpoint = rpc.inspect(node);
       if (endpoint !== undefined)
         addFinding({
@@ -116,6 +135,9 @@ export const analyzeScript = (
         node: endpoint.node,
         accumulator,
       });
+  if (index.bindings.returnedReferenceWidenings.size > 0)
+    accumulator.widenedScripts.push(script.script_key);
+  return completeSemanticSteps(routeScan.finishSteps());
 };
 
 const inspectNode = (
@@ -126,22 +148,14 @@ const inspectNode = (
   isMapLookup: (
     node: t.CallExpression | t.OptionalCallExpression | t.NewExpression,
   ) => boolean,
+  bindings: JavaScriptSemanticAnalysisState,
+  isXhrRequest: (node: t.Node) => boolean,
 ): void => {
-  if (
-    (t.isImportDeclaration(node) || t.isExportAllDeclaration(node)) &&
-    node.source !== undefined
-  )
+  const moduleSource = semanticStaticModuleSource(node);
+  if (moduleSource !== null)
     addEdge({
       script,
-      specifier: node.source.value,
-      kind: "static_import",
-      node,
-      accumulator,
-    });
-  else if (t.isExportNamedDeclaration(node) && node.source != null)
-    addEdge({
-      script,
-      specifier: node.source.value,
+      specifier: moduleSource.value,
       kind: "static_import",
       node,
       accumulator,
@@ -157,13 +171,20 @@ const inspectNode = (
         accumulator,
       });
   }
-  if (t.isObjectProperty(node)) inspectRouteProperty(script, node, accumulator);
   if (
     t.isCallExpression(node) ||
     t.isOptionalCallExpression(node) ||
     t.isNewExpression(node)
   )
-    inspectCall(script, node, accumulator, openReceiverFacts, isMapLookup);
+    inspectCall(
+      script,
+      node,
+      accumulator,
+      openReceiverFacts,
+      isMapLookup,
+      bindings,
+      isXhrRequest,
+    );
 };
 
 const inspectCall = (
@@ -174,6 +195,8 @@ const inspectCall = (
   isMapLookup: (
     node: t.CallExpression | t.OptionalCallExpression | t.NewExpression,
   ) => boolean,
+  bindings: JavaScriptSemanticAnalysisState,
+  isXhrRequest: (node: t.Node) => boolean,
 ): void => {
   const name = calleeName(node.callee);
   const first = stringValue(node.arguments[0]);
@@ -192,19 +215,10 @@ const inspectCall = (
       addEdge({ script, specifier, kind: "worker_import", node, accumulator });
     }
   if (
-    routeCallNames.some(
+    STATIC_ROUTE_CALL_NAMES.some(
       (candidate) => name === candidate || name.endsWith(`.${candidate}`),
     )
   ) {
-    if (first !== undefined)
-      addFinding({
-        collection: accumulator.routes,
-        script,
-        rawValue: first,
-        mechanism: `call:${name}`,
-        node,
-        accumulator,
-      });
     addRouteFrameworkInference({
       script,
       name,
@@ -218,8 +232,13 @@ const inspectCall = (
     node.callee,
     openReceiverFacts.get(node.start ?? -1),
   );
+  const mapLookup = isMapLookup(node);
+  const knownRequest =
+    isBrowserNetworkRequest(node, bindings) || isXhrRequest(node);
   const networkEndpoint =
-    endpoint !== undefined && !isMapLookup(node) ? endpoint : undefined;
+    endpoint !== undefined && !mapLookup
+      ? { ...endpoint, kind: knownRequest ? "endpoint" : endpoint.kind }
+      : undefined;
   if (networkEndpoint?.kind === "candidate")
     addEndpointCandidate(
       script,
@@ -260,24 +279,6 @@ const isWebMcpRegistrationCallee = (callee: t.Node): boolean => {
     semanticStaticPropertyKey(receiver.property, receiver.computed) ===
       "modelContext"
   );
-};
-
-const inspectRouteProperty = (
-  script: IncludedScript,
-  node: t.ObjectProperty,
-  accumulator: AnalysisAccumulator,
-): void => {
-  const key = semanticStaticPropertyName(node.key, node.computed);
-  const route = stringValue(node.value);
-  if ((key === "path" || key === "route") && route !== undefined)
-    addFinding({
-      collection: accumulator.routes,
-      script,
-      rawValue: route,
-      mechanism: `property:${key}`,
-      node,
-      accumulator,
-    });
 };
 
 interface AddEdgeContext {
@@ -362,23 +363,60 @@ const addWebMcpDeclaration = (
   if (!t.isObjectExpression(declaration)) return;
   const name = objectString(declaration, "name");
   const description = objectString(declaration, "description");
-  const schema =
-    objectValue(declaration, "inputSchema") ??
-    objectValue(declaration, "input_schema");
-  const properties = t.isObjectExpression(schema)
-    ? objectValue(schema, "properties")
-    : undefined;
-  const schemaPropertyNames = t.isObjectExpression(properties)
-    ? properties.properties.flatMap((property) => {
-        if (!t.isObjectProperty(property)) return [];
-        const key = semanticStaticPropertyKey(property.key, property.computed);
-        return key === null ? [] : [key];
-      })
-    : [];
+  const camelSchema = staticObjectProperty(
+    declaration,
+    "inputSchema",
+    isNullishJavaScriptSyntax,
+  );
+  const schemaProperty =
+    camelSchema.status === "missing" ||
+    (camelSchema.status === "explicit" &&
+      isNullishJavaScriptSyntax(camelSchema.value))
+      ? staticObjectProperty(
+          declaration,
+          "input_schema",
+          isNullishJavaScriptSyntax,
+        )
+      : camelSchema;
+  let schemaPropertyNames: readonly string[] = [];
+  let schemaPropertyNamesCoverage: NonNullable<
+    WebMcpDeclaration["schema_property_names_coverage"]
+  > = "unknown";
+  if (schemaProperty.status === "missing") {
+    schemaPropertyNamesCoverage = "not_present";
+  } else if (schemaProperty.status === "explicit") {
+    const schema = schemaProperty.value;
+    if (t.isObjectExpression(schema)) {
+      const propertiesProperty = staticObjectProperty(
+        schema,
+        "properties",
+        isNullishJavaScriptSyntax,
+      );
+      if (propertiesProperty.status === "missing") {
+        schemaPropertyNamesCoverage = "not_present";
+      } else if (propertiesProperty.status === "explicit") {
+        const properties = propertiesProperty.value;
+        if (t.isObjectExpression(properties)) {
+          const projection = staticObjectPropertyNames(
+            properties,
+            isNullishJavaScriptSyntax,
+          );
+          if (
+            projection.status === "complete" ||
+            projection.status === "partial"
+          ) {
+            schemaPropertyNames = projection.names;
+            schemaPropertyNamesCoverage = projection.status;
+          }
+        }
+      }
+    }
+  }
   const metadata = {
     name: name ?? null,
     description: description ?? null,
     schema_property_names: [...new Set(schemaPropertyNames)].sort(),
+    schema_property_names_coverage: schemaPropertyNamesCoverage,
   };
   // Deduplicate the metadata we return, preserving omission and descriptions.
   // Property names are a variable-length source-derived list: NUL-joins
@@ -458,31 +496,6 @@ const basis = (script: IncludedScript, detector: string) => ({
   column: null,
   detector,
 });
-
-export const emptyAccumulator = (): AnalysisAccumulator => ({
-  edges: [],
-  routes: [],
-  endpoints: [],
-  webMcp: [],
-  inferences: [],
-  seen: new Set(),
-  visitedNodes: 0,
-  parsedScripts: 0,
-  failedScripts: [],
-  recoveredScripts: [],
-});
-
-export const isIncludedScript = (
-  script: BrowserScript,
-): script is IncludedScript => script.source.included;
-
-const routeCallNames = [
-  "route",
-  "addRoute",
-  "useRoutes",
-  "createBrowserRouter",
-  "createHashRouter",
-] as const;
 
 const vendorDetectors: readonly {
   readonly value: string;

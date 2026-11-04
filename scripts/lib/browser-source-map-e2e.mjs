@@ -12,7 +12,7 @@ import { parseEvidence } from "../../dist/domain/evidence.js";
 import { webSourceLocationResultSchema } from "../../dist/domain/webSourceLocation.js";
 import { startBrowserSourceMapSite } from "../fixtures/browser-source-map-site.mjs";
 import { mcpTextValue } from "./mcp-verifier-results.mjs";
-import { closeVerifierResources } from "./verifier-cleanup.mjs";
+import { withVerifierCleanup } from "./verifier-cleanup.mjs";
 
 /** Verify real Chrome capture → export → original compiler point through packaged CLI/MCP. */
 export async function verifyBrowserSourceMap(
@@ -23,8 +23,7 @@ export async function verifyBrowserSourceMap(
   let root;
   let transport;
   let client;
-  let primaryError;
-  try {
+  return withVerifierCleanup(async () => {
     site = await startBrowserSourceMapSite();
     root = await mkdtemp(join(tmpdir(), "rea-browser-source-map-"));
     const env = {
@@ -132,18 +131,15 @@ export async function verifyBrowserSourceMap(
       selected_inert_userinfo_context_preserved: true,
       public_point_cases: 4,
     };
-  } catch (cause) {
-    primaryError = cause;
-    throw cause;
-  } finally {
-    const cleanup = [];
-    if (client !== undefined) cleanup.push(() => client.close());
-    if (transport !== undefined) cleanup.push(() => transport.close());
-    if (site !== undefined) cleanup.push(() => site.close());
-    if (root !== undefined)
-      cleanup.push(() => rm(root, { recursive: true, force: true }));
-    await closeVerifierResources(cleanup, primaryError);
-  }
+  }, [
+    () => client?.close(),
+    () => transport?.close(),
+    () => site?.close(),
+    () =>
+      root === undefined
+        ? undefined
+        : rm(root, { recursive: true, force: true }),
+  ]);
 }
 function assertPoint(evidence, { site, input, capture, identity }) {
   const result = webSourceLocationResultSchema.parse(

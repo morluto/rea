@@ -313,6 +313,24 @@ function* checkCoverageSteps(
       path: ["coverage", "limits"],
       message: "Truncated graph coverage must identify an effective limit",
     });
+  if (graph.coverage.truncated && graph.coverage.status !== "partial")
+    context.addIssue({
+      code: "custom",
+      path: ["coverage", "status"],
+      message: "Truncated semantic graph coverage must be partial",
+    });
+  if (
+    graph.coverage.truncated &&
+    graph.coverage.omitted_nodes === 0 &&
+    graph.coverage.omitted_relations === 0 &&
+    omittedUnknowns.length === 0
+  )
+    context.addIssue({
+      code: "custom",
+      path: ["coverage"],
+      message:
+        "Truncated semantic graph coverage must acknowledge omitted facts",
+    });
   const relationsByFamily = new Map(
     JAVASCRIPT_SEMANTIC_RELATION_FAMILIES.map((family) => [family, 0]),
   );

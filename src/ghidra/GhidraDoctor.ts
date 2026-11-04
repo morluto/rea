@@ -1,6 +1,6 @@
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { analysisClientFailureForOperation } from "../providers/AnalysisClientFailure.js";
-import type { FileCloseResourceOwner } from "../application/AnalysisProvider.js";
+import type { RetainedResourceScope } from "../application/AnalysisProvider.js";
 import type {
   DoctorProviderCheck,
   DoctorProviderInspection,
@@ -69,7 +69,7 @@ export const projectGhidraDoctorInspection = (
 /** Inspect the process-configured BYO Ghidra installation for `rea doctor`. */
 export const inspectSystemGhidraProvider = async (
   environment: Readonly<NodeJS.ProcessEnv>,
-  resourceOwner: FileCloseResourceOwner,
+  resourceOwner: RetainedResourceScope,
   signal?: AbortSignal,
 ): Promise<DoctorProviderInspection> => {
   try {

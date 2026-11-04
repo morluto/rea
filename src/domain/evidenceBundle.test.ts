@@ -6,9 +6,9 @@ import {
   createEvidenceBundle,
   createImmutableEvidenceBundle,
   NonCanonicalEvidenceBundleError,
-  describeEvidenceBundleFailure,
   evidenceBundleForTarget,
   parseEvidenceBundle,
+  safeParseEvidenceBundle,
 } from "./evidenceBundle.js";
 import {
   createResidualUnknown,
@@ -20,6 +20,36 @@ const provider = { id: "fixture", name: "Fixture", version: "1" };
 const targetDigest = "a".repeat(64);
 const foreignDigest = "b".repeat(64);
 
+describe("artifact manifest projection", () => {
+  it("round-trips GameCube DOL Evidence through retained bundles and target selection", () => {
+    const record = createEvidence(
+      {
+        path: "/tmp/game.dol",
+        sha256: targetDigest,
+        format: "gamecube-dol",
+        architecture: "powerpc",
+      },
+      provider,
+      {
+        operation: "inspect_artifact",
+        parameters: {},
+        result: { observed: true },
+      },
+    );
+    const bundle = createImmutableEvidenceBundle([record]);
+    expect(bundle.artifacts).toEqual([
+      {
+        digest: { sha256: targetDigest },
+        format: "gamecube-dol",
+        architecture: "powerpc",
+      },
+    ]);
+    const restored = parseEvidenceBundle(JSON.parse(JSON.stringify(bundle)));
+    expect(restored.records[0]?.evidence_id).toBe(record.evidence_id);
+    expect(evidenceBundleForTarget(restored, targetDigest)).toEqual(bundle);
+  });
+});
+
 describe("evidence bundle failure classification", () => {
   it("tags valid-shaped bundles that fail canonical ordering", () => {
     const records = ["first", "second"].map((label) =>
@@ -30,12 +60,14 @@ describe("evidence bundle failure classification", () => {
       }),
     );
     const canonical = createEvidenceBundle(records);
-    expect(() =>
-      parseEvidenceBundle({
-        ...canonical,
-        records: [...canonical.records].reverse(),
-      }),
-    ).toThrow(NonCanonicalEvidenceBundleError);
+    const parsed = safeParseEvidenceBundle({
+      ...canonical,
+      records: [...canonical.records].reverse(),
+    });
+    expect(parsed.ok).toBe(false);
+    if (parsed.ok) return;
+    expect(parsed.error.kind).toBe("invalid-bundle");
+    expect(parsed.error.cause).toBeInstanceOf(NonCanonicalEvidenceBundleError);
   });
 
   it("treats only authenticated standalone Evidence as the wrong input kind", () => {
@@ -44,14 +76,18 @@ describe("evidence bundle failure classification", () => {
       parameters: {},
       result: { observed: true },
     });
-    const single = describeEvidenceBundleFailure(record, new Error("bundle"));
-    expect(single).toMatchObject({ kind: "single-record" });
+    const single = safeParseEvidenceBundle(record);
+    expect(single.ok).toBe(false);
+    if (single.ok) return;
+    expect(single.error.kind).toBe("single-record");
 
-    const tampered = describeEvidenceBundleFailure(
-      { ...record, normalized_result: { observed: false } },
-      new Error("bundle"),
-    );
-    expect(tampered).toMatchObject({ kind: "invalid-bundle" });
+    const tampered = safeParseEvidenceBundle({
+      ...record,
+      normalized_result: { observed: false },
+    });
+    expect(tampered.ok).toBe(false);
+    if (tampered.ok) return;
+    expect(tampered.error.kind).toBe("invalid-bundle");
   });
 });
 

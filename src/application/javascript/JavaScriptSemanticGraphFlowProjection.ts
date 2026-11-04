@@ -1,5 +1,10 @@
+import { javascriptSourceRangeKey } from "../../domain/javascript/javascriptSourceCoordinates.js";
 import type { JavaScriptSemanticGraphNode } from "../../domain/javascript/javascriptSemanticGraphSchemas.js";
-import type { JavaScriptSemanticIr } from "../../domain/javascript/javascriptSemanticIr.js";
+import { javaScriptSemanticNodeId } from "../../domain/javascript/javascriptSemanticGraph.js";
+import type {
+  JavaScriptSemanticIr,
+  JavaScriptSemanticProjectedResultBinding,
+} from "../../domain/javascript/javascriptSemanticIr.js";
 import { sourceRangesEqual } from "../../domain/javascript/javascriptStaticAnalysisHelpers.js";
 import type { JavaScriptSourceRange } from "../../domain/javascript/javascriptStaticAnalysisTypes.js";
 import type { JavaScriptArtifactFile } from "../../domain/javascript/javascriptArtifactFiles.js";
@@ -24,6 +29,8 @@ export interface SemanticFlowProjectionContext {
   readonly callableNodes: ReadonlyMap<string, JavaScriptSemanticGraphNode>;
   readonly callSiteNodes: ReadonlyMap<string, JavaScriptSemanticGraphNode>;
   readonly returnSiteNodes: ReadonlyMap<string, JavaScriptSemanticGraphNode>;
+  readonly readNodes: JavaScriptSemanticGraphNode[];
+  readonly writeNodes: JavaScriptSemanticGraphNode[];
   readonly referenceNodes: readonly JavaScriptSemanticGraphNode[];
   readonly referenceNodesWithin: (
     range: JavaScriptSourceRange,
@@ -32,6 +39,26 @@ export interface SemanticFlowProjectionContext {
     range: JavaScriptSourceRange,
   ) => JavaScriptSemanticGraphNode | undefined;
 }
+
+/** Project result destructuring consistently for timers, child processes, and requests. */
+export const projectSemanticResultBindings = (
+  context: Pick<SemanticFlowProjectionContext, "state" | "bindingNodes">,
+  source: JavaScriptSemanticGraphNode | undefined,
+  bindings: readonly JavaScriptSemanticProjectedResultBinding[],
+): void => {
+  for (const projected of bindings)
+    addSemanticGraphRelation(context.state, {
+      source,
+      target: context.bindingNodes.get(projected.bindingId),
+      relation: "destructures",
+      resolution:
+        projected.resolution === "complete" ? "resolved" : "candidate",
+      properties: {
+        projection_path: [...projected.projectionPath],
+        projection_resolution: projected.resolution,
+      },
+    });
+};
 
 /** Project explicit static Promise/task ownership without runtime claims. */
 export const projectSemanticPromises = (
@@ -190,14 +217,76 @@ const addPromiseUnknown = (
   });
 };
 
+interface ObjectReadIndex {
+  readonly state: SemanticGraphProjectionState;
+  readonly nodes: ReadonlyMap<string, JavaScriptSemanticGraphNode>;
+}
+
+const objectReadIndexes = new WeakMap<JavaScriptSemanticIr, ObjectReadIndex>();
+
+/**
+ * The object projection owns a member read's occurrence. Index it once per
+ * file so return and argument flow can connect that expression without
+ * scanning every property read again.
+ */
+const objectReadOccurrences = (
+  context: SemanticFlowProjectionContext,
+): ReadonlyMap<string, JavaScriptSemanticGraphNode> => {
+  const cached = objectReadIndexes.get(context.ir);
+  if (cached !== undefined && cached.state === context.state)
+    return cached.nodes;
+  const nodes = new Map<string, JavaScriptSemanticGraphNode>();
+  for (const operation of context.ir.objectOperations) {
+    if (operation.kind !== "read") continue;
+    const node = context.state.nodes.get(
+      javaScriptSemanticNodeId({
+        kind: "expression",
+        identity: {
+          artifact_sha256: context.file.sha256,
+          module_path: context.file.path,
+          source_range: operation.location,
+          role_key: operation.objectOperationId,
+        },
+      }),
+    );
+    if (node !== undefined)
+      nodes.set(javascriptSourceRangeKey(operation.location), node);
+  }
+  objectReadIndexes.set(context.ir, { state: context.state, nodes });
+  return nodes;
+};
+
+/** Return the retained read occurrence for one unwrapped member expression. */
+export const semanticObjectReadOccurrence = (
+  context: SemanticFlowProjectionContext,
+  location: JavaScriptSourceRange | null,
+): JavaScriptSemanticGraphNode | undefined =>
+  location === null
+    ? undefined
+    : objectReadOccurrences(context).get(javascriptSourceRangeKey(location));
+
 /** Link direct return expressions to their retained semantic references. */
 export const projectSemanticReturnValues = (
   context: SemanticFlowProjectionContext,
 ): void => {
+  const expressions = new Set(
+    context.ir.expressionFlows.map((flow) =>
+      javascriptSourceRangeKey(flow.location),
+    ),
+  );
   for (const callable of context.ir.callables)
     for (const site of callable.returnSites) {
       const returnNode = context.returnSiteNodes.get(site.returnSiteId);
-      const references = context.referenceNodesWithin(site.location);
+      const references =
+        site.valueExpressionLocation !== null &&
+        expressions.has(javascriptSourceRangeKey(site.valueExpressionLocation))
+          ? []
+          : context
+              .referenceNodesWithin(site.location)
+              .filter(
+                (reference) =>
+                  reference.function_node_id === returnNode?.function_node_id,
+              );
       for (const reference of references)
         addSemanticGraphRelation(context.state, {
           source: reference,
@@ -212,6 +301,15 @@ export const projectSemanticReturnValues = (
               ? "resolved"
               : "candidate",
         });
+      addSemanticGraphRelation(context.state, {
+        source: semanticObjectReadOccurrence(
+          context,
+          site.valueExpressionLocation,
+        ),
+        target: returnNode,
+        relation: "aliases",
+        resolution: "resolved",
+      });
     }
 };
 

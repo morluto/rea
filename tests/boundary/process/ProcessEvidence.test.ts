@@ -14,13 +14,13 @@ import { compareProcessCaptures } from "../../../src/domain/process/processCompa
 import { parseProcessCapture } from "../../../src/domain/process/processCaptureParsing.js";
 import {
   digestProcessCommitment,
-  parseProcessScenario,
+  processScenarioSchema,
   processComparisonContract,
   processScenarioCommitment,
 } from "../../../src/domain/process/processScenario.js";
 
 const captureEvidenceForSensitiveInput = (data: string) => {
-  const scenario = parseProcessScenario({
+  const scenario = processScenarioSchema.parse({
     executable: "/bin/echo",
     working_directory: "/tmp",
     events: [{ type: "input", at_ms: 0, data, sensitive: true }],
@@ -60,7 +60,7 @@ const captureEvidenceForSensitiveInput = (data: string) => {
 };
 
 const captureEvidenceForEnvironmentSecret = async (value: string) => {
-  const scenario = parseProcessScenario({
+  const scenario = processScenarioSchema.parse({
     executable: "/bin/echo",
     working_directory: "/tmp",
     environment: { API_TOKEN: value },
@@ -127,11 +127,9 @@ it("does not treat captures with different redacted inputs as equivalent", () =>
 it("preserves selected local environment and input values", async () => {
   const left = await captureEvidenceForEnvironmentSecret("secret-left");
   const right = await captureEvidenceForEnvironmentSecret("secret-right");
-  const serialized = JSON.stringify(left);
   const leftCapture = parseProcessCapture(left.normalized_result);
   const rightCapture = parseProcessCapture(right.normalized_result);
 
-  expect(serialized).toContain("secret-left");
   expect(leftCapture.manifest.scenario).toMatchObject({
     environment: { API_TOKEN: "secret-left" },
   });

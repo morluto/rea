@@ -30,20 +30,15 @@ export const createElectronEvidence = (
     result,
     confidence: "observed",
     authority: "external-service",
-    environment:
-      "target" in result
-        ? {
-            id: `${result.browser.product}@${result.browser.revision}`,
-            platform: "unknown",
-            architecture: "unknown",
-            isolation: "none",
-          }
-        : null,
+    environment: {
+      id: `${result.browser.product}@${result.browser.revision}`,
+      platform: "unknown",
+      architecture: "unknown",
+      isolation: "none",
+    },
     limitations: [
       ...result.limitations,
-      ...("target" in result
-        ? ["Browser host platform and architecture were not observed."]
-        : []),
+      "Browser host platform and architecture were not observed.",
     ],
   });
 
@@ -56,6 +51,9 @@ const parameters = (
         target_id: input.target_id,
         observation_ms: input.observation_ms,
         include_script_sources: input.include_script_sources,
+        ...(input.command_timeout_ms === undefined
+          ? {}
+          : { command_timeout_ms: input.command_timeout_ms }),
       }
     : {}),
 });

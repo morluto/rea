@@ -36,14 +36,18 @@ The MCP tool `project_harmony_application_graph` takes the same
 
 - exact component paths, artifact IDs, and hashes (manifests, Ark bytecode,
   resources, native libraries, JavaScript, signing)
-- a packaging-model hint: Stage is claimed only from a `module.json` entry,
-  FA only from `config.json`, otherwise `unknown`
+- a packaging-model hint: Stage is claimed only from an exactly cased `module.json` entry
+  outside a classified resource path, FA only from `config.json` outside a
+  classified resource path, otherwise `unknown`
 - FA resources under `assets/<module>/resources/` as well as Stage `resources/`
 - unavailable component paths with unknown IDs and hashes, including encrypted entries; these make projection coverage partial
 - App Pack child package paths without recursive inventory
 - runtime-family hints (`ark`, `native`, `javascript`) from paths and formats
 - path-based N-API bridge hypotheses between bytecode and `libs/<abi>` native
   libraries
+
+An unavailable manifest can still supply a path-based model hint; its content
+identity remains unknown. Manifest names follow case-sensitive ZIP member names.
 
 File and slice occurrences supply component and child-package paths; directory
 trees and symlinks retain their identities in the source inventory without
@@ -83,3 +87,12 @@ not been independently established. This lane does not complete the pinned
 toolchain acceptance in #1431 and does not verify Ark decoding or signatures.
 Set `REA_HARMONY_ENTRYPOINT` to an installed package's `scripts/rea.mjs` to run
 the same checks against that package; the default lane uses the repository build.
+
+Packaging-model and App Pack child presence use inventoried file/slice paths even
+when encrypted content cannot be authenticated. Unavailable App Pack children
+retain their path, format, encryption and limitations with null artifact ID and
+digest; they do not establish decoded package semantics. Missing source nodes
+outside supplied pages retain the inventory limitation and partial coverage.
+The signing list includes inventoried META-INF RSA, DSA and EC certificate-block
+paths alongside the existing suffixes; opaque content does not establish a valid
+signature or certificate.

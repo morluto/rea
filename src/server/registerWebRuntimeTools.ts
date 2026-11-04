@@ -5,6 +5,7 @@ import type { EvidenceWriter } from "../application/investigation/InvestigationR
 import { toolContract } from "../contracts/toolContracts.js";
 import type { Logger } from "pino";
 import { mcpProgressReporter } from "./mcpProgress.js";
+import { deliverEvidenceResult } from "./contractToolHandler.js";
 import { logToolExecution } from "./toolLogging.js";
 import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
 import type { WithAdmittedAnalysis } from "./analysisAdmission.js";
@@ -36,13 +37,11 @@ export const registerWebRuntimeTools = (
               progress: mcpProgressReporter(context),
             }),
           );
-          if (!result.ok)
-            return server.delivery.toCallToolResult(result, execution);
-          const recorded = recordEvidence?.(result.value);
-          return server.delivery.toEvidenceToolResult(
-            result.value,
+          return deliverEvidenceResult(
+            server,
+            result,
             execution,
-            recorded,
+            recordEvidence,
           );
         },
       ),
@@ -60,13 +59,11 @@ export const registerWebRuntimeTools = (
           const result = await logToolExecution(logger, listeners.name, () =>
             service.inspect(input, { signal: context.mcpReq.signal }),
           );
-          if (!result.ok)
-            return server.delivery.toCallToolResult(result, listeners);
-          const recorded = recordEvidence?.(result.value);
-          return server.delivery.toEvidenceToolResult(
-            result.value,
+          return deliverEvidenceResult(
+            server,
+            result,
             listeners,
-            recorded,
+            recordEvidence,
           );
         },
       ),

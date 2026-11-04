@@ -1,8 +1,10 @@
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
+import { awaitAcknowledgement } from "../../../tests/fixtures/lifecycleAcknowledgement.js";
+import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
 import { elf } from "../../domain/binaryTarget.fixture.js";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, onTestFinished } from "vitest";
 
 import {
   createAnalysisExecution,
@@ -40,23 +42,155 @@ import { SessionProviderRouter } from "./SessionProviderRouter.js";
  * `operationHealthSnapshot`, the way `HopperClient.operationHealth` reports a
  * recorded process exit.
  */
+it("binds omitted provider subjects to the selected target", async () => {
+  const { session } = openSession();
+  const opened = await session.open(process.execPath);
+  expect(opened.ok).toBe(true);
+  const execution = await session.execute("address_name", {});
+  expect(execution.ok).toBe(true);
+  if (!execution.ok || !opened.ok) return;
+  expect(execution.value.subject).toEqual({
+    path: opened.value.path,
+    sha256: opened.value.sha256,
+    format: opened.value.format,
+    ...(opened.value.architecture === undefined
+      ? {}
+      : { architecture: opened.value.architecture }),
+  });
+});
+
+it("preserves an explicitly unbound provider observation", async () => {
+  const { session } = openSession({ explicitNullSubject: true });
+  expect((await session.open(process.execPath)).ok).toBe(true);
+  const execution = await session.execute("address_name", {});
+  expect(execution.ok).toBe(true);
+  if (execution.ok) expect(execution.value.subject).toBeNull();
+});
+
+it("retains live source Evidence without replaying a prior observation", async () => {
+  const { session, deep } = openSession({ live: true });
+  expect((await session.open(process.execPath)).ok).toBe(true);
+  expect(
+    (
+      await session.execute("address_name", {
+        document: "0",
+        address: "0x9999",
+      })
+    ).ok,
+  ).toBe(true);
+  const child = deep.created[0];
+  if (child === undefined) throw new Error("expected provider child");
+  let reads = 0;
+  child.execute = () =>
+    Promise.resolve(
+      ok(createAnalysisExecution(`live ${++reads}`, deepIdentity)),
+    );
+  const parameters = { document: "0", address: "0x1000" };
+  const first = await session.execute("address_name", parameters);
+  const second = await session.execute("address_name", parameters);
+  expect(first.ok && first.value.result).toBe("live 1");
+  expect(second.ok && second.value.result).toBe("live 2");
+  if (!first.ok || !second.ok) return;
+  expect(first.value.evidenceId).toBeDefined();
+  expect(second.value.evidenceId).toBeDefined();
+  expect(first.value.evidenceId).not.toBe(second.value.evidenceId);
+  expect(session.exportEvidenceBundle().records).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ normalized_result: "live 1" }),
+      expect.objectContaining({ normalized_result: "live 2" }),
+    ]),
+  );
+  const snapshot = session.exportAnalysisSnapshot();
+  expect(snapshot.ok, snapshot.ok ? undefined : snapshot.error.message).toBe(
+    true,
+  );
+  if (!snapshot.ok) return;
+  expect(snapshot.value.entries).toEqual([]);
+});
+
+it("keeps unbound observations out of persisted target snapshots", async () => {
+  const { session, deep } = openSession();
+  const directory = await createTestTempDirectory("rea-unbound-snapshot-");
+  const path = join(directory, "snapshot.json");
+  const parameters = { document: "0", address: "0x1000" };
+  expect((await session.open(process.execPath)).ok).toBe(true);
+  const bound = await session.execute("address_name", parameters);
+  expect(bound.ok).toBe(true);
+  const child = deep.created[0];
+  if (child === undefined || !bound.ok) throw new Error("Expected bound read");
+  child.execute = () =>
+    Promise.resolve(
+      ok(
+        createAnalysisExecution("unbound observation", deepIdentity, {
+          subject: null,
+        }),
+      ),
+    );
+  const execution = await session.execute("address_name", {
+    ...parameters,
+    address: "0x2000",
+  });
+  expect(execution.ok).toBe(true);
+  if (!execution.ok) return;
+  expect(execution.value.subject).toBeNull();
+  expect(session.exportEvidenceBundle().records).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        subject: null,
+        normalized_result: "unbound observation",
+      }),
+    ]),
+  );
+  const snapshot = session.exportAnalysisSnapshot();
+  expect(snapshot.ok, snapshot.ok ? undefined : snapshot.error.message).toBe(
+    true,
+  );
+  if (!snapshot.ok) return;
+  expect(snapshot.value.entries).toHaveLength(1);
+  expect(snapshot.value.entries[0]?.parameters).toEqual(parameters);
+  const unboundReplay = await session.execute("address_name", {
+    ...parameters,
+    address: "0x2000",
+  });
+  expect(unboundReplay.ok).toBe(true);
+  if (unboundReplay.ok) {
+    expect(unboundReplay.value.subject).toBeNull();
+    expect(unboundReplay.value.evidenceId).toBe(execution.value.evidenceId);
+  }
+  expect(
+    (await session.writeAnalysisSnapshot(snapshot.value, path, false)).ok,
+  ).toBe(true);
+  expect((await session.close()).ok).toBe(true);
+  expect(
+    (
+      await session.open(process.execPath, {
+        loadSnapshot: () => session.readAnalysisSnapshot(path),
+      })
+    ).ok,
+  ).toBe(true);
+  const replay = await session.execute("address_name", parameters);
+  expect(replay.ok).toBe(true);
+  if (replay.ok) {
+    expect(replay.value.evidenceId).toBe(bound.value.evidenceId);
+    expect(replay.value.limitations).toContain(
+      "Loaded from a local REA analysis snapshot; this call did not re-run the provider.",
+    );
+  }
+});
+
 describe("BinarySession open liveness", () => {
   it("retires a locally blocked owner even when its native health is idle", async () => {
     const { session, deep } = openSession();
-    try {
-      expect((await session.open(process.execPath)).ok).toBe(true);
-      expect((await session.execute("address_name", {})).ok).toBe(true);
-      const retained = deep.created[0];
-      if (retained === undefined) throw new Error("Expected an acquired child");
-      retained.reuseReadiness = () => "blocked";
-      expect(retained.operationHealthSnapshot?.()?.state).toBe("idle");
-      expect((await session.open(process.execPath)).ok).toBe(true);
-      expect(retained.closeCalled).toBe(true);
-      expect((await session.execute("address_name", {})).ok).toBe(true);
-      expect(deep.created).toHaveLength(2);
-    } finally {
-      await session.close();
-    }
+    expect((await session.open(process.execPath)).ok).toBe(true);
+    expect((await session.execute("address_name", {})).ok).toBe(true);
+    const retained = deep.created[0];
+    if (retained === undefined) throw new Error("Expected an acquired child");
+    retained.reuseReadiness = () => "blocked";
+    expect(retained.operationHealthSnapshot?.()?.state).toBe("idle");
+    expect((await session.open(process.execPath)).ok).toBe(true);
+    expect(retained.closeCalled).toBe(true);
+    expect((await session.execute("address_name", {})).ok).toBe(true);
+    expect(deep.created).toHaveLength(2);
   });
   it("reuses the retained client while the child stays live", async () => {
     const { session, deep } = openSession();
@@ -219,6 +353,7 @@ it("clears retired runtime availability after cancelled-switch restoration", asy
   });
   const { session, deep } = openSession({
     failOperationInitially: true,
+    releaseBeforeCleanup: releaseClose,
     beforeFirstClose: async () => {
       closeStarted();
       await closeGate;
@@ -245,11 +380,17 @@ it("clears retired runtime availability after cancelled-switch restoration", asy
   );
   await writeFile(alternate, elf(2, 1, 62));
   const switching = session.open(alternate, { signal: controller.signal });
-  await closing;
-  controller.abort();
-  releaseClose();
-
-  const cancelled = await switching;
+  const cancelled = await withVerifierCleanup(async () => {
+    await awaitAcknowledgement(closing, switching, "provider close");
+    controller.abort();
+    releaseClose();
+    return await switching;
+  }, [
+    releaseClose,
+    async () => {
+      await switching;
+    },
+  ]);
   expect(cancelled).toMatchObject({
     ok: false,
     error: { _tag: "AnalysisCancelledError" },
@@ -286,7 +427,6 @@ it("clears retired runtime availability after cancelled-switch restoration", asy
     reason: "available",
     remediation: null,
   });
-  await session.close();
 });
 
 const sessionRunId = (
@@ -349,6 +489,9 @@ const openSession = (
     operationHealth?: boolean;
     failOperationInitially?: boolean;
     beforeFirstClose?: () => Promise<void>;
+    releaseBeforeCleanup?: () => void;
+    explicitNullSubject?: boolean;
+    live?: boolean;
   } = {},
 ): {
   session: BinarySession;
@@ -376,6 +519,11 @@ const openSession = (
     ]),
     new InvestigationRecords(),
   );
+  onTestFinished(async () => {
+    options.releaseBeforeCleanup?.();
+    const closed = await session.close();
+    if (!closed.ok) throw closed.error;
+  });
   return { session, deep: { created }, onProbe };
 };
 
@@ -383,6 +531,8 @@ const killableDeepProvider = (options: {
   operationHealth?: boolean;
   failOperationInitially?: boolean;
   beforeFirstClose?: () => Promise<void>;
+  explicitNullSubject?: boolean;
+  live?: boolean;
 }): {
   provider: AnalysisProviderCandidate;
   created: KillableChild[];
@@ -393,7 +543,12 @@ const killableDeepProvider = (options: {
   const withOperationHealth = options.operationHealth !== false;
   const provider: AnalysisProviderCandidate = {
     identity: () => deepIdentity,
-    capabilities: () => [capability(deepIdentity, "address_name")],
+    capabilities: () => [
+      {
+        ...capability(deepIdentity, "address_name"),
+        ...(options.live ? { cachePolicy: "live" as const } : {}),
+      },
+    ],
     inspectAvailability: (): ProviderAvailability => ({
       status: "available",
       code: null,
@@ -433,6 +588,10 @@ const killableDeepProvider = (options: {
                   createAnalysisExecution(
                     operation === "health" ? null : `liveness:${operation}`,
                     deepIdentity,
+                    operation !== "health" &&
+                      options.explicitNullSubject === true
+                      ? { subject: null }
+                      : {},
                   ),
                 ),
               )

@@ -14,7 +14,7 @@ import { webModuleTraceResultSchema } from "../../dist/domain/webModuleTrace.js"
 import { NativeModuleResolver } from "../../dist/browser/modules/NativeModuleResolver.js";
 import { startBrowserModuleSite } from "../fixtures/browser-module-site.mjs";
 import { mcpTextValue } from "./mcp-verifier-results.mjs";
-import { closeVerifierResources } from "./verifier-cleanup.mjs";
+import { withVerifierCleanup } from "./verifier-cleanup.mjs";
 
 /** Check native URL resolution against an independently loaded module graph through CLI/MCP. */
 export async function verifyBrowserModules(
@@ -25,8 +25,7 @@ export async function verifyBrowserModules(
   let root;
   let transport;
   let client;
-  let primaryError;
-  try {
+  return withVerifierCleanup(async () => {
     site = await startBrowserModuleSite();
     root = await mkdtemp(join(tmpdir(), "rea-browser-modules-"));
     const env = {
@@ -304,18 +303,15 @@ export async function verifyBrowserModules(
       map_identity_verified: true,
       implicit_refetches: 0,
     };
-  } catch (cause) {
-    primaryError = cause;
-    throw cause;
-  } finally {
-    const cleanup = [];
-    if (client !== undefined) cleanup.push(() => client.close());
-    if (transport !== undefined) cleanup.push(() => transport.close());
-    if (site !== undefined) cleanup.push(() => site.close());
-    if (root !== undefined)
-      cleanup.push(() => rm(root, { recursive: true, force: true }));
-    await closeVerifierResources(cleanup, primaryError);
-  }
+  }, [
+    () => client?.close(),
+    () => transport?.close(),
+    () => site?.close(),
+    () =>
+      root === undefined
+        ? undefined
+        : rm(root, { recursive: true, force: true }),
+  ]);
 }
 
 const assertTrace = (evidence, oracle, site, scriptIndex) => {
@@ -366,7 +362,7 @@ const loadingOracle = async (executable, site) => {
         : []),
     ],
   });
-  try {
+  return withVerifierCleanup(async () => {
     const page = await browser.newPage();
     await page.goto(site.origin);
     await page.waitForFunction(
@@ -394,7 +390,5 @@ const loadingOracle = async (executable, site) => {
       ),
     );
     return proof;
-  } finally {
-    await browser.close();
-  }
+  }, [() => browser.close()]);
 };

@@ -1,9 +1,10 @@
-import type { JavaScriptOpaqueScopeEffects } from "./javascriptSemanticOpaqueEffects.js";
 import * as t from "@babel/types";
 import {
   semanticStaticPropertyKey,
+  staticJavaScriptTruthiness,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
+import type { SemanticIterationSource } from "./javascriptSemanticIterationFacts.js";
 
 import type {
   JavaScriptSemanticPropertyPath,
@@ -29,10 +30,16 @@ export interface JavaScriptSemanticInitializer {
   readonly node: t.Node;
   readonly projection: readonly (string | number | null)[];
   readonly entryBody?: t.BlockStatement;
+  readonly iterationSources?: readonly {
+    readonly node: t.Node;
+    readonly projection: JavaScriptSemanticPropertyPath;
+  }[];
 }
 
 /** Additional references from destructuring copies and possible defaults. */
 interface JavaScriptSemanticReferenceInitializer extends JavaScriptSemanticInitializer {
+  /** This source is a value replacement, rather than a declaration fallback. */
+  readonly assignment?: true;
   readonly copyKind?: "object-rest" | "array-rest";
   readonly copyProjectionOffset?: number;
   readonly copyExcludedKeys?: readonly string[];
@@ -45,6 +52,14 @@ interface JavaScriptSemanticReferenceInitializer extends JavaScriptSemanticIniti
 export interface JavaScriptSemanticMemberEffect {
   readonly path: JavaScriptSemanticPropertyPath;
   readonly node: t.Node | undefined;
+  /** Selected RHS values retained by the shared pattern-store owner. */
+  readonly assignedSources?: readonly SemanticIterationSource[];
+  /** Binding values whose receiver identities were selected for this effect. */
+  readonly receiverInitializers?: readonly JavaScriptSemanticInitializer[];
+  /** Proof that the write selects this captured receiver, not just a possible alias. */
+  readonly receiverIdentity?: "definite" | "possible";
+  /** Capture of this binding used while following an aliased effect receiver. */
+  readonly receiverAt?: t.Node;
 }
 
 export type JavaScriptSemanticEffectTiming = "before" | "after" | "unknown";
@@ -97,10 +112,24 @@ export interface JavaScriptSemanticScopeState {
   readonly bindings: Map<string, JavaScriptSemanticBindingState>;
   /** Object environment introduced by `with`, active only for its body. */
   readonly dynamicWithStatement?: t.WithStatement;
+  /** Ordinary functions own `arguments`; arrow functions inherit it. */
+  readonly implicitArguments?: true;
+}
+
+/** One source owns sites and the minimal scope tree reaching them; O(AST) storage. */
+export interface JavaScriptOpaqueScopeEffects {
+  /** Cheap source evidence collected with declarations, before alias queries. */
+  mayReferenceGlobalEval: boolean;
+  readonly sites: WeakSet<t.Node>;
+  readonly sloppySites: WeakSet<t.Node>;
+  readonly byScope: Map<string, t.CallExpression[]>;
+  readonly children: Map<string, Set<string>>;
+  readonly globalSites: (t.CallExpression | t.OptionalCallExpression)[];
 }
 
 /** Shared state for semantic collection and evaluation. */
 export interface JavaScriptSemanticAnalysisState {
+  arrayIterationUnknown: boolean;
   readonly program: t.Program;
   readonly opaqueEffects: JavaScriptOpaqueScopeEffects;
   /** Effective loader for static imports in this source artifact. */
@@ -109,7 +138,11 @@ export interface JavaScriptSemanticAnalysisState {
   readonly valueResourceLimits: Set<JavaScriptSemanticResourceLimit>;
   /** Getter query bounds encountered while resolving object and class properties. */
   readonly getterResourceLimits: Set<JavaScriptSemanticResourceLimit>;
+  /** Callee sites whose possible local returns needed a broader projection. */
+  readonly returnedReferenceWidenings: Set<t.Node>;
   readonly parentsByNode: WeakMap<t.Node, t.Node>;
+  /** TypeScript syntax omitted from JavaScript value evaluation. */
+  readonly erasedSyntaxNodes: WeakSet<t.Node>;
   readonly scopes: JavaScriptSemanticScopeState[];
   readonly scopesById: Map<string, JavaScriptSemanticScopeState>;
   /** Scope boundaries and descendant scopes resolved on demand. */
@@ -146,8 +179,14 @@ export interface JavaScriptSemanticAnalysisState {
   readonly ambientBindingWrites: Map<string, t.Node[]>;
   /** Source-local writes, tagged by global, import.meta or CJS module identity. */
   readonly ambientWrites: SemanticPropertyPathCoverage;
+  /** Browser receivers proven to be only the ambient global identity. */
+  readonly retainedGlobalCallReceivers: WeakSet<t.Node>;
+  /** Store targets whose ownership is unknown or ambient, as classified by ambient indexing. */
+  readonly escapingReferenceStores: WeakSet<t.MemberExpression>;
   /** Ambient object identities passed to calls whose effects are not evaluated. */
   readonly ambientEscapes: SemanticPropertyPathCoverage;
+  /** Capture sites keep later opaque effects from changing earlier copies. */
+  readonly ambientEscapeEffects: JavaScriptSemanticMemberEffect[];
   /** Source sites distinguish replacement before an ambient identity capture from later writes. */
   readonly ambientWriteEffects: JavaScriptSemanticMemberEffect[];
 }
@@ -172,6 +211,12 @@ export interface JavaScriptBindingIndex {
     referenceNode: t.Node,
   ): JavaScriptSemanticBindingState | undefined;
   effectsForReferenceAt(
+    site: t.Node,
+    referenceNode: t.Node,
+    propertyPath?: JavaScriptSemanticPropertyPath,
+  ): JavaScriptSemanticReferenceEffectsAtSite;
+  /** Order declarations within one activation; deferred and repeating effects stay unknown. */
+  effectsForReferenceWithinActivationAt(
     site: t.Node,
     referenceNode: t.Node,
     propertyPath?: JavaScriptSemanticPropertyPath,
@@ -276,7 +321,14 @@ type SemanticBindingLookup =
       readonly kind: "binding" | "uncertain-binding";
       readonly binding: JavaScriptSemanticBindingState;
     }
-  | { readonly kind: "ambient" | "uncertain-ambient" | "captured" | "unknown" };
+  | {
+      readonly kind:
+        | "ambient"
+        | "uncertain-ambient"
+        | "captured"
+        | "unknown"
+        | "implicit-arguments";
+    };
 
 /** Retain both a dynamic lookup's uncertainty and its possible outer write owner. */
 export const semanticBindingLookupFromScope = (
@@ -289,6 +341,8 @@ export const semanticBindingLookupFromScope = (
     const binding = scope.bindings.get(name);
     if (binding !== undefined)
       return { kind: uncertain ? "uncertain-binding" : "binding", binding };
+    if (name === "arguments" && scope.implicitArguments === true)
+      return { kind: "implicit-arguments" };
     if (!scope.bindingsComplete) {
       if (scope.dynamicWithStatement === undefined) return { kind: "unknown" };
       const lookup = semanticWithRequireLookup(
@@ -390,7 +444,7 @@ const semanticWithRequireLookup = (
         ? "captures"
         : "unknown";
     }
-    const truthiness = semanticWithStaticTruthiness(entry);
+    const truthiness = staticJavaScriptTruthiness(entry);
     return truthiness === true
       ? "skips"
       : truthiness === false
@@ -471,23 +525,6 @@ const finalSemanticWithStringProperty = (
   return undefined;
 };
 
-const semanticWithStaticTruthiness = (node: t.Node): boolean | undefined => {
-  const value = unwrapJavaScriptExpression(node).node;
-  if (t.isBooleanLiteral(value)) return value.value;
-  if (t.isNullLiteral(value)) return false;
-  if (t.isStringLiteral(value)) return value.value.length > 0;
-  if (t.isNumericLiteral(value))
-    return value.value !== 0 && !Number.isNaN(value.value);
-  if (
-    t.isObjectExpression(value) ||
-    t.isArrayExpression(value) ||
-    t.isFunctionExpression(value) ||
-    t.isArrowFunctionExpression(value)
-  )
-    return true;
-  return undefined;
-};
-
 const isSemanticWithPrimitive = (node: t.Node): boolean =>
   t.isNullLiteral(node) ||
   t.isBooleanLiteral(node) ||
@@ -515,49 +552,4 @@ export const semanticVariableScope = (
     candidate = outer;
   }
   return candidate;
-};
-
-/** Identify a global name only when no lexical or dynamic environment shadows it. */
-export const isUnshadowedGlobal = (
-  node: t.Node,
-  state: JavaScriptSemanticAnalysisState,
-  name: string,
-): boolean =>
-  t.isIdentifier(node, { name }) &&
-  (resolveSemanticBindingState(state, node, name) === undefined
-    ? !semanticResolutionBlocked(state, node, name)
-    : isUnmodifiedCommonJsWrapperBinding(node, name, state));
-
-/** A program-level `var` redeclaration still denotes its untouched CJS wrapper parameter. */
-export const isUnmodifiedCommonJsWrapperBinding = (
-  node: t.Node,
-  name: string,
-  state: JavaScriptSemanticAnalysisState,
-): boolean => {
-  const binding = commonJsWrapperBindingDeclaration(node, name, state);
-  return binding !== undefined && binding.initializers.length === 0;
-};
-
-/** Program `var` redeclarations retain wrapper identity until a source write. */
-export const commonJsWrapperBindingDeclaration = (
-  node: t.Node,
-  name: string,
-  state: JavaScriptSemanticAnalysisState,
-): JavaScriptSemanticBindingState | undefined => {
-  // Parser sourceType separates explicit modules from script/CommonJS source;
-  // specifier resolution mode does not establish that distinction.
-  if (
-    state.program.sourceType !== "script" ||
-    !["module", "exports", "require"].includes(name) ||
-    !t.isIdentifier(node, { name })
-  )
-    return undefined;
-  const binding = resolveSemanticBindingState(state, node, name);
-  if (binding === undefined) return undefined;
-  const scope = state.scopesById.get(binding.scopeId);
-  return scope?.kind === "program" &&
-    binding.declarationKinds.size > 0 &&
-    [...binding.declarationKinds].every((kind) => kind === "var")
-    ? binding
-    : undefined;
 };

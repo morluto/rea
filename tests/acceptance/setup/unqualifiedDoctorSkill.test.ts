@@ -42,7 +42,7 @@ cliTest(
         },
       },
     });
-    expect(await readFile(skill)).toEqual(original);
+    expect(Buffer.compare(await readFile(skill), original)).toBe(0);
 
     const audit = await run(["doctor"]);
     expect(audit.json).toMatchObject({
@@ -54,7 +54,7 @@ cliTest(
         },
       },
     });
-    expect(await readFile(skill)).toEqual(original);
+    expect(Buffer.compare(await readFile(skill), original)).toBe(0);
 
     await mkdir(join(home, ".cursor"));
     const withMarker = await run(["doctor"]);
@@ -67,7 +67,7 @@ cliTest(
         },
       },
     });
-    expect(await readFile(skill)).toEqual(original);
+    expect(Buffer.compare(await readFile(skill), original)).toBe(0);
 
     await writeFile(
       skill,
@@ -102,7 +102,7 @@ cliTest(
           },
         },
       });
-      expect(await readFile(reference)).toEqual(retained);
+      expect(Buffer.compare(await readFile(reference), retained)).toBe(0);
     }
 
     const emptyHome = await createTestTempDirectory(
@@ -146,6 +146,6 @@ cliTest(
       healthy: false,
       identity: { skill: { state: "stale", installed_version: null } },
     });
-    expect(await readFile(foreignSkill)).toEqual(foreignBytes);
+    expect(Buffer.compare(await readFile(foreignSkill), foreignBytes)).toBe(0);
   },
 );

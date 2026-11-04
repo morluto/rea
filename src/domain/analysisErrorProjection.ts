@@ -1,3 +1,9 @@
+import { projectArtifactIntegrityDetails } from "./artifactIntegrity.js";
+import {
+  cleanupRetryRecovery,
+  cleanupRetryRemediation,
+  type AnalysisErrorRecovery,
+} from "./analysisErrorRecovery.js";
 import { jsonValueSchema, type JsonValue } from "./jsonValue.js";
 import { isImmutableJsonSnapshot } from "./immutableJson.js";
 
@@ -25,6 +31,7 @@ import {
 } from "./configurationErrors.js";
 import { BrowserObservationError } from "./browserObservationError.js";
 import {
+  AnalysisSnapshotMismatchError,
   EvidenceFileError,
   EvidenceIntegrityError,
   EvidenceReferenceError,
@@ -41,31 +48,150 @@ import { ProviderSelectionError } from "./providerSelectionError.js";
 import { UnknownRegistryError } from "./unknownRegistryError.js";
 import { providerRetryAction } from "./providerOperationHealth.js";
 import {
+  primaryAnalysisError,
   resolvedAnalysisError,
+  type AnalysisCallerLifetime,
   type AnalysisError,
+  type AnalysisErrorOptions,
   type AnalysisErrorTag,
 } from "./analysisErrorBase.js";
+import { invocationSettingLimit } from "./analysisSettingDefinitions.js";
 
-/** Project expected failures into exhaustive, secret-safe caller fields. */
+/**
+ * Project expected failures into exhaustive, secret-safe caller fields. The
+ * default describes a continuing caller, such as an MCP connection, and is
+ * also the adapter-independent form retained inside Evidence. An adapter that
+ * releases its provider session and runtime after this request, such as a
+ * one-shot CLI command, passes `"invocation"`.
+ */
 export const projectAnalysisError = (
   error: AnalysisError,
+  callerLifetime: AnalysisCallerLifetime = "continuing",
+): AnalysisErrorProjection => projectError(error, true, callerLifetime);
+
+/** Cleanup history references output retained by its enclosing error owner. */
+export const projectAnalysisErrorWithoutCapturedOutput = (
+  error: AnalysisError,
+  callerLifetime: AnalysisCallerLifetime = "continuing",
+): AnalysisErrorProjection => projectError(error, false, callerLifetime);
+
+/** A child failure embedded in a composed error's diagnostics. */
+export interface AnalysisChildFailure {
+  readonly error: AnalysisError;
+  /** Omit output that the composing error already retains. */
+  readonly capturedOutput?: "omit";
+}
+
+/**
+ * Record child failures as composition-time snapshots, so cleanup history
+ * keeps the state it had. The invocation form is recorded only when a child's
+ * projection depends on the caller lifetime; the final projection selects it.
+ */
+export const childFailureDiagnostics = (
+  children: Readonly<Record<string, AnalysisChildFailure>>,
+  diagnostics: Readonly<Record<string, JsonValue>> = {},
+): Pick<AnalysisErrorOptions, "diagnostics" | "invocationDiagnostics"> => {
+  const entries = Object.entries(children);
+  const project = (
+    { error, capturedOutput }: AnalysisChildFailure,
+    callerLifetime: AnalysisCallerLifetime,
+  ) => projectError(error, capturedOutput !== "omit", callerLifetime);
+  const continuing = {
+    ...diagnostics,
+    ...Object.fromEntries(
+      entries.map(([key, child]) => [key, project(child, "continuing")]),
+    ),
+  };
+  const varying = entries.filter(([, { error }]) =>
+    projectionDependsOnCallerLifetime(error),
+  );
+  return varying.length === 0
+    ? { diagnostics: continuing }
+    : {
+        diagnostics: continuing,
+        invocationDiagnostics: {
+          ...continuing,
+          ...Object.fromEntries(
+            varying.map(([key, child]) => [key, project(child, "invocation")]),
+          ),
+        },
+      };
+};
+
+/** Every lifetime-dependent input the projection reads lies on this chain. */
+const projectionDependsOnCallerLifetime = (error: AnalysisError): boolean => {
+  for (
+    let node: AnalysisError | undefined = error;
+    node !== undefined;
+    node = node.cleanupPrimary
+  )
+    if (
+      node.limit !== undefined ||
+      node.continuingCallerGuidance !== undefined ||
+      node.invocationDiagnostics !== undefined
+    )
+      return true;
+  return false;
+};
+
+const projectError = (
+  error: AnalysisError,
+  includeCapturedOutput: boolean,
+  callerLifetime: AnalysisCallerLifetime,
 ): AnalysisErrorProjection => {
   const composed = error;
   error = resolvedAnalysisError(error);
-  const diagnostics = error.diagnostics;
+  let diagnosticSource = error;
+  while (
+    diagnosticSource.diagnostics === undefined &&
+    diagnosticSource.cleanupPrimary !== undefined
+  )
+    diagnosticSource = diagnosticSource.cleanupPrimary;
+  const diagnostics = diagnosticSource.diagnosticsFor(callerLifetime);
+  const cleanupHistory =
+    composed === error ? undefined : composed.diagnosticsFor(callerLifetime);
   const capturedOutput = composed.capturedOutput ?? error.capturedOutput;
   const partialObservation =
     composed.partialObservation ?? error.partialObservation;
+  // A finalizer can add a report above the semantic primary, including while
+  // its cleanup is pending or beneath another cleanup composition.
+  let cleanupReport = composed.cleanupReport;
+  for (
+    let owner = composed.cleanupPrimary;
+    cleanupReport === undefined && owner !== undefined;
+    owner = owner.cleanupPrimary
+  )
+    cleanupReport = owner.cleanupReport;
   assertKnownAnalysisErrorTag(error._tag);
-  const underlyingCode = underlyingErrorCode(error);
+  const primary = primaryAnalysisError(error);
+  assertKnownAnalysisErrorTag(primary._tag);
+  const underlyingCode = underlyingErrorCode(primary);
   const code = error.cleanupIncomplete ? "cleanup_incomplete" : underlyingCode;
-  const primaryDetails = errorDetails(error);
+  const primaryDetails = errorDetails(primary);
   const details = {
     ...primaryDetails,
-    ...(diagnostics === undefined ? {} : { diagnostics }),
-    ...(composed === error || composed.diagnostics === undefined
+    ...(primary.limit === undefined
       ? {}
-      : { cleanup_history: composed.diagnostics }),
+      : {
+          limit:
+            callerLifetime === "invocation"
+              ? { ...invocationSettingLimit(primary.limit) }
+              : { ...primary.limit },
+        }),
+    ...(cleanupReport === undefined
+      ? {}
+      : { cleanup_report: jsonValueSchema.parse(cleanupReport) }),
+    ...(diagnostics === undefined
+      ? {}
+      : {
+          diagnostics,
+          ...(primaryDetails?.diagnostics === undefined
+            ? {}
+            : { provider_diagnostics: primaryDetails.diagnostics }),
+        }),
+    ...(cleanupHistory === undefined
+      ? {}
+      : { cleanup_history: cleanupHistory }),
     ...(error.cleanupIncomplete
       ? {
           cleanup: "incomplete",
@@ -77,7 +203,7 @@ export const projectAnalysisError = (
             primaryDetails?.execution_failure ?? underlyingCode,
         }
       : {}),
-    ...(capturedOutput === undefined
+    ...(!includeCapturedOutput || capturedOutput === undefined
       ? {}
       : {
           captured_output: {
@@ -92,10 +218,17 @@ export const projectAnalysisError = (
             : jsonValueSchema.parse(partialObservation),
         }),
   };
+  // The retained cleanup owner's retry precedes the failed operation's hint.
+  const cleanupRetry = error.cleanupRetry;
+  const recovery =
+    cleanupRetry === undefined
+      ? errorRecovery(error)
+      : cleanupRetryRecovery(cleanupRetry);
+  const remediation = analysisErrorRemediationAction(error, callerLifetime);
   return {
     code,
     category: analysisErrorCategory(error),
-    message: analysisErrorUserMessage(error),
+    message: analysisErrorUserMessage(error, callerLifetime),
     retryable:
       RETRYABLE_CODES.has(code) ||
       (error instanceof AnalysisCapabilityUnavailableError &&
@@ -104,10 +237,30 @@ export const projectAnalysisError = (
         error instanceof AnalysisResourceConstraintError &&
         (error.retryable ?? error.resource === "capacity")),
     remediation: {
-      action: analysisErrorRemediationAction(error),
+      action:
+        cleanupRetry === undefined
+          ? remediation
+          : `${remediation} ${cleanupRetryRemediation(cleanupRetry)}`,
     },
+    ...(recovery === undefined ? {} : { recovery }),
     ...(Object.keys(details).length === 0 ? {} : { details }),
   };
+};
+
+const errorRecovery = (
+  error: AnalysisError,
+): AnalysisErrorRecovery | undefined => {
+  if (error instanceof AnalysisInputError)
+    return error.conformsToInputContract
+      ? undefined
+      : { kind: "inspect_input_contract", operation: error.operation };
+  if (error instanceof AnalysisTimeoutError)
+    return {
+      kind: "inspect_timeout_state",
+      operation: error.operation,
+      timeout_ms: error.timeoutMs,
+    };
+  return undefined;
 };
 
 const underlyingErrorCode = (
@@ -150,6 +303,7 @@ const BROWSER_ERROR_CODES: Readonly<
   target_not_allowed: "target_unavailable",
   service_worker_blocked: "target_unavailable",
   target_changed: "target_unavailable",
+  target_session_detached: "target_unavailable",
   protocol_error: "unreadable_output",
   disconnected: "provider_unavailable",
   payload_limit: "truncated",
@@ -159,7 +313,6 @@ const BROWSER_ERROR_CODES: Readonly<
   cleanup_failed: "execution_failure",
   cancelled: "cancelled",
   timeout: "provider_timeout",
-  secret_unavailable: "unreadable_output",
 };
 
 const artifactOperationCode = (
@@ -176,6 +329,8 @@ const evidenceFileCode = (
   reason: EvidenceFileError["reason"],
 ): AnalysisErrorProjection["code"] => {
   if (reason === "invalid-json") return "evidence_integrity_mismatch";
+  if (reason === "path-limit" || reason === "storage-limit")
+    return "resource_constraint";
   // A missing, non-file or already-existing path is the caller's selection.
   if (reason === "io") return "execution_failure";
   return "invalid_request";
@@ -184,8 +339,9 @@ const evidenceFileCode = (
 const unknownRegistryCode = (
   reason: UnknownRegistryError["reason"],
 ): AnalysisErrorProjection["code"] => {
-  if (reason === "revision-conflict" || reason === "already-exists")
-    return "revision_conflict";
+  if (reason === "revision-conflict") return "revision_conflict";
+  if (reason === "already-exists" || reason === "constraint")
+    return "invalid_request";
   if (reason === "limit") return "truncated";
   if (reason === "integrity") return "evidence_integrity_mismatch";
   return "execution_failure";
@@ -307,6 +463,7 @@ const requestErrorDetails = (
         reason: issue.reason,
         ...(issue.message === undefined ? {} : { message: issue.message }),
         ...(issue.expected === undefined ? {} : { expected: issue.expected }),
+        ...(issue.observed === undefined ? {} : { observed: issue.observed }),
         ...(issue.minimum === undefined ? {} : { minimum: issue.minimum }),
         ...(issue.maximum === undefined ? {} : { maximum: issue.maximum }),
       })),
@@ -315,8 +472,18 @@ const requestErrorDetails = (
     return {
       evidence_id: error.evidenceId,
       reason: error.reason,
+      ...(error.referenceScope === undefined
+        ? {}
+        : { reference_scope: error.referenceScope }),
       expected: error.expected,
       actual: error.actual,
+    };
+  if (error instanceof AnalysisSnapshotMismatchError)
+    return {
+      reason: error.message,
+      ...(error.bindingMismatch === undefined
+        ? {}
+        : { binding_mismatch: jsonValueSchema.parse(error.bindingMismatch) }),
     };
   if (error instanceof EvidenceIntegrityError) return { reason: error.message };
   return undefined;
@@ -326,31 +493,55 @@ const artifactStateErrorDetails = (
   error: AnalysisError,
 ): Readonly<Record<string, JsonValue>> | undefined => {
   if (error instanceof ArtifactOperationError && error.artifactDetails)
-    return {
-      logical_path: error.artifactDetails.logicalPath,
-      declared_sha256: error.artifactDetails.declaredSha256,
-      calculated_sha256: error.artifactDetails.calculatedSha256,
-      unpacked: error.artifactDetails.unpacked,
-    };
+    return projectArtifactIntegrityDetails(error.artifactDetails);
   if (error instanceof ArtifactOperationError)
     return {
       operation: error.operation,
       reason: error.reason,
       ...(error.reason === "limit" ? { truncated: true } : {}),
       ...(error.detail === undefined ? {} : { detail: error.detail }),
+      ...(error.boundary === undefined ? {} : { boundary: error.boundary }),
+      ...(error.admission === undefined
+        ? {}
+        : {
+            admission: error.admission.kind,
+            maximum_header_bytes: error.admission.maximumBytes,
+            maximum_header_bytes_source: error.admission.source,
+            setting: "REA_ASAR_MAX_HEADER_BYTES",
+          }),
     };
-  if (error instanceof UnknownRegistryError) return { reason: error.reason };
+  if (error instanceof UnknownRegistryError)
+    return {
+      reason: error.reason,
+      ...(error.constraint === undefined
+        ? {}
+        : { constraint: error.constraint }),
+    };
   if (error instanceof EvidenceFileError)
     return {
       operation: error.operation,
       reason: error.reason,
+      ...(error.reason === "path-limit" ? { boundary: "filesystem-path" } : {}),
+      ...(error.systemCode === undefined
+        ? {}
+        : { system_code: error.systemCode }),
       ...(error.path === undefined ? {} : { path: error.path }),
+      ...(error.contentIssues === undefined
+        ? {}
+        : {
+            content_issues: error.contentIssues.map((issue) => ({
+              ...issue,
+              path: [...issue.path],
+            })),
+          }),
       ...(error.published === undefined
         ? {}
         : {
             published: true,
             bytes: error.published.bytes,
-            published_path: error.published.path,
+            ...(error.published.path === undefined
+              ? {}
+              : { published_path: error.published.path }),
           }),
     };
   return undefined;
@@ -373,8 +564,12 @@ const providerErrorDetails = (
       candidate_ids: [...error.candidateIds],
       rejections: error.rejections.map((rejection) => ({
         provider_id: rejection.providerId,
+        origin: rejection.origin,
         code: rejection.code,
         reason: rejection.reason,
+        ...(rejection.remediation === undefined
+          ? {}
+          : { remediation: rejection.remediation }),
         diagnostics: rejection.diagnostics,
       })),
     };
@@ -550,6 +745,10 @@ const lifecycleErrorDetails = (
       ...(error.constraint === undefined
         ? {}
         : { constraint: error.constraint }),
+      ...(error.infoPlist === undefined ? {} : { info_plist: error.infoPlist }),
+      ...(error.probedPaths === undefined
+        ? {}
+        : { probed_paths: [...error.probedPaths] }),
       ...(error.systemCode === undefined
         ? {}
         : { system_code: error.systemCode, boundary: "filesystem-read" }),
@@ -559,7 +758,6 @@ const lifecycleErrorDetails = (
 
 const RETRYABLE_CODES: ReadonlySet<AnalysisErrorProjection["code"]> = new Set([
   "artifact_changed",
-  "invalid_request",
   "provider_timeout",
   "cancelled",
   "revision_conflict",
@@ -606,5 +804,6 @@ export interface AnalysisErrorProjection extends Readonly<
   readonly remediation: Readonly<{
     action: string;
   }>;
+  readonly recovery?: AnalysisErrorRecovery;
   readonly details?: Readonly<Record<string, JsonValue>>;
 }

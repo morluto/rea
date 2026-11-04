@@ -661,18 +661,15 @@ def trace(debugger, config):
                 open(observation_path, "wb")
             )
         process = target.Launch(_launch_info(target, config, listener), error)
-        if not error.Success() or not process.IsValid():
+        process_created = process.IsValid()
+        if not error.Success() or not process_created:
             exit_observed = _retire_failed_launch(
                 process, config, listener, stdout, stderr
             )
             return {
                 "status": "launch-error",
                 "error": error.GetCString(),
-                **(
-                    {"target_process_created": True}
-                    if process.IsValid()
-                    else {}
-                ),
+                "target_process_created": process_created,
                 **(
                     {"target_process_exit_observed": True}
                     if exit_observed

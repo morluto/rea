@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { delayWithCancellation } from "./CdpCaptureValues.js";
 
 describe("cancellable browser observation delays", () => {
@@ -23,5 +24,34 @@ describe("cancellable browser observation delays", () => {
     await vi.advanceTimersByTimeAsync(1);
     await waiting;
     expect(completed).toBe(true);
+  });
+
+  it("preserves exact cancellation reasons before and during a capture wait", async () => {
+    const preAbortedReason = { _tag: "pre-aborted" };
+    const preAborted = new AbortController();
+    preAborted.abort(preAbortedReason);
+    const beforeStart = await delayWithCancellation(
+      1,
+      "observe_web_execution",
+      preAborted.signal,
+    ).catch((error: unknown) => error);
+
+    expect(beforeStart).toBeInstanceOf(AnalysisCancelledError);
+    expect(beforeStart).toMatchObject({ cause: preAbortedReason });
+
+    vi.useFakeTimers();
+    const reason = new Error("capture wait cancelled");
+    const active = new AbortController();
+    const waiting = delayWithCancellation(
+      10_000,
+      "observe_web_execution",
+      active.signal,
+    ).catch((error: unknown) => error);
+    active.abort(reason);
+    const duringWait = await waiting;
+
+    expect(duringWait).toBeInstanceOf(AnalysisCancelledError);
+    expect(duringWait).toMatchObject({ cause: reason });
+    expect(vi.getTimerCount()).toBe(0);
   });
 });

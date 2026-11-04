@@ -3,10 +3,11 @@ import { expect, it } from "vitest";
 import {
   createBoundedProcessTextNormalizer,
   createProcessTextNormalizer,
+  createProcessIdentifierLookup,
   normalizeProcessSamples,
   normalizeProcessText,
 } from "./ProcessNormalization.js";
-import { parseProcessScenario } from "../../domain/process/processScenario.js";
+import { processScenarioSchema } from "../../domain/process/processScenario.js";
 
 const rootPid = 41_010;
 const samples = Object.freeze(
@@ -66,7 +67,7 @@ const scenario = (normalization: {
     readonly replacement: string;
   }[];
 }) =>
-  parseProcessScenario({
+  processScenarioSchema.parse({
     executable: "/usr/bin/node",
     working_directory: "/workspace",
     normalization: {
@@ -108,7 +109,10 @@ it("bounds ordered normalization before replacement expansion and preserves late
     rootPid,
   );
 
-  expect(normalize("a".repeat(100), 1_000)).toEqual({ state: "over_budget" });
+  expect(normalize("a".repeat(100), 1_000)).toEqual({
+    state: "over_budget",
+    reason: "normalization",
+  });
   expect(normalize("z", 1_000)).toEqual({
     state: "normalized",
     value: "z",
@@ -131,7 +135,10 @@ it("keeps ordered intermediate expansion explicit even when a later rule could s
     rootPid,
   );
 
-  expect(normalize("a", 10)).toEqual({ state: "over_budget" });
+  expect(normalize("a", 10)).toEqual({
+    state: "over_budget",
+    reason: "normalization",
+  });
 });
 
 it("counts UTF-8 bytes across replacement boundaries like the final JavaScript string", () => {
@@ -215,7 +222,7 @@ it("counts UTF-8 bytes across replacement boundaries like the final JavaScript s
       "/temporary",
       rootPid,
     )(input, Buffer.byteLength(expected) - 1),
-  ).toEqual({ state: "over_budget" });
+  ).toEqual({ state: "over_budget", reason: "normalization" });
 
   const loneSurrogate = scenario({
     paths: false,
@@ -287,7 +294,7 @@ it("reuses matchers while observing the terminal PID after launch", () => {
 });
 
 it("keeps equal-path priority and replacement aliases local to each capture", () => {
-  const declared = parseProcessScenario({
+  const declared = processScenarioSchema.parse({
     executable: "/selected/tool",
     working_directory: "/selected",
     filesystem_observation_paths: ["/selected", "<working-directory>"],
@@ -478,7 +485,7 @@ it("normalizes representative process identities and preserves null, zero, and u
 });
 
 it("normalizes nested paths once using the most specific selected identity", () => {
-  const declared = parseProcessScenario({
+  const declared = processScenarioSchema.parse({
     executable: "/workspace/project/bin/program",
     working_directory: "/workspace/project",
     filesystem_observation_paths: [
@@ -499,8 +506,52 @@ it("normalizes nested paths once using the most specific selected identity", () 
   );
 });
 
+it("normalizes descendants of selected directories spelled with a trailing slash or dot", () => {
+  const declared = processScenarioSchema.parse({
+    executable: "/bin/echo",
+    working_directory: "/work/",
+    filesystem_observation_paths: ["/selected/", "/other/."],
+    normalization: { paths: true, pids: false, ports: false, patterns: [] },
+  });
+  expect(
+    normalizeProcessText(
+      "P=/selected/item.txt /other/item /work/log /selected/",
+      declared,
+      "/tmp",
+      rootPid,
+    ),
+  ).toBe(
+    "P=<filesystem-root-0>/item.txt <filesystem-root-1>/item <working-directory>/log <filesystem-root-0>/",
+  );
+});
+
+it("normalizes filesystem-root descendants without rewriting URL separators or HTML tags", () => {
+  const declared = processScenarioSchema.parse({
+    executable: "/program",
+    working_directory: "/elsewhere",
+    filesystem_observation_paths: ["/"],
+    normalization: { paths: true, pids: false, ports: false, patterns: [] },
+  });
+  const input = "/other/item http://example.test/path </div> /";
+  const expected =
+    "<filesystem-root-0>/other/item http://example.test/path </div> <filesystem-root-0>";
+  expect(normalizeProcessText(input, declared, "/private", rootPid)).toBe(
+    expected,
+  );
+  expect(
+    createBoundedProcessTextNormalizer(
+      declared,
+      "/private",
+      rootPid,
+    )(input, 1024),
+  ).toMatchObject({
+    state: "normalized",
+    value: expected,
+  });
+});
+
 it("treats path metacharacters literally while preferring nested observed roots", () => {
-  const declared = parseProcessScenario({
+  const declared = processScenarioSchema.parse({
     executable: "/selected/[tool]+",
     working_directory: "/selected",
     filesystem_observation_paths: [
@@ -518,5 +569,99 @@ it("treats path metacharacters literally while preferring nested observed roots"
     ),
   ).toBe(
     "<executable> <filesystem-root-1>/item <filesystem-root-0>/file <working-directory>/log <working-directory>/toolll",
+  );
+});
+
+it("does not give a selected executable identity to a sibling filename", () => {
+  const declared = processScenarioSchema.parse({
+    executable: "/tmp/process-paths/original/tool",
+    working_directory: "/tmp/process-paths",
+    normalization: { paths: true, pids: false, ports: false, patterns: [] },
+  });
+  expect(
+    normalizeProcessText(
+      "/tmp/process-paths/original/tool-helper /tmp/process-paths/original/tool, /tmp/process-paths/original/tool",
+      declared,
+      "/tmp/rea-private",
+      rootPid,
+    ),
+  ).toBe(
+    "<working-directory>/original/tool-helper <working-directory>/original/tool, <executable>",
+  );
+});
+
+it.each([
+  "http://localhost:8080/ready",
+  "port=8080",
+  "http://localhost:8080/ready port=8080",
+  "/workspace/child http://localhost:8080/ready pid=41010 marker",
+])("keeps every ordered bounded stage for %s", (input) => {
+  for (const enabled of [true, false]) {
+    const settings = scenario({
+      paths: enabled,
+      ports: enabled,
+      pids: enabled,
+      patterns: enabled ? [{ pattern: "marker", replacement: "selected" }] : [],
+    });
+    const expected = createProcessTextNormalizer(
+      settings,
+      "/temporary",
+      rootPid,
+    )(input);
+    expect(
+      createBoundedProcessTextNormalizer(
+        settings,
+        "/temporary",
+        rootPid,
+      )(input, 4096),
+    ).toEqual({
+      state: "normalized",
+      value: expected,
+      utf8Bytes: Buffer.byteLength(expected),
+    });
+  }
+});
+
+it("shares sampled identifiers before custom patterns in terminal and command normalization", () => {
+  const observed = [
+    {
+      at_ms: 0,
+      pid: 100,
+      parent_pid: 1,
+      process_group_id: 100,
+      session_id: 100,
+      command: "root=100",
+    },
+  ];
+  const lookup = createProcessIdentifierLookup(observed, () => 100);
+  const before = lookup();
+  expect(lookup()).toBe(before);
+  const declared = scenario({
+    paths: false,
+    ports: false,
+    pids: true,
+    patterns: [
+      { pattern: "<pid>", replacement: "selected" },
+      { pattern: "200", replacement: "wrong-order" },
+    ],
+  });
+  const normalize = createProcessTextNormalizer(declared, "/temporary", lookup);
+  expect(normalize("root=100 child=200 other=201")).toBe(
+    "root=selected child=wrong-order other=201",
+  );
+  observed.push({
+    at_ms: 1,
+    pid: 200,
+    parent_pid: 100,
+    process_group_id: 100,
+    session_id: 100,
+    command: "root=100 child=200 other=201",
+  });
+  expect(lookup()).not.toBe(before);
+  expect(normalize(observed[1]!.command)).toBe(
+    "root=selected child=selected other=201",
+  );
+  expect(normalizeProcessSamples(observed, declared, 100)[1]?.command).toBe(
+    "root=selected child=selected other=201",
   );
 });

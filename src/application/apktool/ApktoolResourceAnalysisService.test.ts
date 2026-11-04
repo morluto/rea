@@ -32,6 +32,7 @@ const refusedPort: ApktoolResourceAnalysisPort = {
 
 it.each([
   [{ path: "/targets/app.apk", include_strings: "yes" }],
+  [{ path: "/targets/app.apk", string_tables_only: "yes" }],
   [{ path: "/targets/app.apk", locale: "not a locale" }],
   [{ path: "/targets/app.apk", locales: ["not a locale"] }],
   [{ path: "/targets/app.apk", locales: [] }],

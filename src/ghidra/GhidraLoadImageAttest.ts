@@ -14,6 +14,12 @@ import {
   attestGhidraDosComLoadImage,
   attestGhidraRawBinaryLoadImage,
 } from "./GhidraLoadImageValues.js";
+import { attestGhidraDolLoadImage } from "./GhidraDolLoadImage.js";
+import {
+  ghidraUnverifiedLoadImageReason,
+  isGhidraVerifiedLoadImageFormat,
+} from "./GhidraVerifiedLoadImageFormats.js";
+import type { GhidraLanguageOverride } from "../config/ghidraLanguageOverride.js";
 import type { NativeAotPeResult } from "../domain/native/nativeAotPe.js";
 import type { GhidraClient } from "./GhidraClient.js";
 import type { GhidraSessionError } from "./GhidraSessionError.js";
@@ -25,11 +31,16 @@ type NativeLoadImageAttestationInput = {
   readonly client: Partial<
     Pick<
       GhidraClient,
-      "hashTargetSnapshot" | "readTargetSnapshot" | "attestDosTargetSnapshot"
+      | "hashTargetSnapshot"
+      | "hashTargetSnapshotRanges"
+      | "readTargetSnapshot"
+      | "attestDosTargetSnapshot"
     >
   >;
   readonly mapSessionError: (failure: GhidraSessionError) => AnalysisError;
   readonly nativeAotResult?: NativeAotPeResult | undefined;
+  /** Import language committed by the profile; DOL attestation expects it. */
+  readonly languageOverride?: GhidraLanguageOverride | undefined;
   readonly signal?: AbortSignal | undefined;
 };
 
@@ -83,7 +94,7 @@ const compareLoadImage = async (
   // These formats have no additional source work; retain already-derived PE facts.
   if (
     target.format === "pe" ||
-    !["dos-mz", "dos-com", "raw-binary"].includes(target.format)
+    !isGhidraVerifiedLoadImageFormat(target.format)
   ) {
     if (target.format === "pe" && nativeAotResult === undefined)
       return err(
@@ -94,8 +105,7 @@ const compareLoadImage = async (
       );
     const represented = nativeLoadImageSchema.safeParse({
       status: "unsupported",
-      reason:
-        "Independent load-image verification currently supports DOS MZ, explicit DOS COM, and caller-supplied raw-binary targets only.",
+      reason: ghidraUnverifiedLoadImageReason(),
       observations:
         target.format !== "pe" || nativeAotResult === undefined
           ? observations
@@ -140,6 +150,36 @@ const compareLoadImage = async (
         load_image_observations: jsonValueSchema.parse(observations),
       }),
     );
+  if (target.format === "gamecube-dol") {
+    if (client.hashTargetSnapshotRanges === undefined)
+      return err(
+        comparisonFailure(
+          input,
+          "The Ghidra client does not expose its immutable target snapshot ranges for independent DOL load-image verification.",
+        ),
+      );
+    const snapshot = await client.hashTargetSnapshotRanges(
+      target.dol.sections.map((section) => ({
+        start: section.fileOffset,
+        end: section.fileOffset + section.size,
+      })),
+      signal,
+    );
+    if (!snapshot.ok) return err(sourceFailure(snapshot.error));
+    const attested = attestGhidraDolLoadImage(
+      {
+        sha256: snapshot.value.sha256,
+        bytes: snapshot.value.bytes,
+        sectionSha256: snapshot.value.rangeSha256,
+      },
+      target,
+      observations,
+      input.languageOverride,
+    );
+    return attested.ok
+      ? attested
+      : err(comparisonFailure(input, attested.error));
+  }
   if (target.format === "raw-binary") {
     if (client.hashTargetSnapshot === undefined)
       return err(

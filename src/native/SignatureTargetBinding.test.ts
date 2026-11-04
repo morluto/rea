@@ -1,7 +1,9 @@
 import { createHash } from "node:crypto";
 import {
+  chmod,
   mkdtemp,
   rm,
+  readFile,
   stat,
   writeFile,
   open,
@@ -10,6 +12,8 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it, vi, onTestFinished } from "vitest";
+import { withVerifierCleanup } from "../../scripts/lib/verifier-cleanup.mjs";
+import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
 
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
@@ -18,7 +22,10 @@ import { ok, err } from "../domain/result.js";
 import type { NativeCommandRunner } from "./CommandRunner.js";
 import type { NativeCallTracer } from "./LldbCallTracer.js";
 import { NativeMacOSProvider } from "./NativeMacOSProvider.js";
-import { withSignatureTarget } from "./SignatureTargetBinding.js";
+import {
+  verifySignatureTarget,
+  withSignatureTarget,
+} from "./SignatureTargetBinding.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import { resolvedAnalysisError } from "../domain/analysisErrorBase.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
@@ -115,6 +122,42 @@ it("retains a snapshot root after cleanup fails alongside a digest mismatch", as
   await expect(stat(roots[0]!)).rejects.toMatchObject({ code: "ENOENT" });
 });
 
+it("retains and retries snapshot cleanup after snapshot identity drift", async () => {
+  const target = await createTarget("registered bytes");
+  const resources = new ArtifactResourceScope();
+  const result = await withSignatureTarget(
+    target,
+    resources,
+    async (binding) => {
+      await chmod(binding.snapshotPath, 0o600);
+      await writeFile(binding.snapshotPath, "replacement snapshot bytes");
+      const verified = await verifySignatureTarget(target, binding);
+      return verified.ok ? ok(signatureInspectionFixture()) : verified;
+    },
+    undefined,
+    () => createRoot(1),
+  );
+
+  expect(result.ok).toBe(false);
+  if (result.ok) return;
+  expect(result.error.cleanupIncomplete).toBe(true);
+  expect(projectAnalysisError(result.error)).toMatchObject({
+    details: {
+      diagnostics: {
+        primary_error: { code: "artifact_changed" },
+      },
+    },
+  });
+
+  await resources.close();
+  expect(result.error.cleanupIncomplete).toBe(false);
+  expect(resolvedAnalysisError(result.error)._tag).toBe(
+    "AnalysisArtifactChangedError",
+  );
+  expect(await readFile(target.path, "utf8")).toBe("registered bytes");
+  await expect(stat(roots[0]!)).rejects.toMatchObject({ code: "ENOENT" });
+});
+
 it("returns a retained cleanup failure when the next call cannot retry its root", async () => {
   const target = await createTarget("observed", "expected");
   const resources = new ArtifactResourceScope();
@@ -205,25 +248,44 @@ it("waits for an in-flight signature binding before provider close", async () =>
   );
   const client = provider.createClient(target);
   const operation = client.execute("inspect_signature", {});
-  await entered;
-
   let closeSettled = false;
-  const closing = client.close().finally(() => {
-    closeSettled = true;
-  });
-  await Promise.resolve();
-  expect(closeSettled).toBe(false);
-  releaseRootFactory();
-  await expect(operation).resolves.toMatchObject({
-    ok: false,
-    error: { _tag: "AnalysisArtifactChangedError" },
-  });
-  await expect(closing).resolves.toMatchObject({ ok: true, value: null });
-  expect(closeSettled).toBe(true);
-  await expect(stat(roots[0]!)).rejects.toMatchObject({ code: "ENOENT" });
+  let closing: ReturnType<typeof client.close> | undefined;
+  await withVerifierCleanup(async () => {
+    await awaitAcknowledgement(
+      entered,
+      operation,
+      "signature root acquisition",
+    );
+    closing = client.close().finally(() => {
+      closeSettled = true;
+    });
+    await Promise.resolve();
+    expect(closeSettled).toBe(false);
+    releaseRootFactory();
+    await expect(operation).resolves.toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisArtifactChangedError" },
+    });
+    await expect(closing).resolves.toMatchObject({ ok: true, value: null });
+    expect(closeSettled).toBe(true);
+    await expect(stat(roots[0]!)).rejects.toMatchObject({ code: "ENOENT" });
+  }, [
+    releaseRootFactory,
+    async () => {
+      await operation;
+    },
+    async () => {
+      const result = await closing;
+      if (result !== undefined && !result.ok) throw result.error;
+    },
+    async () => {
+      const result = await client.close();
+      if (!result.ok) throw result.error;
+    },
+  ]);
 });
 
-it("tracks mixed snapshot descriptor and root cleanup through partial release and retry", async () => {
+it("releases retained descriptors before retrying their containing root", async () => {
   const target = await createTarget("observed", "expected");
   const resources = new ArtifactResourceScope();
   const original = OwnedFileHandle.prototype.close;
@@ -265,15 +327,16 @@ it("tracks mixed snapshot descriptor and root cleanup through partial release an
     createRoot,
   );
   expect(retried.ok).toBe(false);
-  if (retried.ok) throw new Error("Expected retained descriptor retry failure");
+  if (retried.ok) throw new Error("Expected retained root retry failure");
   expect(first.error.cleanupIncomplete).toBe(true);
-  expect(first.error.cleanupResources).toEqual([snapshot]);
-  expect(retried.error.cleanupResources).toEqual([snapshot]);
+  expect(first.error.cleanupResources).toEqual([roots[0]!]);
+  expect(retried.error.cleanupResources).toEqual([roots[0]!]);
   expect(roots).toHaveLength(1);
   expect(inspect).not.toHaveBeenCalled();
-  await expect(stat(roots[0]!)).rejects.toMatchObject({ code: "ENOENT" });
+  expect((await stat(roots[0]!)).isDirectory()).toBe(true);
   await resources.close();
   expect(attempts).toBe(3);
+  await expect(stat(roots[0]!)).rejects.toMatchObject({ code: "ENOENT" });
   for (const failure of [first.error, retried.error]) {
     expect(failure.cleanupIncomplete).toBe(false);
     expect(failure.cleanupResources).toEqual([]);
@@ -281,6 +344,57 @@ it("tracks mixed snapshot descriptor and root cleanup through partial release an
   expect(resolvedAnalysisError(first.error)._tag).toBe(
     "AnalysisArtifactChangedError",
   );
+});
+
+it("retains the snapshot root until its failed descriptor owner confirms release", async () => {
+  const target = await createTarget("observed", "expected");
+  const resources = new ArtifactResourceScope();
+  const original = OwnedFileHandle.prototype.close;
+  let blocked: OwnedFileHandle | undefined;
+  let allowClose = false;
+  const close = vi
+    .spyOn(OwnedFileHandle.prototype, "close")
+    .mockImplementation(function (this: OwnedFileHandle) {
+      blocked ??= this;
+      if (this === blocked && !allowClose)
+        return Promise.reject(new Error("snapshot descriptor remains open"));
+      return original.call(this);
+    });
+  const root = await createRoot();
+  const removeRoot = vi.fn(root.close);
+  onTestFinished(async () => {
+    allowClose = true;
+    await resources.close();
+    close.mockRestore();
+  });
+  const result = await withSignatureTarget(
+    target,
+    resources,
+    unusedInspection,
+    undefined,
+    async () => ({ path: root.path, close: removeRoot }),
+  );
+  expect(result.ok).toBe(false);
+  if (result.ok) throw new Error("Expected retained snapshot descriptor");
+  expect(removeRoot).not.toHaveBeenCalled();
+  expect((await stat(root.path)).isDirectory()).toBe(true);
+  const retry = await resources.close().then(
+    () => undefined,
+    (cause: unknown) => cause,
+  );
+  expect(retry).toBeDefined();
+  expect(removeRoot).not.toHaveBeenCalled();
+  expect((await stat(root.path)).isDirectory()).toBe(true);
+  expect(result.error.cleanupIncomplete).toBe(true);
+  allowClose = true;
+  await resources.close();
+  expect(removeRoot).toHaveBeenCalledTimes(1);
+  expect(result.error.cleanupIncomplete).toBe(false);
+  expect(result.error.cleanupResources).toEqual([]);
+  expect(resolvedAnalysisError(result.error)._tag).toBe(
+    "AnalysisArtifactChangedError",
+  );
+  await expect(stat(root.path)).rejects.toMatchObject({ code: "ENOENT" });
 });
 
 const opaqueReasons = [
@@ -339,12 +453,15 @@ for (const ownerIndex of [0, 1])
       const reason = { stage: "descriptor-close" };
       const original = OwnedFileHandle.prototype.close;
       let calls = 0;
+      let blocked: OwnedFileHandle | undefined;
+      let allowClose = false;
       const close = vi
         .spyOn(OwnedFileHandle.prototype, "close")
         .mockImplementation(async function (this: OwnedFileHandle) {
           const cancels = calls++ === ownerIndex;
+          if (cancels && cleanupFails) blocked = this;
           try {
-            if (cancels && cleanupFails)
+            if (this === blocked && !allowClose)
               throw new Error("controlled close failure");
             await original.call(this);
           } finally {
@@ -368,6 +485,7 @@ for (const ownerIndex of [0, 1])
         throw new Error("Expected descriptor finalization cancellation");
       expect(inspect).not.toHaveBeenCalled();
       expect(result.error.cleanupIncomplete).toBe(cleanupFails);
+      allowClose = true;
       await resources.close();
       expect(resolvedAnalysisError(result.error)).toMatchObject({
         _tag: "AnalysisCancelledError",

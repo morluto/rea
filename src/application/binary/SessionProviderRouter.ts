@@ -1,4 +1,4 @@
-import type { AnalysisProviderSelector } from "../../contracts/providerSelection.js";
+import type { AnalysisProviderSelector } from "../../domain/providerSelection.js";
 import type { AnalysisProfileCommitment } from "../../domain/analysisProfile.js";
 import type { BinaryTarget } from "../../domain/binaryTargetTypes.js";
 import { AnalysisCapabilityUnavailableError } from "../../domain/analysisErrorCore.js";
@@ -140,7 +140,12 @@ const selectableRoute = (
       ? providers[0]
       : providers.length === 0
         ? undefined
-        : new CompositeProvider(providers);
+        : new CompositeProvider(
+            providers,
+            binding?.createClient === undefined
+              ? new Map()
+              : new Map([[binding.identity.id, binding.createClient]]),
+          );
   const identity = provider?.identity() ?? emptyProviderIdentity();
   // The binding attributes deep-provider capabilities to the resolved version.
   const capabilities = capabilityMap([

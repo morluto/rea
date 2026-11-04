@@ -217,9 +217,8 @@ cliTest(
         issues: [
           {
             path: ["executable_path"],
-            message: expect.stringContaining(
-              "must be absolute local filesystem paths",
-            ),
+            reason: "invalid_format",
+            message: expect.stringContaining("absolute local filesystem path"),
           },
         ],
       },

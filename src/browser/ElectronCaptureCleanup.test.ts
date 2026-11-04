@@ -1,4 +1,4 @@
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { createDeferred } from "../../tests/fixtures/binarySession.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
@@ -7,33 +7,38 @@ import * as ownershipObservation from "../process/ProcessOwnershipObservation.js
 import * as processCleanup from "./ElectronProcessCleanup.js";
 import * as processOwnership from "../process/ProcessOwnership.js";
 import type {
-  OwnedProcessGroup,
+  PersistentOwnedProcessGroup,
   ProcessLineageObservation,
 } from "../process/ProcessOwnership.js";
+import { ProcessOwnershipEvidenceOwner } from "../process/ProcessOwnershipEvidence.js";
 import { ElectronCaptureCleanup } from "./ElectronCaptureCleanup.js";
 
-const ownership: OwnedProcessGroup = {
-  runId: "authored-run-token",
-  leaderPid: 424242,
-  processGroupId: 424242,
-};
+let ownership: PersistentOwnedProcessGroup;
+beforeEach(() => {
+  ownership = {
+    runId: "authored-run-token",
+    leaderPid: 424242,
+    processGroupId: 424242,
+    evidenceOwner: new ProcessOwnershipEvidenceOwner(),
+  };
+});
 const verified: ProcessLineageObservation = {
   status: "verified",
   observedAt: "2026-10-17T00:00:00Z",
   lineage: {
-    runId: ownership.runId,
-    launcherPid: ownership.leaderPid,
+    runId: "authored-run-token",
+    launcherPid: 424242,
     launcherParentPid: 1,
-    processGroupId: ownership.processGroupId,
+    processGroupId: 424242,
     descendants: [],
   },
 };
 const unavailable: ProcessLineageObservation = {
   status: "unavailable",
   observedAt: "2026-10-17T00:00:01Z",
-  runId: ownership.runId,
-  launcherPid: ownership.leaderPid,
-  processGroupId: ownership.processGroupId,
+  runId: "authored-run-token",
+  launcherPid: 424242,
+  processGroupId: 424242,
   reason: "authored identity unavailable",
 };
 afterEach(() => {
@@ -311,7 +316,7 @@ it("retains a Windows family left after root termination without signaling cache
         {
           pid: 424243,
           parentPid: ownership.leaderPid,
-          processGroupId: ownership.processGroupId,
+          processGroupId: 424242,
         },
       ],
     },

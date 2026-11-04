@@ -4,7 +4,11 @@ import canonicalize from "canonicalize";
 import { describe, expect, it } from "vitest";
 
 import { EvidenceLedger } from "./EvidenceLedger.js";
-import { createEvidence } from "../../domain/evidence.js";
+import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
+import {
+  createEvidence,
+  withEvidenceCallerInputPath,
+} from "../../domain/evidence.js";
 import {
   createEvidenceBundle,
   parseEvidenceBundle,
@@ -57,6 +61,21 @@ const input = (
     ...overrides,
   });
 const mutation = (label: string) => evidence(`mutation-${label}`);
+const expectHistoryConflict = (
+  error: import("../../domain/analysisErrorBase.js").AnalysisError,
+  unknownId: string,
+) => {
+  expect(projectAnalysisError(error)).toMatchObject({
+    code: "evidence_integrity_mismatch",
+    retryable: false,
+    message: expect.stringContaining("conflicts with a revision retained"),
+    remediation: { action: expect.stringContaining("cannot reconcile") },
+    details: {
+      reason: "Conflicting unknown revision",
+      diagnostics: { unknown_id: unknownId, revision: 2 },
+    },
+  });
+};
 const update = (
   unknown: ResidualUnknown,
   overrides: Readonly<Record<string, unknown>> = {},
@@ -140,7 +159,7 @@ describe("residual unknown registry reads and identity", () => {
         recordsAdded: 1,
         unknownsAdded: 0,
         changed: true,
-        metadataChanged: false,
+        replacements: [],
       },
     });
     expect(store.export().unknowns).toEqual(originalUnknowns);
@@ -150,7 +169,7 @@ describe("residual unknown registry reads and identity", () => {
         recordsAdded: 0,
         unknownsAdded: 0,
         changed: false,
-        metadataChanged: false,
+        replacements: [],
       },
     });
   });
@@ -189,7 +208,7 @@ describe("residual unknown dependency histories", () => {
         recordsAdded: 10_000,
         unknownsAdded: 10_000,
         changed: true,
-        metadataChanged: false,
+        replacements: [],
       },
     });
     expect(store.export()).toEqual(bundle);
@@ -405,8 +424,20 @@ describe("residual unknown registry resolution and history", () => {
     const base = ledger();
     const created = base.recordUnknown(input("Divergent?"), mutation("base"));
     if (!created.ok) throw created.error;
+    const source = withEvidenceCallerInputPath(
+      evidence("shared-source"),
+      "./original",
+    );
+    expect(base.record(source).ok).toBe(true);
     const branch = ledger();
     expect(branch.import(base.export()).ok).toBe(true);
+    expect(
+      branch.import(
+        createEvidenceBundle([
+          withEvidenceCallerInputPath(source, "./relocated"),
+        ]),
+      ).ok,
+    ).toBe(true);
     expect(
       base.updateUnknown(update(created.value), mutation("branch-left")).ok,
     ).toBe(true);
@@ -417,7 +448,11 @@ describe("residual unknown registry resolution and history", () => {
       ).ok,
     ).toBe(true);
     const before = serializeEvidenceBundle(base.export());
-    expect(base.import(branch.export()).ok).toBe(false);
+    const conflict = base.import(branch.export());
+    expect(conflict.ok).toBe(false);
+    if (conflict.ok) throw new Error("Expected divergent history refusal");
+    expectHistoryConflict(conflict.error, created.value.unknown_id);
+    expect(base.get(source.evidence_id)?.caller_input_path).toBe("./original");
     expect(serializeEvidenceBundle(base.export())).toBe(before);
   });
 });
