@@ -335,22 +335,42 @@ const isFalsyLiteral = (value: t.Node): boolean =>
   (t.isNumericLiteral(value) && value.value === 0) ||
   (t.isStringLiteral(value) && value.value === "");
 
+/**
+ * The prototype an object literal installs, when that is knowable.
+ *
+ * `null` means no `__proto__` member, so nothing is inherited. An object expression is
+ * the knowable prototype, and `undefined` means the value is `null` (no inherited
+ * member either). `false` means the value is not readable.
+ */
+const objectPrototype = (
+  object: t.ObjectExpression,
+): t.ObjectExpression | null | undefined | false => {
+  let prototype: t.ObjectExpression | null | undefined | false = null;
+  for (const property of object.properties) {
+    if (
+      !t.isObjectProperty(property) ||
+      property.computed ||
+      semanticStaticPropertyName(property.key, false) !== "__proto__"
+    )
+      continue;
+    const value = unwrapJavaScriptExpression(property.value).node;
+    prototype = t.isNullLiteral(value)
+      ? undefined
+      : t.isObjectExpression(value)
+        ? value
+        : false;
+  }
+  return prototype;
+};
+
 const lastMemberValue = (
   object: t.ObjectExpression,
   name: string,
 ): t.Node | null | undefined => {
-  // A `__proto__` member installs a prototype, so a member this object does not
-  // spell may still exist through inheritance. Node reads it, so the absence is not
-  // provable: `{ __proto__: { path: "/tmp/x" }, port: -1 }` connects to that path.
-  if (
-    object.properties.some(
-      (property) =>
-        t.isObjectProperty(property) &&
-        !property.computed &&
-        semanticStaticPropertyName(property.key, false) === "__proto__",
-    )
-  )
-    return null;
+  // A `__proto__` member installs a prototype, so a member this object does not spell
+  // may still exist through inheritance: `{ __proto__: { path: "/tmp/x" }, port: -1 }`
+  // connects to that path. Own fields still settle the answer first, so
+  // `{ __proto__: null, path: "", port: -1 }` decides through its own empty `path`.
   for (let index = object.properties.length - 1; index >= 0; index -= 1) {
     const property = object.properties[index];
     if (property === undefined) continue;
@@ -358,7 +378,10 @@ const lastMemberValue = (
     if (semanticStaticPropertyName(property.key, false) !== name) continue;
     return unwrapJavaScriptExpression(property.value).node;
   }
-  return undefined;
+  const prototype = objectPrototype(object);
+  if (prototype === false) return null;
+  if (prototype === null || prototype === undefined) return undefined;
+  return lastMemberValue(prototype, name);
 };
 
 /**
@@ -452,6 +475,13 @@ const socketPortInFirstArgument = (
  * argument or any `port`. `net.connect` accepts the same object, so this
  * rejection applies to `tls` only.
  */
+/** A first argument that selects a Unix socket, which makes Node ignore `port`. */
+const isUnixSocketPathArgument = (argument: t.Node | undefined): boolean => {
+  if (argument === undefined || t.isSpreadElement(argument)) return false;
+  const value = unwrapJavaScriptExpression(argument).node;
+  return t.isStringLiteral(value) && value.value !== "";
+};
+
 const tlsOptionsRejectCall = (
   candidate: ResourceCandidate,
   context: DataEffectTraversalContext,
@@ -461,6 +491,9 @@ const tlsOptionsRejectCall = (
   if (options === undefined || !t.isObjectExpression(options)) return false;
   const intent = socketOptionsIntent(options);
   if (intent === "invalid" || intent === "socket") return intent === "invalid";
+  // A non-empty string first argument is a Unix socket path, and Node keeps it while
+  // ignoring `port`, so the merged options cannot reject the call.
+  if (isUnixSocketPathArgument(candidate.node.arguments[0])) return false;
   // The options object is merged over the first argument, so its own `port` is
   // validated too: `tls.connect(443, { port: -1 })` throws even though 443 is valid.
   const port = lastMemberValue(options, "port");

@@ -461,3 +461,36 @@ it.each([
     { kind: "acquire", method: call.startsWith("tls") ? "connect" : "connect" },
   ]);
 });
+
+/**
+ * Two further review findings, both measured against Node 24.22.1.
+ *
+ * A non-empty string first argument is a Unix socket path, and Node keeps it while
+ * ignoring the merged `port`, so the options cannot reject the call.
+ *
+ * A `__proto__` member makes inheritance possible, but an own field still decides
+ * first, and a `null` prototype inherits nothing.
+ */
+it("keeps a tls call whose first argument is a Unix socket path", () => {
+  expect(
+    socketAcquisitionsFor(`tls.connect("/tmp/x.sock", { port: -1 })`),
+  ).toEqual([{ kind: "acquire", method: "connect" }]);
+});
+
+it("decides through an own field even when __proto__ is null", () => {
+  // `{ __proto__: null, path: "", port: -1 }` has no inherited path, the own empty
+  // path does not select a socket, and Node validates `port`.
+  expect(
+    socketAcquisitionsFor(
+      `net.connect({ __proto__: null, path: "", port: -1 })`,
+    ),
+  ).toEqual([]);
+});
+
+it("reads an inherited socket path through __proto__", () => {
+  expect(
+    socketAcquisitionsFor(
+      `net.connect({ __proto__: { path: "/tmp/x.sock" }, port: -1 })`,
+    ),
+  ).toEqual([{ kind: "acquire", method: "connect" }]);
+});
