@@ -157,6 +157,7 @@
 * **artifacts:** compare ASAR storage declarations ([60834e3](https://github.com/morluto/rea/commit/60834e391c3f81eb2343eba288b735c3bf3bde61))
 * **artifacts:** compare Node SEA member declarations ([e891926](https://github.com/morluto/rea/commit/e89192653402222c5b099216f0d83a2d1bceace0))
 * **artifacts:** complete positional reads across short results ([d54f5b0](https://github.com/morluto/rea/commit/d54f5b07b4adc82d9d2be479c19966667f429e02))
+* **artifacts:** decide how compare_artifacts compares every format_metadata kind ([#8231](https://github.com/morluto/rea/issues/8231)) ([c13dd36](https://github.com/morluto/rea/commit/c13dd36d9508e3b05b51340eb8188391c9fe08dd))
 * **artifacts:** deduplicate keyed archive selector choices ([8a47cbb](https://github.com/morluto/rea/commit/8a47cbbcce538f511609b90b5d40bd00920b3216))
 * **artifacts:** distinguish incomplete PyInstaller probes ([abc1351](https://github.com/morluto/rea/commit/abc135150628ab62d271324682426fe7ec5fed3a))
 * **artifacts:** explain recovery for existing DMG attachments ([#7221](https://github.com/morluto/rea/issues/7221)) ([4767970](https://github.com/morluto/rea/commit/47679701051dc207533bde5e516e5a77583d52c5))
