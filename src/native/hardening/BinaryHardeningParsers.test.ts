@@ -346,6 +346,16 @@ it("reports Mach-O header flags, imports and per-slice defects", async () => {
   )[0];
   expect(findRow(defined?.rows ?? [], "stack_protector").state).toBe("unknown");
   expect(findRow(defined?.rows ?? [], "pie").state).toBe("enabled");
+  for (const bits of [32, 64] as const) {
+    const common = (
+      await readMachoHardening(
+        machoHardeningFixture({ bits, stackChk: true, commonSize: 4 }),
+      )
+    )[0];
+    expect(findRow(common?.rows ?? [], "stack_protector").state).toBe(
+      "unknown",
+    );
+  }
   const embeddedRestrict = (
     await readMachoHardening(
       machoHardeningFixture({ restrictName: "__RESTRICT\0junk!" }),

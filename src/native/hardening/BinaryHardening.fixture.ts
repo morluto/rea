@@ -1013,6 +1013,8 @@ export interface MachoHardeningFixtureOptions {
   readonly longSymbolName?: boolean;
   /** N_SECT|N_EXT instead of an undefined external. */
   readonly definedSymbol?: boolean;
+  /** Nonzero n_value on the named symbol, as a common definition carries its size. */
+  readonly commonSize?: number;
   /** Raw load commands placed after the segments. */
   readonly extraCommands?: readonly Buffer[];
 }
@@ -1068,6 +1070,8 @@ const machoSymbolPayload = (
     const at = index * nlistWidth;
     symbolBytes.writeUInt32LE(nameOffset, at);
     symbolBytes.writeUInt8(symbolType, at + 4);
+    if (options.commonSize !== undefined)
+      symbolBytes.writeUInt32LE(options.commonSize, at + 8);
   };
   if (options.symbolScanBudget === true) {
     for (let index = 0; index < storedSymbols; index += 1)

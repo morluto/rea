@@ -575,6 +575,13 @@ const stackRow = (
     // the same name, including libc itself, is not an import into this image.
     const nType = bytes.readUInt8(entry + 4);
     if ((nType & 0x0e) !== 0 || (nType & 0x01) === 0) continue;
+    // A common definition shares those type bits but carries its size in
+    // n_value, so only a zero n_value names an import.
+    if (
+      bytes.readUInt32LE(entry + 8) !== 0 ||
+      (wide && bytes.readUInt32LE(entry + 12) !== 0)
+    )
+      continue;
     // After a match, later records are still admitted so symbol order cannot
     // hide a damaged table; their names need not be read.
     if (found !== null) {
