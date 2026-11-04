@@ -224,6 +224,29 @@ launch paths are unsupported. JVM home and temporary properties use quoted
 `JDK_JAVA_OPTIONS`, preserving spaces. `APPDATA` and `LOCALAPPDATA` point into
 the private runtime, isolating Ghidra preferences, logs, and caches.
 
+### Restricted hosts
+
+Each session's private runtime root is created under `os.tmpdir()`, which follows
+`TMP`/`TEMP` on Windows. Some sandboxed agent hosts deny writes by child
+processes such as the JVM outside an allowed tree even when REA itself can write
+there. Ghidra's LaunchSupport then cannot create `java_home.save` and the
+provider exits at startup with `java.io.FileNotFoundException: ...\java_home.save
+(Access is denied)`.
+
+When startup output names `java_home.save` with that denial, REA reports the
+path, Win32 error 5, and this remediation without attributing the denial to
+antivirus or REA's directory ACL: set `TMP` and `TEMP` to a directory inside the
+host's allowed tree in the environment that starts REA (your shell or the MCP
+client's registration), restart REA, and retry. Creating `java_home.save` in
+advance does not help because LaunchSupport rewrites it.
+
+On Windows, `rea doctor` also reports a `temp_directory` check under the Ghidra
+provider. It creates and deletes one file under `os.tmpdir()` from the REA
+process and fails the provider when either step fails. A passing result does
+not test writes by Ghidra's child JVM, so a host that restricts only child
+processes can still pass doctor and fail at startup with the message above.
+The startup-output match is limited to the English `Access is denied` text.
+
 Process creation assigns a suspended child atomically to an owned Job Object.
 Membership and kill-on-owner-close policy are verified before resume.
 Breakaway is disabled. Only the child's default file owner is normalized;

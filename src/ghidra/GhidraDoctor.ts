@@ -11,21 +11,30 @@ import {
   type GhidraInstallationCheck,
   type GhidraInstallationInspection,
 } from "./GhidraInstallation.js";
+import {
+  GHIDRA_RESTRICTED_TEMP_REMEDIATION,
+  probeGhidraTemporaryDirectory,
+  type GhidraTemporaryDirectoryProbe,
+} from "./GhidraTemporaryDirectory.js";
 
 /** Project installation and runtime-authority facts into the doctor contract. */
 export const projectGhidraDoctorInspection = (
   inspection: GhidraInstallationInspection,
+  temporaryDirectory?: GhidraTemporaryDirectoryProbe,
 ): DoctorProviderInspection => {
   const readiness =
     inspection.status === "available" && inspection.platform === "win32"
       ? inspectWindowsNativeReadiness(inspection.platform)
       : undefined;
   const windowsAuthorityUnavailable = readiness?.available === false;
+  const temporaryDirectoryUnavailable = temporaryDirectory?.ok === false;
   return {
     id: "ghidra",
     configured: inspection.installDir !== null,
     available:
-      inspection.status === "available" && !windowsAuthorityUnavailable,
+      inspection.status === "available" &&
+      !windowsAuthorityUnavailable &&
+      !temporaryDirectoryUnavailable,
     providerVersion: inspection.providerVersion,
     registrationEnvironment:
       inspection.status === "available"
@@ -62,30 +71,68 @@ export const projectGhidraDoctorInspection = (
             },
           ]
         : []),
+      ...(temporaryDirectory === undefined
+        ? []
+        : [temporaryDirectoryCheck(temporaryDirectory)]),
     ],
   };
 };
+
+/** Report the REA-process write probe without claiming child-process access. */
+const temporaryDirectoryCheck = (
+  probe: GhidraTemporaryDirectoryProbe,
+): DoctorProviderCheck =>
+  probe.ok
+    ? {
+        name: "temp_directory",
+        ok: true,
+        code: null,
+        detail: `REA created and deleted a file under ${probe.directory}, where Ghidra session runtime roots are created. This does not test writes by Ghidra's child JVM.`,
+        remediation: null,
+        classification: "runtime_failure",
+      }
+    : {
+        name: "temp_directory",
+        ok: false,
+        code: "temp_directory_unwritable",
+        detail: `REA could not ${probe.stage === "write" ? "write" : "delete"} a probe file under ${probe.directory}, where Ghidra session runtime roots are created${probe.code === undefined ? "" : ` (${probe.code})`}: ${probe.message}${probe.retainedPath === undefined ? "" : `. The probe file ${probe.retainedPath} may remain and was not removed.`}`,
+        remediation: GHIDRA_RESTRICTED_TEMP_REMEDIATION,
+        classification: "runtime_failure",
+        details: {
+          directory: probe.directory,
+          stage: probe.stage,
+          ...(probe.code === undefined ? {} : { system_code: probe.code }),
+          ...(probe.retainedPath === undefined
+            ? {}
+            : { retained_path: probe.retainedPath }),
+        },
+      };
 
 /** Inspect the process-configured BYO Ghidra installation for `rea doctor`. */
 export const inspectSystemGhidraProvider = async (
   environment: Readonly<NodeJS.ProcessEnv>,
   resourceOwner: RetainedResourceScope,
   signal?: AbortSignal,
+  probeTemporaryDirectory: () => Promise<GhidraTemporaryDirectoryProbe> = probeGhidraTemporaryDirectory,
 ): Promise<DoctorProviderInspection> => {
   try {
-    return projectGhidraDoctorInspection(
-      await inspectGhidraInstallation({
-        environment,
-        resourceOwner,
-        ...(signal === undefined ? {} : { signal }),
-        ...(environment.GHIDRA_INSTALL_DIR === undefined
-          ? {}
-          : { installDir: environment.GHIDRA_INSTALL_DIR }),
-        ...(environment.JAVA_HOME === undefined
-          ? {}
-          : { javaHome: environment.JAVA_HOME }),
-      }),
-    );
+    const installation = await inspectGhidraInstallation({
+      environment,
+      resourceOwner,
+      ...(signal === undefined ? {} : { signal }),
+      ...(environment.GHIDRA_INSTALL_DIR === undefined
+        ? {}
+        : { installDir: environment.GHIDRA_INSTALL_DIR }),
+      ...(environment.JAVA_HOME === undefined
+        ? {}
+        : { javaHome: environment.JAVA_HOME }),
+    });
+    // The restricted-host denial reported for #7075 is Windows-specific.
+    const temporaryDirectory =
+      installation.status === "available" && installation.platform === "win32"
+        ? await probeTemporaryDirectory()
+        : undefined;
+    return projectGhidraDoctorInspection(installation, temporaryDirectory);
   } catch (cause: unknown) {
     throw analysisClientFailureForOperation(cause, "ghidra", "doctor");
   }
