@@ -80,7 +80,7 @@ export class X11WindowObserver {
     signal?: AbortSignal,
   ): Promise<WindowSample> {
     const root = await this.#xprop(
-      ["-root", "-notype", "_NET_CLIENT_LIST"],
+      ["-root", "-notype", "_NET_CLIENT_LIST", "_NET_SUPPORTED"],
       signal,
     );
     if (root === undefined) return { state: "display_unreadable" };

@@ -16,9 +16,10 @@ as private data and keep it local.
 
 Capture runs on Linux with an X11 display: `DISPLAY` must be set, and `xprop`
 (from `x11-utils`) must be installed, or `REA_XPROP_COMMAND` must name it.
-The window manager must publish the EWMH client list (`_NET_CLIENT_LIST`), as
-xfwm4, Mutter, KWin and Openbox do; without it the capture is refused, because
-no window could be seen. Applications that run under XWayland are visible;
+The window manager must support the EWMH client list (`_NET_CLIENT_LIST`,
+listed in `_NET_SUPPORTED`), as xfwm4, Mutter, KWin and Openbox do; without it
+the capture is refused, because no window could be seen. A supported list that
+is unset, as xfwm4 leaves it while no window is open, means no windows. Applications that run under XWayland are visible;
 native Wayland windows are not. Other hosts are refused before anything is
 launched.
 
