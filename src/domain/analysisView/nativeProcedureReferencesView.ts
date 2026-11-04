@@ -183,7 +183,10 @@ export const projectNativeProcedureReferencesView = (
   };
   const header = {
     ...common,
-    items: { collection: view.collection, rows: [] },
+    items:
+      view.collection === "references"
+        ? { collection: view.collection, endpoints: [], rows: [] }
+        : { collection: view.collection, rows: [] },
     byte_limited: false,
     coverage: {
       status: "complete-within-view",
@@ -203,9 +206,11 @@ export const projectNativeProcedureReferencesView = (
     value: z.infer<typeof unresolvedCallSchema>;
   }[] = [];
   let byteLimited = false;
-  const offer = (row: JsonValue, accepted: number) => {
+  const offer = (row: JsonValue, accepted: number, extra = 0) => {
     const size =
-      jsonValueByteLength(row, PAGE_BYTES - bytes) + (accepted > 0 ? 1 : 0);
+      jsonValueByteLength(row, PAGE_BYTES - bytes) +
+      (accepted > 0 ? 1 : 0) +
+      extra;
     if (bytes + size > PAGE_BYTES) {
       byteLimited = true;
       return false;
@@ -239,24 +244,44 @@ export const projectNativeProcedureReferencesView = (
   const selected = canonicalJson(source.procedure);
   const endpoints: z.infer<typeof procedureIdentitySchema>[] = [];
   const endpointIndexes = new Map<string, number>();
-  const endpoint = (value: z.infer<typeof procedureIdentitySchema> | null) => {
-    if (value === null) return { kind: "null" as const };
-    if (canonicalJson(value) === selected)
-      return { kind: "selected-procedure" as const };
-    const key = canonicalJson(value);
-    const existing = endpointIndexes.get(key);
-    if (existing !== undefined)
-      return { kind: "shared" as const, index: existing };
-    const size = jsonValueByteLength(value as JsonValue, PAGE_BYTES - bytes);
-    if (bytes + size > PAGE_BYTES) {
-      byteLimited = true;
-      return undefined;
+  const planEndpoints = (
+    sourceProcedure: z.infer<typeof procedureIdentitySchema> | null,
+    targetProcedure: z.infer<typeof procedureIdentitySchema> | null,
+  ) => {
+    const pending: z.infer<typeof procedureIdentitySchema>[] = [];
+    const pendingKeys: string[] = [];
+    const resolve = (value: z.infer<typeof procedureIdentitySchema> | null) => {
+      if (value === null) return { kind: "null" as const };
+      if (canonicalJson(value) === selected)
+        return { kind: "selected-procedure" as const };
+      const key = canonicalJson(value);
+      const existing = endpointIndexes.get(key);
+      if (existing !== undefined)
+        return { kind: "shared" as const, index: existing };
+      const pendingIndex = pendingKeys.indexOf(key);
+      if (pendingIndex !== -1)
+        return {
+          kind: "shared" as const,
+          index: endpoints.length + pendingIndex,
+        };
+      pending.push(value);
+      pendingKeys.push(key);
+      return {
+        kind: "shared" as const,
+        index: endpoints.length + pending.length - 1,
+      };
+    };
+    const resolvedSource = resolve(sourceProcedure);
+    const resolvedTarget = resolve(targetProcedure);
+    let extra = 0;
+    for (const [offset, value] of pending.entries()) {
+      extra += jsonValueByteLength(
+        value as JsonValue,
+        PAGE_BYTES - bytes - extra,
+      );
+      if (endpoints.length + offset > 0) extra += 1;
     }
-    bytes += size;
-    const index = endpoints.length;
-    endpoints.push(value);
-    endpointIndexes.set(key, index);
-    return { kind: "shared" as const, index };
+    return { resolvedSource, resolvedTarget, pending, pendingKeys, extra };
   };
   const filtered =
     view.source_address !== undefined || view.target_address !== undefined;
@@ -297,16 +322,21 @@ export const projectNativeProcedureReferencesView = (
     }
   }
   for (const [index, reference] of visit()) {
-    const sourceProcedure = endpoint(reference.source_procedure);
-    const targetProcedure = endpoint(reference.target_procedure);
-    if (sourceProcedure === undefined || targetProcedure === undefined) break;
+    const planned = planEndpoints(
+      reference.source_procedure,
+      reference.target_procedure,
+    );
     const row = {
       ...reference,
       source_index: index,
-      source_procedure: sourceProcedure,
-      target_procedure: targetProcedure,
+      source_procedure: planned.resolvedSource,
+      target_procedure: planned.resolvedTarget,
     };
-    if (!offer(row as JsonValue, referenceRows.length)) break;
+    if (!offer(row as JsonValue, referenceRows.length, planned.extra)) break;
+    for (const [offset, value] of planned.pending.entries()) {
+      endpointIndexes.set(planned.pendingKeys[offset]!, endpoints.length);
+      endpoints.push(value);
+    }
     referenceRows.push(row);
   }
   if (byteLimited && referenceRows.length === 0) return tooLarge();
