@@ -430,6 +430,7 @@
 * **ghidra:** preserve project access failures ([6979c58](https://github.com/morluto/rea/commit/6979c589b06dcef6525e125c2c61ea2735715285))
 * **ghidra:** reject uncommitted handshake reports before the first query ([#8630](https://github.com/morluto/rea/issues/8630)) ([aba56df](https://github.com/morluto/rea/commit/aba56df689380f5bcd66e4858b778ba1e3115e90)), closes [#8612](https://github.com/morluto/rea/issues/8612)
 * **ghidra:** report a missing existing-project program as a configuration error ([#8222](https://github.com/morluto/rea/issues/8222)) ([1dc97d8](https://github.com/morluto/rea/commit/1dc97d8cece2eb68c0e72feb56c7a2821f23237c))
+* **ghidra:** report selected project identity failures ([#8379](https://github.com/morluto/rea/issues/8379)) ([2d16a40](https://github.com/morluto/rea/commit/2d16a40a491067ef0bbe541feef2feeb5f3110ad))
 * **ghidra:** report unbacked file-offset addresses without schema repair ([#8308](https://github.com/morluto/rea/issues/8308)) ([c287a73](https://github.com/morluto/rea/commit/c287a73276a7f751ca65a8cc2219a29d5914bc2c))
 * **ghidra:** report unusable existing-project selections as REA_GHIDRA_PROJECT_PATH configuration errors ([#7922](https://github.com/morluto/rea/issues/7922)) ([32b3722](https://github.com/morluto/rea/commit/32b3722d2ffab1200122d441ec4af9117ea9c77b)), closes [#7417](https://github.com/morluto/rea/issues/7417) [#7416](https://github.com/morluto/rea/issues/7416)
 * **ghidra:** require Windows cleanup ownership ([a6a69ec](https://github.com/morluto/rea/commit/a6a69ec63e0b9f2742d9b39534e2dfc02b6a0814))
