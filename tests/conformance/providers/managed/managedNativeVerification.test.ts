@@ -913,7 +913,6 @@ it("retains every observed native candidate", () => {
   expect(result.pinvoke_imports[0]?.candidates).toHaveLength(2);
 });
 
-
 describe("managed/native verification result algebra", () => {
   it("rejects states without their required native match", () => {
     const result = verifyManagedNativeVerificationSource(

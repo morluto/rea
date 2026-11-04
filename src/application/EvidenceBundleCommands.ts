@@ -212,6 +212,11 @@ export const publishEvidenceDelivery = async (input: {
   return ok({ delivered: input.delivered, evidenceBundle: written.value });
 };
 
+/** A delivery failure can follow commit; its receipt then owns the source closure. */
+export const evidenceDeliveryCommitted = (error: AnalysisError): boolean =>
+  error.diagnostics?.evidence_bundle !== undefined ||
+  (error instanceof EvidenceFileError && error.published !== undefined);
+
 /** Publish a completed bundle and retry its exact staged-output cleanup owner. */
 const persistEvidenceBundleCommand = async (
   bundle: EvidenceBundle,
@@ -292,10 +297,12 @@ const projectWrite = (
 export const inspectEvidenceBundleCommand = async (
   input: {
     readonly path: string;
-    readonly detail: "complete" | "summary" | "records";
+    readonly detail: "complete" | "summary" | "records" | "links";
     readonly filters?: EvidenceRecordFilters | undefined;
     readonly offset?: number | undefined;
     readonly limit?: number | undefined;
+    readonly traversal?: "direct" | "retained-closure" | undefined;
+    readonly link_status?: "missing" | "retained" | "all" | undefined;
   },
   signal?: AbortSignal,
 ) => {
