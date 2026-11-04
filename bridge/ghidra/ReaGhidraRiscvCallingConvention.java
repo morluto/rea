@@ -412,7 +412,9 @@ public final class ReaGhidraRiscvCallingConvention extends GhidraScript {
   /** The psABI's storage class for a first argument or return of this type, after flattening. */
   private static Kind psabiKind(DataType type) {
     List<Boolean> fields = new ArrayList<>();
-    if (!(strip(type) instanceof Union) && flatten(type, fields)) {
+    // C passes no array by value, so an array here is a GNU vector, which Ghidra imports as one.
+    DataType value = strip(type);
+    if (!(value instanceof Union) && !(value instanceof Array) && flatten(type, fields)) {
       long floats = fields.stream().filter(Boolean::booleanValue).count();
       if (fields.size() == 1 && floats == 1) return Kind.FLOAT;
       if (fields.size() == 2 && floats == 2) return Kind.FLOAT_PAIR;
@@ -427,16 +429,18 @@ public final class ReaGhidraRiscvCallingConvention extends GhidraScript {
    * over 32 bits, a third field, a nonzero array of elements without fields, such as C++ empty
    * classes, which GCC and Clang do not ignore, or a trailing array without elements. Ghidra
    * imports a flexible array member, which uses the integer convention, and a trailing `[0]`,
-   * which is ignored, alike, so both are treated as the flexible array and fail closed. Other
+   * which is ignored, alike, so both are treated as the flexible array and fail closed. Either
+   * can start inside the structure's padding, so the position among the members decides. Other
    * empty members, zero-length arrays and zero-width bit-fields are ignored.
    */
   private static boolean flatten(DataType type, List<Boolean> fields) {
     type = strip(type);
     if (type instanceof Structure structure) {
-      for (DataTypeComponent component : structure.getDefinedComponents()) {
+      DataTypeComponent[] components = structure.getDefinedComponents();
+      for (DataTypeComponent component : components) {
         if (component.getLength() == 0) {
           if (strip(component.getDataType()) instanceof Array
-              && component.getOffset() >= structure.getLength()) return false;
+              && component == components[components.length - 1]) return false;
           continue;
         }
         if (component.getDataType() instanceof BitFieldDataType bitField) {

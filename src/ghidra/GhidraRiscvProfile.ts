@@ -43,6 +43,11 @@ export interface GhidraRiscvLane {
   readonly callingConvention?: GhidraRiscvCallingConvention;
   /** Extensions `Tag_RISCV_arch` must declare for the float ABI to exist. */
   readonly requiredExtensions?: readonly string[];
+  /** Extensions the lane's model is wrong with, and what goes wrong. */
+  readonly excludedExtensions?: {
+    readonly names: readonly string[];
+    readonly reason: string;
+  };
 }
 
 /** Every class and float ABI pair the Ghidra lane admits; others are refused. */
@@ -55,6 +60,11 @@ export const GHIDRA_RISCV_LANES: readonly GhidraRiscvLane[] = [
     floatAbi: "single",
     callingConvention: "ilp32f-prototype-v1",
     requiredExtensions: ["f"],
+    excludedExtensions: {
+      names: ["d", "zcd"],
+      reason:
+        "ilp32f then preserves only the low 32 bits of fs0-fs11 across calls, and Ghidra's model preserves all 64",
+    },
   },
 ];
 
@@ -145,7 +155,7 @@ const ghidraRiscvFloatAbiRefusal = (metadata: RiscvElfMetadata): string => {
 
 /**
  * Lanes with a calling-convention policy admit declared, decoded RV32I only,
- * with every extension their float ABI requires.
+ * with every extension their float ABI requires and none their model excludes.
  */
 const ghidraRiscvIsaRefusal = (
   isa: RiscvIsaDeclaration | undefined,
@@ -172,13 +182,21 @@ const ghidraRiscvIsaRefusal = (
     (extension) => !isa.extensions.includes(extension),
   );
   const name = riscvAbiName(lane.elfClass, lane.floatAbi);
-  return missing.length === 0
+  if (missing.length > 0)
+    return `Tag_RISCV_arch declares ${isa.arch} without ${missing.join(
+      ", ",
+    )}, which the ${lane.floatAbi}-float ABI${
+      name === null ? "" : ` (${name})`
+    } declared by e_flags requires.`;
+  const exclusion = lane.excludedExtensions;
+  const excluded = (exclusion?.names ?? []).filter((extension) =>
+    isa.extensions.includes(extension),
+  );
+  return exclusion === undefined || excluded.length === 0
     ? null
-    : `Tag_RISCV_arch declares ${isa.arch} without ${missing.join(
-        ", ",
-      )}, which the ${lane.floatAbi}-float ABI${
-        name === null ? "" : ` (${name})`
-      } declared by e_flags requires.`;
+    : `Tag_RISCV_arch declares ${isa.arch} with ${excluded.join(", ")}: ${
+        exclusion.reason
+      }; see docs/ghidra-riscv.md.`;
 };
 
 /**
@@ -338,6 +356,14 @@ export const ghidraRiscvCallingConventionFailure = (
 export const GHIDRA_RISCV_HIDDEN_REFERENCE_LIMITATION =
   "Ghidra shows a C++ class with a non-trivial copy constructor or destructor as passed by value, although compilers pass it through a hidden pointer. REA cannot detect such a signature, so its storage is unverified.";
 
+/**
+ * Ghidra's DWARF import erases what these types' ilp32f storage depends on: it
+ * reads `float _Complex` as a `qword`, keeps no vector marker on an array, and
+ * resolves `_Atomic`, which GCC ignores and Clang does not, to its base type.
+ */
+export const GHIDRA_RISCV_ERASED_TYPE_LIMITATION =
+  "Ghidra's DWARF import erases three ilp32f distinctions, and REA does not refuse them, so their storage is unverified. `float _Complex` shows as an integer, although compilers use float registers. A GNU vector in a structure shows as an array of floats, although compilers use integer registers. `_Atomic(float)` shows as a `float`, which matches GCC, although Clang uses integer registers.";
+
 /** State the prototype REA applies, and its outcome once the bridge reports it. */
 export const ghidraRiscvCallingConventionLimitations = (
   expected: GhidraRiscvCallingConvention | undefined,
@@ -354,5 +380,8 @@ export const ghidraRiscvCallingConventionLimitations = (
         ]),
     "Ghidra recovers a variadic call's arguments from the registers the caller writes, not from their types: a padding register can appear as an argument, and arguments after an unwritten register are omitted.",
     GHIDRA_RISCV_HIDDEN_REFERENCE_LIMITATION,
+    ...(expected === "ilp32f-prototype-v1"
+      ? [GHIDRA_RISCV_ERASED_TYPE_LIMITATION]
+      : []),
   ];
 };

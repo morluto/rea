@@ -15,6 +15,7 @@ import { hopperLoaderArgsForTarget } from "../hopper/HopperAnalysisProfile.js";
 import { IdaProvider } from "../ida/IdaProvider.js";
 import { GhidraProvider } from "./GhidraProvider.js";
 import {
+  GHIDRA_RISCV_ERASED_TYPE_LIMITATION,
   GHIDRA_RISCV_HIDDEN_REFERENCE_LIMITATION,
   GHIDRA_RISCV32_DECODED_EXTENSIONS,
   GHIDRA_RISCV_CALLING_CONVENTIONS,
@@ -579,10 +580,6 @@ describe("RISC-V ilp32f admission", () => {
       "same base as GCC records it",
       "rv32i2p1_m2p0_a2p1_f2p2_c2p0_zicsr2p0_zifencei2p0_zmmul1p0_zaamo1p0_zalrsc1p0_zca1p0_zcf1p0",
     ],
-    [
-      "single-float ABI on D hardware",
-      "rv32i2p1_m2p0_a2p1_f2p2_d2p2_c2p0_zicsr2p0_zmmul1p0_zca1p0_zcf1p0_zcd1p0",
-    ],
     ["bare F base", "rv32i2p1_f2p2_zicsr2p0"],
   ])("admits the %s", (_label, arch) => {
     const value = ilp32f(arch);
@@ -604,6 +601,18 @@ describe("RISC-V ilp32f admission", () => {
       "a declaration without F",
       ilp32f(C3_ARCH),
       `declares ${C3_ARCH} without f, which the single-float ABI (ilp32f) declared by e_flags requires.`,
+    ],
+    [
+      "the single-float ABI on D hardware",
+      ilp32f(
+        "rv32i2p1_m2p0_a2p1_f2p2_d2p2_c2p0_zicsr2p0_zmmul1p0_zca1p0_zcf1p0_zcd1p0",
+      ),
+      "with d, zcd: ilp32f then preserves only the low 32 bits of fs0-fs11",
+    ],
+    [
+      "Zcd declared without D",
+      ilp32f("rv32i2p1_f2p2_c2p0_zicsr2p0_zcd1p0"),
+      "with zcd: ilp32f then preserves only the low 32 bits of fs0-fs11",
     ],
     [
       "an absent declaration",
@@ -802,6 +811,9 @@ describe("RISC-V calling-convention handshake", () => {
         GHIDRA_RISCV_HIDDEN_REFERENCE_LIMITATION,
       ]),
     );
+    expect(health.value.limitations).not.toContain(
+      GHIDRA_RISCV_ERASED_TYPE_LIMITATION,
+    );
   });
 
   it("launches the single-float policy and reports its outcome", async () => {
@@ -823,6 +835,7 @@ describe("RISC-V calling-convention handshake", () => {
         expect.stringContaining(
           "17 functions and 16 function definitions use __rea_ilp32f.",
         ),
+        GHIDRA_RISCV_ERASED_TYPE_LIMITATION,
       ]),
     );
   });

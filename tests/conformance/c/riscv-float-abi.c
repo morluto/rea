@@ -183,8 +183,40 @@ __attribute__((noinline)) float rea_riscv_abi_flexible(struct rea_riscv_abi_flex
     return value.value;
 }
 
-/* A shape __rea_ilp32f does express, which the refusal must not name: a
- * bit-field counts by its width, so a float and a one-bit field of a 64-bit
+/* The same, for a flexible array that starts inside the structure's padding:
+ * value and tag stay in a0, and the offset of tail is below the size. */
+struct rea_riscv_abi_padded {
+    float value;
+    char tag;
+    char tail[];
+};
+
+__attribute__((noinline)) float rea_riscv_abi_padded(struct rea_riscv_abi_padded value)
+{
+    return value.value;
+}
+
+/* A GNU vector uses the integer convention, a0 and a1, but Ghidra imports it
+ * as an array of two floats. */
+typedef float rea_riscv_abi_lanes __attribute__((vector_size(8)));
+
+__attribute__((noinline)) float rea_riscv_abi_vector(rea_riscv_abi_lanes value)
+{
+    return value[1];
+}
+
+/* Shapes __rea_ilp32f does express, which the refusal must not name. An array
+ * in a structure flattens, so these floats take fa0 and fa1. */
+struct rea_riscv_abi_elements {
+    float values[2];
+};
+
+__attribute__((noinline)) float rea_riscv_abi_elements(struct rea_riscv_abi_elements value)
+{
+    return value.values[1];
+}
+
+/* A bit-field counts by its width, so a float and a one-bit field of a 64-bit
  * type take fa0 and a0. */
 struct rea_riscv_abi_bits {
     float value;
