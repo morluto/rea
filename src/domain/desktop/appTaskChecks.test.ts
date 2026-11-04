@@ -53,10 +53,16 @@ const REFUSALS: readonly (readonly [Record<string, unknown>, string])[] = [
   [
     {
       checks: [
-        { kind: "line_count", file: "a", exact: "x", regex: "x", equals: 1 },
+        {
+          kind: "line_count",
+          file: "a",
+          exact: "x",
+          contains: "x",
+          equals: 1,
+        },
       ],
     },
-    "exactly one of exact and regex",
+    "exactly one of exact and contains",
   ],
   [
     { checks: [{ kind: "line_count", file: "a", exact: "x" }] },
@@ -71,22 +77,8 @@ const REFUSALS: readonly (readonly [Record<string, unknown>, string])[] = [
     "exactly one of equals, at_least and at_most",
   ],
   [
-    { checks: [{ kind: "line_count", file: "a", regex: "\\d+", equals: 1 }] },
-    "\\d is not in the portable subset",
-  ],
-  [
-    {
-      checks: [{ kind: "line_count", file: "a", regex: "(?<=a)b", equals: 1 }],
-    },
-    "only (?: groups",
-  ],
-  [
-    { checks: [{ kind: "line_count", file: "a", regex: "[^]", equals: 1 }] },
-    "empty class",
-  ],
-  [
-    { checks: [{ kind: "line_count", file: "a", regex: "a{", equals: 1 }] },
-    "its regex is refused",
+    { checks: [{ kind: "line_count", file: "a", regex: "(a+)+$", equals: 1 }] },
+    "regex",
   ],
   [
     { checks: [{ kind: "value_equals", file: "a", pointer: "", value: 1 }] },

@@ -228,3 +228,48 @@ describe("draftTaskFiles for structured views", () => {
     ]);
   });
 });
+
+describe("draftTaskFiles with partial evidence", () => {
+  const notes = (...rows: JsonValue[][]) => ({
+    tables: {
+      notes: {
+        columns: ["id", "body"],
+        primary_key: ["id"],
+        rows,
+        truncated: false,
+      },
+    },
+    tables_truncated: false,
+  });
+
+  it("lists a database whose rows changed in its sidecar while its own hash stayed", () => {
+    const same = "a".repeat(64);
+    const [database] = draft({
+      "Documents/notes.db": {
+        ...path("document", "sqlite", null, null),
+        versions: [
+          version(0, "sqlite", notes([1, "a"]), same),
+          version(1, "sqlite", notes([1, "a"], [2, "b"]), same),
+        ],
+      },
+    });
+
+    expect(database).toMatchObject({
+      file: "Documents/notes.db",
+      change: { kind: "rows", added_count: 1 },
+    });
+  });
+
+  it("lists a file whose views match only because both leave its change out", () => {
+    const cut = { lines: ["a"], line_count: 6000, truncated: true };
+    const [long] = draft({
+      "Documents/long.txt": path("document", "text", cut, cut),
+    });
+
+    expect(long).toMatchObject({
+      file: "Documents/long.txt",
+      change: { kind: "content" },
+      suggested: [],
+    });
+  });
+});

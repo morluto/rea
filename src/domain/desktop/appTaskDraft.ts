@@ -289,9 +289,11 @@ const suggestedChecks = (
 /** How a file changed from its baseline to its final version, or undefined when it ends as it began. */
 const netChange = (baseline: Version, final: Version) => {
   if (!baseline.present && !final.present) return undefined;
+  // A database's hash leaves out its -wal sidecar, so equal hashes prove nothing about its rows.
   if (
     baseline.present &&
     final.present &&
+    final.format !== "sqlite" &&
     baseline.sha256 !== null &&
     baseline.sha256 === final.sha256
   )
@@ -314,7 +316,8 @@ const netChange = (baseline: Version, final: Version) => {
       difference.changed_count ===
     0
   )
-    return undefined;
+    // Views that hold only part of their file can match while the rest changed.
+    return difference.complete ? undefined : { kind: "content" };
   if (final.format !== "text") return difference;
   // The diff lists text lines as a multiset; the draft lists each line once.
   return {

@@ -101,22 +101,44 @@ export const CHECK_CASES: readonly (readonly [
   [{ kind: "line_count", file: todo, exact: "buy milk", equals: 2 }, true],
   [{ kind: "line_count", file: todo, exact: "buy milk", at_least: 3 }, false],
   [{ kind: "line_count", file: todo, exact: "buy milk", at_most: 2 }, true],
-  [{ kind: "line_count", file: todo, regex: "^buy", equals: 3 }, true],
-  [{ kind: "line_count", file: todo, regex: "MILK", equals: 0 }, true],
-  [{ kind: "line_count", file: todo, regex: "^C.*E$", equals: 1 }, true],
-  [
-    { kind: "line_count", file: todo, regex: "^na.ve [a-z]+é$", equals: 1 },
-    true,
-  ],
-  [
-    { kind: "line_count", file: todo, regex: "(?:milk|bread)$", at_least: 3 },
-    true,
-  ],
+  [{ kind: "line_count", file: todo, contains: "buy", equals: 3 }, true],
+  [{ kind: "line_count", file: todo, contains: "MILK", equals: 0 }, true],
+  [{ kind: "line_count", file: todo, contains: "IRCL", equals: 1 }, true],
+  [{ kind: "line_count", file: todo, contains: "ïve caf", equals: 1 }, true],
+  [{ kind: "line_count", file: todo, contains: "milk", at_least: 3 }, false],
+  [{ kind: "line_count", file: todo, contains: "(a+)+$", equals: 0 }, true],
   [
     { kind: "line_count", file: "Documents/long.txt", exact: "a", at_least: 1 },
     false,
   ],
   [{ kind: "line_count", file: absent, exact: "x", equals: 0 }, true],
+  [
+    {
+      kind: "value_equals",
+      file: ".config/notes/layout.xml",
+      pointer: "/root/attributes/width",
+      value: "80",
+    },
+    true,
+  ],
+  [
+    {
+      kind: "value_equals",
+      file: ".config/notes/layout.xml",
+      pointer: "/root/attributes",
+      value: { width: "80" },
+    },
+    false,
+  ],
+  [
+    {
+      kind: "value_equals",
+      file: ".local/share/notes/notes.db",
+      pointer: "/tables/big/rows",
+      value: [[1]],
+    },
+    false,
+  ],
   [
     { kind: "value_equals", file: settings, pointer: "/wrap", value: true },
     true,

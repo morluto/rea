@@ -31,7 +31,10 @@ operation `describe_desktop_application_task` and predicate type
   first and last version, with its home path, role, both versions and the net
   change between them, from the state view's own diff (`lines`, `values`,
   `keys` or `rows` with what was added, removed and changed, or `created`,
-  `deleted`, `format`, `content`, `unreadable`). Text changes list each line
+  `deleted`, `format`, `content`, `unreadable`; `content` also when the
+  views hold only part of a file and match while the file changed). A
+  database is compared by its rows, since its hash leaves out the `-wal`
+  file. Text changes list each line
   once and add `line_counts`, the lines found at both ends whose number of
   occurrences changed. Views appear only for the files the suggestions cover,
   with arrays past 200 items and strings past 2,000 characters cut
@@ -82,7 +85,7 @@ file, in the shapes of the state view.
 | `file_absent`   |                                                              | The file does not exist                                                  |
 | `lines_present` | `lines`                                                      | Every listed line is a whole line of the text view                       |
 | `lines_absent`  | `lines`                                                      | None of the listed lines is                                              |
-| `line_count`    | `exact` or `regex`; `equals`, `at_least` or `at_most`        | The number of lines equal to `exact`, or matched by `regex`, compares so |
+| `line_count`    | `exact` or `contains`; `equals`, `at_least` or `at_most`     | The number of lines equal to `exact`, or holding `contains`, compares so |
 | `value_equals`  | `pointer`, `value`                                           | The JSON pointer names a value equal to `value`                          |
 | `value_absent`  | `pointer`                                                    | The pointer names no value                                               |
 | `row_present`   | `table`, `where`                                             | A row of the SQLite table has every column in `where` equal              |
@@ -102,13 +105,13 @@ The rules both evaluators follow:
   `/`. Key files read as `{"groups": {"GROUP": {"KEY": "VALUE"}}}`, so a
   setting is `/groups/GROUP/KEY`; XML as
   `{"root": {"name", "attributes", "children"}}`; SQLite as `{"tables": {"TABLE": {"columns", "rows"}}}`.
-- A regular expression matches anywhere in a line, with `.` matching any
-  character. It must stay in the subset JavaScript and Python read alike: no
-  escaped letters or digits (write `[0-9]` for a digit), no `(?` group other
-  than `(?:`, and no empty class.
+- `contains` matches a line that holds it anywhere, case and all. Checks take
+  no regular expressions: a pattern run on what the agent wrote could stall
+  the verifier, and JavaScript and Python read some patterns differently.
 - A check decided by what a view leaves out (`lines_absent`, `value_absent`,
-  `row_absent` and the counts) fails when that view, or that table, is
-  truncated; a check satisfied by what the view holds is decided on it.
+  `row_absent`, the counts, and `value_equals` of a whole object or array)
+  fails when that view is truncated; a check satisfied by what the view holds
+  is decided on it.
 
 The export refuses, naming the check, a file outside the owned paths, a file
 spelled with a leading slash, `.` or `..`, a pointer into a text file or into

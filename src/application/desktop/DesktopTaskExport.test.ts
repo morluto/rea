@@ -176,7 +176,8 @@ describe("exportDesktopApplication with a task", () => {
       [task([]), task([])],
       "2 task files were given; a capture yields one task.",
     ],
-    ["{", "could not be read (invalid-json)"],
+    ["{", "is not valid UTF-8 JSON"],
+    ["\uFEFF{}", "Save the file as UTF-8 without a byte-order mark"],
     [
       task([{ kind: "file_present", file: ".cache/notes/x" }]),
       "not under the app's owned paths",

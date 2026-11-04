@@ -333,7 +333,7 @@ Checks must express only the observed change:
   columns over generated ids, `at_least` when the user may add more.
 
 Kinds: `file_present` and `file_absent`; `lines_present` and `lines_absent`
-(`lines`); `line_count` (`exact` or `regex`, and `equals`, `at_least` or
+(`lines`); `line_count` (`exact` or `contains`, and `equals`, `at_least` or
 `at_most`); `value_equals` and `value_absent` (a JSON `pointer` into the view,
 such as `/groups/GROUP/KEY` for a key file); `row_present` and `row_absent`
 (`table`, `where` by column) and `row_count`. Each names its `file` as a path

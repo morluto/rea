@@ -45,7 +45,7 @@ const checkSchema = z.discriminatedUnion("kind", [
   kind("lines_absent", { lines }),
   kind("line_count", {
     exact: line.optional(),
-    regex: z.string().min(1).optional(),
+    contains: line.optional(),
     ...comparison,
   }),
   kind("value_equals", { pointer: z.string(), value: jsonValueSchema }),
@@ -93,39 +93,6 @@ const isHomePath = (path: string): boolean =>
     .split("/")
     .every((segment) => segment !== "" && segment !== "." && segment !== "..");
 
-/**
- * Why a regular expression would not match the same lines in JavaScript and
- * Python, or undefined. The portable subset leaves out escapes of letters and
- * digits (shorthand classes, back references), `(?` groups other than `(?:`,
- * and empty classes; JavaScript's `u` mode refuses most other differences.
- */
-export const regexProblem = (source: string): string | undefined => {
-  try {
-    new RegExp(source, "su");
-  } catch (cause: unknown) {
-    return cause instanceof Error ? cause.message : String(cause);
-  }
-  let inClass = false;
-  for (let index = 0; index < source.length; index += 1) {
-    const character = source[index];
-    const next = source[index + 1] ?? "";
-    if (character === "\\") {
-      if (/[\p{L}\p{N}]/u.test(next))
-        return `\\${next} is not in the portable subset; write the characters out, such as [0-9] for \\d`;
-      index += 1;
-    } else if (inClass) inClass = character !== "]";
-    else if (character === "[") {
-      const close = source[index + 1] === "^" ? index + 2 : index + 1;
-      if (source[close] === "]")
-        return "an empty class such as [] or [^] reads differently in Python";
-      inClass = true;
-      index = close - 1;
-    } else if (character === "(" && next === "?" && source[index + 2] !== ":")
-      return "only (?: groups are in the portable subset, not lookarounds, named groups or flags";
-  }
-  return undefined;
-};
-
 /** Whether a value looks like an ISO 8601 date and time, which the app stamps rather than the user writes. */
 export const isTimestamp = (value: JsonValue): boolean =>
   typeof value === "string" &&
@@ -151,13 +118,11 @@ const expectedValues = (check: DesktopTaskCheck): readonly JsonValue[] => {
 const checkProblem = (check: DesktopTaskCheck): string | undefined => {
   if (!isHomePath(check.file))
     return `file ${JSON.stringify(check.file)} must be a path under the home, such as Documents/todo.txt, without a leading slash, . or .. segments`;
-  if (check.kind === "line_count") {
-    if ((check.exact === undefined) === (check.regex === undefined))
-      return "line_count takes exactly one of exact and regex";
-    const problem =
-      check.regex === undefined ? undefined : regexProblem(check.regex);
-    if (problem !== undefined) return `its regex is refused: ${problem}`;
-  }
+  if (
+    check.kind === "line_count" &&
+    (check.exact === undefined) === (check.contains === undefined)
+  )
+    return "line_count takes exactly one of exact and contains";
   if (
     (check.kind === "line_count" || check.kind === "row_count") &&
     countComparison(check) === undefined

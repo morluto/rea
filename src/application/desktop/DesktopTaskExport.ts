@@ -18,10 +18,16 @@ import {
 } from "../../domain/desktop/appTaskPython.js";
 import type { DesktopAppExportPlan } from "../../domain/desktop/appExport.js";
 import type { DesktopStatePath } from "../../domain/desktop/desktopState.js";
+import type { AnalysisError } from "../../domain/analysisErrorBase.js";
+import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
+import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
 import { EvidenceFileError } from "../../domain/evidenceErrors.js";
+import { err } from "../../domain/result.js";
+import { describeValidationFailure } from "../../domain/validationFailure.js";
 import { isWithinAny } from "../../domain/desktop/desktopStateDiff.js";
 import { isPortableBundleName } from "../environment/environmentBundle.js";
 import { readJsonFile } from "../JsonFiles.js";
+import { desktopOperationFailure } from "./DesktopCaptureRefusals.js";
 import { refuse } from "./DesktopExportInstall.js";
 
 const OPERATION = "export_desktop_application";
@@ -49,20 +55,50 @@ export interface AdmittedTask {
   };
 }
 
-const readTaskFile = async (path: string, signal: AbortSignal | undefined) => {
+/** Why the task file could not be read, with the reader's detail and its error as the cause. */
+const taskFileFailure = (path: string, error: AnalysisError): AnalysisError => {
+  if (!(error instanceof EvidenceFileError) || error.reason === "io")
+    return error;
+  const detail = describeValidationFailure(error.cause);
+  const json = error.reason === "invalid-json";
+  const userMessage = json
+    ? `The task file ${path} is not valid UTF-8 JSON (${detail}).`
+    : `The task file ${path} could not be read (${detail}).`;
+  return new AnalysisInputError(
+    OPERATION,
+    {
+      userMessage,
+      remediationAction: json
+        ? "Repair the task file, then export again."
+        : "Pass a regular JSON file, such as the task describe-desktop-application-task drafts.",
+      conformsToInputContract: true,
+      cause: error,
+    },
+    [{ path: ["task"], reason: "invalid_value", message: userMessage }],
+  );
+};
+
+/** The task file's JSON; a failed cleanup is reported with the read failure, if any, as its primary. */
+const readTaskFile = async (
+  path: string,
+  signal: AbortSignal | undefined,
+): Promise<unknown> => {
   const resources = new ArtifactResourceScope();
-  try {
-    const loaded = await readJsonFile(path, signal, resources, OPERATION);
-    if (loaded.ok) return loaded.value;
-    if (!(loaded.error instanceof EvidenceFileError)) throw loaded.error;
-    throw refuse(
-      `The task file ${path} could not be read (${loaded.error.reason}).`,
-      "task",
-      "Pass a JSON task file, such as the task describe-desktop-application-task drafts.",
-    );
-  } finally {
-    await resources.close();
-  }
+  const loaded = await readJsonFile(path, signal, resources, OPERATION).catch(
+    (cause: unknown) => err(cause),
+  );
+  const typed = (cause: unknown) =>
+    desktopOperationFailure(cause, signal, OPERATION, "Reading the task file");
+  const closed = await resources.close().then(() => undefined, typed);
+  const primary = loaded.ok
+    ? undefined
+    : taskFileFailure(path, typed(loaded.error));
+  if (closed !== undefined)
+    throw primary === undefined
+      ? closed
+      : analysisErrorWithCleanupFailure(primary, closed, OPERATION);
+  if (loaded.ok) return loaded.value;
+  throw primary ?? typed(loaded.error);
 };
 
 /** Why a check cannot be validated against this app, or undefined. */

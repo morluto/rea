@@ -13,22 +13,27 @@ environment, with local Docker for the computer run.
   `verify:architecture-guards`: passed, with no lint, typed-lint or
   duplication findings in the new or touched files.
 - `docs:build`: passed, including the new guide and this step's spec pages.
-- `npx vitest run src/domain/desktop src/application/desktop src/desktop`:
-  258 passed and 14 skipped on macOS; with the two Python boundary tests, 273
+- `npx vitest run src/domain/desktop src/application/desktop src/desktop`
+  with the two Python boundary tests: 260 passed and 14 skipped on macOS; 273
   passed and 1 skipped in the container.
 - CLI boundary tests `cliInputSchemaRequired`, `cliToolCoverage` and
   `cliStartupImports`, `setupSkill`, and the Python boundary tests
   `desktopExportPython` and `desktopTaskPython` (macOS and container): passed.
-- New tests: 64 checks covering every kind against views of every format
+- New tests: 68 checks covering every kind against views of every format
   (text, a truncated text view, JSON with numbers, booleans, arrays and
   escaped pointers, a key file, a truncated XML view, SQLite with a truncated
   and an unreadable table and a database whose tables were cut, binary, a
   view error, an absent file), asserted for the TypeScript evaluator and for
   the rendered `verify.py` under `python3 -I` with a stub protocol client,
   which agree on every result and description and call the app at
-  `/svc/notes`; 22 task refusals; suggestions for text, a format rewrite, key
-  files, SQLite rows and created and deleted files; the export with a task
-  and eight refusals, none writing a bundle; and a draft the export accepts.
+  `/svc/notes`, including `contains` given a pattern-like string and whole
+  objects and arrays on truncated XML and SQLite views; 19 task refusals,
+  among them a `regex` field; suggestions for text, a format rewrite, key
+  files, SQLite rows and created and deleted files, and drafts that keep a
+  database whose rows changed under an unchanged hash and a file whose
+  truncated views match while it changed; the export with a task and nine
+  refusals, among them a byte-order mark reported with the reader's fix, none
+  writing a bundle; and a draft the export accepts.
 
 ## Real captures
 

@@ -95,12 +95,11 @@ def _lines(check, entry):
         found = next((line for line in check["lines"] if line in lines), None)
         return (True, f"{file} has none of the lines {_shown(check['lines'])}") if found is None else (
             False, f"{file} still has the line {_shown(found)}")
-    if check.get("regex") is not None:
-        pattern = re.compile(check["regex"], re.DOTALL)
-        n = sum(1 for line in lines if pattern.search(line))
-    else:
-        n = sum(1 for line in lines if line == check["exact"])
-    return _compared(check, n, f"line(s) of {file} match {_shown(check['exact'] if 'exact' in check else check['regex'])}")
+    if check.get("contains") is not None:
+        n = sum(1 for line in lines if check["contains"] in line)
+        return _compared(check, n, f"line(s) of {file} contain {_shown(check['contains'])}")
+    n = sum(1 for line in lines if line == check["exact"])
+    return _compared(check, n, f"line(s) of {file} match {_shown(check['exact'])}")
 
 
 def _value(check, entry):
@@ -109,6 +108,8 @@ def _value(check, entry):
         return False, problem
     found = MISSING if entry is None else _resolve(view, check["pointer"])
     at = f"{check['file']} at {check['pointer']}"
+    if check["kind"] == "value_equals" and isinstance(check["value"], (dict, list)) and truncated:
+        return _undecided(check)
     if check["kind"] == "value_equals":
         if found is not MISSING and _same(found, check["value"]):
             return True, f"{at} is {_shown(check['value'])}"

@@ -183,15 +183,16 @@ const lineVerdict = (
       ? pass(`${file} has none of the lines ${shown(check.lines)}`)
       : fail(`${file} still has the line ${shown(found)}`);
   }
-  const pattern =
-    check.regex === undefined ? undefined : new RegExp(check.regex, "su");
+  const { exact, contains } = check;
   const n = lines.filter((line) =>
-    pattern === undefined ? line === check.exact : pattern.test(line),
+    contains === undefined ? line === exact : line.includes(contains),
   ).length;
   return compared(
     check,
     n,
-    `line(s) of ${file} match ${shown(check.exact ?? check.regex ?? "")}`,
+    contains === undefined
+      ? `line(s) of ${file} match ${shown(exact ?? "")}`
+      : `line(s) of ${file} contain ${shown(contains)}`,
   );
 };
 
@@ -204,6 +205,12 @@ const valueVerdict = (
   const found =
     entry === undefined ? undefined : resolvePointer(read.view, check.pointer);
   const at = `${check.file} at ${check.pointer}`;
+  // A whole object or array equals the expected one only if nothing of it was left out.
+  const whole =
+    check.kind === "value_equals" &&
+    typeof check.value === "object" &&
+    check.value !== null;
+  if (whole && read.truncated) return undecided(check.file);
   if (check.kind === "value_equals")
     return found !== undefined && sameJson(found, check.value)
       ? pass(`${at} is ${shown(check.value)}`)

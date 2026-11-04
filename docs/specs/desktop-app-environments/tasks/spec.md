@@ -25,20 +25,20 @@ never runs code the agent wrote.
 - The task file is JSON with a portable `name` other than `smoke`, a `prompt`
   and 1 to 32 `checks`, parsed by a zod schema in `src/domain/desktop/`. Check
   kinds: `file_present`, `file_absent`, `lines_present`, `lines_absent`,
-  `line_count` (`exact` or `regex`; `equals`, `at_least` or `at_most`),
+  `line_count` (`exact` or `contains`; `equals`, `at_least` or `at_most`),
   `value_equals` and `value_absent` (RFC 6901 pointer), `row_present`,
   `row_absent` and `row_count` (SQLite table, `where` by column). Ids default
   to `check-N` and must be unique.
 - Semantics: an absent file reads as empty; a file without a view fails every
   check but presence; line checks need a text view and row checks a SQLite
-  view; JSON equality by value, never a boolean for a number; a regex matches
-  anywhere with `.` matching any character; checks decided by what a view
-  leaves out fail on a truncated view or table.
+  view; JSON equality by value, never a boolean for a number; `contains`
+  matches a line holding it; checks decided by what a view leaves out, and
+  `value_equals` of a whole object or array, fail on a truncated view. No
+  regular expressions: a pattern run on agent-written text can stall the
+  verifier, and the two evaluators would read some differently.
 - Refusals, each naming the check: a file outside the owned paths or not
   spelled as a home path; the empty pointer; a pointer not starting with `/`,
-  into text, or into XML using namespaces; a repeated line; a regex outside
-  the portable subset (no escaped letters or digits, no `(?` other than `(?:`,
-  no empty class, valid in JavaScript's `u` mode); a value that names the
+  into text, or into XML using namespaces; a repeated line; a value that names the
   captured home or looks like an ISO 8601 date and time; the draft's
   placeholder prompt.
 - `export-desktop-application --task FILE` evaluates the checks on the state
