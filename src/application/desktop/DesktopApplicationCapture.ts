@@ -236,6 +236,44 @@ const admit = async (
   };
 };
 
+/**
+ * One cleanup error for everything left unresolved after the capture was
+ * written: launched processes, retained-file handles, or both.
+ */
+const cleanupFailure = (
+  published: string,
+  output: string,
+  unresolved: {
+    readonly processes:
+      | { readonly reason: string; readonly resources: readonly string[] }
+      | undefined;
+    readonly handles: boolean;
+  },
+) => {
+  const { processes, handles } = unresolved;
+  const reasons = [
+    ...(processes === undefined ? [] : [processes.reason]),
+    ...(handles
+      ? ["a retained file's handle could not be closed after a retry"]
+      : []),
+  ];
+  return new ProviderAdapterError(DESKTOP_PROVIDER.id, DESKTOP_OPERATION, {
+    userMessage: `The capture was written to ${published}, but cleanup is incomplete: ${reasons.join("; ")}.`,
+    remediationAction:
+      processes === undefined
+        ? "Retry the command in a new capture folder; the written capture is complete."
+        : "Check for processes still carrying the listed run token and stop them before capturing again.",
+    cleanup: {
+      reason: reasons.join("; "),
+      resources: [
+        ...(processes?.resources ?? []),
+        ...(handles ? [output] : []),
+      ],
+    },
+    diagnostics: { capture_file: published },
+  });
+};
+
 const runCapture = async (
   request: DesktopCaptureRequest,
   host: DesktopCaptureHost,
@@ -302,29 +340,19 @@ const runCapture = async (
   };
   const evidence = captureEvidence(request, capture);
   const published = await writeCaptureFile(output, evidence);
-  try {
-    await store.close();
-  } catch (cause: unknown) {
-    throw new ProviderAdapterError(DESKTOP_PROVIDER.id, DESKTOP_OPERATION, {
-      cause,
-      userMessage: `The capture was written to ${published}, but a file REA read while retaining content could not be closed.`,
-      cleanup: {
-        reason: "a retained file's handle could not be closed after a retry",
-        resources: [output],
-      },
-      diagnostics: { capture_file: published },
-    });
-  }
-  if (!session.cleanup.verified)
-    throw new ProviderAdapterError(DESKTOP_PROVIDER.id, DESKTOP_OPERATION, {
-      userMessage: `The capture was written to ${published}, but REA could not verify that the processes it launched have exited.`,
-      remediationAction:
-        "Check for processes still carrying the listed run token and stop them before capturing again.",
-      cleanup: {
-        reason: session.cleanup.reason ?? "cleanup was not verified",
-        resources: cleanupResources,
-      },
-      diagnostics: { capture_file: published },
+  const handlesClosed = await store.close().then(
+    () => true,
+    () => false,
+  );
+  if (!handlesClosed || !session.cleanup.verified)
+    throw cleanupFailure(published, output, {
+      processes: session.cleanup.verified
+        ? undefined
+        : {
+            reason: session.cleanup.reason ?? "cleanup was not verified",
+            resources: cleanupResources,
+          },
+      handles: !handlesClosed,
     });
   // A cancellation that arrives during publication must not read as success.
   if (signal?.aborted === true && session.end_reason !== "cancelled")
