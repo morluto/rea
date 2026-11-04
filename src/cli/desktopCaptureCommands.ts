@@ -130,8 +130,8 @@ const withStateReaders = async (
   return finishAnalysisCommand(
     async () => {
       const result = await run({
-        sqlite: (database, writeAheadLog, readSignal) =>
-          readSqliteStateView(sqlite, database, writeAheadLog, readSignal),
+        sqlite: (database, readSignal) =>
+          readSqliteStateView(sqlite, database, readSignal),
         dconf: (database, readSignal) =>
           dumpDconfDatabase(database, environment, readSignal),
       });

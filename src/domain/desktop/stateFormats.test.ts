@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   detectStateFormat,
+  jsonView,
   keyfileView,
   textView,
   xmlView,
@@ -32,6 +33,43 @@ describe("detectStateFormat", () => {
     expect(detectStateFormat("/h/todo.txt", bytes("milk\neggs\n"))).toBe(
       "text",
     );
+  });
+
+  it("reads text as a key file only when every line is a group, a key or a comment", () => {
+    expect(
+      detectStateFormat("/h/todo.txt", bytes("Groceries\n[x]\nmilk\n")),
+    ).toBe("text");
+    expect(
+      detectStateFormat("/h/app.conf", bytes("# no groups\nwrap=true\n")),
+    ).toBe("text");
+    expect(detectStateFormat("/h/app.rc", bytes("[ui]\nset wrap on\n"))).toBe(
+      "text",
+    );
+    expect(
+      detectStateFormat(
+        "/h/app.desktop",
+        bytes("top=1\n; note\n[Desktop Entry]\nName[de]=Notizen\n"),
+      ),
+    ).toBe("keyfile");
+  });
+});
+
+describe("jsonView", () => {
+  it("refuses values a JavaScript number would round, or that nest too deeply", () => {
+    expect(jsonView('{"id":9007199254740993}')).toEqual({
+      ok: false,
+      error:
+        "a number in it cannot be read exactly, such as an integer above 2^53",
+    });
+    expect(jsonView(`${"[".repeat(502)}${"]".repeat(502)}`)).toEqual({
+      ok: false,
+      error: "nested deeper than the 500 levels a JSON view keeps",
+    });
+    expect(jsonView(`${"[".repeat(501)}${"]".repeat(501)}`).ok).toBe(true);
+    expect(jsonView('{"id":9007199254740991,"x":0.5}')).toEqual({
+      ok: true,
+      value: { id: 9007199254740991, x: 0.5 },
+    });
   });
 });
 

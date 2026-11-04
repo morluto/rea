@@ -111,12 +111,27 @@ const keyEntries = (view: JsonValue): Map<string, string> => {
   return entries;
 };
 
-/** `table:key` → row for SQLite views, keyed by primary key when there is one. */
-const rowEntries = (view: JsonValue): Map<string, string> => {
+const tablesOf = (view: JsonValue): Record<string, JsonValue> =>
+  isRecord(view) && isRecord(view.tables) ? view.tables : {};
+
+/** Tables a SQLite view records as failed to read. */
+const unreadTables = (view: JsonValue): string[] =>
+  Object.entries(tablesOf(view))
+    .filter(([, table]) => isRecord(table) && typeof table.error === "string")
+    .map(([name]) => name);
+
+/**
+ * `table:key` → row for SQLite views, keyed by primary key when there is one.
+ * Tables unread in either version are skipped, so their rows are not misreported.
+ */
+const rowEntries = (
+  view: JsonValue,
+  skipped: ReadonlySet<string>,
+): Map<string, string> => {
   const entries = new Map<string, string>();
-  const tables = isRecord(view) && isRecord(view.tables) ? view.tables : {};
-  for (const [name, table] of Object.entries(tables)) {
-    if (!isRecord(table) || !Array.isArray(table.rows)) continue;
+  for (const [name, table] of Object.entries(tablesOf(view))) {
+    if (skipped.has(name) || !isRecord(table) || !Array.isArray(table.rows))
+      continue;
     const columns = Array.isArray(table.columns) ? table.columns : [];
     const keyColumns = (
       Array.isArray(table.primary_key) ? table.primary_key : []
@@ -147,8 +162,8 @@ const truncatedView = (view: JsonValue): boolean => {
   if (!isRecord(view)) return false;
   if (view.truncated === true || view.tables_truncated === true) return true;
   return (
-    isRecord(view.tables) &&
-    Object.values(view.tables).some(
+    unreadTables(view).length > 0 ||
+    Object.values(tablesOf(view)).some(
       (table) => isRecord(table) && table.truncated === true,
     )
   );
@@ -182,8 +197,14 @@ const compareViews = (
     case "keyfile":
     case "dconf":
       return compareMaps("keys", keyEntries(before), keyEntries(after));
-    case "sqlite":
-      return compareMaps("rows", rowEntries(before), rowEntries(after));
+    case "sqlite": {
+      const unread = new Set([...unreadTables(before), ...unreadTables(after)]);
+      return compareMaps(
+        "rows",
+        rowEntries(before, unread),
+        rowEntries(after, unread),
+      );
+    }
     case "binary":
       return compareMaps("content", new Map(), new Map());
   }

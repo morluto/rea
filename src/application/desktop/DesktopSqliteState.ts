@@ -1,9 +1,6 @@
-import { copyFile, mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-
 import type { z } from "zod";
 
+import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
 import {
   sqliteDatabaseSchema,
@@ -47,8 +44,11 @@ const cellValue = (cell: Cell): JsonValue => {
   }
 };
 
+type SqliteReader = Pick<SqliteDatabaseService, "inspect">;
+
+/** One report, or why it failed; cancellation and unfinished cleanup propagate. */
 const report = async (
-  service: SqliteDatabaseService,
+  service: SqliteReader,
   input: Record<string, unknown>,
   signal: AbortSignal | undefined,
 ): Promise<SqliteDatabase | string> => {
@@ -56,7 +56,14 @@ const report = async (
     input,
     signal === undefined ? {} : { signal },
   );
-  if (!inspected.ok) return inspected.error.message;
+  if (!inspected.ok) {
+    if (
+      inspected.error instanceof AnalysisCancelledError ||
+      inspected.error.cleanupIncomplete
+    )
+      throw inspected.error;
+    return inspected.error.message;
+  }
   const parsed = sqliteDatabaseSchema.safeParse(
     inspected.value.normalized_result,
   );
@@ -64,57 +71,51 @@ const report = async (
 };
 
 /**
- * Read every ordinary table of a retained database, staging the database and
- * its write-ahead log side by side in a private directory first.
+ * Read every ordinary table of a staged database, with its write-ahead log
+ * beside it when one was retained. A table that fails keeps its error in place
+ * of its rows. The SQLite service selects one table per call.
  */
 export const readSqliteStateView = async (
-  service: SqliteDatabaseService,
+  service: SqliteReader,
   database: string,
-  writeAheadLog: string | undefined,
   signal?: AbortSignal,
 ): Promise<SqliteStateView> => {
-  const directory = await mkdtemp(join(tmpdir(), "rea-desktop-sqlite-"));
-  try {
-    const staged = join(directory, "state.db");
-    await copyFile(database, staged);
-    if (writeAheadLog !== undefined)
-      await copyFile(writeAheadLog, `${staged}-wal`);
-    const inventory = await report(
+  const inventory = await report(
+    service,
+    { path: database, schema_scope: "database" },
+    signal,
+  );
+  if (typeof inventory === "string") return { ok: false, error: inventory };
+  const tables = plainRecord<JsonValue>();
+  const ordinary = inventory.schema.tables.filter(
+    (table) => table.kind === "table",
+  );
+  for (const table of ordinary.slice(0, MAX_TABLES)) {
+    const selected = await report(
       service,
-      { path: staged, schema_scope: "database" },
+      { path: database, table: table.name, row_limit: ROW_LIMIT },
       signal,
     );
-    if (typeof inventory === "string") return { ok: false, error: inventory };
-    const tables = plainRecord<JsonValue>();
-    const ordinary = inventory.schema.tables.filter(
-      (table) => table.kind === "table",
-    );
-    for (const table of ordinary.slice(0, MAX_TABLES)) {
-      const selected = await report(
-        service,
-        { path: staged, table: table.name, row_limit: ROW_LIMIT },
-        signal,
-      );
-      if (typeof selected === "string") return { ok: false, error: selected };
-      const rows = selected.rows;
-      tables[table.name] = {
-        columns: rows?.columns ?? [],
-        primary_key: table.columns
-          .filter((column) => column.primary_key_position > 0)
-          .sort(
-            (left, right) =>
-              left.primary_key_position - right.primary_key_position,
-          )
-          .map((column) => column.name),
-        rows: (rows?.values ?? []).map((row) => row.map(cellValue)),
-        truncated: rows?.truncated ?? false,
-      };
+    if (typeof selected === "string") {
+      tables[table.name] = { error: selected };
+      continue;
     }
-    return {
-      ok: true,
-      view: { tables, tables_truncated: ordinary.length > MAX_TABLES },
+    const rows = selected.rows;
+    tables[table.name] = {
+      columns: rows?.columns ?? [],
+      primary_key: table.columns
+        .filter((column) => column.primary_key_position > 0)
+        .sort(
+          (left, right) =>
+            left.primary_key_position - right.primary_key_position,
+        )
+        .map((column) => column.name),
+      rows: (rows?.values ?? []).map((row) => row.map(cellValue)),
+      truncated: rows?.truncated ?? false,
     };
-  } finally {
-    await rm(directory, { recursive: true, force: true });
   }
+  return {
+    ok: true,
+    view: { tables, tables_truncated: ordinary.length > MAX_TABLES },
+  };
 };

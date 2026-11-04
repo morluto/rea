@@ -1,5 +1,8 @@
+import { readFile } from "node:fs/promises";
+
 import { describe, expect, it } from "vitest";
 
+import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
 import type {
   DesktopApplicationCapture,
   DesktopCheckpoint,
@@ -7,9 +10,11 @@ import type {
 import { desktopApplicationStateSchema } from "../../domain/desktop/desktopState.js";
 import { inspectDesktopApplicationState } from "./DesktopApplicationState.js";
 import {
+  DATABASE,
   HOME,
   capture,
   change,
+  checkpoint,
   readers,
   retained,
   writeCaptureFolder,
@@ -41,8 +46,8 @@ const extended = (extra: {
 };
 
 /** Inspect a capture folder and index its state paths by home path. */
-const statePathsOf = async (folder: string) => {
-  const evidence = await inspectDesktopApplicationState(folder, readers);
+const statePathsOf = async (folder: string, using = readers) => {
+  const evidence = await inspectDesktopApplicationState(folder, using);
   if (!("normalized_result" in evidence)) throw evidence;
   const state = desktopApplicationStateSchema.parse(evidence.normalized_result);
   return new Map(state.paths.map((entry) => [entry.home_path, entry]));
@@ -165,9 +170,10 @@ describe("inspectDesktopApplicationState", () => {
       evidence.normalized_result,
     );
 
-    expect(result.limitations).toContain(
-      "The capture does not record its state directories as walked, so files in a symlinked state directory may be classed as documents.",
-    );
+    const unrecorded =
+      "The capture does not record its state directories as walked, so files in a symlinked state directory may be classed as documents.";
+    expect(result.limitations).toContain(unrecorded);
+    expect(evidence.limitations).toContain(unrecorded);
     expect(
       result.paths.find(
         (entry) => entry.home_path === ".config/notes/settings.ini",
@@ -206,5 +212,221 @@ describe("inspectDesktopApplicationState", () => {
       view: null,
       view_error: "the database's write-ahead log was not retained",
     });
+  });
+});
+
+describe("inspectDesktopApplicationState database sidecars", () => {
+  it("refuses a database whose write-ahead log was left out at the baseline", async () => {
+    const base = capture();
+    const folder = await writeCaptureFolder({
+      ...base,
+      state: {
+        ...base.state,
+        omitted_content: [{ path: `${DATABASE}-wal`, reason: "too_large" }],
+      },
+    });
+
+    const byPath = await statePathsOf(folder);
+
+    const refused = {
+      view: null,
+      view_error: "the database's write-ahead log was not retained",
+    };
+    expect(byPath.get(".local/share/notes/notes.db")?.versions).toMatchObject([
+      refused,
+      refused,
+    ]);
+  });
+
+  it("stages a retained rollback journal beside its database for the reader to judge", async () => {
+    const database = `${HOME}/.config/notes/log.db`;
+    const folder = await writeCaptureFolder(
+      extended({
+        baseline: [retained(database, "SQLite format 3\0v1")],
+        changes: [
+          change(`${database}-journal`, { after: "journal" }, { state: true }),
+        ],
+        later: [retained(`${database}-journal`, "journal")],
+      }),
+      undefined,
+      ["journal"],
+    );
+    const judging: typeof readers = {
+      ...readers,
+      sqlite: async (staged, signal) =>
+        (await readFile(`${staged}-journal`, "latin1").catch(() => "")) ===
+        "journal"
+          ? { ok: false, error: "hot rollback journal" }
+          : readers.sqlite(staged, signal),
+    };
+
+    const byPath = await statePathsOf(folder, judging);
+
+    expect(byPath.get(".config/notes/log.db")).toMatchObject({
+      versions: [
+        { checkpoint_index: 0, view_error: null },
+        { checkpoint_index: 1, view: null, view_error: "hot rollback journal" },
+      ],
+      changes: [{ kind: "unreadable" }],
+    });
+  });
+
+  it("refuses a database whose rollback journal existed but was not retained", async () => {
+    const database = `${HOME}/.config/notes/log.db`;
+    const folder = await writeCaptureFolder(
+      extended({
+        baseline: [retained(database, "SQLite format 3\0v1")],
+        changes: [
+          {
+            path: `${database}-journal`,
+            kind: "created",
+            before: null,
+            after: {
+              type: "file",
+              size: 7,
+              mode: 0o644,
+              mtime_ns: "1",
+              sha256: null,
+            },
+            in_state_directory: true,
+            opened_by_application: false,
+          },
+        ],
+      }),
+    );
+
+    const byPath = await statePathsOf(folder);
+
+    expect(byPath.get(".config/notes/log.db")?.versions[1]).toMatchObject({
+      view: null,
+      view_error: "the database's rollback journal was not retained",
+    });
+  });
+
+  it("adds no version while a database stays absent and only its log changes", async () => {
+    const database = `${HOME}/.config/notes/late.db`;
+    const base = extended({
+      changes: [
+        change(`${database}-wal`, { after: "wal v1" }, { state: true }),
+      ],
+      later: [retained(`${database}-wal`, "wal v1")],
+    });
+    const saved = checkpoint(
+      "saved",
+      "request",
+      [change(database, { after: "SQLite format 3\0v2" }, { state: true })],
+      [retained(database, "SQLite format 3\0v2")],
+    );
+    const folder = await writeCaptureFolder(
+      {
+        ...base,
+        state: {
+          ...base.state,
+          checkpoints: [...base.state.checkpoints, saved],
+        },
+      },
+      undefined,
+      ["wal v1"],
+    );
+
+    const byPath = await statePathsOf(folder);
+
+    expect(byPath.get(".config/notes/late.db")).toMatchObject({
+      versions: [
+        { checkpoint_index: 0, present: false },
+        { checkpoint_index: 2, present: true },
+      ],
+      changes: [{ kind: "created", from_index: 0, to_index: 2 }],
+    });
+  });
+
+  it("reports cancellation during the last database read instead of Evidence", async () => {
+    const controller = new AbortController();
+    let reads = 0;
+    const folder = await writeCaptureFolder(
+      extended({
+        baseline: [retained(`${HOME}/zz.db`, "SQLite format 3\0v1")],
+      }),
+    );
+
+    const result = await inspectDesktopApplicationState(
+      folder,
+      {
+        ...readers,
+        sqlite: async (database, signal) => {
+          reads += 1;
+          if (reads === 3) controller.abort(new Error("stopped"));
+          return readers.sqlite(database, signal);
+        },
+      },
+      controller.signal,
+    );
+
+    expect(reads).toBe(3);
+    expect(result).toBeInstanceOf(AnalysisCancelledError);
+  });
+});
+
+describe("inspectDesktopApplicationState view bounds", () => {
+  it("gives JSON too large, too deep or too precise for a view a view_error and reads the rest", async () => {
+    const files = {
+      "big.json": JSON.stringify("x".repeat(4 * 1024 * 1024)),
+      "deep.json": `${"[".repeat(1200)}${"]".repeat(1200)}`,
+      "id.json": '{"id":9007199254740993}',
+    };
+    const folder = await writeCaptureFolder(
+      extended({
+        baseline: Object.entries(files).map(([name, text]) =>
+          retained(`${HOME}/.config/notes/${name}`, text),
+        ),
+      }),
+      undefined,
+      Object.values(files),
+    );
+
+    const byPath = await statePathsOf(folder);
+    const errorOf = (name: string) =>
+      byPath.get(`.config/notes/${name}`)?.versions[0]?.view_error;
+
+    expect(errorOf("big.json")).toBe(
+      "larger than the 4 MiB limit for JSON and key file views",
+    );
+    expect(errorOf("deep.json")).toBe(
+      "nested deeper than the 500 levels a JSON view keeps",
+    );
+    expect(errorOf("id.json")).toBe(
+      "a number in it cannot be read exactly, such as an integer above 2^53",
+    );
+    expect(byPath.get(".config/notes/settings.ini")?.format).toBe("keyfile");
+  });
+
+  it("leaves the desktop entry's display name out of the application names", async () => {
+    const base = capture();
+    const folder = await writeCaptureFolder({
+      ...base,
+      application: {
+        ...base.application,
+        desktop_entry: {
+          id: "org.example.Notes",
+          path: "/usr/share/applications/org.example.Notes.desktop",
+          name: "Settings",
+          exec: "notes",
+          icon: null,
+          startup_wm_class: "NotesWindow",
+          categories: [],
+          mime_types: [],
+          terminal: false,
+        },
+      },
+    });
+
+    const evidence = await inspectDesktopApplicationState(folder, readers);
+    if (!("normalized_result" in evidence)) throw evidence;
+    const names = desktopApplicationStateSchema.parse(
+      evidence.normalized_result,
+    ).application_names;
+
+    expect(names).not.toContain("settings");
+    expect(names).toEqual(expect.arrayContaining(["notes", "noteswindow"]));
   });
 });

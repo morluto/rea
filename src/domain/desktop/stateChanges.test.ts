@@ -117,6 +117,26 @@ describe("diffStateViews fidelity", () => {
     ).toBe(false);
   });
 
+  it("leaves a table that could not be read out of the comparison and marks it incomplete", () => {
+    const table = (rows: number[][]) => ({
+      columns: ["id"],
+      primary_key: ["id"],
+      rows,
+      truncated: false,
+    });
+    expect(
+      diffStateViews(
+        "sqlite",
+        { tables: { notes: table([[1]]), log: table([[1], [2]]) } },
+        { tables: { notes: table([[1], [2]]), log: { error: "malformed" } } },
+      ),
+    ).toMatchObject({
+      added: ["notes:[2]"],
+      removed: [],
+      complete: false,
+    });
+  });
+
   it("treats truncated fields in JSON as data, not coverage", () => {
     expect(
       diffStateViews(

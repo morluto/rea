@@ -16,6 +16,7 @@ import { diffStateViews } from "../../domain/desktop/stateChanges.js";
 import {
   decodeStateText,
   detectStateFormat,
+  jsonView,
   keyfileView,
   plainRecord,
   textView,
@@ -31,7 +32,7 @@ import {
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import { safeParseEvidence } from "../../domain/evidenceValidation.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
-import { safeParseJson } from "../../domain/safeJson.js";
+import { err, ok, type Result } from "../../domain/result.js";
 import { describeValidationFailure } from "../../domain/validationFailure.js";
 import { PrivateRuntimeRoot } from "../../process/PrivateRuntimeRoot.js";
 import { readJsonFile } from "../JsonFiles.js";
@@ -40,13 +41,12 @@ import {
   type RetainedContent,
 } from "./DesktopRetainedContent.js";
 import {
-  baselineDigests,
   digestsAt,
-  indexChanges,
+  indexState,
   pathVersions,
   presenceAt,
   statePaths,
-  type ChangeIndex,
+  type StateIndex,
 } from "./DesktopStateVersions.js";
 import {
   DESKTOP_OPERATION,
@@ -56,11 +56,13 @@ import {
 
 const OPERATION = "inspect_desktop_application_state";
 
-/** Readers for formats that need a tool or worker, supplied by composition. */
+/**
+ * Readers for formats that need a tool or worker, supplied by composition. Each
+ * database is staged with its retained log in a private directory the caller removes.
+ */
 export interface DesktopStateReaders {
   readonly sqlite: (
     database: string,
-    writeAheadLog: string | undefined,
     signal?: AbortSignal,
   ) => Promise<{ ok: true; view: JsonValue } | { ok: false; error: string }>;
   readonly dconf: (
@@ -128,12 +130,10 @@ interface ViewContext {
   readonly readers: DesktopStateReaders;
   readonly names: ReadonlySet<string>;
   readonly signal: AbortSignal | undefined;
-  readonly changes: ChangeIndex;
-  readonly baseline: ReadonlyMap<string, string>;
-  readonly checkpoints: number;
+  readonly index: StateIndex;
 }
 
-const dconfView = (text: string, names: ReadonlySet<string>) => {
+const dconfGroups = (text: string, names: ReadonlySet<string>) => {
   const groups = keyfileView(text);
   const application = plainRecord<JsonValue>();
   const others: string[] = [];
@@ -193,70 +193,104 @@ interface ReadInput {
   readonly version: Version;
 }
 
-const toolView = async (
-  { path, bytes, version }: ReadInput,
+/** Whether a database's sidecar file existed at a version, and its retained digest. */
+const sidecarAt = (path: string, version: Version, index: StateIndex) => ({
+  present: presenceAt(path, index)[version.checkpoint_index] === true,
+  sha256: digestsAt(path, index)[version.checkpoint_index] ?? null,
+});
+
+/**
+ * A sidecar's verified bytes to stage beside the database, or why the
+ * database cannot be read: reading it without a sidecar it had could hide or
+ * misstate committed rows.
+ */
+const sidecarBytes = async (
+  { path, version }: Pick<ReadInput, "path" | "version">,
+  sidecar: { readonly suffix: string; readonly label: string },
+  context: ViewContext,
+): Promise<Result<Buffer | undefined, string>> => {
+  const { present, sha256 } = sidecarAt(
+    `${path}${sidecar.suffix}`,
+    version,
+    context.index,
+  );
+  if (present && sha256 === null)
+    return err(`the database's ${sidecar.label} was not retained`);
+  if (sha256 === null) return ok(undefined);
+  const bytes = await context.content.read(sha256, context.signal);
+  return bytes.ok
+    ? ok(bytes.value)
+    : err(`the database's ${sidecar.label} ${bytes.error}`);
+};
+
+const sqliteView = async (
+  input: ReadInput,
   context: ViewContext,
 ): Promise<ViewOutcome> => {
-  if (version.format === "dconf")
-    return withStaged([{ name: "user", bytes }], async ([database]) => {
-      const dump = await context.readers.dconf(database ?? "", context.signal);
-      return dump.ok
-        ? { view: dconfView(dump.text, context.names), error: null }
-        : failed(dump.error);
-    });
-  const logPath = `${path}-wal`;
-  const at = (values: readonly (string | boolean | null)[]) =>
-    values[version.checkpoint_index];
-  const logPresent =
-    at(
-      presenceAt(
-        logPath,
-        context.changes,
-        context.baseline,
-        context.checkpoints,
-      ),
-    ) === true;
-  const logDigest = at(
-    digestsAt(logPath, context.changes, context.baseline, context.checkpoints),
+  const log = await sidecarBytes(
+    input,
+    { suffix: "-wal", label: "write-ahead log" },
+    context,
   );
-  // Reading the database without a log it had would hide committed rows.
-  if (logPresent && typeof logDigest !== "string")
-    return failed("the database's write-ahead log was not retained");
-  const log =
-    typeof logDigest === "string"
-      ? await context.content.read(logDigest, context.signal)
-      : undefined;
-  if (typeof logDigest === "string" && log === undefined)
-    return failed(
-      "the database's write-ahead log is missing or does not match its digest",
-    );
+  if (!log.ok) return failed(log.error);
+  // The SQLite reader accepts an inactive rollback journal and refuses a hot one.
+  const journal = await sidecarBytes(
+    input,
+    { suffix: "-journal", label: "rollback journal" },
+    context,
+  );
+  if (!journal.ok) return failed(journal.error);
   const staged = [
-    { name: "state.db", bytes },
-    ...(log === undefined ? [] : [{ name: "state.db-wal", bytes: log }]),
+    { name: "state.db", bytes: input.bytes },
+    ...(log.value === undefined
+      ? []
+      : [{ name: "state.db-wal", bytes: log.value }]),
+    ...(journal.value === undefined
+      ? []
+      : [{ name: "state.db-journal", bytes: journal.value }]),
   ];
-  return withStaged(staged, async ([database, wal]) => {
-    const read = await context.readers.sqlite(
-      database ?? "",
-      wal,
-      context.signal,
-    );
+  return withStaged(staged, async ([database]) => {
+    const read = await context.readers.sqlite(database ?? "", context.signal);
     return read.ok ? { view: read.view, error: null } : failed(read.error);
   });
 };
+
+const dconfView = async (
+  { bytes }: ReadInput,
+  context: ViewContext,
+): Promise<ViewOutcome> =>
+  withStaged([{ name: "user", bytes }], async ([database]) => {
+    const dump = await context.readers.dconf(database ?? "", context.signal);
+    return dump.ok
+      ? { view: dconfGroups(dump.text, context.names), error: null }
+      : failed(dump.error);
+  });
+
+const MIB = 1024 * 1024;
+/** Largest JSON or key file read into a view, whose whole value enters Evidence. */
+const MAX_PARSED_VIEW_BYTES = 4 * MIB;
 
 /** Read one retained version into JSON for its own format. */
 const viewOf = async (
   input: ReadInput,
   context: ViewContext,
 ): Promise<ViewOutcome> => {
+  const format = input.version.format ?? "binary";
+  if (
+    (format === "json" || format === "keyfile") &&
+    input.bytes.length > MAX_PARSED_VIEW_BYTES
+  )
+    return failed(
+      `larger than the ${String(MAX_PARSED_VIEW_BYTES / MIB)} MiB limit for JSON and key file views`,
+    );
   const text = decodeStateText(input.bytes) ?? "";
-  switch (input.version.format ?? "binary") {
+  switch (format) {
     case "text":
       return { view: textView(text), error: null };
     case "json": {
-      const parsed = safeParseJson(text);
+      const parsed = jsonView(text);
       return parsed.ok
-        ? { view: parsed.value as JsonValue, error: null }
+        ? { view: parsed.value, error: null }
         : failed(parsed.error);
     }
     case "keyfile":
@@ -268,8 +302,9 @@ const viewOf = async (
         : { view: tree, error: null };
     }
     case "dconf":
+      return dconfView(input, context);
     case "sqlite":
-      return toolView(input, context);
+      return sqliteView(input, context);
     case "binary":
       return { view: null, error: null };
   }
@@ -327,13 +362,12 @@ const readVersion = async (
     return;
   }
   const bytes = await context.content.read(version.sha256, context.signal);
-  if (bytes === undefined) {
-    version.view_error =
-      "retained content is missing or does not match its digest";
+  if (!bytes.ok) {
+    version.view_error = `retained content ${bytes.error}`;
     return;
   }
-  version.format = detectStateFormat(path, bytes);
-  const outcome = await viewOf({ path, bytes, version }, context);
+  version.format = detectStateFormat(path, bytes.value);
+  const outcome = await viewOf({ path, bytes: bytes.value, version }, context);
   version.view = outcome.view;
   version.view_error = outcome.error;
 };
@@ -358,18 +392,13 @@ const describePath = async (
   facts: ReturnType<typeof roleFacts>,
   context: ViewContext,
 ): Promise<DesktopStatePath> => {
-  const versions = pathVersions(
-    capture,
-    path,
-    context.changes,
-    context.baseline,
-  );
+  const versions = pathVersions(capture, path, context.index);
   for (const version of versions) await readVersion(version, path, context);
   const reasons = [
     ...stateReasons(
       facts,
       path,
-      (context.changes.get(path) ?? []).map((entry) => entry.change),
+      (context.index.changes.get(path) ?? []).map((entry) => entry.change),
       versions.some(hasDconfGroups),
     ),
   ];
@@ -393,7 +422,8 @@ const describePath = async (
 const STATE_LIMITATIONS = [
   "Roles are inferred from state directories, open files, window titles, selected paths and dconf key names; a path can be misattributed.",
   "Views cover retained content only; a file that existed before the capture but outside the content roots has no starting view.",
-  "SQLite views list at most 500 rows of at most 64 ordinary tables, text views at most 5,000 lines and XML views at most 5,000 nodes; changes between truncated views are marked incomplete.",
+  "SQLite views list at most 500 rows of at most 64 ordinary tables, text views at most 5,000 lines and XML views at most 5,000 nodes; changes between truncated views, or views with an unread table, are marked incomplete.",
+  "JSON and key file views read files of at most 4 MiB, JSON nested at most 500 levels and only numbers JavaScript holds exactly; other files of those formats have a view_error.",
   "dconf views keep only groups whose path names the application.",
 ];
 
@@ -406,22 +436,22 @@ const inspectState = async (
   const { evidence, capture } = await readDesktopCapture(folder, signal);
   const names = applicationNames(capture);
   const facts = roleFacts(capture);
-  const changes = indexChanges(capture);
+  const index = indexState(capture);
   const paths = await withRetainedContent(folder, async (content) => {
-    const context: ViewContext = {
-      content,
-      readers,
-      names,
-      signal,
-      changes,
-      baseline: baselineDigests(capture),
-      checkpoints: capture.state.checkpoints.length,
-    };
+    const context: ViewContext = { content, readers, names, signal, index };
     const described: DesktopStatePath[] = [];
-    for (const path of statePaths(capture, changes))
+    for (const path of statePaths(index))
       described.push(await describePath(capture, path, facts, context));
     return described;
   });
+  const limitations = [
+    ...STATE_LIMITATIONS,
+    ...(capture.state.state_directories === undefined
+      ? [
+          "The capture does not record its state directories as walked, so files in a symlinked state directory may be classed as documents.",
+        ]
+      : []),
+  ];
   const result: DesktopApplicationState = {
     capture: {
       evidence_id: evidence.evidence_id,
@@ -434,15 +464,9 @@ const inspectState = async (
     },
     application_names: [...names],
     paths,
-    limitations: [
-      ...STATE_LIMITATIONS,
-      ...(capture.state.state_directories === undefined
-        ? [
-            "The capture does not record its state directories as walked, so files in a symlinked state directory may be classed as documents.",
-          ]
-        : []),
-    ],
+    limitations,
   };
+  signal?.throwIfAborted();
   return createEvidence(undefined, DESKTOP_PROVIDER, {
     predicateType: "rea.desktop-application-state",
     operation: OPERATION,
@@ -450,7 +474,7 @@ const inspectState = async (
     result,
     confidence: "inferred",
     authority: "analyst-inference",
-    limitations: [...STATE_LIMITATIONS, ...capture.limitations],
+    limitations: [...limitations, ...capture.limitations],
   });
 };
 
