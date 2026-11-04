@@ -273,6 +273,10 @@ export interface KunaIncomingReferences {
   readonly bytes: number;
   readonly rows: number;
   readonly excludedAliasRows: number;
+  readonly targetAliases: readonly {
+    readonly name: string;
+    readonly address: string;
+  }[];
   readonly walkCoverage: z.infer<typeof xrefWalkCoverage> | null;
   readonly pointerCoverage: string | null;
   readonly pointers: Array<
@@ -359,6 +363,10 @@ export const parseKunaIncomingReferences = (
       addresses: [...addresses].sort(compareKunaAddresses),
       rows: document.xrefs.length + (document.data_refs?.length ?? 0),
       excludedAliasRows,
+      targetAliases: document.target.aliases.map(({ name, address }) => ({
+        name,
+        address,
+      })),
       walkCoverage: document.coverage ?? null,
       pointerCoverage: document.data_refs_coverage ?? null,
       pointers:

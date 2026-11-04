@@ -371,6 +371,7 @@ it("counts pointer rows excluded because they target a forwarding alias", () => 
       addresses: ["0x1004", "0x4000"],
       rows: 5,
       excludedAliasRows: 2,
+      targetAliases: [{ name: "slot", address: "0x3000" }],
       pointers: [
         { from_address: "0x4000", to_address: "0x2000" },
         { from_address: "0x4008", to_address: "0x3000" },

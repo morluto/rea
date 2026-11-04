@@ -1016,6 +1016,9 @@ export class KunaSessionClient implements AnalysisClient {
           bytes: references.value.bytes,
           examined_rows: references.value.rows,
           excluded_alias_rows: references.value.excludedAliasRows,
+          target_aliases: references.value.targetAliases.map(
+            ({ name, address }) => ({ name, address }),
+          ),
           walk_coverage: references.value.walkCoverage,
           pointer_coverage: references.value.pointerCoverage,
           pointers: references.value.pointers,
