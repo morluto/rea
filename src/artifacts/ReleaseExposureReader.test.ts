@@ -2268,6 +2268,33 @@ describe("ReleaseExposureReader native members named as maps", () => {
     }
   });
 
+  it("keeps a selected package executable named release.map out of map routing", async () => {
+    const root = await createTestTempDirectory("rea-release-map-package-");
+    const file = join(root, "release.map");
+    await writeFile(
+      file,
+      cArchiveExecutable({
+        carrier: "elf",
+        layout: "2.1",
+        pythonVersion: 310,
+        members: [
+          {
+            name: "notes",
+            typeCode: "x",
+            compress: false,
+            payload: Buffer.from("plain\n"),
+          },
+        ],
+      }),
+    );
+    const scanned = await inspect(file);
+    expect(scanned.native_images).toMatchObject([
+      { path: file, format: "elf" },
+    ]);
+    expect(scanned.debug_companions.paths).toEqual([]);
+    expect(debugCompanionsStatus(scanned)).toBe("not_observed");
+  });
+
   it.each([
     ["a JavaScript map name", "payload.js.map"],
     ["a linker map name", "payload.map"],

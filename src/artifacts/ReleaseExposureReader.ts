@@ -934,7 +934,9 @@ const examineSelectedFile = async (
   if (nativeFormat === "pe") readPdb(state, bytes, input.path);
   await examineMember(state, input, {
     logical: basename(input.path),
-    format: rootFormat,
+    // A selected package executable keeps its native carrier here, so its
+    // name cannot route it as a linker map.
+    format: nativeFormat ?? rootFormat,
     kind: "file",
     kindStated: false,
     encrypted: false,
