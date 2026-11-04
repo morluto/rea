@@ -331,6 +331,13 @@ export const ghidraRiscvCallingConventionFailure = (
       ? `RISC-V calling-convention policy ${report.policy} refused this image, so REA does not serve its analysis: ${report.refused} See docs/ghidra-riscv.md.`
       : undefined;
 
+/**
+ * Compilers pass such a class through a hidden pointer. Ghidra keeps only its
+ * fields, and GCC's DWARF does not record the rule, so no policy can detect it.
+ */
+export const GHIDRA_RISCV_HIDDEN_REFERENCE_LIMITATION =
+  "Ghidra shows a C++ class with a non-trivial copy constructor or destructor as passed by value, although compilers pass it through a hidden pointer. REA cannot detect such a signature, so its storage is unverified.";
+
 /** State the prototype REA applies, and its outcome once the bridge reports it. */
 export const ghidraRiscvCallingConventionLimitations = (
   expected: GhidraRiscvCallingConvention | undefined,
@@ -346,5 +353,6 @@ export const ghidraRiscvCallingConventionLimitations = (
           `RISC-V calling-convention outcome: ${report.functions} functions and ${report.definitions} function definitions use ${prototype}.`,
         ]),
     "Ghidra recovers a variadic call's arguments from the registers the caller writes, not from their types: a padding register can appear as an argument, and arguments after an unwritten register are omitted.",
+    GHIDRA_RISCV_HIDDEN_REFERENCE_LIMITATION,
   ];
 };

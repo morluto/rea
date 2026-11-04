@@ -15,6 +15,7 @@ import { hopperLoaderArgsForTarget } from "../hopper/HopperAnalysisProfile.js";
 import { IdaProvider } from "../ida/IdaProvider.js";
 import { GhidraProvider } from "./GhidraProvider.js";
 import {
+  GHIDRA_RISCV_HIDDEN_REFERENCE_LIMITATION,
   GHIDRA_RISCV32_DECODED_EXTENSIONS,
   GHIDRA_RISCV_CALLING_CONVENTIONS,
   GHIDRA_RISCV_CALLING_CONVENTION_IDS,
@@ -798,6 +799,7 @@ describe("RISC-V calling-convention handshake", () => {
           "11 functions and 11 function definitions use __rea_ilp32.",
         ),
         expect.stringContaining("variadic call's arguments"),
+        GHIDRA_RISCV_HIDDEN_REFERENCE_LIMITATION,
       ]),
     );
   });

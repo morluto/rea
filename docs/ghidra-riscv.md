@@ -288,6 +288,12 @@ Not modelled:
 - Ghidra 12.1.4 imports `float _Complex` from DWARF as an untyped 8-byte
   `qword`, so the policy sees an integer and cannot recover the float-register
   pair. The stock double-float lanes share this.
+- A C++ class with a non-trivial copy constructor or destructor is passed
+  through a hidden pointer, but Ghidra 12.1.4 keeps only its fields, so
+  `struct N { float f; N(const N&); ~N(); }` shows as a `float` in `fa0`.
+  Ghidra's DWARF importer does not read `DW_AT_calling_convention`, and GCC 14.2
+  does not write it, so the policy cannot detect these signatures and does not
+  refuse them. A limitation states this.
 - With D hardware (`rv32imafd` with the ilp32f ABI) the psABI preserves only the
   low 32 bits of `fs0`–`fs11`; Ghidra's model preserves the whole 64-bit
   registers.
