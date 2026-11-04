@@ -12,6 +12,7 @@ import { parseEvidence } from "../../../src/domain/evidence.js";
 import { err, ok } from "../../../src/domain/result.js";
 import {
   AnalysisOutputError,
+  AnalysisCapabilityUnavailableError,
   AnalysisInputError,
 } from "../../../src/domain/analysisErrorCore.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
@@ -186,6 +187,79 @@ describe("decompile_all MCP caveats", () => {
       await readFile(join(parent, "out", "decompile-index.json"), "utf8"),
     );
     expect(index.functions.at(-1).limitations).toContain(longCaveat);
+  });
+});
+
+describe("decompile_all MCP retained body coverage", () => {
+  it("retains the body-coverage limitation across a no-op resume", async () => {
+    const parent = await createTestTempDirectory("rea-decompile-resume-body-");
+    const output = join(parent, "out");
+    const port: AnalysisOperationPort = {
+      execute: async (operation) =>
+        operation === "procedure_info"
+          ? err(
+              new AnalysisCapabilityUnavailableError(
+                provider.id,
+                operation,
+                "no body",
+              ),
+            )
+          : ok(
+              createAnalysisExecution(
+                operation === "list_procedures"
+                  ? [{ address: "0x1000", value: "function" }]
+                  : "int f(void) { return 0; }",
+                provider,
+                {
+                  analysisProfile: profile,
+                  ...(operation === "list_procedures"
+                    ? {
+                        subject: {
+                          path: "/tmp/test",
+                          sha256: "ab".repeat(32),
+                          format: "elf" as const,
+                          architecture: "x86_64" as const,
+                        },
+                      }
+                    : {}),
+                },
+              ),
+            ),
+    };
+    const client = await connect(port);
+    const run = async (resume: boolean) => {
+      const result = await client.callTool({
+        name: "decompile_all",
+        arguments: { output_directory: output, resume },
+      });
+      expect(result.isError).not.toBe(true);
+      return decompileDirectoryManifestSchema.parse(
+        parseEvidence(result.structuredContent).normalized_result,
+      );
+    };
+    const created = await run(false);
+    expect(created.limitations.join("\n")).toContain("procedure_info");
+    const file = join(output, "functions", "0x1000.c");
+    const before = await readFile(file, "utf8");
+    const resumed = await run(true);
+    expect(resumed.counts).toMatchObject({
+      requested: 0,
+      skipped: 1,
+      written: 0,
+    });
+    expect(resumed.limitations.join("\n")).toContain(
+      "retain an unavailable function body",
+    );
+    expect(await readFile(file, "utf8")).toBe(before);
+    const index = decompileDirectoryIndexSchema.parse(
+      JSON.parse(await readFile(join(output, "decompile-index.json"), "utf8")),
+    );
+    expect(index.limitations.join("\n")).toContain(
+      "retain an unavailable function body",
+    );
+    expect(index.functions.map((record) => record.body.available)).toEqual([
+      false,
+    ]);
   });
 });
 

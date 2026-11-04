@@ -3,6 +3,10 @@ import { join } from "node:path";
 import { describe, expect } from "vitest";
 
 import { elf } from "../../../src/domain/binaryTarget.fixture.js";
+import {
+  decompileDirectoryIndexSchema,
+  decompileDirectoryManifestSchema,
+} from "../../../src/contracts/decompileDirectory.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 import { writeFakeKuna } from "../providers/kuna/fakeKuna.js";
@@ -97,6 +101,49 @@ describe("decompile-all CLI", () => {
           counts: { selected: 2, written: 1, skipped: 1, remaining: 0 },
         },
       });
+      const complete = await cli.run({
+        arguments: [
+          "decompile-all",
+          target,
+          "--provider",
+          "kuna",
+          "--output",
+          "out",
+          "--resume",
+          "--address-start",
+          "0X1000",
+          "--address-end",
+          "0X1040",
+          "--format",
+          "json",
+        ],
+        cwd: root,
+        environment,
+      });
+      expect(complete.exitCode, JSON.stringify(complete.json)).toBe(0);
+      const manifest = decompileDirectoryManifestSchema.parse(
+        (complete.json as { normalized_result: unknown }).normalized_result,
+      );
+      expect(manifest.counts).toMatchObject({
+        requested: 0,
+        written: 0,
+        skipped: 2,
+      });
+      expect(manifest.limitations.join("\n")).toContain(
+        "retain an unavailable function body",
+      );
+      const index = decompileDirectoryIndexSchema.parse(
+        JSON.parse(
+          await readFile(join(root, "out", "decompile-index.json"), "utf8"),
+        ),
+      );
+      expect(index.limitations.join("\n")).toContain(
+        "retain an unavailable function body",
+      );
+      expect(index.functions.map((record) => record.body.available)).toEqual([
+        false,
+        false,
+      ]);
     },
   );
 });

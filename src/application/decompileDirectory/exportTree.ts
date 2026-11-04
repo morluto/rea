@@ -149,6 +149,18 @@ export class DecompileExport {
   }
 
   /**
+   * Whether any retained record reports an unavailable function body. The
+   * index summarizes the accumulated directory, so a resume that writes or
+   * attempts nothing must still derive the body-coverage caveat from the
+   * records it keeps.
+   */
+  retainsUnavailableBody(): boolean {
+    for (const record of this.records.values())
+      if (!record.body.available) return true;
+    return false;
+  }
+
+  /**
    * Stable relative path for an address. The first path the journal gave this
    * address wins, even when a later failure record names no path.
    */
