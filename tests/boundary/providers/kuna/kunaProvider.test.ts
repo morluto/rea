@@ -182,13 +182,13 @@ it("waits for an aborted pre-session hash before retrying its late close owner",
 
 it("commits the observed Kuna release and digest to the analysis profile", async () => {
   const { profile, kuna } = await session("rea-kuna-profile-", {
-    version: { stdout: "kuna 1.989\n" },
+    version: { stdout: "kuna 1.990\n" },
   });
 
   expect(profile).toMatchObject({
-    provider: { id: "kuna", name: "Kuna", version: "1.989" },
+    provider: { id: "kuna", name: "Kuna", version: "1.990" },
     parameters: {
-      kuna_version: "1.989",
+      kuna_version: "1.990",
       kuna_sha256: expect.stringMatching(/^[0-9a-f]{64}$/u),
       kuna_command: kuna,
       jobs: 1,
@@ -208,7 +208,7 @@ it("reports an unverified release on observations without binding policy into th
   });
   const client = open();
   const inventory = await run(client, "list_procedures");
-  const warning = "Kuna 1.988 is not REA's verified 1.989 release";
+  const warning = "Kuna 1.988 is not REA's verified 1.990 release";
   expect(inventory.limitations.join("\n")).toContain(warning);
   const dossier = await run(client, "analyze_function", { procedure: "main" });
   expect(dossier.limitations.join("\n")).toContain(warning);
