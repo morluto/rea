@@ -343,6 +343,13 @@ it.each([
 );
 
 const CLASSIC_GLOBAL_ACTIVATIONS = [
+  "function fail() { throw globalThis; } try { fail(); } catch ({ createWindow: start }) { start(); }",
+  "function fail() { throw globalThis; } try { if (true) fail(); } catch ({ createWindow: start }) { start(); }",
+  "const args = [globalThis, 'createWindow']; Reflect.get.apply(Reflect, args)();",
+  "Object.assign(Object.prototype, globalThis); ({}).createWindow();",
+  "Object.setPrototypeOf(String.prototype, globalThis); ''.createWindow();",
+  "Object.setPrototypeOf(this.Array.prototype, globalThis); [].createWindow();",
+  "globalThis[`Reflect`].get(globalThis, 'createWindow')();",
   "Object.extra = 1; function unused() { [].createWindow; } Reflect.get?.(globalThis, 'createWindow')();",
   "const R = Reflect; R.get(globalThis, 'createWindow')();",
   "const read = Reflect.get; read(globalThis, 'createWindow')();",
@@ -396,6 +403,30 @@ const CLASSIC_GLOBAL_ACTIVATIONS = [
   "const noop = () => {}; function unused() { noop(); } (0, eval)('createWindow()');",
   "const noop = () => {}; (0, eval)(''); function unused() { noop(); } (0, eval)('createWindow()');",
 ];
+
+it.each([
+  "",
+  "const root = globalThis;",
+  "const unrelated = { createWindow() {} }; function unusedReceiverRead() { unrelated.createWindow; }",
+  "for (const ignored of [1, 2]) { ({ createWindow() {} }).createWindow; }",
+])("keeps class heritage activation after initialization with %s", (extra) => {
+  const source = `
+    const { BrowserWindow } = require("electron");
+    ${extra}
+    const webPreferences = { nodeIntegration: true };
+    function createWindow() { return new BrowserWindow({ webPreferences }); }
+    class C extends (this.Function('createWindow()')(), Object) {}
+    createWindow();
+  `;
+  expect(
+    analyzeJavaScriptStaticSource(source).electron.browser_windows[0],
+  ).toMatchObject({
+    web_preferences_status: "object-literal",
+    web_preferences: [
+      { name: "nodeIntegration", value: { status: "literal", value: true } },
+    ],
+  });
+});
 
 describe("Classic-script global function activation", () => {
   it.each([

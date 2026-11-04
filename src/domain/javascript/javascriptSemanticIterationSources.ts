@@ -13,6 +13,7 @@ import {
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 
 import { semanticCopiedReferencePath } from "./javascriptSemanticCopiedReferencePaths.js";
+import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
 import type {
   IterationSourceValue,
   SemanticIterationSource,
@@ -275,6 +276,21 @@ const emptySourceFacts: SemanticSourceFacts = {
   iterations: [],
   propertyReads: [],
 };
+const guardedBodyMayCall = (body: t.BlockStatement): boolean => {
+  let mayCall = false;
+  traverseJavaScriptAst(body, {
+    skip: (node) => t.isFunction(node),
+    enter: (node) => {
+      if (
+        t.isCallExpression(node) ||
+        t.isOptionalCallExpression(node) ||
+        t.isNewExpression(node)
+      )
+        mayCall = true;
+    },
+  });
+  return mayCall;
+};
 const sourceFacts = new WeakMap<
   t.Node,
   { readonly parent: t.Node | null; readonly facts: SemanticSourceFacts }
@@ -292,6 +308,7 @@ const semanticSourceFacts = (
       t.isForOfStatement(node) ||
       t.isSpreadElement(node) ||
       t.isYieldExpression(node) ||
+      t.isCatchClause(node) ||
       t.isFunction(node)
     )
   )
@@ -331,6 +348,13 @@ const semanticSourceFacts = (
     node.argument != null
   )
     add(sources, { node: node.argument, projection: [] }, node, {});
+  else if (
+    t.isCatchClause(node) &&
+    node.param != null &&
+    t.isTryStatement(parent) &&
+    guardedBodyMayCall(parent.block)
+  )
+    visit(context, node.param, { node: node.param, projection: [null] });
   else if (t.isFunction(node))
     for (const parameter of runtimeFunctionParameters(node))
       // A caller-supplied value is unknown, not an absent property-read source.

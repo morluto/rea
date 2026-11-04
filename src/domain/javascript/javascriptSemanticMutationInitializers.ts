@@ -16,6 +16,7 @@ import {
 
 import {
   staticObjectProperty,
+  staticObjectOwnMethod,
   semanticStaticPropertyKey,
   semanticWriteSiteReadsFirst,
   unwrapJavaScriptExpression,
@@ -935,7 +936,7 @@ const moduleFunctionFirstRead = (
     const classicScript =
       t.isProgram(program) && javaScriptRuntimeContext(program) === "unknown";
     const globalReceivers = new WeakMap<t.Node, boolean | null>();
-    type PrototypeOwner = "Array" | "Function";
+    type PrototypeOwner = "Object" | "Array" | "String" | "Function";
     const receiverPrototypeOwners = new WeakMap<
       t.Node,
       ReadonlySet<PrototypeOwner>
@@ -996,6 +997,9 @@ const moduleFunctionFirstRead = (
         const node = unwrapJavaScriptExpression(current).node;
         if (t.isArrayExpression(node)) fact.owners.add("Array");
         else if (t.isFunction(node)) fact.owners.add("Function");
+        else if (t.isObjectExpression(node)) fact.owners.add("Object");
+        else if (t.isStringLiteral(node) || t.isTemplateLiteral(node))
+          fact.owners.add("String");
         if (node !== current) fact.dependencies.push(node);
         else if (t.isThisExpression(node)) fact.global = true;
         else if (t.isIdentifier(node)) {
@@ -1146,11 +1150,8 @@ const moduleFunctionFirstRead = (
       return receiverBounds.get(root) ?? null;
     };
     // A single owner-specific bound serves every literal read in this body.
-    const prototypeBounds = new Map<
-      "Array" | "Function",
-      ReceiverBound | null
-    >();
-    for (const owner of ["Array", "Function"] as const) {
+    const prototypeBounds = new Map<PrototypeOwner, ReceiverBound | null>();
+    for (const owner of ["Object", "Array", "String", "Function"] as const) {
       let bound: ReceiverBound | null = { index: Infinity, ambiguous: false };
       for (const effect of state?.prototypeMutationSites ?? []) {
         if (effect.owner !== owner && effect.owner !== "Object") continue;
@@ -1359,10 +1360,40 @@ const moduleFunctionFirstRead = (
             (t.isMemberExpression(node) || t.isOptionalMemberExpression(node))
           ) {
             const receiver = unwrapJavaScriptExpression(node.object).node;
+            const selected = semanticStaticPropertyKey(
+              node.property,
+              node.computed,
+            );
+            const ownMethod =
+              selected !== null &&
+              (staticObjectOwnMethod(receiver, selected) ||
+                (state !== undefined &&
+                  t.isIdentifier(receiver) &&
+                  (() => {
+                    const binding = resolveSemanticBindingState(
+                      state,
+                      receiver,
+                      receiver.name,
+                    );
+                    if (
+                      binding === undefined ||
+                      receiverBound(binding)?.index !== Infinity
+                    )
+                      return false;
+                    return (
+                      binding.initializers.length === 1 &&
+                      staticObjectOwnMethod(
+                        unwrapJavaScriptExpression(
+                          binding.initializers[0]!.node,
+                        ).node,
+                        selected,
+                      )
+                    );
+                  })()));
             // Classic scripts expose hoisted functions through the global object.
             // Property names are not referenced identifiers; keep their read timing too.
-            if (receiverAtRead(receiver, node) !== false) {
-              name = semanticStaticPropertyKey(node.property, node.computed);
+            if (!ownMethod && receiverAtRead(receiver, node) !== false) {
+              name = selected;
               if (name === null) {
                 if (unknownPropertyRead !== null)
                   unknownPropertyRead =

@@ -110,6 +110,7 @@ import {
 import { semanticResourceLimitReason } from "./javascriptSemanticResourceLimits.js";
 import {
   javaScriptRuntimeContext,
+  javaScriptTopLevelThisMayBeGlobal,
   javaScriptProgramStrictness,
   parseJavaScriptSource,
   type ParsedJavaScriptSource,
@@ -1223,7 +1224,9 @@ function* collectDefinitionsSteps(
       bindInnerDeclaration(node, parent, scope, state);
       if (
         t.isIdentifier(node, { name: "Reflect" }) ||
-        t.isStringLiteral(node, { value: "Reflect" })
+        t.isStringLiteral(node, { value: "Reflect" }) ||
+        (t.isTemplateLiteral(node) &&
+          semanticStaticPropertyKey(node, true) === "Reflect")
       )
         mayReferenceReflect = true;
       // Aliases and optional/call/apply/bind forms share the intrinsic owner;
@@ -1440,13 +1443,15 @@ function* collectDefinitionsSteps(
     )
       continue;
     const [receiver, key] = invocation.arguments ?? [];
-    if (!t.isExpression(receiver)) continue;
+    if (invocation.arguments !== undefined && !t.isExpression(receiver))
+      continue;
     const selected =
       t.isStringLiteral(key) || t.isNumericLiteral(key) ? key.value : null;
     state.implicitPropertyReads.set(node, [
       {
-        node: receiver,
-        projection: [selected],
+        node: receiver ?? node,
+        projection:
+          invocation.arguments === undefined ? [null, selected] : [selected],
         mutation: node,
         lookup: "prototype",
       },
@@ -1488,13 +1493,26 @@ function* indexPrototypeUncertaintySteps(
       if (
         (!t.isMemberExpression(value) &&
           !t.isOptionalMemberExpression(value)) ||
-        !t.isIdentifier(unwrapJavaScriptExpression(value.object).node)
+        (!t.isIdentifier(unwrapJavaScriptExpression(value.object).node) &&
+          !t.isThisExpression(unwrapJavaScriptExpression(value.object).node))
       )
         return undefined;
       const key = semanticStaticPropertyKey(value.property, value.computed);
       if (!prototypeOwners.some((owner) => owner === key)) return undefined;
     }
     for (const owner of prototypeOwners) {
+      if (
+        (t.isMemberExpression(value) || t.isOptionalMemberExpression(value)) &&
+        t.isThisExpression(unwrapJavaScriptExpression(value.object).node) &&
+        semanticStaticPropertyKey(value.property, value.computed) === owner &&
+        javaScriptTopLevelThisMayBeGlobal(
+          unwrapJavaScriptExpression(value.object).node as t.ThisExpression,
+          state.program,
+          state.parentsByNode,
+        ) &&
+        !state.ambientWrites.covers(["global", owner])
+      )
+        return owner;
       if (isUnmodifiedGlobalReference(value, state, owner)) return owner;
       if (
         t.isIdentifier(value, { name: owner }) &&
