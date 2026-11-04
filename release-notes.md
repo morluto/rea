@@ -112,6 +112,7 @@
 * **native:** label binary overview counts with their inventory scope ([#8338](https://github.com/morluto/rea/issues/8338)) ([d2518a1](https://github.com/morluto/rea/commit/d2518a19f88509d691ea78f9265680bbf690ff18))
 * **native:** make function matching allowance configurable ([#7159](https://github.com/morluto/rea/issues/7159)) ([b8ce3c7](https://github.com/morluto/rea/commit/b8ce3c74cd42a74893f890697ef9cb26c21a91a8))
 * **native:** open extension, framework, XPC and plug-in bundle directories ([#8117](https://github.com/morluto/rea/issues/8117)) ([37342ec](https://github.com/morluto/rea/commit/37342ecde02ae16db6aa57c3323d1a7367de1b0d))
+* **native:** page retained feature traces ([#8585](https://github.com/morluto/rea/issues/8585)) ([f1622fc](https://github.com/morluto/rea/commit/f1622fc8b4e4de1e32189baab78007a9585f3430))
 * **native:** page retained load-image observations ([#7134](https://github.com/morluto/rea/issues/7134)) ([f69c52a](https://github.com/morluto/rea/commit/f69c52a1cf3940ed1999fcc0859a75dbb913d684))
 * **native:** page retained observations and source context ([#7146](https://github.com/morluto/rea/issues/7146)) ([4c8647a](https://github.com/morluto/rea/commit/4c8647a706694665c881e5d8e3d50bfe70239db7))
 * **native:** retain decompile export source facts ([#8805](https://github.com/morluto/rea/issues/8805)) ([b970238](https://github.com/morluto/rea/commit/b97023809f7990e798fa27fc1f20a8c824dd9a30))
