@@ -8,6 +8,7 @@ import { inspectJadxProvider } from "./android/JadxDoctor.js";
 import { inspectSystemGhidraProvider } from "./ghidra/GhidraDoctor.js";
 import { inspectIdaRegistration } from "./ida/IdaDoctor.js";
 import { inspectKunaProvider } from "./kuna/KunaDoctor.js";
+import { inspectUnicornProvider } from "./unicorn/UnicornDoctor.js";
 import { readIdaConfiguration } from "./ida/IdaConfiguration.js";
 import { selectLinuxPrivateDisplayStrategy } from "./hopper/LinuxPrivateDisplayProbe.js";
 import { ok } from "./domain/result.js";
@@ -96,6 +97,14 @@ export const createSystemDoctorHost = (
         resourceScope,
         signal: inspectionSignal,
       }),
+      await inspectUnicornProvider(
+        environment,
+        process.platform,
+        process.arch,
+        {
+          signal: inspectionSignal,
+        },
+      ),
     ],
     linuxDemoRuntimeCheck: (resourceScope, inspectionSignal) =>
       inspectLinuxHopperDemoRuntime(

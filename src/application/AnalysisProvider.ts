@@ -8,14 +8,17 @@ import type { EnhancedToolName } from "../contracts/enhancedInputs.js";
 import type { NativeToolName } from "../contracts/native/nativeToolContracts.js";
 import type { ArtifactAnalysisOperation } from "../contracts/artifactToolContracts.js";
 import type { ManagedToolName } from "../contracts/managed/managedToolContracts.js";
+import type { UnicornToolName } from "../contracts/unicorn/unicornToolContracts.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { Result } from "../domain/result.js";
 import type {
   Evidence,
+  EvidenceAuthority,
   EvidenceLocation,
   EvidenceSubjectTarget,
+  ExecutionEnvironment,
 } from "../domain/evidence.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
 import type { ProgressReporter } from "./ProgressReporter.js";
@@ -48,6 +51,7 @@ export type AnalysisOperation =
   | NativeToolName
   | ArtifactAnalysisOperation
   | ManagedToolName
+  | UnicornToolName
   // Provider aggregate and composed public overview have distinct Evidence and
   // snapshot identities. This capability does not add a CLI/MCP tool.
   | "read_binary_inventory_summary"
@@ -79,6 +83,9 @@ interface CreateAnalysisExecutionOptions {
   readonly locations?: readonly EvidenceLocation[];
   readonly sourceEvidence?: readonly Evidence[];
   readonly subject?: EvidenceSubjectTarget | null;
+  readonly authority?: EvidenceAuthority;
+  readonly environment?: ExecutionEnvironment | null;
+  readonly subjectUnavailableReason?: string;
 }
 
 /**
@@ -132,6 +139,15 @@ export function createAnalysisExecution(
       ? {}
       : { sourceEvidence: Object.freeze([...options.sourceEvidence]) }),
     ...(options.subject === undefined ? {} : { subject: options.subject }),
+    ...(options.authority === undefined
+      ? {}
+      : { authority: options.authority }),
+    ...(options.environment === undefined
+      ? {}
+      : { environment: options.environment }),
+    ...(options.subjectUnavailableReason === undefined
+      ? {}
+      : { subjectUnavailableReason: options.subjectUnavailableReason }),
   };
 }
 

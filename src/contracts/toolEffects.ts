@@ -614,6 +614,9 @@ export const TOOL_EFFECTS: Readonly<Record<string, ToolEffects>> = {
     executesForeignCode: true,
     idempotent: false,
   }),
+  // Emulation runs caller-declared bytes inside Unicorn, never on the host,
+  // so executesForeignCode stays false; the bridge subprocess is launched.
+  emulate_function: nativeEvidence,
   inspect_macho: nativeEvidence,
   inspect_signature: { ...nativeEvidence, writesFilesystem: true },
   inspect_plist: nativeEvidence,

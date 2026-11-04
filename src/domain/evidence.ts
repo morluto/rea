@@ -185,8 +185,8 @@ export const rebindEvidenceSubjectTargetPath = (
     ? { ...subject, path: target.path }
     : subject;
 
-type EvidenceAuthority = z.infer<typeof evidenceAuthoritySchema>;
-type ExecutionEnvironment = z.infer<typeof executionEnvironmentSchema>;
+export type EvidenceAuthority = z.infer<typeof evidenceAuthoritySchema>;
+export type ExecutionEnvironment = z.infer<typeof executionEnvironmentSchema>;
 
 export type EvidenceProvider = Readonly<z.output<typeof providerSchema>>;
 

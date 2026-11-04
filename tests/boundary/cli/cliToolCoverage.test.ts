@@ -96,6 +96,8 @@ const MCP_TOOLS_WITHOUT_DEDICATED_CLI = Object.freeze([
   "unload_frida_script",
   "frida_session_status",
   "close_frida_session",
+  // Phase 1 exposes emulation over MCP only; a dedicated CLI arrives with later work.
+  "emulate_function",
 ]);
 
 describe("CLI canonical tool coverage", () => {

@@ -61,6 +61,7 @@ import type { Logger } from "pino";
 import { registerApplicationTools } from "./registerApplicationTools.js";
 import { registerArtifactTools } from "./registerArtifactTools.js";
 import { registerNativeTools } from "./registerNativeTools.js";
+import { registerUnicornTools } from "./registerUnicornTools.js";
 import { registerBrowserScenarioTool } from "./registerBrowserScenarioTool.js";
 import { registerBrowserTools } from "./registerBrowserTools.js";
 import { registerWebScriptTool } from "./registerWebScriptTool.js";
@@ -376,6 +377,7 @@ export const createServer = (
       }),
     native: () => {
       registerNativeTools(server, { ...evidenceOptions, evidenceById });
+      registerUnicornTools(server, { ...evidenceOptions, evidenceById });
       registerReverseEngineeringTools(
         server,
         reverseEngineering,

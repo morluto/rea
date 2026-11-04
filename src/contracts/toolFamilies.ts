@@ -45,6 +45,7 @@ import { OFFICIAL_TOOL_CONTRACTS } from "./officialToolContracts.js";
 import { ENHANCED_TOOL_CONTRACTS } from "./enhancedToolContracts.js";
 import { SESSION_TOOL_CONTRACTS } from "./sessionToolContracts.js";
 import { FRIDA_TOOL_CONTRACTS } from "./fridaToolContracts.js";
+import { UNICORN_TOOL_CONTRACTS } from "./unicorn/unicornToolContracts.js";
 import { TOOL_CONTRACTS } from "./toolContracts.js";
 import type { ToolFamilyId } from "./toolFamilyIds.js";
 
@@ -93,6 +94,7 @@ export const TOOL_CONTRACT_GROUPS = {
   SESSION_TOOL_CONTRACTS,
   SIGNAL_TOOL_CONTRACTS,
   SQLITE_TOOL_CONTRACTS,
+  UNICORN_TOOL_CONTRACTS,
   WASM_TOOL_CONTRACTS,
   WEB_NETWORK_CAPTURE_TOOL_CONTRACTS,
   WEB_RUNTIME_TOOL_CONTRACTS,
@@ -134,6 +136,7 @@ export const TOOL_FAMILY_DEFINITIONS = [
       ...TOOL_CONTRACT_GROUPS.REVERSE_ENGINEERING_TOOL_CONTRACTS,
       ...TOOL_CONTRACT_GROUPS.GDB_TOOL_CONTRACTS,
       ...TOOL_CONTRACT_GROUPS.RIZIN_DEBUG_TOOL_CONTRACTS,
+      ...TOOL_CONTRACT_GROUPS.UNICORN_TOOL_CONTRACTS,
     ],
   },
   {

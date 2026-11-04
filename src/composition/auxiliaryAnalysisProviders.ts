@@ -9,12 +9,16 @@ import {
 import { managedStaticCapabilities } from "../dotnet/ManagedStaticProviderMetadata.js";
 import { nativeMacOSCapabilities } from "../native/NativeMacOSProviderMetadata.js";
 import { NATIVE_MACOS_PROVIDER_IDENTITY } from "../native/NativeMacosProviderIdentity.js";
+import {
+  UNICORN_PROVIDER_IDENTITY,
+  unicornCapabilities,
+} from "../unicorn/UnicornProviderMetadata.js";
 
 type AuxiliaryProviderDeclaration = ConstructorParameters<
   typeof LazyAnalysisProvider
 >[0];
 
-/** Wire the three existing auxiliary AnalysisProvider implementations lazily. */
+/** Wire the auxiliary AnalysisProvider implementations lazily. */
 export const auxiliaryAnalysisProviderDeclarations = (
   selectedEnvironment: Readonly<NodeJS.ProcessEnv>,
   platform: NodeJS.Platform = process.platform,
@@ -47,6 +51,15 @@ export const auxiliaryAnalysisProviderDeclarations = (
         const { ManagedStaticProvider } =
           await import("../dotnet/ManagedStaticProvider.js");
         return new ManagedStaticProvider();
+      },
+    },
+    {
+      identity: UNICORN_PROVIDER_IDENTITY,
+      capabilities: unicornCapabilities(environment, platform),
+      load: async () => {
+        const { UnicornProvider } =
+          await import("../unicorn/UnicornProvider.js");
+        return new UnicornProvider(environment, platform);
       },
     },
   ];

@@ -1,10 +1,12 @@
 import {
   createEvidence,
   type Evidence,
+  type EvidenceAuthority,
   type EvidenceCreationOptions,
   type EvidenceLocation,
   type EvidenceProvider,
   type EvidenceSubjectTarget,
+  type ExecutionEnvironment,
 } from "./evidence.js";
 import type { AnalysisProfileCommitment } from "./analysisProfile.js";
 import type { JsonValue } from "./jsonValue.js";
@@ -27,6 +29,16 @@ export interface AnalysisObservation {
    * its caller. Explicit null means the observation has no file subject.
    */
   readonly subject?: EvidenceSubjectTarget | null;
+  /**
+   * Source authority for the Evidence record. Defaults to shipped-artifact
+   * when omitted; a replay-style provider (emulation, controlled execution)
+   * passes controlled-replay so the record never claims artifact provenance.
+   */
+  readonly authority?: EvidenceAuthority;
+  /** Execution environment descriptor; null means no environment is claimed. */
+  readonly environment?: ExecutionEnvironment | null;
+  /** Reason the subject identity is unavailable, when no target is supplied. */
+  readonly subjectUnavailableReason?: string;
 }
 
 /** Commit identical facts on success and when retaining a completed observation after cancellation. */
@@ -59,5 +71,16 @@ export const createAnalysisExecutionEvidence = (
         execution.sourceEvidence?.map(({ evidence_id }) => evidence_id) ?? [],
       confidence,
     },
-    options,
+    {
+      ...options,
+      ...(execution.authority === undefined
+        ? {}
+        : { authority: execution.authority }),
+      ...(execution.environment === undefined
+        ? {}
+        : { environment: execution.environment }),
+      ...(execution.subjectUnavailableReason === undefined
+        ? {}
+        : { subjectUnavailableReason: execution.subjectUnavailableReason }),
+    },
   );

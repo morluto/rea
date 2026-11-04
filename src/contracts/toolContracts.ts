@@ -43,6 +43,7 @@ import { GDB_TOOL_CONTRACTS } from "./gdbToolContracts.js";
 import { RIZIN_DEBUG_TOOL_CONTRACTS } from "./rizinDebugToolContracts.js";
 import { FRIDA_TOOL_CONTRACTS } from "./fridaToolContracts.js";
 import { ENVIRONMENT_TOOL_CONTRACTS } from "./environmentToolContracts.js";
+import { UNICORN_TOOL_CONTRACTS } from "./unicorn/unicornToolContracts.js";
 
 /** Complete ordered public inventory used by registration and verification. */
 export const TOOL_CONTRACTS = [
@@ -91,6 +92,7 @@ export const TOOL_CONTRACTS = [
   ...GDB_TOOL_CONTRACTS,
   ...RIZIN_DEBUG_TOOL_CONTRACTS,
   ...FRIDA_TOOL_CONTRACTS,
+  ...UNICORN_TOOL_CONTRACTS,
 ] as const;
 
 /** Resolve a public contract by name while retaining its exact schema types. */
