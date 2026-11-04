@@ -7,6 +7,8 @@
 
 ### ⚠ BREAKING CHANGES
 
+* **mcp:** distinguish unavailable batch pseudocode ([#8737](https://github.com/morluto/rea/issues/8737))
+* Snapshot-shaped bundle import failures use invalid_request rather than evidence_integrity_mismatch.
 * **browser:** hosts where Chromium cannot create its sandbox, such as root users and Linux containers without user namespaces or a setuid sandbox, now fail to launch until REA_BROWSER_NO_SANDBOX=true is set.
 * **analysis-view:** distinguish unavailable native collections ([#8291](https://github.com/morluto/rea/issues/8291))
 * **objdump:** preserve unknown executable identity ([#8824](https://github.com/morluto/rea/issues/8824))
@@ -452,6 +454,7 @@
 * **ghidra:** update the host no-return probe for the current bridge ([#8462](https://github.com/morluto/rea/issues/8462)) ([1df7ac9](https://github.com/morluto/rea/commit/1df7ac9320cb8cfbabb5fa3b2ca02f3a86b2c376))
 * **gpu:** preserve omitted metadata in projected views ([dfe6aaf](https://github.com/morluto/rea/commit/dfe6aaf6dafc34d4132508285b6e166cf95cfa33))
 * **gpu:** retain AMD target declaration evidence ([b2df588](https://github.com/morluto/rea/commit/b2df588b4a7ec798a7a92d3c466f570d582eaeed))
+* guide snapshot inputs to the restore workflow ([#8867](https://github.com/morluto/rea/issues/8867)) ([30228c9](https://github.com/morluto/rea/commit/30228c9a5f35f4f16fec15d44a49de936630a3e1))
 * **har:** accept Chrome DevTools bracketed IPv6 server addresses ([#7225](https://github.com/morluto/rea/issues/7225)) ([5ed283d](https://github.com/morluto/rea/commit/5ed283d1682ec2326ba2132168df590dcd3e6868))
 * **harmony:** classify exact manifest names once ([#7206](https://github.com/morluto/rea/issues/7206)) ([7d6bccb](https://github.com/morluto/rea/commit/7d6bccb86d1bc8674ee9e1cb3c05960487143732))
 * **harmony:** exclude symlinks from unavailable files ([#7886](https://github.com/morluto/rea/issues/7886)) ([553f195](https://github.com/morluto/rea/commit/553f19590f55313e46fd859a7a9b55ff2d324f8f))
@@ -578,6 +581,7 @@
 * **mcp:** advertise standard route path schemas ([76eecf7](https://github.com/morluto/rea/commit/76eecf7fa175023b7315f40bc7582baea401c2e2))
 * **mcp:** align retained view handoff guidance ([#7926](https://github.com/morluto/rea/issues/7926)) ([31c028f](https://github.com/morluto/rea/commit/31c028f4962e1f2a3a6fdd45406b5010ed5cf01d))
 * **mcp:** bound validation work before tool dispatch ([#7905](https://github.com/morluto/rea/issues/7905)) ([f60e42a](https://github.com/morluto/rea/commit/f60e42a9aece5119719e554715b012b5630735c0))
+* **mcp:** distinguish unavailable batch pseudocode ([#8737](https://github.com/morluto/rea/issues/8737)) ([d896ab7](https://github.com/morluto/rea/commit/d896ab7bd78331efa15e35337c1f8eff45a21623))
 * **mcp:** distinguish validation from connection loss ([#7761](https://github.com/morluto/rea/issues/7761)) ([df7119a](https://github.com/morluto/rea/commit/df7119aeede60f9f81a74f29d6606c49adb79d8e))
 * **mcp:** fit every advertised input schema within the 64 KiB client limit ([#7119](https://github.com/morluto/rea/issues/7119)) ([7336a56](https://github.com/morluto/rea/commit/7336a566ace2f9d1412f78b0c56c2651b9b169cd))
 * **mcp:** guide address context recovery ([#8766](https://github.com/morluto/rea/issues/8766)) ([5a1f754](https://github.com/morluto/rea/commit/5a1f75461ac843f32423afd49c9e8b69a116b879))
