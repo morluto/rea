@@ -1,6 +1,8 @@
 import { readdir } from "node:fs/promises";
 import { isAbsolute } from "node:path";
 
+import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import { bindArtifactFileCleanup } from "../../artifacts/ArtifactFileOperation.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisCancelledError,
@@ -180,6 +182,17 @@ export const desktopOperationFailure = (
   label: string,
 ): AnalysisError => {
   if (cause instanceof AnalysisError) return cause;
+  // A resource that could not be released stays reported, with its owner.
+  if (cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined) {
+    const error = new ProviderAdapterError(DESKTOP_PROVIDER.id, operation, {
+      cause,
+      cleanup: cause.cleanup,
+      diagnostics: { phase: operation },
+      userMessage: `${label} could not release a resource it used: ${describeValidationFailure(cause)}`,
+    });
+    bindArtifactFileCleanup(cause, error);
+    return error;
+  }
   if (signal?.aborted === true)
     return new AnalysisCancelledError(operation, { cause: signal.reason });
   return new ProviderAdapterError(DESKTOP_PROVIDER.id, operation, {

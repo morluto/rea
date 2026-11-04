@@ -108,7 +108,7 @@ interface XmlBudget {
   truncated: boolean;
 }
 
-/** Whitespace-only text is formatting unless `xml:space="preserve"` applies. */
+/** Whether `xml:space="preserve"` applies to a node. */
 const preservesSpace = (node: Node): boolean => {
   for (
     let current: Node | null = node;
@@ -120,6 +120,19 @@ const preservesSpace = (node: Node): boolean => {
       if (space === "preserve") return true;
       if (space === "default") return false;
     }
+  return false;
+};
+
+/** Whitespace-only text between elements is formatting; a leaf's text is its value. */
+const isFormatting = (node: Node): boolean => {
+  if ((node.nodeValue ?? "").trim().length > 0 || preservesSpace(node))
+    return false;
+  for (
+    let sibling = node.parentNode?.firstChild ?? null;
+    sibling !== null;
+    sibling = sibling.nextSibling
+  )
+    if (sibling.nodeType === sibling.ELEMENT_NODE) return true;
   return false;
 };
 
@@ -137,8 +150,7 @@ const xmlNode = (
     node.nodeType === node.TEXT_NODE ||
     node.nodeType === node.CDATA_SECTION_NODE
   ) {
-    const text = node.nodeValue ?? "";
-    return text.trim().length === 0 && !preservesSpace(node) ? undefined : text;
+    return isFormatting(node) ? undefined : (node.nodeValue ?? "");
   }
   if (node.nodeType !== node.ELEMENT_NODE) return undefined;
   const element = node as Element;

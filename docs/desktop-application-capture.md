@@ -124,7 +124,9 @@ running.
 
 **State.** The walked roots (the home directory plus any content root
 outside it), the content roots (state directories, `--state-path` values and
-absolute `--argument` values), and the checkpoints in order: `baseline` before
+absolute `--argument` values), the state directories as walked (their physical
+spelling, which differs from the inventory's when one is a symlink), and the
+checkpoints in order: `baseline` before
 launch, each requested checkpoint, `stop` or `time-limit`, and `exit` after the
 application has gone. Each checkpoint records how many paths its walk saw,
 whether it was truncated, which paths were created, modified, deleted or

@@ -1,5 +1,4 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
@@ -34,6 +33,7 @@ import { safeParseEvidence } from "../../domain/evidenceValidation.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
 import { safeParseJson } from "../../domain/safeJson.js";
 import { describeValidationFailure } from "../../domain/validationFailure.js";
+import { PrivateRuntimeRoot } from "../../process/PrivateRuntimeRoot.js";
 import { readJsonFile } from "../JsonFiles.js";
 import {
   withRetainedContent,
@@ -143,23 +143,41 @@ const dconfView = (text: string, names: ReadonlySet<string>) => {
   return { groups: application, other_groups: others };
 };
 
-/** Run a reader on verified bytes written to a private directory. */
+/**
+ * Run a reader on verified bytes written to a private directory. A failed
+ * removal keeps the directory's owner and is reported with the read's outcome.
+ */
 const withStaged = async <Value>(
   files: readonly { readonly name: string; readonly bytes: Buffer }[],
   read: (paths: readonly string[]) => Promise<Value>,
 ): Promise<Value> => {
-  const directory = await mkdtemp(join(tmpdir(), "rea-desktop-state-"));
+  const root = await PrivateRuntimeRoot.create({
+    prefix: "rea-desktop-state-",
+  });
+  let outcome:
+    | { readonly kind: "completed"; readonly value: Value }
+    | { readonly kind: "failed"; readonly cause: unknown };
   try {
     const paths: string[] = [];
     for (const file of files) {
-      const path = join(directory, file.name);
+      const path = join(root.path, file.name);
       await writeFile(path, file.bytes, { mode: 0o600, flag: "wx" });
       paths.push(path);
     }
-    return await read(paths);
-  } finally {
-    await rm(directory, { recursive: true, force: true });
+    outcome = { kind: "completed", value: await read(paths) };
+  } catch (cause: unknown) {
+    outcome = { kind: "failed", cause };
   }
+  const resources = new ArtifactResourceScope();
+  const removed = await resources.release({
+    kind: "private-runtime-root",
+    resource: root.path,
+    root,
+  });
+  if (removed.kind === "failed")
+    throw resources.cleanupFailure(outcome, [removed]);
+  if (outcome.kind === "failed") throw outcome.cause;
+  return outcome.value;
 };
 
 type ViewOutcome =

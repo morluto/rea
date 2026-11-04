@@ -121,6 +121,7 @@ export const capture = (): DesktopApplicationCapture => ({
   state: {
     roots: [HOME],
     content_roots: [`${HOME}/.config/notes`, `${HOME}/.local/share/notes`],
+    state_directories: [`${HOME}/.config/notes`, `${HOME}/.local/share/notes`],
     checkpoints: [
       checkpoint(
         "baseline",
