@@ -82,6 +82,7 @@ it.each([
         }),
         targetAtCompletion: null,
         providerIdAtCompletion: null,
+        selection: { kind: "none" },
       };
     });
     let closeFails = failedClose;

@@ -70,6 +70,33 @@ it("parses each network outcome without contradictory status or failure data", (
   ).toBe(false);
 });
 
+it("accepts three-digit HTTP response status codes including statuses above 599", () => {
+  expect(
+    browserScenarioEventSchema.safeParse({
+      ...networkEvent,
+      kind: "response",
+      status: 999,
+      failure: null,
+    }).success,
+  ).toBe(true);
+  expect(
+    browserScenarioEventSchema.safeParse({
+      ...networkEvent,
+      kind: "response",
+      status: 1000,
+      failure: null,
+    }).success,
+  ).toBe(false);
+  expect(
+    browserScenarioEventSchema.safeParse({
+      ...networkEvent,
+      kind: "response",
+      status: 99,
+      failure: null,
+    }).success,
+  ).toBe(false);
+});
+
 it("keeps WebSocket payload representation tied to its payload type", () => {
   const frame = {
     sequence: 1,

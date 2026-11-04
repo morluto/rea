@@ -135,6 +135,7 @@ it.each(["close", "switch", "open after close"] as const)(
             error: cleanupError,
             targetAtCompletion: null,
             providerIdAtCompletion: null,
+            selection: { kind: "none" },
           }
         : err(cleanupError),
     );
@@ -166,6 +167,7 @@ it.each(["close", "switch", "open after close"] as const)(
             error: cleanupError,
             targetAtCompletion: null,
             providerIdAtCompletion: null,
+            selection: { kind: "none" },
           },
     );
     expect(await session.status()).toMatchObject({

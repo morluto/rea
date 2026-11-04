@@ -31,12 +31,23 @@ import type {
 import type { SavedAnalysisSnapshot } from "../../domain/savedAnalysisSnapshot.js";
 export type { SavedAnalysisSnapshot } from "../../domain/savedAnalysisSnapshot.js";
 
-/** A failure retains its original error and the target selection when the attempt settled. */
-export type BinarySessionOpenResult =
+/** Selection observed at the end of one serialized open attempt. */
+export type OpenSelectionReceipt =
+  | { readonly kind: "binary"; readonly path: string; readonly sha256: string }
+  | {
+      readonly kind: "resources";
+      readonly path: string;
+      readonly caller_path: string;
+    }
+  | { readonly kind: "none" };
+
+/** A failure retains its original error and both selection receipts. */
+export type BinaryOpenResult =
   | { readonly ok: true; readonly value: BinaryTarget }
   | {
       readonly ok: false;
       readonly error: AnalysisError;
+      readonly selection: OpenSelectionReceipt;
       readonly targetAtCompletion: ReturnType<
         typeof binaryTargetSummary
       > | null;
@@ -85,7 +96,7 @@ export interface BinarySessionPort
       readonly loadSnapshot?: AnalysisSnapshotLoader;
       readonly providerId?: AnalysisProviderSelector;
     },
-  ): Promise<BinarySessionOpenResult>;
+  ): Promise<BinaryOpenResult>;
   /** Open a resource-only app root without selecting or inventing an executable target. */
   openBundleResources(
     path: string,

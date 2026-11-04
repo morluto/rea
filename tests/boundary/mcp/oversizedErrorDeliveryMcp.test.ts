@@ -191,6 +191,11 @@ it("retains an oversized failed-open receipt with its original error", async () 
         ]),
         targetAtCompletion: selected,
         providerIdAtCompletion: "ghidra",
+        selection: {
+          kind: "binary",
+          path: selected.path,
+          sha256: selected.sha256,
+        },
       },
       false,
     ),
