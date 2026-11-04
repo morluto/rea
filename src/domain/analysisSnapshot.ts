@@ -190,6 +190,27 @@ export type AnalysisSnapshotWorkflowEntry = z.infer<typeof workflowEntrySchema>;
 export type AnalysisSnapshotTarget = z.infer<typeof targetSchema>;
 export type AnalysisSnapshotBinding = z.infer<typeof bindingSchema>;
 
+/** Recognize an already-parsed JSON file envelope; this does not validate or authenticate a snapshot. */
+export const resemblesAnalysisSnapshot = (value: unknown): boolean => {
+  if (typeof value !== "object" || value === null || Array.isArray(value))
+    return false;
+  const record = value as Record<string, unknown>;
+  const objectMember = (key: string) =>
+    Object.hasOwn(record, key) &&
+    typeof record[key] === "object" &&
+    record[key] !== null &&
+    !Array.isArray(record[key]);
+  return (
+    objectMember("target") &&
+    objectMember("binding") &&
+    objectMember("evidence_bundle") &&
+    Object.hasOwn(record, "entries") &&
+    Array.isArray(record.entries) &&
+    Object.hasOwn(record, "workflow_entries") &&
+    Array.isArray(record.workflow_entries)
+  );
+};
+
 // These handles only represent entries parsed in this realm. File readers can
 // release their payloads while retaining an authenticated comparison operand.
 const preparedEntryBrand = Symbol("prepared-snapshot-entry");

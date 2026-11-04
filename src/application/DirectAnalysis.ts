@@ -556,6 +556,7 @@ const runAnalysis = async (
         result: evidence.normalized_result,
         evidenceId: evidence.evidence_id,
         recordUnknown: (unknown) => session.recordUnknown(unknown),
+        evidenceRetained: true,
       });
       if (!unknowns.ok)
         return err(unknowns.error.retainPartialObservation(evidence));

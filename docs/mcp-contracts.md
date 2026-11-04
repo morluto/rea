@@ -409,6 +409,19 @@ Duplicate creation is a nonretryable `invalid_request`; use the existing head
 or update it with its current `expected_revision`. A stale update remains a
 retryable `revision_conflict`.
 
+If automatic question publication fails after a workflow completes,
+`details.workflow_unknown_publication` identifies the Evidence and states
+whether its retention was confirmed. `created_questions` and
+`existing_questions` count processed question occurrences; duplicate questions
+may share an Unknown identity. `total_questions` counts string questions, and
+`next_question_index` is the zero-based position in the workflow's original
+`residual_unknowns` array where publication stopped. It is not a resume token.
+For a retained record on the same MCP connection, retrieve the Evidence by ID
+with `get_evidence_bundle` and inspect committed heads with `list_unknowns`.
+Unprocessed questions remain in the completed Evidence; they were not checked
+by this attempt and may already exist from earlier work. A one-shot invocation identifies session-only retention
+as `invocation-only` and carries the completed Evidence in its failure when available.
+
 When `record_unknown` or `update_unknown` commits but its complete reply exceeds
 the response budget, `details.reported_limits.committed_unknown` identifies the
 exact unknown ID, committed revision and mutation Evidence IDs. Its retained
@@ -681,12 +694,19 @@ refuses the summary before analysis. Further views use the returned
 `parent_evidence_id` through `inspect_analysis_view`, or a saved Evidence file or
 portable bundle, and never repeat decompilation.
 
+A null provider observation produces `status: "unavailable"` and
+`reason: "no_pseudocode"`; item limitations retain any provider explanation.
+This does not establish why pseudocode is absent or whether a retry would help.
+Operation failures and malformed non-null output remain `status: "error"`.
+The `failed` count includes both unavailable and error items. Existing retained
+records keep their original item statuses and error details.
+
 A `batch-decompile` view selects one `collection` and repeats the batch counts
 and provider identities:
 
 - `items`: rows in retained order with their original `index`, so duplicate
   selectors stay distinct. A row keeps the selector in `address`, its `procedure`
-  identity and `status`, plus `pseudocode_code_units` or its exact `error` and
+  identity and `status`, plus `pseudocode_code_units`, an unavailable `reason`, or its exact `error` and
   `limitations`. `where.indices`, `where.addresses`, `where.procedure_addresses`
   and `where.statuses` filter exactly and combine; an item with unknown identity
   never matches `procedure_addresses`. Omitted filters select all, and empty
@@ -695,11 +715,11 @@ and provider identities:
 - `pseudocode`: one `index`'s text in UTF-16 code-unit pages. `offset` and `limit`
   default to 0 and 16,384, and `coverage` measures that body. An offset inside a
   surrogate pair is refused, and a limit ending inside one stops before it. An
-  error item has no text and is refused with a pointer to `items`.
+  unavailable or error item has no text and is refused with a pointer to `items`.
 
 Page `coverage` counts the selection only: exhausting it establishes nothing
 about functions outside the batch. Evidence `limitations` aggregate every item's
-provider observations and are not attributed to one successful item; only error
+provider observations and are not attributed to one successful item; unavailable and error
 items keep their own. A page over the response budget offers a smaller selection
 from the same `source`: fewer rows, or one body's `pseudocode` pages when a single
 row does not fit. An inline source offers none, because the record cannot be
