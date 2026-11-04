@@ -431,6 +431,7 @@
 * **gdb:** retain rejected shutdowns for retry ([f89b03e](https://github.com/morluto/rea/commit/f89b03e738fe94f2bea6927c84e05871293707ea))
 * **ghidra:** admit newer 12.x releases as compatible builds ([#6924](https://github.com/morluto/rea/issues/6924)) ([0d1a454](https://github.com/morluto/rea/commit/0d1a454e25db825567782e461da21530bad4b158))
 * **ghidra:** assemble the Swift verifier's unresolved-jump fixture before linking ([#8325](https://github.com/morluto/rea/issues/8325)) ([2d5dec2](https://github.com/morluto/rea/commit/2d5dec26c31662764c9adfe3ff996174901b8d49)), closes [#8188](https://github.com/morluto/rea/issues/8188)
+* **ghidra:** bind existing MIPS projects to target metadata ([#8605](https://github.com/morluto/rea/issues/8605)) ([982e750](https://github.com/morluto/rea/commit/982e750a7079dd7bad41a1cb2919b5438fdb2d7f))
 * **ghidra:** compare the DOS verifier's CLI window before its own rename ([#8339](https://github.com/morluto/rea/issues/8339)) ([d54a466](https://github.com/morluto/rea/commit/d54a4661da20382ad8456564a08569fdd24131c5)), closes [#8189](https://github.com/morluto/rea/issues/8189)
 * **ghidra:** decide batch names independently of request order ([#8306](https://github.com/morluto/rea/issues/8306)) ([7c9ed94](https://github.com/morluto/rea/commit/7c9ed94259fef560fdbec0c9b640348c5d54c391))
 * **ghidra:** discover installed versioned Homebrew JDKs ([#8853](https://github.com/morluto/rea/issues/8853)) ([1998e65](https://github.com/morluto/rea/commit/1998e65705afd04dee078724932fa98d446248b9))
