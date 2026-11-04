@@ -101,10 +101,30 @@ two ArrowDown, End, Enter, the to-do, Control+End, Control+Enter, the row,
 Control+S) made all three checks pass; and after `data/reset` they read as on
 the seed. That sandbox was torn down too.
 
+## Solve rate
+
+The three bundles, exported again from this branch's final code, ran with the
+documented recipe: `agent-env run <bundle> --task NAME --agent claude-code
+--model anthropic/claude-sonnet-5-5 --no-emulate`, three times each, on local
+Docker through a LiteLLM endpoint.
+
+| Task                 | Runs passed | Cost per run (USD) |
+| -------------------- | ----------- | ------------------ |
+| Mousepad `add-milk`  | 3 of 3      | 0.91, 0.39, 0.39   |
+| Typora `plan-sunday` | 3 of 3      | 0.77, 0.31, 0.43   |
+| LibreCAD `add-holes` | 3 of 3      | 0.81, 0.32, 0.34   |
+
+Costs are Claude Code's own totals, $4.67 for the nine runs. Every run worked
+through the computer's input tools only (screenshots, clicks, keys, typing;
+in LibreCAD, circle commands typed into its command line), loaded the app's
+skill first, and passed every check of its task. None failed to finish.
+
+Each task is a single change the user made in one sitting, so Claude Sonnet
+5.5 solves all three every time: they show the exported environments work
+end to end, not how hard a task can be.
+
 ## Limits of this verification
 
-- No computer-use agent ran, so no solve rate was measured: the runner has no
-  model endpoint here.
 - SQLite and dconf readers were not exercised on the host captures, which
   hold text files; SQLite checks are covered by synthetic views.
 - The XML namespace refusal and the CDATA difference the export guide lists
