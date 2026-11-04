@@ -164,6 +164,9 @@ await withVerifierCleanup(async () => {
     process.off("SIGTERM", interrupt);
   },
 ]);
+// A signal that lands outside a command, such as during the final rm, is still
+// a failed run. An earlier failure already left through the rejection above.
+if (interruption.signal.aborted) throw interruption.signal.reason;
 
 async function compilerCandidate(
   name,
