@@ -580,6 +580,16 @@ const parseSigner = (
     sid,
     names,
   );
+  // RFC 5652 5.3: issuerAndSerialNumber requires version 1 and
+  // subjectKeyIdentifier requires version 3.
+  const [expected, identifier] =
+    sid.tag === 0x80
+      ? [3, "subjectKeyIdentifier"]
+      : [1, "issuerAndSerialNumber"];
+  if (version.content.length !== 1 || version.content[0] !== expected)
+    return fail(
+      `SignerInfo version must be ${String(expected)} with ${identifier}.`,
+    );
   let cursor = 3;
   const authenticated = children[cursor]?.tag === 0xa0;
   if (authenticated) {

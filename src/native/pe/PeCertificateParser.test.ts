@@ -515,6 +515,44 @@ it("keeps subjectKeyIdentifier bytes on the signer", () => {
   ).toThrow(/decoded budget/u);
 });
 
+it("rejects a SignerInfo version that does not match its sid", () => {
+  const payload = (version: number, sid: Buffer) =>
+    contentInfo(
+      derSeq(
+        derInt(1),
+        derSet(SHA256_ALG),
+        derSeq(DATA_OID),
+        derSet(
+          derSeq(
+            derInt(version),
+            sid,
+            SHA256_ALG,
+            SHA256_ALG,
+            der(0x04, Buffer.from([1])),
+          ),
+        ),
+      ),
+    );
+  const issuerAndSerial = derSeq(derSeq(), derInt(1));
+  const ski = der(0x80, Buffer.from([0xab]));
+  for (const [version, sid] of [
+    [3, issuerAndSerial],
+    [2, issuerAndSerial],
+    [1, ski],
+  ] as const)
+    expect(() =>
+      parse(peCertificateFixture(false, payload(version, sid))),
+    ).toThrow(/SignerInfo version must be [13] with/u);
+  for (const [version, sid] of [
+    [1, issuerAndSerial],
+    [3, ski],
+  ] as const)
+    expect(
+      parse(peCertificateFixture(false, payload(version, sid))).entries[0]
+        ?.pkcs7?.signers,
+    ).toHaveLength(1);
+});
+
 // X.690 8.3.1 and 8.3.2 apply under BER as well as DER.
 const malformedSerials = [
   [],
