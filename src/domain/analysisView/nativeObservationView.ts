@@ -45,7 +45,8 @@ const readSource = (
 ): Result<NativeObservation, AnalysisError> => {
   switch (parent.operation) {
     case "procedure_callees":
-    case "procedure_callers": {
+    case "procedure_callers":
+    case "xrefs": {
       const read = readAddresses(parent);
       return read.ok
         ? ok({ operation: parent.operation, result: read.value })
@@ -138,6 +139,7 @@ const observationRows = (
       };
     case "procedure_callees":
     case "procedure_callers":
+    case "xrefs":
       return {
         parent_operation: source.operation,
         total: source.result.length,

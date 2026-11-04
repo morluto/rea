@@ -562,6 +562,17 @@ export const createGhidraProviderClient = (input: {
   // Startup failures retain installation guidance; only a previously running
   // provider can be described as lost and reopened.
   let providerStarted = false;
+  // Selects recovery guidance only; every session checks its handshake before
+  // its first query. A provider lost during the first query of any other
+  // session keeps installation guidance until it has answered a request.
+  const handshakeEstablishesProvider =
+    project !== undefined ||
+    target.format === "pe" ||
+    extensions.length > 0 ||
+    seeds !== undefined ||
+    disabledAnalyzers !== undefined ||
+    softFloat ||
+    riscvCallingConvention !== undefined;
   const lostProviderHealth = (): ProviderOperationHealth | undefined =>
     providerStarted ? client.operationHealthSnapshot?.() : undefined;
   let projectHistory: Evidence | undefined;
@@ -667,7 +678,8 @@ export const createGhidraProviderClient = (input: {
           lostProviderHealth(),
         ),
       );
-    providerStarted = true;
+    if (operation === "health" || handshakeEstablishesProvider)
+      providerStarted = true;
     const failed = await checkSessionObservations(operation, started.value);
     return failed === undefined ? started : err(failed);
   };
@@ -820,18 +832,10 @@ export const createGhidraProviderClient = (input: {
         ? parseGhidraFunctionInput(operation, parameters)
         : parseGhidraInventoryInput(operation, parameters);
       if (!input.ok) return input;
-      if (
-        project !== undefined ||
-        target.format === "pe" ||
-        extensions.length > 0 ||
-        seeds !== undefined ||
-        disabledAnalyzers !== undefined ||
-        softFloat ||
-        riscvCallingConvention !== undefined
-      ) {
-        const started = await startSession(operation, options);
-        if (!started.ok) return started;
-      }
+      // A report binds before any query runs. The client shares one startup
+      // attempt, so `callTool` reuses this launch; a restart is checked again.
+      const started = await startSession(operation, options);
+      if (!started.ok) return started;
       const called = await client.callTool(operation, input.value, {
         decompileTimeoutSeconds: config.ghidraDecompileTimeoutSeconds ?? null,
         ...(options?.signal === undefined ? {} : { signal: options.signal }),
@@ -883,19 +887,6 @@ export const createGhidraProviderClient = (input: {
         const address = normalized.address;
         if (typeof address === "string") {
           if (target.format === "pe" && nativeAotOwner !== undefined) {
-            const started = await client.start(
-              options?.signal,
-              options?.progress,
-            );
-            if (!started.ok)
-              return err(
-                projectSessionError(
-                  operation,
-                  started.error,
-                  projection,
-                  lostProviderHealth(),
-                ),
-              );
             const derived = await nativeAotOwner.derive(
               started.value.target.image_base,
               operation,

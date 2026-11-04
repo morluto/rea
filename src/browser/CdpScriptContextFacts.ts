@@ -4,6 +4,7 @@ import {
   numberValue,
   recordValue,
 } from "./CdpCaptureValues.js";
+import { cdpResourceColumnSchema } from "../domain/cdpObservationSchemas.js";
 
 const integer = z.int().min(0);
 const contextAuxDataSchema = z
@@ -31,9 +32,9 @@ export const runtimeScriptParsedSchema = scriptDeclaration.extend({
   scriptId: z.string().min(1),
   executionContextId: integer,
   startLine: integer,
-  startColumn: integer,
+  startColumn: cdpResourceColumnSchema,
   endLine: integer,
-  endColumn: integer,
+  endColumn: cdpResourceColumnSchema,
   hash: z.string().optional(),
   sourceMapURL: z.string().optional(),
   hasSourceURL: z.boolean().optional(),

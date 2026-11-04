@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { once } from "node:events";
 import { createServer, request } from "node:http";
+import { networkInterfaces } from "node:os";
 import {
   closeVerifierResources,
   withVerifierCleanup,
@@ -106,6 +107,27 @@ await withVerifierCleanup(async () => {
     else assert(reply.body.includes('id="main-report"'));
   };
   await checkOrdinary();
+  if (process.argv[3] === "listener-scope") {
+    assert.equal(kind, "storage");
+    const named = new URL(origin);
+    named.hostname = "localhost";
+    const localhost = await send(named.href, ordinary);
+    assert.equal(localhost.status, 200);
+    assert(localhost.body.includes('id="main-report"'));
+    const address = Object.values(networkInterfaces())
+      .flatMap((entries) => entries ?? [])
+      .find((entry) => entry.family === "IPv4" && !entry.internal);
+    assert(
+      address,
+      "Listener scope probe requires an owned non-loopback IPv4 interface",
+    );
+    const nonLoopback = new URL(origin);
+    nonLoopback.hostname = address.address;
+    await assert.rejects(send(nonLoopback.href, ordinary), {
+      code: "ECONNREFUSED",
+    });
+    console.log("storage: localhost served; non-loopback connection refused");
+  }
   for (const target of [
     "http://[",
     "ftp://127.0.0.1/probe",

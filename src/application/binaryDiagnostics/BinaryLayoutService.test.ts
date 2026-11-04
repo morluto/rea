@@ -58,6 +58,7 @@ it("records the decoded layout once in its Evidence", async () => {
 
 it.each([
   [{ machine: "EM_X86_64", bits: 64, byte_order: "little" }, "x86_64"],
+  [{ machine: "EM_AARCH64", bits: 64, byte_order: "little" }, "arm64"],
   [{ machine: "EM_386", bits: 32, byte_order: "little" }, "x86"],
   [{ machine: "EM_ARM", bits: 32, byte_order: "little" }, "arm"],
   [{ machine: "EM_MIPS", bits: 32, byte_order: "big" }, "mips"],
