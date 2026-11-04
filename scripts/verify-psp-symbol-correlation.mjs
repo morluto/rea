@@ -309,19 +309,24 @@ try {
   // A shell pipe has zero stat size. Feed it a finite over-limit input
   // and bound the child so a broken reader cannot hang or exhaust the runner.
   if (process.platform === "linux") {
-    const pipe = (source, bytes) => spawnSync("bash", [
-      "-c",
-      'set -o pipefail; head -c "$1" /dev/zero | "$2" "$3" --symbols "$4" --inventory "$5" --format sym --source-base "$6" --analysis-base "$7" --target-sha256 "$8"',
-      "psp-symbol-fixture",
-      String(bytes),
-      process.execPath,
-      command,
-      source === "symbols" ? "/dev/stdin" : symbolsPath,
-      source === "inventory" ? "/dev/stdin" : rawInventoryPath,
-      settings.sourceBase,
-      settings.analysisBase,
-      targetSha256,
-    ], { encoding: "utf8", timeout: 15_000, maxBuffer: 1024 * 1024 });
+    const pipe = (source, bytes) =>
+      spawnSync(
+        "bash",
+        [
+          "-c",
+          'set -o pipefail; head -c "$1" /dev/zero | "$2" "$3" --symbols "$4" --inventory "$5" --format sym --source-base "$6" --analysis-base "$7" --target-sha256 "$8"',
+          "psp-symbol-fixture",
+          String(bytes),
+          process.execPath,
+          command,
+          source === "symbols" ? "/dev/stdin" : symbolsPath,
+          source === "inventory" ? "/dev/stdin" : rawInventoryPath,
+          settings.sourceBase,
+          settings.analysisBase,
+          targetSha256,
+        ],
+        { encoding: "utf8", timeout: 15_000, maxBuffer: 1024 * 1024 },
+      );
 
     for (const [source, bytes] of [
       ["symbols", 1024 * 1024 + 1],
