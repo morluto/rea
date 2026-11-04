@@ -39,7 +39,7 @@ it.each(["ENOENT", "EACCES", "EPERM", "ENOTDIR"] as const)(
           code: "capability_unavailable",
           retryable: false,
           details: {
-            provider_id: "objdump",
+            provider_id: "objdump.command",
             diagnostics: {
               boundary: "provider-launch",
               command,

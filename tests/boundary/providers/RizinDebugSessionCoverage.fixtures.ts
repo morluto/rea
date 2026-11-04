@@ -43,7 +43,10 @@ export const incompleteStop: typeof stopOwnedDebuggerProcess = async (
   return { status: "incomplete", reason: "injected stop uncertainty" };
 };
 
-export const abortOnCheck = (targetCheck: number): AbortSignal => {
+export const abortOnCheck = (
+  targetCheck: number,
+  reason?: unknown,
+): AbortSignal => {
   let checks = 0;
   let aborted = false;
   type Listener = Parameters<AbortSignal["addEventListener"]>[1];
@@ -68,7 +71,7 @@ export const abortOnCheck = (targetCheck: number): AbortSignal => {
     },
     dispatchEvent: () => true,
     onabort: null,
-    reason: undefined,
+    reason,
     throwIfAborted: () => undefined,
   } as AbortSignal;
 };

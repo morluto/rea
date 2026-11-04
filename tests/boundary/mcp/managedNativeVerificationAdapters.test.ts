@@ -11,7 +11,7 @@ import {
   MANAGED_NATIVE_VERIFICATION_EXAMPLE,
 } from "../../../src/contracts/managed/managedWorkflowExamples.js";
 import { managedMemberInspectionSchema } from "../../../src/domain/managed/managedArtifact.js";
-import { managedApplicationGraphReferenceInputSchema } from "../../../src/contracts/managed/managedWorkflowToolContracts.js";
+import { managedApplicationGraphReferenceInputSchema } from "../../../src/domain/managed/managedApplicationGraph.js";
 import { managedNativeVerificationResultSchema } from "../../../src/domain/managed/managedNativeVerificationSchemas.js";
 import { buildManagedPeFixture } from "../../../src/dotnet/ManagedPe.fixture.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";

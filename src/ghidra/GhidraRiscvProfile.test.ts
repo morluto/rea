@@ -166,6 +166,8 @@ const registerRiscvLanguageCommitmentCases = () => {
       elf_class: 32,
       rvc_declared: false,
     });
+    expect(wide.value.profile?.digest).toEqual(expect.any(String));
+    expect(narrow.value.profile?.digest).toEqual(expect.any(String));
     expect(wide.value.profile?.digest).not.toBe(narrow.value.profile?.digest);
   });
 
