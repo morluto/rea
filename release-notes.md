@@ -479,6 +479,7 @@
 * **javascript:** qualify renderer endpoint observations ([0e1500d](https://github.com/morluto/rea/commit/0e1500dc8d2ace183cb34058e058eba97c21c781))
 * **javascript:** read the spawn env option as Node reads it ([#7713](https://github.com/morluto/rea/issues/7713)) ([f1da7f7](https://github.com/morluto/rea/commit/f1da7f7670d8e6763ed447a329820cad1d61f35f))
 * **javascript:** reconcile Node targets with entry assets ([#8670](https://github.com/morluto/rea/issues/8670)) ([2d11fd9](https://github.com/morluto/rea/commit/2d11fd92d233f65dd0f3904583e09078a5a3342c))
+* **javascript:** recover configuration file reads from fs/promises ([#8446](https://github.com/morluto/rea/issues/8446)) ([703c11c](https://github.com/morluto/rea/commit/703c11c90fb5a24dd9f511b1ad5eede336df6885))
 * **javascript:** report ambiguous artifact paths ([#7864](https://github.com/morluto/rea/issues/7864)) ([83cd1e0](https://github.com/morluto/rea/commit/83cd1e04c93236b0338a98dfc7dedd94fadc81de))
 * **javascript:** report SVG script references and skipped bodies ([#8627](https://github.com/morluto/rea/issues/8627)) ([20a282a](https://github.com/morluto/rea/commit/20a282a1813f45d66f4ab2e76880a8eebba0f9bc))
 * **javascript:** require exactly one fork IPC channel ([#8017](https://github.com/morluto/rea/issues/8017)) ([007e181](https://github.com/morluto/rea/commit/007e181f680250f8b2325c6e0c2d993058d0dd2a))
