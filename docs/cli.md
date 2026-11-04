@@ -569,6 +569,17 @@ prints a failure, so it omits the same-session reuse and
 `parameter`) for a new invocation and rerun. For example, a Ghidra decompile
 deadline names `REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS`.
 
+`rea debug-with-gdb` and `rea debug-with-rizin` hold their debugger only for the
+command's own process. If cleanup cannot confirm the debugger stopped, they print
+`cleanup_incomplete` and exit nonzero without stopping it. `remediation.action`
+names the process, as does `retained_debugger_pids` in `details.diagnostics`, or
+in `details.diagnostics.cleanup_error.details.diagnostics` when the command also
+failed or was interrupted. Exiting closes the debugger's command and output pipes.
+REA does not establish what the debugger or its target does next, so check that
+process. An MCP server that shuts down likewise exits with status 1 instead of
+waiting on a debugger it could not stop. It names the process on stderr and as
+`retained_debugger_pids` in its error log.
+
 If one-shot analysis fails and closing its session also fails, the original
 error details remain inline and `details.cleanup_error` describes the later
 close failure. Each diagnostic retains its own reported resources; the later
@@ -1295,6 +1306,18 @@ new file. A publication that has committed can win a later cancellation; the
 `details.diagnostics.evidence_bundle`. If staging cleanup stays incomplete
 after commit, the `cleanup_incomplete` error reports the same file as
 `details.published_path` and `details.bytes`.
+
+When a failure retains a completed observation and no bundle committed,
+`details.source_closure` states what that observation cites. `publication` is
+`not_published`. `records` holds authentic source Evidence this invocation
+captured, within 64 KiB. `omitted` lists up to 64 other identities and
+`omitted_count` the total: `not_captured` means the invocation holds no such
+record, so nothing is shown for it or its ancestors; `not_inlined` means it was
+captured but is not in this response. `complete` is true only when every cited
+record is in `records` or embedded in the observation. If examining the closure
+itself fails, `collection_failure` names the error type and the closure state is
+unknown; the original failure is still returned. Nothing is retained after exit,
+and running the command again is a new observation.
 
 When the reader of piped output closes early, as `rea ... | head` does, the
 CLI stops writing, prints no error and exits `141` (`128 + 13`, the status of a
