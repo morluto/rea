@@ -1,3 +1,4 @@
+import { evidenceBundleSchema } from "../../../src/domain/evidenceBundle.js";
 import { expect, it } from "vitest";
 
 import { FUNCTION_COMPARISON_EXAMPLE } from "../../../src/contracts/functionComparisonExample.js";
@@ -171,9 +172,11 @@ it.each(["pseudocode", "overall"] as const)(
       claims: { items: [{ unknown_ids: [] }] },
     });
     const exported = await call("get_evidence_bundle", { detail: "complete" });
-    const bundle = toolContract("get_evidence_bundle").outputSchema.parse(
-      exported.structuredContent,
-    ).result;
+    const bundle = evidenceBundleSchema.parse(
+      toolContract("get_evidence_bundle").outputSchema.parse(
+        exported.structuredContent,
+      ).result,
+    );
     for (const source of [left, right, comparison])
       expect(
         bundle.records.find(

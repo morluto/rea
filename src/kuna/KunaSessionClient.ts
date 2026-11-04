@@ -89,7 +89,7 @@ import {
   kunaLimitations,
   type KunaOperation,
 } from "./KunaProviderCapabilities.js";
-import { KUNA_PROVIDER_ID } from "./KunaRelease.js";
+import { KUNA_PROVIDER_ID, KUNA_VERIFIED_VERSION } from "./KunaRelease.js";
 import { KunaTargetCommands } from "./KunaTargetCommands.js";
 import { KunaReferenceQueries } from "./KunaReferenceQueries.js";
 import { KunaQueryWork } from "./KunaQueryWork.js";
@@ -258,7 +258,7 @@ const exportUnavailable = (
     "REA reads Kuna settings when it starts, so restart REA, then reopen the target.";
   const next =
     failure instanceof AnalysisTimeoutError
-      ? `To retry, set REA_KUNA_PROJECT_TIMEOUT_MS above ${String(failure.timeoutMs)} ms or raise REA_KUNA_JOBS in the environment that starts REA. ${restart}`
+      ? `To retry, set REA_KUNA_PROJECT_TIMEOUT_MS above ${String(failure.timeoutMs)} ms in the environment that starts REA. ${restart}`
       : failure instanceof AnalysisResourceConstraintError &&
           failure.remediationAction !== undefined
         ? // A fixed buffer (`memory`) is no setting, so a restart cannot help.
@@ -284,6 +284,16 @@ const exportUnavailable = (
     },
   );
 };
+
+/** Version verification is observation context, not an analysis input. */
+const kunaVerificationLimitations = (
+  installation: KunaInstallation,
+): readonly string[] =>
+  installation.verified
+    ? []
+    : [
+        `Kuna ${installation.version} is not REA's verified ${KUNA_VERIFIED_VERSION} release; its project layout is unverified. Version matching does not authenticate the executable.`,
+      ];
 
 /** Kuna names a procedure by its inventory entry or by an exact entry address. */
 const procedureSelectorSchema = z.string().min(1);
@@ -652,7 +662,11 @@ export class KunaSessionClient implements AnalysisClient {
                   : { strings: answer.stringSource }),
               },
             }),
-        limitations: [...operationLimitations, ...answer.limitations],
+        limitations: [
+          ...operationLimitations,
+          ...kunaVerificationLimitations(installation),
+          ...answer.limitations,
+        ],
         ...(answer.relationshipCoverage === undefined
           ? {}
           : { relationshipCoverage: answer.relationshipCoverage }),
@@ -1043,6 +1057,9 @@ export class KunaSessionClient implements AnalysisClient {
       err(
         new AnalysisInputError(operation, {
           userMessage: kunaDataEntryMessage(entry, index.data.get(entry)!),
+          conformsToInputContract: true,
+          remediationAction:
+            "Inspect the data address with address_name or xrefs, or select a procedure entry from list_procedures. Do not repeat the unchanged call.",
         }),
       );
     const selected = (entry: KunaInventoryFunction) => {
@@ -1062,6 +1079,9 @@ export class KunaSessionClient implements AnalysisClient {
         return err(
           new AnalysisInputError(operation, {
             userMessage: `${address} is not a procedure entry Kuna found; list_procedures shows the entries it found.`,
+            conformsToInputContract: true,
+            remediationAction:
+              "Inspect list_procedures and select a discovered entry if it answers your question. An unlisted address is not proof of a function; REA cannot use it as a Kuna procedure in this session. Do not repeat the unchanged call.",
           }),
         );
       return refused(entry) ? dataRefusal(entry) : selected(entry);
@@ -1074,9 +1094,20 @@ export class KunaSessionClient implements AnalysisClient {
       return dataRefusal(named[0]);
     return err(
       new AnalysisInputError(operation, {
+        conformsToInputContract: true,
+        remediationAction:
+          matches.length === 0 && named.length === 0
+            ? field === "procedure"
+              ? "Use search_procedures or list_procedures to inspect Kuna's discovered entries, then select a matching entry. Do not repeat the unchanged call."
+              : "Inspect the selected target for the intended address and use that address explicitly. Do not repeat the unchanged call."
+            : matches.length === 0
+              ? "Inspect the data addresses with address_name or xrefs, or select a procedure entry from list_procedures. Do not repeat the unchanged call."
+              : "Select the intended entry by its exact address. Do not repeat the unchanged call.",
         userMessage:
           matches.length === 0 && named.length === 0
-            ? `Kuna found no procedure named ${selector}; search_procedures finds similar names.`
+            ? field === "procedure"
+              ? `Kuna found no procedure named ${selector}; search_procedures finds similar names.`
+              : `Kuna found no inventory entry named ${selector}.`
             : matches.length === 0
               ? `${selector} names ${String(named.length)} Kuna entries that lie in Mach-O data regions (${named.map(({ address }) => address).join(", ")}); they are data, not procedures.`
               : `${selector} names ${String(matches.length)} Kuna entries (${matches.map(({ address }) => address).join(", ")}); select one by address.`,
@@ -1469,6 +1500,7 @@ export class KunaSessionClient implements AnalysisClient {
           this.#deadline,
           this.#heapRequest,
         ),
+        ...kunaVerificationLimitations(installation),
         ...pseudocode.value.limitations,
         KUNA_RELATIONSHIP_LIMITATION,
         ...(relationships.ok

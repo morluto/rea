@@ -303,6 +303,12 @@ limitation and reason IDs index that page's `items.messages` dictionary. Expand
 those references to recover exact text, repeated messages, and absent versus
 empty optional fields. Failed nodes retain their original error.
 
+Retained `xrefs` Evidence also supports `native-observation` address pages and
+`native-context` source caveats. `xrefs` still returns complete Evidence by
+default and does not accept `detail`; when its MCP response exceeds the budget,
+follow the returned continuation to page the retained result. These addresses
+remain untyped; paging does not add reference kinds or establish completeness.
+
 These views reference complete source context through `source_context.digest`
 and caveat counts. Read it using the same parent with
 `view: {"kind":"native-context","facet":"overview"}`. The other facets are
@@ -331,6 +337,8 @@ Oversized native inventories likewise include a ready-to-call first
 `native-inventory` page. Reduce its limit or select fields when a row is large.
 An oversized `trace_application_feature` result includes a first `feature-trace`
 page of its retained terminal `paths`; page `nodes` or `edges` from there.
+An oversized `batch_decompile` result includes a first body-free
+`batch-decompile` page of its retained `items`; read bodies from there.
 
 A broad follow-up or `get_evidence_bundle` can also exceed the response budget; exporting
 preserves the complete session without sending it through a single MCP frame.
@@ -399,9 +407,26 @@ that revision. If a list response overflows, retry on the same connection with
 the same filters and offset and a smaller limit; export if one head still cannot
 fit.
 
+To find missing sources before a downstream analysis refuses them, read
+`missing_direct_links` from the summary, or call `get_evidence_bundle` with
+`detail: "links"`. The result (`kind: "evidence-link-inspection"`) transfers no
+record payload. `filters` select the starting records, while membership is
+checked against every record in the session or file, so a filtered-out source is
+`retained`, not missing. Rows (`evidence_id`, `linked_evidence_id`, `status`) are
+in canonical order, default to `link_status: "missing"` and page with `offset` and
+`limit` (default 64); `links` counts every inspected link regardless of that
+selection. `traversal: "direct"` (the default) reads the selected records' own
+links and sets `retained_closure` to null, because it makes no closure claim.
+`traversal: "retained-closure"` also follows retained links, as composed workflows
+such as `build_call_path` do, and reports `complete` or `incomplete`; anything
+beyond a missing link remains unknown. Missing means absent from this session or
+file, not nonexistent, and neither status describes analysis coverage. Importing
+a missing source changes this membership without changing any Evidence ID.
+
 For a portable exported bundle, the CLI shares this projection:
 `rea inspect-evidence-bundle '{"path":"/tmp/evidence.json","detail":"summary","filters":{"operation":"analyze_function"}}' --format json`.
-`"detail":"records"` with an `evidence_id` filter returns that complete record.
+`"detail":"records"` with an `evidence_id` filter returns that complete record,
+and `"detail":"links"` reads link membership.
 The CLI validates and materializes that local bundle under its existing memory
 budget; summary delivery does not make arbitrary large files cheap to import.
 
@@ -630,6 +655,43 @@ default to 0 and 64. Page `coverage` counts the selected collection only; it
 never upgrades `trace_coverage`, and graph connectivity does not prove runtime
 reachability. The CLI keeps complete trace JSON; save it and use
 `inspect-analysis-view` with an `evidence-file` source.
+
+### Selected batch decompile results
+
+`batch_decompile` returns every pseudocode body by default. `detail: "summary"`
+retains the complete batch in the session first and returns its producer counts,
+`source_provider` (the composing workflow), `source_analysis_profile_digest`,
+`decompiling_provider`, procedure identity counts, total and largest
+`pseudocode` size, and `limitation_count`. A server that retains no Evidence
+refuses the summary before analysis. Further views use the returned
+`parent_evidence_id` through `inspect_analysis_view`, or a saved Evidence file or
+portable bundle, and never repeat decompilation.
+
+A `batch-decompile` view selects one `collection` and repeats the batch counts
+and provider identities:
+
+- `items`: rows in retained order with their original `index`, so duplicate
+  selectors stay distinct. A row keeps the selector in `address`, its `procedure`
+  identity and `status`, plus `pseudocode_code_units` or its exact `error` and
+  `limitations`. `where.indices`, `where.addresses`, `where.procedure_addresses`
+  and `where.statuses` filter exactly and combine; an item with unknown identity
+  never matches `procedure_addresses`. Omitted filters select all, and empty
+  arrays select none. `offset` and `limit` default to 0 and 64.
+  `include_pseudocode: true` adds each selected body.
+- `pseudocode`: one `index`'s text in UTF-16 code-unit pages. `offset` and `limit`
+  default to 0 and 16,384, and `coverage` measures that body. An offset inside a
+  surrogate pair is refused, and a limit ending inside one stops before it. An
+  error item has no text and is refused with a pointer to `items`.
+
+Page `coverage` counts the selection only: exhausting it establishes nothing
+about functions outside the batch. Evidence `limitations` aggregate every item's
+provider observations and are not attributed to one successful item; only error
+items keep their own. A page over the response budget offers a smaller selection
+from the same `source`: fewer rows, or one body's `pseudocode` pages when a single
+row does not fit. An inline source offers none, because the record cannot be
+repeated in that reply; resend it with a smaller selection.
+`export_evidence_bundle` remains the complete alternative. The CLI has no batch command; save the Evidence and use
+`inspect-analysis-view` with an `evidence-file` source or `--evidence-bundle`.
 
 Completed `inspect_artifact` and atomic `inventory_artifact` Evidence also
 support summary and inventory views. A summary reports the manifest's expected
@@ -950,6 +1012,14 @@ is `unavailable` with a reason when ownership could not be revalidated, or
 `verified` with launcher PID, parent PID, process group, and descendants observed
 at that bounded check. These are historical snapshots, not live process
 inventories, and do not claim that no short-lived descendant existed.
+
+After a failed close retires the target, `binary_session.cleanup_retry` names
+`close_binary` only while that session still retains the cleanup bound to the
+close error. Target-dependent availability then gives the same conditional
+cleanup guidance before suggesting `open_binary`. The hint disappears after
+cleanup succeeds. A pending flag alone does not establish this retry: active
+targets, an in-flight initial close, and external-mutation blockers keep their
+own recovery and do not receive this hint.
 
 `binary_session.cleanup_pending` reports whether the session retains a provider
 client, session file resource, or provider-candidate resource whose cleanup
