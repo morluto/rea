@@ -398,6 +398,7 @@
 * **ghidra:** decide batch names independently of request order ([#8306](https://github.com/morluto/rea/issues/8306)) ([7c9ed94](https://github.com/morluto/rea/commit/7c9ed94259fef560fdbec0c9b640348c5d54c391))
 * **ghidra:** distinguish unlisted instruction addresses ([#7823](https://github.com/morluto/rea/issues/7823)) ([bd687bb](https://github.com/morluto/rea/commit/bd687bbc40daf47d93f2b4c65b72004eb8f87c83))
 * **ghidra:** honor current directory in PATH discovery ([81adb89](https://github.com/morluto/rea/commit/81adb8977a2df1b84b628aed9317719e6df91fd8))
+* **ghidra:** mark empty xrefs results as unresolved, not unreferenced ([#8831](https://github.com/morluto/rea/issues/8831)) ([d7df9df](https://github.com/morluto/rea/commit/d7df9df3393f77c78a76a06144ff4f515d5db928))
 * **ghidra:** match startup-timeout guidance to the project mode ([#8114](https://github.com/morluto/rea/issues/8114)) ([ca7d1c3](https://github.com/morluto/rea/commit/ca7d1c3750b244364b60cf2253c2c8c481b6dea7)), closes [#3751](https://github.com/morluto/rea/issues/3751)
 * **ghidra:** omit duplicate load-image result ([#7777](https://github.com/morluto/rea/issues/7777)) ([a965cba](https://github.com/morluto/rea/commit/a965cbab06fcdecc6918e77e4d299ea91e8ef41c))
 * **ghidra:** preserve configured seed path traversal ([01d6a95](https://github.com/morluto/rea/commit/01d6a95fd7df6065562b8f087082f5d2062cb468))
