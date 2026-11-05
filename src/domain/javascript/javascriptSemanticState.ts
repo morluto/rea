@@ -133,6 +133,19 @@ export interface JavaScriptOpaqueScopeEffects {
   )[];
 }
 
+/** Intrinsic prototypes tracked from mutation sites to inherited reads. */
+export const semanticPrototypeOwners = [
+  "Object",
+  "Array",
+  "String",
+  "Function",
+  "Number",
+  "Boolean",
+  "RegExp",
+  "BigInt",
+] as const;
+export type SemanticPrototypeOwner = (typeof semanticPrototypeOwners)[number];
+
 /** Shared state for semantic collection and evaluation. */
 export interface JavaScriptSemanticAnalysisState {
   arrayIterationUnknown: boolean;
@@ -167,7 +180,7 @@ export interface JavaScriptSemanticAnalysisState {
     readonly SemanticPropertyReadSource[]
   >;
   readonly prototypeMutationSites: {
-    readonly owner: "Object" | "Array" | "String" | "Function";
+    readonly owner: SemanticPrototypeOwner;
     readonly node: t.Node;
   }[];
   /** Effects on a cached require exports object, independent of local projections. */

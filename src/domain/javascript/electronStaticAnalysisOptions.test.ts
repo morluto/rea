@@ -428,6 +428,10 @@ it.each([
 });
 
 const CLASSIC_GLOBAL_ACTIVATIONS = [
+  "Object.setPrototypeOf(Number.prototype, globalThis); (0).createWindow();",
+  "Object.setPrototypeOf(Boolean.prototype, globalThis); true.createWindow();",
+  "Object.setPrototypeOf(RegExp.prototype, globalThis); /x/.createWindow();",
+  "Object.setPrototypeOf(BigInt.prototype, globalThis); (0n).createWindow();",
   "Object.assign(Object.prototype, globalThis); (0).createWindow();",
   "Object.assign(Object.prototype, globalThis); true.createWindow();",
   "Object.assign(Object.prototype, globalThis); /x/.createWindow();",

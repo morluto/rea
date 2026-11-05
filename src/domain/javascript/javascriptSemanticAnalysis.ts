@@ -49,6 +49,8 @@ import type {
 } from "./javascriptSemanticState.js";
 import {
   currentSemanticScope,
+  semanticPrototypeOwners,
+  type SemanticPrototypeOwner,
   resolveSemanticBindingState,
   semanticResolutionBlocked,
   resolveSemanticBindingFromScope,
@@ -1463,19 +1465,15 @@ function* collectDefinitionsSteps(
   if (state.opaqueEffects.byScope.size > 0) clearSemanticValueCaches(state);
 }
 
-type PrototypeOwner = "Object" | "Array" | "String" | "Function";
-
-const prototypeOwners = ["Object", "Array", "String", "Function"] as const;
-
 /** Preserve uncertainty when source can change or expose a built-in prototype. */
 function* indexPrototypeUncertaintySteps(
   program: t.Program,
   state: JavaScriptSemanticAnalysisState,
 ): Generator<void, void> {
   let effectSite: t.Node = program;
-  const seen = new Map<PrototypeOwner, WeakSet<t.Node>>();
+  const seen = new Map<SemanticPrototypeOwner, WeakSet<t.Node>>();
   const possiblePrototypeReferences = createAmbientPathResolver(state, false);
-  const taint = (owner: PrototypeOwner, inherited = true): void => {
+  const taint = (owner: SemanticPrototypeOwner, inherited = true): void => {
     let sites = seen.get(owner);
     if (sites === undefined) {
       sites = new WeakSet();
@@ -1488,16 +1486,17 @@ function* indexPrototypeUncertaintySteps(
     if (owner === "Object") state.prototypeRequireMutationObserved = undefined;
     state.prototypeEnumerationMayAffect = undefined;
   };
-  const globalOwner = (node: t.Node): PrototypeOwner | undefined => {
+  const globalOwner = (node: t.Node): SemanticPrototypeOwner | undefined => {
     const value = unwrapJavaScriptExpression(node).node;
     // Reject non-owner terminal keys before resolving a namespace spine.
     if (!t.isIdentifier(value)) {
       if (!t.isMemberExpression(value) && !t.isOptionalMemberExpression(value))
         return undefined;
       const key = semanticStaticPropertyKey(value.property, value.computed);
-      if (!prototypeOwners.some((owner) => owner === key)) return undefined;
+      if (!semanticPrototypeOwners.some((owner) => owner === key))
+        return undefined;
     }
-    for (const owner of prototypeOwners) {
+    for (const owner of semanticPrototypeOwners) {
       if (
         (t.isMemberExpression(value) || t.isOptionalMemberExpression(value)) &&
         t.isThisExpression(unwrapJavaScriptExpression(value.object).node) &&
@@ -1527,7 +1526,7 @@ function* indexPrototypeUncertaintySteps(
     }
     return undefined;
   };
-  const prototypeOwner = (node: t.Node): PrototypeOwner | undefined => {
+  const prototypeOwner = (node: t.Node): SemanticPrototypeOwner | undefined => {
     const value = unwrapJavaScriptExpression(node).node;
     return (t.isMemberExpression(value) ||
       t.isOptionalMemberExpression(value)) &&

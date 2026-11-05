@@ -28,6 +28,8 @@ import {
   resolveSemanticBindingState,
   semanticResolutionBlocked,
   semanticScopeId,
+  semanticPrototypeOwners,
+  type SemanticPrototypeOwner,
   type JavaScriptSemanticBindingState,
   type JavaScriptSemanticAnalysisState,
   type JavaScriptSemanticEffectTiming,
@@ -953,10 +955,9 @@ const moduleFunctionFirstRead = (
       }
       return read(name);
     };
-    type PrototypeOwner = "Object" | "Array" | "String" | "Function";
     const receiverPrototypeOwners = new WeakMap<
       t.Node,
-      ReadonlySet<PrototypeOwner>
+      ReadonlySet<SemanticPrototypeOwner>
     >();
 
     const bindingReceivers = new WeakMap<
@@ -974,7 +975,7 @@ const moduleFunctionFirstRead = (
           dependencies: t.Node[];
           unknown: boolean;
           global: boolean;
-          owners: Set<PrototypeOwner>;
+          owners: Set<SemanticPrototypeOwner>;
         }
       >();
       while (pending.length > 0) {
@@ -1009,7 +1010,7 @@ const moduleFunctionFirstRead = (
           dependencies: [] as t.Node[],
           unknown: false,
           global: false,
-          owners: new Set<PrototypeOwner>(),
+          owners: new Set<SemanticPrototypeOwner>(),
         };
         const node = unwrapJavaScriptExpression(current).node;
         if (t.isArrayExpression(node)) fact.owners.add("Array");
@@ -1017,13 +1018,10 @@ const moduleFunctionFirstRead = (
         else if (t.isObjectExpression(node)) fact.owners.add("Object");
         else if (t.isStringLiteral(node) || t.isTemplateLiteral(node))
           fact.owners.add("String");
-        else if (
-          t.isNumericLiteral(node) ||
-          t.isBooleanLiteral(node) ||
-          t.isRegExpLiteral(node) ||
-          t.isBigIntLiteral(node)
-        )
-          fact.owners.add("Object");
+        else if (t.isNumericLiteral(node)) fact.owners.add("Number");
+        else if (t.isBooleanLiteral(node)) fact.owners.add("Boolean");
+        else if (t.isRegExpLiteral(node)) fact.owners.add("RegExp");
+        else if (t.isBigIntLiteral(node)) fact.owners.add("BigInt");
         if (node !== current) fact.dependencies.push(node);
         else if (t.isThisExpression(node)) {
           const owner = t.isProgram(program)
@@ -1179,8 +1177,11 @@ const moduleFunctionFirstRead = (
       return receiverBounds.get(root) ?? null;
     };
     // A single owner-specific bound serves every literal read in this body.
-    const prototypeBounds = new Map<PrototypeOwner, ReceiverBound | null>();
-    for (const owner of ["Object", "Array", "String", "Function"] as const) {
+    const prototypeBounds = new Map<
+      SemanticPrototypeOwner,
+      ReceiverBound | null
+    >();
+    for (const owner of semanticPrototypeOwners) {
       let bound: ReceiverBound | null = { index: Infinity, ambiguous: false };
       for (const effect of state?.prototypeMutationSites ?? []) {
         if (effect.owner !== owner && effect.owner !== "Object") continue;
