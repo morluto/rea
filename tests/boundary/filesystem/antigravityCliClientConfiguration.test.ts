@@ -10,7 +10,10 @@ import { configureClientConfiguration } from "../../../src/application/SetupClie
 import { skillDestinations } from "../../../src/application/SetupSkill.js";
 import { supportedClients } from "../../../src/application/SupportedClients.js";
 import { existingMaintenanceScope } from "../../../src/application/UpdateMaintenance.js";
-import { runUninstall, systemUninstallHost } from "../../../src/application/Uninstall.js";
+import {
+  runUninstall,
+  systemUninstallHost,
+} from "../../../src/application/Uninstall.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { clearClientLocationEnvironment } from "../../fixtures/clientEnvironment.js";
 
@@ -302,8 +305,6 @@ it.each(["disabled", "foreign", "invalid"] as const)(
     expect(scope.skill).toBe(false);
   },
 );
-
-
 
 describe("Antigravity uninstall result projection", () => {
   it("reports one grouped removal under both surfaces for a CLI-only home", async () => {
