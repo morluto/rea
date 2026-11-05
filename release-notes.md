@@ -912,6 +912,7 @@
 
 ### Performance Improvements
 
+* **eval:** measure MCP catalog usage through the real Codex harness ([#9035](https://github.com/morluto/rea/issues/9035)) ([8084916](https://github.com/morluto/rea/commit/80849168590dedcab49cfdb5d5b94749fc9e89fc))
 * **javascript:** cache callable result syntax by AST identity ([#7508](https://github.com/morluto/rea/issues/7508)) ([a95b83c](https://github.com/morluto/rea/commit/a95b83c2b06ef713664d6abb3d29c7c149a2ce01))
 * **javascript:** index member-effect paths for projected reads ([#8108](https://github.com/morluto/rea/issues/8108)) ([767f6af](https://github.com/morluto/rea/commit/767f6afc18f19687eef663a10e9a3983f6f9979e))
 * **javascript:** keep one member-effect record per stored fact ([#8103](https://github.com/morluto/rea/issues/8103)) ([a47dcca](https://github.com/morluto/rea/commit/a47dcca010c24ff5020361ba7148f9862151394a)), closes [#7774](https://github.com/morluto/rea/issues/7774)
