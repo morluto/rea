@@ -477,6 +477,72 @@ describe("draftTaskFiles archives added to whole", () => {
   });
 });
 
+describe("draftTaskFiles archive elements by identity", () => {
+  it("checks an element replaced by another of its type as one added and one gone, not renamed", () => {
+    const document = (name: string, id: string) =>
+      listing([
+        zipEntry("Document.xml", "xml", {
+          root: xmlElement("Objects", {}, [
+            xmlElement("Object", { type: "Part::Box", name: "Plate" }),
+            xmlElement("Object", { type: "Part::Cylinder", name, id }),
+          ]),
+          truncated: false,
+        }),
+      ]);
+
+    const [file] = draft({
+      "Documents/plate.zip": path(
+        "document",
+        "zip",
+        document("Hole", "2"),
+        document("Hole001", "3"),
+      ),
+    });
+
+    const objects = "/entries/[name=Document.xml]/view/root/children";
+    expect(file?.suggested).toEqual([
+      {
+        kind: "value_equals",
+        file: "Documents/plate.zip",
+        pointer: `${objects}/[name=Object][@name=Hole001]/name`,
+        value: "Object",
+      },
+      {
+        kind: "value_absent",
+        file: "Documents/plate.zip",
+        pointer: `${objects}/[name=Object][@name=Hole]`,
+      },
+    ]);
+  });
+
+  it("checks an edit to an element its identifier still names, not a replacement", () => {
+    const list = (color: string) =>
+      listing([
+        zipEntry("list.xml", "xml", {
+          root: xmlElement("list", {}, [
+            xmlElement("item", { color, id: "1" }),
+            xmlElement("item", { id: "2" }),
+          ]),
+          truncated: false,
+        }),
+      ]);
+
+    const [file] = draft({
+      "Documents/list.zip": path("document", "zip", list("red"), list("green")),
+    });
+
+    expect(file?.suggested).toEqual([
+      {
+        kind: "value_equals",
+        file: "Documents/list.zip",
+        pointer:
+          "/entries/[name=list.xml]/view/root/children/[name=item][@id=1]/attributes/color",
+        value: "green",
+      },
+    ]);
+  });
+});
+
 describe("draftTaskFiles archive entries without a view, and type changes", () => {
   it("checks no entry whose view could not be read, though JSON null is a value", () => {
     const [file] = draft({

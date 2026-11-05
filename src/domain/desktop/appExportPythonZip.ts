@@ -30,11 +30,7 @@ def _entry_view(name: str, data: bytes) -> dict:
         text = None
     if text is None:
         return {"format": "binary", "view": None}
-    view = _text_view(name, text)
-    if view["format"] in ("json", "keyfile") and len(data) > MAX_PARSED_BYTES:
-        return {"format": view["format"], "view": None,
-                "error": "larger than the 4 MiB limit for JSON and key file views"}
-    return view
+    return _text_view(name, text, len(data))
 
 
 def _zip_refusal(info, spent: int):

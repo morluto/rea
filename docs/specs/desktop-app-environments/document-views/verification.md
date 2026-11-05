@@ -140,6 +140,38 @@ after it:
   388 ms, reading the members 1,600 times against 128,800. Both diff in a
   16 MiB V8 old space where they needed more than 48 MiB; a test runs them
   under a 32 MiB limit.
+- Member pairing keeps an element's tag apart from its attribute conditions
+  and spells a selector only once it is chosen: an element with a
+  38,588-character tag and 2,000 attributes pairs with itself in 4 ms,
+  growing the heap by 1.1 MiB, against 7.2 s and 148 MiB when the tag was
+  copied into a selector per attribute. A test pairs two such elements under
+  a 32 MiB V8 old space.
+- An element pairs by its identifiers first, and by a later selector both
+  versions share before one that names nothing in the other version keys it
+  as added: `<item color="red" id="1"/>` becoming `<item color="green"
+  id="1"/>` beside another `item` is a changed `color` under
+  `[name=item][@id=1]`, in the diff and the draft, rather than one element
+  removed and another added. A FreeCAD `Hole` deleted and a `Hole001` added,
+  both `Part::Cylinder`, stay one removal and one addition rather than a
+  rename found by their shared `type`. The real FreeCAD 0.21
+  and 1.0 documents, and the Inkscape, LibreOffice and AbiWord ones of the
+  branches built on this one, zipped as entries, give the same diffs, drafts
+  and member keys as before.
+- Both readers refuse a JSON or key file over 4 MiB before building its value,
+  telling JSON from text by a token scan. REA's reader detects a
+  4,200,004-byte array of empty objects in 58 ms, growing the heap by 4.2 MiB
+  (the decoded text), against 129 ms and 85.5 MiB when detection parsed it,
+  and a test reads it under a 32 MiB V8 old space. The exported reader's
+  entry peaks at 8.4 MB of traced allocations against 110.0 MB, a 16 MiB one
+  at 35.2 MB against 442.5 MB, and a 4.9 MB key file at 10.4 MB against
+  86.7 MB; its scan takes 0.9 s and 3.5 s for those entries against 0.7 s and
+  2.7 s for the parse. The exported reader now applies the limit to files as
+  REA does, where it read them whole before.
+- The exported reader takes text nested past Python's recursion limit as JSON
+  only when the token scan finds all of it JSON, as REA does: 1,100 opening
+  brackets and 1,099 closing ones are text in both readers, where the export
+  called them JSON nested too deeply, and 1,100 of each are still refused for
+  their depth in both.
 
 ## FreeCAD captures
 

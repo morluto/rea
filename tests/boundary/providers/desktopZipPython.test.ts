@@ -361,6 +361,33 @@ describe("zip entries the exported module cannot fully read", () => {
     expect(peak).toBeLessThan(4 * MIB);
   });
 
+  it("refuses JSON and key file entries over 4 MiB before building their values, as REA does", async () => {
+    const objects = `[{}${",{}".repeat(1_400_000)}]`;
+    const archive = zipArchive([
+      { name: "objects.json", data: objects, method: 0 },
+      { name: "objects.txt", data: `${objects.slice(0, -1)}}`, method: 0 },
+      {
+        name: "settings.ini",
+        data: `[ui]\n${"wrap=false\n".repeat(400_000)}`,
+        method: 0,
+      },
+    ]);
+    const refused = "larger than the 4 MiB limit for JSON and key file views";
+
+    expect(await sameView(archive)).toMatchObject({
+      entries: [
+        { format: "json", view: null, view_error: refused },
+        { format: "text", view: { line_count: 1 }, view_error: null },
+        { format: "keyfile", view: null, view_error: refused },
+      ],
+    });
+    const { peak } = await pythonPeak(
+      zipArchive([{ name: "objects.json", data: objects, method: 0 }]),
+    );
+    // Parsing the 4,200,004-byte entry before refusing it traced about 110 MB here.
+    expect(peak).toBeLessThan(4 * objects.length);
+  }, 60_000);
+
   it("keeps a JSON entry nested too deeply on that entry and reads its siblings, as REA does", async () => {
     const nested = (levels: number) =>
       `${"[".repeat(levels)}${"]".repeat(levels)}`;

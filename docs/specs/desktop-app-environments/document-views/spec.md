@@ -29,6 +29,12 @@ tolerance. Both evaluators, REA's and the exported verifier's, agree.
 - Exported module: `data/get` gives the same view, read with Python's
   `zipfile` from the file in place with the same limits, order of checks and
   wording; parity tests compare the two readers on the same archives.
+- Parsed views: a JSON or key file entry or file over the 4 MiB limit is
+  refused before its value is built, in both readers. Its format is told
+  apart from text by a token scan that builds no value and holds a byte per
+  open container, which the exported reader also uses when Python's parser
+  reaches its recursion limit, so deeply nested text is JSON only when all of
+  it is.
 - Selectors: on an array, a pointer segment `[KEY=VALUE]` names the member
   whose string field `KEY` is `VALUE`, `[@KEY=VALUE]` the member whose
   `attributes` hold it, and conditions can follow one another. A selector must
@@ -50,8 +56,15 @@ tolerance. Both evaluators, REA's and the exported verifier's, agree.
 - Changes: `values` between zip versions pair array members one to one, by
   the first selector naming a member alone in its version and one unpaired
   member of the other (entries by name, XML elements by tag and attribute),
-  then by position; a comparison is incomplete when either view leaves
-  something out.
+  even when a selector before it names nothing there, then by position; a
+  member left unpaired is keyed by a selector naming it alone and nothing in
+  the other version. Identity comes first: an element with identifying
+  attributes (`name`, `id`, `xid`, or a prefixed `id` such as `xml:id`) is
+  selected by its tag and those alone, so one whose identifiers name nothing
+  in the other version is added or removed; its other attributes (`type`,
+  `color`) are tried only for elements without one. Selectors are spelled
+  only once chosen, so a long tag is not copied per attribute. A comparison
+  is incomplete when either view leaves something out.
 - Draft: for a zip document, checks inside its entries' JSON, key file and
   namespace-free XML views, through no object or array by position and no
   array a view may cut: an element added whole exists, one removed whole is
