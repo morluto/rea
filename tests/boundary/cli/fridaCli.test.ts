@@ -347,7 +347,21 @@ it("forwards every selected spawn argument through the CLI and shared service", 
     },
   );
   expect(exitCode).toBe(0);
-  expect(JSON.parse(stdout)).toHaveProperty("evidence");
+  const published = FRIDA_TOOL_CONTRACTS.find(
+    (contract) => contract.name === "instrument_with_frida",
+  )!.outputSchema.parse(JSON.parse(stdout));
+  expect(published).toMatchObject({
+    operation: "instrument_with_frida",
+    parameters: {
+      mode: "spawn",
+      program: "fixture-program",
+      argv: ["first", "second"],
+    },
+    normalized_result: {
+      source_kind: "inline",
+      cleanup_error: null,
+    },
+  });
   expect(calls).toContainEqual({
     operation: "start",
     input: {
