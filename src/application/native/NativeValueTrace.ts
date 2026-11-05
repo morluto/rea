@@ -1,17 +1,36 @@
-import { functionDossierSchema } from "../../domain/hopperValues.js";
+import { functionDossierSchema } from "../../domain/native/functionDossier.js";
 import { nativeCallTargetsSchema } from "../../domain/native/nativeInstruction.js";
 import {
   nativeValueTraceInputSchema,
   nativeValueTraceSchema,
 } from "../../domain/native/nativeValueTrace.js";
-import { createEvidence } from "../../domain/evidence.js";
+import { createAnalysisExecutionEvidence } from "../../domain/analysisObservation.js";
 import {
   AnalysisCancelledError,
+  AnalysisCapabilityUnavailableError,
   AnalysisOutputError,
 } from "../../domain/analysisErrorCore.js";
 import { err, ok } from "../../domain/result.js";
 import type { AnalysisOperationPort } from "../AnalysisProvider.js";
-import type { EnhancedResult } from "../EnhancedToolTypes.js";
+import type { AnalysisError } from "../../domain/analysisErrorBase.js";
+import { stopsTraversal } from "../CallRelationshipTraversal.js";
+import {
+  failedWithPartialResult,
+  type EnhancedResult,
+} from "../EnhancedToolTypes.js";
+import {
+  renderSourceLimitations,
+  type SourceLimitation,
+} from "../SourceLimitations.js";
+import { createValueTraceBudget } from "./NativeValueTraceBudget.js";
+
+/** The located unknown where unconfirmed provider cleanup stopped a trace. */
+export const CLEANUP_STOPPED_VALUE_TRACE =
+  "Trace stopped because the provider did not confirm cleanup of resources it owns";
+
+/** Fallback when a dossier has no native value-flow facet for this procedure. */
+export const UNRECORDED_NATIVE_VALUE_FLOW =
+  "Native def-use was not recorded for this procedure.";
 
 /** Compose bounded high-p-code def-use graphs across exactly referenced call destinations. */
 export const traceNativeValues = async (
@@ -20,11 +39,9 @@ export const traceNativeValues = async (
   signal?: AbortSignal,
 ): EnhancedResult => {
   const input = nativeValueTraceInputSchema.parse(parameters);
-  const nodes: typeof nativeValueTraceSchema._output.nodes = [];
-  const nodeIds = new Set<string>();
-  const edges: typeof nativeValueTraceSchema._output.edges = [];
   const procedures: typeof nativeValueTraceSchema._output.procedures = [];
   const unknowns: typeof nativeValueTraceSchema._output.unknowns = [];
+  const sourceLimitations: SourceLimitation[] = [];
   const callBindings: {
     caller: string;
     callee: string;
@@ -34,52 +51,105 @@ export const traceNativeValues = async (
     evidence_id: string;
   }[] = [];
   const pending = [{ procedure: input.procedure, depth: 0 }];
+  const attempted = new Set<string>();
   const visited = new Set<string>();
+  // Calls not followed because of depth or candidate policy. They narrow the
+  // traversal only if no other path analyzes or queues the destination.
+  const unexpanded: {
+    caller: string;
+    address: string;
+    destination: string;
+    reason: "max_depth" | "ambiguous_call_candidates";
+  }[] = [];
+  const budget = createValueTraceBudget(input, unknowns);
+  const { nodes, edges } = budget;
   let targetSha256: string | undefined;
-  let truncated = false;
   let decompilations = 0;
   let callSites = 0;
-  let bytes = 0;
+  // A provider that cannot confirm cleanup of resources it owns stops the
+  // trace; its own failure becomes the outcome, holding the admitted work.
+  let stopped: AnalysisError | undefined;
+  /** Record a failed read after the validated seed; true when it ends the trace. */
+  const endsTrace = (
+    error: AnalysisError,
+    procedure: string,
+    address: string | null,
+  ): boolean => {
+    if (!stopsTraversal(error)) {
+      unknowns.push({ procedure, address, reason: error.message });
+      return false;
+    }
+    if (error.cleanupIncomplete)
+      budget.narrow("cleanup_incomplete", {
+        procedure,
+        address,
+        reason: CLEANUP_STOPPED_VALUE_TRACE,
+      });
+    return true;
+  };
   while (pending.length > 0) {
     if (signal?.aborted)
-      return err(new AnalysisCancelledError("trace_native_values"));
+      return err(
+        new AnalysisCancelledError("trace_native_values", {
+          cause: signal.reason,
+        }),
+      );
     const next = pending.shift();
-    if (next === undefined || visited.has(next.procedure)) continue;
+    if (
+      next === undefined ||
+      attempted.has(next.procedure) ||
+      visited.has(next.procedure)
+    )
+      continue;
     if (decompilations >= input.max_functions) {
-      truncated = true;
-      unknowns.push({
+      budget.narrow("max_functions", {
         procedure: next.procedure,
         address: null,
         reason: "decompilation budget reached",
       });
+      // Keep the unanalyzed selector queued so later accounting attributes
+      // it to this budget rather than to a depth limit.
+      pending.unshift(next);
       break;
     }
+    // An exact selector is attempted once per trace, even on failure. Only
+    // successful dossiers establish canonical procedure identity in visited.
+    attempted.add(next.procedure);
     const execution = await analysis.execute(
       "analyze_function",
       { procedure: next.procedure },
       {
         ...(signal === undefined ? {} : { signal }),
         ...(next.depth > 0 ? { selectorOrigin: "provider" as const } : {}),
+        retainEvidence: true,
       },
     );
     decompilations++;
     if (!execution.ok) {
-      if (execution.error._tag === "AnalysisCancelledError")
-        return err(execution.error);
-      unknowns.push({
-        procedure: next.procedure,
-        address: null,
-        reason: execution.error.message,
-      });
+      // A seed failure has no trace to qualify. Preserve the provider's typed
+      // refusal; later failures are unknowns unless they end the trace.
+      if (next.depth === 0) return err(execution.error);
+      if (endsTrace(execution.error, next.procedure, null)) {
+        stopped = execution.error;
+        break;
+      }
       continue;
     }
+    const partialEvidence = () =>
+      createAnalysisExecutionEvidence(
+        "analyze_function",
+        { procedure: next.procedure },
+        execution.value,
+        "observed",
+      );
     const parsed = functionDossierSchema.safeParse(execution.value.result);
-    if (!parsed.success || execution.value.subject === null)
+    if (!parsed.success || execution.value.subject == null)
       return err(
         new AnalysisOutputError(
           "trace_native_values",
           "Function dossier lacks validated facts or artifact identity",
-        ),
+          parsed.success ? undefined : { cause: parsed.error },
+        ).retainPartialObservation(partialEvidence()),
       );
     const dossier = parsed.data;
     const address = dossier.procedure.address;
@@ -92,24 +162,17 @@ export const traceNativeValues = async (
         new AnalysisOutputError(
           "trace_native_values",
           "Cross-function target digest mismatch",
-        ),
+        ).retainPartialObservation(partialEvidence()),
       );
-    const evidence = createEvidence(
-      execution.value.subject,
-      execution.value.provider,
-      {
-        operation: "analyze_function",
-        parameters: { procedure: next.procedure },
-        result: execution.value.result,
-        rawResult: execution.value.rawResult,
-        limitations: execution.value.limitations,
-        locations: execution.value.locations,
-        ...(execution.value.analysisProfile === undefined
-          ? {}
-          : { analysisProfile: execution.value.analysisProfile }),
-      },
-    );
-    const evidenceId = evidence.evidence_id;
+    const evidenceId = execution.value.evidenceId;
+    if (evidenceId === undefined)
+      return err(
+        new AnalysisCapabilityUnavailableError(
+          "rea",
+          "trace_native_values",
+          "The function observation has no Evidence retention owner.",
+        ).retainPartialObservation(partialEvidence()),
+      );
     procedures.push({
       address,
       depth: next.depth,
@@ -122,19 +185,21 @@ export const traceNativeValues = async (
       unknowns.push({
         procedure: address,
         address: null,
-        reason: flow?.reason ?? "Provider has no native def-use model",
+        reason: flow?.reason ?? UNRECORDED_NATIVE_VALUE_FLOW,
       });
       continue;
     }
-    if (flow.truncated) {
-      truncated = true;
-      unknowns.push({
+    if (flow.truncated)
+      budget.narrow("provider_pcode_truncated", {
         procedure: address,
         address: null,
         reason: "Provider p-code was truncated",
       });
-    }
     const ids = new Set<string>();
+    // Keep generated parameter identity independent of which operations fit
+    // the budget, while preserving every provider-supplied operation ID.
+    const operationIds = new Set(flow.operations.map(({ id }) => id));
+    const parameterIds = new Map<number, string>();
     const qualified = (id: string) => `${address}/${id}`;
     for (const operation of flow.operations) {
       if (
@@ -150,65 +215,62 @@ export const traceNativeValues = async (
         kind: "operation" as const,
         parameter: null,
       };
-      const size = Buffer.byteLength(JSON.stringify(node));
-      if (nodes.length >= input.max_nodes || bytes + size > 8 * 1024 * 1024) {
-        truncated = true;
-        break;
-      }
-      bytes += size;
+      if (!budget.retainNode(node)) break;
       ids.add(operation.id);
-      nodes.push(node);
-      nodeIds.add(node.id);
     }
     for (const parameter of flow.parameters) {
-      if (nodes.length >= input.max_nodes) {
-        truncated = true;
+      const parameterId = `parameter:${parameter.ordinal}`;
+      let localId = parameterId;
+      for (let suffix = 1; operationIds.has(localId); suffix++)
+        localId = `${parameterId}#${suffix}`;
+      const id = qualified(localId);
+      if (
+        !budget.retainNode({
+          id,
+          procedure: address,
+          evidence_id: evidenceId,
+          kind: "parameter",
+          operation: null,
+          parameter,
+        })
+      )
         break;
-      }
-      const id = `${address}/parameter:${parameter.ordinal}`;
-      nodes.push({
-        id,
-        procedure: address,
-        evidence_id: evidenceId,
-        kind: "parameter",
-        operation: null,
-        parameter,
-      });
-      nodeIds.add(id);
+      parameterIds.set(parameter.ordinal, id);
     }
     for (const use of flow.parameter_uses) {
+      const source = parameterIds.get(use.ordinal);
+      if (!ids.has(use.use) || source === undefined) continue;
       if (
-        !ids.has(use.use) ||
-        !nodeIds.has(`${address}/parameter:${use.ordinal}`)
+        !budget.retainEdge(
+          {
+            source,
+            target: qualified(use.use),
+            input_index: use.input_index,
+            kind: "parameter-use",
+            status: "derived",
+            evidence_id: evidenceId,
+          },
+          address,
+        )
       )
-        continue;
-      if (edges.length >= input.max_edges) {
-        truncated = true;
         break;
-      }
-      edges.push({
-        source: `${address}/parameter:${use.ordinal}`,
-        target: qualified(use.use),
-        input_index: use.input_index,
-        kind: "parameter-use",
-        status: "derived",
-        evidence_id: evidenceId,
-      });
     }
     for (const edge of flow.def_use) {
       if (!ids.has(edge.definition) || !ids.has(edge.use)) continue;
-      if (edges.length >= input.max_edges) {
-        truncated = true;
+      if (
+        !budget.retainEdge(
+          {
+            source: qualified(edge.definition),
+            target: qualified(edge.use),
+            input_index: edge.input_index,
+            kind: "def-use",
+            status: "derived",
+            evidence_id: evidenceId,
+          },
+          address,
+        )
+      )
         break;
-      }
-      edges.push({
-        source: qualified(edge.definition),
-        target: qualified(edge.use),
-        input_index: edge.input_index,
-        kind: "def-use",
-        status: "derived",
-        evidence_id: evidenceId,
-      });
     }
     for (const operation of flow.operations) {
       if (
@@ -216,9 +278,10 @@ export const traceNativeValues = async (
         !["CALL", "CALLIND"].includes(operation.opcode)
       )
         continue;
+      // A full edge budget cannot retain this call or expand its destination.
+      if (budget.edgesExhausted()) break;
       if (callSites >= input.max_call_sites) {
-        truncated = true;
-        unknowns.push({
+        budget.narrow("max_call_sites", {
           procedure: address,
           address: operation.address,
           reason: "Call-site resolution budget reached",
@@ -232,13 +295,10 @@ export const traceNativeValues = async (
         signal === undefined ? {} : { signal },
       );
       if (!resolved.ok) {
-        if (resolved.error._tag === "AnalysisCancelledError")
-          return err(resolved.error);
-        unknowns.push({
-          procedure: address,
-          address: operation.address,
-          reason: resolved.error.message,
-        });
+        if (endsTrace(resolved.error, address, operation.address)) {
+          stopped = resolved.error;
+          break;
+        }
         continue;
       }
       const targets = nativeCallTargetsSchema.safeParse(resolved.value.result);
@@ -247,8 +307,23 @@ export const traceNativeValues = async (
           new AnalysisOutputError(
             "resolve_native_call_targets",
             "Invalid static call resolution",
+            { cause: targets.error },
+          ).retainPartialObservation(
+            createAnalysisExecutionEvidence(
+              "resolve_native_call_targets",
+              { address: operation.address },
+              resolved.value,
+              "observed",
+            ),
           ),
         );
+      sourceLimitations.push(
+        ...targets.data.limitations.map((limitation) => ({
+          provider: resolved.value.provider,
+          operation: "resolve_native_call_targets" as const,
+          limitation,
+        })),
+      );
       if (targets.data.targets.length === 0)
         unknowns.push({
           procedure: address,
@@ -256,19 +331,21 @@ export const traceNativeValues = async (
           reason: `Call target ${targets.data.status}`,
         });
       for (const target of targets.data.targets) {
-        if (edges.length >= input.max_edges) {
-          truncated = true;
-          break;
-        }
         const destination = target.procedure ?? target.address;
-        edges.push({
-          source: qualified(operation.id),
-          target: destination,
-          input_index: null,
-          kind: "call",
-          status: target.status,
-          evidence_id: evidenceId,
-        });
+        if (
+          !budget.retainEdge(
+            {
+              source: qualified(operation.id),
+              target: destination,
+              input_index: null,
+              kind: "call",
+              status: target.status,
+              evidence_id: evidenceId,
+            },
+            address,
+          )
+        )
+          break;
         if (target.status !== "candidate")
           callBindings.push({
             caller: address,
@@ -280,27 +357,23 @@ export const traceNativeValues = async (
           });
         if (next.depth < input.max_depth && target.status !== "candidate")
           pending.push({ procedure: destination, depth: next.depth + 1 });
-        else if (!visited.has(destination)) {
-          truncated = true;
-          unknowns.push({
-            procedure: address,
+        else
+          unexpanded.push({
+            caller: address,
             address: operation.address,
+            destination,
             reason:
               target.status === "candidate"
-                ? "Ambiguous call candidates were not traversed"
-                : "Call depth budget reached",
+                ? "ambiguous_call_candidates"
+                : "max_depth",
           });
-        }
       }
     }
-    if (
-      truncated &&
-      (nodes.length >= input.max_nodes ||
-        edges.length >= input.max_edges ||
-        bytes >= 8 * 1024 * 1024)
-    )
-      break;
+    // Remaining work is attributed to the rejecting budget recorded above.
+    if (stopped !== undefined || budget.exhausted()) break;
   }
+  // Cancellation leaves no outcome to qualify; unconfirmed cleanup keeps one.
+  if (stopped !== undefined && !stopped.cleanupIncomplete) return err(stopped);
   if (targetSha256 === undefined)
     return err(
       new AnalysisOutputError(
@@ -308,6 +381,26 @@ export const traceNativeValues = async (
         "No seed function could be analyzed",
       ),
     );
+  // A destination queued at a lower depth is omitted by the budget that ended
+  // traversal, and one already attempted was not narrowed by this call.
+  const queued = new Set(pending.map(({ procedure }) => procedure));
+  for (const skipped of unexpanded) {
+    const { destination } = skipped;
+    if (
+      visited.has(destination) ||
+      attempted.has(destination) ||
+      queued.has(destination)
+    )
+      continue;
+    budget.narrow(skipped.reason, {
+      procedure: skipped.caller,
+      address: skipped.address,
+      reason:
+        skipped.reason === "ambiguous_call_candidates"
+          ? "Ambiguous call candidates were not traversed"
+          : "Call depth budget reached",
+    });
+  }
   const parametersByProcedure = new Map<string, typeof nodes>();
   const returnsByProcedure = new Map<string, typeof nodes>();
   for (const node of nodes) {
@@ -342,37 +435,45 @@ export const traceNativeValues = async (
         });
         continue;
       }
-      if (edges.length >= input.max_edges) {
-        truncated = true;
+      if (
+        !budget.retainEdge(
+          {
+            source: binding.call,
+            target: node.id,
+            input_index: ordinal + 1,
+            kind: "argument-binding",
+            status: "derived",
+            evidence_id: binding.evidence_id,
+          },
+          binding.caller,
+        )
+      )
         break;
-      }
-      edges.push({
-        source: binding.call,
-        target: node.id,
-        input_index: ordinal + 1,
-        kind: "argument-binding",
-        status: "derived",
-        evidence_id: binding.evidence_id,
-      });
     }
     if (binding.output)
       for (const node of returnsByProcedure.get(binding.callee) ?? []) {
-        if (edges.length >= input.max_edges) {
-          truncated = true;
+        if (
+          !budget.retainEdge(
+            {
+              source: node.id,
+              target: binding.call,
+              input_index: 1,
+              kind: "return-binding",
+              status: "derived",
+              evidence_id: node.evidence_id,
+            },
+            binding.caller,
+          )
+        )
           break;
-        }
-        edges.push({
-          source: node.id,
-          target: binding.call,
-          input_index: 1,
-          kind: "return-binding",
-          status: "derived",
-          evidence_id: node.evidence_id,
-        });
       }
   }
   const page = nodes.slice(input.offset, input.offset + input.limit);
   const pageIds = new Set(page.map(({ id }) => id));
+  // Every edge source is a retained node, so a page holding every node holds
+  // every edge; traversal truncation is independent of the requested page.
+  const pageTruncated = page.length !== nodes.length;
+  const traversal = budget.traversal();
   const result = nativeValueTraceSchema.parse({
     seed: input.procedure,
     target_sha256: targetSha256,
@@ -387,19 +488,33 @@ export const traceNativeValues = async (
       input.offset + page.length < nodes.length
         ? input.offset + page.length
         : null,
-    truncated: truncated || page.length !== nodes.length,
+    page_truncated: pageTruncated,
+    traversal,
+    truncated: pageTruncated || traversal.status === "truncated",
     limitations: [
       "Static decompiler def-use graphs cover recovered block members; when membership is unavailable they exclude operations marked dead. Logical CALL argument positions bind to recovered HighParam ordinals and RETURN values bind to recovered CALL outputs; these are decompiler-derived dependencies, not original source or runtime observations. Missing parameters, variadic arguments and alias dependencies remain unknown.",
       "LOAD and STORE are memory operations; object fields, persistent state and RNG semantics are not inferred from names or pseudocode.",
-      "Traversal caps depth, decompilations, call-site resolutions, nodes, edges and node payloads (8 MiB). Complete serialized output is bounded to 32 MiB. Pagination reruns analysis and returns edges whose source is on the node page; endpoints outside the page retain stable identities.",
+      "Traversal caps depth, decompilations, call-site resolutions, nodes, edges and node payloads (8388608 bytes, 8 MiB); traversal.reasons names each cap or policy this trace reached. This release has no runtime override for the 8388608-byte node-payload allowance. Complete serialized output is bounded to 33554432 bytes (32 MiB) and that output allowance has no runtime override. Pagination reruns analysis and returns edges whose source is on the node page; endpoints outside the page retain stable identities.",
+      ...renderSourceLimitations(sourceLimitations),
     ],
   });
-  if (Buffer.byteLength(JSON.stringify(result)) > 32 * 1024 * 1024)
+  const oversized =
+    Buffer.byteLength(JSON.stringify(result)) > 32 * 1024 * 1024;
+  // The stopping failure stays primary over output size and a later abort.
+  if (stopped !== undefined)
+    return oversized ? err(stopped) : failedWithPartialResult(stopped, result);
+  if (oversized)
     return err(
       new AnalysisOutputError(
         "trace_native_values",
-        "Graph output exceeds 32 MiB; lower max_nodes, max_edges or page limit",
+        "Graph output exceeds 33554432 bytes (32 MiB). This release has no runtime override. Lower max_nodes, max_edges, or the page limit.",
       ),
+    );
+  if (signal?.aborted)
+    return err(
+      new AnalysisCancelledError("trace_native_values", {
+        cause: signal.reason,
+      }),
     );
   return ok(result);
 };

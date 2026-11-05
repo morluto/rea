@@ -17,6 +17,12 @@ const retained = {
 
 it("validates the actual retained bytes against canonical base64, count, and digest", () => {
   expect(browserNetworkBodySchema.safeParse(retained).success).toBe(true);
+  expect(
+    browserNetworkBodySchema.safeParse({
+      ...retained,
+      representation: "playwright-response-body-bytes",
+    }).success,
+  ).toBe(true);
   for (const mutation of [
     { bytes: 4 },
     { sha256: "0".repeat(64) },

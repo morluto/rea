@@ -3,17 +3,35 @@ name: Real recorded crash evidence
 on:
   workflow_dispatch:
   workflow_call:
+    inputs:
+      build_cache_artifact:
+        description: Portable build cache artifact from the calling CI run.
+        required: false
+        type: string
+        default: ""
+      remote_cache_write:
+        description: Trusted release qualification may publish the remote cache.
+        required: false
+        type: boolean
+        default: false
+    secrets:
+      TURBO_TOKEN:
+        description: Remote cache token. Only trusted callers pass it.
+        required: false
 
 permissions:
   contents: read
 
-concurrency:
-  group: real-recorded-crash-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
-
 env:
   NODE_OPTIONS: --max-old-space-size=768
   HUSKY: "0"
+  # A called workflow sees the caller event, so workflow_call is not an event
+  # name here. Writes when remote_cache_write is set, or on the default branch
+  # for push, schedule, and manual dispatch. Open pull requests stay empty-token
+  # and use the local cache only.
+  TURBO_TOKEN: "${{ (inputs.remote_cache_write == true || (github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'))) && secrets.TURBO_TOKEN || '' }}"
+  TURBO_TEAM: ${{ vars.TURBO_TEAM }}
+  TURBO_CACHE: "${{ (inputs.remote_cache_write == true || (github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'))) && 'local:rw,remote:rw' || 'local:rw' }}"
   UV_CONCURRENT_BUILDS: "1"
   UV_CONCURRENT_INSTALLS: "1"
   UV_PYTHON_DOWNLOADS: never
@@ -22,19 +40,30 @@ jobs:
   real-recorded-crash:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ["ubuntu:24.04", "debian:trixie-slim"]
+    container: ${{ matrix.image }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version-file: .nvmrc
-          cache: npm
-      - run: npm ci
-      - uses: ./.github/actions/portable-build-cache
-      - name: Install GDB on the disposable CI runner
+      - name: Install fixture and debugger prerequisites in the disposable container
         shell: bash
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install --yes --no-install-recommends gdb
+          apt-get update -qq
+          apt-get install --yes --no-install-recommends \
+            ca-certificates git python3-venv gcc libc6-dev strace gdb
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .nvmrc
+      - name: Cache npm package downloads
+        id: npm-cache
+        uses: ./.github/actions/npm-cache
+      - run: npm ci
+      - uses: ./.github/actions/portable-build-cache
+        with:
+          build_cache_artifact: ${{ inputs.build_cache_artifact }}
       - name: Acquire exact unchanged upstreams in isolated runner storage
         shell: bash
         run: |

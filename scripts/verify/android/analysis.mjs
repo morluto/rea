@@ -1,3 +1,4 @@
+import { requireMcpOutput } from "../../lib/mcp-verifier-results.mjs";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { access, writeFile } from "node:fs/promises";
@@ -12,11 +13,10 @@ import { JADX_RELEASE } from "../../../dist/android/JadxRelease.js";
 import fixture from "../../fixtures/android/apidemos.json" with { type: "json" };
 import { verifyAndroidCliCancellation } from "./cli-cancellation.mjs";
 import { verifyAndroidMetadata } from "./metadata.mjs";
+import { verifyAndroidClassSearch } from "./class-search.mjs";
 import { verifyAndroidFailureRecovery } from "./failure-recovery.mjs";
-import {
-  resolveJadxConfigurationInputs,
-  validateJadxConfiguration,
-} from "../../../dist/android/JadxConfiguration.js";
+import { resolveJadxConfigurationInputs } from "../../../dist/android/JadxConfiguration.js";
+import { validateVerifierJadxConfiguration } from "../../lib/jadx-configuration-inspection.mjs";
 import { verifyWindowsAndroidLifecycle } from "./windows-lifecycle.mjs";
 
 const repository = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
@@ -42,7 +42,7 @@ const configuration = await resolveJadxConfigurationInputs(
   process.env,
   "inspect_android_package",
 );
-await validateJadxConfiguration(
+await validateVerifierJadxConfiguration(
   configuration,
   process.env,
   "inspect_android_package",
@@ -148,17 +148,14 @@ try {
       { name: task.name, arguments: task.input },
       { timeout: 150_000 },
     );
-    assert.notEqual(response.isError, true, JSON.stringify(response));
-    const structured = response.structuredContent;
-    assert.ok(structured !== undefined);
-    const evidence = parseEvidence(structured);
+    assert.notEqual(response.structuredContent, undefined);
+    const evidence = parseEvidence(requireMcpOutput(response, task.name));
     assert.deepEqual(
       evidence.normalized_result,
       cliResults.get(task.name).normalized_result,
     );
     // Raw observations retain different workspace paths and load durations.
     // Validate each evidence ID independently; compare portable results/intent.
-    assert.equal(structured.evidence_id, evidence.evidence_id);
     assert.deepEqual(evidence.parameters, cliResults.get(task.name).parameters);
     assert.deepEqual(evidence.provider, cliResults.get(task.name).provider);
     assert.deepEqual(
@@ -170,9 +167,54 @@ try {
       cliResults.get(task.name).limitations,
     );
     assert.equal(evidence.confidence, cliResults.get(task.name).confidence);
-    assert.deepEqual(structured.normalized_result, evidence.normalized_result);
     console.log(`PASS MCP/CLI parity ${task.name}`);
   }
+  const overloadedInput = {
+    path,
+    class_name: "androidx.activity.ComponentActivity",
+    method_name: "setContentView",
+    overload_index: 0,
+  };
+  const overloadedCli = await execute(
+    process.execPath,
+    [
+      entrypoint,
+      "trace-android-references",
+      path,
+      overloadedInput.class_name,
+      "--method-name",
+      overloadedInput.method_name,
+      "--overload-index",
+      "0",
+      "--format",
+      "json",
+    ],
+    {
+      cwd: repository,
+      env: environment,
+      timeout: 150_000,
+      maxBuffer: 8 * 1024 * 1024,
+    },
+  );
+  const overloadedEvidence = parseEvidence(JSON.parse(overloadedCli.stdout));
+  assert.equal(overloadedEvidence.normalized_result.overload_index, 0);
+  assert.equal(
+    overloadedEvidence.normalized_result.reported_signature,
+    "setContentView(int): void",
+  );
+  assert.equal(overloadedEvidence.normalized_result.total, 1);
+  const overloadedMcp = await client.callTool(
+    { name: "trace_android_references", arguments: overloadedInput },
+    { timeout: 150_000 },
+  );
+  assert.notEqual(overloadedMcp.structuredContent, undefined);
+  assert.deepEqual(
+    parseEvidence(requireMcpOutput(overloadedMcp, "trace_android_references"))
+      .normalized_result,
+    overloadedEvidence.normalized_result,
+  );
+  console.log("PASS real overloaded method references through CLI/MCP");
+  await verifyAndroidClassSearch({ client, path, sha256: fixture.sha256 });
 } catch (cause) {
   process.stderr.write(stderr);
   throw cause;
@@ -188,6 +230,24 @@ assert.equal(packageResult.min_sdk, "26");
 assert.equal(packageResult.target_sdk, "33");
 assert.equal(packageResult.manifest.status, "complete");
 assert.ok(packageResult.manifest.text.includes(fixture.package));
+// Binary manifest contains nested class names with '$'; JADX's ordinary
+// class-aware XML renderer substitutes Java display aliases with dots.
+const nestedActivity =
+  "io.appium.android.apis.app.FragmentLayout$DetailsActivity";
+assert.ok(packageResult.manifest.text.includes(nestedActivity));
+assert.ok(packageResult.manifest.text.includes("@bool/atLeastHoneycomb"));
+assert.ok(
+  packageResult.manifest.text.includes(
+    'android:name=".app.LocalSampleInstrumentation"',
+  ),
+);
+assert.ok(
+  packageResult.components.items.some(
+    (component) =>
+      component.declared_name === nestedActivity &&
+      component.name === nestedActivity,
+  ),
+);
 assert.ok(packageResult.permissions.includes("android.permission.INTERNET"));
 assert.equal(packageResult.signature_verification, "not_performed");
 assert.ok(
@@ -205,7 +265,7 @@ assert.equal(method.body_status, "available");
 assert.equal(method.source.status, "complete");
 assert.ok(method.source.text.includes("getIntent()"));
 assert.ok(method.source.text.includes("setListAdapter"));
-assert.equal(method.method.dex_descriptor, null);
+assert.equal(method.method.dex_descriptor, "(Landroid/os/Bundle;)V");
 const references = cliResults.get("trace_android_references").normalized_result;
 assert.ok(references.total > 0);
 assert.ok(
@@ -264,3 +324,8 @@ if (process.env.REA_ANDROID_REPORT !== undefined)
     JSON.stringify(report, null, 2) + "\n",
   );
 console.log(JSON.stringify(report, null, 2));
+assert.notEqual(
+  windowsLifecycle?.cli_abrupt_owner_exit_workspace_cleanup,
+  false,
+  "Android workspace remained after abrupt owner exit",
+);

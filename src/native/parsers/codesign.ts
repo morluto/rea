@@ -16,14 +16,11 @@ export const parseCodeSignature = (
   unsigned: boolean,
   executablePaths: readonly string[] = [],
 ): Omit<InspectSignature, "provenance"> => {
-  const { identifier, fields } = splitEchoedValues(
-    output.replaceAll("\r\n", "\n"),
-    executablePaths,
-  );
+  const { identifier, fields } = splitEchoedValues(output, executablePaths);
   const values = new Map<string, string>();
   const authorities: string[] = [];
   const cdhashes: string[] = [];
-  for (const line of fields.split("\n")) {
+  for (const line of fields.split(/\r?\n/u)) {
     if (line.startsWith("CodeDirectory ")) {
       values.set("CodeDirectory", line.slice("CodeDirectory ".length));
       continue;
@@ -48,11 +45,7 @@ export const parseCodeSignature = (
     entitlements: null,
     timestamp: values.get("Timestamp") ?? null,
     hardened_runtime: parseRuntime(values.get("CodeDirectory")),
-    limitations: unsigned
-      ? ["Artifact is not signed."]
-      : [
-          "Entitlements and designated requirements require separate bounded commands.",
-        ],
+    limitations: unsigned ? ["Artifact is not signed."] : [],
   });
   return parsed;
 };
@@ -65,12 +58,20 @@ const splitEchoedValues = (
   text: string,
   executablePaths: readonly string[],
 ): { readonly identifier: string | undefined; readonly fields: string } => {
-  const executable = executablePaths
-    .map((path) => `Executable=${path}\n`)
-    .find((line) => text.startsWith(line));
   let rest = text;
-  if (executable !== undefined) rest = text.slice(executable.length);
-  else if (text.startsWith("Executable=")) {
+  // Frame the exact source path before interpreting record separators. A CRLF
+  // inside that path or the signing identifier is payload, not a line ending.
+  let newline: string | undefined;
+  for (const path of executablePaths) {
+    const prefix = `Executable=${path}`;
+    if (!text.startsWith(prefix)) continue;
+    const separator = /^\r?\n/u.exec(text.slice(prefix.length))?.[0];
+    if (separator === undefined) continue;
+    newline = separator;
+    rest = text.slice(prefix.length + separator.length);
+    break;
+  }
+  if (rest === text && text.startsWith("Executable=")) {
     const identifierLine = text.indexOf("\nIdentifier=");
     rest = identifierLine < 0 ? text : text.slice(identifierLine + 1);
   }
@@ -79,8 +80,17 @@ const splitEchoedValues = (
   // Later fields come from the signature itself, so the last `Format=` line
   // is the one codesign printed after the identifier.
   const format = rest.lastIndexOf("\nFormat=");
-  const lineEnd = rest.indexOf("\n");
-  const end = format >= 0 ? format : lineEnd >= 0 ? lineEnd : rest.length;
+  // Without an exact path, use the producer-owned Format record's terminator.
+  // Looking inside Identifier instead would confuse literal CRLF payload with
+  // record framing, or strip a literal trailing CR from an LF-delimited value.
+  if (newline === undefined && format >= 0)
+    newline = /\r?\n/u.exec(rest.slice(format + 1))?.[0];
+  const boundary = format >= 0 ? format : rest.indexOf("\n");
+  const crlf = newline === undefined || newline === "\r\n";
+  const end =
+    boundary < 0
+      ? rest.length
+      : boundary - (crlf && rest[boundary - 1] === "\r" ? 1 : 0);
   return {
     identifier: rest.slice("Identifier=".length, end),
     fields: rest.slice(end),

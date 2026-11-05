@@ -5,6 +5,8 @@ import ghidra.program.model.lang.Register;
 import ghidra.program.model.listing.Function;
 import ghidra.program.model.listing.Program;
 import ghidra.program.model.mem.Memory;
+import ghidra.program.model.mem.MemoryBlock;
+import ghidra.program.model.mem.MemoryBlockSourceInfo;
 
 import java.math.BigInteger;
 
@@ -29,8 +31,19 @@ public final class ReaGhidraPrepareRaw extends GhidraScript {
             );
         }
         Address entry = currentProgram.getAddressFactory().getDefaultAddressSpace().getAddress(entryHex);
-        Address start = currentProgram.getMinAddress();
-        if (entry == null || !entry.equals(start)) {
+        MemoryBlock block = entry == null ? null : currentProgram.getMemory().getBlock(entry);
+        boolean fileStart = false;
+        if (block != null) {
+            // Processor-defined zero page/stack blocks can precede the imported file.
+            for (MemoryBlockSourceInfo source : block.getSourceInfos()) {
+                if (source.getFileBytes().isPresent() && source.getFileBytesOffset() == 0 &&
+                    entry.equals(source.getMinAddress())) {
+                    fileStart = true;
+                    break;
+                }
+            }
+        }
+        if (!fileStart) {
             throw new IllegalArgumentException(
                 "Raw binary import must map file offset 0 at the caller-supplied entry"
             );

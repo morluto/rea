@@ -8,9 +8,15 @@ body:
   - type: markdown
     attributes:
       value: |
-        Keep one primary capability or workflow outcome per request. For a
-        substantial provider, public contract, or architecture change, explain
-        the decision maintainers need to make before implementation.
+        Describe one problem and the outcome you would like. Short answers are
+        welcome. Choose "Not sure yet" wherever needed; you do not need code, a
+        finished design, or a complete test plan to propose an idea.
+        Use concrete examples when available, distinguish current limitations
+        from proposed behavior, and leave unmeasured impact or unknowns explicit.
+
+        Read the [contribution scope](https://github.com/morluto/rea/blob/main/CONTRIBUTING.md#contribution-scope).
+        Maintainers can help resolve scope and technical questions. Unresolved
+        boundaries block integration, not opening a request for discussion.
 
   - type: checkboxes
     id: before-submitting
@@ -19,7 +25,9 @@ body:
       options:
         - label: I searched the open and closed issues and pull requests for a related proposal.
           required: true
-        - label: I removed credentials, tokens, private paths, and sensitive target data.
+        - label: I understand the [contribution scope](https://github.com/morluto/rea/blob/main/CONTRIBUTING.md#contribution-scope) must be reviewed before integration; open questions are welcome here.
+          required: true
+        - label: This request does not include credentials, private samples, or sensitive target data.
           required: true
 
   - type: dropdown
@@ -36,6 +44,7 @@ body:
         - MCP or agent integration
         - Documentation
         - Other
+        - Not sure yet
     validations:
       required: true
 
@@ -43,7 +52,7 @@ body:
     id: current-limitation
     attributes:
       label: Current limitation
-      description: What user or agent workflow is blocked, ambiguous, or unnecessarily difficult today?
+      description: What are you trying to understand or do, and what is difficult today? A short example is enough.
     validations:
       required: true
 
@@ -51,23 +60,69 @@ body:
     id: use-cases
     attributes:
       label: Use cases
-      description: Give concrete applications, targets, callers, or investigation workflows. Explain why current tools are insufficient.
-    validations:
-      required: true
+      description: Optional examples of affected workflows, targets, or callers and their practical impact. Include observed frequency or measurements when available; do not invent them. Leave blank if covered above.
 
   - type: textarea
     id: desired-outcome
     attributes:
       label: Desired outcome and success criteria
-      description: Describe observable behavior, inputs, outputs, evidence, and compatibility criteria that would make this useful.
+      description: What would a useful result look like? Describe the output or behavior you want; implementation details are optional.
+      placeholder: For a selected APK, show whether it is packed and include the detection evidence.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: target-interaction
+    attributes:
+      label: Expected interaction with targets
+      description: >-
+        Select all known effects, including upstream tool behavior. Add "Not sure
+        yet" if anything is unclear. Use "No target interaction" only on its own.
+        These selections help discussion and do not establish scope approval.
+      multiple: true
+      options:
+        - Read existing files or captured data
+        - Launch or attach to a process
+        - Inject instrumentation or run scripts/code
+        - Change process memory or registers
+        - Write or change files/configuration
+        - Contact network services
+        - Recover protected code or work around protections
+        - No target interaction (documentation or usability only)
+        - Not sure yet
     validations:
       required: true
 
   - type: textarea
     id: boundaries
     attributes:
-      label: Authority boundaries and non-goals
-      description: Call out process execution, target mutation, provider licensing, evidence provenance, supported platforms, and work that should remain out of scope.
+      label: Target and scope details (optional)
+      description: >-
+        If known, name the target/platform, clarify selected effects, or list a
+        non-goal or scope question. You can leave this blank; maintainers can help.
+        Do not include private samples or proof-of-authorization documents.
+
+  - type: dropdown
+    id: verification-readiness
+    attributes:
+      label: Verification available so far
+      description: Pick the closest match. An idea without samples or test results is welcome.
+      options:
+        - Idea only; I need help defining checks
+        - I can suggest a sample or manual check
+        - I have a prototype or observed results
+        - Not sure yet
+    validations:
+      required: true
+
+  - type: textarea
+    id: verification
+    attributes:
+      label: Verification details (optional)
+      description: >-
+        Share an expected output, a possible check, or existing results if you have
+        them. Self-owned or appropriately licensed samples can help, but are not
+        required to open a request. Do not attach private or sensitive data.
 
   - type: textarea
     id: alternatives
@@ -85,4 +140,4 @@ body:
     id: references
     attributes:
       label: References
-      description: Link relevant provider documentation, source, measurements, artifacts, issues, or discussions.
+      description: Optional supporting examples, provider documentation, source, measurements, artifacts, issues, or prior art. Distinguish observed results from expected benefits; an idea without evidence is welcome.

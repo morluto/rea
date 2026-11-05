@@ -1,15 +1,17 @@
+import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import { z } from "incur";
-import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { JebAnalysisService } from "../application/jeb/JebAnalysisService.js";
 import type { JebAnalysisPort } from "../application/jeb/JebAnalysisPort.js";
 import { createJebAnalysisProvider } from "../composition/jeb.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { logCliCommand } from "../cliLogging.js";
-import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import type { JebOperation } from "../domain/jeb/jebAnalysis.js";
 import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
 import { withCommandCancellation } from "./commandCancellation.js";
+import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
+import { bindCliEvidenceCallerPath } from "./cliEvidenceCallerPath.js";
+import { jebInputSchemas } from "../domain/jeb/jebAnalysis.js";
 
 /** Expose the same explicit JEB requests through one-shot CLI commands. */
 export const registerJebCommands = (
@@ -19,19 +21,26 @@ export const registerJebCommands = (
   provider: JebAnalysisPort = createJebAnalysisProvider(environment),
 ): void => {
   const service = new JebAnalysisService(provider);
-  const execute = (name: string, operation: JebOperation, input: unknown) =>
+  const execute = (
+    name: string,
+    operation: JebOperation,
+    input: unknown,
+    callerPath?: string,
+  ) =>
     withCommandCancellation((signal) =>
-      logCliCommand(logger, name, async () => {
-        const result = await service.execute(operation, input, { signal });
-        try {
-          await provider.close();
-        } catch (cause) {
-          if (cause instanceof AnalysisError)
-            return projectAnalysisError(cause);
-          throw cause;
-        }
-        return result.ok ? result.value : projectAnalysisError(result.error);
-      }),
+      logCliCommand(logger, name, () =>
+        finishAnalysisCommand(
+          callerPath === undefined
+            ? () => service.execute(operation, input, { signal })
+            : bindCliEvidenceCallerPath(callerPath, () =>
+                service.execute(operation, input, { signal }),
+              ),
+          { close: () => provider.close() },
+          "jeb",
+          operation,
+          signal,
+        ).then(projectCliAnalysisResult),
+      ),
     );
 
   cli.command(CLI_COMMANDS.inspectJebClient, {
@@ -43,38 +52,19 @@ export const registerJebCommands = (
     description:
       "Open or create a JEB project from an artifact or .jdb2 database",
     args: z.object({
-      path: z
-        .string()
-        .describe("Artifact or .jdb2 path resolved by the JEB engine host"),
+      path: jebInputSchemas.open_jeb_project.shape.path,
     }),
     run: ({ args }) =>
-      execute(CLI_COMMANDS.openJebProject, "open_jeb_project", args),
+      execute(CLI_COMMANDS.openJebProject, "open_jeb_project", args, args.path),
   });
   cli.command(CLI_COMMANDS.listJebUnits, {
     description: "List JEB project units by path and type with optional filter",
     args: z.object({}),
     options: z.object({
-      filter: z
-        .string()
-        .optional()
-        .describe("Wildcard filter matched against unit paths"),
-      "parent-unit-path": z
-        .string()
-        .optional()
-        .describe("Restrict results to descendants of this unit path"),
-      index: z
-        .number()
-        .int()
-        .nonnegative()
-        .default(0)
-        .describe("Zero-based index of the first result to return"),
-      count: z
-        .number()
-        .int()
-        .min(1)
-        .max(100)
-        .default(100)
-        .describe("Maximum results; the engine caps unit pages at 100"),
+      filter: jebInputSchemas.list_jeb_units.shape.filter,
+      "parent-unit-path": jebInputSchemas.list_jeb_units.shape.parent_unit_path,
+      index: jebInputSchemas.list_jeb_units.shape.index,
+      count: jebInputSchemas.list_jeb_units.shape.count,
     }),
     run: ({ options }) =>
       execute(CLI_COMMANDS.listJebUnits, "list_jeb_units", {
@@ -89,22 +79,11 @@ export const registerJebCommands = (
   cli.command(CLI_COMMANDS.decompileJebItem, {
     description: "Decompile one JEB type or method to engine pseudo-code",
     args: z.object({
-      "item-address": z
-        .string()
-        .min(1)
-        .describe("Type or method address within the unit"),
-      "item-kind": z
-        .enum(["type", "method"])
-        .describe("Kind of item to decompile"),
+      "item-address": jebInputSchemas.decompile_jeb_item.shape.item_address,
+      "item-kind": jebInputSchemas.decompile_jeb_item.shape.item_kind,
     }),
     options: z.object({
-      "unit-path": z
-        .string()
-        .min(1)
-        .optional()
-        .describe(
-          "Target code unit; the engine's first code unit when omitted",
-        ),
+      "unit-path": jebInputSchemas.decompile_jeb_item.shape.unit_path,
     }),
     run: ({ args, options }) =>
       execute(CLI_COMMANDS.decompileJebItem, "decompile_jeb_item", {

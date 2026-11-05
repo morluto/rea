@@ -57,7 +57,7 @@ import {
 } from "../../domain/analysisErrorCore.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { err, ok, type Result } from "../../domain/result.js";
-import { procedureReferencesResultSchema } from "../../domain/hopperValues.js";
+import { procedureReferencesResultSchema } from "../../domain/native/nativeReference.js";
 
 /** Input parameters for reconstructing a procedure's hardware peripheral interactions. */
 export const reconstructProcedureHardwareInputSchema = z.strictObject({
@@ -470,9 +470,13 @@ export const reconstructProcedureHardwareInteractions = async (
   parameters: unknown,
   options?: ExecutionOptions,
 ): Promise<Result<HardwarePeripheralReconstruction, AnalysisError>> => {
-  if (options?.signal?.aborted) {
+  const signal = options?.signal;
+  if (signal?.aborted) {
     return err(
-      new AnalysisCancelledError("reconstruct_procedure_hardware_interactions"),
+      new AnalysisCancelledError(
+        "reconstruct_procedure_hardware_interactions",
+        { cause: signal.reason },
+      ),
     );
   }
 

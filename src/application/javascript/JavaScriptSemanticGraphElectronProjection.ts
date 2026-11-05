@@ -1,6 +1,6 @@
 import type { ElectronCallPath } from "../../domain/javascript/electronStaticAnalysisTypes.js";
 import type { JavaScriptArtifactFile } from "../../domain/javascript/javascriptArtifactFiles.js";
-import { sha256Text } from "../../domain/javascript/javascriptStaticAnalysisHelpers.js";
+import { electronCallPathId } from "./ElectronCallPathIdentity.js";
 import {
   addSemanticGraphRelation,
   retainSemanticGraphNode,
@@ -16,7 +16,7 @@ export function* projectElectronSemanticCallPaths(
 ): Generator<void, void> {
   for (const path of paths) {
     yield;
-    const pathId = sha256Text(JSON.stringify(path));
+    const pathId = electronCallPathId(file.path, path);
     let previous: ReturnType<typeof retainSemanticGraphNode> = null;
     let previousKind: ElectronCallPath["steps"][number]["kind"] | undefined;
     for (const [index, step] of path.steps.entries()) {
@@ -34,6 +34,9 @@ export function* projectElectronSemanticCallPaths(
         properties: {
           path_id: pathId,
           entry: path.entry,
+          ...(path.entry_path === undefined
+            ? {}
+            : { entry_path: [...path.entry_path] }),
           channel: path.channel,
           terminal: path.terminal,
           step_kind: step.kind,
@@ -62,6 +65,9 @@ export function* projectElectronSemanticCallPaths(
         properties: {
           path_id: pathId,
           entry: path.entry,
+          ...(path.entry_path === undefined
+            ? {}
+            : { entry_path: [...path.entry_path] }),
           channel: path.channel,
           basis: "lexical-wrapper-substitution",
         },

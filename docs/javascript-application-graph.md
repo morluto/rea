@@ -68,9 +68,25 @@ The node vocabulary covers:
 - runtime script instance;
 - an explicit `unknown` kind when classification is not justified.
 
+Static network endpoints can have `resolution: "partial"` when the analyzer
+recognizes a request call but cannot resolve its target to one exact value.
+The observation's `value` then preserves the source expression, and its
+evidence points to the call site. Partial and exact endpoints have distinct
+identities even when their displayed values match. Partial identities also retain
+the source site: matching expression text at different sites does not establish
+the same runtime target. This records observed source syntax; it does not
+establish that the call ran or contacted that endpoint.
+Version comparison can align equal unresolved source sites and syntax across
+artifact changes, while target identity remains unknown. Equal unresolved text
+at different sites and partial versus exact values cannot establish a pair.
+Unresolved targets qualify endpoint absence only within the same endpoint kind;
+known metadata differences on an established pair remain visible.
+Graph coverage describes the analyzed artifact scope and resource limits, not
+runtime execution. A partial target alone does not imply omitted source.
+
 The directed relation vocabulary is `contains`, `loads`, `imports`, `maps_to`,
-`exposes`, `sends`, `invokes`, `handles`, `calls`, `persists_to`, `observed_as`,
-and `changed_from`. Provider names are deliberately absent from both
+`exposes`, `sends`, `invokes`, `handles`, `calls`, `accesses`, `persists_to`,
+`observed_as`, and `changed_from`. Provider names are deliberately absent from both
 vocabularies.
 
 For a `maps_to` edge targeting a source-map node, the edge carries
@@ -103,6 +119,15 @@ The `loads`, `exposes`, `invokes`, `handles`, and `imports` relationships remain
 static inferences. Dynamic or ambiguous IPC is retained without a pairing edge.
 Runtime entities retain passive-CDP authority, while a successful static/runtime
 correspondence is a separately identified cross-layer inference.
+
+Source module links retain their resolution mode. Static imports in `.ts` and
+`.tsx` are `compiler-dependent` when compiler options have not been retained.
+REA compares Node import and require resolution: a shared outcome remains
+available with a limitation; divergent outcomes remain unavailable with both
+conditional branches and their limitations. This models source relationships,
+not verified emitted code or execution. A declaration file found only through
+an emitted-extension fallback is retained as a candidate, not a runtime target;
+an explicitly selected path keeps its original identity.
 
 ## Evidence and authority
 
@@ -137,6 +162,14 @@ module produced it. In particular:
 - truncated coverage must be partial, name the limiting bound, and not claim
   zero omissions;
 - complete coverage cannot be truncated or omit items.
+
+Semantic graph validation enforces the same truncation coupling. Unknown
+omission extents remain `null`; positive omitted unknown occurrences can explain
+truncation even when omitted node and relation counts are both zero. Ordinary
+source unavailability, including invalid UTF-8, can make coverage partial without
+resource truncation. JavaScript summary `limitation_count` counts the full,
+deduplicated union of parent, application and semantic caveats, including messages
+whose delivery is omitted by the view's byte budget.
 
 Unavailable values are represented explicitly rather than as missing fields,
 so absence of evidence cannot silently become evidence of absence.

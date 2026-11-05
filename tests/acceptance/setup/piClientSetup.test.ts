@@ -11,9 +11,14 @@ import { COMPACT_INPUT_SCHEMA_BUDGET_BYTES } from "../../../src/config/mcpInputS
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
-for (const profile of ["", "bogus"])
+for (const [setting, profile] of [
+  ["REA_MCP_INPUT_SCHEMA_PROFILE", ""],
+  ["REA_MCP_INPUT_SCHEMA_PROFILE", "bogus"],
+  ["REA_MCP_OUTPUT_SCHEMA_PROFILE", ""],
+  ["REA_MCP_OUTPUT_SCHEMA_PROFILE", "bogus"],
+] as const)
   cliTest(
-    `setup and doctor refuse an invalid retained schema profile ${JSON.stringify(profile)}`,
+    `setup and doctor refuse an invalid retained ${setting} value ${JSON.stringify(profile)}`,
     async ({ cli }) => {
       const home = await createTestTempDirectory("rea-pi-invalid-profile-cli-");
       const agent = join(home, ".pi", "agent");
@@ -24,7 +29,7 @@ for (const profile of ["", "bogus"])
             type: "stdio",
             command: "rea",
             args: ["mcp"],
-            env: { REA_MCP_INPUT_SCHEMA_PROFILE: profile },
+            env: { [setting]: profile },
           },
         },
       });
@@ -52,7 +57,7 @@ for (const profile of ["", "bogus"])
         status: "needs_human",
         plannedActions: [],
         appliedActions: [],
-        remediation: expect.stringContaining("REA_MCP_INPUT_SCHEMA_PROFILE"),
+        remediation: expect.stringContaining(setting),
       });
       const doctor = await cli.run({
         arguments: ["doctor", "--client", "pi", "--json"],
@@ -83,6 +88,7 @@ cliTest(
     const config = join(agent, "mcp.json");
     const custom = {
       REA_MCP_INPUT_SCHEMA_PROFILE: "compact",
+      REA_MCP_OUTPUT_SCHEMA_PROFILE: "off",
       REA_LOG_LEVEL: "silent",
     };
     const original = JSON.stringify({
@@ -220,6 +226,7 @@ cliTest(
         environment: {
           HOME: home,
           USERPROFILE: home,
+          HOPPER_LAUNCHER_PATH: join(home, "unconfigured-hopper"),
           PI_CODING_AGENT_DIR: "custom-agent",
           OMP_PROFILE: "work",
           PI_PROFILE: "legacy",
@@ -275,8 +282,8 @@ cliTest(
         other: { command: "other-server" },
         rea: {
           type: "stdio",
-          command: process.platform === "win32" ? process.execPath : cliPath,
-          args: process.platform === "win32" ? [cliPath, "mcp"] : ["mcp"],
+          command: process.execPath,
+          args: [cliPath, "mcp"],
         },
       },
       autoEnableCodemode: false,
@@ -335,6 +342,7 @@ cliTest(
         environment: {
           HOME: home,
           USERPROFILE: home,
+          HOPPER_LAUNCHER_PATH: join(home, "unconfigured-hopper"),
           PI_CODING_AGENT_DIR: "custom-agent",
         },
         timeoutMs: 20_000,
@@ -443,6 +451,7 @@ cliTest(
         environment: {
           HOME: home,
           USERPROFILE: home,
+          HOPPER_LAUNCHER_PATH: join(home, "unconfigured-hopper"),
           PI_CODING_AGENT_DIR: "file:///agent%2fdir",
         },
         timeoutMs: 20_000,

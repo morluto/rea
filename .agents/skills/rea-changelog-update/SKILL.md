@@ -68,9 +68,10 @@ closing-issue reporters. Grouping preserves all those credits in one line.
 When Highlights, detailed entries or migrations reference the same work,
 put its thanks in one of those entries, not all of them. Include issue links.
 Direct-commit bullets carry the commit link and known human credit.
-Exclude GitHub bots and known agent accounts. REA's observed Anthropic and
-Cursor co-author trailers resolve to `@claude` and `@cursoragent` with GitHub
-type `User`; the credit policy excludes them while retaining their metadata.
+Exclude GitHub bots and known agent accounts. REA's observed Anthropic, Cursor,
+Codex, and Copilot co-author trailers resolve to `@claude`, `@cursoragent`,
+`@codex`, and `@Copilot` with GitHub type `User`; the credit policy excludes
+them while retaining their metadata.
 At the REA maintainer's request, omit `@morluto` self-thanks while preserving
 authorship in the inventory. Other human contributors remain eligible.
 Use explicit GitHub links for cross-repository references to avoid ambiguous

@@ -1,29 +1,20 @@
 import type { EvidenceMcpServer } from "./EvidenceMcpServer.js";
-import type { EvidenceWriter } from "../application/investigation/InvestigationRecordPort.js";
 
 import { ARTIFACT_TOOL_CONTRACTS } from "../contracts/artifactToolContracts.js";
-import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
-import type { Logger } from "pino";
+import { createArtifactExtractionDestination } from "../application/artifacts/ArtifactExtractionDestination.js";
 import { registerEvidenceTools } from "./registerEvidenceTools.js";
-import { artifactInspectionResultSchema } from "../domain/artifactInspection.js";
+import type { EvidenceToolFamilyOptions } from "./retainedSummaryDelivery.js";
 
 /** Register deterministic artifact inventory and safe extraction operations. */
 export const registerArtifactTools = (
   server: EvidenceMcpServer,
-  options: {
-    readonly logger: Logger;
-    readonly activeTarget: (() => BinaryTarget | undefined) | undefined;
-    readonly recordEvidence: EvidenceWriter["recordEvidence"] | undefined;
-    readonly withAdmittedAnalysis: import("./analysisAdmission.js").WithAdmittedAnalysis;
-  },
+  options: EvidenceToolFamilyOptions,
 ): void => {
   registerEvidenceTools(server, ARTIFACT_TOOL_CONTRACTS, {
     ...options,
-    sourceEvidence: (operation, result) =>
-      operation === "inspect_artifact"
-        ? artifactInspectionResultSchema
-            .parse(result)
-            .substeps.map(({ evidence }) => evidence)
-        : [],
+    parametersForExecution: (operation, parameters) =>
+      operation === "extract_artifact"
+        ? { ...parameters, output_root: createArtifactExtractionDestination() }
+        : parameters,
   });
 };

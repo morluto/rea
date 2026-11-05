@@ -68,6 +68,18 @@ static ULONGLONG jobMemoryLimit(napi_env env, napi_value value) {
   return limit;
 }
 
+// An affinity mask is meaningful only inside one processor group, so only a
+// process occupying exactly one group has a group a child can inherit. A
+// process whose threads span groups, or whose membership cannot be read, has no
+// single group.
+static bool singleProcessorGroup(HANDLE process, USHORT& group) {
+  USHORT count = 1;
+  std::array<USHORT, 1> groups{};
+  if (!GetProcessGroupAffinity(process, &count, groups.data()) || count != 1) return false;
+  group = groups[0];
+  return true;
+}
+
 static void pipe(Handle& read, Handle& write, bool parentReads = true) {
   SECURITY_ATTRIBUTES attributes{sizeof(SECURITY_ATTRIBUTES), nullptr, TRUE};
   HANDLE rawRead, rawWrite;
@@ -168,11 +180,27 @@ std::unique_ptr<Process> spawnProcess(const std::wstring& command, const std::ws
   TOKEN_OWNER owner{reinterpret_cast<TOKEN_USER*>(tokenUser.data())->User.Sid};
   require(SetTokenInformation(token.get(), TokenOwner, &owner, sizeof(owner)),
           "Set suspended process file owner failed", command);
+  // A mask names processors inside one processor group, and Windows assigns a
+  // new process to a group of its own choosing, so a mask belonging to another
+  // group is rejected (ERROR_INVALID_PARAMETER). An unconstrained caller, whose
+  // mask is its group's whole active set, asks for no bound the child's own
+  // group cannot give, so such a child keeps that group's default and the spawn
+  // proceeds. A narrower mask is a deliberate CPU constraint that a child in
+  // another group cannot express, and silently widening it would hand the
+  // provider tree the whole group, so that spawn fails naming the constraint.
   DWORD_PTR affinity = 0, systemAffinity = 0;
   require(GetProcessAffinityMask(GetCurrentProcess(), &affinity, &systemAffinity),
           "Read caller process affinity failed", command);
-  if (affinity != 0)
+  USHORT callerGroup = 0, childGroup = 0;
+  const bool sharedGroup = singleProcessorGroup(GetCurrentProcess(), callerGroup) &&
+                           singleProcessorGroup(result->process.get(), childGroup) &&
+                           callerGroup == childGroup;
+  if (affinity != 0 && sharedGroup)
     require(SetProcessAffinityMask(result->process.get(), affinity), "Preserve caller process affinity failed", command);
+  else
+    require(affinity == 0 || affinity == systemAffinity,
+            "Caller CPU affinity cannot bound an owned process in another processor group", command,
+            ERROR_INVALID_PARAMETER);
   const DWORD priority = GetPriorityClass(GetCurrentProcess());
   require(priority != 0 && SetPriorityClass(result->process.get(), priority),
           "Preserve caller process priority failed", command);
@@ -186,18 +214,37 @@ std::unique_ptr<Process> spawnProcess(const std::wstring& command, const std::ws
 }
 
 static napi_value readOutput(napi_env env, Handle& read, bool& ended) {
-  std::array<unsigned char, 65536> bytes;
-  DWORD available = 0, count = 0;
-  if (!read.valid()) ended = true;
-  else if (!PeekNamedPipe(read.get(), nullptr, 0, nullptr, &available, nullptr)) {
-    require(GetLastError() == ERROR_BROKEN_PIPE, "Observe owned process output failed");
-    read.reset(); ended = true;
-  } else if (available > 0) {
-    require(ReadFile(read.get(), bytes.data(), std::min<DWORD>(available, bytes.size()), &count, nullptr),
-            "Read owned process output failed");
+  constexpr size_t kMaximumReadPerPoll = 1024 * 1024;
+  std::array<unsigned char, 65536> chunk;
+  std::vector<unsigned char> bytes;
+  // A close-blocked pipe is EOF. Its number may have been reused, so this
+  // poll must not pass it to PeekNamedPipe or ReadFile. process_close still
+  // owns that value.
+  if (!read.valid() || read.closeBlocked()) ended = true;
+  else {
+    while (bytes.size() < kMaximumReadPerPoll) {
+      DWORD available = 0;
+      if (!PeekNamedPipe(read.get(), nullptr, 0, nullptr, &available, nullptr)) {
+        require(GetLastError() == ERROR_BROKEN_PIPE,
+                "Observe owned process output failed");
+        // Broken pipe is EOF for the bytes already queued. A failed close keeps
+        // this handle for process_close instead of dropping those bytes.
+        read.release();
+        ended = true;
+        break;
+      }
+      if (available == 0) break;
+      const auto requested = static_cast<DWORD>(std::min<size_t>(
+          {available, chunk.size(), kMaximumReadPerPoll - bytes.size()}));
+      DWORD count = 0;
+      require(ReadFile(read.get(), chunk.data(), requested, &count, nullptr) &&
+                  count > 0,
+              "Read owned process output failed");
+      bytes.insert(bytes.end(), chunk.begin(), chunk.begin() + count);
+    }
   }
   napi_value result;
-  check(napi_create_buffer_copy(env, count, bytes.data(), nullptr, &result));
+  check(napi_create_buffer_copy(env, bytes.size(), bytes.data(), nullptr, &result));
   return result;
 }
 
@@ -308,7 +355,8 @@ static void completeInput(napi_env env, napi_status status, void* pointer) {
 }
 
 static napi_value inputWrite(napi_env env, napi_value owner, Process& process, napi_value input) {
-  require(process.stdinWrite.valid(), "Owned process has no writable input", L"", ERROR_BROKEN_PIPE);
+  require(process.stdinWrite.valid() && !process.stdinWrite.closeBlocked(),
+          "Owned process has no writable input", L"", ERROR_BROKEN_PIPE);
   require(!process.inputPending, "Owned process input already has a pending write", L"", ERROR_BUSY);
   auto work = std::make_unique<InputWork>(process);
   void* bytes = nullptr;
@@ -369,7 +417,7 @@ napi_value processCall(napi_env env, const std::wstring& operation, const std::v
   require(args.size() == 1, "Wrong native process handle argument count", L"", ERROR_INVALID_PARAMETER);
   auto& process = static_cast<Process&>(resource(env, args[0], Kind::Process));
   if (operation == L"process_stdin_close") {
-    process.stdinWrite.reset();
+    requireReleased(process.stdinWrite, "Close owned process stdin failed");
     return null(env);
   }
   if (operation == L"process_poll") {
@@ -404,25 +452,44 @@ napi_value processCall(napi_env env, const std::wstring& operation, const std::v
   }
   if (operation == L"process_close") {
     // Closing the job is the crash-safe authority; no PID enumeration is used.
-    process.job.reset(); process.process.reset(); process.stdoutRead.reset(); process.stderrRead.reset(); process.stdinWrite.reset();
-    process.notifications.reset();
+    // A failed close leaves that handle on this process so a later close can
+    // retry it. Handles that already closed stay released, so the retry
+    // resumes at the first handle still owned. Callers that have observed
+    // settlement must retry this close alone; kill and poll still need the job.
+    retryRetainedNativeHandles();
+    requireReleased(process.job, "Close owned Job Object failed");
+    requireReleased(process.process, "Close owned process failed");
+    requireReleased(process.stdoutRead, "Close owned process stdout failed");
+    requireReleased(process.stderrRead, "Close owned process stderr failed");
+    requireReleased(process.stdinWrite, "Close owned process stdin failed");
+    requireReleased(process.notifications, "Close owned process notifications failed");
     process.closed = true;
     return null(env);
   }
   throw Failure("Unknown native process operation", L"", ERROR_INVALID_PARAMETER);
 }
 
-napi_value inspect(napi_env env, std::unique_ptr<Runtime>& probe) {
+napi_value inspect(napi_env env, std::unique_ptr<Runtime>& pending) {
   // Settle the previous owner before admitting another probe. Failed cleanup
   // retains its handles, including when identity construction itself failed.
-  if (probe) { closeRuntime(*probe); probe.reset(); }
+  if (pending) { closeRuntime(*pending); pending.reset(); }
   wchar_t temp[32768];
   const auto length = GetTempPathW(32768, temp);
   require(length > 0 && length < 32768, "Read temporary directory coordinate failed");
-  probe = createRuntime(std::wstring(temp, length), L"rea-native-probe-");
-  auto filesystem = identity(env, probe->directory.get(), probe->path);
-  closeRuntime(*probe);
-  probe.reset();
+  createRuntime(std::wstring(temp, length), L"rea-native-probe-", pending);
+  napi_value filesystem;
+  try {
+    filesystem = identity(env, pending->directory.get(), pending->path);
+  } catch (Failure& primary) {
+    cleanupFailedRuntime(pending, primary);
+    throw;
+  } catch (const std::exception& error) {
+    Failure primary(error.what(), pending ? pending->path : L"", ERROR_GEN_FAILURE);
+    cleanupFailedRuntime(pending, primary);
+    throw primary;
+  }
+  closeRuntime(*pending);
+  pending.reset();
   auto job = createJob();
   Attributes attributes(1);
   HANDLE raw = job.get();
@@ -436,6 +503,7 @@ napi_value inspect(napi_env env, std::unique_ptr<Runtime>& probe) {
   set(env, result, "architecture", string(env, std::string("x64")));
   set(env, result, "filesystem", filesystem);
   set(env, result, "privateDacl", boolean(env, true));
+  set(env, result, "privateBridgeDescriptorAccess", boolean(env, true));
   set(env, result, "atomicJobAssignment", boolean(env, true));
   set(env, result, "killOnOwnerClose", boolean(env, true));
   set(env, result, "protocolStdin", boolean(env, true));

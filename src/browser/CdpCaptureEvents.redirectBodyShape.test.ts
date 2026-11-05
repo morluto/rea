@@ -39,7 +39,9 @@ it("preserves an already captured response shape without marking it unavailable"
       },
     },
   });
-  events.ingestResponseBody("request-1", {
+  const candidate = events.responseBodyRequests()[0];
+  expect(candidate).toBeDefined();
+  events.ingestResponseBody(candidate!, {
     body: '{"response":true}',
     base64Encoded: false,
   });
@@ -62,7 +64,7 @@ it("preserves an already captured response shape without marking it unavailable"
     capturedShape,
   );
   expect(events.network.get("request-1")?.body_shapes.status).toBe("included");
-  expect(events.responseBodyRequestIds()).toEqual([]);
+  expect(events.responseBodyRequests()).toEqual([]);
   expect(events.completeness.snapshot().unavailable_sections).not.toContain(
     "json_body_shapes",
   );

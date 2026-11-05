@@ -13,10 +13,9 @@ import { dirname, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
-import {
-  resolveJadxConfigurationInputs,
-  validateJadxConfiguration,
-} from "../../../dist/android/JadxConfiguration.js";
+import { resolveJadxConfigurationInputs } from "../../../dist/android/JadxConfiguration.js";
+import { validateVerifierJadxConfiguration } from "../../lib/jadx-configuration-inspection.mjs";
+import { verifyWindowsGuardianIsolation } from "./windows-guardian-isolation.mjs";
 
 /** Verify real Windows cancellation, disconnect and abrupt CLI owner exit. */
 export async function verifyWindowsAndroidLifecycle(options) {
@@ -24,15 +23,16 @@ export async function verifyWindowsAndroidLifecycle(options) {
   await verifyJavaSelection(options.environment);
   const cancellation = await verifyMcp(options, "cancel");
   await verifyMcp(options, "disconnect");
-  await verifyCliOwnerExit(options);
+  const abruptWorkspaceRemoved = await verifyCliOwnerExit(options);
+  await verifyWindowsGuardianIsolation();
   return {
     mcp_cancelled_engine_exited: true,
     mcp_cancelled_workspace_removed: true,
     mcp_ping_and_next_call: true,
     mcp_disconnect_engine_exited: true,
     cli_abrupt_owner_exit_engine_exited: true,
-    // A forced Windows process exit cannot execute JavaScript workspace cleanup.
-    cli_abrupt_owner_exit_workspace_cleanup: false,
+    cli_abrupt_owner_exit_workspace_cleanup: abruptWorkspaceRemoved,
+    guardian_two_owner_isolation: true,
     observed_resources: cancellation,
     java_home_and_quoted_case_insensitive_path: true,
   };
@@ -43,7 +43,7 @@ async function verifyJavaSelection(environment) {
     environment,
     "inspect_android_package",
   );
-  await validateJadxConfiguration(
+  await validateVerifierJadxConfiguration(
     selected,
     environment,
     "inspect_android_package",
@@ -63,7 +63,7 @@ async function verifyJavaSelection(environment) {
       pathEnvironment,
       "inspect_android_package",
     );
-    await validateJadxConfiguration(
+    await validateVerifierJadxConfiguration(
       onPath,
       pathEnvironment,
       "inspect_android_package",
@@ -161,6 +161,7 @@ async function verifyCliOwnerExit({
   path,
   repository,
 }) {
+  const baseline = new Set(await runtimeRoots());
   const child = spawn(
     process.execPath,
     [entrypoint, "inspect-android-package", path, "--format", "json"],
@@ -185,7 +186,40 @@ async function verifyCliOwnerExit({
     await deadline(exited, 15000);
     await observer.verifyExit();
     assert.equal(output, "", "Aborted CLI published successful Evidence");
-    console.log("PASS Windows CLI abrupt owner exit: real Java job cleanup");
+    const created = (await runtimeRoots()).filter(
+      (name) => !baseline.has(name),
+    );
+    assert.ok(
+      created.length <= 1,
+      "Concurrent Android workspaces make abrupt cleanup observation ambiguous",
+    );
+    if (created.length === 0) {
+      console.log(
+        "PASS Windows CLI abrupt owner exit: real Java job and workspace cleanup",
+      );
+      return true;
+    }
+    const ownedName = created[0];
+    try {
+      await waitFor(
+        async () => !(await runtimeRoots()).includes(ownedName),
+        5000,
+        "Android workspace remained after abrupt owner exit",
+      );
+    } catch (cause) {
+      if (
+        !(cause instanceof Error) ||
+        cause.message !== "Android workspace remained after abrupt owner exit"
+      )
+        throw cause;
+    }
+    const removed = !(await runtimeRoots()).includes(ownedName);
+    console.log(
+      removed
+        ? "PASS Windows CLI abrupt owner exit: real Java job and workspace cleanup"
+        : "OBSERVED Windows CLI abrupt owner exit: Java job cleaned, workspace residue remains",
+    );
+    return removed;
   } finally {
     if (child.exitCode === null && child.signalCode === null) child.kill();
     await deadline(exited, 15000);

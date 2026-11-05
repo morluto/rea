@@ -1,4 +1,5 @@
 import { constants } from "node:fs";
+import { StagedOutputError } from "./StagedOutputError.js";
 import type { Stats } from "node:fs";
 import {
   lstat,
@@ -50,6 +51,7 @@ export class OwnedStagedOutput {
   #fileIdentity: Identity | undefined;
   #directoryIdentity: Identity | undefined;
   #retainedHandles: OwnedFileHandle[] = [];
+  #fileClosed = false;
   #fileRemovedByOwner = false;
   #publishedRename = false;
   #closeAttempt: Promise<void> | undefined;
@@ -63,6 +65,7 @@ export class OwnedStagedOutput {
     try {
       const stats = await lstat(directory);
       if (!stats.isDirectory() || stats.isSymbolicLink()) return owner;
+      // Path stat on Windows reports device 0. The open handle reports the volume.
       await owner.#readIdentity(directory, (identity) => {
         owner.#directoryIdentity = identity;
       });
@@ -89,35 +92,50 @@ export class OwnedStagedOutput {
     for (const handle of this.#retainedHandles) await handle.close();
   }
 
-  async setFile(file: OwnedFileHandle): Promise<void> {
+  setFile(file: OwnedFileHandle): void {
     if (this.#file !== undefined)
-      throw new Error("Staged output already owns a file handle");
+      throw new StagedOutputError("handle_already_owned");
     this.#file = file;
-    try {
-      this.#fileIdentity = identityOf(await file.handle.stat());
-    } catch (cause: unknown) {
-      // The handle remains owned; cleanup will close it and refuse pathname removal.
-      this.#identityFailure = cause;
-    }
   }
 
-  /** Verify that the path still names the exact closed file before publication. */
+  /** Verify the staged name against its descriptor after the last write. */
   async assertReadyForPublication(content: string): Promise<void> {
     await this.#verifiedDirectory();
+    if (this.#file !== undefined && !this.#fileClosed)
+      await this.#observeFileIdentity();
     if (this.#fileIdentity === undefined)
-      throw new Error("Cannot verify staged file identity", {
+      throw new StagedOutputError("identity_unverified", undefined, {
         cause: this.#identityFailure,
       });
     const stagedFile = await lstat(content);
     if (!stagedFile.isFile() || stagedFile.isSymbolicLink())
-      throw new Error(`Staged file identity changed: ${content}`);
+      throw new StagedOutputError("identity_changed", { path: content });
     const stagedIdentity = await this.#readIdentity(content);
     if (!sameIdentity(stagedIdentity, this.#fileIdentity))
-      throw new Error(`Staged file identity changed: ${content}`);
+      throw new StagedOutputError("identity_changed", { path: content });
   }
 
-  closeFile(): Promise<void> {
-    return this.#file?.close() ?? Promise.resolve();
+  /** Observe the descriptor's identity after its last write, then close it. */
+  async closeFile(): Promise<void> {
+    const file = this.#file;
+    if (file === undefined || this.#fileClosed) return;
+    await this.#observeFileIdentity();
+    await file.close();
+    this.#fileClosed = true;
+  }
+
+  async #observeFileIdentity(): Promise<void> {
+    const file = this.#file;
+    if (file === undefined) return;
+    // FAT and exFAT assign a file ID when the first write allocates storage,
+    // so only the descriptor's final identity can prove the staged pathname.
+    try {
+      this.#fileIdentity = identityOf(await file.handle.stat());
+    } catch (cause: unknown) {
+      // The handle remains owned; cleanup will close it and refuse pathname removal.
+      this.#fileIdentity = undefined;
+      this.#identityFailure = cause;
+    }
   }
 
   /** Record that the staged file moved to the published destination by rename. */
@@ -148,63 +166,71 @@ export class OwnedStagedOutput {
     await this.closeFile();
     await this.#verifiedDirectory();
 
-    const content = `${this.directory}/content`;
-    let stagedFile: Stats | undefined;
-    try {
-      stagedFile = await lstat(content);
-    } catch (cause: unknown) {
-      if (
-        errorCode(cause) === "ENOENT" &&
-        (this.#file === undefined ||
-          this.#fileRemovedByOwner ||
-          this.#publishedRename)
-      ) {
-        stagedFile = undefined;
-      } else if (errorCode(cause) === "ENOENT") {
-        throw new Error(`Owned staged file disappeared: ${content}`, {
-          cause,
-        });
-      } else {
-        throw cause;
+    // No descriptor was acquired when creating /content failed. Enumerate
+    // the owned directory instead of probing a possibly overlong child path.
+    if (this.#file !== undefined) {
+      const content = `${this.directory}/content`;
+      let stagedFile: Stats | undefined;
+      try {
+        stagedFile = await lstat(content);
+      } catch (cause: unknown) {
+        if (
+          errorCode(cause) === "ENOENT" &&
+          (this.#fileRemovedByOwner || this.#publishedRename)
+        ) {
+          stagedFile = undefined;
+        } else if (errorCode(cause) === "ENOENT") {
+          throw new StagedOutputError(
+            "file_disappeared",
+            { path: content },
+            { cause },
+          );
+        } else {
+          throw cause;
+        }
       }
-    }
-    if (stagedFile !== undefined) {
-      if (
-        !stagedFile.isFile() ||
-        stagedFile.isSymbolicLink() ||
-        this.#fileIdentity === undefined
-      )
-        throw new Error(`Staged file identity changed: ${content}`);
-      const stagedIdentity = await this.#readIdentity(content);
-      if (!sameIdentity(stagedIdentity, this.#fileIdentity))
-        throw new Error(`Staged file identity changed: ${content}`);
-      await unlink(content);
-      this.#fileRemovedByOwner = true;
+      if (stagedFile !== undefined) {
+        if (
+          !stagedFile.isFile() ||
+          stagedFile.isSymbolicLink() ||
+          this.#fileIdentity === undefined
+        )
+          throw new StagedOutputError("identity_changed", { path: content });
+        const stagedIdentity = await this.#readIdentity(content);
+        if (!sameIdentity(stagedIdentity, this.#fileIdentity))
+          throw new StagedOutputError("identity_changed", { path: content });
+        await unlink(content);
+        this.#fileRemovedByOwner = true;
+      }
     }
 
     const remaining = await readdir(this.directory);
     if (remaining.length > 0)
-      throw new Error(
-        `Unexpected staging entries remain in ${this.directory}: ${remaining.join(", ")}`,
-      );
+      throw new StagedOutputError("unexpected_entries", {
+        count: remaining.length,
+        entries: remaining.join(","),
+      });
     await this.#verifiedDirectory();
     await rmdir(this.directory);
   }
 
   async #verifiedDirectory(): Promise<void> {
     if (this.#directoryIdentity === undefined)
-      throw new Error(
-        `Cannot verify staging directory ownership: ${this.directory}`,
-        {
-          cause: this.#identityFailure,
-        },
+      throw new StagedOutputError(
+        "directory_unverified",
+        { directory: this.directory },
+        { cause: this.#identityFailure },
       );
     const directory = await lstat(this.directory);
     if (!directory.isDirectory() || directory.isSymbolicLink())
-      throw new Error(`Staging directory identity changed: ${this.directory}`);
+      throw new StagedOutputError("directory_identity_changed", {
+        directory: this.directory,
+      });
     const directoryIdentity = await this.#readIdentity(this.directory);
     if (!sameIdentity(directoryIdentity, this.#directoryIdentity))
-      throw new Error(`Staging directory identity changed: ${this.directory}`);
+      throw new StagedOutputError("directory_identity_changed", {
+        directory: this.directory,
+      });
   }
 }
 

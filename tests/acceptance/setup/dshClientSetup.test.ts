@@ -1,5 +1,6 @@
+import { artifactMcpCall } from "../../../scripts/lib/artifact-e2e.mjs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { expect } from "vitest";
@@ -7,6 +8,111 @@ import { parse } from "yaml";
 import { z } from "zod";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
+
+cliTest.for([
+  {
+    label: "blank defaults",
+    harness: "",
+    agents: " \t ",
+    dshRoot: "home/.dsh",
+    agentsRoot: "home/.agents",
+  },
+  {
+    label: "tilde roots",
+    harness: "~/selected harness",
+    agents: "~\\shared agents",
+    dshRoot: "home/selected harness",
+    agentsRoot: "home/shared agents",
+  },
+  {
+    label: "relative roots",
+    harness: "./selected harness",
+    agents: "../shared agents",
+    dshRoot: "workspace/selected harness",
+    agentsRoot: "shared agents",
+  },
+])(
+  "DSH CLI uses Harness path semantics through setup, doctor and uninstall for $label",
+  async ({ harness, agents, dshRoot, agentsRoot }, { cli }) => {
+    const root = await createTestTempDirectory("rea-dsh-paths-");
+    const home = join(root, "home");
+    const cwd = join(root, "workspace");
+    const config = join(root, dshRoot, "cordis.patch.yml");
+    const skillRoot = join(
+      root,
+      agentsRoot,
+      "skills",
+      "reverse-engineer-anything",
+    );
+    const skill = join(skillRoot, "SKILL.md");
+    await mkdir(home);
+    await mkdir(cwd);
+    await mkdir(dirname(config), { recursive: true });
+    const original =
+      "# caller patch\n- insert: [{id: caller, name: caller-plugin}]\n";
+    await writeFile(config, original);
+    const run = (args: readonly string[]) =>
+      cli.run({
+        arguments: [...args, "--json"],
+        cwd,
+        environment: {
+          HOME: home,
+          USERPROFILE: home,
+          DSH_HOME: harness,
+          DSH_AGENTS_HOME: agents,
+        },
+      });
+    const planned = await run(["setup", "--client", "dsh", "--dry-run"]);
+    expect(planned.exitCode).toBe(0);
+    expect(planned.json).toMatchObject({
+      status: "planned",
+      appliedActions: [],
+      plannedActions: expect.arrayContaining([
+        expect.objectContaining({ id: "configure_client:dsh", target: config }),
+        expect.objectContaining({ kind: "install_skill", target: skillRoot }),
+      ]),
+    });
+    expect(await readFile(config, "utf8")).toBe(original);
+    await expect(readFile(skill)).rejects.toMatchObject({ code: "ENOENT" });
+    const configured = await run(["setup", "--client", "dsh", "--yes"]);
+    expect(configured.exitCode).toBe(0);
+    expect(configured.json).toMatchObject({
+      status: "ready",
+      clients: { dsh: { status: "configured" } },
+    });
+    const text = await readFile(config, "utf8");
+    expect(text).toContain("# caller patch");
+    expect(text).toContain("rea-mcp");
+    expect(await readFile(`${config}.rea.backup`, "utf8")).toBe(original);
+    expect(await readFile(skill, "utf8")).toContain(
+      "name: reverse-engineer-anything",
+    );
+    const doctor = await run(["doctor", "--client", "dsh", "--skill"]);
+    expect(doctor.exitCode).toBe(0);
+    expect(doctor.json).toMatchObject({ healthy: true });
+    const repeated = await run(["setup", "--client", "dsh", "--yes"]);
+    expect(repeated.exitCode).toBe(0);
+    expect(repeated.json).toMatchObject({
+      status: "ready",
+      plannedActions: [],
+      appliedActions: [],
+    });
+    expect(await readFile(config, "utf8")).toBe(text);
+    const removed = await run(["uninstall"]);
+    expect(removed.exitCode).toBe(0);
+    expect(removed.json).toMatchObject({
+      status: "complete",
+      items: expect.arrayContaining([
+        expect.objectContaining({ name: "dsh", status: "removed" }),
+      ]),
+    });
+    expect(parse(await readFile(config, "utf8"))).toEqual([
+      { insert: [{ id: "caller", name: "caller-plugin" }] },
+    ]);
+    expect(await readFile(`${config}.rea.backup`, "utf8")).toBe(original);
+    await expect(readFile(skill)).rejects.toMatchObject({ code: "ENOENT" });
+  },
+);
 
 cliTest(
   "DSH CLI previews, approves, repairs, launches MCP, repeats and uninstalls while preserving caller YAML",
@@ -167,7 +273,7 @@ async function verifyGeneratedLauncher(
     expect((await client.listTools()).tools.map(({ name }) => name)).toContain(
       "binary_session",
     );
-    const session = await client.callTool({
+    const session = await artifactMcpCall(client, {
       name: "binary_session",
       arguments: {},
     });

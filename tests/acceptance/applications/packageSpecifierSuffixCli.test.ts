@@ -9,6 +9,7 @@ import { expect } from "vitest";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 import { analyzeJavaScriptDirectory } from "../../support/cli/javascriptApplication.js";
+import { writeFixtureFiles } from "../../support/javascriptApplicationFixture.js";
 
 type PackageSpecifierCase = {
   readonly specifier: string;
@@ -17,6 +18,23 @@ type PackageSpecifierCase = {
   readonly value: string | number | null;
   readonly error: string | null;
 };
+
+const directoryFormSpecifiers = [
+  "legacy/feature.js/.",
+  "legacy/feature.js/child/..",
+  "legacy/feature.js/",
+  "legacy/feature.js/.?cache=1#entry",
+  "legacy/with%20space.js/.",
+  "legacy/missing/.",
+  "legacy/feature.js/.\t",
+  "legacy/feature.js/.\n?cache=1#entry",
+  "legacy/feature.js/ch\til\rd/..",
+  "legacy/feature.js/. ",
+];
+const encodedDotSpecifiers = ["\t", "\n", "\r"].flatMap((control) => [
+  `legacy/child/%2${control}e%2${control}e/feature.js`,
+  `legacy/child/.%2${control}E/feature.js`,
+]);
 
 const requests = [
   {
@@ -131,6 +149,74 @@ const requests = [
     value: "legacy spaced feature",
     error: null,
   },
+  ...directoryFormSpecifiers.map((specifier) => ({
+    specifier,
+    target: null,
+    status: "rejected" as const,
+    value: null,
+    error: "ERR_UNSUPPORTED_DIR_IMPORT",
+  })),
+  ...encodedDotSpecifiers.map((specifier) => ({
+    specifier,
+    target: "node_modules/legacy/feature.js",
+    status: "resolved" as const,
+    value: "legacy feature",
+    error: null,
+  })),
+  {
+    specifier: "legacy/feature.js/%2e",
+    target: null,
+    status: "rejected",
+    value: null,
+    error: "ERR_UNSUPPORTED_DIR_IMPORT",
+  },
+  {
+    specifier: "legacy/feature.js/.%09",
+    target: null,
+    status: "not-found",
+    value: null,
+    error: "ERR_MODULE_NOT_FOUND",
+  },
+  {
+    specifier: "legacy/feature.js/%2f",
+    target: null,
+    status: "rejected",
+    value: null,
+    error: "ERR_INVALID_MODULE_SPECIFIER",
+  },
+  ...[
+    "legacy/feature.js?cache=/..",
+    "legacy/feature.js#entry/.",
+    "legacy/fea\tture.js",
+    "legacy/feature.js?cache=%2\te",
+    "legacy/feature.js#entry=%2\nf",
+    "legacy/child/../feature.js",
+  ].map((specifier) => ({
+    specifier,
+    target: "node_modules/legacy/feature.js",
+    status: "resolved" as const,
+    value: "legacy feature",
+    error: null,
+  })),
+  ...[
+    "fixture/feature.js/.",
+    "fixture/feature.js/.\t",
+    "fixture/child/%2\te%2\te/feature",
+    "legacy/../fixture/literal.cjs",
+  ].map((specifier) => ({
+    specifier,
+    target: "node_modules/fixture/literal.cjs",
+    status: "resolved" as const,
+    value: "literal",
+    error: null,
+  })),
+  {
+    specifier: "legacy/literal%252e.js",
+    target: "node_modules/legacy/literal%2e.js",
+    status: "resolved",
+    value: "legacy literal percent",
+    error: null,
+  },
   {
     specifier: "legacy/feature",
     target: null,
@@ -184,6 +270,9 @@ const createPackageSpecifierFixture = async (): Promise<{
       exports: {
         "./feature": "./feature.cjs",
         "./literal?cache=1": "./literal.cjs",
+        "./feature.js/.": "./literal.cjs",
+        "./feature.js/.\t": "./literal.cjs",
+        "./child/%2\te%2\te/feature": "./literal.cjs",
       },
     }),
   );
@@ -205,6 +294,10 @@ const createPackageSpecifierFixture = async (): Promise<{
     writeFile(
       join(legacyPackagePath, "with space.js"),
       'module.exports = "legacy spaced feature";',
+    ),
+    writeFile(
+      join(legacyPackagePath, "literal%2e.js"),
+      'module.exports = "legacy literal percent";',
     ),
     writeFile(
       join(legacyPackagePath, "nested", "package.json"),
@@ -258,6 +351,13 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
             resolution_status: status,
           }),
           evidence: expect.objectContaining({
+            ...(directoryFormSpecifiers.includes(specifier)
+              ? {
+                  limitations: expect.arrayContaining([
+                    `ESM package subpath ${JSON.stringify(specifier)} has URL directory form; directory imports are unsupported and no exact-file, package main or index lookup was attempted.`,
+                  ]),
+                }
+              : {}),
             ...(specifier === "legacy/feature"
               ? {
                   limitations: expect.arrayContaining([
@@ -270,6 +370,65 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
             }),
             location: expect.objectContaining({
               value: expect.objectContaining({ source: "main.mjs" }),
+            }),
+          }),
+        }),
+      );
+  },
+);
+
+cliTest.for(["CLI", "stdio MCP"] as const)(
+  "confines legacy package traversal before URL normalization through %s",
+  async (surface, { cli }) => {
+    const root = await createTestTempDirectory("rea-package-root-traversal-");
+    const cases = [
+      { specifier: "legacy/../../outside.js", status: "resolved" },
+      {
+        specifier: "legacy/../../outside.js?cache=/../../rea-artifact/#/..",
+        status: "resolved",
+      },
+      { specifier: "legacy//../../../outside.js", status: "resolved" },
+      {
+        specifier: "legacy/../../../rea-artifact/outside.js",
+        status: "rejected",
+      },
+      {
+        specifier: "legacy/../../../../rea-artifact/outside.js",
+        status: "rejected",
+      },
+      {
+        specifier: "legacy/../.\t./.\n./rea-artifact/outside.js?cache=1#entry",
+        status: "rejected",
+      },
+    ] as const;
+    const source = cases
+      .map(({ specifier }) => `import ${JSON.stringify(specifier)};`)
+      .join("\n");
+    await writeFixtureFiles(root, {
+      "main.mjs": source,
+      "outside.js": "export default 1;",
+      "node_modules/legacy/package.json": "{}",
+    });
+    const { graph } = await analyzeJavaScriptDirectory(surface, cli, root);
+    for (const { specifier, status } of cases)
+      expect(graph.edges).toContainEqual(
+        expect.objectContaining({
+          relation: "imports",
+          properties: expect.objectContaining({
+            specifier,
+            resolution_status: status,
+            resolved_path: status === "resolved" ? "outside.js" : null,
+          }),
+          evidence: expect.objectContaining({
+            ...(status === "rejected"
+              ? {
+                  limitations: expect.arrayContaining([
+                    "The resolved candidate escapes the canonical artifact root.",
+                  ]),
+                }
+              : {}),
+            artifact: expect.objectContaining({
+              sha256: createHash("sha256").update(source).digest("hex"),
             }),
           }),
         }),

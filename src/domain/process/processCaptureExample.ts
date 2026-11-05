@@ -79,6 +79,7 @@ export const EMPTY_PROCESS_CAPTURE_EXAMPLE = {
       depth_limit: 16,
       enumeration_truncated: false,
       enumeration_reasons: [],
+      enumeration_omissions: [],
       hash_budget_bytes: 10_000_000,
       hashed_bytes: 0,
       hash_omissions: [],
@@ -88,6 +89,7 @@ export const EMPTY_PROCESS_CAPTURE_EXAMPLE = {
       depth_limit: 16,
       enumeration_truncated: false,
       enumeration_reasons: [],
+      enumeration_omissions: [],
       hash_budget_bytes: 10_000_000,
       hashed_bytes: 0,
       hash_omissions: [],
@@ -107,33 +109,5 @@ export const EMPTY_PROCESS_CAPTURE_EXAMPLE = {
   cleanup: {
     owned_process_group: "verified",
     temporary_root: "removed",
-  },
-} satisfies JsonValue;
-
-const finalizedScenario = { ...scenario, finalization_ms: 1_500 };
-const finalizedComparisonContract = { finalization_ms: 1_500 };
-
-/** Valid capture of a timeout that finalized: SIGTERM delivered, exit observed. */
-export const FINALIZED_PROCESS_CAPTURE_EXAMPLE = {
-  ...EMPTY_PROCESS_CAPTURE_EXAMPLE,
-  manifest: {
-    ...EMPTY_PROCESS_CAPTURE_EXAMPLE.manifest,
-    scenario: finalizedScenario,
-    comparison_contract: finalizedComparisonContract,
-    full_scenario_sha256: digestProcessCommitment(finalizedScenario),
-    comparison_contract_sha256: digestProcessCommitment(
-      finalizedComparisonContract,
-    ),
-  },
-  exit: {
-    code: null,
-    signal: 0,
-    reason: "timeout",
-    finalization: {
-      requested_ms: 1_500,
-      elapsed_ms: 12,
-      exit_code: 0,
-      signals: [{ signal: "SIGTERM", sent_at_ms: 0, delivery: "signaled" }],
-    },
   },
 } satisfies JsonValue;

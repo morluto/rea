@@ -21,7 +21,7 @@ describe("HopperClient restart", () => {
 
     const result = await starting;
     expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.error._tag).toBe("HopperCancelledError");
+    if (!result.ok) expect(result.error._tag).toBe("HopperProtocolError");
   });
 
   it("starts a fresh session after close completes", async () => {
@@ -30,7 +30,12 @@ describe("HopperClient restart", () => {
 
     await expect(client.start()).resolves.toEqual({
       ok: true,
-      value: { name: "REA Hopper bridge", version: "1.0.0" },
+      value: {
+        name: "REA Hopper bridge",
+        version: "1.0.0",
+        processId: expect.any(Number),
+        maxRequestBytes: 16 * 1024 * 1024,
+      },
     });
   });
 
@@ -42,7 +47,12 @@ describe("HopperClient restart", () => {
     await closing;
     await expect(restarting).resolves.toEqual({
       ok: true,
-      value: { name: "REA Hopper bridge", version: "1.0.0" },
+      value: {
+        name: "REA Hopper bridge",
+        version: "1.0.0",
+        processId: expect.any(Number),
+        maxRequestBytes: 16 * 1024 * 1024,
+      },
     });
     await expect(client.callTool("echo", { value: "fresh" })).resolves.toEqual({
       ok: true,

@@ -11,7 +11,10 @@ export async function verifyGhidraAddressBoundaries(client, entry, cli) {
     assert.notEqual(reply.isError, true, JSON.stringify(reply));
     return reply.structuredContent.normalized_result;
   };
-  const before = await query("analyze_function", { procedure: entry });
+  const before = await query("analyze_function", {
+    procedure: entry,
+    detail: "complete",
+  });
   // The segmented parser used to discard the high 32 bits and alias this entry.
   const overflow = (0x100000000n + BigInt(entry)).toString(16);
   const representations = [
@@ -52,7 +55,7 @@ export async function verifyGhidraAddressBoundaries(client, entry, cli) {
     }
   }
   assert.deepEqual(
-    await query("analyze_function", { procedure: entry }),
+    await query("analyze_function", { procedure: entry, detail: "complete" }),
     before,
     "Rejected oversized annotations changed the aliased function",
   );
@@ -62,36 +65,68 @@ export async function verifyGhidraAddressBoundaries(client, entry, cli) {
     await query("read_bytes", { address: padded, length: 1 }),
     await query("read_bytes", { address: entry, length: 1 }),
   );
-  const aliasKeys = [entry, padded];
-  assert.deepEqual(
-    await query("set_addresses_names", {
-      names: {
-        [entry]: "rea_same_address_alias",
-        [padded]: "rea_same_address_alias",
-      },
-    }),
-    Object.fromEntries(aliasKeys.map((address) => [address, true])),
-    "Equivalent address spellings with one requested name share one edit",
-  );
-  const nameBeforeAliasedBatch = await query("address_name", {
-    address: entry,
-  });
-  assert.equal(nameBeforeAliasedBatch, "rea_same_address_alias");
-  assert.deepEqual(
-    await query("set_addresses_names", {
-      names: {
-        [entry]: "rea_first_address_alias",
-        [padded]: "rea_second_address_alias",
-      },
-    }),
-    Object.fromEntries(aliasKeys.map((address) => [address, false])),
-    "Conflicting spellings of one Ghidra address must be rejected together",
-  );
+  const originalName = await query("address_name", { address: entry });
   assert.equal(
-    await query("address_name", { address: entry }),
-    nameBeforeAliasedBatch,
-    "A rejected alias collision must leave the preexisting target name unchanged",
+    typeof originalName,
+    "string",
+    "The function entry needs an observed name that can be restored",
   );
+  const aliasKeys = [entry, padded];
+  let primaryFailure;
+  try {
+    assert.deepEqual(
+      await query("set_addresses_names", {
+        names: {
+          [entry]: "rea_same_address_alias",
+          [padded]: "rea_same_address_alias",
+        },
+      }),
+      Object.fromEntries(aliasKeys.map((address) => [address, true])),
+      "Equivalent address spellings with one requested name share one edit",
+    );
+    const nameBeforeAliasedBatch = await query("address_name", {
+      address: entry,
+    });
+    assert.equal(nameBeforeAliasedBatch, "rea_same_address_alias");
+    assert.deepEqual(
+      await query("set_addresses_names", {
+        names: {
+          [entry]: "rea_first_address_alias",
+          [padded]: "rea_second_address_alias",
+        },
+      }),
+      Object.fromEntries(aliasKeys.map((address) => [address, false])),
+      "Conflicting spellings of one Ghidra address must be rejected together",
+    );
+    assert.equal(
+      await query("address_name", { address: entry }),
+      nameBeforeAliasedBatch,
+      "A rejected alias collision must leave the preexisting target name unchanged",
+    );
+  } catch (cause) {
+    primaryFailure = cause;
+    throw cause;
+  } finally {
+    try {
+      assert.equal(
+        await query("set_address_name", { address: entry, name: originalName }),
+        true,
+        "The temporary alias edit must be restored",
+      );
+      assert.equal(
+        await query("address_name", { address: entry }),
+        originalName,
+        "The original function-entry name must survive restoration",
+      );
+    } catch (cleanupCause) {
+      if (primaryFailure !== undefined)
+        throw new AggregateError(
+          [primaryFailure, cleanupCause],
+          "Ghidra address-boundary verification and alias restoration failed",
+        );
+      throw cleanupCause;
+    }
+  }
   for (const [command, flags, operation] of [
     ["read-bytes", ["--length", "1"], "read_bytes"],
     [

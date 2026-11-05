@@ -34,7 +34,7 @@ audited source revision.
 
 ## Public APK fixture
 
-`scripts/fetch-android-fixtures.mjs` explicitly downloads the audited engine and
+`npm run fixtures:android` (`scripts/fixtures/android/fetch.mjs`) downloads the audited engine and
 Appium ApiDemos v6.0.18 into ignored `_reference/apk-integration/`. Both downloads
 are checked against fixed SHA-256 values. Fixture provenance is recorded in
 `scripts/fixtures/android-apidemos.json`; the source uses Apache-2.0. This is a

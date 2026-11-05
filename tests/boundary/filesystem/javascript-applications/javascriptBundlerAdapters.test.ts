@@ -42,7 +42,7 @@ describe("Webpack and Rspack runtime adapters", () => {
     expect(webpackEntry?.observations[0]?.properties).toMatchObject({
       bundler: "webpack",
       runtime_require_name: "__webpack_require__",
-      runtime_module_cache_status: "observed",
+      runtime_module_cache_status: "not-observed",
       entry_module_keys: ["10"],
       async_chunk_keys: ["lazy", "missing"],
       unknown_async_chunk_keys: 1,
@@ -55,6 +55,7 @@ describe("Webpack and Rspack runtime adapters", () => {
     expect(rspackEntry?.observations[0]?.properties).toMatchObject({
       bundler: "rspack",
       runtime_require_name: "r",
+      runtime_module_cache_status: "not-observed",
       entry_module_keys: ["src/entry.ts"],
       async_chunk_keys: ["model"],
     });
@@ -156,7 +157,8 @@ const bundlerFixture = async (): Promise<string> => {
   const root = await createTestTempDirectory("rea-bundler-adapters-");
   await writeFixtureFiles(root, {
     "renderer/chunks/runtime.js": `
-      var __webpack_module_cache__ = {};
+      // A cache-like name here is not evidence about either registration.
+      const documentation = "__webpack_module_cache__";
       (globalThis["webpackChunkcustomPortal"] = globalThis["webpackChunkcustomPortal"] || []).push([
         ["main"],
         {
@@ -179,7 +181,11 @@ const bundlerFixture = async (): Promise<string> => {
       (globalThis["webpackChunkcustomPortal"] = globalThis["webpackChunkcustomPortal"] || []).push([
         ["lazy"],
         {
-          20: (module) => { module.exports = "lazy"; }
+          20: (module) => {
+            // A marker in a different registration must not be inherited.
+            const documentation = "installedModules";
+            module.exports = "lazy";
+          }
         }
       ]);
       (self.rspackChunkcustomPortal = self.rspackChunkcustomPortal || []).push([

@@ -1,12 +1,14 @@
+import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import { z } from "incur";
 import { createWebModuleTraceService } from "../composition/webModules.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { logCliCommand } from "../cliLogging.js";
-import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { webModuleTraceInputSchema } from "../domain/webModuleTrace.js";
 import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
+import { cliIntegerArgument } from "./options.js";
 import { withCommandCancellation } from "./commandCancellation.js";
+import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
 
 const importMapInputSchema =
   webModuleTraceInputSchema.shape.import_map.unwrap();
@@ -23,31 +25,27 @@ export const registerWebModuleCommands = (
       "Trace one captured script's native imports to URLs and captured source candidates",
     args: z.object({
       manifestPath: webModuleTraceInputSchema.shape.manifest_path,
-      scriptIndex: z.coerce
-        .number()
-        .int()
-        .min(0)
-        .describe("Zero-based manifest script index"),
+      scriptIndex: cliIntegerArgument(0).describe(
+        "Zero-based manifest script index",
+      ),
     }),
     options: z.object({
       importerUrl: webModuleTraceInputSchema.shape.importer_url,
       importMapPath: importMapInputSchema.shape.path
+        .optional()
         .describe(
           "Absolute local import-map JSON path; requires --import-map-base-url",
-        )
-        .optional(),
+        ),
       importMapBaseUrl: importMapInputSchema.shape.base_url
-        .describe("HTTP(S) import-map base URL; requires --import-map-path")
-        .optional(),
+        .optional()
+        .describe("HTTP(S) import-map base URL; requires --import-map-path"),
     }),
     run: ({ args, options }) =>
-      withCommandCancellation(async (signal) => {
-        try {
-          return await logCliCommand(
-            logger,
-            CLI_COMMANDS.traceWebModuleImports,
-            async () => {
-              const result = await service.trace(
+      withCommandCancellation((signal) =>
+        logCliCommand(logger, CLI_COMMANDS.traceWebModuleImports, () =>
+          finishAnalysisCommand(
+            () =>
+              service.trace(
                 {
                   manifest_path: args.manifestPath,
                   script_index: args.scriptIndex,
@@ -65,15 +63,13 @@ export const registerWebModuleCommands = (
                       }),
                 },
                 { signal },
-              );
-              return result.ok
-                ? result.value
-                : projectAnalysisError(result.error);
-            },
-          );
-        } finally {
-          await service.close();
-        }
-      }),
+              ),
+            service,
+            "web-module-trace",
+            "trace_web_module_imports",
+            signal,
+          ).then(projectCliAnalysisResult),
+        ),
+      ),
   });
 };

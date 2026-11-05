@@ -191,3 +191,185 @@ const htmlScriptRanges = (html: string) => {
   }
   return ranges;
 };
+
+it("reports unanalyzed inline HTML scripts instead of claiming complete coverage", async () => {
+  const root = await createTestTempDirectory("rea-html-inline-scripts-");
+  const html = [
+    "<!doctype html><html><head>",
+    '<script src="cordova.js"></script>',
+    '<script type="application/ld+json">{"@type":"Thing"}</script>',
+    "</head><body>",
+    "<script>",
+    'function startGame(){ fetch("https://api.example.test/score"); }',
+    "</script>",
+    '<script type="module">import { x } from "./mod.js"; console.log(x);</script>',
+    "</body></html>",
+  ].join("\n");
+  await mkdir(join(root, "www"));
+  await Promise.all([
+    writeFile(
+      join(root, "package.json"),
+      JSON.stringify({ name: "game", version: "1.0.0" }),
+    ),
+    writeFile(join(root, "www", "index.html"), html),
+    writeFile(join(root, "www", "cordova.js"), "globalThis.cordova = {};"),
+  ]);
+
+  const result = await reconstructJavaScriptArtifact({ input_path: root });
+  const gaps = result.graph.nodes.filter(
+    ({ kind, observations }) =>
+      kind === "unknown" &&
+      observations.some(
+        ({ properties }) =>
+          properties.operation === "parse-html-inline-scripts",
+      ),
+  );
+
+  expect(result.graph.coverage.status).toBe("partial");
+  expect(gaps).toHaveLength(1);
+  expect(gaps[0]?.observations[0]).toMatchObject({
+    properties: {
+      path: "www/index.html",
+      inline_script_count: 2,
+      inline_scripts: [
+        {
+          script_type: "classic",
+          location: {
+            start: { line: 5, column: 8 },
+            end: { line: 7, column: 0 },
+          },
+        },
+        {
+          script_type: "module",
+          location: {
+            start: { line: 8, column: 22 },
+            end: { line: 8, column: 67 },
+          },
+        },
+      ],
+    },
+    evidence: {
+      state: "unavailable",
+      artifact: {
+        sha256: createHash("sha256").update(html).digest("hex"),
+      },
+      coverage: { status: "partial" },
+    },
+  });
+  expect(result.graph.limitations).toContain(
+    "www/index.html has 2 inline JavaScript bodies starting at lines 5, 8 that were not analyzed; endpoints, storage, imports and other facts in them are absent from the evidence.",
+  );
+  // The external script is still projected as before.
+  expect(
+    result.graph.edges.some(
+      ({ relation, properties }) =>
+        relation === "loads" && properties.resolved_path === "www/cordova.js",
+    ),
+  ).toBe(true);
+});
+
+it("keeps complete coverage when HTML has only external scripts and data blocks", async () => {
+  const root = await createTestTempDirectory("rea-html-no-inline-scripts-");
+  await Promise.all([
+    writeFile(
+      join(root, "index.html"),
+      '<script src="actual.js"></script><script type="importmap">{"imports":{}}</script><script>  </script>',
+    ),
+    writeFile(join(root, "actual.js"), "globalThis.ownedActual = true;"),
+  ]);
+
+  const result = await reconstructJavaScriptArtifact({ input_path: root });
+
+  expect(result.graph.coverage.status).toBe("complete");
+  expect(
+    result.graph.limitations.some((limitation) =>
+      limitation.includes("inline JavaScript"),
+    ),
+  ).toBe(false);
+});
+
+it.each(coordinateCases)(
+  "retains parse5 source coordinates for inline script bodies with $name",
+  async ({ prefix }) => {
+    const root = await createTestTempDirectory("rea-html-inline-coordinates-");
+    const html = `${prefix}<script>\r\nrun();\rnext();\n</script>`;
+    await writeFile(join(root, "index.html"), html);
+
+    const result = await reconstructJavaScriptArtifact({ input_path: root });
+    const gap = result.graph.nodes
+      .flatMap(({ observations }) => observations)
+      .find(
+        ({ properties }) =>
+          properties.operation === "parse-html-inline-scripts",
+      );
+
+    expect(gap?.properties.inline_scripts).toEqual([
+      { script_type: "classic", location: inlineBodyRange(html) },
+    ]);
+  },
+);
+
+const inlineBodyRange = (html: string) => {
+  const pending: DefaultTreeAdapterTypes.Node[] = [
+    parse(html, { sourceCodeLocationInfo: true }),
+  ];
+  while (pending.length > 0) {
+    const node = pending.pop();
+    if (node === undefined) continue;
+    if (defaultTreeAdapter.isElementNode(node) && node.tagName === "script") {
+      const opening = node.sourceCodeLocation?.startTag;
+      const body = node.childNodes[0]?.sourceCodeLocation;
+      if (opening === undefined || body === undefined || body === null)
+        throw new Error("Missing parse5 inline script range");
+      return {
+        start: { line: opening.endLine, column: opening.endCol - 1 },
+        end: { line: body.endLine, column: body.endCol - 1 },
+      };
+    }
+    if ("childNodes" in node) {
+      for (const child of node.childNodes.toReversed()) pending.push(child);
+    }
+  }
+  throw new Error("Missing parse5 inline script");
+};
+
+it("bounds retained inline script locations and names the omitted remainder", async () => {
+  const root = await createTestTempDirectory("rea-html-many-inline-scripts-");
+  const count = 5_000;
+  await writeFile(
+    join(root, "index.html"),
+    "<script>run();</script>\n".repeat(count),
+  );
+
+  const result = await reconstructJavaScriptArtifact({ input_path: root });
+  const gap = result.graph.nodes
+    .flatMap(({ observations }) => observations)
+    .find(
+      ({ properties }) => properties.operation === "parse-html-inline-scripts",
+    );
+  const limit = {
+    name: "html_inline_script_locations_per_file",
+    value: 100,
+    unit: "items",
+  };
+
+  expect(gap?.properties.inline_script_count).toBe(count);
+  expect(gap?.properties.inline_scripts).toHaveLength(100);
+  // The gap record knows exactly which locations the bound dropped.
+  expect(gap?.evidence.coverage).toEqual({
+    status: "partial",
+    truncated: true,
+    omitted_count: count - 100,
+    limits: [limit],
+  });
+  // The graph is truncated too, but unanalyzed bodies hide an unknown total.
+  expect(result.graph.coverage).toMatchObject({
+    status: "partial",
+    truncated: true,
+    omitted_count: null,
+    limits: expect.arrayContaining([limit]),
+  });
+  expect(result.graph.limitations).toContain(
+    `index.html has ${String(count)} inline JavaScript bodies starting at lines 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 and ${String(count - 10)} more that were not analyzed; endpoints, storage, imports and other facts in them are absent from the evidence.`,
+  );
+});

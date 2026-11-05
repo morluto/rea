@@ -97,6 +97,49 @@ it("normalizes producer text before identity and revision authentication", () =>
   expect(residualUnknownSchema.parse(created)).toEqual(created);
 });
 
+it("authenticates typed comparison scope and preserves it across revisions", () => {
+  const comparisonId = `ev_${"c".repeat(64)}`;
+  const scopedInput = recordUnknownInputSchema.parse({
+    ...input,
+    domain: "function-comparison",
+    supporting_evidence_ids: [comparisonId],
+    comparison_conclusion_scope: {
+      comparison_evidence_id: comparisonId,
+      dimensions: ["calls"],
+    },
+  });
+  const created = createResidualUnknown(scopedInput, mutationId, scopeDigest);
+  const updated = updateResidualUnknown(
+    created,
+    {
+      ...input,
+      unknown_id: created.unknown_id,
+      expected_revision: 1,
+      status: "investigating",
+      severity: "high",
+      supporting_evidence_ids: [comparisonId],
+      required_confidence: "observed",
+      recommended_probes: [],
+      resolution: null,
+    },
+    mutationId,
+  );
+  expect(updated.comparison_conclusion_scope).toEqual({
+    comparison_evidence_id: comparisonId,
+    dimensions: ["calls"],
+  });
+  expect(residualUnknownSchema.parse(updated)).toEqual(updated);
+  expect(
+    residualUnknownSchema.safeParse({
+      ...created,
+      comparison_conclusion_scope: {
+        comparison_evidence_id: `ev_${"d".repeat(64)}`,
+        dimensions: ["calls"],
+      },
+    }).success,
+  ).toBe(false);
+});
+
 it("keeps generated revisions subject to state and relationship validation", () => {
   const created = createResidualUnknown(input, mutationId, scopeDigest);
   const command = {

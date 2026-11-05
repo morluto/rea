@@ -1,10 +1,10 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { TOOL_CONTRACTS } from "../dist/contracts/toolContracts.js";
 import { PRODUCT_IDENTITY } from "../dist/identity.js";
-import { MCP_STARTUP_POLICY } from "../dist/mcpStartupPolicy.js";
+import { resolveMcpStartupBudgets } from "../dist/config/mcpStartupBudgets.js";
 import * as prompts from "./verify-package-prompts.mjs";
 import { verifyPackageArtifactAndElectron } from "./verify-package-artifact.mjs";
 import { verifyPackageCapabilitiesAndSearch } from "./verify-package-capabilities.mjs";
@@ -20,13 +20,21 @@ import { verifyPackageSetup } from "./verify-package-setup.mjs";
 import { verifyRepositorySkill } from "./verify-repository-skill.mjs";
 import { verifyManaged } from "./verify-package-managed.mjs";
 import { verifyUnknownProvider } from "./verify-package-unknown-provider.mjs";
+import { createPackageVerifierCommands } from "./lib/verify-package-commands.mjs";
+import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
 import { completeVerifierRun, createVerifierRun } from "./lib/verifier-run.mjs";
+import {
+  createVerifiedPackageMetadata,
+  retainVerifiedPackage,
+  writeVerifiedPackageManifest,
+} from "./ci/verified-package.mjs";
 import {
   measureMcpStartup,
   profileMcpModuleLoading,
 } from "./lib/mcp-startup-probe.mjs";
 
 const root = process.cwd();
+const retentionDirectory = process.env.REA_VERIFIED_PACKAGE_DIRECTORY;
 const verifierRun = createVerifierRun();
 const workspace = await mkdtemp(join(tmpdir(), "rea-package-"));
 const evidenceRoot = join(workspace, "evidence");
@@ -37,6 +45,13 @@ let mcpModuleLoading;
 let update;
 let repositorySkill;
 let report;
+let retainedPackage;
+let retentionMetadata;
+let commands;
+const releaseWorkspace = () =>
+  runStage("workspace cleanup", () =>
+    rm(workspace, { recursive: true, force: true }),
+  );
 
 const runStage = async (name, action) => {
   const started = performance.now();
@@ -48,12 +63,36 @@ const runStage = async (name, action) => {
   return result;
 };
 
-try {
+await withVerifierCleanup(async () => {
+  commands = await createPackageVerifierCommands({
+    workspace: { path: workspace, close: releaseWorkspace },
+  });
+  if (retentionDirectory !== undefined && retentionDirectory !== "") {
+    const sourceSha = (
+      await commands.exec("git", ["rev-parse", "HEAD"], { cwd: root })
+    ).stdout.trim();
+    retentionMetadata = createVerifiedPackageMetadata({
+      sourceSha,
+      runId: process.env.GITHUB_RUN_ID,
+      runAttempt: process.env.GITHUB_RUN_ATTEMPT,
+      platform: process.platform,
+      architecture: process.arch,
+      packageVersion: PRODUCT_IDENTITY.packageVersion,
+      nodeVersion: process.version,
+    });
+    await mkdir(retentionDirectory, { recursive: true });
+    await unlink(join(retentionDirectory, "manifest.json")).catch((cause) => {
+      if (
+        !(cause instanceof Error && "code" in cause && cause.code === "ENOENT")
+      )
+        throw cause;
+    });
+  }
   repositorySkill = await runStage("repository skill", () =>
-    verifyRepositorySkill({ root, workspace }),
+    verifyRepositorySkill({ commands, root, workspace }),
   );
   ({ tarball } = await runStage("package archive", () =>
-    verifyPackagePack({ root, workspace }),
+    verifyPackagePack({ commands, root, workspace }),
   ));
   const environmentData = await runStage("package environment", () =>
     verifyPackageEnvironment({
@@ -65,6 +104,7 @@ try {
   );
   const { cli, packageRunnerCli } = await runStage("package install", () =>
     verifyPackageInstall({
+      commands,
       tarball,
       prefix: environmentData.prefix,
       workspace,
@@ -73,6 +113,7 @@ try {
   );
   update = await runStage("package update", () =>
     verifyPackageUpdate({
+      commands,
       prefix: environmentData.prefix,
       packageRoot: join(
         environmentData.prefix,
@@ -92,7 +133,7 @@ try {
       environment: {
         ...environmentData.environment,
       },
-      policy: MCP_STARTUP_POLICY,
+      policy: resolveMcpStartupBudgets(environmentData.environment),
     }),
   );
   mcpModuleLoading = await runStage("MCP module loading", () =>
@@ -102,7 +143,7 @@ try {
       environment: {
         ...environmentData.environment,
       },
-      policy: MCP_STARTUP_POLICY,
+      policy: resolveMcpStartupBudgets(environmentData.environment),
       packageName: PRODUCT_IDENTITY.packageName,
     }),
   );
@@ -110,12 +151,14 @@ try {
     "package discovery",
     () =>
       verifyPackageDiscovery({
+        commands,
         cli,
         environment: environmentData.environment,
       }),
   );
   const { artifactArchive } = await runStage("artifact and Electron CLI", () =>
     verifyPackageArtifactAndElectron({
+      commands,
       cli,
       workspace,
       environment: environmentData.environment,
@@ -123,6 +166,7 @@ try {
   );
   await runStage("managed analysis CLI", () =>
     verifyManaged({
+      commands,
       cli,
       workspace,
       environment: environmentData.environment,
@@ -130,24 +174,28 @@ try {
   );
   await runStage("unknown provider CLI", () =>
     verifyUnknownProvider({
+      commands,
       cli,
       environment: environmentData.environment,
     }),
   );
   await runStage("platform CLI", () =>
     verifyPackagePlatform({
+      commands,
       cli,
       environment: environmentData.environment,
     }),
   );
   await runStage("capabilities and search CLI", () =>
     verifyPackageCapabilitiesAndSearch({
+      commands,
       cli,
       environment: environmentData.environment,
     }),
   );
   await runStage("evidence CLI", () =>
     verifyPackageEvidence({
+      commands,
       cli,
       evidenceRoot,
       referenceRoot,
@@ -156,6 +204,7 @@ try {
   );
   await runStage("setup and uninstall CLI", () =>
     verifyPackageSetup({
+      commands,
       cli,
       packageRunnerCli,
       environment: environmentData.environment,
@@ -171,9 +220,15 @@ try {
       root,
     }),
   );
-  await runStage("MCP tools and evidence", () =>
+  const extractedDirectory = join(workspace, "extracted-plugin");
+  await mkdir(extractedDirectory);
+  await commands.exec("tar", ["-xzf", tarball, "-C", extractedDirectory]);
+  // Codex extracts npm plugins without installing dependencies. Run the real
+  // catalog/Evidence workflow from that isolated tree so npm cannot repair it.
+  await runStage("extracted plugin MCP tools and evidence", () =>
     verifyPackageMcp({
-      cli,
+      commands,
+      cli: join(extractedDirectory, "package", "scripts", "rea.mjs"),
       environment: environmentData.environment,
       evidenceRoot,
       artifactArchive,
@@ -208,21 +263,29 @@ try {
     promptCompletion: true,
     promptCompletionLifecycle: true,
     evidenceMcp: true,
+    extractedPluginMcp: true,
     targetFree: true,
     targetLifecycle: true,
-    boundedRegexBridge: true,
     update,
     mcpStartup,
     mcpModuleLoading,
   };
-} finally {
-  await runStage("workspace cleanup", () =>
-    rm(workspace, { recursive: true, force: true }),
-  );
-}
+  if (retentionMetadata !== undefined) {
+    retainedPackage = await retainVerifiedPackage({
+      sourceTarball: tarball,
+      directory: retentionDirectory,
+      metadata: retentionMetadata,
+    });
+  }
+}, [() => (commands === undefined ? releaseWorkspace() : commands.close())]);
 const verifierLineage = await runStage("verifier lineage", () =>
   completeVerifierRun(verifierRun),
 );
+if (retainedPackage !== undefined)
+  await writeVerifiedPackageManifest(
+    retainedPackage.directory,
+    retainedPackage.metadata,
+  );
 process.stdout.write(
   `${JSON.stringify({ verifier_run: verifierLineage, ...report })}\n`,
 );

@@ -6,24 +6,21 @@ import type {
   ElectronActiveObservationInput,
   ElectronActiveObservationResult,
 } from "../../domain/javascript/electronActiveObservation.js";
-import { jsonObjectSchema, jsonValueSchema } from "../../domain/jsonValue.js";
-
-type CanonicalElectronActiveObservationInput =
-  ElectronActiveObservationInput & {
-    readonly application_root: string;
-  };
+import { jsonObjectSchema } from "../../domain/jsonValue.js";
+import type { CanonicalElectronActiveObservationInput } from "./ElectronActiveObservationPort.js";
 
 /** Commit the selected Electron experiment and its observed result. */
 export const createElectronActiveEvidence = (
-  input: CanonicalElectronActiveObservationInput,
+  input: ElectronActiveObservationInput,
   result: ElectronActiveObservationResult,
   provider: ProviderIdentity,
+  resolvedInput?: CanonicalElectronActiveObservationInput,
 ): Evidence =>
   createEvidence(undefined, provider, {
     predicateType: "rea.electron-active-scenario",
     operation: "capture_electron_scenario",
-    parameters: parameters(input),
-    result: jsonValueSchema.parse(result),
+    parameters: parameters(input, resolvedInput),
+    result,
     confidence: "observed",
     authority: "controlled-replay",
     environment: {
@@ -39,11 +36,21 @@ export const createElectronActiveEvidence = (
   });
 
 const parameters = (
-  input: CanonicalElectronActiveObservationInput,
+  input: ElectronActiveObservationInput,
+  resolvedInput?: CanonicalElectronActiveObservationInput,
 ): EvidenceObservation["parameters"] => {
   const scenario = jsonObjectSchema.parse(input);
   return {
     ...scenario,
     scenario_sha256: digestCanonicalValue(scenario, "Electron scenario"),
+    ...(resolvedInput === undefined
+      ? {}
+      : {
+          resolved_paths: {
+            executable_path: resolvedInput.executable_path,
+            application_path: resolvedInput.application_path,
+            application_root: resolvedInput.application_root,
+          },
+        }),
   };
 };

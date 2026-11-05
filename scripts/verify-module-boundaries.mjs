@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
-import { readFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { readdir, readFile } from "node:fs/promises";
+import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 
 import { inspectModuleBoundaries } from "./lib/module-boundaries.mjs";
@@ -11,24 +11,44 @@ const selected = process.argv.slice(2);
 for (const file of selected)
   if (!file.endsWith(".ts"))
     throw new TypeError(`Expected an exact TypeScript source file: ${file}`);
-const files =
-  selected.length > 0
-    ? selected
-    : (
-        await execute(
-          "git",
-          [
-            "ls-files",
-            "-z",
-            "--cached",
-            "--others",
-            "--exclude-standard",
-            "--",
-            "src",
-          ],
-          { cwd: root, maxBuffer: 8 * 1024 * 1024 },
-        )
-      ).stdout.split("\0");
+
+const enumerateSourceFiles = async () => {
+  if (selected.length > 0) return selected;
+  let isGitRoot = false;
+  try {
+    const { stdout } = await execute("git", ["rev-parse", "--show-cdup"], {
+      cwd: root,
+      maxBuffer: 8 * 1024 * 1024,
+    });
+    isGitRoot = stdout.trim() === "";
+  } catch {
+    // Archives and source snapshots may not be in a Git worktree.
+  }
+  if (isGitRoot) {
+    try {
+      const { stdout } = await execute(
+        "git",
+        [
+          "ls-files",
+          "-z",
+          "--cached",
+          "--others",
+          "--exclude-standard",
+          "--",
+          "src",
+        ],
+        { cwd: root, maxBuffer: 8 * 1024 * 1024 },
+      );
+      return stdout.split("\0");
+    } catch {
+      // Fall back to disk when Git's index is unavailable or unreadable.
+    }
+  }
+  const entries = await readdir(resolve(root, "src"), { recursive: true });
+  return entries.map((entry) => join("src", entry));
+};
+
+const files = await enumerateSourceFiles();
 
 let checked = 0;
 for (const file of new Set(files.filter((path) => path.endsWith(".ts")))) {
@@ -36,7 +56,11 @@ for (const file of new Set(files.filter((path) => path.endsWith(".ts")))) {
   try {
     source = await readFile(resolve(root, file), "utf8");
   } catch (cause) {
-    if (selected.length === 0 && cause.code === "ENOENT") continue;
+    if (
+      selected.length === 0 &&
+      (cause.code === "ENOENT" || cause.code === "EISDIR")
+    )
+      continue;
     throw cause;
   }
   checked += 1;

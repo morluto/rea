@@ -3,14 +3,14 @@ import * as t from "@babel/types";
 
 import type { JavaScriptModuleOrigin } from "./javascriptSemanticIr.js";
 import {
-  isUnshadowedGlobal,
   resolveSemanticBindingState,
   semanticScopeId,
   semanticStableInitializer,
   type JavaScriptSemanticAnalysisState,
   type JavaScriptSemanticBindingState,
 } from "./javascriptSemanticState.js";
-import { semanticRequireOrigin } from "./javascriptSemanticRequireOrigin.js";
+import { isUnshadowedGlobal } from "./javascriptSemanticMutationInitializers.js";
+import { readSemanticRequireOrigin } from "./javascriptSemanticRequireOriginSlot.js";
 import {
   childNodes,
   javaScriptAstChildKeys,
@@ -19,12 +19,18 @@ import {
   electronMemberPath,
   type JavaScriptIntrinsicInvocation,
 } from "./javascriptElectronMemberWrites.js";
-import { resolveJavaScriptIntrinsicInvocation } from "./javascriptIntrinsicInvocation.js";
+import {
+  expandJavaScriptInvocationArguments,
+  resolveJavaScriptIntrinsicInvocation,
+} from "./javascriptIntrinsicInvocation.js";
 import { SemanticPropertyPathCoverage } from "./javascriptSemanticPropertyPaths.js";
 import {
   readExactJavaScriptLiteral,
+  runtimeFunctionParameters,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
+import { semanticKnownArrayIterationAt } from "./javascriptSemanticReferenceSources.js";
+import { semanticOpaqueBindingReadMayHaveChanged } from "./javascriptSemanticOpaqueEffects.js";
 
 // Match the complete Rolldown runtime operations, including its live getters.
 // Names and formatting are irrelevant; lexical roles, operators and keys are not.
@@ -74,9 +80,19 @@ interface InteropHelper {
 /** Prove one inert namespace conversion without relaxing general assignment semantics. */
 export const createSemanticModuleInterop = (
   state: JavaScriptSemanticAnalysisState,
+  options?: {
+    readonly intrinsicPath: (node: t.Node) => readonly string[] | undefined;
+  },
 ) => {
+  const nativeArrayIteration = (array: t.ArrayExpression) =>
+    semanticKnownArrayIterationAt(array, state);
   const helpers = new Map<string, InteropHelper | null>();
   const origins = new Map<string, InteropOrigin>();
+  const aliasTargets = new Map<
+    string,
+    { targetBinding: JavaScriptSemanticBindingState; node: t.Node }
+  >();
+  const aliasChangedCache = new Map<string, boolean>();
   const calls = new WeakMap<t.Node, InteropOrigin>();
   const intrinsicBindings = new Map<string, readonly string[] | null>();
   const writes: {
@@ -96,55 +112,57 @@ export const createSemanticModuleInterop = (
     return ["intrinsic"];
   };
 
-  const intrinsicPath = (node: t.Node): readonly string[] | undefined => {
-    let current = node;
-    const visited = new Set<string>();
-    const pending: { id: string; suffixLength: number }[] = [];
-    let suffix: readonly string[] = [];
-    const finish = (
-      path: readonly string[] | undefined,
-    ): readonly string[] | undefined => {
-      for (const binding of pending)
-        intrinsicBindings.set(
-          binding.id,
-          path === undefined
-            ? null
-            : path.slice(0, path.length - binding.suffixLength),
-        );
-      return path;
-    };
-    for (;;) {
-      const { root, members } = electronMemberPath(current);
-      if (members.some((member) => member === null)) return finish(undefined);
-      suffix = [...(members as readonly string[]), ...suffix];
-      for (const global of ["Object", "Function", "Reflect"])
-        if (isUnshadowedGlobal(root, state, global))
-          return finish(["intrinsic", global, ...suffix]);
-      for (const global of ["globalThis", "global", "window", "self"])
-        if (isUnshadowedGlobal(root, state, global))
-          return finish(["intrinsic", ...suffix]);
-      if (!t.isIdentifier(root)) return finish(undefined);
-      const binding = resolveSemanticBindingState(state, root, root.name);
-      const cached =
-        binding === undefined
-          ? undefined
-          : intrinsicBindings.get(binding.bindingId);
-      if (cached !== undefined)
-        return finish(cached === null ? undefined : [...cached, ...suffix]);
-      const initializer = semanticStableInitializer(binding, state);
-      if (
-        binding === undefined ||
-        initializer === undefined ||
-        initializer.projection.some((segment) => segment === null) ||
-        visited.has(binding.bindingId)
-      )
-        return finish(undefined);
-      visited.add(binding.bindingId);
-      pending.push({ id: binding.bindingId, suffixLength: suffix.length });
-      suffix = [...initializer.projection.map(String), ...suffix];
-      current = initializer.node;
-    }
-  };
+  const intrinsicPath =
+    options?.intrinsicPath ??
+    ((node: t.Node): readonly string[] | undefined => {
+      let current = node;
+      const visited = new Set<string>();
+      const pending: { id: string; suffixLength: number }[] = [];
+      let suffix: readonly string[] = [];
+      const finish = (
+        path: readonly string[] | undefined,
+      ): readonly string[] | undefined => {
+        for (const binding of pending)
+          intrinsicBindings.set(
+            binding.id,
+            path === undefined
+              ? null
+              : path.slice(0, path.length - binding.suffixLength),
+          );
+        return path;
+      };
+      for (;;) {
+        const { root, members } = electronMemberPath(current);
+        if (members.some((member) => member === null)) return finish(undefined);
+        suffix = [...(members as readonly string[]), ...suffix];
+        for (const global of ["Object", "Function", "Reflect"])
+          if (isUnshadowedGlobal(root, state, global))
+            return finish(["intrinsic", global, ...suffix]);
+        for (const global of ["globalThis", "global", "window", "self"])
+          if (isUnshadowedGlobal(root, state, global))
+            return finish(["intrinsic", ...suffix]);
+        if (!t.isIdentifier(root)) return finish(undefined);
+        const binding = resolveSemanticBindingState(state, root, root.name);
+        const cached =
+          binding === undefined
+            ? undefined
+            : intrinsicBindings.get(binding.bindingId);
+        if (cached !== undefined)
+          return finish(cached === null ? undefined : [...cached, ...suffix]);
+        const initializer = semanticStableInitializer(binding, state);
+        if (
+          binding === undefined ||
+          initializer === undefined ||
+          initializer.projection.some((segment) => segment === null) ||
+          visited.has(binding.bindingId)
+        )
+          return finish(undefined);
+        visited.add(binding.bindingId);
+        pending.push({ id: binding.bindingId, suffixLength: suffix.length });
+        suffix = [...initializer.projection.map(String), ...suffix];
+        current = initializer.node;
+      }
+    });
 
   // A nominal alias path is sufficient for conservative mutation lookup, but
   // helper proof also needs each read to follow initialization. An alias copy
@@ -263,7 +281,10 @@ export const createSemanticModuleInterop = (
       const { root, members } = electronMemberPath(current.callee);
       let bindTarget = root;
       let bindingArguments: JavaScriptIntrinsicInvocation["arguments"] =
-        current.arguments;
+        expandJavaScriptInvocationArguments(
+          current.arguments,
+          nativeArrayIteration,
+        );
       let captured = capturedIntrinsic(current.callee);
       let terminal = captured?.path.at(-1) === "bind";
       let path: readonly string[] | undefined = captured?.path.slice(0, -1);
@@ -278,6 +299,7 @@ export const createSemanticModuleInterop = (
           intrinsicPath,
           boundIntrinsic,
           intrinsicReadChanged,
+          nativeArrayIteration,
         );
         if (
           invocation?.kind !== "known" ||
@@ -484,7 +506,7 @@ export const createSemanticModuleInterop = (
     const required =
       converted === undefined
         ? undefined
-        : semanticRequireOrigin(converted.input, state)?.origin;
+        : readSemanticRequireOrigin(converted.input, state)?.origin;
     if (
       converted === undefined ||
       required === undefined ||
@@ -501,40 +523,9 @@ export const createSemanticModuleInterop = (
     return result;
   };
 
-  const origin = (
+  const twoInitializerOrigin = (
     binding: JavaScriptSemanticBindingState,
   ): InteropOrigin | undefined => {
-    const single = semanticStableInitializer(binding, state);
-    if (single !== undefined) {
-      if (
-        !single.projection.every(
-          (key): key is string => typeof key === "string",
-        )
-      )
-        return undefined;
-      const converted = callOrigin(single.node);
-      if (
-        converted?.origin.importedPath.length === 0 &&
-        single.projection[0] === "default" &&
-        !converted.defaultIsModule
-      )
-        return undefined;
-      const result =
-        converted === undefined
-          ? undefined
-          : {
-              ...converted,
-              origin: {
-                ...converted.origin,
-                importedPath: [
-                  ...converted.origin.importedPath,
-                  ...single.projection,
-                ],
-              },
-            };
-      if (result !== undefined) origins.set(binding.bindingId, result);
-      return result;
-    }
     const [initial, converted] = binding.initializers;
     if (
       binding.definitions.length !== 2 ||
@@ -545,7 +536,7 @@ export const createSemanticModuleInterop = (
       converted === undefined ||
       initial.projection.length !== 0 ||
       converted.projection.length !== 0 ||
-      state.conditionalInitializers.has(initial.node)
+      state.conditionallySkippedExpressions.has(initial.node)
     )
       return undefined;
     const call = converted.node;
@@ -580,17 +571,130 @@ export const createSemanticModuleInterop = (
       resolveSemanticBindingState(state, input, input.name) !== binding
     )
       return undefined;
-    const required = semanticRequireOrigin(initial.node, state)?.origin;
+    const required = readSemanticRequireOrigin(initial.node, state)?.origin;
     if (required === undefined || required.importedPath.length !== 0)
       return undefined;
     if (convertedCall === undefined) return undefined;
-    const result = {
+    return {
       origin: required,
       dependencies: convertedCall.dependencies,
       defaultIsModule: convertedCall.defaultIsModule,
     };
-    origins.set(binding.bindingId, result);
-    return result;
+  };
+
+  const origin = (
+    binding: JavaScriptSemanticBindingState,
+  ): InteropOrigin | undefined => {
+    const cached = origins.get(binding.bindingId);
+    if (cached !== undefined) return cached;
+
+    let currentBinding: JavaScriptSemanticBindingState | undefined = binding;
+    const visited = new Set<string>();
+    const steps: {
+      binding: JavaScriptSemanticBindingState;
+      segments: readonly string[];
+    }[] = [];
+    let baseOrigin: InteropOrigin | undefined;
+
+    while (currentBinding !== undefined) {
+      const alreadyCached = origins.get(currentBinding.bindingId);
+      if (alreadyCached !== undefined) {
+        baseOrigin = alreadyCached;
+        break;
+      }
+      if (visited.has(currentBinding.bindingId)) return undefined;
+      visited.add(currentBinding.bindingId);
+
+      const single = semanticStableInitializer(currentBinding, state);
+      if (single !== undefined) {
+        if (
+          !single.projection.every(
+            (key): key is string => typeof key === "string",
+          )
+        )
+          return undefined;
+        const converted = callOrigin(single.node);
+        if (converted !== undefined) {
+          if (
+            converted.origin.importedPath.length === 0 &&
+            single.projection[0] === "default" &&
+            !converted.defaultIsModule
+          )
+            return undefined;
+          baseOrigin = {
+            ...converted,
+            origin: {
+              ...converted.origin,
+              importedPath: [
+                ...converted.origin.importedPath,
+                ...(single.projection as readonly string[]),
+              ],
+            },
+          };
+          break;
+        }
+        const { root, members } = electronMemberPath(single.node);
+        if (
+          !t.isIdentifier(root) ||
+          !members.every((member): member is string => member !== null)
+        )
+          return undefined;
+        const targetBinding = resolveSemanticBindingState(
+          state,
+          root,
+          root.name,
+        );
+        if (targetBinding === undefined || targetBinding === currentBinding)
+          return undefined;
+        aliasTargets.set(currentBinding.bindingId, {
+          targetBinding,
+          node: root,
+        });
+        steps.push({
+          binding: currentBinding,
+          segments: [
+            ...(members as readonly string[]),
+            ...(single.projection as readonly string[]),
+          ],
+        });
+        currentBinding = targetBinding;
+        continue;
+      }
+
+      const twoInit = twoInitializerOrigin(currentBinding);
+      if (twoInit !== undefined) {
+        baseOrigin = twoInit;
+        break;
+      }
+      return undefined;
+    }
+
+    if (baseOrigin === undefined) return undefined;
+    origins.set(currentBinding!.bindingId, baseOrigin);
+
+    let currentOrigin = baseOrigin;
+    for (let i = steps.length - 1; i >= 0; i--) {
+      const step = steps[i]!;
+      const firstSegment = step.segments[0];
+      if (
+        currentOrigin.origin.importedPath.length === 0 &&
+        firstSegment === "default" &&
+        !currentOrigin.defaultIsModule
+      )
+        return undefined;
+      currentOrigin = {
+        ...currentOrigin,
+        origin: {
+          ...currentOrigin.origin,
+          importedPath: [
+            ...currentOrigin.origin.importedPath,
+            ...step.segments,
+          ],
+        },
+      };
+      origins.set(step.binding.bindingId, currentOrigin);
+    }
+    return currentOrigin;
   };
   const invalidatedOrigin = (record: InteropOrigin | undefined): boolean =>
     record?.dependencies.some(({ path, capturedAt }) => {
@@ -609,12 +713,20 @@ export const createSemanticModuleInterop = (
     origin,
     callOrigin,
     intrinsicPath,
-    intrinsicInvocation: (node: t.CallExpression | t.OptionalCallExpression) =>
+    intrinsicInvocation: (
+      node:
+        | t.CallExpression
+        | t.OptionalCallExpression
+        | t.NewExpression
+        | t.TaggedTemplateExpression,
+      callablePath = intrinsicPath,
+    ) =>
       resolveJavaScriptIntrinsicInvocation(
         node,
-        intrinsicPath,
+        callablePath,
         boundIntrinsic,
         intrinsicReadChanged,
+        nativeArrayIteration,
       ),
     boundIntrinsic,
     staticString,
@@ -643,6 +755,34 @@ export const createSemanticModuleInterop = (
       invalidatedCalls.set(node, result);
       return result;
     },
+    aliasMayHaveChanged: (binding: JavaScriptSemanticBindingState): boolean => {
+      if (state.opaqueEffects.byScope.size === 0) return false;
+      const cached = aliasChangedCache.get(binding.bindingId);
+      if (cached !== undefined) return cached;
+      origin(binding);
+      let current: JavaScriptSemanticBindingState | undefined = binding;
+      const seen = new Set<string>();
+      let changed = false;
+      while (current !== undefined) {
+        if (seen.has(current.bindingId)) break;
+        seen.add(current.bindingId);
+        const next = aliasTargets.get(current.bindingId);
+        if (next === undefined) break;
+        if (
+          semanticOpaqueBindingReadMayHaveChanged(
+            next.targetBinding,
+            next.node,
+            state,
+          )
+        ) {
+          changed = true;
+          break;
+        }
+        current = next.targetBinding;
+      }
+      aliasChangedCache.set(binding.bindingId, changed);
+      return changed;
+    },
   };
 };
 
@@ -654,10 +794,10 @@ const identityFunction = (
     !t.isFunction(node) ||
     node.async ||
     node.generator ||
-    node.params.length !== 1
+    runtimeFunctionParameters(node).length !== 1
   )
     return false;
-  const parameter = node.params[0];
+  const parameter = runtimeFunctionParameters(node)[0];
   const result = t.isBlockStatement(node.body)
     ? node.body.body.length === 1 && t.isReturnStatement(node.body.body[0])
       ? node.body.body[0].argument

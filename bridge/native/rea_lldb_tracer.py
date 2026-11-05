@@ -26,7 +26,6 @@ ARGUMENT_REGISTERS = {
     "x86_64h": ["rdi", "rsi", "rdx", "rcx", "r8", "r9"],
 }
 MAX_SELECTOR_BYTES = 1024
-MAX_REPORTED_LOCATIONS = 64
 MAX_OTHER_STOPS = 256
 MAX_TRACE_BYTES = 8 * 1024 * 1024
 MAX_TRACE_FRAMES = 65_536
@@ -505,20 +504,19 @@ def _breakpoint_report(target, created, config):
                 if not _wanted(config["breakpoints"][index], location["symbol"] or ""):
                     continue
                 count += 1
-                if len(locations) < MAX_REPORTED_LOCATIONS:
-                    remaining_bytes = (
-                        MAX_BREAKPOINT_LOCATION_BYTES - retained_location_bytes
-                    )
-                    if not _fits_trace_budget(location, remaining_bytes):
-                        locations_truncated = True
-                        continue
-                    location_bytes = len(json.dumps(location).encode("utf-8"))
-                    addition = location_bytes + (1 if locations else 0)
-                    if addition > remaining_bytes:
-                        locations_truncated = True
-                        continue
-                    locations.append(location)
-                    retained_location_bytes += addition
+                remaining_bytes = (
+                    MAX_BREAKPOINT_LOCATION_BYTES - retained_location_bytes
+                )
+                if not _fits_trace_budget(location, remaining_bytes):
+                    locations_truncated = True
+                    continue
+                location_bytes = len(json.dumps(location).encode("utf-8"))
+                addition = location_bytes + (1 if locations else 0)
+                if addition > remaining_bytes:
+                    locations_truncated = True
+                    continue
+                locations.append(location)
+                retained_location_bytes += addition
         report.append({"index": index, "location_count": count, "locations": locations})
     return report, locations_truncated
 
@@ -555,6 +553,38 @@ def _failed_launch_description(process):
     return None
 
 
+def _retire_failed_launch(process, config, listener, stdout, stderr):
+    """Reconcile an SBProcess returned alongside a failed Launch error."""
+    if not process.IsValid():
+        stdout.close()
+        stderr.close()
+        return False
+
+    pid = process.GetProcessID()
+    if pid > 0:
+        # Even an already-exited process needs its PID published so the host
+        # can distinguish a completed launch failure from an unknown target.
+        with open(config["pid_path"], "w") as handle:
+            handle.write(str(pid))
+
+    if process.GetState() != lldb.eStateExited:
+        stdout.mark_launched()
+        stderr.mark_launched()
+        if pid > 0:
+            # Hold a surviving target until the host has captured its start
+            # identity. If that proof is unavailable, Kill still addresses
+            # this exact SBProcess created by the current launch request.
+            _wait_for_identity_ack(config)
+        process.Kill()
+        _wait_for_exit(listener, process, 5)
+
+    exit_observed = process.GetState() == lldb.eStateExited
+    expected_exit = exit_observed
+    stdout.close(expected_exit=expected_exit)
+    stderr.close(expected_exit=expected_exit)
+    return exit_observed
+
+
 def trace(debugger, config):
     global _TRACE_CONTEXT
     debugger.SetAsync(True)
@@ -567,18 +597,27 @@ def trace(debugger, config):
         before_digest = _hash_file(config["executable"])
         before_identity = _file_identity(config["executable"])
     except OSError as error:
-        return {"status": "target-integrity-error", "error": str(error)}
+        return {
+            "status": "target-integrity-error",
+            "error": str(error),
+            "target_process_created": False,
+        }
     if before_digest != config["expected_sha256"]:
         return {
             "status": "target-integrity-error",
             "error": "selected executable digest changed before LLDB target creation",
+            "target_process_created": False,
         }
     error = lldb.SBError()
     target = debugger.CreateTarget(
         config["executable"], config["architecture"], None, False, error
     )
     if not target.IsValid():
-        return {"status": "target-error", "error": error.GetCString()}
+        return {
+            "status": "target-error",
+            "error": error.GetCString(),
+            "target_process_created": False,
+        }
     module_path_before, module_file_identity_before, module_uuid_before = (
         _module_identity(target)
     )
@@ -589,6 +628,7 @@ def trace(debugger, config):
         return {
             "status": "target-integrity-error",
             "error": "LLDB executable module resolved to a different pre-launch file identity",
+            "target_process_created": False,
         }
     created = [_create_breakpoints(target, spec) for spec in config["breakpoints"]]
     breakpoint_index = {}
@@ -619,15 +659,36 @@ def trace(debugger, config):
                 open(observation_path, "wb")
             )
         process = target.Launch(_launch_info(target, config, listener), error)
-        if not error.Success() or not process.IsValid():
-            stdout.close()
-            stderr.close()
-            return {"status": "launch-error", "error": error.GetCString()}
+        process_created = process.IsValid()
+        if not error.Success() or not process_created:
+            exit_observed = _retire_failed_launch(
+                process, config, listener, stdout, stderr
+            )
+            return {
+                "status": "launch-error",
+                "error": error.GetCString(),
+                "target_process_created": process_created,
+                **(
+                    {"target_process_exit_observed": True}
+                    if exit_observed
+                    else {}
+                ),
+            }
         launch_failure = _failed_launch_description(process)
         if launch_failure is not None:
-            stdout.close(expected_exit=True)
-            stderr.close(expected_exit=True)
-            return {"status": "launch-error", "error": launch_failure}
+            exit_observed = _retire_failed_launch(
+                process, config, listener, stdout, stderr
+            )
+            return {
+                "status": "launch-error",
+                "error": launch_failure,
+                "target_process_created": True,
+                **(
+                    {"target_process_exit_observed": True}
+                    if exit_observed
+                    else {}
+                ),
+            }
         stdout.mark_launched()
         stderr.mark_launched()
         # Publish the PID before any post-launch file or module inspection. The
@@ -644,6 +705,7 @@ def trace(debugger, config):
             return {
                 "status": "target-identity-unavailable",
                 "error": "host could not establish the launched process identity; target was stopped",
+                "target_process_created": True,
             }
         try:
             after_digest = _hash_file(config["executable"])
@@ -652,7 +714,11 @@ def trace(debugger, config):
             process.Kill()
             stdout.close(expected_exit=process.GetState() == lldb.eStateExited)
             stderr.close(expected_exit=process.GetState() == lldb.eStateExited)
-            return {"status": "target-integrity-error", "error": str(identity_error)}
+            return {
+                "status": "target-integrity-error",
+                "error": str(identity_error),
+                "target_process_created": True,
+            }
         if after_digest != config["expected_sha256"] or after_identity != before_identity:
             process.Kill()
             _wait_for_exit(listener, process, 5)
@@ -661,6 +727,7 @@ def trace(debugger, config):
             return {
                 "status": "target-integrity-error",
                 "error": "selected executable digest or file identity changed during LLDB launch",
+                "target_process_created": True,
             }
         module_path_after, module_file_identity_after, module_uuid_after = (
             _module_identity(target)
@@ -676,6 +743,7 @@ def trace(debugger, config):
             return {
                 "status": "target-integrity-error",
                 "error": "LLDB executable module resolved to a different file identity",
+                "target_process_created": True,
             }
         if (
             module_uuid_before is not None
@@ -689,6 +757,7 @@ def trace(debugger, config):
             return {
                 "status": "target-integrity-error",
                 "error": "LLDB executable module identity changed during launch",
+                "target_process_created": True,
             }
         context = {
             "target": target,
@@ -748,7 +817,11 @@ def trace(debugger, config):
         # exit code; preserve the debugger's concrete launch denial.
         launch_failure = _failed_launch_description(process)
         if launch_failure is not None:
-            return {"status": "launch-error", "error": launch_failure}
+            return {
+                "status": "launch-error",
+                "error": launch_failure,
+                "target_process_created": True,
+            }
         launch_identity_stable = (
             module_path_before is not None
             and module_path_after == module_path_before

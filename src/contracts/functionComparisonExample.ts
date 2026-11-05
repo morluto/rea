@@ -7,6 +7,13 @@ const dossier = (text: string) =>
     procedure: {
       address: "0x1000",
       name: "main",
+      symbol: {
+        primary: true,
+        dynamic: false,
+        external: false,
+        type: "function",
+        source: "imported" as const,
+      },
       classification: null,
       body: {
         available: false,
@@ -16,7 +23,7 @@ const dossier = (text: string) =>
       locals: [],
     },
     pseudocode: text,
-    assembly: [],
+    assembly: ["ret"],
     comments: [],
     callers: [],
     callees: [],
@@ -27,6 +34,16 @@ const dossier = (text: string) =>
     basic_blocks: [{ start: "0x1000", end: "0x1001", successors: [] }],
     native_api: null,
     native_value_flow: null,
+    facet_availability: {
+      pseudocode: { available: true },
+      assembly: { available: true },
+      comments: { available: true },
+      callers: { available: true },
+      callees: { available: true },
+      references: { available: true },
+      strings_names: { available: true },
+      cfg: { available: true },
+    },
     limitations: ["The fixture omits native API and value-flow observations."],
   });
 
@@ -50,6 +67,7 @@ const observe = (digit: string, text: string) =>
       result: dossier(text),
       confidence: "derived",
       authority: "shipped-artifact",
+      relationshipCoverage: { status: "complete" },
     },
   );
 

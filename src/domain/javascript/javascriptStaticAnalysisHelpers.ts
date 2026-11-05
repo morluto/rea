@@ -13,17 +13,26 @@ import type {
 } from "./javascriptStaticAnalysisTypes.js";
 import {
   readExactJavaScriptLiteral,
+  semanticStaticPropertyKey,
   semanticStaticPropertyName,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
+import type { JavaScriptOpenReceiverFact } from "./javascriptSemanticReceiverFacts.js";
 import {
   compareUnicodeCodePoints,
   compositeKey,
 } from "../unicodeCodePointOrder.js";
+import { unexaminedJavaScriptStaticCoverage } from "./javascriptStaticCoverage.js";
 
 /** Explicit result for source text that Babel cannot parse. */
 export const failedJavaScriptStaticAnalysis = (): JavaScriptStaticAnalysis => ({
   parse_status: "failed",
+  analysis_coverage: {
+    ...unexaminedJavaScriptStaticCoverage(
+      "JavaScript source could not be parsed.",
+    ),
+    syntax: { status: "failed", error_count: null },
+  },
   parse_error_count: 1,
   visited_ast_nodes: 0,
   references: [],
@@ -40,6 +49,7 @@ export const failedJavaScriptStaticAnalysis = (): JavaScriptStaticAnalysis => ({
     sender_validations: [],
     utility_processes: [],
     native_addon_bindings: [],
+    protocols: [],
   },
   limitations: [
     "JavaScript source could not be parsed; absence of findings is not evidence of absence.",
@@ -131,22 +141,14 @@ export const moduleFactory = (
 /** Derive a literal or explicitly computed module key. */
 export const modulePropertyName = (
   property: t.ObjectMethod | t.ObjectProperty | t.SpreadElement,
-): string =>
-  t.isObjectMethod(property) || t.isObjectProperty(property)
-    ? property.computed &&
-      !t.isStringLiteral(property.key) &&
-      !t.isNumericLiteral(property.key)
-      ? `[computed@${String(property.start ?? -1)}]`
-      : semanticStaticPropertyName(property.key, property.computed) ||
-        `[unknown@${String(property.start ?? -1)}]`
+): string => {
+  if (!t.isObjectMethod(property) && !t.isObjectProperty(property))
+    return `[unknown@${String(property.start ?? -1)}]`;
+  const key = semanticStaticPropertyKey(property.key, property.computed);
+  if (key !== null) return key;
+  return property.computed
+    ? `[computed@${String(property.start ?? -1)}]`
     : `[unknown@${String(property.start ?? -1)}]`;
-
-/** Read the factory-local bundler require parameter when declared. */
-export const factoryRequireName = (
-  factory: t.FunctionExpression | t.ArrowFunctionExpression | t.ObjectMethod,
-): string | null => {
-  const parameter = factory.params[2];
-  return t.isIdentifier(parameter) ? parameter.name : null;
 };
 
 /** Collect all unique static literal values from an array. */
@@ -168,73 +170,192 @@ export const staticArrayValues = (
 };
 
 /** Classify whether inert path syntax is a module specifier or file expression. */
+export type JavaScriptStaticPathIntrinsicQuery = (
+  node: t.Node,
+  fact?:
+    | "resolve"
+    | "join"
+    | "file-url-to-path"
+    | "source-url"
+    | "source-directory",
+) => boolean;
+
 export const staticPathResolutionContext = (
   node: t.Node,
+  pathIntrinsics?: JavaScriptStaticPathIntrinsicQuery,
 ): JavaScriptStaticPathContext =>
-  isFilesystemPathExpression(node)
+  isFilesystemPathExpression(node, pathIntrinsics)
     ? "filesystem-expression"
     : "module-specifier";
 
-/** Resolve a path composed only from inert literal syntax. */
-export const staticPath = (node: t.Node): string | undefined => {
-  if (t.isStringLiteral(node)) return node.value;
-  if (t.isTemplateLiteral(node) && node.expressions.length === 0)
-    return stringValue(node);
-  if (t.isBinaryExpression(node, { operator: "+" })) {
-    const left = staticPath(node.left);
-    const right = staticPath(node.right);
-    return left === undefined || right === undefined
-      ? undefined
-      : `${left}${right}`;
-  }
+interface StaticPathFact {
+  readonly path: string;
+  readonly base: "source-directory" | "literal-path" | "unknown";
+}
+
+/** Resolve a path string composed only from inert literal syntax. */
+export const staticPath = (
+  node: t.Node,
+  pathIntrinsics?: JavaScriptStaticPathIntrinsicQuery,
+): string | undefined => staticPathFact(node, pathIntrinsics)?.path;
+
+/** Parse spelling and its source-directory provenance together at the owning boundary. */
+const staticPathFact = (
+  raw: t.Node,
+  pathIntrinsics?: JavaScriptStaticPathIntrinsicQuery,
+): StaticPathFact | undefined => {
+  const node = unwrapJavaScriptExpression(raw).node;
+  const value = stringValue(node);
+  if (value !== undefined) return { path: value, base: "literal-path" };
+  if (t.isBinaryExpression(node, { operator: "+" }))
+    return staticConcatenation(node, pathIntrinsics);
   if (t.isCallExpression(node) || t.isNewExpression(node))
-    return staticCallPath(node);
+    return staticCallPath(node, pathIntrinsics);
   return undefined;
+};
+
+/** Admit file expressions only when the normalized spelling retains a proven base. */
+export const staticFileExpressionPath = (
+  node: t.Node,
+  pathIntrinsics?: JavaScriptStaticPathIntrinsicQuery,
+):
+  | {
+      readonly path: string;
+      readonly base: "source-directory" | "literal-path";
+    }
+  | undefined => {
+  const fact = staticPathFact(node, pathIntrinsics);
+  return fact === undefined || fact.base === "unknown"
+    ? undefined
+    : { path: fact.path, base: fact.base };
+};
+
+/**
+ * Concatenate inert text. A leading source directory contributes no text:
+ * `__dirname + "/preload.js"` names a file inside it, while text without a
+ * leading separator extends the directory's own name and stays unknown.
+ */
+const staticConcatenation = (
+  node: t.BinaryExpression,
+  pathIntrinsics?: JavaScriptStaticPathIntrinsicQuery,
+): StaticPathFact | undefined => {
+  const operands: t.Node[] = [];
+  let current: t.Node = node;
+  while (t.isBinaryExpression(current, { operator: "+" })) {
+    operands.push(current.right);
+    current = unwrapJavaScriptExpression(current.left).node;
+  }
+  const anchored = isDirectoryPath(current, pathIntrinsics);
+  if (!anchored) operands.push(current);
+  let text = "";
+  let literal = true;
+  for (const operand of operands.reverse()) {
+    const value = staticPathFact(operand, pathIntrinsics);
+    if (value === undefined) return undefined;
+    text += value.path;
+    literal &&= value.base === "literal-path";
+  }
+  if (!anchored)
+    return { path: text, base: literal ? "literal-path" : "unknown" };
+  return text.startsWith("/")
+    ? {
+        path: posix.join(".", text),
+        base: literal ? "source-directory" : "unknown",
+      }
+    : undefined;
 };
 
 const staticCallPath = (
   node: t.CallExpression | t.NewExpression,
-): string | undefined => {
-  const name = calleeName(node.callee);
-  if (name === "URL" || name.endsWith(".URL"))
-    return isFileIdentity(argumentNode(node.arguments[1]))
-      ? stringValue(node.arguments[0])
-      : undefined;
-  if (name === "fileURLToPath" || name.endsWith(".fileURLToPath")) {
-    return staticFileUrlPath(argumentNode(node.arguments[0]));
-  }
+  pathIntrinsics?: JavaScriptStaticPathIntrinsicQuery,
+): StaticPathFact | undefined => {
+  if (t.isCallExpression(node) && pathIntrinsics?.(node.callee))
+    return staticResolvedPath(node, pathIntrinsics);
   if (
-    (name === "dirname" || name.endsWith(".dirname")) &&
-    isFileIdentity(argumentNode(node.arguments[0]))
+    t.isCallExpression(node) &&
+    pathIntrinsics?.(node.callee, "file-url-to-path")
   )
-    return "";
-  if (name.endsWith(".resolve"))
-    return name === "win32.resolve" || name.endsWith(".win32.resolve")
-      ? undefined
-      : staticResolvedPath(node);
-  if (!name.endsWith(".join") && name !== "join") return undefined;
-  const parts: string[] = [];
+    return staticFileUrlPathFact(node, pathIntrinsics);
+  if (!t.isCallExpression(node) || !pathIntrinsics?.(node.callee, "join"))
+    return undefined;
+  const parts: StaticPathFact[] = [];
   for (const argument of node.arguments) {
-    if (isDirectoryIdentity(argumentNode(argument))) continue;
-    const value = t.isNode(argument) ? staticPath(argument) : undefined;
+    if (isDirectoryPath(argumentNode(argument), pathIntrinsics)) {
+      // join never resets at an absolute segment after the source directory.
+      parts.push({ path: ".", base: "source-directory" });
+      continue;
+    }
+    const value = t.isNode(argument)
+      ? staticPathFact(argument, pathIntrinsics)
+      : undefined;
     if (value === undefined) return undefined;
     parts.push(value);
   }
-  return parts.length === 0 ? undefined : posix.join(...parts);
+  if (parts.length === 0) return undefined;
+  const first = parts.findIndex(({ path }) => path !== "");
+  const sourceAnchors = parts.flatMap(({ base }, index) =>
+    base === "source-directory" ? [index] : [],
+  );
+  const base = parts.some(({ base }) => base === "unknown")
+    ? "unknown"
+    : sourceAnchors.length === 0
+      ? "literal-path"
+      : sourceAnchors.length === 1 && sourceAnchors[0] === first
+        ? "source-directory"
+        : "unknown";
+  return { path: posix.join(...parts.map(({ path }) => path)), base };
 };
 
-const staticFileUrlPath = (
-  argument: t.Node | undefined,
-): string | undefined => {
-  if (argument === undefined) return undefined;
-  return isSourceFileUrl(argument)
-    ? sourceRelativeFileUrlPath(argument)
-    : staticPath(argument);
+/** Normalized path facts from a source-relative file URL expression. */
+export interface JavaScriptStaticSourceUrlPath {
+  readonly path: string;
+  readonly directory: boolean;
+}
+
+const staticFileUrlPathFact = (
+  node: t.CallExpression | t.NewExpression,
+  pathIntrinsics?: JavaScriptStaticPathIntrinsicQuery,
+): StaticPathFact | undefined => {
+  if (node.arguments.length !== 1) return undefined;
+  const rawArgument = argumentNode(node.arguments[0]);
+  if (rawArgument === undefined) return undefined;
+  const argument = unwrapJavaScriptExpression(rawArgument).node;
+  if (t.isNewExpression(argument) && pathIntrinsics?.(argument, "source-url")) {
+    const resolved = staticSourceRelativeUrlPath(argument);
+    return resolved === undefined
+      ? undefined
+      : { path: resolved.path, base: "source-directory" };
+  }
+  const value = staticPath(argument, pathIntrinsics);
+  const rawPath = value?.split(/[?#]/u, 1)[0] ?? "";
+  if (
+    value === undefined ||
+    !/^file:/iu.test(value) ||
+    value !== value.trim() ||
+    value.includes("\\") ||
+    [...value].some((character) => character.charCodeAt(0) < 32) ||
+    /%(?:2f|5c)/iu.test(rawPath)
+  )
+    return undefined;
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "file:") return undefined;
+    // Canonical analysis paths use POSIX spelling so results do not depend on
+    // the analyzer host. Drive and UNC paths need an explicit target platform.
+    const path = fileURLToPath(url, { windows: false });
+    return /^\/[a-z]:/iu.test(path)
+      ? undefined
+      : { path, base: "literal-path" };
+  } catch (cause: unknown) {
+    void cause;
+    return undefined;
+  }
 };
 
-/** Project a known source-relative URL through the actual file URL decoder. */
-const sourceRelativeFileUrlPath = (node: t.Node): string | undefined => {
-  if (!isSourceFileUrl(node)) return undefined;
+/** Decode a source-relative URL after the caller proves constructor and base identity. */
+export const staticSourceRelativeUrlPath = (
+  node: t.NewExpression,
+): JavaScriptStaticSourceUrlPath | undefined => {
   const value = stringValue(node.arguments[0]);
   if (
     value === undefined ||
@@ -253,14 +374,19 @@ const sourceRelativeFileUrlPath = (node: t.Node): string | undefined => {
   try {
     const resolved = new URL(value, `file://${directory}entry.js`);
     const path = fileURLToPath(resolved, { windows: false });
-    if (value.startsWith("/")) return path;
+    if (value.startsWith("/"))
+      return { path, directory: resolved.pathname.endsWith("/") };
     const relative = posix.relative(directory, path) || ".";
     // Keep the established explicit source-directory observation spelling.
-    return value.startsWith("./") &&
-      relative !== "." &&
-      !relative.startsWith("../")
-      ? `./${relative}`
-      : relative;
+    return {
+      path:
+        value.startsWith("./") &&
+        relative !== "." &&
+        !relative.startsWith("../")
+          ? `./${relative}`
+          : relative,
+      directory: resolved.pathname.endsWith("/"),
+    };
   } catch (cause: unknown) {
     // Malformed escapes and non-file URL forms remain unknown.
     void cause;
@@ -268,89 +394,91 @@ const sourceRelativeFileUrlPath = (node: t.Node): string | undefined => {
   }
 };
 
-const isSourceFileUrl = (
-  node: t.Node,
-): node is t.CallExpression | t.NewExpression =>
-  (t.isCallExpression(node) || t.isNewExpression(node)) &&
-  (calleeName(node.callee) === "URL" ||
-    calleeName(node.callee).endsWith(".URL")) &&
-  isFileIdentity(argumentNode(node.arguments[1]));
-
 const staticResolvedPath = (
   node: t.CallExpression | t.NewExpression,
-): string | undefined => {
-  const parts: (string | null)[] = [];
-  for (const argument of node.arguments) {
-    if (isDirectoryIdentity(argumentNode(argument))) {
-      parts.push(null);
-      continue;
+  pathIntrinsics?: JavaScriptStaticPathIntrinsicQuery,
+): StaticPathFact | undefined => {
+  const parts: string[] = [];
+  let base: StaticPathFact["base"] | undefined;
+  // Node walks right-to-left and never inspects arguments before its anchor.
+  for (let index = node.arguments.length - 1; index >= 0; index -= 1) {
+    const argument = node.arguments[index];
+    if (isDirectoryPath(argumentNode(argument), pathIntrinsics)) {
+      base = "source-directory";
+      break;
     }
-    const value = t.isNode(argument) ? staticPath(argument) : undefined;
-    // Validate every argument, including those before the last anchor.
-    if (value === undefined) return undefined;
-    parts.push(value);
+    const value = t.isNode(argument)
+      ? staticPathFact(argument, pathIntrinsics)
+      : undefined;
+    if (value === undefined || value.base === "unknown") return undefined;
+    parts.push(value.path);
+    if (value.base === "source-directory" || posix.isAbsolute(value.path)) {
+      base = value.base;
+      break;
+    }
   }
-  const anchor = parts.findLastIndex(
-    (part) => part === null || posix.isAbsolute(part),
-  );
   // Relative-only calls depend on the target process cwd, which is unknown.
-  if (anchor === -1) return undefined;
-  // A null anchor is the source directory; preserve its relative projection.
-  const path = posix.join(
-    ...parts.slice(anchor).filter((part) => part !== null),
-  );
-  return path === "/" ? path : path.replace(/\/$/u, "");
+  if (base === undefined) return undefined;
+  const path = posix.join(...parts.reverse());
+  return { path: path === "/" ? path : path.replace(/\/$/u, ""), base };
 };
 
-const isFilesystemPathExpression = (node: t.Node): boolean => {
-  if (t.isStringLiteral(node)) return node.value.startsWith("/");
-  if (isFileIdentity(node) || isDirectoryIdentity(node)) return true;
+const isFilesystemPathExpression = (
+  node: t.Node,
+  pathIntrinsics?: JavaScriptStaticPathIntrinsicQuery,
+): boolean => {
+  node = unwrapJavaScriptExpression(node).node;
+  const value = stringValue(node);
+  if (value !== undefined) return value.startsWith("/");
+  if (isFileIdentity(node) || isDirectoryPath(node, pathIntrinsics))
+    return true;
   if (t.isBinaryExpression(node, { operator: "+" }))
     return (
-      isFilesystemPathExpression(node.left) ||
-      isFilesystemPathExpression(node.right)
+      isFilesystemPathExpression(node.left, pathIntrinsics) ||
+      isFilesystemPathExpression(node.right, pathIntrinsics)
     );
   if (t.isCallExpression(node) || t.isNewExpression(node)) {
-    const name = calleeName(node.callee);
-    if (name.endsWith(".resolve") && staticCallPath(node) !== undefined)
-      return true;
-    if (name === "URL" || name.endsWith(".URL"))
-      return isFileIdentity(argumentNode(node.arguments[1]));
-    if (name === "fileURLToPath" || name.endsWith(".fileURLToPath"))
-      return node.arguments.some((argument) => {
-        const value = argumentNode(argument);
-        return value !== undefined && isFilesystemPathExpression(value);
-      });
-    return node.arguments.some((argument) => {
-      const value = argumentNode(argument);
-      return value !== undefined && isFilesystemPathExpression(value);
-    });
+    if (!t.isCallExpression(node)) return false;
+    const native =
+      pathIntrinsics?.(node.callee) ||
+      pathIntrinsics?.(node.callee, "join") ||
+      pathIntrinsics?.(node.callee, "file-url-to-path");
+    return (
+      native === true && staticCallPath(node, pathIntrinsics) !== undefined
+    );
   }
   return false;
 };
 
-const isDirectoryIdentity = (node: t.Node | undefined): boolean => {
-  if (t.isIdentifier(node, { name: "__dirname" })) return true;
-  if (!t.isCallExpression(node) && !t.isNewExpression(node)) return false;
-  const name = calleeName(node.callee);
-  if (name === "URL" || name.endsWith(".URL"))
-    return isFileIdentity(argumentNode(node.arguments[1]));
+/** `__dirname` or the dirname of the source file, as a string. */
+const isDirectoryPath = (
+  node: t.Node | undefined,
+  pathIntrinsics?: JavaScriptStaticPathIntrinsicQuery,
+): boolean => {
+  if (node !== undefined) node = unwrapJavaScriptExpression(node).node;
   return (
-    (name === "dirname" || name.endsWith(".dirname")) &&
-    isFileIdentity(argumentNode(node.arguments[0]))
+    node !== undefined && pathIntrinsics?.(node, "source-directory") === true
+  );
+};
+
+/** Whether the expression denotes the current module's URL. */
+export const isImportMetaUrl = (node: t.Node | undefined): boolean => {
+  if (node === undefined) return false;
+  const expression = unwrapJavaScriptExpression(node).node;
+  if (!t.isMemberExpression(expression)) return false;
+  const object = unwrapJavaScriptExpression(expression.object).node;
+  return (
+    t.isMetaProperty(object) &&
+    object.meta.name === "import" &&
+    object.property.name === "meta" &&
+    semanticStaticPropertyName(expression.property, expression.computed) ===
+      "url"
   );
 };
 
 const isFileIdentity = (node: t.Node | undefined): boolean => {
-  if (t.isIdentifier(node, { name: "__filename" })) return true;
-  if (node === undefined) return false;
-  if (
-    t.isMemberExpression(node) &&
-    t.isMetaProperty(node.object) &&
-    node.object.meta.name === "import" &&
-    node.object.property.name === "meta" &&
-    semanticStaticPropertyName(node.property, node.computed) === "url"
-  )
+  if (node !== undefined) node = unwrapJavaScriptExpression(node).node;
+  if (t.isIdentifier(node, { name: "__filename" }) || isImportMetaUrl(node))
     return true;
   if (!t.isCallExpression(node)) return false;
   const name = calleeName(node.callee);
@@ -372,12 +500,26 @@ const XHR_METHODS = new Set([
   "TRACE",
 ]);
 
-/** An absolute HTTP(S)/WebSocket URL, or an absolute or relative path. */
-const isRequestUrlLiteral = (value: string): boolean =>
+/** Legacy URL/path shapes that bypass the overloaded lookup exclusions. */
+const isRequestUrlOrPathLiteral = (value: string): boolean =>
   /^(?:https?|wss?):\/\//iu.test(value) ||
   value.startsWith("/") ||
   value.startsWith("./") ||
   value.startsWith("../");
+
+/** Explicit request references, classified after receiver-specific exclusions. */
+const isRequestUrlReference = (value: string): boolean => {
+  if (
+    isRequestUrlOrPathLiteral(value) ||
+    value.startsWith("?") ||
+    value.startsWith("#")
+  )
+    return true;
+  // WHATWG accepts HTTP/WS scheme forms without authority slashes. Parse
+  // without a base so bare keys stay ambiguous, and keep the source spelling.
+  if (!/^(?:https?|wss?):/iu.test(value)) return false;
+  return URL.parse(value) !== null;
+};
 
 /**
  * Browsing-context and document `open` take a URL or type first and a target
@@ -388,7 +530,7 @@ const WINDOW_OPEN_CALL =
   /(?:^|\.)(?:window|self|globalThis|top|parent|opener|frames|document)\.open$/u;
 
 /** Node `fs.open` flag strings, which are never request URLs. */
-const FS_OPEN_FLAGS = new Set([
+export const FS_OPEN_FLAGS: ReadonlySet<string> = new Set([
   "a",
   "a+",
   "as",
@@ -434,13 +576,7 @@ const xhrOpenUrl = (
   name: string,
   methodNode: t.Node | null | undefined,
   urlNode: t.Node | null | undefined,
-  receiverFact?:
-    | "window"
-    | "indexed-db"
-    | "cache-storage"
-    | "local"
-    | "local-indexed-db"
-    | "local-cache-storage",
+  receiverFact?: JavaScriptOpenReceiverFact,
 ): string | undefined => {
   const url = stringValue(urlNode);
   if (url === undefined) return undefined;
@@ -489,14 +625,17 @@ const KEYED_COLLECTION_CONSTRUCTORS = new Set([
  * binding, so callers keep URL and path literals as requests.
  */
 const isKeyedCollectionReceiver = (callee: t.Node): boolean => {
+  callee = unwrapJavaScriptExpression(callee).node;
   if (!t.isMemberExpression(callee) && !t.isOptionalMemberExpression(callee))
     return false;
-  const receiver = callee.object;
-  if (t.isNewExpression(receiver))
+  const receiver = unwrapJavaScriptExpression(callee.object).node;
+  if (t.isNewExpression(receiver)) {
+    const constructor = unwrapJavaScriptExpression(receiver.callee).node;
     return (
-      t.isIdentifier(receiver.callee) &&
-      KEYED_COLLECTION_CONSTRUCTORS.has(receiver.callee.name)
+      t.isIdentifier(constructor) &&
+      KEYED_COLLECTION_CONSTRUCTORS.has(constructor.name)
     );
+  }
   if (
     !t.isMemberExpression(receiver) &&
     !t.isOptionalMemberExpression(receiver)
@@ -506,10 +645,20 @@ const isKeyedCollectionReceiver = (callee: t.Node): boolean => {
     receiver.property,
     receiver.computed,
   );
-  return property === "headers" || property === "searchParams";
+  return (
+    property === "headers" ||
+    property === "headersList" ||
+    property === "searchParams"
+  );
 };
 
-/** Select the literal URL argument for recognized network callees. */
+/** A literal endpoint shape or an argument whose callee spelling is unproven. */
+export interface JavaScriptEndpointArgument {
+  readonly kind: "endpoint" | "candidate";
+  readonly value: string;
+}
+
+/** Classify one literal without treating a generic method name as network identity. */
 export const endpointArgument = (
   name: string,
   args: readonly (
@@ -519,19 +668,26 @@ export const endpointArgument = (
     | t.ArgumentPlaceholder
   )[],
   callee: t.Node,
-  receiverFact?:
-    | "window"
-    | "indexed-db"
-    | "cache-storage"
-    | "local"
-    | "local-indexed-db"
-    | "local-cache-storage",
-): string | undefined => {
+  receiverFact?: JavaScriptOpenReceiverFact,
+): JavaScriptEndpointArgument | undefined => {
+  const candidate = (
+    value: string | undefined,
+  ): JavaScriptEndpointArgument | undefined =>
+    value === undefined ? undefined : { kind: "candidate", value };
   if (receiverFact === "window") return undefined;
-  if (name === "fetch" || name.endsWith(".fetch") || name === "WebSocket")
-    return stringValue(args[0]);
-  if (name.endsWith(".open"))
-    return xhrOpenUrl(name, args[0], args[1], receiverFact);
+  if (
+    name === "fetch" ||
+    name.endsWith(".fetch") ||
+    name === "WebSocket" ||
+    name === "EventSource" ||
+    name.endsWith(".EventSource")
+  )
+    return candidate(stringValue(args[0]));
+  if (name.endsWith(".open")) {
+    const value = xhrOpenUrl(name, args[0], args[1], receiverFact);
+    if (value === undefined) return undefined;
+    return { kind: "candidate", value };
+  }
   const method = ["get", "post", "put", "patch", "delete", "request"].find(
     (candidate) => name === candidate || name.endsWith(`.${candidate}`),
   );
@@ -539,43 +695,50 @@ export const endpointArgument = (
     const value = stringValue(args[0]);
     // Only get and delete also belong to the keyed-collection APIs, whose
     // keys are header, field, and parameter names rather than URLs or paths.
-    return value !== undefined &&
+    // Configuration `get` reads setting keys.
+    if (value === undefined) return undefined;
+    if (
       (method === "get" || method === "delete") &&
-      !isRequestUrlLiteral(value) &&
-      isKeyedCollectionReceiver(callee)
-      ? undefined
-      : value;
+      !isRequestUrlOrPathLiteral(value) &&
+      (isKeyedCollectionReceiver(callee) ||
+        (method === "get" &&
+          (receiverFact === "configuration" ||
+            receiverFact === "extension-state")))
+    )
+      return undefined;
+    return { kind: "candidate", value };
   }
-  if (name.endsWith("loadURL")) return stringValue(args[0]);
+  if (name === "sendBeacon" || name.endsWith(".sendBeacon"))
+    return candidate(stringValue(args[0]));
+  if (name === "loadURL" || name.endsWith(".loadURL")) {
+    const value = stringValue(args[0]);
+    return value === undefined ? undefined : { kind: "candidate", value };
+  }
   return undefined;
 };
 
-/** Classify a recognized storage API call name. */
-export const storageKind = (
+/** Spelling-only candidate exclusion for overloaded open calls; not API identity. */
+const storageKind = (
   name: string,
 ): JavaScriptStaticStorage["kind"] | undefined => {
   if (name.includes("localStorage.")) return "local-storage";
   if (name.includes("sessionStorage.")) return "session-storage";
   if (name.endsWith("indexedDB.open")) return "indexed-db";
   if (name.endsWith("caches.open")) return "cache-storage";
-  if (name === "Database" || name.endsWith(".Database")) return "sqlite";
   return undefined;
 };
 
-/** Produce a dotted callee name from member syntax. */
+/** Produce a dotted callee name through type-erased expression wrappers. */
 export const calleeName = (node: t.Node): string => {
+  node = unwrapJavaScriptExpression(node).node;
   const segments: string[] = [];
   while (t.isMemberExpression(node) || t.isOptionalMemberExpression(node)) {
     // Dynamic keys retain their syntax identity instead of inventing a name.
     segments.push(memberPropertyName(node));
     if (!t.isNode(node.object)) break;
-    node = node.object;
+    node = unwrapJavaScriptExpression(node.object).node;
   }
-  const base = t.isIdentifier(node)
-    ? node.name
-    : t.isImport(node)
-      ? "import"
-      : "";
+  const base = t.isIdentifier(node) ? node.name : "";
   segments.push(base);
   segments.reverse();
   const first = segments.findIndex((segment) => segment !== "");
@@ -586,11 +749,8 @@ export const calleeName = (node: t.Node): string => {
 const memberPropertyName = (
   node: t.MemberExpression | t.OptionalMemberExpression,
 ): string =>
-  node.computed &&
-  !t.isStringLiteral(node.property) &&
-  !t.isNumericLiteral(node.property)
-    ? `[computed@${String(node.property.start ?? -1)}]`
-    : semanticStaticPropertyName(node.property, node.computed);
+  semanticStaticPropertyKey(node.property, node.computed) ??
+  (node.computed ? `[computed@${String(node.property.start ?? -1)}]` : "");
 
 /**
  * Return a string literal value without evaluating an expression. A template
@@ -683,20 +843,19 @@ export const registrationKey = (
     registration.runtime,
     registration.chunk_keys,
     String(registration.unknown_chunk_keys),
+    // Equal factory tables can be registered with different runtime callbacks.
+    // Both early collection and finalization must retain those recovered facts.
+    registration.runtime_require_name,
+    registration.runtime_module_cache_status,
+    registration.entry_module_keys,
+    String(registration.unknown_entry_module_keys),
+    registration.async_chunk_keys,
+    String(registration.unknown_async_chunk_keys),
     registration.modules.map(({ module_key: key, source_sha256: digest }) => [
       key,
       digest,
     ]),
   ]);
-
-/** Sort values by a deterministic unique semantic key. */
-export const sortedUnique = <Value>(
-  values: readonly Value[],
-  key: (value: Value) => string,
-): Value[] =>
-  [...new Map(values.map((value) => [key(value), value])).values()].sort(
-    (left, right) => compareUnicodeCodePoints(key(left), key(right)),
-  );
 
 /** Hash exact UTF-8 source text. */
 export const sha256Text = (value: string): string =>

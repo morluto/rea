@@ -1,7 +1,12 @@
+import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import { Cli, z } from "incur";
 
-import { browserContext, browserCliError } from "../cliBrowserContext.js";
-import { browserScopeOptions } from "../cliObservationOptions.js";
+import { browserCliError } from "./browserCliError.js";
+import { createBrowserObservationProvider } from "../composition/browserObservation.js";
+import {
+  browserScopeOptions,
+  selectedCommandTimeout,
+} from "../cliObservationOptions.js";
 import {
   captureWebScreenshot,
   compareWebCaptureEvidence,
@@ -14,8 +19,13 @@ import {
   AnalysisInputError,
   type AnalysisInputIssue,
 } from "../domain/analysisErrorCore.js";
-import { browserCaptureComparisonInputSchema } from "../domain/browserCaptureComparison.js";
-import { projectInputIssues } from "../domain/inputIssueProjection.js";
+import { compareBrowserScenariosInputSchema } from "../domain/browserScenarioDiffValues.js";
+import { browserScenarioCaptureSchema } from "../domain/browserScenarioCapture.js";
+import { compareWebCapturesInputSchema } from "../domain/webCaptureDiffSchemas.js";
+import {
+  analysisInputErrorFromIssues,
+  projectInputIssues,
+} from "../domain/inputIssueProjection.js";
 import { discoverWebMcpToolsInputSchema } from "../domain/webMcpDiscovery.js";
 import {
   captureWebScreenshotInputSchema,
@@ -25,6 +35,8 @@ import type { JsonValue } from "../domain/jsonValue.js";
 import { parseCliJsonInput } from "../cliJsonInput.js";
 import type { Logger } from "pino";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
+import { withCommandCancellation } from "./commandCancellation.js";
+import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
 
 /** Register WebMCP, capture-diff, and screenshot CLI equivalents. */
 export const registerAdvancedBrowserCommands = (
@@ -44,7 +56,9 @@ const registerWebMcp = (
   cli.command(CLI_COMMANDS.discoverWebMcpTools, {
     description: "Passively discover page-declared WebMCP tools",
     args: z.object({
-      endpoint: z.string().describe("Configured loopback CDP HTTP endpoint"),
+      endpoint: z
+        .string()
+        .describe("Loopback CDP HTTP endpoint or browser WebSocket URL"),
       targetId: z.string().describe("Target ID from list-browser-targets"),
     }),
     options: z.object({
@@ -57,18 +71,35 @@ const registerWebMcp = (
         .describe("Observation duration in milliseconds"),
     }),
     run: ({ args, options }) =>
-      logCliCommand(logger, "discover-webmcp-tools", async () => {
-        const context = browserContext();
-        const parsed = discoverWebMcpToolsInputSchema.safeParse({
-          cdp_endpoint: args.endpoint,
-          allowed_origins: options.allowedOrigins,
-          target_id: args.targetId,
-          observation_ms: options.observationMs,
-        });
-        if (!parsed.success) return inputError("discover_webmcp_tools");
-        const result = await discoverWebMcpTools(context.provider, parsed.data);
-        return result.ok ? result.value : browserCliError(result.error);
-      }),
+      withCommandCancellation((signal) =>
+        logCliCommand(logger, "discover-webmcp-tools", async () => {
+          const provider = createBrowserObservationProvider();
+          const input = {
+            cdp_endpoint: args.endpoint,
+            allowed_origins: options.allowedOrigins,
+            target_id: args.targetId,
+            observation_ms: options.observationMs,
+            ...selectedCommandTimeout(options.commandTimeoutMs),
+          };
+          const parsed = discoverWebMcpToolsInputSchema.safeParse(input);
+          if (!parsed.success)
+            return inputError(
+              "discover_webmcp_tools",
+              projectInputIssues(parsed.error.issues, input),
+            );
+          return await finishAnalysisCommand(
+            () => discoverWebMcpTools(provider, parsed.data, { signal }),
+            {
+              close: async () => {
+                await provider.close?.();
+              },
+            },
+            provider.identity().id,
+            "discover_webmcp_tools",
+            signal,
+          ).then(projectCliAnalysisResult);
+        }),
+      ),
   });
 };
 
@@ -104,16 +135,28 @@ const registerCaptureDiff = (
         });
         if (!inputs.ok) return inputs.error;
         const { before, after, normalization } = inputs.value;
-        const scenarioComparison =
-          browserCaptureComparisonInputSchema.safeParse({
-            before_scenario: before,
-            after_scenario: after,
-            normalization,
-          });
-        const parsed = scenarioComparison.success
-          ? scenarioComparison
-          : browserCaptureComparisonInputSchema.safeParse({ before, after });
-        if (!parsed.success) return inputError("compare_web_captures");
+        // Passive snapshots own the inspection wrapper. Otherwise recognize
+        // scenario-owned fields even when the scenario manifest is missing.
+        const scenarioInput = [before, after].some(
+          (capture) =>
+            typeof capture === "object" &&
+            capture !== null &&
+            !("inspection" in capture) &&
+            Object.keys(browserScenarioCaptureSchema.shape).some(
+              (field) => field in capture,
+            ),
+        );
+        const input = scenarioInput
+          ? { before_scenario: before, after_scenario: after, normalization }
+          : { before, after };
+        const parsed = scenarioInput
+          ? compareBrowserScenariosInputSchema.safeParse(input)
+          : compareWebCapturesInputSchema.safeParse(input);
+        if (!parsed.success)
+          return inputError(
+            "compare_web_captures",
+            projectInputIssues(parsed.error.issues, input),
+          );
         const result = await compareWebCaptureEvidence(
           new CdpBrowserProvider(),
           parsed.data,
@@ -131,27 +174,43 @@ const registerScreenshot = (
     description:
       "Capture one visible page viewport within the supplied origin scope",
     args: z.object({
-      endpoint: z.string().describe("Configured loopback CDP HTTP endpoint"),
+      endpoint: z
+        .string()
+        .describe("Loopback CDP HTTP endpoint or browser WebSocket URL"),
       targetId: z.string().describe("Target ID from list-browser-targets"),
     }),
     options: z.object({
       ...browserScopeOptions,
     }),
     run: ({ args, options }) =>
-      logCliCommand(logger, "capture-web-screenshot", async () => {
-        const context = browserContext();
-        const parsed = captureWebScreenshotInputSchema.safeParse({
-          cdp_endpoint: args.endpoint,
-          allowed_origins: options.allowedOrigins,
-          target_id: args.targetId,
-        });
-        if (!parsed.success) return inputError("capture_web_screenshot");
-        const result = await captureWebScreenshot(
-          context.provider,
-          parsed.data,
-        );
-        return result.ok ? result.value : browserCliError(result.error);
-      }),
+      withCommandCancellation((signal) =>
+        logCliCommand(logger, "capture-web-screenshot", async () => {
+          const provider = createBrowserObservationProvider();
+          const input = {
+            cdp_endpoint: args.endpoint,
+            allowed_origins: options.allowedOrigins,
+            target_id: args.targetId,
+            ...selectedCommandTimeout(options.commandTimeoutMs),
+          };
+          const parsed = captureWebScreenshotInputSchema.safeParse(input);
+          if (!parsed.success)
+            return inputError(
+              "capture_web_screenshot",
+              projectInputIssues(parsed.error.issues, input),
+            );
+          return await finishAnalysisCommand(
+            () => captureWebScreenshot(provider, parsed.data, { signal }),
+            {
+              close: async () => {
+                await provider.close?.();
+              },
+            },
+            provider.identity().id,
+            "capture_web_screenshot",
+            signal,
+          ).then(projectCliAnalysisResult);
+        }),
+      ),
   });
 };
 
@@ -195,10 +254,11 @@ const registerScreenshotDiff = (
         const parsed = compareWebScreenshotsInputSchema.safeParse(input);
         if (!parsed.success)
           return browserCliError(
-            new AnalysisInputError(
+            analysisInputErrorFromIssues(
               operation,
+              parsed.error.issues,
+              input,
               { cause: parsed.error },
-              projectInputIssues(parsed.error.issues, input),
             ),
           );
         const result = await compareWebScreenshotEvidence(

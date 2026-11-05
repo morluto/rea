@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { createEvidence } from "../../../src/domain/evidence.js";
 import type { JsonValue } from "../../../src/domain/jsonValue.js";
-import { evaluateCodexEvents } from "../../../src/evaluation/CodexAgentEval.js";
+import { evaluateCodexEvents } from "./CodexAgentEval.js";
 
 const observation = (
   operation = "inspect_managed_artifact",
@@ -130,6 +130,134 @@ describe("Codex agent release evaluation", () => {
       evidenceIds: [evidenceId],
       finalCitesEvidence: true,
       answerHeuristicsMet: true,
+    });
+  });
+});
+
+describe("Codex completed tool call parsing", () => {
+  it("does not let an unfinished direct event reserve a completed call identity", () => {
+    const evidence = observation();
+    const metrics = evaluateCodexEvents(
+      [
+        {
+          type: "mcp_tool_call",
+          id: "same-call",
+          status: "in_progress",
+          server: "rea",
+          tool: evidence.operation,
+          arguments: {},
+        },
+        {
+          type: "item.completed",
+          item: {
+            id: "same-call",
+            type: "mcp_tool_call",
+            status: "completed",
+            server: "rea",
+            tool: evidence.operation,
+            arguments: {},
+            result: { structuredContent: evidence },
+          },
+        },
+        {
+          type: "item.completed",
+          item: {
+            type: "agent_message",
+            text: `Observed Evidence ${evidence.evidence_id} supports the artifact claim; runtime behavior remains unknown without runtime authority.`,
+          },
+        },
+      ],
+      evidence.operation,
+      { requireEvidence: true },
+    );
+
+    expect(metrics).toMatchObject({
+      naturalUse: true,
+      correctFirstTool: true,
+      reaCalls: [{ id: "same-call" }],
+      evidenceIds: [evidence.evidence_id],
+      finalCitesEvidence: true,
+      answerHeuristicsMet: true,
+    });
+  });
+
+  it.each([
+    { server: "rea", server_name: "other" },
+    { tool: "inspect_managed_artifact", name: "other_tool" },
+    { server: 42 },
+    { arguments: { value: 1 }, input: { value: 2 } },
+  ])(
+    "rejects completed calls with invalid or conflicting fields: %j",
+    (aliases) => {
+      const evidence = observation();
+      const metrics = evaluateCodexEvents(
+        [
+          {
+            type: "item.completed",
+            item: {
+              type: "mcp_tool_call",
+              status: "completed",
+              server: "rea",
+              tool: evidence.operation,
+              arguments: {},
+              result: { structuredContent: evidence },
+              ...aliases,
+            },
+          },
+        ],
+        evidence.operation,
+        { requiredToolSubsequence: [evidence.operation] },
+      );
+
+      expect(metrics).toMatchObject({
+        naturalUse: false,
+        correctFirstTool: false,
+        requiredToolSubsequenceMet: false,
+        evidenceIds: [],
+      });
+    },
+  );
+
+  it.each([
+    {
+      label: "missing server identity",
+      identity: {},
+      routed: false,
+    },
+    {
+      label: "another server",
+      identity: { server: "other" },
+      routed: false,
+    },
+    {
+      label: "verified REA alias",
+      identity: { server_name: "rea" },
+      routed: true,
+    },
+  ])("routes only $label calls", ({ identity, routed }) => {
+    const metrics = evaluateCodexEvents(
+      [
+        {
+          type: "item.completed",
+          item: {
+            type: "mcp_tool_call",
+            status: "completed",
+            tool: "inspect_managed_artifact",
+            arguments: {},
+            ...identity,
+          },
+        },
+      ],
+      "inspect_managed_artifact",
+      { requiredToolSubsequence: ["inspect_managed_artifact"] },
+    );
+
+    expect(metrics).toMatchObject({
+      naturalUse: routed,
+      correctFirstTool: routed,
+      firstTool: routed ? "inspect_managed_artifact" : null,
+      requiredToolSubsequenceMet: routed,
+      reaCalls: routed ? [{ server: "rea" }] : [],
     });
   });
 });
@@ -345,6 +473,46 @@ describe("Codex agent routing and error evaluation", () => {
     expect(metrics.requiredToolSubsequenceMet).toBe(false);
   });
 
+  it.each(["failed", undefined])(
+    "preserves failure without choosing duplicate JSON error codes with status %s",
+    (status) => {
+      const texts = [
+        '{"error":{"code":"bridge_timeout","code":"invalid_request"}}',
+        '{"error":{"code":"invalid_request","code":"bridge_timeout"}}',
+        '{"error":{"code":"bridge_timeout"},"error":{"code":"invalid_request"}}',
+        '{"error":{"code":"invalid_request"}}',
+      ];
+      const metrics = evaluateCodexEvents(
+        texts.map((text, index) => ({
+          type: "item.completed",
+          item: {
+            id: `failure-${String(index)}`,
+            type: "mcp_tool_call",
+            server: "rea",
+            tool: "close_binary",
+            arguments: {},
+            ...(status === undefined ? {} : { status }),
+            result: { content: [{ type: "text", text }] },
+          },
+        })),
+        "close_binary",
+      );
+      expect(
+        metrics.reaCalls.map(({ error, errorCode, evidenceIds }) => ({
+          error,
+          errorCode,
+          evidenceIds,
+        })),
+      ).toEqual([
+        { error: true, errorCode: null, evidenceIds: [] },
+        { error: true, errorCode: null, evidenceIds: [] },
+        { error: true, errorCode: null, evidenceIds: [] },
+        { error: true, errorCode: "invalid_request", evidenceIds: [] },
+      ]);
+      expect(metrics.inputValidationFailureCount).toBe(1);
+    },
+  );
+
   it("requires no REA call when target selection is missing", () => {
     const events = [
       {
@@ -524,28 +692,32 @@ describe("Codex agent completion evaluation", () => {
     });
   });
 
-  it("recognizes Codex MCP failed status when the error field is null", () => {
-    const metrics = evaluateCodexEvents(
-      [
-        {
-          type: "item.completed",
-          item: {
-            id: "item-failed",
-            type: "mcp_tool_call",
-            server: "rea",
-            tool: "analyze_javascript_application",
-            arguments: { input_path: "/tmp/app.asar" },
-            result: { structured_content: { error: { code: "denied" } } },
-            error: null,
-            status: "failed",
-          },
-        },
-      ],
-      "analyze_javascript_application",
-    );
+  it.each(["item.completed", "mcp_tool_call"] as const)(
+    "counts a failed completed invocation from %s without delivering Evidence",
+    (type) => {
+      const item = {
+        id: "item-failed",
+        type: "mcp_tool_call",
+        server: "rea",
+        tool: "analyze_javascript_application",
+        arguments: { input_path: "/tmp/app.asar" },
+        result: { structured_content: { error: { code: "denied" } } },
+        error: null,
+        status: "failed",
+      };
+      const metrics = evaluateCodexEvents(
+        [type === "item.completed" ? { type, item } : item],
+        "analyze_javascript_application",
+      );
 
-    expect(metrics.reaCalls[0]?.error).toBe(true);
-  });
+      expect(metrics).toMatchObject({
+        naturalUse: true,
+        correctFirstTool: true,
+        evidenceIds: [],
+        reaCalls: [{ error: true }],
+      });
+    },
+  );
 });
 
 describe("Codex agent workflow evaluation", () => {

@@ -39,11 +39,11 @@ cliTest(
 );
 
 cliTest(
-  "rejects an unaligned AArch64 entry before provider startup",
+  "rejects a 6502 image crossing the 16-bit boundary before provider startup",
   async ({ cli }) => {
-    const root = await createTestTempDirectory("rea-raw-cli-alignment-");
+    const root = await createTestTempDirectory("rea-6502-cli-overflow-");
     const path = join(root, "image.bin");
-    await writeFile(path, Buffer.from("c0035fd6", "hex"));
+    await writeFile(path, Buffer.from("a92a60", "hex"));
     const result = await cli.run({
       arguments: [
         "inspect",
@@ -51,9 +51,9 @@ cliTest(
         "--target-format",
         "raw-binary",
         "--architecture",
-        "arm64",
+        "6502",
         "--entry-point",
-        "0x8000001",
+        "0xffff",
         "--provider",
         "ghidra",
         "--json",
@@ -63,7 +63,40 @@ cliTest(
     expect(result.exitCode).toBe(1);
     expect(result.json).toMatchObject({
       code: "invalid_request",
-      details: { reason: expect.stringContaining("must be 4-byte aligned") },
+      details: { reason: expect.stringContaining("6502 address width") },
+    });
+  },
+);
+
+cliTest.for([
+  ["arm64", "c0035fd6", "0x8000001", "must be 4-byte aligned"],
+  ["m68k", "4e75", "0x1001", "must be 2-byte aligned"],
+] as const)(
+  "rejects an unaligned %s entry before provider startup",
+  async ([architecture, bytes, entryPoint, reason], { cli }) => {
+    const root = await createTestTempDirectory("rea-raw-cli-alignment-");
+    const path = join(root, "image.bin");
+    await writeFile(path, Buffer.from(bytes, "hex"));
+    const result = await cli.run({
+      arguments: [
+        "inspect",
+        path,
+        "--target-format",
+        "raw-binary",
+        "--architecture",
+        architecture,
+        "--entry-point",
+        entryPoint,
+        "--provider",
+        "ghidra",
+        "--json",
+      ],
+      environment: { HOME: root, XDG_CONFIG_HOME: root, XDG_CACHE_HOME: root },
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.json).toMatchObject({
+      code: "invalid_request",
+      details: { reason: expect.stringContaining(reason) },
     });
   },
 );

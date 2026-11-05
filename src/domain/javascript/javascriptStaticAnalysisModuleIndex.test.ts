@@ -50,6 +50,222 @@ it("does not infer a bootstrap from a function table without a matching loader",
   expect(analysis.bundler_registrations).toEqual([]);
 });
 
+it("does not treat a same-named shadow as the factory exports parameter", () => {
+  const analysis =
+    analyzeJavaScriptStaticSource(`globalThis.webpackChunkApp.push([[1], {
+    first(module, e, require) {
+      { const e = {}; require.d(e, { shadowed: () => 1 }); e.other = 2; }
+    }
+  }]);`);
+  expect(analysis.bundler_registrations[0]?.modules).toMatchObject([
+    { module_key: "first", exports: [] },
+  ]);
+});
+
+it("does not resolve a parameter named require as a module dependency", () => {
+  const analysis = analyzeJavaScriptStaticSource(
+    `function run(require) { return require("./ghost.cjs"); }`,
+  );
+  expect(analysis.references).not.toContainEqual(
+    expect.objectContaining({ specifier: "./ghost.cjs" }),
+  );
+  expect(analysis.references).toContainEqual(
+    expect.objectContaining({
+      kind: "require",
+      specifier: null,
+      expression: 'require("./ghost.cjs")',
+    }),
+  );
+});
+
+it("keeps a top-level wrapper require redeclaration", () => {
+  const analysis = analyzeJavaScriptStaticSource(
+    `var require; require("./wrapper.cjs");`,
+  );
+  expect(analysis.references).toContainEqual(
+    expect.objectContaining({ specifier: "./wrapper.cjs" }),
+  );
+});
+
+it("retains the wrapper dependency evaluated inside its replacing assignment", () => {
+  const analysis = analyzeJavaScriptStaticSource(
+    `var require; require = require("./before-replacement.cjs");`,
+  );
+  expect(analysis.references).toContainEqual(
+    expect.objectContaining({ specifier: "./before-replacement.cjs" }),
+  );
+});
+
+it.each([
+  [
+    "a deferred function assignment",
+    `var require; function load() { require = require("./maybe.cjs"); } load(); load();`,
+  ],
+  [
+    "an assignment repeated by a loop",
+    `var require; while (condition) { require = require("./maybe.cjs"); }`,
+  ],
+])("keeps %s unknown", (_label, source) => {
+  const analysis = analyzeJavaScriptStaticSource(source);
+  expect(analysis.references).not.toContainEqual(
+    expect.objectContaining({ specifier: "./maybe.cjs" }),
+  );
+  expect(analysis.references).toContainEqual(
+    expect.objectContaining({ kind: "require", specifier: null }),
+  );
+});
+
+it.each([
+  [
+    "a skipped wrapper write",
+    `var require; if (false) require = localLoader; require("./ghost.cjs");`,
+    "./ghost.cjs",
+  ],
+  [
+    "a skipped createRequire write",
+    `import { createRequire } from "node:module"; let require = () => "local"; if (false) require = createRequire(import.meta.url); require("./ghost.cjs");`,
+    "./ghost.cjs",
+  ],
+  [
+    "a class static field write before its computed key in source order",
+    `var require; class C { static value = (require = () => "local"); [require("./computed-key.cjs")]() {} }`,
+    "./computed-key.cjs",
+  ],
+  [
+    "a loop condition write before a later call",
+    `var require; while ((require = () => "local", false)) {} require("./after-loop.cjs");`,
+    "./after-loop.cjs",
+  ],
+])("preserves uncertainty for %s", (_label, source, specifier) => {
+  const analysis = analyzeJavaScriptStaticSource(source);
+  expect(analysis.references).not.toContainEqual(
+    expect.objectContaining({ specifier }),
+  );
+  expect(analysis.references).toContainEqual(
+    expect.objectContaining({ kind: "require", specifier: null }),
+  );
+});
+
+it("keeps a proven createRequire binding", () => {
+  const analysis = analyzeJavaScriptStaticSource(`
+    import { createRequire as makeRequire } from "node:module";
+    const require = makeRequire(import.meta.url);
+    require("./created.cjs");
+  `);
+  expect(analysis.references).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ specifier: "./created.cjs" }),
+    ]),
+  );
+});
+
+it("recognizes only factory loader calls and supported bind references", () => {
+  const analysis = analyzeJavaScriptStaticSource(`
+    globalThis.webpackChunkApp.push([[1], {
+      "factory": function (module, exports, loader) {
+        loader.resolve("./not-a-dependency.cjs");
+        loader("./dependency.cjs");
+        loader.bind(module, "./bound-dependency.cjs");
+      }
+    }]);
+  `);
+  expect(analysis.references.map(({ specifier }) => specifier)).toEqual(
+    expect.arrayContaining(["./dependency.cjs", "./bound-dependency.cjs"]),
+  );
+  expect(analysis.references).not.toContainEqual(
+    expect.objectContaining({ specifier: "./not-a-dependency.cjs" }),
+  );
+});
+
+it("keeps reassigned factory loaders unknown instead of resolving imports", () => {
+  const analysis = analyzeJavaScriptStaticSource(`
+    globalThis.webpackChunkApp.push([[1], {
+      "factory": function (module, exports, loader) {
+        loader = userInput;
+        loader("./uncertain.cjs");
+      }
+    }]);
+  `);
+  expect(analysis.references).not.toContainEqual(
+    expect.objectContaining({ specifier: "./uncertain.cjs" }),
+  );
+  expect(analysis.references).toContainEqual(
+    expect.objectContaining({ kind: "require", specifier: null }),
+  );
+});
+
+it("keeps a reassigned function named require unknown", () => {
+  const analysis = analyzeJavaScriptStaticSource(`
+    function require() { return userInput; }
+    require = replacement;
+    require("./uncertain.cjs");
+  `);
+  expect(analysis.references).not.toContainEqual(
+    expect.objectContaining({ specifier: "./uncertain.cjs" }),
+  );
+  expect(analysis.references).toContainEqual(
+    expect.objectContaining({ kind: "require", specifier: null }),
+  );
+});
+
+it("does not treat a shadowed webpack loader name as bundler ownership", () => {
+  const analysis = analyzeJavaScriptStaticSource(`
+    function local(__webpack_require__) {
+      __webpack_require__("./ghost.cjs");
+      __webpack_require__.e("ghost-chunk");
+    }
+  `);
+  expect(analysis.references).not.toContainEqual(
+    expect.objectContaining({ specifier: "./ghost.cjs" }),
+  );
+  expect(analysis.references).not.toContainEqual(
+    expect.objectContaining({ specifier: "chunk:ghost-chunk" }),
+  );
+});
+
+it("uses recovered factory and runtime loader identities for webpack imports and chunks", () => {
+  const analysis = analyzeJavaScriptStaticSource(`
+    globalThis.webpackChunkApp.push([[1], {
+      "factory": function (module, exports, __webpack_require__) {
+        __webpack_require__("./factory-dependency.cjs");
+        __webpack_require__.e("factory-chunk");
+      }
+    }, function (__webpack_require__) {
+      __webpack_require__("factory");
+      __webpack_require__.e("runtime-chunk");
+    }]);
+  `);
+  expect(analysis.references.map(({ specifier }) => specifier)).toEqual(
+    expect.arrayContaining([
+      "./factory-dependency.cjs",
+      "chunk:factory-chunk",
+      "chunk:runtime-chunk",
+    ]),
+  );
+  expect(analysis.bundler_registrations[0]?.async_chunk_keys).toEqual(
+    expect.arrayContaining(["factory-chunk", "runtime-chunk"]),
+  );
+});
+
+it("does not attribute a shadowed factory loader parameter to async chunks", () => {
+  const analysis = analyzeJavaScriptStaticSource(`
+    globalThis.webpackChunkApp.push([[1], {
+      "factory": function (module, exports, loader) {
+        function local(__webpack_require__) {
+          __webpack_require__.e("ghost-chunk");
+        }
+        loader.e("real-chunk");
+      }
+    }]);
+  `);
+  expect(analysis.bundler_registrations[0]?.async_chunk_keys).toEqual([
+    "real-chunk",
+  ]);
+  expect(analysis.references).not.toContainEqual(
+    expect.objectContaining({ specifier: "chunk:ghost-chunk" }),
+  );
+});
+
 it("does not confuse a shadowed dispatch table with the outer module table", () => {
   const analysis = analyzeJavaScriptStaticSource(`(() => {
     const modules = { 17(module) { module.exports = require("electron"); } };

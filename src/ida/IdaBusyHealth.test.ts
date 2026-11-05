@@ -1,4 +1,5 @@
 import { expect, it } from "vitest";
+import { AnalysisTimeoutError } from "../domain/analysisErrorCore.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { IdaMcpConnection } from "./IdaMcpConnection.js";
 import { readSettledHealth } from "./IdaBusyHealth.js";
@@ -18,6 +19,7 @@ const scripted = (answers: readonly JsonValue[]) => {
     connect: async () => [],
     serverInfo: () => null,
     close: async () => undefined,
+    detach: () => undefined,
     call: async () => {
       reads.push(reads.length);
       const answer = answers[Math.min(reads.length - 1, answers.length - 1)];
@@ -60,6 +62,34 @@ it("sleeps the fixed retry delay between busy reads and returns the settled answ
   expect(sleeps, "two fixed 100 ms pauses").toEqual([100, 100]);
 });
 
+it("returns an expired readiness timeout without starting a health read", async () => {
+  const timeoutMs = 10;
+  const { connection, reads } = scripted([ok]);
+  let clockReads = 0;
+  const clock = {
+    now: () => (clockReads++ === 0 ? 0 : 11),
+    delay: async () => {
+      throw new Error("An expired wait must not schedule a pause");
+    },
+  };
+
+  const failure = await readSettledHealth(connection, {
+    database: "db",
+    timeoutMs,
+    clock,
+  }).catch((cause: unknown) => cause);
+
+  expect(failure).toMatchObject({
+    _tag: "AnalysisTimeoutError",
+    operation: "server_health",
+    timeoutMs,
+  });
+  expect(
+    reads,
+    "an expired budget never becomes an SDK timeout of zero",
+  ).toHaveLength(0);
+});
+
 it("clamps the last pause to the remaining budget and stops without another read at expiry", async () => {
   const { connection, reads } = scripted([busy("config_json_get")]);
   const { clock, sleeps } = virtualClock();
@@ -77,6 +107,8 @@ it("clamps the last pause to the remaining budget and stops without another read
   expect(failure, "expiry while busy is a timeout").toMatchObject({
     _tag: "AnalysisTimeoutError",
     timeoutMs: 350,
+    userMessage: expect.stringContaining("350 ms"),
+    remediationAction: expect.stringContaining("REA_IDA_MCP_CONFIG"),
   });
 });
 
@@ -108,8 +140,13 @@ it("reports the busy tool of the last observation", async () => {
     clock,
   }).catch((cause: unknown) => cause);
 
-  expect(failure, "the operation names the tool seen last").toMatchObject({
-    operation: "server_health: headless worker still busy in last_tool",
+  expect(
+    failure,
+    "the producer retains the tool seen last independently of attribution",
+  ).toMatchObject({
+    operation: "server_health",
+    userMessage: expect.stringContaining("last_tool"),
+    diagnostics: { busy_tool: "last_tool" },
     cause: busy("last_tool"),
   });
 });
@@ -117,7 +154,8 @@ it("reports the busy tool of the last observation", async () => {
 it("rejects without another read when the signal aborts after the pause has fulfilled", async () => {
   const controller = new AbortController();
   const { connection, reads } = scripted([busy("config_json_get")]);
-  const { clock } = virtualClock(() => controller.abort());
+  const reason = { caller: "busy-health cancellation" };
+  const { clock } = virtualClock(() => controller.abort(reason));
 
   const failure = await readSettledHealth(connection, {
     database: "db",
@@ -128,6 +166,40 @@ it("rejects without another read when the signal aborts after the pause has fulf
 
   expect(reads.length, "the abort wins over the next read").toBe(1);
   expect(failure, "the abort is surfaced, not a timeout").toMatchObject({
-    name: "AbortError",
+    _tag: "AnalysisCancelledError",
+    operation: "server_health",
+    cause: reason,
+  });
+  expect(failure instanceof Error && failure.cause).toBe(reason);
+});
+
+it("retains the last busy observation when a shortened health request times out", async () => {
+  const capturedOutput = {
+    stdout: "",
+    stderr: "transport closed",
+    truncated: false,
+  };
+  const raw = busy("last_tool");
+  let reads = 0;
+  const { connection } = scripted([raw]);
+  connection.call = async (_name, _args, options) => {
+    if (reads++ === 0) return raw;
+    throw new AnalysisTimeoutError("server_health", options?.timeoutMs ?? 0, {
+      capturedOutput,
+    });
+  };
+  const { clock } = virtualClock();
+  const failure = await readSettledHealth(connection, {
+    database: "db",
+    timeoutMs: 350,
+    clock,
+  }).catch((cause: unknown) => cause);
+  expect(failure).toMatchObject({
+    operation: "server_health",
+    timeoutMs: 350,
+    cause: raw,
+    capturedOutput,
+    userMessage: expect.stringContaining("last_tool"),
+    diagnostics: { busy_tool: "last_tool", health_request_timeout_ms: 250 },
   });
 });

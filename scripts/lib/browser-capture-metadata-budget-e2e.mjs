@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { artifactCliEvidence, artifactMcpResult } from "./artifact-e2e.mjs";
+import { webSourceMapsSchema } from "../../dist/domain/webBundleAnalysis.js";
 
 const ANNOTATION_BYTES = 2 * 1024 * 1024;
 const SCRIPT_COUNT = 5;
@@ -54,10 +55,12 @@ export async function verifyBrowserCaptureMetadataBudget(endpoint) {
     if (address === null || typeof address === "string")
       throw new Error("Browser metadata fixture did not bind a TCP port");
     fixtureOrigin = `http://127.0.0.1:${String(address.port)}`;
+    // Each independent capture opens a new Debugger session. Keep each script
+    // reachable so V8 cannot collect it before the later sessions attach.
     const annotations = Array.from(
       { length: SCRIPT_COUNT },
       (_, index) =>
-        `<script>globalThis["${marker}${index}"]=true;\n//# sourceMappingURL=${fixtureOrigin}/maps/${String(index)}-${"x".repeat(ANNOTATION_BYTES)}.map\n</script>`,
+        `<script>globalThis["${marker}${index}"]=()=>true;\n//# sourceMappingURL=${fixtureOrigin}/maps/${String(index)}-${"x".repeat(ANNOTATION_BYTES)}.map\n</script>`,
     ).join("");
     page = `<!doctype html><meta charset="utf-8">${annotations}<script>fetch("/capture-metadata-ready")</script>`;
     const fixtureUrl = `${fixtureOrigin}/capture-metadata-budget`;
@@ -191,19 +194,51 @@ function assertMetadataBudget(result) {
 }
 
 function assertBundleMetadataOmissions(result, omittedMaps) {
+  // The source-map owner carries capture omissions as structured exclusions.
+  // Their presence makes aggregate coverage partial even when retained maps
+  // decoded completely; item validity remains independent of that coverage.
+  const maps = webSourceMapsSchema.parse(result.observations.source_maps);
+  const exclusion = maps.excluded?.find(
+    ({ section, reason }) =>
+      section === "source_maps" && reason === "resource_budget_exhausted",
+  );
+  const retained = maps.items.filter(({ status }) => status === "included");
   const unknown = result.unknowns.find(
     ({ dimension, reason }) =>
       dimension === "source_maps" &&
-      reason.includes(String(omittedMaps)) &&
-      reason.includes("source-map declarations"),
+      typeof maps.limitation === "string" &&
+      reason === maps.limitation,
   );
   if (
-    result.observations.source_maps.status !== "included" ||
-    result.observations.source_maps.items.length === 0 ||
+    maps.status !== "partial" ||
+    retained.length === 0 ||
+    retained.some(
+      (map) =>
+        map.artifact === null ||
+        map.mappings.length === 0 ||
+        !map.original_sources.some(
+          ({ artifact }) =>
+            artifact?.text === "export const retainedSource = true;",
+        ),
+    ) ||
+    exclusion?.count !== omittedMaps ||
     result.completeness.status !== "partial" ||
     unknown === undefined
   )
     throw new Error(
-      "Bundle analysis lost capture omissions despite valid retained maps",
+      `Bundle analysis lost capture omissions or valid retained maps: ${JSON.stringify(
+        {
+          source_maps_status: maps.status,
+          requested: maps.requested,
+          processed: maps.processed,
+          retained_maps: retained.length,
+          excluded: maps.excluded,
+          expected_omitted_maps: omittedMaps,
+          completeness: result.completeness.status,
+          source_map_unknowns: result.unknowns.filter(
+            ({ dimension }) => dimension === "source_maps",
+          ),
+        },
+      )}`,
     );
 }

@@ -1,14 +1,17 @@
 import { createHash } from "node:crypto";
-import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { access, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Readable } from "node:stream";
 
+import { TextReader, Uint8ArrayWriter, ZipWriter } from "@zip.js/zip.js";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 
 const injectedFilesystemFailures = vi.hoisted(() => ({
   closeNext: false,
   blockCloseRetries: false,
   chmodNext: false,
+  syncAbortAfter: undefined as AbortController | undefined,
+  syncCount: 0,
   rootIdentityPath: undefined as string | undefined,
 }));
 
@@ -41,6 +44,15 @@ vi.mock("node:fs/promises", async (importOriginal) => {
             throw new Error("injected close failure");
           }
           await close();
+        };
+      }
+      if (injectedFilesystemFailures.syncAbortAfter !== undefined) {
+        const sync = handle.sync.bind(handle);
+        handle.sync = async () => {
+          await sync();
+          injectedFilesystemFailures.syncCount += 1;
+          if (injectedFilesystemFailures.syncCount === 2)
+            injectedFilesystemFailures.syncAbortAfter?.abort();
         };
       }
       return handle;
@@ -78,6 +90,34 @@ describe("safe artifact output close failures", () => {
         "durable output",
       );
       await rm(parent, { recursive: true, force: true });
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "keeps the tree unpublished when cancellation arrives during commit durability",
+    async () => {
+      const parent = await createTestTempDirectory("rea-safe-output-cancel-");
+      const output = join(parent, "unpublished");
+      const tree = await SafeOutputTree.create(output);
+      const bytes = Buffer.from("pending output");
+      await tree.write("file.txt", Readable.from(bytes), {
+        sha256: createHash("sha256").update(bytes).digest("hex"),
+        bytes: bytes.byteLength,
+      });
+      const controller = new AbortController();
+      injectedFilesystemFailures.syncCount = 0;
+      injectedFilesystemFailures.syncAbortAfter = controller;
+      try {
+        await expect(tree.commit(controller.signal)).rejects.toMatchObject({
+          reason: "cancelled",
+        });
+        expect(tree.published).toBe(false);
+      } finally {
+        injectedFilesystemFailures.syncAbortAfter = undefined;
+        injectedFilesystemFailures.syncCount = 0;
+      }
+      expect(await tree.rollback()).toMatchObject({ status: "complete" });
+      await expect(access(output)).rejects.toMatchObject({ code: "ENOENT" });
     },
   );
 
@@ -140,16 +180,18 @@ it.skipIf(process.platform === "win32").each([false, true])(
   "preserves extracted output when commit close fails (persistent: %s)",
   async (persistent) => {
     const root = await createTestTempDirectory("rea-extraction-commit-close-");
-    const source = join(root, "source");
+    const source = join(root, "source.zip");
     const output = join(root, "published");
-    await mkdir(source);
-    await writeFile(join(source, "payload.txt"), "committed bytes");
+    const writer = new ZipWriter(new Uint8ArrayWriter());
+    await writer.add("payload.txt", new TextReader("committed bytes"));
+    const bytes = await writer.close();
+    await writeFile(source, bytes);
     const client = new ArtifactProvider(process.env).createClient({
       path: source,
       sourcePath: source,
-      sha256: "0".repeat(64),
+      sha256: createHash("sha256").update(bytes).digest("hex"),
       kind: "archive",
-      format: "asar",
+      format: "zip",
     });
     onTestFinished(async () => {
       injectedFilesystemFailures.blockCloseRetries = false;

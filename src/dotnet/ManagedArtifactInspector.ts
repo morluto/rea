@@ -9,6 +9,8 @@ import {
   type ManagedParseIssue,
 } from "../domain/managed/managedArtifact.js";
 import {
+  managedCli32BitRequirement,
+  managedCliIsMixedClrNative,
   readManagedPeLayout,
   type ManagedCliHeader,
   type ManagedPeLayout,
@@ -23,7 +25,12 @@ import {
   readManagedMetadataLayout,
   type ManagedMetadataLayout,
 } from "./ManagedMetadataLayout.js";
-import { ManagedReaderFailure } from "./ManagedReaderFailure.js";
+import { readTypeMemberListFacts } from "./ManagedTypeMemberLists.js";
+import {
+  ManagedReaderFailure,
+  managedMetadataFailureStatus,
+  type ManagedMetadataHeaderFacts,
+} from "./ManagedReaderFailure.js";
 
 const flagNames = (flags: number): string[] => {
   const names: string[] = [];
@@ -157,6 +164,15 @@ interface RuntimeClassificationInput {
   readonly inventory: ManagedMetadataInventory;
 }
 
+const runtimeFamilyFromCliHeader = (
+  cli: ManagedCliHeader | null,
+): ManagedArtifactInspection["classification"]["runtime_family"] =>
+  cli?.readyToRunSignature === true
+    ? "modern-dotnet"
+    : cli !== null && managedCliIsMixedClrNative(cli)
+      ? "mixed-clr-native"
+      : "unknown";
+
 const runtimeFamilyFor = (
   cli: ManagedCliHeader,
   inventory: ManagedMetadataInventory,
@@ -177,9 +193,57 @@ const runtimeFamilyFor = (
   const hasUnity = inventory.referenceNames.some(
     (name) => name === "UnityEngine" || name.startsWith("UnityEngine."),
   );
+  const hasFrameworkTarget = frameworks.some((value) =>
+    value.startsWith(".NETFramework,"),
+  );
+  const hasModernTarget = frameworks.some((value) =>
+    value.startsWith(".NETCoreApp,"),
+  );
+  const hasStandardTarget = frameworks.some((value) =>
+    value.startsWith(".NETStandard,"),
+  );
+  if (cli.readyToRunSignature)
+    evidence.push({
+      code: "ready-to-run-signature-observed",
+      detail: "The managed native header has the ReadyToRun signature.",
+      file_offset: layout.rvaToOffset(
+        cli.managedNativeHeader.rva,
+        4,
+        "cli.managed-native-header",
+      ),
+    });
+  if (hasUnity)
+    evidence.push({
+      code: "unity-reference-observed",
+      detail:
+        "The admitted AssemblyRef table contains a UnityEngine reference.",
+      file_offset: metadata.table(35)?.offset ?? null,
+    });
+  if (hasFrameworkTarget)
+    evidence.push({
+      code: "target-framework-observed",
+      detail:
+        "An assembly-level TargetFrameworkAttribute names .NET Framework.",
+      file_offset: metadata.table(12)?.offset ?? null,
+    });
+  if (hasModernTarget)
+    evidence.push({
+      code: "target-framework-observed",
+      detail: "An assembly-level TargetFrameworkAttribute names modern .NET.",
+      file_offset: metadata.table(12)?.offset ?? null,
+    });
+  if (hasStandardTarget)
+    evidence.push({
+      code: "target-framework-observed",
+      detail:
+        "An assembly-level TargetFrameworkAttribute names .NET Standard, an API specification that does not identify a runtime family.",
+      file_offset: metadata.table(12)?.offset ?? null,
+    });
   let runtimeFamily: ManagedArtifactInspection["classification"]["runtime_family"] =
     "unknown";
-  if ((cli.flags & 1) === 0) {
+  if (cli.readyToRunSignature) {
+    runtimeFamily = "modern-dotnet";
+  } else if (runtimeFamilyFromCliHeader(cli) === "mixed-clr-native") {
     runtimeFamily = "mixed-clr-native";
     evidence.push({
       code: "cli-il-only-clear",
@@ -189,47 +253,10 @@ const runtimeFamilyFor = (
     });
   } else if (hasUnity) {
     runtimeFamily = "unity-mono";
-    evidence.push({
-      code: "unity-reference-observed",
-      detail:
-        "The admitted AssemblyRef table contains a UnityEngine reference.",
-      file_offset: metadata.table(35)?.offset ?? null,
-    });
-  } else if (frameworks.some((value) => value.startsWith(".NETFramework,"))) {
+  } else if (hasFrameworkTarget) {
     runtimeFamily = "dotnet-framework";
-    evidence.push({
-      code: "target-framework-observed",
-      detail:
-        "An assembly-level TargetFrameworkAttribute names .NET Framework.",
-      file_offset: metadata.table(12)?.offset ?? null,
-    });
-  } else if (
-    frameworks.some((value) => value.startsWith(".NETCoreApp,")) ||
-    cli.readyToRunSignature
-  ) {
+  } else if (hasModernTarget) {
     runtimeFamily = "modern-dotnet";
-    evidence.push({
-      code: cli.readyToRunSignature
-        ? "ready-to-run-signature-observed"
-        : "target-framework-observed",
-      detail: cli.readyToRunSignature
-        ? "The managed native header has the ReadyToRun signature."
-        : "An assembly-level TargetFrameworkAttribute names modern .NET.",
-      file_offset: cli.readyToRunSignature
-        ? layout.rvaToOffset(
-            cli.managedNativeHeader.rva,
-            4,
-            "cli.managed-native-header",
-          )
-        : (metadata.table(12)?.offset ?? null),
-    });
-  } else if (frameworks.some((value) => value.startsWith(".NETStandard,"))) {
-    evidence.push({
-      code: "target-framework-observed",
-      detail:
-        "An assembly-level TargetFrameworkAttribute names .NET Standard, an API specification that does not identify a runtime family.",
-      file_offset: metadata.table(12)?.offset ?? null,
-    });
   }
   return { runtime_family: runtimeFamily, evidence };
 };
@@ -238,8 +265,8 @@ const implementationFor = (
   cli: ManagedCliHeader,
   metadata: ManagedMetadataLayout,
 ): ManagedArtifactInspection["classification"]["implementation"] => {
-  if ((cli.flags & 1) === 0) return "cpp-cli-mixed";
   if (cli.readyToRunSignature) return "cil-and-ready-to-run";
+  if ((cli.flags & 1) === 0) return "cpp-cli-mixed";
   return (metadata.rowCounts[6] ?? 0) === 0 ? "metadata-only" : "cil";
 };
 
@@ -249,9 +276,9 @@ const managedArchitectureFor = (
 ): ManagedArtifactInspection["classification"]["managed_architecture"] => {
   if (layout.architecture !== "x86" || (cli.flags & 1) === 0)
     return layout.architecture;
-  if ((cli.flags & 0x0000_0002) !== 0) return "x86";
-  if ((cli.flags & 0x0002_0000) !== 0) return "anycpu-prefer-32";
-  return "anycpu";
+  const requirement = managedCli32BitRequirement(cli.flags);
+  if (requirement === "required") return "x86";
+  return requirement === "preferred" ? "anycpu-prefer-32" : "anycpu";
 };
 
 const runtimeClassification = ({
@@ -290,6 +317,7 @@ interface PartialMetadataContext {
   readonly bytes: Buffer;
   readonly layout: ManagedPeLayout;
   readonly issue: ManagedParseIssue;
+  readonly metadataHeader?: ManagedMetadataHeaderFacts | null;
 }
 
 const partialMetadataResult = ({
@@ -297,13 +325,16 @@ const partialMetadataResult = ({
   bytes,
   layout,
   issue,
+  metadataHeader,
 }: PartialMetadataContext): ManagedArtifactInspection => ({
   ...base(target, bytes, layout),
   classification: {
-    status: issue.code === "resource-limit" ? "managed" : "malformed",
+    status:
+      managedMetadataFailureStatus(issue) === "partial"
+        ? "managed"
+        : "malformed",
     container: "pe",
-    runtime_family:
-      (layout.cli?.flags ?? 1) & 1 ? "unknown" : "mixed-clr-native",
+    runtime_family: runtimeFamilyFromCliHeader(layout.cli),
     implementation: "unknown",
     managed_architecture: "unknown",
     evidence: [
@@ -315,9 +346,9 @@ const partialMetadataResult = ({
     ],
   },
   metadata: {
-    status: issue.code === "resource-limit" ? "partial" : "malformed",
-    version: null,
-    stream_names: [],
+    status: managedMetadataFailureStatus(issue),
+    version: metadataHeader?.version ?? null,
+    stream_names: [...(metadataHeader?.streamNames ?? [])],
     table_row_counts: {},
   },
   module: null,
@@ -328,9 +359,11 @@ const partialMetadataResult = ({
   attributes: [],
   coverage: { state: "partial", issues: [issue] },
   limitations: [
-    issue.code === "resource-limit"
-      ? "CLI metadata inspection stopped at its representation budget; omitted facts are unknown."
-      : "CLI metadata could not be read because the PE/CLI structure is malformed or unsupported.",
+    issue.code === "unsupported-metadata"
+      ? issue.detail
+      : issue.code === "resource-limit"
+        ? "CLI metadata inspection stopped at its representation budget; omitted facts are unknown."
+        : "CLI metadata could not be read because the PE/CLI structure is malformed or unsupported.",
   ],
 });
 
@@ -363,6 +396,7 @@ export const inspectManagedArtifactBytes = (
           bytes,
           layout,
           issue: cause.issue,
+          metadataHeader: cause.metadataHeader,
         }),
       ),
     );
@@ -373,10 +407,12 @@ export const inspectManagedArtifactBytes = (
     resourceIssues,
   );
   try {
+    const memberLists = readTypeMemberListFacts(bytes, metadata);
     const inventory = readManagedMetadataInventory(
       bytes,
       metadata,
       resourceDirectory,
+      memberLists,
     );
     const issues = [...resourceIssues, ...inventory.issues];
     const limitations = [
@@ -421,7 +457,13 @@ export const inspectManagedArtifactBytes = (
     if (!(cause instanceof ManagedReaderFailure)) throw cause;
     return managedArtifactInspectionSchema.parse(
       admitManagedProjection(
-        partialMetadataResult({ target, bytes, layout, issue: cause.issue }),
+        partialMetadataResult({
+          target,
+          bytes,
+          layout,
+          issue: cause.issue,
+          metadataHeader: cause.metadataHeader,
+        }),
       ),
     );
   }

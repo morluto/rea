@@ -10,10 +10,10 @@ import {
   requireAddressArray,
   requireFunctionDossier,
   requirePseudocode,
-} from "../dist/application/RealHopperAssertions.js";
-import { HOPPER_PROVIDER_IDENTITY } from "../dist/hopper/HopperProviderCapabilities.js";
-import { HOPPER_TARGET_LEASE_DIRECTORY } from "../dist/hopper/HopperTargetLease.js";
-import { REA_WORKFLOW_PROVIDER } from "../dist/application/InvestigationProviders.js";
+} from "./lib/real-hopper-assertions.mjs";
+import { HOPPER_PROVIDER_IDENTITY } from "../dist/hopper/HopperProviderMetadata.js";
+import { HOPPER_TARGET_LEASE_DIRECTORY } from "../dist/process/HopperLease.js";
+import { REA_WORKFLOW_PROVIDER } from "../dist/domain/investigationProviders.js";
 import { loadRealHopperFixtureTargets } from "./lib/real-hopper-fixture.mjs";
 import { verifyHopperStringObjects } from "./lib/real-hopper-search.mjs";
 import {
@@ -47,6 +47,7 @@ import {
 } from "./lib/real-hopper-boundaries.mjs";
 import { startUnrelatedHopperSentinel } from "./lib/unrelated-hopper-sentinel.mjs";
 import { snapshotHopperRuntime } from "./lib/real-hopper-cleanup.mjs";
+import { verifyLinuxHopperOwnerExit } from "./lib/real-hopper-owner-exit.mjs";
 const execFileAsync = promisify(execFile);
 const verifierRun = createVerifierRun();
 const timeout = 180_000;
@@ -202,7 +203,7 @@ const verifyCurrentTarget = async (client, options) => {
       await client.callTool(
         {
           name: "analyze_function",
-          arguments: { procedure: firstAddress },
+          arguments: { procedure: firstAddress, detail: "complete" },
         },
         options,
       ),
@@ -212,7 +213,7 @@ const verifyCurrentTarget = async (client, options) => {
   );
   return {
     procedure: dossier.procedure,
-    procedureCount: procedures.total,
+    procedureCount: procedures.length,
     boundedPseudocodeChars: boundedPseudocode.length,
     analyzedPseudocodeChars: [...dossier.pseudocode].length,
     callerCount: relationships.procedure_callers.length,
@@ -577,6 +578,14 @@ if (sessionsAfter.length > 0) {
 }
 if (summary === undefined)
   throw new Error("Real-Hopper verification did not produce a summary");
+if (process.platform === "linux")
+  summary.ownerExit = await verifyLinuxHopperOwnerExit({
+    primary: targetA,
+    secondary: targetB,
+    serverCommand,
+    serverArgs,
+    environment: serverEnvironment,
+  });
 const completedVerifierRun = await completeVerifierRun(verifierRun);
 if (
   completedVerifierRun.process_lineage.status !== "verified" ||

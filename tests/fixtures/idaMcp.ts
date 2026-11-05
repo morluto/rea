@@ -57,6 +57,7 @@ const modernNames = [
   "callees",
   "xrefs_to",
   "callgraph",
+  "survey_binary",
 ];
 
 /** Stateful producer fixture at the real connection seam; no module mocking. */
@@ -67,6 +68,7 @@ export class RecordingIdaMcp implements IdaMcpConnection {
   }[] = [];
   connects = 0;
   closes = 0;
+  detaches = 0;
   inputSha256: string;
   inputPath: string;
   imageBase = "0x1000";
@@ -93,6 +95,7 @@ export class RecordingIdaMcp implements IdaMcpConnection {
   }
   /** Tool names the fake server advertises; defaults to the profile's full set. */
   tools?: readonly string[];
+  readResource?: NonNullable<IdaMcpConnection["readResource"]>;
   async connect() {
     this.connects += 1;
     return this.tools ?? (this.mode === "attached" ? legacyNames : modernNames);
@@ -102,6 +105,9 @@ export class RecordingIdaMcp implements IdaMcpConnection {
   }
   async close() {
     this.closes += 1;
+  }
+  detach() {
+    this.detaches += 1;
   }
   async call(
     name: string,
@@ -113,10 +119,13 @@ export class RecordingIdaMcp implements IdaMcpConnection {
     if (overridden !== undefined) return overridden;
     if (["idb_open", "idb_list", "idb_close", "server_health"].includes(name))
       return this.lifecycle(name, args);
-    return this.read(name);
+    return this.read(name, args);
   }
 
-  private read(name: string): JsonValue {
+  private read(
+    name: string,
+    args: Readonly<Record<string, JsonValue>>,
+  ): JsonValue {
     const fn = { address: "0x1000", name: "main", size: "0x20" };
     const asm = {
       name: "main",
@@ -153,13 +162,13 @@ export class RecordingIdaMcp implements IdaMcpConnection {
       case "get_function_by_name":
         return fn;
       case "lookup_funcs":
-        return [
-          {
-            query: "main",
-            fn: { addr: fn.address, name: fn.name, size: fn.size },
-            error: null,
-          },
-        ];
+        if (!Array.isArray(args.queries))
+          throw new Error("Invalid fixture lookup queries");
+        return args.queries.map((query) => ({
+          query,
+          fn: { addr: fn.address, name: fn.name, size: fn.size },
+          error: null,
+        }));
       case "decompile_function":
         return this.pseudocode;
       case "decompile":

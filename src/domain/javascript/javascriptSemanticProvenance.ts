@@ -48,7 +48,11 @@ export const uniqueSemanticOrigins = (
   );
 
 const semanticOriginKey = (origin: JavaScriptModuleOrigin): string =>
-  JSON.stringify([origin.specifier, origin.importedPath]);
+  JSON.stringify([
+    origin.specifier,
+    origin.importedPath,
+    origin.resolutionMode ?? "import",
+  ]);
 
 /** Canonically distinguish primitive values across type boundaries. */
 export const semanticPrimitiveKey = (

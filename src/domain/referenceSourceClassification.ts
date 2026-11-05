@@ -27,6 +27,8 @@ const CODE_EXTENSIONS = new Set([
   "rs",
   "go",
   "java",
+  "kt",
+  "kts",
   "c",
   "h",
   "cpp",
@@ -37,6 +39,8 @@ const CODE_EXTENSIONS = new Set([
   "m",
   "mm",
   "sh",
+  "cs",
+  "php",
 ]);
 
 const LANGUAGE_BY_EXTENSION = new Map<string, string>([
@@ -52,6 +56,8 @@ const LANGUAGE_BY_EXTENSION = new Map<string, string>([
   ["rs", "Rust"],
   ["go", "Go"],
   ["java", "Java"],
+  ["kt", "Kotlin"],
+  ["kts", "Kotlin"],
   ["c", "C"],
   ["h", "C"],
   ["cpp", "C++"],
@@ -59,6 +65,8 @@ const LANGUAGE_BY_EXTENSION = new Map<string, string>([
   ["cc", "C++"],
   ["cxx", "C++"],
   ["swift", "Swift"],
+  ["cs", "C#"],
+  ["php", "PHP"],
   ["m", "Objective-C"],
   ["mm", "Objective-C++"],
   ["sh", "Shell"],
@@ -209,7 +217,6 @@ const GENERATED_DIRECTORY_NAMES = new Set([
   ".svelte-kit",
   ".astro",
   "storybook-static",
-  "docs/api",
   ".codex",
   ".devin",
   ".factory",
@@ -220,6 +227,8 @@ const GENERATED_DIRECTORY_NAMES = new Set([
   ".tox",
   ".nyc_output",
 ]);
+
+const GENERATED_DIRECTORY_PATHS = [["docs", "api"]] as const;
 
 const VENDOR_DIRECTORY_NAMES = new Set([
   "node_modules",
@@ -311,13 +320,18 @@ const basenameMatch = (filename: string, set: ReadonlySet<string>): boolean => {
   return set.has(lower);
 };
 
-const isPathUnderAny = (path: string, names: ReadonlySet<string>): boolean => {
-  for (const segment of path.split("/")) {
-    if (segment === "") continue;
-    if (names.has(segment.toLowerCase())) return true;
-  }
-  return false;
-};
+const isPathUnderAny = (
+  parts: readonly string[],
+  names: ReadonlySet<string>,
+): boolean => parts.some((segment) => names.has(segment));
+
+const containsDirectoryPath = (
+  parts: readonly string[],
+  directory: readonly string[],
+): boolean =>
+  parts.some((_, start) =>
+    directory.every((segment, offset) => parts[start + offset] === segment),
+  );
 
 /** Detect a source language from a POSIX path. */
 export const detectReferenceSourceLanguage = (path: string): string | null => {
@@ -331,8 +345,9 @@ export const detectReferenceSourceLanguage = (path: string): string | null => {
   if (lower.endsWith(".d.cts")) return "TypeScript";
 
   const parts = basenameParts(filename);
-  const extension = parts.ext.toLowerCase();
-  return LANGUAGE_BY_EXTENSION.get(extension) ?? null;
+  if (parts.ext === "C") return "C++";
+  if (parts.ext === "M") return "Objective-C++";
+  return LANGUAGE_BY_EXTENSION.get(parts.ext.toLowerCase()) ?? null;
 };
 
 /** Classify a reference source path deterministically. */
@@ -340,33 +355,34 @@ export const classifyReferenceSourcePath = (
   path: string,
 ): ReferenceSourceClassification[] => {
   const classifications: Set<ReferenceSourceClassification> = new Set();
-  const parts = path.split("/").filter((segment) => segment !== "");
+  const parts = path
+    .toLowerCase()
+    .split("/")
+    .filter((segment) => segment !== "");
   const filename = parts[parts.length - 1] ?? "";
-  const lower = filename.toLowerCase();
-
   if (parts.length === 0) {
     classifications.add("source");
     return [...classifications].sort();
   }
-  addDirectoryClassifications(path, classifications);
+  addDirectoryClassifications(parts, classifications);
   addFilenameClassifications(filename, classifications);
 
   if (
-    lower.endsWith(".json") ||
-    lower.endsWith(".yaml") ||
-    lower.endsWith(".yml")
+    filename.endsWith(".json") ||
+    filename.endsWith(".yaml") ||
+    filename.endsWith(".yml")
   ) {
     if (!classifications.has("manifest") && !classifications.has("config"))
       classifications.add("config");
   }
 
-  if (isPathUnderAny(path, SOURCE_DIRECTORY_NAMES)) {
+  if (isPathUnderAny(parts, SOURCE_DIRECTORY_NAMES)) {
     if (!classifications.has("vendor") && !classifications.has("generated"))
       classifications.add("source");
   }
 
   if (classifications.size === 0) {
-    if (lower === "license" || lower === "copying")
+    if (filename === "license" || filename === "copying")
       classifications.add("documentation");
     else classifications.add("unknown");
   }
@@ -375,15 +391,20 @@ export const classifyReferenceSourcePath = (
 };
 
 const addDirectoryClassifications = (
-  path: string,
+  parts: readonly string[],
   classifications: Set<ReferenceSourceClassification>,
 ): void => {
-  if (isPathUnderAny(path, TEST_DIRECTORY_NAMES)) classifications.add("test");
-  if (isPathUnderAny(path, DOCUMENTATION_DIRECTORY_NAMES))
+  if (isPathUnderAny(parts, TEST_DIRECTORY_NAMES)) classifications.add("test");
+  if (isPathUnderAny(parts, DOCUMENTATION_DIRECTORY_NAMES))
     classifications.add("documentation");
-  if (isPathUnderAny(path, VENDOR_DIRECTORY_NAMES))
+  if (isPathUnderAny(parts, VENDOR_DIRECTORY_NAMES))
     classifications.add("vendor");
-  if (isPathUnderAny(path, GENERATED_DIRECTORY_NAMES))
+  if (
+    isPathUnderAny(parts, GENERATED_DIRECTORY_NAMES) ||
+    GENERATED_DIRECTORY_PATHS.some((directory) =>
+      containsDirectoryPath(parts, directory),
+    )
+  )
     classifications.add("generated");
 };
 

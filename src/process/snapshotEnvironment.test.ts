@@ -1,6 +1,33 @@
 import { expect, it } from "vitest";
 
-import { snapshotEnvironment } from "./snapshotEnvironment.js";
+import {
+  mergeEnvironmentOverrides,
+  snapshotEnvironment,
+} from "./snapshotEnvironment.js";
+
+it.each(["win32", "linux", "darwin"] as const)(
+  "merges explicit environment layers using %s key identity before sorting",
+  (platform) => {
+    const existing = {
+      rea_analysis_provider: "hopper",
+      CallerSetting: "retain",
+    };
+    const overrides = { REA_ANALYSIS_PROVIDER: "ghidra", Path: "chosen" };
+    const merged = mergeEnvironmentOverrides(existing, overrides, platform);
+    expect(merged).toEqual(
+      platform === "win32"
+        ? {
+            REA_ANALYSIS_PROVIDER: "ghidra",
+            CallerSetting: "retain",
+            Path: "chosen",
+          }
+        : { ...existing, ...overrides },
+    );
+    expect(Object.isFrozen(merged)).toBe(true);
+    expect(existing.rea_analysis_provider).toBe("hopper");
+    expect(overrides.REA_ANALYSIS_PROVIDER).toBe("ghidra");
+  },
+);
 
 it.each(["linux", "darwin"] as const)(
   "preserves case-sensitive %s variables in an immutable snapshot",
@@ -25,19 +52,24 @@ it("canonicalizes selected Windows variables without inheriting ambient values",
   expect(Object.isFrozen(snapshot)).toBe(true);
 });
 
-it("uses Node's first lexicographic Windows key even when it is undefined", () => {
-  expect(
-    snapshotEnvironment(
-      {
-        path: "lower",
-        Path: "mixed",
-        PATH: "upper",
-        ComSpec: "mixed-cmd",
-        COMSPEC: "upper-cmd",
-        Temp: "mixed-temp",
-        TEMP: undefined,
-      },
-      "win32",
-    ),
-  ).toEqual({ PATH: "upper", COMSPEC: "upper-cmd", TEMP: undefined });
+it("keeps the last caller value for Windows aliases, including undefined", () => {
+  const snapshot = snapshotEnvironment(
+    {
+      PATH: "upper",
+      path: "lower",
+      COMSPEC: "upper-cmd",
+      ComSpec: "mixed-cmd",
+      TEMP: "ambient-temp",
+      temp: undefined,
+    },
+    "win32",
+  );
+
+  expect(snapshot).toEqual({
+    COMSPEC: "mixed-cmd",
+    PATH: "lower",
+    TEMP: undefined,
+  });
+  expect(Object.keys(snapshot)).toEqual(["COMSPEC", "PATH", "TEMP"]);
+  expect(Object.isFrozen(snapshot)).toBe(true);
 });

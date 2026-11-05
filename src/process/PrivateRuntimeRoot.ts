@@ -1,8 +1,9 @@
-import { chmod, mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, realpath, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { WindowsPrivateRuntime } from "../windows/WindowsPrivateRuntime.js";
+import { PrivateRuntimeRootUnavailableError } from "./PrivateRuntimeRootUnavailableError.js";
 
 import {
   windowsNativeCapabilities,
@@ -23,7 +24,7 @@ export type PrivateRuntimeRootCapability =
   | {
       readonly available: true;
       readonly reason: null;
-      readonly proof: "posix-mode-0700";
+      readonly proof: "posix-mkdtemp-owner-only";
     };
 
 /** Report whether this process can establish a private runtime root. */
@@ -32,17 +33,7 @@ export const privateRuntimeRootCapability = (
 ): PrivateRuntimeRootCapability =>
   platform === "win32"
     ? windowsNativeCapabilities(platform).private_runtime_dacl
-    : { available: true, reason: null, proof: "posix-mode-0700" };
-
-/** Expected failure when a runtime root's privacy boundary is unavailable. */
-export class PrivateRuntimeRootUnavailableError extends Error {
-  readonly code = "private-runtime-root-authority-unavailable";
-
-  constructor(message: string) {
-    super(message);
-    this.name = "PrivateRuntimeRootUnavailableError";
-  }
-}
+    : { available: true, reason: null, proof: "posix-mkdtemp-owner-only" };
 
 /**
  * Owns a private temporary runtime root and removes it idempotently.
@@ -66,7 +57,9 @@ export class PrivateRuntimeRoot {
     const platform = options.platform ?? process.platform;
     const capability = privateRuntimeRootCapability(platform);
     if (!capability.available)
-      throw new PrivateRuntimeRootUnavailableError(capability.reason);
+      throw new PrivateRuntimeRootUnavailableError(capability.reason, {
+        retryable: capability.retryable === true,
+      });
     if (platform === "win32") {
       const runtime = WindowsPrivateRuntime.create(
         options.parent ?? tmpdir(),
@@ -74,16 +67,17 @@ export class PrivateRuntimeRoot {
       );
       return new PrivateRuntimeRoot(runtime.observation.path, runtime);
     }
-    const path = await mkdtemp(
-      join(options.parent ?? tmpdir(), options.prefix ?? "rea-provider-"),
-    );
-    try {
-      await chmod(path, 0o700);
-      return new PrivateRuntimeRoot(path);
-    } catch (cause: unknown) {
-      await rm(path, { recursive: true, force: true });
-      throw cause;
-    }
+    const selectedParent = options.parent ?? tmpdir();
+    // The final dot requires a native directory lookup, preserving the host's
+    // failure code and path. An explicitly empty selection remains invalid.
+    await stat(selectedParent === "" ? selectedParent : `${selectedParent}/.`);
+    // Canonicalize only after native admission so consumers share one physical
+    // spelling without collapsing an invalid file/.. traversal on Darwin.
+    const parent = await realpath(selectedParent);
+    const path = await mkdtemp(join(parent, options.prefix ?? "rea-provider-"));
+    // POSIX mkdtemp establishes owner-only access atomically. Return its owner
+    // without a fallible permission rewrite and rollback after allocation.
+    return new PrivateRuntimeRoot(path);
   }
 
   /**

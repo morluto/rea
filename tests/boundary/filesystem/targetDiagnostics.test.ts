@@ -1,12 +1,38 @@
-import { chmod, realpath, writeFile } from "node:fs/promises";
+import { chmod, readFile, realpath, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { systemDoctorHost } from "../../../src/application/Doctor.js";
 import { parseBinaryTarget } from "../../../src/application/BinaryTargetResolver.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
+import { pe } from "../../../src/domain/binaryTarget.fixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 describe("executable format refusal diagnostics", () => {
+  it.each([
+    [0x01a6, "0x01a6"],
+    [0x0000, "0x0000"],
+    [0xffff, "0xffff"],
+  ] as const)(
+    "retains unsupported PE machine %i in the refusal",
+    async (machine, expectedMachine) => {
+      const directory = await createTestTempDirectory("rea-target-pe-machine-");
+      const path = join(directory, "unsupported.exe");
+      const bytes = pe(0x014c);
+      bytes.writeUInt16LE(machine, 0x44);
+      await writeFile(path, bytes);
+
+      const result = await parseBinaryTarget(path);
+      if (result.ok) throw new Error("unsupported PE target was admitted");
+      const reason = `unsupported PE architecture (COFF machine ${expectedMachine})`;
+      expect(projectAnalysisError(result.error)).toMatchObject({
+        code: "target_unavailable",
+        category: "unsupported_target",
+        message: `Cannot open artifact: ${reason}.`,
+        details: { reason, constraint: "file_format_rejected" },
+      });
+    },
+  );
+
   it.each(["NE", "LE", "LX"] as const)(
     "reports unsupported %s executables without path advice",
     async (signature) => {
@@ -52,7 +78,7 @@ describe("executable format refusal diagnostics", () => {
 });
 
 describe("target route diagnostics", () => {
-  it.each(["module.wasm", "module.bin", "misleading.js"])(
+  it.each(["module.wasm", "module.bin", "misleading.js", "misleading.hop"])(
     "identifies a WASM v1 header in %s without suggesting native provider installation",
     async (name) => {
       const directory = await createTestTempDirectory("rea-wasm-target-");
@@ -223,8 +249,7 @@ describe("raw-binary load rejection diagnostics", () => {
     expect(projected).toMatchObject({
       code: "invalid_request",
       category: "invalid_input",
-      // invalid_request is retryable: correcting the load argument succeeds.
-      retryable: true,
+      retryable: false,
       message:
         "Cannot open artifact: raw-binary arm entry_point 0x1 must be 4-byte aligned.",
       details: {
@@ -319,4 +344,69 @@ describe("raw-binary load rejection diagnostics", () => {
       },
     });
   });
+});
+
+describe("caller-selected and inferred target interpretation", () => {
+  it.each(["archive.hop", "archive.HOP"])(
+    "preserves inferred database routing for ZIP content named %s",
+    async (name) => {
+      const directory = await createTestTempDirectory("rea-zip-database-");
+      const bytes = Buffer.alloc(22);
+      bytes.writeUInt32LE(0x06054b50, 0);
+      const zipPath = join(directory, "archive.zip");
+      const databasePath = join(directory, name);
+      await writeFile(zipPath, bytes);
+      await writeFile(databasePath, bytes);
+      expect(await parseBinaryTarget(zipPath)).toMatchObject({
+        ok: true,
+        value: { kind: "archive", format: "zip" },
+      });
+      expect(await parseBinaryTarget(databasePath)).toMatchObject({
+        ok: true,
+        value: { kind: "database", format: "analysis-database" },
+      });
+      expect(Buffer.compare(await readFile(databasePath), bytes)).toBe(0);
+    },
+  );
+
+  it("preserves explicit DOS COM interpretation for bytes with a WASM header", async () => {
+    const directory = await createTestTempDirectory("rea-wasm-explicit-com-");
+    const path = join(directory, "module.hop");
+    await writeFile(path, Buffer.from([0, 0x61, 0x73, 0x6d, 1, 0, 0, 0]));
+    expect(
+      await parseBinaryTarget(path, { formatHint: "dos-com" }),
+    ).toMatchObject({
+      ok: true,
+      value: { kind: "executable", format: "dos-com", architecture: "x86" },
+    });
+  });
+  it.each(["module.wasm", "misleading.hop"])(
+    "preserves explicitly selected database routing for %s",
+    async (name) => {
+      const directory = await createTestTempDirectory(
+        "rea-wasm-explicit-database-",
+      );
+      const path = join(directory, name);
+      await writeFile(path, Buffer.from([0, 0x61, 0x73, 0x6d, 1, 0, 0, 0]));
+      expect(
+        await parseBinaryTarget(path, { targetKind: "database" }),
+      ).toMatchObject({
+        ok: true,
+        value: { kind: "database", format: "analysis-database" },
+      });
+    },
+  );
+
+  it.each(["ordinary.hop", "ordinary.HOP"])(
+    "retains automatic database routing for non-WASM %s",
+    async (name) => {
+      const directory = await createTestTempDirectory("rea-ordinary-database-");
+      const path = join(directory, name);
+      await writeFile(path, "existing database content");
+      expect(await parseBinaryTarget(path)).toMatchObject({
+        ok: true,
+        value: { kind: "database", format: "analysis-database" },
+      });
+    },
+  );
 });

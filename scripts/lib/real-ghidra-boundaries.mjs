@@ -10,6 +10,7 @@ import { access, readFile, readdir, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { promisify } from "node:util";
+import { GHIDRA_ANNOTATIONS_RETAINED } from "../../dist/ghidra/GhidraProviderClient.js";
 import Ajv from "ajv/dist/2020.js";
 import addFormats from "ajv-formats";
 
@@ -46,7 +47,7 @@ export async function verifyGhidraBoundaries(
   }
   let successfulCalls = 0;
   let rejectedCalls = 0;
-  const call = async (name, args = {}) => {
+  const checkedReply = async (name, args = {}) => {
     const reply = await client.callTool({ name, arguments: args }, options);
     const result = requireMcpOperationResult(reply, name);
     const validate = validators.get(name);
@@ -66,8 +67,13 @@ export async function verifyGhidraBoundaries(
         `${name} omitted defined-string coverage`,
       );
     successfulCalls++;
-    return result;
+    return { reply, result };
   };
+  const call = async (name, args = {}) =>
+    (await checkedReply(name, args)).result;
+  // Validated complete Evidence for checks outside the operation result.
+  const evidence = async (name, args = {}) =>
+    (await checkedReply(name, args)).reply.structuredContent;
   const invalid = async (name, args, diagnostic) => {
     const reply = await client.callTool({ name, arguments: args }, options);
     assert.equal(
@@ -106,7 +112,10 @@ export async function verifyGhidraBoundaries(
     );
     return JSON.parse(stdout).normalized_result;
   };
-  const original = await call("analyze_function", { procedure });
+  const original = await call("analyze_function", {
+    procedure,
+    detail: "complete",
+  });
   const roots = (await readdir(env.TMPDIR)).filter((name) =>
     name.startsWith("rea-ghidra-"),
   );
@@ -130,7 +139,27 @@ export async function verifyGhidraBoundaries(
   assert.ok(external, "Source fixture lacks an external function");
   const externalDossier = await call("analyze_function", {
     procedure: external.address,
+    detail: "complete",
   });
+  assert.equal(externalDossier.pseudocode, "");
+  assert.deepEqual(externalDossier.assembly, []);
+  assert.deepEqual(externalDossier.callees, []);
+  assert.deepEqual(externalDossier.facet_availability.pseudocode, {
+    available: false,
+    reason: "Ghidra does not decompile external functions.",
+  });
+  for (const facet of [
+    "assembly",
+    "comments",
+    "callers",
+    "callees",
+    "references",
+    "strings_names",
+    "cfg",
+  ])
+    assert.deepEqual(externalDossier.facet_availability[facet], {
+      available: true,
+    });
   const externalEntry = await call("resolve_containing_procedure", {
     address: external.address,
   });
@@ -208,6 +237,7 @@ export async function verifyGhidraBoundaries(
   assert.equal(interiorEdge.kind.data, true);
   const leafDossier = await call("analyze_function", {
     procedure: leaf.address,
+    detail: "complete",
   });
   assert.ok(
     leafDossier.incoming_references.some(
@@ -475,6 +505,9 @@ export async function verifyGhidraBoundaries(
   // Prime both inventories before editing so stale names cannot hide in caches.
   await call("list_names");
   await call("list_procedures");
+  const traceInput = { procedure: address, max_depth: 0, max_functions: 1 };
+  const traceBefore = await evidence("trace_native_values", traceInput);
+  const sourceBefore = traceBefore.normalized_result.procedures[0].evidence_id;
   const changes = {
     procedure: address,
     name: "dead",
@@ -488,6 +521,16 @@ export async function verifyGhidraBoundaries(
     comment: changes.comment,
     inline_comment: changes.inline_comment,
   });
+  const traceAfter = await evidence("trace_native_values", traceInput);
+  const sourceAfter = traceAfter.normalized_result.procedures[0].evidence_id;
+  assert.notEqual(sourceBefore, sourceAfter);
+  const sourceProcedure = (evidenceId) =>
+    call("inspect_analysis_view", {
+      source: { kind: "retained-evidence", evidence_id: evidenceId },
+      view: { kind: "native", facet: "procedure", offset: 0, limit: 1 },
+    });
+  assert.equal((await sourceProcedure(sourceBefore)).item.name, name);
+  assert.equal((await sourceProcedure(sourceAfter)).item.name, changes.name);
   const regexPattern = "^(a|aa)*b$";
   const regexFailure = await client.callTool(
     {
@@ -505,10 +548,10 @@ export async function verifyGhidraBoundaries(
     regexError.remediation.action,
     /literal mode or simplify the regex/u,
   );
-  assert.match(
-    regexError.details.reason,
-    /exhausted its stack.*Use literal mode/u,
-  );
+  // The producer reason describes the failure; continuing-session guidance
+  // is projected separately and the following live calls verify it.
+  assert.match(regexError.details.reason, /stack while matching pattern/u);
+  assert.ok(regexError.message.includes(GHIDRA_ANNOTATIONS_RETAINED));
   rejectedCalls++;
   const nestedPattern = "(".repeat(12000) + "a" + ")".repeat(12000);
   const compileFailure = await client.callTool(
@@ -526,7 +569,7 @@ export async function verifyGhidraBoundaries(
   assert.equal(compileError.remediation.action, regexError.remediation.action);
   rejectedCalls++;
   assert.deepEqual(
-    await call("analyze_function", { procedure: address }),
+    await call("analyze_function", { procedure: address, detail: "complete" }),
     updated.dossier,
     "Regex stack exhaustion must preserve the live annotation database",
   );
@@ -581,8 +624,12 @@ export async function verifyGhidraBoundaries(
     address,
   );
   assert.equal(
-    (await call("analyze_function", { procedure: changes.name })).procedure
-      .name,
+    (
+      await call("analyze_function", {
+        procedure: changes.name,
+        detail: "complete",
+      })
+    ).procedure.name,
     changes.name,
   );
   assert.equal(await call("address_name", { address }), changes.name);
@@ -716,7 +763,7 @@ export async function verifyGhidraBoundaries(
   const snapshotLifecycle = await verifyGhidraSnapshotLifecycle(
     client,
     target,
-    await call("analyze_function", { procedure: address }),
+    await call("analyze_function", { procedure: address, detail: "complete" }),
     cli,
   );
   successfulCalls += snapshotLifecycle.successfulCalls;
@@ -730,6 +777,7 @@ export async function verifyGhidraBoundaries(
   });
   await verifyGhidraNamespaceAnnotations({
     call,
+    evidence,
     reject: invalid,
     target,
     entrypoint,
@@ -758,7 +806,8 @@ export async function verifyGhidraBoundaries(
     indirectProcedure.address,
   );
   assert.deepEqual(
-    (await call("analyze_function", { procedure: address })).comments,
+    (await call("analyze_function", { procedure: address, detail: "complete" }))
+      .comments,
     original.comments,
   );
   assert.equal(

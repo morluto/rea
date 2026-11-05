@@ -26,6 +26,26 @@ class FixtureProcess extends EventEmitter implements ProviderProcessHandle {
   }
 }
 
+const fixtureLauncher =
+  (process: FixtureProcess): JadxLauncher =>
+  async ({ runId }) => ({
+    process,
+    ownership: {
+      runId,
+      leaderPid: process.pid,
+      processGroupId: process.pid,
+      expectedParentPid: process.pid,
+    },
+    cleanup: async () => {
+      process.emit("exit", 0, null);
+      process.emit("close", 0, null);
+      process.stdout.end();
+      process.stderr.end();
+      process.stdin.end();
+      return { cleaned: true, signaled: false };
+    },
+  });
+
 it("joins pending input errors before detaching the owned protocol stream", async () => {
   let completeWrite: ((cause: Error) => void) | undefined;
   const failure = new Error("owned pipe closed during cancellation");
@@ -70,26 +90,9 @@ it("joins pending input errors before detaching the owned protocol stream", asyn
 
 it("decodes split UTF-8 and newline bytes, then routes multiple complete frames", async () => {
   const process = new FixtureProcess();
-  const launcher: JadxLauncher = async ({ runId }) => ({
-    process,
-    ownership: {
-      runId,
-      leaderPid: process.pid,
-      processGroupId: process.pid,
-      expectedParentPid: process.pid,
-    },
-    cleanup: async () => {
-      process.emit("exit", 0, null);
-      process.emit("close", 0, null);
-      process.stdout.end();
-      process.stderr.end();
-      process.stdin.end();
-      return { cleaned: true, signaled: false };
-    },
-  });
   const transport = new JadxMcpTransport(
     { command: "fixture", arguments: [] },
-    launcher,
+    fixtureLauncher(process),
   );
   const received: JSONRPCMessage[] = [];
   transport.onmessage = (message) => received.push(message);
@@ -98,7 +101,9 @@ it("decodes split UTF-8 and newline bytes, then routes multiple complete frames"
   const first = {
     jsonrpc: "2.0",
     id: 1,
-    result: { content: [{ type: "text", text: "snow 雪 🦊" }] },
+    result: {
+      content: [{ type: "text", text: "snow 雪 🦊 and literal �" }],
+    },
   } satisfies JSONRPCMessage;
   const second = {
     jsonrpc: "2.0",
@@ -120,28 +125,41 @@ it("decodes split UTF-8 and newline bytes, then routes multiple complete frames"
   await transport.close();
 });
 
-it("accepts a complete JSON-RPC frame at the 8 MiB boundary", async () => {
+it.each([
+  ["invalid UTF-8 byte", Buffer.from([0xff])],
+  ["truncated UTF-8 sequence", Buffer.from([0xe2, 0x82])],
+])("rejects %s in a complete JSON-RPC frame", async (_label, invalid) => {
   const process = new FixtureProcess();
-  const launcher: JadxLauncher = async ({ runId }) => ({
-    process,
-    ownership: {
-      runId,
-      leaderPid: process.pid,
-      processGroupId: process.pid,
-      expectedParentPid: process.pid,
-    },
-    cleanup: async () => {
-      process.emit("exit", 0, null);
-      process.emit("close", 0, null);
-      process.stdout.end();
-      process.stderr.end();
-      process.stdin.end();
-      return { cleaned: true, signaled: false };
-    },
-  });
   const transport = new JadxMcpTransport(
     { command: "fixture", arguments: [] },
-    launcher,
+    fixtureLauncher(process),
+  );
+  const received: JSONRPCMessage[] = [];
+  const errors: Error[] = [];
+  transport.onmessage = (message) => received.push(message);
+  transport.onerror = (cause) => errors.push(cause);
+
+  await transport.start();
+  process.stdout.write(
+    Buffer.concat([
+      Buffer.from('{"jsonrpc":"2.0","id":1,"result":{"text":"'),
+      invalid,
+      Buffer.from('"}}\n'),
+    ]),
+  );
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  await transport.close();
+
+  expect(received).toEqual([]);
+  expect(errors).toHaveLength(1);
+  expect(errors[0]?.message).toMatch(/encoded data was not valid/i);
+});
+
+it("accepts a complete JSON-RPC frame at the 8 MiB boundary", async () => {
+  const process = new FixtureProcess();
+  const transport = new JadxMcpTransport(
+    { command: "fixture", arguments: [] },
+    fixtureLauncher(process),
   );
   const received: JSONRPCMessage[] = [];
   transport.onmessage = (message) => received.push(message);

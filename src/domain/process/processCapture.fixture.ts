@@ -1,12 +1,46 @@
+import type { ProcessTraceSpecification } from "./processTraceSpecification.js";
 import { compareProcessCaptures } from "./processComparison.js";
 import { parseProcessCapture } from "./processCaptureParsing.js";
 import { EMPTY_PROCESS_CAPTURE_EXAMPLE } from "./processCaptureExample.js";
 import { hasCaptureTruncation } from "./processCaptureCoverage.js";
+import { digestProcessCommitment } from "./processScenario.js";
+import type { JsonValue } from "../jsonValue.js";
 
 import {
   processCaptureSchema,
   type UnverifiedProcessCapture,
 } from "./processCapture.js";
+
+const finalizedScenario = {
+  ...EMPTY_PROCESS_CAPTURE_EXAMPLE.manifest.scenario,
+  finalization_ms: 1_500,
+};
+const finalizedComparisonContract = { finalization_ms: 1_500 };
+
+/** Valid capture of a timeout that finalized: SIGTERM delivered, exit observed. */
+export const FINALIZED_PROCESS_CAPTURE_EXAMPLE = {
+  ...EMPTY_PROCESS_CAPTURE_EXAMPLE,
+  manifest: {
+    ...EMPTY_PROCESS_CAPTURE_EXAMPLE.manifest,
+    scenario: finalizedScenario,
+    comparison_contract: finalizedComparisonContract,
+    full_scenario_sha256: digestProcessCommitment(finalizedScenario),
+    comparison_contract_sha256: digestProcessCommitment(
+      finalizedComparisonContract,
+    ),
+  },
+  exit: {
+    code: null,
+    signal: 0,
+    reason: "timeout",
+    finalization: {
+      requested_ms: 1_500,
+      elapsed_ms: 12,
+      exit_code: 0,
+      signals: [{ signal: "SIGTERM", sent_at_ms: 0, delivery: "signaled" }],
+    },
+  },
+} satisfies JsonValue;
 /** Parse a detached valid empty capture for tests that need trusted evidence. */
 export const emptyProcessCapture = () =>
   parseProcessCapture(EMPTY_PROCESS_CAPTURE_EXAMPLE);
@@ -112,3 +146,56 @@ export const compareUnverifiedProcessCaptures = (
     parseProcessCapture(right),
     options,
   );
+
+/** One journal and its matching declared trace, shared by domain and adapter checks. */
+export const processTraceCaptureFixture = () => {
+  const capture = {
+    ...EMPTY_PROCESS_CAPTURE_EXAMPLE,
+    event_journal: [
+      { capture_order: 0, collection: "filesystem_checkpoints", index: 0 },
+      { capture_order: 1, collection: "lifecycle", index: 0 },
+      { capture_order: 2, collection: "lifecycle", index: 1 },
+      { capture_order: 3, collection: "filesystem_checkpoints", index: 1 },
+    ],
+  } as const;
+  const [before, after] = capture.filesystem_checkpoints;
+  if (before === undefined || after === undefined)
+    throw new Error(
+      "Trace fixture requires before and after filesystem checkpoints",
+    );
+  const traceSpecification: ProcessTraceSpecification = {
+    events: [
+      {
+        id: "before",
+        source: "filesystem",
+        exact: before,
+        cardinality: { kind: "required" },
+      },
+      {
+        id: "exit",
+        source: "lifecycle",
+        exact: { event: "exit", ...capture.exit },
+        cardinality: { kind: "required" },
+      },
+      {
+        id: "settlement",
+        source: "lifecycle",
+        exact: { event: "settlement", ...capture.settlement },
+        cardinality: { kind: "required" },
+      },
+      {
+        id: "after",
+        source: "filesystem",
+        exact: after,
+        cardinality: { kind: "required" },
+      },
+    ],
+    language: {
+      kind: "finite_traces",
+      variants: [
+        { id: "normal", trace: ["before", "exit", "settlement", "after"] },
+      ],
+    },
+  };
+  return { capture, traceSpecification };
+};

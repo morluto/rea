@@ -152,9 +152,11 @@ describe("script capture identity and response projection", () => {
     )
       throw new Error("Missing response bytes");
     content.body.redacted = true;
+    content.body.representation = "playwright-response-body-bytes";
     expect(selectScriptCapture(capture).scripts[0]?.content).toMatchObject({
       state: "captured",
       redacted: true,
+      representation: "playwright-response-body-bytes",
     });
     content.body.representation = "browser-exposed-request-bytes";
     expect(selectScriptCapture(capture).scripts[0]?.content).toMatchObject({

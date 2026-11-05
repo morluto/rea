@@ -1,4 +1,49 @@
 import * as t from "@babel/types";
+import {
+  isErasedJavaScriptDeclaration,
+  isTypeOnlyExportDeclaration,
+  isTypeOnlyExportSpecifier,
+  isTypeOnlyImportDeclaration,
+  isTypeOnlyImportSpecifier,
+} from "./javascriptModuleDeclaration.js";
+
+/** Whether this child and its descendants contribute no JavaScript value. */
+export const isErasedJavaScriptValueChild = (
+  node: t.Node,
+  parent: t.Node | null,
+): boolean => {
+  if (
+    isErasedJavaScriptDeclaration(node) ||
+    t.isTSType(node) ||
+    t.isTSTypeElement(node) ||
+    t.isTSDeclareMethod(node) ||
+    t.isTSTypeAnnotation(node) ||
+    t.isTSTypeParameterDeclaration(node) ||
+    t.isTSTypeParameterInstantiation(node) ||
+    t.isTSClassImplements(node) ||
+    t.isTSInterfaceHeritage(node) ||
+    t.isTSInterfaceBody(node) ||
+    (t.isImportDeclaration(node) && isTypeOnlyImportDeclaration(node)) ||
+    ((t.isExportNamedDeclaration(node) || t.isExportAllDeclaration(node)) &&
+      isTypeOnlyExportDeclaration(node)) ||
+    (t.isImportSpecifier(node) && isTypeOnlyImportSpecifier(node)) ||
+    (t.isExportSpecifier(node) && isTypeOnlyExportSpecifier(node)) ||
+    (t.isTSImportEqualsDeclaration(node) && node.importKind === "type")
+  )
+    return true;
+  // Undecorated declared or abstract fields erase their keys and annotations.
+  // Decorators and a decorated field's computed key may execute at definition.
+  return (
+    t.isClassProperty(parent) &&
+    (parent.declare === true || parent.abstract === true) &&
+    !t.isDecorator(node) &&
+    !(
+      node === parent.key &&
+      parent.computed === true &&
+      (parent.decorators?.length ?? 0) > 0
+    )
+  );
+};
 
 /**
  * Visit Babel AST nodes in deterministic source-tree order, excluding skipped subtrees.
@@ -14,6 +59,30 @@ export const traverseJavaScriptAst = (
   root: t.Node,
   visitor: JavaScriptAstVisitor,
 ): void => completeSemanticSteps(traverseJavaScriptAstSteps(root, visitor));
+
+/** Visit only syntax retained as JavaScript values after TypeScript erasure. */
+export const traverseJavaScriptValueAst = (
+  root: t.Node,
+  erasedSyntaxNodes: WeakSet<t.Node>,
+  visitor: JavaScriptAstVisitor,
+): void =>
+  completeSemanticSteps(
+    traverseJavaScriptValueAstSteps(root, erasedSyntaxNodes, visitor),
+  );
+
+/** Cooperative value-only view of the same deterministic AST traversal. */
+export function* traverseJavaScriptValueAstSteps(
+  root: t.Node,
+  erasedSyntaxNodes: WeakSet<t.Node>,
+  visitor: JavaScriptAstVisitor,
+): Generator<void, void> {
+  if (erasedSyntaxNodes.has(root)) return;
+  yield* traverseJavaScriptAstSteps(root, {
+    ...visitor,
+    skip: (node) =>
+      erasedSyntaxNodes.has(node) || visitor.skip?.(node) === true,
+  });
+}
 
 /** Callbacks for one deterministic AST traversal. */
 export interface JavaScriptAstVisitor {

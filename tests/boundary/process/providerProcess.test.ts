@@ -1,6 +1,7 @@
-import { access, stat } from "node:fs/promises";
+import { access, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -17,7 +18,7 @@ import {
   spawnOwnedProviderProcess,
   type ProviderProcessDiagnostic,
 } from "../../../src/process/ProviderProcess.js";
-import { WINDOWS_NATIVE_AUTHORITY_UNAVAILABLE_REASON } from "../../../src/process/WindowsAuthority.js";
+import * as nativeLoader from "../../../src/windows/WindowsNativeLoader.js";
 import {
   spawnProviderProcessFixture,
   stopProviderProcessFixture,
@@ -57,7 +58,8 @@ describe("provider process runtime and wait primitives", () => {
       parent: tmpdir(),
       prefix: "rea-provider-test-",
     });
-    expect((await stat(runtime.path)).mode & 0o777).toBe(0o700);
+    expect((await stat(runtime.path)).mode & 0o077).toBe(0);
+    await writeFile(join(runtime.path, "owned-scratch"), "fixture");
 
     const first = runtime.close();
     const second = runtime.close();
@@ -69,12 +71,25 @@ describe("provider process runtime and wait primitives", () => {
   });
 
   it("fails closed for a Windows runtime root without native DACL authority", async () => {
-    await expect(
-      PrivateRuntimeRoot.create({ platform: "win32" }),
-    ).rejects.toMatchObject({
-      code: "private-runtime-root-authority-unavailable",
-      message: WINDOWS_NATIVE_AUTHORITY_UNAVAILABLE_REASON,
-    });
+    const authority = vi
+      .spyOn(nativeLoader, "systemWindowsNativeAuthority")
+      .mockReturnValue({
+        available: false,
+        failureStage: "self-test",
+        reason: "Native DACL self-test failed with Win32 error 145",
+        retryable: true,
+      });
+    try {
+      await expect(
+        PrivateRuntimeRoot.create({ platform: "win32" }),
+      ).rejects.toMatchObject({
+        code: "private-runtime-root-authority-unavailable",
+        message: "Native DACL self-test failed with Win32 error 145",
+        retryable: true,
+      });
+    } finally {
+      authority.mockRestore();
+    }
   });
 
   it("classifies external cancellation during startup", async () => {
@@ -186,6 +201,40 @@ describe("provider process runtime and wait primitives", () => {
 });
 
 describe("provider process output and cleanup primitives", () => {
+  it("marks retained provider output that cannot be represented as UTF-8", async () => {
+    const child = spawnProviderProcessFixture("invalid-utf8");
+    const supervisor = new ProviderProcessSupervisor({
+      process: child,
+      ownsProcessLifetime: true,
+    });
+
+    await expect(supervisor.waitForOutputClose(2_000)).resolves.toBe(true);
+    expect(supervisor.snapshot()).toMatchObject({
+      stdout: { text: "a�b", invalidUtf8: true },
+      stderr: { text: "c�d", invalidUtf8: true },
+    });
+    await expect(supervisor.stop()).resolves.toMatchObject({
+      status: "already-exited",
+    });
+  });
+
+  it("marks a retained byte prefix that cuts a valid multibyte UTF-8 character", async () => {
+    const child = spawnProviderProcessFixture("valid-multibyte");
+    const supervisor = new ProviderProcessSupervisor(
+      { process: child, ownsProcessLifetime: true },
+      { maxDiagnosticBytes: 2 },
+    );
+
+    await expect(supervisor.waitForOutputClose(2_000)).resolves.toBe(true);
+    expect(supervisor.snapshot()).toMatchObject({
+      stdout: { text: "�", bytes: 2, observedBytes: 3, invalidUtf8: true },
+      diagnosticTruncated: true,
+    });
+    await expect(supervisor.stop()).resolves.toMatchObject({
+      status: "already-exited",
+    });
+  });
+
   it("retains complete stdout and stderr beyond the former fixed ceiling", async () => {
     const outputBytes = 70_000;
     const child = spawnProviderProcessFixture("burst", outputBytes);
@@ -457,7 +506,10 @@ describe("provider process memory limits", () => {
         platform: "linux",
         memoryLimitBytes: 704 * 1024 * 1024,
       }),
-    ).rejects.toThrow("require the Windows Job Object launcher");
+    ).rejects.toMatchObject({
+      _tag: "ProcessAdmissionError",
+      code: "memory_limit_unsupported",
+    });
   });
 });
 

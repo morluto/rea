@@ -1,39 +1,52 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   cleanupOwnedProcessGroup,
   verifyNoTokenOwnedProcesses,
   type ProcessOwnershipHost,
 } from "./ProcessOwnership.js";
 import { observeOwnedProcessLineage } from "./ProcessOwnershipObservation.js";
-import { host, ownership } from "./ProcessOwnership.fixture.js";
+import {
+  createOwnership,
+  host,
+  verifiedLineage,
+} from "./ProcessOwnership.fixture.js";
+
+let ownership = createOwnership();
+beforeEach(() => {
+  ownership = createOwnership();
+});
 describe("owned process-group cleanup discovery", () => {
   it("signals token-owned groups that were reparented outside the launcher tree", async () => {
-    const signalGroup = vi.fn();
+    const processes = [
+      {
+        pid: 100,
+        parentPid: 1,
+        processGroupId: 100,
+        state: "S",
+        command: "fixture",
+      },
+      {
+        pid: 900,
+        parentPid: 1,
+        processGroupId: 900,
+        state: "S",
+        command: "detached-helper",
+      },
+      {
+        pid: 901,
+        parentPid: 900,
+        processGroupId: 900,
+        state: "S",
+        command: "detached-worker",
+      },
+    ];
+    const signalGroup = vi.fn((processGroupId: number) => {
+      for (let index = processes.length - 1; index >= 0; index -= 1)
+        if (processes[index]?.processGroupId === processGroupId)
+          processes.splice(index, 1);
+    });
     const adapter: ProcessOwnershipHost = {
-      listProcesses: () =>
-        Promise.resolve([
-          {
-            pid: 100,
-            parentPid: 1,
-            processGroupId: 100,
-            state: "S",
-            command: "fixture",
-          },
-          {
-            pid: 900,
-            parentPid: 1,
-            processGroupId: 900,
-            state: "S",
-            command: "detached-helper",
-          },
-          {
-            pid: 901,
-            parentPid: 900,
-            processGroupId: 900,
-            state: "S",
-            command: "detached-worker",
-          },
-        ]),
+      listProcesses: () => Promise.resolve(processes),
       environment: () => Promise.resolve({ REA_PROCESS_RUN_ID: "run-token" }),
       signalGroup,
     };
@@ -164,20 +177,12 @@ describe("owned process-group cleanup discovery", () => {
     });
     await expect(
       observeOwnedProcessLineage(ownership, adapter),
-    ).resolves.toEqual({
-      status: "verified",
-      observedAt: expect.any(String),
-      lineage: {
-        runId: "run-token",
-        launcherPid: 100,
-        launcherParentPid: 1,
-        processGroupId: 100,
-        descendants: [
-          { pid: 101, parentPid: 100, processGroupId: 100 },
-          { pid: 102, parentPid: 100, processGroupId: 100 },
-        ],
-      },
-    });
+    ).resolves.toEqual(
+      verifiedLineage([
+        { pid: 101, parentPid: 100, processGroupId: 100 },
+        { pid: 102, parentPid: 100, processGroupId: 100 },
+      ]),
+    );
   });
 });
 

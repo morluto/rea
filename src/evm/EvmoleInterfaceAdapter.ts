@@ -1,6 +1,7 @@
 import { z } from "zod";
+import type { EvmInterface } from "../domain/evm/evmInterface.js";
 
-const offset = z.number().int().nonnegative();
+const offset = z.int().nonnegative();
 const reportedMetadata = z.strictObject({
   bytecodeOffset: offset,
   cborLength: offset,
@@ -9,7 +10,11 @@ const reportedMetadata = z.strictObject({
       key: z.string(),
       value: z.discriminatedUnion("type", [
         z.strictObject({ type: z.literal("string"), value: z.string() }),
-        z.strictObject({ type: z.literal("integer"), value: z.number() }),
+        z.strictObject({
+          type: z.literal("integer"),
+          // Reported integers can exceed the safe range; fractions still violate the tag.
+          value: z.number().refine(Number.isInteger, "Expected an integer"),
+        }),
         z.strictObject({ type: z.literal("bytes"), value: z.string() }),
         z.strictObject({ type: z.literal("bool"), value: z.boolean() }),
         z.strictObject({ type: z.literal("undecoded"), value: z.string() }),
@@ -44,16 +49,13 @@ export const evmoleInterfaceReplySchema = z.strictObject({
 });
 
 /** Preserve inference strings and unknown absence; selectors use the conventional 0x display prefix. */
-export const projectEvmoleInterface = (raw: unknown) => {
-  const producer = evmoleInterfaceReplySchema.parse(raw);
-  return {
-    raw: producer,
-    functions: (producer.functions ?? []).map((fn) => ({
-      selector: `0x${fn.selector}`,
-      bytecode_offset: fn.bytecodeOffset,
-      dispatch: fn.dispatch,
-      inferred_arguments: fn.arguments ?? null,
-      inferred_state_mutability: fn.stateMutability ?? null,
-    })),
-  };
-};
+export const projectEvmoleFunctions = (
+  producer: z.output<typeof evmoleInterfaceReplySchema>,
+): EvmInterface["functions"] =>
+  (producer.functions ?? []).map((fn) => ({
+    selector: `0x${fn.selector}`,
+    bytecode_offset: fn.bytecodeOffset,
+    dispatch: fn.dispatch,
+    inferred_arguments: fn.arguments ?? null,
+    inferred_state_mutability: fn.stateMutability ?? null,
+  }));

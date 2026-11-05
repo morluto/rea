@@ -1,264 +1,409 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import {
-  access,
-  mkdir,
-  mkdtemp,
-  readFile,
-  rm,
-  symlink,
-} from "node:fs/promises";
+import * as fs from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import * as nodePath from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { firmwareResultSchemas } from "../../../dist/domain/firmware/firmwareAnalysis.js";
 import { parseEvidence } from "../../../dist/domain/evidence.js";
-import { hashFirmwareFile } from "../../../dist/firmware/FirmwareFiles.js";
+import { ArtifactResourceScope } from "../../../dist/artifacts/ArtifactResourceScope.js";
+import { hashVerifierFile } from "../../lib/verifier-file-resources.mjs";
+import {
+  closeVerifierResources,
+  withVerifierCleanup,
+} from "../../lib/verifier-cleanup.mjs";
 
-const exec = promisify(execFile);
-const repository = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
-const entrypoint = resolve(
+const execFileAsync = promisify(execFile);
+const { join, resolve, dirname } = nodePath;
+
+const CALL_TIMEOUT_MS = 150_000;
+const CONNECT_TIMEOUT_MS = 30_000;
+const SEVENZIP_TIMEOUT_MS = 10_000;
+const MAX_STDOUT_BYTES = 16 * 1024 * 1024;
+
+const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
+const ENTRYPOINT = resolve(
   process.env.REA_FIRMWARE_TEST_ENTRYPOINT ??
-    join(repository, "scripts/rea.mjs"),
+    join(REPO_ROOT, "scripts/rea.mjs"),
 );
-if (process.platform !== "linux")
-  throw new Error(
-    "verify:firmware requires Linux; other hosts are not verified",
-  );
-for (const variable of ["REA_BINWALK_COMMAND", "REA_UNBLOB_COMMAND"]) {
-  const path = process.env[variable];
-  if (path === undefined)
-    throw new Error(
-      `verify:firmware requires ${variable}; see docs/firmware-analysis.md`,
-    );
-  await access(path);
-}
-try {
-  await exec("7z", ["i"], { timeout: 10_000 });
-} catch (cause) {
-  throw new Error(
-    "verify:firmware prerequisite unavailable: Unblob's gzip/USTAR fixture extraction requires 7z on PATH",
-    { cause },
-  );
-}
-const fixtureRoot = resolve(
+const FIXTURE_ROOT = resolve(
   process.env.REA_FIRMWARE_FIXTURE_ROOT ??
-    join(repository, "_reference/firmware-integration/generated"),
+    join(REPO_ROOT, "_reference/firmware-integration/generated"),
 );
-await access(join(fixtureRoot, "oracle.json")).catch((cause) => {
-  throw new Error(
-    "verify:firmware requires generated fixtures; run npm run fixtures:firmware",
-    { cause },
-  );
-});
+
+// ---------------------------------------------------------------------------
+// Prerequisite checks
+// ---------------------------------------------------------------------------
+
+async function checkPrerequisites() {
+  if (process.platform !== "linux") {
+    throw new Error(
+      "verify:firmware requires Linux; other hosts are not verified",
+    );
+  }
+
+  for (const name of ["REA_BINWALK_COMMAND", "REA_UNBLOB_COMMAND"]) {
+    const value = process.env[name];
+    if (value === undefined) {
+      throw new Error(
+        `verify:firmware requires ${name}; see docs/firmware-analysis.md`,
+      );
+    }
+    await fs.access(value);
+  }
+
+  try {
+    await execFileAsync("7z", ["i"], { timeout: SEVENZIP_TIMEOUT_MS });
+  } catch (cause) {
+    throw new Error(
+      "verify:firmware prerequisite unavailable: Unblob's gzip/USTAR fixture extraction requires 7z on PATH",
+      { cause },
+    );
+  }
+
+  try {
+    await fs.access(join(FIXTURE_ROOT, "oracle.json"));
+  } catch (cause) {
+    throw new Error(
+      "verify:firmware requires generated fixtures; run npm run fixtures:firmware",
+      { cause },
+    );
+  }
+}
+
+await checkPrerequisites();
+
+// ---------------------------------------------------------------------------
+// Shared state
+// ---------------------------------------------------------------------------
+
 const oracle = JSON.parse(
-  await readFile(join(fixtureRoot, "oracle.json"), "utf8"),
+  await fs.readFile(join(FIXTURE_ROOT, "oracle.json"), "utf8"),
 );
-const path = join(fixtureRoot, "firmware.bin");
-assert.equal(await hashFirmwareFile(path), oracle.sha256);
-const root = await mkdtemp(join(tmpdir(), "rea-real-firmware-"));
-const environment = Object.fromEntries(
-  Object.entries(process.env).filter(([, value]) => value !== undefined),
+const firmwarePath = join(FIXTURE_ROOT, "firmware.bin");
+const fileResources = new ArtifactResourceScope();
+
+const workDir = await fs.mkdtemp(join(tmpdir(), "rea-real-firmware-"));
+const baseEnv = Object.fromEntries(
+  Object.entries(process.env).filter(([, v]) => v !== undefined),
 );
-const client = new Client({ name: "rea-real-firmware-verifier", version: "1" });
-const cli = async (args, env = environment) => {
-  const response = await exec(
+const mcpClient = new Client({
+  name: "rea-real-firmware-verifier",
+  version: "1",
+});
+
+// ---------------------------------------------------------------------------
+// Invocation helpers
+// ---------------------------------------------------------------------------
+
+async function runCli(args, env = baseEnv) {
+  const { stdout } = await execFileAsync(
     process.execPath,
-    [entrypoint, ...args, "--format", "json"],
+    [ENTRYPOINT, ...args, "--format", "json"],
     {
       env,
-      cwd: repository,
-      timeout: 150_000,
-      maxBuffer: 16 * 1024 * 1024,
+      cwd: REPO_ROOT,
+      timeout: CALL_TIMEOUT_MS,
+      maxBuffer: MAX_STDOUT_BYTES,
     },
   );
-  return parseEvidence(JSON.parse(response.stdout));
-};
-const call = async (name, args) => {
-  const response = await client.callTool(
+  return parseEvidence(JSON.parse(stdout));
+}
+
+async function callTool(name, args) {
+  const result = await mcpClient.callTool(
     { name, arguments: args },
-    { timeout: 150_000 },
+    { timeout: CALL_TIMEOUT_MS },
   );
-  assert.notEqual(response.isError, true, JSON.stringify(response));
-  assert.ok(response.structuredContent !== undefined);
-  return response.structuredContent;
-};
-const verifyRegions = (evidence) => {
+  assert.notEqual(result.isError, true, JSON.stringify(result));
+  assert.ok(result.structuredContent !== undefined);
+  return result.structuredContent;
+}
+
+// ---------------------------------------------------------------------------
+// Result verifiers
+// ---------------------------------------------------------------------------
+
+function verifyRegions(evidence) {
   assert.equal(evidence.subject.digest.sha256, oracle.sha256);
-  const result = firmwareResultSchemas.inspect_firmware_regions.parse(
+
+  const parsed = firmwareResultSchemas.inspect_firmware_regions.parse(
     evidence.normalized_result,
   );
-  const gzip = result.regions.find(
-    (region) => region.signature === "gzip" && region.offset === oracle.offset,
+
+  const gzipRegion = parsed.regions.find(
+    (r) => r.signature === "gzip" && r.offset === oracle.offset,
   );
   assert.ok(
-    gzip !== undefined,
+    gzipRegion !== undefined,
     "Binwalk must find the independently generated gzip offset",
   );
-  assert.equal(gzip.reported_size, oracle.length);
-  assert.equal(gzip.size_basis, "provider_reported_validation_unknown");
-  return result.regions.map(
-    ({ provider_id: _provider_id, ...region }) => region,
-  );
-};
-const verifyFiles = async (evidence) => {
-  const result = firmwareResultSchemas.extract_firmware.parse(
+  assert.equal(gzipRegion.reported_size, oracle.length);
+  assert.equal(gzipRegion.size_basis, "provider_reported_validation_unknown");
+
+  // Strip provider-specific ids so CLI and MCP results compare equal.
+  return parsed.regions.map((region) => {
+    const { provider_id: _ignored, ...rest } = region;
+    return rest;
+  });
+}
+
+async function verifyFiles(evidence) {
+  const parsed = firmwareResultSchemas.extract_firmware.parse(
     evidence.normalized_result,
   );
-  assert.ok(result.chunks.some((chunk) => chunk.handler === "gzip"));
+
+  assert.ok(parsed.chunks.some((c) => c.handler === "gzip"));
+
   for (const [suffix, expected] of Object.entries(oracle.files)) {
-    const file = result.files.find((candidate) =>
-      candidate.relative_path.endsWith(`/${suffix}`),
+    const entry = parsed.files.find((f) =>
+      f.relative_path.endsWith(`/${suffix}`),
     );
-    assert.ok(file !== undefined, `Missing extracted ${suffix}`);
-    assert.equal(file.sha256, expected.sha256);
-    assert.equal(file.size, expected.size);
-    assert.equal(await hashFirmwareFile(file.path), expected.sha256);
-    assert.equal(file.original_file_range, null);
-    assert.equal(file.runtime_address, null);
+    assert.ok(entry !== undefined, `Missing extracted ${suffix}`);
+    assert.equal(entry.sha256, expected.sha256);
+    assert.equal(entry.size, expected.size);
+    assert.equal(
+      (await hashVerifierFile(entry.path, fileResources)).sha256,
+      expected.sha256,
+    );
+    assert.equal(entry.original_file_range, null);
+    assert.equal(entry.runtime_address, null);
   }
-  return result;
-};
-try {
-  const inspected = await cli(["inspect-firmware-regions", path]);
-  const cliRegions = verifyRegions(inspected);
-  const extracted = await cli([
-    "extract-firmware",
-    path,
-    join(root, "cli-output"),
+
+  return parsed;
+}
+
+const toContentIdentity = (parsed) =>
+  parsed.files.map(({ relative_path, sha256, size }) => ({
+    relative_path,
+    sha256,
+    size,
+  }));
+
+// ---------------------------------------------------------------------------
+// Verification stages
+// ---------------------------------------------------------------------------
+
+async function stageCli() {
+  const regionsEvidence = await runCli([
+    "inspect-firmware-regions",
+    firmwarePath,
   ]);
-  const cliFiles = await verifyFiles(extracted);
-  assert.equal(cliFiles.coverage, "partial");
+  const regions = verifyRegions(regionsEvidence);
+
+  const extractEvidence = await runCli([
+    "extract-firmware",
+    firmwarePath,
+    join(workDir, "cli-output"),
+  ]);
+  const files = await verifyFiles(extractEvidence);
+
+  assert.equal(files.coverage, "partial");
   assert.ok(
-    cliFiles.chunks.some(
-      (chunk) =>
-        chunk.handler === null &&
-        chunk.range.offset === 0 &&
-        chunk.range.length === 64,
+    files.chunks.some(
+      (c) =>
+        c.handler === null && c.range.offset === 0 && c.range.length === 64,
     ),
   );
-  await client.connect(
-    new StdioClientTransport({
-      command: process.execPath,
-      args: [entrypoint, "mcp"],
-      cwd: repository,
-      env: environment,
-      stderr: "pipe",
-    }),
-    { timeout: 30_000 },
+
+  assert.ok(
+    files.extraction_gaps.some(
+      (gap) =>
+        gap.kind === "unknown-chunk-handler" &&
+        gap.range !== null &&
+        gap.range.offset === 0 &&
+        gap.range.length === 64,
+    ),
+    "The unknown chunk must carry its explicit recovery row",
   );
-  const inspectedMcp = await call("inspect_firmware_regions", { path });
-  const mcpEvidence = parseEvidence(inspectedMcp);
-  assert.deepEqual(verifyRegions(mcpEvidence), cliRegions);
-  const extractedMcp = await call("extract_firmware", {
-    path,
-    output_directory: join(root, "mcp-output"),
+  return { regions, files };
+}
+
+async function connectMcp() {
+  const transport = new StdioClientTransport({
+    command: process.execPath,
+    args: [ENTRYPOINT, "mcp"],
+    cwd: REPO_ROOT,
+    env: baseEnv,
+    stderr: "pipe",
   });
-  const mcpFiles = await verifyFiles(parseEvidence(extractedMcp));
-  const contentIdentity = (result) =>
-    result.files.map(({ relative_path, sha256, size }) => ({
-      relative_path,
-      sha256,
-      size,
-    }));
-  assert.deepEqual(contentIdentity(mcpFiles), contentIdentity(cliFiles));
-  const selected = await call("extract_firmware", {
-    path,
-    output_directory: join(root, "selected-output"),
+  await mcpClient.connect(transport, { timeout: CONNECT_TIMEOUT_MS });
+}
+
+async function stageMcp(cli) {
+  const regionsRaw = await callTool("inspect_firmware_regions", {
+    path: firmwarePath,
+  });
+  assert.deepEqual(verifyRegions(parseEvidence(regionsRaw)), cli.regions);
+
+  const extractRaw = await callTool("extract_firmware", {
+    path: firmwarePath,
+    output_directory: join(workDir, "mcp-output"),
+  });
+  const mcpFiles = await verifyFiles(parseEvidence(extractRaw));
+  assert.deepEqual(toContentIdentity(mcpFiles), toContentIdentity(cli.files));
+
+  const rangedRaw = await callTool("extract_firmware", {
+    path: firmwarePath,
+    output_directory: join(workDir, "selected-output"),
     range: { offset: oracle.offset, length: oracle.length },
   });
-  const selectedFiles = await verifyFiles(parseEvidence(selected));
-  assert.equal(selectedFiles.selection.offset, oracle.offset);
-  assert.equal(selectedFiles.selection.length, oracle.length);
-  const depth = await call("extract_firmware", {
-    path,
-    output_directory: join(root, "depth-output"),
+  const ranged = await verifyFiles(parseEvidence(rangedRaw));
+  assert.equal(ranged.selection.offset, oracle.offset);
+  assert.equal(ranged.selection.length, oracle.length);
+
+  const depthRaw = await callTool("extract_firmware", {
+    path: firmwarePath,
+    output_directory: join(workDir, "depth-output"),
     max_depth: 1,
   });
-  const depthResult = firmwareResultSchemas.extract_firmware.parse(
-    depth.normalized_result,
+  const depthParsed = firmwareResultSchemas.extract_firmware.parse(
+    depthRaw.normalized_result,
   );
-  assert.equal(depthResult.coverage, "partial");
-  assert.ok(depthResult.depth_limited_paths.length > 0);
+  assert.equal(depthParsed.coverage, "partial");
+  assert.ok(depthParsed.depth_limited_paths.length > 0);
+  assert.ok(
+    depthParsed.extraction_gaps.some(
+      (gap) =>
+        gap.kind === "depth-limited" &&
+        gap.dependencies.length === 0 &&
+        depthParsed.extraction_continuations.some(
+          ({ id, instruction }) =>
+            id === gap.continuation_id &&
+            instruction.includes("max_depth") &&
+            instruction.includes("fresh output_directory"),
+        ),
+    ),
+    "Depth-limited paths must carry the explicit depth continuation",
+  );
+
   console.log(
     "PASS real Binwalk/Unblob: CLI, MCP, independent offsets/digests, range extraction, unknown chunks and depth limits",
   );
-  if (process.env.REA_FIRMWARE_VERIFY_EXT4 === "1") {
-    const ext4 = join(fixtureRoot, "ext4.bin");
-    await access(ext4);
-    const response = await call("extract_firmware", {
-      path: ext4,
-      output_directory: join(root, "ext4-output"),
-    });
-    const result = firmwareResultSchemas.extract_firmware.parse(
-      response.normalized_result,
+
+  return mcpFiles;
+}
+
+async function stageExt4() {
+  const ext4Path = join(FIXTURE_ROOT, "ext4.bin");
+  await fs.access(ext4Path);
+
+  const raw = await callTool("extract_firmware", {
+    path: ext4Path,
+    output_directory: join(workDir, "ext4-output"),
+  });
+  const parsed = firmwareResultSchemas.extract_firmware.parse(
+    raw.normalized_result,
+  );
+  assert.ok(parsed.chunks.some((c) => c.handler === "extfs"));
+  assert.equal(parsed.coverage, "complete");
+
+  for (const [suffix, expected] of Object.entries(oracle.files)) {
+    const match = parsed.files.find((f) =>
+      f.relative_path.endsWith(`/${suffix}`),
     );
-    assert.ok(result.chunks.some((chunk) => chunk.handler === "extfs"));
-    assert.equal(result.coverage, "complete");
-    for (const [suffix, expected] of Object.entries(oracle.files))
-      assert.equal(
-        result.files.find((file) => file.relative_path.endsWith(`/${suffix}`))
-          ?.sha256,
-        expected.sha256,
-      );
-    console.log("PASS real ext4 extraction with debugfs; no mounts");
-    // Preserve the process-ownership utility while withholding all extractors.
-    const withoutExtractors = join(root, "without-extractors");
-    await access("/bin/ps");
-    await mkdir(withoutExtractors);
-    await symlink("/bin/ps", join(withoutExtractors, "ps"));
-    const missing = await cli(
-      ["extract-firmware", ext4, join(root, "missing-extractor-output")],
-      { ...environment, PATH: withoutExtractors },
-    );
-    const partial = firmwareResultSchemas.extract_firmware.parse(
-      missing.normalized_result,
-    );
-    assert.equal(partial.coverage, "partial");
-    assert.ok(JSON.stringify(partial.diagnostics).includes("debugfs"));
-    console.log(
-      "PASS real missing-extractor diagnostics retained despite Unblob exit 1",
+    assert.equal(match?.sha256, expected.sha256);
+  }
+  console.log("PASS real ext4 extraction with debugfs; no mounts");
+
+  // Keep the process-ownership utility available but hide every extractor.
+  const emptyBin = join(workDir, "without-extractors");
+  await fs.access("/bin/ps");
+  await fs.mkdir(emptyBin);
+  await fs.symlink("/bin/ps", join(emptyBin, "ps"));
+
+  const degraded = await runCli(
+    ["extract-firmware", ext4Path, join(workDir, "missing-extractor-output")],
+    { ...baseEnv, PATH: emptyBin },
+  );
+  const degradedParsed = firmwareResultSchemas.extract_firmware.parse(
+    degraded.normalized_result,
+  );
+  assert.equal(degradedParsed.coverage, "partial");
+  assert.ok(JSON.stringify(degradedParsed.diagnostics).includes("debugfs"));
+  assert.ok(
+    degradedParsed.extraction_gaps.some(
+      (gap) =>
+        gap.kind === "missing-extractor-dependency" &&
+        gap.dependencies.includes("debugfs") &&
+        gap.handler === "extfs",
+    ),
+    "The missing extractor must be named in its explicit recovery row",
+  );
+  console.log(
+    "PASS real missing-extractor diagnostics and recovery row retained despite Unblob exit 1",
+  );
+}
+
+async function stageGhidra(mcpFiles) {
+  if (process.env.GHIDRA_INSTALL_DIR === undefined) {
+    throw new Error(
+      "Firmware Ghidra handoff requires GHIDRA_INSTALL_DIR and Java; see docs/ghidra.md",
     );
   }
-  if (process.env.REA_FIRMWARE_VERIFY_GHIDRA === "1") {
-    if (process.env.GHIDRA_INSTALL_DIR === undefined)
-      throw new Error(
-        "Firmware Ghidra handoff requires GHIDRA_INSTALL_DIR and Java; see docs/ghidra.md",
-      );
-    const child = mcpFiles.files.find((file) =>
-      file.relative_path.endsWith("/usr/bin/probe"),
-    );
-    assert.ok(child !== undefined);
-    await call("open_binary", { path: child.path, provider_id: "ghidra" });
-    const dossier = await call("analyze_function", {
-      procedure: "firmware_probe",
-    });
-    const evidence = parseEvidence(dossier);
-    assert.equal(
-      evidence.subject.digest.sha256,
-      oracle.files["usr/bin/probe"].sha256,
-    );
-    const pseudocode = await call("procedure_pseudo_code", {
-      procedure: "firmware_probe",
-    });
-    assert.equal(parseEvidence(pseudocode).provider.id, "ghidra");
-    assert.ok(
-      JSON.stringify(evidence.normalized_result).includes("firmware_probe"),
-    );
-    await call("close_binary", {});
-    console.log(
-      "PASS real Ghidra handoff of the selected extracted host ELF, bound to its digest",
-    );
-  }
+
+  const probe = mcpFiles.files.find((f) =>
+    f.relative_path.endsWith("/usr/bin/probe"),
+  );
+  assert.ok(probe !== undefined);
+
+  await callTool("open_binary", { path: probe.path, provider_id: "ghidra" });
+
+  const dossierRaw = await callTool("analyze_function", {
+    procedure: "firmware_probe",
+    detail: "complete",
+  });
+  const dossier = parseEvidence(dossierRaw);
   assert.equal(
-    await hashFirmwareFile(path),
+    dossier.subject.digest.sha256,
+    oracle.files["usr/bin/probe"].sha256,
+  );
+
+  const pseudoRaw = await callTool("procedure_pseudo_code", {
+    procedure: "firmware_probe",
+  });
+  assert.equal(parseEvidence(pseudoRaw).provider.id, "ghidra");
+  assert.ok(
+    JSON.stringify(dossier.normalized_result).includes("firmware_probe"),
+  );
+
+  await callTool("close_binary", {});
+  console.log(
+    "PASS real Ghidra handoff of the selected extracted host ELF, bound to its digest",
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Entry point
+// ---------------------------------------------------------------------------
+
+await withVerifierCleanup(async () => {
+  assert.equal(
+    (await hashVerifierFile(firmwarePath, fileResources)).sha256,
+    oracle.sha256,
+  );
+  const cli = await stageCli();
+  await connectMcp();
+  const mcpFiles = await stageMcp(cli);
+
+  if (process.env.REA_FIRMWARE_VERIFY_EXT4 === "1") await stageExt4();
+  if (process.env.REA_FIRMWARE_VERIFY_GHIDRA === "1")
+    await stageGhidra(mcpFiles);
+
+  assert.equal(
+    (await hashVerifierFile(firmwarePath, fileResources)).sha256,
     oracle.sha256,
     "Original firmware bytes must remain unchanged",
   );
-} finally {
-  await client.close();
-  await rm(root, { recursive: true, force: true });
-}
+}, [
+  async () => {
+    await closeVerifierResources([
+      () => mcpClient.close(),
+      () => fileResources.close(),
+    ]);
+    await fs.rm(workDir, { recursive: true, force: true });
+  },
+]);

@@ -1,14 +1,17 @@
 import { z } from "zod";
 import { browserNetworkContentSelectionValuesSchema } from "./browserNetworkEvidence.js";
+import { browserScenarioCaptureLimitsValuesSchema } from "./browserScenarioCaptureLimits.js";
 
 import {
   browserScenarioCompletenessSchema,
+  browserScenarioEventFamilySchema,
+  browserScenarioEventOmissionsSchema,
   browserScenarioEventSchema,
   browserScenarioStepSchema,
 } from "./browserScenarioCaptureValues.js";
 
-/** Step-indexed browser scenario observation. */
-export const browserScenarioCaptureSchema = z
+/** Retained observations also admit legacy omission of event-family selection. */
+export const retainedBrowserScenarioCaptureSchema = z
   .strictObject({
     browser: z.strictObject({
       mode: z.enum(["launch", "connect"]),
@@ -19,16 +22,19 @@ export const browserScenarioCaptureSchema = z
     }),
     scenario: z.strictObject({
       start_origin: z.string().min(1),
-      action_count: z.number().int().min(1),
+      action_count: z.int().min(1),
       secret_references: z.array(z.string().min(1)),
       network_content: browserNetworkContentSelectionValuesSchema,
+      event_families: z.array(browserScenarioEventFamilySchema).optional(),
+      limits: browserScenarioCaptureLimitsValuesSchema,
     }),
-    duration_ms: z.number().int().min(0),
+    duration_ms: z.int().min(0),
     steps: z.array(browserScenarioStepSchema).min(1),
     events: z.strictObject({
-      retained: z.number().int().min(0),
-      dropped: z.number().int().min(0),
+      retained: z.int().min(0),
+      dropped: z.int().min(0),
       items: z.array(browserScenarioEventSchema),
+      omissions: browserScenarioEventOmissionsSchema,
     }),
     completeness: browserScenarioCompletenessSchema,
     limitations: z.array(z.string().min(1)),
@@ -64,6 +70,17 @@ export const browserScenarioCaptureSchema = z
         path: ["events", "retained"],
         message: "Retained event count must equal items length",
       });
+    if (
+      capture.events.omissions.by_kind.reduce(
+        (count, omission) => count + omission.count,
+        0,
+      ) !== capture.events.dropped
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["events", "omissions", "by_kind"],
+        message: "Per-kind omission counts must equal the dropped event count",
+      });
     if (capture.steps.length !== capture.scenario.action_count + 1)
       context.addIssue({
         code: "custom",
@@ -91,6 +108,18 @@ export const browserScenarioCaptureSchema = z
         path: ["events", "items"],
         message: "Event references an unknown step index",
       });
+  });
+
+export type RetainedBrowserScenarioCapture = z.infer<
+  typeof retainedBrowserScenarioCaptureSchema
+>;
+
+/** Current producers must record the caller's event-family selection. */
+export const browserScenarioCaptureSchema =
+  retainedBrowserScenarioCaptureSchema.safeExtend({
+    scenario: retainedBrowserScenarioCaptureSchema.shape.scenario.extend({
+      event_families: z.array(browserScenarioEventFamilySchema),
+    }),
   });
 export type BrowserScenarioCapture = z.infer<
   typeof browserScenarioCaptureSchema

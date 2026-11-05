@@ -12,4 +12,6 @@ export interface WebNetworkCapturePort {
     input: InspectWebNetworkCaptureInput,
     options?: ExecutionOptions,
   ): Promise<Result<WebNetworkCapture, AnalysisError>>;
+  /** Retry retained reader/runtime cleanup when the owning service shuts down. */
+  close?(): Promise<void>;
 }

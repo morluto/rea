@@ -6,6 +6,31 @@ import { expect, it } from "vitest";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { importReferenceSource } from "../../support/referenceSourceResourceScope.js";
 
+it("imports valid CommonJS wrapper syntax without inventing a parse failure", async () => {
+  const root = await createTestTempDirectory("rea-reference-commonjs-mode-");
+  await Promise.all([
+    writeFile(
+      join(root, "main.cjs"),
+      'void new.target; require("./dep.cjs"); return;\n',
+    ),
+    writeFile(join(root, "dep.cjs"), "module.exports = 1;\n"),
+  ]);
+  const imported = await importReferenceSource({
+    root,
+    caller: "native-commonjs-source",
+    policy: { secretPatterns: [] },
+  });
+  if (!imported.ok) throw imported.error;
+  expect(imported.value.parse_failures).toEqual([]);
+  expect(imported.value.relationships).toContainEqual({
+    from_path: "main.cjs",
+    to: "dep.cjs",
+    kind: "requires",
+    resolution: "internal",
+    parse_state: "parsed",
+  });
+});
+
 it.each([
   ["main.ts", "dep.js", "dep.ts"],
   ["main.mts", "dep.mjs", "dep.mts"],

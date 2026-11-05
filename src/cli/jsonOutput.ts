@@ -16,16 +16,28 @@ export const writeJsonOutput = async (
   destination: Writable,
   format: JsonOutputFormat = "json",
 ): Promise<void> => {
-  for (const part of bufferedJsonParts(
-    jsonOutputParts(value, format, isTerminal(destination)),
-  ))
-    await writePart(destination, part);
+  await writeOutputParts(
+    destination,
+    jsonOutputParts(value, format, isTerminalOutput(destination)),
+  );
 };
 
-const isTerminal = (destination: Writable): boolean =>
+/** Share bounded writes and destination ownership across structured formats. */
+export const writeOutputParts = async (
+  destination: Writable,
+  parts: Iterable<string>,
+): Promise<void> => {
+  for (const part of bufferedJsonParts(parts))
+    await writeOutputText(destination, part);
+};
+
+export const isTerminalOutput = (destination: Writable): boolean =>
   "isTTY" in destination && destination.isTTY === true;
 
-const writePart = (destination: Writable, part: string): Promise<void> =>
+export const writeOutputText = (
+  destination: Writable,
+  part: string,
+): Promise<void> =>
   new Promise((resolve, reject) => {
     const onError = (cause: unknown): void => reject(cause);
     destination.once("error", onError);

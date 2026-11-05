@@ -1,19 +1,25 @@
-# Reconstruction readiness conformance
+# Reconstruction readiness verification
 
-Run the source-owned native, JavaScript CLI, Electron, Evidence, comparison,
-obligation, replay, and cleanup conformance verifier from a clean checkout:
+Run the public static-analysis journeys and synthetic report-evaluator checks
+from a clean checkout:
 
 ```sh
 npm ci
 npm run verify:readiness
 ```
 
-The command builds the redistributable native conformance fixtures, inventories
-the native executable through the public CLI, analyzes the generated JavaScript
-CLI and Electron fixtures through both CLI and MCP, evaluates an internal
-nine-stage conformance report, and proves stale/tampered replay rejection. The
-report evaluator is part of the repository verifier, not a public REA tool. It
-prints one compact JSON summary.
+The command builds the redistributable native conformance fixtures, inspects
+the native executable through the public CLI, and analyzes the JavaScript CLI
+and Electron fixture sources through both CLI and MCP. It checks matching
+CLI/MCP Evidence identities for those two application analyses. The fixture
+applications are not executed, and native MCP parity is not exercised.
+
+Separately, the command evaluates a wholly synthetic nine-stage input and
+checks evaluator determinism, Evidence tampering rejection, and stale-source
+digest rejection. These checks concern report evaluation; they do not establish
+application runtime behavior, authority recovery, cancellation cleanup,
+behavioral equivalence, or reconstruction closure for the analyzed fixtures.
+The command prints one compact JSON summary.
 
 Set `REA_READINESS_REPORT_PATH` to retain the complete machine-readable report:
 
@@ -24,19 +30,41 @@ REA_READINESS_REPORT_PATH=readiness-report.json npm run verify:readiness
 CI runs this command on Linux, publishes the compact summary, and retains the
 full report as the `reconstruction-readiness` artifact.
 
-## Project conformance contract
+## Report scope and ownership
 
 The verifier runs as `npm run verify:readiness`; it is not exposed as a public
-CLI command or MCP tool. The synthetic report input and evaluator exist to
-check project-owned conformance fixtures and fail-closed report behavior.
+CLI command or MCP tool. Its report separates two kinds of verification:
 
-## Required stages
+- `observed_journeys` retains the actual static-analysis Evidence and the
+  observed CLI/MCP identity checks, with their coverage limits.
+- `evaluator_conformance` retains the synthetic baseline report and the
+  evaluator checks. Its nine-stage `pass` describes acceptance of supplied
+  synthetic observations.
 
-| Stage                           | Required proof                                                                                                        |
+The verifier's overall success means its listed checks passed. It is not an
+end-to-end reconstruction-readiness verdict. Actual analysis Evidence is not
+grafted into the synthetic report or used to close its checks.
+
+The retained artifact now uses `schema: "ReconstructionReadinessVerificationReport"`
+and `schema_version: 1`. The previous unversioned artifact was the nine-stage
+evaluator report itself. Consumers should read the two explicit sections; the
+synthetic nine-stage report now lives at `evaluator_conformance.baseline_report`.
+Observed CLI and MCP Evidence are retained in separate bundles under
+`observed_journeys.evidence_bundles`, preserving each surface's records.
+
+The evaluator, schemas, synthetic input, and semantic tests live under
+`tests/conformance/readiness/report/`. They are development verification code,
+excluded from the compiled runtime package. The evaluator authenticates Evidence
+commitments and checks supplied observations for consistency; it does not
+independently observe the events described by those observations.
+
+## Synthetic evaluator stages
+
+| Stage                           | Required supplied observations                                                                                        |
 | ------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
 | `discover-classify`             | target-free startup, artifact inventory, compatible workflow selection, and exact visible limits                      |
 | `diagnose-environment`          | broken runtime separated from analysis failure, version skew detected, and revision changed after recovery            |
-| `declare-request`               | exact target, operation, and lifecycle are carried by the request before launch                                       |
+| `acquire-authority`             | missing scope reported, narrow grant resumed, expansion reprompted, and denial launched nothing                       |
 | `static-analysis`               | native and JavaScript routing plus preserved ambiguity, truncation, unsupported syntax, and residual unknowns         |
 | `reactive-scenarios`            | predicate-driven interaction, descendant settlement, Electron correlation, and cancellation cleanup Evidence          |
 | `compare-authority-candidate`   | explicit partial-order/finite-trace semantics, primary divergence localization, and unknown for incomplete comparison |
@@ -44,13 +72,13 @@ check project-owned conformance fixtures and fail-closed report behavior.
 | `verify-reconstruction-closure` | incomplete reconstruction detected, incremental verifier closure, and authority-delegating candidates rejected        |
 | `export-replay`                 | CLI/MCP parity, process/structured failure parity, deterministic replay, tamper rejection, and stale-input rejection  |
 
-Every stage and required check must occur exactly once and link to Evidence in
-the embedded Evidence bundle. `fail`, `unknown`, `unsupported`, `truncated`,
-and `skipped` never aggregate to `pass`.
+Within the synthetic input, every stage and required check must occur exactly
+once and link to Evidence in its embedded bundle. `fail`, `unknown`,
+`unsupported`, `truncated`, and `skipped` never aggregate to `pass`.
 
 ## Fail-closed rules
 
-The evaluator rejects or withholds readiness when:
+The evaluator rejects or withholds a passing synthetic report when:
 
 - a bounded capability omits its effective numeric limits;
 - a fixture lacks exactly one compatible selected workflow;
@@ -63,8 +91,8 @@ The evaluator rejects or withholds readiness when:
 - contradiction Evidence or its affected comparison is missing;
 - the reconstruction obligation ledger is not `ready`, has no required
   obligation, or retains an unowned/unverified required obligation;
-- a process exceeds its declared target/lifecycle, cancellation loses diagnostics, or owned
-  resources remain;
+- a denied or cancelled grant reports a process launch, a cancelled cleanup
+  observation omits diagnostic Evidence, or owned resources remain;
 - replay is nondeterministic, tampering/staleness is not detected, or the
   expected source digest differs.
 
@@ -73,21 +101,49 @@ Stage `capability_issue` and `next_action` fields map unsupported or failing
 work to the responsible capability and remediation without claiming that the
 requested analysis ran.
 
+Closure history describes one fixed required-obligation universe from the
+supplied final ledger. Its first entry establishes the starting open count and
+cannot claim a new transition. Every observation marked `ready` must report
+zero required obligations open. Observations marked `open` or `failed` must
+report a positive required-open count. `unknown` may have zero open obligations
+because limitations can prevent a ready verdict independently of that count.
+Every decrease must name that many distinct, verified required obligations;
+an obligation cannot count again within an entry or in a later observation.
+No historical open count can exceed the ledger's required-obligation count.
+The retained history is checked for consistency with that ledger, not
+authenticated as a series of complete historical ledgers. Original entries
+remain in the report snapshot when these checks fail.
+
+For each operation and call kind, every retained success/error-code variant
+must occur on both CLI and MCP. Repeated observations and their Evidence stay
+in the report snapshot; drift findings cite the complete group and its sequence
+numbers. Equal repeat counts and one-to-one run pairing are not claimed: the
+input has no identity linking an individual CLI attempt to an MCP attempt.
+Differing transport status is checked on each observation separately.
+
 ## Fixtures
 
-The verifier uses only source-owned, redistributable fixtures:
+The static-analysis journeys use source-owned, redistributable fixtures:
 
-- `tests/conformance` native executables with stable symbols and deliberate
-  version divergence;
+- `build/conformance/c`, built from `tests/conformance/c/fixture.c`, with stable
+  symbols and strings;
 - `tests/conformance/readiness/javascript-cli`, which exposes prompts,
   alternate-screen behavior, configuration precedence, child process,
   persistence, loopback HTTP, and signal teardown to static reconstruction;
 - `tests/conformance/readiness/electron`, which exposes main, preload,
   renderer, utility, IPC, renderer restart, blocked shell effect, and deep-link
-  surfaces;
-- the shared incomplete reconstruction and broken-runtime observations in
-  `RECONSTRUCTION_READINESS_EXAMPLE`.
+  surfaces to static analysis.
 
-The synthetic example is a public typed input, not a global equivalence claim.
-It demonstrates that every deliberate fault remains represented in the final
-report and that only comparable Evidence can close the associated obligation.
+The separate `RECONSTRUCTION_READINESS_EXAMPLE` supplies synthetic incomplete
+reconstruction, broken-runtime, authority, comparison, cleanup, and closure
+observations. Its semantic tests preserve malformed-Evidence rejection,
+fail-closed stage results, contradiction handling, repeated CLI/MCP outcomes,
+and closure-history consistency. Run those source tests independently:
+
+```sh
+npm run test:local -- tests/conformance/readiness/report/reconstructionReadiness.test.ts
+```
+
+Passing evaluator tests does not establish real-provider or fixture runtime
+behavior. Use the applicable [real-toolchain lanes](testing.md#real-toolchain-verification-lanes)
+for those claims.

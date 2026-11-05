@@ -1,15 +1,18 @@
 #!/usr/bin/env python3
-"""Inspect or activate Hopper's version-pinned demo dialog on a private X display."""
+"""Inspect or activate Hopper's authenticated demo dialog on a private X display."""
 
 from __future__ import annotations
 
 import argparse
+from collections.abc import Callable
 import ctypes
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import secrets
+import select
 import stat
 import subprocess
 import tempfile
@@ -17,12 +20,6 @@ import threading
 import time
 
 
-# Keep this digest aligned with LinuxHopper.ts and rerun real-Hopper verification
-# before accepting another vendor build.
-SUPPORTED_HOPPER_SHA256 = {
-    "0294ced141cc373468ee22d8343e7dac41980cb05a937994ca81c9f09afe7ded",
-    "1339f9e58377442b0c6fcb0dfc3cec20d593cc557408521fad9a00dbc6b8da13",
-}
 EXPECTED_SCREEN = (1280, 1024)
 DIALOG_TITLES = {"Registration", "Registration — Hopper Disassembler"}
 HOPPER_WINDOW_TITLE = "Hopper Disassembler"
@@ -39,6 +36,14 @@ UNEXPECTED_DISPLAY_GEOMETRY = 77
 X11_INPUT_FAILED = 78
 RUNTIME_DEPENDENCY_UNAVAILABLE = 79
 X11_SOCKET_DIRECTORY_UNUSABLE = 80
+DEMO_DIALOG_ABSENT = 81
+INVALID_DIALOG_TIMEOUT = 82
+DEFAULT_DIALOG_TIMEOUT_MS = 10_000
+DIALOG_TIMEOUT_MINIMUM_MS = 1
+# Node schedules a delay above this signed 32-bit bound as 1 ms. Keep the
+# watcher on the same ceiling as REA's other millisecond settings.
+DIALOG_TIMEOUT_MAXIMUM_MS = 2_147_483_647
+DIALOG_TIMEOUT_ENV = "REA_HOPPER_DEMO_DIALOG_TIMEOUT_MS"
 DIAGNOSTIC_PREFIX = "REA_X11_DIAGNOSTIC="
 X11_SOCKET_DIRECTORY = Path("/tmp/.X11-unix")
 class AdapterFailure(Exception):
@@ -48,15 +53,23 @@ class AdapterFailure(Exception):
         reason: str,
         message: str,
         stderr_bytes: int = 0,
+        dialog_timeout: dict[str, object] | None = None,
     ) -> None:
         super().__init__(message)
         self.code = code
         self.reason = reason
         self.stderr_bytes = stderr_bytes
+        self.dialog_timeout = dialog_timeout
 
     def with_stderr(self, capture: CapturedStderr) -> AdapterFailure:
         self.stderr_bytes, _ = capture.snapshot()
         return self
+
+
+class DemoWatchStop(Exception):
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
 
 
 class CapturedStderr:
@@ -115,10 +128,86 @@ class XWindowAttributes(ctypes.Structure):
     ]
 
 
+def rejected_timeout_value(value: str) -> str:
+    visible = "".join(
+        character if character.isprintable() else "\ufffd" for character in value
+    )
+    if len(visible) <= 128:
+        return visible
+    return f"{visible[:127]}…"
+
+
+def dialog_timeout_message(value: str | None) -> str:
+    current = (
+        "was rejected"
+        if value is None
+        else f"is {json.dumps(value, ensure_ascii=False)} ms"
+    )
+    return (
+        f"The effective {DIALOG_TIMEOUT_ENV} value {current} "
+        f"(source setting; default {DEFAULT_DIALOG_TIMEOUT_MS} ms, "
+        f"floor {DIALOG_TIMEOUT_MINIMUM_MS} ms, "
+        f"maximum {DIALOG_TIMEOUT_MAXIMUM_MS} ms). "
+        f"Set {DIALOG_TIMEOUT_ENV} in the environment that starts REA to a "
+        f"positive decimal integer from {DIALOG_TIMEOUT_MINIMUM_MS} to "
+        f"{DIALOG_TIMEOUT_MAXIMUM_MS}, then restart REA."
+    )
+
+
+def dialog_timeout_decimal(value: str) -> int | None:
+    if re.fullmatch(r"[1-9]\d{0,9}", value) is None:
+        return None
+    parsed = int(value)
+    if parsed > DIALOG_TIMEOUT_MAXIMUM_MS:
+        return None
+    return parsed
+
+
+def dialog_timeout_rejection(value: str) -> AdapterFailure:
+    shown = rejected_timeout_value(value)
+    return AdapterFailure(
+        INVALID_DIALOG_TIMEOUT,
+        "invalid_dialog_timeout",
+        dialog_timeout_message(shown),
+        dialog_timeout={
+            "setting": DIALOG_TIMEOUT_ENV,
+            "value": shown,
+            "source": "setting",
+            "minimum_ms": DIALOG_TIMEOUT_MINIMUM_MS,
+            "maximum_ms": DIALOG_TIMEOUT_MAXIMUM_MS,
+            "default_ms": DEFAULT_DIALOG_TIMEOUT_MS,
+        },
+    )
+
+
+def positive_timeout(value: str) -> int:
+    parsed = dialog_timeout_decimal(value)
+    if parsed is None:
+        raise argparse.ArgumentTypeError(
+            "dialog timeout must be a positive decimal integer from "
+            f"{DIALOG_TIMEOUT_MINIMUM_MS} to {DIALOG_TIMEOUT_MAXIMUM_MS}"
+        )
+    return parsed
+
+
+def configured_dialog_timeout_ms(requested: int | None) -> int:
+    if requested is not None:
+        return requested
+    configured = os.environ.get(DIALOG_TIMEOUT_ENV)
+    if configured is None:
+        return DEFAULT_DIALOG_TIMEOUT_MS
+    parsed = dialog_timeout_decimal(configured)
+    if parsed is None:
+        raise dialog_timeout_rejection(configured)
+    return parsed
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--probe", action="store_true")
+    parser.add_argument("--owner-stdin", action="store_true")
     parser.add_argument("--hopper")
+    parser.add_argument("--expected-launcher-sha256")
     parser.add_argument("--socket")
     parser.add_argument(
         "--strategy",
@@ -129,8 +218,46 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--xvfb", default="/usr/bin/Xvfb")
     parser.add_argument("--xauth", default="/usr/bin/xauth")
     parser.add_argument("--display-number", type=int)
+    parser.add_argument("--dialog-timeout-ms", type=positive_timeout)
     parser.add_argument("command", nargs=argparse.REMAINDER)
     return parser.parse_args()
+
+
+class OwnerLifetime:
+    """The launcher's private pipe is a lifetime capability, independent of PIDs."""
+
+    def __init__(self, enabled: bool) -> None:
+        self._poll = select.poll() if enabled else None
+        if self._poll is not None:
+            # Node/libuv can implement piped stdio with a Unix socket pair.
+            mode = os.fstat(0).st_mode
+            if not (stat.S_ISFIFO(mode) or stat.S_ISSOCK(mode)):
+                raise AdapterFailure(
+                    INVALID_LAUNCH_COMMAND,
+                    "invalid_launch_command",
+                    "owner lifetime requires a private stdin pipe",
+                )
+            self._poll.register(0, select.POLLIN | select.POLLHUP | select.POLLERR)
+
+    def alive(self) -> bool:
+        if self._poll is None:
+            return True
+        for _, events in self._poll.poll(0):
+            if events & (select.POLLHUP | select.POLLERR | select.POLLNVAL):
+                return False
+            if events & select.POLLIN and not os.read(0, 4096):
+                return False
+        return True
+
+
+def wait_for_hopper(child: subprocess.Popen[bytes], owner: OwnerLifetime) -> int:
+    while owner.alive():
+        try:
+            return child.wait(timeout=0.1)
+        except subprocess.TimeoutExpired:
+            continue
+    # run_launch's finally owns cleanup of both direct, unreaped children.
+    return 0
 
 
 def digest(path: Path) -> str:
@@ -240,6 +367,70 @@ def demo_click(dialog: tuple[int, int, int, int, int]) -> tuple[int, int]:
     return x + DEMO_CLICK_LEFT, y + height - DEMO_CLICK_BOTTOM
 
 
+def watch_for_demo_dialog(
+    x11: ctypes.CDLL,
+    display: int,
+    timeout_ms: int,
+    *,
+    owner_alive: Callable[[], bool],
+    socket_ready: Callable[[], bool],
+    process_owned: Callable[[], bool],
+    process_exited: Callable[[], bool],
+    monotonic: Callable[[], float],
+    sleep: Callable[[float], None],
+    list_windows: Callable[[], list[tuple[int, int, int, int, int]]],
+) -> tuple[int, int, int, int, int]:
+    deadline = monotonic() + timeout_ms / 1000
+    hopper_window_observed = False
+    while monotonic() < deadline:
+        if not owner_alive():
+            raise DemoWatchStop("owner_closed")
+        if socket_ready():
+            raise DemoWatchStop("socket_ready")
+        if not process_owned():
+            if not process_exited():
+                sleep(0.1)
+                continue
+            raise AdapterFailure(
+                HOPPER_EXITED_DURING_STARTUP,
+                "hopper_exited_during_startup",
+                "owned Hopper process exited",
+            )
+        observed = list_windows()
+        hopper_window_observed = hopper_window_observed or any(
+            window_title(x11, display, candidate[0]) == HOPPER_WINDOW_TITLE
+            for candidate in observed
+        )
+        dialog = find_demo_dialog(x11, display, observed)
+        if dialog is not None:
+            return dialog
+        sleep(0.1)
+    raise classify_watch_timeout(process_owned(), hopper_window_observed)
+
+
+def classify_watch_timeout(
+    owned: bool,
+    hopper_window_observed: bool,
+) -> AdapterFailure:
+    if not owned:
+        return AdapterFailure(
+            PROCESS_OWNERSHIP_MISMATCH,
+            "process_ownership_mismatch",
+            "Hopper process ownership mismatch",
+        )
+    if hopper_window_observed:
+        return AdapterFailure(
+            UNSUPPORTED_DEMO_DIALOG,
+            "unsupported_demo_dialog",
+            "Hopper did not present a supported registration dialog",
+        )
+    return AdapterFailure(
+        DEMO_DIALOG_ABSENT,
+        "demo_dialog_absent",
+        "Hopper started without presenting a registration dialog",
+    )
+
+
 def configure_x11(x11: ctypes.CDLL, xtst: ctypes.CDLL) -> None:
     window_pointer = ctypes.POINTER(ctypes.c_ulong)
     x11.XOpenDisplay.argtypes = [ctypes.c_char_p]
@@ -337,7 +528,7 @@ def diagnostic(
 ) -> dict[str, object]:
     mode, read_only, _ = socket_directory_state()
     captured_bytes, _ = (0, "") if capture is None else capture.snapshot()
-    return {
+    record = {
         "component": "hopper_private_display",
         "operation": operation,
         "status": status,
@@ -355,6 +546,9 @@ def diagnostic(
         if failure is None
         else failure.stderr_bytes,
     }
+    if failure is not None and failure.dialog_timeout is not None:
+        record["dialog_timeout"] = failure.dialog_timeout
+    return record
 
 
 def failure_name(code: int) -> str:
@@ -370,6 +564,8 @@ def failure_name(code: int) -> str:
         X11_INPUT_FAILED: "x11_input_failed",
         RUNTIME_DEPENDENCY_UNAVAILABLE: "runtime_dependency_unavailable",
         X11_SOCKET_DIRECTORY_UNUSABLE: "x11_socket_directory_unusable",
+        DEMO_DIALOG_ABSENT: "demo_dialog_absent",
+        INVALID_DIALOG_TIMEOUT: "invalid_dialog_timeout",
     }[code]
 
 
@@ -444,13 +640,13 @@ def authorize_display(
         authorized = subprocess.run(
             [
                 xauth_path,
+                "-q",
                 "-f",
                 str(authority),
-                "add",
-                display_name,
-                ".",
-                secrets.token_hex(16),
+                "source",
+                "-",
             ],
+            input=("add %s . %s\n" % (display_name, secrets.token_hex(16))).encode("ascii"),
             check=False,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,
@@ -545,7 +741,11 @@ def start_xvfb(
     authority = session / "Xauthority"
     collision: AdapterFailure | None = None
     for _ in range(3):
-        display_number = args.display_number or (100 + secrets.randbelow(900))
+        display_number = (
+            args.display_number
+            if args.display_number is not None
+            else 100 + secrets.randbelow(900)
+        )
         display_name = f":{display_number}"
         if Path(f"/tmp/.X11-unix/X{display_number}").exists() or Path(
             f"/tmp/.X{display_number}-lock"
@@ -572,6 +772,7 @@ def start_xvfb(
                     "-auth",
                     str(authority),
                 ],
+                stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.PIPE,
             )
@@ -621,16 +822,25 @@ def run_probe(args: argparse.Namespace) -> dict[str, object]:
 
 
 def run_launch(args: argparse.Namespace) -> int:
-    if args.hopper is None or args.socket is None:
+    if (
+        args.hopper is None or args.socket is None
+        or args.expected_launcher_sha256 is None
+        or re.fullmatch(r"[a-f0-9]{64}", args.expected_launcher_sha256) is None
+    ):
         raise AdapterFailure(
             INVALID_LAUNCH_COMMAND,
             "invalid_launch_command",
             "missing Hopper launch coordinates",
         )
+    owner = OwnerLifetime(args.owner_stdin)
+    if not owner.alive():
+        return 0
     hopper = Path(args.hopper)
     socket = Path(args.socket)
     try:
-        supported = digest(hopper) in SUPPORTED_HOPPER_SHA256
+        # The parent owns publisher/package interpretation. Recheck its admitted
+        # launcher bytes immediately before execution, preserving all X11 guards.
+        supported = digest(hopper) == args.expected_launcher_sha256
     except OSError as error:
         raise AdapterFailure(
             INVALID_LAUNCH_COMMAND,
@@ -641,7 +851,7 @@ def run_launch(args: argparse.Namespace) -> int:
         raise AdapterFailure(
             UNSUPPORTED_HOPPER_BUILD,
             "unsupported_hopper_build",
-            "unsupported Hopper binary",
+            "Hopper binary differs from the authenticated release",
         )
     command = args.command[1:] if args.command[:1] == ["--"] else args.command
     if not command or Path(command[0]).resolve() != hopper.resolve():
@@ -650,10 +860,15 @@ def run_launch(args: argparse.Namespace) -> int:
             "invalid_launch_command",
             "invalid Hopper launch command",
         )
+    timeout_ms = configured_dialog_timeout_ms(
+        getattr(args, "dialog_timeout_ms", None)
+    )
     xvfb, display_name, authority, capture = start_xvfb(socket.parent, args)
     child: subprocess.Popen[bytes] | None = None
     display: int | None = None
     try:
+        if not owner.alive():
+            return 0
         hopper_environment = dict(os.environ)
         for name in ("WAYLAND_DISPLAY", "WAYLAND_SOCKET"):
             hopper_environment.pop(name, None)
@@ -666,7 +881,10 @@ def run_launch(args: argparse.Namespace) -> int:
                 "XDG_SESSION_TYPE": "x11",
             }
         )
-        child = subprocess.Popen(command, env=hopper_environment)
+        # Children must not consume or retain REA's lifetime pipe.
+        child = subprocess.Popen(
+            command, env=hopper_environment, stdin=subprocess.DEVNULL
+        )
         leader = os.getpid()
         os.environ["XAUTHORITY"] = str(authority)
 
@@ -698,42 +916,26 @@ def run_launch(args: argparse.Namespace) -> int:
                 "unexpected private display geometry",
             )
 
-        deadline = time.monotonic() + 10
-        observed: list[tuple[int, int, int, int, int]] = []
-        dialog: tuple[int, int, int, int, int] | None = None
-        while time.monotonic() < deadline:
-            if socket.exists():
-                x11.XCloseDisplay(display)
-                display = None
-                return child.wait()
-            if not hopper_is_owned(leader, hopper):
-                if child.poll() is None:
-                    time.sleep(0.1)
-                    continue
-                raise AdapterFailure(
-                    HOPPER_EXITED_DURING_STARTUP,
-                    "hopper_exited_during_startup",
-                    "owned Hopper process exited",
-                )
-            observed = windows(x11, display, root)
-            dialog = find_demo_dialog(x11, display, observed)
-            if dialog is not None:
-                break
-            time.sleep(0.1)
-        else:
-            if not hopper_is_owned(leader, hopper):
-                raise AdapterFailure(
-                    PROCESS_OWNERSHIP_MISMATCH,
-                    "process_ownership_mismatch",
-                    "Hopper process ownership mismatch",
-                )
-            raise AdapterFailure(
-                UNSUPPORTED_DEMO_DIALOG,
-                "unsupported_demo_dialog",
-                "expected Hopper demo dialog not found",
+        try:
+            dialog = watch_for_demo_dialog(
+                x11,
+                display,
+                timeout_ms,
+                owner_alive=owner.alive,
+                socket_ready=socket.exists,
+                process_owned=lambda: hopper_is_owned(leader, hopper),
+                process_exited=lambda: child is not None and child.poll() is not None,
+                monotonic=time.monotonic,
+                sleep=time.sleep,
+                list_windows=lambda: windows(x11, display, root),
             )
+        except DemoWatchStop as stopped:
+            if stopped.reason == "owner_closed":
+                return 0
+            x11.XCloseDisplay(display)
+            display = None
+            return wait_for_hopper(child, owner)
 
-        assert dialog is not None
         click_x, click_y = demo_click(dialog)
         input_results = (
             xtst.XTestFakeMotionEvent(display, -1, click_x, click_y, 0),
@@ -749,7 +951,7 @@ def run_launch(args: argparse.Namespace) -> int:
         x11.XFlush(display)
         x11.XCloseDisplay(display)
         display = None
-        return child.wait()
+        return wait_for_hopper(child, owner)
     except AdapterFailure as error:
         raise error.with_stderr(capture)
     finally:

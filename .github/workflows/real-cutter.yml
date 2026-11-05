@@ -1,0 +1,84 @@
+name: Real upstream Cutter verification
+
+on:
+  workflow_dispatch:
+  repository_dispatch:
+    types: [real-cutter-upstream]
+
+permissions:
+  contents: read
+
+env:
+  HUSKY: "0"
+  # Writes only on the default branch for push, schedule, manual dispatch,
+  # and workflow_call. Pull requests get an empty token and remote read-only mode.
+  TURBO_TOKEN: "${{ (github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call')) && secrets.TURBO_TOKEN || '' }}"
+  TURBO_TEAM: ${{ vars.TURBO_TEAM }}
+  TURBO_CACHE: "${{ (github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call')) && 'local:rw,remote:rw' || 'local:rw,remote:r' }}"
+
+jobs:
+  windows-native-artifact:
+    name: Build Windows bridge security boundary
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .nvmrc
+      - name: Install the cross compiler used by the Windows native lane
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y g++-mingw-w64-x86-64
+      - run: npm run build:windows-native
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: cutter-windows-native
+          path: native/windows/build/
+          if-no-files-found: error
+
+  cutter-upstream:
+    name: Cutter upstream smoke (${{ matrix.platform }})
+    needs: windows-native-artifact
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux
+            runner: [self-hosted, cutter-upstream, linux]
+          - platform: macOS
+            runner: [self-hosted, cutter-upstream, macOS]
+          - platform: Windows
+            runner: [self-hosted, cutter-upstream, Windows]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .nvmrc
+      - name: Cache npm package downloads
+        id: npm-cache
+        uses: ./.github/actions/npm-cache
+      - run: npm ci
+      - if: matrix.platform == 'Windows'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: cutter-windows-native
+          path: native/windows/build/
+      - if: matrix.platform == 'Windows'
+        run: npm run verify:windows-native:artifact
+      - if: matrix.platform == 'Windows'
+        run: npm run build:cached
+      - if: matrix.platform == 'Windows'
+        run: npm run verify:windows-native
+      - name: Verify host and real Cutter bridge
+        env:
+          EXPECTED_PLATFORM: ${{ matrix.platform }}
+        run: npm run verify:cutter
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: cutter-upstream-${{ matrix.platform }}
+          path: cutter-smoke.json
+          if-no-files-found: ignore
+          retention-days: 30

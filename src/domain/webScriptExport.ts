@@ -30,8 +30,8 @@ const sourceSchema = z.discriminatedUnion("kind", [
   z.strictObject({
     kind: z.literal("scenario-response"),
     transaction_id: z.string().min(1),
-    request_sequence: z.number().int().min(1),
-    response_sequence: z.number().int().min(1).nullable(),
+    request_sequence: z.int().min(1),
+    response_sequence: z.int().min(1).nullable(),
     status: z.number().nullable(),
   }),
 ]);
@@ -47,11 +47,14 @@ export const exportedWebScriptSchema = z.strictObject({
       layout: z.enum(["url-path", "isolated"]),
       layout_reason: z.string().nullable(),
       sha256: digestSchema,
-      bytes: z.number().int().min(0),
+      bytes: z.int().min(0),
       media_type: z.string().nullable(),
       redacted: z.boolean().nullable(),
       representation: z.enum([
         "debugger-source-utf8",
+        "playwright-response-body-bytes",
+        // Accept already-saved exports from before the response representation
+        // was narrowed to the Playwright API result.
         "browser-decoded-response-bytes",
       ]),
     }),
@@ -91,7 +94,7 @@ export const webScriptExportResultSchema = webScriptExportManifestSchema.extend(
     manifest: z.strictObject({
       path: z.string().min(1),
       sha256: digestSchema,
-      bytes: z.number().int().min(0),
+      bytes: z.int().min(0),
     }),
   },
 );
@@ -116,9 +119,10 @@ export interface CapturedWebScript {
         readonly sha256: string;
         readonly media_type: string | null;
         readonly redacted: boolean | null;
-        readonly representation:
-          | "debugger-source-utf8"
-          | "browser-decoded-response-bytes";
+        readonly representation: Extract<
+          ExportedWebScript["content"],
+          { readonly state: "exported" }
+        >["representation"];
       }
     | Extract<ExportedWebScript["content"], { state: "unavailable" }>;
 }

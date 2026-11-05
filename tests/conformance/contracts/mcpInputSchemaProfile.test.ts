@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { parseMcpInputSchemaProfile } from "../../../src/config/mcpInputSchemaProfile.js";
+import {
+  compactPresentationForMcpInputSchemaProfile,
+  COMPACT_INPUT_SCHEMA_BUDGET_BYTES,
+  parseMcpInputSchemaProfile,
+} from "../../../src/config/mcpInputSchemaProfile.js";
 
 describe("MCP input schema profile configuration", () => {
   it("accepts the full and compact presentations", () => {
@@ -26,4 +30,14 @@ describe("MCP input schema profile configuration", () => {
       expect(parsed.error.message).toContain("REA_MCP_INPUT_SCHEMA_PROFILE");
     },
   );
+
+  it("defaults to compact while preserving an explicit full choice", () => {
+    expect(compactPresentationForMcpInputSchemaProfile(undefined)).toEqual({
+      budgetBytes: COMPACT_INPUT_SCHEMA_BUDGET_BYTES,
+    });
+    expect(compactPresentationForMcpInputSchemaProfile("full")).toBe(undefined);
+    expect(compactPresentationForMcpInputSchemaProfile("compact")).toEqual({
+      budgetBytes: COMPACT_INPUT_SCHEMA_BUDGET_BYTES,
+    });
+  });
 });

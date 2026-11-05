@@ -1,9 +1,14 @@
-import { readdir, readFile } from "node:fs/promises";
+import { readdir } from "node:fs/promises";
 import { join } from "node:path";
-import { DOMParser, onWarningStopParsing } from "@xmldom/xmldom";
+import { parseXmlDocument } from "../domain/xmlDocument.js";
+import { decodeXmlPlistText } from "../domain/propertyListXmlText.js";
 
+import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { withArtifactRegularFile } from "../artifacts/ArtifactFileOperation.js";
 import type { GhidraLanguageOverride } from "../config/ghidraLanguageOverride.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
+import { RegularFileOperationCancelled } from "../filesystem/RegularFile.js";
+import { readBoundedFileBytes } from "../process/BoundedFileBytes.js";
 
 /** One language definition and the compiler specs it declares. */
 export interface GhidraLanguageDefinition {
@@ -21,9 +26,12 @@ export const parseGhidraLanguageDefinitions = (
   text: string,
 ): readonly GhidraLanguageDefinition[] => {
   const definitions: GhidraLanguageDefinition[] = [];
-  const document = new DOMParser({
-    onError: onWarningStopParsing,
-  }).parseFromString(text, "application/xml");
+  const parsed = parseXmlDocument(text, {
+    doctype: "allow",
+    lineEndings: "normalize",
+  });
+  if (!parsed.ok) throw parsed.error;
+  const document = parsed.value;
   const root = document.documentElement;
   if (root?.tagName !== "language_definitions")
     throw new SyntaxError("Expected Ghidra language_definitions XML root");
@@ -50,8 +58,10 @@ const languageDirectories = async (installDir: string): Promise<string[]> => {
     let modules: string[];
     try {
       modules = await readdir(join(installDir, root));
-    } catch {
-      continue;
+    } catch (cause: unknown) {
+      if (cause instanceof Error && "code" in cause && cause.code === "ENOENT")
+        continue;
+      throw cause;
     }
     for (const module of modules.sort())
       directories.push(join(installDir, root, module, "data", "languages"));
@@ -59,29 +69,73 @@ const languageDirectories = async (installDir: string): Promise<string[]> => {
   return directories;
 };
 
-/** Read every language definition shipped by one Ghidra installation. */
-export const readGhidraLanguageCatalog = async (
+/**
+ * Parse one definition before its final close; an oversized file declares
+ * nothing. The caller's scope owns a descriptor whose close is unconfirmed.
+ */
+const readLanguageDefinitionFile = (
+  path: string,
+  resources: ArtifactResourceScope,
+  signal: AbortSignal | undefined,
+): Promise<readonly GhidraLanguageDefinition[]> =>
+  withArtifactRegularFile(
+    path,
+    resources,
+    signal,
+    async ({ handle: file }) => {
+      const bytes = await readBoundedFileBytes(file, MAX_LDEFS_BYTES, {
+        signal,
+        cancellationFailure: (reason) =>
+          new RegularFileOperationCancelled(reason),
+      });
+      // The XML byte owner validates encoding and declaration before syntax
+      // parsing; a literal U+FFFD cannot diagnose invalid source bytes.
+      return bytes === undefined
+        ? []
+        : parseGhidraLanguageDefinitions(decodeXmlPlistText(bytes));
+    },
+    "follow",
+  );
+
+/**
+ * Read every language definition shipped by one Ghidra installation. Admission
+ * first retries cleanup the scope retains, so an unconfirmed close blocks reads
+ * only until that exact owner releases.
+ */
+export const readGhidraLanguageCatalog = (
   installDir: string,
-): Promise<readonly GhidraLanguageDefinition[]> => {
-  const definitions: GhidraLanguageDefinition[] = [];
-  for (const directory of await languageDirectories(installDir)) {
-    let entries: string[];
-    try {
-      entries = await readdir(directory);
-    } catch {
-      continue;
+  resources: ArtifactResourceScope,
+  signal?: AbortSignal,
+): Promise<readonly GhidraLanguageDefinition[]> =>
+  resources.run(async () => {
+    const definitions: GhidraLanguageDefinition[] = [];
+    for (const directory of await languageDirectories(installDir)) {
+      let entries: string[];
+      try {
+        entries = await readdir(directory);
+      } catch (cause: unknown) {
+        // A module may contain no language directory; inability to read one is not absence.
+        if (
+          cause instanceof Error &&
+          "code" in cause &&
+          (cause.code === "ENOENT" || cause.code === "ENOTDIR")
+        )
+          continue;
+        throw cause;
+      }
+      for (const entry of entries.sort()) {
+        if (!entry.endsWith(".ldefs")) continue;
+        definitions.push(
+          ...(await readLanguageDefinitionFile(
+            join(directory, entry),
+            resources,
+            signal,
+          )),
+        );
+      }
     }
-    for (const entry of entries.sort()) {
-      if (!entry.endsWith(".ldefs")) continue;
-      const bytes = await readFile(join(directory, entry));
-      if (bytes.length > MAX_LDEFS_BYTES) continue;
-      definitions.push(
-        ...parseGhidraLanguageDefinitions(bytes.toString("utf8")),
-      );
-    }
-  }
-  return definitions;
-};
+    return definitions;
+  });
 
 /**
  * Check a configured import language against the installation before launch,

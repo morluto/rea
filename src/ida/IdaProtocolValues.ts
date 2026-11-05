@@ -11,18 +11,19 @@ export const idaAddressSchema = z
       `0x${BigInt(value.startsWith("0x") || value.startsWith("0X") ? value : `0x${value}`).toString(16)}`,
   );
 
-/** A function observation; size is an enclosing span, never a complete body. */
+/**
+ * Function identity only. Upstream size is an enclosing span, not body coverage;
+ * retain it in the raw observation rather than requiring it for identity.
+ */
 export const idaFunctionSchema = z.union([
   z.object({
     address: idaAddressSchema,
     name: z.string().min(1),
-    size: z.string(),
   }),
   z
     .object({
       addr: idaAddressSchema,
       name: z.string().min(1),
-      size: z.string(),
     })
     .transform(({ addr, ...rest }) => ({ address: addr, ...rest })),
 ]);
@@ -57,33 +58,31 @@ export const modernHealthSchema = z
 
 /** An upstream cursor must either finish or advance strictly to avoid replay loops. */
 export const cursorSchema = z.union([
-  z.object({ next: z.number().int().nonnegative() }),
+  z.object({ next: z.int().nonnegative() }),
   z.object({ done: z.literal(true) }),
 ]);
-export const nextOffset = (
-  cursor: z.infer<typeof cursorSchema>,
+/** Both legacy pages and modern cursors must finish or advance strictly. */
+export const nextPageOffset = (
+  next: number | null,
   current: number,
 ): number | null => {
-  if ("done" in cursor) return null;
-  if (cursor.next <= current)
+  if (next !== null && next <= current)
     throw new AnalysisProtocolError(
       "IDA MCP pagination did not advance its offset.",
     );
-  return cursor.next;
+  return next;
 };
+export const nextOffset = (
+  cursor: z.infer<typeof cursorSchema>,
+  current: number,
+): number | null =>
+  nextPageOffset("done" in cursor ? null : cursor.next, current);
 
 export const legacyPageSchema = z.object({
   data: z.array(jsonValueSchema),
-  next_offset: z.number().int().nonnegative().nullable(),
+  next_offset: z.int().nonnegative().nullable(),
 });
-export const modernPageSchema = z
-  .array(
-    z.object({
-      data: z.array(jsonValueSchema),
-      next_offset: z.number().int().nonnegative().nullable(),
-    }),
-  )
-  .length(1);
+export const modernPageSchema = z.array(legacyPageSchema).length(1);
 
 const modernLookupRowSchema = z.object({
   query: z.string(),
@@ -126,18 +125,19 @@ export const modernDecompileSchema = z.object({
   code: z.string().nullable(),
   error: z.string().optional(),
   cursor: cursorSchema,
-  line_count: z.number().int().nonnegative().optional(),
-  total_lines: z.number().int().nonnegative().optional(),
+  line_count: z.int().nonnegative().optional(),
+  total_lines: z.int().nonnegative().optional(),
 });
 
 export const legacyStringSchema = z.object({
   address: idaAddressSchema,
   string: z.string(),
-  length: z.number().int().nonnegative(),
+  length: z.int().nonnegative(),
 });
-export const modernStringsSchema = z.object({
+export const idaStringsPageSchema = z.object({
   matches: z.array(z.object({ addr: idaAddressSchema, string: z.string() })),
   cursor: cursorSchema,
+  error: z.string().nullish(),
 });
 export const legacyXrefsSchema = z.array(
   z.object({
@@ -199,7 +199,7 @@ export const modernCallGraphSchema = z
         ),
         truncated: z.boolean().optional(),
         limit_reason: z.string().nullable().optional(),
-        max_edges_per_func: z.number().int().positive().optional(),
+        max_edges_per_func: z.int().positive().optional(),
         per_func_capped: z.boolean().optional(),
       })
       .passthrough(),
@@ -218,6 +218,14 @@ export const openDatabaseSchema = z
       .passthrough(),
   })
   .passthrough();
+/** Only an explicit completed rejection preserves legacy no-worker cleanup. */
+export const rejectedOpenDatabaseSchema = z
+  .object({
+    error: z.string().min(1),
+    success: z.never().optional(),
+  })
+  .passthrough();
+
 export const databaseListSchema = z
   .object({
     sessions: z.array(
@@ -247,3 +255,53 @@ export const absentDatabaseCloseSchema = (sessionId: string) =>
   z
     .object({ error: z.literal(`Session not found: ${sessionId}`) })
     .passthrough();
+
+// Piped, so a malformed coordinate is a schema issue and never reaches BigInt.
+const hexCoordinate = z
+  .string()
+  .regex(/^0x[0-9a-f]+$/iu)
+  .pipe(z.transform((value) => BigInt(value)));
+
+/**
+ * The minimal `survey_binary` reply, reduced to validated segment intervals
+ * (exclusive ends). Any malformed, reversed or inconsistent fact rejects the
+ * whole reply, because a membership answer needs every segment.
+ */
+export const surveySegmentsSchema = z
+  .object({
+    statistics: z
+      .object({ total_segments: z.int().nonnegative().optional() })
+      .passthrough()
+      .optional(),
+    segments: z
+      .array(
+        z
+          .object({
+            start: hexCoordinate,
+            end: hexCoordinate,
+            size: hexCoordinate.optional(),
+          })
+          .passthrough(),
+      )
+      .min(1),
+  })
+  .passthrough()
+  .superRefine(({ statistics, segments }, context) => {
+    if (
+      statistics?.total_segments !== undefined &&
+      statistics.total_segments !== segments.length
+    )
+      context.addIssue({
+        code: "custom",
+        message: "survey segment count disagrees with its statistics",
+      });
+    for (const { start, end, size } of segments) {
+      // A malformed row has already reported its own issue; refinements still run.
+      if (typeof start !== "bigint" || typeof end !== "bigint") continue;
+      if (start >= end || (size !== undefined && size !== end - start))
+        context.addIssue({
+          code: "custom",
+          message: "survey segment bounds are reversed or inconsistent",
+        });
+    }
+  });

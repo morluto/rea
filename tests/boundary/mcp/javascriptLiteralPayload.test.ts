@@ -8,16 +8,35 @@ import { expect } from "vitest";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/javascript/javascriptApplicationAnalysis.js";
 import { javaScriptSemanticTraceResultSchema } from "../../../src/domain/javascript/javascriptSemanticTraceSchemas.js";
+import { compareUnicodeCodePoints } from "../../../src/domain/unicodeCodePointOrder.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
+const boundedLargeLiteralPayloads = (): readonly string[] => {
+  // Preserve the former aggregate payload size while each normalized value
+  // stays within its independent semantic byte budget.
+  const values = Array.from({ length: 16 }, (_, index) =>
+    `rea_literal_payload_ğ\\"\0${String(index)}_`.padEnd(24, "x").repeat(4096),
+  );
+  expect(
+    values.reduce((total, value) => total + value.length, 0),
+  ).toBeGreaterThanOrEqual(24 * 65_536);
+  expect(values.every((value) => value.length * 6 + 2 <= 1_048_576)).toBe(true);
+  return values;
+};
+
 cliTest(
-  "delivers complete large literals through CLI and default stdio MCP without metadata copies",
+  "delivers aggregate large literal payloads through CLI and default stdio MCP without metadata copies",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-literal-payload-");
-    const value = 'rea_literal_payload_ğ\\"\0'.padEnd(24, "x").repeat(65_536);
+    const values = boundedLargeLiteralPayloads();
+    const value = values[0];
+    if (value === undefined) throw new Error("Missing literal payload");
     const source = [
-      `export const payload = ${JSON.stringify(value)};`,
+      ...values.map(
+        (payload, index) =>
+          `export const payload${String(index)} = ${JSON.stringify(payload)};`,
+      ),
       'export const choice = flag ? 1 : "1";',
       'export const empty = "";',
     ].join("\n");
@@ -52,7 +71,7 @@ cliTest(
         name: "analyze_javascript_application",
         arguments: { input_path: root, format: "directory" },
       });
-      // The old payload-bearing role key/label exceed the default wire budget.
+      // Default wire delivery must retain every admitted value in the aggregate.
       expect(response.isError).not.toBe(true);
       const evidence = toolContract(
         "analyze_javascript_application",
@@ -67,6 +86,15 @@ cliTest(
       const graph = javascriptApplicationAnalysisResultSchema.parse(
         evidence.normalized_result,
       ).semantic_graph;
+      const retainedPayloads = graph.nodes
+        .filter(
+          (node) =>
+            node.kind === "literal" &&
+            typeof node.properties.value === "string" &&
+            values.includes(node.properties.value),
+        )
+        .map((node) => node.properties.value);
+      expect(retainedPayloads.toSorted()).toEqual(values.toSorted());
       const literal = graph.nodes.find(
         (node) => node.kind === "literal" && node.properties.value === value,
       );
@@ -85,8 +113,8 @@ cliTest(
           node.kind === "literal" &&
           (node.properties.value === 1 || node.properties.value === "1"),
       );
-      expect(choices.length).toBe(2);
-      expect(new Set(choices.map((node) => node.node_id)).size).toBe(2);
+      expect(choices.length).toBe(4);
+      expect(new Set(choices.map((node) => node.node_id)).size).toBe(4);
       expect(
         graph.nodes.some(
           (node) => node.kind === "literal" && node.properties.value === "",
@@ -142,7 +170,8 @@ cliTest(
       expect(valueTrace.seed_node_ids).toEqual(
         choices
           .filter((node) => node.properties.value === "1")
-          .map((node) => node.node_id),
+          .map((node) => node.node_id)
+          .sort(compareUnicodeCodePoints),
       );
       await client.ping();
     } finally {

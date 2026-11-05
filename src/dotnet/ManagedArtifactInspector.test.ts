@@ -93,6 +93,22 @@ describe("managed PE optional-header directory count", () => {
 });
 
 describe("managed CLI directory availability", () => {
+  it("keeps a readable CLI directory when later declared entries are truncated", () => {
+    const bytes = buildManagedPeFixture();
+    const optional = bytes.readUInt32LE(0x3c) + 24;
+    bytes.writeUInt32LE(0xffffffff, optional + 92);
+    expect(readManagedPeLayout(bytes)).toMatchObject({
+      cliDirectoryState: "present",
+      cliIssue: null,
+      cli: expect.objectContaining({ headerSize: 72 }),
+    });
+    const result = inspectManagedArtifactBytes(
+      bytes,
+      managedPeFixtureTarget(bytes),
+    );
+    expect(result.metadata.status).toBe("complete");
+  });
+
   it("keeps a declared but truncated CLI directory malformed", () => {
     const bytes = buildManagedPeFixture();
     const peOffset = bytes.readUInt32LE(0x3c);
@@ -292,6 +308,119 @@ describe("managed artifact inventory", () => {
     ]);
     expect(result.coverage).toMatchObject({ state: "complete", issues: [] });
   });
+
+  // dotnet/runtime corhdr.h: 32BITREQUIRED and 32BITPREFERRED form one
+  // two-bit field, so neither bit can be read on its own.
+  it.each([
+    ["neither bit", 0x0000_0001, "anycpu", false],
+    ["32BITREQUIRED alone", 0x0000_0003, "x86", true],
+    ["both bits", 0x0002_0003, "anycpu-prefer-32", false],
+    ["the reserved 32BITPREFERRED alone", 0x0002_0001, "anycpu", false],
+  ] as const)(
+    "reads %s as one 32-bit requirement",
+    (_label, cliFlags, architecture, requires32Bit) => {
+      const bytes = buildManagedPeFixture({ cliFlags });
+      const target = managedPeFixtureTarget(bytes);
+
+      expect(
+        inspectManagedArtifactBytes(bytes, target).classification
+          .managed_architecture,
+      ).toBe(architecture);
+      expect(
+        inspectManagedNativeBoundariesBytes(bytes, target).cli_native
+          ?.requires_32bit,
+      ).toBe(requires32Bit);
+    },
+  );
+});
+
+describe("managed attribute SerString encoding", () => {
+  it.each([
+    [0, [0x00]],
+    [0x7f, [0x7f]],
+    [0x80, [0x80, 0x80]],
+    [0x3fff, [0xbf, 0xff]],
+    [0x4000, [0xc0, 0x00, 0x40, 0x00]],
+  ] as const)(
+    "reads a target-framework SerString of %i UTF-8 bytes",
+    (length, prefix) => {
+      const targetFramework =
+        "é".repeat(Math.floor(length / 2)) + (length % 2 === 0 ? "" : "A");
+      const value = Buffer.concat([
+        Buffer.from([1, 0, ...prefix]),
+        Buffer.from(targetFramework),
+        Buffer.from([0, 0]),
+      ]);
+      const bytes = buildManagedPeFixture({ targetFramework });
+      const result = inspectManagedArtifactBytes(
+        bytes,
+        managedPeFixtureTarget(bytes),
+      );
+
+      expect(result.target_frameworks).toEqual([targetFramework]);
+      expect(result.attributes).toMatchObject([
+        {
+          decoded_fixed_string: targetFramework,
+          value_length: value.length,
+          value_sha256: createHash("sha256").update(value).digest("hex"),
+        },
+      ]);
+      expect(result.coverage).toEqual({ state: "complete", issues: [] });
+    },
+  );
+
+  it.each([
+    { name: "missing length", value: [1, 0], decoded: null },
+    { name: "null sentinel", value: [1, 0, 0xff], decoded: null },
+    { name: "truncated two-byte prefix", value: [1, 0, 0x80], decoded: null },
+    {
+      name: "truncated four-byte prefix",
+      value: [1, 0, 0xc0, 0, 0],
+      decoded: null,
+    },
+    { name: "reserved prefix", value: [1, 0, 0xe0], decoded: null },
+    { name: "content outside value", value: [1, 0, 5, 0x41], decoded: null },
+    {
+      name: "maximum length without content",
+      value: [1, 0, 0xdf, 0xff, 0xff, 0xff],
+      decoded: null,
+    },
+    { name: "invalid UTF-8", value: [1, 0, 1, 0xff, 0, 0], decoded: null },
+    { name: "invalid prolog", value: [0, 0, 1, 0x41, 0, 0], decoded: null },
+    {
+      name: "overlong two-byte length",
+      value: [1, 0, 0x80, 1, 0x41, 0, 0],
+      decoded: "A",
+    },
+    {
+      name: "overlong four-byte length",
+      value: [1, 0, 0xc0, 0, 0, 1, 0x41, 0, 0],
+      decoded: "A",
+    },
+  ])("preserves attribute evidence for $name", ({ value, decoded }) => {
+    const customAttributeValue = Buffer.from(value);
+    const bytes = buildManagedPeFixture({ customAttributeValue });
+    const result = inspectManagedArtifactBytes(
+      bytes,
+      managedPeFixtureTarget(bytes),
+    );
+
+    expect(result.attributes).toMatchObject([
+      {
+        parent_token: "0x20000001",
+        constructor_token: "0x0a000001",
+        type_name: "System.Runtime.Versioning.TargetFrameworkAttribute",
+        decoded_fixed_string: decoded,
+        value_length: customAttributeValue.length,
+        value_sha256: createHash("sha256")
+          .update(customAttributeValue)
+          .digest("hex"),
+      },
+    ]);
+    expect(result.target_frameworks).toEqual(decoded === null ? [] : [decoded]);
+    expect(result.metadata.status).toBe("complete");
+    expect(result.coverage).toEqual({ state: "complete", issues: [] });
+  });
 });
 
 describe("managed artifact coded indexes", () => {
@@ -454,7 +583,113 @@ describe("managed artifact coded indexes", () => {
   }, 30_000);
 });
 
+it.each([false, true])(
+  "resolves an attribute type without reading malformed constructor heaps (bad name %s)",
+  (badName) => {
+    const bytes = buildManagedPeFixture();
+    const layout = metadataLayoutFor(bytes);
+    const row = layout.table(10)!;
+    const nameColumn = row.offset + layout.codedIndexSize("MemberRefParent");
+    const signatureColumn = nameColumn + layout.stringIndexSize;
+    if (badName) {
+      if (layout.stringIndexSize === 2) bytes.writeUInt16LE(0xffff, nameColumn);
+      else bytes.writeUInt32LE(0xffffffff, nameColumn);
+    }
+    if (layout.blobIndexSize === 2)
+      bytes.writeUInt16LE(0xffff, signatureColumn);
+    else bytes.writeUInt32LE(0xffffffff, signatureColumn);
+
+    const result = inspectManagedArtifactBytes(
+      bytes,
+      managedPeFixtureTarget(bytes),
+    );
+    expect(result.attributes[0]).toMatchObject({
+      constructor_token: "0x0a000001",
+      type_name: "System.Runtime.Versioning.TargetFrameworkAttribute",
+      decoded_fixed_string: ".NETCoreApp,Version=v8.0",
+    });
+    expect(result.coverage).toEqual({ state: "complete", issues: [] });
+  },
+);
+
 describe("managed artifact reference inventory", () => {
+  it("qualifies referenced custom-attribute names from TypeRef scopes", () => {
+    const bytes = buildManagedPeFixture({
+      customAttributeTypeRaw: (1 << 3) | 3,
+      memberRefParentRaw: (3 << 3) | 1,
+      typeReferences: [
+        { namespace: "Fixture", name: "Outer" },
+        { namespace: "", name: "InnerAttribute", enclosingRow: 2 },
+      ],
+    });
+    const result = inspectManagedArtifactBytes(
+      bytes,
+      managedPeFixtureTarget(bytes),
+    );
+
+    expect(result.attributes[0]?.type_name).toBe(
+      "Fixture.Outer+InnerAttribute",
+    );
+    expect(result.coverage).toEqual({ state: "complete", issues: [] });
+  });
+
+  it.each([
+    {
+      label: "duplicate NestedClass rows",
+      additionalEmptyTypes: 1,
+      nestedTypes: [
+        [2, 1],
+        [2, 1],
+      ] as const,
+      coverage: "partial",
+    },
+    {
+      label: "a cyclic NestedClass chain",
+      additionalEmptyTypes: 2,
+      nestedTypes: [
+        [2, 3],
+        [3, 2],
+      ] as const,
+      coverage: "complete",
+    },
+  ])("leaves a nested attribute name unknown for $label", (fixture) => {
+    const bytes = buildManagedPeFixture({
+      additionalEmptyTypes: fixture.additionalEmptyTypes,
+      customAttributeTypeRaw: (1 << 3) | 2,
+      nestedTypes: fixture.nestedTypes,
+      typeName: "InnerAttribute",
+      typeNamespace: "",
+    });
+    const result = inspectManagedArtifactBytes(
+      bytes,
+      managedPeFixtureTarget(bytes),
+    );
+
+    expect(result.attributes[0]?.type_name).toBeNull();
+    expect(result.coverage.state).toBe(fixture.coverage);
+  });
+
+  it("leaves a custom-attribute name unknown when nesting exceeds its cap", () => {
+    const nestedTypes: (readonly [number, number])[] = Array.from(
+      { length: 64 },
+      (_, index) => [65 - index, 64 - index],
+    );
+    const bytes = buildManagedPeFixture({
+      additionalEmptyTypes: 64,
+      customAttributeTypeRaw: (1 << 3) | 2,
+      nestedTypes,
+      typeName: "InnerAttribute",
+      typeNamespace: "",
+    });
+    const result = inspectManagedArtifactBytes(
+      bytes,
+      managedPeFixtureTarget(bytes),
+    );
+
+    expect(result.attributes[0]?.type_name).toBeNull();
+    expect(result.coverage).toEqual({ state: "complete", issues: [] });
+  });
+
   it("returns all references inline while classifying from the full inventory", () => {
     const bytes = buildManagedPeFixture({
       references: ["System.Runtime", "UnityEngine.CoreModule"],
@@ -520,6 +755,96 @@ describe("managed fixture data layout", () => {
       data_sha256: createHash("sha256").update(resource).digest("hex"),
     });
     expect(result.coverage).toMatchObject({ state: "complete", issues: [] });
+  });
+});
+
+describe("managed implementation classification", () => {
+  it.each([
+    {
+      hint: "Unity AssemblyRef",
+      options: { references: ["UnityEngine.CoreModule"] },
+      evidence: "unity-reference-observed",
+    },
+    {
+      hint: ".NET Framework target",
+      options: { targetFramework: ".NETFramework,Version=v4.8" },
+      evidence: "target-framework-observed",
+    },
+  ])(
+    "keeps ReadyToRun classification and evidence with a $hint",
+    ({ options, evidence }) => {
+      const bytes = buildManagedPeFixture({ readyToRun: true, ...options });
+      const result = inspectManagedArtifactBytes(
+        bytes,
+        managedPeFixtureTarget(bytes),
+      );
+
+      expect(result.classification).toMatchObject({
+        runtime_family: "modern-dotnet",
+        implementation: "cil-and-ready-to-run",
+      });
+      expect(result.classification.evidence).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ code: "ready-to-run-signature-observed" }),
+          expect.objectContaining({ code: evidence }),
+        ]),
+      );
+    },
+  );
+
+  it("classifies crossgen2 ReadyToRun output without ILONLY as modern .NET", () => {
+    // crossgen2 writes IL_LIBRARY | STRONGNAMESIGNED and clears ILONLY.
+    const bytes = buildManagedPeFixture({ readyToRun: true, cliFlags: 0xc });
+    const result = inspectManagedArtifactBytes(
+      bytes,
+      managedPeFixtureTarget(bytes),
+    );
+
+    expect(result.classification).toMatchObject({
+      runtime_family: "modern-dotnet",
+      implementation: "cil-and-ready-to-run",
+    });
+    expect(result.classification.evidence).toContainEqual(
+      expect.objectContaining({ code: "ready-to-run-signature-observed" }),
+    );
+    expect(result.classification.evidence).not.toContainEqual(
+      expect.objectContaining({ code: "cli-il-only-clear" }),
+    );
+  });
+
+  it("preserves ReadyToRun runtime identity after metadata capacity is exhausted", () => {
+    const bytes = buildManagedPeFixture({
+      readyToRun: true,
+      cliFlags: 0xc,
+      references: ["x".repeat(12 * 1024 * 1024)],
+    });
+    const result = inspectManagedArtifactBytes(
+      bytes,
+      managedPeFixtureTarget(bytes),
+    );
+    expect(result.classification).toMatchObject({
+      status: "managed",
+      runtime_family: "modern-dotnet",
+    });
+    expect(result.coverage.issues).toContainEqual(
+      expect.objectContaining({ code: "resource-limit" }),
+    );
+  });
+
+  it("keeps a clear ILONLY flag without ReadyToRun as mixed CLR/native", () => {
+    const bytes = buildManagedPeFixture({ cliFlags: 0 });
+    const result = inspectManagedArtifactBytes(
+      bytes,
+      managedPeFixtureTarget(bytes),
+    );
+
+    expect(result.classification).toMatchObject({
+      runtime_family: "mixed-clr-native",
+      implementation: "cpp-cli-mixed",
+    });
+    expect(result.classification.evidence).toContainEqual(
+      expect.objectContaining({ code: "cli-il-only-clear" }),
+    );
   });
 });
 

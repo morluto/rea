@@ -1,17 +1,4 @@
-const sourceProjects = [
-  "domain",
-  "services",
-  "adapters",
-  "composition",
-  "conformance",
-  "evaluation",
-];
-
-const sourceTest = (path) =>
-  path.startsWith("src/") ||
-  ["composition", "conformance", "evaluation"].some((project) =>
-    path.startsWith(`tests/${project}/`),
-  );
+import { SOURCE_TEST_PROJECTS, projectForTest } from "./test-projects.mjs";
 
 /** Parse explicit test paths and an optional branch-comparison base. */
 export const parseDevelopmentTestRequest = (mode, arguments_) => {
@@ -35,10 +22,9 @@ export const parseDevelopmentTestRequest = (mode, arguments_) => {
         path.split("/").some((part) => part === ".." || part === ".")
       )
         throw new Error(`Expected an exact repository test path: ${argument}`);
-      if (mode !== "focused" && !sourceTest(path))
-        throw new Error(
-          `Use test:focused for compiled boundary tests: ${path}`,
-        );
+      const project = projectForTest(path);
+      if (mode !== "focused" && project.group !== "source")
+        throw new Error(`Use test:focused for built test projects: ${path}`);
       paths.push(path);
     }
   }
@@ -52,11 +38,18 @@ export const parseDevelopmentTestRequest = (mode, arguments_) => {
 // Test-only outputs are declared beside the test planner rather than becoming
 // runtime or typecheck prerequisites. Add a consumer here when it reads one.
 const artifactConsumers = {
+  "artifacts:skills": [
+    "tests/boundary/cli/guidanceCli.test.ts",
+    "tests/boundary/guidanceSearch.test.ts",
+    "tests/boundary/mcp/registerGuidanceTools.test.ts",
+  ],
   "artifacts:mcp-catalog": [
+    "tests/boundary/mcp/deferredRuntime.test.ts",
     "tests/boundary/mcp/contractPresentation.test.ts",
     "tests/boundary/mcp/toolSchemaValidity.test.ts",
   ],
   "artifacts:product-catalog": [
+    "tests/boundary/filesystem/documentationFacts.test.ts",
     "tests/boundary/filesystem/productCatalog.test.ts",
   ],
   "artifacts:managed-evidence": [
@@ -72,9 +65,14 @@ export const developmentTestPlan = (request, baseCommit) => {
     !/^[a-f0-9]{40,64}$/u.test(baseCommit ?? "")
   )
     throw new Error("Changed tests require a resolved Git merge base");
-  const projects = request.mode === "focused" ? [] : sourceProjects;
+  const projects =
+    request.mode === "focused"
+      ? []
+      : SOURCE_TEST_PROJECTS.map(({ name }) => name);
   return {
-    needsBuild: request.paths.some((path) => !sourceTest(path)),
+    needsBuild: request.paths.some(
+      (path) => projectForTest(path).group === "built",
+    ),
     artifactTasks: Object.entries(artifactConsumers).flatMap(
       ([task, consumers]) =>
         request.paths.some((path) => consumers.includes(path)) ? [task] : [],

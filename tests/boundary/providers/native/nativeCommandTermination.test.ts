@@ -8,6 +8,7 @@ import {
   type NativeCommandLauncher,
 } from "../../../../src/native/CommandRunner.js";
 import { ok } from "../../../../src/domain/result.js";
+import { DarwinProcessOwnershipInspectionError } from "../../../../src/process/DarwinProcessRunTokenReader.js";
 
 afterEach(() => vi.unstubAllEnvs());
 
@@ -75,7 +76,11 @@ it.skipIf(process.platform === "win32")(
       PATH: "/selected-path",
     };
     const runner = new XcrunCommandRunner(environment, async () =>
-      ok({ path: process.execPath, sha256: "a".repeat(64) }),
+      ok({
+        invocationPath: process.execPath,
+        resolvedPath: process.execPath,
+        sha256: "a".repeat(64),
+      }),
     );
     environment.REA_NATIVE_SELECTED = "mutated-after-construction";
     const captured = await runner.run(
@@ -140,7 +145,12 @@ it.skipIf(process.platform === "win32")(
     };
     const runner = new XcrunCommandRunner(
       {},
-      async () => ok({ path: process.execPath, sha256: "a".repeat(64) }),
+      async () =>
+        ok({
+          invocationPath: process.execPath,
+          resolvedPath: process.execPath,
+          sha256: "a".repeat(64),
+        }),
       launcher,
     );
 
@@ -194,7 +204,11 @@ it.skipIf(process.platform === "win32")(
       .update(await readFile(process.execPath))
       .digest("hex");
     const runner = new XcrunCommandRunner({}, async () =>
-      ok({ path: process.execPath, sha256 }),
+      ok({
+        invocationPath: process.execPath,
+        resolvedPath: process.execPath,
+        sha256,
+      }),
     );
     const exited = await runner.run("file", ["-e", "process.exit(1)"], {
       acceptNonZero: true,
@@ -210,3 +224,25 @@ it.skipIf(process.platform === "win32")(
     if (!killed.ok) expect(killed.error.reason).toBe("nonzero-exit");
   },
 );
+
+it("keeps the ownership helper prerequisite when xcrun cannot be supervised", async () => {
+  const inspection = new DarwinProcessOwnershipInspectionError(
+    "macOS process ownership inspection requires the Apple Swift compiler via xcrun",
+  );
+  const runner = new XcrunCommandRunner({}, undefined, () =>
+    Promise.reject(inspection),
+  );
+
+  const result = await runner.run("file", [], {});
+
+  expect(result.ok).toBe(false);
+  if (result.ok) return;
+  expect(result.error.preparationFailure).toBe(inspection);
+  expect(result.error).toMatchObject({
+    tool: "file",
+    reason: "io",
+    preparationFailure: inspection,
+    detail: inspection.message,
+    cause: { tool: "xcrun", detail: inspection.message, cause: inspection },
+  });
+});

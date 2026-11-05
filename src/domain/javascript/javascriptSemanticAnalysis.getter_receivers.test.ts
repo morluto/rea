@@ -34,6 +34,38 @@ const getterReceivers = [
     "const outer = { box: { x: 1, get self() { return this; } } }; outer.box.self.x = 2; return outer.box.x;",
   ],
   [
+    "array element",
+    "const arr = [{ x: 1, get self() { return this; } }]; arr[0].self.x = 2; return arr[0].x;",
+  ],
+  [
+    "array element after a hole",
+    "const arr = [, { x: 1, get self() { return this; } }]; arr[1].self.x = 2; return arr[1].x;",
+  ],
+  [
+    "mixed object and array owners",
+    "const outer = { rows: [{ box: { x: 1, get self() { return this; } } }] }; outer.rows[0].box.self.x = 2; return outer.rows[0].box.x;",
+  ],
+  [
+    "assigned owner",
+    "let box; box = { x: 1, get self() { return this; } }; box.self.x = 2; return box.x;",
+  ],
+  [
+    "saved array receiver alias",
+    "const arr = [{ x: 1, get self() { return this; } }]; const saved = arr[0].self; saved.x = 2; return arr[0].x;",
+  ],
+  [
+    "old receiver captured inside its replacement initializer",
+    "const old = { x: 1 }; let box = old; box = { old: box, get self() { return this; } }; box.self.old.x = 2; return old.x;",
+  ],
+  [
+    "array receiver after an unknown spread",
+    "const arr = [...items, { x: 1, get self() { return this; } }]; arr[index].self.x = 2; return arr[index].x;",
+  ],
+  [
+    "saved receiver before its array alias is reassigned",
+    "const original = [{ x: 1, get self() { return this; } }]; let arr = original; const saved = arr[0].self; arr = [{ x: 1 }]; saved.x = 2; return original[0].x;",
+  ],
+  [
     "inherited receiver field",
     "const shared = { x: 1 }; class A { get v() { return this.s; } } class B extends A { s = shared; } new B().v.x = 2; return shared.x;",
   ],
@@ -75,7 +107,7 @@ const getterReceivers = [
   ],
 ] as const;
 
-describe("getter receiver mutation aliases (#1665)", () => {
+describe("getter receiver mutation aliases (#1665, #2654)", () => {
   it.each(getterReceivers)(
     "does not report a stale literal through %s",
     (_shape, body) => {
@@ -102,6 +134,42 @@ describe("getter receiver mutation aliases (#1665)", () => {
     [
       "unrelated sibling",
       "const box = { x: 1, y: 1, get self() { return this; } }; box.self.y = 2; return box.x;",
+    ],
+    [
+      "array receiver read without write",
+      "const arr = [{ x: 1, get self() { return this; } }]; const saved = arr[0].self; return arr[0].x;",
+    ],
+    [
+      "assigned receiver read without write",
+      "let box; box = { x: 1, get self() { return this; } }; const saved = box.self; return box.x;",
+    ],
+    [
+      "unrelated array receiver property",
+      "const arr = [{ x: 1, y: 1, get self() { return this; } }]; arr[0].self.y = 2; return arr[0].x;",
+    ],
+    [
+      "unrelated array element",
+      "const arr = [{ x: 1, get self() { return this; } }, { x: 1 }]; arr[0].self.x = 2; return arr[1].x;",
+    ],
+    [
+      "array replacement after a receiver was captured",
+      "const original = [{ x: 1, get self() { return this; } }]; const replacement = [{ x: 1 }]; let arr = original; const saved = arr[0].self; arr = replacement; saved.x = 2; return replacement[0].x;",
+    ],
+    [
+      "known array prefix before a spread receiver",
+      "const arr = [{ x: 1 }, ...items, { x: 1, get self() { return this; } }]; arr[1].self.x = 2; return arr[0].x;",
+    ],
+    [
+      "outer binding shadowed by an assigned receiver",
+      "let box; box = { x: 1 }; { let box; box = { x: 1, get self() { return this; } }; box.self.x = 2; } return box.x;",
+    ],
+    [
+      "old object before an unconditional receiver assignment",
+      "const old = { x: 1 }; let box = old; box = { x: 1, get self() { return this; } }; box.self.x = 2; return old.x;",
+    ],
+    [
+      "unmodified old receiver captured inside its replacement initializer",
+      "const old = { x: 1 }; let box = old; box = { x: 1, old: box, get self() { return this; } }; box.self.x = 2; return old.x;",
     ],
     [
       "replace getter",

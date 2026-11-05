@@ -1,4 +1,5 @@
 import type { ProcessCaptureCleanupReport } from "../../domain/process/processCapture.js";
+import { monotonicProcessCaptureClock } from "./ProcessCaptureClock.js";
 
 /**
  * Progress port accepted by process capture.
@@ -52,16 +53,18 @@ const formatProgressMessage = (
   const dispositionText =
     disposition === undefined ? "" : ` disposition=${disposition}`;
   const cleanupText =
-    cleanup === undefined
-      ? ""
-      : ` owned_process_group=${cleanup.owned_process_group.state} terminal_renderer=${cleanup.terminal_renderer.state} temporary_root=${cleanup.temporary_root.state}`;
+    cleanup !== undefined
+      ? ` owned_process_group=${cleanup.owned_process_group.state} terminal_renderer=${cleanup.terminal_renderer.state} temporary_root=${cleanup.temporary_root.state}`
+      : disposition === undefined
+        ? ""
+        : " owned_process_group=unverified terminal_renderer=unverified temporary_root=unverified";
   return `${status}${dispositionText}${cleanupText}`;
 };
 
 /** Serialize observed capture status through one rate-limited reporter. */
 export const createProcessCaptureProgressTracker = (
   progress: ProcessCaptureProgress | undefined,
-  now: () => number = Date.now,
+  now: () => number = monotonicProcessCaptureClock,
 ) => {
   const started = now();
   let completed = 0;

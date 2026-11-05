@@ -1,10 +1,11 @@
+import { projectCliAnalysisResult } from "../../../src/cli/projectCliAnalysisResult.js";
 import { parseConfig } from "../../../src/config/parseConfig.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { describe, expect, it, onTestFinished } from "vitest";
 
 import type { AnalysisOperationPort } from "../../../src/application/AnalysisProvider.js";
 import { runDirectAnalysis } from "../../../src/application/DirectAnalysis.js";
-import { functionDossierSchema } from "../../../src/domain/hopperValues.js";
+import { functionDossierSchema } from "../../../src/domain/native/functionDossier.js";
 import { ghidraFunctionDossier } from "../../../src/domain/ghidraValues.fixture.js";
 import {
   jsonValueSchema,
@@ -14,6 +15,7 @@ import { parseEvidence } from "../../../src/domain/evidence.js";
 import { ok } from "../../../src/domain/result.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { observed } from "../../fixtures/analysisExecution.js";
+import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import {
   createBinarySessionTargets,
   createTestBinarySession,
@@ -33,6 +35,53 @@ const connect = async (analysis: AnalysisOperationPort) => {
   return client;
 };
 
+const invalidArguments = [
+  [
+    "list_procedures",
+    { document: null },
+    { path: ["document"], reason: "invalid_type", expected: "string" },
+  ],
+  [
+    "procedure_pseudo_code",
+    { procedure: "main", document: 3 },
+    { path: ["document"], reason: "invalid_type", expected: "string" },
+  ],
+  [
+    "search_strings",
+    { pattern: "entry", case_sensitive: null },
+    {
+      path: ["case_sensitive"],
+      reason: "invalid_type",
+      expected: "boolean",
+    },
+  ],
+  [
+    "search_bytes",
+    { pattern: "??" },
+    { path: ["pattern"], reason: "invalid_value" },
+  ],
+  [
+    "search_bytes",
+    { pattern: "48 8B", mask: "ff" },
+    { path: ["mask"], reason: "invalid_value" },
+  ],
+  [
+    "search_bytes",
+    { pattern: "4?" },
+    { path: ["pattern"], reason: "invalid_value" },
+  ],
+  [
+    "search_bytes",
+    { pattern: "48", limit: 1001 },
+    { path: ["limit"], reason: "out_of_range", maximum: 1000 },
+  ],
+  [
+    "search_bytes",
+    { pattern: "48", cursor: null },
+    { path: ["cursor"], reason: "invalid_type", expected: "string" },
+  ],
+] as const;
+
 describe("official operation arguments", () => {
   it("dispatches equivalent CLI and MCP arguments while retaining omissions and defaults", async () => {
     const [path] = await createBinarySessionTargets();
@@ -43,7 +92,23 @@ describe("official operation arguments", () => {
     const execute: AnalysisOperationPort["execute"] = (name, parameters) => {
       calls.push({ name, parameters });
       return Promise.resolve(
-        observed(name === "search_strings" ? [] : "int main() {}"),
+        observed(
+          name === "search_bytes"
+            ? {
+                matches: [],
+                searched: {
+                  blocks: [],
+                  bytes: 0,
+                  skipped_uninitialized: [],
+                  skipped_not_loaded: [],
+                },
+                complete: true,
+                next_cursor: null,
+              }
+            : name === "search_strings"
+              ? []
+              : "int main() {}",
+        ),
       );
     };
     const createSession = () =>
@@ -54,11 +119,15 @@ describe("official operation arguments", () => {
     const dependencies = {
       readConfiguration: () => parseConfig({}),
       createBinarySession: createSession,
+      createArtifactBinarySession: createSession,
+      createNativeDispatchBinarySession: createSession,
+      createNativeBinarySession: createSession,
       createManagedBinarySession: createSession,
     };
     const client = await connect({ execute });
     for (const [name, mcpParameters, cliParameters] of [
       ["procedure_pseudo_code", { procedure: "main" }, { procedure: "main" }],
+      ["search_bytes", { pattern: "48 ??" }, { pattern: "48 ??", limit: 100 }],
       [
         "search_strings",
         { pattern: "entry" },
@@ -66,7 +135,9 @@ describe("official operation arguments", () => {
       ],
     ] as const) {
       const cli = parseEvidence(
-        await runDirectAnalysis(dependencies, path, name, cliParameters),
+        await runDirectAnalysis(dependencies, path, name, cliParameters).then(
+          projectCliAnalysisResult,
+        ),
       );
       const mcp = await client.callTool({ name, arguments: mcpParameters });
       expect(mcp.isError).not.toBe(true);
@@ -86,20 +157,32 @@ describe("official operation arguments", () => {
     const client = await connect({
       execute: (name) => {
         calls.push(name);
-        return Promise.resolve(observed(null));
+        return Promise.resolve(observed([]));
       },
     });
-    for (const [name, parameters] of [
-      ["list_procedures", { document: null }],
-      ["procedure_pseudo_code", { procedure: "main", document: 3 }],
-      ["search_strings", { pattern: "entry", case_sensitive: null }],
-    ] as const) {
+    for (const [name, parameters, issue] of invalidArguments) {
       const result = await client.callTool({ name, arguments: parameters });
-      expect(result.isError).toBe(true);
+      expect(parseMcpToolError(result)).toMatchObject({
+        error: {
+          code: "invalid_request",
+          category: "invalid_input",
+          retryable: false,
+          recovery: { kind: "inspect_input_contract", operation: name },
+          details: { operation: name, issues: [issue] },
+        },
+      });
     }
     expect(calls).toEqual([]);
+    const valid = await client.callTool({
+      name: "list_procedures",
+      arguments: {},
+    });
+    expect(valid.isError).not.toBe(true);
+    expect(calls).toEqual(["list_procedures"]);
   });
+});
 
+describe("official operation arguments", () => {
   it("preserves existing annotations when updates omit them and keeps empty clearing text", async () => {
     const dossier = functionDossierSchema.parse(ghidraFunctionDossier());
     const annotations = {

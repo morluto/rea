@@ -1,13 +1,15 @@
 import { z } from "zod";
 
-import { localPathStringSchema } from "../localPath.js";
-import { CANONICAL_BASE64_PATTERN } from "../stringPatterns.js";
+import type { BinaryArchitecture } from "../binaryTargetTypes.js";
+import { pwntoolsTimeoutField } from "./nativeDeadlines.js";
+import { absoluteLocalPathStringSchema } from "../localPath.js";
+import { canonicalBase64Schema } from "../stringPatterns.js";
 import { recordedNoteCoverageIssues } from "./recordedCrashNoteCoverage.js";
 
 const hex = z.string().regex(/^0x(?:0|[1-9a-f][0-9a-f]{0,15})$/);
-const index = z.number().int().nonnegative();
-const signed32 = z.number().int().min(-2147483648).max(2147483647);
-const base64 = z.string().regex(CANONICAL_BASE64_PATTERN);
+const index = z.int().nonnegative();
+const signed32 = z.int().min(-2147483648).max(2147483647);
+const base64 = canonicalBase64Schema;
 const range = z.strictObject({ offset: hex, bytes: hex });
 const diagnostics = z.strictObject({
   stdout: z.string(),
@@ -17,8 +19,17 @@ const diagnostics = z.strictObject({
 // Exact b"CORE\0"; a lossy display label cannot establish the Linux note ABI.
 const LINUX_CORE_OWNER_BASE64 = "Q09SRQA=";
 
+/** Source identity controls interpretation; decoder labels are display facts. */
+export const isLinuxCoreNote = (
+  note:
+    | { readonly owner_bytes_base64: string; readonly type_id: number }
+    | undefined,
+  type: number,
+): boolean =>
+  note?.owner_bytes_base64 === LINUX_CORE_OWNER_BASE64 && note.type_id === type;
+
 /** Complete register identities in the supported Linux amd64 PRSTATUS ABI order. */
-export const RECORDED_LINUX_AMD64_REGISTERS: readonly string[] = [
+const RECORDED_LINUX_AMD64_REGISTERS: readonly string[] = [
   "r15",
   "r14",
   "r13",
@@ -47,11 +58,99 @@ export const RECORDED_LINUX_AMD64_REGISTERS: readonly string[] = [
   "fs",
   "gs",
 ];
-const supportedRegisters = new Set(RECORDED_LINUX_AMD64_REGISTERS);
+const RECORDED_LINUX_AARCH64_REGISTERS: readonly string[] = [
+  "x0",
+  "x1",
+  "x2",
+  "x3",
+  "x4",
+  "x5",
+  "x6",
+  "x7",
+  "x8",
+  "x9",
+  "x10",
+  "x11",
+  "x12",
+  "x13",
+  "x14",
+  "x15",
+  "x16",
+  "x17",
+  "x18",
+  "x19",
+  "x20",
+  "x21",
+  "x22",
+  "x23",
+  "x24",
+  "x25",
+  "x26",
+  "x27",
+  "x28",
+  "x29",
+  "x30",
+  "sp",
+  "pc",
+  "pstate",
+];
+
+/** Recorded-core architectures whose Linux note ABI is interpreted. */
+export const RECORDED_LINUX_CORE_ARCHITECTURES = [
+  "x86_64-little-endian",
+  "aarch64-little-endian",
+] as const;
+
+export type RecordedCrashArchitecture =
+  (typeof RECORDED_LINUX_CORE_ARCHITECTURES)[number];
+
+/**
+ * ABI facts for one recorded-core architecture, measured from unchanged pwntools
+ * 4.15.0 `elf_prstatus_*` and `user_regs_struct_*` structures and mirrored by
+ * `bridge/pwntools/recorded_crash_impl.py`. Both profiles place `pr_cursig` at
+ * 12, `pr_pid` at 32 and the register window at 112; the ELF machine, the window
+ * contents and the Evidence CPU family differ per profile.
+ */
+export const RECORDED_LINUX_CORE_PROFILES: Record<
+  RecordedCrashArchitecture,
+  {
+    readonly machine: number;
+    readonly evidenceArchitecture: BinaryArchitecture;
+    readonly registers: readonly string[];
+    readonly registerBytes: number;
+    readonly registerOffset: number;
+    readonly prstatusBytes: number;
+  }
+> = {
+  "x86_64-little-endian": {
+    machine: 62,
+    evidenceArchitecture: "x86_64",
+    registers: RECORDED_LINUX_AMD64_REGISTERS,
+    registerBytes: 8,
+    registerOffset: 112,
+    prstatusBytes: 336,
+  },
+  "aarch64-little-endian": {
+    machine: 183,
+    evidenceArchitecture: "arm64",
+    registers: RECORDED_LINUX_AARCH64_REGISTERS,
+    registerBytes: 8,
+    registerOffset: 112,
+    prstatusBytes: 392,
+  },
+};
+
+const recordedCoreRegisterSets: Record<
+  RecordedCrashArchitecture,
+  ReadonlySet<string>
+> = {
+  "x86_64-little-endian": new Set(RECORDED_LINUX_AMD64_REGISTERS),
+  "aarch64-little-endian": new Set(RECORDED_LINUX_AARCH64_REGISTERS),
+};
 
 /** Select an explicit recording and optionally request debugger-derived mapping context. */
 export const inspectRecordedCrashInputSchema = z.strictObject({
-  path: localPathStringSchema.describe(
+  path: absoluteLocalPathStringSchema.describe(
     "Absolute filesystem path to a supplied Linux ELF core",
   ),
   include_debugger_context: z
@@ -60,6 +159,7 @@ export const inspectRecordedCrashInputSchema = z.strictObject({
     .describe(
       "Add core-only mapping candidates through caller-supplied GDB/pwndbg",
     ),
+  pwntools_timeout_ms: pwntoolsTimeoutField,
 });
 
 /** Debugger map candidates preserve reported flags; zero does not establish absent permissions. */
@@ -108,13 +208,14 @@ const recordedCrashObjectSchema = z.strictObject({
     bytes: index,
   }),
   format: z.literal("elf-core"),
-  architecture: z.literal("x86_64-little-endian"),
+  architecture: z.enum(RECORDED_LINUX_CORE_ARCHITECTURES),
   target_execution: z.literal("not-performed"),
   live_process_identity: z.literal("unknown"),
   segments: z.array(
     z.strictObject({
       index,
       type: z.union([z.string(), index]),
+      type_id: index.max(0xffffffff),
       header_location: range,
       offset: hex,
       file_size: hex,
@@ -131,6 +232,7 @@ const recordedCrashObjectSchema = z.strictObject({
       index,
       segment_index: index,
       type: z.union([z.string(), index]),
+      type_id: index.max(0xffffffff),
       location: range,
       owner_location: range,
       owner_bytes_base64: base64,
@@ -150,7 +252,7 @@ const recordedCrashObjectSchema = z.strictObject({
     z.strictObject({
       note_index: index,
       historical_pid: signed32,
-      recorded_current_signal: z.number().int().min(-32768).max(32767),
+      recorded_current_signal: z.int().min(-32768).max(32767),
       registers: z.array(
         z.strictObject({
           name: z.string().min(1),
@@ -207,6 +309,8 @@ export const recordedCrashSchema = recordedCrashObjectSchema.superRefine(
     ))
       fail(issue);
     for (const [position, segment] of value.segments.entries()) {
+      if (typeof segment.type === "number" && segment.type !== segment.type_id)
+        fail("Numeric segment type differs from its source identity.");
       if (position !== segment.index || !within(segment.header_location))
         fail("Invalid original segment identity or header range.");
       if (
@@ -215,26 +319,40 @@ export const recordedCrashSchema = recordedCrashObjectSchema.superRefine(
       )
         fail("Recorded segment exceeds artifact bytes.");
       if (
-        segment.type === "PT_LOAD" &&
+        segment.type_id === 1 &&
         BigInt(segment.file_size) > BigInt(segment.memory_size)
       )
         fail("Recorded PT_LOAD file size exceeds memory size.");
     }
     for (const [position, note] of value.notes.entries()) {
       const segment = value.segments[note.segment_index];
-      if (position !== note.index || segment?.type !== "PT_NOTE") {
+      if (position !== note.index || segment?.type_id !== 4) {
         fail("Invalid original note identity or segment reference.");
         continue;
       }
-      const decodedLength = (raw: string) =>
-        BigInt(
-          (raw.length / 4) * 3 -
-            (raw.endsWith("==") ? 2 : raw.endsWith("=") ? 1 : 0),
+      const ownerBytes = Buffer.from(note.owner_bytes_base64, "base64");
+      const terminator = ownerBytes.indexOf(0);
+      const ownerDisplay =
+        ownerBytes.length === 0
+          ? null
+          : ownerBytes.subarray(0, terminator).toString("utf8");
+      if (
+        (ownerBytes.length > 0 && terminator < 0) ||
+        note.owner_display !== ownerDisplay
+      )
+        fail("Note owner display differs from its retained bytes.");
+      if (typeof note.type === "number" && note.type !== note.type_id)
+        fail("Numeric note type differs from its source identity.");
+      if (
+        note.owner_bytes_base64 !== LINUX_CORE_OWNER_BASE64 &&
+        note.type !== note.type_id
+      )
+        fail(
+          "Uninterpreted note owners must retain their numeric type identity.",
         );
       if (
-        decodedLength(note.owner_bytes_base64) !==
-          BigInt(note.owner_location.bytes) ||
-        decodedLength(note.descriptor_bytes_base64) !==
+        BigInt(ownerBytes.length) !== BigInt(note.owner_location.bytes) ||
+        BigInt(Buffer.byteLength(note.descriptor_bytes_base64, "base64")) !==
           BigInt(note.descriptor_location.bytes)
       )
         fail("Raw note lengths differ from their source ranges.");
@@ -258,7 +376,7 @@ export const recordedCrashSchema = recordedCrashObjectSchema.superRefine(
     for (const padding of value.note_padding) {
       const segment = value.segments[padding.segment_index];
       if (
-        segment?.type !== "PT_NOTE" ||
+        segment?.type_id !== 4 ||
         !within(
           padding.location,
           BigInt(segment.offset),
@@ -268,13 +386,11 @@ export const recordedCrashSchema = recordedCrashObjectSchema.superRefine(
         fail("Invalid recorded note padding range.");
     }
     for (const [kind, rows] of [
-      ["NT_PRSTATUS", value.threads],
-      ["NT_SIGINFO", value.signals],
+      [1, value.threads],
+      [0x53494749, value.signals],
     ] as const) {
-      const matchingNotes = value.notes.filter(
-        (note) =>
-          note.type === kind &&
-          note.owner_bytes_base64 === LINUX_CORE_OWNER_BASE64,
+      const matchingNotes = value.notes.filter((note) =>
+        isLinuxCoreNote(note, kind),
       );
       if (
         rows.length !== matchingNotes.length ||
@@ -284,19 +400,17 @@ export const recordedCrashSchema = recordedCrashObjectSchema.superRefine(
           "Each supported raw note requires exactly one corresponding interpretation.",
         );
     }
+    const profile = RECORDED_LINUX_CORE_PROFILES[value.architecture];
+    const profileRegisters = recordedCoreRegisterSets[value.architecture];
     for (const thread of value.threads) {
       const note = value.notes[thread.note_index];
-      if (
-        note?.type !== "NT_PRSTATUS" ||
-        note.owner_display !== "CORE" ||
-        note.owner_bytes_base64 !== LINUX_CORE_OWNER_BASE64
-      ) {
+      if (note === undefined || !isLinuxCoreNote(note, 1)) {
         fail("Thread references a different note kind.");
         continue;
       }
       if (
-        thread.registers.length !== RECORDED_LINUX_AMD64_REGISTERS.length ||
-        !thread.registers.every(({ name }) => supportedRegisters.has(name)) ||
+        thread.registers.length !== profile.registers.length ||
+        !thread.registers.every(({ name }) => profileRegisters.has(name)) ||
         new Set(thread.registers.map(({ name }) => name)).size !==
           thread.registers.length
       )
@@ -305,7 +419,7 @@ export const recordedCrashSchema = recordedCrashObjectSchema.superRefine(
         );
       for (const register of thread.registers)
         if (
-          BigInt(register.location.bytes) !== 8n ||
+          BigInt(register.location.bytes) !== BigInt(profile.registerBytes) ||
           !within(
             register.location,
             BigInt(note.descriptor_location.offset),
@@ -316,12 +430,7 @@ export const recordedCrashSchema = recordedCrashObjectSchema.superRefine(
           fail("Register source exceeds its descriptor.");
     }
     for (const signal of value.signals) {
-      if (
-        value.notes[signal.note_index]?.type !== "NT_SIGINFO" ||
-        value.notes[signal.note_index]?.owner_display !== "CORE" ||
-        value.notes[signal.note_index]?.owner_bytes_base64 !==
-          LINUX_CORE_OWNER_BASE64
-      )
+      if (!isLinuxCoreNote(value.notes[signal.note_index], 0x53494749))
         fail("Signal references a different note kind.");
       const known =
         signal.number === 11 && (signal.code === 1 || signal.code === 2);
@@ -358,3 +467,14 @@ export type InspectRecordedCrashInput = z.output<
   typeof inspectRecordedCrashInputSchema
 >;
 export type RecordedCrash = z.output<typeof recordedCrashSchema>;
+
+/** Validated basic core evidence retained when requested debugger enrichment fails. */
+export type RecordedCrashPartialObservation = Omit<
+  RecordedCrash,
+  "debugger"
+> & {
+  readonly debugger: {
+    readonly status: "unavailable";
+    readonly requested: true;
+  };
+};

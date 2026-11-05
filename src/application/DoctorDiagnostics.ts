@@ -1,17 +1,15 @@
 import {
   SUPPORTED_NODE_VERSION_PROSE,
-  supportsNodeVersion,
+  supportsJavaScriptRuntime,
 } from "../domain/runtimeVersion.js";
-import { linuxHopperLauncherPath } from "./LinuxHopper.js";
+import { hopperLauncherDiscovery } from "./HopperLauncherDiscovery.js";
+import { macosMajorVersion } from "../domain/macosVersion.js";
+import { LINUX_HOPPER_SETUP_HOSTS, supportsReaHost } from "./LinuxHopper.js";
 import type {
   DoctorCheck,
   DoctorHost,
   DoctorProviderInspection,
 } from "./Doctor.js";
-
-const DEFAULT_HOPPER =
-  "/Applications/Hopper Disassembler.app/Contents/MacOS/hopper";
-const SYSTEM_LINUX_HOPPER = "/opt/hopper/bin/Hopper";
 
 /** Ordered environment diagnostics consumed by the Doctor report assembler. */
 export interface DoctorDiagnostics {
@@ -30,6 +28,9 @@ export const collectDoctorDiagnostics = async (
 
   const hopperPath = await findHopper(host);
   checks.push(hopperCheck(host, hopperPath));
+  const hopperTimeoutCheck = optionalHopperStartupTimeoutCheck(host);
+  if (hopperTimeoutCheck !== undefined) checks.push(hopperTimeoutCheck);
+  checks.push(...runtimeConfigurationChecks(host));
   const hopperVersionCheck = await optionalHopperVersionCheck(host, hopperPath);
   if (hopperVersionCheck !== undefined) checks.push(hopperVersionCheck);
 
@@ -76,6 +77,8 @@ export const doctorHealthy = (
     .every(({ ok }) => ok);
   const configuredProvidersHealthy = providerChecks
     .filter(({ name }) => {
+      // Validate the supplied setting independently of provider discovery.
+      if (name === "hopper-startup-timeout") return true;
       if (name.startsWith("hopper")) return providers.hopperConfigured;
       return providers.providerInspections?.some(
         (inspection) =>
@@ -91,7 +94,7 @@ export const doctorHealthy = (
   );
 };
 
-/** Bun passes when its reported Node.js compatibility version is supported. */
+/** Runtime support follows the shared rule, which judges Bun by its Node.js compatibility. */
 const nodeCheck = ({ runtime }: DoctorHost): DoctorCheck => {
   const failure = {
     remediation: `Install ${SUPPORTED_NODE_VERSION_PROSE}.`,
@@ -101,7 +104,7 @@ const nodeCheck = ({ runtime }: DoctorHost): DoctorCheck => {
     return {
       ...check(
         "node",
-        supportsNodeVersion(runtime.version),
+        supportsJavaScriptRuntime(runtime),
         runtime.version,
         failure,
       ),
@@ -110,7 +113,7 @@ const nodeCheck = ({ runtime }: DoctorHost): DoctorCheck => {
   return {
     ...check(
       "node",
-      supportsNodeVersion(runtime.nodeCompatibilityVersion),
+      supportsJavaScriptRuntime(runtime),
       `Bun ${runtime.version} (Node.js ${runtime.nodeCompatibilityVersion} compatibility)`,
       failure,
     ),
@@ -127,9 +130,23 @@ const hostCheck = async (host: DoctorHost): Promise<DoctorCheck> => {
     host.platform === "darwin" ? await host.macosVersion() : undefined;
   const linuxDistribution =
     host.platform === "linux" ? await host.linuxDistribution() : undefined;
+  const macosMajor = macosMajorVersion(macosVersion);
+  if (host.platform === "darwin" && macosMajor === undefined)
+    return {
+      name: "host",
+      ok: false,
+      classification: "unknown",
+      detail:
+        macosVersion === undefined
+          ? "The macOS version could not be determined."
+          : `The macOS version probe returned an unrecognized value: ${JSON.stringify(macosVersion)}.`,
+      remediation: "Check /usr/bin/sw_vers -productVersion and rerun doctor.",
+    };
   const supported =
-    (host.platform === "darwin" && parseMajor(macosVersion) >= 12) ||
-    (host.platform === "linux" && linuxDistribution?.supported === true) ||
+    (host.platform === "darwin" &&
+      macosMajor !== undefined &&
+      macosMajor >= 12) ||
+    (host.platform === "linux" && supportsReaHost(linuxDistribution)) ||
     (host.platform === "win32" && host.architecture === "x64");
   const detail =
     macosVersion ??
@@ -137,25 +154,20 @@ const hostCheck = async (host: DoctorHost): Promise<DoctorCheck> => {
       ? `${host.platform} ${host.architecture}`
       : `${linuxDistribution.id} ${linuxDistribution.versionId ?? "unknown"}`);
   return check("host", supported, detail, {
-    remediation:
-      "REA supports macOS 12+, Ubuntu 24.04+, Fedora 41+, Nobara 44+, 64-bit Arch Linux, CachyOS, Omarchy, and the experimental Windows x64 Ghidra P0 boundary.",
+    remediation: `REA supports macOS 12+, Linux distributions with a recognized apt, dnf, or pacman package family, and the experimental Windows x64 Ghidra P0 boundary; automated Hopper setup on Linux additionally requires ${LINUX_HOPPER_SETUP_HOSTS}.`,
     classification: "unsupported_host",
   });
 };
 
 const findHopper = async (host: DoctorHost): Promise<string | undefined> => {
-  const candidates =
-    host.configuredHopperPath === undefined
-      ? [
-          DEFAULT_HOPPER,
-          SYSTEM_LINUX_HOPPER,
-          linuxHopperLauncherPath(host.homeDirectory),
-          ...(await host.manualHopperPaths()),
-        ]
-      : [host.configuredHopperPath];
-  const hopperPath = await firstExecutable(host, candidates);
-  if (hopperPath !== undefined || host.configuredHopperPath !== undefined)
-    return hopperPath;
+  if (host.configuredHopperPath !== undefined)
+    return firstExecutable(host, [host.configuredHopperPath]);
+  const discovery = hopperLauncherDiscovery(host.platform, host.homeDirectory);
+  const fixed = await firstExecutable(host, discovery.candidates);
+  if (fixed !== undefined || !discovery.probesMacApplicationBundles)
+    return fixed;
+  const renamed = await firstExecutable(host, await host.manualHopperPaths());
+  if (renamed !== undefined) return renamed;
   const brewCandidate = await host.brewHopperPath();
   return firstExecutable(
     host,
@@ -192,22 +204,96 @@ const hopperCheck = (
     },
   );
 
+const optionalHopperStartupTimeoutCheck = (
+  host: DoctorHost,
+): DoctorCheck | undefined => {
+  const parsed = host.nativeConfiguration?.configuredHopperStartupTimeout;
+  if (parsed === undefined) return undefined;
+  return check(
+    "hopper-startup-timeout",
+    parsed.ok,
+    parsed.ok
+      ? `REA_HOPPER_STARTUP_TIMEOUT_MS=${String(parsed.value)}`
+      : `REA_HOPPER_STARTUP_TIMEOUT_MS: ${parsed.error.settings.map(({ constraint }) => constraint).join("; ")}`,
+    {
+      classification: "config_drift",
+      remediation:
+        "Unset REA_HOPPER_STARTUP_TIMEOUT_MS to use the default, or set it to a positive decimal integer from 1 to 2147483647 milliseconds.",
+    },
+  );
+};
+
+/**
+ * Project every native-analysis admission failure except the Hopper timeout,
+ * which already has its own check. Provider scopes include engine settings.
+ * Settings that block process start are marked for every doctor scope.
+ */
+const runtimeConfigurationChecks = (
+  host: DoctorHost,
+): readonly DoctorCheck[] => {
+  const issues = host.nativeConfiguration?.issues;
+  if (issues === undefined || issues.length === 0) return [];
+  const grouped: { setting: string; constraints: string[] }[] = [];
+  for (const issue of issues) {
+    if (issue.setting === "REA_HOPPER_STARTUP_TIMEOUT_MS") continue;
+    const existing = grouped.find((item) => item.setting === issue.setting);
+    if (existing === undefined)
+      grouped.push({ setting: issue.setting, constraints: [issue.constraint] });
+    else existing.constraints.push(issue.constraint);
+  }
+  return grouped.map(({ setting, constraints }) => ({
+    ...check(
+      `runtime-configuration:${setting}`,
+      false,
+      constraints
+        .map((constraint) =>
+          constraint.includes(setting)
+            ? constraint.replace(/\.$/u, "")
+            : `${setting}: ${constraint}`,
+        )
+        .join("; "),
+      {
+        classification: "config_drift",
+        remediation: `Correct ${setting} in the environment that starts REA (your shell or the MCP client's registration), then rerun.`,
+      },
+    ),
+    details: { setting },
+  }));
+};
+
 const optionalHopperVersionCheck = async (
   host: DoctorHost,
   hopperPath: string | undefined,
 ): Promise<DoctorCheck | undefined> => {
   if (host.platform !== "linux" || hopperPath === undefined) return undefined;
-  return check(
-    "hopper-version",
-    await host.supportedLinuxHopper(hopperPath),
-    hopperPath,
-    {
-      remediation: unsupportedHopperRemediation(
-        host.configuredHopperPath === hopperPath,
-      ),
-      classification: "config_drift",
-    },
-  );
+  const inspected = await host.inspectLinuxHopper(hopperPath);
+  const buildCheck = check("hopper-version", inspected.ok, hopperPath, {
+    remediation: unsupportedHopperRemediation(
+      host.configuredHopperPath === hopperPath,
+    ),
+    classification:
+      !inspected.ok &&
+      [
+        "release_metadata",
+        "download",
+        "verification_unavailable",
+        "cancelled",
+        "cleanup_failed",
+      ].includes(inspected.error.reason)
+        ? "unknown"
+        : "config_drift",
+  });
+  return {
+    ...buildCheck,
+    details: inspected.ok
+      ? {
+          reported_release_version: inspected.value.version,
+          launcher_sha256: inspected.value.sha256,
+          primary_fingerprint: inspected.value.primaryFingerprint,
+          source: inspected.value.source,
+        }
+      : { reason: inspected.error.reason, message: inspected.error.message },
+  };
 };
 
 const optionalHopperDemoCheck = async (
@@ -280,15 +366,13 @@ const providerDoctorChecks = (
     ...(candidate.remediation === null
       ? {}
       : { remediation: candidate.remediation }),
+    ...(candidate.details === undefined ? {} : { details: candidate.details }),
   }));
 
 const unsupportedHopperRemediation = (configured: boolean): string =>
   configured
-    ? "Unset or update HOPPER_LAUNCHER_PATH, install the Hopper build supported by this REA release, or update REA."
-    : "Install the Hopper build supported by this REA release, or update REA for a newer Hopper build.";
-
-const parseMajor = (version: string | undefined): number =>
-  Number.parseInt(version?.split(".")[0] ?? "0", 10);
+    ? "Check HOPPER_LAUNCHER_PATH and its publisher verification evidence. Run rea setup to install and retain an authenticated official Hopper package for offline use."
+    : "Run rea setup to install and retain an authenticated official Hopper package for offline use.";
 
 const providerCheckName = (providerId: string, name: string): boolean =>
   name === providerId || name.startsWith(`${providerId}-`);

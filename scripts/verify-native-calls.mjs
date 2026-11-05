@@ -10,6 +10,7 @@ import { promisify } from "node:util";
 import {
   artifactCli,
   artifactMcpResult,
+  artifactMcpCall,
   withArtifactMcp,
 } from "./lib/artifact-e2e.mjs";
 
@@ -225,7 +226,8 @@ const checkHardenedRuntime = async (directory, binary) => {
   assert.equal(denied.code, "capability_unavailable");
   assert.match(denied.details.reason, /^debugger-attach-denied: /u);
   await withArtifactMcp(blocked, async (client) => {
-    const deniedMcp = await client.callTool(
+    const deniedMcp = await artifactMcpCall(
+      client,
       {
         name: "observe_native_calls",
         arguments: INPUT,

@@ -107,7 +107,7 @@ const failedStartup = async (launcher: RetryCleanupLauncher) => {
     error: {
       _tag: "ProviderAdapterError",
       cleanupIncomplete: true,
-      cause: { _tag: "HopperTimeoutError" },
+      cause: { cause: { _tag: "HopperTimeoutError" } },
     },
   });
   const session = launcher.sessions[0];
@@ -184,6 +184,7 @@ it.each([false, true])(
       processSupervisor: supervisor,
       runtimeRoot,
       shutdownConfirmed: false,
+      externalApplication: undefined,
     };
     const socket = new Socket();
     onTestFinished(() => {
@@ -233,7 +234,7 @@ it("blocks a fresh launch while cleanup remains unverified", async () => {
     ok: false,
     error: {
       cleanupIncomplete: true,
-      cause: { _tag: "HopperTimeoutError" },
+      cause: { cause: { _tag: "HopperTimeoutError" } },
       diagnostics: { primary_error: { code: "provider_timeout" } },
     },
   });
@@ -263,7 +264,7 @@ it("preserves failed startup state through a blocked retry until cleanup succeed
     error: {
       _tag: "ProviderAdapterError",
       cleanupIncomplete: true,
-      cause: { _tag: "HopperTimeoutError" },
+      cause: { cause: { _tag: "HopperTimeoutError" } },
     },
   });
   // ...but must not wipe the failed-startup state: the client still
@@ -393,6 +394,7 @@ it("preserves confirmed document shutdown while retrying owned process cleanup",
       processSupervisor: supervisor,
       runtimeRoot,
       shutdownConfirmed: false,
+      externalApplication: undefined,
     } satisfies HopperOwnedResources,
     activeRequest: null,
     retainDocument: false,
@@ -457,6 +459,7 @@ it.each([
       processSupervisor: supervisor,
       runtimeRoot,
       shutdownConfirmed: false,
+      externalApplication: undefined,
     };
     const result = await cleanupHopperSession({
       socket: new Socket(),

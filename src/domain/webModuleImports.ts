@@ -4,16 +4,21 @@ import { traverseJavaScriptAst } from "./javascript/javascriptSemanticTraversal.
 import { parseJavaScriptSource } from "./javascript/javascriptSourceParser.js";
 import type { WebModuleImport } from "./webModuleTrace.js";
 import type { ExportedWebScript } from "./webScriptExport.js";
+import {
+  hasUncertainTypeOnlyModuleSideEffect,
+  semanticStaticModuleSource,
+} from "./javascript/javascriptModuleDeclaration.js";
 
-/** Collect native import syntax, excluding erased type-only references. */
+/** Collect module declarations, omitting whole-statement type-only forms. */
 export const collectWebModuleImports = (
   source: string,
+  sourcePath: string,
 ): {
   readonly imports: readonly WebModuleImport[];
   readonly state: "parsed" | "unparseable";
   readonly diagnostics: readonly string[];
 } => {
-  const ast = parseJavaScriptSource(source);
+  const ast = parseJavaScriptSource(source, sourcePath);
   if (ast === null)
     return {
       imports: [],
@@ -54,52 +59,28 @@ export const collectWebModuleImports = (
   };
   traverseJavaScriptAst(ast, {
     enter: (node) => {
-      if (node.type === "ImportDeclaration") {
-        if (node.importKind === "type" || node.importKind === "typeof") return;
-        if (
-          node.specifiers.length > 0 &&
-          node.specifiers.every(
-            (s) =>
-              s.type === "ImportSpecifier" &&
-              (s.importKind === "type" || s.importKind === "typeof"),
-          )
-        )
-          return;
-        add("static-import", node.source);
-      } else if (
-        node.type === "ExportAllDeclaration" ||
-        node.type === "ExportNamedDeclaration"
-      ) {
-        if (
-          node.exportKind === "type" ||
-          node.source === null ||
-          node.source === undefined
-        )
-          return;
-        if (
-          node.type === "ExportNamedDeclaration" &&
-          node.specifiers.length > 0 &&
-          node.specifiers.every(
-            (s) => s.type === "ExportSpecifier" && s.exportKind === "type",
-          )
-        )
-          return;
-        add("re-export", node.source);
+      const moduleSource = semanticStaticModuleSource(node);
+      if (moduleSource !== null) {
+        add(
+          node.type === "ImportDeclaration" ? "static-import" : "re-export",
+          moduleSource,
+        );
       } else if (node.type === "ImportExpression")
         add("dynamic-import", node.source);
-      else if (
-        node.type === "CallExpression" &&
-        node.callee.type === "Import" &&
-        node.arguments[0] !== undefined
-      )
-        add("dynamic-import", node.arguments[0]);
     },
   });
   imports.sort((a, b) => a.start.offset - b.start.offset);
   return {
     imports,
     state: "parsed",
-    diagnostics: ast.errors?.map((error) => error.message) ?? [],
+    diagnostics: [
+      ...(ast.errors?.map((error) => error.message) ?? []),
+      ...(hasUncertainTypeOnlyModuleSideEffect(ast.program)
+        ? [
+            "Compiler options are unavailable; inline type-only imports or re-exports may preserve a module side-effect dependency.",
+          ]
+        : []),
+    ],
   };
 };
 

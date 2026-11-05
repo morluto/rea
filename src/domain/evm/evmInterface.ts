@@ -1,19 +1,33 @@
 import { z } from "zod";
 
-import { localPathStringSchema } from "../localPath.js";
+import { absoluteLocalPathStringSchema } from "../localPath.js";
+import { solidityMetadataSchema } from "./solidityMetadata.js";
 
-const byteOffset = z.number().int().nonnegative();
+const byteOffset = z.int().nonnegative();
 const sha256 = z.string().regex(/^[a-f0-9]{64}$/);
+/** Owned EVMole worker deadline. Omission keeps this value. */
+export const DEFAULT_EVM_TIMEOUT_MS = 30_000;
+/** Largest delay supported without overflowing Node timers. */
+export const MAX_EVM_TIMEOUT_MS = 2_147_483_647;
 
 /** Select the carrier representation explicitly; no RPC or deployed-contract lookup is implied. */
 export const inspectEvmInterfaceInputSchema = z.strictObject({
-  path: localPathStringSchema.describe(
+  path: absoluteLocalPathStringSchema.describe(
     "Absolute path to caller-selected local bytecode carrier",
   ),
   encoding: z
     .enum(["raw", "hex"])
     .describe(
       "Raw bytes or UTF-8 hex with optional 0x prefix and outer ASCII whitespace",
+    ),
+  timeout_ms: z
+    .number()
+    .int()
+    .min(1)
+    .max(MAX_EVM_TIMEOUT_MS)
+    .optional()
+    .describe(
+      `Deadline in milliseconds for the owned EVMole worker command (default ${String(DEFAULT_EVM_TIMEOUT_MS)}), not carrier acquisition or final reply reads. An integer from 1 to ${String(MAX_EVM_TIMEOUT_MS)} applies on the next call. Fixed input, reply, diagnostic, address-space, and CPU allowances stay unchanged.`,
     ),
 });
 
@@ -34,6 +48,7 @@ export const evmInterfaceSchema = z
       kind: z.literal("unknown"),
       deployment_authenticity: z.literal("unknown"),
       hardfork: z.literal("unknown"),
+      metadata: solidityMetadataSchema.nullable().default(null),
     }),
     evidence_kind: z.literal("inferred"),
     functions: z.array(
@@ -61,6 +76,23 @@ export const evmInterfaceSchema = z
         path: ["bytecode"],
         message:
           "Selected byte count does not match the bytecode hex representation.",
+      });
+    const metadata = value.bytecode.metadata;
+    if (
+      metadata !== null &&
+      metadata.status !== "unavailable" &&
+      (metadata.bytecode_offset === null ||
+        metadata.cbor_bytes === null ||
+        metadata.bytecode_offset + metadata.cbor_bytes + 2 !==
+          value.bytecode.bytes ||
+        metadata.cbor_bytes !==
+          Number.parseInt(value.bytecode.hex.slice(-4), 16))
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["bytecode", "metadata"],
+        message:
+          "Metadata range must match the terminal length suffix in selected bytecode.",
       });
     for (const [index, fn] of value.functions.entries())
       if (fn.bytecode_offset >= value.bytecode.bytes)

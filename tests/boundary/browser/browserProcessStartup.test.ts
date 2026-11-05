@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { describe, expect } from "vitest";
@@ -9,11 +10,35 @@ import {
 } from "../../support/process/processFixture.js";
 
 import {
+  BROWSER_DEVTOOLS_STARTUP_TIMEOUT_MS,
   BrowserStartupError,
   waitForBrowserDevtoolsPort,
-} from "../../../src/browser/BrowserProcessStartup.js";
+} from "../../../scripts/lib/browser-process-startup.mjs";
+import { assertOrdinaryWindowsVerifierCaller } from "../../../scripts/lib/windows-ordinary-user-verifier.mjs";
 
 describe("browser process startup", () => {
+  it("requires a positively observed ordinary Windows verifier caller", () => {
+    expect(() =>
+      assertOrdinaryWindowsVerifierCaller({
+        administrator: false,
+        elevated: false,
+        integrityLevel: 8192,
+      }),
+    ).not.toThrow();
+
+    for (const token of [
+      { administrator: true, elevated: false },
+      { administrator: false, elevated: true },
+      { administrator: false },
+      { administrator: false, elevated: null },
+      null,
+    ]) {
+      expect(() => assertOrdinaryWindowsVerifierCaller(token)).toThrow(
+        /ordinary, non-elevated user token/u,
+      );
+    }
+  });
+
   it("returns a delayed valid DevToolsActivePort", async ({ processes }) => {
     const root = await temporaryRoot();
     const portPath = join(root, "DevToolsActivePort");
@@ -86,12 +111,58 @@ describe("browser process startup", () => {
         failure: "timeout",
         exitCode: null,
         signalCode: null,
+        startupTimeoutMs: 20,
       });
       expect(String(failure)).toContain("stderr=<empty>");
+      expect(String(failure)).toContain("timeoutMs=20");
     } finally {
       child.kill("SIGKILL");
       expect(await waitForExit(child, 5_000)).toBe(true);
     }
+  });
+
+  it("names the owner's deadline when a caller omits one", async ({
+    processes,
+  }) => {
+    const root = await temporaryRoot();
+    const child = processes.spawn(process.execPath, [
+      "-e",
+      "setTimeout(() => process.exit(3), 10)",
+    ]);
+
+    const failure = await waitForBrowserDevtoolsPort({
+      child,
+      executable: process.execPath,
+      activePortPath: join(root, "DevToolsActivePort"),
+      stderr: () => "owner default fixture",
+      pollIntervalMs: 5,
+    }).catch((cause: unknown) => cause);
+
+    expect(failure).toBeInstanceOf(BrowserStartupError);
+    expect(failure).toMatchObject({
+      failure: "exited",
+      startupTimeoutMs: BROWSER_DEVTOOLS_STARTUP_TIMEOUT_MS,
+    });
+    expect(String(failure)).toContain(
+      `timeoutMs=${String(BROWSER_DEVTOOLS_STARTUP_TIMEOUT_MS)}`,
+    );
+  });
+
+  it("keeps one owner for the DevToolsActivePort deadline", async () => {
+    expect(BROWSER_DEVTOOLS_STARTUP_TIMEOUT_MS).toBe(60_000);
+    const source = await readFile(
+      new URL(
+        "../../../scripts/lib/browser-runtime-fixture-lifecycle.mjs",
+        import.meta.url,
+      ),
+      "utf8",
+    );
+    expect(source).toContain(
+      "const deadline = performance.now() + BROWSER_DEVTOOLS_STARTUP_TIMEOUT_MS",
+    );
+    expect(source).toContain(
+      "timeoutMs: Math.max(1, deadline - performance.now())",
+    );
   });
 });
 

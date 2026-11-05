@@ -7,7 +7,7 @@ import { createWebTextArtifact } from "../../src/domain/webContentArtifact.js";
 import { analyzeJavaScriptApplication } from "../support/javascriptApplicationScope.js";
 import { createTestTempDirectory } from "./temporaryDirectory.js";
 
-export const SOURCE = `const worker = new Worker("./worker.js");\nexport const observed = worker;\n`;
+export const SOURCE = `const worker = new Worker(new URL("./worker.js", import.meta.url));\nexport const observed = worker;\n`;
 
 export const applicationFixture = async (): Promise<string> => {
   const root = await createTestTempDirectory("rea-runtime-reconciliation-");

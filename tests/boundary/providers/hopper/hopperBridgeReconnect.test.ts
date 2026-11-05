@@ -53,11 +53,29 @@ it.skipIf(process.platform === "win32")(
         thread_released: true,
       })),
       {
+        mode: "authenticated-idle",
+        requests: [
+          "health",
+          "health",
+          "health",
+          "shutdown_document",
+          "shutdown_document",
+        ],
+        listener_removed: true,
+        thread_released: true,
+      },
+      {
         mode: "expiry",
         requests: ["health"],
         listener_removed: true,
         thread_released: true,
       },
+      ...["initial-expiry", "silent-expiry"].map((mode) => ({
+        mode,
+        requests: [],
+        listener_removed: true,
+        thread_released: true,
+      })),
     ]);
   },
 );

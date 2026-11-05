@@ -13,13 +13,12 @@ import {
 import {
   canonicalTraceJson,
   processTraceCardinalityBounds,
+  processTraceIdentifierSchema,
   type ProcessTraceSpecification,
 } from "./processTraceSpecification.js";
 
-const identifierSchema = z.string().regex(/^[A-Za-z][A-Za-z0-9._\x2d]{0,63}$/u);
-
 const matchedEventSchema = z.strictObject({
-  event_id: identifierSchema,
+  event_id: processTraceIdentifierSchema,
   location: processObservationLocationSchema,
 });
 
@@ -32,7 +31,7 @@ const sideResultSchema = z.union([
   z.strictObject({
     ...sideResultShape,
     status: z.literal("pass"),
-    matched_variant: identifierSchema.nullable(),
+    matched_variant: processTraceIdentifierSchema.nullable(),
   }),
   z.strictObject({
     ...sideResultShape,
@@ -53,7 +52,7 @@ const diagnosticSchema = z.strictObject({
   ]),
   side: z.enum(["left", "right"]),
   message: z.string(),
-  event_ids: z.array(identifierSchema),
+  event_ids: z.array(processTraceIdentifierSchema),
   locations: z.array(processObservationLocationSchema),
 });
 
@@ -124,29 +123,125 @@ const failure = (input: FailureInput): EvaluatedSide => ({
   },
 });
 
+type FiniteTraceEvaluation =
+  | { readonly status: "pass"; readonly variant: string }
+  | {
+      readonly status: "fail";
+      readonly eventIds: readonly string[];
+      readonly locationIndexes: readonly number[];
+    };
+
+/** Distinguish pure omissions from displaced successors, without relaxing the language. */
+const finiteTraceOmissions = (
+  ids: readonly string[],
+  tokens: Extract<
+    ProcessTraceSpecification["language"],
+    { kind: "finite_traces" }
+  >["variants"][number]["trace"],
+): readonly string[] | undefined => {
+  let observed = 0;
+  const missing: string[] = [];
+  for (const token of tokens) {
+    const remaining = new Map<string, number>();
+    for (const id of typeof token === "string" ? [token] : token.unordered)
+      remaining.set(id, (remaining.get(id) ?? 0) + 1);
+    while (observed < ids.length) {
+      const id = ids[observed];
+      const count = id === undefined ? 0 : (remaining.get(id) ?? 0);
+      if (id === undefined || count === 0) break;
+      if (count === 1) remaining.delete(id);
+      else remaining.set(id, count - 1);
+      observed++;
+    }
+    for (const [id, count] of remaining)
+      for (let index = 0; index < count; index++) missing.push(id);
+  }
+  return observed === ids.length && missing.length > 0 ? missing : undefined;
+};
+
+/** Match variants once, retaining the best-prefix mismatch for attribution. */
 const evaluateFiniteTrace = (
   ids: readonly string[],
-  specification: ProcessTraceSpecification,
-): string | null => {
-  if (specification.language.kind !== "finite_traces") return null;
-  for (const variant of specification.language.variants) {
-    let offset = 0;
-    let accepted = true;
-    for (const token of variant.trace) {
-      if (typeof token === "string") {
-        if (ids[offset] !== token) accepted = false;
-        offset += 1;
-        continue;
-      }
-      const actual = ids.slice(offset, offset + token.unordered.length).sort();
-      const expected = [...token.unordered].sort();
-      if (canonicalTraceJson(actual) !== canonicalTraceJson(expected))
-        accepted = false;
-      offset += token.unordered.length;
+  language: Extract<
+    ProcessTraceSpecification["language"],
+    { kind: "finite_traces" }
+  >,
+): FiniteTraceEvaluation => {
+  let bestPrefix = -1;
+  const bestEventIds = new Set<string>();
+  const bestLocationIndexes = new Set<number>();
+
+  const recordMismatch = (
+    offset: number,
+    missing: readonly string[],
+    unexpected: readonly { readonly id: string; readonly index: number }[],
+  ): void => {
+    if (offset > bestPrefix) {
+      bestPrefix = offset;
+      bestEventIds.clear();
+      bestLocationIndexes.clear();
     }
-    if (accepted && offset === ids.length) return variant.id;
+    if (offset !== bestPrefix) return;
+    for (const eventId of missing) bestEventIds.add(eventId);
+    for (const { id, index } of unexpected) {
+      bestEventIds.add(id);
+      bestLocationIndexes.add(index);
+    }
+  };
+
+  for (const variant of language.variants) {
+    let offset = 0;
+    let mismatched = false;
+    for (const token of variant.trace) {
+      const expected = typeof token === "string" ? [token] : token.unordered;
+      const actual = ids.slice(offset, offset + expected.length);
+      const remaining = new Map<string, number>();
+      for (const eventId of expected)
+        remaining.set(eventId, (remaining.get(eventId) ?? 0) + 1);
+      const unexpected: Array<{ readonly id: string; readonly index: number }> =
+        [];
+      for (const [index, eventId] of actual.entries()) {
+        const count = remaining.get(eventId) ?? 0;
+        if (count === 0)
+          unexpected.push({ id: eventId, index: offset + index });
+        else if (count === 1) remaining.delete(eventId);
+        else remaining.set(eventId, count - 1);
+      }
+      const missing = [...remaining].flatMap(([eventId, count]) =>
+        Array.from({ length: count }, () => eventId),
+      );
+      if (
+        missing.length > 0 ||
+        unexpected.length > 0 ||
+        actual.length < expected.length
+      ) {
+        const omitted = finiteTraceOmissions(ids, variant.trace);
+        recordMismatch(
+          offset,
+          omitted ?? missing,
+          omitted === undefined ? unexpected : [],
+        );
+        mismatched = true;
+        break;
+      }
+      offset += expected.length;
+    }
+
+    if (mismatched) continue;
+    if (offset === ids.length) return { status: "pass", variant: variant.id };
+    const unexpected = ids[offset];
+    recordMismatch(
+      offset,
+      [],
+      unexpected === undefined ? [] : [{ id: unexpected, index: offset }],
+    );
   }
-  return null;
+
+  return {
+    status: "fail",
+    eventIds: [...bestEventIds],
+    locationIndexes: [...bestLocationIndexes],
+  };
 };
 
 type MatchedTrace = {
@@ -249,38 +344,33 @@ const evaluateOrderingConstraints = (
   language: PartialOrderLanguage,
 ): { readonly failure: EvaluatedSide | null; readonly satisfied: string[] } => {
   const satisfied: string[] = [];
+  const failures: FailureInput[] = [];
   for (const edge of language.happens_before) {
     const before = trace.locationsById.get(edge.before) ?? [];
     const after = trace.locationsById.get(edge.after) ?? [];
     const lastBefore = before.at(-1);
     const firstAfter = after[0];
     if (lastBefore === undefined && firstAfter !== undefined)
-      return {
-        failure: failure({
-          kind: "edge",
-          message: `${edge.before} is required when ${edge.after} occurs.`,
-          eventIds: [edge.before, edge.after],
-          locations: [firstAfter],
-          rawTrace: trace.rawTrace,
-        }),
-        satisfied,
-      };
-    if (
+      failures.push({
+        kind: "edge",
+        message: `${edge.before} is required when ${edge.after} occurs.`,
+        eventIds: [edge.before, edge.after],
+        locations: [firstAfter],
+        rawTrace: trace.rawTrace,
+      });
+    else if (
       lastBefore !== undefined &&
       firstAfter !== undefined &&
       lastBefore.capture_order >= firstAfter.capture_order
     )
-      return {
-        failure: failure({
-          kind: "edge",
-          message: `${edge.before} must happen before ${edge.after}.`,
-          eventIds: [edge.before, edge.after],
-          locations: [lastBefore, firstAfter],
-          rawTrace: trace.rawTrace,
-        }),
-        satisfied,
-      };
-    satisfied.push(`happens_before:${edge.before}:${edge.after}`);
+      failures.push({
+        kind: "edge",
+        message: `${edge.before} must happen before ${edge.after}.`,
+        eventIds: [edge.before, edge.after],
+        locations: [lastBefore, firstAfter],
+        rawTrace: trace.rawTrace,
+      });
+    else satisfied.push(`happens_before:${edge.before}:${edge.after}`);
   }
   for (const constraint of language.not_before) {
     const events = trace.locationsById.get(constraint.event) ?? [];
@@ -288,34 +378,47 @@ const evaluateOrderingConstraints = (
     const firstEvent = events[0];
     const firstAnchor = anchors[0];
     if (firstEvent !== undefined && firstAnchor === undefined)
-      return {
-        failure: failure({
-          kind: "edge",
-          message: `${constraint.anchor} is required when ${constraint.event} occurs.`,
-          eventIds: [constraint.event, constraint.anchor],
-          locations: [firstEvent],
-          rawTrace: trace.rawTrace,
-        }),
-        satisfied,
-      };
-    if (
+      failures.push({
+        kind: "edge",
+        message: `${constraint.anchor} is required when ${constraint.event} occurs.`,
+        eventIds: [constraint.event, constraint.anchor],
+        locations: [firstEvent],
+        rawTrace: trace.rawTrace,
+      });
+    else if (
       firstEvent !== undefined &&
       firstAnchor !== undefined &&
       firstEvent.capture_order < firstAnchor.capture_order
     )
-      return {
-        failure: failure({
-          kind: "edge",
-          message: `${constraint.event} must not occur before ${constraint.anchor}.`,
-          eventIds: [constraint.event, constraint.anchor],
-          locations: [firstEvent, firstAnchor],
-          rawTrace: trace.rawTrace,
-        }),
-        satisfied,
-      };
-    satisfied.push(`not_before:${constraint.event}:${constraint.anchor}`);
+      failures.push({
+        kind: "edge",
+        message: `${constraint.event} must not occur before ${constraint.anchor}.`,
+        eventIds: [constraint.event, constraint.anchor],
+        locations: [firstEvent, firstAnchor],
+        rawTrace: trace.rawTrace,
+      });
+    else satisfied.push(`not_before:${constraint.event}:${constraint.anchor}`);
   }
-  return { failure: null, satisfied };
+  if (failures.length === 0) return { failure: null, satisfied };
+  const unique = <T>(values: readonly T[], key: (value: T) => string): T[] => [
+    ...new Map(values.map((value) => [key(value), value])).values(),
+  ];
+  return {
+    failure: failure({
+      kind: "edge",
+      message: failures.map(({ message }) => message).join(" "),
+      eventIds: unique(
+        failures.flatMap(({ eventIds }) => eventIds),
+        String,
+      ),
+      locations: unique(
+        failures.flatMap(({ locations }) => locations),
+        ({ collection, index }) => `${collection}:${String(index)}`,
+      ),
+      rawTrace: trace.rawTrace,
+    }),
+    satisfied,
+  };
 };
 
 const boundaryFailure = (
@@ -384,20 +487,23 @@ const evaluateMatchedTrace = (
   if (specification.language.kind === "partial_order")
     return evaluatePartialOrder(trace, specification.language);
   const ids = trace.rawTrace.map(({ event_id }) => event_id);
-  const variant = evaluateFiniteTrace(ids, specification);
-  return variant === null
+  const evaluation = evaluateFiniteTrace(ids, specification.language);
+  return evaluation.status === "fail"
     ? failure({
         kind: "trace",
         message: "Observed events do not match any finite trace variant.",
-        eventIds: ids,
-        locations: trace.rawTrace.map(({ location }) => location),
+        eventIds: evaluation.eventIds,
+        locations: evaluation.locationIndexes.flatMap((index) => {
+          const location = trace.rawTrace[index]?.location;
+          return location === undefined ? [] : [location];
+        }),
         rawTrace: trace.rawTrace,
       })
     : {
         result: {
           status: "pass",
-          matched_variant: variant,
-          satisfied_constraints: [`variant:${variant}`],
+          matched_variant: evaluation.variant,
+          satisfied_constraints: [`variant:${evaluation.variant}`],
           raw_trace: trace.rawTrace,
         },
         diagnostic: null,

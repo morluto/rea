@@ -13,12 +13,19 @@ import { EvidenceIntegrityError } from "../../../src/domain/evidenceErrors.js";
 import type { Evidence } from "../../../src/domain/evidence.js";
 import { err, ok } from "../../../src/domain/result.js";
 import { EvidenceMcpServer } from "../../../src/server/EvidenceMcpServer.js";
-import { ToolResultDelivery } from "../../../src/server/toolResult.js";
+import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 
-const delivery = new ToolResultDelivery(STDIO_DEFAULT_MAX_BUFFER_SIZE);
+const delivery = createToolResultDelivery(STDIO_DEFAULT_MAX_BUFFER_SIZE);
+const UNTRUSTED_TARGET_CONTENT = {
+  provenance: { untrusted_content: true, source: "analysis_target" },
+};
 
-const failureWithName = (nameBytes: number) =>
-  delivery.toErrorToolResult(
+const failureWithName = (
+  nameBytes: number,
+  targetContent = false,
+  selectedDelivery = delivery,
+) =>
+  selectedDelivery.toErrorToolResult(
     new AnalysisInputError("procedure_address", undefined, [
       {
         path: ["procedure"],
@@ -26,6 +33,7 @@ const failureWithName = (nameBytes: number) =>
         message: `Unknown Ghidra procedure name or address: REA_MISSING_${"x".repeat(nameBytes)}`,
       },
     ]),
+    targetContent,
   );
 
 // The delivered error carries its JSON once, as text, so only a diagnostic
@@ -151,6 +159,86 @@ it("retains the complete oversized diagnostic before removing its private struct
   expect(retained[0]?.raw_result).toEqual(oversizedFailure());
 });
 
+it("retains an oversized failed-open receipt with its original error", async () => {
+  const retained: Evidence[] = [];
+  const limited = createToolResultDelivery(8192);
+  const server = new EvidenceMcpServer(
+    { name: "oversized-open-test", version: "1" },
+    { capabilities: {} },
+    (evidence) => {
+      retained.push(evidence);
+      return ok("added");
+    },
+    limited,
+  );
+  const selected = {
+    path: "/owned/previous.elf",
+    sha256: "1".repeat(64),
+    kind: "executable" as const,
+    format: "elf" as const,
+    architecture: "x86_64" as const,
+  };
+  server.registerTool("open_failure", { inputSchema: z.object({}) }, async () =>
+    limited.toOpenFailureToolResult(
+      {
+        ok: false,
+        error: new AnalysisInputError("open_binary", undefined, [
+          {
+            path: ["path"],
+            reason: "invalid_value",
+            message: "x".repeat(16384),
+          },
+        ]),
+        targetAtCompletion: selected,
+        providerIdAtCompletion: "ghidra",
+        selection: {
+          kind: "binary",
+          path: selected.path,
+          sha256: selected.sha256,
+        },
+      },
+      false,
+    ),
+  );
+  const client = new Client({ name: "oversized-open-client", version: "1" });
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  try {
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    const response = await client.callTool({
+      name: "open_failure",
+      arguments: {},
+    });
+    expect(retained).toHaveLength(1);
+    expect(parseMcpToolError(response)).toMatchObject({
+      error: {
+        code: "resource_constraint",
+        details: {
+          reported_limits: {
+            original_error_code: "invalid_request",
+            evidence_reference: {
+              kind: "retained-evidence",
+              evidence_id: retained[0]?.evidence_id,
+            },
+          },
+        },
+      },
+    });
+    expect(retained[0]?.normalized_result).toMatchObject({
+      error: {
+        code: "invalid_request",
+        details: {
+          target_at_open_completion: selected,
+          provider_id_at_open_completion: "ghidra",
+        },
+      },
+    });
+  } finally {
+    await Promise.all([client.close(), server.close()]);
+  }
+});
+
 it("delivers an error whose text fits although structured and text copies would not", async () => {
   const nameBytes = Math.ceil(STDIO_DEFAULT_MAX_BUFFER_SIZE / 2) + 64 * 1024;
   const retained: Evidence[] = [];
@@ -189,3 +277,147 @@ it("delivers an error whose text fits although structured and text copies would 
     await Promise.all([client.close(), server.close()]);
   }
 });
+
+it("keeps the untrusted target-content marker on an oversized error's replacement", async () => {
+  const retained: Evidence[] = [];
+  const server = new EvidenceMcpServer(
+    { name: "oversized-target-error-test", version: "1" },
+    { capabilities: {} },
+    (evidence) => {
+      retained.push(evidence);
+      return ok("added");
+    },
+    delivery,
+  );
+  server.registerTool(
+    "procedure_pseudo_code",
+    { inputSchema: z.object({}) },
+    async () =>
+      failureWithName(STDIO_DEFAULT_MAX_BUFFER_SIZE + 64 * 1024, true),
+  );
+  server.registerTool(
+    "record_unknown",
+    { inputSchema: z.object({ required: z.string() }) },
+    async (): Promise<CallToolResult> => ({ content: [] }),
+  );
+  server.registerTool(
+    "list_strings",
+    { inputSchema: z.object({ required: z.string() }) },
+    async (): Promise<CallToolResult> => ({ content: [] }),
+  );
+  const client = new Client({ name: "oversized-target-client", version: "1" });
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  try {
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    const failure = await client.callTool({
+      name: "procedure_pseudo_code",
+      arguments: {},
+    });
+    expect(failure.isError).toBe(true);
+    expect(parseMcpToolError(failure)).toMatchObject({
+      error: { code: "resource_constraint" },
+    });
+    expect(failure._meta).toEqual(UNTRUSTED_TARGET_CONTENT);
+    expect(retained[0]?.raw_result).toMatchObject({
+      _meta: UNTRUSTED_TARGET_CONTENT,
+    });
+    // SDK-built input validation errors bypass ToolResultDelivery; the
+    // transport still marks them for target-content tools only.
+    const invalidTarget = await client.callTool({
+      name: "list_strings",
+      arguments: {},
+    });
+    expect(invalidTarget.isError).toBe(true);
+    expect(invalidTarget._meta).toEqual(UNTRUSTED_TARGET_CONTENT);
+    const invalidContentFree = await client.callTool({
+      name: "record_unknown",
+      arguments: {},
+    });
+    expect(invalidContentFree.isError).toBe(true);
+    expect(invalidContentFree._meta).toBeUndefined();
+  } finally {
+    await Promise.all([client.close(), server.close()]);
+  }
+});
+
+// The delivered error wire omits only the private structured carrier; its
+// `isError` flag and any provenance marker count against the result budget.
+const deliveredErrorBytes = (
+  nameBytes: number,
+  targetContent: boolean,
+  selectedDelivery = delivery,
+) => {
+  const { structuredContent: _carrier, ...wire } = failureWithName(
+    nameBytes,
+    targetContent,
+    selectedDelivery,
+  );
+  return Buffer.byteLength(JSON.stringify(wire));
+};
+
+it.each([false, true])(
+  "applies the result budget to the complete delivered error (target content: %s)",
+  async (targetContent) => {
+    const boundaryDelivery = createToolResultDelivery(4096);
+    const fittingName =
+      boundaryDelivery.resultBudgetBytes -
+      deliveredErrorBytes(0, targetContent, boundaryDelivery);
+    expect(
+      deliveredErrorBytes(fittingName, targetContent, boundaryDelivery),
+    ).toBe(boundaryDelivery.resultBudgetBytes);
+    const toolName = targetContent ? "procedure_pseudo_code" : "record_unknown";
+    const server = new EvidenceMcpServer(
+      { name: "error-budget-test", version: "1" },
+      { capabilities: {} },
+      undefined,
+      boundaryDelivery,
+    );
+    server.registerTool(toolName, { inputSchema: z.object({}) }, async () =>
+      failureWithName(fittingName, targetContent, boundaryDelivery),
+    );
+    server.registerTool(
+      targetContent ? "inspect_artifact" : "export_evidence_bundle",
+      { inputSchema: z.object({}) },
+      async () =>
+        failureWithName(fittingName + 1, targetContent, boundaryDelivery),
+    );
+    const client = new Client({ name: "error-budget-client", version: "1" });
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+    try {
+      await server.connect(serverTransport);
+      await client.connect(clientTransport);
+      const fitting = await client.callTool({
+        name: toolName,
+        arguments: {},
+      });
+      expect(fitting.isError).toBe(true);
+      expect(fitting._meta).toEqual(
+        targetContent ? UNTRUSTED_TARGET_CONTENT : undefined,
+      );
+      expect(parseMcpToolError(fitting)).toEqual(
+        failureWithName(fittingName, targetContent, boundaryDelivery)
+          .structuredContent,
+      );
+      const over = await client.callTool({
+        name: targetContent ? "inspect_artifact" : "export_evidence_bundle",
+        arguments: {},
+      });
+      expect(over.isError).toBe(true);
+      expect(over.structuredContent).toBeUndefined();
+      expect(parseMcpToolError(over)).toMatchObject({
+        error: {
+          code: "resource_constraint",
+          details: {
+            reported_limits: { original_error_code: "invalid_request" },
+          },
+        },
+      });
+    } finally {
+      await Promise.all([client.close(), server.close()]);
+    }
+  },
+  20000,
+);

@@ -1,6 +1,9 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
 
+export const PLAYWRIGHT_RESPONSE_BODY_PROVENANCE_LIMITATION =
+  "Captured response-body bytes are the result of Playwright's Response.body() API. Playwright may satisfy that API with a credentialed follow-up load of the request URL when CDP has no body, so transaction and event links do not verify that retained bytes came from the original network transaction.";
+
 /** Resolved network content selection recorded by a capture. */
 export const browserNetworkContentSelectionValuesSchema = z.strictObject({
   request_body: z.boolean(),
@@ -23,9 +26,7 @@ export const browserNetworkContentSelectionSchema =
     });
 
 /** Self-verifying retained bytes, after any declared-secret redaction. */
-export const browserNetworkBodySchema = z.union([
-  z.strictObject({ state: z.literal("not_requested") }),
-  z.strictObject({ state: z.literal("not_exposed") }),
+const unavailableBrowserNetworkBodySchema = z.discriminatedUnion("reason", [
   z.strictObject({
     state: z.literal("unavailable"),
     reason: z.enum([
@@ -38,16 +39,39 @@ export const browserNetworkBodySchema = z.union([
     ]),
     message: z.string().min(1),
   }),
+  z.strictObject({
+    state: z.literal("unavailable"),
+    reason: z.literal("body-size-limit"),
+    message: z.string().min(1),
+    limit_bytes: z.int().positive().safe(),
+    observed_bytes: z.int().positive().safe(),
+  }),
+  z.strictObject({
+    state: z.literal("unavailable"),
+    reason: z.literal("body-allocation-limit"),
+    message: z.string().min(1),
+    limit_allocation_bytes: z.int().positive().safe(),
+    observed_allocation_bytes: z.int().positive().safe(),
+  }),
+]);
+
+export const browserNetworkBodySchema = z.union([
+  z.strictObject({ state: z.literal("not_requested") }),
+  z.strictObject({ state: z.literal("not_exposed") }),
+  unavailableBrowserNetworkBodySchema,
   z
     .strictObject({
       state: z.literal("captured"),
       representation: z.enum([
         "browser-exposed-request-bytes",
+        "playwright-response-body-bytes",
+        // Retained for captures produced before response-body provenance was
+        // narrowed to the bytes Playwright exposes through Response.body().
         "browser-decoded-response-bytes",
       ]),
       encoding: z.literal("base64"),
       content: z.string(),
-      bytes: z.number().int().min(0),
+      bytes: z.int().min(0),
       sha256: z.string().regex(/^[a-f0-9]{64}$/u),
       media_type: z.string().nullable(),
       redacted: z.boolean(),

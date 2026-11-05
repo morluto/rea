@@ -1,9 +1,45 @@
+import { createHash } from "node:crypto";
+
+import canonicalize from "canonicalize";
+import type { z } from "zod";
+
 import { createEvidence } from "./evidence.js";
 import { createEvidenceBundle } from "./evidenceBundle.js";
 import {
-  createReconstructionCoverageData,
-  createReconstructionVerifierContract,
+  evaluateParsedReconstructionClosure,
+  readReconstructionCoverageData,
+  reconstructionCoverageDataSchema,
+  type ReconstructionCoverageData,
+  type ReconstructionVerifierContract,
 } from "./reconstructionCoverage.js";
+
+const verifierContractInputSchema =
+  reconstructionCoverageDataSchema.shape.verifier_contracts.element.omit({
+    contract_sha256: true,
+  });
+
+/** Author test coverage through the live authentication and reference owner. */
+export const reconstructionCoverageDataFixture = (
+  input: unknown,
+): ReconstructionCoverageData => {
+  const parsed = readReconstructionCoverageData(input);
+  if (!parsed.ok) throw parsed.error;
+  return parsed.value.coverage;
+};
+
+/** Commit schema-owned verifier fields with an independent canonical hash. */
+export const reconstructionVerifierContractFixture = (
+  input: z.input<typeof verifierContractInputSchema>,
+): ReconstructionVerifierContract => {
+  const contract = verifierContractInputSchema.parse(input);
+  const encoded = canonicalize(contract);
+  if (encoded === undefined)
+    throw new TypeError("Unserializable fixture verifier contract");
+  return {
+    ...contract,
+    contract_sha256: createHash("sha256").update(encoded).digest("hex"),
+  };
+};
 
 const digest = (character: string): string => character.repeat(64);
 
@@ -16,6 +52,11 @@ const EVIDENCE_RECORDS = ["1", "2", "3", "4", "5"].map((character) =>
       operation: `fixture-${character}`,
       parameters: {},
       result: { character },
+      confidence: "observed",
+      authority:
+        character === "3" || character === "4"
+          ? "controlled-replay"
+          : "shipped-artifact",
     },
   ),
 );
@@ -36,7 +77,7 @@ export const reconstructionCoverageEvidenceId = (character: string): string => {
 
 /** Build one fully closed reconstruction-coverage workspace. */
 export const completeReconstructionCoverageData = () => {
-  const contract = createReconstructionVerifierContract({
+  const contract = reconstructionVerifierContractFixture({
     verifier_id: "verify.cli.help",
     claim_ids: ["claim.cli.help"],
     dimensions: ["output", "exit"],
@@ -46,7 +87,7 @@ export const completeReconstructionCoverageData = () => {
     normalization_sha256: digest("4"),
     normalization_removes_dimensions: false,
   });
-  return createReconstructionCoverageData({
+  return reconstructionCoverageDataFixture({
     evidence_bundle: createEvidenceBundle(EVIDENCE_RECORDS),
     artifacts: [
       {
@@ -142,4 +183,31 @@ export const completeReconstructionCoverageData = () => {
       },
     ],
   });
+};
+
+/** Assert successful domain parsing and evaluation for semantic test fixtures. */
+export const assertReconstructionCoverageEvaluation = (
+  input: unknown,
+  boundaryId: string,
+  nowEpochMs: number,
+) => {
+  const parsed = readReconstructionCoverageData(input, ["coverage"]);
+  if (!parsed.ok) throw parsed.error;
+  const result = evaluateParsedReconstructionClosure(
+    parsed.value,
+    boundaryId,
+    nowEpochMs,
+  );
+  if (!result.ok) throw result.error;
+  return result.value;
+};
+
+/** Complete workspace with its first verifier result and boundary narrowed once. */
+export const completeReconstructionCoverageFixture = () => {
+  const workspace = completeReconstructionCoverageData();
+  const result = workspace.verifier_results[0];
+  const boundary = workspace.boundaries[0];
+  if (result === undefined || boundary === undefined)
+    throw new Error("Expected complete reconstruction coverage fixture");
+  return { workspace, result, boundary };
 };

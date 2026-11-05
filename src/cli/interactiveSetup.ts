@@ -82,6 +82,13 @@ export const renderSetupProgress = (event: SetupProgressEvent): void => {
   writeLine(`${symbol}  ${event.label}${suffix}`);
 };
 
+/** Show the resolved dry-run plan to a human at an interactive terminal. */
+export const renderSetupDryRun = (actions: readonly SetupAction[]): void => {
+  intro("REA setup plan", promptStreams);
+  renderPreflight(actions);
+  outro("Dry run complete. No changes were made.", promptStreams);
+};
+
 /** Finish an interactive setup journey without exposing the full doctor catalog. */
 export const renderInteractiveSetupResult = (
   result: SetupResult,
@@ -103,6 +110,8 @@ export const renderInteractiveSetupResult = (
   }
   if (result.status === "planned" || result.status === "cancelled") return;
   writeLine(`!  ${result.remediation ?? "Setup needs attention."}`);
+  for (const resource of result.cleanup?.resources ?? [])
+    writeLine(`   Pending cleanup: ${resource}`);
   outro(
     `Run \`${cliInvocation(environment)} doctor\` for the remaining checks.`,
     promptStreams,

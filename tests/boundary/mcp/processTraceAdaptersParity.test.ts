@@ -3,89 +3,30 @@ import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
+import { INLINE_EVIDENCE_MCP_ENVIRONMENT } from "../../../scripts/lib/mcp-verification-environment.mjs";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import type { AnalysisClient } from "../../../src/application/AnalysisProvider.js";
 import { compareProcessEvidenceFiles } from "../../../src/application/process/ProcessCli.js";
 import { PROCESS_PROVIDER } from "../../../src/domain/process/processEvidenceProvider.js";
-import { EMPTY_PROCESS_CAPTURE_EXAMPLE } from "../../../src/domain/process/processCaptureExample.js";
+import { processTraceCaptureFixture } from "../../../src/domain/process/processCapture.fixture.js";
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
-import { jsonValueSchema } from "../../../src/domain/jsonValue.js";
-import type { ProcessTraceSpecification } from "../../../src/domain/process/processTraceSpecification.js";
+
 import { createServer } from "../../../src/server/createServer.js";
 import { observed as ok } from "../../fixtures/analysisExecution.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const resources: Array<{ close(): Promise<void> }> = [];
 const temporaryRoots: string[] = [];
-const beforeCheckpoint = {
-  name: "before",
-  at_ms: 0,
-  files: [],
-  effects: [],
-  truncated: false,
-};
-const afterCheckpoint = {
-  name: "after_settlement",
-  at_ms: 50,
-  files: [],
-  effects: [],
-  truncated: false,
-};
-const capture = {
-  ...EMPTY_PROCESS_CAPTURE_EXAMPLE,
-  event_journal: [
-    { capture_order: 0, collection: "filesystem_checkpoints", index: 0 },
-    { capture_order: 1, collection: "lifecycle", index: 0 },
-    { capture_order: 2, collection: "lifecycle", index: 1 },
-    { capture_order: 3, collection: "filesystem_checkpoints", index: 1 },
-  ],
-} as const;
-const traceSpecification: ProcessTraceSpecification = {
-  events: [
-    {
-      id: "before",
-      source: "filesystem",
-      exact: beforeCheckpoint,
-      cardinality: { kind: "required" },
-    },
-    {
-      id: "exit",
-      source: "lifecycle",
-      exact: { event: "exit", ...capture.exit },
-      cardinality: { kind: "required" },
-    },
-    {
-      id: "settlement",
-      source: "lifecycle",
-      exact: { event: "settlement", ...capture.settlement },
-      cardinality: { kind: "required" },
-    },
-    {
-      id: "after",
-      source: "filesystem",
-      exact: afterCheckpoint,
-      cardinality: { kind: "required" },
-    },
-  ],
-  language: {
-    kind: "finite_traces",
-    variants: [
-      {
-        id: "normal",
-        trace: ["before", "exit", "settlement", "after"],
-      },
-    ],
-  },
-};
+const { capture, traceSpecification } = processTraceCaptureFixture();
 
 const captureEvidence = (side: "left" | "right") =>
   createEvidence(undefined, PROCESS_PROVIDER, {
     predicateType: "rea.process-capture",
     operation: "capture_process_scenario",
     parameters: { side },
-    result: jsonValueSchema.parse(capture),
+    result: capture,
     confidence: "observed",
     authority: "controlled-replay",
     locations: [{ kind: "artifact-path", path: `/fixture/${side}` }],
@@ -104,7 +45,10 @@ const comparisonClient = async (
   );
   expect(session.recordEvidence(left).ok).toBe(true);
   expect(session.recordEvidence(right).ok).toBe(true);
-  const server = createServer({ kind: "session", session });
+  const server = createServer(
+    { kind: "session", session },
+    { environment: { ...process.env, ...INLINE_EVIDENCE_MCP_ENVIRONMENT } },
+  );
   const client = new Client({ name: "trace-parity", version: "1" });
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
@@ -214,5 +158,59 @@ describe("declared trace adapter parity", () => {
     expect(text).toContain(message);
     expect(text.match(/first undeclared pair/g)).toHaveLength(1);
     await client.ping();
+  });
+
+  it("rejects a variant that only reorders unordered members through CLI and MCP", async () => {
+    const left = captureEvidence("left");
+    const right = captureEvidence("right");
+    const reorderedSpecification = {
+      ...traceSpecification,
+      language: {
+        kind: "finite_traces",
+        variants: [
+          {
+            id: "forward",
+            trace: ["before", { unordered: ["exit", "settlement"] }, "after"],
+          },
+          {
+            id: "reverse",
+            trace: ["before", { unordered: ["settlement", "exit"] }, "after"],
+          },
+        ],
+      },
+    };
+    const root = await createTestTempDirectory("rea-trace-duplicates-");
+    temporaryRoots.push(root);
+    const leftPath = join(root, "left.json");
+    const rightPath = join(root, "right.json");
+    const specificationPath = join(root, "trace.json");
+    await Promise.all([
+      writeFile(leftPath, JSON.stringify(left)),
+      writeFile(rightPath, JSON.stringify(right)),
+      writeFile(specificationPath, JSON.stringify(reorderedSpecification)),
+    ]);
+    const message = "finite trace variants must not duplicate a trace";
+    expect(
+      await compareProcessEvidenceFiles(leftPath, rightPath, specificationPath),
+    ).toMatchObject({
+      category: "invalid_input",
+      details: {
+        issues: [
+          { path: ["trace_spec", "language", "variants", 1, "trace"], message },
+        ],
+      },
+    });
+    const client = await comparisonClient(left, right);
+    const response = await client.callTool({
+      name: "compare_process_captures",
+      arguments: { left, right, trace_spec: reorderedSpecification },
+    });
+    expect(response.isError).toBe(true);
+    expect(
+      response.content
+        .filter((block) => block.type === "text")
+        .map((block) => block.text)
+        .join("\n"),
+    ).toContain(message);
   });
 });

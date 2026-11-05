@@ -1,5 +1,6 @@
+import { projectCliAnalysisResult } from "../../../src/cli/projectCliAnalysisResult.js";
 import { parseConfig } from "../../../src/config/parseConfig.js";
-import { writeFile } from "node:fs/promises";
+import { access, chmod, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
@@ -18,9 +19,12 @@ import {
   createTestBinarySession,
 } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
+import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createAnalysisProfile } from "../../../src/domain/analysisProfile.js";
 import { readAnalysisSnapshot } from "../../../src/application/binary/AnalysisSnapshotFiles.js";
 import { ok } from "../../../src/domain/result.js";
+import { evidenceBundleSchema } from "../../../src/domain/evidenceBundle.js";
 import { silentLogger } from "../../../src/logger.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
@@ -39,6 +43,131 @@ const resources: Array<{ close(): Promise<unknown> }> = [];
 
 afterEach(async () => {
   await Promise.all(resources.splice(0).map((resource) => resource.close()));
+});
+
+describe("MCP external command snapshot retirement", () => {
+  it.skipIf(process.platform === "win32")(
+    "rejects a queued snapshot after mutation and preserves Evidence through explicit reopening",
+    async () => {
+      const { targetPaths, snapshotPath } = await createWorkflowFiles(
+        "rea-mcp-admitted-reverse-",
+        ["target.hop"],
+      );
+      const targetPath = targetPaths[0];
+      if (targetPath === undefined)
+        throw new Error("Expected one workflow target");
+      const fixtureDirectory = dirname(snapshotPath);
+      const startedPath = join(fixtureDirectory, "rizin-started");
+      const releasePath = join(fixtureDirectory, "rizin-release");
+      const providerPath = join(fixtureDirectory, "rizin-fixture.mjs");
+      await writeFile(
+        providerPath,
+        `#!${process.execPath}\nimport { existsSync, writeFileSync } from "node:fs";\nwriteFileSync(${JSON.stringify(startedPath)}, "started");\nwhile (!existsSync(${JSON.stringify(releasePath)})) await new Promise((resolve) => setTimeout(resolve, 5));\nprocess.stdout.write("Rizin fixture output\\n");\n`,
+      );
+      await chmod(providerPath, 0o755);
+      const session = createWorkflowSession(makeProvider([], []));
+      const { mcp } = await connectWorkflowMcp(
+        session,
+        "admitted-reverse-engineering",
+        { REA_RIZIN_COMMAND: providerPath },
+      );
+      await openWorkflowTarget(mcp, targetPath);
+
+      const analysisRequest = mcp.callTool({
+        name: "execute_rizin_command",
+        arguments: { path: targetPath, command: "iI" },
+      });
+      let closeSettled = false;
+      const closeStarted = createDeferred<void>();
+      let closeRequest: ReturnType<typeof mcp.callTool> | undefined;
+      try {
+        const readyDeadline = Date.now() + 5_000;
+        while (Date.now() < readyDeadline) {
+          try {
+            await access(startedPath);
+            break;
+          } catch {
+            await new Promise((resolve) => setTimeout(resolve, 10));
+          }
+        }
+        await expect(access(startedPath)).resolves.toBeUndefined();
+        closeRequest = mcp
+          .callTool(
+            {
+              name: "close_binary",
+              arguments: { snapshot_path: snapshotPath },
+            },
+            { onprogress: () => closeStarted.resolve() },
+          )
+          .finally(() => {
+            closeSettled = true;
+          });
+        // Close queues its transition before sending its first progress event.
+        await awaitAcknowledgement(
+          closeStarted.promise,
+          closeRequest,
+          "snapshot close progress",
+        );
+        expect(closeSettled).toBe(false);
+        await expect(access(snapshotPath)).rejects.toMatchObject({
+          code: "ENOENT",
+        });
+      } finally {
+        await writeFile(releasePath, "release");
+        await Promise.allSettled([
+          analysisRequest,
+          ...(closeRequest === undefined ? [] : [closeRequest]),
+        ]);
+      }
+      const analyzed = await analysisRequest;
+      expect(analyzed.isError, JSON.stringify(analyzed.content)).not.toBe(true);
+      const evidence = toolContract("execute_rizin_command").outputSchema.parse(
+        analyzed.structuredContent,
+      );
+      const closed = await closeRequest;
+      expect(closed.isError).toBe(true);
+      // Retirement removes the engine binding and its invalidation marker.
+      // Saving remains unavailable until an explicit fresh open.
+      expect(parseMcpToolError(closed)).toMatchObject({
+        error: { code: "target_unavailable" },
+      });
+      expect(session.activeTarget()).toBeUndefined();
+      await expect(access(snapshotPath)).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+      const exported = await mcp.callTool({
+        name: "export_evidence_bundle",
+        arguments: { path: join(fixtureDirectory, "observations.json") },
+      });
+      expect(exported.isError ?? false).toBe(false);
+      const observations = evidenceBundleSchema.parse(
+        JSON.parse(
+          await readFile(join(fixtureDirectory, "observations.json"), "utf8"),
+        ),
+      );
+      expect(observations.records).toContainEqual(
+        expect.objectContaining({ evidence_id: evidence.evidence_id }),
+      );
+
+      // The provider process has completed; explicitly open fresh analysis
+      // before saving an immutable snapshot of the new binding.
+      await openWorkflowTarget(mcp, targetPath);
+      const saved = await mcp.callTool({
+        name: "close_binary",
+        arguments: { snapshot_path: snapshotPath },
+      });
+      expect(saved.isError ?? false).toBe(false);
+      const snapshot = await readAnalysisSnapshot(snapshotPath);
+      if (!snapshot.ok) throw snapshot.error;
+      expect(snapshot.value.evidence_bundle.records).toContainEqual(
+        expect.objectContaining({
+          evidence_id: evidence.evidence_id,
+          operation: "execute_rizin_command",
+          subject: expect.objectContaining({ local_path: targetPath }),
+        }),
+      );
+    },
+  );
 });
 
 describe("MCP composed workflow target admission", () => {
@@ -69,18 +198,38 @@ describe("MCP composed workflow target admission", () => {
       name: "binary_overview",
       arguments: {},
     });
-    await entered.promise;
-    const closeRequest = mcp.callTool({
-      name: "close_binary",
-      arguments: { snapshot_path: snapshotPath },
-      _meta: { progressToken: "close-race" },
-    });
-    await closeStarted.promise;
-    const openRequest = mcp.callTool({
-      name: "open_binary",
-      arguments: { path: secondPath },
-    });
-    release.resolve();
+    let closeRequest: ReturnType<typeof mcp.callTool> | undefined;
+    let openRequest: ReturnType<typeof mcp.callTool> | undefined;
+    try {
+      await awaitAcknowledgement(
+        entered.promise,
+        analysisRequest,
+        "workflow provider entry",
+      );
+      closeRequest = mcp.callTool({
+        name: "close_binary",
+        arguments: { snapshot_path: snapshotPath },
+        _meta: { progressToken: "close-race" },
+      });
+      await awaitAcknowledgement(
+        closeStarted.promise,
+        closeRequest,
+        "workflow close progress",
+      );
+      openRequest = mcp.callTool({
+        name: "open_binary",
+        arguments: { path: secondPath },
+      });
+    } finally {
+      release.resolve();
+      await Promise.allSettled([
+        analysisRequest,
+        ...(closeRequest === undefined ? [] : [closeRequest]),
+        ...(openRequest === undefined ? [] : [openRequest]),
+      ]);
+    }
+    if (closeRequest === undefined || openRequest === undefined)
+      throw new Error("Expected queued close and open requests");
 
     const analyzed = await analysisRequest;
     expect(analyzed.isError, JSON.stringify(analyzed.content)).not.toBe(true);
@@ -207,9 +356,11 @@ describe("MCP composed workflow snapshot replay", () => {
       arguments: {},
     });
     expect(retained.isError, JSON.stringify(retained.content)).not.toBe(true);
-    const retainedBundle = toolContract(
-      "get_evidence_bundle",
-    ).outputSchema.parse(retained.structuredContent).result;
+    const retainedBundle = evidenceBundleSchema.parse(
+      toolContract("get_evidence_bundle").outputSchema.parse(
+        retained.structuredContent,
+      ).result,
+    );
     expect(
       retainedBundle.records.find(
         ({ evidence_id }) => evidence_id === primitiveEvidence.evidence_id,
@@ -221,6 +372,9 @@ describe("MCP composed workflow snapshot replay", () => {
     const dependencies: DirectAnalysisDependencies = {
       readConfiguration: () => parseConfig({}),
       createBinarySession: () => createWorkflowSession(provider),
+      createArtifactBinarySession: () => createWorkflowSession(provider),
+      createNativeDispatchBinarySession: () => createWorkflowSession(provider),
+      createNativeBinarySession: () => createWorkflowSession(provider),
       createManagedBinarySession: () => createWorkflowSession(provider),
     };
     const replay = await runDirectAnalysis(
@@ -229,9 +383,10 @@ describe("MCP composed workflow snapshot replay", () => {
       "binary_overview",
       {},
       { snapshotPath },
-    );
+    ).then(projectCliAnalysisResult);
 
-    expect(replay).toEqual(output);
+    expect(output).not.toHaveProperty("caller_input_path");
+    expect(replay).toEqual({ ...output, caller_input_path: targetPath });
     expect(calls).toEqual(afterAnalysisCalls);
     expect(starts).toEqual(afterAnalysisStarts);
   });
@@ -398,6 +553,7 @@ describe("MCP investigation history snapshot replay", () => {
         replay,
         "investigation-history-replay",
       );
+      await expectSnapshotImportGuidance(replayMcp, snapshotPath);
       const reopened = await replayMcp.callTool({
         name: "open_binary",
         arguments: { path: firstPath, snapshot_path: snapshotPath },
@@ -412,9 +568,87 @@ describe("MCP investigation history snapshot replay", () => {
         toolContract("list_unknowns").outputSchema.parse(
           listed.structuredContent,
         ).result,
-      ).toEqual({ items: [resolved], total: 1 });
+      ).toEqual({
+        items: [resolved],
+        total: 1,
+        offset: 0,
+        next_offset: null,
+      });
     },
   );
+});
+
+const expectSnapshotImportGuidance = async (mcp: Client, path: string) => {
+  const before = await readFile(path);
+  const imported = await mcp.callTool({
+    name: "import_evidence_bundle",
+    arguments: { path },
+  });
+  const error = parseMcpToolError(imported).error;
+  expect(error.code).toBe("invalid_request");
+  expect(error.remediation.action).toContain("open_binary");
+  expect(error.remediation.action).toContain("snapshot_path");
+  expect(error.remediation.action).toContain("--snapshot");
+  expect(error.remediation.action).toContain("loads and updates");
+  expect(error.remediation.action).toContain("not been validated");
+  expect((await readFile(path)).equals(before)).toBe(true);
+};
+
+it("does not authenticate snapshot-shaped or unrelated malformed bundle input", async () => {
+  const { snapshotPath } = await createWorkflowFiles(
+    "rea-mcp-snapshot-kind-",
+    [],
+  );
+  const { mcp } = await connectWorkflowMcp(
+    createWorkflowSession(makeProvider([], [])),
+    "snapshot-kind",
+  );
+  await writeFile(
+    snapshotPath,
+    JSON.stringify({
+      target: {},
+      binding: {},
+      evidence_bundle: {},
+      entries: [],
+      workflow_entries: [],
+    }),
+  );
+  const snapshotLike = parseMcpToolError(
+    await mcp.callTool({
+      name: "import_evidence_bundle",
+      arguments: { path: snapshotPath },
+    }),
+  ).error;
+  expect(snapshotLike.code).toBe("invalid_request");
+  expect(snapshotLike.remediation.action).toContain("not been validated");
+
+  await writeFile(
+    snapshotPath,
+    JSON.stringify({
+      target: {},
+      binding: {},
+      evidence_bundle: {},
+      entries: [],
+      workflow_entries: [],
+      records: [],
+    }),
+  );
+  const ambiguousBundle = parseMcpToolError(
+    await mcp.callTool({
+      name: "import_evidence_bundle",
+      arguments: { path: snapshotPath },
+    }),
+  ).error;
+  expect(ambiguousBundle.code).toBe("evidence_integrity_mismatch");
+
+  await writeFile(snapshotPath, JSON.stringify({ records: [] }));
+  const malformedBundle = parseMcpToolError(
+    await mcp.callTool({
+      name: "import_evidence_bundle",
+      arguments: { path: snapshotPath },
+    }),
+  ).error;
+  expect(malformedBundle.code).toBe("evidence_integrity_mismatch");
 });
 
 const createWorkflowFiles = async (
@@ -443,10 +677,14 @@ const createWorkflowSession = (provider: AnalysisProvider) =>
 const connectWorkflowMcp = async (
   session: ReturnType<typeof createWorkflowSession>,
   clientName: string,
+  providerEnvironment?: Readonly<NodeJS.ProcessEnv>,
 ): Promise<{ readonly mcp: Client }> => {
   const server = createServer(
     { kind: "session", session },
-    { logger: silentLogger },
+    {
+      logger: silentLogger,
+      ...(providerEnvironment === undefined ? {} : { providerEnvironment }),
+    },
   );
   const mcp = new Client({ name: clientName, version: "1.0.0" });
   const [clientTransport, serverTransport] =
@@ -520,9 +758,7 @@ const makeProvider = (
                   ]
                 : operation === "list_documents"
                   ? ["fixture"]
-                  : operation === "list_procedures"
-                    ? ["0x1000"]
-                    : [{ address: "0x1000", value: "fixture" }];
+                  : [{ address: "0x1000", value: "fixture" }];
           return ok(createAnalysisExecution(result, identity));
         },
         close: () => Promise.resolve(ok(null)),

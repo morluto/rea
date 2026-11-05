@@ -1,23 +1,29 @@
-import { copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { afterEach, describe, expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
+import { BYTE_ENTROPY_PROVIDER } from "../../../src/domain/investigationProviders.js";
 import { SUPPORTED_CLIENT_DEFINITIONS } from "../../../src/application/SupportedClients.js";
 import { CLI_COMMAND_NAMES } from "../../../src/cliCommandNames.js";
 import { createCli } from "../../../src/cli.js";
+import { FRIDA_PROVIDER_IDENTITY } from "../../../src/frida/FridaProviderIdentity.js";
 import { TOOL_CONTRACTS } from "../../../src/contracts/toolContracts.js";
 import {
   HOPPER_OPERATIONS,
   HOPPER_PROVIDER_IDENTITY,
-} from "../../../src/hopper/HopperProviderCapabilities.js";
+} from "../../../src/hopper/HopperProviderMetadata.js";
 import {
   GHIDRA_PROVIDER_IDENTITY,
   GHIDRA_OPERATIONS,
-} from "../../../src/ghidra/GhidraProviderCapabilities.js";
+} from "../../../src/ghidra/GhidraProviderMetadata.js";
+import { OBJDUMP_PROVIDER_IDENTITY } from "../../../src/objdump/ObjdumpProviderIdentity.js";
+import { RIZIN_PROVIDER_IDENTITY } from "../../../src/rizin/RizinProviderIdentity.js";
+import { GDB_PROVIDER_IDENTITY } from "../../../src/gdb/GdbProviderIdentity.js";
+import { PWNTOOLS_PROVIDER_IDENTITY } from "../../../src/native/pwntools/PwntoolsProviderIdentity.js";
 import {
   documentationFactIssues,
   skillReferenceIssues,
@@ -70,6 +76,16 @@ describe("canonical product catalog", () => {
     expect(catalog.setup_clients.map(({ id }) => id)).toEqual(
       SUPPORTED_CLIENT_DEFINITIONS.map(({ name }) => name),
     );
+    expect(catalog.cli.commands).toHaveLength(CLI_COMMAND_NAMES.length);
+    expect(catalog.providers.map(({ id }) => id)).toEqual(
+      expect.arrayContaining(
+        [
+          OBJDUMP_PROVIDER_IDENTITY,
+          RIZIN_PROVIDER_IDENTITY,
+          GDB_PROVIDER_IDENTITY,
+        ].map(({ id }) => id),
+      ),
+    );
     expect(
       catalog.providers.find(({ id }) => id === HOPPER_PROVIDER_IDENTITY.id)
         ?.capabilities,
@@ -78,6 +94,26 @@ describe("canonical product catalog", () => {
       catalog.providers.find(({ id }) => id === GHIDRA_PROVIDER_IDENTITY.id)
         ?.capabilities,
     ).toEqual([...GHIDRA_OPERATIONS].sort());
+    expect(
+      catalog.providers.find(({ id }) => id === FRIDA_PROVIDER_IDENTITY.id)
+        ?.capabilities,
+    ).toEqual(
+      TOOL_CONTRACTS.filter(({ name }) => name.includes("frida"))
+        .map(({ name }) => name)
+        .sort(),
+    );
+    expect(
+      catalog.providers.find(({ id }) => id === BYTE_ENTROPY_PROVIDER.id),
+    ).toEqual({
+      id: "byte-entropy",
+      name: "REA byte entropy",
+      version: "1",
+      capabilities: ["inspect_byte_entropy"],
+    });
+    expect(
+      catalog.providers.find(({ id }) => id === PWNTOOLS_PROVIDER_IDENTITY.id)
+        ?.capabilities,
+    ).toEqual(["inspect_binary_layout", "inspect_recorded_crash"]);
     expect(
       JSON.parse(await readFile("docs/public/product-catalog.json", "utf8")),
     ).toEqual(catalog);
@@ -92,9 +128,7 @@ describe("canonical CLI catalog", () => {
   it("uses the same primary command names as the actual Incur router", () => {
     const inventory = createCliInventory(createCli());
     expect(inventory.primary).toEqual([...CLI_COMMAND_NAMES].sort());
-    expect(inventory.aliases).toEqual([
-      { name: "compare-bundles", target: "compare" },
-    ]);
+    expect(inventory.aliases).toEqual([]);
   }, 30_000);
 
   it("describes every primary command argument and option", () => {
@@ -162,66 +196,6 @@ describe("canonical product catalog drift", () => {
     const issues = await documentationFactIssues(root, drifted);
     expect(issues).toContain("docs/installation.md: missing Future Client");
     expect(issues).not.toContain("README.md: missing Future Client");
-  });
-
-  it("keeps translated readmes linked to canonical setup and tool details", async () => {
-    const directory = await createTestTempDirectory("rea-readme-facts-");
-    temporaryRoots.push(directory);
-    const paths = [
-      "README.md",
-      "README_zh.md",
-      "README_ja.md",
-      "README_ko.md",
-      "README_ar.md",
-      "website/locales/languages.json",
-      "docs/installation.md",
-      "AGENTS.md",
-      ".github/pull_request_template.md",
-    ];
-    for (const path of paths) {
-      const destination = join(directory, path);
-      await mkdir(dirname(destination), { recursive: true });
-      await copyFile(join(root, path), destination);
-    }
-    await mkdir(join(directory, "skills/reverse-engineer-anything"), {
-      recursive: true,
-    });
-    const translatedPath = join(directory, "README_zh.md");
-    const translated = await readFile(translatedPath, "utf8");
-    const catalog = await createProductCatalog(root);
-    await expect(documentationFactIssues(directory, catalog)).resolves.toEqual(
-      [],
-    );
-    for (const [original, changed] of [
-      [
-        "(docs/installation.md#supported-agents)",
-        "(docs/installation.md#missing-agents)",
-      ],
-      [
-        "https://rea.tools/zh-CN/guides/native/",
-        "https://rea.tools/zh-CN/missing/",
-      ],
-      [
-        "https://rea.tools/zh-CN/guides/native/",
-        "https://rea.tools/zh-TW/guides/native/",
-      ],
-      [
-        "https://rea.tools/zh-CN/guides/native/",
-        "https://rea.tools/zh-CN/guides/native/?other=1",
-      ],
-    ] as const) {
-      expect(translated).toContain(original);
-      await writeFile(
-        translatedPath,
-        translated.replace(original, changed),
-        "utf8",
-      );
-      await expect(
-        documentationFactIssues(directory, catalog),
-      ).resolves.toEqual([
-        "README_zh.md: documentation links differ from README.md",
-      ]);
-    }
   });
 
   it("fails check mode without rewriting a stale generated artifact", async () => {

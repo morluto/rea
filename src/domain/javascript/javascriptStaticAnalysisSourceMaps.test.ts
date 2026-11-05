@@ -72,13 +72,36 @@ describe("source map directives", () => {
   it("preserves Unicode whitespace and URL terminator boundaries", () => {
     const source =
       "ğ/*@\u00a0sourceMappingURL\u2003=\ufeffapp.js.map* ignored */";
-    const declaredEnd = source.indexOf("* ignored");
+    const declaredEnd = source.indexOf(" ignored");
     expect(analyzeJavaScriptStaticSource(source).source_map_urls).toEqual([
       {
-        declared_url: "app.js.map",
+        declared_url: "app.js.map*",
         location: {
           start: { line: 1, column: 1 },
           end: { line: 1, column: declaredEnd },
+        },
+      },
+    ]);
+  });
+
+  it.each([
+    ["/*#", "app*part.js.map", " */"],
+    ["/*@", "*part.js.map", "*/"],
+    ["/*#", "app.js.map*", "*/"],
+    ["/*#", "**part.js.map", " */"],
+    ["/*#", "app.js.map", "*/"],
+    ["//#", "app*part.js.map", ""],
+  ])("preserves the URL and range in %s %s%s", (marker, url, suffix) => {
+    const directive = marker + " sourceMappingURL=" + url;
+    const result = analyzeJavaScriptStaticSource(
+      "export const value = 1;\n" + directive + suffix,
+    );
+    expect(result.source_map_urls).toEqual([
+      {
+        declared_url: url,
+        location: {
+          start: { line: 2, column: 0 },
+          end: { line: 2, column: directive.length },
         },
       },
     ]);

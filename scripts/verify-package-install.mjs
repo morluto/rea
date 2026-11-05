@@ -2,17 +2,15 @@ import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { exec, json, run } from "./lib/verify-package-core.mjs";
-
 /** Install the packed CLI globally with and without optional dependencies and verify PTY degradation. */
 export async function verifyPackageInstall({
   tarball,
   prefix,
   workspace,
   environment,
+  commands,
 }) {
-  await exec(
-    "npm",
+  await commands.execNpm(
     [
       "install",
       "--global",
@@ -27,7 +25,11 @@ export async function verifyPackageInstall({
   );
   const cli = join(prefix, "bin", "rea");
   const packageRunnerCli = join(prefix, "bin", "rea-agents");
-  if (!(await run(packageRunnerCli, ["--help"], environment)).includes("setup"))
+  if (
+    !(await commands.run(packageRunnerCli, ["--help"], environment)).includes(
+      "setup",
+    )
+  )
     throw new Error("packaged rea-agents alias did not expose setup");
   const processCaptureCapabilityUrl = pathToFileURL(
     join(
@@ -35,9 +37,9 @@ export async function verifyPackageInstall({
       "lib/node_modules/rea-agents/dist/process/capture/ProcessCaptureCapability.js",
     ),
   ).href;
-  const processCaptureCapability = json(
+  const processCaptureCapability = JSON.parse(
     (
-      await exec(
+      await commands.exec(
         process.execPath,
         [
           "--input-type=module",
@@ -53,8 +55,7 @@ export async function verifyPackageInstall({
       `packaged PTY backend failed without lifecycle scripts: ${JSON.stringify(processCaptureCapability)}`,
     );
   const noOptionalPrefix = join(workspace, "prefix-no-optional");
-  await exec(
-    "npm",
+  await commands.execNpm(
     [
       "install",
       "--global",
@@ -81,9 +82,9 @@ export async function verifyPackageInstall({
       "lib/node_modules/rea-agents/dist/process/capture/ProcessCaptureCapability.js",
     ),
   ).href;
-  const noOptionalCapability = json(
+  const noOptionalCapability = JSON.parse(
     (
-      await exec(
+      await commands.exec(
         process.execPath,
         [
           "--input-type=module",
@@ -95,20 +96,26 @@ export async function verifyPackageInstall({
     ).stdout,
   );
   if (
-    !(await run(noOptionalCli, ["--help"], environment)).includes("setup") ||
+    !(await commands.run(noOptionalCli, ["--help"], environment)).includes(
+      "setup",
+    ) ||
     noOptionalCapability.available !== false
   )
     throw new Error(
       `packaged CLI did not degrade without the optional PTY binary: ${JSON.stringify(noOptionalCapability)}`,
     );
-  await verifyInstalledPackageCanRepack(prefix, environment);
+  await verifyInstalledPackageCanRepack(commands, prefix, environment);
   return { cli, packageRunnerCli };
 }
 
-const verifyInstalledPackageCanRepack = async (prefix, environment) => {
+const verifyInstalledPackageCanRepack = async (
+  commands,
+  prefix,
+  environment,
+) => {
   const installedPackageRoot = join(prefix, "lib/node_modules/rea-agents");
   const repackedTarball = (
-    await exec("npm", ["pack", "--silent"], {
+    await commands.execNpm(["pack", "--silent"], {
       cwd: installedPackageRoot,
       env: environment,
     })

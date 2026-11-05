@@ -3,14 +3,19 @@ import { createHash } from "node:crypto";
 import { Writable } from "node:stream";
 
 import { Cli } from "incur";
+import { estimateTokenCount } from "tokenx";
+import { parse as parseYaml } from "yaml";
 import { describe, expect, it } from "vitest";
 
 import { writeJsonOutput } from "../../../src/cli/jsonOutput.js";
+import { parseCliOutputArguments } from "../../../src/cliOutput.js";
 import {
-  createStreamedCliJsonOutput,
+  createCliResultOutput,
   streamCliCommandResults,
-} from "../../../src/cli/streamedJsonOutput.js";
+} from "../../../src/cli/cliResultOutput.js";
+import { logCliCommand } from "../../../src/cliLogging.js";
 import { registerManagedCommands } from "../../../src/cli/managedCommands.js";
+import { analysisErrorProjectionSchema } from "../../../src/contracts/errorSchemas.js";
 import { silentLogger } from "../../../src/logger.js";
 
 const collect = async (
@@ -33,6 +38,146 @@ const collect = async (
   await writeJsonOutput(value, destination, format);
   return Buffer.concat(chunks).toString("utf8");
 };
+
+describe("SDK output completion", () => {
+  it.each(["json", "toon"])(
+    "waits for pending raw %s writes before exit",
+    async (format) => {
+      const document = JSON.stringify({
+        code: "VALIDATION_ERROR",
+        message: "x".repeat(8192),
+      });
+      let complete = false;
+      const destination = new Writable({
+        highWaterMark: 1,
+        write(chunk, _encoding, callback) {
+          if (chunk.length === 0) {
+            callback();
+            return;
+          }
+          setImmediate(() => {
+            complete = true;
+            callback();
+          });
+        },
+      });
+      // Terminal JSON stays with Incur; only pipes buffer for compact rewrite.
+      if (format === "json")
+        Object.defineProperty(destination, "isTTY", { value: true });
+      const output = createCliResultOutput(
+        parseCliOutputArguments(["--format", format]),
+        destination,
+      );
+      if (output === undefined)
+        throw new Error("Expected valid output controls");
+      expect(output.captureSdkOutput(document)).toBe(false);
+      destination.write(document);
+      expect(complete).toBe(false);
+      await output.finishSdkOutput(1);
+      expect(complete).toBe(true);
+      expect(destination.writableEnded).toBe(false);
+    },
+  );
+
+  it("rewrites piped SDK JSON diagnostics compactly", async () => {
+    const value = {
+      code: "VALIDATION_ERROR",
+      message: "REA could not read the command arguments.",
+      fieldErrors: [{ path: "symbols", missing: true, expected: "array" }],
+    };
+    const indented = `${JSON.stringify(value, null, 2)}\n`;
+    const chunks: Buffer[] = [];
+    const destination = new Writable({
+      write(chunk: unknown, _encoding, callback) {
+        if (!Buffer.isBuffer(chunk)) {
+          callback(new TypeError("Expected a UTF-8 output buffer"));
+          return;
+        }
+        chunks.push(chunk);
+        callback();
+      },
+    });
+    const output = createCliResultOutput(
+      parseCliOutputArguments(["--json"]),
+      destination,
+    );
+    if (output === undefined) throw new Error("Expected valid output controls");
+    expect(output.captureSdkOutput(indented)).toBe(true);
+    expect(Buffer.concat(chunks).toString("utf8")).toBe("");
+    await output.finishSdkOutput(1);
+    const text = Buffer.concat(chunks).toString("utf8");
+    expect(text).toBe(`${JSON.stringify(value)}\n`);
+    expect(text).not.toContain("\n  ");
+    expect(JSON.parse(text)).toEqual(value);
+  });
+
+  it("counts tokens for piped SDK JSON documents instead of rewriting them", async () => {
+    const value = {
+      version: "incur.v1",
+      commands: [{ name: "inspect-devicetree" }],
+    };
+    const indented = `${JSON.stringify(value, null, 2)}\n`;
+    const compact = `${JSON.stringify(value)}\n`;
+    const chunks: Buffer[] = [];
+    const destination = new Writable({
+      write(chunk: unknown, _encoding, callback) {
+        if (!Buffer.isBuffer(chunk)) {
+          callback(new TypeError("Expected a UTF-8 output buffer"));
+          return;
+        }
+        chunks.push(chunk);
+        callback();
+      },
+    });
+    const output = createCliResultOutput(
+      parseCliOutputArguments([
+        "--llms-full",
+        "--format",
+        "json",
+        "--token-count",
+      ]),
+      destination,
+    );
+    if (output === undefined) throw new Error("Expected valid output controls");
+    expect(
+      output.sdkArguments(["--llms-full", "--format", "json", "--token-count"]),
+    ).toEqual(expect.any(Array));
+    expect(output.captureSdkOutput(indented)).toBe(true);
+    await output.finishSdkOutput(0);
+    expect(Buffer.concat(chunks).toString("utf8")).toBe(
+      `${estimateTokenCount(compact)}\n`,
+    );
+  });
+
+  it("preserves non-JSON piped --json output under --token-count (completion hooks)", async () => {
+    const hook = "# bash completion hook\ncomplete -F _rea rea\n";
+    const chunks: Buffer[] = [];
+    const destination = new Writable({
+      write(chunk: unknown, _encoding, callback) {
+        if (!Buffer.isBuffer(chunk)) {
+          callback(new TypeError("Expected a UTF-8 output buffer"));
+          return;
+        }
+        chunks.push(chunk);
+        callback();
+      },
+    });
+    const output = createCliResultOutput(
+      parseCliOutputArguments([
+        "completions",
+        "bash",
+        "--json",
+        "--token-count",
+      ]),
+      destination,
+    );
+    if (output === undefined) throw new Error("Expected valid output controls");
+    output.sdkArguments(["completions", "bash", "--json", "--token-count"]);
+    expect(output.captureSdkOutput(hook)).toBe(true);
+    await output.finishSdkOutput(0);
+    expect(Buffer.concat(chunks).toString("utf8")).toBe(hook);
+  });
+});
 
 describe("incremental CLI JSON", () => {
   it.each([
@@ -157,16 +302,420 @@ describe("incremental CLI JSON", () => {
   );
 });
 
-describe("streamed CLI result surface", () => {
+describe("CLI command output wrapping", () => {
+  it("wraps a mounted group root reached through its alias", async () => {
+    const chunks: Buffer[] = [];
+    const destination = new Writable({
+      write(chunk: Buffer, _encoding, callback) {
+        chunks.push(chunk);
+        callback();
+      },
+    });
+    const output = createCliResultOutput(
+      parseCliOutputArguments(["--format", "json", "--full-output"]),
+      destination,
+    );
+    if (output === undefined)
+      throw new Error("Missing structured output surface");
+
+    const group = Cli.create("nested", {
+      aliases: ["nested-alias"],
+      run: () => ({ kind: "group-root" }),
+    }).command("child", { run: () => ({ kind: "child" }) });
+    const cli = Cli.create("rea-output-group-test", { sync: false }).command(
+      group,
+    );
+    streamCliCommandResults(cli, output);
+
+    let fallback = "";
+    await cli.serve(["nested-alias", "--format", "json"], {
+      stdout: (text) => {
+        if (!output.handled) fallback += text;
+      },
+    });
+
+    expect(output.handled).toBe(true);
+    expect(fallback).toBe("");
+    expect(JSON.parse(Buffer.concat(chunks).toString("utf8"))).toMatchObject({
+      ok: true,
+      data: { kind: "group-root" },
+      meta: { command: "nested" },
+    });
+  });
+});
+
+describe("CLI result output surface", () => {
+  it.each(["json", "yaml", "toon", "md"] as const)(
+    "places typed analysis failures in the full-output error envelope (%s)",
+    async (format) => {
+      const chunks: Buffer[] = [];
+      const destination = new Writable({
+        write(chunk: Buffer, _encoding, callback) {
+          chunks.push(chunk);
+          callback();
+        },
+      });
+      const failure = {
+        error: "Analysis failed",
+        code: "target_unavailable",
+        category: "unavailable",
+        message: "The selected artifact is missing.",
+        retryable: false,
+        remediation: { action: "Check that the path exists." },
+        details: { source: "artifact-open" },
+        input_path: "missing.dll",
+        input_reason: "read-failed",
+      };
+      const argv = [
+        "inspect-managed-artifact",
+        "missing.dll",
+        "--format",
+        format,
+        "--full-output",
+        "--filter-output",
+        "message",
+      ];
+      const output = createCliResultOutput(
+        parseCliOutputArguments(argv),
+        destination,
+      );
+      if (output === undefined)
+        throw new Error("Missing structured output surface");
+      const cli = Cli.create("rea-output-test", { sync: false });
+      registerManagedCommands(cli, silentLogger, async () => ({
+        ok: false,
+        error: failure,
+      }));
+      streamCliCommandResults(cli, output);
+      let fallback = "";
+      const previousExitCode = process.exitCode;
+      try {
+        await cli.serve(argv, {
+          stdout: (text) => {
+            if (!output.handled) fallback += text;
+          },
+        });
+        expect(process.exitCode).toBe(1);
+      } finally {
+        process.exitCode = previousExitCode;
+      }
+
+      const text = Buffer.concat(chunks).toString("utf8");
+      expect(output.handled).toBe(true);
+      expect(fallback).toBe("");
+      if (format === "json" || format === "yaml") {
+        const document = format === "json" ? JSON.parse(text) : parseYaml(text);
+        expect(document).toMatchObject({
+          ok: false,
+          error: {
+            code: failure.code,
+            category: failure.category,
+            message: failure.message,
+            retryable: false,
+            remediation: failure.remediation,
+            details: {
+              ...failure.details,
+              input_path: failure.input_path,
+              input_reason: failure.input_reason,
+            },
+          },
+          meta: { command: "inspect-managed-artifact" },
+        });
+        expect(() =>
+          analysisErrorProjectionSchema.parse(document.error),
+        ).not.toThrow();
+        expect(document).not.toHaveProperty("data");
+      } else {
+        expect(text).toContain("false");
+        expect(text).toContain(failure.code);
+        expect(text).not.toContain("true");
+      }
+    },
+  );
+
   it.each([
-    [],
-    ["--format", "md"],
+    {
+      name: "custom command failure",
+      value: {
+        status: "failed",
+        message: "Update was not applied.",
+        remediation: "Check the package manager, then retry.",
+        details: { stage: "install" },
+      },
+      isFailure: () => true,
+    },
+    {
+      name: "unhealthy doctor result",
+      value: { healthy: false, checks: [{ name: "provider", ok: false }] },
+      isFailure: undefined,
+    },
+  ])("preserves $name as a full-output error payload", async (scenario) => {
+    const chunks: Buffer[] = [];
+    const destination = new Writable({
+      write(chunk: Buffer, _encoding, callback) {
+        chunks.push(chunk);
+        callback();
+      },
+    });
+    const argv = ["fixture", "--json", "--full-output"];
+    const output = createCliResultOutput(
+      parseCliOutputArguments(argv),
+      destination,
+    );
+    if (output === undefined) throw new Error("Missing JSON output surface");
+    const cli = Cli.create("rea-output-test", { sync: false });
+    cli.command("fixture", {
+      run: () =>
+        logCliCommand(
+          silentLogger,
+          "fixture",
+          async () => scenario.value,
+          scenario.isFailure,
+        ),
+    });
+    streamCliCommandResults(cli, output);
+    const previousExitCode = process.exitCode;
+    try {
+      await cli.serve(argv, { stdout: () => undefined });
+      expect(process.exitCode).toBe(1);
+    } finally {
+      process.exitCode = previousExitCode;
+    }
+    expect(JSON.parse(Buffer.concat(chunks).toString("utf8"))).toMatchObject({
+      ok: false,
+      error: scenario.value,
+    });
+  });
+});
+
+describe("full-output token windows", () => {
+  it("preserves Incur token-window metadata when truncating a TOON failure", async () => {
+    const chunks: Buffer[] = [];
+    const destination = new Writable({
+      write(chunk: Buffer, _encoding, callback) {
+        chunks.push(chunk);
+        callback();
+      },
+    });
+    const argv = [
+      "inspect-managed-artifact",
+      "missing.dll",
+      "--format",
+      "toon",
+      "--full-output",
+      "--token-limit",
+      "3",
+    ];
+    const output = createCliResultOutput(
+      parseCliOutputArguments(argv),
+      destination,
+    );
+    if (output === undefined) throw new Error("Missing TOON output surface");
+    const cli = Cli.create("rea-output-test", { sync: false });
+    registerManagedCommands(cli, silentLogger, async () => ({
+      ok: false,
+      error: {
+        code: "target_unavailable",
+        category: "unavailable",
+        message: "The selected artifact is missing.",
+        retryable: false,
+        remediation: { action: "Check that the path exists." },
+        details: { source: "artifact-open" },
+      },
+    }));
+    streamCliCommandResults(cli, output);
+    const previousExitCode = process.exitCode;
+    try {
+      await cli.serve(argv, { stdout: () => undefined });
+      expect(process.exitCode).toBe(1);
+    } finally {
+      process.exitCode = previousExitCode;
+    }
+    const text = Buffer.concat(chunks).toString("utf8");
+    expect(text).toContain("[truncated: showing tokens 0–3 of");
+    expect(text).toMatch(/nextOffset:?\s*3/);
+    expect(text).toContain("ok: false");
+  });
+});
+
+describe("logger classification handoff", () => {
+  it("honors an explicit success for data containing error-shaped fields", async () => {
+    const chunks: Buffer[] = [];
+    const destination = new Writable({
+      write(chunk: Buffer, _encoding, callback) {
+        chunks.push(chunk);
+        callback();
+      },
+    });
+    const result = {
+      error: {
+        code: "target_unavailable",
+        category: "unavailable",
+        message: "Source data describes a missing target.",
+        retryable: false,
+        remediation: { action: "Use the value as source data." },
+      },
+      source: "captured-metadata",
+    };
+    const argv = ["fixture", "--json", "--full-output"];
+    const output = createCliResultOutput(
+      parseCliOutputArguments(argv),
+      destination,
+    );
+    if (output === undefined) throw new Error("Missing JSON output surface");
+    const cli = Cli.create("rea-output-test", { sync: false });
+    cli.command("fixture", {
+      run: () =>
+        logCliCommand(
+          silentLogger,
+          "fixture",
+          async () => result,
+          () => false,
+        ),
+    });
+    streamCliCommandResults(cli, output);
+    const previousExitCode = process.exitCode;
+    try {
+      await cli.serve(argv, { stdout: () => undefined });
+      expect(process.exitCode).toBe(previousExitCode);
+    } finally {
+      process.exitCode = previousExitCode;
+    }
+    expect(JSON.parse(Buffer.concat(chunks).toString("utf8"))).toMatchObject({
+      ok: true,
+      data: result,
+    });
+  });
+});
+
+describe("full-output token counts", () => {
+  it("counts the full failure payload before applying output filters", async () => {
+    const chunks: Buffer[] = [];
+    const destination = new Writable({
+      write(chunk: Buffer, _encoding, callback) {
+        chunks.push(chunk);
+        callback();
+      },
+    });
+    const failure = {
+      code: "target_unavailable",
+      category: "unavailable",
+      message: "The selected artifact is missing.",
+      retryable: false,
+      remediation: { action: "Check that the path exists." },
+      details: { source: "artifact-open" },
+    };
+    const argv = [
+      "inspect-managed-artifact",
+      "missing.dll",
+      "--json",
+      "--full-output",
+      "--token-count",
+      "--filter-output",
+      "message",
+    ];
+    const output = createCliResultOutput(
+      parseCliOutputArguments(argv),
+      destination,
+    );
+    if (output === undefined) throw new Error("Missing JSON output surface");
+    await output.write(failure, {
+      command: "inspect-managed-artifact",
+      duration: "0ms",
+      format: "json",
+    });
+    expect(output.handled).toBe(true);
+    expect(Buffer.concat(chunks).toString("utf8")).toBe(
+      `${estimateTokenCount(JSON.stringify({ ok: false, error: failure, meta: { command: "inspect-managed-artifact", duration: "0ms" } }) + "\n")}\n`,
+    );
+  });
+  it("counts the exact emitted JSON representation and selected document", async () => {
+    const metadata = { command: "fixture", duration: "0ms", format: "json" };
+    for (const terminal of [false, true]) {
+      for (const flags of [
+        [],
+        ["--full-output"],
+        ["--filter-output", "missing"],
+        ["--format", "jsonl"],
+      ]) {
+        const argv = ["fixture", "--json", ...flags];
+        const render = async (count: boolean) => {
+          const chunks: Buffer[] = [];
+          const destination = new Writable({
+            write(chunk: Buffer, _encoding, callback) {
+              chunks.push(chunk);
+              callback();
+            },
+          });
+          Object.defineProperty(destination, "isTTY", { value: terminal });
+          const output = createCliResultOutput(
+            parseCliOutputArguments([
+              ...argv,
+              ...(count ? ["--token-count"] : []),
+            ]),
+            destination,
+          );
+          if (output === undefined) throw new Error("Missing output surface");
+          await output.write({ value: ["hello", "雪😀"] }, metadata);
+          return Buffer.concat(chunks).toString("utf8");
+        };
+        expect(Number((await render(true)).trim())).toBe(
+          estimateTokenCount(await render(false)),
+        );
+      }
+    }
+  });
+
+  it("normalizes exhausted failure window display coordinates", async () => {
+    const chunks: Buffer[] = [];
+    const destination = new Writable({
+      write(chunk: Buffer, _encoding, callback) {
+        chunks.push(chunk);
+        callback();
+      },
+    });
+    const output = createCliResultOutput(
+      parseCliOutputArguments([
+        "fixture",
+        "--format",
+        "toon",
+        "--full-output",
+        "--token-offset",
+        "100000",
+        "--token-limit",
+        "3",
+      ]),
+      destination,
+    );
+    if (output === undefined) throw new Error("Missing output surface");
+    await output.write(
+      {
+        code: "target_unavailable",
+        category: "unavailable",
+        message: "Missing target",
+        retryable: false,
+        remediation: { action: "Select an available target." },
+      },
+      { command: "fixture", duration: "0ms", format: "toon" },
+    );
+    const text = Buffer.concat(chunks).toString("utf8");
+    expect(text).toMatch(/showing tokens (\d+)–\1 of \1/);
+    expect(text).not.toContain("nextOffset");
+    expect(text).toContain("ok: false");
+  });
+});
+
+describe("CLI result output surface", () => {
+  it.each([
     ["--json", "--token-limit", "5"],
     ["--json", "--format", "invalid"],
   ])("delegates unsupported output controls %j", (...arguments_) => {
-    expect(createStreamedCliJsonOutput(arguments_, new Writable())).toBe(
-      undefined,
-    );
+    expect(
+      createCliResultOutput(
+        parseCliOutputArguments(arguments_),
+        new Writable(),
+      ),
+    ).toBe(undefined);
   });
 
   it("keeps ownership after a failed write so no second document is emitted", async () => {
@@ -176,7 +725,10 @@ describe("streamed CLI result surface", () => {
         callback(cause);
       },
     });
-    const output = createStreamedCliJsonOutput(["--json"], destination);
+    const output = createCliResultOutput(
+      parseCliOutputArguments(["--json"]),
+      destination,
+    );
     if (output === undefined) throw new Error("Missing JSON output surface");
     await expect(
       output.write(
@@ -220,15 +772,18 @@ describe("streamed CLI result surface", () => {
       },
     });
     const cli = Cli.create("rea-output-test", { sync: false });
-    registerManagedCommands(cli, silentLogger, async (path, operation) => {
+    registerManagedCommands(cli, silentLogger, async (...[path, operation]) => {
       expect(path).toBe("fixture.dll");
       expect(operation).toBe("inspect_managed_members");
-      return value;
+      return { ok: false, error: value };
     });
     // A terminal destination exercises the indented encoding past the limit.
     Object.defineProperty(destination, "isTTY", { value: true });
     const argv = ["inspect-managed-members", "fixture.dll", "--json"];
-    const output = createStreamedCliJsonOutput(argv, destination);
+    const output = createCliResultOutput(
+      parseCliOutputArguments(argv),
+      destination,
+    );
     if (output === undefined) throw new Error("Missing JSON output surface");
     streamCliCommandResults(cli, output);
     let exitCode = 0;
@@ -248,8 +803,8 @@ describe("streamed CLI result surface", () => {
 
     const chunks: Buffer[] = [];
     const tokenArgv = [...argv, "--token-count", "--full-output"];
-    const tokenOutput = createStreamedCliJsonOutput(
-      tokenArgv,
+    const tokenOutput = createCliResultOutput(
+      parseCliOutputArguments(tokenArgv),
       new Writable({
         write(chunk: Buffer, _encoding, callback) {
           chunks.push(chunk);
@@ -260,7 +815,10 @@ describe("streamed CLI result surface", () => {
     if (tokenOutput === undefined)
       throw new Error("Missing token-count output surface");
     const tokenCli = Cli.create("rea-output-test", { sync: false });
-    registerManagedCommands(tokenCli, silentLogger, async () => value);
+    registerManagedCommands(tokenCli, silentLogger, async () => ({
+      ok: false,
+      error: value,
+    }));
     streamCliCommandResults(tokenCli, tokenOutput);
     await tokenCli.serve(tokenArgv, {
       stdout: (text) => {
@@ -272,7 +830,8 @@ describe("streamed CLI result surface", () => {
     });
     expect(exitCode).toBe(1);
     expect(fallbackBytes).toBe(0);
-    expect(JSON.parse(Buffer.concat(chunks).toString("utf8"))).toMatchObject({
+    const report = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+    expect(report).toMatchObject({
       ok: false,
       error: {
         code: "resource_constraint",
@@ -281,7 +840,16 @@ describe("streamed CLI result surface", () => {
         },
         details: {
           reported_limits: {
-            formatted_characters: expectedCharacters - 1,
+            // Token counting uses the compact pipe encoding, unlike the
+            // terminal digest above. Count leaves, separators and framing.
+            formatted_characters:
+              count * encodedLeaf.length +
+              (count - 1) +
+              '{"methods":[]}'.length +
+              1 +
+              JSON.stringify({ ok: true, data: null, meta: report.meta })
+                .length -
+              4,
             max_string_characters: constants.MAX_STRING_LENGTH,
           },
         },
@@ -289,4 +857,48 @@ describe("streamed CLI result surface", () => {
       meta: { command: "inspect-managed-members" },
     });
   }, 60_000);
+});
+
+describe("streamed CLI filtered selections", () => {
+  it.each([
+    ["raw_result", "json", "null\n"],
+    ["raw_result", "jsonl", "JSONL_BOUNDARY_ERROR"],
+    ["nested.value", "json", '{"nested":{"value":null}}\n'],
+    ["missing", "json", "{}\n"],
+    ["count", "json", "0\n"],
+    ["enabled", "json", "false\n"],
+  ] as const)(
+    "keeps the selected value of --filter-output %s in %s",
+    async (filter, format, expected) => {
+      const chunks: Buffer[] = [];
+      const destination = new Writable({
+        write(chunk: Buffer, _encoding, callback) {
+          chunks.push(chunk);
+          callback();
+        },
+      });
+      const output = createCliResultOutput(
+        parseCliOutputArguments([
+          "--format",
+          format,
+          "--filter-output",
+          filter,
+        ]),
+        destination,
+      );
+      if (output === undefined) throw new Error("Missing JSON output surface");
+      await output.write(
+        { raw_result: null, nested: { value: null }, count: 0, enabled: false },
+        { command: "fixture", duration: "1ms", format },
+      );
+      const text = Buffer.concat(chunks).toString("utf8");
+      if (expected === "JSONL_BOUNDARY_ERROR")
+        expect(JSON.parse(text)).toMatchObject({
+          $rea: "jsonl/v1",
+          type: "error",
+          result: { code: "invalid_request", category: "invalid_input" },
+        });
+      else expect(text).toBe(expected);
+    },
+  );
 });

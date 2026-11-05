@@ -1,3 +1,11 @@
+import { InvalidResidualUnknownGraphError } from "./residualUnknownGraphError.js";
+import { withEvidenceSubjectDeclaration } from "./evidenceSubject.js";
+import { digestSchema } from "./digests.js";
+import { EvidenceIntegrityError } from "./evidenceErrors.js";
+import { AnalysisInputError } from "./analysisErrorCore.js";
+import { err, ok, type Result } from "./result.js";
+import { describeValidationFailure } from "./validationFailure.js";
+import { equalJsonText } from "./jsonSerialization.js";
 import { z } from "zod";
 import canonicalize from "canonicalize";
 
@@ -16,24 +24,25 @@ import {
 } from "./residualUnknown.js";
 import { freezeJsonSnapshot } from "./immutableJson.js";
 
-const artifactManifestSchema = evidenceSchema.shape.subject.unwrap().pick({
-  digest: true,
-  format: true,
-  architecture: true,
+const artifactManifestBaseSchema = z.strictObject({
+  digest: z.strictObject({ sha256: digestSchema }),
 });
+const artifactManifestSchema = withEvidenceSubjectDeclaration(
+  artifactManifestBaseSchema,
+);
 const providerManifestSchema = providerSchema;
 const environmentManifestSchema = evidenceSchema.shape.environment.unwrap();
-const scenarioManifestSchema = z.object({
+const scenarioManifestSchema = z.strictObject({
   evidence_id: evidenceSchema.shape.evidence_id,
   operation: z.string().min(1),
   authority: z.literal("controlled-replay"),
 });
-const captureManifestSchema = z.object({
+const captureManifestSchema = z.strictObject({
   evidence_id: evidenceSchema.shape.evidence_id,
   predicate_type: z.string().min(1),
 });
 
-export const evidenceBundleSchema = z.object({
+export const evidenceBundleSchema = z.strictObject({
   artifacts: z.array(artifactManifestSchema),
   providers: z.array(providerManifestSchema),
   environments: z.array(environmentManifestSchema),
@@ -46,6 +55,28 @@ export const evidenceBundleSchema = z.object({
 export type EvidenceBundle = z.infer<typeof evidenceBundleSchema>;
 const immutableBundles = new WeakMap<object, EvidenceBundle>();
 
+/** Recognize an authenticated sealed bundle without traversing or copying it. */
+export const isImmutableEvidenceBundle = (
+  input: unknown,
+): input is EvidenceBundle =>
+  typeof input === "object" && input !== null && immutableBundles.has(input);
+
+/** Caller input has valid shape but is not in authenticated canonical form. */
+export class NonCanonicalEvidenceBundleError extends TypeError {
+  constructor() {
+    super("Evidence bundle manifests are not canonical");
+    this.name = "NonCanonicalEvidenceBundleError";
+  }
+}
+
+/** Caller input lists the same Evidence record more than once. */
+export class DuplicateEvidenceRecordError extends TypeError {
+  constructor() {
+    super("Evidence bundle contains duplicate record IDs");
+    this.name = "DuplicateEvidenceRecordError";
+  }
+}
+
 /** Build and authenticate a sealed bundle while reusing immutable Evidence records. */
 export const createImmutableEvidenceBundle = (
   records: readonly Evidence[],
@@ -56,7 +87,7 @@ export const createImmutableEvidenceBundle = (
     new Set(checkedRecords.map(({ evidence_id }) => evidence_id)).size !==
     checkedRecords.length
   )
-    throw new TypeError("Evidence bundle contains duplicate record IDs");
+    throw new DuplicateEvidenceRecordError();
   const checkedUnknowns = unknowns.map((unknown) =>
     residualUnknownSchema.parse(unknown),
   );
@@ -82,11 +113,11 @@ export const createEvidenceBundle = (
         subject === null
           ? []
           : [
-              {
+              artifactManifestSchema.parse({
                 digest: subject.digest,
                 format: subject.format,
                 architecture: subject.architecture,
-              },
+              }),
             ],
       ),
     ),
@@ -126,7 +157,7 @@ export const createEvidenceBundle = (
   };
 };
 
-/** Retain target records and eligible complete unknown histories with their mutation evidence. */
+/** Retain target records, their linked sources, and eligible complete unknown histories. */
 export const evidenceBundleForTarget = (
   bundle: EvidenceBundle,
   sha256: string,
@@ -187,12 +218,30 @@ export const evidenceBundleForTarget = (
   const mutationIds = new Set(
     unknowns.flatMap(({ mutation_evidence_ids: ids }) => ids),
   );
+  const selectedIds = new Set(
+    bundle.records
+      .filter(
+        (record) =>
+          record.subject?.digest.sha256 === sha256 ||
+          mutationIds.has(record.evidence_id),
+      )
+      .map((record) => record.evidence_id),
+  );
+  // Source Evidence may have no subject or describe a different artifact.
+  // Follow only explicit links from selected records, retaining missing links
+  // as missing rather than inventing or importing unrelated observations.
+  const pendingEvidence = [...selectedIds];
+  for (let index = 0; index < pendingEvidence.length; index += 1) {
+    const record = recordsById.get(pendingEvidence[index] ?? "");
+    for (const id of record?.evidence_links ?? []) {
+      if (!selectedIds.has(id) && recordsById.has(id)) {
+        selectedIds.add(id);
+        pendingEvidence.push(id);
+      }
+    }
+  }
   return createEvidenceBundle(
-    bundle.records.filter(
-      (record) =>
-        record.subject?.digest.sha256 === sha256 ||
-        mutationIds.has(record.evidence_id),
-    ),
+    bundle.records.filter((record) => selectedIds.has(record.evidence_id)),
     unknowns,
   );
 };
@@ -204,32 +253,41 @@ const referencedEvidenceIds = (unknown: ResidualUnknown): readonly string[] => [
   ...(unknown.resolution?.evidence_ids ?? []),
 ];
 
-/**
- * Name the bundle constraint that failed and how to recover. A single
- * Evidence record, such as one command result, is not a bundle.
- */
-export const describeEvidenceBundleFailure = (
-  input: unknown,
-  cause: unknown,
-): string => {
-  const record = evidenceSchema.safeParse(input);
-  if (record.success)
-    return `Expected an Evidence bundle with records and manifest arrays, but this JSON is one Evidence record (${record.data.evidence_id}). Export a session bundle with the MCP export_evidence_bundle tool and supply that file.`;
-  return cause instanceof z.ZodError
-    ? `Evidence bundle does not match the bundle schema ${describeValidationFailure(cause)}. Supply an unmodified bundle written by export_evidence_bundle or rea evidence-export.`
-    : `Evidence bundle validation failed: ${describeValidationFailure(cause)}. Recreate or re-export the bundle, then try again.`;
+type EvidenceBundleValidationFailure =
+  | z.ZodError
+  | DuplicateEvidenceRecordError
+  | InvalidResidualUnknownGraphError
+  | NonCanonicalEvidenceBundleError;
+
+/** Expected source rejection, including authenticated standalone Evidence. */
+export type EvidenceBundleFailure = {
+  readonly kind: "single-record" | "invalid-bundle";
+  readonly message: string;
+  readonly cause: EvidenceBundleValidationFailure;
 };
 
-/** Locate the first schema issue, or keep a thrown constraint message. */
-export const describeValidationFailure = (cause: unknown): string => {
-  if (!(cause instanceof z.ZodError))
-    return cause instanceof Error ? cause.message : String(cause);
-  const [first, ...rest] = cause.issues;
-  const location =
-    first === undefined || first.path.length === 0
-      ? "the document root"
-      : first.path.map(String).join(".");
-  return `at ${location}: ${first?.message ?? "invalid value"}${rest.length === 0 ? "" : ` (${String(rest.length)} more issues)`}`;
+const describeEvidenceBundleFailure = (
+  input: unknown,
+  cause: EvidenceBundleValidationFailure,
+): EvidenceBundleFailure => {
+  try {
+    const record = parseEvidence(input);
+    return {
+      kind: "single-record",
+      cause,
+      message: `Expected an Evidence bundle with records and manifest arrays, but this JSON is one Evidence record (${record.evidence_id}). Export a session bundle with the MCP export_evidence_bundle tool and supply that file.`,
+    };
+  } catch (recordFailure: unknown) {
+    if (!(recordFailure instanceof z.ZodError)) throw recordFailure;
+    return {
+      kind: "invalid-bundle",
+      cause,
+      message:
+        cause instanceof z.ZodError
+          ? `Evidence bundle does not match the bundle schema ${describeValidationFailure(cause)}. Supply an unmodified bundle produced by this REA identity format. Recreate observations from earlier formats; re-exporting an old bundle does not update its identities.`
+          : `Evidence bundle validation failed: ${describeValidationFailure(cause)}. Recreate or re-export the bundle, then try again.`,
+    };
+  }
 };
 
 /** Parse records, verify semantic IDs, and reject inconsistent manifests. */
@@ -237,12 +295,19 @@ export const parseEvidenceBundle = (input: unknown): EvidenceBundle => {
   return parseBundle(input, false);
 };
 
-/** Authenticate and seal file-owned payloads once for downstream zero-copy reuse. */
-export const parseImmutableEvidenceBundle = (
+/** Authenticate and seal snapshot-owned payloads, throwing validation failures. */
+export const parseImmutableEvidenceBundle = (input: unknown): EvidenceBundle =>
+  parseBundle(input, true);
+
+/** Read expected source failures as facts; implementation failures still throw. */
+export const safeParseEvidenceBundle = (
   input: unknown,
-): EvidenceBundle => {
-  return parseBundle(input, true);
-};
+): Result<EvidenceBundle, EvidenceBundleFailure> => readBundle(input, false);
+
+/** Authenticate and seal file-owned payloads once for downstream zero-copy reuse. */
+export const safeParseImmutableEvidenceBundle = (
+  input: unknown,
+): Result<EvidenceBundle, EvidenceBundleFailure> => readBundle(input, true);
 
 const parseBundle = (input: unknown, seal: boolean): EvidenceBundle => {
   if (typeof input === "object" && input !== null) {
@@ -250,6 +315,53 @@ const parseBundle = (input: unknown, seal: boolean): EvidenceBundle => {
     if (owned !== undefined) return owned;
   }
   return authenticateBundle(evidenceBundleSchema.parse(input), seal);
+};
+
+/** Read a source bundle while preserving unexpected implementation failures. */
+export const readEvidenceBundle = (
+  input: unknown,
+  context: {
+    readonly operation: string;
+    readonly path: readonly (string | number)[];
+  },
+): Result<EvidenceBundle, AnalysisInputError | EvidenceIntegrityError> => {
+  const parsed = safeParseEvidenceBundle(input);
+  if (parsed.ok) return parsed;
+  const { cause, kind, message } = parsed.error;
+  if (kind === "single-record")
+    return err(
+      new AnalysisInputError(
+        context.operation,
+        { cause, userMessage: message, remediationAction: message },
+        [{ path: context.path, reason: "invalid_value", message }],
+      ),
+    );
+  return err(
+    new EvidenceIntegrityError(cause.message, {
+      cause,
+      userMessage: message,
+    }),
+  );
+};
+
+const readBundle = (
+  input: unknown,
+  seal: boolean,
+): Result<EvidenceBundle, EvidenceBundleFailure> => {
+  try {
+    return ok(
+      seal ? parseImmutableEvidenceBundle(input) : parseEvidenceBundle(input),
+    );
+  } catch (cause: unknown) {
+    if (
+      !(cause instanceof z.ZodError) &&
+      !(cause instanceof DuplicateEvidenceRecordError) &&
+      !(cause instanceof InvalidResidualUnknownGraphError) &&
+      !(cause instanceof NonCanonicalEvidenceBundleError)
+    )
+      throw cause;
+    return err(describeEvidenceBundleFailure(input, cause));
+  }
 };
 
 /** Authenticate evidence and bundle invariants after the bundle shape is parsed. */
@@ -263,7 +375,7 @@ const authenticateBundle = (
 ): EvidenceBundle => {
   const recordIds = parsed.records.map(({ evidence_id: id }) => id);
   if (new Set(recordIds).size !== recordIds.length)
-    throw new TypeError("Evidence bundle contains duplicate record IDs");
+    throw new DuplicateEvidenceRecordError();
   validateUnknownGraph(parsed.unknowns, parsed.records);
   const canonical = createEvidenceBundle(
     parsed.records.map((record, index) => {
@@ -287,8 +399,8 @@ const authenticateBundle = (
     }),
     parsed.unknowns,
   );
-  if (JSON.stringify(parsed) !== JSON.stringify(canonical))
-    throw new TypeError("Evidence bundle manifests are not canonical");
+  if (!equalJsonText(parsed, canonical))
+    throw new NonCanonicalEvidenceBundleError();
   if (seal) {
     freezeJsonSnapshot(canonical);
     immutableBundles.set(canonical, canonical);
@@ -316,15 +428,19 @@ const validateUnknownGraph = (
     );
     for (const [index, revision] of history.entries()) {
       if (revision.revision !== index + 1)
-        throw new TypeError(
-          `Residual unknown ${id} revision history has a gap`,
-        );
+        throw new InvalidResidualUnknownGraphError({
+          kind: "history_gap",
+          unknown_id: id,
+        });
       if (
         index > 0 &&
         revision.previous_revision_digest !==
           history[index - 1]?.revision_digest
       )
-        throw new TypeError(`Residual unknown ${id} revision chain is broken`);
+        throw new InvalidResidualUnknownGraphError({
+          kind: "revision_chain",
+          unknown_id: id,
+        });
     }
     const head = history.at(-1);
     if (head === undefined)
@@ -340,14 +456,18 @@ const validateUnknownGraph = (
     ];
     for (const evidenceId of referencedEvidence)
       if (!evidenceById.has(evidenceId))
-        throw new TypeError(
-          `Residual unknown references missing evidence ${evidenceId}`,
-        );
+        throw new InvalidResidualUnknownGraphError({
+          kind: "missing_evidence",
+          unknown_id: unknown.unknown_id,
+          evidence_id: evidenceId,
+        });
     for (const relationship of unknown.relationships)
       if (!unknownById.has(relationship.unknown_id))
-        throw new TypeError(
-          `Residual unknown references missing unknown ${relationship.unknown_id}`,
-        );
+        throw new InvalidResidualUnknownGraphError({
+          kind: "missing_unknown",
+          unknown_id: unknown.unknown_id,
+          related_unknown_id: relationship.unknown_id,
+        });
     if (unknown.resolution?.disposition === "verified")
       validateVerifiedResolution(unknown, evidenceById);
   }
@@ -359,9 +479,10 @@ const validateVerifiedResolution = (
   evidenceById: Pick<ReadonlyMap<string, Evidence>, "get">,
 ): void => {
   if (unknown.contradicting_evidence_ids.length > 0)
-    throw new TypeError(
-      `Residual unknown ${unknown.unknown_id} retains contradicting evidence`,
-    );
+    throw new InvalidResidualUnknownGraphError({
+      kind: "contradicting_evidence",
+      unknown_id: unknown.unknown_id,
+    });
   const qualifies = unknown.resolution?.evidence_ids.some((evidenceId) => {
     const evidence = evidenceById.get(evidenceId);
     return (
@@ -372,9 +493,10 @@ const validateVerifiedResolution = (
     );
   });
   if (qualifies !== true)
-    throw new TypeError(
-      `Residual unknown ${unknown.unknown_id} has no qualifying resolution evidence`,
-    );
+    throw new InvalidResidualUnknownGraphError({
+      kind: "resolution_unproven",
+      unknown_id: unknown.unknown_id,
+    });
 };
 
 /**
@@ -394,22 +516,27 @@ export const validateResidualUnknownAddition = (
       : unknown.revision !== current.revision + 1 ||
         unknown.previous_revision_digest !== current.revision_digest
   )
-    throw new TypeError(
-      `Residual unknown ${unknown.unknown_id} revision chain is broken`,
-    );
+    throw new InvalidResidualUnknownGraphError({
+      kind: "revision_chain",
+      unknown_id: unknown.unknown_id,
+    });
   for (const evidenceId of referencedEvidenceIds(unknown))
     if (!evidenceById.has(evidenceId))
-      throw new TypeError(
-        `Residual unknown references missing evidence ${evidenceId}`,
-      );
+      throw new InvalidResidualUnknownGraphError({
+        kind: "missing_evidence",
+        unknown_id: unknown.unknown_id,
+        evidence_id: evidenceId,
+      });
   for (const relationship of unknown.relationships)
     if (
       relationship.unknown_id !== unknown.unknown_id &&
       !currentHeads.has(relationship.unknown_id)
     )
-      throw new TypeError(
-        `Residual unknown references missing unknown ${relationship.unknown_id}`,
-      );
+      throw new InvalidResidualUnknownGraphError({
+        kind: "missing_unknown",
+        unknown_id: unknown.unknown_id,
+        related_unknown_id: relationship.unknown_id,
+      });
   if (unknown.resolution?.disposition === "verified")
     validateVerifiedResolution(unknown, evidenceById);
   // In a valid graph, no existing node can point to an absent ID. Since the
@@ -423,7 +550,10 @@ export const validateResidualUnknownAddition = (
       dependencies.length > 0 &&
       reachesUnknown(dependencies, unknown.unknown_id, currentHeads, unknown)
     )
-      throw new TypeError("Residual unknown dependency graph contains a cycle");
+      throw new InvalidResidualUnknownGraphError({
+        kind: "dependency_cycle",
+        unknown_id: unknown.unknown_id,
+      });
   }
 };
 
@@ -511,9 +641,10 @@ const rejectDependencyCycles = (
         if (relationship?.type !== "depends-on") continue;
         const dependency = relationship.unknown_id;
         if (active.has(dependency))
-          throw new TypeError(
-            "Residual unknown dependency graph contains a cycle",
-          );
+          throw new InvalidResidualUnknownGraphError({
+            kind: "dependency_cycle",
+            unknown_id: dependency,
+          });
         if (visited.has(dependency)) continue;
         const unknown = unknownById.get(dependency);
         if (unknown === undefined)

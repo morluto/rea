@@ -4,10 +4,13 @@ import type {
   CapturedWebScript,
   ExportedWebScript,
 } from "./webScriptExport.js";
+import { urlDeclaresQueryOrFragment } from "./urlComponents.js";
 
 const hash = (text: string): string =>
   createHash("sha256").update(text).digest("hex");
-const PORTABLE_SEGMENT = /^[A-Za-z0-9_~.-]+$/u;
+// Literal URL path characters that are also portable filename characters.
+// Percent escapes remain isolated: decoding them could change path identity.
+const PORTABLE_SEGMENT = /^[A-Za-z0-9_~.!$&'()+,;=@-]+$/u;
 const RESERVED_SEGMENT = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/iu;
 
 /** One planned file, or an explicit missing source with no filesystem effect. */
@@ -15,6 +18,12 @@ export interface PlannedWebScript {
   readonly script: CapturedWebScript;
   readonly record: ExportedWebScript;
 }
+
+/** Stable isolated identity shared by planning and destination collision fallback. */
+export const isolatedWebScriptPath = (
+  source: CapturedWebScript["source"],
+  index: number,
+): string => `isolated/source-${index + 1}-${hash(JSON.stringify(source))}.js`;
 
 /** Preserve safe URL layouts only when every captured path is unambiguous. */
 export const planWebScriptExport = (
@@ -44,9 +53,7 @@ export const planWebScriptExport = (
         url: script.url,
         content: {
           state: "exported",
-          relative_path:
-            path ??
-            `isolated/source-${index + 1}-${hash(JSON.stringify(script.source))}.js`,
+          relative_path: path ?? isolatedWebScriptPath(script.source, index),
           layout: path === undefined ? "isolated" : "url-path",
           layout_reason: reason,
           sha256: script.content.sha256,
@@ -94,8 +101,7 @@ const candidatePath = (script: CapturedWebScript): CandidatePath => {
   return {
     path: `origins/${hash(url.origin)}/${parts.join("/")}`,
     reason:
-      url.search !== "" ||
-      url.hash !== "" ||
+      urlDeclaresQueryOrFragment(url) ||
       url.username !== "" ||
       url.password !== ""
         ? "URL query, fragment, or credentials cannot select a canonical local module."

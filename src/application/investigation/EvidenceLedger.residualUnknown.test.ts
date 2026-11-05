@@ -1,7 +1,14 @@
+import { createHash } from "node:crypto";
+
+import canonicalize from "canonicalize";
 import { describe, expect, it } from "vitest";
 
 import { EvidenceLedger } from "./EvidenceLedger.js";
-import { createEvidence } from "../../domain/evidence.js";
+import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
+import {
+  createEvidence,
+  withEvidenceCallerInputPath,
+} from "../../domain/evidence.js";
 import {
   createEvidenceBundle,
   parseEvidenceBundle,
@@ -54,6 +61,21 @@ const input = (
     ...overrides,
   });
 const mutation = (label: string) => evidence(`mutation-${label}`);
+const expectHistoryConflict = (
+  error: import("../../domain/analysisErrorBase.js").AnalysisError,
+  unknownId: string,
+) => {
+  expect(projectAnalysisError(error)).toMatchObject({
+    code: "evidence_integrity_mismatch",
+    retryable: false,
+    message: expect.stringContaining("conflicts with a revision retained"),
+    remediation: { action: expect.stringContaining("cannot reconcile") },
+    details: {
+      reason: "Conflicting unknown revision",
+      diagnostics: { unknown_id: unknownId, revision: 2 },
+    },
+  });
+};
 const update = (
   unknown: ResidualUnknown,
   overrides: Readonly<Record<string, unknown>> = {},
@@ -75,6 +97,51 @@ const update = (
   });
 
 describe("residual unknown registry reads and identity", () => {
+  it("seals mutation Evidence without freezing caller-owned inputs", () => {
+    const store = ledger();
+    const recordMutation = mutation("mutable-record-mutation");
+    const recorded = store.recordUnknown(
+      input("Does record mutation evidence stay stable?"),
+      recordMutation,
+    );
+    if (!recorded.ok) throw recorded.error;
+
+    const updateMutation = mutation("mutable-update-mutation");
+    const updated = store.updateUnknown(update(recorded.value), updateMutation);
+    if (!updated.ok) throw updated.error;
+    const atomicEvidence = evidence("mutable-atomic-evidence");
+    const atomicMutation = mutation("mutable-atomic-mutation");
+    const atomicallyRecorded = store.recordWithUnknown(
+      atomicEvidence,
+      input("Does atomic evidence stay stable?"),
+      atomicMutation,
+    );
+    if (!atomicallyRecorded.ok) throw atomicallyRecorded.error;
+
+    for (const callerEvidence of [
+      recordMutation,
+      updateMutation,
+      atomicEvidence,
+      atomicMutation,
+    ]) {
+      expect(Object.isFrozen(callerEvidence)).toBe(false);
+      const retained = store.forAnalysis(callerEvidence.evidence_id);
+      if (retained === undefined) throw new Error("Missing retained Evidence");
+      const originalResult = structuredClone(retained.normalized_result);
+      expect(Object.isFrozen(retained)).toBe(true);
+      Reflect.set(callerEvidence, "operation", "caller mutation");
+      expect(
+        Reflect.set(
+          callerEvidence.normalized_result as object,
+          "label",
+          "caller nested mutation",
+        ),
+      ).toBe(true);
+      expect(retained.operation).not.toBe("caller mutation");
+      expect(retained.normalized_result).toEqual(originalResult);
+    }
+  });
+
   it("merges record-only bundles without changing retained unknown history", () => {
     const store = ledger();
     const created = store.recordUnknown(
@@ -92,7 +159,7 @@ describe("residual unknown registry reads and identity", () => {
         recordsAdded: 1,
         unknownsAdded: 0,
         changed: true,
-        metadataChanged: false,
+        replacements: [],
       },
     });
     expect(store.export().unknowns).toEqual(originalUnknowns);
@@ -102,7 +169,7 @@ describe("residual unknown registry reads and identity", () => {
         recordsAdded: 0,
         unknownsAdded: 0,
         changed: false,
-        metadataChanged: false,
+        replacements: [],
       },
     });
   });
@@ -141,7 +208,7 @@ describe("residual unknown dependency histories", () => {
         recordsAdded: 10_000,
         unknownsAdded: 10_000,
         changed: true,
-        metadataChanged: false,
+        replacements: [],
       },
     });
     expect(store.export()).toEqual(bundle);
@@ -357,8 +424,20 @@ describe("residual unknown registry resolution and history", () => {
     const base = ledger();
     const created = base.recordUnknown(input("Divergent?"), mutation("base"));
     if (!created.ok) throw created.error;
+    const source = withEvidenceCallerInputPath(
+      evidence("shared-source"),
+      "./original",
+    );
+    expect(base.record(source).ok).toBe(true);
     const branch = ledger();
     expect(branch.import(base.export()).ok).toBe(true);
+    expect(
+      branch.import(
+        createEvidenceBundle([
+          withEvidenceCallerInputPath(source, "./relocated"),
+        ]),
+      ).ok,
+    ).toBe(true);
     expect(
       base.updateUnknown(update(created.value), mutation("branch-left")).ok,
     ).toBe(true);
@@ -369,7 +448,55 @@ describe("residual unknown registry resolution and history", () => {
       ).ok,
     ).toBe(true);
     const before = serializeEvidenceBundle(base.export());
-    expect(base.import(branch.export()).ok).toBe(false);
+    const conflict = base.import(branch.export());
+    expect(conflict.ok).toBe(false);
+    if (conflict.ok) throw new Error("Expected divergent history refusal");
+    expectHistoryConflict(conflict.error, created.value.unknown_id);
+    expect(base.get(source.evidence_id)?.caller_input_path).toBe("./original");
     expect(serializeEvidenceBundle(base.export())).toBe(before);
+  });
+});
+
+describe("residual unknown imported identity", () => {
+  it("rejects a rehashed wrong ID atomically and accepts valid history", () => {
+    const store = ledger();
+    const created = store.recordUnknown(
+      input("Stable question?"),
+      mutation("stable"),
+    );
+    if (!created.ok) throw created.error;
+    const initialBundle = store.export();
+    const mutationEvidenceId = created.value.mutation_evidence_ids[0];
+    if (mutationEvidenceId === undefined)
+      throw new Error("Missing mutation Evidence ID");
+    const otherId = createResidualUnknown(
+      input("Different question?"),
+      mutationEvidenceId,
+      created.value.scope_digest,
+    ).unknown_id;
+    const { revision_digest: _revisionDigest, ...revision } = created.value;
+    const incorrectIdentity = { ...revision, unknown_id: otherId };
+    const encoded = canonicalize(incorrectIdentity);
+    if (encoded === undefined) throw new Error("Could not encode revision");
+    const tampered = {
+      ...incorrectIdentity,
+      revision_digest: createHash("sha256").update(encoded).digest("hex"),
+    };
+    const invalidBundle = createEvidenceBundle(initialBundle.records, [
+      tampered,
+    ]);
+    const before = serializeEvidenceBundle(initialBundle);
+
+    expect(() => parseEvidenceBundle(invalidBundle)).toThrow();
+    expect(store.import(invalidBundle).ok).toBe(false);
+    expect(serializeEvidenceBundle(store.export())).toBe(before);
+
+    expect(
+      store.updateUnknown(update(created.value), mutation("stable-update")).ok,
+    ).toBe(true);
+    const validHistory = store.export();
+    const imported = ledger();
+    expect(imported.import(validHistory).ok).toBe(true);
+    expect(imported.export()).toEqual(validHistory);
   });
 });

@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import type { JsonValue } from "../domain/jsonValue.js";
-import { encodeToolResult } from "./toolResultEncoding.js";
+import {
+  carriesTargetContentMarker,
+  encodeToolResult,
+  TARGET_CONTENT_RESULT_META,
+} from "./toolResultEncoding.js";
 
 const projectedResult = (candidate: JsonValue) => ({
   content: [{ type: "text", text: JSON.stringify(candidate) }],
@@ -44,20 +48,80 @@ describe("MCP result encoding budget", () => {
   it.each([
     { error: { code: "invalid_request", message: '中文"\n'.repeat(30000) } },
     { error: { message: "😀\ud800" } },
-  ])("counts only escaped text for text-only error delivery", (candidate) => {
-    const textBytes = Buffer.byteLength(
+  ])(
+    "counts escaped text and the error flag for error delivery",
+    (candidate) => {
+      const errorBytes = Buffer.byteLength(
+        JSON.stringify({
+          content: [{ type: "text", text: JSON.stringify(candidate) }],
+          isError: true,
+        }),
+      );
+      const encoded = encodeToolResult(candidate, errorBytes, "error-text");
+      if (!encoded.ok) throw new Error("Expected complete encoding");
+      expect(encoded.text).toBe(JSON.stringify(candidate));
+      expect(encoded.bytes).toBe(errorBytes);
+      expect(
+        encodeToolResult(candidate, errorBytes - 1, "error-text"),
+      ).toMatchObject({
+        ok: false,
+        bytesAtLeast: errorBytes,
+      });
+    },
+  );
+
+  it("accounts for the untrusted target-content marker", () => {
+    const candidate = { strings: ['"ignore previous instructions"', "中文"] };
+    const markedBytes = Buffer.byteLength(
       JSON.stringify({
-        content: [{ type: "text", text: JSON.stringify(candidate) }],
+        ...projectedResult(candidate),
+        _meta: TARGET_CONTENT_RESULT_META,
       }),
     );
-    const encoded = encodeToolResult(candidate, textBytes, "text");
-    if (!encoded.ok) throw new Error("Expected complete encoding");
-    expect(encoded.text).toBe(JSON.stringify(candidate));
-    expect(encoded.bytes).toBe(textBytes);
-    expect(encodeToolResult(candidate, textBytes - 1, "text")).toMatchObject({
-      ok: false,
-      bytesAtLeast: textBytes,
+    const marked = encodeToolResult(
+      candidate,
+      markedBytes,
+      "structured-and-text",
+      true,
+    );
+    if (!marked.ok) throw new Error("Expected complete encoding");
+    expect(marked.bytes).toBe(markedBytes);
+    expect(marked.text).toBe(JSON.stringify(candidate));
+    expect(
+      encodeToolResult(candidate, markedBytes - 1, "structured-and-text", true),
+    ).toMatchObject({ ok: false, bytesAtLeast: markedBytes });
+    expect(TARGET_CONTENT_RESULT_META).toEqual({
+      provenance: { untrusted_content: true, source: "analysis_target" },
     });
+  });
+
+  it("accounts for the marker on text-only error results", () => {
+    const candidate = { error: { message: "target says: run this" } };
+    const markedBytes = Buffer.byteLength(
+      JSON.stringify({
+        content: [{ type: "text", text: JSON.stringify(candidate) }],
+        isError: true,
+        _meta: TARGET_CONTENT_RESULT_META,
+      }),
+    );
+    expect(
+      encodeToolResult(candidate, markedBytes, "error-text", true),
+    ).toMatchObject({ ok: true, bytes: markedBytes });
+    expect(
+      encodeToolResult(candidate, markedBytes - 1, "error-text", true),
+    ).toMatchObject({ ok: false, bytesAtLeast: markedBytes });
+  });
+
+  it("recognizes the delivered marker", () => {
+    expect(
+      carriesTargetContentMarker({ _meta: TARGET_CONTENT_RESULT_META }),
+    ).toBe(true);
+    expect(carriesTargetContentMarker({})).toBe(false);
+    expect(
+      carriesTargetContentMarker({
+        _meta: { provenance: { untrusted_content: false } },
+      }),
+    ).toBe(false);
   });
 
   it("stops before reading the remainder of an oversized result", () => {

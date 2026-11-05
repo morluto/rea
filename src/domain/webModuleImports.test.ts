@@ -9,7 +9,7 @@ describe("native module syntax observations", () => {
   it("collects native imports and re-exports, preserving empty strings and computed unknowns", () => {
     const source =
       'import ""; import x from "./x.js"; export * from "./all.js"; export {x} from "pkg"; import(`./literal.js`); import(`./${name}.js`); import(expr);';
-    const result = collectWebModuleImports(source);
+    const result = collectWebModuleImports(source, "main.js");
     expect(result.state).toBe("parsed");
     expect(result.imports.map((item) => [item.kind, item.specifier])).toEqual([
       ["static-import", ""],
@@ -25,15 +25,36 @@ describe("native module syntax observations", () => {
         item.expression,
       );
   });
-  it("excludes erased TypeScript imports/exports and bundler inference", () => {
+  it("excludes whole type declarations and retains inline type dependency syntax", () => {
     const result = collectWebModuleImports(
       'import type {T} from "types"; import {type X} from "also-types"; export type {T} from "export-types"; export {type Y} from "only-types"; import {type T, value} from "mixed"; __webpack_require__.e(4); __vitePreload(() => 1, ["chunk.js"]);',
+      "main.ts",
     );
-    expect(result.imports.map((item) => item.specifier)).toEqual(["mixed"]);
+    expect(result.imports.map((item) => item.specifier)).toEqual([
+      "also-types",
+      "only-types",
+      "mixed",
+    ]);
+    expect(result.diagnostics).toContain(
+      "Compiler options are unavailable; inline type-only imports or re-exports may preserve a module side-effect dependency.",
+    );
+  });
+  it("keeps JavaScript relational imports distinct from TypeScript import types", () => {
+    const source = 'const order = left < import("./dep.js") > (right);';
+    const javascript = collectWebModuleImports(source, "main.js");
+    expect(javascript.diagnostics).toEqual([]);
+    expect(javascript.imports).toEqual([
+      expect.objectContaining({
+        kind: "dynamic-import",
+        specifier: "./dep.js",
+        expression: '"./dep.js"',
+      }),
+    ]);
+    expect(collectWebModuleImports(source, "main.ts").imports).toEqual([]);
   });
   it("uses UTF-16 source locations after astral characters", () => {
     const source = 'const emoji = "😀";\nimport "./x.js";';
-    const item = collectWebModuleImports(source).imports[0];
+    const item = collectWebModuleImports(source, "main.js").imports[0];
     expect(item?.start).toEqual({
       offset: source.indexOf('"./x.js"'),
       line: 2,
@@ -41,7 +62,10 @@ describe("native module syntax observations", () => {
     });
   });
   it("reports unparseable input without asserting an empty complete graph", () => {
-    const result = collectWebModuleImports('import "./ok.js"; function {');
+    const result = collectWebModuleImports(
+      'import "./ok.js"; function {',
+      "main.js",
+    );
     expect(result).toMatchObject({ state: "unparseable", imports: [] });
     expect(result.diagnostics.length).toBeGreaterThan(0);
   });
@@ -50,7 +74,7 @@ describe("native module syntax observations", () => {
 describe("deep native module syntax", () => {
   it("retains imports and their locations after a parser-admitted deep property chain", () => {
     const source = `const value = root${".next".repeat(12_000)};\nimport "./last.js";\nexport * from "./reexport.js";\nimport("./lazy.js");`;
-    const result = collectWebModuleImports(source);
+    const result = collectWebModuleImports(source, "main.js");
     expect(result.state).toBe("parsed");
     expect(result.diagnostics).toEqual([]);
     expect(

@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { chmod, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -108,3 +108,27 @@ it("reads a linked worktree's own branch and detached HEAD through shared Git re
     dirty: null,
   });
 });
+
+it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+  "keeps unreadable loose refs unknown instead of falling back to packed refs",
+  async () => {
+    const root = await createTestTempDirectory("rea-reference-loose-ref-");
+    const gitdir = join(root, ".git");
+    const looseRef = join(gitdir, "refs", "heads", "main");
+    await mkdir(join(gitdir, "refs", "heads"), { recursive: true });
+    const head = "1234567890abcdef1234567890abcdef12345678";
+    await writeFile(join(gitdir, "HEAD"), "ref: refs/heads/main\n");
+    await writeFile(join(gitdir, "packed-refs"), `${head} refs/heads/main\n`);
+    await writeFile(looseRef, `${head}\n`);
+    await chmod(looseRef, 0);
+    try {
+      expect(await readVcs(root)).toEqual({
+        kind: "unknown",
+        head: null,
+        dirty: null,
+      });
+    } finally {
+      await chmod(looseRef, 0o600);
+    }
+  },
+);

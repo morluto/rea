@@ -1,3 +1,7 @@
+import {
+  metadataTokenFact,
+  type MetadataTokenFact,
+} from "./ManagedMetadataHeaps.js";
 import type { ManagedDecodeBudget } from "./ManagedDecodeBudget.js";
 import { ManagedReaderFailure } from "./ManagedReaderFailure.js";
 import type {
@@ -12,6 +16,7 @@ const PREFIX_OPCODES = new Set([
   "tail.",
   "constrained.",
   "readonly.",
+  "no.",
 ]);
 
 const OPCODES = new Map<
@@ -232,28 +237,21 @@ const OPCODES = new Map<
   [0xfe16, { name: "constrained.", operand: "type" }],
   [0xfe17, { name: "cpblk", operand: "none" }],
   [0xfe18, { name: "initblk", operand: "none" }],
+  [0xfe19, { name: "no.", operand: "short-i" }],
   [0xfe1a, { name: "rethrow", operand: "none" }],
   [0xfe1c, { name: "sizeof", operand: "type" }],
   [0xfe1d, { name: "refanytype", operand: "none" }],
   [0xfe1e, { name: "readonly.", operand: "none" }],
 ]);
 
-const tokenKind = (token: string): ManagedInstructionAnchor["operand_kind"] => {
-  if (
-    token.startsWith("0x06") ||
-    token.startsWith("0x0a") ||
-    token.startsWith("0x2b")
-  )
-    return "method";
-  if (token.startsWith("0x04")) return "field";
-  if (token.startsWith("0x70")) return "string";
-  if (token.startsWith("0x11")) return "signature";
-  if (
-    token.startsWith("0x01") ||
-    token.startsWith("0x02") ||
-    token.startsWith("0x1b")
-  )
-    return "type";
+const tokenKind = (table: number): ManagedInstructionAnchor["operand_kind"] => {
+  if (table === 6 || table === 0x2b) return "method";
+  if (table === 4) return "field";
+  if (table === 0x70) return "string";
+  if (table === 0x11) return "signature";
+  // MemberRefs need their signature to distinguish methods from fields.
+  if (table === 0x0a) return "token";
+  if (table === 1 || table === 2 || table === 0x1b) return "type";
   return "token";
 };
 
@@ -261,86 +259,110 @@ type OperandResult = {
   readonly next: number;
   readonly anchorKind: ManagedInstructionAnchor["operand_kind"];
   readonly value: string | null;
+  readonly reference?: MetadataTokenFact;
 };
 
 type OperandReader = (il: Buffer, offset: number) => OperandResult;
 
-const FIXED_OPERAND_READERS = new Map<string, OperandReader>([
+// String(-0) loses a CIL constant's sign in both anchors and normalized hashes.
+const floatingPointOperand = (value: number): string =>
+  Object.is(value, -0) ? "-0" : String(value);
+
+/**
+ * A fixed-width operand declares its byte width next to its reader so the
+ * extent check can bound the read before any value is consumed. Keeping both
+ * facts in one entry is what stops the width and the reader from drifting.
+ */
+type FixedOperand = {
+  readonly width: number;
+  readonly read: OperandReader;
+};
+
+const fixed = (width: number, read: OperandReader): FixedOperand => ({
+  width,
+  read,
+});
+
+const FIXED_OPERAND_READERS = new Map<string, FixedOperand>([
   [
     "none",
-    (_il, offset) => ({ next: offset, anchorKind: "none", value: null }),
+    fixed(0, (_il, offset) => ({
+      next: offset,
+      anchorKind: "none",
+      value: null,
+    })),
   ],
   [
     "short-var",
-    (il, offset) => ({
+    fixed(1, (il, offset) => ({
       next: offset + 1,
       anchorKind: "variable",
       value: String(il.readUInt8(offset)),
-    }),
+    })),
   ],
   [
     "var",
-    (il, offset) => ({
+    fixed(2, (il, offset) => ({
       next: offset + 2,
       anchorKind: "variable",
       value: String(il.readUInt16LE(offset)),
-    }),
+    })),
   ],
   [
     "short-i",
-    (il, offset) => ({
+    fixed(1, (il, offset) => ({
       next: offset + 1,
       anchorKind: "constant",
       value: String(il.readInt8(offset)),
-    }),
+    })),
   ],
   [
     "i",
-    (il, offset) => ({
+    fixed(4, (il, offset) => ({
       next: offset + 4,
       anchorKind: "constant",
       value: String(il.readInt32LE(offset)),
-    }),
+    })),
   ],
   [
     "i8",
-    (il, offset) => ({
+    fixed(8, (il, offset) => ({
       next: offset + 8,
       anchorKind: "constant",
       value: il.readBigInt64LE(offset).toString(),
-    }),
+    })),
   ],
   [
     "r4",
-    (il, offset) => ({
+    fixed(4, (il, offset) => ({
       next: offset + 4,
       anchorKind: "constant",
-      value: String(il.readFloatLE(offset)),
-    }),
+      value: floatingPointOperand(il.readFloatLE(offset)),
+    })),
   ],
   [
     "r8",
-    (il, offset) => ({
+    fixed(8, (il, offset) => ({
       next: offset + 8,
       anchorKind: "constant",
-      value: String(il.readDoubleLE(offset)),
-    }),
+      value: floatingPointOperand(il.readDoubleLE(offset)),
+    })),
   ],
   [
     "short-branch",
-    (il, offset) => ({
+    fixed(1, (il, offset) => ({
       next: offset + 1,
       anchorKind: "branch",
       value: String(offset + 1 + il.readInt8(offset)),
-    }),
+    })),
   ],
   [
     "branch",
-    (il, offset) => ({
+    fixed(4, (il, offset) => ({
       next: offset + 4,
       anchorKind: "branch",
       value: String(offset + 4 + il.readInt32LE(offset)),
-    }),
+    })),
   ],
 ]);
 
@@ -355,13 +377,43 @@ const TOKEN_OPERAND_KINDS = new Map<
   ["signature", "signature"],
 ]);
 
+/** Every token operand is a 4-byte metadata token. */
+const TOKEN_OPERAND_WIDTH = 4;
+
+/**
+ * Bytes the operand at `offset` occupies, or `null` when the extent itself
+ * cannot be read from `il`. This is the single extent authority: `readOperand`
+ * must never be called for an operand whose extent it cannot bound, so no
+ * operand read can leave the method body.
+ */
+const operandExtent = (
+  il: Buffer,
+  offset: number,
+  kind: string,
+): number | null => {
+  const fixedOperand = FIXED_OPERAND_READERS.get(kind);
+  if (fixedOperand !== undefined) return fixedOperand.width;
+  if (kind === "switch") {
+    if (offset > il.length - 4) return null;
+    return 4 + il.readUInt32LE(offset) * 4;
+  }
+  return TOKEN_OPERAND_KINDS.has(kind) || kind === "token"
+    ? TOKEN_OPERAND_WIDTH
+    : 0;
+};
+
+/**
+ * Read an operand whose extent is already known to fit. `next` is always
+ * `offset + operandExtent(il, offset, kind)`; callers bound the read first.
+ */
 const readOperand = (
   il: Buffer,
   offset: number,
   kind: string,
+  memberRefKind?: (token: string) => "field" | "method" | undefined,
 ): OperandResult => {
-  const fixed = FIXED_OPERAND_READERS.get(kind);
-  if (fixed !== undefined) return fixed(il, offset);
+  const fixedOperand = FIXED_OPERAND_READERS.get(kind);
+  if (fixedOperand !== undefined) return fixedOperand.read(il, offset);
   if (kind === "switch") {
     const count = il.readUInt32LE(offset);
     return {
@@ -370,19 +422,25 @@ const readOperand = (
       value: String(count),
     };
   }
-  const raw = il.readUInt32LE(offset);
-  const token = `0x${raw.toString(16).padStart(8, "0")}`;
-  const tokenOperandKind = TOKEN_OPERAND_KINDS.get(kind);
-  if (tokenOperandKind !== undefined)
-    return { next: offset + 4, anchorKind: tokenOperandKind, value: token };
-  if (kind === "token")
-    return { next: offset + 4, anchorKind: tokenKind(token), value: token };
-  return { next: offset, anchorKind: "unknown", value: null };
+  if (!TOKEN_OPERAND_KINDS.has(kind) && kind !== "token")
+    return { next: offset, anchorKind: "unknown", value: null };
+  const reference = metadataTokenFact(il.readUInt32LE(offset));
+  const { token } = reference;
+  return {
+    next: offset + TOKEN_OPERAND_WIDTH,
+    anchorKind:
+      TOKEN_OPERAND_KINDS.get(kind) ??
+      (kind === "token" ? memberRefKind?.(token) : undefined) ??
+      tokenKind(reference.table),
+    value: token,
+    reference,
+  };
 };
 
 export const decodeInstructions = (
   il: Buffer,
-  admitInstruction?: (offset: number) => void,
+  admitInstruction?: (offset: number, hasReference: boolean) => void,
+  memberRefKind?: (token: string) => "field" | "method" | undefined,
 ): {
   readonly parsed: readonly ParsedInstruction[];
   readonly instructionStarts: readonly number[];
@@ -400,20 +458,36 @@ export const decodeInstructions = (
       const start = offset;
       const first = il.readUInt8(offset);
       offset += 1;
+      if (first === 0xfe && offset >= il.length) {
+        issue = `Two-byte CIL opcode at IL offset ${String(start)} leaves method body`;
+        break;
+      }
       const code = first === 0xfe ? 0xfe00 + il.readUInt8(offset++) : first;
       const descriptor = OPCODES.get(code);
       if (descriptor === undefined) {
         issue = `Unsupported CIL opcode 0x${code.toString(16)} at IL offset ${String(start)}`;
         break;
       }
-      const operand = readOperand(il, offset, descriptor.operand);
-      if (operand.next < offset || operand.next > il.length) {
+      // Bound the operand extent before reading its value. Reading first would
+      // throw a raw Buffer RangeError out of a truncated body and replace this
+      // diagnostic with the runtime message, losing the instruction identity.
+      const extent = operandExtent(il, offset, descriptor.operand);
+      if (extent === null || offset + extent > il.length) {
         issue = `Instruction ${descriptor.name} at IL offset ${String(start)} leaves method body`;
         break;
       }
-      // Charge each actual instruction before growing the decoded arrays.
-      // A multi-byte operand must not consume a full record per raw IL byte.
-      admitInstruction?.(start);
+      // The extent is admitted; bound transient records before allocating token facts.
+      admitInstruction?.(
+        start,
+        TOKEN_OPERAND_KINDS.has(descriptor.operand) ||
+          descriptor.operand === "token",
+      );
+      const operand = readOperand(
+        il,
+        offset,
+        descriptor.operand,
+        memberRefKind,
+      );
       offset = operand.next;
       if (PREFIX_OPCODES.has(descriptor.name)) {
         prefixStart ??= start;
@@ -426,6 +500,7 @@ export const decodeInstructions = (
         opcode: descriptor.name,
         operandKind: operand.anchorKind,
         operand: operand.value,
+        reference: operand.reference ?? null,
       });
     }
   } catch (cause: unknown) {
@@ -433,6 +508,8 @@ export const decodeInstructions = (
     issue =
       cause instanceof Error ? cause.message : "Instruction decode failed";
   }
+  if (issue === null && prefixStart !== null)
+    issue = `CIL prefix chain at IL offset ${String(prefixStart)} has no following instruction`;
   const truncated = offset < il.length && issue === null ? 1 : 0;
   return { parsed, instructionStarts, count: parsed.length, truncated, issue };
 };
@@ -444,6 +521,7 @@ export const parseExceptionRegions = (
   budget?: ManagedDecodeBudget,
 ): ExceptionRegionParseResult => {
   const regions: ManagedExceptionRegion[] = [];
+  const catchTokens = new Map<number, MetadataTokenFact>();
   let sectionOffset = offset;
   let hasMoreSections = true;
   while (hasMoreSections) {
@@ -456,6 +534,7 @@ export const parseExceptionRegions = (
       return malformedExceptionRegions(
         "Exception section header leaves artifact",
         regions,
+        catchTokens,
       );
 
     const kind = bytes.readUInt8(sectionOffset);
@@ -463,6 +542,7 @@ export const parseExceptionRegions = (
       return malformedExceptionRegions(
         `Unsupported method data section kind ${String(kind & 0x3f)}`,
         regions,
+        catchTokens,
       );
     const fat = (kind & 0x40) !== 0;
     const size = fat
@@ -479,11 +559,40 @@ export const parseExceptionRegions = (
       return malformedExceptionRegions(
         "Exception section size leaves artifact",
         regions,
+        catchTokens,
       );
-    if ((size - 4) % clauseSize !== 0)
+    let count: number;
+    let sectionSize = size;
+    if (fat) {
+      if ((size - 4) % clauseSize !== 0)
+        return malformedExceptionRegions(
+          "Exception section size does not contain whole clauses",
+          regions,
+          catchTokens,
+        );
+      count = (size - 4) / clauseSize;
+    } else if ((size - 4) % clauseSize === 0) {
+      count = (size - 4) / clauseSize;
+    } else if (size >= clauseSize && size % clauseSize === 0) {
+      // CoreCLR accommodates legacy VB/MC++ sections whose DataSize omits the
+      // four-byte section header. DataSize is still not the physical extent.
+      count = size / clauseSize;
+      sectionSize = 4 + count * clauseSize;
+    } else {
       return malformedExceptionRegions(
         "Exception section size does not contain whole clauses",
         regions,
+        catchTokens,
+      );
+    }
+    if (
+      sectionOffset > methodEnd - sectionSize ||
+      sectionOffset > bytes.length - sectionSize
+    )
+      return malformedExceptionRegions(
+        "Exception section size leaves artifact",
+        regions,
+        catchTokens,
       );
     if (
       !fat &&
@@ -492,46 +601,64 @@ export const parseExceptionRegions = (
       return malformedExceptionRegions(
         "Small exception section reserved bytes are nonzero",
         regions,
+        catchTokens,
       );
 
-    const count = (size - 4) / clauseSize;
     // Accumulates with the method IL bound; the body reserves what it retains.
     budget?.admitTransient(count * 256, sectionOffset);
     for (const region of readExceptionClauses(
       bytes,
-      sectionOffset + 4,
-      count,
-      fat,
+      { start: sectionOffset + 4, count, fat, budget },
+      catchTokens,
+      regions.length,
     ))
       regions.push(region);
 
     hasMoreSections = (kind & 0x80) !== 0;
-    sectionOffset += size;
+    sectionOffset += sectionSize;
   }
-  return { status: "complete", regions };
+  return { status: "complete", regions, catchTokens };
 };
 
 export type ExceptionRegionParseResult =
   | {
       readonly status: "complete";
       readonly regions: ManagedExceptionRegion[];
+      readonly catchTokens: ReadonlyMap<number, MetadataTokenFact>;
     }
   | {
       readonly status: "malformed";
       readonly regions: ManagedExceptionRegion[];
+      readonly catchTokens: ReadonlyMap<number, MetadataTokenFact>;
       readonly issue: string;
     };
 
 const malformedExceptionRegions = (
   issue: string,
-  regions: ManagedExceptionRegion[] = [],
-): ExceptionRegionParseResult => ({ status: "malformed", regions, issue });
+  regions: ManagedExceptionRegion[],
+  catchTokens: ReadonlyMap<number, MetadataTokenFact>,
+): ExceptionRegionParseResult => ({
+  status: "malformed",
+  regions,
+  catchTokens,
+  issue,
+});
 
 const readExceptionClauses = (
   bytes: Buffer,
-  start: number,
-  count: number,
-  fat: boolean,
+  {
+    start,
+    count,
+    fat,
+    budget,
+  }: {
+    readonly start: number;
+    readonly count: number;
+    readonly fat: boolean;
+    readonly budget: ManagedDecodeBudget | undefined;
+  },
+  catchTokens: Map<number, MetadataTokenFact>,
+  firstOrdinal: number,
 ): ManagedExceptionRegion[] => {
   const regions: ManagedExceptionRegion[] = [];
   const clauseSize = fat ? 24 : 12;
@@ -539,6 +666,9 @@ const readExceptionClauses = (
     const clause = start + index * clauseSize;
     const flags = fat ? bytes.readUInt32LE(clause) : bytes.readUInt16LE(clause);
     const extra = bytes.readUInt32LE(clause + (fat ? 20 : 8));
+    if (flags === 0) budget?.admitTransient(256, clause);
+    const reference = flags === 0 ? metadataTokenFact(extra) : null;
+    if (reference !== null) catchTokens.set(firstOrdinal + index, reference);
     regions.push({
       flags,
       try_offset: fat
@@ -553,8 +683,10 @@ const readExceptionClauses = (
       handler_length: fat
         ? bytes.readUInt32LE(clause + 16)
         : bytes.readUInt8(clause + 7),
-      class_token:
-        flags === 0 ? `0x${extra.toString(16).padStart(8, "0")}` : null,
+      class_token: reference?.token ?? null,
+      class_type: null,
+      class_type_name_sha256: null,
+      class_type_identity_resolved: null,
       filter_offset: flags === 1 ? extra : null,
     });
   }

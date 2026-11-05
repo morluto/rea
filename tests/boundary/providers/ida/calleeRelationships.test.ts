@@ -28,6 +28,30 @@ const armSession = () =>
     leafRoots: ["0x2000", "0x3000"],
   });
 
+it("keeps unknown caller coverage and callee diagnostics in an ARM64 dossier", async () => {
+  const { client } = await armSession();
+  try {
+    const result = await client.execute("analyze_function", {
+      procedure: "main",
+    });
+    if (!result.ok) throw result.error;
+    expect(result.value.relationshipCoverage).toMatchObject({
+      status: "unknown",
+      reason:
+        "Callers: Upstream xrefs do not establish direct caller relationships.",
+      diagnostics: expect.arrayContaining([
+        expect.stringContaining("targets IDA does not recognize as functions"),
+      ]),
+    });
+    expect(result.value.result).toMatchObject({
+      callers: [],
+      callees: [{ address: "0x2000" }, { address: "0x3000" }],
+    });
+  } finally {
+    await client.close();
+  }
+});
+
 it("shows the callee edges of an ARM64 procedure in the call graph", async () => {
   const { client, producer } = await armSession();
   try {
@@ -184,6 +208,22 @@ it("preserves missing callgraph coverage through direct, graph, and trace workfl
       ]),
     );
 
+    const dossier = await client.execute("analyze_function", {
+      procedure: "main",
+    });
+    if (!dossier.ok) throw dossier.error;
+    expect(dossier.value.result).toMatchObject({
+      callers: [],
+      callees: [],
+      facet_availability: {
+        callers: { available: false },
+        callees: {
+          available: false,
+          reason: expect.stringContaining("callgraph was unavailable"),
+        },
+      },
+    });
+
     const application = new EnhancedTools(client);
     const graph = await application.execute("get_call_graph", {
       address: "main",
@@ -209,7 +249,7 @@ it("preserves missing callgraph coverage through direct, graph, and trace workfl
     });
     if (!trace.ok) throw trace.error;
     expect(trace.value).toMatchObject({
-      goal_status: "not_reached",
+      goal_status: "unknown",
       edges: [],
       limitations: expect.arrayContaining([
         expect.stringContaining("callgraph was unavailable"),
@@ -305,6 +345,37 @@ it("preserves an explicit root cap below the edge limit through every relationsh
       truncated: true,
       residual_unknowns: expect.arrayContaining([
         `Call relationships for 0x1000 are limited: ${limitation}`,
+      ]),
+    });
+  } finally {
+    expect((await client.close()).ok).toBe(true);
+  }
+});
+
+it("does not treat omitted x86 callee truncation as a definite miss", async () => {
+  const { client, producer } = await callGraphSession(
+    {
+      callees: [{ addr: "0x2000", name: "square", type: "internal" }],
+    },
+    "x86_64",
+  );
+  const inner = producer.overrideCall;
+  producer.overrideCall = (name, args) =>
+    name === "callees"
+      ? [{ callees: [{ addr: "0x2000", name: "square", type: "internal" }] }]
+      : inner?.(name, args);
+  try {
+    const result = await new EnhancedTools(client).execute("trace_call_path", {
+      start: "main",
+      goal: "0x3000",
+    });
+    if (!result.ok) throw result.error;
+    expect(result.value).toMatchObject({
+      goal_status: "unknown",
+      residual_unknowns: expect.arrayContaining([
+        expect.stringContaining(
+          "Call relationship coverage is unknown for 0x1000:",
+        ),
       ]),
     });
   } finally {

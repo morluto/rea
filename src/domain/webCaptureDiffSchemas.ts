@@ -6,10 +6,13 @@ import { webMcpDiscoverySchema } from "./webMcpDiscovery.js";
 
 /** One normalized passive page snapshot accepted by capture comparison. */
 export const captureSnapshotSchema = z.object({
-  inspection: webPageInspectionSchema.describe(
-    "Complete normalized_result from inspect_web_page, including capture identity, observations, completeness, and limitations.",
-  ),
+  inspection: webPageInspectionSchema
+    .describe(
+      "Complete normalized_result from inspect_web_page, including capture identity, observations, completeness, and limitations.",
+    )
+    .meta({ "x-rea-complete-observation": true }),
   webmcp: webMcpDiscoverySchema
+    .meta({ "x-rea-complete-observation": true })
     .nullable()
     .default(null)
     .describe(
@@ -35,7 +38,7 @@ const dimensionSchema = z.union([
   z
     .object({
       status: z.literal("changed"),
-      total_changes: z.number().int().min(1),
+      total_changes: z.int().min(1),
       changes: z.array(changeSchema),
       reason: z.null(),
     })

@@ -1,5 +1,8 @@
 import { expect, it } from "vitest";
-import { projectEvmoleInterface } from "./EvmoleInterfaceAdapter.js";
+import {
+  evmoleInterfaceReplySchema,
+  projectEvmoleFunctions,
+} from "./EvmoleInterfaceAdapter.js";
 
 it("preserves the actual producer keys, duplicates and unknown inference absence", () => {
   const raw = {
@@ -14,9 +17,8 @@ it("preserves the actual producer keys, duplicates and unknown inference absence
       },
     ],
   };
-  const result = projectEvmoleInterface(raw);
-  expect(result.raw).toEqual(raw);
-  expect(result.functions).toEqual([
+  const producer = evmoleInterfaceReplySchema.parse(raw);
+  expect(projectEvmoleFunctions(producer)).toEqual([
     {
       selector: "0xaabbccdd",
       bytecode_offset: 1,
@@ -32,7 +34,12 @@ it("preserves the actual producer keys, duplicates and unknown inference absence
       inferred_state_mutability: "view",
     },
   ]);
-  expect(projectEvmoleInterface({}).functions).toEqual([]);
+  expect(producer).toEqual(raw);
+  expect(projectEvmoleFunctions(evmoleInterfaceReplySchema.parse({}))).toEqual(
+    [],
+  );
+});
+it("admits reported metadata and the binding's disabled undefined facets", () => {
   const metadata = {
     bytecodeOffset: 1,
     cborLength: 4,
@@ -41,10 +48,10 @@ it("preserves the actual producer keys, duplicates and unknown inference absence
     ],
   };
   expect(
-    projectEvmoleInterface({ functions: [], metadata }).raw.metadata,
+    evmoleInterfaceReplySchema.parse({ functions: [], metadata }).metadata,
   ).toEqual(metadata);
   expect(
-    projectEvmoleInterface({
+    evmoleInterfaceReplySchema.parse({
       functions: [],
       storage: undefined,
       transientStorage: undefined,
@@ -56,11 +63,19 @@ it("preserves the actual producer keys, duplicates and unknown inference absence
   ).toEqual([]);
 });
 it.each([
+  { storage: [] },
   { functions: [{ selector: "bad", bytecodeOffset: 0, dispatch: "abi" }] },
   {
     functions: [{ selector: "aabbccdd", bytecodeOffset: -1, dispatch: "abi" }],
   },
   { metadata: {} },
+  {
+    metadata: {
+      bytecodeOffset: 1,
+      cborLength: 4,
+      entries: [{ key: "reported", value: { type: "integer", value: 1.5 } }],
+    },
+  },
 ])("rejects producer representations outside the selected profile", (raw) => {
-  expect(() => projectEvmoleInterface(raw)).toThrow();
+  expect(() => evmoleInterfaceReplySchema.parse(raw)).toThrow();
 });

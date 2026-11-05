@@ -69,15 +69,11 @@ export const overallStatus = (
   dimensions: readonly FunctionDimension[],
   match: FunctionComparisonResult["function_match"]["status"],
 ): FunctionComparisonResult["status"] => {
-  if (
-    match === "ambiguous" ||
-    dimensions.some(({ status }) => status === "unknown")
-  )
-    return "unknown";
   if (match === "mismatched") return "changed";
-  return dimensions.some(({ status }) => status === "changed")
-    ? "changed"
-    : "unchanged";
+  if (match === "ambiguous") return "unknown";
+  if (dimensions.some(({ status }) => status === "changed")) return "changed";
+  if (dimensions.some(({ status }) => status === "unknown")) return "unknown";
+  return "unchanged";
 };
 
 export const summarize = (dimensions: readonly FunctionDimension[]) => ({

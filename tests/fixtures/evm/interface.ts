@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
+import type { EvmInterfaceExecution } from "../../../src/application/evm/EvmInterfacePort.js";
 import type { EvmInterface } from "../../../src/domain/evm/evmInterface.js";
 
 /** Source-owned transport seam, independent of real engine verification. */
@@ -17,6 +18,7 @@ export const evmInterfaceFixture = (
     kind: "unknown",
     deployment_authenticity: "unknown",
     hardfork: "unknown",
+    metadata: null,
   },
   evidence_kind: "inferred",
   functions: [],
@@ -27,8 +29,10 @@ export const evmInterfaceFixture = (
 });
 
 /** Bind a fixture to its explicit producing seam and carrier identity. */
-export const evmInterfaceExecution = (value = evmInterfaceFixture()) =>
-  createAnalysisExecution(
+export const evmInterfaceExecution = (
+  value = evmInterfaceFixture(),
+): EvmInterfaceExecution => {
+  return createAnalysisExecution(
     value,
     { id: "fixture-evm", name: "Source-owned EVM seam", version: "1" },
     {
@@ -42,3 +46,4 @@ export const evmInterfaceExecution = (value = evmInterfaceFixture()) =>
       locations: [{ kind: "artifact-path", path: value.artifact.path }],
     },
   );
+};

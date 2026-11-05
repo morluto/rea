@@ -1,4 +1,5 @@
 import type {
+  ArtifactInventoryCoverage,
   ArtifactInventoryResult,
   ArtifactNode,
   IntegrityContradiction,
@@ -14,5 +15,7 @@ export interface ArtifactInventorySnapshot {
     ArtifactInventoryResult["provenance"][number]
   >;
   readonly integrity_contradictions: readonly IntegrityContradiction[];
+  readonly ines?: ArtifactInventoryResult["ines"];
+  readonly coverage: ArtifactInventoryCoverage;
   readonly limitations: readonly string[];
 }

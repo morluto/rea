@@ -1,11 +1,12 @@
 import { describe, expect, it } from "vitest";
-
+import { FUNCTION_COMPARISON_EVIDENCE } from "../contracts/investigationExamples.js";
 import {
   changedBehaviorResultSchema,
   findChangedBehavior,
   type ChangedBehaviorResult,
 } from "./changedBehavior.js";
 import { createEvidence, type Evidence } from "./evidence.js";
+import { functionComparisonResultSchema } from "./functionComparisonSchemas.js";
 import type { JsonValue } from "./jsonValue.js";
 
 const source = (digit: string): Evidence =>
@@ -21,6 +22,9 @@ const source = (digit: string): Evidence =>
 
 const left = source("1");
 const right = source("2");
+
+const aggregate = (comparisons: readonly unknown[]) =>
+  findChangedBehavior({ comparisons });
 
 const comparison = (
   operation: "compare_process_captures" | "compare_artifacts",
@@ -65,13 +69,21 @@ const comparison = (
   );
 };
 
+type FixtureStatus =
+  | "unchanged"
+  | "changed"
+  | "unknown"
+  | "truncated"
+  | "contradiction";
+
 const processResult = (
   overrides: Partial<{
-    status: "unchanged" | "changed" | "unknown" | "truncated";
-    terminal: "unchanged" | "changed" | "unknown" | "truncated";
-    interaction: "unchanged" | "changed" | "unknown" | "truncated";
-    exit: "unchanged" | "changed" | "unknown" | "truncated";
-    process: "unchanged" | "changed" | "unknown" | "truncated";
+    status: FixtureStatus;
+    terminal: FixtureStatus;
+    interaction: FixtureStatus;
+    exit: FixtureStatus;
+    process: FixtureStatus;
+    first_divergence: JsonValue;
   }> = {},
 ): JsonValue => ({
   status: overrides.status ?? "unchanged",
@@ -81,7 +93,8 @@ const processResult = (
   filesystem: "unchanged",
   process: overrides.process ?? "unchanged",
   first_divergence:
-    overrides.status === "changed"
+    overrides.first_divergence ??
+    (overrides.status === "changed"
       ? {
           status: "found",
           dimension: "terminal",
@@ -91,9 +104,11 @@ const processResult = (
           left: "left",
           right: "right",
         }
-      : overrides.status === "truncated" || overrides.status === "unknown"
+      : overrides.status === "truncated" ||
+          overrides.status === "unknown" ||
+          overrides.status === "contradiction"
         ? { status: "unknown", reason: "Incomplete fixture." }
-        : { status: "none" },
+        : { status: "none" }),
   limitations: [],
 });
 
@@ -136,9 +151,9 @@ const expectInvalidSummary = (result: ChangedBehaviorResult): void => {
 
 describe("changed behavior", () => {
   it("accepts process comparison Evidence", () => {
-    const result = findChangedBehavior([
+    const result = aggregate([
       comparison("compare_process_captures", processResult()),
-    ]);
+    ]).result;
     expect(result.behavior_status).toBe("observed_unchanged");
   });
 
@@ -152,7 +167,7 @@ describe("changed behavior", () => {
       }),
     );
 
-    expect(findChangedBehavior([evidence])).toMatchObject({
+    expect(aggregate([evidence]).result).toMatchObject({
       behavior_status: "observed_changed",
       summary: { observed_changes: 2 },
       findings: {
@@ -172,7 +187,7 @@ describe("changed behavior", () => {
       "compare_process_captures",
       processResult({ status: "changed", terminal: "changed" }),
     );
-    const result = findChangedBehavior([evidence]);
+    const result = aggregate([evidence]).result;
     expect(changedBehaviorResultSchema.parse(result)).toMatchObject({
       behavior_status: "observed_changed",
       summary: { observed_changes: 1, static_candidates: 0 },
@@ -193,7 +208,7 @@ describe("changed behavior", () => {
 
   it("keeps static differences as candidates, never runtime observations", () => {
     const evidence = comparison("compare_artifacts", artifactResult());
-    const result = findChangedBehavior([evidence]);
+    const result = aggregate([evidence]).result;
     expect(result).toMatchObject({
       behavior_status: "unknown",
       summary: { observed_changes: 0, static_candidates: 1 },
@@ -217,28 +232,101 @@ describe("changed behavior", () => {
       "compare_process_captures",
       processResult({ status: "unknown", exit: "unknown" }),
     );
-    const result = findChangedBehavior([changed, unknown]);
+    const result = aggregate([changed, unknown]).result;
     expect(result).toMatchObject({
       behavior_status: "unknown",
       findings: { items: expect.any(Array) },
     });
-    expect(findChangedBehavior([changed, unknown])).toEqual(result);
+    expect(aggregate([changed, unknown]).result).toEqual(result);
+  });
+});
+
+describe("changed behavior withheld equality", () => {
+  it("withholds equality when residual unknowns prevent proving no divergence", () => {
+    const reason =
+      "Residual unknowns prevent proving that no divergence occurred.";
+    const evidence = comparison(
+      "compare_process_captures",
+      processResult({ first_divergence: { status: "unknown", reason } }),
+    );
+    expect(aggregate([evidence]).result).toMatchObject({
+      behavior_status: "unknown",
+      summary: { observed_changes: 0, contradictions: 0, unresolved: 1 },
+      findings: {
+        items: [
+          {
+            scope: "runtime",
+            dimension: "first_divergence",
+            classification: "unresolved_branch",
+            status: "unknown",
+            source_comparison_id: evidence.evidence_id,
+            limitations: [reason],
+          },
+        ],
+      },
+    });
   });
 
-  it("uses complete inline artifact deltas as static candidates", () => {
-    const complete = comparison("compare_artifacts", artifactResult());
-    expect(findChangedBehavior([complete]).findings.items).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ dimension: "artifact:main.js" }),
-      ]),
+  it("keeps a changed comparison observed when only its localization is unknown", () => {
+    const evidence = comparison(
+      "compare_process_captures",
+      processResult({
+        status: "changed",
+        terminal: "changed",
+        first_divergence: { status: "unknown", reason: "Unlocalized." },
+      }),
+    );
+    expect(aggregate([evidence]).result).toMatchObject({
+      behavior_status: "observed_changed",
+      summary: { observed_changes: 1, unresolved: 0 },
+    });
+  });
+
+  it("reports a process contradiction as a contradiction, never equality", () => {
+    const evidence = comparison(
+      "compare_process_captures",
+      processResult({ status: "contradiction", terminal: "contradiction" }),
+    );
+    expect(aggregate([evidence]).result).toMatchObject({
+      behavior_status: "unknown",
+      summary: { observed_changes: 0, contradictions: 1, unresolved: 0 },
+      findings: {
+        items: [
+          {
+            dimension: "terminal",
+            classification: "contradiction",
+            status: "contradiction",
+          },
+        ],
+      },
+    });
+  });
+});
+
+describe("changed-behavior input and Evidence validation", () => {
+  it("rejects an empty comparison selection", () => {
+    expect(() => findChangedBehavior({ comparisons: [] })).toThrowError(
+      expect.objectContaining({
+        _tag: "AnalysisInputError",
+        operation: "find_changed_behavior",
+        userMessage: "Provide at least one comparison Evidence item.",
+        issues: [expect.objectContaining({ path: ["comparisons"] })],
+      }),
     );
   });
 
-  it("rejects bundles, duplicate comparisons, and malformed exact results", () => {
+  it("rejects duplicate comparison selection with the repeated item path", () => {
     const valid = comparison("compare_process_captures", processResult());
-    expect(() => findChangedBehavior([valid, valid])).toThrow(
-      /duplicate comparison Evidence/u,
+    expect(() => aggregate([valid, valid])).toThrowError(
+      expect.objectContaining({
+        _tag: "AnalysisInputError",
+        operation: "find_changed_behavior",
+        issues: [expect.objectContaining({ path: ["comparisons", 1] })],
+      }),
     );
+  });
+
+  it("rejects a comparison operation unsupported by this workflow", () => {
     const bundle = createEvidence(
       undefined,
       { id: "rea-bundle-comparison", name: "Bundle", version: "1" },
@@ -252,26 +340,97 @@ describe("changed behavior", () => {
         evidenceLinks: [left.evidence_id, right.evidence_id],
       },
     );
-    expect(() => findChangedBehavior([bundle])).toThrow(
-      /requires process, artifact, or function/u,
+    expect(() => aggregate([bundle])).toThrowError(
+      expect.objectContaining({
+        _tag: "AnalysisInputError",
+        userMessage: expect.stringContaining(
+          "requires process, artifact, or function",
+        ),
+        issues: [expect.objectContaining({ path: ["comparisons", 0] })],
+      }),
     );
-    const malformed = comparison("compare_process_captures", {
-      status: "unchanged",
-    });
-    expect(() => findChangedBehavior([malformed])).toThrow();
+  });
+
+  it("classifies a malformed Evidence envelope as an integrity failure", () => {
+    const valid = comparison("compare_process_captures", processResult());
+    const malformedEvidence = { ...valid, evidence_id: "ev_invalid" };
+    expect(() => aggregate([malformedEvidence])).toThrowError(
+      expect.objectContaining({
+        _tag: "EvidenceIntegrityError",
+        cause: expect.any(Error),
+      }),
+    );
+  });
+
+  it.each(["compare_process_captures", "compare_artifacts"] as const)(
+    "classifies an invalid authenticated %s result payload as an integrity failure",
+    (operation) => {
+      const malformed = comparison(operation, {
+        status: "unchanged",
+      });
+      expect(() => aggregate([malformed])).toThrowError(
+        expect.objectContaining({
+          _tag: "EvidenceIntegrityError",
+          cause: expect.any(Error),
+        }),
+      );
+    },
+  );
+
+  it("rejects contradictory dimensions in authenticated comparison results", () => {
     const contradictory = comparison(
       "compare_process_captures",
       processResult({ status: "unchanged", terminal: "changed" }),
     );
-    expect(() => findChangedBehavior([contradictory])).toThrow(
-      /contradicts its dimensions/u,
+    expect(() => aggregate([contradictory])).toThrowError(
+      expect.objectContaining({ _tag: "EvidenceIntegrityError" }),
     );
+  });
+
+  it("rejects artifact citations outside the top-level Evidence closure", () => {
     const danglingNested = comparison(
       "compare_artifacts",
       artifactResult([`ev_${"f".repeat(64)}`, right.evidence_id]),
     );
-    expect(() => findChangedBehavior([danglingNested])).toThrow(
-      /outside its top-level closure/u,
+    expect(() => aggregate([danglingNested])).toThrowError(
+      expect.toSatisfy(
+        (error: { _tag?: unknown; message?: unknown; cause?: unknown }) =>
+          error._tag === "EvidenceIntegrityError" &&
+          error.message ===
+            "Comparison finding cites Evidence outside its top-level closure" &&
+          error.cause === undefined,
+      ),
+    );
+  });
+
+  it("rejects authenticated function citations outside the top-level Evidence closure", () => {
+    const base = FUNCTION_COMPARISON_EVIDENCE;
+    const result = functionComparisonResultSchema.parse(base.normalized_result);
+    const dimensions = result.dimensions.map((dimension) => ({
+      ...dimension,
+      evidence_links: [...dimension.evidence_links, `ev_${"f".repeat(64)}`],
+    }));
+    const danglingNested = createEvidence(undefined, base.provider, {
+      predicateType: base.predicate_type,
+      operation: base.operation,
+      parameters: base.parameters,
+      result: functionComparisonResultSchema.parse({
+        ...result,
+        dimensions,
+        changes: dimensions.filter(({ status }) => status !== "unchanged"),
+      }),
+      confidence: base.confidence,
+      authority: base.authority,
+      evidenceLinks: base.evidence_links,
+    });
+    expect(() => aggregate([danglingNested])).toThrowError(
+      expect.toSatisfy(
+        (error: { _tag?: unknown; message?: unknown; cause?: unknown }) =>
+          error._tag === "EvidenceIntegrityError" &&
+          error.message ===
+            "Comparison finding cites Evidence outside its top-level closure" &&
+          error.cause === undefined,
+      ),
     );
   });
 });
@@ -299,10 +458,15 @@ describe("changed behavior aggregation", () => {
       ),
     );
 
-    const result = findChangedBehavior(comparisons);
+    const result = aggregate(comparisons);
 
-    expect(result.summary.observed_changes).toBe(comparisons.length);
-    expect(result.evidence_links).toHaveLength(comparisons.length * 201 + 2);
-    expect(result.findings.items[0]?.evidence_links).toHaveLength(203);
+    expect(result.result.summary.observed_changes).toBe(comparisons.length);
+    expect(result.result.evidence_links).toHaveLength(
+      comparisons.length * 201 + 2,
+    );
+    expect(result.result.findings.items[0]?.evidence_links).toHaveLength(203);
+    expect(result.comparisonEvidenceIds).toEqual(
+      comparisons.map(({ evidence_id }) => evidence_id),
+    );
   });
 });

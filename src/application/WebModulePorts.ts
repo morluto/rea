@@ -3,7 +3,8 @@ import type { JsonValue } from "../domain/jsonValue.js";
 import type { Result } from "../domain/result.js";
 import type {
   WebModuleFile,
-  WebModuleResolution,
+  WebModuleResolutionBatch,
+  WebModuleResolutionRequest,
   WebModuleTraceInput,
 } from "../domain/webModuleTrace.js";
 import type { SelectedWebScriptArtifacts } from "../domain/webScriptArtifacts.js";
@@ -22,32 +23,18 @@ export interface WebModuleArtifacts extends SelectedWebScriptArtifacts {
 
 /** Read selected local artifacts without refetching website assets. */
 export interface WebModuleArtifactPort {
+  close?(): Promise<void>;
   load(
     input: WebModuleTraceInput,
     options?: ExecutionOptions,
   ): Promise<Result<WebModuleArtifacts, AnalysisError>>;
 }
 
-/** Resolve literal specifiers in a selected URL/map context without executing the selected application. */
-export interface WebModuleResolutionBatch {
-  readonly engine: { readonly id: string; readonly version: string };
-  readonly resolutions: readonly WebModuleResolution[];
-  readonly diagnostics: readonly string[];
-  readonly rawResult: JsonObject;
-}
-
 /** Replaceable native resolution engine, with no provider protocol in callers. */
 export interface WebModuleResolutionPort {
   close?(): Promise<void>;
   resolve(
-    input: {
-      readonly importerUrl: string;
-      readonly importMap: {
-        readonly baseUrl: string;
-        readonly value: JsonObject;
-      } | null;
-      readonly specifiers: readonly string[];
-    },
+    input: WebModuleResolutionRequest,
     options?: ExecutionOptions,
   ): Promise<Result<WebModuleResolutionBatch, AnalysisError>>;
 }

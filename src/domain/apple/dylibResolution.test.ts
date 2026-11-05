@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  machoImageSlices,
   traceDylibLoading,
   type DylibTreeEntry,
   type DylibTreeView,
@@ -60,6 +61,74 @@ const parsed = (...slices: MachoSlice[]): MachoImageFacts => ({
 const executable = (overrides: Partial<MachoSlice> = {}): MachoImageFacts =>
   parsed(slice({ file_type: "execute", ...overrides }));
 
+it("uses hidden ARM64 slices as selectable images while preserving their marker", async () => {
+  const declared = slice({
+    architecture: "arm",
+    cpu_type: 12,
+    cpu_subtype: 9,
+    file_type: "execute",
+  });
+  const hidden = slice({
+    architecture: "arm64",
+    hidden: true,
+    file_type: "execute",
+    slice_offset: 8192,
+  });
+  const facts: MachoImageFacts = {
+    status: "parsed",
+    slices: [declared],
+    hiddenSlices: [hidden],
+  };
+  const trace = await traceDylibLoading(memoryView({ [MAIN]: facts }), {
+    roots: [MAIN],
+    architecture: "arm64",
+  });
+  expect(machoImageSlices(facts)).toEqual([declared, hidden]);
+  expect(trace.roots).toEqual([{ image: MAIN, architecture: "arm64" }]);
+  expect(trace.coverage.roots_without_architecture).toEqual([]);
+  expect(trace.images[0]?.slices).toContainEqual(
+    expect.objectContaining({ architecture: "arm64", hidden: true }),
+  );
+});
+
+it.each([
+  { architecture: "arm64e", expected: ["arm64e", "arm64e.x1"] },
+  { architecture: "arm64", expected: ["arm64", "arm64v8"] },
+  { architecture: "x86_64", expected: [] },
+  {
+    architecture: undefined,
+    expected: ["arm64", "arm64v8", "arm64e", "arm64e.x1"],
+  },
+] as const)(
+  "preserves exact root labels with family filter $architecture",
+  async ({ architecture, expected }) => {
+    const facts = parsed(
+      ...(
+        [
+          [0, "arm64"],
+          [1, "arm64v8"],
+          [2, "arm64e"],
+          [12, "arm64e.x1"],
+        ] as const
+      ).map(([subtype, name]) =>
+        slice({
+          architecture: name,
+          cpu_subtype: subtype,
+          file_type: "execute",
+        }),
+      ),
+    );
+    const trace = await traceDylibLoading(memoryView({ [MAIN]: facts }), {
+      roots: [MAIN],
+      ...(architecture === undefined ? {} : { architecture }),
+    });
+    expect(trace.roots.map((root) => root.architecture)).toEqual(expected);
+    expect(trace.coverage.roots_without_architecture).toEqual(
+      expected.length === 0 ? [MAIN] : [],
+    );
+  },
+);
+
 /** In-memory tree: files are images (or "data"), symlinks map to targets. */
 const memoryView = (
   files: Readonly<Record<string, MachoImageFacts | "data">>,
@@ -80,6 +149,7 @@ const memoryView = (
     entries.set(path, { kind: "symlink", target });
   }
   return {
+    rootRelativePath: () => undefined,
     entry: (path) => Promise.resolve(entries.get(path)),
     image: (path) => {
       const facts = files[path];
@@ -107,6 +177,57 @@ const edgeFor = (
     throw new Error(`missing ${loader} -> ${installName}`);
   return edge;
 };
+
+it.each(["\n", "\r", "\r\n", "\u2028", "\u2029"])(
+  "preserves line terminator %j in dependency names and rpaths",
+  async (separator) => {
+    const direct = `lib${separator}direct.dylib`;
+    const fromExecutable = `libexecutable.dylib${separator}`;
+    const directory = `Libraries${separator}Nested`;
+    const trace = await traceDylibLoading(
+      memoryView({
+        [MAIN]: executable({
+          dependencies: [
+            dependency(`@loader_path/${direct}`),
+            dependency(`@executable_path/${fromExecutable}`),
+            dependency("@rpath/libsearch.dylib"),
+          ],
+          rpaths: [`@loader_path/${directory}`],
+        }),
+        [`Contents/MacOS/${direct}`]: parsed(slice()),
+        [`Contents/MacOS/${fromExecutable}`]: parsed(slice()),
+        [`Contents/MacOS/${directory}/libsearch.dylib`]: parsed(slice()),
+      }),
+      { roots: [MAIN] },
+    );
+    expect(trace.edges.map(({ resolution }) => resolution)).toEqual([
+      { status: "resolved", image: `Contents/MacOS/${direct}` },
+      { status: "resolved", image: `Contents/MacOS/${fromExecutable}` },
+      {
+        status: "resolved",
+        image: `Contents/MacOS/${directory}/libsearch.dylib`,
+      },
+    ]);
+  },
+);
+
+it.each(["@loader_path_suffix", "@executable_path_suffix", "@loader_path\n"])(
+  "does not expand a lookalike path token %j",
+  async (token) => {
+    const name = `${token}/lib.dylib`;
+    const trace = await traceDylibLoading(
+      memoryView({
+        [MAIN]: executable({ dependencies: [dependency(name)] }),
+        "Contents/MacOS/lib.dylib": parsed(slice()),
+      }),
+      { roots: [MAIN] },
+    );
+    expect(edgeFor(trace, MAIN, name).resolution).toEqual({
+      status: "undetermined",
+      image: null,
+    });
+  },
+);
 
 describe("dyld path expansion", () => {
   it("searches the loading image's rpaths before its loaders'", async () => {
@@ -397,6 +518,9 @@ describe("dyld resolution outcomes: checking candidate format and compatibility"
         ({ outcome }) => outcome,
       ),
     ).toEqual(["not-mach-o", "malformed", "architecture-missing"]);
+    expect(trace.findings[0]?.explanation).toContain(
+      "No usable candidate for @rpath/lib.dylib exists in the analyzed root; found Contents/MacOS/a/lib.dylib (not a Mach-O image), Contents/MacOS/b/lib.dylib (malformed), Contents/MacOS/c/lib.dylib (missing the process architecture)",
+    );
     expect(trace.coverage).toEqual({
       status: "partial",
       unparsed_images: ["Contents/MacOS/b/lib.dylib"],
@@ -438,26 +562,6 @@ describe("dyld resolution outcomes: checking candidate format and compatibility"
       status: "resolved",
       image: "Contents/MacOS/c/lib.dylib",
     });
-  });
-
-  it("preserves unknown platform compatibility before a later known candidate", async () => {
-    const trace = await traceDylibLoading(
-      memoryView({
-        [MAIN]: executable({
-          rpaths: ["@executable_path/a", "@executable_path/b"],
-          dependencies: [dependency("@rpath/lib.dylib")],
-        }),
-        "Contents/MacOS/a/lib.dylib": parsed(slice({ platform: null })),
-        "Contents/MacOS/b/lib.dylib": parsed(slice()),
-      }),
-      { roots: [MAIN] },
-    );
-    const edge = edgeFor(trace, MAIN, "@rpath/lib.dylib");
-    expect(edge.candidates.map(({ outcome }) => outcome)).toEqual([
-      "undetermined",
-      "resolved",
-    ]);
-    expect(edge.resolution.status).toBe("conditional");
   });
 
   it("applies dyld Catalyst and zippered platform compatibility", async () => {
@@ -502,6 +606,104 @@ describe("dyld resolution outcomes: checking candidate format and compatibility"
       status: "resolved",
       image: "Contents/MacOS/zippered/lib.dylib",
     });
+  });
+});
+
+describe("platform-less dylib compatibility", () => {
+  it("keeps an unknown candidate unresolved and traces the later known fallback", async () => {
+    const trace = await traceDylibLoading(
+      memoryView({
+        [MAIN]: executable({
+          platform: 6,
+          platforms: [6],
+          rpaths: ["@executable_path/a", "@executable_path/b"],
+          dependencies: [dependency("@rpath/lib.dylib")],
+        }),
+        "Contents/MacOS/a/lib.dylib": parsed(slice({ platform: null })),
+        "Contents/MacOS/b/lib.dylib": parsed(
+          slice({
+            platform: 6,
+            platforms: [6],
+            dependencies: [dependency("@loader_path/libChild.dylib")],
+          }),
+        ),
+        "Contents/MacOS/b/libChild.dylib": parsed(
+          slice({ platform: 6, platforms: [6] }),
+        ),
+      }),
+      { roots: [MAIN] },
+    );
+    const edge = edgeFor(trace, MAIN, "@rpath/lib.dylib");
+    expect(edge.candidates.map(({ outcome }) => outcome)).toEqual([
+      "undetermined",
+      "resolved",
+    ]);
+    expect(edge.resolution).toEqual({
+      status: "conditional",
+      image: "Contents/MacOS/b/lib.dylib",
+    });
+    expect(edge.candidates[0]).not.toHaveProperty("platform_basis");
+    expect(trace.edges.map(({ loader }) => loader)).toContain(
+      "Contents/MacOS/b/lib.dylib",
+    );
+    expect(trace.images.map(({ path }) => path)).toContain(
+      "Contents/MacOS/b/libChild.dylib",
+    );
+    expect(trace.coverage.status).toBe("partial");
+    expect(trace.limitations).toContainEqual(
+      expect.stringContaining("Contents/MacOS/a/lib.dylib"),
+    );
+  });
+
+  it("does not infer a platform-less image's platform when process platform is unknown", async () => {
+    const trace = await traceDylibLoading(
+      memoryView({
+        [MAIN]: executable({
+          platform: null,
+          platforms: [],
+          rpaths: ["@executable_path/a"],
+          dependencies: [dependency("@rpath/lib.dylib")],
+        }),
+        "Contents/MacOS/a/lib.dylib": parsed(slice({ platform: null })),
+      }),
+      { roots: [MAIN] },
+    );
+    const edge = edgeFor(trace, MAIN, "@rpath/lib.dylib");
+    expect(edge.candidates[0]).toMatchObject({
+      outcome: "undetermined",
+      resolved_path: "Contents/MacOS/a/lib.dylib",
+    });
+    expect(edge.candidates[0]).not.toHaveProperty("platform_basis");
+    expect(edge.resolution).toEqual({ status: "undetermined", image: null });
+    expect(trace.coverage.status).toBe("partial");
+  });
+
+  it("does not treat a selected dylib root as an executable process context", async () => {
+    const library = "Contents/Frameworks/libRoot.dylib";
+    const child = "Contents/Frameworks/libChild.dylib";
+    const trace = await traceDylibLoading(
+      memoryView({
+        [library]: parsed(
+          slice({
+            file_type: "dylib",
+            file_type_code: 6,
+            platform: 1,
+            platforms: [1],
+            dependencies: [dependency("@loader_path/libChild.dylib")],
+          }),
+        ),
+        [child]: parsed(slice({ platform: null })),
+      }),
+      { roots: [library] },
+    );
+    const edge = edgeFor(trace, library, "@loader_path/libChild.dylib");
+    expect(edge.candidates[0]).toMatchObject({
+      outcome: "undetermined",
+      resolved_path: child,
+    });
+    expect(edge.candidates[0]).not.toHaveProperty("platform_basis");
+    expect(edge.resolution).toEqual({ status: "undetermined", image: null });
+    expect(trace.coverage.status).toBe("partial");
   });
 });
 
@@ -585,19 +787,248 @@ describe("dyld load order", () => {
     ]);
   });
 
-  it("stops when cancelled", async () => {
-    const controller = new AbortController();
-    controller.abort();
-    await expect(
-      traceDylibLoading(memoryView({ [MAIN]: executable() }), {
-        roots: [MAIN],
-        signal: controller.signal,
+  it.each([undefined, null, "caller reason"])(
+    "stops with the exact caller cancellation reason: %s",
+    async (reason) => {
+      const controller = new AbortController();
+      controller.abort(reason);
+      await expect(
+        traceDylibLoading(memoryView({ [MAIN]: executable() }), {
+          roots: [MAIN],
+          signal: controller.signal,
+        }),
+      ).rejects.toMatchObject({
+        _tag: "AnalysisCancelledError",
+        cause: controller.signal.reason,
+      });
+    },
+  );
+});
+
+describe("loader-relative dylib resolution", () => {
+  it("does not reuse already loaded images by install name for @loader_path dependencies", async () => {
+    const pluginA = "Contents/PlugIns/A/pluginA.dylib";
+    const helperA = "Contents/PlugIns/A/libhelper.dylib";
+    const pluginB = "Contents/PlugIns/B/pluginB.dylib";
+    const trace = await traceDylibLoading(
+      memoryView({
+        [MAIN]: executable({
+          dependencies: [
+            dependency("@executable_path/../PlugIns/A/pluginA.dylib"),
+            dependency("@executable_path/../PlugIns/B/pluginB.dylib"),
+          ],
+        }),
+        [pluginA]: parsed(
+          slice({
+            dependencies: [dependency("@loader_path/libhelper.dylib")],
+          }),
+        ),
+        [helperA]: parsed(
+          slice({
+            install_name: "@loader_path/libhelper.dylib",
+          }),
+        ),
+        [pluginB]: parsed(
+          slice({
+            dependencies: [dependency("@loader_path/libhelper.dylib")],
+          }),
+        ),
       }),
-    ).rejects.toThrow();
+      { roots: [MAIN] },
+    );
+
+    const edgeA = edgeFor(trace, pluginA, "@loader_path/libhelper.dylib");
+    expect(edgeA.resolution).toEqual({
+      status: "resolved",
+      image: helperA,
+    });
+    expect(edgeA.candidates).toEqual([
+      expect.objectContaining({
+        source: "loader_path",
+        outcome: "resolved",
+        resolved_path: helperA,
+      }),
+    ]);
+
+    const edgeB = edgeFor(trace, pluginB, "@loader_path/libhelper.dylib");
+    expect(edgeB.resolution).toEqual({
+      status: "unresolved",
+      image: null,
+    });
+    expect(edgeB.candidates).toEqual([
+      expect.objectContaining({
+        path: "Contents/PlugIns/B/libhelper.dylib",
+        source: "loader_path",
+        outcome: "absent",
+        resolved_path: null,
+      }),
+    ]);
+    expect(trace.findings).toContainEqual(
+      expect.objectContaining({
+        kind: "required-load-unresolved",
+        image: pluginB,
+      }),
+    );
+  });
+
+  it("resolves @loader_path dependencies to the loader's own directory when multiple helpers exist", async () => {
+    const pluginA = "Contents/PlugIns/A/pluginA.dylib";
+    const helperA = "Contents/PlugIns/A/libhelper.dylib";
+    const pluginB = "Contents/PlugIns/B/pluginB.dylib";
+    const helperB = "Contents/PlugIns/B/libhelper.dylib";
+    const trace = await traceDylibLoading(
+      memoryView({
+        [MAIN]: executable({
+          dependencies: [
+            dependency("@executable_path/../PlugIns/A/pluginA.dylib"),
+            dependency("@executable_path/../PlugIns/B/pluginB.dylib"),
+          ],
+        }),
+        [pluginA]: parsed(
+          slice({
+            dependencies: [dependency("@loader_path/libhelper.dylib")],
+          }),
+        ),
+        [helperA]: parsed(
+          slice({
+            install_name: "@loader_path/libhelper.dylib",
+          }),
+        ),
+        [pluginB]: parsed(
+          slice({
+            dependencies: [dependency("@loader_path/libhelper.dylib")],
+          }),
+        ),
+        [helperB]: parsed(
+          slice({
+            install_name: "@loader_path/libhelper.dylib",
+          }),
+        ),
+      }),
+      { roots: [MAIN] },
+    );
+
+    expect(
+      edgeFor(trace, pluginA, "@loader_path/libhelper.dylib"),
+    ).toMatchObject({
+      resolution: { status: "resolved", image: helperA },
+      candidates: [
+        expect.objectContaining({
+          source: "loader_path",
+          outcome: "resolved",
+          resolved_path: helperA,
+        }),
+      ],
+    });
+    expect(
+      edgeFor(trace, pluginB, "@loader_path/libhelper.dylib"),
+    ).toMatchObject({
+      resolution: { status: "resolved", image: helperB },
+      candidates: [
+        expect.objectContaining({
+          source: "loader_path",
+          outcome: "resolved",
+          resolved_path: helperB,
+        }),
+      ],
+    });
   });
 });
 
+it.each([
+  {
+    rootName: "arm64v8",
+    rootSubtype: 1,
+    dylibName: "arm64",
+    dylibSubtype: 0,
+    outcome: "resolved",
+  },
+  {
+    rootName: "arm64",
+    rootSubtype: 0,
+    dylibName: "arm64v8",
+    dylibSubtype: 1,
+    outcome: "resolved",
+  },
+  {
+    rootName: "arm64e.x1",
+    rootSubtype: 12,
+    dylibName: "arm64e",
+    dylibSubtype: 2,
+    outcome: "architecture-missing",
+  },
+  {
+    rootName: "arm64e",
+    rootSubtype: 2,
+    dylibName: "arm64e.x1",
+    dylibSubtype: 12,
+    outcome: "architecture-missing",
+  },
+  {
+    rootName: "arm64e.x1",
+    rootSubtype: 12,
+    dylibName: "arm64e.x1",
+    dylibSubtype: 12,
+    outcome: "resolved",
+  },
+] as const)(
+  "preserves compatibility from $rootName to $dylibName",
+  async ({ rootName, rootSubtype, dylibName, dylibSubtype, outcome }) => {
+    const library = "Contents/MacOS/libfamily.dylib";
+    const trace = await traceDylibLoading(
+      memoryView({
+        [MAIN]: executable({
+          architecture: rootName,
+          cpu_subtype: rootSubtype,
+          dependencies: [dependency("@executable_path/libfamily.dylib")],
+        }),
+        [library]: parsed(
+          slice({ architecture: dylibName, cpu_subtype: dylibSubtype }),
+        ),
+      }),
+      { roots: [MAIN] },
+    );
+    expect(trace.edges).toHaveLength(1);
+    expect(trace.edges[0]).toMatchObject({
+      architecture: rootName,
+      candidates: [expect.objectContaining({ outcome })],
+      resolution:
+        outcome === "resolved"
+          ? { status: "resolved", image: library }
+          : { status: "unresolved", image: null },
+    });
+  },
+);
+
 describe("dyld slice compatibility and coverage", () => {
+  it("keeps an unmodeled ARM32 subtype uncertain when matching slices exist", async () => {
+    const trace = await traceDylibLoading(
+      memoryView({
+        [MAIN]: executable({
+          architecture: "arm",
+          cpu_type: 12,
+          cpu_subtype: 42,
+          dependencies: [dependency("@executable_path/libarm.dylib")],
+        }),
+        "Contents/MacOS/libarm.dylib": parsed(
+          slice({ architecture: "arm", cpu_type: 12, cpu_subtype: 42 }),
+          slice({ architecture: "arm", cpu_type: 12, cpu_subtype: 9 }),
+        ),
+      }),
+      { roots: [MAIN] },
+    );
+
+    expect(trace.edges[0]).toMatchObject({
+      candidates: [
+        {
+          outcome: "undetermined",
+          resolved_path: "Contents/MacOS/libarm.dylib",
+        },
+      ],
+      resolution: { status: "undetermined", image: null },
+    });
+  });
+
   it("lets an x86_64h process load generic x86_64 but not arm64e load arm64", async () => {
     const files = {
       [MAIN]: parsed(
@@ -702,6 +1133,93 @@ describe("lazily loaded dependencies", () => {
     expect(trace.edges[0]?.resolution.status).toBe("resolved");
     expect(trace.findings.map(({ kind }) => kind)).toEqual([
       "lazy-load-unresolved",
+    ]);
+  });
+
+  it("resolves LC_LAZY_LOAD_DYLIB_INFO without traversing it", async () => {
+    const trace = await traceDylibLoading(
+      memoryView({
+        [MAIN]: executable({
+          rpaths: ["@executable_path/../Frameworks"],
+          dependencies: [
+            dependency("@rpath/libinfo.dylib", {
+              command: "LC_LAZY_LOAD_DYLIB_INFO",
+              encoding: "lazy_load_dylib_info",
+              weak: true,
+              current_version: null,
+              compatibility_version: null,
+            }),
+            dependency("@rpath/libmissing.dylib", {
+              command: "LC_LAZY_LOAD_DYLIB_INFO",
+              encoding: "lazy_load_dylib_info",
+              current_version: null,
+              compatibility_version: null,
+            }),
+          ],
+        }),
+        "Contents/Frameworks/libinfo.dylib": parsed(
+          slice({ dependencies: [dependency("@rpath/libdeep.dylib")] }),
+        ),
+      }),
+      { roots: [MAIN] },
+    );
+    expect(trace.edges.map(({ install_name: name }) => name)).toEqual([
+      "@rpath/libinfo.dylib",
+      "@rpath/libmissing.dylib",
+    ]);
+    expect(trace.edges[0]).toMatchObject({
+      command: "LC_LAZY_LOAD_DYLIB_INFO",
+      encoding: "lazy_load_dylib_info",
+      weak: true,
+      current_version: null,
+      compatibility_version: null,
+      resolution: {
+        status: "resolved",
+        image: "Contents/Frameworks/libinfo.dylib",
+      },
+    });
+    expect(trace.coverage.status).toBe("complete");
+    expect(trace.findings.map(({ kind }) => kind)).toEqual([
+      "lazy-load-unresolved",
+    ]);
+    expect(trace.findings[0]?.explanation).toContain(
+      "which would fail unless the image is supplied elsewhere",
+    );
+  });
+
+  it("treats a missing may-be-missing lazy image as optional", async () => {
+    const trace = await traceDylibLoading(
+      memoryView({
+        [MAIN]: executable({
+          rpaths: ["@executable_path/../Frameworks"],
+          dependencies: [
+            dependency("@rpath/liboptional.dylib", {
+              command: "LC_LAZY_LOAD_DYLIB_INFO",
+              encoding: "lazy_load_dylib_info",
+              weak: true,
+              current_version: null,
+              compatibility_version: null,
+            }),
+            dependency("@rpath/libweaklazy.dylib", {
+              command: "LC_LAZY_LOAD_DYLIB",
+              weak: true,
+            }),
+          ],
+        }),
+      }),
+      { roots: [MAIN] },
+    );
+    expect(trace.findings).toMatchObject([
+      {
+        kind: "lazy-load-unresolved",
+        explanation:
+          "No candidate for lazily loaded weak dependency @rpath/liboptional.dylib exists in the analyzed root; dyld loads it on first use and continues if it is absent.",
+      },
+      {
+        kind: "lazy-load-unresolved",
+        explanation:
+          "No candidate for lazily loaded weak dependency @rpath/libweaklazy.dylib exists in the analyzed root; dyld loads it on first use and continues if it is absent.",
+      },
     ]);
   });
 });

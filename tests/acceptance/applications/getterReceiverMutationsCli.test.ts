@@ -39,6 +39,47 @@ export function superclass() {
   new B().v.x = 2;
   return shared.x;
 }
+export function arrayReceiver() {
+  const arr = [{ x: 1, get self() { return this; } }];
+  arr[0].self.x = 2;
+  return arr[0].x;
+}
+export function nestedArrayReceiver() {
+  const outer = { arr: [{ x: 1, get self() { return this; } }] };
+  outer.arr[0].self.x = 2;
+  return outer.arr[0].x;
+}
+export function assignedReceiver() {
+  let box;
+  box = { x: 1, get self() { return this; } };
+  box.self.x = 2;
+  return box.x;
+}
+export function savedArrayReceiver() {
+  const arr = [{ x: 1, get self() { return this; } }];
+  const saved = arr[0].self;
+  saved.x = 2;
+  return arr[0].x;
+}
+export function arrayReadOnly() {
+  const arr = [{ x: 1, get self() { return this; } }];
+  const saved = arr[0].self;
+  return arr[0].x;
+}
+export function replacementKeepsOldObject() {
+  const old = { x: 1 };
+  let box = old;
+  box = { x: 1, old: box, get self() { return this; } };
+  box.self.x = 2;
+  return old.x;
+}
+export function replacementMutatesCapturedObject() {
+  const old = { x: 1 };
+  let box = old;
+  box = { old: box, get self() { return this; } };
+  box.self.old.x = 2;
+  return old.x;
+}
 export function untouched() {
   const box = { x: 1, y: 1, get self() { return this; } };
   box.self.y = 2;
@@ -66,13 +107,20 @@ export function untouched() {
     const { graph } = z
       .object({ normalized_result: javascriptApplicationAnalysisResultSchema })
       .parse(document).normalized_result;
-    for (const name of [
-      "self",
-      "property",
-      "privateField",
-      "superclass",
-      "untouched",
-    ]) {
+    for (const [name, status] of [
+      ["self", "unknown"],
+      ["property", "unknown"],
+      ["privateField", "unknown"],
+      ["superclass", "unknown"],
+      ["arrayReceiver", "unknown"],
+      ["nestedArrayReceiver", "unknown"],
+      ["assignedReceiver", "unknown"],
+      ["savedArrayReceiver", "unknown"],
+      ["arrayReadOnly", "literal"],
+      ["replacementKeepsOldObject", "literal"],
+      ["replacementMutatesCapturedObject", "unknown"],
+      ["untouched", "literal"],
+    ] as const) {
       const projection = graph.nodes
         .flatMap(({ observations }) => observations)
         .find(
@@ -82,7 +130,16 @@ export function untouched() {
         );
       expect(projection, name).toBeDefined();
       expect(projection?.properties.static_return_shapes).toMatchObject([
-        { value_status: name === "untouched" ? "literal" : "unknown" },
+        {
+          value_status: status,
+          fields: [
+            {
+              path: "",
+              state: status,
+              ...(status === "literal" ? { value: 1 } : {}),
+            },
+          ],
+        },
       ]);
     }
   },

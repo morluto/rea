@@ -1,5 +1,5 @@
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
-import { open, writeFile, type FileHandle } from "node:fs/promises";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it, onTestFinished, vi } from "vitest";
 
@@ -10,9 +10,10 @@ import {
   serializeEvidenceBundle,
 } from "../../../src/domain/evidenceBundle.js";
 import { createServer } from "../../../src/server/createServer.js";
-import { ToolResultDelivery } from "../../../src/server/toolResult.js";
+import { ToolResultDelivery } from "../../../src/server/ToolResultDelivery.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { holdFirstFileRead } from "../../support/holdFirstFileRead.js";
 
 it("leaves the session unchanged after bundle comparison cancellation and permits a retry", async () => {
   const root = await createTestTempDirectory("rea-mcp-compare-cancel-");
@@ -58,8 +59,10 @@ it("leaves the session unchanged after bundle comparison cancellation and permit
     version: "1",
   });
   const controller = new AbortController();
+  let releaseRead: (() => void) | undefined;
   onTestFinished(async () => {
     controller.abort();
+    releaseRead?.();
     vi.restoreAllMocks();
     await client.close();
     await server.close();
@@ -70,8 +73,8 @@ it("leaves the session unchanged after bundle comparison cancellation and permit
   await server.connect(serverTransport);
   await client.connect(clientTransport);
 
-  const reader = await holdFirstRead(leftPath);
-  onTestFinished(reader.release);
+  const reader = await holdFirstFileRead(leftPath);
+  releaseRead = reader.release;
 
   let resolveDispatched: (() => void) | undefined;
   const dispatched = new Promise<void>((resolve) => {
@@ -162,56 +165,3 @@ it("leaves the session unchanged after bundle comparison cancellation and permit
     ]),
   );
 });
-
-const holdFirstRead = async (path: string) => {
-  // Hold the first streamed read after it reaches the operating system.
-  const probe = await open(path, "r");
-  const identity = await probe.stat();
-  const fileHandlePrototype = Object.getPrototypeOf(probe) as {
-    read(
-      buffer: Buffer,
-      offset: number,
-      length: number,
-      position: number | null,
-    ): Promise<{ readonly bytesRead: number; readonly buffer: Buffer }>;
-  };
-  await probe.close();
-  let totalReadBytes = 0;
-  let readCount = 0;
-  let resolveFirstRead: (() => void) | undefined;
-  const firstRead = new Promise<void>((resolve) => {
-    resolveFirstRead = resolve;
-  });
-  let releaseRead: (() => void) | undefined;
-  const readGate = new Promise<void>((resolve) => {
-    releaseRead = resolve;
-  });
-  const read = fileHandlePrototype.read;
-  vi.spyOn(fileHandlePrototype, "read").mockImplementation(async function (
-    this: FileHandle,
-    ...args: [Buffer, number, number, number | null]
-  ) {
-    const current = await this.stat();
-    const isTarget =
-      current.dev === identity.dev && current.ino === identity.ino;
-    const result = await read.call(this, ...args);
-    if (!isTarget) return result;
-    totalReadBytes += result.bytesRead;
-    readCount += 1;
-    if (readCount === 1) {
-      resolveFirstRead?.();
-      await readGate;
-    }
-    return result;
-  });
-  return {
-    firstRead,
-    release: () => releaseRead?.(),
-    get readCount() {
-      return readCount;
-    },
-    get totalReadBytes() {
-      return totalReadBytes;
-    },
-  };
-};

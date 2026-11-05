@@ -5,8 +5,10 @@ import { describe, expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 
-import { analyzeJavaScriptApplication } from "../../../support/javascriptApplicationScope.js";
-import { reconstructJavaScriptArtifact } from "../../../support/javascriptApplicationScope.js";
+import {
+  analyzeJavaScriptApplication,
+  reconstructJavaScriptArtifact,
+} from "../../../support/javascriptApplicationScope.js";
 import { parseEvidence } from "../../../../src/domain/evidence.js";
 import { parseJavaScriptApplicationGraph } from "../../../../src/domain/javascript/javascriptApplicationGraph.js";
 import { analyzeJavaScriptApplicationInputSchema } from "../../../../src/domain/javascript/javascriptApplicationAnalysis.js";
@@ -67,22 +69,18 @@ describe("static Electron application analysis", () => {
     });
   });
 
+  it(
+    "keeps Electron runtime entrypoints on their declared filenames",
+    exactRuntimeEntrypointFixture,
+  );
+
   it("keeps computed identifier member keys unknown", async () => {
     const root = await computedMemberFixtureDirectory();
 
     const result = await reconstructJavaScriptArtifact({ input_path: root });
     const graph = parseJavaScriptApplicationGraph(result.graph);
-    // Computed access keeps no known members; the unknown access is an
-    // explicit dynamic flag rather than a "*" sentinel inside members.
-    const accesses = graph.nodes.flatMap((node) =>
-      node.kind === "native-export"
-        ? node.observations.map(({ properties }) => ({
-            members: Array.isArray(properties.requested_members)
-              ? properties.requested_members
-              : [],
-            dynamicMemberAccess: properties.dynamic_member_access ?? false,
-          }))
-        : [],
+    const nativeBindings = graph.nodes.filter(
+      (node) => node.kind === "native-export",
     );
 
     expect(result.electron_summary).toMatchObject({
@@ -90,7 +88,20 @@ describe("static Electron application analysis", () => {
       native_addon_bindings: 1,
       resolved_native_addon_bindings: 1,
     });
-    expect(accesses).toEqual([{ members: [], dynamicMemberAccess: true }]);
+    expect(nativeBindings).toMatchObject([
+      {
+        observations: [
+          {
+            properties: {
+              requested_members: [],
+              namespace_access: false,
+              dynamic_member_access: true,
+              native_export_verification: "not-performed",
+            },
+          },
+        ],
+      },
+    ]);
   });
 
   it("maps Electron boundaries through bundler-renamed bindings", async () => {
@@ -153,8 +164,261 @@ describe("static Electron application analysis", () => {
   });
 });
 
+describe("native addon association", () => {
+  it.each([
+    { native: false, associations: [] },
+    {
+      native: true,
+      associations: [{ source: "native-addon", resolved: "addon.node" }],
+    },
+  ])(
+    "associates a requested binding only with a resolved native addon (exact addon.node: $native)",
+    async ({ native, associations }) => {
+      const root = await createTestTempDirectory("rea-electron-addon-kind-");
+      await Promise.all([
+        writeFile(
+          join(root, "main.js"),
+          'const addon = require("./addon.node");\nvoid addon;\n',
+        ),
+        writeFile(
+          join(root, "addon.node.js"),
+          "module.exports = { requested: true };\n",
+        ),
+        ...(native
+          ? [writeFile(join(root, "addon.node"), Buffer.from([0, 1, 2, 3]))]
+          : []),
+      ]);
+
+      const result = await reconstructJavaScriptArtifact({ input_path: root });
+      const graph = parseJavaScriptApplicationGraph(result.graph);
+      const nodes = new Map(graph.nodes.map((node) => [node.node_id, node]));
+
+      expect(result.electron_summary).toMatchObject({
+        native_addon_bindings: 1,
+        resolved_native_addon_bindings: native ? 1 : 0,
+      });
+      expect(
+        graph.nodes.filter(({ kind }) => kind === "native-export"),
+      ).toHaveLength(1);
+      expect(
+        graph.edges
+          .filter(
+            (edge) =>
+              edge.evidence.extractor.operation ===
+              "associate-native-addon-requested-exports",
+          )
+          .map((edge) => ({
+            source: nodes.get(edge.source_node_id)?.kind,
+            resolved: edge.properties.resolved_path,
+          })),
+      ).toEqual(associations);
+    },
+  );
+});
+
+const exactRuntimeEntrypointFixture = async (): Promise<void> => {
+  const root = await createTestTempDirectory("rea-electron-exact-entrypoints-");
+  await mkdir(join(root, "renderer/page"), { recursive: true });
+  await Promise.all([
+    writeFile(
+      join(root, "main.cjs"),
+      String.raw`
+const { BrowserWindow, utilityProcess } = require("electron");
+const path = require("node:path");
+new BrowserWindow({ webPreferences: { preload: "./entry" } });
+new BrowserWindow().loadURL("file:///renderer/index.html");
+new BrowserWindow().loadURL("renderer/bare.html");
+new BrowserWindow().loadURL("#home");
+new BrowserWindow().loadURL("");
+new BrowserWindow().loadURL("./renderer/other.html?theme=dark#home");
+new BrowserWindow().loadURL("./renderer/missing.html");
+new BrowserWindow().loadFile("./renderer/page");
+new BrowserWindow({ webPreferences: { preload: path.join(__dirname, "preload") } });
+new BrowserWindow({ webPreferences: { preload: "./explicit-preload.js" } });
+utilityProcess.fork("./worker");
+utilityProcess.fork("./worker#v1.js");
+utilityProcess.fork("./service.js");
+`,
+    ),
+    writeFile(join(root, "entry.html"), "<title>sibling</title>"),
+    writeFile(join(root, "preload.html"), "<title>sibling</title>"),
+    writeFile(join(root, "worker.js"), "module.exports = {};"),
+    writeFile(join(root, "renderer/index.html"), "<title>renderer</title>"),
+    writeFile(
+      join(root, "renderer/bare.html"),
+      "<title>bare renderer URL</title>",
+    ),
+    writeFile(join(root, "renderer/other.html"), "<title>other</title>"),
+    writeFile(join(root, "renderer/missing.html.js"), "module.exports = {};"),
+    writeFile(
+      join(root, "renderer/page/index.html"),
+      "<title>directory</title>",
+    ),
+    writeFile(join(root, "explicit-preload.js"), "module.exports = {};"),
+    writeFile(join(root, "service.js"), "module.exports = {};"),
+  ]);
+
+  const result = await reconstructJavaScriptArtifact({ input_path: root });
+  const graph = parseJavaScriptApplicationGraph(result.graph);
+  expectSuffixOnlyRenderersUnresolved(graph);
+  expectExactRendererPaths(graph);
+  const roles = graph.nodes.filter(({ kind }) => kind === "electron-preload");
+  const roleByDeclaration = new Map(
+    roles.map((role) => [role.observations[0]?.properties.declared_path, role]),
+  );
+
+  expect(result.electron_summary.resolved_utility_entrypoints).toBe(2);
+  for (const [declaredPath, candidatePath] of [
+    ["./entry", "entry"],
+    ["preload", "preload"],
+  ]) {
+    const role = roleByDeclaration.get(declaredPath);
+    expect(role?.observations[0]?.properties).toMatchObject({
+      declared_path: declaredPath,
+      resolved_path: null,
+      resolution_status: "not-found",
+      candidate_path: candidatePath,
+      limitations: [
+        expect.stringContaining(
+          "extension and directory fallback were not attempted",
+        ),
+      ],
+    });
+    expect(
+      graph.edges.some(
+        (edge) =>
+          edge.source_node_id === role?.node_id && edge.relation === "maps_to",
+      ),
+    ).toBe(false);
+  }
+  expect(
+    roleByDeclaration.get("./explicit-preload.js")?.observations[0]?.properties,
+  ).toMatchObject({
+    resolved_path: "explicit-preload.js",
+    resolution_status: "resolved",
+  });
+
+  const utilityLaunches = graph.edges.filter(
+    (edge) =>
+      edge.evidence.extractor.operation === "map-utility-process-launch",
+  );
+  const resolvedWorker = utilityLaunches.find(
+    (edge) => edge.properties.declared_path === "./worker",
+  );
+  expect(resolvedWorker?.evidence).toMatchObject({
+    authority: "static-relationship-inference",
+    state: "inferred",
+    limitations: expect.arrayContaining([
+      "Static syntax does not prove that this relationship executes at runtime.",
+    ]),
+  });
+  expect(utilityLaunches).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        properties: expect.objectContaining({
+          declared_path: "./worker",
+          resolved_path: "worker.js",
+          resolution_status: "resolved",
+        }),
+      }),
+      expect.objectContaining({
+        properties: expect.objectContaining({
+          declared_path: "./worker#v1.js",
+          resolved_path: null,
+          resolution_status: "not-found",
+        }),
+      }),
+      expect.objectContaining({
+        properties: expect.objectContaining({
+          declared_path: "./service.js",
+          resolved_path: "service.js",
+          resolution_status: "resolved",
+        }),
+      }),
+    ]),
+  );
+  expect(
+    graph.edges.some(
+      (edge) =>
+        edge.evidence.extractor.operation ===
+          "resolve-utility-process-entrypoint" &&
+        edge.properties.resolved_path === "worker.html",
+    ),
+  ).toBe(false);
+};
+
 type Reconstruction = Awaited<ReturnType<typeof reconstructJavaScriptArtifact>>;
 type ApplicationGraph = ReturnType<typeof parseJavaScriptApplicationGraph>;
+
+const expectSuffixOnlyRenderersUnresolved = (graph: ApplicationGraph): void => {
+  const renderers = new Map(
+    graph.nodes
+      .filter(({ kind }) => kind === "electron-renderer")
+      .map((renderer) => [
+        renderer.observations[0]?.properties.declared_path,
+        renderer,
+      ]),
+  );
+  expect(
+    renderers.get("file:///renderer/index.html")?.observations[0]?.properties,
+  ).toMatchObject({
+    resolved_path: "renderer/index.html",
+    resolution_status: "resolved",
+  });
+  for (const declaredPath of [
+    "./renderer/other.html?theme=dark#home",
+    "renderer/bare.html",
+    "./renderer/missing.html",
+    "#home",
+    "",
+  ]) {
+    const renderer = renderers.get(declaredPath);
+    expect(renderer?.observations[0]?.properties).toMatchObject({
+      resolved_path: null,
+      resolution_status: "unavailable",
+    });
+    expect(renderer?.observations[0]?.properties.limitations).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("requires a URL protocol"),
+      ]),
+    );
+    expect(
+      graph.edges.some(
+        (edge) =>
+          edge.source_node_id === renderer?.node_id &&
+          edge.relation === "maps_to",
+      ),
+    ).toBe(false);
+  }
+};
+
+const expectExactRendererPaths = (graph: ApplicationGraph): void => {
+  const renderers = new Map(
+    graph.nodes
+      .filter(({ kind }) => kind === "electron-renderer")
+      .map((renderer) => [
+        renderer.observations[0]?.properties.declared_path,
+        renderer,
+      ]),
+  );
+  for (const [declaredPath, candidatePath] of [
+    ["./renderer/page", "renderer/page"],
+  ]) {
+    const renderer = renderers.get(declaredPath);
+    expect(renderer?.observations[0]?.properties).toMatchObject({
+      resolved_path: null,
+      resolution_status: "not-found",
+      candidate_path: candidatePath,
+    });
+    expect(
+      graph.edges.some(
+        (edge) =>
+          edge.source_node_id === renderer?.node_id &&
+          edge.relation === "maps_to",
+      ),
+    ).toBe(false);
+  }
+};
 
 const expectElectronSummary = (result: Reconstruction): void => {
   expect(result.electron_summary).toMatchObject({
@@ -166,9 +430,10 @@ const expectElectronSummary = (result: Reconstruction): void => {
     ipc: {
       literal_channels: 5,
       dynamic_channel_operations: 2,
-      paired_renderer_transmissions: 4,
-      ambiguous_renderer_transmissions: 1,
-      unpaired_literal_renderer_transmissions: 1,
+      // Retained module gaps leave preload/renderer application ownership unknown.
+      paired_renderer_transmissions: 0,
+      ambiguous_renderer_transmissions: 7,
+      unpaired_literal_renderer_transmissions: 0,
     },
     sender_validation_observations: 2,
     utility_processes: 1,
@@ -327,12 +592,7 @@ const expectElectronBoundaries = (graph: ApplicationGraph): void => {
     ({ properties }) =>
       properties.pairing_basis === "unique-exact-literal-channel",
   );
-  expect(pairingEdges).toHaveLength(4);
-  expect(
-    pairingEdges.some(
-      ({ properties }) => properties.channel === "rea:ambiguous",
-    ),
-  ).toBe(false);
+  expect(pairingEdges).toHaveLength(0);
   expect(graph.limitations.join(" ")).toMatch(/dynamic IPC|ambiguous/iu);
 };
 

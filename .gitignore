@@ -33,9 +33,12 @@ codedb.snapshot
 htmlcov/
 .coverage
 coverage/
+.stryker-tmp/
+reports/mutation/
 .vitest/
 .vitest-reports/
 test-results.xml
+test-timings.json
 .turbo/
 .cache/
 docs/.vitepress/cache/
@@ -47,6 +50,7 @@ Thumbs.db
 
 # Local reference sources and analysis artifacts
 /_reference/
+/experiments/analysis-efficiency/
 
 # Generated website download
 /website/public/examples/notes-example.zip
@@ -71,3 +75,5 @@ Thumbs.db
 
 # Complete static website output, including generated language editions.
 website/_site/
+# Temporary translation output prepared before replacing the complete site.
+website/.i18n-*/

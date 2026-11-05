@@ -1,6 +1,9 @@
 import * as t from "@babel/types";
 
-import { semanticStaticPropertyKey } from "./javascriptAstValues.js";
+import {
+  semanticStaticPropertyKey,
+  runtimeFunctionParameters,
+} from "./javascriptAstValues.js";
 import { moduleFactory } from "./javascriptStaticAnalysisHelpers.js";
 import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
 import {
@@ -27,7 +30,7 @@ export const javascriptBootstrapAt = (
     (!t.isFunctionExpression(call.callee) &&
       !t.isArrowFunctionExpression(call.callee)) ||
     !t.isBlockStatement(call.callee.body) ||
-    call.callee.params.length !== 0 ||
+    runtimeFunctionParameters(call.callee).length !== 0 ||
     call.arguments.length !== 0
   )
     return undefined;
@@ -63,10 +66,10 @@ export const javascriptBootstrapAt = (
       !t.isFunctionDeclaration(loader) ||
       loader.id === null ||
       loader.id === undefined ||
-      loader.params.length !== 1
+      runtimeFunctionParameters(loader).length !== 1
     )
       continue;
-    const parameter = loader.params[0];
+    const parameter = runtimeFunctionParameters(loader)[0];
     if (!t.isIdentifier(parameter)) continue;
     const loaderName = loader.id.name;
     const loaderBindingId = bindingId(state, loader.id);
