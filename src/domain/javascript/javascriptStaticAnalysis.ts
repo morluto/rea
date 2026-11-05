@@ -213,7 +213,7 @@ export function* analyzeParsedJavaScriptStaticSourceSteps(
     source,
     accumulator,
     electronIdentity,
-    () => completeSemanticSteps(index.indexMemberMutationFactsSteps()),
+    () => index.indexMemberMutationFactsSteps(),
   );
   addSourceMapDirectives(source, file.comments ?? [], accumulator);
   return finalizeStaticAnalysis(source, file, accumulator, bindings, routes);
