@@ -408,6 +408,25 @@ describe("executable dispatcher JavaScript shutdown", () => {
   );
 
   workspaceCliTest(
+    "reports a failed JavaScript worker shutdown when the exit callback receives an undefined code",
+    async ({ processes, workspace }) => {
+      await installCliRuntime(
+        workspace,
+        'export const closeCliResources = () => Promise.reject(new Error("worker still owned")); export const createCli = () => ({ serve: (_args, options) => { options.exit(); } });\n',
+        'export const createCliResultOutput = () => ({ handled: false, failed: false, captureSdkOutput: () => true, finishSdkOutput: async (status) => { process.stderr.write(`finalization status: ${status}\\n`); } });\n',
+      );
+      const result = await processes.run(
+        process.execPath,
+        [workspace.path("scripts/rea.mjs"), "fixture"],
+        { cwd: workspace.root },
+      );
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain("worker still owned");
+      expect(result.stderr).toContain("finalization status: 1");
+    },
+  );
+
+  workspaceCliTest(
     "keeps the closed-pipe status when JavaScript worker shutdown fails",
     async ({ processes, workspace }) => {
       await installCliRuntime(
