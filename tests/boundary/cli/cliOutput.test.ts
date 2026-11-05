@@ -200,6 +200,13 @@ describe("CLI output value admission", () => {
         "NaN",
         "Infinity",
         "9007199254740992",
+        "0x10",
+        "0b101",
+        "1e3",
+        " 5 ",
+        "5.0",
+        "+5",
+        "٥",
       ]) {
         const validation = parseCliOutputArguments([
           "providers",
@@ -220,7 +227,7 @@ describe("CLI output value admission", () => {
             error: { code: "INVALID_OUTPUT_VALUE" },
           });
       }
-      for (const value of ["0", "1", "9007199254740991"])
+      for (const value of ["0", "1", "007", "9007199254740991"])
         expect(
           parseCliOutputArguments(["providers", flag, value]).validation,
         ).toEqual({ ok: true });

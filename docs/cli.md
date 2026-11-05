@@ -1198,7 +1198,8 @@ JSON consumer. Valued output flags (`--format`, `--filter-output`,
 missing value fails with `MISSING_OUTPUT_VALUE` before the command runs.
 Malformed format values and token windows fail with `INVALID_OUTPUT_VALUE` in the
 selected structured format. Token limits and offsets must be nonnegative safe
-integers; zero selects an empty window. These checks run before command execution. `--json` is indented on a terminal and compact when piped or
+integers written as decimal digits; other spellings, such as `0x10` or `1e3`,
+fail rather than being reinterpreted. Zero selects an empty window. These checks run before command execution. `--json` is indented on a terminal and compact when piped or
 redirected, which keeps large results smaller for agents and scripts; pipe
 through `jq .` for indented files. A formatting refusal exits nonzero even when
 the underlying operation succeeded.

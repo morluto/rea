@@ -71,13 +71,13 @@ export const cliOutputValueRejection = (
       ? undefined
       : `Invalid value for --columns: "${value}". Expected unique, nonempty comma-separated column names.`;
   }
-  if (
-    (flag === "--token-limit" || flag === "--token-offset") &&
-    (!Number.isSafeInteger(Number(value)) ||
-      Number(value) < 0 ||
-      value.trim() === "")
-  )
-    return `Invalid value for ${flag}: "${value}". Expected a nonnegative safe integer.`;
+  if (flag === "--token-limit" || flag === "--token-offset") {
+    // Decimal token text only, as the numeric command options require through
+    // cliIntegerArgument. Number() coercion would silently reinterpret
+    // spellings such as "0x10", "1e3", " 5 ", and "5.0" as integers.
+    if (!/^[0-9]+$/u.test(value) || !Number.isSafeInteger(Number(value)))
+      return `Invalid value for ${flag}: "${value}". Expected a nonnegative safe integer written in decimal digits.`;
+  }
   return undefined;
 };
 
