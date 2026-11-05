@@ -14,13 +14,9 @@ import {
 import { analysisProviderSelectorSchema } from "../domain/providerSelection.js";
 
 /** Caller-supplied dSYM bundle path; must name the bundle directory absolutely. */
-const dsymPathSchema = absoluteLocalPathStringSchema
-  .refine((value) => value.endsWith(".dSYM"), {
-    message: "dsym_path must name a .dSYM bundle directory",
-  })
-  .describe(
-    "Absolute local filesystem path to a .dSYM bundle whose DWARF member carries the target image's LC_UUID; admitted only for Mach-O executable targets. Omitting it analyzes without debug types.",
-  );
+const dsymPathSchema = absoluteLocalPathStringSchema.describe(
+  "Absolute local filesystem path to a .dSYM bundle whose DWARF member carries the target image's LC_UUID; admitted only for Mach-O executable targets. Omitting it analyzes without debug types.",
+);
 
 /** Caller-supplied analysis snapshot path; must name its destination absolutely. */
 const snapshotPathSchema = absoluteLocalPathStringSchema.describe(

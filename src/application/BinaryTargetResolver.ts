@@ -47,7 +47,10 @@ import {
   type UniversalMachOSlice,
   type MachODebugCompanion,
 } from "../domain/binaryTargetTypes.js";
-import { admitDebugCompanion } from "./DebugCompanionAdmission.js";
+import {
+  admitDebugCompanion,
+  debugCompanionRejectedError,
+} from "./DebugCompanionAdmission.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { readMipsElfMetadata } from "./MipsElfMetadata.js";
 import {
@@ -597,6 +600,7 @@ const readOpenedBinaryTarget = async (
       );
     const companion = await admitDebugCompanion({
       dsymPath,
+      targetPath: path,
       targetHandle: handle,
       targetSize: metadata.size,
       architecture: detected.value.architecture,
@@ -609,17 +613,7 @@ const readOpenedBinaryTarget = async (
       ...(signal === undefined ? {} : { signal }),
     });
     if (!companion.ok)
-      return err(
-        new BinaryTargetError(path, companion.error.reason, {
-          constraint: "debug_companion_rejected",
-          ...(companion.error.remediationAction === undefined
-            ? {}
-            : { remediationAction: companion.error.remediationAction }),
-          ...(companion.error.diagnostics === undefined
-            ? {}
-            : { diagnostics: companion.error.diagnostics }),
-        }),
-      );
+      return err(debugCompanionRejectedError(path, companion.error));
     debugCompanion = companion.value;
   }
   return ok({
@@ -646,15 +640,51 @@ const finalizedTargetResolution = (
   );
 };
 
+const companionDirectoryCleanupError = (
+  failure: ArtifactReaderFailure,
+  candidate: string,
+): BinaryTargetError => {
+  const underlying =
+    failure.cause instanceof ArtifactReaderFailure
+      ? failure.cause.cause
+      : failure.cause;
+  const primary =
+    underlying instanceof BinaryTargetError ||
+    underlying instanceof AnalysisCancelledError ||
+    underlying instanceof AnalysisArtifactChangedError
+      ? underlying
+      : undefined;
+  const error = new BinaryTargetError(
+    failure.cleanup?.resources[0] ?? candidate,
+    "The debug companion directory handle could not be closed",
+    {
+      cause: failure,
+      cleanupPrimary: primary,
+      ...(failure.cleanup === undefined ? {} : { cleanup: failure.cleanup }),
+      ...childFailureDiagnostics(
+        primary === undefined ? {} : { primary_error: { error: primary } },
+      ),
+    },
+  );
+  bindRegularFileCleanup(failure, error);
+  return error;
+};
+
 /** Descriptor cleanup retains the physical result and binds its exact release lease. */
 const targetFileCleanupError = (
-  failure: RetainedRegularFileCleanupFailure<TargetResolution>,
+  failure: RetainedRegularFileCleanupFailure,
   candidate: string,
   stage: TargetFilesystemStage,
+  reason = "The target file handle could not be closed",
 ): BinaryTargetError => {
   const cancellation = regularFileCancellation(failure);
   const completed =
-    failure.outcome.kind === "completed" ? failure.outcome.value : undefined;
+    failure.outcome.kind === "completed" &&
+    failure.outcome.value !== null &&
+    typeof failure.outcome.value === "object" &&
+    "ok" in failure.outcome.value
+      ? (failure.outcome.value as TargetResolution)
+      : undefined;
   const completedTarget =
     completed?.ok === true ? jsonValueSchema.parse(completed.value) : undefined;
   let primary:
@@ -663,21 +693,36 @@ const targetFileCleanupError = (
     | AnalysisArtifactChangedError
     | undefined;
   if (failure.outcome.kind === "failed") {
-    const physical = failure.outcome.cause;
+    const rawPhysical = failure.outcome.cause;
+    const physical =
+      rawPhysical instanceof OwnedRegularFileOperationFailure
+        ? rawPhysical.operationCause
+        : rawPhysical;
     primary =
       physical instanceof BinaryTargetError ||
-      physical instanceof AnalysisCancelledError
+      physical instanceof AnalysisCancelledError ||
+      physical instanceof AnalysisArtifactChangedError
         ? physical
-        : cancellation !== undefined
-          ? new AnalysisCancelledError("resolve_binary_target", {
-              cause: cancellation.reason,
-            })
-          : (classifyTargetFilesystemFailure(candidate, physical, stage) ??
-            new BinaryTargetError(
-              failure.path,
-              "Target read failed before file cleanup",
-              { cause: physical },
-            ));
+        : physical instanceof RetainedRegularFileCleanupFailure
+          ? targetFileCleanupError(
+              physical,
+              candidate,
+              stage,
+              "The debug companion file handle could not be closed",
+            )
+          : physical instanceof ArtifactReaderFailure &&
+              physical.cleanup !== undefined
+            ? companionDirectoryCleanupError(physical, candidate)
+            : cancellation !== undefined
+              ? new AnalysisCancelledError("resolve_binary_target", {
+                  cause: cancellation.reason,
+                })
+              : (classifyTargetFilesystemFailure(candidate, physical, stage) ??
+                new BinaryTargetError(
+                  failure.path,
+                  "Target read failed before file cleanup",
+                  { cause: physical },
+                ));
   } else if (completed?.ok === false) primary = completed.error;
   else if (cancellation !== undefined)
     primary = new AnalysisCancelledError("resolve_binary_target", {
@@ -686,27 +731,23 @@ const targetFileCleanupError = (
         ? {}
         : { diagnostics: { completed_target: completedTarget } }),
     });
-  const error = new BinaryTargetError(
-    failure.path,
-    "The target file handle could not be closed",
-    {
-      cause: failure,
-      cleanupPrimary: primary,
-      cleanup: {
-        reason:
-          failure.cleanupCause instanceof Error
-            ? failure.cleanupCause.message
-            : String(failure.cleanupCause),
-        resources: [failure.path],
-      },
-      ...childFailureDiagnostics(
-        primary === undefined ? {} : { primary_error: { error: primary } },
-        completedTarget === undefined
-          ? {}
-          : { completed_target: completedTarget },
-      ),
+  const error = new BinaryTargetError(failure.path, reason, {
+    cause: failure,
+    cleanupPrimary: primary,
+    cleanup: {
+      reason:
+        failure.cleanupCause instanceof Error
+          ? failure.cleanupCause.message
+          : String(failure.cleanupCause),
+      resources: [failure.path],
     },
-  );
+    ...childFailureDiagnostics(
+      primary === undefined ? {} : { primary_error: { error: primary } },
+      completedTarget === undefined
+        ? {}
+        : { completed_target: completedTarget },
+    ),
+  });
   bindRegularFileCleanup(failure, error);
   return error;
 };
@@ -729,38 +770,20 @@ const targetResolutionFailure = (
   )
     return err(physical);
   if (cause instanceof OwnedRegularFileOperationFailure) {
-    if (physical instanceof RetainedRegularFileCleanupFailure) {
-      const error = new BinaryTargetError(
-        physical.path,
-        "The debug companion file handle could not be closed",
-        {
-          cause: physical,
-          cleanup: {
-            reason:
-              physical.cleanupCause instanceof Error
-                ? physical.cleanupCause.message
-                : String(physical.cleanupCause),
-            resources: [physical.path],
-          },
-        },
+    if (physical instanceof RetainedRegularFileCleanupFailure)
+      return err(
+        targetFileCleanupError(
+          physical,
+          candidate,
+          stage,
+          "The debug companion file handle could not be closed",
+        ),
       );
-      bindRegularFileCleanup(physical, error);
-      return err(error);
-    }
     if (
       physical instanceof ArtifactReaderFailure &&
       physical.cleanup !== undefined
     )
-      return err(
-        new BinaryTargetError(
-          physical.cleanup.resources[0] ?? candidate,
-          "The debug companion directory handle could not be closed",
-          {
-            cause: physical,
-            cleanup: physical.cleanup,
-          },
-        ),
-      );
+      return err(companionDirectoryCleanupError(physical, candidate));
   }
   if (!(cause instanceof OwnedRegularFileOperationFailure)) {
     const cancellation = regularFileCancellation(cause);

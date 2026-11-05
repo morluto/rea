@@ -19,6 +19,8 @@ import {
   admitDebugCompanion,
   readMachoFileUuidEntries,
 } from "../../../src/application/DebugCompanionAdmission.js";
+import { parseBinaryTarget } from "../../../src/application/BinaryTargetResolver.js";
+import { openBinaryInputSchema } from "../../../src/contracts/sessionLifecycleInputs.js";
 import { stageGhidraDebugCompanion } from "../../../src/ghidra/GhidraDebugCompanion.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
@@ -340,3 +342,39 @@ it("reports a placeholder target UUID before inspecting companion matches", asyn
     error: { reason: expect.stringContaining("no usable LC_UUID") },
   });
 });
+
+it.each(["/", "/."])(
+  "accepts valid dSYM bundle directory spelling ending with %s in openBinaryInputSchema and parseBinaryTarget",
+  async (suffix) => {
+    const root = await createTestTempDirectory("rea-dsym-bundle-spelling-");
+    const dsymPath = `${join(root, "selected.dSYM")}${suffix}`;
+    const directory = join(
+      root,
+      "selected.dSYM",
+      "Contents",
+      "Resources",
+      "DWARF",
+    );
+    await mkdir(directory, { recursive: true });
+    const target = join(root, "target");
+    const bytes = uuidImage("11111111-2222-3333-4444-555555555555");
+    await writeFile(target, bytes);
+    await writeFile(join(directory, "member"), bytes);
+
+    expect(
+      openBinaryInputSchema.safeParse({ path: target, dsym_path: dsymPath }),
+    ).toMatchObject({
+      success: true,
+    });
+    expect(await parseBinaryTarget(target, { dsymPath })).toMatchObject({
+      ok: true,
+      value: {
+        format: "mach-o",
+        debugCompanion: {
+          sourcePath: dsymPath,
+          uuid: "11111111-2222-3333-4444-555555555555",
+        },
+      },
+    });
+  },
+);

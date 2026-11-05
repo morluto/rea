@@ -396,7 +396,7 @@ it.each([false, true])(
     );
     expect(readMachoUuids(bytes)).toMatchObject({
       ok: false,
-      error: expect.stringContaining("invalid size"),
+      error: expect.stringContaining("invalid cmdsize"),
     });
   },
 );

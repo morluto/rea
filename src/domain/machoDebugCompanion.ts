@@ -1,14 +1,16 @@
 import {
   readFatContainerHeader,
+  readMachoHeaderPrefixFacts,
   validateFatSlice,
 } from "./apple/machoContainer.js";
 import { machoCpuSubtypeBase } from "./apple/machoCpuIdentity.js";
-import { validMachOLoadCommandSize } from "./apple/machoLoadCommand.js";
+import {
+  MachoLoadCommandCursor,
+  readMachoLoadCommandTableHeader,
+} from "./apple/machoLoadCommands.js";
 import { err, ok, type Result } from "./result.js";
 
 const LC_UUID = 0x1b;
-const THIN_LITTLE_MAGICS = new Set([0xcefaedfe, 0xcffaedfe]);
-const THIN_BIG_MAGICS = new Set([0xfeedface, 0xfeedfacf]);
 const UUID_BYTES = 16;
 
 /**
@@ -57,53 +59,38 @@ export function* machoUuidReads(
   if (imageSize < 4) return err("Mach-O header is truncated");
   const magicBytes = yield { offset: 0, length: 4 };
   if (magicBytes.length < 4) return err("Mach-O header is truncated");
-  const magic = magicBytes.readUInt32BE(0);
-  const little = THIN_LITTLE_MAGICS.has(magic);
-  if (!little && !THIN_BIG_MAGICS.has(magic)) return err("not a Mach-O image");
-  const wide = magic === 0xfeedfacf || magic === 0xcffaedfe;
-  const headerSize = wide ? 32 : 28;
+  const prefix = readMachoHeaderPrefixFacts(magicBytes);
+  if (prefix.format === null) return err("not a Mach-O image");
+  const { headerSize } = prefix.format;
   if (imageSize < headerSize)
     return err("Mach-O header is truncated before its load commands");
   const header = yield { offset: 0, length: headerSize };
-  if (header.length < headerSize)
-    return err("Mach-O header is truncated before its load commands");
-  const read32 = (bytes: Buffer, offset: number): number =>
-    little ? bytes.readUInt32LE(offset) : bytes.readUInt32BE(offset);
-  const cpuType = read32(header, 4);
-  const cpuSubtype = read32(header, 8);
-  const commandCount = read32(header, 16);
-  const declaredSize = read32(header, 20);
-  if (declaredSize > imageSize - headerSize)
-    return err("Mach-O load commands exceed the declared image region");
-  const commandsEnd = headerSize + declaredSize;
-  let cursor = headerSize;
+  const table = readMachoLoadCommandTableHeader(header, imageSize);
+  if (!table.ok) return table;
+  if (table.value === null) return err("not a Mach-O image");
+  const {
+    identity: { cpuType, cpuSubtype },
+  } = table.value;
+  const commands = new MachoLoadCommandCursor(table.value);
   let observed: string | null = null;
-  for (let index = 0; index < commandCount; index += 1) {
-    if (commandsEnd - cursor < 8)
-      return err(`Mach-O load command ${String(index)} is truncated`);
-    const commandHeader = yield { offset: cursor, length: 8 };
-    if (commandHeader.length < 8)
-      return err(`Mach-O load command ${String(index)} is truncated`);
-    const command = read32(commandHeader, 0);
-    const size = read32(commandHeader, 4);
-    if (!validMachOLoadCommandSize(size, commandsEnd - cursor, wide))
-      return err(`Mach-O load command ${String(index)} has an invalid size`);
-    if (command === LC_UUID) {
-      if (size < 8 + UUID_BYTES)
+  while (commands.nextOffset !== null) {
+    const commandOffset = headerSize + commands.nextOffset;
+    const commandHeader = yield { offset: commandOffset, length: 8 };
+    const frame = commands.read(commandHeader);
+    if (!frame.ok) return frame;
+    if (frame.value.command === LC_UUID) {
+      if (frame.value.size < 8 + UUID_BYTES)
         return err("LC_UUID load command is truncated");
       if (observed !== null)
         return err("Mach-O image declares more than one LC_UUID");
-      const payload = yield { offset: cursor + 8, length: UUID_BYTES };
+      const payload = yield { offset: commandOffset + 8, length: UUID_BYTES };
       if (payload.length < UUID_BYTES)
         return err("LC_UUID load command is truncated");
       observed = formatUuid(payload);
     }
-    cursor += size;
   }
-  if (cursor !== commandsEnd)
-    return err(
-      "Mach-O load commands do not fill the declared load-command span",
-    );
+  const finished = commands.finish();
+  if (!finished.ok) return finished;
   return ok({ cpuType, cpuSubtype, uuid: observed });
 }
 

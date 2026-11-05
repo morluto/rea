@@ -7,6 +7,11 @@ const fault = vi.hoisted(() => ({
   statFailure: undefined as Error | undefined,
   openPath: "",
   openFailure: undefined as Error | undefined,
+  memberReadFailure: undefined as Error | undefined,
+  memberCloseFailure: undefined as Error | undefined,
+  dirReadFailure: undefined as Error | undefined,
+  dirCloseFailure: undefined as Error | undefined,
+  onOpendir: undefined as (() => void) | undefined,
   controller: undefined as AbortController | undefined,
 }));
 vi.mock("node:fs/promises", async (importOriginal) => {
@@ -24,14 +29,66 @@ vi.mock("node:fs/promises", async (importOriginal) => {
     open: async (...args: Parameters<typeof original.open>) => {
       if (args[0] === fault.openPath && fault.openFailure !== undefined)
         throw fault.openFailure;
-      return await original.open(...args);
+      const handle = await original.open(...args);
+      if (
+        args[0] === fault.openPath &&
+        (fault.memberReadFailure !== undefined ||
+          fault.memberCloseFailure !== undefined)
+      ) {
+        const originalClose = handle.close.bind(handle);
+        if (fault.memberReadFailure !== undefined) {
+          handle.read = (() =>
+            Promise.reject(fault.memberReadFailure)) as typeof handle.read;
+        }
+        if (fault.memberCloseFailure !== undefined) {
+          handle.close = async () => {
+            if (fault.memberCloseFailure !== undefined)
+              throw fault.memberCloseFailure;
+            await originalClose();
+          };
+        }
+      }
+      return handle;
+    },
+    opendir: async (...args: Parameters<typeof original.opendir>) => {
+      fault.onOpendir?.();
+      const directory = await original.opendir(...args);
+      if (
+        fault.dirReadFailure !== undefined ||
+        fault.dirCloseFailure !== undefined
+      ) {
+        const originalClose = directory.close.bind(directory);
+        let closed = false;
+        if (fault.dirReadFailure !== undefined) {
+          directory.read = (() =>
+            Promise.reject(fault.dirReadFailure)) as typeof directory.read;
+        }
+        if (fault.dirCloseFailure !== undefined) {
+          directory.close = (async () => {
+            if (!closed) {
+              closed = true;
+              await originalClose();
+            }
+            if (fault.dirCloseFailure !== undefined)
+              throw fault.dirCloseFailure;
+          }) as typeof directory.close;
+        }
+      }
+      return directory;
     },
   };
 });
 
+import { parseBinaryTarget } from "../../src/application/BinaryTargetResolver.js";
 import { admitDebugCompanion } from "../../src/application/DebugCompanionAdmission.js";
-import { AnalysisCancelledError } from "../../src/domain/analysisErrorCore.js";
+import { AnalysisCleanupLease } from "../../src/artifacts/AnalysisCleanupLease.js";
+import { ArtifactResourceScope } from "../../src/artifacts/ArtifactResourceScope.js";
+import {
+  AnalysisArtifactChangedError,
+  AnalysisCancelledError,
+} from "../../src/domain/analysisErrorCore.js";
 import { BinaryTargetError } from "../../src/domain/configurationErrors.js";
+import { RegularFileChangedError } from "../../src/filesystem/RegularFile.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 
 beforeEach(() => {
@@ -39,6 +96,11 @@ beforeEach(() => {
   fault.statFailure = undefined;
   fault.openPath = "";
   fault.openFailure = undefined;
+  fault.memberReadFailure = undefined;
+  fault.memberCloseFailure = undefined;
+  fault.dirReadFailure = undefined;
+  fault.dirCloseFailure = undefined;
+  fault.onOpendir = undefined;
   fault.controller = undefined;
 });
 
@@ -81,7 +143,7 @@ const admissionFixture = async () => {
       await targetHandle.close();
     }
   };
-  return { dsymPath, member, admit };
+  return { dsymPath, directory, member, target, admit };
 };
 
 const errno = (code: string): Error =>
@@ -144,4 +206,72 @@ it("still skips an unreadable DWARF candidate as caller data", async () => {
       reason: expect.stringContaining("no Mach-O DWARF member"),
     },
   });
+});
+
+it("does not deadlock when a pending cleanup owner is retained while parseBinaryTarget admits a dSYM", async () => {
+  const fixture = await admissionFixture();
+  const resources = new ArtifactResourceScope();
+  fault.onOpendir = () => {
+    const resource = `${fixture.member}-retained`;
+    resources.retain({
+      kind: "lease",
+      resource,
+      lease: new AnalysisCleanupLease(() => Promise.resolve(), [resource]),
+    });
+  };
+  const resolved = await parseBinaryTarget(fixture.target, {
+    dsymPath: fixture.dsymPath,
+    resources,
+  });
+  expect(resolved).toMatchObject({
+    ok: true,
+    value: {
+      format: "mach-o",
+      debugCompanion: { uuid: UUID },
+    },
+  });
+  await resources.close();
+});
+
+it("preserves a changed-member primary failure and binds the cleanup lease when member handle close also fails", async () => {
+  const fixture = await admissionFixture();
+  const resources = new ArtifactResourceScope();
+  fault.openPath = fixture.member;
+  fault.memberReadFailure = new RegularFileChangedError(fixture.member);
+  fault.memberCloseFailure = errno("EIO");
+  const resolved = await parseBinaryTarget(fixture.target, {
+    dsymPath: fixture.dsymPath,
+    resources,
+  });
+  expect(resolved.ok).toBe(false);
+  if (resolved.ok) return;
+  expect(resolved.error).toBeInstanceOf(BinaryTargetError);
+  expect(resolved.error.cleanupPrimary).toBeInstanceOf(
+    AnalysisArtifactChangedError,
+  );
+  expect(resolved.error.cleanupIncomplete).toBe(true);
+  fault.memberCloseFailure = undefined;
+  await resources.close();
+  expect(resolved.error.cleanupIncomplete).toBe(false);
+});
+
+it("preserves a DWARF directory enumeration failure and binds the cleanup lease when directory close also fails", async () => {
+  const fixture = await admissionFixture();
+  const resources = new ArtifactResourceScope();
+  fault.dirReadFailure = errno("EIO");
+  fault.dirCloseFailure = errno("EIO");
+  const resolved = await parseBinaryTarget(fixture.target, {
+    dsymPath: fixture.dsymPath,
+    resources,
+  });
+  expect(resolved.ok).toBe(false);
+  if (resolved.ok) return;
+  expect(resolved.error).toBeInstanceOf(BinaryTargetError);
+  expect(resolved.error.cleanupPrimary).toBeInstanceOf(BinaryTargetError);
+  expect(resolved.error.cleanupPrimary?.message).toContain("EIO");
+  expect(resolved.error.cleanupIncomplete).toBe(true);
+  expect(resolved.error.cleanupResources).toEqual([fixture.directory]);
+  await expect(resources.close()).rejects.toThrow(
+    "Artifact cleanup remains incomplete",
+  );
 });
