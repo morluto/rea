@@ -120,7 +120,15 @@ entry point, even from an ELF file. Without `-n`, a Rizin format loader can
 claim a raw image and give wrong reads with no error. In Rizin 0.9.1 the AVR
 loader turns `io.va` off, so every read at the mapped address returns `0xff`.
 In Rizin 0.7.4 and 0.9.1 the BIOS loader maps the file at another address.
-Evidence records each input and the complete argument list.
+A loader can also claim a raw image that you open with only `asm_*` inputs, so
+pass `base_address`, `0x0` if the image has no known address. Evidence records
+each input and the complete argument list.
+
+With `-n`, Rizin has no headers to read, so arch, bits and byte order stay at
+its defaults unless the call selects them. A Thumb image opened with only
+`base_address` decodes as plausible AArch64 on an arm64 host. Pass `asm_arch`
+and `asm_bits` with `base_address`, and for a big-endian image start the command
+with `e cfg.bigendian=true`.
 
 REA checks only the spelling. Arch and CPU names contain letters, digits, `_`,
 `.`, `+` and `-`, and start with a letter or a digit. `asm_bits` is an integer
@@ -133,9 +141,11 @@ list what the installed Rizin supports. To use another build, set
 another value and exits with status 0. Rizin 0.9.1 keeps its default and
 reports the value on stderr. Rizin 0.7.4 reports an unknown arch on stderr, but
 for `arm` it used 16 bits instead of 8 without a message. Both accept any
-`asm.cpu` value. Evidence therefore states that REA does not confirm the
-decoder that Rizin used. To check the decoder and the map, start the command
-with `e asm.arch; e asm.bits; e asm.cpu; oml`.
+`asm.cpu` value, and `e asm.cpu` then echoes it, so compare it with
+`e asm.cpu=?`, which lists the CPUs of the selected arch. Evidence therefore
+states that REA does not confirm the decoder that Rizin used. To check the
+decoder and the map, start the command with
+`e asm.arch; e asm.bits; e asm.cpu; e cfg.bigendian; oml`.
 
 This call reads a Cortex-M flash dump at its address, in Thumb state:
 

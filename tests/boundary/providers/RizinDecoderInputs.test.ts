@@ -20,6 +20,8 @@ const banner = rizin === undefined ? "no Rizin on PATH" : versionBanner(rizin);
 const CORTEX_M_IMAGE = Buffer.from([
   0x00, 0x20, 0x00, 0x20, 0x09, 0x01, 0x00, 0x08, 0x70, 0x47, 0x00, 0xbf,
 ]);
+// Thumb `msr primask, r0`, which only an M-profile decoder knows.
+const MSR_PRIMASK = Buffer.from([0x80, 0xf3, 0x10, 0x88]);
 // 6502 `nop; rts`; no host decodes 6502 by default.
 const MOS_6502_IMAGE = Buffer.from([0xea, 0x60]);
 // Raw images that Rizin's loaders claim unless REA passes -n. Rizin 0.9.1's
@@ -71,6 +73,7 @@ const runRizin = async (
   return {
     lines: evidence.normalized_result.stdout.trimEnd().split("\n"),
     stderr: evidence.normalized_result.stderr,
+    limitations: evidence.limitations.join(" "),
   };
 };
 
@@ -107,6 +110,45 @@ it.skipIf(rizin === undefined)(
       "ff",
       "bx lr",
     ]);
+  },
+);
+
+it.skipIf(rizin === undefined)(
+  `applies asm_cpu to the decoder, and echoes one Rizin lacks (${banner})`,
+  async () => {
+    const thumb = { asm_arch: "arm", asm_bits: 16, base_address: "0x0" };
+    const plain = await runRizin({ command: "pi 1", ...thumb }, MSR_PRIMASK);
+    expect(plain.lines).toEqual(["invalid"]);
+
+    const selected = await runRizin(
+      { command: "pi 1", ...thumb, asm_cpu: "cortexm" },
+      MSR_PRIMASK,
+    );
+    expect(selected.lines).toEqual(["msr primask, r0"]);
+
+    const unknown = await runRizin(
+      { command: "e asm.cpu; pi 1", ...thumb, asm_cpu: "rea-no-such-cpu" },
+      MSR_PRIMASK,
+    );
+    expect(unknown.lines).toEqual(["rea-no-such-cpu", "invalid"]);
+    expect(unknown.limitations).toContain("e asm.cpu echoes any value");
+  },
+);
+
+it.skipIf(rizin === undefined)(
+  `states what a call with only base_address leaves unconfirmed (${banner})`,
+  async () => {
+    const { lines, limitations } = await runRizin(
+      { command: "omlj; om-*; omlj", base_address: "0x8000" },
+      CORTEX_M_IMAGE,
+    );
+    expect(mapsOf(lines[0])).toEqual([
+      expect.objectContaining({ delta: 0, from: 0x8000 }),
+    ]);
+    // The command removed the map, and the limitation claims no map.
+    expect(mapsOf(lines[1])).toEqual([]);
+    expect(limitations).toContain("REA does not confirm the map");
+    expect(limitations).toContain("stay at Rizin's defaults");
   },
 );
 

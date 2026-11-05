@@ -183,6 +183,12 @@ it("passes Rizin decoder and map inputs as flags before the artifact", async () 
     expect.arrayContaining([...rizinCommandLimitations(input)]),
   );
 
+  // Compact schemas drop property descriptions, so the tool description warns.
+  const { tools } = await client.listTools();
+  expect(
+    tools.find((tool) => tool.name === "execute_rizin_command")?.description,
+  ).toContain("base_address also passes -n");
+
   const refused = await client.callTool({
     name: "execute_rizin_command",
     arguments: { ...input, asm_cpu: "cortexm; q" },

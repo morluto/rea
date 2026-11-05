@@ -30,11 +30,11 @@ export const rizinCommandLimitations = (
   input.asm_cpu === undefined
     ? []
     : [
-        "REA passed the selected asm_* values to Rizin unchecked. Rizin uses another value for one it cannot apply, at most reporting it on stderr, so REA does not confirm the decoder that Rizin used.",
+        "REA does not confirm that Rizin applied the selected asm_* values. Rizin uses another arch or bits value when it cannot apply one, at most reporting it on stderr, and e asm.cpu echoes any value, so compare it with e asm.cpu=?.",
       ]),
   ...(input.base_address === undefined
     ? []
     : [
-        "With base_address, REA passed -n and -m: Rizin mapped the file at that address as a raw image and loaded no format information, such as sections, symbols or an entry point.",
+        "With base_address, REA passed -n and -m so that Rizin maps file offset 0 at that address as a raw image; REA does not confirm the map, which oml shows. -n skips Rizin's format loaders, so expect no sections, symbols or entry point, and arch, bits and byte order stay at Rizin's defaults unless the call selects them.",
       ]),
 ];
