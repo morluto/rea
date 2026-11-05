@@ -1178,6 +1178,7 @@
 ### Continuous Integration
 
 * **codeql:** separate production scans from test fixtures ([#8450](https://github.com/morluto/rea/issues/8450)) ([a6caa79](https://github.com/morluto/rea/commit/a6caa79bf4f393c02601fbf2f6df246eae0b1558))
+* **environment:** pin the real agentenv lane to agentenv-framework 0.9.1431 ([#8865](https://github.com/morluto/rea/issues/8865)) ([0ac6be1](https://github.com/morluto/rea/commit/0ac6be1a3de38a1c84ee128768ae0e692b99411c))
 * exempt designated authors from readiness declaration ([920d634](https://github.com/morluto/rea/commit/920d634e835ede760831bee51baabb054924f041))
 * **ghidra:** probe M-profile ARM and Xtensa decoding ([#7482](https://github.com/morluto/rea/issues/7482)) ([19ab239](https://github.com/morluto/rea/commit/19ab2392781b923a2056ed6c7317e1b4e19c1066))
 * source 20,888 passed / 15 skipped; seven built-dependent shards, static, docs, package builds, Linux native baseline and real JS recovery CLI/MCP passed. Shard 6 Hermes path-preview failures both reproduce on exact main b9d1a61dd; Portable tests fails downstream. Greptile 5/5, no findings; Codex quota exhausted. Authorized admin bypass for unrelated baseline CI and unchecked human readiness; no human review attestation made. ([a95b83c](https://github.com/morluto/rea/commit/a95b83c2b06ef713664d6abb3d29c7c149a2ce01))
