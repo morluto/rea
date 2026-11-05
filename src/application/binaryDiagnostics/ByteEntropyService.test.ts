@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { open, stat, rename, writeFile } from "node:fs/promises";
+import { open, stat, rename, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
@@ -38,6 +38,70 @@ it("keeps whole-file identity and entropy while selecting unaligned blocks and a
   expect(result.value.confidence).toBe("observed");
 });
 
+it.each([256, 4096, 65536])(
+  "keeps %i-byte blocks relative to an unaligned window across short physical reads",
+  async (blockSize) => {
+    const root = await createTestTempDirectory("rea-entropy-short-reads-");
+    const path = join(root, "bytes");
+    const bytes = Buffer.from(
+      Array.from({ length: 3 * 65536 + 256 }, (_, i) => i % 256),
+    );
+    await writeFile(path, bytes);
+    let reads = 0;
+    const service = new ByteEntropyService({
+      stat,
+      open: async (...args) => {
+        const file = await open(...args);
+        const read = file.read.bind(file);
+        Object.defineProperty(file, "read", {
+          value: async (
+            buffer: Buffer,
+            offset: number,
+            length: number,
+            position: number,
+          ) => {
+            reads += 1;
+            return read(buffer, offset, Math.min(length, 3571), position);
+          },
+        });
+        return file;
+      },
+    });
+    try {
+      const result = await service.inspect({
+        path,
+        offset: 3,
+        length: 2 * 65536 + 1,
+        block_size: blockSize,
+      });
+      if (!result.ok) throw result.error;
+      const report = byteEntropySchema.parse(result.value.normalized_result);
+      const fullBlocks = (2 * 65536) / blockSize;
+      expect(report.blocks).toEqual([
+        ...Array.from({ length: fullBlocks }, (_, i) => ({
+          offset: 3 + i * blockSize,
+          length: blockSize,
+          entropy: 8,
+        })),
+        { offset: 3 + 2 * 65536, length: 1, entropy: 0 },
+      ]);
+      expect(report.runs).toEqual([
+        { offset: 3, length: 2 * 65536, classification: "high" },
+        { offset: 3 + 2 * 65536, length: 1, classification: "low" },
+      ]);
+      expect(report.file_entropy).toBe(8);
+      expect(report.artifact.sha256).toBe(
+        createHash("sha256").update(bytes).digest("hex"),
+      );
+      // Even with 3,571-byte short reads, finer report resolution does not
+      // require hundreds of asynchronous reads of this 193 KiB file.
+      expect(reads).toBeLessThan(100);
+    } finally {
+      await service.close();
+    }
+  },
+);
+
 it("rejects missing files, non-files and windows beyond EOF, but accepts empty windows", async () => {
   const root = await createTestTempDirectory("rea-entropy-input-");
   const path = join(root, "empty");
@@ -67,6 +131,83 @@ it("rejects missing files, non-files and windows beyond EOF, but accepts empty w
   expect(
     byteEntropySchema.parse(result.value.normalized_result).limitations,
   ).toContainEqual(expect.stringContaining("reports a size of 0"));
+});
+
+it.skipIf(process.platform !== "linux" && process.platform !== "darwin")(
+  "projects real path-resolution failures as actionable input errors",
+  async () => {
+    const root = await createTestTempDirectory("rea-entropy-path-resolution-");
+    const loop = join(root, "loop");
+    await symlink("loop", loop);
+    const overlong = join(root, "x".repeat(256));
+    const cases = [
+      [loop, "ELOOP"],
+      [overlong, "ENAMETOOLONG"],
+    ] as const;
+    const service = new ByteEntropyService();
+    try {
+      for (const [path, code] of cases) {
+        let observedCode: unknown;
+        try {
+          await stat(path);
+        } catch (cause: unknown) {
+          observedCode =
+            cause instanceof Error && "code" in cause ? cause.code : undefined;
+        }
+        expect(observedCode).toBe(code);
+
+        const result = await service.inspect({ path });
+        if (result.ok) throw new Error(`Expected ${code} path failure`);
+        expect(result.error).toMatchObject({
+          _tag: "AnalysisInputError",
+          cause: { code },
+          issues: [
+            {
+              path: ["path"],
+              reason: "invalid_value",
+            },
+          ],
+        });
+        const projected = projectAnalysisError(result.error);
+        expect(projected).toMatchObject({
+          code: "invalid_request",
+          recovery: {
+            kind: "inspect_input_contract",
+            operation: "inspect_byte_entropy",
+          },
+          details: {
+            operation: "inspect_byte_entropy",
+            issues: [
+              {
+                path: ["path"],
+                reason: "invalid_value",
+                message: expect.stringContaining(code),
+              },
+            ],
+          },
+        });
+        expect(JSON.stringify(projected.details)).toContain(path);
+      }
+    } finally {
+      await service.close();
+    }
+  },
+);
+
+it.each([
+  [{ offset: 2048 }, "offset"],
+  [{ offset: 2048, length: 0 }, "offset"],
+  [{ offset: 512, length: 1024 }, "length"],
+])("names the selector that puts %o past EOF", async (window, field) => {
+  const root = await createTestTempDirectory("rea-entropy-window-");
+  const path = join(root, "bytes");
+  await writeFile(path, Buffer.alloc(1024));
+  const result = await new ByteEntropyService().inspect({ path, ...window });
+  if (result.ok) throw new Error("Expected an out-of-file window to fail");
+  expect(projectAnalysisError(result.error)).toMatchObject({
+    code: "invalid_request",
+    details: { issues: [{ path: [field], reason: "invalid_value" }] },
+  });
 });
 
 it.skipIf(process.platform !== "linux")(

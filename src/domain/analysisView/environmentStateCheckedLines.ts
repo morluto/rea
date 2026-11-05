@@ -4,6 +4,7 @@ import {
 } from "../unicodeCodePointOrder.js";
 import {
   iterateUrlQueryParameters,
+  parseUrlQueryParameterNames,
   singleQueryValues,
 } from "../recordedTransportUrl.js";
 import {
@@ -18,13 +19,16 @@ import {
 } from "./environmentStateRules.js";
 import { pagesOnly } from "./environmentStatePaging.js";
 
-/** A query as replay compares a call's: decoded values by name, in any order; undefined when it repeats a name with another value, which no call's arguments can carry. */
-const queryKey = (query: string | undefined): string | undefined => {
-  const values = singleQueryValues(query);
-  if (values === undefined) return undefined;
-  return compositeKey(
-    [...values].sort(([left], [right]) => compare(left, right)),
-  );
+/** A query's decoded values by name, in any order, as replay compares a call's. */
+export const queryValuesKey = (values: ReadonlyMap<string, string>): string =>
+  compositeKey([...values].sort(([left], [right]) => compare(left, right)));
+
+/** A query as replay compares a call's; undefined when it repeats a name with another value, which no call's arguments can carry. */
+export const queryKey = (
+  query: string | null | undefined,
+): string | undefined => {
+  const values = singleQueryValues(query ?? undefined);
+  return values === undefined ? undefined : queryValuesKey(values);
 };
 
 interface CheckedLine {
@@ -141,9 +145,7 @@ export const servedLine = (
 ): ServedLine | undefined => {
   const key = queryKey(record.query);
   if (lines === undefined || key === undefined) return undefined;
-  const names = [...iterateUrlQueryParameters(record.query ?? "")].map(
-    ([name]) => name,
-  );
+  const names = [...parseUrlQueryParameterNames(record.query ?? "")];
   const named = bestLine(lines, lines.byQuery.get(key) ?? [], record);
   if (named !== undefined) return { ...named, named: true };
   const unfiltered =
@@ -165,7 +167,7 @@ const queryMatches = (
   query: string | undefined,
 ): number => {
   const matched = new Set<string>();
-  for (const [name, value] of iterateUrlQueryParameters(query ?? ""))
+  for (const [name, value] of iterateUrlQueryParameters(query ?? "", read))
     if (read.get(name) === value) matched.add(name);
   return matched.size;
 };

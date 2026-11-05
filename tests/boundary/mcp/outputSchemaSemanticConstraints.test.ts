@@ -20,7 +20,8 @@ import type { JsonValue } from "../../../src/domain/jsonValue.js";
 import { mcpTest } from "../../support/mcp/mcpFixture.js";
 import { toolRegistrationOptions } from "../../../src/server/toolRegistrationOptions.js";
 
-import { verifyManagedNativeBoundaries } from "../../../src/domain/managed/managedNativeVerification.js";
+import { verifyManagedNativeVerificationSource } from "../../../src/domain/managed/managedNativeVerification.js";
+import { readManagedNativeVerificationSource } from "../../../src/domain/managed/managedNativeVerificationSource.js";
 import { processCaptureSchema } from "../../../src/domain/process/processCapture.js";
 const record = (value: unknown): Record<string, unknown> => {
   if (typeof value !== "object" || value === null || Array.isArray(value))
@@ -173,10 +174,14 @@ it("advertises semantic output invariants and keeps producers aligned with Zod",
     expect(managed.result.description).toContain(
       "accepted plus unsupported equals total",
     );
-    const validVerification = verifyManagedNativeBoundaries(
+    const verificationSource = readManagedNativeVerificationSource(
       managedNativeVerificationInputSchema.parse(
         MANAGED_NATIVE_VERIFICATION_EXAMPLE,
       ),
+    );
+    if (!verificationSource.ok) throw verificationSource.error;
+    const validVerification = verifyManagedNativeVerificationSource(
+      verificationSource.value,
     );
     expect(managed.validate(validVerification)).toBe(true);
     const invalidVerification = structuredClone(validVerification);

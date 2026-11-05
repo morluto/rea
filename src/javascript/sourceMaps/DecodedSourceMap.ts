@@ -28,7 +28,6 @@ export const decodeValidatedSourceMapLeaves = (
   readonly leaf: SourceMapLeaf;
   readonly map: TraceMap;
   readonly rows: ReturnType<typeof decodedMappings>;
-  readonly resolvedSources: readonly string[];
 }[] =>
   leaves.map((leaf) => {
     check?.();
@@ -59,5 +58,5 @@ export const decodeValidatedSourceMapLeaves = (
           );
       }
     }
-    return { leaf, map, rows, resolvedSources: map.resolvedSources };
+    return { leaf, map, rows };
   });

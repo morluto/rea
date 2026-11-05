@@ -1,8 +1,8 @@
 import { expect, it, onTestFinished, vi } from "vitest";
 
 import { createJavaScriptArtifactReader } from "../../src/artifacts/javascript/JavaScriptArtifactReader.js";
-import { analyzeJavaScriptArtifactFiles } from "../../src/application/javascript/JavaScriptArtifactAnalysis.js";
-import { buildJavaScriptArtifactGraph } from "../../src/application/javascript/JavaScriptArtifactGraphBuilder.js";
+import { analyzeArtifactFiles } from "../fixtures/javascriptArtifactAnalysis.js";
+import { immutableArtifactGraph } from "../fixtures/javascriptArtifactGraph.js";
 import type {
   JavaScriptArtifactFile,
   JavaScriptArtifactFileSet,
@@ -65,7 +65,7 @@ it.each([
   },
 ])(
   "propagates unexpected JSON.parse faults from $document",
-  ({ text, create }) => {
+  async ({ text, create }) => {
     const files = fileSet();
     const originalParse = JSON.parse;
     const thrown = create();
@@ -79,7 +79,7 @@ it.each([
 
     let caught: unknown;
     try {
-      analyzeJavaScriptArtifactFiles(files);
+      await analyzeArtifactFiles(files);
     } catch (cause: unknown) {
       caught = cause;
     }
@@ -87,10 +87,10 @@ it.each([
   },
 );
 
-it("keeps malformed JSON as an invalid observation", () => {
+it("keeps malformed JSON as an invalid observation", async () => {
   const malformedPackage = artifactFile("package.json", "package-json", "{");
   const malformedJson = artifactFile("settings.json", "json", "{");
-  const analysis = analyzeJavaScriptArtifactFiles({
+  const { analysis } = await analyzeArtifactFiles({
     ...fileSet(),
     files: [malformedPackage, malformedJson],
   });
@@ -111,7 +111,7 @@ it("reuses parsed package and JSON facts while building the public graph", async
   const reader = createJavaScriptArtifactReader(root, "directory");
   try {
     const files = await readJavaScriptArtifactFiles(reader, snapshot);
-    const analysis = analyzeJavaScriptArtifactFiles(files);
+    const { analysis } = await analyzeArtifactFiles(files);
     const depPackageText = '{"main":"index.cjs"}';
     const configText = '{"enabled":true}';
     const originalParse = JSON.parse;
@@ -121,7 +121,7 @@ it("reuses parsed package and JSON facts while building the public graph", async
       return originalParse(text);
     });
 
-    const graph = buildJavaScriptArtifactGraph(snapshot, files, analysis);
+    const graph = await immutableArtifactGraph(snapshot, files, analysis);
     expect(
       graph.edges.find(
         ({ relation, properties }) =>

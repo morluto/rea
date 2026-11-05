@@ -12,10 +12,12 @@ import {
   isErasedJavaScriptDeclaration,
   isUnmodeledJavaScriptRuntimeScope,
 } from "./javascriptModuleDeclaration.js";
-import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
-import { SEMANTIC_EXPRESSION_DEPTH_LIMIT } from "./javascriptSemanticResourceLimits.js";
 import {
   isUnshadowedGlobal,
+  semanticBindingAtRead,
+} from "./javascriptSemanticMutationInitializers.js";
+import { SEMANTIC_EXPRESSION_DEPTH_LIMIT } from "./javascriptSemanticResourceLimits.js";
+import {
   resolveSemanticBindingState,
   semanticStableInitializer,
   type JavaScriptSemanticAnalysisState,
@@ -23,7 +25,7 @@ import {
 import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
 import { javaScriptRuntimeContext } from "./javascriptSourceParser.js";
 
-type Shape = "array" | "callback" | "unknown";
+type Shape = "array" | "unknown";
 
 /** Bounded argument-shape queries shared by call-signature owners. */
 export type JavaScriptExpressionShapeResolver = ReturnType<
@@ -41,19 +43,9 @@ const commonJsWrapperParameterNames = new Set([
 export const createSemanticExpressionShapeResolver = (
   state: JavaScriptSemanticAnalysisState,
 ) => {
-  const hoistedFunction = (node: t.Node): boolean => {
-    const parent = state.parentsByNode.get(node);
-    return (
-      t.isFunctionDeclaration(node) &&
-      (t.isProgram(parent) ||
-        (t.isBlockStatement(parent) &&
-          t.isFunction(state.parentsByNode.get(parent))))
-    );
-  };
   // Most modules have no named child arguments. Collect source-wide blockers
   // only when a query actually needs a named binding or ambient undefined.
   let blocked: boolean | undefined;
-  const blockFunctionNames = new Set<string>();
   const namedProofBlocked = (): boolean => {
     if (blocked !== undefined) return blocked;
     blocked = false;
@@ -62,13 +54,6 @@ export const createSemanticExpressionShapeResolver = (
         blocked ||=
           isErasedJavaScriptDeclaration(node) ||
           isUnmodeledJavaScriptRuntimeScope(node);
-        if (
-          javaScriptRuntimeContext(state.program) !== "module" &&
-          t.isFunctionDeclaration(node) &&
-          node.id != null &&
-          !hoistedFunction(node)
-        )
-          blockFunctionNames.add(node.id.name);
       },
     });
     return blocked;
@@ -88,8 +73,6 @@ export const createSemanticExpressionShapeResolver = (
       if (seen.has(node)) return "unknown";
       seen.add(node);
       if (t.isArrayExpression(node)) return "array";
-      if (t.isFunction(node) && !("declare" in node && node.declare))
-        return "callback";
       if (!t.isIdentifier(node)) return "unknown";
       const binding = resolveSemanticBindingState(state, node, node.name);
       if (binding === undefined || binding.referenceInitializers.length > 0)
@@ -105,24 +88,16 @@ export const createSemanticExpressionShapeResolver = (
         )
           return "unknown";
       }
-      // Annex B may copy a block function into an outer var without an indexed
-      // assignment. Keep same-named vars unknown rather than model that copy.
       if (
         namedProofBlocked() ||
-        semanticOpaqueBindingReadMayHaveChanged(binding, node, state) ||
-        (binding.declarationKinds.has("var") &&
-          blockFunctionNames.has(binding.name))
+        semanticOpaqueBindingReadMayHaveChanged(binding, node, state)
       )
         return "unknown";
       const initializer = semanticStableInitializer(binding, state);
       if (initializer === undefined || initializer.projection.length > 0)
         return "unknown";
       const read = semanticBindingAtRead(binding, node, state.parentsByNode);
-      // Hoisted function declarations are the only accepted unordered source.
-      if (
-        !hoistedFunction(initializer.node) &&
-        (read.status !== "ordered" || !read.hasDefiniteInitializer)
-      )
+      if (read.status !== "ordered" || !read.hasDefiniteInitializer)
         return "unknown";
       node = initializer.node;
       depth++;
@@ -130,7 +105,6 @@ export const createSemanticExpressionShapeResolver = (
   };
   return {
     isArray: (node: t.Node) => shape(node) === "array",
-    isCallback: (node: t.Node) => shape(node) === "callback",
     isNullish: (input: t.Node) => {
       const { node } = unwrapJavaScriptExpression(input);
       return (

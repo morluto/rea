@@ -6,7 +6,6 @@ import type {
 } from "../domain/analysisErrorBase.js";
 import {
   AnalysisCancelledError,
-  AnalysisInputError,
   AnalysisOutputError,
 } from "../domain/analysisErrorCore.js";
 import type { Evidence } from "../domain/evidence.js";
@@ -15,7 +14,7 @@ import {
   isImmutableJsonSnapshot,
 } from "../domain/immutableJson.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
-import { projectInputIssues } from "../domain/inputIssueProjection.js";
+import { analysisOperationInputErrorFromIssues } from "../domain/inputIssueProjection.js";
 import { err, ok, type Result } from "../domain/result.js";
 import type {
   AnalysisExecution,
@@ -61,15 +60,11 @@ export const executeProviderOperation = async <
   const request = schema.safeParse({ operation, input });
   if (!request.success)
     return err(
-      new AnalysisInputError(
+      analysisOperationInputErrorFromIssues(
         operation,
-        { cause: request.error },
-        projectInputIssues(request.error.issues, { operation, input }).map(
-          (issue) =>
-            issue.path[0] === "input"
-              ? { ...issue, path: issue.path.slice(1) }
-              : issue,
-        ),
+        request.error.issues,
+        input,
+        request.error,
       ),
     );
   const executed = await provider.execute(request.data, options);

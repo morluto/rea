@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { INLINE_EVIDENCE_MCP_ENVIRONMENT } from "../../../scripts/lib/mcp-verification-environment.mjs";
 import { createHash } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
@@ -15,9 +16,9 @@ import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/j
 import { javaScriptExportShapeComparisonResultSchema } from "../../../src/domain/javascript/javascriptExportShapeComparisonSchemas.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import {
-  startCompiledCliSession,
-  type CompiledCliSession,
-} from "../../support/cli/compiledCliSession.js";
+  createCliCommandSession,
+  type CliCommandSession,
+} from "../../support/cli/cliCommandSession.js";
 
 const execute = promisify(execFile);
 const requireFixture = createRequire(import.meta.url);
@@ -27,11 +28,10 @@ const comparisonEnvelope = z.object({
 const applicationEnvelope = z.object({
   normalized_result: javascriptApplicationAnalysisResultSchema,
 });
-let cliSession: CompiledCliSession | undefined;
+let cliSession: CliCommandSession | undefined;
 
-// Source semantics use one real stdio MCP session. Cases that also check the
-// compiled CLI adapter share one warm process: it loads the production command
-// runtime once and serves the same JSON commands as scripts/rea.mjs.
+// Source semantics use one real stdio MCP session. CLI parity uses the shared
+// file-scoped session, including its worker rotation and cleanup policy.
 let mcpConnection:
   | {
       readonly client: Client;
@@ -1115,11 +1115,15 @@ const expectRuntimeExports = async (
   expected: (count: number) => unknown,
 ): Promise<void> => {
   // Execute only source-owned fixtures as an independent runtime oracle.
-  for (const [path, exportName, count] of [
+  const entries = [
     [fixture.leftPath, fixture.input.left_export_name, 1],
     [fixture.rightPath, fixture.input.right_export_name, 2],
-  ] as const)
-    expect(await runtimeExport(path, exportName)).toEqual(expected(count));
+  ] as const;
+  const values = await runtimeExports(
+    entries.map(([path, exportName]) => [path, exportName]),
+  );
+  for (const [index, [, , count]] of entries.entries())
+    expect(values[index]).toEqual(expected(count));
 };
 
 const expectExportedCallableBinding = (
@@ -1207,8 +1211,22 @@ const expectCountChange = (
 };
 
 const runCli = async (args: readonly string[]): Promise<unknown> => {
-  cliSession ??= startCompiledCliSession();
-  return cliSession.run(args);
+  cliSession ??= createCliCommandSession({
+    startTimeoutMs: 20_000,
+    requestTimeoutMs: 20_000,
+  });
+  const environment = Object.fromEntries(
+    Object.entries({ ...process.env, REA_LOG_LEVEL: "silent" }).filter(
+      (entry): entry is [string, string] => entry[1] !== undefined,
+    ),
+  );
+  const result = await cliSession.run({
+    arguments: args,
+    cwd: process.cwd(),
+    environment,
+  });
+  expect(result.exitCode, result.stderr || result.stdout).toBe(0);
+  return result.json;
 };
 
 const analyzeVersions = async (
@@ -1297,7 +1315,11 @@ const getMcpClient = async (): Promise<Client> => {
       command: process.execPath,
       args: [resolve("scripts/rea.mjs"), "mcp"],
       cwd: process.cwd(),
-      env: { PATH: process.env.PATH ?? "", REA_LOG_LEVEL: "silent" },
+      env: {
+        PATH: process.env.PATH ?? "",
+        REA_LOG_LEVEL: "silent",
+        ...INLINE_EVIDENCE_MCP_ENVIRONMENT,
+      },
       stderr: "pipe",
     });
     transport.stderr?.on("data", () => undefined);
@@ -1315,20 +1337,30 @@ const getMcpClient = async (): Promise<Client> => {
   return mcpConnection.client;
 };
 
-const runtimeExport = async (
-  path: string,
-  exportName: string,
-): Promise<unknown> => {
+const runtimeExports = async (
+  entries: readonly (readonly [path: string, exportName: string])[],
+): Promise<unknown[]> => {
   const { stdout } = await execute(process.execPath, [
     "--input-type=module",
     "-e",
     `import { pathToFileURL } from 'node:url';
-     const module = await import(pathToFileURL(process.argv[1]).href);
-     const value = module[process.argv[2]];
-     console.log(JSON.stringify({ value: typeof value === 'function' ? value() : value }));`,
-    path,
-    exportName,
+     const results = [];
+     for (const [path, exportName] of JSON.parse(process.argv[1])) {
+       const module = await import(pathToFileURL(path).href);
+       const value = module[exportName];
+       results.push({ value: typeof value === 'function' ? value() : value });
+     }
+     console.log(JSON.stringify(results));`,
+    JSON.stringify(entries),
   ]);
-  return z.object({ value: z.unknown().optional() }).parse(JSON.parse(stdout))
-    .value;
+  return z
+    .array(z.object({ value: z.unknown().optional() }))
+    .length(entries.length)
+    .parse(JSON.parse(stdout))
+    .map(({ value }) => value);
 };
+
+const runtimeExport = async (
+  path: string,
+  exportName: string,
+): Promise<unknown> => (await runtimeExports([[path, exportName]]))[0];

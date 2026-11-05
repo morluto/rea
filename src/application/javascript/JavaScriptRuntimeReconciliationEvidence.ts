@@ -7,7 +7,7 @@ import type {
   JavaScriptRuntimeReconciliationResult,
   ReconcileJavaScriptRuntimeInput,
 } from "../../domain/javascript/javascriptRuntimeReconciliationSchemas.js";
-import { JAVASCRIPT_RUNTIME_RECONCILIATION_PROVIDER } from "../InvestigationProviders.js";
+import { JAVASCRIPT_RUNTIME_RECONCILIATION_PROVIDER } from "../../domain/investigationProviders.js";
 
 /** Create derived Evidence for one exact set of static/runtime inputs. */
 export const createJavaScriptRuntimeReconciliationEvidence = (

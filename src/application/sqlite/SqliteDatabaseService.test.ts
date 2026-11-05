@@ -1,8 +1,7 @@
 import { expect, it } from "vitest";
 import { SqliteDatabaseService } from "./SqliteDatabaseService.js";
 import { AnalysisCapabilityUnavailableError } from "../../domain/analysisErrorCore.js";
-import { err } from "../../domain/result.js";
-import { ok } from "../../domain/result.js";
+import { err, ok } from "../../domain/result.js";
 import { createAnalysisExecution } from "../AnalysisProvider.js";
 import { sqliteDatabaseSchema } from "../../domain/sqlite/sqliteDatabase.js";
 
@@ -64,25 +63,6 @@ it.each([
   },
 );
 
-it("preserves the selected worker budget in provider input and Evidence", async () => {
-  const report = { ...fixture(), worker_timeout_ms: 1234 };
-  const service = new SqliteDatabaseService({
-    inspect: async (input) => {
-      expect(input.worker_timeout_ms).toBe(1234);
-      return ok(execution(report));
-    },
-  });
-  const result = await service.inspect({
-    path: "/selected.db",
-    worker_timeout_ms: 1234,
-  });
-  if (!result.ok) throw result.error;
-  expect(result.value.parameters).toMatchObject({ worker_timeout_ms: 1234 });
-  expect(result.value.normalized_result).toMatchObject({
-    worker_timeout_ms: 1234,
-  });
-});
-
 it.each([
   { selected: undefined, reported: undefined },
   { selected: undefined, reported: 1234 },
@@ -110,16 +90,88 @@ it.each([
   },
 );
 
-it("retains the actual default without inventing an explicit caller selection", async () => {
+it("accepts sqlite_schema rows without requiring a fabricated declaration", async () => {
+  const report = {
+    ...fixture(),
+    schema: {
+      ...fixture().schema,
+      scope: "selected_table",
+      tables: [],
+    },
+    rows: {
+      table: "sqlite_schema",
+      columns: ["name", "type"],
+      values: [
+        [
+          {
+            type: "text",
+            value: "records",
+            bytes_hex: "7265636f726473",
+            encoding: "UTF-8",
+          },
+          {
+            type: "text",
+            value: "table",
+            bytes_hex: "7461626c65",
+            encoding: "UTF-8",
+          },
+        ],
+      ],
+      row_limit: 20,
+      returned_rows: 1,
+      truncated: false,
+      order: "unspecified",
+    },
+  };
   const service = new SqliteDatabaseService({
-    inspect: async () => ok(execution(fixture())),
+    inspect: async () => ok(execution(report)),
   });
-  const result = await service.inspect({ path: "/selected.db" });
-  if (!result.ok) throw result.error;
-  expect(result.value.normalized_result).toMatchObject({
-    worker_timeout_ms: 30_000,
+  const result = await service.inspect({
+    path: "/selected.db",
+    table: "sqlite_schema",
+    columns: ["name", "type"],
+    schema_scope: "selected_table",
   });
-  expect(result.value.parameters).not.toHaveProperty("worker_timeout_ms");
+  expect(result.ok).toBe(true);
+
+  const foreign = {
+    ...report,
+    schema: {
+      ...report.schema,
+      tables: [
+        {
+          name: "records",
+          root_page: 2,
+          kind: "table",
+          without_rowid: false,
+          strict: false,
+          column_count: 0,
+          columns_completeness: "complete",
+          columns: [],
+        },
+      ],
+    },
+  };
+  const foreignService = new SqliteDatabaseService({
+    inspect: async () => ok(execution(foreign)),
+  });
+  expect(
+    await foreignService.inspect({
+      path: "/selected.db",
+      table: "sqlite_schema",
+      columns: ["name", "type"],
+      schema_scope: "selected_table",
+    }),
+  ).toMatchObject({ ok: false, error: { _tag: "AnalysisOutputError" } });
+
+  expect(
+    await service.inspect({
+      path: "/selected.db",
+      table: "missing",
+      columns: ["name", "type"],
+      schema_scope: "selected_table",
+    }),
+  ).toMatchObject({ ok: false, error: { _tag: "AnalysisOutputError" } });
 });
 
 it("parses historical report omissions as unknown without supplying a default", () => {

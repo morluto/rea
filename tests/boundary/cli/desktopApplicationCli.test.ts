@@ -8,6 +8,33 @@ import { createDesktopApplicationService } from "../../../src/composition/deskto
 import { parseEvidence } from "../../../src/domain/evidence.js";
 
 cliTest(
+  "rejects an empty desktop selection while explicit . selects the working directory",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-desktop-empty-");
+    await writeFile(join(root, "marker.txt"), "selected cwd control");
+    const empty = await cli.run({
+      arguments: ["inspect-desktop-application", "", "--json"],
+      cwd: root,
+    });
+    expect(empty.exitCode).not.toBe(0);
+    expect(empty.json).toMatchObject({
+      code: "VALIDATION_ERROR",
+      fieldErrors: expect.arrayContaining([
+        expect.objectContaining({ path: "path", code: "too_small" }),
+      ]),
+    });
+    const explicit = await cli.run({
+      arguments: ["inspect-desktop-application", ".", "--json"],
+      cwd: root,
+    });
+    expect(explicit.exitCode).toBe(0);
+    expect(parseEvidence(explicit.json).normalized_result).toMatchObject({
+      files: [{ path: "marker.txt" }],
+    });
+  },
+);
+
+cliTest(
   "shares directory facts and exact retained-field semantics with the public CLI",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-desktop-cli-");

@@ -147,10 +147,10 @@ const addSections = ({
   for (const [index, section] of sections.entries()) {
     if ((index & 255) === 0) options.check?.();
     const previous = sections[index - 1];
-    if (previous !== undefined && compare(section.offset, previous.offset) <= 0)
+    if (previous !== undefined && compare(section.offset, previous.offset) < 0)
       throw new SourceMapFormatFailure(
         "format",
-        "Indexed section offsets must be strictly increasing.",
+        "Indexed section offsets must be in nondecreasing order.",
       );
     const classification = classifySourceMapSection(section);
     if (classification.kind === "external")
@@ -159,7 +159,10 @@ const addSections = ({
         `External source-map section URL is not fetched: ${classification.url}`,
       );
     if (classification.kind === "invalid")
-      throw new SourceMapFormatFailure("format", classification.reason);
+      throw new SourceMapFormatFailure(
+        "format",
+        `${classification.reason} Section path: ${JSON.stringify([...node.path, index])}.`,
+      );
     embeddedMaps.push(classification.map);
   }
   for (let index = sections.length - 1; index >= 0; index -= 1) {
@@ -181,11 +184,6 @@ const addSections = ({
           ? nextOffset
           : node.stop;
     const offset = addOffset(node.offset, section.offset);
-    if (node.stop !== null && compare(offset, node.stop) >= 0)
-      throw new SourceMapFormatFailure(
-        "format",
-        "Nested source-map section overlaps its enclosing boundary.",
-      );
     pending.push({
       value: map,
       path: [...node.path, index],

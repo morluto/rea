@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { javaScriptRuntime, supportsNodeVersion } from "./runtimeVersion.js";
+import {
+  javaScriptRuntime,
+  supportsJavaScriptRuntime,
+  supportsNodeVersion,
+} from "./runtimeVersion.js";
 
 describe("supported Node.js versions", () => {
   it.each([
@@ -41,5 +45,23 @@ describe("JavaScript runtime identity", () => {
       version: "1.4.2",
       nodeCompatibilityVersion: "26.3.0",
     });
+  });
+});
+
+describe("supported JavaScript runtimes", () => {
+  it.each([
+    [{ id: "node", version: "24.22.1" }, true],
+    [{ id: "node", version: "24.18.0" }, false],
+    // Bun is judged by its Node.js compatibility version, not its own.
+    [
+      { id: "bun", version: "1.4.2", nodeCompatibilityVersion: "26.12.1" },
+      true,
+    ],
+    [
+      { id: "bun", version: "99.0.0", nodeCompatibilityVersion: "24.18.0" },
+      false,
+    ],
+  ] as const)("classifies %o as supported=%s", (runtime, expected) => {
+    expect(supportsJavaScriptRuntime(runtime)).toBe(expected);
   });
 });

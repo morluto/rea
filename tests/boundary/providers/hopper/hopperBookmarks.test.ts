@@ -19,6 +19,13 @@ const bookmark = z.strictObject({
 });
 const bookmarks = z.array(bookmark);
 const resultSchema = z.strictObject({
+  missing_apis: z.array(
+    z.strictObject({
+      api: z.string(),
+      diagnostic_type: z.literal("capability_unavailable"),
+      message: z.string(),
+    }),
+  ),
   fresh_empty: z.strictObject({
     result: z.boolean(),
     listing: bookmarks,
@@ -60,6 +67,15 @@ describe("Hopper bookmark bridge mutations", () => {
       maxBuffer: 1_024 * 1_024,
     });
     const result = resultSchema.parse(JSON.parse(stdout));
+    expect(result.missing_apis).toEqual(
+      ["getBookmarks", "hasBookmarkAtAddress", "removeBookmarkAtAddress"].map(
+        (api) => ({
+          api,
+          diagnostic_type: "capability_unavailable",
+          message: `Hopper's public Python API does not expose ${api}`,
+        }),
+      ),
+    );
 
     expect(result.fresh_empty).toEqual({
       result: true,

@@ -1,8 +1,12 @@
+import { readElfSectionHeader } from "../domain/elfSectionHeader.js";
+import { readElfProgramHeader } from "../domain/elfProgramHeader.js";
+import { MAX_FLUTTER_BUILD_ID_BYTES } from "../domain/flutter/flutterBuildAnalysis.js";
 import type { FileHandle } from "node:fs/promises";
 import { setImmediate as yieldToEventLoop } from "node:timers/promises";
 import {
   elfNoteAlignment,
   elfNoteLayout,
+  readElfNoteHeader,
 } from "../domain/native/elfNoteLayout.js";
 import {
   readElfHeader,
@@ -70,6 +74,7 @@ export const readElfBuildIds = async (
     string,
     { offset: number; size: number; alignment: number }
   >();
+  let compressedNotes = false;
   tables: for (const table of [
     {
       offset: h.e_phoff,
@@ -95,35 +100,41 @@ export const readElfBuildIds = async (
         signal?.throwIfAborted();
       }
       const base = index * table.width;
-      if (
-        bytes.readUInt32LE(base + (table.program ? 0 : 4)) !==
-        (table.program ? 4 : 7)
-      )
-        continue;
-      const offsetAt =
-        base + (table.program ? (h.is64 ? 8 : 4) : h.is64 ? 0x18 : 0x10);
-      const sizeAt =
-        base + (table.program ? (h.is64 ? 0x20 : 0x10) : h.is64 ? 0x20 : 0x14);
-      const offset = h.is64
-        ? Number(bytes.readBigUInt64LE(offsetAt))
-        : bytes.readUInt32LE(offsetAt);
-      const size = h.is64
-        ? Number(bytes.readBigUInt64LE(sizeAt))
-        : bytes.readUInt32LE(sizeAt);
+      const parsedRecord = table.program
+        ? readElfProgramHeader(
+            bytes.subarray(base, base + table.width),
+            h.is64 ? 64 : 32,
+            true,
+          )
+        : readElfSectionHeader(
+            bytes.subarray(base, base + table.width),
+            h.is64 ? 64 : 32,
+            true,
+          );
+      if (!parsedRecord.ok) return failure(parsedRecord.error.message);
+      const record = parsedRecord.value;
+      if (record.type !== (table.program ? 4 : 7)) continue;
+      const offset = Number(record.offset);
+      const size = Number("fileSize" in record ? record.fileSize : record.size);
       if (
         !Number.isSafeInteger(offset) ||
         !Number.isSafeInteger(size) ||
         size > totalBytes - offset
       )
         return failure("ELF note range is not file-backed");
+      if ("size" in record) {
+        if ((record.flags & 0x800n) !== 0n) {
+          if (!compressedNotes) {
+            failures.push({
+              reason: "Compressed ELF note sections are unsupported",
+            });
+            compressedNotes = true;
+          }
+          continue;
+        }
+      }
       if (size === 0) continue;
-      const alignmentAt =
-        base + (table.program ? (h.is64 ? 48 : 28) : h.is64 ? 48 : 32);
-      const alignment = elfNoteAlignment(
-        h.is64
-          ? bytes.readBigUInt64LE(alignmentAt)
-          : bytes.readUInt32LE(alignmentAt),
-      );
+      const alignment = elfNoteAlignment(record.alignment);
       const key = `${offset}:${size}:${alignment}`;
       if (ranges.has(key)) continue;
       if (ranges.size === MAX_NOTE_RANGES) {
@@ -154,9 +165,9 @@ export const readElfBuildIds = async (
           return failure("ELF note header is truncated");
         break;
       }
-      const namesz = notes.readUInt32LE(at);
-      const descsz = notes.readUInt32LE(at + 4);
-      const type = notes.readUInt32LE(at + 8);
+      const parsedHeader = readElfNoteHeader(notes.subarray(at, at + 12), true);
+      if (!parsedHeader.ok) return failure(parsedHeader.error.message);
+      const { namesz, descsz, type } = parsedHeader.value;
       const layout = elfNoteLayout(namesz, descsz, range.alignment);
       const descriptor = at + layout.descriptor;
       const end = descriptor + descsz;
@@ -167,9 +178,9 @@ export const readElfBuildIds = async (
         type === 3 &&
         notes.subarray(at + 12, at + 16).equals(Buffer.from("GNU\0"))
       ) {
-        if (descsz < 4 || descsz > 64)
+        if (descsz < 1 || descsz > MAX_FLUTTER_BUILD_ID_BYTES)
           return failure(
-            "GNU build-id descriptor exceeds the 4–64 byte projection",
+            `GNU build-id descriptor is outside the 1–${MAX_FLUTTER_BUILD_ID_BYTES} byte projection`,
           );
         const candidate = notes.subarray(descriptor, end).toString("hex");
         if (!candidates.has(candidate) && candidates.size === MAX_BUILD_IDS)

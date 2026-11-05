@@ -10,6 +10,7 @@ import { AnalysisInputError } from "./analysisErrorCore.js";
 import { analysisInputErrorFromIssues } from "./inputIssueProjection.js";
 import { readEvidencePayload } from "./evidenceValidation.js";
 import { nativeAddressInputSchema } from "./native/nativeAddress.js";
+import { functionCoordinateContextsEqual } from "./native/functionCoordinateContext.js";
 import {
   parseFunctionEvidence,
   type FunctionSnapshot,
@@ -219,6 +220,17 @@ const assertCompatible = (
         ["functions"],
         "Call-path Evidence mixes providers",
       );
+    const firstProfile = first.evidence.analysis_profile;
+    const profile = snapshot.evidence.analysis_profile;
+    if (
+      (firstProfile?.parameters.function_coordinate_context !== undefined ||
+        profile?.parameters.function_coordinate_context !== undefined) &&
+      !functionCoordinateContextsEqual(firstProfile, profile)
+    )
+      throw invalidCallPathSelection(
+        ["functions"],
+        "Call-path Evidence has incompatible or unestablished function coordinate contexts",
+      );
   }
 };
 
@@ -259,6 +271,7 @@ const inspectSearch = ({
       const coverage = snapshot.evidence.relationship_coverage;
       for (const limitation of snapshot.limitations)
         limitations.push(limitation);
+      limitations.push(...snapshot.unresolvedCallCaveats);
       if (coverage !== null) {
         for (const limitation of relationshipCoverageLimitations(coverage))
           limitations.push(limitation);
@@ -269,6 +282,8 @@ const inspectSearch = ({
       // cannot add a path to the goal, so its dossier limits are contextual
       // but do not make the searched start-to-goal closure incomplete.
       if (node === goal) continue;
+      if (snapshot.unresolvedCallCaveats.length > 0)
+        incompleteExpandedCoverage = true;
       const callees = snapshot.dossier.facet_availability?.callees;
       if (callees?.available === false) {
         limitations.push(callees.reason);

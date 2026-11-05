@@ -6,6 +6,7 @@ import {
   parseRecoveredJavaScript,
   parserPluginsForPath,
   javaScriptRuntimeContext,
+  javaScriptProgramStrictness,
 } from "./javascriptSourceParser.js";
 import { analyzeParsedJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
 
@@ -45,6 +46,25 @@ it.each([
     expect(javaScriptRuntimeContext(t.cloneNode(parsed.program, true))).toBe(
       "unknown",
     );
+  },
+);
+
+it.each([
+  ["const args=[]; export = args;", "fixture.ts", "sloppy"],
+  ['"use strict"; const args=[]; export = args;', "fixture.ts", "strict"],
+  ['import type {T} from "example";', "fixture.ts", "unknown"],
+  ["const args=[];", "fixture.mjs", "strict"],
+  ["const args=[];", "fixture.cjs", "sloppy"],
+] as const)(
+  "owns program strictness independently of parser syntax: %s (%s)",
+  (source, path, strictness) => {
+    const parsed = parseJavaScriptSource(source, path);
+    if (parsed === null) throw new Error("Expected parsed source");
+    expect(javaScriptProgramStrictness(parsed.program)).toBe(strictness);
+    const recovered = parseRecoveredJavaScript(source, path, {
+      plugins: parserPluginsForPath(path),
+    }).file;
+    expect(javaScriptProgramStrictness(recovered.program)).toBe(strictness);
   },
 );
 

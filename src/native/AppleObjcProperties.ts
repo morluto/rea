@@ -13,18 +13,9 @@ export interface ObjcPropertyReaders {
 }
 
 /**
- * Parse an `@property` attribute string such as `T@"NSString",C,N,V_name`.
- * Each comma-separated token is one attribute; `T` is the type encoding.
- */
-export const parsePropertyAttributes = (
-  name: string,
-  attributes: string,
-): ObjcProperty => decodePropertyAttributes(name, attributes).property;
-
-/**
- * Decode one attribute string. A quoted class name that never closes leaves
- * the string incomplete: later attributes may be inside the unfinished type,
- * so a missing `N` or `R` does not establish the Objective-C defaults.
+ * Decode one attribute string. An unfinished quoted or templated type leaves
+ * later attributes ambiguous, so a missing `N` or `R` does not establish the
+ * Objective-C defaults.
  */
 const decodePropertyAttributes = (
   name: string,
@@ -68,8 +59,8 @@ const decodePropertyAttributes = (
 };
 
 /**
- * Split on commas that are outside a quoted class name in the type encoding,
- * and report whether every quote closed.
+ * Split on separators outside quoted names and C++ template arguments in the
+ * type attribute, and report whether those constructs are complete.
  */
 const splitAttributes = (
   attributes: string,
@@ -77,9 +68,19 @@ const splitAttributes = (
   const tokens: string[] = [];
   let current = "";
   let quoted = false;
+  let templateDepth = 0;
   for (const character of attributes) {
     if (character === '"') quoted = !quoted;
-    if (character === "," && !quoted) {
+    const inTypeAttribute = current.startsWith("T");
+    if (!quoted && inTypeAttribute && character === "<") templateDepth += 1;
+    else if (
+      !quoted &&
+      inTypeAttribute &&
+      character === ">" &&
+      templateDepth > 0
+    )
+      templateDepth -= 1;
+    if (character === "," && !quoted && templateDepth === 0) {
       tokens.push(current);
       current = "";
     } else current += character;
@@ -87,7 +88,7 @@ const splitAttributes = (
   tokens.push(current);
   return {
     tokens: tokens.filter((token) => token.length > 0),
-    complete: !quoted,
+    complete: !quoted && templateDepth === 0,
   };
 };
 
@@ -139,7 +140,7 @@ export const readObjcPropertyList = (
       if (!decoded.complete)
         issues.push({
           code: "property_attributes_incomplete",
-          message: `property ${name} has an unterminated quoted class name in its type attribute, so atomicity and unestablished read-only state are unknown`,
+          message: `property ${name} has an incomplete quoted name or template argument in its type attribute, so atomicity and unestablished read-only state are unknown`,
           location,
         });
     } catch (cause: unknown) {

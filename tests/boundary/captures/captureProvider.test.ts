@@ -16,6 +16,7 @@ import { Cli } from "incur";
 import { registerCaptureCommands } from "../../../src/cli/captureCommands.js";
 import { silentLogger } from "../../../src/logger.js";
 import { analysisErrorRemediationAction } from "../../../src/domain/analysisErrorPresentation.js";
+import { parseEvidence } from "../../../src/domain/evidence.js";
 
 // A command-boundary simulator: real process ownership/filesystem, not real TShark coverage.
 const fixture = async (mode = "ok", failCleanup = false) => {
@@ -35,7 +36,7 @@ else if (${JSON.stringify(mode)} === 'wait') { console.log('ready'); setInterval
 else if (${JSON.stringify(mode)} === 'invalid-json') console.log('not json');
 else if (${JSON.stringify(mode)} === 'many') console.log(JSON.stringify(Array.from({length:90},(_,i)=>({_source:{layers:{"frame.number":[String(i+1)],"ip.addr":["192.0.2.1"]}}}))));
 else if (${JSON.stringify(mode)} === 'alias-canonical') { if (!process.argv.includes('bootp.type')) throw Error('alias selector missing'); console.log(JSON.stringify([{_source:{layers:{"frame.number":["1"],"dhcp.type":["1"]}}}])); }
-else if (process.argv.includes('-G')) { console.log('P\\tUniversal Serial Bus\\tusb\\nF\\tVendor ID\\tusb.idVendor\\tFT_UINT16\\tusb\\tBASE_HEX\\t0x0\\t\\nF\\tOther Vendor\\tusb.idVendor\\tFT_UINT32\\tusb\\tBASE_HEX\\t0x0\\tSecond registration\\nP\\tInternet Protocol\\tip\\nF\\tAddress\\tip.addr\\tFT_IPv4\\tip\\t\\t0x0\\tSource or destination'); console.error('glossary warning'); }
+else if (process.argv.includes('-G')) { console.log(${JSON.stringify(mode)} === 'unicode-search' ? 'P\\tΟΣ\\tgreek.proto\\nF\\tΟΣ field\\tgreek.field\\tFT_STRING\\tgreek.proto\\tBASE_NONE\\t0x0\\tGreek description' : 'P\\tUniversal Serial Bus\\tusb\\nF\\tVendor ID\\tusb.idVendor\\tFT_UINT16\\tusb\\tBASE_HEX\\t0x0\\t\\nF\\tOther Vendor\\tusb.idVendor\\tFT_UINT32\\tusb\\tBASE_HEX\\t0x0\\tSecond registration\\nP\\tInternet Protocol\\tip\\nF\\tAddress\\tip.addr\\tFT_IPv4\\tip\\t\\t0x0\\tSource or destination'); console.error('glossary warning'); }
 else { if(readFileSync('capture', 'utf8') !== 'recording bytes') throw Error('wrong copy'); console.log(JSON.stringify([{_source:{layers:{"frame.number":["1"],"ip.addr":["192.0.2.1","192.0.2.2"]}}}])); console.error('producer warning'); }
 `,
   );
@@ -205,9 +206,12 @@ it("returns canonical alias output through the public packet-capture CLI", async
     ],
     { stdout: (text) => (stdout += text), exit: () => {} },
   );
-  const result: unknown = JSON.parse(stdout);
-  expect(JSON.stringify(result)).toContain('"bootp.type"');
-  expect(JSON.stringify(result)).toContain('"dhcp.type":["1"]');
+  const evidence = parseEvidence(JSON.parse(stdout));
+  const report = packetCaptureSchema.parse(evidence.normalized_result);
+  expect(report.selection.fields).toEqual(["bootp.type"]);
+  expect(report.packets).toEqual([
+    { "frame.number": ["1"], "dhcp.type": ["1"] },
+  ]);
 });
 
 it("bounds admission without queuing additional snapshots or delaying cancellation", async () => {
@@ -634,8 +638,14 @@ it("discovers installed protocols and field definitions without a capture", asyn
       {
         records: [
           {
+            kind: "field",
+            name: "Other Vendor",
             abbreviation: "usb.idVendor",
             field_type: "FT_UINT32",
+            parent_protocol: "usb",
+            display_base: "BASE_HEX",
+            bitmask: "0x0",
+            description: "Second registration",
             source_line: 3,
           },
         ],
@@ -673,6 +683,22 @@ it("discovers installed protocols and field definitions without a capture", asyn
   expect(
     (await readdir(f.directory)).filter((name) => name.startsWith("decoder-")),
   ).toEqual([]);
+});
+
+it("matches Unicode simple case-folded protocol and field glossary queries", async () => {
+  const f = await fixture("unicode-search");
+  for (const [input, expected] of [
+    [{ kind: "protocols", query: "Σ" }, "greek.proto"],
+    [{ kind: "fields", query: "Σ" }, "greek.field"],
+  ] as const) {
+    const result = await f.service.inspectFields(input);
+    if (!result.ok) throw result.error;
+    const report = packetFieldsCatalogSchema.parse(
+      result.value.normalized_result,
+    );
+    expect(report.records).toMatchObject([{ abbreviation: expected }]);
+    expect(report.output_window.matching).toBe(1);
+  }
 });
 
 it("shares discovery admission with inspection and refuses work after shutdown", async () => {

@@ -33,7 +33,8 @@ const COMPARISON_EVIDENCE_IDENTITIES = {
   },
 } as const;
 
-type ComparisonEvidenceOperation = keyof typeof COMPARISON_EVIDENCE_IDENTITIES;
+export type ComparisonEvidenceOperation =
+  keyof typeof COMPARISON_EVIDENCE_IDENTITIES;
 
 /** Whether an operation is one of the comparison workflows this domain owns. */
 export const isComparisonEvidenceOperation = (

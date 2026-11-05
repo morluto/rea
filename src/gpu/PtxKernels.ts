@@ -1,6 +1,8 @@
-import { BinaryFormatFailure } from "../native/metadata/BinaryContainer.js";
+import {
+  BinaryFormatFailure,
+  BinaryResourceFailure,
+} from "../native/metadata/BinaryContainer.js";
 import type { GpuKernel } from "../domain/gpu/gpuCodeObjects.js";
-import { BinaryResourceFailure } from "../native/metadata/BinaryContainer.js";
 import { GPU_REPORT_BYTES, rejectGpu } from "./GpuSource.js";
 interface Token {
   readonly value: string;
@@ -55,7 +57,16 @@ function* tokens(text: string): Generator<Token> {
       continue;
     }
     if (/[.\w$%@]/u.test(text[at]!)) {
-      while (at < text.length && /[.\w$%@]/u.test(text[at]!)) advance();
+      // Dot-prefixed keywords remain separate when their whitespace is omitted.
+      // Internal dots in names, instruction mnemonics and version literals stay intact.
+      const keyword = text[at] === ".";
+      advance();
+      while (
+        at < text.length &&
+        /[.\w$%@]/u.test(text[at]!) &&
+        (!keyword || text[at] !== ".")
+      )
+        advance();
     } else advance();
     if (at - position > 65536)
       throw new BinaryResourceFailure(
@@ -71,6 +82,12 @@ const integer = (token: string | undefined): number | null => {
   const value = Number(token);
   return Number.isSafeInteger(value) ? value : null;
 };
+const alignmentValue = (token: string | undefined): number | null => {
+  const value = integer(token);
+  return value !== null && value > 0 && Number.isInteger(Math.log2(value))
+    ? value
+    : null;
+};
 type PtxVersion = { major: number; minor: number };
 const ptxVersion = (token: string | undefined): PtxVersion | null => {
   const match = /^(\d+)\.(\d+)$/u.exec(token ?? "");
@@ -85,7 +102,7 @@ const sizeOf = (type: string | undefined): number | null => {
   const match = /^\.(?:b|u|s|f)(8|16|32|64|128)$/u.exec(type ?? "");
   return match === null ? null : Number(match[1]) / 8;
 };
-const identifier = /^%?[A-Za-z_$][\w$@.]*$/u;
+const identifier = /^(?:%?[A-Za-z_$][\w$@.]*|%[0-9][A-Za-z0-9_$]*)$/u;
 /** Stream register names/ranges without retaining the declaration token list. */
 const registerDeclaration = (
   next: () => Token,
@@ -145,21 +162,10 @@ const declaration = (
   size: number | null;
   align: number | null;
 } => {
-  const values = (source[0] === ".param" ? source.slice(1) : source).flatMap(
-    (value) =>
-      value.startsWith(".ptr.")
-        ? [
-            ".ptr",
-            ...value
-              .slice(5)
-              .split(".")
-              .map((part) => `.${part}`),
-          ]
-        : [value],
-  );
+  const values = source[0] === ".param" ? source.slice(1) : source;
   let at = 0;
-  const explicit = values[at] === ".align";
-  const alignment = explicit ? integer(values[++at]) : null;
+  let explicit = values[at] === ".align";
+  let alignment = explicit ? alignmentValue(values[++at]) : null;
   if (explicit) at++;
   const vector = values[at] === ".v2" ? 2 : values[at] === ".v4" ? 4 : 1;
   if (vector !== 1) at++;
@@ -177,43 +183,43 @@ const declaration = (
       [".const", ".global", ".local", ".shared"].includes(qualifier)
     ) {
       // Address-space qualifiers describe the pointed-to object.
-    } else if (pointer && qualifier === ".align") {
+    } else if (qualifier === ".align") {
       const alignmentToken = values[at];
       if (alignmentToken !== undefined && /^[0-9]+$/u.test(alignmentToken))
         at++;
-      const pointeeAlignment = integer(alignmentToken);
-      if (
-        pointeeAlignment === null ||
-        pointeeAlignment <= 0 ||
-        !Number.isInteger(Math.log2(pointeeAlignment))
-      )
-        layoutKnown = false;
+      const declaredAlignment = alignmentValue(alignmentToken);
+      if (declaredAlignment === null) layoutKnown = false;
+      if (!pointer) {
+        if (explicit) layoutKnown = false;
+        explicit = true;
+        alignment = declaredAlignment;
+      }
     } else layoutKnown = false;
   }
-  let nameIndex = values.length - 1;
-  let arrayStart: number | null = null;
-  if (values[nameIndex] === "]") {
-    let depth = 0;
-    for (let index = nameIndex; index >= at; index--) {
-      if (values[index] === "]") depth++;
-      else if (values[index] === "[" && --depth === 0) {
-        arrayStart = index;
-        break;
-      }
+  const name = identifier.test(values[at] ?? "") ? values[at]! : null;
+  if (name === null) layoutKnown = false;
+  let cursor = at + (name === null ? 0 : 1);
+  const dimensions: string[][] = [];
+  while (values[cursor] === "[") {
+    const start = ++cursor;
+    let parentheses = 0;
+    while (cursor < values.length) {
+      const value = values[cursor]!;
+      if (value === "(") parentheses++;
+      else if (value === ")") {
+        if (parentheses === 0) break;
+        parentheses--;
+      } else if (value === "]" && parentheses === 0) break;
+      cursor++;
     }
-    if (arrayStart !== null) nameIndex = arrayStart - 1;
-  } else {
-    const opening = values.indexOf("[", at);
-    if (opening >= 0) {
-      arrayStart = opening;
-      nameIndex = opening - 1;
+    if (values[cursor] !== "]" || parentheses !== 0) {
       layoutKnown = false;
+      break;
     }
+    dimensions.push(values.slice(start, cursor));
+    cursor++;
   }
-  const name = identifier.test(values[nameIndex] ?? "")
-    ? values[nameIndex]!
-    : null;
-  if (name === null || nameIndex !== at) layoutKnown = false;
+  if (cursor !== values.length || dimensions.length > 1) layoutKnown = false;
   let size = unit === null ? null : unit * vector;
   const type =
     scalar === undefined
@@ -221,22 +227,15 @@ const declaration = (
       : vector === 1
         ? scalar
         : `.v${vector} ${scalar}`;
-  const parameterAlignment = explicit ? alignment : size;
-  const align = parameterAlignment;
-  if (arrayStart !== null) {
-    const count = integer(values[arrayStart + 1]);
-    if (
-      arrayStart !== nameIndex + 1 ||
-      arrayStart + 2 !== values.length - 1 ||
-      count === null ||
-      size === null ||
-      !Number.isSafeInteger(count * size)
-    )
+  const align = explicit ? alignment : size;
+  if (dimensions.length === 1) {
+    const dimension = dimensions[0]!,
+      count = dimension.length === 1 ? integer(dimension[0]) : null;
+    if (count === null || size === null || !Number.isSafeInteger(count * size))
       layoutKnown = false;
     else size *= count;
   }
   if (
-    (arrayStart === null && values.length !== nameIndex + 1) ||
     name === null ||
     align === null ||
     align <= 0 ||
@@ -326,8 +325,21 @@ export function* readPtxKernels(
     };
     let t = next();
     if (t.value === "(") {
-      for (t = next(); t.value !== ")"; t = next()) {
-        if (t.value === ",") flush();
+      let parentheses = 0,
+        brackets = 0;
+      while (true) {
+        t = next();
+        if (t.value === "(") parentheses++;
+        else if (t.value === ")") {
+          if (parentheses > 0) parentheses--;
+          else if (brackets === 0) break;
+          else rejectGpu("Malformed PTX parameter dimension");
+        } else if (t.value === "[") brackets++;
+        else if (t.value === "]") {
+          if (brackets === 0) rejectGpu("Malformed PTX parameter dimension");
+          brackets--;
+        }
+        if (t.value === "," && parentheses === 0 && brackets === 0) flush();
         else part.push(t.value);
         if (part.length > 128)
           throw new BinaryResourceFailure(
@@ -515,36 +527,93 @@ export function* readPtxKernels(
   if (outerDepth !== 0) rejectGpu("Unbalanced PTX body");
 }
 
-/** Positive PTX header recognition uses the same lexer as kernel extraction. */
-export const readPtxTarget = (text: string): string | null => {
+export interface PtxTargetFacts {
+  readonly recognized: boolean;
+  readonly target: string | null;
+  readonly limitation: string | null;
+}
+
+/** PTX's compute spelling is an alias for the corresponding baseline SM target. */
+export const ptxTargetIdentity = (target: string): string =>
+  target.replace(/^compute_(\d+[a-z]?)$/u, "sm_$1");
+
+/** Resolve all module-scope targets through the highest numbered architecture. */
+export const readPtxTarget = (text: string): PtxTargetFacts => {
   const stream = tokens(text);
-  let version = false,
-    target: string | null = null;
+  let depth = 0,
+    target: string | null = null,
+    targetIdentity: string | null = null,
+    targetArchitecture = -1,
+    ambiguous = false,
+    unsupported = false,
+    malformed = false;
   try {
+    const first = stream.next();
+    if (first.done || first.value.value !== ".version")
+      return { recognized: false, target: null, limitation: null };
+    const declaredVersion = stream.next();
+    if (
+      declaredVersion.done ||
+      ptxVersion(declaredVersion.value.value) === null
+    )
+      return { recognized: false, target: null, limitation: null };
     for (const token of stream) {
-      if (
-        token.value === ".entry" ||
-        token.value === ".func" ||
-        token.value === "{"
-      )
-        break;
-      if (token.value === ".version") {
-        const value = stream.next();
-        version = !value.done && ptxVersion(value.value.value) !== null;
+      if (token.value === "{") {
+        depth++;
+        continue;
       }
-      if (token.value === ".target") {
-        const value = stream.next();
-        target =
-          !value.done &&
-          /^(?:sm_[0-9]+(?:a|f)?|compute_[0-9]+)$/u.test(value.value.value)
-            ? value.value.value
-            : null;
+      if (token.value === "}") {
+        if (depth > 0) depth--;
+        continue;
       }
-      if (version && target !== null) return target;
+      if (depth !== 0) continue;
+      if (token.value !== ".target") continue;
+      const value = stream.next();
+      if (value.done) {
+        unsupported = true;
+        continue;
+      }
+      const spelling = value.value.value,
+        match = /^(?:sm_|compute_)([0-9]+)(?:a|f)?$/u.exec(spelling);
+      if (match === null) {
+        unsupported = true;
+        continue;
+      }
+      const architecture = Number(match[1]);
+      if (!Number.isSafeInteger(architecture)) {
+        unsupported = true;
+        continue;
+      }
+      const identity = ptxTargetIdentity(spelling);
+      if (architecture > targetArchitecture) {
+        target = spelling;
+        targetIdentity = identity;
+        targetArchitecture = architecture;
+        ambiguous = false;
+      } else if (
+        architecture === targetArchitecture &&
+        targetIdentity !== identity
+      ) {
+        ambiguous = true;
+      }
     }
   } catch (cause) {
     if (!(cause instanceof BinaryFormatFailure)) throw cause;
-    // A malformed quote/comment before both directives does not establish PTX identity.
+    malformed = true;
   }
-  return null;
+  const recognized = target !== null;
+  const limitation = !recognized
+    ? null
+    : unsupported
+      ? "Unsupported PTX target directives leave the effective target unknown."
+      : ambiguous
+        ? "Same-generation PTX target profiles cannot be represented by one effective target."
+        : malformed
+          ? "Malformed PTX text prevents complete target discovery."
+          : null;
+  return {
+    recognized,
+    target: limitation === null ? target : null,
+    limitation,
+  };
 };

@@ -31,7 +31,7 @@ for (const command of ["analyze-javascript-application", "analyze"]) {
       if (!direct.ok) throw direct.error;
 
       const output = await cli.run({ arguments: [command, root, "--json"] });
-      expect(output.exitCode).toBe(0);
+      expect(output.exitCode, `${output.stdout}\n${output.stderr}`).toBe(0);
       expect(parseEvidence(output.json).evidence_id).toBe(
         direct.value.evidence_id,
       );
@@ -43,6 +43,17 @@ for (const command of ["analyze-javascript-application", "analyze"]) {
       expect(
         updates.some(({ phase }) => phase === "parse_javascript_sources"),
       ).toBe(true);
+      expect(
+        updates
+          .filter(({ phase }) => phase.startsWith("javascript_worker_"))
+          .map(({ phase }) => phase),
+      ).toEqual([
+        "javascript_worker_parse",
+        "javascript_worker_static",
+        "javascript_worker_semantic",
+        "javascript_worker_projection",
+        "javascript_worker_transfer",
+      ]);
       expect(updates.at(-1)).toMatchObject({ completed: 1, terminal: true });
       expect(
         updates.slice(0, -1).every(({ terminal }) => terminal !== true),

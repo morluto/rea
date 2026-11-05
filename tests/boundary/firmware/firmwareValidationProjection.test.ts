@@ -45,7 +45,7 @@ describe("firmware request validation projection", () => {
           operation: "extract_firmware",
           issues: [
             {
-              path: ["input", "range", missing],
+              path: ["range", missing],
               reason: "missing_argument",
             },
           ],

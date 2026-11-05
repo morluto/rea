@@ -27,6 +27,41 @@ const compareRows = (
 };
 
 describe("environment comparison identifier semantics", () => {
+  it("reports changed business tokens and numeric arrays through the application comparison boundary", () => {
+    const probe = compareRows(
+      [
+        [
+          "GET",
+          "/api/measurements",
+          { sku: "product1", samples: [1700000000] },
+        ],
+      ],
+      [
+        [
+          "GET",
+          "/api/measurements",
+          { sku: "product2", samples: [1800000000] },
+        ],
+      ],
+    );
+    expect(probe.results[0]?.equal).toBe(false);
+    expect(
+      probe.results[0]?.differences.map(({ category, pointer }) => [
+        category,
+        pointer,
+      ]),
+    ).toEqual([
+      ["value", "/sku"],
+      ["value", "/samples/0"],
+    ]);
+    expect(probe.normalised.generated).toBe(0);
+    expect(probe.normalised.clocks).toBe(0);
+    const same = compareRows(
+      [["GET", "/api/measurements", { samples: [1700000000] }]],
+      [["GET", "/api/measurements", { samples: [1700000000] }]],
+    );
+    expect(same.results[0]?.equal).toBe(true);
+  });
   it("compares numeric format identifiers literally while normalizing actual clock fields", () => {
     const fourcc = (value: string) => Buffer.from(value).readUInt32LE(0);
     const probe = compareRows(

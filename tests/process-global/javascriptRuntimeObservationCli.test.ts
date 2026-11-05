@@ -11,7 +11,7 @@ import { V8InspectorProvider } from "../../src/inspector/V8InspectorProvider.js"
 import { observeJavaScriptRuntimeInputSchema } from "../../src/domain/javascript/javascriptRuntimeObservation.js";
 import { startFakeV8Inspector } from "../fixtures/inspector/fakeV8Inspector.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
-import { registerJavaScriptRuntimeObservationCommands } from "../../src/cliJavaScriptRuntimeCommands.js";
+import { registerJavaScriptRuntimeObservationCommands } from "../../src/cli/javascriptRuntimeCommands.js";
 import { ProviderCleanupError } from "../../src/domain/providerCleanupError.js";
 import { ok } from "../../src/domain/result.js";
 import { silentLogger } from "../../src/logger.js";

@@ -5,12 +5,16 @@ import type {
 } from "../domain/javascript/electronObservation.js";
 import type { CdpConnection } from "./CdpConnection.js";
 import { CdpCaptureCompleteness } from "./CdpCaptureCompleteness.js";
-import { recordValue, cdpStringValue } from "./CdpCaptureValues.js";
+import { recordValue } from "./CdpCaptureValues.js";
 import type { CdpEndpointTarget } from "./CdpEndpoint.js";
 import { optionalCdpCommand } from "./CdpOptionalCommand.js";
 import { authorizedElectronFile } from "./ElectronFileScope.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import {
+  parseCdpWorkerTarget,
+  workerTargetOwnership,
+} from "./CdpWorkerTarget.js";
 
 /** Inventory local worker targets without attaching to them. */
 export const captureElectronWorkers = async (input: {
@@ -46,24 +50,27 @@ export const captureElectronWorkers = async (input: {
   }
   for (const entry of targetInfos) {
     throwIfElectronWorkerCaptureCancelled(input.signal);
-    const target = recordValue(entry);
-    if (target === undefined) {
+    const parsed = parseCdpWorkerTarget(entry);
+    if (!parsed.ok) {
       input.completeness.exclude("workers", "invalid_protocol_value");
       continue;
     }
-    const type = cdpStringValue(target.type) ?? "";
-    if (!type.includes("worker")) continue;
-    const openerTargetId = boundedTargetField(target.openerId);
-    const parentFrameId = boundedTargetField(target.parentFrameId);
-    if (
-      openerTargetId !== input.target.id &&
-      (parentFrameId === null || !input.frameIds.has(parentFrameId))
-    ) {
-      input.completeness.exclude("workers", "out_of_target_scope");
+    const target = parsed.value;
+    if (target.kind === "non_worker") continue;
+    const ownership = workerTargetOwnership(
+      target,
+      input.target.id,
+      input.frameIds,
+    );
+    if (ownership !== "selected") {
+      input.completeness.exclude(
+        "workers",
+        ownership === "unknown" ? "unattributed_target" : "out_of_target_scope",
+      );
       continue;
     }
     const path = await authorizedElectronFile(
-      cdpStringValue(target.url) ?? "",
+      target.url,
       input.signal,
       "inspect_electron_page",
       input.asarHeaderAdmission,
@@ -72,22 +79,13 @@ export const captureElectronWorkers = async (input: {
       input.completeness.exclude("workers", "out_of_target_scope");
       continue;
     }
-    const targetId = boundedTargetField(target.targetId);
-    if (targetId === null) {
-      input.completeness.exclude("workers", "invalid_protocol_value");
-      continue;
-    }
-    if (typeof target.attached !== "boolean") {
-      input.completeness.exclude("workers", "invalid_protocol_value");
-      continue;
-    }
     workers.push({
-      target_id: targetId,
-      type,
+      target_id: target.targetId,
+      type: target.type,
       file_path: path,
       attached: target.attached,
-      opener_target_id: openerTargetId,
-      parent_frame_id: parentFrameId,
+      opener_target_id: target.openerTargetId,
+      parent_frame_id: target.parentFrameId,
     });
   }
   return workers.sort((left, right) =>
@@ -100,9 +98,4 @@ const throwIfElectronWorkerCaptureCancelled = (signal?: AbortSignal): void => {
     throw new AnalysisCancelledError("inspect_electron_page", {
       cause: signal.reason,
     });
-};
-
-const boundedTargetField = (value: unknown): string | null => {
-  const field = cdpStringValue(value);
-  return field === undefined || field === "" ? null : field;
 };

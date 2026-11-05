@@ -383,6 +383,7 @@ it.skipIf(process.platform !== "linux")(
   async () => {
     const sessionId = await startFakeInferiorSession({
       overflowPxCommand: true,
+      withholdCleanupSynchronization: true,
       maxCommandOutputBytes: 1_024,
     });
     let watchdog: ReturnType<typeof setTimeout> | undefined;
@@ -540,6 +541,7 @@ async function startFakeInferiorSession(
     readonly truncateOlj?: boolean;
     readonly truncateCleanupFrame?: boolean;
     readonly overflowPxCommand?: boolean;
+    readonly withholdCleanupSynchronization?: boolean;
     readonly startupWatchdogMs?: number;
     readonly maxCommandOutputBytes?: number;
   } = {},
@@ -567,6 +569,7 @@ const exitKills = ${JSON.stringify(options.exitKills ?? "false")};
 const truncateOlj = ${JSON.stringify(options.truncateOlj ?? false)};
 const truncateCleanupFrame = ${JSON.stringify(options.truncateCleanupFrame ?? false)};
 const overflowPxCommand = ${JSON.stringify(options.overflowPxCommand ?? false)};
+const withholdCleanupSynchronization = ${JSON.stringify(options.withholdCleanupSynchronization ?? false)};
 let oljCalls = 0;
 let input = "";
 process.stdin.setEncoding("utf8");
@@ -583,6 +586,7 @@ process.stdin.on("data", (chunk) => {
     }
     else if (overflowPxCommand && line === "px") process.stdout.write("x".repeat(2_048) + "\\0");
     else if (line === "e dbg.exitkills") process.stdout.write(exitKills + "\\0");
+    else if (withholdCleanupSynchronization && line.startsWith("!echo __REA_CLEANUP_SYNC_")) {}
     else if (line.startsWith("!echo ")) process.stdout.write((truncateCleanupFrame ? "x".repeat(2_048) : "") + line.slice(6) + "\\0");
   }
 });

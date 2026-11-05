@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { jsonRecordSchema } from "../jsonRecord.js";
 import { localPathStringSchema } from "../localPath.js";
 
 const hexSchema = z.string().regex(/^0x[0-9a-f]+$/u);
@@ -18,7 +19,7 @@ const functionBreakpoint = {
   name: nativeString
     .min(1)
     .describe(
-      "Exact symbol name, such as `open`, a C++ or mangled Swift symbol, or `-[NSString length]`.",
+      "Exact LLDB runtime symbol name, such as `open`, a C++ or mangled Swift symbol, or `-[NSString length]`. On Darwin, pass an inspect_macho export or import `runtime_name` (`main`), not its symbol-table `name` (`_main`); REA preserves the selected name without translating it.",
     ),
 };
 
@@ -58,6 +59,18 @@ export const nativeCallBreakpointSchema = z.discriminatedUnion("kind", [
   }),
 ]);
 
+const environmentNameSchema = z
+  .string()
+  .min(1)
+  .regex(/^[^=\x00]+$/u, "Environment names cannot contain '=' or NUL");
+const environmentValueSchema = z
+  .string()
+  .regex(/^[^\x00]*$/u, "Environment values cannot contain NUL");
+const nativeCallEnvironmentSchema = jsonRecordSchema(
+  environmentValueSchema,
+  environmentNameSchema,
+);
+
 /**
  * Launch the active Mach-O as an owned process under LLDB and observe calls.
  * Duration and event bounds keep runtime observation finite.
@@ -65,14 +78,7 @@ export const nativeCallBreakpointSchema = z.discriminatedUnion("kind", [
 export const nativeCallObservationInputSchema = z.strictObject({
   breakpoints: z.array(nativeCallBreakpointSchema).min(1),
   arguments: z.array(nativeString).default([]),
-  environment: z
-    .record(
-      z
-        .string()
-        .min(1)
-        .regex(/^[^=\x00]+$/u, "Environment names cannot contain '=' or NUL"),
-      z.string().regex(/^[^\x00]*$/u, "Environment values cannot contain NUL"),
-    )
+  environment: nativeCallEnvironmentSchema
     .default({})
     .describe("Overrides on top of the environment REA runs with."),
   working_directory: localPathStringSchema.optional(),
@@ -152,7 +158,7 @@ export const nativeCallObservationResultSchema = z.strictObject({
     sha256: z.string().regex(/^[0-9a-f]{64}$/u),
     architecture: z.string(),
     arguments: z.array(z.string()),
-    environment: z.record(z.string(), z.string()),
+    environment: nativeCallEnvironmentSchema,
     working_directory: z.string().nullable(),
     launch_identity: z.strictObject({
       /** A pathname hash does not verify the bytes mapped into the process. */

@@ -7,11 +7,16 @@ import { afterEach, expect, it, onTestFinished, vi } from "vitest";
 import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import { ArtifactFileCleanupFailure } from "../../artifacts/ArtifactFileOperation.js";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
-import { inventoryRecoveryFiles, readRecoveryFile } from "./RecoveryFiles.js";
+import {
+  fingerprintRecoveryFile,
+  inventoryRecoveryFiles,
+  readRecoveryFile,
+} from "./RecoveryFiles.js";
 
 const closeFault = vi.hoisted(() => ({
   path: undefined as string | undefined,
   denied: false,
+  cancel: undefined as AbortController | undefined,
   handles: [] as FileHandle[],
   failure: new Error("controlled recovery descriptor close failure"),
 }));
@@ -57,6 +62,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
           if (handle.fd >= 0) await close();
         });
         handle.close = async () => {
+          closeFault.cancel?.abort();
           if (closeFault.denied) throw closeFault.failure;
           await close();
         };
@@ -73,6 +79,7 @@ afterEach(() => {
   directoryFault.closeAttempts = 0;
   closeFault.path = undefined;
   closeFault.denied = false;
+  closeFault.cancel = undefined;
   closeFault.handles = [];
 });
 
@@ -165,3 +172,29 @@ it.each([
     expect(resources.hasPending).toBe(true);
   },
 );
+
+it("retains completed hash facts and the exact reason when cancellation arrives during file close", async () => {
+  const { path, bytes } = await selectedFile();
+  const controller = new AbortController();
+  const resources = new ArtifactResourceScope();
+  closeFault.cancel = controller;
+  const failure: unknown = await fingerprintRecoveryFile(
+    path,
+    1024,
+    controller.signal,
+    resources,
+  ).catch((cause: unknown) => cause);
+  expect(failure).toMatchObject({
+    _tag: "AnalysisCancelledError",
+    cause: controller.signal.reason,
+    cleanupIncomplete: false,
+    partialObservation: {
+      kind: "file-snapshot-hash",
+      path,
+      bytes: bytes.length,
+      sha256: createHash("sha256").update(bytes).digest("hex"),
+    },
+  });
+  expect(closeFault.handles[0]?.fd).toBe(-1);
+  await resources.close();
+});

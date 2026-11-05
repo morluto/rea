@@ -4,7 +4,8 @@ import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
-import { closeVerifierResources } from "./verifier-cleanup.mjs";
+import { withVerifierCleanup } from "./verifier-cleanup.mjs";
+import { INLINE_EVIDENCE_MCP_ENVIRONMENT } from "./mcp-verification-environment.mjs";
 
 // REA registers process-static tool contracts. Bind their parsed definitions to
 // the SDK's negotiated connection identity, including when a Client reconnects.
@@ -123,12 +124,11 @@ const withOpenedArtifactMcp = async (target, openTool, verify) => {
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [fileURLToPath(new URL("../rea.mjs", import.meta.url)), "mcp"],
-    env: environment(),
+    env: { ...environment(), ...INLINE_EVIDENCE_MCP_ENVIRONMENT },
     stderr: "pipe",
   });
   const client = new Client({ name: "artifact-real-e2e", version: "1" });
-  let failure;
-  try {
+  return withVerifierCleanup(async () => {
     await client.connect(transport);
     const opened = await artifactMcpCall(client, {
       name: openTool,
@@ -138,16 +138,13 @@ const withOpenedArtifactMcp = async (target, openTool, verify) => {
     if (openTool === "open_bundle_resources")
       assert.equal(opened.structuredContent?.result?.caller_path, target);
     await verify(client);
-  } catch (cause) {
-    failure = cause;
-    throw cause;
-  } finally {
-    toolBindings.delete(client);
-    await closeVerifierResources(
-      [() => client.close(), () => transport.close()],
-      failure,
-    );
-  }
+  }, [
+    () => {
+      toolBindings.delete(client);
+    },
+    () => client.close(),
+    () => transport.close(),
+  ]);
 };
 
 /** Run a real stdio MCP subprocess with an explicitly opened binary target. */

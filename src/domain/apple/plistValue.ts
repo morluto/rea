@@ -2,18 +2,36 @@ import { types } from "node:util";
 import { z } from "zod";
 
 import type { JsonValue } from "../jsonValue.js";
+import { copyPlistUidIdentity } from "./plistUid.js";
 import { UnknownPlistScalar } from "./unknownPlistScalar.js";
 
+const jsonScalarSchema = z.union([
+  z.string(),
+  z.number(),
+  z.boolean(),
+  z.null(),
+]);
+
 /**
- * Maximum plist value nesting the JSON projection supports. The XML decode
- * preflight shares this limit so oversized documents are rejected before any
- * recursive pass rather than during one.
+ * Default source-value nesting for archive consumers. Ordinary plist inspection
+ * supplies its result-capacity allowance to both decode and projection.
  */
 export const MAX_PLIST_DEPTH = 128;
 
 /** Agent-visible refusal for nesting past the JSON projection allowance. */
-export const plistNestingLimitMessage = (): string =>
-  `Plist exceeds ${String(MAX_PLIST_DEPTH)} nesting levels. This release has no runtime override for this ${String(MAX_PLIST_DEPTH)}-level nesting allowance.`;
+export const plistNestingLimitMessage = (
+  maximumDepth = MAX_PLIST_DEPTH,
+): string =>
+  `Plist exceeds ${String(maximumDepth)} nesting levels. This release has no runtime override for this ${String(maximumDepth)}-level nesting allowance.`;
+
+/** A source-value depth refusal, distinct from malformed decoder output. */
+export class PlistNestingLimitError extends RangeError {
+  readonly _tag = "PlistNestingLimitError";
+
+  constructor(readonly maximumDepth: number) {
+    super(plistNestingLimitMessage(maximumDepth));
+  }
+}
 
 /** A decoded plist projected into JSON, with values JSON cannot express. */
 export interface ProjectedPlistValue {
@@ -64,6 +82,7 @@ export const projectPlistValue = (
   value: unknown,
   /** Observe generated wrappers before consumers classify the JSON value tree. */
   onWrappedScalar?: (value: Record<string, JsonValue>) => void,
+  maximumDepth = MAX_PLIST_DEPTH,
 ): ProjectedPlistValue => {
   let nonFiniteRealCount = 0;
   let negativeZeroRealCount = 0;
@@ -74,8 +93,7 @@ export const projectPlistValue = (
     return value;
   };
   const project = (item: unknown, depth: number): JsonValue => {
-    if (depth > MAX_PLIST_DEPTH)
-      throw new RangeError(plistNestingLimitMessage());
+    if (depth > maximumDepth) throw new PlistNestingLimitError(maximumDepth);
     if (item !== null && typeof item === "object" && types.isProxy(item))
       throw new TypeError("Plist values cannot contain proxies");
     if (item instanceof Uint8Array)
@@ -140,9 +158,11 @@ export const projectPlistValue = (
           );
         entries.push([key, project(descriptor.value, depth + 1)]);
       }
-      return Object.fromEntries(entries);
+      const result = Object.fromEntries(entries);
+      copyPlistUidIdentity(item, result);
+      return result;
     }
-    return z.union([z.string(), z.number(), z.boolean(), z.null()]).parse(item);
+    return jsonScalarSchema.parse(item);
   };
   const projected = project(value, 0);
   return {

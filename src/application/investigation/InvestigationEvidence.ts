@@ -1,39 +1,23 @@
-import {
-  resolveEvidenceInput,
-  type EvidenceLookup,
-} from "../EvidenceInputResolver.js";
+import { resolveEvidenceInput } from "../EvidenceInputResolver.js";
 import type { EvidenceReader } from "./InvestigationRecordPort.js";
-import type { EvidenceBundle } from "../../domain/evidenceBundle.js";
 import { uniqueSorted } from "../../domain/canonicalOrdering.js";
 import type { EvidenceIntegrityError } from "../../domain/evidenceErrors.js";
+import type { Evidence } from "../../domain/evidence.js";
 import { ok, type Result } from "../../domain/result.js";
-
-type InvestigationLookup = Pick<
-  EvidenceReader,
-  "evidenceForAnalysis" | "evidenceById"
->;
-
-/** Prefer owned immutable records; detached-only readers retain their contract. */
-export const investigationEvidenceLookup =
-  (reader: InvestigationLookup): EvidenceLookup =>
-  (id) =>
-    reader.evidenceForAnalysis?.(id) ?? reader.evidenceById(id);
-
-/** Borrow the owner's immutable snapshot for read-only projection or delivery. */
-export const investigationEvidenceBundle = (
-  reader: Pick<
-    EvidenceReader,
-    "immutableEvidenceBundle" | "exportEvidenceBundle"
-  >,
-): EvidenceBundle =>
-  reader.immutableEvidenceBundle?.() ?? reader.exportEvidenceBundle();
 
 /** Follow exact session references without exporting unrelated records or Unknowns. */
 export const resolveInvestigationEvidenceClosure = (
-  reader: InvestigationLookup,
+  reader: Pick<EvidenceReader, "evidenceForAnalysis">,
   seedIds: readonly string[],
+  sources: readonly Evidence[] = [],
 ): Result<string[], EvidenceIntegrityError> => {
-  const lookup = investigationEvidenceLookup(reader);
+  // Supplied authenticated records are part of this investigation too. A
+  // portable inline source need not already have been inserted in the ledger.
+  const supplied = new Map(
+    sources.map((source) => [source.evidence_id, source]),
+  );
+  const lookup = (id: string) =>
+    supplied.get(id) ?? reader.evidenceForAnalysis(id);
   const visited = new Set<string>();
   const pending = [...seedIds];
   while (pending.length > 0) {
@@ -42,6 +26,7 @@ export const resolveInvestigationEvidenceClosure = (
     const evidence = resolveEvidenceInput(
       { kind: "retained-evidence", evidence_id: evidenceId },
       lookup,
+      "retained-closure",
     );
     if (!evidence.ok) return evidence;
     visited.add(evidenceId);

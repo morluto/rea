@@ -110,6 +110,8 @@ export const renderInteractiveSetupResult = (
   }
   if (result.status === "planned" || result.status === "cancelled") return;
   writeLine(`!  ${result.remediation ?? "Setup needs attention."}`);
+  for (const resource of result.cleanup?.resources ?? [])
+    writeLine(`   Pending cleanup: ${resource}`);
   outro(
     `Run \`${cliInvocation(environment)} doctor\` for the remaining checks.`,
     promptStreams,

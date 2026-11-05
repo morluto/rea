@@ -1,3 +1,4 @@
+import { readObjcPropertyList } from "./AppleObjcProperties.js";
 import type { ObjcSwiftMetadata } from "../domain/native/objcSwiftMetadata.js";
 import type { SwiftNominalReaders } from "./AppleSwiftNominalTypes.js";
 
@@ -86,7 +87,8 @@ export const createObjcProtocolReader = (input: {
     if (address === 0n || visited.has(address) || !read.admit()) return;
     visited.add(address);
     try {
-      if (read.u32(address + 64n) < 72)
+      const protocolSize = read.u32(address + 64n);
+      if (protocolSize < 72)
         throw new RangeError("Truncated Objective-C protocol declaration");
       const protocolName = name(address);
       // Adopted protocols are independent declarations; decode them before
@@ -135,7 +137,34 @@ export const createObjcProtocolReader = (input: {
         failures.push(
           `Protocol 0x${address.toString(16)}: Objective-C protocol ${protocolName} ${message}`,
         );
+      let properties: ObjcSwiftMetadata["objc_protocols"][number]["properties"] =
+        [];
+      const propertyReasons: string[] = [];
+      try {
+        const decoded = readObjcPropertyList(
+          read,
+          read.pointer(address + 56n),
+          () => read.admit(),
+          onTruncated,
+        );
+        properties = decoded.properties;
+        for (const problem of decoded.issues)
+          propertyReasons.push(problem.message);
+        // Older protocol revisions end at size/flags. The later class-property
+        // list has no class/instance discriminator in the public property shape.
+        if (protocolSize >= 96 && read.pointer(address + 88n) !== 0n)
+          propertyReasons.push("protocol class properties are not decoded");
+      } catch (cause) {
+        propertyReasons.push(
+          cause instanceof Error ? cause.message : String(cause),
+        );
+      }
+      for (const message of propertyReasons)
+        failures.push(
+          `Protocol 0x${address.toString(16)}: Objective-C protocol ${protocolName} properties: ${message}`,
+        );
       const decodeReasons = [
+        ...propertyReasons,
         ...(skipped.length === 0 ? [] : ["protocol_method_selector_empty"]),
         ...(budgetTruncated ? ["max_records_reached"] : []),
       ];
@@ -143,7 +172,7 @@ export const createObjcProtocolReader = (input: {
         name: protocolName,
         methods: required,
         optional_methods: optional,
-        properties: [],
+        properties,
       });
       result.objc_protocol_records.push({
         name: protocolName,

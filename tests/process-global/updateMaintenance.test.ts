@@ -1,3 +1,7 @@
+import {
+  UpdateCommandRunner,
+  UPDATE_COMMAND_OUTPUT_BYTES,
+} from "../../src/application/UpdateCommandRunner.js";
 import { mkdir, readFile, rm, writeFile, access } from "node:fs/promises";
 import { delimiter, dirname, join, relative, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -6,15 +10,12 @@ import { err, ok } from "../../src/domain/result.js";
 import { runUpdate, type UpdateResult } from "../../src/application/Update.js";
 import { PRODUCT_IDENTITY } from "../../src/identity.js";
 import { supportedClients } from "../../src/application/SupportedClients.js";
+import { readClientRegistrationInspections } from "../../src/application/ClientRegistrationStatus.js";
 import {
   existingMaintenanceScope,
   planIntegrationMaintenance,
 } from "../../src/application/UpdateMaintenance.js";
-import {
-  runUpdateCommand,
-  UPDATE_COMMAND_OUTPUT_BYTES,
-  systemUpdateHost,
-} from "../../src/application/UpdateRuntime.js";
+import { systemUpdateHost } from "../../src/application/UpdateRuntime.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
 
@@ -130,6 +131,42 @@ describe("OMP integration maintenance", () => {
 });
 
 describe("maintenance activation and layered configuration", () => {
+  it("keeps unresolved registrations out of writes without calling them current", async () => {
+    await writeClient("codex", staleCodex);
+    const cursor = await writeClient(
+      "cursor",
+      JSON.stringify({
+        mcpServers: {
+          rea: { command: join(home, "removed-release", "rea"), args: ["mcp"] },
+        },
+      }),
+    );
+    const before = await readFile(cursor, "utf8");
+    const result = await planIntegrationMaintenance(
+      home,
+      entryPoint,
+      process.env,
+      () => {
+        throw new Error("An unresolved maintenance scope must not be executed");
+      },
+    );
+    expect(result).toMatchObject({
+      status: "unavailable",
+      scope: {
+        clients: ["codex"],
+        unresolved: [
+          expect.objectContaining({
+            client: "cursor",
+            state: "unknown",
+            config_path: cursor,
+          }),
+        ],
+      },
+      remediation: expect.stringContaining("cursor"),
+    });
+    expect(await readFile(cursor, "utf8")).toBe(before);
+  });
+
   it("leaves an inherited disabled OpenCode V2 registration outside maintenance", async () => {
     const upper = await writeClient(
       "opencode",
@@ -181,9 +218,11 @@ describe("maintenance activation and layered configuration", () => {
       }),
     );
 
+    // The fallback row is also FreeBuff's registration, and FreeBuff is the
+    // setup action that rewrites it, so both views stay in maintenance scope.
     await expect(
       existingMaintenanceScope(home, entryPoint, process.env),
-    ).resolves.toMatchObject({ clients: ["zcode"] });
+    ).resolves.toMatchObject({ clients: ["freebuff", "zcode"] });
   });
 
   it("selects an enabled registration inherited through layered OpenCode files", async () => {
@@ -202,7 +241,7 @@ describe("maintenance activation and layered configuration", () => {
   });
 });
 
-describe("existing REA integration maintenance", () => {
+describe("registration ownership in maintenance", () => {
   it("selects owned registrations while preserving unconfigured, foreign, and disabled choices", async () => {
     await writeClient("codex", staleCodex);
     await writeClient("claude_code", '{"mcpServers":{}}');
@@ -220,6 +259,40 @@ describe("existing REA integration maintenance", () => {
         servers: { rea: { type: "stdio", command: entryPoint, args: ["mcp"] } },
       }),
     );
+    expect(
+      await readClientRegistrationInspections(home, entryPoint, {
+        environment: process.env,
+      }),
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          status: expect.objectContaining({ client: "codex", state: "stale" }),
+          activation: "enabled",
+          commandIdentity: "owned",
+        }),
+        expect.objectContaining({
+          status: expect.objectContaining({ client: "cursor", state: "stale" }),
+          activation: "enabled",
+          commandIdentity: "foreign",
+        }),
+        expect.objectContaining({
+          status: expect.objectContaining({
+            client: "opencode",
+            state: "stale",
+          }),
+          activation: "disabled",
+          commandIdentity: "owned",
+        }),
+        expect.objectContaining({
+          status: expect.objectContaining({
+            client: "claude_code",
+            state: "missing",
+          }),
+          activation: "unknown",
+          commandIdentity: "unknown",
+        }),
+      ]),
+    );
     await expect(
       existingMaintenanceScope(home, entryPoint, process.env),
     ).resolves.toEqual({
@@ -228,7 +301,9 @@ describe("existing REA integration maintenance", () => {
       skillDestinations: [],
     });
   });
+});
 
+describe("existing REA integration maintenance", () => {
   it("does not install a missing skill or overwrite an unrelated skill", async () => {
     await expect(
       existingMaintenanceScope(home, entryPoint, process.env),
@@ -355,6 +430,93 @@ describe("existing REA integration maintenance", () => {
   });
 });
 
+describe("shared registration maintenance", () => {
+  it("refreshes an owned shared registration without its product profile", async () => {
+    // FreeBuff's registration lives in the shared user agents file. The row is
+    // owned, so maintenance must refresh it even though no FreeBuff profile
+    // exists to establish product applicability.
+    await writeClient(
+      "freebuff",
+      JSON.stringify({
+        mcpServers: {
+          other: { command: "other-server" },
+          rea: { command: entryPoint, args: ["mcp"] },
+        },
+      }),
+    );
+    await expect(
+      existingMaintenanceScope(home, entryPoint, process.env),
+    ).resolves.toEqual({
+      clients: ["freebuff"],
+      skill: false,
+      skillDestinations: [],
+    });
+  });
+
+  it("retains FreeBuff when ZCode reads the shared fallback", async () => {
+    // Both products load the one shared row, but their setup actions write
+    // different files: ZCode writes ~/.zcode/cli/config.json and deliberately
+    // leaves ~/.agents/mcp.json untouched (docs/client-configuration.md), so
+    // its fallback view cannot cover FreeBuff's registration. The shared row
+    // would stay pinned to the old version without FreeBuff's own action.
+    await writeClient("zcode", JSON.stringify({ mcp: { servers: {} } }));
+    await mkdir(join(home, ".config", "freebuff-desktop"), {
+      recursive: true,
+    });
+    await writeClient(
+      "freebuff",
+      JSON.stringify({
+        mcpServers: {
+          rea: { command: "npx", args: ["-y", "rea-agents@0.1.0", "mcp"] },
+        },
+      }),
+    );
+
+    await expect(
+      existingMaintenanceScope(home, entryPoint, process.env),
+    ).resolves.toMatchObject({ clients: ["freebuff", "zcode"] });
+  });
+
+  it("leaves a foreign shared registration out of maintenance", async () => {
+    await writeClient(
+      "freebuff",
+      JSON.stringify({
+        mcpServers: { rea: { command: "foreign-server", args: [] } },
+      }),
+    );
+    await expect(
+      existingMaintenanceScope(home, entryPoint, process.env),
+    ).resolves.toEqual({
+      clients: [],
+      skill: false,
+      skillDestinations: [],
+    });
+  });
+
+  it("leaves a ZCode-disabled shared row out of maintenance", async () => {
+    // The shared file doubles as ZCode's fallback, where `enable: false`
+    // disables the registration. Ownership evidence must not let maintenance
+    // rewrite the row as a FreeBuff registration and drop that flag.
+    const configPath = await writeClient(
+      "freebuff",
+      JSON.stringify({
+        mcpServers: {
+          rea: { command: entryPoint, args: ["mcp"], enable: false },
+        },
+      }),
+    );
+    const original = await readFile(configPath, "utf8");
+    await expect(
+      existingMaintenanceScope(home, entryPoint, process.env),
+    ).resolves.toEqual({
+      clients: [],
+      skill: false,
+      skillDestinations: [],
+    });
+    expect(await readFile(configPath, "utf8")).toBe(original);
+  });
+});
+
 describe("updated executable maintenance planning", () => {
   it("runs real setup as a noninteractive dry run and creates no new integrations or backups", async () => {
     const configPath = await writeClient("codex", staleCodex);
@@ -366,7 +528,10 @@ describe("updated executable maintenance planning", () => {
       home,
       entryPoint,
       process.env,
-      (command) => runUpdateCommand(command, process.env),
+      async (command) => {
+        const result = await updateCommands.runProbe(command, process.env);
+        return result.ok ? result : err(result.error.detail);
+      },
     );
     expect(result).toMatchObject({
       status: "planned",
@@ -404,15 +569,19 @@ describe("updated executable maintenance planning", () => {
 });
 
 describe("update subprocess boundaries", () => {
-  cliTest("exposes update in CLI help", async ({ cli }) => {
-    const help = await cli.run({
-      arguments: ["--help"],
-      environment: process.env,
-    });
-    expect(help.exitCode, help.stderr).toBe(0);
-    expect(help.stdout).toMatch(/^\s{2}update\s/mu);
-    expect(help.stdout).not.toMatch(/^\s{2}upgrade\s/mu);
-  });
+  cliTest(
+    "exposes update in CLI help",
+    async ({ cli }) => {
+      const help = await cli.run({
+        arguments: ["--help"],
+        environment: process.env,
+      });
+      expect(help.exitCode, help.stderr).toBe(0);
+      expect(help.stdout).toMatch(/^\s{2}update\s/mu);
+      expect(help.stdout).not.toMatch(/^\s{2}upgrade\s/mu);
+    },
+    60_000,
+  );
 
   cliTest("rejects the removed upgrade CLI command", async ({ cli }) => {
     const removed = await cli.run({
@@ -424,7 +593,7 @@ describe("update subprocess boundaries", () => {
   });
   it("captures output through stream closure and keeps arguments literal", async () => {
     const literal = 'space and $(echo bad); & | "quotes"';
-    const result = await runUpdateCommand(
+    const result = await updateCommands.runProbe(
       [
         process.execPath,
         "-e",
@@ -438,7 +607,7 @@ describe("update subprocess boundaries", () => {
 
   it("reports actual stderr and launch failures", async () => {
     await expect(
-      runUpdateCommand(
+      updateCommands.runProbe(
         [
           process.execPath,
           "-e",
@@ -446,13 +615,19 @@ describe("update subprocess boundaries", () => {
         ],
         process.env,
       ),
-    ).resolves.toEqual(err("EACCES /test/install"));
-    const missing = await runUpdateCommand(
+    ).resolves.toEqual(
+      err({ kind: "execution", detail: "EACCES /test/install" }),
+    );
+    const missing = await updateCommands.runProbe(
       [join(home, "missing-executable")],
       process.env,
     );
     expect(missing).toMatchObject({ ok: false });
-    if (!missing.ok) expect(missing.error).toContain("ENOENT");
+    if (!missing.ok)
+      expect(missing.error).toMatchObject({
+        kind: "launch",
+        detail: expect.stringContaining("ENOENT"),
+      });
   });
 
   it("verifies the requested package entry rather than PATH's rea", async () => {
@@ -524,6 +699,125 @@ const createBunUpdateFixture = async (
   }
   return { globalDirectory, packageRoot, versionPath, logPath, binDirectory };
 };
+
+it.skipIf(process.platform === "win32")(
+  "distinguishes a missing npm metadata launcher from a started registry probe",
+  async () => {
+    const root = await createTestTempDirectory("rea-npm-probe-failure-");
+    const bin = join(root, "bin");
+    await mkdir(bin);
+    const host = systemUpdateHost(root, home, { ...process.env, PATH: bin });
+    const installation = {
+      manager: "npm" as const,
+      prefix: root,
+      packageRoot: root,
+    };
+    try {
+      expect(await host.latestVersion(installation)).toMatchObject({
+        ok: false,
+        error: {
+          kind: "package-manager-unavailable",
+          manager: "npm",
+          detail: expect.stringContaining("ENOENT"),
+        },
+      });
+      await writeFile(
+        join(bin, "npm"),
+        "#!/bin/sh\nprintf 'registry fixture failed\\n' >&2\nexit 7\n",
+        { mode: 0o755 },
+      );
+      expect(await host.latestVersion(installation)).toEqual(
+        err({ kind: "unavailable", detail: "registry fixture failed" }),
+      );
+    } finally {
+      await host.close?.();
+    }
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "reports a Bun metadata launcher lost after a successful version probe",
+  async () => {
+    const root = await createTestTempDirectory("rea-bun-metadata-launch-");
+    const fixture = await createBunUpdateFixture(root, "1.4.2", 0, 0);
+    await writeFile(
+      join(fixture.binDirectory, "bun"),
+      "#!/bin/sh\n/bin/rm \"$0\"\nprintf '1.4.2\\n'\n",
+      { mode: 0o755 },
+    );
+    const host = systemUpdateHost(fixture.packageRoot, home, {
+      ...process.env,
+      PATH: fixture.binDirectory,
+      BUN_INSTALL_GLOBAL_DIR: fixture.globalDirectory,
+    });
+    try {
+      expect(
+        await host.latestVersion({
+          manager: "bun",
+          globalDirectory: fixture.globalDirectory,
+          packageRoot: fixture.packageRoot,
+        }),
+      ).toMatchObject({
+        ok: false,
+        error: {
+          kind: "package-manager-unavailable",
+          manager: "bun",
+          detail: expect.stringContaining("ENOENT"),
+        },
+      });
+    } finally {
+      await host.close?.();
+    }
+  },
+);
+
+it.skipIf(process.platform === "win32").each(["failed", "missing"] as const)(
+  "reports a %s local Bun probe without attempting release lookup",
+  async (mode) => {
+    const root = await createTestTempDirectory("rea-bun-probe-failure-");
+    const fixture = await createBunUpdateFixture(root, "1.4.2", 0, 0);
+    const executable = join(fixture.binDirectory, "bun");
+    if (mode === "missing") await rm(executable);
+    else
+      await writeFile(
+        executable,
+        `#!/bin/sh\nprintf 'probe\\n' > ${JSON.stringify(fixture.logPath)}\nprintf 'fixture: bun cannot start\\n' >&2\nexit 7\n`,
+        { mode: 0o755 },
+      );
+    const result = await runUpdate(
+      "3.2.1",
+      systemUpdateHost(fixture.packageRoot, home, {
+        ...process.env,
+        PATH: fixture.binDirectory,
+        BUN_INSTALL_GLOBAL_DIR: fixture.globalDirectory,
+      }),
+      "structured",
+    );
+    expect(result).toMatchObject({
+      status: "failed",
+      reason: "version-check",
+      latestVersion: null,
+      remediation: expect.stringContaining(
+        mode === "failed" ? "fixture: bun cannot start" : "ENOENT",
+      ),
+    });
+    expect(result).toHaveProperty(
+      "remediation",
+      expect.stringContaining("repair its launcher"),
+    );
+    expect(result).toHaveProperty(
+      "remediation",
+      expect.not.stringContaining("registry access"),
+    );
+    if (mode === "failed")
+      expect(await readFile(fixture.logPath, "utf8")).toBe("probe\n");
+    else
+      await expect(access(fixture.logPath)).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+    expect(await readFile(fixture.versionPath, "utf8")).toBe("3.2.1");
+  },
+);
 
 describe("Bun global installation update", () => {
   it.each([
@@ -651,4 +945,12 @@ describe("Bun global installation update", () => {
       ]);
     },
   );
+});
+
+let updateCommands: UpdateCommandRunner;
+beforeEach(() => {
+  updateCommands = new UpdateCommandRunner();
+});
+afterEach(async () => {
+  await updateCommands.close();
 });

@@ -4,7 +4,6 @@ import {
   decodeChainedPointer,
   parsePointerFixups,
 } from "./AppleMachoFixups.js";
-import { parsePropertyAttributes } from "./AppleObjcProperties.js";
 import type { Segment } from "./AppleMachoSelection.js";
 
 const BASE = 0x100000000n;
@@ -155,6 +154,285 @@ const SEGMENTS: Segment[] = [
   { address: BASE + 0x4000n, size: 0x4000n, offset: 0x4000, executable: false },
 ];
 
+it.each([1, 2, 3] as const)(
+  "preserves opaque chained library identity and readable siblings for import format %i",
+  (format) => {
+    const data = chainedData(format);
+    const libraryBytes = Buffer.from([0x2f, 0x6c, 0x69, 0x62, 0x80]).toString(
+      "base64",
+    );
+    data.writeBigUInt64LE(
+      field(1n, 63) | field(2n, 51) | field(3n, 24),
+      0x4008,
+    );
+    data.writeBigUInt64LE(1n | field(1n, 63), 0x4010);
+    const fixups = parsePointerFixups(
+      data,
+      {
+        chained: { offset: 0, size: 180 },
+        binds: [],
+        rebases: [],
+        dylibs: [{ bytes_base64: libraryBytes }, "/library-2"],
+      },
+      SEGMENTS,
+      BASE,
+    );
+    expect(
+      fixups.decode(BASE + 0x4008n, data.readBigUInt64LE(0x4008)),
+    ).toMatchObject({
+      kind: "unsupported",
+      reason: expect.stringContaining("install-name bytes"),
+      binding: {
+        symbol: "_OBJC_CLASS_$_NSObject",
+        binding_source: "chained",
+        library_ordinal: 1,
+        library: null,
+        library_bytes_base64: libraryBytes,
+        weak: false,
+        addend: 3n,
+      },
+    });
+    expect(
+      fixups.decode(BASE + 0x4010n, data.readBigUInt64LE(0x4010)),
+    ).toMatchObject({ kind: "bind", symbol: "_free", library: "/library-2" });
+    expect(fixups.issues).toContainEqual(
+      expect.objectContaining({
+        code: "chained_pointer_decode_failed",
+        location: "0x100004008",
+      }),
+    );
+  },
+);
+
+it.each(["bind", "weak", "lazy"] as const)(
+  "retains opaque library facts for %s without changing weak lookup scope",
+  (stream) => {
+    const libraryBytes = Buffer.from([0x2f, 0x6c, 0x69, 0x62, 0x80]).toString(
+      "base64",
+    );
+    const opcodes = Buffer.from([
+      0x11,
+      0x40,
+      ...Buffer.from("_first\0"),
+      0x71,
+      0x08,
+      0x90,
+      0x12,
+      0x40,
+      ...Buffer.from("_second\0"),
+      0x90,
+      0,
+    ]);
+    const data = Buffer.alloc(0x8000);
+    opcodes.copy(data);
+    const fixups = parsePointerFixups(
+      data,
+      {
+        chained: null,
+        rebases: [],
+        binds: [{ offset: 0, size: opcodes.length, stream }],
+        dylibs: [{ bytes_base64: libraryBytes }, "/library-2"],
+      },
+      SEGMENTS,
+      BASE,
+    );
+    expect(fixups.decode(BASE + 0x4008n, 0n)).toMatchObject(
+      stream === "weak"
+        ? { kind: "bind", symbol: "_first", library: null }
+        : {
+            kind: "unsupported",
+            binding: {
+              symbol: "_first",
+              library_ordinal: 1,
+              library: null,
+              library_bytes_base64: libraryBytes,
+            },
+          },
+    );
+    expect(fixups.decode(BASE + 0x4010n, 0n)).toMatchObject({
+      kind: "bind",
+      symbol: "_second",
+      library: stream === "weak" ? null : "/library-2",
+    });
+    expect(fixups.decoded).toBe(1);
+    expect(fixups.issues).toEqual(
+      stream === "weak"
+        ? []
+        : [
+            expect.objectContaining({
+              code: "bind_library_text_unavailable",
+              location: "0x100004008",
+            }),
+          ],
+    );
+  },
+);
+
+it.each([1, 2, 3] as const)(
+  "preserves non-UTF-8 chained symbol bytes without inventing class identity for import format %i",
+  (format) => {
+    const data = chainedData(format);
+    const nameAt = data.readUInt32LE(12) + 1;
+    data[nameAt + Buffer.byteLength("_OBJC_CLASS_$_")] = 0xff;
+    data.writeBigUInt64LE(
+      field(1n, 63) | field(2n, 51) | field(3n, 24),
+      0x4008,
+    );
+    data.writeBigUInt64LE(1n | field(1n, 63), 0x4010);
+    const fixups = parsePointerFixups(
+      data,
+      {
+        chained: { offset: 0, size: 180 },
+        binds: [],
+        rebases: [],
+        dylibs: ["/library-1", "/library-2"],
+      },
+      SEGMENTS,
+      BASE,
+    );
+    expect(
+      fixups.decode(BASE + 0x4008n, data.readBigUInt64LE(0x4008)),
+    ).toMatchObject({
+      kind: "unsupported",
+      reason: expect.stringContaining("UTF-8"),
+      binding: {
+        symbol: null,
+        symbol_bytes_base64: data
+          .subarray(nameAt, data.indexOf(0, nameAt))
+          .toString("base64"),
+        binding_source: "chained",
+        library_ordinal: 1,
+        library: "/library-1",
+        weak: false,
+        addend: 3n,
+      },
+    });
+    expect(
+      fixups.decode(BASE + 0x4010n, data.readBigUInt64LE(0x4010)),
+    ).toMatchObject({
+      kind: "bind",
+      symbol: "_free",
+      library_ordinal: 2,
+    });
+    expect(fixups.issues).toContainEqual(
+      expect.objectContaining({
+        code: "chained_pointer_decode_failed",
+        location: `0x${(BASE + 0x4008n).toString(16)}`,
+      }),
+    );
+    expect(fixups.decoded).toBe(0);
+    const literal = "_OBJC_CLASS_$_�bject";
+    Buffer.from(literal).copy(data, nameAt);
+    const literalFixups = parsePointerFixups(
+      data,
+      {
+        chained: { offset: 0, size: 180 },
+        binds: [],
+        rebases: [],
+        dylibs: ["/library-1", "/library-2"],
+      },
+      SEGMENTS,
+      BASE,
+    );
+    expect(
+      literalFixups.decode(BASE + 0x4008n, data.readBigUInt64LE(0x4008)),
+    ).toMatchObject({
+      kind: "bind",
+      symbol: literal,
+    });
+  },
+);
+
+it.each(["bind", "weak", "lazy"] as const)(
+  "retains partial non-UTF-8 %s bindings and recovers subsequent lossless names",
+  (stream) => {
+    const invalidName = Buffer.concat([
+      Buffer.from("_OBJC_CLASS_$_"),
+      Buffer.from([0xff]),
+    ]);
+    const otherInvalidName = Buffer.concat([
+      Buffer.from("_OBJC_CLASS_$_"),
+      Buffer.from([0xfe]),
+    ]);
+    const literalName = "_OBJC_CLASS_$_�";
+    const opcodes = Buffer.from([
+      0x11,
+      0x71,
+      0x08,
+      0x60,
+      0x04,
+      0x40,
+      ...invalidName,
+      0,
+      0x90,
+      0x40,
+      ...otherInvalidName,
+      0,
+      0x90,
+      0x40,
+      ...Buffer.from(literalName),
+      0,
+      0x90,
+      0x40,
+      ...Buffer.from("_later"),
+      0,
+      0x90,
+      0,
+    ]);
+    const data = Buffer.alloc(0x8000);
+    opcodes.copy(data, 0x7000);
+    const fixups = parsePointerFixups(
+      data,
+      {
+        chained: null,
+        binds: [{ offset: 0x7000, size: opcodes.length, stream }],
+        rebases: [],
+        dylibs: ["/library-1"],
+      },
+      SEGMENTS,
+      BASE,
+    );
+    expect(fixups.decode(BASE + 0x4008n, 0n)).toMatchObject({
+      kind: "unsupported",
+      reason: expect.stringContaining("UTF-8"),
+      binding: {
+        symbol: null,
+        symbol_bytes_base64: invalidName.toString("base64"),
+        binding_source: stream,
+        library_ordinal: 1,
+        library: stream === "weak" ? null : "/library-1",
+        weak: false,
+        addend: 4n,
+      },
+    });
+    expect(fixups.decode(BASE + 0x4010n, 0n)).toMatchObject({
+      kind: "unsupported",
+      binding: {
+        symbol: null,
+        symbol_bytes_base64: otherInvalidName.toString("base64"),
+      },
+    });
+    expect(fixups.decode(BASE + 0x4018n, 0n)).toMatchObject({
+      kind: "bind",
+      symbol: literalName,
+    });
+    expect(fixups.decode(BASE + 0x4020n, 0n)).toMatchObject({
+      kind: "bind",
+      symbol: "_later",
+    });
+    expect(fixups.issues).toContainEqual(
+      expect.objectContaining({
+        code: "bind_symbol_text_unavailable",
+        location: `0x${(BASE + 0x4008n).toString(16)}`,
+      }),
+    );
+    expect(fixups.decode(BASE + 0x4028n, 0n)).toEqual({
+      kind: "raw",
+      target: 0n,
+    });
+  },
+);
+
 const legacyRebaseInput = (stream: Buffer) => {
   const data = Buffer.alloc(0x8000);
   stream.copy(data, 0x7000);
@@ -187,6 +465,7 @@ it("marks only opcode-selected pointer slots rebased, including target zero", ()
     kind: "rebase",
     target: BASE + 0x200n,
   });
+  expect(fixups.hasUnresolvedLegacyBytes(BASE + 0x100n, 4)).toBe(false);
   expect(fixups.decode(BASE + 0x118n, 0n)).toEqual({
     kind: "rebase",
     target: 0n,
@@ -252,6 +531,7 @@ it("retains known prefix rebases and leaves unmatched locations unknown on an in
   expect(fixups.issues).toMatchObject([
     { code: "rebase_stream_decode_failed" },
   ]);
+  expect(fixups.hasUnresolvedLegacyBytes(BASE + 0x108n, 4)).toBe(true);
 });
 
 it("does not treat 32-bit text rebases as 64-bit metadata pointers", () => {
@@ -263,6 +543,10 @@ it("does not treat 32-bit text rebases as 64-bit metadata pointers", () => {
     kind: "unsupported",
     reason: "Legacy non-pointer rebase is not a 64-bit metadata pointer",
   });
+  expect(fixups.hasUnresolvedLegacyBytes(BASE + 0x100n, 4)).toBe(true);
+  expect(fixups.hasUnresolvedLegacyBytes(BASE + 0x103n, 4)).toBe(true);
+  expect(fixups.hasUnresolvedLegacyBytes(BASE + 0x104n, 4)).toBe(false);
+  expect(fixups.hasUnresolvedLegacyBytes(BASE + 0x108n, 4)).toBe(false);
   expect(fixups.decode(BASE + 0x108n, BASE + 0x300n)).toMatchObject({
     kind: "raw",
     target: BASE + 0x300n,
@@ -438,6 +722,7 @@ describe("incomplete legacy bind applicability", () => {
     expect(fixups.issues).toMatchObject([
       { code: "bind_stream_decode_failed" },
     ]);
+    expect(fixups.hasUnresolvedLegacyBytes(BASE + 0x1008n, 4)).toBe(true);
   });
 
   it("retains a positive bind prefix while leaving unmatched slots unknown", () => {
@@ -1285,6 +1570,10 @@ describe("legacy pointer fixup streams", () => {
       kind: "raw",
       target: 0x99n,
     });
+    expect(fixups.hasUnresolvedLegacyBytes(BASE + 0x4014n, 4)).toBe(true);
+    expect(fixups.hasUnresolvedLegacyBytes(BASE + 0x4018n, 4)).toBe(false);
+    expect(fixups.hasUnresolvedLegacyBytes(BASE + 0x401cn, 4)).toBe(false);
+    expect(fixups.hasUnresolvedLegacyBytes(BASE + 0x401cn, 8)).toBe(true);
   });
 
   it("wraps a negative DO_BIND_ADD_ADDR_ULEB step and keeps decoding", () => {
@@ -1506,54 +1795,6 @@ describe("legacy bind operand decoding", () => {
       "bind bind opcodes: Oversized bind opcode operand",
     ]);
     expect(fixups.decode(BASE + 0x4008n, 0n).kind).not.toBe("bind");
-  });
-});
-
-describe("Objective-C property attributes", () => {
-  it("parses type, ownership, accessors and quoted class names", () => {
-    expect(
-      parsePropertyAttributes(
-        "title",
-        'T@"NSString<NSCopying, NSSecureCoding>",C,N,GcustomTitle,V_title',
-      ),
-    ).toEqual({
-      name: "title",
-      type_encoding: '@"NSString<NSCopying, NSSecureCoding>"',
-      atomicity: "nonatomic",
-      attributes: [
-        { name: "T", value: '@"NSString<NSCopying, NSSecureCoding>"' },
-        { name: "C", value: "" },
-        { name: "N", value: "" },
-        { name: "G", value: "customTitle" },
-        { name: "V", value: "_title" },
-      ],
-      is_readonly: false,
-      getter: "customTitle",
-      setter: null,
-    });
-    expect(parsePropertyAttributes("count", "Tq,R")).toMatchObject({
-      type_encoding: "q",
-      is_readonly: true,
-      atomicity: "atomic",
-    });
-    expect(parsePropertyAttributes("count", "Tq,R,N").atomicity).toBe(
-      "nonatomic",
-    );
-    expect(parsePropertyAttributes("count", "").atomicity).toBeNull();
-    expect(parsePropertyAttributes("count", "R").atomicity).toBeNull();
-  });
-
-  it("establishes no defaults from an unfinished quoted class name", () => {
-    // `,N,R` here lie inside the unterminated quote, so they are not flags.
-    expect(parsePropertyAttributes("title", 'T@"NSString,N,R')).toMatchObject({
-      type_encoding: '@"NSString,N,R',
-      atomicity: null,
-      is_readonly: null,
-    });
-    expect(parsePropertyAttributes("title", 'N,R,T@"NSString')).toMatchObject({
-      atomicity: "nonatomic",
-      is_readonly: true,
-    });
   });
 });
 

@@ -1,15 +1,15 @@
 import type { EvidenceMcpServer } from "../EvidenceMcpServer.js";
 import { runAdmittedToolOperation } from "../admittedToolOperation.js";
-import { recordSessionEvidenceSources } from "../sessionEvidence.js";
+import { recordEvidenceSources } from "../../application/investigation/recordEvidenceSources.js";
 
 import { compareApplicationVersionsEvidence } from "../../application/javascript/JavaScriptApplicationWorkflowService.js";
-import { applicationToolContract } from "../../contracts/applicationToolContracts.js";
+import { toolContract } from "../../contracts/toolContracts.js";
 import { logToolExecution } from "../toolLogging.js";
 import { toolRegistrationOptions } from "../toolRegistrationOptions.js";
 import { recordResult } from "./helpers.js";
 import type { ApplicationToolRegistration } from "./types.js";
 
-const compareContract = applicationToolContract("compare_application_versions");
+const compareContract = toolContract("compare_application_versions");
 
 /** Register the provider-neutral JavaScript version comparison tool. */
 export const registerCompareApplicationVersionsTool = (
@@ -31,12 +31,16 @@ export const registerCompareApplicationVersionsTool = (
             compareContract.name,
             () =>
               Promise.resolve(
-                compareApplicationVersionsEvidence(input, options.evidenceById),
+                compareApplicationVersionsEvidence(
+                  input,
+                  options.evidenceById,
+                  { signal: context.mcpReq.signal },
+                ),
               ),
           );
           if (!result.ok)
             return server.delivery.toCallToolResult(result, compareContract);
-          const recorded = recordSessionEvidenceSources(
+          const recorded = recordEvidenceSources(
             options.recordEvidence,
             result.value.sources,
           );

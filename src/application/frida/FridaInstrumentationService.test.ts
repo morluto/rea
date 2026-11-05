@@ -12,6 +12,7 @@ import {
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
 } from "../../domain/analysisErrorCore.js";
+import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import type { Evidence } from "../../domain/evidence.js";
 import { ok } from "../../domain/result.js";
 
@@ -455,10 +456,16 @@ it.each([false, true])(
           return cleanupFails
             ? {
                 ok: false,
-                error: new AnalysisCapabilityUnavailableError(
+                error: new ProviderAdapterError(
                   "frida",
                   "close_frida_session",
-                  "session cleanup failed",
+                  {
+                    userMessage: "session cleanup failed",
+                    cleanup: {
+                      reason: "session cleanup failed",
+                      resources: [createSession().sessionId],
+                    },
+                  },
                 ),
               }
             : { ok: true, value: { targetResumeObserved: false } };
@@ -485,10 +492,14 @@ it.each([false, true])(
     if (result.ok) return;
     expect(result.error).not.toBeInstanceOf(AnalysisCancelledError);
     if (cleanupFails) {
-      expect(result.error).toBeInstanceOf(AnalysisCapabilityUnavailableError);
-      expect(result.error.cause).toBe(primary);
-      expect(result.error.diagnostics).toEqual({
-        native_status: "resume_rejected",
+      expect(result.error).toBeInstanceOf(ProviderAdapterError);
+      expect(result.error.cleanupPrimary).toBe(primary);
+      expect(result.error.cause).toBeInstanceOf(AggregateError);
+      expect((result.error.cause as AggregateError).errors[0]).toBe(primary);
+      expect(result.error.diagnostics).toMatchObject({
+        primary_error: {
+          details: { diagnostics: { native_status: "resume_rejected" } },
+        },
       });
       expect(result.error.cleanup).toMatchObject({
         reason: expect.stringContaining("session cleanup failed"),
@@ -906,39 +917,56 @@ it("records target selection in Evidence without remote authentication values", 
   expect(parameters).not.toContain(certificate);
 });
 
-it("reports completed cleanup when closing the parent session releases a failed script", async () => {
-  const service = new FridaInstrumentationService(
-    createProvider({
-      async loadScript() {
-        return {
-          ok: false,
-          error: new AnalysisCapabilityUnavailableError(
-            "frida",
-            "load_frida_script",
-            "script load failed",
-            {
-              cleanup: {
-                reason: "script unload failed",
-                resources: ["script-1"],
-              },
-            },
-          ),
-        };
+it.each([false, true])(
+  "tracks the failed script owner after parent close (released=%s)",
+  async (released) => {
+    const scriptOwner = { cleanupResources: ["script-1"] };
+    const failure = new AnalysisCapabilityUnavailableError(
+      "frida",
+      "load_frida_script",
+      "script load failed",
+      {
+        cleanup: {
+          reason: "script unload failed",
+          resources: ["script-1"],
+        },
       },
-    }),
-  );
+    );
+    failure.bindCleanupResourceOwner(scriptOwner);
+    const service = new FridaInstrumentationService(
+      createProvider({
+        async loadScript() {
+          return { ok: false, error: failure };
+        },
+        async closeSession() {
+          // The parent provider owns the script and confirms its release.
+          if (released) {
+            scriptOwner.cleanupResources = [];
+            failure.resolveCleanup();
+          }
+          return { ok: true, value: { targetResumeObserved: false } };
+        },
+      }),
+    );
 
-  const result = await service.instrument({
-    mode: "spawn",
-    deviceId: "local",
-    program: "/tmp/fixture",
-    source: { sourceKind: "inline", source: "send('ready');" },
-    durationMs: 1,
-  });
+    const result = await service.instrument({
+      mode: "spawn",
+      deviceId: "local",
+      program: "/tmp/fixture",
+      source: { sourceKind: "inline", source: "send('ready');" },
+      durationMs: 1,
+    });
 
-  expect(result.ok).toBe(false);
-  if (!result.ok) expect(result.error.cleanupIncomplete).toBe(false);
-});
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toBe(failure);
+      expect(result.error.cleanupIncomplete).toBe(!released);
+      expect(result.error.cleanupResources).toEqual(
+        released ? [] : ["script-1"],
+      );
+    }
+  },
+);
 
 it("cleans up a session and returns typed cancellation after a pending start", async () => {
   let finishStart: (() => void) | undefined;
@@ -1080,10 +1108,16 @@ it.each([
           return cleanupFails
             ? {
                 ok: false,
-                error: new AnalysisCapabilityUnavailableError(
+                error: new ProviderAdapterError(
                   "frida",
                   "close_frida_session",
-                  "session cleanup failed",
+                  {
+                    userMessage: "session cleanup failed",
+                    cleanup: {
+                      reason: "session cleanup failed",
+                      resources: [createSession().sessionId],
+                    },
+                  },
                 ),
               }
             : { ok: true, value: { targetResumeObserved: false } };
@@ -1106,10 +1140,14 @@ it.each([
     expect(result.error).not.toBeInstanceOf(AnalysisCancelledError);
     expect(controller.signal.reason).toBe(abortReason);
     if (cleanupFails) {
-      expect(result.error).toBeInstanceOf(AnalysisCapabilityUnavailableError);
-      expect(result.error.cause).toBe(primary);
-      expect(result.error.diagnostics).toEqual({
-        native_status: "compile_rejected",
+      expect(result.error).toBeInstanceOf(ProviderAdapterError);
+      expect(result.error.cleanupPrimary).toBe(primary);
+      expect(result.error.cause).toBeInstanceOf(AggregateError);
+      expect((result.error.cause as AggregateError).errors[0]).toBe(primary);
+      expect(result.error.diagnostics).toMatchObject({
+        primary_error: {
+          details: { diagnostics: { native_status: "compile_rejected" } },
+        },
       });
       expect(result.error.cleanup).toMatchObject({
         reason: expect.stringContaining("session cleanup failed"),

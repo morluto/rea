@@ -18,6 +18,7 @@ type TypeInventory = Pick<
   | "types"
   | "nesting_read"
   | "selection"
+  | "method_rows"
   | "limitations"
 >;
 
@@ -38,6 +39,7 @@ export const prepareManagedMemberRecovery = (
     ...inventory,
     metadata: { ...inventory.metadata, status: "partial" },
     signature_resolution: null,
+    assembly: null,
     exported_types: null,
     fields: [],
     methods: [],

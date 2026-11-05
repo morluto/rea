@@ -1,3 +1,4 @@
+import { requirePermissionDenial } from "../../tests/fixtures/permissionDenial.js";
 import { execFile } from "node:child_process";
 import { once } from "node:events";
 import {
@@ -75,9 +76,10 @@ describe.skipIf(process.platform === "win32")(
       expect((await lstat(alias)).isSymbolicLink()).toBe(true);
     });
 
-    it.skipIf(process.getuid?.() === 0)(
+    it.skipIf(process.platform === "win32")(
       "explains unreadable directory recovery without changing unverified permissions",
-      async () => {
+      async (context) => {
+        await requirePermissionDenial(context, "directory-read");
         const directory = await temporaryDirectory();
         await chmod(directory, 0o333);
         try {

@@ -1,3 +1,4 @@
+import { snapshotEnvironment } from "../../process/snapshotEnvironment.js";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -16,6 +17,7 @@ import {
   AnalysisOutputError,
 } from "../../domain/analysisErrorCore.js";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import { artifactFileCancellationCause } from "../../artifacts/ArtifactFileOperation.js";
 import {
   javascriptRecoveryResultSchema,
   type JavaScriptRecoveryInput,
@@ -108,6 +110,8 @@ export class WakaruProvider implements JavaScriptRecoveryPort {
   ): Promise<Result<AnalysisExecution, AnalysisError>> {
     const pending = await this.#retire();
     if (pending !== undefined) return err(pending);
+    // Capture configuration after queue/cleanup admission; later requests may select updates.
+    const environment = snapshotEnvironment(this.environment);
     let root: string | undefined;
     let tree: SafeOutputTree | undefined;
     let failed: { readonly cause: unknown } | undefined;
@@ -116,7 +120,7 @@ export class WakaruProvider implements JavaScriptRecoveryPort {
     try {
       checkRecoveryCancellation(options?.signal);
       const engine = await resolveWakaruCommand(
-        this.environment,
+        environment,
         this.#resources,
         options?.signal,
       );
@@ -148,7 +152,7 @@ export class WakaruProvider implements JavaScriptRecoveryPort {
         input,
         sources,
         engine,
-        environment: this.environment,
+        environment,
         launcher: this.launcher,
         options,
         deadline,
@@ -166,7 +170,9 @@ export class WakaruProvider implements JavaScriptRecoveryPort {
         failed.cause instanceof ArtifactReaderFailure &&
         failed.cause.reason === "cancelled" &&
         failed.cause.cleanup === undefined
-          ? new AnalysisCancelledError(OPERATION, { cause: failed.cause })
+          ? new AnalysisCancelledError(OPERATION, {
+              cause: artifactFileCancellationCause(failed.cause),
+            })
           : failed.cause;
       const residuals: string[] = [];
       const cleanupFailures: { resource: string; reason: string }[] = [];

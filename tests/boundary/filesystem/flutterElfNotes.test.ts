@@ -5,6 +5,7 @@ import { readElfBuildIds } from "../../../src/flutter/ElfBuildId.js";
 import {
   elfNote,
   elfNoteFixture,
+  compressedElfNoteSectionFixture,
 } from "../../../src/native/elf/ElfNotes.fixture.js";
 import {
   appendElfRanges,
@@ -27,11 +28,12 @@ it.each([32, 64] as const)(
           bits,
           alignment,
           ownership: table === "program" ? "program" : "both",
-          notes: Buffer.concat(
-            ids.map((id) =>
+          notes: Buffer.concat([
+            elfNote("Example", 1, Buffer.from([1]), true, alignment),
+            ...ids.map((id) =>
               elfNote("GNU", 3, Buffer.from(id, "hex"), true, alignment),
             ),
-          ),
+          ]),
         });
         if (table === "section") image.writeUInt32LE(1, bits === 64 ? 64 : 52);
         const root = await createTestTempDirectory("rea-flutter-alignment-");
@@ -47,6 +49,55 @@ it.each([32, 64] as const)(
           await file.close();
         }
       }
+    }
+  },
+);
+
+it.each(
+  ([32, 64] as const).flatMap((bits) => [
+    { bits, empty: false },
+    { bits, empty: true },
+  ]),
+)(
+  "retains other ELF$bits note IDs with compressed storage (empty: $empty)",
+  async ({ bits, empty }) => {
+    const encoded = compressedElfNoteSectionFixture(bits);
+    const noteSection = (bits === 64 ? 64 : 52) + (bits === 64 ? 64 : 40);
+    if (empty) {
+      if (bits === 64) encoded.writeBigUInt64LE(0n, noteSection + 32);
+      else encoded.writeUInt32LE(0, noteSection + 20);
+    }
+    // Engine metadata parsing also requires a program directory.
+    const compressed = appendElfRanges(encoded, "program", [
+      { type: 1, offset: 0, size: 0 },
+    ]);
+    const bytes = appendElfRanges(
+      Buffer.concat([compressed, note]),
+      "section",
+      [{ type: 7, offset: compressed.length, size: note.length }],
+    );
+    const root = await createTestTempDirectory("rea-flutter-compressed-notes-");
+    const path = join(root, "engine.so");
+    await writeFile(path, bytes);
+    const file = await open(path, "r");
+    const read = vi.spyOn(file, "read");
+    try {
+      expect(await readElfBuildIds(file, bytes.length, undefined)).toEqual({
+        candidates: ["0123456789abcdef"],
+        failures: [{ reason: "Compressed ELF note sections are unsupported" }],
+      });
+      const storedOffset =
+        bits === 64
+          ? Number(compressed.readBigUInt64LE(noteSection + 24))
+          : compressed.readUInt32LE(noteSection + 16);
+      expect(read).not.toHaveBeenCalledWith(
+        expect.anything(),
+        expect.anything(),
+        expect.anything(),
+        storedOffset,
+      );
+    } finally {
+      await file.close();
     }
   },
 );

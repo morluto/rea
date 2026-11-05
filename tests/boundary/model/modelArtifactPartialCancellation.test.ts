@@ -5,7 +5,7 @@ import { expect, it, vi } from "vitest";
 import { ModelArtifactProvider } from "../../../src/model/ModelArtifactProvider.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
-import { ggufFixture } from "../../fixtures/model/model.js";
+import { ggufFixture, safetensorsFixture } from "../../fixtures/model/model.js";
 
 const cancelledArrayFixture = (alignment?: number) => {
   const seed = ggufFixture();
@@ -131,7 +131,7 @@ it.each([undefined, 64])(
   },
 );
 
-it("retains completed GGUF tensor declarations before later tensor bytes cancel", async () => {
+it("retains GGUF tensor declarations and layout limitations before later tensor bytes cancel", async () => {
   const root = await mkdtemp(join(tmpdir(), "rea-model-tensor-partial-"));
   const path = join(root, "model.gguf");
   const tensorCount = 4000;
@@ -139,10 +139,10 @@ it("retains completed GGUF tensor declarations before later tensor bytes cancel"
     metadata: [],
     tensors: Array.from({ length: tensorCount }, (_, index) => ({
       name: `tensor-${String(index).padStart(4, "0")}`,
-      type: 0,
-      shape: [1n],
+      type: index === 0 ? 9 : 0,
+      shape: index === 0 ? [320n] : [1n],
       offset: 0n,
-      bytes: 4,
+      bytes: index === 0 ? 400 : 4,
     })),
   });
   await writeFile(path, fixture.bytes);
@@ -210,12 +210,18 @@ it("retains completed GGUF tensor declarations before later tensor bytes cancel"
     expect(partial.tensor_declarations.length).toBeGreaterThan(0);
     expect(partial.tensor_declarations[0]).toMatchObject({
       index: 0,
+      type: "Q8_1",
+      byte_length: null,
+      byte_length_state: "unknown",
       file_offset: null,
       storage_validation: "not-established",
     });
     expect(partial.tensors).toEqual([]);
     expect(partial.coverage.tensors).toBe("partial");
     expect(evidence.normalized_result).toMatchObject({ alignment: 32 });
+    expect(evidence.limitations).toContainEqual(
+      expect.stringContaining("Q8_1 has released 40-byte and 36-byte layouts"),
+    );
     expect(partial.artifact).toMatchObject({
       path,
       header_sha256: null,
@@ -229,23 +235,40 @@ it("retains completed GGUF tensor declarations before later tensor bytes cancel"
   }
 });
 
-it.each([32, 64])(
-  "retains resolved GGUF alignment %s when full hashing is cancelled",
-  async (alignment) => {
+it.each([
+  { format: "gguf", alignment: 32 },
+  { format: "gguf", alignment: 64 },
+  { format: "safetensors", alignment: null },
+])(
+  "retains parsed $format facts with alignment $alignment when full hashing is cancelled",
+  async ({ format, alignment }) => {
     const root = await mkdtemp(join(tmpdir(), "rea-model-hash-cancel-"));
-    const path = join(root, "model.gguf");
-    const fixture = ggufFixture({
-      ...(alignment === 32 ? {} : { alignment }),
-      tensors: [
-        {
-          name: "weight",
-          type: 0,
-          shape: [524288n],
-          offset: 0n,
-          bytes: 2 * 1024 * 1024,
-        },
-      ],
-    });
+    const path = join(root, `model.${format}`);
+    const fixture =
+      format === "safetensors"
+        ? safetensorsFixture(
+            JSON.stringify({
+              __metadata__: { author: "test" },
+              weight: {
+                dtype: "FUTURE_F32",
+                shape: [524288],
+                data_offsets: [0, 2 * 1024 * 1024],
+              },
+            }),
+            Buffer.alloc(2 * 1024 * 1024),
+          )
+        : ggufFixture({
+            ...(alignment === 64 ? { alignment } : {}),
+            tensors: [
+              {
+                name: "weight",
+                type: 0,
+                shape: [524288n],
+                offset: 0n,
+                bytes: 2 * 1024 * 1024,
+              },
+            ],
+          });
     await writeFile(path, fixture.bytes);
     const sample = await open(path, "r");
     const prototype = Object.getPrototypeOf(sample) as {
@@ -296,7 +319,12 @@ it.each([32, 64])(
         parseEvidence(result.error.partialObservation).normalized_result,
       ).toMatchObject({
         kind: "model-artifact-partial",
+        format,
         alignment,
+        declared_tensor_count: 1,
+        tensors: [
+          expect.objectContaining({ name: "weight", shape: ["524288"] }),
+        ],
         coverage: {
           header: "complete",
           metadata: "complete",
@@ -308,6 +336,14 @@ it.each([32, 64])(
           file_identity: "unverified",
         },
       });
+      if (format === "safetensors")
+        expect(
+          parseEvidence(result.error.partialObservation).limitations,
+        ).toContainEqual(
+          expect.stringContaining(
+            "Unknown tensor types prevent storage-size validation: FUTURE_F32",
+          ),
+        );
     } finally {
       readSpy.mockRestore();
       await provider.close();

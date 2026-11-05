@@ -144,8 +144,3 @@ export const createEvidenceCompletionLedger = (
     summary: summarize(records),
   });
 };
-
-/** Parse a completion ledger and reject non-canonical or tampered content. */
-export const parseEvidenceCompletionLedger = (
-  input: unknown,
-): EvidenceCompletionLedger => evidenceCompletionLedgerSchema.parse(input);

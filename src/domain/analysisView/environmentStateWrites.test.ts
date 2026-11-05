@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import type { JsonValue } from "../jsonValue.js";
+import { webNetworkCaptureSchema } from "../webNetworkCapture.js";
+import { EnvironmentStateAccumulator } from "./EnvironmentStateAccumulator.js";
 import {
   timedCaptureEvidence,
   type TimedCaptureRow,
@@ -12,6 +14,7 @@ import {
   BOOK_ROWS,
   BOOK_WRITE_CLOCK,
   DETAILED_LIST_ROWS,
+  EXPANDED_LIST_ROWS,
   FIRST_BOOK,
   OMITTED_FIELD_ROWS,
   PROJECTED_ROWS,
@@ -31,6 +34,7 @@ import {
   bookClock,
   detailedBook,
   environmentStateViewOf,
+  expandedBook,
   rawCaptureEvidence,
   renamedBook,
   type Book,
@@ -47,6 +51,131 @@ const ISO_SECONDS = {
 
 const stateOf = (rows: readonly TimedCaptureRow[]): StateView =>
   environmentStateViewOf(timedCaptureEvidence(rows));
+
+it("retains learned clock rules but withholds their serving when the global clock is unknown", () => {
+  const baseline = stateOf(BOOK_ROWS);
+  const unknown = stateOf([
+    ...BOOK_ROWS,
+    ["GET", "/api/health", { ready: true }, 200, undefined, -1],
+  ]);
+  expect(baseline.write_clock).not.toBeNull();
+  expect(unknown.write_clock).toBeNull();
+  const generatesClock = (plan: StateView["writes"][number]) =>
+    plan.rules.some((rule) =>
+      ["clock", "held-clock", "nested-clock"].includes(rule.rule),
+    );
+  const clockPlans = baseline.writes.filter(
+    (plan) => plan.served && generatesClock(plan),
+  );
+  expect(clockPlans.length).toBeGreaterThan(0);
+  for (const plan of clockPlans)
+    expect(
+      unknown.writes.find((candidate) => candidate.tool === plan.tool),
+    ).toEqual({
+      ...plan,
+      served: false,
+      reason: "unknown-clock",
+    });
+  const independent = baseline.writes.filter(
+    (plan) => plan.served && !generatesClock(plan),
+  );
+  expect(independent.length).toBeGreaterThan(0);
+  for (const plan of independent)
+    expect(
+      unknown.writes.find((candidate) => candidate.tool === plan.tool),
+    ).toEqual(plan);
+});
+
+it.each(["delete", "mismatched-query"])(
+  "does not parse unused request content for %s under a bounded state allowance",
+  (kind) => {
+    const payload = { unused: "x".repeat(96 * 1024) };
+    const changed = renamedBook(FIRST_BOOK, "Renamed", 3);
+    const rows: TimedCaptureRow[] =
+      kind === "delete"
+        ? [
+            ...BOOK_INIT_ROWS,
+            ["DELETE", "/api/books/2", "", 204, payload],
+            ["GET", "/api/books/2", BOOK_NOT_FOUND, 404],
+          ]
+        : [
+            ...BOOK_INIT_ROWS,
+            [
+              "PATCH",
+              "/api/books/1?mode=one",
+              changed,
+              200,
+              { name: "Renamed" },
+            ],
+            ["GET", "/api/books/1", changed],
+            ["PATCH", "/api/books/2?mode=two", SECOND_BOOK, 200, payload],
+          ];
+    const capture = webNetworkCaptureSchema.parse(
+      timedCaptureEvidence(rows).normalized_result,
+    );
+    const accumulator = new EnvironmentStateAccumulator(512 * 1024);
+    for (const record of capture.records) {
+      const added = accumulator.add(record);
+      if (!added.ok) throw added.error;
+    }
+    const state = accumulator.finishState();
+    expect(state).toMatchObject({ ok: true });
+    if (!state.ok) throw state.error;
+    expect(
+      state.value.writes.find(
+        (write) => write.effect === (kind === "delete" ? "delete" : "update"),
+      ),
+    ).toMatchObject({ served: true });
+  },
+);
+
+describe("structured values an earlier update kept", () => {
+  it.each([false, true])(
+    "refuses a later derived rule that changes an earlier kept value (array: %s)",
+    (array) => {
+      const content = (text: string): JsonValue =>
+        array ? [{ text }] : { children: [{ text }] };
+      const entry = (id: number, edited: boolean) => ({
+        id,
+        title: edited ? "Edited" : "Original",
+        content: content(edited ? "Edited body text." : "Original body text."),
+      });
+      const initial: TimedCaptureRow[] = [
+        ["GET", "/api/posts", [entry(1, false), entry(2, false)]],
+        ["GET", "/api/posts/1", entry(1, false)],
+        ["GET", "/api/posts/2", entry(2, false)],
+      ];
+      const edit = (id: number, changed: boolean): TimedCaptureRow[] => {
+        const after = { ...entry(id, changed), title: "Edited" };
+        return [
+          [
+            "PATCH",
+            `/api/posts/${id}`,
+            after,
+            200,
+            { title: "Edited", html: "<p>Edited body text.</p>" },
+          ],
+          ["GET", `/api/posts/${id}`, after],
+        ];
+      };
+      const plan = (rows: TimedCaptureRow[]) =>
+        stateOf([...initial, ...rows]).writes.find(
+          (write) => write.tool === "patch_posts_by_id",
+        );
+      expect(plan([...edit(1, true), ...edit(2, true)])).toMatchObject({
+        served: true,
+      });
+      expect(plan([...edit(1, false), ...edit(2, true)])).toMatchObject({
+        served: false,
+        reason: "unexplained-change",
+      });
+      expect(plan([...edit(1, true), ...edit(2, false)])).toMatchObject({
+        served: false,
+        reason: "unexplained-change",
+      });
+    },
+  );
+});
 
 const planOf = (state: StateView, tool: string) => {
   const plan = state.writes.find((candidate) => candidate.tool === tool);
@@ -212,6 +341,83 @@ describe("wider write coverage", () => {
       shape: "item",
       checked_record_ordinals: [1, 2],
       projected_record_ordinals: [3],
+    });
+  });
+
+  it("leaves a list line that expands its books to replay, serving the create the plain list confirms", () => {
+    const state = stateOf(EXPANDED_LIST_ROWS);
+    expect(state.views.find((view) => view.tool === "get_books")).toMatchObject(
+      {
+        shape: "list",
+        checked_record_ordinals: [0],
+        projected_record_ordinals: [1],
+        projected_query_keys: [{ name: "expand" }],
+      },
+    );
+    expect(planOf(state, "post_books")).toMatchObject({
+      served: true,
+      checked_record_ordinals: [5],
+    });
+  });
+
+  it("leaves a list line that asks for some fields only to replay", () => {
+    const view = stateOf([
+      ["GET", "/api/books", [FIRST_BOOK, SECOND_BOOK]],
+      [
+        "GET",
+        "/api/books?fields=id,name",
+        [
+          { id: 1, name: "First Book" },
+          { id: 2, name: "Second Book" },
+        ],
+      ],
+      ["GET", "/api/books/1", FIRST_BOOK],
+      ["GET", "/api/books/2", SECOND_BOOK],
+    ]).views.find((candidate) => candidate.tool === "get_books");
+    expect(view).toMatchObject({
+      shape: "list",
+      checked_record_ordinals: [0],
+      projected_record_ordinals: [1],
+      projected_query_keys: [{ name: "fields" }],
+    });
+  });
+
+  it("tells a line that adds a parameter apart by the members its books show, not by the parameters it shares", () => {
+    const view = stateOf([
+      ["GET", "/api/books?sort=name&limit=1", [FIRST_BOOK]],
+      ["GET", "/api/books?sort=name&q=first", [FIRST_BOOK]],
+      [
+        "GET",
+        "/api/books?sort=name&with=stats&offset=1",
+        [{ ...SECOND_BOOK, stats: { reads: 4 } }],
+      ],
+      ["GET", "/api/books/1", FIRST_BOOK],
+      ["GET", "/api/books/2", SECOND_BOOK],
+    ]).views.find((candidate) => candidate.tool === "get_books");
+    expect(view).toMatchObject({
+      shape: "list",
+      checked_record_ordinals: [0, 1],
+      projected_record_ordinals: [2],
+      projected_query_keys: [{ name: "with" }],
+    });
+  });
+
+  it("confirms a delete by a missing book's read on a line that expands its shelf", () => {
+    const state = stateOf([
+      ...BOOK_INIT_ROWS,
+      ["GET", "/api/books/1?expand=shelf", expandedBook(FIRST_BOOK)],
+      ["DELETE", "/api/books/2", "", 204],
+      ["GET", "/api/books/2?expand=shelf", BOOK_NOT_FOUND, 404],
+    ]);
+    expect(
+      state.views.find((view) => view.tool === "get_books_by_id"),
+    ).toMatchObject({
+      projected_record_ordinals: [3],
+      projected_query_keys: [{ name: "expand" }],
+    });
+    expect(planOf(state, "delete_books_by_id")).toMatchObject({
+      served: true,
+      checked_record_ordinals: [5],
     });
   });
 
@@ -557,7 +763,6 @@ describe("unserved write plans", () => {
       stateOf(sending()),
       stateOf(sending([{ name: "Third Book" }])),
       recorded("application/x-www-form-urlencoded", "name=Third+Book"),
-      recorded("application/json", '{"__proto__":{},"name":"Third Book"}'),
       recorded(
         "application/json",
         '{"name":"Third Book","copies":12345678901234567890}',
@@ -1259,3 +1464,1197 @@ describe("what a list query read shows of writes", () => {
     });
   });
 });
+
+describe("calls the capture shows reading only", () => {
+  const LOOKUP: TimedCaptureRow = [
+    "POST",
+    "/api/books/ids",
+    [FIRST_BOOK, SECOND_BOOK],
+    200,
+    { ids: [1, 2] },
+  ];
+
+  it("replays a lookup POST and plans no write for it", () => {
+    const state = stateOf([...BOOK_INIT_ROWS, LOOKUP]);
+    expect(state.writes.map((plan) => plan.tool)).not.toContain(
+      "post_books_ids",
+    );
+    expect(state.views).toContainEqual({
+      tool: "post_books_ids",
+      shape: "recorded",
+      reason: "query-body",
+    });
+  });
+
+  it("keeps a read after a lookup POST among the initial recordings", () => {
+    // The lookup changes nothing, so the second book's only read, after it, still seeds the state.
+    const state = stateOf([
+      ["GET", "/api/books/1", FIRST_BOOK],
+      LOOKUP,
+      ["GET", "/api/books/2", SECOND_BOOK],
+    ]);
+    expect(state.entities.map((entity) => entity.id).sort()).toEqual([
+      "1",
+      "2",
+    ]);
+  });
+});
+
+describe("types whose reads disagree across a write", () => {
+  const recipe = (id: number, name: string, views: number) => ({
+    id,
+    name,
+    views,
+  });
+
+  it("plans a type its reads disagree on across an unrelated write from the reads before it, and serves its create", () => {
+    const state = stateOf([
+      ["GET", "/api/recipes", [recipe(1, "Soup", 1), recipe(2, "Stew", 4)]],
+      ["GET", "/api/recipes/1", recipe(1, "Soup", 1)],
+      // Logging a view bumps the counter, so the reads after it disagree with those before.
+      ["POST", "/api/view-log", { ok: true }, 200, { recipe: 1 }],
+      ["GET", "/api/recipes/1", recipe(1, "Soup", 2)],
+      ["POST", "/api/recipes", recipe(3, "Broth", 0), 201, { name: "Broth" }],
+      ["GET", "/api/recipes/3", recipe(3, "Broth", 0)],
+    ]);
+    expect(state.types).toMatchObject([
+      { collection_template: "/api/recipes", init_before_ordinal: 2 },
+    ]);
+    expect(planOf(state, "post_recipes")).toMatchObject({
+      served: true,
+      checked_record_ordinals: [5],
+    });
+  });
+
+  it("ends a type's state at the earlier of a write its reads disagree across and a create that made one of its entities", () => {
+    const rows = (disagreeFirst: boolean): TimedCaptureRow[] => {
+      const disagreement: TimedCaptureRow[] = [
+        ["POST", "/api/view-log", { ok: true }, 200, { recipe: 1 }],
+        ["GET", "/api/recipes/1", recipe(1, "Soup", 2)],
+      ];
+      const creation: TimedCaptureRow[] = [
+        ["POST", "/api/imports", { id: "rcp-0042" }, 201, { name: "Broth" }],
+        ["GET", "/api/recipes", [recipe(1, "Soup", 1), { id: "rcp-0042" }]],
+      ];
+      return [
+        ["GET", "/api/recipes", [recipe(1, "Soup", 1)]],
+        ["GET", "/api/recipes/1", recipe(1, "Soup", 1)],
+        ...(disagreeFirst
+          ? [...disagreement, ...creation]
+          : [...creation, ...disagreement]),
+      ];
+    };
+    expect(stateOf(rows(true)).types).toMatchObject([
+      { init_before_ordinal: 2 },
+    ]);
+    expect(stateOf(rows(false)).types).toMatchObject([
+      { init_before_ordinal: 2 },
+    ]);
+  });
+});
+
+const note = (id: number, title: string) => ({ id, title });
+const A = note(1001, "Alpha");
+const B = note(1002, "Beta");
+const C = note(1003, "Gamma");
+const notesOf = (state: StateView) =>
+  state.entities
+    .filter((entity) => entity.type === "/api/notes")
+    .map((entity) => entity.id);
+/** Two notes read, the given exchanges, then a POST elsewhere whose returned id the notes are read under. */
+const published = (before: readonly TimedCaptureRow[]): TimedCaptureRow[] => [
+  ["GET", "/api/notes", [A, B]],
+  ["GET", "/api/notes/1001", A],
+  ["GET", "/api/notes/1002", B],
+  ...before,
+  ["POST", "/api/drafts/publish", { id: 1003 }, 201, { title: "Gamma" }],
+  ["GET", "/api/notes/1003", C],
+  ["GET", "/api/notes", [A, B, C]],
+];
+
+describe("creates read under another path", () => {
+  it("plans a POST to another path as a create into the type its returned id is first read under", () => {
+    const state = stateOf(published([]));
+    expect(planOf(state, "post_drafts_publish")).toMatchObject({
+      effect: "create",
+      target: "/api/notes",
+      collection: "/api/notes",
+    });
+    expect(notesOf(state)).toEqual(["1001", "1002"]);
+  });
+
+  it("ends a type's initial reads at a POST elsewhere that made one of its entities", () => {
+    const state = stateOf([
+      ["GET", "/api/notes", [A, B]],
+      ["POST", "/api/imports", { id: 1003 }, 201, { title: "Gamma" }],
+      ["GET", "/api/notes", [A, B, C]],
+    ]);
+    expect(notesOf(state)).toEqual(["1001", "1002"]);
+    expect(
+      state.types.find((type) => type.collection_template === "/api/notes"),
+    ).toMatchObject({ init_before_ordinal: 1 });
+  });
+
+  it("links no create whose returned id a read showed before it", () => {
+    const shownBefore = published([
+      [
+        "PATCH",
+        "/api/notes/1001",
+        note(1001, "Alpha 2"),
+        200,
+        { title: "Alpha 2" },
+      ],
+      ["GET", "/api/notes/1003", C],
+    ]);
+    expect(planOf(stateOf(shownBefore), "post_drafts_publish")).toMatchObject({
+      effect: "none",
+      reason: "no-state-target",
+    });
+    expect(planOf(stateOf(published([])), "post_drafts_publish")).toMatchObject(
+      { effect: "create" },
+    );
+  });
+
+  /** A create linked under project 11, then a call for project 12, whose note a later item read and delete show. */
+  const otherProject = (): TimedCaptureRow[] => {
+    const D = note(1004, "Delta");
+    return [
+      ["GET", "/api/projects/11/notes", [A, B]],
+      ["GET", "/api/projects/11/notes/1001", A],
+      ["GET", "/api/projects/11/notes/1002", B],
+      [
+        "POST",
+        "/api/projects/11/publish",
+        { id: 1003 },
+        201,
+        { title: "Gamma" },
+      ],
+      ["GET", "/api/projects/11/notes/1003", C],
+      ["GET", "/api/projects/11/notes", [A, B, C]],
+      ["POST", "/api/projects/12/publish", D, 201, { title: "Delta" }],
+      ["GET", "/api/projects/12/notes/1004", D],
+      ["GET", "/api/projects/11/notes", [A, B, C]],
+      ["DELETE", "/api/projects/12/notes/1004", "", 204],
+      ["GET", "/api/projects/12/notes/1004", { error: "Not found" }, 404],
+    ];
+  };
+
+  it("puts no linked create's call that sends other path arguments into the linked collection", () => {
+    // Project 12's note never reaches project 11, so the later read of project 11 confirms the create.
+    expect(
+      planOf(stateOf(otherProject()), "post_projects_publish_by_id"),
+    ).toMatchObject({
+      served: true,
+      collection: "/api/projects/11/notes",
+      checked_record_ordinals: [5],
+      contradicted_by: null,
+    });
+  });
+
+  it("takes the entity such a call made when a read first shows it", () => {
+    expect(
+      planOf(stateOf(otherProject()), "delete_projects_notes_by_id_id_2"),
+    ).toMatchObject({ served: true, checked_record_ordinals: [10] });
+  });
+
+  it("links a create whose response names a short id under an identity member", () => {
+    const [one, two, three] = [
+      note(1, "Alpha"),
+      note(2, "Beta"),
+      note(3, "Gamma"),
+    ];
+    const rows = (response: JsonValue): TimedCaptureRow[] => [
+      ["GET", "/api/notes", [one, two]],
+      ["GET", "/api/notes/1", one],
+      ["GET", "/api/notes/2", two],
+      ["POST", "/api/drafts/publish", response, 201, { title: "Gamma" }],
+      ["GET", "/api/notes/3", three],
+      ["GET", "/api/notes", [one, two, three]],
+    ];
+    expect(
+      planOf(stateOf(rows({ id: 3 })), "post_drafts_publish"),
+    ).toMatchObject({ effect: "create", target: "/api/notes", served: true });
+    // A bare or unnamed short scalar may count rather than name, so it links nothing.
+    for (const response of [3, { created: 3 }])
+      expect(
+        planOf(stateOf(rows(response)), "post_drafts_publish"),
+      ).toMatchObject({ effect: "none", reason: "no-state-target" });
+  });
+
+  it("links a short id to no type that no read showed before the call", () => {
+    // Another type's id 1 may be the one the call returned, so the notes keep their initial reads.
+    const [one, two] = [note(1, "Alpha"), note(2, "Beta")];
+    const state = stateOf([
+      ["POST", "/api/imports", { id: 1 }, 201, { source: "csv" }],
+      ["GET", "/api/notes/1", one],
+      ["GET", "/api/notes", [one, two]],
+    ]);
+    expect(planOf(state, "post_imports")).toMatchObject({
+      effect: "none",
+      reason: "no-state-target",
+    });
+    expect(notesOf(state)).toEqual(["1", "2"]);
+  });
+
+  it("links no create whose returned id the initial state holds", () => {
+    const held = stateOf([
+      ["GET", "/api/notes", [A, B, C]],
+      ["GET", "/api/notes/1001", A],
+      ["POST", "/api/drafts/publish", { id: 1003 }, 201, { title: "Gamma" }],
+      ["GET", "/api/notes/1003", C],
+    ]);
+    expect(planOf(held, "post_drafts_publish")).toMatchObject({
+      effect: "none",
+      reason: "no-state-target",
+    });
+    expect(notesOf(held)).toEqual(["1001", "1002", "1003"]);
+    expect(planOf(stateOf(published([])), "post_drafts_publish")).toMatchObject(
+      { effect: "create" },
+    );
+  });
+});
+
+describe("creates a later write may explain", () => {
+  it("links no create past a later write, which may have made what the read shows", () => {
+    const drafted = (publish: boolean): TimedCaptureRow[] => [
+      ["GET", "/api/notes", [A, B]],
+      ["GET", "/api/notes/1001", A],
+      ["GET", "/api/notes/1002", B],
+      ["POST", "/api/drafts", C, 201, { title: "Gamma" }],
+      ...(publish
+        ? ([
+            [
+              "POST",
+              "/api/drafts/1003/publish",
+              { id: 1003, status: "published" },
+              201,
+            ],
+          ] as TimedCaptureRow[])
+        : []),
+      ["GET", "/api/notes/1003", C],
+      ["GET", "/api/notes", [A, B, C]],
+    ];
+    const state = stateOf(drafted(true));
+    // The publish call made the note, so the draft's POST creates none.
+    expect(planOf(state, "post_drafts")).toMatchObject({
+      effect: "none",
+      reason: "no-state-target",
+    });
+    expect(
+      state.writes.find((plan) => plan.tool !== "post_drafts"),
+    ).toMatchObject({ effect: "create", target: "/api/notes" });
+    expect(planOf(stateOf(drafted(false)), "post_drafts")).toMatchObject({
+      effect: "create",
+      target: "/api/notes",
+    });
+  });
+});
+
+describe("state order after a variant line is dropped", () => {
+  it("orders entities by the lines left, so a plain list listing them in another order lists them all", () => {
+    const view = stateOf([
+      [
+        "GET",
+        "/api/books?expand=shelf",
+        [expandedBook(SECOND_BOOK), expandedBook(FIRST_BOOK)],
+      ],
+      ["GET", "/api/books", [FIRST_BOOK, SECOND_BOOK]],
+    ]).views.find((candidate) => candidate.tool === "get_books");
+    expect(view).toMatchObject({
+      shape: "list",
+      membership: "all",
+      projected_record_ordinals: [0],
+    });
+  });
+});
+
+describe("item lines first recorded after a write", () => {
+  it("replays an item line that shows another representation, though first recorded after a write", () => {
+    const created = book(3, "Third Book", bookClock(4));
+    const state = stateOf([
+      ["GET", "/api/books", [FIRST_BOOK, SECOND_BOOK]],
+      ["GET", "/api/books/1", FIRST_BOOK],
+      ["GET", "/api/books/2", SECOND_BOOK],
+      ["POST", "/api/books", created, 201, { name: "Third Book" }],
+      ["GET", "/api/books/3", created],
+      ["GET", "/api/books/1?expand=shelf", expandedBook(FIRST_BOOK)],
+    ]);
+    expect(
+      state.views.find((view) => view.tool === "get_books_by_id"),
+    ).toMatchObject({
+      projected_record_ordinals: [5],
+      projected_query_keys: [{ name: "expand" }],
+    });
+  });
+});
+
+describe("item lines first recorded after a write, against the lines left", () => {
+  const created = book(3, "Third Book", bookClock(4));
+  const lines = (late: TimedCaptureRow): TimedCaptureRow[] => [
+    ["GET", "/api/books", [FIRST_BOOK, SECOND_BOOK]],
+    ["GET", "/api/books/1", FIRST_BOOK],
+    ["GET", "/api/books/2", SECOND_BOOK],
+    ["GET", "/api/books/1?expand=shelf", expandedBook(FIRST_BOOK)],
+    ["POST", "/api/books", created, 201, { name: "Third Book" }],
+    ["GET", "/api/books/3", created],
+    late,
+  ];
+  const itemView = (rows: TimedCaptureRow[]) =>
+    stateOf(rows).views.find((view) => view.tool === "get_books_by_id");
+
+  it("compares a later line with the lines left after variants are dropped, not the dropped ones", () => {
+    // The early `expand` line is dropped as a variant, so `include` shows a shelf the lines left never show.
+    expect(
+      itemView(
+        lines(["GET", "/api/books/2?include=shelf", expandedBook(SECOND_BOOK)]),
+      ),
+    ).toMatchObject({
+      projected_record_ordinals: [3, 6],
+      projected_query_keys: expect.arrayContaining([{ name: "include" }]),
+    });
+  });
+
+  it("replays a later selection of some fields that keeps the identity but leaves members out", () => {
+    expect(
+      itemView(
+        lines([
+          "GET",
+          "/api/books/2?fields=id,name",
+          { id: 2, name: "Second Book" },
+        ]),
+      ),
+    ).toMatchObject({
+      projected_record_ordinals: [3, 6],
+      projected_query_keys: expect.arrayContaining([{ name: "fields" }]),
+    });
+  });
+});
+
+describe("reads overlapping a linked create", () => {
+  it("links a create whose id only a list still running when it began showed before", () => {
+    const state = stateOf([
+      ["GET", "/api/notes", [A, B]],
+      ["GET", "/api/notes/1001", A],
+      ["GET", "/api/notes/1002", B],
+      // Begun before the publish and finished after it, so it may show what the publish made.
+      ["GET", "/api/notes", [A, B, C], 200, undefined, 2500],
+      ["POST", "/api/drafts/publish", { id: 1003 }, 201, { title: "Gamma" }],
+      ["GET", "/api/notes/1003", C],
+      ["GET", "/api/notes", [A, B, C]],
+    ]);
+    expect(planOf(state, "post_drafts_publish")).toMatchObject({
+      effect: "create",
+      target: "/api/notes",
+    });
+    expect(notesOf(state)).toEqual(["1001", "1002"]);
+  });
+});
+
+describe("earlier reads of the returned id under other types", () => {
+  it("links a create whose id an earlier read of another type named", () => {
+    const user = { id: 1003, login: "gamma" };
+    const state = stateOf([
+      ["GET", "/api/users/1003", user],
+      ["GET", "/api/notes", [A, B]],
+      ["GET", "/api/notes/1001", A],
+      ["GET", "/api/notes/1002", B],
+      ["POST", "/api/drafts/publish", { id: 1003 }, 201, { title: "Gamma" }],
+      ["GET", "/api/notes/1003", C],
+      ["GET", "/api/notes", [A, B, C]],
+    ]);
+    expect(planOf(state, "post_drafts_publish")).toMatchObject({
+      effect: "create",
+      target: "/api/notes",
+    });
+  });
+});
+
+describe("item reads that show no entity", () => {
+  it("links a create past a read of its id that answered JSON null under another type", () => {
+    const user = (id: number, login: string) => ({ id, login });
+    const state = stateOf([
+      ["GET", "/api/notes", [A, B]],
+      ["GET", "/api/notes/1001", A],
+      ["GET", "/api/notes/1002", B],
+      ["GET", "/api/users/1001", user(1001, "alpha")],
+      // Ends the users' initial reads, so the null read below plans nothing.
+      [
+        "PATCH",
+        "/api/users/1001",
+        user(1001, "alpha2"),
+        200,
+        { login: "alpha2" },
+      ],
+      ["POST", "/api/drafts/publish", { id: 1003 }, 201, { title: "Gamma" }],
+      ["GET", "/api/users/1003", null],
+      ["GET", "/api/notes/1003", C],
+      ["GET", "/api/notes", [A, B, C]],
+    ]);
+    expect(planOf(state, "post_drafts_publish")).toMatchObject({
+      effect: "create",
+      target: "/api/notes",
+    });
+  });
+});
+
+describe("what a linked create observes", () => {
+  it("observes a linked create only in a read of an id its response named, inside an envelope too", () => {
+    const D = note(1004, "Delta");
+    const state = stateOf([
+      ["GET", "/api/notes", [A, B]],
+      ["GET", "/api/notes/1001", A],
+      ["GET", "/api/notes/1002", B],
+      [
+        "POST",
+        "/api/drafts/publish",
+        { data: { id: 1003 } },
+        201,
+        { title: "Gamma" },
+      ],
+      // Another note the state never held, which the publish did not make.
+      ["GET", "/api/notes/1004", D],
+      ["GET", "/api/notes/1003", C],
+    ]);
+    expect(planOf(state, "post_drafts_publish")).toMatchObject({
+      effect: "create",
+      target: "/api/notes",
+      observation: { ordinal: 5 },
+    });
+  });
+});
+
+describe("creates whose returned id an earlier read showed", () => {
+  it("links no create whose returned id a list of its collection showed before it", () => {
+    const listed = (shown: JsonValue[]): TimedCaptureRow[] =>
+      published([
+        [
+          "PATCH",
+          "/api/notes/1001",
+          note(1001, "Alpha 2"),
+          200,
+          { title: "Alpha 2" },
+        ],
+        ["GET", "/api/notes?include=archived", shown],
+      ]);
+    const alpha = note(1001, "Alpha 2");
+    expect(
+      planOf(stateOf(listed([alpha, B, C])), "post_drafts_publish"),
+    ).toMatchObject({ effect: "none", reason: "no-state-target" });
+    expect(
+      planOf(stateOf(listed([alpha, B])), "post_drafts_publish"),
+    ).toMatchObject({ effect: "create", target: "/api/notes" });
+  });
+});
+
+describe("lines left to replay", () => {
+  it("plans a list past a line that asks for some fields only and leaves the proved id out", () => {
+    const created = book(3, "Third Book", bookClock(4));
+    const state = stateOf([
+      ["GET", "/api/books", [FIRST_BOOK, SECOND_BOOK]],
+      [
+        "GET",
+        "/api/books?fields=name",
+        [{ name: "First Book" }, { name: "Second Book" }],
+      ],
+      ["GET", "/api/books/1", FIRST_BOOK],
+      ["GET", "/api/books/2", SECOND_BOOK],
+      ["POST", "/api/books", created, 201, { name: "Third Book" }],
+      ["GET", "/api/books", [FIRST_BOOK, SECOND_BOOK, created]],
+    ]);
+    expect(state.views.find((view) => view.tool === "get_books")).toMatchObject(
+      {
+        shape: "list",
+        checked_record_ordinals: [0],
+        projected_record_ordinals: [1],
+        projected_query_keys: [{ name: "fields" }],
+      },
+    );
+    expect(planOf(state, "post_books")).toMatchObject({
+      served: true,
+      checked_record_ordinals: [5],
+    });
+  });
+
+  it("checks a list line asking for every field beside the plain one, as serving answers both from the state", () => {
+    const created = book(3, "Third Book", bookClock(4));
+    const state = stateOf([
+      ["GET", "/api/books", [FIRST_BOOK, SECOND_BOOK]],
+      ["GET", "/api/books?fields=*", [FIRST_BOOK, SECOND_BOOK]],
+      ["GET", "/api/books/1", FIRST_BOOK],
+      ["GET", "/api/books/2", SECOND_BOOK],
+      ["POST", "/api/books", created, 201, { name: "Third Book" }],
+      ["GET", "/api/books?fields=*", [FIRST_BOOK, SECOND_BOOK, created]],
+    ]);
+    const view = state.views.find(
+      (candidate) => candidate.tool === "get_books",
+    );
+    expect(view).toMatchObject({
+      shape: "list",
+      checked_record_ordinals: [0, 1],
+    });
+    expect(view).not.toHaveProperty("projected_record_ordinals");
+    expect(planOf(state, "post_books")).toMatchObject({
+      served: true,
+      checked_record_ordinals: [5],
+    });
+  });
+
+  it("keeps a list's whole line when only a replayed line's membership changed across a write", () => {
+    // The expanded line lists shelved books only; the whole list still shows both after the export.
+    const view = stateOf([
+      ["GET", "/api/books/1", FIRST_BOOK],
+      ["GET", "/api/books/2", SECOND_BOOK],
+      [
+        "GET",
+        "/api/books?expand=shelf",
+        [FIRST_BOOK, SECOND_BOOK].map(expandedBook),
+      ],
+      ["POST", "/api/exports", { queued: true }, 202, { format: "csv" }],
+      ["GET", "/api/books?expand=shelf", [expandedBook(FIRST_BOOK)]],
+      ["GET", "/api/books", [FIRST_BOOK, SECOND_BOOK]],
+    ]).views.find((candidate) => candidate.tool === "get_books");
+    expect(view).toMatchObject({
+      shape: "list",
+      checked_record_ordinals: [5],
+      projected_record_ordinals: [4],
+      projected_query_keys: [{ name: "expand" }],
+    });
+  });
+});
+
+describe("field selections the gate reads as serving answers them", () => {
+  it("approves no create from a read serving replays, a selection no checked line gave", () => {
+    const state = stateOf([
+      ["GET", "/api/books/1?fields=*", FIRST_BOOK],
+      ["GET", "/api/books/2?fields=*", SECOND_BOOK],
+      ["GET", "/api/books/2?fields=name", { name: "Second Book" }],
+      ["POST", "/api/books", THIRD_BOOK, 201, { name: "Third Book" }],
+      [
+        "GET",
+        "/api/books/3?fields=id,name,slug,created_at,updated_at",
+        THIRD_BOOK,
+      ],
+    ]);
+    expect(
+      state.views.find((view) => view.tool === "get_books_by_id"),
+    ).toMatchObject({
+      projected_query_keys: [{ name: "fields", value: "name" }],
+    });
+    expect(planOf(state, "post_books")).toMatchObject({
+      served: false,
+      reason: "unconfirmed",
+    });
+  });
+
+  it("checks an update against a read of every field, which serving answers from the state", () => {
+    const state = stateOf([
+      ...BOOK_INIT_ROWS,
+      ["GET", "/api/books/2?fields=name", { name: "Second Book" }],
+      ["PATCH", "/api/books/1", RENAMED_BOOK, 200, { name: "Renamed Book" }],
+      ["GET", "/api/books/1?fields=*", FIRST_BOOK],
+      ["GET", "/api/books/1", RENAMED_BOOK],
+    ]);
+    expect(
+      state.views.find((view) => view.tool === "get_books_by_id"),
+    ).toMatchObject({ projected_query_keys: [{ name: "fields" }] });
+    expect(planOf(state, "patch_books_by_id")).toMatchObject({
+      served: false,
+      reason: "contradicted",
+      contradicted_by: 5,
+    });
+  });
+});
+
+/** A create and an update whose bodies and responses wrap the book in a one-element array. */
+const ENVELOPED_ROWS: readonly TimedCaptureRow[] = [
+  ...BOOK_INIT_ROWS,
+  [
+    "POST",
+    "/api/books",
+    { books: [THIRD_BOOK] },
+    201,
+    { books: [{ name: "Third Book" }] },
+  ],
+  ["GET", "/api/books/3", THIRD_BOOK],
+  [
+    "PATCH",
+    "/api/books/1",
+    { books: [RENAMED_BOOK] },
+    200,
+    { books: [{ name: "Renamed Book" }] },
+  ],
+  ["GET", "/api/books/1", RENAMED_BOOK],
+];
+
+/** A card whose edit info an update restamps: its response and its read-back name instants milliseconds apart. */
+const cardEdit = (milliseconds: number) => ({
+  at: new Date(Date.parse(bookClock(3)) + milliseconds).toISOString(),
+  by: "rea",
+});
+const FIRST_CARD = {
+  id: 1,
+  name: "First Card",
+  edit: { at: "2026-10-01T09:00:00.000Z", by: "rea" },
+};
+const SECOND_CARD = { ...FIRST_CARD, id: 2, name: "Second Card" };
+
+describe("values an application stamps", () => {
+  it("serves a create and an update whose bodies wrap the book in a one-element array, as the capture sent them", () => {
+    const state = stateOf(ENVELOPED_ROWS);
+    expect(planOf(state, "post_books")).toMatchObject({
+      served: true,
+      body: { accepted: ["name"], envelope: "books" },
+    });
+    expect(planOf(state, "patch_books_by_id")).toMatchObject({
+      served: true,
+      body: { accepted: ["name"], envelope: "books" },
+    });
+  });
+
+  it("serves an update that restamps a nested clock, storing the instant its read-back shows", () => {
+    const edited = { ...FIRST_CARD, name: "First Card (edited)" };
+    const state = stateOf([
+      ["GET", "/api/cards", [FIRST_CARD, SECOND_CARD]],
+      ["GET", "/api/cards/1", FIRST_CARD],
+      ["GET", "/api/cards/2", SECOND_CARD],
+      [
+        "PUT",
+        "/api/cards/1",
+        { ...edited, edit: cardEdit(64) },
+        200,
+        { name: "First Card (edited)" },
+      ],
+      ["GET", "/api/cards/1", { ...edited, edit: cardEdit(53) }],
+    ]);
+    expect(planOf(state, "put_cards_by_id")).toMatchObject({
+      served: true,
+      rules: expect.arrayContaining([
+        expect.objectContaining({
+          field: "edit",
+          rule: "nested-clock",
+          members: ["at"],
+        }),
+      ]),
+    });
+  });
+
+  it("serves creates whose read-backs store a nested clock at another instant than their responses spell", () => {
+    // Each response stamps the edit in milliseconds; its read-back stores microseconds a few milliseconds earlier.
+    const card = (id: number, seconds: number, at: string) => ({
+      id,
+      name: `Card ${String(id)}`,
+      edit: { at, by: "rea" },
+    });
+    const answered = (seconds: number) =>
+      new Date(Date.parse(bookClock(seconds)) + 30).toISOString();
+    const stored = (seconds: number, micro: string) =>
+      `${bookClock(seconds).slice(0, -1)}.${micro}Z`;
+    const state = stateOf([
+      ["GET", "/api/cards", [FIRST_CARD, SECOND_CARD]],
+      ["GET", "/api/cards/1", FIRST_CARD],
+      ["GET", "/api/cards/2", SECOND_CARD],
+      ["POST", "/api/cards", card(3, 3, answered(3)), 201, { name: "Card 3" }],
+      ["GET", "/api/cards/3", card(3, 3, stored(3, "020123"))],
+      ["POST", "/api/cards", card(4, 5, answered(5)), 201, { name: "Card 4" }],
+      ["GET", "/api/cards/4", card(4, 5, stored(5, "021456"))],
+    ]);
+    expect(planOf(state, "post_cards")).toMatchObject({
+      served: true,
+      checked_record_ordinals: [4, 6],
+      rules: expect.arrayContaining([
+        expect.objectContaining({ field: "edit", rule: "nested-clock" }),
+      ]),
+    });
+  });
+});
+
+describe("nested clocks another recorded call kept", () => {
+  const CARD_INIT_ROWS: TimedCaptureRow[] = [
+    ["GET", "/api/cards", [FIRST_CARD, SECOND_CARD]],
+    ["GET", "/api/cards/1", FIRST_CARD],
+    ["GET", "/api/cards/2", SECOND_CARD],
+  ];
+  /** The first card renamed, with its edit stamped 64 ms into the given exchange's second, or kept as it was. */
+  const card = (name: string, stampedAt?: number) => ({
+    ...FIRST_CARD,
+    name,
+    edit:
+      stampedAt === undefined
+        ? FIRST_CARD.edit
+        : {
+            at: new Date(Date.parse(bookClock(stampedAt)) + 64).toISOString(),
+            by: "rea",
+          },
+  });
+  const put = (written: ReturnType<typeof card>): TimedCaptureRow[] => [
+    ["PUT", "/api/cards/1", written, 200, { name: written.name }],
+    ["GET", "/api/cards/1", written],
+  ];
+  const verdictOf = (rows: readonly TimedCaptureRow[]) =>
+    planOf(stateOf([...CARD_INIT_ROWS, ...rows]), "put_cards_by_id");
+
+  it("serves no update whose nested clock another recorded call kept, before or after the call that stamped it", () => {
+    expect(
+      verdictOf([...put(card("Edited", 3)), ...put(card("Renamed", 5))]),
+    ).toMatchObject({ served: true });
+    const stamped = card("Edited", 3);
+    expect(
+      verdictOf([...put(stamped), ...put({ ...stamped, name: "Renamed" })]),
+    ).toMatchObject({ served: false, reason: "unexplained-change" });
+    expect(
+      verdictOf([...put(card("Edited")), ...put(card("Renamed", 5))]),
+    ).toMatchObject({ served: false, reason: "unexplained-change" });
+  });
+});
+
+/** A book with tags, as an application that keeps tags as a set lists them. */
+const tagged = (entry: Book, tags: string[]): Book => ({ ...entry, tags });
+const TAGGED_INIT_ROWS: TimedCaptureRow[] = [
+  [
+    "GET",
+    "/api/books",
+    [tagged(FIRST_BOOK, ["alpha", "beta"]), tagged(SECOND_BOOK, ["gamma"])],
+  ],
+  ["GET", "/api/books/1", tagged(FIRST_BOOK, ["alpha", "beta"])],
+  ["GET", "/api/books/2", tagged(SECOND_BOOK, ["gamma"])],
+  [
+    "PATCH",
+    "/api/books/2",
+    tagged(SECOND_BOOK, ["zeta", "delta"]),
+    200,
+    { tags: ["zeta", "delta"] },
+  ],
+];
+
+describe("array fields a view lists sorted", () => {
+  it("serves an update whose read-back lists the written tags sorted, and every view of the type sorts them", () => {
+    const state = stateOf([
+      ...TAGGED_INIT_ROWS,
+      ["GET", "/api/books/2", tagged(SECOND_BOOK, ["delta", "zeta"])],
+    ]);
+    expect(planOf(state, "patch_books_by_id")).toMatchObject({
+      served: true,
+      checked_record_ordinals: [4],
+    });
+    for (const tool of ["get_books_by_id", "get_books"])
+      expect(state.views.find((view) => view.tool === tool)).toMatchObject({
+        sorted_arrays: ["tags"],
+      });
+  });
+
+  it("learns no sorting from a read after another the gate counted listed the field unsorted", () => {
+    const state = stateOf([
+      ...TAGGED_INIT_ROWS,
+      ["GET", "/api/books/2", tagged(SECOND_BOOK, ["zeta", "delta"])],
+      [
+        "PATCH",
+        "/api/books/1",
+        tagged(FIRST_BOOK, ["omega", "beta"]),
+        200,
+        { tags: ["omega", "beta"] },
+      ],
+      ["GET", "/api/books/1", tagged(FIRST_BOOK, ["beta", "omega"])],
+    ]);
+    expect(planOf(state, "patch_books_by_id")).toMatchObject({
+      served: false,
+      reason: "contradicted",
+    });
+    expect(
+      state.views.find((view) => view.tool === "get_books_by_id"),
+    ).not.toHaveProperty("sorted_arrays");
+  });
+
+  it("learns no sorting from a read whose order fits the values held first, then the new ones as written", () => {
+    // `alpha` was held before the update and `zeta` was not: a store ordering tags by when it made them lists them so too.
+    const state = stateOf([
+      ...TAGGED_INIT_ROWS.slice(0, 3),
+      [
+        "PATCH",
+        "/api/books/2",
+        tagged(SECOND_BOOK, ["zeta", "alpha"]),
+        200,
+        { tags: ["zeta", "alpha"] },
+      ],
+      ["GET", "/api/books/2", tagged(SECOND_BOOK, ["alpha", "zeta"])],
+    ]);
+    expect(planOf(state, "patch_books_by_id")).toMatchObject({
+      served: false,
+      reason: "contradicted",
+    });
+    expect(
+      state.views.find((view) => view.tool === "get_books_by_id"),
+    ).not.toHaveProperty("sorted_arrays");
+  });
+
+  it("keeps the written order a read-back shows, though every initial array was sorted", () => {
+    const state = stateOf([
+      ...TAGGED_INIT_ROWS,
+      ["GET", "/api/books/2", tagged(SECOND_BOOK, ["zeta", "delta"])],
+    ]);
+    expect(planOf(state, "patch_books_by_id")).toMatchObject({
+      served: true,
+      checked_record_ordinals: [4],
+    });
+    expect(
+      state.views.find((view) => view.tool === "get_books_by_id"),
+    ).not.toHaveProperty("sorted_arrays");
+  });
+});
+
+/** A book on a shelf, in a collection per shelf whose ids repeat across shelves. */
+const shelved = (tags: string[]) => ({ id: 1, name: "Shelved Book", tags });
+
+describe("evidence a learned sort keeps answering to", () => {
+  it("drops a sort a view learned once a later counted read lists the field as written", () => {
+    const state = stateOf([
+      ...TAGGED_INIT_ROWS,
+      ["GET", "/api/books/2", tagged(SECOND_BOOK, ["delta", "zeta"])],
+      [
+        "GET",
+        "/api/books",
+        [
+          tagged(FIRST_BOOK, ["alpha", "beta"]),
+          tagged(SECOND_BOOK, ["zeta", "delta"]),
+        ],
+      ],
+    ]);
+    expect(planOf(state, "patch_books_by_id")).toMatchObject({
+      served: true,
+      checked_record_ordinals: [4],
+    });
+    expect(
+      state.views.find((view) => view.tool === "get_books_by_id"),
+    ).toMatchObject({ sorted_arrays: ["tags"] });
+    expect(
+      state.views.find((view) => view.tool === "get_books"),
+    ).not.toHaveProperty("sorted_arrays");
+  });
+
+  it("learns no sorting from another collection's entity under the read's id", () => {
+    // Shelf 1's read-back fits `alpha`, held before the update, then `zeta` as written; shelf 2's book shares its id.
+    const state = stateOf([
+      ["GET", "/api/shelves/1/books", [shelved(["alpha", "beta"])]],
+      ["GET", "/api/shelves/1/books/1", shelved(["alpha", "beta"])],
+      ["GET", "/api/shelves/2/books", [shelved(["beta", "gamma"])]],
+      ["GET", "/api/shelves/2/books/1", shelved(["beta", "gamma"])],
+      [
+        "PATCH",
+        "/api/shelves/1/books/1",
+        shelved(["zeta", "alpha"]),
+        200,
+        { tags: ["zeta", "alpha"] },
+      ],
+      ["GET", "/api/shelves/1/books/1", shelved(["alpha", "zeta"])],
+    ]);
+    expect(state.writes).toEqual([
+      expect.objectContaining({ served: false, reason: "contradicted" }),
+    ]);
+    for (const view of state.views)
+      expect(view).not.toHaveProperty("sorted_arrays");
+  });
+});
+
+describe("initial order", () => {
+  it("orders a collection as a whole list line that applies no sort lists it, after an item read and filtered or sorted lines", () => {
+    const alpha = book(1, "Alpha", "2026-10-01T09:00:00Z");
+    const charlie = book(2, "Charlie", "2026-10-01T10:00:00Z");
+    const bravo = book(3, "Bravo", "2026-10-01T11:00:00Z");
+    const state = stateOf([
+      ["GET", "/api/books/2", charlie],
+      ["GET", "/api/books?name=Alpha", [alpha]],
+      ["GET", "/api/books?ordering=name", [alpha, bravo, charlie]],
+      ["GET", "/api/books", [bravo, alpha, charlie]],
+      ["GET", "/api/books/1", alpha],
+      ["GET", "/api/books/3", bravo],
+    ]);
+    expect(
+      state.entities
+        .filter((entity) => entity.type === "/api/books")
+        .map((entity) => entity.id),
+    ).toEqual(["3", "1", "2"]);
+  });
+});
+
+describe("insert rules the recorded order cannot settle", () => {
+  const listed = (id: string, name: string, created: string) => ({
+    id,
+    name,
+    created_at: created,
+  });
+  const rowsFor = (
+    members: { id: string; name: string; created_at: string }[],
+    created: { id: string; name: string; created_at: string },
+  ): TimedCaptureRow[] => [
+    ["GET", "/api/items", members],
+    ...members.map((member): TimedCaptureRow => [
+      "GET",
+      `/api/items/${member.id}`,
+      member,
+    ]),
+    ["POST", "/api/items", created, 201, { name: created.name }],
+    ["GET", `/api/items/${created.id}`, created],
+  ];
+
+  it("places a create last, not by identity, when its identities are random UUIDs", () => {
+    const at = "2026-10-01T09:00:00Z";
+    const plan = planOf(
+      stateOf(
+        rowsFor(
+          [
+            listed("1c0e8a2b-7f3d-4e9a-b1c2-d3e4f5a6b7c8", "Delta", at),
+            listed("5a6b7c8d-9e0f-4a1b-8c2d-3e4f5a6b7c8d", "Alpha", at),
+            listed("9b2f1c3e-0d4a-4b6e-8f1a-2c3d4e5f6a7b", "Charlie", at),
+          ],
+          listed("e5d6e7f8-1a2b-4c3d-9e4f-5a6b7c8d9e0f", "Echo", bookClock(4)),
+        ),
+      ),
+      "post_items",
+    );
+    expect(plan).toMatchObject({ served: true, insert: { rule: "last" } });
+  });
+
+  it("keeps sorting by an identity a creation clock follows", () => {
+    const plan = planOf(
+      environmentStateViewOf(
+        timedCaptureEvidence(
+          rowsFor(
+            [
+              listed(
+                "6ad47b491023b50001087124",
+                "Alpha",
+                "2026-10-01T09:00:00Z",
+              ),
+              listed(
+                "6ad47b491023b50001087125",
+                "Bravo",
+                "2026-10-01T10:00:00Z",
+              ),
+            ],
+            listed("6ad47b491023b50001087130", "Charlie", bookClock(3)),
+          ),
+        ),
+        ["opaque-token"],
+      ),
+      "post_items",
+    );
+    expect(plan).toMatchObject({
+      served: true,
+      insert: { rule: "sorted", field: "id", direction: "ascending" },
+    });
+  });
+
+  it("places a create last when the orders the list admits put it in different places", () => {
+    const plan = planOf(
+      stateOf(
+        rowsFor(
+          [
+            listed("2", "Alpha", "2026-10-01T10:00:00Z"),
+            listed("1", "Delta", "2026-10-01T09:00:00Z"),
+          ],
+          listed("3", "Bravo", bookClock(3)),
+        ),
+      ),
+      "post_items",
+    );
+    expect(plan).toMatchObject({ served: true, insert: { rule: "last" } });
+  });
+});
+
+/** A task whose modified clock is stored in whole seconds. */
+const task = (id: number, name: string, modifiedAt: string) => ({
+  id,
+  name,
+  modifiedAt,
+});
+const OLD_CLOCK = "2026-10-01T09:00:00Z";
+
+describe("clocks an update may stamp in its own second", () => {
+  const sameSecond: TimedCaptureRow[] = [
+    [
+      "GET",
+      "/api/tasks",
+      [task(1, "First", bookClock(3)), task(2, "Second", OLD_CLOCK)],
+    ],
+    ["GET", "/api/tasks/1", task(1, "First", bookClock(3))],
+    ["GET", "/api/tasks/2", task(2, "Second", OLD_CLOCK)],
+    [
+      "PATCH",
+      "/api/tasks/1",
+      task(1, "Renamed", bookClock(3)),
+      200,
+      { name: "Renamed" },
+    ],
+    ["GET", "/api/tasks/1", task(1, "Renamed", bookClock(3))],
+  ];
+
+  it("confirms no update that left an unsent clock as it was in the second it ran", () => {
+    expect(planOf(stateOf(sameSecond), "patch_tasks_by_id")).toMatchObject({
+      served: false,
+      reason: "unconfirmed",
+    });
+  });
+
+  it("serves the update once another call shows it stamping the clock", () => {
+    const plan = planOf(
+      stateOf([
+        ...sameSecond,
+        [
+          "PATCH",
+          "/api/tasks/2",
+          task(2, "Second (renamed)", bookClock(5)),
+          200,
+          { name: "Second (renamed)" },
+        ],
+        ["GET", "/api/tasks/2", task(2, "Second (renamed)", bookClock(5))],
+      ]),
+      "patch_tasks_by_id",
+    );
+    expect(plan).toMatchObject({
+      served: true,
+      checked_record_ordinals: [4, 6],
+    });
+    expect(plan.rules).toContainEqual(
+      expect.objectContaining({ field: "modifiedAt", rule: "clock" }),
+    );
+  });
+});
+
+/** A book with an `archived` flag, which an item action sets. */
+const withArchived = (entity: Book, archived: boolean): Book => ({
+  ...entity,
+  archived,
+});
+
+/** A post whose `status` goes with whether it has a publication clock. */
+const post = (id: number, status: string, publishedAt: string | null) => ({
+  id,
+  title: `Post ${id}`,
+  status,
+  published_at: publishedAt,
+});
+
+describe("recorded calls serving would refuse", () => {
+  it("serves no action that only a call sent with another query showed setting its field", () => {
+    const archived = withArchived(FIRST_BOOK, true);
+    // Serving pins toggle=true, so the call sent with toggle=false shows nothing of what serving does.
+    const plan = planOf(
+      stateOf([
+        [
+          "GET",
+          "/api/books",
+          [withArchived(FIRST_BOOK, false), withArchived(SECOND_BOOK, false)],
+        ],
+        ["GET", "/api/books/1", withArchived(FIRST_BOOK, false)],
+        ["GET", "/api/books/2", withArchived(SECOND_BOOK, false)],
+        ["POST", "/api/books/1/archive?toggle=true", archived],
+        ["GET", "/api/books/1", archived],
+        ["POST", "/api/books/1/archive?toggle=false", archived],
+        ["GET", "/api/books/1", archived],
+      ]),
+      "post_books_archive_by_id",
+    );
+    expect(plan).toMatchObject({ served: false, reason: "unconfirmed" });
+  });
+
+  it("confirms no document write by a call sent with another query than serving pins", () => {
+    // The dry run changed nothing; the read after the real call shows only what that call did.
+    const plan = planOf(
+      stateOf([
+        ["GET", "/api/settings", { theme: "light", lang: "en" }],
+        [
+          "PATCH",
+          "/api/settings?dry_run=true",
+          { theme: "dark", lang: "en" },
+          200,
+          { theme: "dark" },
+        ],
+        [
+          "PATCH",
+          "/api/settings?dry_run=false",
+          { theme: "dark", lang: "en" },
+          200,
+          { theme: "dark" },
+        ],
+        ["GET", "/api/settings", { theme: "dark", lang: "en" }],
+      ]),
+      "patch_settings",
+    );
+    expect(plan).toMatchObject({ served: false, checked_record_ordinals: [] });
+  });
+
+  it("confirms no delete by a call sent with another query than serving pins", () => {
+    const plan = planOf(
+      stateOf([
+        ...BOOK_INIT_ROWS,
+        ["DELETE", "/api/books/2?dry_run=true", "", 204],
+        ["DELETE", "/api/books/1?dry_run=false", "", 204],
+        ["GET", "/api/books/1", BOOK_NOT_FOUND, 404],
+      ]),
+      "delete_books_by_id",
+    );
+    expect(plan).toMatchObject({ served: false, checked_record_ordinals: [] });
+  });
+
+  it("keeps a create's dependent state pinned when another call does not prove its result", () => {
+    const draft = post(3, "draft", null);
+    const sent = { title: "Post 3", status: "draft" };
+    const others: TimedCaptureRow[] = [
+      ["POST", "/api/posts", { detail: "Invalid." }, 422, { status: "x" }],
+      ["POST", "/api/posts", "", 204, { title: "Post 4", status: "published" }],
+      [
+        "POST",
+        "/api/posts?import=true",
+        post(4, "published", bookClock(6)),
+        201,
+        { title: "Post 4", status: "published" },
+      ],
+    ];
+    for (const other of others) {
+      const plan = planOf(
+        stateOf([
+          [
+            "GET",
+            "/api/posts",
+            [
+              post(1, "published", "2026-10-01T09:00:00Z"),
+              post(2, "published", "2026-10-01T10:00:00Z"),
+            ],
+          ],
+          ["GET", "/api/posts/1", post(1, "published", "2026-10-01T09:00:00Z")],
+          ["GET", "/api/posts/2", post(2, "published", "2026-10-01T10:00:00Z")],
+          ["POST", "/api/posts", draft, 201, sent],
+          ["GET", "/api/posts/3", draft],
+          other,
+        ]),
+        "post_posts",
+      );
+      expect(plan.served, other[1]).toBe(true);
+      expect(plan.body?.fixed, other[1]).toEqual([
+        { member: "status", sent: "draft" },
+      ]);
+    }
+  });
+});
+
+it.each(["__proto__", "constructor"])(
+  "learns a confirmed update of an own %s field",
+  (field) => {
+    const initial = {
+      id: 1,
+      name: "One",
+      ...Object.fromEntries([[field, { label: "old" }]]),
+    };
+    const body = Object.fromEntries([[field, { label: "stored" }]]);
+    const updated = { ...initial, ...body };
+    const state = stateOf([
+      ["GET", "/api/items", [initial, { id: 2, name: "Two" }]],
+      ["GET", "/api/items/1", initial],
+      ["PATCH", "/api/items/1", updated, 200, body],
+      ["GET", "/api/items/1", updated],
+    ]);
+    expect(planOf(state, "patch_items_by_id")).toMatchObject({
+      served: true,
+      rules: expect.arrayContaining([{ rule: "echo", field }]),
+    });
+  },
+);

@@ -17,7 +17,7 @@ import {
   STATIC_ROUTE_CALL_NAMES,
   stringValue,
 } from "./javascriptStaticAnalysisHelpers.js";
-import { traverseJavaScriptAstSteps } from "./javascriptSemanticTraversal.js";
+import { traverseJavaScriptValueAstSteps } from "./javascriptSemanticTraversal.js";
 import {
   semanticStableInitializer,
   type JavaScriptBindingIndex,
@@ -250,6 +250,8 @@ export class JavaScriptRouteScan {
   };
   readonly #rejected = new WeakSet<t.Node>();
   readonly #seen = new Set<string>();
+  readonly #nextPaths: { value: string; node: t.Node; computed: boolean }[] =
+    [];
   readonly #literalPaths: { value: string; node: t.Node }[] = [];
   readonly #propertyValues = new WeakSet<t.Node>();
   readonly #dynamicValues = new WeakMap<t.Node, DynamicRouteValueOwner>();
@@ -310,27 +312,33 @@ export class JavaScriptRouteScan {
         return;
       if (this.#queue(node)) requests.push({ node, site });
     };
-    yield* traverseJavaScriptAstSteps(root, {
-      skip: () => this.#result.capacity !== null,
-      enter: (node) => {
-        if (t.isCallExpression(node) || t.isOptionalCallExpression(node)) {
-          const parts = calleeName(node.callee).split(".");
-          if (navigationRecognition(parts.at(-1)!, parts.at(-2) ?? "") !== true)
-            return;
-          const first = node.arguments[0];
-          if (
-            first !== undefined &&
-            !t.isSpreadElement(first) &&
-            !t.isArgumentPlaceholder(first)
+    yield* traverseJavaScriptValueAstSteps(
+      root,
+      this.index.bindings.erasedSyntaxNodes,
+      {
+        skip: () => this.#result.capacity !== null,
+        enter: (node) => {
+          if (t.isCallExpression(node) || t.isOptionalCallExpression(node)) {
+            const parts = calleeName(node.callee).split(".");
+            if (
+              navigationRecognition(parts.at(-1)!, parts.at(-2) ?? "") !== true
+            )
+              return;
+            const first = node.arguments[0];
+            if (
+              first !== undefined &&
+              !t.isSpreadElement(first) &&
+              !t.isArgumentPlaceholder(first)
+            )
+              remember(first, node);
+          } else if (
+            t.isObjectProperty(node) &&
+            semanticStaticPropertyName(node.key, node.computed) === "href"
           )
-            remember(first, node);
-        } else if (
-          t.isObjectProperty(node) &&
-          semanticStaticPropertyName(node.key, node.computed) === "href"
-        )
-          remember(node.value, node);
+            remember(node.value, node);
+        },
       },
-    });
+    );
     if (requests.length === 0 || this.#result.capacity !== null) return;
     yield* this.index.indexMemberMutationFactsSteps();
     for (const { node, site } of requests) {
@@ -382,87 +390,93 @@ export class JavaScriptRouteScan {
         structured: true,
         reported: true,
       };
-      yield* traverseJavaScriptAstSteps(value, {
-        skip: (node) =>
-          this.#result.capacity !== null ||
-          isRouteValueBoundary(node, true) ||
-          seen.has(node),
-        enter: (node, parent) => {
-          if (node !== value) {
-            if (!this.#queue(node)) return;
-            seen.add(node);
-          }
-          this.#dynamicValues.set(node, owner);
-          let overwritten = false;
-          if (
-            t.isObjectProperty(node) &&
-            !isObjectPrototypeSetter(node) &&
-            t.isObjectExpression(parent)
-          ) {
-            const key = semanticStaticPropertyKey(node.key, node.computed);
-            if (key !== null) {
-              const fields = this.#fields(parent);
-              const effective = fields.values.get(key);
-              // Unknown spreads/keys may preserve earlier data. Only a known
-              // final slot or method proves that this reference was discarded.
-              overwritten =
-                fields.dynamicNames.has(key) ||
-                (effective !== undefined && effective !== node);
+      yield* traverseJavaScriptValueAstSteps(
+        value,
+        this.index.bindings.erasedSyntaxNodes,
+        {
+          skip: (node) =>
+            this.#result.capacity !== null ||
+            isRouteValueBoundary(node, true) ||
+            seen.has(node),
+          enter: (node, parent) => {
+            if (node !== value) {
+              if (!this.#queue(node)) return;
+              seen.add(node);
             }
-          }
-          const nonValue =
-            overwritten ||
-            t.isTSType(node) ||
-            !isNavigationDataEdge(node, parent) ||
-            (parent !== null && nonValueReferences.has(parent));
-          if (nonValue) nonValueReferences.add(node);
-          if (
-            !nonValue &&
-            (t.isMemberExpression(node) || t.isOptionalMemberExpression(node))
-          ) {
-            for (const selected of this.#memberValues(node)) admit(selected);
-          }
-          if (
-            nonValue ||
-            !t.isIdentifier(node) ||
-            (parent !== null && !t.isReferenced(node, parent))
-          )
-            return;
-          const declared = this.index.bindingForReferenceAt(node);
-          if (declared === undefined) return;
-          for (const sources of [
-            declared.initializers,
-            declared.referenceInitializers,
-          ])
-            for (const source of sources) if (!this.#queue(source.node)) return;
-          // Different reads may select different values; unresolved order
-          // retains its possible sources instead of becoming absence.
-          const binding = semanticBindingAtRead(
-            declared,
-            node,
-            this.index.bindings.parentsByNode,
-          ).binding;
-          for (const initializers of [
-            binding.initializers,
-            binding.referenceInitializers,
-          ])
-            for (const initializer of initializers) {
-              if (
-                semanticReferenceSourcesInactive(
-                  initializer,
-                  this.index.bindings,
+            this.#dynamicValues.set(node, owner);
+            let overwritten = false;
+            if (
+              t.isObjectProperty(node) &&
+              !isObjectPrototypeSetter(node) &&
+              t.isObjectExpression(parent)
+            ) {
+              const key = semanticStaticPropertyKey(node.key, node.computed);
+              if (key !== null) {
+                const fields = this.#fields(parent);
+                const effective = fields.values.get(key);
+                // Unknown spreads/keys may preserve earlier data. Only a known
+                // final slot or method proves that this reference was discarded.
+                overwritten =
+                  fields.dynamicNames.has(key) ||
+                  (effective !== undefined && effective !== node);
+              }
+            }
+            const nonValue =
+              overwritten ||
+              t.isTSType(node) ||
+              !isNavigationDataEdge(node, parent) ||
+              (parent !== null && nonValueReferences.has(parent));
+            if (nonValue) nonValueReferences.add(node);
+            if (
+              !nonValue &&
+              (t.isMemberExpression(node) || t.isOptionalMemberExpression(node))
+            ) {
+              for (const selected of this.#memberValues(node)) admit(selected);
+            }
+            if (
+              nonValue ||
+              !t.isIdentifier(node) ||
+              (parent !== null && !t.isReferenced(node, parent))
+            )
+              return;
+            const declared = this.index.bindingForReferenceAt(node);
+            if (declared === undefined) return;
+            for (const sources of [
+              declared.initializers,
+              declared.referenceInitializers,
+            ])
+              for (const source of sources)
+                if (!this.#queue(source.node)) return;
+            // Different reads may select different values; unresolved order
+            // retains its possible sources instead of becoming absence.
+            const binding = semanticBindingAtRead(
+              declared,
+              node,
+              this.index.bindings.parentsByNode,
+            ).binding;
+            for (const initializers of [
+              binding.initializers,
+              binding.referenceInitializers,
+            ])
+              for (const initializer of initializers) {
+                if (
+                  semanticReferenceSourcesInactive(
+                    initializer,
+                    this.index.bindings,
+                  )
                 )
-              )
-                continue;
-              for (const selected of this.#initializerValues(initializer))
-                admit(selected);
-            }
+                  continue;
+                for (const selected of this.#initializerValues(initializer))
+                  admit(selected);
+              }
+          },
         },
-      });
+      );
     }
   }
 
   inspect(node: t.Node, parent: t.Node | null): void {
+    if (this.index.bindings.erasedSyntaxNodes.has(node)) return;
     const expressionParent =
       parent === null ? null : (this.#expressionParents.get(parent) ?? parent);
     if (
@@ -533,34 +547,36 @@ export class JavaScriptRouteScan {
       }
       const value = stringValue(node);
       if (value === undefined) return;
-      const next = classifyNextAppRoutePath(value);
-      if (
+      const reference =
+        expressionParent !== null &&
+        (t.isImportDeclaration(expressionParent) ||
+          t.isExportNamedDeclaration(expressionParent) ||
+          t.isExportAllDeclaration(expressionParent) ||
+          t.isImportExpression(expressionParent) ||
+          t.isCallExpression(expressionParent) ||
+          t.isOptionalCallExpression(expressionParent) ||
+          t.isNewExpression(expressionParent));
+      const next = classifyNextAppRoutePath(
+        value,
+        reference
+          ? { kind: "source-reference" }
+          : { kind: "source-literal", runtime: "unknown" },
+      );
+      const computed =
         (t.isBinaryExpression(expressionParent) &&
           expressionParent.operator === "+") ||
         (t.isTemplateLiteral(expressionParent) &&
-          expressionParent.expressions.length > 0)
-      ) {
-        if (next !== undefined)
-          this.#unknown(
-            "next-app-chunk",
-            expressionParent!,
-            "The module filename is part of a computed expression; a complete page path remains unknown.",
-          );
-        return;
-      }
-      if (next?.kind === "unknown") {
-        this.#unknown("next-app-chunk", node, next.reason);
-        return;
-      }
-      if (next?.kind === "known")
-        this.#emit(
-          next.path,
-          "next-app-chunk",
-          [{ value, location: range(node), origin: "next-app-path" }],
+          expressionParent.expressions.length > 0);
+      if (next !== undefined && this.#queue(node, value))
+        this.#nextPaths.push({
+          value,
           node,
-          false,
-        );
+          computed,
+        });
       if (
+        !computed &&
+        !reference &&
+        next === undefined &&
         !this.#propertyValues.has(node) &&
         routePath(value) !== undefined &&
         this.#queue(node, value)
@@ -703,6 +719,30 @@ export class JavaScriptRouteScan {
   *finishSteps(): Generator<void, JavaScriptRouteSourceFacts> {
     const index = this.index;
     if (this.#result.capacity !== null) return this.#result;
+    for (const { value, node, computed } of this.#nextPaths) {
+      yield;
+      if (this.#result.capacity !== null) return this.#result;
+      const next = classifyNextAppRoutePath(value, {
+        kind: "source-literal",
+        runtime: this.#nextRuntime ? "next" : "unknown",
+      });
+      if (computed) {
+        this.#unknown(
+          "next-app-chunk",
+          node,
+          "The module filename is part of a computed expression; a complete page path remains unknown.",
+        );
+      } else if (next?.kind === "unknown")
+        this.#unknown("next-app-chunk", node, next.reason);
+      else if (next?.kind === "known")
+        this.#emit(
+          next.path,
+          "next-app-chunk",
+          [{ value, location: range(node), origin: "next-app-path" }],
+          node,
+          false,
+        );
+    }
     if (
       this.#calls.length > 0 ||
       this.#automaticRoots.size > 0 ||
@@ -791,11 +831,7 @@ export class JavaScriptRouteScan {
       // Decide generic-constant admission only after all specific owners finish.
       if (this.#propertyValues.has(literal.node)) continue;
       const path = routePath(literal.value, { navigation: true });
-      if (
-        path === undefined ||
-        /^\/(?:_next|api|assets|static)(?:\/|$)/u.test(path)
-      )
-        continue;
+      if (path === undefined) continue;
       // These remain inferred candidates. The inventory owner additionally binds them to app roots across sources.
       if (this.#nextRuntime || roots.has(path.split("/")[1]!))
         this.#emit(
@@ -982,8 +1018,16 @@ export class JavaScriptRouteScan {
       if (!t.isIdentifier(node)) return node;
       if (seen.has(node) || !this.#queue(node)) return;
       seen.add(node);
+      const binding = index.bindingForReferenceAt(node);
+      if (binding === undefined) return;
+      const read = semanticBindingAtRead(
+        binding,
+        node,
+        index.bindings.parentsByNode,
+      );
+      if (!read.hasDefiniteInitializer) return;
       const initializer = semanticStableInitializer(
-        index.bindingForReferenceAt(node),
+        read.binding,
         index.bindings,
       );
       if (
@@ -1132,17 +1176,29 @@ export class JavaScriptRouteScan {
         visited: new WeakMap(),
       };
       pending.push({ kind: "finish", lookup: work, key, values });
-      for (const reference of this.#selectedReferences(work.receiver, work.key))
+      for (const reference of this.#selectedReferences(
+        work.receiver,
+        work.key,
+      )) {
+        if (reference.widenedGetterResult === true)
+          this.#unknown(
+            mechanism,
+            node,
+            "An incomplete getter selection, including cyclic expansion, cannot establish its complete data sources.",
+          );
         if (
           !this.#retainSelection(
             pending,
-            reference.node,
+            // The reference owner identifies the allocation directly; a
+            // declaration identifier here is not a read before initialization.
+            reference.ownerInitializer ?? reference.node,
             reference.path,
             0,
             returned,
           )
         )
           return;
+      }
     }
   }
 
@@ -1379,7 +1435,11 @@ export class JavaScriptRouteScan {
         fields.unknownKeys ||
         [...fields.dynamicNames].some(
           (key) =>
-            typed || key === "path" || key === "route" || key === "children",
+            typed ||
+            key === "path" ||
+            key === "route" ||
+            key === "children" ||
+            key === "index",
         );
       if (uncertain) {
         this.#unknown(
@@ -1433,8 +1493,16 @@ export class JavaScriptRouteScan {
         };
         emit = true;
       } else if (!typed) {
-        const value = own.get("index")?.value;
+        const flag = own.get("index")?.value;
+        const value =
+          flag === undefined ? undefined : this.#resolve(flag, site, index);
         emit = t.isBooleanLiteral(value) && value.value;
+        if (flag !== undefined && !t.isBooleanLiteral(value))
+          this.#unknown(
+            mechanism,
+            flag,
+            "The index-route flag is not a known boolean at this use.",
+          );
       }
       if (emit && link !== undefined) {
         const segments: JavaScriptRouteSegment[] = [];

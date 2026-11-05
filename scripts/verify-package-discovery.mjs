@@ -1,5 +1,3 @@
-import { json, run, runWithStatus } from "./lib/verify-package-core.mjs";
-
 const REQUIRED_HELP_COMMANDS = [
   "setup",
   "update",
@@ -79,15 +77,15 @@ async function readHostLinuxDistribution() {
 }
 
 /** Validate --help, --llms, and doctor output and determine host setup support. */
-export async function verifyPackageDiscovery({ cli, environment }) {
-  const help = await run(cli, ["--help"], environment);
-  const llms = await run(cli, ["--llms"], environment);
-  const doctorExecution = await runWithStatus(
+export async function verifyPackageDiscovery({ commands, cli, environment }) {
+  const help = await commands.run(cli, ["--help"], environment);
+  const llms = await commands.run(cli, ["--llms"], environment);
+  const doctorExecution = await commands.runWithStatus(
     cli,
     ["doctor", "--json"],
     environment,
   );
-  const doctor = json(doctorExecution.stdout);
+  const doctor = JSON.parse(doctorExecution.stdout);
   const { supportedSetupHost, hopperReadinessRequired, hopperSetupSupported } =
     packageSetupSupport(doctor.checks, {
       platform: process.platform,

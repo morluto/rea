@@ -1,9 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  mergeNibHierarchies,
-  projectNibViewHierarchy,
-} from "./NibViewHierarchy.js";
+import { projectNibViewHierarchy } from "./NibViewHierarchy.js";
 
 const object = (id: number, parent?: number) => ({
   id,
@@ -13,7 +10,7 @@ const object = (id: number, parent?: number) => ({
 });
 
 describe("serialized NIB view hierarchy bounds", () => {
-  it("leaves archives without superview links to the legacy projection", () => {
+  it("does not invent hierarchy for objects without serialized relationships", () => {
     expect(projectNibViewHierarchy([object(0)], new Set([0]))).toEqual({
       hierarchy: null,
       omitted: 0,
@@ -113,77 +110,32 @@ describe("serialized NIB view hierarchy bounds", () => {
   });
 });
 
-describe("legacy NIB hierarchy preservation", () => {
-  it("keeps encoded window parents while merging shared views only once", () => {
-    const legacy = [
+it("does not treat a dangling registry owner as top-level authority", () => {
+  const result = projectNibViewHierarchy(
+    [
       {
-        objectID: "window",
-        children: [
-          { objectID: "view", children: [{ objectID: "first", children: [] }] },
-        ],
+        id: 0,
+        class_name: "NSIBObjectData",
+        values: {
+          NSRoot: { $nib_object_ref: 99 },
+          NSObjectsKeys: { $nib_object_ref: 2 },
+          NSObjectsValues: { $nib_object_ref: 3 },
+        },
       },
-    ];
-    const recovered = [
+      object(1),
       {
-        objectID: "view",
-        children: [
-          { objectID: "first", children: [] },
-          { objectID: "second", children: [] },
-        ],
+        id: 2,
+        class_name: "NSArray",
+        values: { "NS.objects": { $nib_object_ref: 1 } },
       },
-    ];
-    expect(mergeNibHierarchies(legacy, recovered).hierarchy).toEqual([
       {
-        objectID: "window",
-        children: [
-          {
-            objectID: "view",
-            children: [
-              { objectID: "first", children: [] },
-              { objectID: "second", children: [] },
-            ],
-          },
-        ],
+        id: 3,
+        class_name: "NSArray",
+        values: { "NS.objects": { $nib_object_ref: 99 } },
       },
-    ]);
-  });
-  it("moves an existing root under its encoded parent without duplicate visits", () => {
-    expect(
-      mergeNibHierarchies(
-        [{ objectID: "child", children: [] }],
-        [
-          {
-            objectID: "parent",
-            children: [{ objectID: "child", children: [] }],
-          },
-        ],
-      ),
-    ).toEqual({
-      hierarchy: [
-        { objectID: "parent", children: [{ objectID: "child", children: [] }] },
-      ],
-      omitted: 0,
-    });
-  });
-  it("reports conflicting encoded parents rather than dropping a link silently", () => {
-    const legacy = [
-      { objectID: "first", children: [{ objectID: "child", children: [] }] },
-    ];
-    const recovered = [
-      { objectID: "second", children: [{ objectID: "child", children: [] }] },
-    ];
-    expect(mergeNibHierarchies(legacy, recovered).omitted).toBe(1);
-  });
-  it("does not introduce a cycle when moving an existing root", () => {
-    const legacy = [
-      { objectID: "child", children: [{ objectID: "parent", children: [] }] },
-    ];
-    const recovered = [
-      { objectID: "parent", children: [{ objectID: "child", children: [] }] },
-    ];
-    expect(mergeNibHierarchies(legacy, recovered)).toEqual({
-      hierarchy: legacy,
-      omitted: 1,
-    });
-  });
+    ],
+    new Set([1]),
+  );
+  expect(result.hierarchy).toEqual([]);
+  expect(result.omitted).toBeGreaterThan(0);
 });

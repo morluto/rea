@@ -4,6 +4,7 @@ import {
   projectReferenceSourceImportError,
   type ReferenceSourceImportError,
 } from "./ReferenceSourceImportTypes.js";
+import { analysisErrorProjectionSchema } from "../contracts/errorSchemas.js";
 import type { ReferenceSourceRead } from "../reference/ReferenceSourceReaderTypes.js";
 
 describe("reference-source import error projection", () => {
@@ -11,7 +12,7 @@ describe("reference-source import error projection", () => {
     const expectedCategories = {
       cancelled: "cancelled",
       "invalid-root": "invalid_input",
-      unsupported: "unsupported_host",
+      unsupported: "unsupported_provider",
       io: "execution_failure",
       parse: "execution_failure",
     } as const;
@@ -21,6 +22,9 @@ describe("reference-source import error projection", () => {
         code: code as ReferenceSourceImportError["code"],
         message: "EIO while reading /selected/source/src/main.ts",
       });
+      expect(analysisErrorProjectionSchema.safeParse(projected).success).toBe(
+        true,
+      );
       expect(projected.category).toBe(category);
       expect(projected.message).toContain(
         "EIO while reading /selected/source/src/main.ts",
@@ -63,18 +67,22 @@ describe("reference-source import error projection", () => {
       message: expect.stringContaining(
         "Traversal cancelled after reading src/main.ts",
       ),
-      cleanup: {
-        reason: "directory close rejected",
+      code: "cleanup_incomplete",
+      details: {
+        cleanup: "incomplete",
+        cleanup_reason: "directory close rejected",
         resources: ["/selected/source"],
-      },
-      partial: {
-        root: "/selected/source",
-        entries: [{ path: "src/main.ts", bytes }],
+        diagnostics: {
+          reference_source_code: "cancelled",
+          partial: {
+            root: "/selected/source",
+            entries: [{ path: "src/main.ts", bytes: Array.from(bytes) }],
+          },
+        },
       },
     });
-    expect(projected.message).toContain("Cleanup failed during import");
-    expect(projected.message).toContain("directory close rejected");
-    expect(projected.message).toContain("/selected/source");
-    expect(projected.message).not.toContain("remains unconfirmed");
+    expect(analysisErrorProjectionSchema.safeParse(projected).success).toBe(
+      true,
+    );
   });
 });

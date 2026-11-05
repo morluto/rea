@@ -13,6 +13,93 @@ const cutterInput = {
   command: "pd 4",
 };
 
+it.each(["descriptor-first", "command-first"] as const)(
+  "retains receipt-read cleanup alongside pending command ownership: %s",
+  async (order) => {
+    const descriptor = new ProviderCleanupError(
+      "cutter",
+      ["descriptor-fixture"],
+      { reason: "controlled receipt descriptor close failure" },
+      { operation: "cutter_command" },
+    );
+    let readFails = true;
+    let terminal = false;
+    const execute = vi.fn(async () => ({
+      requestId: "4b18ce4d-bf31-456e-ae31-e8c547b2f9db",
+      output: null,
+      currentFile: null,
+      documentGeneration: 7,
+      identityStatus: "partial" as const,
+      cutterVersion: null,
+      executionState: "unknown" as const,
+      error: "missing-reply",
+      message: "completion remains unknown",
+      outputTruncated: false,
+    }));
+    const service = new CutterBridgeService({
+      listSessions: async () => ({
+        sessions: [],
+        bridge_directory: "/fixture",
+        discovery_status: "no_live_bridge_found",
+        bridge_directory_security: "private_verified",
+      }),
+      confirmCommandCompletion: async () =>
+        readFails
+          ? { ok: false, error: descriptor }
+          : { ok: true, value: terminal },
+      execute,
+    });
+    const dispatched = await service.execute(cutterInput);
+    if (dispatched.ok) throw new Error("Expected pending completion");
+    const retried = await service.retryCleanup();
+    if (retried.ok) throw new Error("Expected receipt-read failure");
+    expect(retried.error.cleanupResources).toEqual(
+      expect.arrayContaining([
+        "descriptor-fixture",
+        `cutter-session:${cutterInput.session_id}`,
+      ]),
+    );
+    expect(retried.error.partialObservation).toBe(
+      dispatched.error.partialObservation,
+    );
+    expect(retried.error.diagnostics).toMatchObject({
+      cleanup_error: {
+        details: {
+          diagnostics: {
+            reason: "controlled receipt descriptor close failure",
+          },
+        },
+      },
+    });
+    if (order === "descriptor-first") {
+      descriptor.resolveCleanup();
+      expect(retried.error.cleanupResources).toEqual([
+        `cutter-session:${cutterInput.session_id}`,
+      ]);
+      readFails = false;
+      expect(await service.retryCleanup()).toEqual({
+        ok: false,
+        error: dispatched.error,
+      });
+      expect(retried.error.cleanupIncomplete).toBe(true);
+      terminal = true;
+      expect(await service.retryCleanup()).toEqual({ ok: true, value: null });
+    } else {
+      readFails = false;
+      terminal = true;
+      expect(await service.retryCleanup()).toEqual({ ok: true, value: null });
+      expect(dispatched.error.cleanupIncomplete).toBe(false);
+      expect(retried.error.cleanupIncomplete).toBe(true);
+      expect(retried.error.cleanupResources).toEqual(["descriptor-fixture"]);
+      descriptor.resolveCleanup();
+    }
+    expect(retried.error.cleanupIncomplete).toBe(false);
+    expect(retried.error.cleanupResources).toEqual([]);
+    expect(execute).toHaveBeenCalledTimes(1);
+    await service.close();
+  },
+);
+
 it("retains uncertain command completion as Evidence without encouraging a retry", async () => {
   const service = new CutterBridgeService({
     listSessions: async () => ({

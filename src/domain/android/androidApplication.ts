@@ -9,8 +9,7 @@ import {
   hasCompleteInventoryCoverage,
   type ParsedInventorySet,
 } from "../artifactInventoryEvidence.js";
-import { digestSchema } from "../digests.js";
-import { prefixedDigestSchema } from "../digests.js";
+import { digestSchema, prefixedDigestSchema } from "../digests.js";
 import { digestCanonicalValue } from "../canonicalDigest.js";
 import { nativeRuntimeConvention } from "../nativeConvention.js";
 import {
@@ -24,6 +23,7 @@ import {
 } from "../mobileApplicationGraphProjection.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import { err, ok, type Result } from "../result.js";
+import { isV1SignatureMetadataName } from "../apkSignature/apkV1MetadataName.js";
 
 /** Deterministic, execution-free Android application inventory projection. */
 export const androidApplicationProjectionResultSchema = z.strictObject({
@@ -119,7 +119,10 @@ export const projectAndroidInventory = (
     "Bridge candidates are path-based hypotheses, not decoded JNI declarations or observed runtime calls.",
     "A bridge basis is inferred from the native path and is repeated for every managed component.",
     "ZIP inventory cannot see the APK Signing Block, so an empty signing array does not mean the APK is unsigned.",
-    ...(all.some(({ path }) => path === "AndroidManifest.xml")
+    ...(entries.some(
+      ({ path, kind }) =>
+        path === "AndroidManifest.xml" && (kind === "file" || kind === "slice"),
+    )
       ? []
       : [
           "No root AndroidManifest.xml occurrence was observed. The APK family comes from the .apk suffix of a ZIP archive, so these bytes may not be an APK.",
@@ -173,9 +176,7 @@ const classify = (all: readonly Component[]) => ({
       format === "elf" || /(?:^|\/)lib\/[^/]+\/[^/]+\.so$/iu.test(path),
   ),
   javascript: all.filter(({ format }) => format === "javascript-bundle"),
-  signing: all.filter(({ path }) =>
-    /^META-INF\/[^/]+\.(?:MF|RSA|DSA|EC|SF)$/iu.test(path),
-  ),
+  signing: all.filter(({ path }) => isV1SignatureMetadataName(path)),
 });
 
 const runtimeFamilies = (
@@ -190,7 +191,7 @@ const runtimeFamilies = (
   if (all.some(({ format }) => format === "elf")) families.add("native");
   if (all.some(({ format }) => format === "javascript-bundle"))
     families.add("javascript");
-  for (const { path } of all) {
+  for (const { path } of components.native_libraries) {
     const convention = nativeRuntimeConvention(path);
     if (convention !== null) families.add(convention);
   }

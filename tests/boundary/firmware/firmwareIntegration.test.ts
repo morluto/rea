@@ -1,5 +1,6 @@
 import { STDIO_DEFAULT_MAX_BUFFER_SIZE } from "@modelcontextprotocol/server";
 import { access, mkdir, readFile, writeFile } from "node:fs/promises";
+import { dirname } from "node:path";
 import { expect, it as test, vi } from "vitest";
 import {
   firmwareFixture,
@@ -12,7 +13,7 @@ import { FirmwareProvider } from "../../../src/firmware/FirmwareProvider.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { AnalysisError } from "../../../src/domain/analysisErrorBase.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
-import { ToolResultDelivery } from "../../../src/server/toolResult.js";
+import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { SafeOutputTree } from "../../../src/artifacts/SafeOutputTree.js";
 import { SafeOutputTreeCreationFailure } from "../../../src/artifacts/SafeOutputTreeCreationFailure.js";
 
@@ -38,6 +39,7 @@ const gapsWithContinuations = (
 const directoryCloseFailure = vi.hoisted(() => ({
   mode: "off" as "off" | "transient" | "persistent",
   attempts: 0,
+  parent: "",
 }));
 
 vi.mock("node:fs/promises", async (importOriginal) => {
@@ -48,6 +50,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
       const handle = await filesystem.open(...args);
       if (
         directoryCloseFailure.mode !== "off" &&
+        String(args[0]) === directoryCloseFailure.parent &&
         (await handle.stat()).isDirectory()
       ) {
         const close = handle.close.bind(handle);
@@ -69,7 +72,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
   };
 });
 
-const delivery = new ToolResultDelivery(STDIO_DEFAULT_MAX_BUFFER_SIZE);
+const delivery = createToolResultDelivery(STDIO_DEFAULT_MAX_BUFFER_SIZE);
 
 const it = test.skipIf(process.platform !== "linux");
 
@@ -251,7 +254,7 @@ it("returns firmware output after a transient published-directory close failure"
     expect(await readFile(normalized.files[0]?.path ?? "", "utf8")).toBe(
       "firmware=true\n",
     );
-    expect(closeFailure.attempts()).toBeGreaterThanOrEqual(4);
+    expect(closeFailure.attempts()).toBeGreaterThanOrEqual(2);
   } finally {
     closeFailure.restore();
   }
@@ -300,7 +303,7 @@ it("retains the complete firmware result when published output cleanup stays unc
     expect(await readFile(`${fixture.output}/rootfs/config`, "utf8")).toBe(
       "firmware=true\n",
     );
-    expect(closeFailure.attempts()).toBeGreaterThanOrEqual(4);
+    expect(closeFailure.attempts()).toBeGreaterThanOrEqual(2);
   } finally {
     closeFailure.restore();
   }
@@ -524,6 +527,78 @@ it("reports a failed multi-file stage as an extractor-failure gap", async () => 
   );
 });
 
+it.each(["task-error", "task-warning"])(
+  "preserves standalone diagnostic recovery without inventing stage ownership: %s",
+  async (mode) => {
+    const fixture = await firmwareFixture(mode);
+    const result = await fixture.service.execute("extract_firmware", {
+      path: fixture.path,
+      output_directory: fixture.output,
+    });
+    if (!result.ok) throw result.error;
+    const normalized = firmwareResultSchemas.extract_firmware.parse(
+      result.value.normalized_result,
+    );
+    const failures = gapsWithContinuations(normalized).filter(
+      (gap) => gap.kind === "extractor-failure",
+    );
+    expect(normalized.diagnostics).toContainEqual(
+      expect.objectContaining({
+        input_path: "$input",
+        report: expect.objectContaining({
+          __typename__:
+            mode === "task-error"
+              ? "UnknownError"
+              : "ExtractCommandFailedReport",
+        }),
+      }),
+    );
+    if (mode === "task-error") {
+      expect(failures).toEqual([
+        expect.objectContaining({
+          input_path: "$input",
+          handler: null,
+          provider_id: null,
+          range: null,
+          root_file_range: null,
+          dependencies: [],
+          continuation: expect.stringContaining("diagnostics"),
+        }),
+      ]);
+    } else expect(failures).toEqual([]);
+    await assertFirmwareCleanup(fixture.launches);
+  },
+);
+
+it("retains independent failures beside dependencies at each extraction owner", async () => {
+  const fixture = await firmwareFixture("mixed-failures");
+  const result = await fixture.service.execute("extract_firmware", {
+    path: fixture.path,
+    output_directory: fixture.output,
+  });
+  if (!result.ok) throw result.error;
+  const normalized = firmwareResultSchemas.extract_firmware.parse(
+    result.value.normalized_result,
+  );
+  const gaps = gapsWithContinuations(normalized);
+  expect(gaps).toHaveLength(4);
+  for (const provider_id of ["gzip-id", "mixed-id"]) {
+    const owned = gaps.filter((gap) => gap.provider_id === provider_id);
+    expect(owned.map((gap) => gap.kind).sort()).toEqual([
+      "extractor-failure",
+      "missing-extractor-dependency",
+    ]);
+    for (const gap of owned) {
+      expect(gap.input_path).toBe("$input");
+      expect(gap.range).toEqual(
+        provider_id === "mixed-id" ? null : normalized.chunks[0]?.range,
+      );
+    }
+  }
+  expect(normalized.chunks[0]?.extraction_failed).toBe(true);
+  await assertFirmwareCleanup(fixture.launches);
+});
+
 it("carries the owning multi-file stage on a task-level dependency gap", async () => {
   const fixture = await firmwareFixture("multi-file-dependency");
   const result = await fixture.service.execute("extract_firmware", {
@@ -559,12 +634,16 @@ const injectPublishedDirectoryCloseFailure = (persistent: boolean) => {
     .spyOn(SafeOutputTree.prototype, "commit")
     .mockImplementation(async function (this: SafeOutputTree) {
       directoryCloseFailure.mode = persistent ? "persistent" : "transient";
+      // Only the parent descriptor closes after the publication cutoff. A
+      // child/root close failure aborts sync before output becomes published.
+      directoryCloseFailure.parent = dirname(this.outputRoot);
       await commit.call(this);
     });
   return {
     attempts: () => directoryCloseFailure.attempts,
     restore: () => {
       directoryCloseFailure.mode = "off";
+      directoryCloseFailure.parent = "";
       spy.mockRestore();
     },
   };
@@ -641,6 +720,7 @@ it.each(["depth", "dependency", "link"])(
           relative_path: "escape",
           kind: "symlink",
           link_target: "/etc/passwd",
+          link_target_hex: Buffer.from("/etc/passwd", "utf8").toString("hex"),
         },
       ]);
       expect(gapsWithContinuations(normalized)).toEqual([
@@ -715,12 +795,16 @@ it("preserves existing output and rejects invalid intervals before invoking extr
   const previous = fixture.launches.length;
   const invalid = await fixture.service.execute("extract_firmware", {
     path: fixture.path,
-    output_directory: fixture.output,
+    output_directory: `${fixture.output}-invalid-range`,
     range: { offset: 100, length: 1 },
   });
   expect(invalid).toMatchObject({
     ok: false,
     error: { _tag: "AnalysisInputError" },
+  });
+  if (invalid.ok) throw new Error("Expected out-of-file-range rejection");
+  expect(projectAnalysisError(invalid.error)).toMatchObject({
+    details: { issues: [{ path: ["range"], reason: "out_of_range" }] },
   });
   expect(fixture.launches).toHaveLength(previous);
   await assertFirmwareCleanup(fixture.launches);

@@ -28,6 +28,7 @@ export interface SwiftNominalDescriptor {
   readonly descriptor: bigint;
   readonly flags: number;
   readonly name: string;
+  readonly context: SwiftContextFacts;
 }
 
 /** A `__swift5_types` record that may be a class whose name is unknown. */
@@ -37,7 +38,7 @@ export interface SwiftNominalRecordFailure {
 }
 
 /**
- * Receives each descriptor as soon as its kind and name are read, so a
+ * Receives each descriptor with its shared context facts, so a
  * consumer spends the record budget in record order rather than after every
  * declaration.
  */
@@ -53,6 +54,7 @@ const ENUM = 18;
 const MODULE = 0;
 const EXTENSION = 1;
 const ANONYMOUS = 2;
+const PROTOCOL = 3;
 const GENERIC = 0x80;
 const CLASS_IS_ACTOR = 0x80;
 /** Swift nesting is shallow; a longer chain is malformed or cyclic. */
@@ -66,7 +68,7 @@ const hex = (value: bigint) => `0x${value.toString(16)}`;
  * Facts of one context. `depth` counts contexts up to and including its
  * module, so a cached result is valid wherever a walk reaches it.
  */
-interface ContextFacts {
+export interface SwiftContextFacts {
   readonly module: string | null;
   /** Dotted named path below the module; null when unresolved. */
   readonly path: string | null;
@@ -77,7 +79,10 @@ interface ContextFacts {
   readonly walkLimited: boolean;
 }
 
-const unresolved = (reason: string, walkLimited = false): ContextFacts => ({
+const unresolved = (
+  reason: string,
+  walkLimited = false,
+): SwiftContextFacts => ({
   module: null,
   path: null,
   depth: 0,
@@ -86,43 +91,37 @@ const unresolved = (reason: string, walkLimited = false): ContextFacts => ({
   walkLimited,
 });
 
-const tooDeep = (): ContextFacts =>
+const tooDeep = (): SwiftContextFacts =>
   unresolved(
     `Swift context parent chain exceeds ${MAXIMUM_CONTEXT_DEPTH} contexts or is cyclic`,
   );
 
-/**
- * Decode `__swift5_types` nominal type descriptors into `swift_decls`.
- * Each context is read once, so shared parents add one relative-pointer
- * record regardless of how many types they contain.
- */
-export const decodeSwiftNominalTypes = (input: {
-  readers: SwiftNominalReaders;
-  entries: readonly bigint[];
-  result: ObjcSwiftMetadata;
-  visitor: SwiftNominalVisitor;
-}): FacetDecodeFacts => {
-  const { readers: read, result, visitor } = input;
-  const issues = [] as ReturnType<typeof issue>[];
-  const contexts = new Map<bigint, ContextFacts>();
+/** One snapshot-scoped owner of nominal names and parent-context identity. */
+export const createSwiftContextReader = (
+  read: Pick<SwiftNominalReaders, "u32" | "relative" | "string">,
+) => {
+  const contexts = new Map<bigint, SwiftContextFacts>();
   const names = new Map<bigint, string>();
-  let examined = 0;
-  let decoded = 0;
 
-  const typeName = (descriptor: bigint): string => {
+  const namedContext = (
+    descriptor: bigint,
+    field: "typeName" | "protocolName",
+  ): string => {
     const known = names.get(descriptor);
     if (known !== undefined) return known;
-    const value = read.relative(descriptor + 8n, "typeName");
+    const value = read.relative(descriptor + 8n, field);
     if (value.kind !== "target")
-      throw new RangeError(unresolvedSwiftRelativeReason(value, "typeName"));
+      throw new RangeError(unresolvedSwiftRelativeReason(value, field));
     const name = read.string(value.target);
     if (name.length === 0)
-      throw new RangeError("Swift type descriptor name is empty");
+      throw new RangeError(
+        `Swift ${field === "protocolName" ? "protocol" : "type"} descriptor name is empty`,
+      );
     names.set(descriptor, name);
     return name;
   };
 
-  const parentOf = (context: bigint, walk: number): ContextFacts => {
+  const parentOf = (context: bigint, walk: number): SwiftContextFacts => {
     const value = read.relative(context + 4n, "contextParent");
     if (value.kind === "target") return contextOf(value.target, walk + 1);
     return unresolved(
@@ -134,9 +133,9 @@ export const decodeSwiftNominalTypes = (input: {
 
   /** One level below `parent`, bounded in depth and qualified-name length. */
   const child = (
-    parent: ContextFacts,
-    facts: Partial<ContextFacts>,
-  ): ContextFacts => {
+    parent: SwiftContextFacts,
+    facts: Partial<SwiftContextFacts>,
+  ): SwiftContextFacts => {
     if (parent.depth + 1 > MAXIMUM_CONTEXT_DEPTH)
       return { ...tooDeep(), walkLimited: parent.walkLimited };
     const next = {
@@ -156,7 +155,7 @@ export const decodeSwiftNominalTypes = (input: {
       : next;
   };
 
-  const readContext = (context: bigint, walk: number): ContextFacts => {
+  const readContext = (context: bigint, walk: number): SwiftContextFacts => {
     const kind = read.u32(context) & 31;
     switch (kind) {
       case MODULE: {
@@ -175,10 +174,14 @@ export const decodeSwiftNominalTypes = (input: {
               walkLimited: false,
             };
       }
+      case PROTOCOL:
       case CLASS:
       case STRUCT:
       case ENUM: {
-        const name = typeName(context);
+        const name = namedContext(
+          context,
+          kind === PROTOCOL ? "protocolName" : "typeName",
+        );
         const parent = parentOf(context, walk);
         return child(parent, {
           path:
@@ -207,14 +210,14 @@ export const decodeSwiftNominalTypes = (input: {
     }
   };
 
-  const contextOf = (context: bigint, walk: number): ContextFacts => {
+  const contextOf = (context: bigint, walk: number): SwiftContextFacts => {
     const known = contexts.get(context);
     if (known !== undefined) return known;
     // Bound recursion on cyclic or over-deep chains; this stop depends on
     // where the walk began, so neither it nor its descendants are cached.
     if (walk > MAXIMUM_CONTEXT_DEPTH)
       return { ...tooDeep(), walkLimited: true };
-    let facts: ContextFacts;
+    let facts: SwiftContextFacts;
     try {
       facts = readContext(context, walk);
     } catch (cause) {
@@ -225,6 +228,33 @@ export const decodeSwiftNominalTypes = (input: {
     if (!facts.walkLimited) contexts.set(context, facts);
     return facts;
   };
+
+  return {
+    typeName: (descriptor: bigint) => namedContext(descriptor, "typeName"),
+    protocolName: (descriptor: bigint) =>
+      namedContext(descriptor, "protocolName"),
+    contextOf: (descriptor: bigint) => contextOf(descriptor, 0),
+  };
+};
+export type SwiftContextReader = ReturnType<typeof createSwiftContextReader>;
+
+/**
+ * Decode `__swift5_types` nominal type descriptors into `swift_decls`.
+ * Each context is read once, so shared parents add one relative-pointer
+ * record regardless of how many types they contain.
+ */
+export const decodeSwiftNominalTypes = (input: {
+  readers: SwiftNominalReaders;
+  entries: readonly bigint[];
+  result: ObjcSwiftMetadata;
+  visitor: SwiftNominalVisitor;
+  contextReader: SwiftContextReader;
+}): FacetDecodeFacts => {
+  const { readers: read, result, visitor } = input;
+  const issues = [] as ReturnType<typeof issue>[];
+  const { typeName, contextOf } = input.contextReader;
+  let examined = 0;
+  let decoded = 0;
 
   const accessorOf = (
     descriptor: bigint,
@@ -296,8 +326,8 @@ export const decodeSwiftNominalTypes = (input: {
       issues.push(issue(FACET, "type_decode_failed", message, hex(record)));
       continue;
     }
-    visitor.descriptor({ record, descriptor, flags, name });
-    const context = contextOf(descriptor, 0);
+    const context = contextOf(descriptor);
+    visitor.descriptor({ record, descriptor, flags, name, context });
     const accessor = accessorOf(descriptor);
     const reason = context.reason ?? accessor.reason;
     result.swift_decls.push({

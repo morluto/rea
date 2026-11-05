@@ -31,11 +31,16 @@ what the writes did:
   is left out of the identity proof and the view's checks. The view lists it in `projected_record_ordinals`, and serving
   replays a call to that tool naming such a parameter, for an entity the state holds, with the reason `projection`;
   the replay shows the recording, not served writes. The write gate neither checks nor learns a write's effect from a
-  successful read that names such a parameter and leaves out a field its view requires; a 400, 404 or 410 such a read
-  answers is still the absence it checks.
+  successful read serving replays, nor from one that names such a parameter and leaves out a field its view requires; a
+  400, 404 or 410 such a read answers is still the absence it checks.
   Identity-free projection evidence after the initial-state cutoff is retained too, without seeding later values
   into initial entities. Failed responses are classified before the projection-replay shortcut, so a projected
   absence can confirm a delete or contradict an unexplained disappearance.
+  A list line asking for some fields only beside one showing whole entities is replayed the same way and proves no
+  identity or membership; an item or list line showing its entities in another representation (an expanding or
+  reducing query) is replayed when a query key tells it from the view's other lines (`projected_query_keys`, reason
+  `variant`). A call asking for some fields only replays unless every value it gives is `*` or one a checked line
+  gave, and no replayed read gave it; such calls replay recordings and do not show served writes.
 - **Sequences.** A sequence value may be `-`-separated digit groups of one width of at least two digits, not a date,
   version or address. The next value keeps the exemplar's groups and zero padding; digits that outgrow them lead. A
   later create must record its value spelled that way. A held value whose digits outgrew the mask (`100-00` after

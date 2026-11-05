@@ -40,7 +40,7 @@ export async function* readCudaFatbinary(
         encoded > padded
       )
         rejectGpu("CUDA entry extent is invalid");
-      const compressed = (flags & 0xa000n) !== 0n;
+      const compressed = (flags & 0xb000n) !== 0n;
       const row = gpuObject(source, {
         offset: position + width,
         size: compressed ? encoded : padded,

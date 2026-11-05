@@ -1,3 +1,31 @@
+// Released llama.cpp b1500 GGML_QKK_64 blocks and default/b3001 blocks.
+// These are source-derived payload sizes, not output from historical binaries.
+export const ggufKLayouts = [
+  { id: 10, name: "Q2_K", bytes64: 24, bytes256: 84 },
+  { id: 11, name: "Q3_K", bytes64: 28, bytes256: 110 },
+  { id: 12, name: "Q4_K", bytes64: 38, bytes256: 144 },
+  { id: 13, name: "Q5_K", bytes64: 46, bytes256: 176 },
+  { id: 14, name: "Q6_K", bytes64: 54, bytes256: 210 },
+  { id: 15, name: "Q8_K", bytes64: 76, bytes256: 292 },
+] as const;
+
+// Integer IDs shifted as IQ types were added, before upstream PR 6050 pinned
+// integers at 24–26. Oldest colliding integer width and modern bytes/256 values
+// are independent goldens from b1500/b1803/b1871/b2100/b2172/b2221/b2253/b2275
+// and b3001. An authored body does not establish producer provenance.
+export const ggufShiftedTypeLayouts = [
+  { id: 16, integerBytes: 1, modernName: "IQ2_XXS", modernBytes256: 66 },
+  { id: 17, integerBytes: 2, modernName: "IQ2_XS", modernBytes256: 74 },
+  { id: 18, integerBytes: 4, modernName: "IQ3_XXS", modernBytes256: 98 },
+  { id: 19, integerBytes: 4, modernName: "IQ1_S", modernBytes256: 50 },
+  { id: 20, integerBytes: 4, modernName: "IQ4_NL", modernBytes256: 144 },
+  { id: 21, integerBytes: 4, modernName: "IQ3_S", modernBytes256: 110 },
+  { id: 22, integerBytes: 4, modernName: "IQ2_S", modernBytes256: 82 },
+  { id: 23, integerBytes: 4, modernName: "IQ4_XS", modernBytes256: 136 },
+  { id: 24, integerBytes: 4, modernName: "I8", modernBytes256: 256 },
+  { id: 25, integerBytes: 4, modernName: "I16", modernBytes256: 512 },
+] as const;
+
 /** Source-built declarations with independent expected byte layouts; no model loader. */
 export const ggufFixture = (
   options: {

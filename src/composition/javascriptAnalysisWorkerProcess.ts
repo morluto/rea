@@ -47,6 +47,7 @@ const analyze: JavaScriptSourceWorkerAnalyzer = async (
     analyzeParsedJavaScriptSemanticsSteps(
       parsed,
       moduleResolutionModeForJavaScriptReference(file.path, "static-import"),
+      capacity.nodes,
     ),
   );
   parsed = null;

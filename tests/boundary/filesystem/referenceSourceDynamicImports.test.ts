@@ -39,10 +39,9 @@ it("resolves dynamic source imports while retaining computed targets as unknown"
   });
   if (!result.ok) throw result.error;
   expect(result.value.parse_failures).toEqual([]);
-  expect(result.value.relationships).toHaveLength(8);
+  expect(result.value.relationships).toHaveLength(7);
   for (const [to, kind] of [
     ["static.ts", "imports"],
-    ["common.js", "requires"],
     ["lazy.ts", "imports"],
     ["template-lazy.mjs", "imports"],
     ["wrapped-lazy.mjs", "imports"],

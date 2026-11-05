@@ -3,6 +3,7 @@ import { z } from "zod";
 import { digestCanonicalValue } from "../canonicalDigest.js";
 import { emptyArraySchema } from "../emptyArraySchema.js";
 import { evidenceSchema } from "../evidence.js";
+import { evidenceInputSchema } from "../evidenceReference.js";
 import {
   cliMetadataGuidSchema,
   managedMetadataTokenSchema,
@@ -10,6 +11,8 @@ import {
 } from "./managedArtifact.js";
 import {
   buildComparisonCoverage,
+  hasCompleteMethodRows,
+  managedComparisonScope,
   buildComparisonMatching,
   buildComparisonSummary,
   comparisonLimitations,
@@ -21,26 +24,43 @@ import {
 } from "./managedMemberComparisonItems.js";
 import { keyMembers } from "./managedMemberComparisonMatch.js";
 import { hasSignatureResolution } from "./managedMemberSignatureIdentity.js";
-import { digestSchema } from "../digests.js";
-import { prefixedDigestSchema } from "../digests.js";
+import { digestSchema, prefixedDigestSchema } from "../digests.js";
 
 const evidenceIdSchema = prefixedDigestSchema("ev");
 const boundedTextSchema = z.string().min(1);
 
-/** Two authenticated managed member observations. */
+const memberComparisonShape = <Source extends z.ZodType>(source: Source) => ({
+  left: source,
+  right: source,
+});
+
+const distinctMemberSources = (
+  input: {
+    readonly left: { readonly evidence_id: string };
+    readonly right: { readonly evidence_id: string };
+  },
+  context: z.RefinementCtx,
+): void => {
+  if (
+    typeof input.left?.evidence_id === "string" &&
+    input.left.evidence_id === input.right?.evidence_id
+  )
+    context.addIssue({
+      code: "custom",
+      path: ["right"],
+      message: "Managed member Evidence must be distinct",
+    });
+};
+
+/** Two complete managed member observations for semantic consumers. */
 export const compareManagedMembersInputSchema = z
-  .strictObject({
-    left: evidenceSchema,
-    right: evidenceSchema,
-  })
-  .superRefine((input, context) => {
-    if (input.left.evidence_id === input.right.evidence_id)
-      context.addIssue({
-        code: "custom",
-        path: ["right"],
-        message: "Managed member Evidence must be distinct",
-      });
-  });
+  .strictObject(memberComparisonShape(evidenceSchema))
+  .superRefine(distinctMemberSources);
+
+/** Public member comparison selects records inline or by exact retained identity. */
+export const compareManagedMembersRequestSchema = z
+  .strictObject(memberComparisonShape(evidenceInputSchema))
+  .superRefine(distinctMemberSources);
 
 const concreteMatchBasisSchema = z.enum([
   "exact-il-signature",
@@ -134,7 +154,9 @@ const methodComparisonItemSchema = comparisonItemSchema(
         "call-shape",
         "call-target",
         "field-shape",
+        "field-target",
         "exception-shape",
+        "exception-target",
         "availability",
         "body-coverage",
       ]),
@@ -213,11 +235,6 @@ export interface ManagedMemberComparisonSide {
   readonly result: ManagedMemberInspection;
 }
 
-const selectedTypes = (
-  result: ManagedMemberInspection,
-): ReadonlySet<string> | null =>
-  result.selection === null ? null : new Set(result.selection.type_names);
-
 const callEdgesByCaller = (
   result: ManagedMemberInspection,
 ): ReadonlyMap<
@@ -236,35 +253,71 @@ const callEdgesByCaller = (
   return edges;
 };
 
+const fieldAccessesByCaller = (
+  result: ManagedMemberInspection,
+): ReadonlyMap<
+  string,
+  readonly ManagedMemberInspection["field_accesses"][number][]
+> => {
+  const accesses = new Map<
+    string,
+    ManagedMemberInspection["field_accesses"][number][]
+  >();
+  for (const access of result.field_accesses) {
+    const callerAccesses = accesses.get(access.method_token);
+    if (callerAccesses === undefined)
+      accesses.set(access.method_token, [access]);
+    else callerAccesses.push(access);
+  }
+  return accesses;
+};
+
 /** Compare managed members with constrained exact and structural identities. */
 export const compareManagedMembers = (
   left: ManagedMemberComparisonSide,
   right: ManagedMemberComparisonSide,
 ): ManagedMemberComparisonResult => {
-  const { methodMatches, fieldMatches } = keyMembers(left, right);
+  const scope = managedComparisonScope(left.result, right.result);
+  const { methodMatches, fieldMatches } = keyMembers(left, right, scope);
   const itemContext = {
     leftEvidenceId: left.evidenceId,
     rightEvidenceId: right.evidenceId,
     leftComplete: left.result.metadata.status === "complete",
     rightComplete: right.result.metadata.status === "complete",
-    leftSelection: selectedTypes(left.result),
-    rightSelection: selectedTypes(right.result),
+    leftMethodsComplete:
+      left.result.metadata.status === "complete" &&
+      hasCompleteMethodRows(left.result),
+    rightMethodsComplete:
+      right.result.metadata.status === "complete" &&
+      hasCompleteMethodRows(right.result),
+    scope,
     signatureResolutionExamined:
       hasSignatureResolution(left.result) &&
       hasSignatureResolution(right.result),
+    sameArtifact: left.result.artifact.sha256 === right.result.artifact.sha256,
+    leftAssembly: left.result.assembly,
+    rightAssembly: right.result.assembly,
     leftCallEdgesByCaller: callEdgesByCaller(left.result),
     rightCallEdgesByCaller: callEdgesByCaller(right.result),
+    leftFieldAccessesByCaller: fieldAccessesByCaller(left.result),
+    rightFieldAccessesByCaller: fieldAccessesByCaller(right.result),
   };
   const methodItems = buildMethodItems(methodMatches, itemContext);
   const fieldItems = buildFieldItems(fieldMatches, itemContext);
   const allItems = [...methodItems, ...fieldItems];
   const summary = buildComparisonSummary(allItems);
   const matching = buildComparisonMatching(methodItems, fieldItems);
+  const selectionAgreement = scope.agreement;
   const coverage = buildComparisonCoverage({
     left: left.result,
     right: right.result,
+    selectionAgreement,
   });
-  const limitations = comparisonLimitations(left.result, right.result);
+  const limitations = comparisonLimitations(
+    left.result,
+    right.result,
+    selectionAgreement,
+  );
   const result = {
     comparison_id: `mmc_${digestCanonicalValue(
       {

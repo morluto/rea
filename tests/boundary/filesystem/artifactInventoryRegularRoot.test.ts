@@ -6,6 +6,7 @@ import {
   rename,
   rm,
   writeFile,
+  mkdir,
 } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -19,7 +20,30 @@ import {
 import { asarHeaderBytes } from "../../fixtures/asarHeader.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { readWithoutFifoWriter } from "../../fixtures/fifoInput.js";
-import { DEFAULT_ASAR_MAX_HEADER_BYTES } from "../../../src/config/asarHeaderAdmission.js";
+import { DEFAULT_ASAR_MAX_HEADER_BYTES } from "../../../src/domain/analysisResourceLimits.js";
+import {
+  CPU,
+  arArchive,
+  fatImage,
+} from "../../../src/artifacts/apple/MachoImage.fixture.js";
+
+it.skipIf(process.platform === "win32").each(["file", "directory"])(
+  "rejects invalid native traversal before canonicalizing a %s inventory root",
+  async (kind) => {
+    const root = await createTestTempDirectory(
+      "rea-inventory-native-selection-",
+    );
+    await writeFile(join(root, "blocker"), "regular file");
+    const path = join(root, "target");
+    if (kind === "directory") await mkdir(path);
+    else await writeFile(path, "target bytes");
+    await expect(
+      inventoryArtifact(`${root}/blocker/../target`),
+    ).rejects.toMatchObject({ code: "ENOTDIR" });
+    const valid = await inventoryArtifact(path);
+    expect(valid.manifest.root_format).toBe(kind);
+  },
+);
 
 it.skipIf(process.platform === "win32")(
   "rejects a FIFO artifact root without waiting for a writer",
@@ -79,6 +103,40 @@ it("keeps unavailable container traversal distinct from observed root bytes", as
     scope: "container-entries",
     status: "unknown",
   });
+});
+
+it("retains root identity without asserting absent children for an unclassified FAT archive", async () => {
+  const root = await createTestTempDirectory("rea-fat-archive-root-scope-");
+  const path = join(root, "libfat.a");
+  const archive = arArchive();
+  const bytes = fatImage([
+    { cpu: CPU.x86_64, bytes: archive },
+    { cpu: CPU.arm64, bytes: archive },
+  ]);
+  await writeFile(path, bytes);
+
+  const inventory = await inventoryArtifact(path);
+  const sha256 = createHash("sha256").update(bytes).digest("hex");
+  expect(inventory.manifest).toMatchObject({
+    root_format: "unknown",
+    root_sha256: sha256,
+    node_count: 1,
+    occurrence_count: 1,
+    edge_count: 0,
+  });
+  expect(inventory.nodes).toEqual([
+    expect.objectContaining({ format: "unknown", sha256, size: bytes.length }),
+  ]);
+  expect(inventory.occurrences).toEqual([
+    expect.objectContaining({
+      artifact_format: "unknown",
+      hash_status: "verified",
+    }),
+  ]);
+  expect(inventory.coverage).toEqual({ scope: "root", status: "complete" });
+  expect(inventory.limitations).toEqual([
+    "Inventory covers root bytes only; child container entries were not examined.",
+  ]);
 });
 
 it("admits a FAT root when a valid slice header starts at the prefix boundary", async () => {

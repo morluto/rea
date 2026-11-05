@@ -209,19 +209,25 @@ export const readSafetensorsHeader = async (
   tensor_data_offset: number;
   metadata: ModelMetadata[];
   tensors: ModelTensor[];
+  limitations: string[];
 }> => {
   const budget = new ModelReportBudget();
   // Lengths such as 640 (80 02 ...) also begin like a pickle PROTO opcode.
   const protocol = first[1] ?? 0;
   const pickle = first[0] === 0x80 && protocol >= 2 && protocol <= 5;
-  if (pickle && reader.size < 9) rejectPickle();
+  // ZIP's four-byte signature is also a valid little-endian header length.
+  const zip = first.equals(Buffer.from([0x50, 0x4b, 3, 4]));
+  if ((pickle || zip) && reader.size < 9) rejectPickle();
   const second = await reader.take(4);
   reader.excludeSafetensorsLengthPrefix();
   const length =
     BigInt(first.readUInt32LE()) + (BigInt(second.readUInt32LE()) << 32n);
   const brace = length === 0n ? undefined : (await reader.take(1))[0];
   // A brace after an admissible length is safetensors, even if truncated.
-  if (pickle && (brace !== 0x7b || length > BigInt(MODEL_HEADER_BYTES)))
+  if (
+    (pickle || zip) &&
+    (brace !== 0x7b || length > BigInt(MODEL_HEADER_BYTES))
+  )
     rejectPickle();
   if (brace !== 0x7b)
     rejectModel("File does not contain a GGUF or safetensors header");
@@ -275,6 +281,7 @@ export const readSafetensorsHeader = async (
     }
   }
   const tensors: ModelTensor[] = [];
+  const unknownTypes = new Set<string>();
   const tensor_data_offset = 8 + size;
   const names = Object.keys(root)
     .filter((name) => name !== "__metadata__")
@@ -312,6 +319,7 @@ export const readSafetensorsHeader = async (
         );
     }
     const bits = safetensorsBits(type);
+    if (bits === undefined) unknownTypes.add(type);
     if (bits !== undefined) {
       const expected = parameters * BigInt(bits);
       if (expected % 8n !== 0n || expected / 8n !== BigInt(end - start))
@@ -359,5 +367,11 @@ export const readSafetensorsHeader = async (
     tensor_data_offset,
     metadata,
     tensors,
+    limitations:
+      unknownTypes.size === 0
+        ? []
+        : [
+            `Unknown tensor types prevent storage-size validation: ${[...unknownTypes].join(", ")}`,
+          ],
   };
 };

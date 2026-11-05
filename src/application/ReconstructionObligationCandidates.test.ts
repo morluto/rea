@@ -13,13 +13,15 @@ import { describe, expect, it } from "vitest";
 
 import { createEvidence } from "../domain/evidence.js";
 import { createEvidenceBundle } from "../domain/evidenceBundle.js";
-import { emptyUnverifiedProcessCapture } from "../domain/process/processCapture.fixture.js";
-import { FINALIZED_PROCESS_CAPTURE_EXAMPLE } from "../domain/process/processCaptureExample.js";
+import {
+  emptyUnverifiedProcessCapture,
+  FINALIZED_PROCESS_CAPTURE_EXAMPLE,
+} from "../domain/process/processCapture.fixture.js";
 import { PROCESS_PROVIDER } from "../domain/process/processEvidenceProvider.js";
 import { parseProcessCapture } from "../domain/process/processCaptureParsing.js";
 import {
   digestProcessCommitment,
-  parseProcessScenario,
+  processScenarioSchema,
   processComparisonContract,
   processScenarioCommitment,
 } from "../domain/process/processScenario.js";
@@ -33,8 +35,7 @@ import {
   createJavaScriptApplicationGraph,
   createJavaScriptApplicationNode,
 } from "../domain/javascript/javascriptApplicationGraph.js";
-import { jsonValueSchema } from "../domain/jsonValue.js";
-import { MANAGED_WORKFLOW_PROVIDER } from "./InvestigationProviders.js";
+import { MANAGED_WORKFLOW_PROVIDER } from "../domain/investigationProviders.js";
 import { createProcessCaptureEvidence } from "./process/ProcessEvidence.js";
 
 const applicationWithUnknowns = (
@@ -90,7 +91,7 @@ const applicationWithUnknowns = (
     predicateType: "rea.managed-application-graph",
     operation: "project_managed_application_graph",
     parameters: {},
-    result: jsonValueSchema.parse({
+    result: {
       projection_id: `magp_${"a".repeat(64)}`,
       root_artifact_sha256: APPLICATION_GRAPH_DIGESTS.asar,
       source_evidence: {
@@ -113,7 +114,7 @@ const applicationWithUnknowns = (
       coverage: { status: "complete-within-inputs" },
       evidence_links: [source.evidence_id],
       limitations: [],
-    }),
+    },
     confidence: "inferred",
     authority: "analyst-inference",
     evidenceLinks: [source.evidence_id],
@@ -169,7 +170,7 @@ describe("reconstruction obligation candidates", () => {
   });
 
   it("does not bind an unknown process image to a packaged artifact obligation", () => {
-    const scenario = parseProcessScenario({
+    const scenario = processScenarioSchema.parse({
       executable: "/path/whose-launch-identity-is-unknown",
     });
     const base = emptyUnverifiedProcessCapture();
@@ -212,7 +213,7 @@ describe("reconstruction obligation candidates", () => {
       predicateType: "rea.process-capture",
       operation: "capture_process_scenario",
       parameters: {},
-      result: jsonValueSchema.parse({
+      result: {
         ...rest,
         manifest,
         exit: {
@@ -224,7 +225,7 @@ describe("reconstruction obligation candidates", () => {
             ],
           },
         },
-      }),
+      },
     });
     const generated = deriveCandidates(createEvidenceBundle([evidence]), []);
 
@@ -308,7 +309,7 @@ it("keeps each semantic candidate bound to its own file and authority context", 
       predicateType: example.predicate_type,
       operation: example.operation,
       parameters: example.parameters,
-      result: jsonValueSchema.parse({ ...base, semantic_graph: semanticGraph }),
+      result: { ...base, semantic_graph: semanticGraph },
       confidence: "derived",
       authority: "shipped-artifact",
       evidenceLinks: sourceRecords.map(({ evidence_id }) => evidence_id),
@@ -415,7 +416,7 @@ it("falls back to a kind-based title when a semantic node label is blank", () =>
       predicateType: example.predicate_type,
       operation: example.operation,
       parameters: example.parameters,
-      result: jsonValueSchema.parse({ ...base, semantic_graph: semanticGraph }),
+      result: { ...base, semantic_graph: semanticGraph },
       confidence: "derived",
       authority: "shipped-artifact",
       evidenceLinks: [source.evidence_id],

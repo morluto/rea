@@ -50,6 +50,12 @@ const responseSchema = z.discriminatedUnion("ok", [
     message: z.string(),
   }),
 ]);
+const initialSelectionFields = new Map<string, "pid" | "window_id">([
+  ["pid-not-application", "pid"],
+  ["target-mismatch", "pid"],
+  ["window-mismatch", "window_id"],
+  ["ambiguous-window", "window_id"],
+]);
 /** Narrow process seam preserves the native helper's OS and target failures. */
 export type NativeUiHelper = (
   parameters: Readonly<Record<string, unknown>>,
@@ -179,14 +185,31 @@ const observeWithHelper = async (
           signal,
         ),
       );
-      if (!response.ok)
+      if (!response.ok) {
+        const field = initialSelectionFields.get(response.code);
+        if (launchTime === undefined && field !== undefined)
+          return err(
+            new AnalysisInputError(
+              operation,
+              { userMessage: response.message },
+              [
+                {
+                  path: [field],
+                  reason: "invalid_value",
+                  message: `${response.code}: ${response.message}`,
+                },
+              ],
+            ),
+          );
         return err(
           new AnalysisCapabilityUnavailableError(
             "native-macos",
             operation,
             `${response.code}: ${response.message}`,
+            { userMessage: response.message },
           ),
         );
+      }
       if (
         response.result.window.pid !== input.pid ||
         response.result.window.window_id !== input.window_id ||

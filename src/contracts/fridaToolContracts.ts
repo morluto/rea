@@ -5,13 +5,17 @@ import type { ToolContract } from "./toolContractTypes.js";
 import { evidenceResultOf } from "./toolOutputSchemaPrimitives.js";
 import { analysisDetailOutputSchemaOf } from "./analysisDetail.js";
 import { toolContractMetadata } from "./toolEffects.js";
-import { isValidFridaRemoteAddress } from "./fridaRemoteAddress.js";
+import { isValidFridaRemoteAddress } from "../domain/fridaRemoteAddress.js";
 import {
   fridaSessionObservationSchema,
   fridaSessionStatusInputSchema,
   fridaSessionStatusSchema,
 } from "../domain/fridaSessionStatus.js";
 import { fridaSessionStatusSummaryViewResultSchema } from "../domain/analysisView/analysisView.js";
+import {
+  fridaDeviceListSchema,
+  fridaProcessListSchema,
+} from "../domain/fridaDiscovery.js";
 
 export const FRIDA_KEEPALIVE_INTERVAL_DESCRIPTION =
   "Remote keepalive interval in seconds";
@@ -69,16 +73,7 @@ export const FRIDA_TOOL_CONTRACTS = [
     description:
       "List Frida devices currently available to this host, optionally connecting to the caller-selected remote Frida endpoint. Remote authentication options are used for this call only and are never returned or recorded.",
     inputSchema: z.strictObject({ remote: remoteConnection.optional() }),
-    outputSchema: z.strictObject({
-      devices: z.array(
-        z.strictObject({
-          device_id: z.string(),
-          name: z.string(),
-          type: z.string(),
-        }),
-      ),
-      cleanup_error: z.string().nullable(),
-    }),
+    outputSchema: fridaDeviceListSchema,
     examples: [{ title: "List Frida devices", input: {} }],
   },
   {
@@ -95,17 +90,7 @@ export const FRIDA_TOOL_CONTRACTS = [
       .describe(
         'Provide exactly one of device_id or remote. device_id selects a device (use "local" for this host); remote requires an address.',
       ),
-    outputSchema: z.strictObject({
-      device_id: z.string(),
-      processes: z.array(
-        z.strictObject({
-          pid: z.int().nonnegative(),
-          name: z.string(),
-          identifier: z.string().nullable(),
-        }),
-      ),
-      cleanup_error: z.string().nullable(),
-    }),
+    outputSchema: fridaProcessListSchema,
     examples: [
       {
         title: "List local Frida processes",

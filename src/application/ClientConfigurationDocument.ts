@@ -17,7 +17,6 @@ import {
   createScanner,
   format as formatJson,
   getNodeValue,
-  parse as parseJsonc,
   parseTree,
   printParseErrorCode,
   type Edit,
@@ -33,7 +32,7 @@ import type { SetupClient } from "./SupportedClients.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 
 export type ClientConfigurationFormat = NonNullable<SetupClient["format"]>;
-export type ClientServersKey = "mcp_servers" | "mcpServers" | "mcp" | "servers";
+type ClientServersKey = "mcp_servers" | "mcpServers" | "mcp" | "servers";
 
 /**
  * Registration entry dialect. OpenCode V2 reads V1 `mcp.<name>` entries, but a
@@ -51,6 +50,8 @@ export interface ClientConfigurationDocument {
   /** Key path of `servers` in `document`. */
   readonly serversPath: readonly string[];
   readonly dialect: ClientRegistrationDialect;
+  /** Member holding explicit environment overrides in a server registration. */
+  readonly environmentKey: "env" | "environment";
   /**
    * OpenCode V1 server members beside a native V2 `mcp.servers` table. OpenCode
    * still loads them, and a native entry with the same name takes precedence.
@@ -58,7 +59,14 @@ export interface ClientConfigurationDocument {
   readonly legacyServers: Record<string, unknown>;
 }
 
-const objectSchema = z.record(z.string(), z.unknown());
+/** Admit source mappings without Zod's record clone dropping caller keys. */
+export const clientConfigurationRecordSchema = z
+  .custom<Record<string, unknown>>((value) => {
+    if (typeof value !== "object" || value === null) return false;
+    const prototype: unknown = Object.getPrototypeOf(value);
+    return prototype === null || prototype === Object.prototype;
+  })
+  .transform((value) => Object.fromEntries(Object.entries(value)));
 
 /** Compare parsed configuration values without depending on parser prototypes. */
 export const clientConfigurationValuesEqual = (
@@ -144,9 +152,10 @@ const parseDocument = (
   // Pi loads `mcp.json` with a strict `JSON.parse` and no BOM tolerance, so
   // comments, trailing commas, a BOM, or an empty existing file must be
   // rejected instead of registering into a document the client cannot load.
-  // Kimi also reads mcp.json with JSON.parse and an empty-file fallback.
-  if (format === "pi" || format === "kimi") {
-    if (format === "kimi" && text.trim().length === 0) return {};
+  // Kimi and LM Studio also read mcp.json with JSON.parse; an empty file holds
+  // nothing to preserve.
+  if (format === "pi" || format === "kimi" || format === "lm_studio") {
+    if (format !== "pi" && text.trim().length === 0) return {};
     return requireObject(JSON.parse(text), "The configuration root");
   }
   // An empty file, which some clients create before any server is added,
@@ -171,24 +180,27 @@ const parseDocument = (
   const errors: ParseError[] = [];
   // Accept a UTF-8 BOM without shifting diagnostics or editing the original text.
   const jsonText = text.startsWith("\uFEFF") ? ` ${text.slice(1)}` : text;
-  const document = parseJsonc(jsonText, errors, { allowTrailingComma: true });
+  const root = parseTree(jsonText, errors, { allowTrailingComma: true });
   const firstError = errors[0];
   if (firstError !== undefined)
     throw new SyntaxError(
       `Invalid JSON/JSONC at offset ${firstError.offset}: ${printParseErrorCode(firstError.error)}`,
     );
-  return requireObject(document, "The configuration root");
+  return requireObject(
+    root === undefined ? undefined : getNodeValue(root),
+    "The configuration root",
+  );
 };
 
 /** A parsed configuration whose structure, not its syntax, cannot hold MCP servers. */
 export class ClientConfigurationShapeError extends TypeError {}
 
-/** Validate and copy own properties, excluding non-record YAML values and parser-injected prototypes. */
+/** Validate source mappings and copy their own properties without rewriting values. */
 const requireObject = (
   value: unknown,
   description: string,
 ): Record<string, unknown> => {
-  const parsed = objectSchema.safeParse(value);
+  const parsed = clientConfigurationRecordSchema.safeParse(value);
   if (parsed.success) return parsed.data;
   throw new ClientConfigurationShapeError(`${description} must be an object`, {
     cause: parsed.error,
@@ -208,6 +220,7 @@ export const parseZcodeFallbackConfiguration = (
         : requireObject(document.mcpServers, "ZCode fallback mcpServers"),
     serversPath: ["mcpServers"],
     dialect: "zcode_fallback",
+    environmentKey: "env",
     legacyServers: {},
   };
 };
@@ -226,6 +239,7 @@ export const parseClientConfiguration = (
   if (format === "zcode_fallback") return parseZcodeFallbackConfiguration(text);
   if (format === "dsh") return parseDshCordisDocument(text);
   const document = parseDocument(text, format);
+  const environmentKey = format === "opencode" ? "environment" : "env";
   const serversKey = clientConfigurationServersKey(format);
   const value = document[serversKey];
   const servers =
@@ -242,6 +256,7 @@ export const parseClientConfiguration = (
           : requireObject(nested, `"${serversKey}.servers"`),
       serversPath: [serversKey, "servers"],
       dialect: format,
+      environmentKey,
       legacyServers: {},
     };
   }
@@ -261,6 +276,7 @@ export const parseClientConfiguration = (
       servers,
       serversPath: [serversKey],
       dialect: format,
+      environmentKey,
       legacyServers: {},
     };
   return {
@@ -268,6 +284,7 @@ export const parseClientConfiguration = (
     servers: requireObject(native, `"${serversKey}.servers"`),
     serversPath: [serversKey, "servers"],
     dialect: "opencode_v2",
+    environmentKey,
     legacyServers: Object.fromEntries(
       Object.entries(servers).filter(
         ([name]) => !OPENCODE_V2_MCP_SETTINGS.has(name),
@@ -280,10 +297,28 @@ export const parseClientConfiguration = (
 export const effectiveClientServer = (
   parsed: ClientConfigurationDocument,
   name: string,
-): unknown =>
-  Object.hasOwn(parsed.servers, name)
+): unknown => {
+  const native = Object.hasOwn(parsed.servers, name);
+  const value = native
     ? parsed.servers[name]
-    : parsed.legacyServers[name];
+    : Object.hasOwn(parsed.legacyServers, name)
+      ? parsed.legacyServers[name]
+      : undefined;
+  if (
+    (parsed.dialect !== "opencode" && parsed.dialect !== "opencode_v2") ||
+    typeof value !== "object" ||
+    value === null ||
+    Array.isArray(value)
+  )
+    return value;
+  const { enabled, ...registration } = value as Record<string, unknown>;
+  // OpenCode migrates legacy activation before merging layers. An enabled V1
+  // fragment must override inherited disabled:true; native V2 ignores enabled.
+  return (parsed.dialect === "opencode" || !native) &&
+    typeof enabled === "boolean"
+    ? { ...registration, disabled: !enabled }
+    : registration;
+};
 
 /**
  * Return `parsed.document` with `servers` at its server table. A legacy OpenCode
@@ -299,7 +334,9 @@ export const withClientServers = (
     return Object.hasOwn(servers, PRODUCT_IDENTITY.mcpServerKey)
       ? editDshDocument(
           parsed,
-          objectSchema.parse(servers[PRODUCT_IDENTITY.mcpServerKey]),
+          clientConfigurationRecordSchema.parse(
+            servers[PRODUCT_IDENTITY.mcpServerKey],
+          ),
         )
       : editDshDocument(parsed);
   const [key = "", nested] = parsed.serversPath;
@@ -308,7 +345,9 @@ export const withClientServers = (
   // ZCode `config.json` without an `mcp` object), so treat absence as empty.
   const outerValue = parsed.document[key];
   const outer =
-    outerValue === undefined ? {} : { ...objectSchema.parse(outerValue) };
+    outerValue === undefined
+      ? {}
+      : clientConfigurationRecordSchema.parse(outerValue);
   if (
     parsed.dialect === "opencode_v2" &&
     removeLegacy !== undefined &&
@@ -325,7 +364,7 @@ const valueAt = (
 ): unknown => {
   let current: unknown = document;
   for (const key of path) {
-    const object = objectSchema.safeParse(current);
+    const object = clientConfigurationRecordSchema.safeParse(current);
     if (!object.success || !Object.hasOwn(object.data, key)) return undefined;
     current = object.data[key];
   }
@@ -756,11 +795,14 @@ const editInlineServerTable = (
   table: string,
   serverKey: string,
   entry: unknown,
-): string | undefined => {
+):
+  | { readonly text: string; readonly comments: readonly string[] }
+  | undefined => {
   if (!table.startsWith("{")) return undefined;
   const end = endOfContainer(table, 0);
   if (table[end - 1] !== "}") return undefined;
   const pairs: InlinePair[] = [];
+  const comments: string[] = [];
   let index = 1;
   let trailing = "";
   while (index < end - 1) {
@@ -775,10 +817,14 @@ const editInlineServerTable = (
     if (table[equals] !== "=") return undefined;
     const valueEnd = endOfTomlValue(table, equals + 1);
     if (valueEnd > end - 1) return undefined;
+    const pairText = table.slice(trivia.next, valueEnd);
+    const drop = key.segments[0] === serverKey;
+    if (drop)
+      for (const comment of tomlCommentLines(pairText)) comments.push(comment);
     pairs.push({
       leading: trivia.text,
-      text: table.slice(trivia.next, valueEnd),
-      drop: key.segments[0] === serverKey,
+      text: pairText,
+      drop,
     });
     index = valueEnd;
   }
@@ -787,8 +833,8 @@ const editInlineServerTable = (
       ? undefined
       : `${tomlInlineKey(serverKey)} = ${tomlInlineValue(entry)}`;
   if (insertion === undefined && pairs.every((pair) => !pair.drop))
-    return table;
-  return rebuildInlineTable(pairs, trailing, insertion);
+    return { text: table, comments };
+  return { text: rebuildInlineTable(pairs, trailing, insertion), comments };
 };
 
 const rebuildInlineTable = (
@@ -977,10 +1023,32 @@ const withoutTrailingLineFeeds = (text: string): string => {
   return text.slice(0, end);
 };
 
+/** Retain comment trivia from removed code without promoting string contents. */
+const tomlCommentLines = (text: string): readonly string[] => {
+  const comments: string[] = [];
+  let index = 0;
+  while (index < text.length) {
+    if (text.startsWith('"""', index) || text.startsWith("'''", index)) {
+      const basic = text[index] === '"';
+      index =
+        closeMultiline(text, index + 3, basic ? '"""' : "'''", basic) ??
+        text.length;
+    } else if (text[index] === '"' || text[index] === "'") {
+      index = parseQuotedKey(text, index)?.next ?? text.length;
+    } else if (text[index] === "#") {
+      const end = text.indexOf("\n", index);
+      comments.push(text.slice(index, end < 0 ? text.length : end));
+      index = end < 0 ? text.length : end + 1;
+    } else index += 1;
+  }
+  return comments;
+};
+
 /**
  * Replace REA's TOML server tables and assignments. Every comment line stays
  * where it was, including comments before, inside, and after REA's own table;
- * only blank lines that separated a removed table go with it. Text inside
+ * inline comments on replaced code become standalone comment lines.
+ * Only blank lines that separated a removed table go with it. Text inside
  * strings is not treated as a header. Only Grok Build reads the root
  * `disabled_mcp_servers` list that registration also edits.
  */
@@ -1040,6 +1108,7 @@ const upsertTomlServerSection = (
       tablePath = header.path;
       if (isTomlServerTable(header.path, serverKey)) {
         discardPending();
+        appendLines(tomlCommentLines(physical));
         skipping = true;
         lineIndex += 1;
         continue;
@@ -1068,6 +1137,7 @@ const upsertTomlServerSection = (
         endLine += 1;
       if (skipping) {
         discardPending();
+        appendLines(tomlCommentLines(text.slice(lineStart, statementEnd)));
         lineIndex = endLine + 1;
         mode = "none";
         continue;
@@ -1117,10 +1187,16 @@ const upsertTomlServerSection = (
           const replacement =
             edited === undefined
               ? text.slice(lineStart, statementEnd)
-              : `${prefix}${edited}${suffix}`;
+              : `${prefix}${edited.text}${suffix}`;
           appendLines(replacement.split("\n"));
+          // TOML 1.0 inline tables cannot gain standalone comments between
+          // their fields. Retain removed value comments after the assignment.
+          if (edited !== undefined) appendLines(edited.comments);
           inlineServerTable = true;
-        } else discardPending();
+        } else {
+          discardPending();
+          appendLines(tomlCommentLines(text.slice(lineStart, statementEnd)));
+        }
       } else {
         flushPending();
         for (let index = lineIndex; index <= endLine; index += 1)
@@ -1181,14 +1257,16 @@ const tomlServerEntry = (
   document: Record<string, unknown>,
   serverKey: string,
 ): unknown => {
-  const servers = objectSchema.safeParse(document.mcp_servers);
+  const servers = clientConfigurationRecordSchema.safeParse(
+    document.mcp_servers,
+  );
   if (!servers.success || !Object.hasOwn(servers.data, serverKey))
     return undefined;
   return servers.data[serverKey];
 };
 
 /** Whether Grok Build's root disable list names `serverKey`. */
-export const grokServerListedDisabled = (
+const grokServerListedDisabled = (
   document: Record<string, unknown>,
   serverKey: string,
 ): boolean =>
@@ -1202,7 +1280,7 @@ export const grokServerListedDisabled = (
 export const OMP_DISABLED_SERVERS_KEY = "disabledServers";
 
 /** Whether OMP's root `disabledServers` denylist names `serverKey`. */
-export const ompServerListedDisabled = (
+const ompServerListedDisabled = (
   document: Record<string, unknown>,
   serverKey: string,
 ): boolean => {
@@ -1255,7 +1333,9 @@ const serializeGrokConfiguration = (
 const withoutEmptyServerTable = (
   document: Record<string, unknown>,
 ): Record<string, unknown> => {
-  const servers = objectSchema.safeParse(document.mcp_servers);
+  const servers = clientConfigurationRecordSchema.safeParse(
+    document.mcp_servers,
+  );
   if (!servers.success || Object.keys(servers.data).length > 0) return document;
   const { mcp_servers: empty, ...rest } = document;
   void empty;
@@ -1291,7 +1371,9 @@ const tomlTextHolds = (
 ): boolean => {
   try {
     return clientConfigurationValuesEqual(
-      withoutEmptyServerTable(objectSchema.parse(parseClientToml(text))),
+      withoutEmptyServerTable(
+        clientConfigurationRecordSchema.parse(parseClientToml(text)),
+      ),
       withoutEmptyServerTable(document),
     );
   } catch (cause: unknown) {
@@ -1667,7 +1749,8 @@ export const clientRegistrationEntry = (
           : { environment: { ...environment } }),
       };
     case "kimi":
-      // Kimi infers stdio from command; it uses `transport`, not `type`.
+    case "lm_studio":
+      // Both infer stdio from command; Kimi uses `transport`, not `type`.
       return {
         command: executable,
         args,

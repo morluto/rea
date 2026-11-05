@@ -886,17 +886,20 @@ describe("JavaScript Application Graph: identity strategy requirements", () => {
     );
   });
 
-  it("prevents static authorities from claiming runtime locations", () => {
-    const evidence = artifactEvidence(
-      APPLICATION_GRAPH_DIGESTS.asar,
-      "dist/module.js",
-      "ast-static-analysis",
-    );
-    evidence.location = runtimeEvidence("script-module").location;
-    expect(() => graphForNode(contentNode(evidence))).toThrow(
-      /cannot claim a runtime location/u,
-    );
-  });
+  it.each(["ast-static-analysis", "managed-static-analysis"] as const)(
+    "prevents %s from claiming runtime locations",
+    (authority) => {
+      const evidence = artifactEvidence(
+        APPLICATION_GRAPH_DIGESTS.asar,
+        "dist/module.js",
+        authority,
+      );
+      evidence.location = runtimeEvidence("script-module").location;
+      expect(() => graphForNode(contentNode(evidence))).toThrow(
+        /cannot claim a runtime location/u,
+      );
+    },
+  );
 
   it("enforces epistemic truthfulness and content-addressed artifacts", () => {
     const inferredAsObserved = inferredArtifactEvidence(

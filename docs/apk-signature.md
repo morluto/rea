@@ -102,7 +102,11 @@ share the application workflow, projection, retention and publication owners.
   `SignerInfo`'s certificate and digest/signature algorithm OIDs. The PKCS#7
   `SignedData` envelope is read as BER, including constructed signature OCTET
   STRINGs; each embedded certificate is still interpreted as DER by the X.509
-  owner.
+  owner. Issuer matching preserves the encoded Name and also admits equivalent
+  ASCII PrintableString/UTF8String values for CN, C, L, ST, O and OU: case and
+  repeated/edge spaces are normalized, RDN sequence order is preserved, and
+  attribute order inside one multivalued RDN is ignored. Other name forms
+  require exact encoded identity; semantic equivalence remains unestablished.
   `certificate` is `null` when the block has more than one `SignerInfo` (with
   nothing verified there is no single signer) or names a certificate it does
   not carry. A block that cannot be read (malformed ASN.1, an unsupported
@@ -144,7 +148,10 @@ share the application workflow, projection, retention and publication owners.
 - **Per signer:** the certificate's **SHA-256 fingerprint over the raw embedded
   DER** (the same value `apksigner --print-certs` prints), plus subject, issuer,
   serial, ISO 8601 validity and public-key algorithm when the X.509 parser can
-  read them (each is `null` otherwise); raw signature algorithm IDs, declared
+  read the exact carried DER (each is `null` otherwise). The parser's returned
+  DER must equal those bytes before readable facts are combined with their
+  fingerprint; embedded PEM text and trailing data cannot select a different
+  certificate. Raw signature algorithm IDs, declared
   digest hex and digest algorithms, signature lengths and public-key length; and for
   v3/v3.1 the signer's declared min/max SDK.
 - **Key rotation (v3/v3.1):** the declared proof-of-rotation lineage, oldest
@@ -172,26 +179,31 @@ share the application workflow, projection, retention and publication owners.
   - `schemes_agree_on_signer` (observed): every present block scheme presents
     the same _set_ of signer certificates. An extra signer in one scheme is
     disagreement; a signer without a certificate makes it `null` (unknown).
-    Build-tools 33+ rotate through v3.1 by default, so a rotated app usually
-    reads `false` here and `true` below.
+    A single present block scheme with known signers agrees with itself;
+    v1 is compared separately below.
   - `signer_change_declared_by_rotation` (declared): the signers differ, but
-    each appears in a lineage the APK declares. Read the two together: a
-    rotated APK shows `false` / `true`; signers that differ with no declared
-    lineage containing them show `false` / `false`. It is `null` when a
-    signer's identity is unknown, or when the signers differ and a declared
-    lineage could not be decoded.
+    each appears in a lineage the APK declares. Read the two together: block
+    schemes with different signers covered by a declared lineage show `false`
+    / `true`; differing signers without such a lineage show `false` / `false`.
+    A lineage alone does not establish a change between block schemes. It is
+    `null` when a signer's identity is unknown, or when the signers differ and
+    a declared lineage could not be decoded.
   - `v1_signers_match_block_signers` (observed): the v1 signer certificates
     equal what the lowest block scheme that has signers (v2, else v3, else
     v3.1) expects v1 to carry. That is its signer set, except that a v3/v3.1
     signer declaring a rotation lineage expects the lineage's first
     (original) certificate, as apksig requires. `false` is notable: the JAR
-    signature names a different key than the block signature. A key rotation
-    keeps v1 (and v2) on the original key, so it reads `true` while
-    `schemes_agree_on_signer` reads `false`, with or without v2. `null` when
-    v1 or a block scheme is absent, any signer's identity is unknown (a
+    signature names a different key than the block signature. When v1 uses
+    the lineage's original key and v3 its newer key, this comparison reads
+    `true`. If v3 is the only present block scheme, agreement is `true` and
+    declared inter-block signer change is `false` even though rotation is
+    present. If v2 also uses the original key, agreement is `false` and the
+    declared inter-block change is `true`. `null` when
+    v1 or a populated block scheme is absent, any signer's identity is unknown (a
     `decode_error`, a `null` certificate or a `subjectKeyIdentifier`
     `SignerInfo`), or the lineage's original certificate cannot be
-    identified; a limitation then says why.
+    identified. When identities or a lineage origin are unknown, limitations
+    explain why; absence is shown in the scheme records.
   - `strongest_scheme`, `rotation_present`, `source_stamp_present`,
     `self_consistent`.
 
@@ -214,9 +226,9 @@ Not yet read: v4 `.apk.idsig` (a sibling file), verity (`0x0421`/`0x0423`/`0x042
 ## Bounds and errors
 
 The archive is read once, bounded at 512 MiB, without following symlinks and
-with change detection. Every size and offset in the ZIP tail and signing block
-is checked against its containing section before use, including the complete
-central-directory extent before ZIP end records. A process-wide queue permits
+with change detection. ZIP tail offsets, the central-directory size and signing
+block spans used by the reader are checked against their containing sections,
+including the complete central-directory extent before ZIP end records. A process-wide queue permits
 one active whole-file inspection and eight pending scans across provider
 instances; pending scans retain no APK bytes and can be cancelled with their
 original reason. Further requests receive a capacity error. The active slot
@@ -232,19 +244,41 @@ serialized size of the report together with its limitations (which repeat
 archive names) is then checked against an 8 MiB output budget (the exact check
 is authoritative); an over-budget report is refused, not truncated.
 
-The whole-file reader retains read chunks and a concatenated buffer; total
-process memory exceeds the selected file's size. It also computes the complete
+Signing blocks admit at most 4096 ID/value pairs; at most 4096 signing-relevant
+META-INF entries are retained. These fixed counts, signer/lineage counts and the
+report byte budget return nonretryable `resource_constraint` errors naming the
+effective allowance. This release has no runtime override for them. Waiting for
+an active scan cannot raise a fixed count, and complete CLI JSON cannot raise the
+report budget. Occupied scan-queue capacity remains retryable after a scan finishes.
+
+The whole-file reader allocates the selected snapshot and bounded read scratch;
+total process memory exceeds the selected file's size. It also computes the complete
 file SHA-256, so inspection is not header-only. Content digests are recomputed
 at most once per SHA-256/SHA-512 algorithm during one inspection. Input,
 inflation, decoded-record and serialized-output bounds keep work finite;
 resource refusals are distinct from malformed format errors.
 
+If the stable read completes but closing its descriptor fails or is cancelled,
+the error retains `details.partial_observation` with the selected path, complete
+file SHA-256 and byte count. These facts describe the acquired file; they do not
+establish any decoded signing facts. Failed cleanup remains visible until the
+provider releases the descriptor on a cleanup retry.
+
 A file that is not a ZIP is refused as an unsupported target. A damaged ZIP
 (local headers but no end-of-central-directory), a central directory that
 cannot be walked or whose declared record count does not account for all of
 its bytes, or a malformed signing block or signer is an input error naming the
-scheme and reason. Signer framing includes signature records, the public-key
-field and matching signed/outer v3 SDK ranges. Suffix bytes beyond known
+offset or scheme and reason. Zip64 tail damage includes a missing required
+locator, an impossible locator disk/count pair, a fixed end record that does
+not fit before its locator, or an incorrect end-record signature. These are
+input errors, not evidence of an unsupported format. Coherent multi-disk
+locator metadata and 64-bit offsets/counts/sizes beyond the reader's safe
+integer range remain unsupported. The locator offset is disk-relative, so
+multi-disk metadata is checked before applying local file bounds. This follows
+the record fields in [PKWARE APPNOTE 6.3.10, sections 4.3.14–4.3.15](https://pkware.cachefly.net/webdocs/casestudies/APPNOTE.TXT);
+it does not establish full validation of Zip64 versions or extensible data.
+Signer framing includes signature records, the public-key field and matching
+signed/outer v3 SDK ranges. Suffix bytes beyond known
 fields are counted as uninterpreted, as Android readers may ignore extensions;
 their presence does not establish malformed signing.
 When the central directory is not immediately followed by

@@ -16,7 +16,10 @@ describe("bounded file byte reads", () => {
       await writeFile(path, content);
       const handle = await open(path, "r");
       try {
-        expect(await readBoundedFileBytes(handle, limit)).toEqual(content);
+        const actual = await readBoundedFileBytes(handle, limit);
+        if (actual === undefined)
+          throw new Error("Expected complete file bytes");
+        expect(actual.equals(content)).toBe(true);
       } finally {
         await handle.close();
       }

@@ -15,7 +15,7 @@ import {
   capturePointer,
 } from "./CaptureRedaction.js";
 import { createHarValidator } from "./HarSchema.js";
-import { HAR_CAPTURE_PROVIDER_IDENTITY } from "./CaptureRelease.js";
+import { HAR_CAPTURE_PROVIDER_IDENTITY } from "./CaptureProviderIdentities.js";
 
 type DecodedCapture = Omit<
   WebNetworkCapture,
@@ -33,9 +33,14 @@ export const decodeHarCapture = (
 ): DecodedCapture => {
   const raw = parseCaptureJson(text, "HAR");
   const validation = projectHar(raw, [], "validation");
-  const adaptedPlaywrightEntries = new Set(
-    createHarValidator()(validation.reported),
-  );
+  const ipv6Adaptation = createHarValidator()(validation.reported);
+  const adaptedIpv6Entries = new Set(ipv6Adaptation?.entries);
+  const ipv6Limitations =
+    ipv6Adaptation === null
+      ? []
+      : [
+          `This capture declares ${ipv6Adaptation.producer} and reports bracketed IPv6 serverIPAddress. Original spellings are retained; brackets were removed only from valid IPv6 values in the validation copy. Producer declarations are not authenticated.`,
+        ];
   if (
     !captureObject(raw) ||
     !captureObject(raw.log) ||
@@ -75,12 +80,8 @@ export const decodeHarCapture = (
         : { kind: "json-pointer", pointer: `/log/entries/${ordinal}` },
       ...projection,
       limitations: [
-        "HAR text is producer-decoded Unicode. Original body bytes remain unknown unless content explicitly uses valid base64; declared sizes are preserved independently of retained bytes. mitmproxy 12.2.3 SaveHar may report null optional postData.text; that null is retained and omitted only from the upstream validation copy.",
-        ...(adaptedPlaywrightEntries.has(ordinal)
-          ? [
-              "This capture declares Playwright 1.58.2 and reports bracketed IPv6 serverIPAddress. Original spellings are retained; brackets were removed only from valid IPv6 values in the validation copy. Producer declarations are not authenticated.",
-            ]
-          : []),
+        "HAR text without an encoding declaration is producer-decoded Unicode. Unsupported declared body encodings remain opaque; original body bytes remain unknown unless content explicitly uses valid base64. Declared sizes are preserved independently of retained bytes. mitmproxy 12.2.3 SaveHar may report null optional postData.text; that null is retained and omitted only from the upstream validation copy.",
+        ...(adaptedIpv6Entries.has(ordinal) ? ipv6Limitations : []),
         ...(recordsExcluded
           ? [
               "This record's payload and sidecars are excluded because its structural ancestor property was explicitly marked sensitive.",
@@ -109,7 +110,10 @@ const projectHar = (
   scope: "validation" | "container" | "entry",
 ): Projection => {
   const redact = scope !== "validation";
-  const redactor = new CaptureRedaction(sensitiveValues);
+  const redactor = new CaptureRedaction(
+    sensitiveValues,
+    scope === "entry" ? value : undefined,
+  );
   const numeric_literals: Projection["numeric_literals"] = [];
   const binary_fields: Projection["binary_fields"] = [];
   const projectNumber = (item: LosslessNumber, pointer: string): JsonValue => {
@@ -192,7 +196,9 @@ const projectHar = (
         ? redactor.text(
             item,
             pointer,
-            scope === "entry" && redactor.harTransportUrl(pointer, parent),
+            scope === "entry"
+              ? redactor.harTransportUrl(pointer, parent)
+              : undefined,
           )
         : item;
     }

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { createEvidence } from "../../../src/domain/evidence.js";
 import type { JsonValue } from "../../../src/domain/jsonValue.js";
-import { evaluateCodexEvents } from "../../../src/evaluation/CodexAgentEval.js";
+import { evaluateCodexEvents } from "./CodexAgentEval.js";
 
 const observation = (
   operation = "inspect_managed_artifact",

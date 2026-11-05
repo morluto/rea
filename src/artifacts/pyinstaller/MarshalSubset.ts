@@ -1,4 +1,5 @@
 import { err, ok, type Result } from "../../domain/result.js";
+import { decodeMarshalUtf8 } from "../../domain/python/marshalUtf8.js";
 import {
   pyInstallerFailure,
   type PyInstallerFailure,
@@ -74,7 +75,8 @@ const readObject = (
     return storeScalar(cursor, flag, readShortAscii(cursor));
   if (type === 0x61 || type === 0x41)
     return storeScalar(cursor, flag, readCountedAscii(cursor));
-  if (type === 0x75) return storeScalar(cursor, flag, readUtf8(cursor));
+  if (type === 0x74 || type === 0x75)
+    return storeScalar(cursor, flag, readUtf8(cursor));
   if (type === 0x73) return storeScalar(cursor, flag, readByteString(cursor));
   if (type === 0x28) return readSequence(cursor, flag, readInt32(cursor));
   if (type === 0x29) return readSequence(cursor, flag, readByte(cursor));
@@ -183,17 +185,12 @@ const readUtf8 = (
   if (!length.ok) return length;
   const bytes = readBytes(cursor, length.value);
   if (!bytes.ok) return bytes;
-  try {
-    return ok(
-      new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
-        bytes.value,
-      ),
-    );
-  } catch {
+  const value = decodeMarshalUtf8(bytes.value);
+  if (!value.ok)
     return err(
       pyInstallerFailure("format", "PYZ marshal string is not valid UTF-8"),
     );
-  }
+  return ok(value.value.text);
 };
 
 const readByteString = (

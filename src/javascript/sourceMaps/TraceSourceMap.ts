@@ -11,6 +11,7 @@ import { z } from "zod";
 import { javaScriptRuntime } from "../../domain/runtimeVersion.js";
 import { javaScriptWorkerMemoryLimitBytes } from "../../process/JavaScriptWorkerMemoryLimit.js";
 import { webSourceOffset } from "../../domain/webSourcePosition.js";
+import { resolveJavaScriptSourceMapUrl } from "../../domain/javascript/javascriptSourceMapPaths.js";
 import {
   webSourceMapReportSchema,
   type WebSourceMapReport,
@@ -68,7 +69,7 @@ export const traceSourceMap = (
   let bytes = 0;
   const matches: WebSourceMapReport["matches"] = [];
   for (const segment of segments) {
-    const match = originalMatch(segment, map, inspected.declarations);
+    const match = originalMatch(segment, map, url, inspected.declarations);
     bytes += Buffer.byteLength(JSON.stringify(match)) + 1;
     if (bytes > WEB_SOURCE_MAP_LIMITS.outputBytes)
       throw new SourceMapFormatFailure(
@@ -158,6 +159,7 @@ const greatestPosition = (
 const originalMatch = (
   segment: Readonly<SourceMapSegment>,
   map: TraceMap,
+  mapUrl: string,
   declarations: readonly SourceMapSourceDeclaration[],
 ): WebSourceMapReport["matches"][number] => {
   if (segment.length === 1) return { state: "generated-only" };
@@ -179,10 +181,11 @@ const originalMatch = (
     source_index: declaration.sourceIndex,
     reported_source: declaration.source,
     reported_source_root: declaration.root,
-    resolved_url:
-      declaration.source === null
-        ? null
-        : (map.resolvedSources[segment[1]] ?? null),
+    resolved_url: resolveJavaScriptSourceMapUrl(
+      declaration.source,
+      declaration.root,
+      mapUrl,
+    ),
     ignored: declaration.ignored,
     content:
       declaration.content === null

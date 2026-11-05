@@ -1,4 +1,4 @@
-import { writeFile } from "node:fs/promises";
+import { open, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { expect, it, vi } from "vitest";
@@ -7,7 +7,39 @@ import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceSc
 import { readJsonFile } from "../../../src/application/JsonFiles.js";
 import { RegularFileCleanupFailure } from "../../../src/filesystem/OwnedRegularFile.js";
 import { OwnedFileHandle } from "../../../src/filesystem/OwnedFileHandle.js";
+import { EvidenceFileError } from "../../../src/domain/evidenceErrors.js";
+import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+
+it("keeps a cleanup-shaped caller cancellation opaque before JSON admission", async () => {
+  const root = await createTestTempDirectory("rea-json-opaque-cancel-");
+  const path = join(root, "input.json");
+  await writeFile(path, "{}");
+  const owner = new OwnedFileHandle(await open(path, "r"));
+  const reason = new RegularFileCleanupFailure({
+    path,
+    owner,
+    outcome: { kind: "completed", value: null },
+    cleanupCause: new Error("foreign owner"),
+  });
+  const controller = new AbortController();
+  controller.abort(reason);
+  const close = vi.spyOn(owner, "close");
+  try {
+    const result = await readJsonFile(path, controller.signal);
+    if (result.ok) throw new Error("Expected cancellation");
+    expect(result.error).toMatchObject({
+      _tag: "AnalysisCancelledError",
+      cleanupIncomplete: false,
+    });
+    expect(result.error.cause).toBe(reason);
+    expect(close).not.toHaveBeenCalled();
+    expect(owner.handle.fd).toBeGreaterThanOrEqual(0);
+  } finally {
+    close.mockRestore();
+    await owner.close();
+  }
+});
 
 it("retains and retries a JSON file owner after a persistent close failure", async () => {
   const root = await createTestTempDirectory("rea-json-file-owner-");
@@ -22,13 +54,13 @@ it("retains and retries a JSON file owner after a persistent close failure", asy
       attempts += 1;
       throw closeFailure;
     });
-  let failure: unknown;
   try {
-    try {
-      await readJsonFile(path, undefined, resources);
-    } catch (cause: unknown) {
-      failure = cause;
-    }
+    const result = await readJsonFile(path, undefined, resources);
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("Expected a typed JSON cleanup failure");
+    expect(result.error).toBeInstanceOf(EvidenceFileError);
+    expect(result.error.cleanupIncomplete).toBe(true);
+    const failure = result.error.cause;
     expect(failure).toBeInstanceOf(RegularFileCleanupFailure);
     if (!(failure instanceof RegularFileCleanupFailure))
       throw new Error("Expected the failed file owner to remain visible");
@@ -39,13 +71,59 @@ it("retains and retries a JSON file owner after a persistent close failure", asy
     });
     expect(failure.owner.handle.fd).toBeGreaterThanOrEqual(0);
     expect(attempts).toBe(2);
+    const blocked = await readJsonFile(path, undefined, resources);
+    if (blocked.ok)
+      throw new Error("Expected retained cleanup to block admission");
+    expect(attempts).toBe(3);
+    expect(blocked.error.cleanupIncomplete).toBe(true);
+    close.mockRestore();
+    await resources.close();
+    expect(failure.owner.handle.fd).toBe(-1);
+    expect(result.error.cleanupIncomplete).toBe(false);
+    expect(blocked.error.cleanupIncomplete).toBe(false);
   } finally {
     close.mockRestore();
     await resources.close();
   }
-  if (!(failure instanceof RegularFileCleanupFailure))
-    throw new Error("Expected the retained file owner");
-  expect(failure.owner.handle.fd).toBe(-1);
+});
+
+it("retains malformed JSON over cancellation during failed final close", async () => {
+  const root = await createTestTempDirectory("rea-json-invalid-close-");
+  const path = join(root, "input.json");
+  await writeFile(path, '{"unterminated":');
+  const resources = new ArtifactResourceScope();
+  const controller = new AbortController();
+  const reason = { caller: "stop after parsing" };
+  const close = vi
+    .spyOn(OwnedFileHandle.prototype, "close")
+    .mockImplementation(async () => {
+      controller.abort(reason);
+      throw new Error("controlled close failure");
+    });
+  try {
+    const result = await readJsonFile(path, controller.signal, resources);
+    if (result.ok) throw new Error("Expected invalid JSON and cleanup failure");
+    expect(projectAnalysisError(result.error)).toMatchObject({
+      code: "cleanup_incomplete",
+      details: {
+        diagnostics: {
+          primary_error: {
+            code: "evidence_integrity_mismatch",
+            details: { reason: "invalid-json" },
+          },
+        },
+      },
+    });
+    close.mockRestore();
+    await resources.close();
+    expect(result.error.cleanupIncomplete).toBe(false);
+    expect(result.error.cleanupPrimary).toMatchObject({
+      reason: "invalid-json",
+    });
+  } finally {
+    close.mockRestore();
+    await resources.close();
+  }
 });
 
 it("returns parsed JSON when a failed file close is recovered by the resource scope", async () => {

@@ -9,7 +9,7 @@ const isObject = (value: Initiator[string] | undefined): value is Initiator =>
 /** Sanitize known transport fields while retaining declarations and every unknown producer field. */
 export const sanitizeRuntimeInitiator = (
   initiator: Initiator,
-  sources: CdpRuntimeSources,
+  sources: Pick<CdpRuntimeSources, "sourceUrl">,
 ): Initiator => {
   if (typeof initiator.url === "string")
     initiator.url = sanitizeBrowserUrl(initiator.url).url;

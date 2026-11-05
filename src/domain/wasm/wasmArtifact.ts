@@ -14,13 +14,17 @@ const artifact = z.strictObject({
 /** Default execution budget; upper bound is the runtime's signed 32-bit timer range. */
 export const DEFAULT_WASM_COMMAND_TIMEOUT_MS = 30_000;
 export const MAX_WASM_COMMAND_TIMEOUT_MS = 2_147_483_647;
+/** Selected artifact lists share the same resource bound across path transports. */
+export const wasmArtifactPathsSchema = (
+  pathSchema: z.ZodString = absoluteLocalPathStringSchema,
+) => z.array(pathSchema).max(16);
 /** All artifacts are explicitly selected local files; references never trigger acquisition. */
 export const inspectWasmArtifactInputSchema = z.strictObject({
   path: absoluteLocalPathStringSchema.describe(
     "Absolute selected local WASM artifact path",
   ),
-  glue_paths: z.array(absoluteLocalPathStringSchema).max(16).default([]),
-  candidate_paths: z.array(absoluteLocalPathStringSchema).max(16).default([]),
+  glue_paths: wasmArtifactPathsSchema().default([]),
+  candidate_paths: wasmArtifactPathsSchema().default([]),
   command_timeout_ms: z
     .number()
     .int()
@@ -48,6 +52,18 @@ export const wasmArtifactSchema = z
     interface: wasmInterfaceSchema.exactOptional(),
     imports: z.array(z.string()),
     exports: z.array(z.string()),
+    debug_name_metadata: z
+      .enum(["unknown", "not-present", "complete", "uninterpretable"])
+      .default("unknown"),
+    custom_section_warnings: z
+      .array(
+        z.strictObject({
+          tool: z.enum(["wasm-validate", "wasm-objdump", "wasm2wat"]),
+          text: z.string().min(1),
+        }),
+      )
+      .nullable()
+      .default(null),
     headers: z.string(),
     details: z.string(),
     wat: z.strictObject({
@@ -119,12 +135,18 @@ export const wasmArtifactSchema = z
         path: ["candidates"],
         message: "Selected candidate does not match artifact identity.",
       });
+    const tolerantCustomSections =
+      value.tool_profile.commands[0]?.arguments.includes(
+        "--ignore-custom-section-errors",
+      );
     for (const [index, command] of value.tool_profile.commands.entries()) {
       const expected = ["wasm-validate", "wasm-objdump", "wasm2wat"][index];
       const argumentsExpected =
         command.tool === "wasm-objdump"
           ? ["-h", "-x", "module.wasm"]
-          : ["--enable-all", "module.wasm"];
+          : tolerantCustomSections
+            ? ["--enable-all", "--ignore-custom-section-errors", "module.wasm"]
+            : ["--enable-all", "module.wasm"];
       if (
         command.tool !== expected ||
         command.version_banner.trim() !== "1.0.42" ||
@@ -152,20 +174,20 @@ export type InspectWasmArtifactInput = z.infer<
 >;
 export type WasmArtifact = z.infer<typeof wasmArtifactSchema>;
 
-/** A WASM observation must identify the selected file path and byte digest. */
+/** Semantic WASM subject identity excludes delivery-only local paths. */
 export type WasmArtifactSubject = Pick<
   EvidenceSubjectTarget,
-  "path" | "sha256" | "format"
+  "sha256" | "format"
 >;
 type WasmArtifactFileSubject = WasmArtifactSubject & {
   readonly format: "file";
 };
 
+/** Match semantic artifact identity; local subject paths are delivery metadata. */
 export const wasmArtifactMatchesSubject = (
   artifact: WasmArtifact["artifact"],
   subject: WasmArtifactSubject | null | undefined,
 ): subject is WasmArtifactFileSubject =>
   subject != null &&
-  subject.path === artifact.path &&
   subject.sha256 === artifact.sha256 &&
   subject.format === "file";

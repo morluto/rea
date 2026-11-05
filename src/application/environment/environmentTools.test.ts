@@ -92,9 +92,14 @@ describe("environmentToolDefinitions", () => {
     expect(search.additionalProperties).toBe(false);
     expect(Object.keys(search.properties).sort()).toEqual(["query", "type"]);
     expect(search.properties.query).toEqual({
-      type: "string",
+      oneOf: [
+        { type: "string" },
+        { type: "number" },
+        { type: "boolean" },
+        { type: "array", items: { type: "string" } },
+      ],
       description:
-        "Query parameter query; optional, matched against the recorded query on replay.",
+        "Query parameter query; optional. Supply one value for one occurrence, a number or boolean sent as its JSON text, or an array of strings to preserve repeated values in captured order; repeated values replay their recorded request.",
     });
     expect("body" in search.properties).toBe(false);
   });
@@ -522,9 +527,14 @@ describe("environmentToolInputSchema argument names", () => {
     ]);
     expect(Object.hasOwn(schema.properties, "constructor")).toBe(true);
     expect(schema.properties.query_id?.description).toBe(
-      "Query parameter id; optional, matched against the recorded query on replay.",
+      "Query parameter id; optional. Supply one value for one occurrence, a number or boolean sent as its JSON text, or an array of strings to preserve repeated values in captured order; repeated values replay their recorded request.",
     );
-    expect(schema.properties.body?.type).toBe("string");
+    expect(schema.properties.body?.oneOf).toEqual([
+      { type: "string" },
+      { type: "number" },
+      { type: "boolean" },
+      { type: "array", items: { type: "string" } },
+    ]);
     expect(schema.properties.request_body?.type).toBe("object");
     expect(schema.required).toEqual(["id"]);
   });

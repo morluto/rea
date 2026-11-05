@@ -12,14 +12,23 @@ import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { readGhidraExecutableHeader } from "./GhidraExecutableHeader.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import {
+  absoluteCallerPath,
+  appendCallerPath,
+} from "../filesystem/callerPath.js";
+import {
   readGhidraInstallationProperties,
   type GhidraInstallationFileOptions,
 } from "./GhidraInstallationProperties.js";
-import { constants } from "node:fs";
-import { accessSync, realpathSync, statSync } from "node:fs";
+import {
+  constants,
+  accessSync,
+  readdirSync,
+  realpathSync,
+  statSync,
+} from "node:fs";
 import { delimiter as pathDelimiter, dirname, posix, win32 } from "node:path";
 
-import type { ProviderRejectionCode } from "../contracts/providerSelection.js";
+import type { ProviderRejectionCode } from "../domain/providerSelection.js";
 import {
   parseExecutableHeader,
   readFatArchitectureFamilies,
@@ -201,6 +210,10 @@ interface GhidraInstallationObservation {
   readonly configurationDirectoryName: string | null;
   readonly nativeDecompilerPath: string | null;
   readonly nativeDecompilerHeaderFailure?: AnalysisError;
+  readonly javaDiscoveryFailures?: readonly {
+    readonly command: string;
+    readonly failure: GhidraJavaProbeFailure;
+  }[];
   readonly javaCommand: string;
   readonly javaProbeFailure?: GhidraJavaProbeFailure;
   /** Observed java.vm.name; omitted when the probe cannot establish VM identity. */
@@ -241,6 +254,7 @@ export interface UnavailableGhidraInstallation extends GhidraInstallationObserva
   readonly rejection: Readonly<{
     code: ProviderRejectionCode;
     reason: string;
+    remediation: string;
   }>;
 }
 
@@ -266,6 +280,8 @@ export interface GhidraInstallationHost {
     options: GhidraInstallationFileOptions,
   ): string | undefined | Promise<string | undefined>;
   executable(path: string): boolean;
+  /** Optional best-effort enumeration of installed Homebrew opt aliases. */
+  directoryEntries?(path: string): readonly string[];
   /**
    * Read a bounded header prefix of one executable so admission can reject a
    * tool built for another platform or architecture. An omitted seam, or an
@@ -305,6 +321,10 @@ interface GhidraInstallationCoordinates {
     AnalysisError
   >;
   readonly properties: GhidraApplicationProperties | undefined;
+  readonly javaDiscoveryFailures?: readonly {
+    readonly command: string;
+    readonly failure: GhidraJavaProbeFailure;
+  }[];
   readonly javaCommand: string;
   readonly java: GhidraJavaObservation | undefined;
   readonly javaProbeFailure: GhidraJavaProbeFailure | undefined;
@@ -361,6 +381,9 @@ export const inspectGhidraInstallation = async (
           nativeDecompilerHeaderFailure:
             coordinates.nativeDecompilerHeader.error,
         }),
+    ...(coordinates.javaDiscoveryFailures === undefined
+      ? {}
+      : { javaDiscoveryFailures: coordinates.javaDiscoveryFailures }),
     javaCommand: coordinates.javaCommand,
     ...(coordinates.javaProbeFailure === undefined
       ? {}
@@ -385,21 +408,26 @@ export const inspectGhidraInstallation = async (
       providerVersion: coordinates.properties?.providerVersion ?? null,
       javaHome: javaObservation?.home ?? options.javaHome ?? null,
       javaVersion: javaObservation?.version ?? null,
-      rejection: { code: failed.code, reason: failed.remediation },
+      rejection: {
+        code: failed.code,
+        reason: failed.remediation,
+        remediation: failed.remediation,
+      },
     };
   if (options.signal?.aborted)
     throw new AnalysisCancelledError("ghidra:installation", {
       cause: options.signal.reason,
       diagnostics: ghidraInstallationDiagnostics(
-        availableInstallation(coordinates, observation),
+        availableInstallation(coordinates, observation, options.javaHome),
       ),
     });
-  return availableInstallation(coordinates, observation);
+  return availableInstallation(coordinates, observation, options.javaHome);
 };
 
 const availableInstallation = (
   coordinates: GhidraInstallationCoordinates,
   observation: GhidraInstallationObservation,
+  selectedJavaHome: string | undefined,
 ): AvailableGhidraInstallation => {
   const providerVersion = coordinates.properties?.providerVersion;
   if (
@@ -420,7 +448,11 @@ const availableInstallation = (
     analyzeHeadlessPath: coordinates.analyzeHeadlessPath,
     applicationPropertiesPath: coordinates.applicationPropertiesPath,
     providerVersion,
-    javaHome: coordinates.java.home,
+    javaHome: stableJavaHome(
+      coordinates.java.home,
+      selectedJavaHome,
+      observation.platform,
+    ),
     javaVersion: coordinates.java.version,
   };
 };
@@ -441,14 +473,14 @@ const installationCoordinates = async (
   const applicationPropertiesPath =
     installDir === null
       ? null
-      : path.join(installDir, "Ghidra", "application.properties");
+      : appendCallerPath(installDir, "Ghidra/application.properties", platform);
   const analyzeHeadlessPath =
     installDir === null
       ? null
-      : path.join(
+      : appendCallerPath(
           installDir,
-          "support",
-          platform === "win32" ? "analyzeHeadless.bat" : "analyzeHeadless",
+          `support/${platform === "win32" ? "analyzeHeadless.bat" : "analyzeHeadless"}`,
+          platform,
         );
   const decompilerPlatform = NATIVE_PLATFORMS[platform]?.[architecture];
   const decompilerExecutable =
@@ -457,24 +489,15 @@ const installationCoordinates = async (
     installDir === null || decompilerPlatform === undefined
       ? null
       : ([
-          path.join(
+          appendCallerPath(
             installDir,
-            "Ghidra",
-            "Features",
-            "Decompiler",
-            "os",
-            decompilerPlatform,
-            decompilerExecutable,
+            `Ghidra/Features/Decompiler/os/${decompilerPlatform}/${decompilerExecutable}`,
+            platform,
           ),
-          path.join(
+          appendCallerPath(
             installDir,
-            "Ghidra",
-            "Features",
-            "Decompiler",
-            "build",
-            "os",
-            decompilerPlatform,
-            decompilerExecutable,
+            `Ghidra/Features/Decompiler/build/os/${decompilerPlatform}/${decompilerExecutable}`,
+            platform,
           ),
         ].find((candidate) => host.executable(candidate)) ?? null);
   const properties =
@@ -497,42 +520,71 @@ const installationCoordinates = async (
       nativeDecompilerHeader.error.cleanupIncomplete)
   )
     throw nativeDecompilerHeader.error;
-  const javaCommand = (() => {
+  const parsedProperties =
+    properties === undefined
+      ? undefined
+      : ghidraApplicationProperties(properties);
+  const javaRequirement = ghidraJavaRequirement(parsedProperties);
+  const homebrewJavaCandidates = () =>
+    (architecture === "arm64"
+      ? ["/opt/homebrew", "/usr/local"]
+      : ["/usr/local", "/opt/homebrew"]
+    )
+      .flatMap((prefix) => {
+        const opt = path.join(prefix, "opt");
+        const versioned = (host.directoryEntries?.(opt) ?? [])
+          .filter((name) => /^openjdk@[1-9][0-9]*$/u.test(name))
+          .map((name) => ({
+            name,
+            major: Number(name.slice("openjdk@".length)),
+          }))
+          .filter(
+            ({ major }) =>
+              Number.isSafeInteger(major) &&
+              ghidraJavaMajorAccepted(major, javaRequirement),
+          )
+          .sort((left, right) => left.major - right.major)
+          .map(({ name }) => name);
+        return ["openjdk", ...versioned].map((formula) =>
+          path.join(opt, formula, "libexec/openjdk.jdk/Contents/Home/bin/java"),
+        );
+      })
+      .filter((candidate) => host.executable(candidate));
+  const selectedJava: {
+    command: string;
+    source: "configured" | "path" | "homebrew" | "default";
+  } = (() => {
     if (options.javaHome !== undefined)
-      return path.join(
-        options.javaHome,
-        "bin",
-        platform === "win32" ? "java.exe" : "java",
-      );
+      return {
+        source: "configured",
+        command: appendCallerPath(
+          options.javaHome,
+          `bin/${platform === "win32" ? "java.exe" : "java"}`,
+          platform,
+        ),
+      };
     if (platform !== "darwin")
-      return platform === "win32" ? "java.exe" : "java";
+      return {
+        source: "default",
+        command: platform === "win32" ? "java.exe" : "java",
+      };
     // Check the caller's PATH, never a file named java in the working directory.
-    const javaOnPath = options.environment.PATH?.split(":").some(
-      (directory) =>
-        path.isAbsolute(directory) &&
-        host.executable(path.join(directory, "java")),
-    );
-    if (javaOnPath) return "java";
-    // Prefer the Homebrew prefix matching the process architecture.
-    const prefixes =
-      architecture === "arm64"
-        ? ["/opt/homebrew", "/usr/local"]
-        : ["/usr/local", "/opt/homebrew"];
-    return (
-      prefixes
-        .map((prefix) =>
-          path.join(
-            prefix,
-            "opt/openjdk/libexec/openjdk.jdk/Contents/Home/bin/java",
-          ),
-        )
-        .find((candidate) => host.executable(candidate)) ?? "java"
-    );
+    const javaOnPath = options.environment.PATH?.split(":")
+      .filter((directory) => path.isAbsolute(directory))
+      .map((directory) => absoluteCallerPath(`${directory}/java`, { platform }))
+      .find((candidate) => host.executable(candidate));
+    if (javaOnPath !== undefined)
+      return { source: "path", command: javaOnPath };
+    const homebrew = homebrewJavaCandidates()[0];
+    return homebrew === undefined
+      ? { source: "default", command: "/usr/bin/java" }
+      : { source: "homebrew", command: homebrew };
   })();
+  let javaCommand = selectedJava.command;
   // Java is a prerequisite of a selected installation. Without one, or with a
   // relative JAVA_HOME, configuration validation refuses Ghidra before Java can
   // matter, so callers such as setup and doctor must not execute a host JVM.
-  const javaProbe =
+  let javaProbe =
     installDir !== null &&
     (options.javaHome === undefined || path.isAbsolute(options.javaHome))
       ? await host.probeJava(
@@ -554,16 +606,58 @@ const installationCoordinates = async (
     javaProbe.error instanceof AnalysisError
   )
     throw javaProbe.error;
+  const javaDiscoveryFailures: {
+    command: string;
+    failure: GhidraJavaProbeFailure;
+  }[] = [];
+  if (
+    platform === "darwin" &&
+    options.javaHome === undefined &&
+    selectedJava.source !== "configured" &&
+    javaProbe !== undefined &&
+    !javaProbe.ok &&
+    !(javaProbe.error instanceof AnalysisError) &&
+    javaProbe.error.code !== "version_unresolved" &&
+    javaProbe.error.cancellation === undefined &&
+    !options.signal?.aborted
+  ) {
+    javaDiscoveryFailures.push({
+      command: javaCommand,
+      failure: javaProbe.error,
+    });
+    for (const candidate of homebrewJavaCandidates()) {
+      if (candidate === selectedJava.command) continue;
+      const fallback = await host.probeJava(
+        candidate,
+        ghidraJavaEnvironment(undefined, options.environment, platform),
+        {
+          resourceOwner: options.resourceOwner,
+          ...(options.signal === undefined ? {} : { signal: options.signal }),
+        },
+      );
+      if (fallback.ok) {
+        javaCommand = candidate;
+        javaProbe = fallback;
+        break;
+      }
+      const failure = fallback.error;
+      if (failure instanceof AnalysisError) throw failure;
+      javaDiscoveryFailures.push({ command: candidate, failure });
+      if (failure.cancellation !== undefined || options.signal?.aborted) {
+        javaCommand = candidate;
+        javaProbe = fallback;
+        break;
+      }
+    }
+  }
   return {
     installDir,
     applicationPropertiesPath,
     analyzeHeadlessPath,
     nativeDecompilerPath,
     nativeDecompilerHeader,
-    properties:
-      properties === undefined
-        ? undefined
-        : ghidraApplicationProperties(properties),
+    properties: parsedProperties,
+    ...(javaDiscoveryFailures.length === 0 ? {} : { javaDiscoveryFailures }),
     javaCommand,
     java: javaProbe?.ok === true ? javaProbe.value : undefined,
     javaProbeFailure:
@@ -704,6 +798,26 @@ export const ghidraInstallationDiagnostics = (
             : { output: { ...inspection.javaProbeFailure.output } }),
         },
       }),
+  ...(inspection.javaDiscoveryFailures === undefined
+    ? {}
+    : {
+        java_discovery_failures: inspection.javaDiscoveryFailures.map(
+          ({ command, failure }) => ({
+            command,
+            code: failure.code,
+            detail: failure.detail,
+            ...(failure.output === undefined
+              ? {}
+              : { output: { ...failure.output } }),
+            ...(failure.properties === undefined
+              ? {}
+              : { properties: { ...failure.properties } }),
+            ...(failure.cancellation === undefined
+              ? {}
+              : { cancellation_observed: true }),
+          }),
+        ),
+      }),
   java_home: inspection.javaHome,
   java_version: inspection.javaVersion,
   java_vm_name: inspection.javaVmName ?? null,
@@ -738,10 +852,7 @@ export const ghidraJavaEnvironment = (
     : {
         ...boundedEnvironment,
         JAVA_HOME: javaHome,
-        PATH: `${(platform === "win32" ? win32 : posix).join(
-          javaHome,
-          "bin",
-        )}${platform === "win32" ? win32.delimiter : posix.delimiter}${selectedEnvironment.PATH ?? ""}`,
+        PATH: `${appendCallerPath(javaHome, "bin", platform)}${platform === "win32" ? win32.delimiter : posix.delimiter}${selectedEnvironment.PATH ?? ""}`,
       };
 };
 
@@ -987,6 +1098,14 @@ const javaRemediation = (
 
 export const systemGhidraInstallationHost = (): GhidraInstallationHost => ({
   readText: readGhidraInstallationProperties,
+  directoryEntries(path) {
+    try {
+      return readdirSync(path);
+    } catch {
+      // Optional discovery cannot replace explicit Java selection or admission.
+      return [];
+    }
+  },
   executableHeader: readGhidraExecutableHeader,
   executable(path) {
     try {
@@ -1010,19 +1129,23 @@ export const discoverGhidraInstallationOnPath = (
   if (platform !== process.platform) return undefined;
   const path = platform === "win32" ? win32 : posix;
   const pathValue = environment.PATH;
-  if (pathValue === undefined || pathValue.length === 0) return undefined;
+  if (pathValue === undefined) return undefined;
   const launchers =
     platform === "win32"
       ? ["ghidra.bat", "ghidraRun.bat", "ghidra.exe", "ghidraRun.exe"]
       : ["ghidra", "ghidraRun"];
   for (const directory of pathValue.split(pathDelimiter)) {
-    if (directory.length === 0) continue;
+    // POSIX empty PATH entries select cwd, including an entirely empty PATH.
+    if (directory.length === 0 && platform === "win32") continue;
     for (const launcher of launchers) {
       let resolved: string;
       try {
-        const candidate = path.resolve(directory, launcher);
+        const candidate = absoluteCallerPath(
+          appendCallerPath(directory, launcher, platform),
+          { platform },
+        );
         if (!executablePath(candidate)) continue;
-        resolved = realpathSync(candidate);
+        resolved = realpathSync.native(candidate);
       } catch (cause: unknown) {
         void cause;
         continue;
@@ -1073,12 +1196,60 @@ const stableGhidraInstallationRoot = (
   const prefix = posix.join(parsed.root, ...segments.slice(0, cellarIndex));
   const candidate = posix.join(prefix, "opt", formula, "libexec");
   try {
-    return realpathSync(candidate) === root ? candidate : root;
+    return realpathSync.native(candidate) === root ? candidate : root;
   } catch (cause: unknown) {
     // An absent or unresolved alias cannot establish a stable installation identity.
     void cause;
     return root;
   }
+};
+
+/** Preserve a proven caller alias, or an active Homebrew keg alias. */
+const stableJavaHome = (
+  observedHome: string,
+  selectedHome: string | undefined,
+  platform: NodeJS.Platform,
+): string => {
+  // Compare paths only with the matching host filesystem semantics.
+  if (platform !== process.platform) return observedHome;
+  const sameHome = (candidate: string): boolean => {
+    try {
+      return (
+        realpathSync.native(candidate) === realpathSync.native(observedHome)
+      );
+    } catch (cause: unknown) {
+      // Missing or unresolved aliases do not prove identity.
+      void cause;
+      return false;
+    }
+  };
+  if (selectedHome !== undefined)
+    return sameHome(selectedHome) ? selectedHome : observedHome;
+  if (platform !== "darwin") return observedHome;
+  const parsed = posix.parse(observedHome);
+  const segments = observedHome.slice(parsed.root.length).split(posix.sep);
+  const cellarIndex = segments.length - 7;
+  const formula = segments[cellarIndex + 1];
+  const version = segments[cellarIndex + 2];
+  if (
+    cellarIndex < 0 ||
+    segments[cellarIndex] !== "Cellar" ||
+    formula === undefined ||
+    formula.length === 0 ||
+    version === undefined ||
+    version.length === 0 ||
+    segments.slice(cellarIndex + 3).join("/") !==
+      "libexec/openjdk.jdk/Contents/Home"
+  )
+    return observedHome;
+  const prefix = posix.join(parsed.root, ...segments.slice(0, cellarIndex));
+  const candidate = posix.join(
+    prefix,
+    "opt",
+    formula,
+    "libexec/openjdk.jdk/Contents/Home",
+  );
+  return sameHome(candidate) ? candidate : observedHome;
 };
 
 const executablePath = (path: string): boolean => {

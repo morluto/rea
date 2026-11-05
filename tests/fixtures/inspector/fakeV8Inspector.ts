@@ -10,7 +10,7 @@ interface InspectorCommand {
 
 interface FakeV8InspectorOptions {
   readonly targetUrl: string;
-  readonly attached?: boolean | null;
+  readonly attached?: unknown;
   readonly targetType?: "node" | "page";
   readonly runtimeProduct?: string;
   readonly scriptUrls?: readonly string[];
@@ -48,6 +48,9 @@ export const startFakeV8Inspector = async (
   const sockets = new Set<WebSocket>();
   let port = 0;
   const http = createServer((request, response) => {
+    // The in-process client may block on schema validation past the idle socket
+    // deadline. Keep discovery independent of pooled-socket expiry races.
+    response.setHeader("connection", "close");
     response.setHeader("content-type", "application/json");
     if (request.url === "/json/version") {
       response.end(
@@ -227,7 +230,7 @@ const target = (
   options: {
     readonly type: "node" | "page";
     readonly port: number;
-    readonly attached: boolean | null | undefined;
+    readonly attached: unknown;
   },
 ) => ({
   id,

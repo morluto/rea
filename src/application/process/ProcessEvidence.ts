@@ -10,7 +10,6 @@ import {
   PROCESS_PROVIDER,
   isProcessEvidenceProvider,
 } from "../../domain/process/processEvidenceProvider.js";
-import { jsonValueSchema } from "../../domain/jsonValue.js";
 import {
   safeParseProcessCapture,
   type ProcessCapture,
@@ -91,7 +90,7 @@ export const createProcessCaptureEvidence = (
     predicateType: PROCESS_CAPTURE_EVIDENCE.predicate,
     operation: PROCESS_CAPTURE_EVIDENCE.operation,
     parameters: processEvidenceParameters(scenario, capture.manifest.platform),
-    result: jsonValueSchema.parse(capture),
+    result: capture,
     confidence: "observed",
     authority: "controlled-replay",
     environment: {

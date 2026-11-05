@@ -15,8 +15,16 @@ permissions restores the retained tarball and verifier runtime. It installs
 that exact archive into an empty prefix, then exercises CLI help/discovery and
 the real stdio MCP catalog/session contract. Installation finishes before the
 protocol deadline begins, with dependency lifecycle scripts disabled. Only a
-successful rehearsal enables the job with npm publishing authority. Both jobs
-use the same release-input action; neither rebuilds or repacks the archive.
+successful rehearsal enables the job with npm publishing authority. The publisher
+downloads only
+the original qualified archive and manifest, validates their source/run/attempt,
+version, Node identity and streamed digest using Node built-ins, then invokes
+`npm publish --ignore-scripts` against the official registry. A shared built-in
+registry reader checks existing bytes and tags afresh on every publisher attempt,
+including retries after partial publication. It does not install
+application dependencies, restore verifier code or execute package canaries.
+Pinned Node/npm, Actions and the runner remain trusted toolchain inputs. Neither
+job rebuilds or repacks the archive.
 This rehearsal checks package consumption on the Linux release runner;
 qualification retains its broader native-host and real-provider checks.
 
@@ -25,10 +33,19 @@ An existing version must match the qualified tarball's SHA-512 and intended
 `latest`/`next` dist-tag before it can be reused. Publication never overwrites
 an existing version or silently changes a dist-tag. After publication, only
 confirmed registry absence is retried within the propagation window. Content
-or tag mismatches fail immediately. The post-publication verifier installs
+or tag mismatches fail immediately. A separate post-publication job with read-only
+repository/actions permissions verifies registry bytes and tags, then installs
 from npm and repeats the same CLI/MCP checks; it also exercises a real update
 from an older stable release. For a prerelease on `next`, that updater still
-targets stable `latest`, as the public update command does.
+targets stable `latest`, as the public update command does. MCP publication
+depends on that verification job succeeding. Rehearsal, publication and both
+registry-verification/publication jobs do not inherit remote-cache credentials.
+
+Qualification records the parsed `latest`/`next` channel in manifest schema v2.
+Rehearsal validates its exact SemVer mapping; the minimal publisher consumes the
+qualified channel without a second version parser. Only read-only recovery
+accepts existing schema-v1 artifacts, preserving their original bytes and
+source/run identity. New publication requires schema v2.
 
 The required reverse-tools lane runs fresh coverage and both mutation
 preflights. Complete mutation sweeps run separately on a schedule or manual
@@ -38,7 +55,7 @@ both publication jobs and the published-package canary; a merged PR or GitHub
 tag alone does not establish that publication finished. Retry failed jobs in
 the original run after a partial publication.
 
-### Recover an already published npm release
+## Recover an already published npm release
 
 Rerunning a job uses its original workflow and source revision. When a verifier
 or publishing workflow needs a code fix, land that fix on main first, then use
@@ -50,7 +67,9 @@ gh workflow run release-recovery.yml --ref main \
 ```
 
 Select the existing version and its original automatic Release run. Recovery
-requires that run's successful exact-source CI gate and npm publish step. It
+requires that run's successful exact-source CI gate plus a successful npm write
+or registry-byte verification. It recognizes verification in either the older
+publisher job or the separate post-publication job. It
 uses the existing release tag, original qualified tarball and verifier runtime;
 expired or missing artifacts stop recovery. The archive's source, version,
 original run/attempt and Node version must match, and its SHA-512 must equal
@@ -70,6 +89,40 @@ releases are outside this recovery path.
 
 For a release that needs an independently frozen application checkpoint, use
 the optional manual path below. It retains explicit prepare and publish phases.
+
+Automatic main proposals and manual checkpoint preparation use
+`scripts/release-proposal.mjs` with the pinned release-please dependency.
+The controller applies `patches/release-please+17.3.0.patch` only when invoked;
+normal dependency installation and published-package installation do not apply it.
+The patch avoids commit-file backfills, associated PR file lists and path splitting
+for a single root Node package with the default changelog, default or
+always-bump-minor versioning, no path exclusions and no explicit plugins. Other
+configurations retain the upstream file attribution workflow. Commit history and
+associated PR metadata still come from GitHub: release notes need the commits,
+and `BEGIN_COMMIT_OVERRIDE` needs the merged PR body. Skipped file lists remain
+unknown rather than being reported as empty. The controller sizes commit search
+from the complete selected Git history, and a missing known release boundary
+fails before proposal creation.
+
+History-page reads retry GitHub's canonical internal GraphQL response error within
+the existing five-retry budget and exponential backoff. Each retry uses the same
+cursor; permission, validation and mixed errors fail immediately. Exhaustion
+stops preparation before proposal writes. The controller does not restart proposal
+creation or retry mutations. An internal GraphQL error does not establish API
+quota exhaustion or prove that query size caused the failure. Publication
+continues through the pinned release-please action.
+
+A nonzero manifest version must resolve to a GitHub release or tag before
+proposal history is collected. If publication has not created that boundary
+yet, preparation stops before opening or updating a PR; wait for publication
+before retrying. Missing manifest versions and `0.0.0` still allow an initial
+release. This prevents historical `Release-As` directives from being replayed
+as unreleased changes.
+
+When upgrading release-please, review the upstream manifest implementation,
+refresh the versioned patch and run the release proposal and workflow boundary
+tests. Version mismatch or a patch that neither applies cleanly nor matches an
+already-applied patch fails closed.
 
 ## Contributor-aware release notes
 
@@ -296,7 +349,10 @@ tag remains in main's ancestry. Keep the released tag unchanged.
 
 The synchronization must include `.release-please-manifest.json`,
 `package.json`, both root versions in `package-lock.json`, `CHANGELOG.md`,
-`server.json`, and the versioned documentation examples. Run
+`server.json`, both plugin manifests (`.claude-plugin/plugin.json` and
+`.codex-plugin/plugin.json`), the Codex server declaration (`.codex-plugin/mcp.json`), both
+marketplaces (`.claude-plugin/marketplace.json` and
+`.agents/plugins/marketplace.json`), and the versioned documentation examples. Run
 `npm run docs:generate`, `npm run docs:check`, and the release configuration
 tests against the combined tree. After the merge, verify that the released
 tag is an ancestor of main:
@@ -330,3 +386,18 @@ tag. Do not dispatch a fresh publish phase to repair an already-created
 release: Release Please will not create the same release again. Do not move
 the tag, delete the release, or unpublish npm as a retry. A defective public
 package requires a reviewed correction and a new version.
+
+### Plugin artifact metadata
+
+Package verification selects files with npm, then packs an owned staging directory.
+The release manifest omits development dependencies and development-only overrides;
+its generated `npm-shrinkwrap.json` preserves the runtime dependency resolutions
+and integrity values from `package-lock.json`. Runtime or unresolved overrides
+fail packaging rather than being dropped. Source metadata is never rewritten.
+The archive bundles production dependencies because Codex fetches npm plugins
+without installing dependencies. The producer includes all locked PTY platform
+archives after checking their integrity, without re-resolving the runtime tree.
+Optional Frida stays outside the bundle so ordinary npm installation can retain
+its host-specific installer. This also lets Claude install locked dependencies under its plugin policy while
+retaining development security overrides. Both plugin marketplaces select the
+same qualified npm artifact, which the release workflow publishes unchanged.

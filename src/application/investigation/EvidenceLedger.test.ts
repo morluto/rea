@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import type { BinaryTarget } from "../../domain/binaryTargetTypes.js";
-import { createEvidence } from "../../domain/evidence.js";
+import {
+  createEvidence,
+  withEvidenceCallerInputPath,
+} from "../../domain/evidence.js";
 import { createEvidenceBundle } from "../../domain/evidenceBundle.js";
 import { recordUnknownInputSchema } from "../../domain/residualUnknown.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
@@ -16,6 +19,32 @@ const TARGET: BinaryTarget = {
   availableArchitectures: ["arm64"],
 };
 const PROVIDER = { id: "fixture", name: "Fixture provider", version: "1" };
+
+it("accepts and replaces caller path metadata for the same semantic record", () => {
+  const original = createEvidence(TARGET, PROVIDER, {
+    operation: "health",
+    parameters: {},
+    result: true,
+  });
+  const selected = withEvidenceCallerInputPath(original, "./selected-alias");
+  const ledger = new EvidenceLedger();
+  expect(ledger.record(original)).toEqual({ ok: true, value: "added" });
+  expect(ledger.record(selected)).toEqual({ ok: true, value: "duplicate" });
+  expect(ledger.import(createEvidenceBundle([selected]))).toEqual({
+    ok: true,
+    value: {
+      recordsAdded: 0,
+      unknownsAdded: 0,
+      changed: true,
+      replacements: [
+        { kind: "metadata", previous: original, current: selected },
+      ],
+    },
+  });
+  expect(ledger.get(original.evidence_id)?.caller_input_path).toBe(
+    "./selected-alias",
+  );
+});
 
 describe("evidence ledger recording", () => {
   it("deduplicates and atomically imports bundles", () => {
@@ -43,7 +72,7 @@ describe("evidence ledger recording", () => {
         recordsAdded: 0,
         unknownsAdded: 0,
         changed: false,
-        metadataChanged: false,
+        replacements: [],
       },
     });
     expect(ledger.export().records).toEqual([evidence]);
@@ -60,7 +89,13 @@ describe("evidence ledger recording", () => {
         recordsAdded: 0,
         unknownsAdded: 0,
         changed: true,
-        metadataChanged: true,
+        replacements: [
+          {
+            kind: "metadata",
+            previous: evidence,
+            current: relocatedBundleRecord,
+          },
+        ],
       },
     });
     expect(ledger.get(evidence.evidence_id)).toEqual(relocatedBundleRecord);
@@ -73,7 +108,7 @@ describe("evidence ledger recording", () => {
         recordsAdded: 0,
         unknownsAdded: 0,
         changed: false,
-        metadataChanged: false,
+        replacements: [],
       },
     });
     const conflictingBundle = createEvidenceBundle([
@@ -111,7 +146,7 @@ describe("evidence ledger recording", () => {
         recordsAdded: 0,
         unknownsAdded: 0,
         changed: false,
-        metadataChanged: false,
+        replacements: [],
       },
     });
     ledger.clear();
@@ -194,7 +229,13 @@ describe("evidence ledger metadata imports", () => {
         recordsAdded: 0,
         unknownsAdded: 0,
         changed: true,
-        metadataChanged: true,
+        replacements: [
+          {
+            kind: "metadata",
+            previous: mutation,
+            current: relocatedMutation,
+          },
+        ],
       },
     });
     expect(ledger.get(mutation.evidence_id)).toEqual(relocatedMutation);
@@ -204,7 +245,7 @@ describe("evidence ledger metadata imports", () => {
         recordsAdded: 0,
         unknownsAdded: 0,
         changed: false,
-        metadataChanged: false,
+        replacements: [],
       },
     });
   });

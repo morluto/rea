@@ -97,16 +97,12 @@ export const openCdpEndpoint = async (
           connection,
         };
       } catch (cause: unknown) {
-        if (owner === undefined) {
-          await connection.close();
-          throw cause;
-        }
-        try {
-          await owner.finish(connection);
-        } catch (cleanupCause: unknown) {
-          throw combineOpenFailure(cause, cleanupCause, operation);
-        }
-        throw cause;
+        return await failCdpOpenAfterCleanup(
+          connection,
+          cause,
+          operation,
+          owner,
+        );
       }
     },
     discoveryTimeoutMs,
@@ -147,12 +143,7 @@ export const openCdpTargetSession = async (
     );
   } catch (cause: unknown) {
     if (owner === undefined) throw cause;
-    try {
-      await owner.finish(connection);
-    } catch (cleanupCause: unknown) {
-      throw combineOpenFailure(cause, cleanupCause, operation);
-    }
-    throw cause;
+    return await failCdpOpenAfterCleanup(connection, cause, operation, owner);
   }
 };
 
@@ -173,12 +164,26 @@ export const attachCdpTargetSession = async (
     );
     return { connection, sessionId: attachedSessionId(attached, operation) };
   } catch (cause: unknown) {
-    if (owner === undefined) {
-      await connection.close();
-      throw cause;
-    }
+    if (owner === undefined)
+      return await failCdpOpenAfterCleanup(connection, cause, operation);
     throw cause;
   }
+};
+
+/** Finish failed admission without allowing cleanup to replace its primary. */
+export const failCdpOpenAfterCleanup = async (
+  connection: CdpConnection,
+  primary: unknown,
+  operation: BrowserObservationOperation,
+  owner?: CdpTargetSessionOwner,
+): Promise<never> => {
+  try {
+    if (owner === undefined) await connection.close();
+    else await owner.finish(connection);
+  } catch (cleanup: unknown) {
+    throw combineOpenFailure(primary, cleanup, operation);
+  }
+  throw primary;
 };
 
 const combineOpenFailure = (

@@ -76,6 +76,11 @@ identities even when their displayed values match. Partial identities also retai
 the source site: matching expression text at different sites does not establish
 the same runtime target. This records observed source syntax; it does not
 establish that the call ran or contacted that endpoint.
+Version comparison can align equal unresolved source sites and syntax across
+artifact changes, while target identity remains unknown. Equal unresolved text
+at different sites and partial versus exact values cannot establish a pair.
+Unresolved targets qualify endpoint absence only within the same endpoint kind;
+known metadata differences on an established pair remain visible.
 Graph coverage describes the analyzed artifact scope and resource limits, not
 runtime execution. A partial target alone does not imply omitted source.
 
@@ -157,6 +162,14 @@ module produced it. In particular:
 - truncated coverage must be partial, name the limiting bound, and not claim
   zero omissions;
 - complete coverage cannot be truncated or omit items.
+
+Semantic graph validation enforces the same truncation coupling. Unknown
+omission extents remain `null`; positive omitted unknown occurrences can explain
+truncation even when omitted node and relation counts are both zero. Ordinary
+source unavailability, including invalid UTF-8, can make coverage partial without
+resource truncation. JavaScript summary `limitation_count` counts the full,
+deduplicated union of parent, application and semantic caveats, including messages
+whose delivery is omitted by the view's byte budget.
 
 Unavailable values are represented explicitly rather than as missing fields,
 so absence of evidence cannot silently become evidence of absence.

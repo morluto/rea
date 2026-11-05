@@ -18,6 +18,11 @@ const wire = (hex: string) => {
     same,
   );
 };
+const readSchema = async (...args: Parameters<typeof ProtobufSchema.read>) => {
+  const admitted = await ProtobufSchema.read(...args);
+  if (!admitted.ok) throw new Error(admitted.error.message);
+  return admitted.value;
+};
 const source = {
   pointer: "/response/content/text",
   content_type: "application/grpc-web+proto",
@@ -126,12 +131,7 @@ it("keeps enum numbers separate from every declared alias", async () => {
     }),
   );
   const budget = new ProtobufBudget();
-  const schema = await ProtobufSchema.read(
-    bytes,
-    "aliases.Message",
-    budget,
-    same,
-  );
+  const schema = await readSchema(bytes, "aliases.Message", budget, same);
   const decoded = await decodeProtobufBody(
     Buffer.from([8, 0, 21, 0, 0, 0, 128]),
     "raw",
@@ -328,12 +328,7 @@ it("uses supplied descriptors without replacing wire values and preserves schema
     }),
   );
   const budget = new ProtobufBudget();
-  const schema = await ProtobufSchema.read(
-    descriptor,
-    "sample.Message",
-    budget,
-    same,
-  );
+  const schema = await readSchema(descriptor, "sample.Message", budget, same);
   const body = Buffer.from("0801120568656c6c6f1a020801220201023801", "hex");
   const decoded = await decodeProtobufBody(
     body,
@@ -403,7 +398,7 @@ it("stops before exhausting fact capacity and yields for caller cancellation", a
 
 it("preserves a leading Unicode BOM in both the wire string and schema interpretation", async () => {
   const budget = new ProtobufBudget();
-  const schema = await ProtobufSchema.read(
+  const schema = await readSchema(
     protobufCaptureDescriptor(),
     "capture.Message",
     budget,
@@ -458,12 +453,7 @@ it("keeps bad nested schema interpretations local and preserves subsequent outer
     }),
   );
   const budget = new ProtobufBudget();
-  const schema = await ProtobufSchema.read(
-    descriptor,
-    "nested.Message",
-    budget,
-    same,
-  );
+  const schema = await readSchema(descriptor, "nested.Message", budget, same);
   const bytes = Buffer.from("0a01ff1001", "hex");
   const result = await decodeProtobufWire(
     bytes,
@@ -489,7 +479,7 @@ it("keeps bad nested schema interpretations local and preserves subsequent outer
 it("yields and preserves the cancellation reason inside one large packed interpretation", async () => {
   const abort = new AbortController();
   const budget = new ProtobufBudget(abort.signal);
-  const schema = await ProtobufSchema.read(
+  const schema = await readSchema(
     protobufCaptureDescriptor(),
     "capture.Message",
     budget,
@@ -524,5 +514,78 @@ it("rejects malformed descriptor wire even when the SDK would skip the unknown f
   );
   await expect(
     ProtobufSchema.read(bytes, "M", new ProtobufBudget(), same),
-  ).rejects.toThrow("Malformed FileDescriptorSet wire format");
+  ).resolves.toMatchObject({
+    ok: false,
+    error: {
+      kind: "malformed-descriptor",
+      field: "descriptor_set_path",
+      message: expect.stringContaining("byte"),
+    },
+  });
+});
+
+it("uses the same group grammar for nested candidates and direct messages", async () => {
+  for (const [nested, accepted] of [
+    ["0b10010c", true],
+    ["0b100114", false],
+    ["0b1001", false],
+    ["0c", false],
+    ["0900", false],
+  ] as const) {
+    const direct = await wire(nested);
+    const wrapped = await wire(
+      `0a${(nested.length / 2).toString(16).padStart(2, "0")}${nested}`,
+    );
+    expect(direct.error === undefined).toBe(accepted);
+    expect(wrapped.fields[0]?.interpretations?.includes("nested-message")).toBe(
+      accepted,
+    );
+  }
+});
+it("distinguishes missing selected message types from malformed and duplicate descriptor declarations", async () => {
+  expect(
+    await ProtobufSchema.read(
+      protobufCaptureDescriptor(),
+      "capture.Missing",
+      new ProtobufBudget(),
+      same,
+    ),
+  ).toMatchObject({
+    ok: false,
+    error: {
+      kind: "missing-message",
+      field: "message_type",
+      message: expect.stringContaining("capture.Missing"),
+    },
+  });
+  const bytes = toBinary(
+    FileDescriptorSetSchema,
+    create(FileDescriptorSetSchema, {
+      file: [
+        {
+          name: "duplicate.proto",
+          syntax: "proto3",
+          messageType: [
+            {
+              name: "M",
+              field: [
+                { name: "first", number: 1, type: 5, label: 1 },
+                { name: "second", number: 1, type: 9, label: 1 },
+              ],
+            },
+          ],
+        },
+      ],
+    }),
+  );
+  expect(
+    await ProtobufSchema.read(bytes, "M", new ProtobufBudget(), same),
+  ).toMatchObject({
+    ok: false,
+    error: {
+      kind: "malformed-descriptor",
+      field: "descriptor_set_path",
+      message: expect.stringContaining("Duplicate field number 1"),
+    },
+  });
 });

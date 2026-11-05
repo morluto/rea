@@ -218,6 +218,95 @@ it("excludes structural auth material and explicit normalized values without gue
   expect(traces[0]?.incomplete_fact_records).toContain(2);
 });
 
+it.each(["http:frame_created", "http:frame_parsed", "extension:custom"])(
+  "applies HTTP credential and transport URL rules only to HTTP header events: %s",
+  (name) => {
+    const headers = [
+      { name: "Authorization", value: "authorization credential" },
+      { name: "Proxy-AUTHORIZATION", value: "proxy credential" },
+      { name: "CoOkIe", value: "cookie credential" },
+      { name: "Set-Cookie", value: "response cookie credential" },
+      { name: "Location", value: "https://user:pass@example.test/path" },
+      { name: "authorization-extra", value: "ordinary extension" },
+    ];
+    const { decoded } = facts(
+      capture([{ name, time: 1, data: { frame: { headers } } }]),
+    );
+    const http = name.startsWith("http:");
+    const expectedValues = http
+      ? [
+          null,
+          null,
+          null,
+          null,
+          "https://example.test/path",
+          "ordinary extension",
+        ]
+      : headers.map(({ value }) => value);
+    expect(decoded.records[0]?.reported).toMatchObject({
+      data: {
+        frame: {
+          headers: headers.map((header, index) => ({
+            ...header,
+            value: expectedValues[index],
+          })),
+        },
+      },
+    });
+    expect(decoded.records[0]?.redactions).toEqual(
+      http
+        ? Array.from({ length: 5 }, (_, index) => ({
+            pointer: `/data/frame/headers/${index}/value`,
+            reason: "transport-credential",
+          }))
+        : [],
+    );
+  },
+);
+
+it.each([
+  { literal: "1e2", sensitive: "100", reported: null, retained: false },
+  { literal: "1e2", sensitive: "1e2", reported: null, retained: false },
+  { literal: "1e2", sensitive: "unrelated", reported: 100, retained: true },
+  {
+    literal: "9007199254740993",
+    sensitive: "9007199254740993",
+    reported: null,
+    retained: false,
+  },
+  {
+    literal: "9007199254740993",
+    sensitive: "9007199254740992",
+    reported: null,
+    retained: true,
+  },
+])(
+  "preserves numeric source spelling or excludes declared values: $literal / $sensitive",
+  ({ literal, sensitive, reported, retained }) => {
+    const text = capture([
+      { name: "extension:custom", time: 1, data: { value: 123456789 } },
+    ]).replace('"value":123456789', `"value":${literal}`);
+    const { decoded } = facts(text, [sensitive]);
+    expect(decoded.records[0]?.reported).toMatchObject({
+      data: { value: reported },
+    });
+    expect(
+      decoded.records[0]?.numeric_literals.filter(
+        ({ pointer }) => pointer === "/data/value",
+      ),
+    ).toEqual(
+      retained
+        ? [{ pointer: "/data/value", producer_type: "json-number", literal }]
+        : [],
+    );
+    expect(decoded.records[0]?.redactions).toEqual(
+      retained
+        ? []
+        : [{ pointer: "/data/value", reason: "explicit-sensitive-value" }],
+    );
+  },
+);
+
 it.each([
   { hidden: "sent", incomplete: [0], streams: 0, losses: 1 },
   { hidden: "lost", incomplete: [1], streams: 1, losses: 0 },
@@ -242,6 +331,23 @@ it.each([
     expect(traces[0]?.loss_declarations).toHaveLength(losses);
   },
 );
+
+it("counts hidden payloads only for events interpreted as transport facts", () => {
+  const text = capture([
+    { name: "extension:custom", time: 0, data: { body: "ordinary" } },
+    event([frame(0, 10, false)]),
+    { name: "recovery:packet_lost", time: 2, data: { packet_number: 5 } },
+  ]);
+  const control = facts(text);
+  expect(control.traces[0]?.incomplete_fact_records).toEqual([]);
+  const hidden = facts(text, ["data"]);
+  expect(hidden.traces[0]?.incomplete_fact_records).toEqual([1, 2]);
+  expect(hidden.decoded.records.map((record) => record.reported)).toEqual([
+    { name: "extension:custom", time: 0 },
+    { name: "transport:packet_sent", time: 1791819895000.25 },
+    { name: "recovery:packet_lost", time: 2 },
+  ]);
+});
 
 it("omits a hidden derived total for a stream with more contributions than call arguments allow", () => {
   const events = Array.from({ length: 130 }, (_, index) =>

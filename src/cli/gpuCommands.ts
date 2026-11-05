@@ -6,6 +6,7 @@ import { safeParseJson } from "../domain/safeJson.js";
 import { z } from "incur";
 import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
+import { localPathStringSchema } from "../domain/localPath.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { createGpuCodeObjectsService } from "../composition/gpu.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
@@ -22,9 +23,9 @@ export const registerGpuCommands = (cli: CliInstance, logger: Logger): void => {
     description:
       "Inspect embedded CUDA/HIP targets and selected static kernel metadata",
     args: z.object({
-      path: z
-        .string()
-        .describe("Local ELF/PE, CUDA fatbin, CUBIN, PTX or HIP bundle"),
+      path: localPathStringSchema.describe(
+        "Local ELF/PE, CUDA fatbin, CUBIN, PTX or HIP bundle",
+      ),
     }),
     options: z.object({
       ...analysisEvidenceDeliveryOptions,
@@ -98,10 +99,11 @@ export const registerGpuCommands = (cli: CliInstance, logger: Logger): void => {
             );
           const service = createGpuCodeObjectsService();
           return deliverCliAnalysisEvidence({
+            callerInputPath: args.path,
             run: () =>
               service.inspect(
                 {
-                  path: absoluteCallerPath(args.path),
+                  path: selected.data.path,
                   analysis: selected.data.analysis,
                   ...(selected.data.expected_sha256 === undefined
                     ? {}

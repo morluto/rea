@@ -26,7 +26,6 @@ ARGUMENT_REGISTERS = {
     "x86_64h": ["rdi", "rsi", "rdx", "rcx", "r8", "r9"],
 }
 MAX_SELECTOR_BYTES = 1024
-MAX_REPORTED_LOCATIONS = 64
 MAX_OTHER_STOPS = 256
 MAX_TRACE_BYTES = 8 * 1024 * 1024
 MAX_TRACE_FRAMES = 65_536
@@ -505,20 +504,19 @@ def _breakpoint_report(target, created, config):
                 if not _wanted(config["breakpoints"][index], location["symbol"] or ""):
                     continue
                 count += 1
-                if len(locations) < MAX_REPORTED_LOCATIONS:
-                    remaining_bytes = (
-                        MAX_BREAKPOINT_LOCATION_BYTES - retained_location_bytes
-                    )
-                    if not _fits_trace_budget(location, remaining_bytes):
-                        locations_truncated = True
-                        continue
-                    location_bytes = len(json.dumps(location).encode("utf-8"))
-                    addition = location_bytes + (1 if locations else 0)
-                    if addition > remaining_bytes:
-                        locations_truncated = True
-                        continue
-                    locations.append(location)
-                    retained_location_bytes += addition
+                remaining_bytes = (
+                    MAX_BREAKPOINT_LOCATION_BYTES - retained_location_bytes
+                )
+                if not _fits_trace_budget(location, remaining_bytes):
+                    locations_truncated = True
+                    continue
+                location_bytes = len(json.dumps(location).encode("utf-8"))
+                addition = location_bytes + (1 if locations else 0)
+                if addition > remaining_bytes:
+                    locations_truncated = True
+                    continue
+                locations.append(location)
+                retained_location_bytes += addition
         report.append({"index": index, "location_count": count, "locations": locations})
     return report, locations_truncated
 
@@ -661,18 +659,15 @@ def trace(debugger, config):
                 open(observation_path, "wb")
             )
         process = target.Launch(_launch_info(target, config, listener), error)
-        if not error.Success() or not process.IsValid():
+        process_created = process.IsValid()
+        if not error.Success() or not process_created:
             exit_observed = _retire_failed_launch(
                 process, config, listener, stdout, stderr
             )
             return {
                 "status": "launch-error",
                 "error": error.GetCString(),
-                **(
-                    {"target_process_created": True}
-                    if process.IsValid()
-                    else {}
-                ),
+                "target_process_created": process_created,
                 **(
                     {"target_process_exit_observed": True}
                     if exit_observed

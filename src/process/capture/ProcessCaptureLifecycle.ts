@@ -52,10 +52,15 @@ import { assertNotCancelled } from "./ProcessScenarioRuntimeValidation.js";
 import {
   normalizeProcessElapsedTime,
   normalizeProcessSamples,
+  normalizeRetainedTerminalFrames,
   type BoundedProcessTextNormalization,
 } from "./ProcessNormalization.js";
 import { PROCESS_PROVIDER } from "../../domain/process/processEvidenceProvider.js";
 import { TerminalRenderer } from "./TerminalRenderer.js";
+import type { ProcessSensitiveOutput } from "./ProcessSensitiveOutput.js";
+import { AnalysisError } from "../../domain/analysisErrorBase.js";
+import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
+import { jsonValueSchema } from "../../domain/jsonValue.js";
 import {
   hasCaptureTruncation,
   type NormalizedTerminalRetention,
@@ -335,7 +340,7 @@ export const buildCaptureResult = (
     (event) => event.type === "input" && event.sensitive,
   );
   const sensitiveInputUnknown =
-    "Sensitive scripted input values are redacted from process capture Evidence.";
+    "Sensitive scripted input literals and retained terminal echoes are redacted. Terminal states are reconstructed from the redacted stream; private display effects and transformed values remain unknown.";
   const filesystemObservationUnknown =
     "No filesystem observation paths were selected; filesystem effects remain unknown.";
   const hasFilesystemObservations =
@@ -424,7 +429,10 @@ export const buildCaptureResult = (
         reason,
       })),
       ...(hasSensitiveScriptedInput
-        ? [{ scope: "interaction" as const, reason: sensitiveInputUnknown }]
+        ? [
+            { scope: "interaction" as const, reason: sensitiveInputUnknown },
+            { scope: "terminal" as const, reason: sensitiveInputUnknown },
+          ]
         : []),
       ...captureCoverageUnknowns(options.truncationDetails).filter(
         ({ scope }) => scope !== "terminal",
@@ -448,6 +456,12 @@ const captureCoverageUnknowns = (
           ? "Raw PTY chunks were omitted because original input exceeded output_bytes or an ordered normalization stage exceeded its remaining bound; final normalized sizes for the latter omissions are unknown. Rendered states also lack those inputs. See raw_terminal and normalized_terminal retention details, including the normalized omission count."
           : "Raw PTY chunks exceeded output_bytes and were omitted; rendered states also lack those inputs. See truncation_details.raw_terminal.",
     });
+  if ((details.raw_terminal.redacted_bytes ?? 0) > 0)
+    unknowns.push({
+      scope: "terminal",
+      reason:
+        "Sensitive terminal text was removed before rendering. Redacted bytes still consume the original output budget. When retained input has gaps, all retained terminal text is withheld; private display effects remain unknown.",
+    });
   if (
     details.rendered_terminal.observed_frames >
     details.rendered_terminal.retained_frames
@@ -455,7 +469,7 @@ const captureCoverageUnknowns = (
     unknowns.push({
       scope: "terminal",
       reason:
-        (details.rendered_terminal.unknown_size_frames ?? 0) > 0
+        (details.rendered_terminal.normalization_over_budget_frames ?? 0) > 0
           ? "Rendered frames were omitted because a normalization stage exceeded the remaining output_bytes budget; final rendered byte totals are unknown for those frames. See truncation_details.rendered_terminal."
           : "Cumulative rendered state and visible-line bytes exceeded output_bytes; whole rendered frames were omitted. Raw PTY coverage is reported separately. See truncation_details.rendered_terminal.",
     });
@@ -463,6 +477,11 @@ const captureCoverageUnknowns = (
     ["before", details.filesystem_before],
     ["after_settlement", details.filesystem_after],
   ] as const) {
+    for (const subtree of coverage.unobserved_subtrees ?? [])
+      unknowns.push({
+        scope: "filesystem",
+        reason: `Filesystem ${name} subtree ${subtree.path} was outside observation: ${subtree.reason === "symlink_not_followed" ? "symbolic links are not followed" : "the exact observer-owned directory is excluded, including target activity within it"}.`,
+      });
     if (coverage.enumeration_truncated)
       unknowns.push({
         scope: "filesystem",
@@ -1122,7 +1141,7 @@ const releaseCapturedProcessGroup = async (
 export interface ProcessCaptureResourceCleanupOptions {
   readonly timers: ReadonlySet<ProcessTimer>;
   readonly terminal: Pick<IPty, "pid"> | undefined;
-  readonly renderer: TerminalRenderer | undefined;
+  readonly renderer: Pick<TerminalRenderer, "dispose"> | undefined;
   readonly runId: string;
   readonly temporaryRoot: string;
   readonly captureBaseline?: ProcessOwnershipBaseline;
@@ -1175,7 +1194,9 @@ class ProcessCaptureResourceOwner {
   }
 
   get cleanupResources(): readonly string[] {
-    return unresolvedCleanupResources(this.report);
+    return unresolvedCleanupResources(this.report).map((resource) =>
+      resource === "temporary_root" ? this.options.temporaryRoot : resource,
+    );
   }
 
   get report(): ProcessCaptureCleanupReport {
@@ -1198,8 +1219,8 @@ class ProcessCaptureResourceOwner {
 
   async close(): Promise<ProcessCaptureCleanupReport> {
     for (const timer of this.options.timers) timer.cancel();
-    await this.#releaseRenderer();
     await this.#releaseOwnedProcessGroup();
+    await this.#releaseRenderer();
     await this.#releaseTemporaryRoot();
     return this.report;
   }
@@ -1423,6 +1444,8 @@ export const captureTerminalFrames = (options: {
   readonly terminal: IPty;
   readonly scenario: ProcessScenario;
   readonly frames: TerminalFrame[];
+  readonly sensitiveOutput?: ProcessSensitiveOutput;
+  readonly onSensitiveOutputFailure?: () => void;
   readonly started: number;
   readonly onOutput: () => void;
   readonly renderer: TerminalRenderer;
@@ -1431,13 +1454,18 @@ export const captureTerminalFrames = (options: {
     maxBytes: number,
   ) => BoundedProcessTextNormalization;
   readonly recordEvent: RecordProcessCaptureEvent;
+  readonly identifiers: () => readonly number[];
 }): (() => TerminalCaptureRetention) => {
   let rawBytes = 0;
   let normalizedBytes = 0;
   let observedBytes = 0;
   let observedFrames = 0;
   let normalizedOmittedFrames = 0;
-  options.terminal.onData((data) => {
+  let firstIdentifiers: readonly number[] | undefined;
+  let sealed = false;
+  let redactedBytes = 0;
+  const subscription = options.terminal.onData((data) => {
+    if (sealed) return;
     options.onOutput();
     const bytes = Buffer.byteLength(data);
     observedBytes += bytes;
@@ -1451,6 +1479,7 @@ export const captureTerminalFrames = (options: {
       normalizedOmittedFrames += 1;
       return;
     }
+    firstIdentifiers ??= options.identifiers();
     rawBytes += bytes;
     normalizedBytes += normalized.utf8Bytes;
     const atMs = normalizeProcessElapsedTime(
@@ -1464,23 +1493,111 @@ export const captureTerminalFrames = (options: {
       data: normalized.value,
       ...(normalized.value === data ? {} : { raw_data: data }),
     });
-    options.renderer.write(data, atMs);
+    options.renderer.write(
+      options.sensitiveOutput === undefined
+        ? data
+        : () => {
+            if (options.sensitiveOutput?.failure !== undefined)
+              throw options.sensitiveOutput.failure;
+            const frame = options.frames[sequence];
+            if (frame === undefined)
+              throw new ProcessCaptureError(
+                "Retained terminal frame is unavailable.",
+              );
+            return frame.raw_data ?? frame.data;
+          },
+      atMs,
+    );
     options.recordEvent("frames", sequence);
   });
-  return () => ({
-    raw_terminal: {
-      budget_bytes: options.scenario.limits.output_bytes,
-      observed_bytes: observedBytes,
-      retained_bytes: rawBytes,
-      observed_frames: observedFrames,
-      retained_frames: options.frames.length,
-    },
-    normalized_terminal: {
-      budget_bytes: options.scenario.limits.output_bytes,
-      retained_bytes: normalizedBytes,
-      omitted_frames: normalizedOmittedFrames,
-    },
-  });
+  return () => {
+    if (!sealed) {
+      sealed = true;
+      try {
+        if (options.sensitiveOutput !== undefined) {
+          const projection = options.sensitiveOutput.projectRawFrames(
+            options.frames,
+            observedFrames > options.frames.length,
+          );
+          if (!projection.ok) throw projection.error;
+          redactedBytes = projection.value;
+          normalizedBytes = normalizeRetainedTerminalFrames(
+            options.frames,
+            options.normalizeText,
+            options.scenario.limits.output_bytes,
+            "sensitive-input",
+          );
+          const normalized = options.sensitiveOutput.projectNormalizedFrames(
+            options.frames,
+          );
+          if (!normalized.ok) throw normalized.error;
+          normalizedBytes = normalized.value;
+          rawBytes -= redactedBytes;
+        }
+      } catch (cause) {
+        if (options.sensitiveOutput !== undefined) {
+          const failure =
+            cause instanceof AnalysisError
+              ? cause
+              : new ProcessCaptureError(
+                  "Sensitive terminal projection failed; terminal text was withheld.",
+                );
+          options.sensitiveOutput.fail(failure);
+          for (const [index, frame] of options.frames.entries())
+            options.frames[index] = {
+              sequence: frame.sequence,
+              at_ms: frame.at_ms,
+              data: "",
+            };
+          options.onSensitiveOutputFailure?.();
+          throw failure;
+        }
+        throw cause;
+      } finally {
+        try {
+          subscription.dispose();
+        } catch (cause) {
+          if (options.sensitiveOutput?.failure === undefined) throw cause;
+          options.sensitiveOutput.failure.retainSecondaryFailure(
+            new ProcessCaptureError("Terminal subscription disposal failed."),
+          );
+        }
+      }
+    }
+    if (options.sensitiveOutput?.failure !== undefined)
+      throw options.sensitiveOutput.failure;
+    const identifiers = options.identifiers();
+    if (
+      options.sensitiveOutput === undefined &&
+      options.scenario.normalization.pids &&
+      firstIdentifiers !== undefined &&
+      identifiers !== firstIdentifiers
+    ) {
+      normalizedBytes = normalizeRetainedTerminalFrames(
+        options.frames,
+        options.normalizeText,
+        options.scenario.limits.output_bytes,
+      );
+      firstIdentifiers = identifiers;
+    }
+    return {
+      raw_terminal: {
+        budget_bytes: options.scenario.limits.output_bytes,
+        observed_bytes: observedBytes,
+        retained_bytes: rawBytes,
+        ...(options.sensitiveOutput === undefined
+          ? {}
+          : { redacted_bytes: redactedBytes }),
+        observed_frames: observedFrames,
+        retained_frames: options.frames.length,
+      },
+      normalized_terminal: {
+        budget_bytes: options.scenario.limits.output_bytes,
+        retained_bytes: normalizedBytes,
+        omitted_frames: normalizedOmittedFrames,
+      },
+    };
+  };
 };
 
 export interface TerminalCaptureRetention {
@@ -1571,6 +1688,15 @@ export const resolveProcessResult = (
         cleanupReport: cleanup,
         cleanupFailure: cleanupError,
       });
+    if (executionFailure instanceof AnalysisError) {
+      if (partialObservation !== undefined)
+        executionFailure.retainPartialObservation(partialObservation);
+      throw analysisErrorWithCleanupFailure(
+        executionFailure,
+        cleanupError,
+        "capture_process",
+      ).bindCleanupDependencies([executionFailure, cleanupError]);
+    }
     throw cleanupError;
   }
   if (executionFailure instanceof ProcessCaptureError) {
@@ -1583,6 +1709,14 @@ export const resolveProcessResult = (
     });
   }
   if (executionFailure !== undefined) {
+    if (executionFailure instanceof AnalysisError) {
+      if (partialObservation !== undefined)
+        executionFailure.retainPartialObservation(partialObservation);
+      executionFailure.retainDiagnostics({
+        cleanup_report: jsonValueSchema.parse(cleanup),
+      });
+      throw executionFailure;
+    }
     throw new ProcessCaptureError("process capture failed", {
       cause: executionFailure,
       reason: "capture_failed",
@@ -1649,17 +1783,22 @@ export const prepareProcessCapture = async (
   let temporaryRoot: string | undefined;
   const runId = randomUUID();
   try {
-    before = await captureSnapshot(scenario, signal, undefined, resourceScope);
     temporaryRoot = await host.createTemporaryRoot();
+    before = await captureSnapshot(scenario, signal, undefined, {
+      ...(resourceScope === undefined ? {} : { cleanup: resourceScope }),
+      observerPaths: [temporaryRoot],
+    });
     assertNotCancelled(signal);
     const ownershipBaseline =
       (await host.captureOwnershipBaseline?.(signal)) ?? [];
     assertNotCancelled(signal);
     return { temporaryRoot, runId, ownershipBaseline, before };
   } catch (cause: unknown) {
+    let failure = cause;
     if (cause instanceof ProcessCaptureSnapshotFailure) {
       before = cause.snapshot;
       for (const lease of cause.cleanupLeases) resourceScope?.retain(lease);
+      failure = cause.failureForCaller();
     }
     const cleanupOptions =
       temporaryRoot === undefined
@@ -1690,7 +1829,7 @@ export const prepareProcessCapture = async (
           : await resourceScope.release(cleanupOptions);
     resolveProcessResult(
       undefined,
-      normalizeCaptureFailure(cause, signal),
+      normalizeCaptureFailure(failure, signal),
       cleanup,
       createProcessCaptureObservationBuffer({
         frames: [],
@@ -1702,7 +1841,7 @@ export const prepareProcessCapture = async (
       }),
       { scenario },
     );
-    throw cause;
+    throw failure;
   }
 };
 

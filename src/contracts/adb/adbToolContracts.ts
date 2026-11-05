@@ -93,7 +93,7 @@ export const ADB_TOOL_CONTRACTS = [
     name: "inspect_adb_package",
     ...toolContractMetadata("inspect_adb_package"),
     description:
-      "Inspect one installed package through `dumpsys package`: version name/code, install and update times, installer, user id, flags, and the requested-permission count. A fixed projection of version-dependent output; unknown sections are ignored rather than guessed. Read-only.",
+      "Inspect installed-package versions, install times, installer, user id, flags, and requested-permission count through read-only `dumpsys package`. Malformed numeric declarations are retained in bounded numeric_issues and make coverage partial; version_code stays exact text. Unknown sections are not inferred.",
     kind: "adb-provider",
     inputSchema: adbInputSchemas.inspect_adb_package,
     outputSchema: evidenceResultOf(adbResultSchemas.inspect_adb_package),
@@ -212,7 +212,7 @@ export const ADB_TOOL_CONTRACTS = [
     name: "inspect_adb_display",
     ...toolContractMetadata("inspect_adb_display"),
     description:
-      "Report the display's physical and any overridden size (`wm size`) and density (`wm density`) as the device declares them. Read-only; setting values is not exposed.",
+      "Read physical and override size/density from `wm size` and `wm density`. Malformed numeric declarations are retained in numeric_issues with partial coverage; optional values remain null. Required physical-size failures retain partial display facts. Read-only.",
     kind: "adb-provider",
     inputSchema: adbInputSchemas.inspect_adb_display,
     outputSchema: evidenceResultOf(adbResultSchemas.inspect_adb_display),

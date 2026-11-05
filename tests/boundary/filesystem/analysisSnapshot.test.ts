@@ -276,6 +276,7 @@ describe("analysis snapshot member decoding", () => {
       `${" ".repeat(9 * 1024 * 1024)}${JSON.stringify(snapshot)}`,
     );
     const controller = new AbortController();
+    const reason = { request: "cancel snapshot import" };
     const reads = await holdFirstFileRead(path);
     onTestFinished(() => {
       controller.abort();
@@ -283,12 +284,16 @@ describe("analysis snapshot member decoding", () => {
     });
     const pending = readAnalysisSnapshot(path, controller.signal);
     await reads.firstRead;
-    controller.abort();
+    controller.abort(reason);
     reads.release();
     try {
       expect(await pending).toMatchObject({
         ok: false,
-        error: { _tag: "AnalysisCancelledError" },
+        error: {
+          _tag: "AnalysisCancelledError",
+          operation: "open_binary",
+          cause: reason,
+        },
       });
       expect(reads.readCount).toBe(1);
     } finally {
@@ -317,14 +322,17 @@ describe("analysis snapshot file ownership", () => {
         });
       let failure: unknown;
       try {
-        try {
-          await readAnalysisSnapshot(
-            path,
-            cancelDuringClose ? controller.signal : undefined,
-          );
-        } catch (cause: unknown) {
-          failure = cause;
-        }
+        const result = await readAnalysisSnapshot(
+          path,
+          cancelDuringClose ? controller.signal : undefined,
+        );
+        if (result.ok)
+          throw new Error("Expected typed snapshot cleanup failure");
+        expect(result.error.cleanupIncomplete).toBe(true);
+        failure =
+          cancelDuringClose && result.error.cause instanceof AggregateError
+            ? result.error.cause.errors[1].cause
+            : result.error.cause;
         expect(failure).toBeInstanceOf(RegularFileCleanupFailure);
         if (!(failure instanceof RegularFileCleanupFailure))
           throw new Error("Expected the retained snapshot file handle owner");

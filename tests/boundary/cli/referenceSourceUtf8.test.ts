@@ -134,6 +134,66 @@ cliTest.skipIf(process.platform !== "linux")(
 );
 
 cliTest.skipIf(process.platform === "win32")(
+  "keeps raw symlink target identities distinct from UTF-8 replacement and BOM handling",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-reference-link-bytes-");
+    const config = await createTestTempDirectory(
+      "rea-reference-link-bytes-config-",
+    );
+    const rawTarget = Buffer.from([0x62, 0x61, 0x64, 0xff, 0x2e, 0x74, 0x73]);
+    await Promise.all([
+      writeFile(join(root, "bad\ufffd.ts"), "export const unicode = 1;\n"),
+      symlink(rawTarget, join(root, "alias.ts")),
+      writeFile(join(root, "\ufefftarget.ts"), "export const bom = 1;\n"),
+      symlink("\ufefftarget.ts", join(root, "bom-alias.ts")),
+    ]);
+
+    const result = await cli.run({
+      arguments: ["import-reference-source", root, "--json"],
+      environment: {
+        HOME: config,
+        XDG_CONFIG_HOME: config,
+        XDG_CACHE_HOME: config,
+      },
+    });
+    expect(result.exitCode, result.stderr + JSON.stringify(result.json)).toBe(
+      0,
+    );
+    const graph = historicalSourceGraphSchema.parse(result.json);
+    expect(graph.entries).toContainEqual(
+      expect.objectContaining({
+        kind: "symlink",
+        path: "alias.ts",
+        target: null,
+        target_state: "unreadable",
+        limitations: [expect.stringContaining(rawTarget.toString("hex"))],
+      }),
+    );
+    expect(graph.entries).toContainEqual(
+      expect.objectContaining({
+        kind: "file",
+        path: "bad\ufffd.ts",
+        content_state: "hashed",
+      }),
+    );
+    expect(graph.entries).toContainEqual(
+      expect.objectContaining({
+        kind: "symlink",
+        path: "bom-alias.ts",
+        target: "\ufefftarget.ts",
+        target_state: "internal",
+      }),
+    );
+    expect(
+      Buffer.compare(
+        await readlink(join(root, "alias.ts"), { encoding: "buffer" }),
+        rawTarget,
+      ),
+    ).toBe(0);
+  },
+);
+
+cliTest.skipIf(process.platform === "win32")(
   "preserves historical literal-backslash entries and their exact owning import base",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-reference-literal-paths-");

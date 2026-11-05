@@ -144,9 +144,9 @@ test("retains failed snapshot cleanup ownership and retries it on close", async 
       sha256: f.digest,
     },
   });
-  await expect(readFile(f.snapshotPath())).resolves.toEqual(
-    await readFile(f.source),
-  );
+  expect(
+    Buffer.compare(await readFile(f.snapshotPath()), await readFile(f.source)),
+  ).toBe(0);
 
   await f.provider.close();
   await expect(lstat(dirname(f.snapshotPath()))).rejects.toMatchObject({
@@ -372,9 +372,10 @@ test.each([
     const secondary = result.error.secondaryFailures[0];
     expect(secondary).toBeInstanceOf(AnalysisOutputError);
     expect(secondary?.cause).toBeInstanceOf(AdbInputSnapshotFailure);
-    expect(
-      (secondary?.cause as AdbInputSnapshotFailure).cleanupCause,
-    ).toBeDefined();
+    const snapshotFailure = secondary?.cause;
+    if (!(snapshotFailure instanceof AdbInputSnapshotFailure))
+      throw new Error("Expected snapshot cleanup failure");
+    expect(snapshotFailure.cleanupCause).toBeDefined();
   },
 );
 
@@ -464,7 +465,7 @@ test.each([
             }),
       },
     });
-    await expect(readFile(localPath)).resolves.toEqual(pulledBytes);
+    expect(Buffer.compare(await readFile(localPath), pulledBytes)).toBe(0);
     const originatingError = result.error;
     await f.provider.close();
     expect(closeAttempts).toBe(failClose ? 2 : 1);
@@ -681,7 +682,12 @@ test.each([false, true])(
         dirname(f.snapshotPath()),
       );
     else expect(result.error.cleanupIncomplete).toBe(false);
-    expect(await readFile(f.source)).toEqual(Buffer.from("immutable payload"));
+    expect(
+      Buffer.compare(
+        await readFile(f.source),
+        Buffer.from("immutable payload"),
+      ),
+    ).toBe(0);
     await f.provider.close();
   },
 );

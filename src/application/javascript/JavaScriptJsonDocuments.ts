@@ -15,6 +15,7 @@ interface JavaScriptJsonDocumentFactBase {
 export type JavaScriptJsonDocumentFacts =
   | (JavaScriptJsonDocumentFactBase & {
       readonly status: "included";
+      readonly nextDependency: "declared" | "unproven";
       readonly packageFields: Readonly<
         Partial<Record<(typeof PACKAGE_PROPERTIES)[number], unknown>>
       > | null;
@@ -127,6 +128,7 @@ const parseDocument = (
     return Object.freeze({
       source: snapshot.source,
       status: "included",
+      nextDependency: "unproven",
       packageFields: null,
       topLevelKeys: Object.freeze([]),
     });
@@ -135,21 +137,34 @@ const parseDocument = (
   const topLevelKeys = Object.freeze(
     Object.keys(record).sort(compareUnicodeCodePoints),
   );
-  const packageFields =
-    snapshot.kind === "package-json"
-      ? Object.freeze(
-          Object.fromEntries(
-            PACKAGE_PROPERTIES.flatMap((key) =>
-              Object.hasOwn(record, key)
-                ? [[key, Reflect.get(record, key)]]
-                : [],
-            ),
-          ),
-        )
-      : null;
+  // Absent source fields must stay absent when consumers read named properties.
+  const packageFields: Partial<
+    Record<(typeof PACKAGE_PROPERTIES)[number], unknown>
+  > | null = snapshot.kind === "package-json" ? Object.create(null) : null;
+  if (packageFields !== null) {
+    for (const key of PACKAGE_PROPERTIES)
+      if (Object.hasOwn(record, key))
+        packageFields[key] = Reflect.get(record, key);
+    Object.freeze(packageFields);
+  }
+  const nextDeclared =
+    snapshot.kind === "package-json" &&
+    ["dependencies", "devDependencies", "peerDependencies"].some((key) => {
+      const dependencies: unknown = record[key];
+      if (
+        typeof dependencies !== "object" ||
+        dependencies === null ||
+        Array.isArray(dependencies) ||
+        !Object.hasOwn(dependencies, "next")
+      )
+        return false;
+      const version: unknown = Reflect.get(dependencies, "next");
+      return typeof version === "string" && version.length > 0;
+    });
   return Object.freeze({
     source: snapshot.source,
     status: "included",
+    nextDependency: nextDeclared ? "declared" : "unproven",
     packageFields,
     topLevelKeys,
   });

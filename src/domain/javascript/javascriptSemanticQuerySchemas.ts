@@ -8,8 +8,7 @@ import {
   javaScriptSemanticEvidenceContextSchema,
   javaScriptSemanticUnknownSchema,
 } from "./javascriptSemanticGraphSchemas.js";
-import { digestSchema } from "../digests.js";
-import { prefixedDigestSchema } from "../digests.js";
+import { digestSchema, prefixedDigestSchema } from "../digests.js";
 
 const semanticNodeIdSchema = prefixedDigestSchema("jsrg_node");
 const literalValueSchema = z.union([
@@ -43,13 +42,15 @@ export const javaScriptSemanticQuerySeedSchema = z.discriminatedUnion("kind", [
     kind: z.literal("property"),
     name: z.string(),
   }),
+  // Analysis preserves the complete literal endpoint, including the empty
+  // string, so the seed matches any retained value exactly, as event does.
   z.strictObject({
     kind: z.literal("endpoint"),
-    value: z.string().min(1),
+    value: z.string(),
   }),
   z.strictObject({
     kind: z.literal("event"),
-    name: z.string().min(1),
+    name: z.string(),
   }),
   z.strictObject({
     kind: z.literal("boundary-field"),

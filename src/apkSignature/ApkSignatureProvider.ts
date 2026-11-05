@@ -397,7 +397,7 @@ export class ApkSignatureProvider implements ApkSignaturePort {
         }
       });
     } catch (cause: unknown) {
-      return err(apkSignatureFailure(cause, input.path, options?.signal));
+      return err(apkSignatureFailure(cause, input.path));
     }
   }
 

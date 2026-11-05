@@ -27,9 +27,12 @@ import {
   hostRemediation,
   systemSetupHost,
 } from "./SetupHost.js";
-import { AnalysisError } from "../domain/analysisErrorBase.js";
+import {
+  AnalysisError,
+  type AnalysisCleanupObservation,
+} from "../domain/analysisErrorBase.js";
+import { setupCleanupError, setupCleanupReason } from "./SetupCleanupOwner.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
-import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import type { SetupSkillInstallError } from "./SetupSkill.js";
 import type { SetupHopperInstallFailure } from "./SetupInstallFailure.js";
 
@@ -49,42 +52,47 @@ export const runSetup = async (
     primaryFailure = cause;
   }
 
-  let cleanupFailure: string | undefined;
+  let cleanup: AnalysisError | undefined;
   try {
-    cleanupFailure = await host.close?.();
+    const report = await host.close?.();
+    cleanup = report === undefined ? undefined : setupCleanupError(report);
   } catch (cause: unknown) {
-    cleanupFailure = `Setup resource cleanup failed: ${failureMessage(cause)}`;
+    cleanup = setupCleanupError(cause);
   }
-
+  if (cleanup !== undefined && !cleanup.cleanupIncomplete) cleanup = undefined;
   if (threw) {
-    if (cleanupFailure !== undefined && primaryFailure instanceof AnalysisError)
+    if (cleanup === undefined) throw primaryFailure;
+    if (primaryFailure instanceof AnalysisError)
       throw analysisErrorWithCleanupFailure(
         primaryFailure,
-        new ProviderCleanupError(
-          "setup",
-          primaryFailure.cleanupResources,
-          { reason: cleanupFailure },
-          { operation: "setup" },
-        ),
+        cleanup,
         "setup",
-      );
-    if (cleanupFailure !== undefined)
-      throw new AggregateError(
-        [primaryFailure, new Error(cleanupFailure)],
-        "Setup and resource cleanup failed.",
-        { cause: primaryFailure },
-      );
-    throw primaryFailure;
+      ).bindCleanupDependencies([primaryFailure, cleanup]);
+    throw new AggregateError(
+      [primaryFailure, cleanup],
+      "Setup and resource cleanup failed.",
+      { cause: primaryFailure },
+    );
   }
   if (result === undefined) throw new Error("Setup returned no result.");
-  if (cleanupFailure === undefined) return result;
+  if (cleanup === undefined) return result;
+  const cleanupReason = setupCleanupReason(cleanup);
+  const cleanupReport: AnalysisCleanupObservation = {
+    reason: cleanupReason,
+    get resources() {
+      return cleanup.cleanupResources;
+    },
+  };
   return {
     ...result,
     status: "needs_human",
     code: result.code ?? "cleanup_failed",
+    get cleanup() {
+      return cleanup.cleanupIncomplete ? cleanupReport : undefined;
+    },
     remediation: result.remediation
-      ? `${result.remediation} ${cleanupFailure}`
-      : cleanupFailure,
+      ? `${result.remediation} ${cleanupReason}`
+      : cleanupReason,
   };
 };
 
@@ -123,6 +131,14 @@ const runSetupWorkflow = async (
       options.proposeHopper ?? (confirm !== undefined && !options.structured),
     initialDoctor: initialState.doctor,
   });
+  // The advertised family scope is a registration setting, not a detected
+  // provider fact; merge it after discovery so it cannot suppress the
+  // Hopper installation offer on an otherwise unconfigured machine.
+  if (options.toolFamilies !== undefined)
+    providerEnvironment = {
+      ...providerEnvironment,
+      REA_MCP_TOOL_FAMILIES: options.toolFamilies,
+    };
   clientStates = discovery.clientStates;
   const clientSelectionAllowed =
     options.clientIds === undefined &&
@@ -154,17 +170,10 @@ const runSetupWorkflow = async (
   let installSkill = skillSelected && skillNeedsInstall;
   let planDiscovery = discovery;
   if (interactiveSelection) {
-    const selectionSkillClientIds = [
-      ...new Set([
-        ...discovery.defaultClientIds,
-        ...discovery.detectedClientIds,
-      ]),
-    ];
-    const selectionSkillNeedsInstall = await host.skillNeedsInstall(
-      selectionSkillClientIds,
-    );
-    const offerSkillAction =
-      options.installSkill !== false && selectionSkillNeedsInstall;
+    // The skill choice is intent; its final destination is determined after
+    // selecting clients. An empty client selection names the shared CLI copy.
+    const selectionSkillClientIds: readonly string[] = [];
+    const offerSkillAction = options.installSkill !== false;
     const selectionActions = await planSetupActions({
       discovery,
       host,
@@ -212,10 +221,15 @@ const runSetupWorkflow = async (
         options.installHopper ||
         (proposedInstallAction && selectedActionIds.has("install_hopper")),
     };
+    // The offered skill action can carry a client-specific ID (for example
+    // `install_skill:claude_code`); without a selected client it means the
+    // shared CLI skill.
+    const skillActionSelected = selectionActions.plannedActions.some(
+      ({ id, kind }) => kind === "install_skill" && selectedActionIds.has(id),
+    );
     skillSelected =
       options.installSkill === true ||
-      (selectedActionIds.has("install_skill") &&
-        selectedClientIds.length === 0) ||
+      (skillActionSelected && selectedClientIds.length === 0) ||
       (options.installSkill !== false && selectedClientIds.length > 0);
     installSkill = skillSelected && skillNeedsInstall;
     selectedSkillClientIds = selectedClientIds;
@@ -358,6 +372,7 @@ const runSetupWorkflow = async (
           remediation:
             combineRemediation(hopperFailure.remediation, result.remediation) ??
             hopperFailure.remediation,
+          ...hopperDownload(hopperFailure),
         };
   if (clientFailure !== undefined)
     return withHopperFailure(await fail(clientFailure));
@@ -380,7 +395,8 @@ const runSetupWorkflow = async (
         appliedActions.includes("installed_hopper"),
         doctor.healthy,
         // Offer installation only where the explicit gate accepts it.
-        hopperPath === undefined && planDiscovery.hopperInstall.supported,
+        hopperPath === undefined &&
+          planDiscovery.hopperInstall.supported !== false,
       ),
     hopperWarning,
     manualRemediation,
@@ -393,9 +409,16 @@ const runSetupWorkflow = async (
     doctor,
     clientStates,
     ...(remediation === undefined ? {} : { remediation }),
-    ...(hopperFailure === undefined ? {} : { code: hopperFailure.code }),
+    ...(hopperFailure === undefined
+      ? {}
+      : { code: hopperFailure.code, ...hopperDownload(hopperFailure) }),
   };
 };
+
+const hopperDownload = (
+  failure: SetupHopperInstallFailure,
+): Pick<SetupResult, "download"> =>
+  failure.download === undefined ? {} : { download: failure.download };
 
 const installHopperAction = async (input: {
   readonly host: SetupHost;

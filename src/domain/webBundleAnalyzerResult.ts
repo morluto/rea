@@ -88,7 +88,7 @@ export const buildCapturedWebBundleAnalysis = (
     "script_sources",
   );
   const omittedSourceMaps =
-    sourceMaps.status === "not_requested"
+    sourceMaps.status === "not_requested" || sourceMaps.excluded !== undefined
       ? undefined
       : captureBudgetOmission(inspection, "source_maps");
   const sourceMapIncomplete =

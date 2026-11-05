@@ -1,3 +1,4 @@
+import { AnalysisSettings } from "../application/AnalysisSettings.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 
 import type { AppConfig } from "../config/types.js";
@@ -14,7 +15,9 @@ import {
   loadOptionalObservationProviders,
 } from "../composition/optionalObservationProviders.js";
 import { createToolResultDelivery } from "../server/toolResult.js";
-import { createShutdown } from "./shutdown.js";
+import { createShutdown, reportMcpShutdownFailure } from "./shutdown.js";
+import { ownStdioStartupInput } from "./StdioStartupInput.js";
+import type { AnalysisError } from "../domain/analysisErrorBase.js";
 
 /**
  * Start the long-lived MCP adapter and install idempotent shutdown handlers.
@@ -36,35 +39,131 @@ export const runEager = async (
   }
   const logger = createLogger("mcp", config.value.logLevel);
   const serverLogger = logger.child({ layer: "server" });
-  const session = createBinarySession(config.value, logger, environment);
-  const opened = await openInitialTarget(
-    session,
+  const analysisSettings = new AnalysisSettings(environment);
+  const session = createBinarySession(
     config.value,
-    serverLogger,
-    dependencies.writeStderr,
-  );
-  if (!opened.ok) return opened.exitCode;
-  const transport = await startMcpTransport(dependencies, session, {
     logger,
-    serverLogger,
     environment,
-    delivery: createToolResultDelivery(config.value.mcpMaxResponseBytes),
-    loadOptionalProviders:
-      dependencies.loadOptionalProviders ??
-      (() =>
-        loadOptionalObservationProviders(
-          createOptionalObservationFactories(environment),
-        )),
+    analysisSettings.read,
+  );
+  const startup = new AbortController();
+  let transport: Awaited<ReturnType<typeof startMcpTransport>> | undefined;
+  let settleStartup!: () => void;
+  const startupSettled = new Promise<void>((resolve) => {
+    settleStartup = resolve;
   });
-  if (!transport.ok) return 1;
+  let inputFailure: AnalysisError | undefined;
   const shutdown = createShutdown({
-    handle: transport.handle,
-    closeAndroid: transport.closeAndroid,
-    closeOptionalProviders: transport.closeOptionalProviders,
+    // A shutdown request seals session admission immediately, then waits for
+    // startup to return every late handle before any resource is released.
+    handle: {
+      prepareShutdown: async () => {
+        await startupSettled;
+        await transport?.handle.prepareShutdown?.();
+      },
+      close: async () => {
+        await transport?.handle.close();
+      },
+    },
+    closeAndroid: async () => {
+      await transport?.closeAndroid();
+    },
+    closeOptionalProviders: async () => {
+      await transport?.closeOptionalProviders();
+    },
     session,
-    dependencies,
+    dependencies: {
+      ...dependencies,
+      registerShutdown: (handler) =>
+        dependencies.registerShutdown(() => {
+          startup.abort();
+          handler();
+        }),
+    },
     serverLogger,
   });
-  dependencies.captureShutdown?.(shutdown.shutdown);
-  return 0;
+  const startupInput =
+    dependencies.transport !== "http" &&
+    dependencies.stdin !== undefined &&
+    !startup.signal.aborted
+      ? ownStdioStartupInput(dependencies.stdin, (failure) => {
+          inputFailure ??= failure;
+          startup.abort(failure);
+          shutdown.request();
+        })
+      : undefined;
+  dependencies.captureShutdown?.(async () => {
+    startup.abort();
+    await shutdown.shutdown();
+  });
+  let ready = false;
+  let startupRejected = false;
+  let startupCause: unknown;
+  let exitCode = 0;
+  try {
+    const opened = await openInitialTarget(
+      session,
+      config.value,
+      serverLogger,
+      dependencies.writeStderr,
+      startup.signal,
+    );
+    if (!opened.ok) exitCode = opened.exitCode;
+    else if (!startup.signal.aborted) {
+      const started = await startMcpTransport(
+        {
+          ...dependencies,
+          serve: async (factory, options) => {
+            if (startup.signal.aborted) throw startup.signal.reason;
+            startupInput?.handoff();
+            const handle = await dependencies.serve(factory, options);
+            if (!startup.signal.aborted) startupInput?.resume();
+            return handle;
+          },
+        },
+        session,
+        {
+          logger,
+          serverLogger,
+          analysisSettings,
+          environment,
+          signal: startup.signal,
+          delivery: createToolResultDelivery(config.value.mcpMaxResponseBytes),
+          loadOptionalProviders:
+            dependencies.loadOptionalProviders ??
+            (() =>
+              loadOptionalObservationProviders(
+                createOptionalObservationFactories(
+                  environment,
+                  analysisSettings.read,
+                ),
+              )),
+        },
+      );
+      transport = started;
+      if (started.ok) ready = true;
+      else exitCode = started.cancelled ? 0 : 1;
+    }
+  } catch (cause: unknown) {
+    startupRejected = true;
+    startupCause = cause;
+  } finally {
+    settleStartup();
+    startupInput?.close();
+  }
+  if (startupRejected || !ready || startup.signal.aborted) {
+    if (inputFailure !== undefined)
+      dependencies.writeStderr(
+        `${projectAnalysisError(inputFailure).message}\n`,
+      );
+    try {
+      await shutdown.shutdown();
+    } catch (cause: unknown) {
+      reportMcpShutdownFailure(cause, dependencies, serverLogger);
+      return 1;
+    }
+    if (inputFailure !== undefined) return 1;
+    if (startupRejected) throw startupCause;
+  }
+  return exitCode;
 };

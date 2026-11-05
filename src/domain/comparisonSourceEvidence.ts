@@ -61,15 +61,3 @@ export const comparisonSourceEvidenceIds = (evidence: Evidence): string[] => {
   const sides = comparisonSourceEvidenceSides(evidence);
   return uniqueSorted([...sides.left, ...sides.right]);
 };
-
-/** Preserve the source closure when consuming nested comparison findings. */
-export const assertComparisonFindingLinks = (
-  evidence: Pick<Evidence, "evidence_links">,
-  nestedLinks: readonly string[],
-): void => {
-  const closure = new Set(evidence.evidence_links);
-  if (nestedLinks.some((id) => !closure.has(id)))
-    throw new EvidenceIntegrityError(
-      "Comparison finding cites Evidence outside its top-level closure",
-    );
-};
