@@ -60,25 +60,41 @@ const runOwnedHeadless = (command, args, cwd) =>
 const stopOwnedProcess = async () => {
   const child = owned;
   owned = undefined;
-  if (child === undefined || child.exitCode !== null) return;
+  if (child === undefined) return;
+  const group = process.platform === "win32" ? undefined : -child.pid;
+  const groupExists = () => {
+    if (group === undefined) return child.exitCode === null;
+    try {
+      process.kill(group, 0);
+      return true;
+    } catch (error) {
+      if (error.code === "ESRCH") return false;
+      throw error;
+    }
+  };
   const signal = (name) => {
     try {
       // Address the group so decompiler children cannot outlive the JVM.
-      if (process.platform === "win32") child.kill(name);
-      else process.kill(-child.pid, name);
+      if (group === undefined) child.kill(name);
+      else process.kill(group, name);
     } catch (error) {
       if (error.code !== "ESRCH") throw error;
     }
   };
+  const waitForGroup = async (milliseconds) => {
+    const deadline = Date.now() + milliseconds;
+    while (Date.now() < deadline) {
+      if (!groupExists()) return true;
+      await new Promise((done) => setTimeout(done, 50));
+    }
+    return !groupExists();
+  };
+  if (!groupExists()) return;
   signal("SIGTERM");
-  const settled = await Promise.race([
-    new Promise((done) => child.once("close", () => done(true))),
-    new Promise((done) => setTimeout(() => done(false), 5_000)),
-  ]);
-  if (!settled) {
-    signal("SIGKILL");
-    await new Promise((done) => child.once("close", done));
-  }
+  if (await waitForGroup(5_000)) return;
+  signal("SIGKILL");
+  if (!(await waitForGroup(2_000)))
+    throw new Error("Owned Ghidra process group remained after SIGKILL");
 };
 
 const scratch = await mkdtemp(
@@ -100,7 +116,7 @@ try {
     join(root, "tests/conformance/ghidra/ReaPrototypeConflictProbe.java"),
     join(scripts, "ReaPrototypeConflictProbe.java"),
   );
-  const image = Buffer.alloc(0x800, 0xcc);
+  const image = Buffer.alloc(0x0b00, 0xcc);
   for (const [offset, hex] of [
     // JNE skips the early LEAVE; RET and reaches MOV ECX, [EBP + 8].
     [0x000, "5589e583f8007502c9c38b4d08c9c3"],
