@@ -71,7 +71,7 @@ the first source that has the app:
 - `desktop_entry` is the package's `.desktop` file name under
   `/usr/share/applications` without `.desktop`, such as
   `org.inkscape.Inkscape`. Add `window_class` when you know it; Inkscape's
-  is `Inkscape`.
+  is `Inkscape`. AbiWord's entry is `abiword` and its class `Abiword`.
 
 ## Drive the app
 
@@ -174,6 +174,12 @@ Write `{"name", "prompt", "checks"}` from the draft and what you did.
   `normalize_whitespace: true` when the app may reflow spaces. Example, an
   AbiWord paragraph by its stable id:
   `{"kind": "text_contains", "file": "Documents/memo.abw", "pointer": "/root/children/[name=section]/children/[name=p][@xid=6]", "value": "at 3:30 PM"}`.
+  Point a text check at the paragraph or another element the edit keeps,
+  never at a run such as AbiWord's `[name=c]`: a reopened document splits
+  the text into several runs. The draft lists only what changed; to name an
+  unchanged element, such as another paragraph's `xid`, use the app's usual
+  numbering and let the export confirm it, or read it in the exported
+  bundle's `envs/<env>/seed/`.
 - Where easy, add one check that the rest is untouched, such as another
   text's value the edit must leave alone. It is the one unchanged value
   worth checking; it passes on the seed too, which is fine, since the export
@@ -196,8 +202,9 @@ The kinds and pointer rules are in
 
 `export_build_environment` with `task` and `directory`, the absolute path of
 a new or empty folder here, such as `<home>/rea-builds/poster/bundle`. The
-export seeds what was saved at `seed`, scrubs the computer's host name and
-user, and checks the task against `seed` and `end`. It refuses a task
+export seeds what was saved at `seed`, replaces the computer's host name,
+`user@host` and home path (a bare user name, such as AbiWord's author
+`user`, stays), and checks the task against `seed` and `end`. It refuses a task
 unless at least one check fails on the seed and every check passes at the
 end, and says why, such as a pointer that names nothing at the end. A
 check that the rest is untouched passes on the seed too, which is fine. On
