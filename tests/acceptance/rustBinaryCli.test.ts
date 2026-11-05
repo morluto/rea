@@ -6,6 +6,7 @@ import { pathToFileURL } from "node:url";
 import { join } from "node:path";
 import { expect } from "vitest";
 import { toolContract } from "../../src/contracts/toolContracts.js";
+import { RUST_RESOURCE_GUARD_LIMITATION } from "../../src/rust/RustBinaryProvider.js";
 import { machoImageWithUnknownCommand } from "../../src/artifacts/apple/MachoImage.fixture.js";
 import {
   compressRustElfSectionNames,
@@ -17,6 +18,7 @@ import {
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
 import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
+import { expectCliMcpEvidenceParity } from "../fixtures/cliMcpEvidenceParity.js";
 import { parseMcpToolError } from "../fixtures/mcpToolError.js";
 
 cliTest(
@@ -68,7 +70,7 @@ cliTest(
         auditable_metadata: null,
       });
       expect(response.isError, JSON.stringify(response)).not.toBe(true);
-      expect(response.structuredContent).toEqual(evidence);
+      expectCliMcpEvidenceParity(evidence, response.structuredContent, path);
     }
     await client.ping();
   },
@@ -464,6 +466,9 @@ cliTest(
     expect(metadata?.uncompressed_bytes).toBeLessThanOrEqual(
       (metadata?.compressed_bytes ?? 0) * 64,
     );
+    // Padding separates the section size from the consumed stream that the
+    // inflate guidance names.
+    expect(evidence.limitations).toContain(RUST_RESOURCE_GUARD_LIMITATION);
     expect(evidence.locations).toContainEqual({
       kind: "file-offset-range",
       start: metadata?.file_offset,
@@ -471,7 +476,7 @@ cliTest(
     });
     const response = await call("inspect_rust_binary", { path });
     expect(response.isError, JSON.stringify(response)).not.toBe(true);
-    expect(response.structuredContent).toEqual(evidence);
+    expectCliMcpEvidenceParity(evidence, response.structuredContent, path);
     await client.ping();
   },
   30000,
@@ -649,7 +654,7 @@ cliTest(
       });
       const response = await call("inspect_rust_binary", { path });
       expect(response.isError, JSON.stringify(response)).not.toBe(true);
-      expect(response.structuredContent).toEqual(evidence);
+      expectCliMcpEvidenceParity(evidence, response.structuredContent, path);
       const go = await cli.run({
         arguments: ["inspect-go-binary", path, "--json"],
       });

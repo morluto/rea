@@ -36,6 +36,7 @@ import {
 import {
   moduleResolutionModeForJavaScriptReference,
   isJsonModuleTarget,
+  isNativeAddonModuleTarget,
 } from "../../domain/javascript/javascriptModuleResolutionMode.js";
 
 type StaticReference = JavaScriptStaticAnalysis["references"][number];
@@ -309,7 +310,8 @@ const addReference = (
     coverage: input.coverage,
     relation:
       input.value.operation === "load" &&
-      resolved?.file?.kind === "native-addon"
+      resolved?.path != null &&
+      isNativeAddonModuleTarget(resolved.path, resolved.file?.kind)
         ? "loads"
         : "imports",
     properties: {
@@ -741,7 +743,8 @@ const resolveReference = (
     targetPath !== undefined && isJsonModuleTarget(targetPath, targetKind);
   const targetImportsUnexamined =
     !targetIsJson &&
-    (resolution.resolution_status === "unavailable" ||
+    (resolution.unexamined_module_imports === true ||
+      resolution.resolution_status === "unavailable" ||
       (path !== null &&
         !context.applicationModuleReferencesRetained.has(path)));
   if (path === null) {

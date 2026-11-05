@@ -331,7 +331,7 @@ const fetchOne = async (
     return emptySourceMapItem(
       request,
       "policy_filtered",
-      "Declared source-map URL is outside the approved exact origins.",
+      "Declared source-map URL must be a credential-free HTTP(S) URL on an approved exact origin.",
     );
   let effectiveUrl: string | null = null;
   let completedResponseIdentity: ResponseIdentity | undefined;
@@ -349,7 +349,7 @@ const fetchOne = async (
       return emptySourceMapItem(
         request,
         "policy_filtered",
-        "A source-map redirect left the approved exact origins.",
+        "Each source-map redirect must be a credential-free HTTP(S) URL on an approved exact origin.",
         effectiveUrl,
       );
     const { response, fetchedUrl } = fetched;

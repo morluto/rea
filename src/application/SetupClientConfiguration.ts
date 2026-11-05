@@ -67,6 +67,7 @@ import type {
   SetupProviderEnvironment,
 } from "./SetupTypes.js";
 import {
+  compactInputSchemaByDefault,
   registrationWriteBlocker,
   type SetupClient,
 } from "./SupportedClients.js";
@@ -379,7 +380,6 @@ const persistClientConfiguration = async ({
       transactionPath,
       serialized.value,
       original,
-      0o600,
       { requestedPath: client.configPath, state: snapshot?.state },
     );
   } catch (cause: unknown) {
@@ -937,7 +937,7 @@ const clientConfigurationDesired = async (
   );
   if (!environment.ok) throw environment.error;
   const registrationEnvironment =
-    client.name === "kimi" &&
+    compactInputSchemaByDefault(client) &&
     snapshotEnvironment(environment.value).REA_MCP_INPUT_SCHEMA_PROFILE ===
       undefined
       ? {

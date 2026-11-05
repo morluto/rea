@@ -1,3 +1,4 @@
+import { WEB_SOURCE_LOCATION_PROVIDER } from "../domain/webTraceProviders.js";
 import { closeOwnedWebResources } from "./closeOwnedWebResources.js";
 import { createHash } from "node:crypto";
 import { z } from "zod";
@@ -50,13 +51,13 @@ const artifactsSchema = selectedWebScriptArtifactsSchema.extend({
 const LIMITATIONS = [
   "The source/map pairing and source-map URL context are caller-selected. Deployment authenticity and execution remain unknown.",
   "Capture metadata and its Evidence reference are historical context; this trace independently verifies only the selected manifest, script and map bytes.",
-  "Source names and sourceRoot are reported declarations. Resolved URLs are derived by the pinned upstream codec; no original source is fetched or executed.",
+  "Source names and sourceRoot are reported declarations. REA derives resolved URLs using WHATWG URL resolution; the pinned upstream codec decodes mappings. No original source is fetched or executed.",
   "Embedded source hashes identify the UTF-8 encoding of decoded sourcesContent text, not an independently retained original file. Missing or out-of-range original content positions remain explicit.",
   "Lookup returns all segments at the greatest generated position not greater than the selected point, including earlier lines and generated-only segments. A mapped point does not establish an executed range or UI causality.",
   "Regular maps and inline indexed sections are supported. External section URLs are unsupported; unknown extensions are retained in raw map text and are not interpreted.",
 ];
 const codecBudget = (timeoutMs: number): string =>
-  `Complete evidence has a 4 MiB map, 32 MiB reply, 262144 decoded rows/segments and 64-level section budget. The owned codec has a ${String(timeoutMs)} ms decode_timeout_ms deadline`;
+  `Complete evidence has a 4 MiB map, 32 MiB reply and a ${String(WEB_SOURCE_MAP_LIMITS.decodedRecords)}-record shared decoder budget for generated rows, mapping segments, leaf maps, source and name declarations, sourcesContent entries, and indexed sections. Generated rows and mapping segments have separate ${String(WEB_SOURCE_MAP_LIMITS.decodedRows)} and ${String(WEB_SOURCE_MAP_LIMITS.decodedSegments)} limits, and indexed maps have a ${String(WEB_SOURCE_MAP_LIMITS.sectionDepth)}-level section budget. The owned codec has a ${String(timeoutMs)} ms decode_timeout_ms deadline`;
 /** Bun accepts but ignores the codec's V8 heap flags; Windows enforces a commit limit instead. */
 const codecBudgetLimitation = (
   runtime: WebSourceMapReport["runtime"],
@@ -209,11 +210,7 @@ export class WebSourceLocationService {
           sha256: data.sourceFile.sha256,
           format: "file",
         },
-        {
-          id: "rea-web-source-location",
-          name: "REA captured source-map point trace",
-          version: "1",
-        },
+        WEB_SOURCE_LOCATION_PROVIDER,
         {
           operation: OPERATION,
           parameters: input,

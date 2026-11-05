@@ -245,7 +245,7 @@ export const APK_SIGNATURE_LIMITATIONS: readonly string[] = [
   "Static structural inspection only. No Android code executes, no device or adb is involved, and odex/vdex/oat/cdex are not read.",
   "No signature is verified: signer, rotation-lineage and source-stamp signatures are NOT cryptographically checked, and certificate chains, revocation and authenticity are NOT evaluated. Certificates and lineages are what the APK declares.",
   "matches_apk and self_consistent only show that the declared content digest equals the digest of the current bytes. This is not a signature verification: anyone who changes the bytes can recompute the digest and write it into the signed data. SHA-256 identifies the exact bytes, not the producer.",
-  "v1 signers are what each signature block's PKCS#7 SignedData declares: its signatures, the .SF and MANIFEST.MF digests and entry coverage are NOT verified.",
+  "v1 signers are what each signature block's outer PKCS#7 SignedData declares. Signer unsigned attributes, including nested signatures and timestamps, are not decoded; signatures, the .SF and MANIFEST.MF digests and entry coverage are NOT verified.",
   "Not read: v4 .apk.idsig, verity digests (matches_apk null), and the v1 X-Android-APK-Signed marker, so v1_only cannot distinguish a v1-only APK from one whose v2/v3 block was removed.",
 ];
 
@@ -345,25 +345,34 @@ const expectedV1Certificate = (
 const v1MatchesBlockSigners = (
   v1: readonly (string | null)[],
   lowest: ApkPostureInput["blockSchemes"][number] | undefined,
-): { readonly match: boolean | null; readonly note: string | null } => {
+): { readonly match: boolean | null; readonly notes: readonly string[] } => {
   if (v1.length === 0 || lowest === undefined || lowest.signers.length === 0)
-    return { match: null, note: null };
+    return { match: null, notes: [] };
+  const notes = new Set<string>();
+  if (v1.includes(null))
+    notes.add(
+      "v1_signers_match_block_signers is null: one or more v1 signer identities are unknown; inspect the v1 signer records for details.",
+    );
   const expected: (string | null)[] = [];
   for (const signer of lowest.signers) {
     const one = expectedV1Certificate(lowest.scheme, signer);
-    if (!one.ok)
-      return {
-        match: null,
-        note: `v1_signers_match_block_signers is null: ${one.reason}, so the original certificate v1 is expected to carry is unknown.`,
-      };
+    if (!one.ok) {
+      notes.add(
+        `v1_signers_match_block_signers is null: ${one.reason}, so the original certificate v1 is expected to carry is unknown.`,
+      );
+      continue;
+    }
+    if (one.fingerprint === null)
+      notes.add(
+        `v1_signers_match_block_signers is null: one or more ${lowest.scheme} signer identities are unknown; inspect the block signer records for details.`,
+      );
     expected.push(one.fingerprint);
   }
-  if (v1.includes(null) || expected.includes(null))
-    return { match: null, note: null };
+  if (notes.size > 0) return { match: null, notes: [...notes] };
   return {
     match:
       setKey(v1 as readonly string[]) === setKey(expected as readonly string[]),
-    note: null,
+    notes: [],
   };
 };
 
@@ -416,7 +425,7 @@ export const deriveApkPosture = (
         input.v1SignerFingerprints,
         present.find(({ signers }) => signers.length > 0),
       )
-    : { match: null, note: null };
+    : { match: null, notes: [] };
   return {
     posture: {
       v1_only: input.v1Present && !blockPresent,
@@ -436,7 +445,7 @@ export const deriveApkPosture = (
       strongest_scheme: strongest,
       self_consistent: input.selfConsistent,
     },
-    notes: v1Match.note === null ? [] : [v1Match.note],
+    notes: v1Match.notes,
   };
 };
 

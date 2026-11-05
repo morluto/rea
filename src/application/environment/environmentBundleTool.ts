@@ -33,6 +33,7 @@ const captureFile = async (
       "evidence",
       source.path,
       EXPORT_ENVIRONMENT_BUNDLE_OPERATION,
+      ["source", "path"],
     );
   const retained = resolveEvidenceInput(source, lookup);
   if (!retained.ok) return retained;

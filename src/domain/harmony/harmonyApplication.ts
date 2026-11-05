@@ -43,6 +43,7 @@ export const harmonyApplicationProjectionResultSchema = z.strictObject({
     javascript: z.array(projectedComponentSchema),
     signing: z.array(projectedComponentSchema),
   }),
+  unclassified_components: z.array(projectedComponentSchema),
   unavailable_components: z.array(unavailableComponentSchema),
   app_pack_children: z.array(
     z.union([projectedComponentSchema, unavailableComponentSchema]),
@@ -81,11 +82,11 @@ export const projectHarmonyInventory = (
   const { entries, limitations: unresolved } =
     projectedInventoryEntries(inventory);
   const all = projectedFileComponents(entries);
-  const unavailable = entries.flatMap(({ unavailable }) =>
-    unavailable === undefined ? [] : [unavailable],
-  );
   const fileEntries = entries.filter(
     ({ kind }) => kind === "file" || kind === "slice",
+  );
+  const unavailable = fileEntries.flatMap(({ unavailable }) =>
+    unavailable === undefined ? [] : [unavailable],
   );
   const children: HarmonyApplicationProjectionResult["app_pack_children"] = [];
   if (rootFormat === "app-pack") {
@@ -97,6 +98,10 @@ export const projectHarmonyInventory = (
   }
   const manifests = classifyManifests(fileEntries);
   const classified = classify(all, manifests.components);
+  const classifiedFiles = new Set([
+    ...Object.values(classified).flat(),
+    ...children,
+  ]);
   const bridgeProjection = bridgeCandidates(
     classified.bytecode,
     classified.native_libraries,
@@ -109,7 +114,7 @@ export const projectHarmonyInventory = (
       : []),
     ...(unavailable.length > 0
       ? [
-          "Some inventoried occurrences have no authenticated content identity. Their paths and limitations are retained in unavailable_components; component and runtime absence is unknown.",
+          "Some inventoried files or slices have no authenticated content identity. Their paths and limitations are retained in unavailable_components; component and runtime absence is unknown.",
         ]
       : []),
     "Manifest, module, resource, and signing semantics require a dedicated HarmonyOS provider; this projection reports exact inventory paths and hashes only.",
@@ -138,6 +143,9 @@ export const projectHarmonyInventory = (
       .sort(compareUnicodeCodePoints),
     packaging_model: manifests.packagingModel,
     components: classified,
+    unclassified_components: all.filter(
+      (component) => !classifiedFiles.has(component),
+    ),
     unavailable_components: unavailable,
     app_pack_children: children,
     runtime_families: runtimeFamilies(all, classified),

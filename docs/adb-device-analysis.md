@@ -103,6 +103,10 @@ existing analysis families directly, for example
 | `start_adb_activity`    | **mutates device** | Starts an intent (`am start -a` with optional URI, component, and up to 16 typed extras); preserves the activity manager's verdict                                                                                                    |
 | `stop_adb_app`          | **mutates device** | Force-stops every process of a package, ending a dynamic-analysis run                                                                                                                                                                 |
 
+Screen capture validates the PNG signature, IHDR framing, dimensions, and IHDR
+checksum before publishing. It does not validate encoding fields or decode and
+validate image contents; that limitation is retained in Evidence.
+
 When `push_adb_file` receives an existing directory, adb places the local file
 inside it under the local basename; Evidence reports that effective file path
 while retaining the caller's directory path in the input parameters. The
@@ -199,8 +203,12 @@ and during shutdown.
   `uninstall_adb_package` declare `mutatesTarget` and never run implicitly:
   pushes check for existing device files before transfer and refuse them
   unless `overwrite` is set. A failed or unexpected existence probe stops
-  transfer even with `overwrite`; only a clean `test -e` exit of 1 with no
-  output is interpreted as absence. The check is not atomic, so a different
+  transfer even with `overwrite`. A completed `test -e` exit of 1 establishes
+  absence only with empty stdout and either empty stderr or a recognized,
+  completed adb-server startup notice sequence. Startup notices are host
+  observations, not remote-path diagnostics; successful push receipts retain
+  them in `raw_result.device_path_probes`. Incomplete startup, extra diagnostics,
+  truncation and cancellation do not establish absence. The check is not atomic, so a different
   process can create the path before `adb push` writes it. When available, the device's
   `sha256sum` verifies the transfer. A missing command or output without a
   recognizable digest reports `device_digest_source: "unavailable"` with an
@@ -253,12 +261,12 @@ beyond already-connected devices (`adb connect`) are not exposed yet.
 
 ## Real verification
 
-`npm run verify:adb` exercises every operation against a live device. It
+`npm run verify:adb` exercises observation and transfer operations against a live device. It
 requires `adb` (or `REA_ADB_PATH`) and any attached emulator or phone;
 `--serial` selects one when several are attached, `--pull PACKAGE` pulls a
-real package and verifies the returned digests against the files on disk,
-and `--install-apk PATH` drives a full install → resolve → uninstall
-lifecycle with a lane-owned probe.
+real package and verifies the returned digests against the files on disk.
+The optional `--install-apk` lifecycle is unavailable until the selected APK
+identity and device cleanup ownership can be established safely.
 
 Record: verified against adb 34.0.5 on Linux against an Android 14
 (API 34) x86_64 emulator — all operations above, a 224-package inventory,

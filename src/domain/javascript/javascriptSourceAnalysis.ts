@@ -9,12 +9,20 @@ import type { JavaScriptArtifactFile } from "./javascriptArtifactFiles.js";
 import type { JavaScriptStaticAnalysis } from "./javascriptStaticAnalysisTypes.js";
 import type { JavaScriptModuleSemanticIr } from "./javascriptModuleSemanticIr.js";
 
+/** An earlier static projection displaced to retain later static observations. */
+export interface JavaScriptRevokedStaticProjection {
+  /** Zero-based source-analysis call index within this worker checkout. */
+  readonly sourceIndex: number;
+  readonly error: AnalysisResourceConstraintError;
+}
+
 /** Portable facts collected from one inert source. */
 export interface JavaScriptAnalyzedSource {
   readonly javascript: JavaScriptStaticAnalysis;
   readonly module: JavaScriptModuleSemanticIr | null;
   readonly projection: JavaScriptSemanticFileProjection | null;
   readonly applicationProjectionFailure?: AnalysisResourceConstraintError;
+  readonly revokedStaticProjections?: readonly JavaScriptRevokedStaticProjection[];
 }
 
 /** Execution failure alongside facts already collected by the consumer. */
@@ -24,6 +32,7 @@ export interface JavaScriptSourceAnalysisFailure {
   readonly module: JavaScriptModuleSemanticIr | null;
   readonly projection: JavaScriptSemanticFileProjection | null;
   readonly applicationProjectionFailure?: AnalysisResourceConstraintError;
+  readonly revokedStaticProjections?: readonly JavaScriptRevokedStaticProjection[];
 }
 
 /** Operational choices for source analysis, independent of transport framing. */

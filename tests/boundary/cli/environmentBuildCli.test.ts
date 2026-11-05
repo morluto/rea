@@ -26,6 +26,25 @@ const listFiles = async (root: string): Promise<string[]> =>
     .sort();
 
 cliTest(
+  "attributes invalid capture JSON to the capture argument",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory(
+      "rea-environment-invalid-capture-",
+    );
+    const capture = join(root, "invalid.json");
+    await writeFile(capture, "{");
+    const result = await cli.run({
+      arguments: ["environment-build", capture, join(root, "output"), "--json"],
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.json).toMatchObject({
+      code: "invalid_request",
+      details: { issues: [{ path: ["capture"], reason: "invalid_format" }] },
+    });
+  },
+);
+
+cliTest(
   "builds the bundle the three CLI steps build, byte for byte",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-environment-build-cli-");

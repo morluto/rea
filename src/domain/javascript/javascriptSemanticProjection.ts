@@ -20,6 +20,7 @@ import {
 } from "./javascriptSemanticTraversal.js";
 import {
   evaluateSemanticBinding,
+  evaluateSemanticExpression,
   evaluateSemanticProvenance,
 } from "./javascriptSemanticValues.js";
 import { range } from "./javascriptStaticAnalysisHelpers.js";
@@ -268,6 +269,17 @@ export const immutableSemanticBindings = (
       mutable: binding.mutable,
       definitions: binding.definitions,
       value: evaluateSemanticBinding(binding, state),
+      ...(binding.memberWrites.length > 0 &&
+      binding.initializers.length === 1 &&
+      binding.initializers[0]?.projection.length === 0
+        ? {
+            initializerValue: evaluateSemanticExpression(
+              binding.initializers[0].node,
+              state,
+              binding.initializers[0].node,
+            ),
+          }
+        : {}),
       provenance: evaluateSemanticProvenance(binding, state),
     }))
     .sort((left, right) =>
