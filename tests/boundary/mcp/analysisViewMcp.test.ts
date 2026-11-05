@@ -284,7 +284,7 @@ it("directs unsupported parent views to the original Evidence", async () => {
     { path: "/fixtures/native.exe", format: "pe", sha256: "a".repeat(64) },
     { id: "fixture", name: "Fixture", version: "1" },
     {
-      operation: "trace_feature",
+      operation: "capture_process_scenario",
       parameters: { query: "marker" },
       result: { matches: [], references: [] },
     },
@@ -311,7 +311,7 @@ it("directs unsupported parent views to the original Evidence", async () => {
       details: {
         operation: "inspect_analysis_view",
         reason: expect.stringContaining(
-          'Parent Evidence operation "trace_feature"',
+          'Parent Evidence operation "capture_process_scenario"',
         ),
       },
     });
