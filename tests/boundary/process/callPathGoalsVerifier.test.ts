@@ -9,6 +9,8 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 it.each([
   "analysis",
+  "compiler",
+  "command",
   "close_binary",
   "session-check",
   "client",
@@ -32,9 +34,16 @@ it.each([
       let snapshotCalls = 0;
       let closed = false;
       const controls = {
-        execFile(_command, args, callback) {
-          writeFileSync(args.at(-1), "inert compiler output");
-          callback(null, "", "");
+        async createVerifierCommands() {
+          return {
+            async exec(_command, args) {
+              record("compile");
+              fail("compiler");
+              writeFileSync(args.at(-1), "inert compiler output");
+              return { stdout: "", stderr: "" };
+            },
+            async close() { record("command"); fail("command"); },
+          };
         },
         mkdtemp: fs.mkdtemp,
         readFile: fs.readFile,
@@ -73,11 +82,11 @@ it.each([
       };
       globalThis.callPathVerifierControls = controls;
       const modules = new Map([
-        ["node:child_process", ["execFile"]],
         ["node:fs/promises", ["mkdtemp", "readFile", "rm"]],
         ["@modelcontextprotocol/client", ["Client"]],
         ["@modelcontextprotocol/client/stdio", ["StdioClientTransport"]],
         ["./lib/mcp-verifier-results.mjs", ["requireMcpOperationResult"]],
+        ["./lib/verify-commands.mjs", ["createVerifierCommands"]],
         ["../dist/process/HopperLease.js", ["HOPPER_TARGET_LEASE_DIRECTORY"]],
         ["./lib/real-hopper-cleanup.mjs", ["snapshotHopperRuntime"]],
         ["./lib/verifier-run.mjs", ["createVerifierRun", "completeVerifierRun", "assertVerifierCleanupComplete"]],
@@ -115,15 +124,19 @@ it.each([
     },
   );
   expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(1);
-  expect(result.stderr).toContain("controlled analysis failure");
+  expect(result.stderr).toContain(
+    stage === "compiler" ? "controlled compiler failure" : "controlled analysis failure",
+  );
   const attempted = (await readFile(events, "utf8"))
     .trim()
     .split("\n")
     .map((line) => JSON.parse(line) as string);
   expect(attempted).toEqual([
-    "close_binary",
+    "compile",
+    ...(stage === "compiler" ? [] : ["close_binary"]),
     "client",
     "transport",
+    "command",
     "snapshot",
     "snapshot",
     "lineage",
@@ -135,7 +148,7 @@ it.each([
   expect(retained).toHaveLength(stage === "remove" ? 1 : 0);
   if (stage === "remove")
     expect(result.stdout).not.toContain('"fixture_removed"');
-  if (!["analysis", "session-check"].includes(stage))
+  if (!["analysis", "session-check", "compiler"].includes(stage))
     expect(result.stderr).toContain(`controlled ${stage} failure`);
   if (stage === "session-check")
     expect(result.stderr).toContain("AssertionError");

@@ -1,14 +1,13 @@
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { requireMcpOperationResult } from "./lib/mcp-verifier-results.mjs";
+import { createVerifierCommands } from "./lib/verify-commands.mjs";
 import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
 import { HOPPER_TARGET_LEASE_DIRECTORY } from "../dist/process/HopperLease.js";
 import { snapshotHopperRuntime } from "./lib/real-hopper-cleanup.mjs";
@@ -24,7 +23,7 @@ assert.ok(
   "Usage: node scripts/verify-call-path-goals.mjs ghidra|hopper",
 );
 const run = createVerifierRun();
-const exec = promisify(execFile);
+let commands;
 const root = await mkdtemp(join(tmpdir(), "rea-call-path-goals-"));
 const source = fileURLToPath(
   new URL("../tests/conformance/native/call-path-goals.c", import.meta.url),
@@ -71,7 +70,8 @@ const call = async (name, args = {}) => {
 };
 await withVerifierCleanup(
   async () => {
-    await exec(process.env.REA_CC ?? "cc", [
+    commands = await createVerifierCommands();
+    await commands.exec(process.env.REA_CC ?? "cc", [
       "-O0",
       "-g",
       "-fno-inline",
@@ -219,6 +219,7 @@ await withVerifierCleanup(
     },
     () => client.close(),
     () => transport.close(),
+    () => commands?.close(),
     async () => {
       const sessionsAfter = [
         ...(await snapshotHopperRuntime(
