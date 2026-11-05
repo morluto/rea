@@ -29,6 +29,9 @@ folder to build the environment; this step builds nothing.
   `REA_XPROP_COMMAND`). Before writing or launching anything it refuses other
   hosts, a request naming neither or both of `--desktop-entry` and
   `--executable`, an empty `--state-path`, `--exclude` or `--output` value,
+  a program found only through a relative or empty entry of the host's
+  `PATH` (lookup follows the launch's search order; an `env` prefix's `PATH`
+  travels with the command and may hold such entries),
   an output folder that is not new or empty or is owned by another user, an
   unreadable window list, a window manager that does not publish
   `_NET_CLIENT_LIST` (EWMH), and an application that already has a window

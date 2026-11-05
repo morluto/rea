@@ -15,28 +15,35 @@ const isExecutable = async (path: string): Promise<boolean> => {
 const tidy = (path: string): string =>
   path.replace(/\/(?:\.?\/)+/gu, "/").replace(/(?<=.)\/\.?$/u, "");
 
+/** A program as found, and whether a relative or empty PATH entry found it. */
+export interface FoundProgram {
+  readonly path: string;
+  readonly fromRelativeEntry: boolean;
+}
+
 /**
- * Find a program the way a shell would, without running a shell: a relative
- * path is read from the directory the program is started in, and so is an
- * empty or relative PATH entry when `searchRelative` is set, as for the PATH
- * an `env` prefix sets, which travels with the launch command; the host's own
- * PATH does not. `..` is kept, so after a symbolic link it means what it
- * means to the launch.
+ * Find a program as the launch will, without running a shell: a relative path,
+ * or an empty or relative PATH entry, is read from the directory the program
+ * is started in, in PATH order. `..` is kept, so after a symbolic link it
+ * means what it means to the launch.
  */
 export const resolveProgram = async (
   program: string,
   environment: Readonly<Record<string, string | undefined>>,
   startedIn: string,
-  searchRelative: boolean,
-): Promise<string | undefined> => {
+): Promise<FoundProgram | undefined> => {
   const from = (path: string) =>
     tidy(isAbsolute(path) ? path : `${startedIn}/${path}`);
-  const candidates = program.includes("/")
-    ? [from(program)]
-    : (environment.PATH?.split(delimiter) ?? [])
-        .filter((directory) => searchRelative || isAbsolute(directory))
-        .map((directory) => from(`${directory}/${program}`));
-  for (const candidate of candidates)
-    if (await isExecutable(candidate)) return candidate;
+  if (program.includes("/")) {
+    const path = from(program);
+    return (await isExecutable(path))
+      ? { path, fromRelativeEntry: false }
+      : undefined;
+  }
+  for (const directory of environment.PATH?.split(delimiter) ?? []) {
+    const path = from(directory === "" ? program : `${directory}/${program}`);
+    if (await isExecutable(path))
+      return { path, fromRelativeEntry: !isAbsolute(directory) };
+  }
   return undefined;
 };

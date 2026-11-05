@@ -40,7 +40,10 @@ and Nix do, is followed to its file. The entry's `Exec` line is expanded with no
 entry's `Path` or the home directory. When the line starts with
 `env NAME=value`, the program is found on the `PATH` those assignments set,
 with an empty or relative entry read from the folder the application runs
-in, and their XDG folders name the state directories. An `--executable` runs from
+in, and their XDG folders name the state directories. Otherwise the program is
+looked up on the host's `PATH` in the order the launch searches it, and one
+found only through a relative or empty entry is refused, since the exported
+computer would not have that entry. An `--executable` runs from
 the current directory, as it would from a shell, and a relative path to it is
 resolved there.
 
