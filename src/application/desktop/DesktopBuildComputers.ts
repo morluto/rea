@@ -30,6 +30,10 @@ import {
   type ComputerRelease,
 } from "../../desktop/AgentEnvComputerHelper.js";
 import type { PrivateRuntimeRoot } from "../../process/PrivateRuntimeRoot.js";
+import {
+  BuildComputerActionLog,
+  type ReadonlyActionLog,
+} from "./DesktopBuildActionLog.js";
 import { writeRequestBundle } from "./DesktopBuildBundle.js";
 
 const START = "start_build_computer";
@@ -42,22 +46,10 @@ export interface ForwardedResult<Value> {
   readonly content: DriverResult["content"];
 }
 
-/** One forwarded action, in the order REA sent it, as the witness reads it. */
-export interface BuildComputerAction {
-  readonly index: number;
-  readonly action: ComputerAction;
-  readonly tool: string;
-  /** The driver's arguments as sent, keys translated. */
-  readonly arguments: Readonly<Record<string, JsonValue>>;
-  readonly started_at: string;
-  readonly ended_at: string | null;
-  readonly outcome: "pending" | "applied" | "refused" | "failed";
-}
-
 /** What later stages read of a live build computer: its action log and recording hooks. */
 export interface BuildComputerSession {
   readonly sandboxId: string;
-  readonly actions: readonly BuildComputerAction[];
+  readonly actions: ReadonlyActionLog;
   readonly startRecording: AgentEnvComputer["startRecording"];
   readonly endRecording: AgentEnvComputer["endRecording"];
   readonly recordingSegments: AgentEnvComputer["recordingSegments"];
@@ -69,7 +61,7 @@ interface HeldComputer {
   /** Brings the computer down; absent when no helper was spawned. */
   readonly release: (() => Promise<ComputerRelease>) | undefined;
   readonly workspace: PrivateRuntimeRoot | undefined;
-  readonly actions: BuildComputerAction[];
+  readonly actions: BuildComputerActionLog;
   closing: boolean;
 }
 
@@ -230,7 +222,7 @@ export class DesktopBuildComputers {
         computer: live,
         release: () => live.close(),
         workspace: target.workspace,
-        actions: [],
+        actions: new BuildComputerActionLog(),
         closing: false,
       });
       return ok({
@@ -254,7 +246,7 @@ export class DesktopBuildComputers {
               ? undefined
               : () => owner.release(),
         workspace: target.workspace,
-        actions: [],
+        actions: new BuildComputerActionLog(),
         closing: true,
       });
       const release = await this.#retire(id);
@@ -299,24 +291,11 @@ export class DesktopBuildComputers {
           ],
         ),
       );
-    const index = held.actions.length;
-    const entry: BuildComputerAction = {
-      index,
+    const logged = held.actions.begin(
       action,
-      tool: call.value.tool,
-      arguments: call.value.arguments,
-      started_at: new Date().toISOString(),
-      ended_at: null,
-      outcome: "pending",
-    };
-    held.actions.push(entry);
-    const settle = (outcome: BuildComputerAction["outcome"]) => {
-      held.actions[index] = {
-        ...entry,
-        outcome,
-        ended_at: new Date().toISOString(),
-      };
-    };
+      call.value.tool,
+      call.value.arguments,
+    );
     let result: DriverResult;
     try {
       result = await computer.callTool(
@@ -325,10 +304,10 @@ export class DesktopBuildComputers {
         signal,
       );
     } catch (cause: unknown) {
-      settle("failed");
+      logged.settle("failed");
       return err(failure(ACT, cause, signal));
     }
-    settle(result.isError ? "refused" : "applied");
+    logged.settle(result.isError ? "refused" : "applied");
     if (result.isError)
       return err(
         new AnalysisInputError(ACT, {
@@ -346,7 +325,7 @@ export class DesktopBuildComputers {
       value: {
         computer_id: id,
         action,
-        action_index: index,
+        action_index: logged.index,
         result: result.structured,
       },
       content: result.content,

@@ -123,12 +123,18 @@ larger than the MCP budget is refused with how to ask for a smaller image: a
 happened.
 
 Every action is logged on the computer in order with the arguments sent, its
-start and end and whether it was applied, refused or failed. The log and the
-computer's recording hooks (`computer-recording/v1` start and end under REA's
-own request id, and the segments fetched through the driver's `data/get` one
-at a time, each read within its manifest size and checked against it) are kept
-for later build stages; they are not tools. A recording larger than a quarter
-of the V8 heap is refused before any segment is read.
+start and end and whether it was applied, refused or failed. The log keeps the
+latest 256 actions within 256 KiB of JSON, dropping the oldest first. Each
+string argument, such as `type`'s `text`, is kept to its first 1 KiB and each
+list, such as `drag`'s `path`, to its first 64 items; an entry names the
+arguments it cut in `truncated_arguments`, and the driver gets them whole. The
+log counts every action, so it says how many it dropped, and keeps the index of
+the last applied action of each kind for rules over the whole session. The log
+and the computer's recording hooks (`computer-recording/v1` start and end under
+REA's own request id, and the segments fetched through the driver's `data/get`
+one at a time, each read within its manifest size and checked against it) are
+kept for later build stages; they are not tools. A recording larger than a
+quarter of the V8 heap is refused before any segment is read.
 
 ## Close
 

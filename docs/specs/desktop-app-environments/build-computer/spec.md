@@ -54,7 +54,10 @@ it for building, or from an existing bundle folder.
   against the response budget as a whole; a response over it is refused with
   REA's own result, `computer_id` included, kept in the error. The first
   screenshot takes `region`, `format` and `quality`. Each action is logged per
-  computer.
+  computer within a fixed allowance: the latest 256 actions in 256 KiB of JSON,
+  oldest dropped first, each string argument cut to 1 KiB and each list to 64
+  items with the cut arguments named, beside a count of every action and the
+  index of the last applied action of each kind.
 - Recording hooks, internal: start and end `computer-recording/v1` under REA's
   request id, and fetch the segments through the driver's `data/get` one per
   request, each answer read within its segment's base64 size and the segment

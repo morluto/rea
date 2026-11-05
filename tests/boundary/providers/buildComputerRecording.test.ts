@@ -1,6 +1,12 @@
 import { expect, it, onTestFinished } from "vitest";
 
 import {
+  LOGGED_ACTIONS,
+  LOGGED_BYTES,
+  LOGGED_LIST_ITEMS,
+  LOGGED_TEXT_BYTES,
+} from "../../../src/application/desktop/DesktopBuildActionLog.js";
+import {
   FAKE_SEGMENTS,
   type FakeComputerOptions,
   fakeBuildComputers,
@@ -47,7 +53,7 @@ it("records a build session under REA's request id and fetches its segments befo
     },
   ]);
   // The witness reads what was done, in order, with the driver's arguments.
-  expect(session.actions).toMatchObject([
+  expect(session.actions.entries).toMatchObject([
     {
       index: 0,
       action: "type",
@@ -58,6 +64,46 @@ it("records a build session under REA's request id and fetches its segments befo
   ]);
   expect(computer.unauthorized).toEqual([]);
   expect((await computers.close(id)).ok).toBe(true);
+});
+
+it("keeps a long session's action log within its allowance while the driver gets each action whole", async () => {
+  const { computer, computers, id, session } = await startComputer();
+  const signal = new AbortController().signal;
+  const path = Array.from(
+    { length: 2 * LOGGED_LIST_ITEMS },
+    (_, at): [number, number] => [at, at],
+  );
+  expect(
+    (await computers.act({ computer_id: id, action: "drag", path }, signal)).ok,
+  ).toBe(true);
+  const text = "buy milk ".repeat(LOGGED_TEXT_BYTES);
+  const typed = LOGGED_ACTIONS;
+  for (let index = 0; index < typed; index += 1)
+    expect(
+      (await computers.act({ computer_id: id, action: "type", text }, signal))
+        .ok,
+    ).toBe(true);
+  expect(computer.calls.at(1)?.arguments).toEqual({ path });
+  expect(computer.calls.at(-1)?.arguments).toEqual({ text });
+  const { entries } = session.actions;
+  expect(
+    entries.reduce(
+      (bytes, entry) => bytes + Buffer.byteLength(JSON.stringify(entry)),
+      0,
+    ),
+  ).toBeLessThanOrEqual(LOGGED_BYTES);
+  expect(session.actions.total).toBe(typed + 1);
+  expect(session.actions.dropped).toBe(typed + 1 - entries.length);
+  expect(session.actions.dropped).toBeGreaterThan(0);
+  expect(entries.at(-1)).toMatchObject({
+    index: typed,
+    action: "type",
+    arguments: { text: text.slice(0, LOGGED_TEXT_BYTES) },
+    truncated_arguments: ["text"],
+    outcome: "applied",
+  });
+  // The drag is no longer kept, but that it was applied is.
+  expect(session.actions.lastApplied).toEqual({ drag: 0, type: typed });
 });
 
 it("refuses a segment whose bytes differ from the recording's manifest", async () => {

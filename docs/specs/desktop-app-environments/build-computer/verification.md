@@ -25,8 +25,13 @@ agentenv were not used by the gates or the boundary tests.
   close; the first screenshot's options. No result carries the control token.
 - `tests/boundary/providers/buildComputerRecording.test.ts`: recording start,
   end and one fetch per segment under REA's request id, the action log, a
-  segment that differs from its manifest, a recording over the allowance
-  refused before any read, and an answer outgrowing its segment's size.
+  long session's log kept within its allowance with every action counted and
+  the driver still getting each argument whole, a segment that differs from
+  its manifest, a recording over the allowance refused before any read, and an
+  answer outgrowing its segment's size.
+- `src/application/desktop/DesktopBuildActionLog.test.ts`: the log names only
+  the arguments it cut, cuts text without splitting a character, and records
+  the outcome of an action dropped while it was pending.
 - `tests/boundary/providers/buildComputerLifecycle.test.ts`: shutdown cancels
   and joins a start in progress and refuses later starts; a failed start whose
   teardown is unconfirmed stays held under the id its error names, keeps its
