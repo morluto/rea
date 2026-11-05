@@ -85,12 +85,12 @@ export const swiftSymbolsSchema = z.array(
 export const NATIVE_TOOL_CONTRACTS = [
   native(
     "observe_native_ui",
-    "Observe an already-running native app by PID and window ID, bound to the active Mach-O target. Captures a bounded accessibility tree and selected-window screenshot; OS permission denial fails without broad capture or target launch. native_ui_deadline_ms is the observation deadline (omitted means 180000 ms, range 1..2147483647, next call). It does not raise the fixed 67108864-byte output allowance or the 180000 ms wait-step cap.",
+    "Observe an already-running native app by PID and window ID, bound to the active Mach-O target. Captures a bounded accessibility tree and selected-window screenshot; screenshot or accessibility must be enabled. OS permission denial fails without broad capture or target launch. native_ui_deadline_ms is the observation deadline (omitted means 180000 ms, range 1..2147483647, next call). It does not raise the fixed 67108864-byte output allowance or the 180000 ms wait-step cap.",
     nativeUiObservationInputSchema,
   ),
   native(
     "capture_native_ui_scenario",
-    "Run selected-element press, increment/decrement scroll, AXValue text entry and bounded wait steps in one exact native app window. Returns ordered before/after captures and action/capture failures. Actions can change app data, network activity and persistent state; application state is left as-is and restoration is not attempted. native_ui_deadline_ms is the scenario deadline (omitted means 180000 ms, range 1..2147483647, next call). It does not raise the fixed 67108864-byte output allowance or the 180000 ms wait-step cap.",
+    "Run selected-element press, increment/decrement scroll, AXValue text entry and bounded wait steps in one exact native app window. Returns ordered before/after captures and action/capture failures; screenshot or accessibility must be enabled. Actions can change app data, network activity and persistent state; application state is left as-is and restoration is not attempted. native_ui_deadline_ms is the scenario deadline (omitted means 180000 ms, range 1..2147483647, next call). It does not raise the fixed 67108864-byte output allowance or the 180000 ms wait-step cap.",
     nativeUiScenarioInputSchema,
   ),
   native(

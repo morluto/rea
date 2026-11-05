@@ -93,6 +93,42 @@ const connectNativeUi = async () => {
   return { client, replies, snapshot };
 };
 
+it("advertises and explains the capture source requirement through both MCP tools", async () => {
+  const { client } = await connectNativeUi();
+  const tools = (await client.listTools()).tools;
+  for (const name of [
+    "observe_native_ui",
+    "capture_native_ui_scenario",
+  ] as const) {
+    const tool = tools.find((entry) => entry.name === name);
+    expect(tool).toBeDefined();
+    expect(tool?.description).toMatch(
+      /screenshot or accessibility must be enabled/iu,
+    );
+    const response = await client.callTool({
+      name,
+      arguments: {
+        ...scope,
+        accessibility: false,
+        ...(name === "capture_native_ui_scenario"
+          ? { steps: [{ kind: "wait", milliseconds: 0 }] }
+          : {}),
+      },
+    });
+    expect(parseMcpToolError(response)).toMatchObject({
+      error: {
+        code: "invalid_request",
+        details: {
+          issues: [
+            expect.objectContaining({ path: ["screenshot"] }),
+            expect.objectContaining({ path: ["accessibility"] }),
+          ],
+        },
+      },
+    });
+  }
+});
+
 it("preserves scalar accessibility values in passive and scenario Evidence", async () => {
   const { client, replies, snapshot } = await connectNativeUi();
   replies.push(snapshot([0.25, true, "selected", null]));
