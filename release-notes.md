@@ -117,6 +117,7 @@
 * **native:** page retained feature traces ([#8585](https://github.com/morluto/rea/issues/8585)) ([f1622fc](https://github.com/morluto/rea/commit/f1622fc8b4e4de1e32189baab78007a9585f3430))
 * **native:** page retained load-image observations ([#7134](https://github.com/morluto/rea/issues/7134)) ([f69c52a](https://github.com/morluto/rea/commit/f69c52a1cf3940ed1999fcc0859a75dbb913d684))
 * **native:** page retained observations and source context ([#7146](https://github.com/morluto/rea/issues/7146)) ([4c8647a](https://github.com/morluto/rea/commit/4c8647a706694665c881e5d8e3d50bfe70239db7))
+* **native:** report binary hardening for ELF, PE and Mach-O ([#8524](https://github.com/morluto/rea/issues/8524)) ([560674e](https://github.com/morluto/rea/commit/560674e2de851cec3f670be8297d28835009247a))
 * **native:** retain decompile export source facts ([#8805](https://github.com/morluto/rea/issues/8805)) ([b970238](https://github.com/morluto/rea/commit/b97023809f7990e798fa27fc1f20a8c824dd9a30))
 * **native:** select retained batch decompile results through analysis views ([#8629](https://github.com/morluto/rea/issues/8629)) ([dec8d2d](https://github.com/morluto/rea/commit/dec8d2d58898c71abb17a37c338935f32bd14210))
 * **plugins:** make Claude Code and Codex installs self-contained ([#7514](https://github.com/morluto/rea/issues/7514)) ([0cd7ef4](https://github.com/morluto/rea/commit/0cd7ef456bf960da265e04b341e82a24b1e377d5))
