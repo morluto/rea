@@ -2,7 +2,7 @@
 ---
 
 
-## [6.9.0](https://github.com/morluto/rea/compare/rea-agents-6.8.0...rea-agents-6.9.0) (2026-11-04)
+## [6.9.0](https://github.com/morluto/rea/compare/rea-agents-6.8.0...rea-agents-6.9.0) (2026-11-05)
 
 
 ### ⚠ BREAKING CHANGES
@@ -78,6 +78,7 @@
 * **cli:** report opt-in command timings ([#7042](https://github.com/morluto/rea/issues/7042)) ([d3b31a0](https://github.com/morluto/rea/commit/d3b31a0e29a67c8d3a2b756ec46744c27f70ea8f))
 * **cli:** validate browser scenarios offline ([#7343](https://github.com/morluto/rea/issues/7343)) ([d109a39](https://github.com/morluto/rea/commit/d109a3910522db9927e4160f9b22669cb2cda0d4))
 * **debugger:** share GDB and Rizin session caps as REA_ settings ([#8056](https://github.com/morluto/rea/issues/8056)) ([4a8d8f7](https://github.com/morluto/rea/commit/4a8d8f72b354dc96a8d1bce06da4bf6c7eda33ec))
+* **desktop:** capture and export apps installed from a downloaded .deb ([#8954](https://github.com/morluto/rea/issues/8954)) ([970969c](https://github.com/morluto/rea/commit/970969cb53f788976e64eae387076fcea104b603))
 * **desktop:** suggest managed members for Unity script assemblies ([#5511](https://github.com/morluto/rea/issues/5511)) ([abc647b](https://github.com/morluto/rea/commit/abc647bf6cfe4b7f40343448faccf000adceec32))
 * **dotnet:** expose field constant defaults ([#8015](https://github.com/morluto/rea/issues/8015)) ([1ddee10](https://github.com/morluto/rea/commit/1ddee1089b2300dc8220ade654cc73cd74d46a74))
 * **electron:** report custom URL protocol registrations ([47fa6ab](https://github.com/morluto/rea/commit/47fa6ab3795d547207001ffb01643c0aa39dcad8))
