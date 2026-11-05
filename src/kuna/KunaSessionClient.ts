@@ -285,6 +285,7 @@ const exportUnavailable = (
     {
       cause: failure,
       siblingOperations: KUNA_PROJECT_DEPENDENT_OPERATIONS,
+      remediationAction: next,
       // Callers see only the top-level projection, so the export failure's
       // own projected code and details (its limits, target path, captured
       // output and diagnostics) travel whole rather than field by field.

@@ -714,6 +714,59 @@ it("marks declared sibling operations unavailable when fallback reports export f
   });
 });
 
+it("preserves observed sibling recovery instructions when a later fallback reports sibling unavailability", async () => {
+  const recoveryMessage =
+    "Project export failed. Set REA_FIXTURE_TIMEOUT_MS and restart REA.";
+  const respond = {
+    current: (operation: string): Promise<Reply> => {
+      if (operation === "procedure_assembly")
+        return Promise.resolve(
+          err(
+            new AnalysisCapabilityUnavailableError(
+              FIXTURE.id,
+              operation,
+              "project export failed",
+              {
+                userMessage: recoveryMessage,
+                siblingOperations: ["procedure_assembly", "procedure_info"],
+              },
+            ),
+          ),
+        );
+      if (operation === "procedure_pseudo_code")
+        return Promise.resolve(
+          ok(
+            createAnalysisExecution("int main() { return 0; }", FIXTURE, {
+              siblingUnavailability: new AnalysisCapabilityUnavailableError(
+                FIXTURE.id,
+                operation,
+                "project export failed",
+                {
+                  siblingOperations: ["procedure_assembly", "procedure_info"],
+                },
+              ),
+            }),
+          ),
+        );
+      return Promise.resolve(observed("fixture-text"));
+    },
+  };
+  const { call, availability } = await connectScripted({
+    operations: [...DIRECT_OPERATIONS, "procedure_pseudo_code"],
+    respond,
+  });
+  expect(await call("procedure_assembly", PROCEDURE)).toBe("error");
+  expect(await availability(["procedure_assembly"])).toEqual({
+    procedure_assembly: recoveryMessage,
+  });
+
+  // A later successful fallback must not overwrite the full recovery explanation.
+  expect(await call("procedure_pseudo_code", PROCEDURE)).toBe("ok");
+  expect(await availability(["procedure_assembly"])).toEqual({
+    procedure_assembly: recoveryMessage,
+  });
+});
+
 it("keeps each provider's failures and ignores cancelled requests", async () => {
   let fixtureBroken = false;
   let auxiliaryBroken = true;
