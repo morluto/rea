@@ -155,6 +155,18 @@ mitigations carry `evidence_kind: "inferred"`; enforcement remains unobserved.
 See
 [PE TLS callbacks and load configuration](https://github.com/morluto/rea/blob/main/docs/pe-load-config.md).
 
+## Binary hardening
+
+Use `inspect_binary_hardening` for an explicit local ELF, PE, or Mach-O file
+when the question concerns PIE or ASLR, NX, RELRO, stack-protector or FORTIFY
+signs, control-flow flags, or stripped state. No `open_binary`, pwntools, or
+target execution is required. The CLI equivalent is
+`inspect-binary-hardening PATH`. Universal Mach-O files return one image per
+slice. A missing import is `unknown`, not proof the protection was omitted.
+Authenticode and Mach-O code-signature rows report presence, not validity.
+`hardened_runtime` stays unknown and names `inspect_signature`. See
+[binary hardening](https://github.com/morluto/rea/blob/main/docs/binary-hardening.md).
+
 ## ELF note tables
 
 Use `inspect_elf_notes` for an explicit local ELF32/ELF64 image when the
@@ -713,6 +725,13 @@ Virtual member offsets are not physical carrier locations. Format 6–8 readers
 cache one decoded block and support retained filtered/paged views. No
 decryption or SerializedFile object decoding is provided. See
 [UnityFS](https://github.com/morluto/rea/blob/main/docs/unityfs.md).
+
+WeChat mini-program packages (`.wxapkg` files with `0xBE`/`0xED` marks) list
+members with declared names and absolute carrier offsets; member bytes are
+stored verbatim. `V1MMWX` PC-client packages report `encrypted` directory
+status with unknown coverage and are refused on extraction; no decryption is
+attempted. See
+[wxapkg](https://github.com/morluto/rea/blob/main/docs/wxapkg.md).
 
 U-Boot legacy uImages use the same inspection/extraction workflows. Prefer a
 retained summary and selected inventory views for header facts or component

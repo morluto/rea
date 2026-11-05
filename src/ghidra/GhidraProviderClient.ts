@@ -9,6 +9,11 @@ import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.
 import { artifactFilePrimaryFacts } from "../artifacts/ArtifactFileOperation.js";
 import { fileURLToPath } from "node:url";
 import { GHIDRA_BRIDGE_SOURCES } from "./GhidraBridgeSources.js";
+import { GhidraAdmissionError } from "./GhidraAdmissionError.js";
+import {
+  GHIDRA_RESTRICTED_TEMP_REMEDIATION,
+  ghidraJavaHomeSaveDenial,
+} from "./GhidraTemporaryDirectory.js";
 
 import {
   createAnalysisExecution,
@@ -75,6 +80,7 @@ import {
   isGhidraFunctionOperation,
   parseGhidraFunctionInput,
   parseGhidraFunctionResult,
+  type GhidraFunctionOperation,
 } from "./GhidraFunctionValues.js";
 import {
   isGhidraInventoryOperation,
@@ -102,12 +108,18 @@ import {
 } from "./GhidraXtensaProfile.js";
 import { ghidraPePdbLimitations } from "./GhidraPeProfile.js";
 import { unverifiedGhidraBuildLimitation } from "./GhidraReleasePolicy.js";
-import { GhidraHeadlessLauncher } from "./GhidraLauncher.js";
+import { GhidraHeadlessLauncher, GhidraLaunchError } from "./GhidraLauncher.js";
 import { attestGhidraNativeLoadImage } from "./GhidraLoadImageAttest.js";
 import type { NativeAotPeResult } from "../domain/native/nativeAotPe.js";
 import { GhidraNativeAotSnapshotOwner } from "./GhidraNativeAotSnapshotOwner.js";
 import {
   ghidraHealthLimitations,
+  ghidraEmptyXrefsLimitation,
+  ghidraEmptyIncomingReferencesLimitation,
+  ghidraEmptyDossierIncomingLimitation,
+  ghidraEmptyExternalOutgoingLimitation,
+  ghidraEmptyInstructionOutgoingLimitation,
+  ghidraEmptyOutgoingReferencesLimitation,
   windowsP0Limitations,
   limitationsFor,
 } from "./GhidraProviderCapabilities.js";
@@ -159,6 +171,111 @@ interface GhidraExecutionMetadata {
   readonly locations?: readonly EvidenceLocation[];
   readonly relationshipCoverage?: RelationshipCoverage;
 }
+
+/** The ReferenceManager observation record of one function-reference result. */
+const referenceObservationRecord = (
+  normalized: JsonValue,
+): Readonly<Record<string, JsonValue>> | undefined =>
+  typeof normalized === "object" &&
+  normalized !== null &&
+  !Array.isArray(normalized)
+    ? (normalized as Readonly<Record<string, JsonValue>>)
+    : undefined;
+
+const isEmptyArray = (value: JsonValue | undefined | null): boolean =>
+  Array.isArray(value) && value.length === 0;
+
+/**
+ * Caveats for the empty reference directions observed in one record: each
+ * empty facet is qualified independently, because the provider's empty answer
+ * is unresolved, not proof of absence for that direction. External functions
+ * (no local body) and the in-body-filtered dossier incoming list get wording
+ * that matches what was actually observed.
+ */
+const isExternalProcedureRecord = (
+  record: Readonly<Record<string, JsonValue>>,
+): boolean => {
+  const procedure = referenceObservationRecord(record.procedure ?? null);
+  const classification =
+    procedure === undefined
+      ? undefined
+      : referenceObservationRecord(procedure.classification ?? null);
+  return classification?.external === true;
+};
+
+const incomingCaveat = (external: boolean): string =>
+  external
+    ? ghidraEmptyIncomingReferencesLimitation
+    : ghidraEmptyDossierIncomingLimitation;
+
+const outgoingCaveat = (external: boolean): string =>
+  external
+    ? ghidraEmptyExternalOutgoingLimitation
+    : ghidraEmptyOutgoingReferencesLimitation;
+
+const emptyReferenceDirectionCaveats = (
+  record: Readonly<Record<string, JsonValue>>,
+): readonly string[] => {
+  const external = isExternalProcedureRecord(record);
+  return [
+    ...(isEmptyArray(record.incoming_references)
+      ? [incomingCaveat(external)]
+      : []),
+    ...(isEmptyArray(record.outgoing_references)
+      ? [outgoingCaveat(external)]
+      : []),
+  ];
+};
+
+/** Caveat for a procedure_references result that resolved no references. */
+const emptyProcedureReferencesCaveat = (
+  record: Readonly<Record<string, JsonValue>>,
+): string | undefined => {
+  if (!isEmptyArray(record.references)) return undefined;
+  return record.direction === "outgoing"
+    ? outgoingCaveat(isExternalProcedureRecord(record))
+    : ghidraEmptyIncomingReferencesLimitation;
+};
+
+/**
+ * Caveats for an empty ReferenceManager observation, in limitation order:
+ * the provider's empty answer is unresolved, not proof of absence. xrefs
+ * reports per address; the function-reference facets per empty direction.
+ */
+const emptyReferenceCaveat = (
+  operation: GhidraFunctionOperation,
+  normalized: JsonValue,
+): readonly string[] => {
+  if (operation === "xrefs")
+    return isEmptyArray(normalized) ? [ghidraEmptyXrefsLimitation] : [];
+  const record = referenceObservationRecord(normalized);
+  if (record === undefined) return [];
+  if (operation === "procedure_references") {
+    const caveat = emptyProcedureReferencesCaveat(record);
+    return caveat === undefined ? [] : [caveat];
+  }
+  if (operation === "analyze_function")
+    return emptyReferenceDirectionCaveats(record);
+  if (operation === "annotate_native_function") {
+    const dossier = referenceObservationRecord(record.dossier ?? null);
+    return dossier === undefined ? [] : emptyReferenceDirectionCaveats(dossier);
+  }
+  if (operation === "inspect_native_instruction") {
+    // The incoming list and the outgoing references are independent
+    // ReferenceManager facets; each empty facet is qualified on its own.
+    // The outgoing list is only collected for a decoded instruction — other
+    // statuses return before the ReferenceManager is queried at all.
+    return [
+      ...(isEmptyArray(record.incoming_references)
+        ? [ghidraEmptyXrefsLimitation]
+        : []),
+      ...(record.status === "decoded" && isEmptyArray(record.references)
+        ? [ghidraEmptyInstructionOutgoingLimitation]
+        : []),
+    ];
+  }
+  return [];
+};
 
 /** Build one AnalysisClient for an admitted Ghidra target and profile. */
 export const createGhidraProviderClient = (input: {
@@ -332,6 +449,9 @@ export const createGhidraProviderClient = (input: {
   const mipsProfileMismatch = ghidraMipsProfileMismatchReason(
     target,
     committedProfile.parameters,
+    project !== undefined &&
+      committedProfile.parameters.import_mode ===
+        "existing-project-private-copy-v1",
   );
   if (mipsProfileMismatch !== null)
     return err(
@@ -863,6 +983,21 @@ export const createGhidraProviderClient = (input: {
         : parseGhidraInventoryResult(operation, called.value);
       if (!result.ok) return result;
       let { value: normalized, ...observation } = result.value;
+      let executionMetadata: GhidraExecutionMetadata = observation;
+      const unresolvedReferences = isGhidraFunctionOperation(operation)
+        ? emptyReferenceCaveat(operation, normalized)
+        : [];
+      if (unresolvedReferences.length > 0) {
+        // An empty list is the provider's observation, not proof: distinguish
+        // "no references were resolved" from "there are no references".
+        executionMetadata = {
+          ...executionMetadata,
+          limitations: [
+            ...(executionMetadata.limitations ?? []),
+            ...unresolvedReferences,
+          ],
+        };
+      }
       if (
         (operation === "search_procedures" || operation === "search_strings") &&
         input.value.mode === "literal" &&
@@ -873,7 +1008,7 @@ export const createGhidraProviderClient = (input: {
           normalized,
           input.value.pattern,
         );
-        observation = { ...observation, rawResult: called.value };
+        executionMetadata = { ...executionMetadata, rawResult: called.value };
       }
       if (
         operation === "inspect_native_data_type" &&
@@ -898,7 +1033,10 @@ export const createGhidraProviderClient = (input: {
           const metadata = nativeAotOwner?.readTypeDetail(address);
           if (metadata !== undefined) {
             // Preserve the database reply independently of the derived overlay.
-            observation = { ...observation, rawResult: called.value };
+            executionMetadata = {
+              ...executionMetadata,
+              rawResult: called.value,
+            };
             normalized = jsonValueSchema.parse({
               ...normalized,
               metadata_recovery: metadata,
@@ -906,7 +1044,7 @@ export const createGhidraProviderClient = (input: {
           }
         }
       }
-      return ok(projectExecution(operation, normalized, observation));
+      return ok(projectExecution(operation, normalized, executionMetadata));
     },
     executeIfReady: async (operation, parameters, options) => {
       if (operation !== "list_documents" && operation !== "list_procedures")
@@ -1084,8 +1222,16 @@ const projectPrimarySessionError = (
       ? {}
       : { partialObservation: failure.partialObservation }),
   };
+  // Launch-time copies, such as the verified existing-project copy, report a
+  // changed source as the launcher's primary failure; read it through the
+  // launch wrapper so the refusal keeps its typed projection.
+  const launchChange =
+    failure.cause instanceof GhidraLaunchError &&
+    failure.cause.primaryFailure instanceof AnalysisArtifactChangedError
+      ? failure.cause.primaryFailure
+      : undefined;
   const { cause: physicalCause, origin } = artifactFilePrimaryFacts(
-    failure.cause,
+    launchChange ?? failure.cause,
   );
   // A client-side ceiling refusal travels as the cause; re-attribute it to this
   // operation so callers see a typed resource constraint rather than a generic
@@ -1118,6 +1264,32 @@ const projectPrimarySessionError = (
       physicalCause.reason,
       context,
     );
+  if (
+    failure.kind === "admission" &&
+    failure.cause instanceof GhidraAdmissionError &&
+    (failure.cause.code === "import_identity_unavailable" ||
+      failure.cause.code === "import_identity_mismatch")
+  ) {
+    const unavailable = failure.cause.code === "import_identity_unavailable";
+    const constraint = unavailable
+      ? "The Ghidra program did not report a valid imported SHA-256, so REA cannot verify its target identity"
+      : "The Ghidra program's imported SHA-256 differs from the selected target's SHA-256";
+    const remediationAction = unavailable
+      ? "Select a Ghidra program whose imported identity can be verified, or investigate the missing identity in Ghidra. Configure a different project or program when starting REA. REA did not fall back to a fresh import."
+      : "Select a target matching the configured program and retry, or configure a matching project or program when starting REA. Resolve any reported cleanup before reopening. REA did not fall back to a fresh import.";
+    if (limits.ghidraExistingProject !== undefined)
+      return new ConfigurationError(constraint, {
+        ...context,
+        settings: [{ setting: "REA_GHIDRA_PROJECT_PATH", constraint }],
+        remediationAction,
+      });
+    return new ProviderAdapterError("ghidra", operation, {
+      ...context,
+      userMessage: `${constraint}.`,
+      remediationAction:
+        "Inspect the retained Ghidra diagnostics and target identity before retrying the import.",
+    });
+  }
   // A well-formed address that lacks one exact source offset keeps the
   // bridge's reason and the caller's exact spelling, not schema advice.
   const fileOffset =
@@ -1140,6 +1312,54 @@ const projectPrimarySessionError = (
     return new AnalysisInputError(operation, context, [
       { path: ["name"], reason: "invalid_value", message: failure.message },
     ]);
+  if (
+    failure.kind === "remote" &&
+    (failure.remoteCode === "procedure_not_found" ||
+      failure.remoteCode === "file_offset_unmapped" ||
+      failure.remoteCode === "procedure_ambiguous" ||
+      failure.remoteCode === "file_offset_ambiguous")
+  ) {
+    let recovery: string;
+    switch (failure.remoteCode) {
+      case "file_offset_unmapped":
+        recovery =
+          "Use inspect_native_load_image (CLI: `rea inspect-native-load-image <path> --provider ghidra --json`) to inspect the admitted file's loaded mappings, then select an offset with an observed mapping. A missing mapping does not prove the file contains no relevant data.";
+        break;
+      case "file_offset_ambiguous":
+        recovery =
+          "Choose an explicit analysis address from the reported mappings. Use inspect_native_load_image to inspect the loaded mappings; REA does not select one automatically.";
+        break;
+      case "procedure_ambiguous":
+        recovery =
+          "Choose an explicit procedure entry address from the reported candidates. Use list_procedures or search_procedures to inspect the current Ghidra inventory.";
+        break;
+      default:
+        recovery =
+          "Use list_procedures or search_procedures (CLI: `rea search <path> <pattern> --kind procedures --provider ghidra --json`) to inspect the current Ghidra inventory and choose an observed name or address. An absent entry does not prove the function is absent from the artifact." +
+          (limits.ghidraExistingProject !== undefined
+            ? " The selected project's previous analysis completeness is unknown. To explicitly request a separate fresh import, start a new REA process without REA_GHIDRA_PROJECT_PATH and REA_GHIDRA_PROGRAM_NAME; that analysis will not include the selected project's annotations or other edits."
+            : "");
+    }
+    return new AnalysisInputError(
+      operation,
+      {
+        ...context,
+        userMessage: failure.message,
+        conformsToInputContract: true,
+        remediationAction: recovery,
+      },
+      [
+        {
+          path: ["procedure"],
+          reason: "invalid_value",
+          message: failure.message,
+          ...(typeof request?.procedure === "string"
+            ? { observed: { procedure: request.procedure } }
+            : {}),
+        },
+      ],
+    );
+  }
   if (
     failure.kind === "cancelled" ||
     (failure.kind === "remote" && failure.remoteCode === "decompile_cancelled")
@@ -1231,6 +1451,26 @@ const projectPrimarySessionError = (
       },
     );
   }
+  if (
+    failure.kind === "remote" &&
+    failure.remoteCode === "invalid_regex_pattern"
+  )
+    return new AnalysisInputError(
+      operation,
+      {
+        ...context,
+        userMessage: failure.message,
+        remediationAction:
+          "Correct the pattern using the reported Ghidra regex syntax error, or select mode literal to search for the text literally, then retry.",
+      },
+      [
+        {
+          path: ["pattern"],
+          reason: "invalid_format",
+          message: failure.message,
+        },
+      ],
+    );
   if (failure.kind === "remote" && isGhidraInputFailureCode(failure.remoteCode))
     return new AnalysisInputError(operation, context, [
       { path: [], reason: "invalid_value", message: failure.message },
@@ -1269,6 +1509,16 @@ const projectPrimarySessionError = (
       limits.ghidraExistingProject?.programName !== undefined,
       context,
     );
+  const javaHomeSave =
+    output === undefined ? undefined : ghidraJavaHomeSaveDenial(output.text);
+  if (javaHomeSave !== undefined)
+    return new ProviderAdapterError("ghidra", operation, {
+      ...context,
+      userMessage: `Ghidra's launcher could not open ${javaHomeSave.path} ("Access is denied", Win32 error 5), so Ghidra exited before its bridge started. The output does not establish why the host denied the write.${
+        uncertainty === undefined ? "" : ` ${uncertainty}`
+      }`,
+      remediationAction: GHIDRA_RESTRICTED_TEMP_REMEDIATION,
+    });
   const killed = projectSigkill(operation, failure, context, {
     restart: exitedProviderMessage(operation, failure, health),
     uncertainty,

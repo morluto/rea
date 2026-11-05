@@ -40,6 +40,7 @@ const EXECUTION_WORDING_EXCEPTIONS: Readonly<Record<string, string>> = {
   inspect_apple_ips: "states that it does not execute a target",
   inspect_kernel_module: "states that it does not execute the module",
   inspect_pe_load_config: "states that it does not execute the image",
+  inspect_binary_hardening: "states that it does not execute the image",
   inspect_desktop_application:
     "states that directory triage performs no target execution",
   inspect_pe_certificates: "states that it does not execute the image",
@@ -258,6 +259,14 @@ describe("tool effects", () => {
 
 it("advertises signature inspection's temporary snapshot filesystem writes", () => {
   expect(TOOL_EFFECTS.inspect_signature).toMatchObject({
+    writesFilesystem: true,
+    mutatesTarget: false,
+    launchesProcess: true,
+  });
+});
+
+it("advertises inspect_macho's temporary private operand filesystem writes", () => {
+  expect(TOOL_EFFECTS.inspect_macho).toMatchObject({
     writesFilesystem: true,
     mutatesTarget: false,
     launchesProcess: true,
