@@ -37,6 +37,7 @@ export default defineConfig({
           { text: "Windows shortcuts", link: "/windows-shortcut" },
           { text: "PE TLS/load config", link: "/pe-load-config" },
           { text: "ELF notes", link: "/elf-notes" },
+          { text: "Binary hardening", link: "/binary-hardening" },
           { text: "Apple IPS crash reports", link: "/apple-ips" },
           { text: "Linux kernel modules", link: "/kernel-modules" },
           { text: "CPython pyc files", link: "/python-pyc" },
@@ -62,6 +63,22 @@ export default defineConfig({
           { text: "Electron observation", link: "/electron-observation" },
           { text: "Electron fuses", link: "/electron-fuses" },
           { text: "Process capture", link: "/process-capture" },
+          {
+            text: "Desktop application capture",
+            link: "/desktop-application-capture",
+          },
+          {
+            text: "Desktop application state",
+            link: "/desktop-application-state",
+          },
+          {
+            text: "Desktop application export",
+            link: "/desktop-application-export",
+          },
+          {
+            text: "Desktop application tasks",
+            link: "/desktop-application-tasks",
+          },
           { text: ".NET assemblies", link: "/managed-code-analysis" },
           {
             text: "Python packaged applications",

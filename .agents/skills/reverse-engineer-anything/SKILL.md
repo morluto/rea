@@ -137,6 +137,9 @@ explicit path or endpoint and do not need it.
 - Agent environment (AgentEnv bundle) of a web application: read
   [environments](references/environments.md) before recording; it records with
   `capture_browser_scenario` and writes the bundle with `export_environment_bundle`.
+- Task for a desktop application's exported environment, from a
+  `capture-desktop-application` folder: read
+  [desktop application tasks](references/environments.md#tasks-for-a-desktop-application-environment).
 - Fiddler Everywhere traffic or a native `.saz` capture: read the
   [Fiddler workflow](references/runtime-observation.md#fiddler-everywhere-traffic-debugging).
   Inspect saved SAZ with `inspect_web_network_capture` and `format: "saz"`;
@@ -281,6 +284,15 @@ explicit path or endpoint and do not need it.
   linker declarations, not proof of enforcement. A missing directory is observed
   absence of that declaration. See the
   [PE load configuration guide](https://github.com/morluto/rea/blob/main/docs/pe-load-config.md).
+- ELF, PE, and Mach-O hardening: `inspect_binary_hardening` with the explicit
+  local file. This built-in target-free inspection requires no pwntools or other
+  host tool. One image per Mach-O slice. Each property is `enabled`, `disabled`,
+  `partial`, `unknown`, or `not_applicable`, with the header field or import
+  behind it. A missing stack-protector or fortify import is `unknown`, not
+  proof the protection was omitted. Authenticode and Mach-O code signatures
+  report presence, not validity. Hardened runtime stays unknown and names
+  `inspect_signature`. The image is not executed. See the
+  [binary hardening guide](https://github.com/morluto/rea/blob/main/docs/binary-hardening.md).
 - ELF note tables: `inspect_elf_notes` with the explicit local ELF32/ELF64
   file. This built-in target-free inspection requires no disassembler. Preserve
   PT_NOTE and SHT_NOTE ranges, owners, types, descriptor SHA-256, and GNU
@@ -529,6 +541,8 @@ as complete while required questions remain open.
 - Agent environments (AgentEnv bundles) of a web application, recorded from
   a live instance or a HAR:
   [references/environments.md](references/environments.md)
+- Tasks for a desktop application's exported environment:
+  [references/environments.md](references/environments.md#tasks-for-a-desktop-application-environment)
 
 ## Finish the task
 

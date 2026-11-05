@@ -1,5 +1,7 @@
 import { PeLoadConfigProvider } from "../../src/native/pe/PeLoadConfigProvider.js";
+import { BinaryHardeningProvider } from "../../src/native/hardening/BinaryHardeningProvider.js";
 import { inspectPeLoadConfigInputSchema } from "../../src/domain/native/peLoadConfig.js";
+import { inspectBinaryHardeningInputSchema } from "../../src/domain/native/binaryHardening.js";
 import { open, writeFile, type FileHandle } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
@@ -1002,6 +1004,7 @@ const stableArtifactProviders = [
   ["kernel module", () => new KernelModuleProvider()],
   ["PE certificates", () => new PeCertificatesProvider()],
   ["PE load configuration", () => new PeLoadConfigProvider()],
+  ["binary hardening", () => new BinaryHardeningProvider()],
   ["PE imports", () => new PeImportsProvider()],
   ["Windows shortcut", () => new WindowsShortcutProvider()],
   ["native exports", () => new NativeExportsProvider()],
@@ -1047,6 +1050,11 @@ const inspectFileFailure = (
   if (provider instanceof PeLoadConfigProvider)
     return provider.inspect(
       inspectPeLoadConfigInputSchema.parse({ path }),
+      options,
+    );
+  if (provider instanceof BinaryHardeningProvider)
+    return provider.inspect(
+      inspectBinaryHardeningInputSchema.parse({ path }),
       options,
     );
   if (provider instanceof PeImportsProvider)
