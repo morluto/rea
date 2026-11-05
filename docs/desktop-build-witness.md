@@ -52,7 +52,9 @@ Like the computer tools, these are MCP-only and act on a `computer_id` from
    and the export's limitations name what the Trash held at `seed`. For a
    `.deb` app that no apt source the capture found offers, the export takes
    the request's URL with `--package-url`; one apt offers installs from apt. REA lists the bundle's files with their sizes
-   and SHA-256 in the computer, brings them back through the driver's
+   and SHA-256 in the computer, into a file beside the bundle that it reads
+   through `data/get`, since a large bundle's list outgrows a command's
+   output; it then brings the files back through the driver's
    `data/get` in answers of at most 8 MiB, and checks and writes each answer
    into the folder before asking for the next, so one answer at a time is
    held; a failure leaves no partial folder.
@@ -80,9 +82,17 @@ The capture, the draft and the export run as the computer's user in its home,
 without any `AGENTENV_*` variable, so neither REA nor the app holds the
 computer's control token. REA sends each command through agentenv's
 `computer-exec/v1` route with that token, which stays in REA, and reads larger
-outputs, such as the draft and the export's Evidence, from files under
-`~/.rea-build` through `data/get`, since a command's output is capped at
-1 MiB.
+outputs, such as the draft, the export's Evidence and the bundle's file
+list, from files under `~/.rea-build` through `data/get`, since a command's
+output is capped at 1 MiB.
+
+Calls on one computer run one at a time, in the order REA receives them:
+an action, a capture step, a check or a close waits until the call before
+it on that computer has answered, and sends progress notifications while
+it waits. So a check reads the app with no action half done, and a witness
+stage is admitted, read and filed before anything else on that computer
+runs. Calls on different computers run side by side. Closing a computer
+cancels the call in progress on it and refuses the calls still waiting.
 
 ## Witness
 
@@ -101,14 +111,24 @@ Then, with the task exactly as exported:
 beside the files and evaluates each check with REA's evaluator, the one the
 export validates tasks with and the exported verifier mirrors, one result per
 check. Without `stage` it only grades. The `seed` stage begins a recording
-of the display under REA's own request id; a seed check that fails after it,
-such as on a failed read of the app's state, can be asked again with the same
-task and folder. The stages come in order. The edit and the near miss each
+of the display under REA's own request id, one per computer; a seed check
+that fails after it, such as on a failed read of the app's state or a lost
+reply to the recording's start, can be asked again, and asks for the
+recording under the same id, which the computer answers with the recording
+it already began. The stages come in order. The edit and the near miss each
 need an applied click, drag, scroll, type or key since the stage before, with
 no reset after the last of them, since a reset puts the seed back rather than
 changing the app; `after_reset` needs the reset as the last change. A reset
 relaunches the app, and REA waits until the computer is ready again before
 answering, sending progress notifications while it waits.
+
+Only a check that fails on what the app's view shows counts as a failure. A
+check that fails because its file or table could not be read, such as an
+SQLite file locked past the reader's wait, or because its view is cut short,
+is `undecided` in its result: it shows nothing about the task. A stage that
+only undecided checks would settle, such as a near miss whose one failing
+check could not read its file, files nothing and is refused; check it again
+once the files read whole.
 
 A stage whose checks do not show what it must ends the witness, and so does
 `after_reset`. REA then ends the recording, fetches its segments through

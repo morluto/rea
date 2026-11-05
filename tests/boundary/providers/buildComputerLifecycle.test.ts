@@ -70,3 +70,31 @@ it("keeps a failed start whose teardown is unconfirmed, so close and shutdown ca
   expect(await computers.close(id)).toMatchObject({ ok: false });
   expect(await runner.notes("teardowns.jsonl")).toHaveLength(1);
 });
+
+it("cancels a call in progress and the one waiting behind it when the owner closes", async () => {
+  const app = {
+    name: "notes",
+    state: {},
+    seed: {},
+    methods: [],
+    unreadyAfterReset: 600,
+  };
+  const { computers, runner, start } = await setUp({ app });
+  const started = await start();
+  if (!started.ok) throw started.error;
+  const act = (action: "reset" | "screenshot") =>
+    computers.act(
+      { computer_id: started.value.value.computer_id, action },
+      new AbortController().signal,
+    );
+  const reset = act("reset");
+  while (app.methods.length === 0) await delay(50);
+  const waiting = act("screenshot");
+  await computers.closeAll();
+  for (const result of await Promise.all([reset, waiting]))
+    expect(result).toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisCancelledError" },
+    });
+  expect(await runner.notes("teardowns.jsonl")).toHaveLength(1);
+});

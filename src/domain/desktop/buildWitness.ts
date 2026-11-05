@@ -54,14 +54,26 @@ const INPUT = ["click", "drag", "scroll", "type", "key"] as const;
 export const stageExpectation = (stage: WitnessStage): WitnessExpectation =>
   EXPECTATIONS[stage];
 
-/** Whether a stage's results show what the witness needs of it. */
-export const stageHeld = (
+/** What a stage's results show of it: that it held, that it did not, or, when only undecided checks could tell, nothing. */
+export type StageVerdict = "held" | "not_held" | "undecided";
+
+/**
+ * Whether a stage's results show what the witness needs of it. Only a check
+ * that failed on what its view shows counts as a failure; one that failed for
+ * want of a readable or whole view leaves the stage undecided when no such
+ * failure settles it.
+ */
+export const stageVerdict = (
   stage: WitnessStage,
-  results: readonly Pick<TaskCheckOutcome, "passed">[],
-): boolean =>
-  EXPECTATIONS[stage] === "all_pass"
-    ? results.length > 0 && results.every((result) => result.passed)
-    : results.some((result) => !result.passed);
+  results: readonly Pick<TaskCheckOutcome, "passed" | "undecided">[],
+): StageVerdict => {
+  const failed = results.filter((result) => !result.passed);
+  const shown = failed.some((result) => result.undecided !== true);
+  if (EXPECTATIONS[stage] === "some_fail")
+    return shown ? "held" : failed.length > 0 ? "undecided" : "not_held";
+  if (shown || results.length === 0) return "not_held";
+  return failed.length > 0 ? "undecided" : "held";
+};
 
 /** Why an edit or a near miss is not one: no input since the stage before, or a reset after the last input. */
 const notAnEdit = (

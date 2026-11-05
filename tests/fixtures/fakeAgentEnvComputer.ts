@@ -58,6 +58,8 @@ export interface FakeComputerOptions {
   readonly screenshotDelaysMs?: readonly number[];
   /** Bytes data/get appends to each segment beyond its manifest size. */
   readonly segmentPadding?: number;
+  /** Recording starts, in order, whose recording begins but whose reply is lost. */
+  readonly lostRecordingStarts?: number;
   /** Run computer-exec commands on this host in `home`, with `bin` first on PATH and `env` added. */
   readonly exec?: {
     readonly home: string;
@@ -207,7 +209,10 @@ const homeFileParts = async (home: string, paths: readonly string[]) => {
   return parts;
 };
 
-/** Run one computer-exec command on this host as the computer would: in the home, its stdin closed. */
+/** The most of a command's stdout the computer's computer-exec answers with. */
+const EXEC_STDOUT_BYTES = 1024 * 1024;
+
+/** Run one computer-exec command on this host as the computer would: in the home, its stdin closed, its stdout cut at the cap. */
 const runExec = (
   exec: NonNullable<FakeComputerOptions["exec"]>,
   token: string,
@@ -226,17 +231,18 @@ const runExec = (
       },
       stdio: ["ignore", "pipe", "pipe"],
     });
-    let stdout = "";
+    const stdout: Buffer[] = [];
     let stderr = "";
-    child.stdout.on("data", (chunk: Buffer) => (stdout += String(chunk)));
+    child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));
     child.stderr.on("data", (chunk: Buffer) => (stderr += String(chunk)));
     child.once("error", reject);
     child.once("close", (code) => {
+      const output = Buffer.concat(stdout);
       resolve({
         exit_code: code,
-        stdout,
+        stdout: output.subarray(0, EXEC_STDOUT_BYTES).toString("utf8"),
         stderr,
-        truncated: false,
+        truncated: output.length > EXEC_STDOUT_BYTES,
         timed_out: false,
       });
     });
@@ -343,6 +349,7 @@ interface FakeState {
   readonly recordingRequests: FakeComputer["recordingRequests"];
   readonly dataRequests: unknown[];
   polls: number;
+  lostStarts: number;
 }
 
 const segments = FAKE_SEGMENTS.map((bytes, index) => ({
@@ -377,6 +384,10 @@ const frameworkRoute = (
   }
   if (path.startsWith("/agentenv/ext/computer-recording/")) {
     state.recordingRequests.push({ path, body: parsed });
+    if (path.endsWith("/start") && state.lostStarts > 0) {
+      state.lostStarts -= 1;
+      return LOST;
+    }
     return path.endsWith("/start")
       ? {
           recording_id: "rec-000000000001",
@@ -432,6 +443,7 @@ export const startFakeComputer = async (
     recordingRequests: [],
     dataRequests: [],
     polls: 0,
+    lostStarts: options.lostRecordingStarts ?? 0,
   };
   const refusals = new Map<string, string>();
   const { mcp, transport } = await startFakeDriver(calls, refusals, options);
@@ -497,7 +509,8 @@ export const startFakeComputer = async (
  * it notes each call, loads each of the bundle's Python files in a child
  * Python as agentenv's `_declare` does, which compiles it and caches its
  * bytecode beside it unless Python is told not to, copies the bundle and
- * writes to stdout as a build would, then hands out the fake computer.
+ * writes to stdout as a build would, then hands out the fake computer, or
+ * the one the bundle's `fake-computer-url` names.
  */
 const FAKE_BUNDLE_MODULE = String.raw`
 import glob
@@ -560,6 +573,10 @@ def run_bundle(root, *, tasks=(), keep=False, emulate=True, sandbox=None, on_pro
         print(f"E: {os.environ['FAKE_FAIL']}", file=sys.stderr, flush=True)
         raise RuntimeError(os.environ["FAKE_FAIL"])
     url = os.environ["FAKE_COMPUTER_URL"]
+    named = os.path.join(root, "fake-computer-url")
+    if os.path.exists(named):
+        with open(named) as handle:
+            url = handle.read().strip()
     env = types.SimpleNamespace(environment_url=url, mcp_url=url + "/mcp", sandbox_id="sbx-fake",
                                 control_token=os.environ["FAKE_COMPUTER_TOKEN"])
     run = types.SimpleNamespace(context=types.SimpleNamespace(deployed_envs=[env]), error=None, failed_steps=[])

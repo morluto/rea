@@ -142,13 +142,11 @@ export const registerDesktopBuildTools = (
   registerForwarded(tool("start_build_computer"), (input, context) =>
     computers.start(input, context.mcpReq.signal, mcpProgressReporter(context)),
   );
-  // A reset waits for the relaunched app to be ready, which can take minutes.
+  // An action can wait for the call before it on its computer, and a reset for the relaunched app, which can take minutes.
   registerForwarded(tool("act_on_build_computer"), (input, context) =>
-    input.action === "reset"
-      ? withHeartbeat(context, "act_on_build_computer", () =>
-          computers.act(input, context.mcpReq.signal),
-        )
-      : computers.act(input, context.mcpReq.signal),
+    withHeartbeat(context, "act_on_build_computer", () =>
+      computers.act(input, context.mcpReq.signal),
+    ),
   );
   registerForwarded(tool("start_build_capture"), (input, context) =>
     withHeartbeat(context, "start_build_capture", () =>

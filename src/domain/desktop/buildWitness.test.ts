@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   admitWitnessStage,
   appStateViews,
-  stageHeld,
+  stageVerdict,
   type WitnessActionLog,
   type WitnessStageRecord,
 } from "./buildWitness.js";
@@ -54,14 +54,32 @@ describe("build witness rules", () => {
       { id: "b", passed: false, description: "" },
     ];
     const passing = [{ id: "a", passed: true, description: "" }];
-    expect(stageHeld("seed", failing)).toBe(true);
-    expect(stageHeld("seed", passing)).toBe(false);
-    expect(stageHeld("after_edit", passing)).toBe(true);
-    expect(stageHeld("after_edit", failing)).toBe(false);
-    expect(stageHeld("near_miss", failing)).toBe(true);
-    expect(stageHeld("near_miss", passing)).toBe(false);
-    expect(stageHeld("after_reset", failing)).toBe(true);
-    expect(stageHeld("after_reset", passing)).toBe(false);
+    expect(stageVerdict("seed", failing)).toBe("held");
+    expect(stageVerdict("seed", passing)).toBe("not_held");
+    expect(stageVerdict("after_edit", passing)).toBe("held");
+    expect(stageVerdict("after_edit", failing)).toBe("not_held");
+    expect(stageVerdict("after_edit", [])).toBe("not_held");
+    expect(stageVerdict("near_miss", failing)).toBe("held");
+    expect(stageVerdict("near_miss", passing)).toBe("not_held");
+    expect(stageVerdict("after_reset", failing)).toBe("held");
+    expect(stageVerdict("after_reset", passing)).toBe("not_held");
+  });
+
+  it("takes no unreadable or partial view as a failure, leaving a stage it alone would settle undecided", () => {
+    const unread = {
+      id: "u",
+      passed: false,
+      description: "",
+      undecided: true as const,
+    };
+    const passing = { id: "a", passed: true, description: "" };
+    const failing = { id: "b", passed: false, description: "" };
+    for (const stage of ["seed", "near_miss", "after_reset"] as const) {
+      expect(stageVerdict(stage, [passing, unread])).toBe("undecided");
+      expect(stageVerdict(stage, [unread, failing])).toBe("held");
+    }
+    expect(stageVerdict("after_edit", [passing, unread])).toBe("undecided");
+    expect(stageVerdict("after_edit", [unread, failing])).toBe("not_held");
   });
 
   it("takes the stages in order, each after the actions it follows", () => {

@@ -55,21 +55,25 @@ export class DesktopBuildSteps {
   > {
     const steps = this.computers.steps(input.computer_id);
     if (steps === undefined) return err(unknownComputer("start_build_capture"));
-    const started = await steps.capture.start(
-      input.arguments === undefined ? {} : { arguments: input.arguments },
-      signal,
-    );
-    if (!started.ok) return started;
-    const shot = await steps.computer
-      .callTool("computer_screenshot", {}, signal)
-      .catch(() => undefined);
-    return ok({
-      value: {
-        computer_id: input.computer_id,
-        ...started.value,
-        screenshot: shot === undefined || shot.isError ? null : shot.structured,
-      },
-      content: shot === undefined || shot.isError ? [] : shot.content,
+    // The screenshot of the opened app takes the same turn as the start.
+    return steps.turns.run("start_build_capture", signal, async (turn) => {
+      const started = await steps.capture.start(
+        input.arguments === undefined ? {} : { arguments: input.arguments },
+        turn,
+      );
+      if (!started.ok) return started;
+      const shot = await steps.computer
+        .callTool("computer_screenshot", {}, turn)
+        .catch(() => undefined);
+      return ok({
+        value: {
+          computer_id: input.computer_id,
+          ...started.value,
+          screenshot:
+            shot === undefined || shot.isError ? null : shot.structured,
+        },
+        content: shot === undefined || shot.isError ? [] : shot.content,
+      });
     });
   }
 
@@ -80,8 +84,9 @@ export class DesktopBuildSteps {
     return this.#on(
       input.computer_id,
       "mark_build_checkpoint",
-      async (steps) => {
-        const taken = await steps.capture.mark(input.name, signal);
+      signal,
+      async (steps, turn) => {
+        const taken = await steps.capture.mark(input.name, turn);
         return taken.ok ? ok({ checkpoint: taken.value }) : taken;
       },
     );
@@ -91,8 +96,11 @@ export class DesktopBuildSteps {
     input: { readonly computer_id: string },
     signal: AbortSignal,
   ): Promise<Result<Identified<StoppedCapture>, AnalysisError>> {
-    return this.#on(input.computer_id, "stop_build_capture", (steps) =>
-      steps.capture.stop(signal),
+    return this.#on(
+      input.computer_id,
+      "stop_build_capture",
+      signal,
+      (steps, turn) => steps.capture.stop(turn),
     );
   }
 
@@ -103,8 +111,8 @@ export class DesktopBuildSteps {
     signal: AbortSignal,
   ): Promise<Result<Identified<ExportedBuild>, AnalysisError>> {
     const { computer_id: id, ...request } = input;
-    return this.#on(id, "export_build_environment", (steps) =>
-      steps.capture.export(request, signal),
+    return this.#on(id, "export_build_environment", signal, (steps, turn) =>
+      steps.capture.export(request, turn),
     );
   }
 
@@ -115,20 +123,26 @@ export class DesktopBuildSteps {
     signal: AbortSignal,
   ): Promise<Result<Identified<CheckedTask>, AnalysisError>> {
     const { computer_id: id, ...request } = input;
-    return this.#on(id, "check_build_task", (steps) =>
-      steps.witness.check(request, signal),
+    return this.#on(id, "check_build_task", signal, (steps, turn) =>
+      steps.witness.check(request, turn),
     );
   }
 
-  /** Run one step on a held computer and name the computer in its result. */
+  /** Run one step on a held computer, on its turn among the computer's calls, and name the computer in its result. */
   async #on<Value extends object>(
     id: string,
     operation: string,
-    run: (steps: BuildComputerSteps) => Promise<Result<Value, AnalysisError>>,
+    signal: AbortSignal,
+    run: (
+      steps: BuildComputerSteps,
+      signal: AbortSignal,
+    ) => Promise<Result<Value, AnalysisError>>,
   ): Promise<Result<Identified<Value>, AnalysisError>> {
     const steps = this.computers.steps(id);
     if (steps === undefined) return err(unknownComputer(operation));
-    const result = await run(steps);
+    const result = await steps.turns.run(operation, signal, (turn) =>
+      run(steps, turn),
+    );
     return result.ok ? ok({ computer_id: id, ...result.value }) : result;
   }
 }

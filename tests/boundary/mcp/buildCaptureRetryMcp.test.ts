@@ -1,3 +1,4 @@
+import { mkdir, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import type { Client } from "@modelcontextprotocol/client";
@@ -19,6 +20,13 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const call = (client: Client, name: string, args: Record<string, unknown>) =>
   client.callTool({ name, arguments: args });
+
+/** Start a capture on the computer and mark seed and end. */
+const captureSeedAndEnd = async (client: Client, id: string) => {
+  await callOk(client, "start_build_capture", { computer_id: id });
+  for (const name of ["seed", "end"])
+    await callOk(client, "mark_build_checkpoint", { computer_id: id, name });
+};
 
 const captureCalls = async (
   rea: Awaited<ReturnType<typeof fakes>>["rea"],
@@ -84,9 +92,7 @@ it("returns a checkpoint taken in the computer when its reply was lost and the n
 it("finishes a stop whose draft reply was lost when stop is asked again, and repeats its result", async () => {
   const { rea, client } = await fakes({ dropReplies: ["run"] });
   const id = await startBuildComputer(client, BUILD_REQUEST);
-  await callOk(client, "start_build_capture", { computer_id: id });
-  for (const name of ["seed", "end"])
-    await callOk(client, "mark_build_checkpoint", { computer_id: id, name });
+  await captureSeedAndEnd(client, id);
   const stop = () => call(client, "stop_build_capture", { computer_id: id });
   expect((await stop()).isError).toBe(true);
   const first = await stop();
@@ -139,9 +145,7 @@ const captureDebRequest = async (
       dependencies: [],
     },
   });
-  await callOk(client, "start_build_capture", { computer_id: id });
-  for (const name of ["seed", "end"])
-    await callOk(client, "mark_build_checkpoint", { computer_id: id, name });
+  await captureSeedAndEnd(client, id);
   await callOk(client, "stop_build_capture", { computer_id: id });
   const exported = toolContract("export_build_environment").outputSchema.parse(
     (
@@ -187,3 +191,31 @@ it("exports an app from apt, without the .deb's URL, when an apt source offers t
   expect(exportArgv).not.toContain("--package-url");
   expect(exported.files).toBeGreaterThan(0);
 });
+
+it("brings back a bundle whose file list outgrows a command's 1 MiB of output", async () => {
+  const fakeSet = await fakes();
+  const { outputs, client } = fakeSet;
+  // 1,500 files whose list, about 1.15 MB with their long paths, is more than the 1 MiB exec answers with.
+  const long = (letter: string) => letter.repeat(200);
+  const extra = join(outputs.bundle, "seed", long("a"), long("b"));
+  await mkdir(extra, { recursive: true });
+  for (let index = 0; index < 1500; index += 1)
+    await writeFile(join(extra, `${long("c")}-${String(index)}`), "x");
+  const id = await startBuildComputer(client, BUILD_REQUEST);
+  await captureSeedAndEnd(client, id);
+  await callOk(client, "stop_build_capture", { computer_id: id });
+  const directory = join(await createTestTempDirectory("build-out-"), "bundle");
+  const exported = toolContract("export_build_environment").outputSchema.parse(
+    (
+      await callOk(client, "export_build_environment", {
+        computer_id: id,
+        task: BUILD_TASK,
+        directory,
+      })
+    ).structuredContent,
+  );
+  expect(exported.files).toBeGreaterThan(1500);
+  expect(
+    await readdir(join(directory, "seed", long("a"), long("b"))),
+  ).toHaveLength(1500);
+}, 120_000);

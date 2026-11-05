@@ -11,7 +11,7 @@ import { setTimeout as delay } from "node:timers/promises";
 
 import type { Client } from "@modelcontextprotocol/client";
 import type { CallToolResult } from "@modelcontextprotocol/server";
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import { z } from "zod";
 
 import { toolContract } from "../../../src/contracts/toolContracts.js";
@@ -25,6 +25,7 @@ import {
 } from "../../fixtures/buildComputerMcp.js";
 import {
   FAKE_FRAME_PNG,
+  type FakeApp,
   type FakeComputer,
 } from "../../fixtures/fakeAgentEnvComputer.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
@@ -454,4 +455,105 @@ it("stops the helper when the caller cancels a start", async () => {
     await delay(50);
   }
   expect(await runner.notes("interrupted.jsonl")).toHaveLength(1);
+});
+
+/** An app whose reset keeps the computer unready for `polls` readiness polls, 500 ms apart. */
+const slowApp = (polls: number): FakeApp => ({
+  name: "notes",
+  state: {},
+  seed: {},
+  methods: [],
+  unreadyAfterReset: polls,
+});
+
+it("runs one computer's calls in the order they arrive and another computer's beside them", async () => {
+  const app = slowApp(4);
+  const { runner } = await fakes({ app });
+  const other = await fakes();
+  const client = await connect(runner.environment);
+  const first = await startBuildComputer(client, {
+    kind: "bundle",
+    path: await bundleFolder(),
+  });
+  const second = await startBuildComputer(client, {
+    kind: "bundle",
+    path: await bundleFolder(other.computer),
+  });
+  const act = (id: string, action: string) =>
+    callOk(client, "act_on_build_computer", { computer_id: id, action });
+  const order: string[] = [];
+  const reset = act(first, "reset").then(() => order.push("reset"));
+  await vi.waitFor(() => expect(app.methods).toEqual(["data/reset"]));
+  const behind = act(first, "screenshot").then(() =>
+    order.push("screenshot behind the reset"),
+  );
+  await act(second, "screenshot");
+  order.push("other computer's screenshot");
+  await Promise.all([reset, behind]);
+  expect(order).toEqual([
+    "other computer's screenshot",
+    "reset",
+    "screenshot behind the reset",
+  ]);
+}, 30_000);
+
+it("sends progress while an action waits for the call before it on its computer", async () => {
+  const app = slowApp(14);
+  const { runner } = await fakes({ app });
+  const client = await connect(runner.environment);
+  const id = await startBuildComputer(client, {
+    kind: "bundle",
+    path: await bundleFolder(),
+  });
+  const reset = callOk(client, "act_on_build_computer", {
+    computer_id: id,
+    action: "reset",
+  });
+  await vi.waitFor(() => expect(app.methods).toEqual(["data/reset"]));
+  const progress: unknown[] = [];
+  const waited = await client.callTool(
+    {
+      name: "act_on_build_computer",
+      arguments: { computer_id: id, action: "screenshot" },
+    },
+    { onprogress: (update) => progress.push(update) },
+  );
+  expect(waited.isError, JSON.stringify(waited)).not.toBe(true);
+  expect(progress.length).toBeGreaterThan(0);
+  await reset;
+}, 30_000);
+
+it("cancels a computer's call in progress on close and refuses the calls waiting behind it", async () => {
+  const app = slowApp(600);
+  const { computer, runner } = await fakes({ app });
+  const client = await connect(runner.environment);
+  const id = await startBuildComputer(client, {
+    kind: "bundle",
+    path: await bundleFolder(),
+  });
+  const calls = computer.calls.length;
+  const call = (name: string, fields: Record<string, unknown> = {}) =>
+    client.callTool({ name, arguments: { computer_id: id, ...fields } });
+  const reset = call("act_on_build_computer", { action: "reset" });
+  await vi.waitFor(() => expect(app.methods).toEqual(["data/reset"]));
+  const waiting = [
+    call("act_on_build_computer", { action: "screenshot" }),
+    call("stop_build_capture"),
+  ];
+  const closed = await callOk(client, "close_build_computer", {
+    computer_id: id,
+  });
+  expect(closed.structuredContent).toEqual({
+    computer_id: id,
+    teardown: "agentenv",
+  });
+  for (const result of await Promise.all([reset, ...waiting]))
+    expect(parseMcpToolError(result).error.code).toBe("cancelled");
+  expect(computer.calls).toHaveLength(calls);
+  expect(app.methods).toEqual(["data/reset"]);
+  expect(await runner.notes("teardowns.jsonl")).toHaveLength(1);
+  expect(
+    parseMcpToolError(await call("act_on_build_computer", { action: "wait" }))
+      .error.message,
+  ).toContain("start_build_computer");
 });

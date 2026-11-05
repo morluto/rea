@@ -15,11 +15,16 @@ export interface TaskFileView {
   readonly error?: string | null;
 }
 
-/** How one check came out against one set of views. */
+/**
+ * How one check came out against one set of views. `undecided` marks a failure
+ * that shows nothing about the task: its file or table could not be read, or
+ * its view holds only part of what the check needs.
+ */
 export type TaskCheckOutcome = {
   readonly id: string;
   readonly passed: boolean;
   readonly description: string;
+  readonly undecided?: true;
 };
 
 type Verdict = Omit<TaskCheckOutcome, "id">;
@@ -37,8 +42,13 @@ const shown = (value: JsonValue): string => {
   const text = JSON.stringify(value);
   return text.length > 200 ? `${text.slice(0, 200)}…` : text;
 };
+/** A failure for want of a readable or whole view, not for what the view holds. */
+const unread = (description: string): Verdict => ({
+  ...fail(description),
+  undecided: true,
+});
 const undecided = (file: string): Verdict =>
-  fail(`the view of ${file} is truncated, so what it leaves out is unknown`);
+  unread(`the view of ${file} is truncated, so what it leaves out is unknown`);
 
 const isRecord = (
   value: JsonValue | null | undefined,
@@ -113,7 +123,7 @@ const viewOf = (
 ): { view: JsonValue | null; truncated: boolean } | Verdict => {
   if (entry === undefined) return { view: null, truncated: false };
   if (typeof entry.error === "string")
-    return fail(`${check.file} has no view: ${entry.error}`);
+    return unread(`${check.file} has no view: ${entry.error}`);
   if (entry.format === null || entry.format === "binary")
     return fail(`${check.file} is binary and has no view`);
   if (format !== undefined && entry.format !== format)
@@ -209,8 +219,10 @@ const unreadOrPartial = (
 ): Verdict | undefined => {
   const zip = format === "zip";
   const viewless = zip ? viewlessEntryAt(read.view, check.pointer) : undefined;
-  if (viewless !== undefined)
-    return fail(`${check.file} entry ${viewless.name} ${viewless.reason}`);
+  if (viewless !== undefined) {
+    const description = `${check.file} entry ${viewless.name} ${viewless.reason}`;
+    return viewless.unread ? unread(description) : fail(description);
+  }
   // A selector tells one member from several only in an array the view holds whole.
   const partial = (array: string) =>
     zip ? zipArrayLeavesOut(read.view, array) : read.truncated;
@@ -277,7 +289,7 @@ const tableOf = (
     return undecided(check.file);
   const read = isRecord(table) ? table : {};
   if (typeof read.error === "string")
-    return fail(
+    return unread(
       `${check.file} table ${check.table} could not be read: ${read.error}`,
     );
   return {

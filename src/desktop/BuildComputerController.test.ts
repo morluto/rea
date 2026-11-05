@@ -8,30 +8,39 @@ const MIB = 1024 * 1024;
 const sha256 = (bytes: Buffer) =>
   createHash("sha256").update(bytes).digest("hex");
 
-/** A computer whose controller lists `files` and whose data/get answers them, noting each step. */
-const computer = (files: ReadonlyMap<string, Buffer>, steps: string[]) => ({
-  exec: () =>
-    Promise.resolve({
-      exit_code: 0,
-      stdout: `${JSON.stringify({
-        files: [...files].map(([path, bytes]) => ({
-          path,
-          size: bytes.length,
-          sha256: sha256(bytes),
-        })),
-        skipped: [],
-      })}\n`,
-      stderr: "",
-      truncated: false,
-      timed_out: false,
+/** A computer whose controller lists `files` into a file beside the folder and whose data/get answers them, noting each fetch of a file. */
+const computer = (files: ReadonlyMap<string, Buffer>, steps: string[]) => {
+  const listing = Buffer.from(
+    JSON.stringify({
+      files: [...files].map(([path, bytes]) => ({
+        path,
+        size: bytes.length,
+        sha256: sha256(bytes),
+      })),
+      skipped: [],
     }),
-  homeFiles: (paths: readonly string[], bytes: number) => {
-    steps.push(`get ${paths.join(",")} within ${String(bytes)}`);
-    return Promise.resolve(
-      new Map(paths.map((path) => [path, files.get(path) ?? Buffer.alloc(0)])),
-    );
-  },
-});
+  );
+  return {
+    exec: () =>
+      Promise.resolve({
+        exit_code: 0,
+        stdout: `${JSON.stringify({ listing_bytes: listing.length })}\n`,
+        stderr: "",
+        truncated: false,
+        timed_out: false,
+      }),
+    homeFiles: (paths: readonly string[], bytes: number) => {
+      if (paths[0]?.endsWith(".listing.json") === true)
+        return Promise.resolve(new Map([[paths[0], listing]]));
+      steps.push(`get ${paths.join(",")} within ${String(bytes)}`);
+      return Promise.resolve(
+        new Map(
+          paths.map((path) => [path, files.get(path) ?? Buffer.alloc(0)]),
+        ),
+      );
+    },
+  };
+};
 
 describe("fetchHomeFolder", () => {
   it("hands over each checked batch before asking for the next, so one batch at a time is held", async () => {
@@ -59,10 +68,13 @@ describe("fetchHomeFolder", () => {
   it("refuses a file that differs from its listing before handing it over", async () => {
     const files = new Map([[".rea-build/b/a", Buffer.from("seed")]]);
     const steps: string[] = [];
+    const base = computer(files, steps);
     const changed = {
-      ...computer(files, steps),
-      homeFiles: () =>
-        Promise.resolve(new Map([[".rea-build/b/a", Buffer.from("SEED")]])),
+      ...base,
+      homeFiles: (paths: readonly string[], bytes: number) =>
+        paths[0] === ".rea-build/b/a"
+          ? Promise.resolve(new Map([[".rea-build/b/a", Buffer.from("SEED")]]))
+          : base.homeFiles(paths, bytes),
     };
     await expect(
       fetchHomeFolder(changed, ".rea-build/b", {

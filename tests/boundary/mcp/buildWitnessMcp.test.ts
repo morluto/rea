@@ -1,7 +1,8 @@
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { expect, it } from "vitest";
+import type { CallToolResult } from "@modelcontextprotocol/server";
+import { expect, it, vi } from "vitest";
 
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
@@ -16,6 +17,7 @@ import {
 import {
   FAKE_SEGMENTS,
   type FakeApp,
+  type FakeComputerOptions,
 } from "../../fixtures/fakeAgentEnvComputer.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -27,6 +29,7 @@ const TASK = {
     { kind: "lines_present", file: "Documents/today.txt", lines: ["eggs"] },
   ],
 };
+const WITNESS_ORDER = ["seed", "after_edit", "near_miss", "after_reset"];
 const lines = (...text: string[]) => ({
   "Documents/today.txt": {
     format: "text",
@@ -35,7 +38,7 @@ const lines = (...text: string[]) => ({
   },
 });
 
-const witnessed = async (slowReset = 0) => {
+const witnessed = async (slowReset = 0, options: FakeComputerOptions = {}) => {
   const app: FakeApp = {
     name: "notes",
     state: lines("milk"),
@@ -43,7 +46,7 @@ const witnessed = async (slowReset = 0) => {
     methods: [],
     unreadyAfterReset: slowReset,
   };
-  const { computer, runner } = await buildComputerFakes({ app });
+  const { computer, runner } = await buildComputerFakes({ ...options, app });
   const client = await connectBuildServer(runner.environment);
   const id = await startBuildComputer(client, {
     kind: "bundle",
@@ -71,6 +74,17 @@ const edit = async (
 ) => {
   await witness.act("type", { text: "x" });
   witness.app.state = state;
+};
+
+/** Check the seed, the edit and the near miss, each after the act it needs. */
+const throughNearMiss = async (
+  witness: Awaited<ReturnType<typeof witnessed>>,
+) => {
+  await witness.check({ stage: "seed", directory: witness.directory });
+  await edit(witness, lines("milk", "eggs"));
+  await witness.check({ stage: "after_edit" });
+  await edit(witness, lines("milk", "egg"));
+  await witness.check({ stage: "near_miss" });
 };
 
 const parsed = (result: unknown) =>
@@ -253,6 +267,59 @@ it("retries a seed whose state read failed, with the recording it began", async 
   ).toHaveLength(1);
 });
 
+it("asks for the recording a lost start reply began again under its request id when the seed is retried", async () => {
+  const witness = await witnessed(0, { lostRecordingStarts: 1 });
+  const { check, directory, computer } = witness;
+  const lost = await check({ stage: "seed", directory });
+  expect(parseMcpToolError(lost).error.message).toContain("recording");
+  const seed = parsed(await check({ stage: "seed", directory }));
+  expect(seed.witness).toMatchObject({ held: true, next_stage: "after_edit" });
+  const starts = computer.recordingRequests.filter(({ path }) =>
+    path.endsWith("/start"),
+  );
+  expect(starts).toHaveLength(2);
+  expect(starts[1]?.body).toEqual(starts[0]?.body);
+});
+
+it("files no seed or near miss whose only failing check could not read its file, and takes it once the file reads", async () => {
+  const witness = await witnessed();
+  const { app, check, directory, computer } = witness;
+  const locked = {
+    "Documents/today.txt": {
+      format: null,
+      view: null,
+      error: "database is locked",
+    },
+  };
+  app.state = locked;
+  const seed = parseMcpToolError(await check({ stage: "seed", directory }));
+  expect(seed.error.message).toContain("cannot decide seed");
+  expect(seed.error.message).toContain("database is locked");
+  app.state = lines("milk");
+  expect(
+    parsed(await check({ stage: "seed", directory })).witness,
+  ).toMatchObject({ stage: "seed", held: true });
+  await edit(witness, lines("milk", "eggs"));
+  await check({ stage: "after_edit" });
+  await edit(witness, locked);
+  expect(
+    parseMcpToolError(await check({ stage: "near_miss" })).error.message,
+  ).toContain("cannot decide near_miss");
+  app.state = lines("milk", "egg");
+  const nearMiss = parsed(await check({ stage: "near_miss" }));
+  expect(nearMiss.witness).toMatchObject({
+    stage: "near_miss",
+    held: true,
+    next_stage: "after_reset",
+  });
+  await witness.act("reset");
+  const record = parsed(await check({ stage: "after_reset" })).witness?.record;
+  expect(record?.stages.map(({ stage }) => stage)).toEqual(WITNESS_ORDER);
+  expect(
+    computer.recordingRequests.filter(({ path }) => path.endsWith("/start")),
+  ).toHaveLength(1);
+});
+
 it("records a long witness from the bounded action log, naming what it dropped and what it cut", async () => {
   const witness = await witnessed();
   const { app, check, directory } = witness;
@@ -287,11 +354,7 @@ it("records a long witness from the bounded action log, naming what it dropped a
 it("saves a witness record again after a failed save, without checking again", async () => {
   const witness = await witnessed();
   const { check, directory, app } = witness;
-  await check({ stage: "seed", directory });
-  await edit(witness, lines("milk", "eggs"));
-  await check({ stage: "after_edit" });
-  await edit(witness, lines("milk", "egg"));
-  await check({ stage: "near_miss" });
+  await throughNearMiss(witness);
   await witness.act("reset");
   // Something else writes into the record's folder, so the save is refused.
   await mkdir(directory, { recursive: true });
@@ -312,6 +375,55 @@ it("saves a witness record again after a failed save, without checking again", a
     parseMcpToolError(await check({ stage: "after_reset" })).error.message,
   ).toContain("ended");
 });
+
+it("files one after_edit when two checks of it arrive together, so the record cannot hold without a near miss", async () => {
+  const witness = await witnessed();
+  const { check, directory } = witness;
+  await check({ stage: "seed", directory });
+  await edit(witness, lines("milk", "eggs"));
+  const both = await Promise.all([
+    check({ stage: "after_edit" }),
+    check({ stage: "after_edit" }),
+  ]);
+  const filed = both.filter((result) => result.isError !== true);
+  expect(filed).toHaveLength(1);
+  expect(parsed(filed[0])).toMatchObject({
+    passed: 1,
+    witness: { stage: "after_edit", held: true, next_stage: "near_miss" },
+  });
+  const second = both.find((result) => result.isError === true);
+  expect(parseMcpToolError(second as CallToolResult).error.message).toContain(
+    "the next stage is near_miss",
+  );
+  await witness.act("reset");
+  expect(
+    parseMcpToolError(await check({ stage: "after_reset" })).error.message,
+  ).toContain("the next stage is near_miss");
+});
+
+it("checks after_reset once the reset sent before it has relaunched the app", async () => {
+  const witness = await witnessed(4);
+  const { app, check } = witness;
+  await throughNearMiss(witness);
+  const order: string[] = [];
+  const reset = witness.act("reset").then(() => order.push("reset"));
+  await vi.waitFor(() => expect(app.methods.at(-1)).toBe("data/reset"));
+  const last = await check({ stage: "after_reset" });
+  order.push("check");
+  await reset;
+  expect(order).toEqual(["reset", "check"]);
+  const record = parsed(last).witness?.record;
+  expect(record).toMatchObject({ verdict: "held", failed_stage: null });
+  expect(record?.stages.at(-1)).toMatchObject({
+    stage: "after_reset",
+    actions_before: 3,
+  });
+  expect(record?.actions.at(-1)).toMatchObject({
+    action: "reset",
+    outcome: "applied",
+  });
+  expect(app.methods.slice(-2)).toEqual(["data/reset", "data/get"]);
+}, 30_000);
 
 it("sends progress while a reset waits for the relaunched app", async () => {
   const witness = await witnessed(14);

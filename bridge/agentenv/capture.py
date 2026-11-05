@@ -216,7 +216,11 @@ def run(arguments: dict) -> int:
 
 
 def listing(arguments: dict) -> int:
-    """Every regular file under a folder, by its path relative to the home, with its size and SHA-256."""
+    """Every regular file under a folder, by its path relative to the home, with its size and SHA-256.
+
+    The list goes to the file ``output`` names, outside the folder, and the answer gives its size: a large
+    bundle's list outgrows the 1 MiB of stdout a command answers with, so REA reads it through ``data/get``.
+    """
     home = os.path.expanduser("~")
     files, skipped = [], []
     for directory, folders, names in os.walk(os.path.abspath(arguments["root"])):
@@ -232,7 +236,11 @@ def listing(arguments: dict) -> int:
                 for chunk in iter(lambda: handle.read(1 << 20), b""):
                     digest.update(chunk)
             files.append({"path": relative, "size": os.path.getsize(path), "sha256": digest.hexdigest()})
-    return _say({"files": files, "skipped": skipped})
+    output = os.path.abspath(arguments["output"])
+    os.makedirs(os.path.dirname(output), exist_ok=True)
+    with open(output, "w", encoding="utf-8") as handle:
+        json.dump({"files": files, "skipped": skipped}, handle)
+    return _say({"listing_bytes": os.path.getsize(output)})
 
 
 COMMANDS = {"start": start, "mark": mark, "stop": stop, "run": run, "list": listing}

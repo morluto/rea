@@ -84,6 +84,17 @@ and the recording and writes the record as Evidence.
   start from a bundle folder writes no bytecode into it; the first
   screenshot waits, briefly and bounded, until the frame is not one colour.
 
+- Gaps of the second review: calls on one computer (actions, capture
+  steps, checks and close) run one at a time in arrival order, so a stage's
+  admission, read and filing see no other call, while computers run side by
+  side; a close cancels the call in progress and refuses those waiting. The
+  witness's recording has one request id per computer, so a seed retried
+  after a lost reply asks for the recording it began. A check that fails for
+  want of a readable or whole view is `undecided` and proves nothing; a
+  stage only such checks would settle files nothing and can be checked
+  again. The controller writes a folder's file list to a file that REA reads
+  through `data/get`, so a large bundle's list is not cut at the 1 MiB of a
+  command's output.
 - The witness reads the build computer's bounded action log: its stage rules
   use the log's count and the last applied action of each kind, and the
   record holds the entries the log keeps, `actions_dropped`, and a

@@ -178,6 +178,54 @@ describe("evaluateTaskChecks", () => {
       '2 line(s) of Documents/todo.txt match "buy milk", expected at least 3',
     );
   });
+
+  it("marks a failure for want of a readable or whole view as undecided, apart from what a view shows", () => {
+    const outcomes = evaluateTaskChecks(
+      [
+        {
+          id: "unread",
+          kind: "lines_absent",
+          file: "Documents/huge.txt",
+          lines: ["x"],
+        },
+        {
+          id: "table",
+          kind: "row_present",
+          file: ".local/share/notes/notes.db",
+          table: "broken",
+          where: { id: 1 },
+        },
+        {
+          id: "cut",
+          kind: "lines_absent",
+          file: "Documents/long.txt",
+          lines: ["z"],
+        },
+        {
+          id: "shown",
+          kind: "lines_present",
+          file: "Documents/todo.txt",
+          lines: ["x"],
+        },
+        {
+          id: "binary",
+          kind: "lines_present",
+          file: "Documents/photo.png",
+          lines: ["x"],
+        },
+      ] as never,
+      new Map(Object.entries(CHECK_VIEWS)),
+    );
+    expect(
+      outcomes.map(({ id, passed, undecided }) => [id, passed, undecided]),
+    ).toEqual([
+      ["unread", false, true],
+      ["table", false, true],
+      ["cut", false, true],
+      ["shown", false, undefined],
+      ["binary", false, undefined],
+    ]);
+  });
 });
 
 describe("evaluateTaskChecks selectors and tolerance", () => {
@@ -200,7 +248,7 @@ describe("evaluateTaskChecks selectors and tolerance", () => {
         pointer: "/entries/[name=a.json]/view/x",
         value: 1,
       }),
-    ).toEqual({ id: "c", passed: false, description: cut });
+    ).toEqual({ id: "c", passed: false, description: cut, undecided: true });
     expect(
       outcome({
         kind: "value_equals",
@@ -208,7 +256,7 @@ describe("evaluateTaskChecks selectors and tolerance", () => {
         pointer: "/entries/1/view/root/children/[name=p]/attributes/id",
         value: "1",
       }),
-    ).toEqual({ id: "c", passed: false, description: cut });
+    ).toEqual({ id: "c", passed: false, description: cut, undecided: true });
     expect(
       outcome({
         kind: "value_equals",
@@ -231,6 +279,7 @@ describe("evaluateTaskChecks selectors and tolerance", () => {
       passed: false,
       description:
         "Documents/plate.FCStd entry huge.brp has no view: larger than the 16 MiB an entry's view reads",
+      undecided: true,
     });
     expect(
       outcome({

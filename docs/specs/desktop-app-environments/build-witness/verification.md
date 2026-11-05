@@ -153,6 +153,43 @@ build and desktop boundary tests 67 passed with the real test skipped.
 Not verified on a real computer: that the first frame not of one colour
 shows the panel on the computer's desktop.
 
+## Second review fixes
+
+Run on macOS after the second review; the VM was not used. Each new
+boundary test failed on the reviewed head, with only the new tests and
+fixtures added, and passes now. The fake computer now cuts a command's
+stdout at 1 MiB as the computer does, loses a recording start's reply when
+a test asks, and a bundle folder can name the fake computer its start
+hands out, so one server can hold two.
+
+- `buildWitnessMcp.test.ts`: two `after_edit` checks sent together file
+  one stage, the other is refused as out of order, and `after_reset` stays
+  refused until a near miss. Before, both were filed, and after a reset the
+  record held with the stages `seed`, `after_edit`, `after_edit`,
+  `after_reset`. An `after_reset` check sent while a reset relaunches the
+  app waits for it and is admitted; before, it ran during the reset and was
+  refused. A seed retried after its recording's start reply was lost asks
+  for the same request id; before, a new one. A seed and a near miss whose
+  only failing check could not read its file are refused and filed once
+  the file reads; before, the read error was filed as the failure.
+- `buildComputerMcp.test.ts`: a screenshot sent behind a slow reset on one
+  computer answers after it, while a screenshot on another computer answers
+  first, and the waiting action sends progress; a close during a reset
+  cancels it and refuses an action and a capture step waiting behind it,
+  and tears the computer down. Before, the screenshot answered first and
+  the close left the reset running.
+- `buildComputerLifecycle.test.ts`: the owner's shutdown cancels a call in
+  progress and the one waiting behind it.
+- `buildCaptureRetryMcp.test.ts`: an export whose bundle's file list is
+  about 1.1 MB brings every file back. Before, the list was cut at 1 MiB and
+  the export failed with the controller not answering.
+- `DesktopBuildTurns.test.ts`: calls run one at a time in arrival order, a
+  call that throws frees its turn, a call cancelled while it waits keeps its
+  place until the one before it ends, and a close runs once the call it
+  cancelled has ended.
+- `buildWitness.test.ts` and `appTaskChecks.test.ts`: the three-way stage
+  verdict, and which failures are `undecided`.
+
 ## Bounded action log
 
 Run on macOS after merging the build computer's bounded action log; the VM

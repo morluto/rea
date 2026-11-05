@@ -58,6 +58,7 @@ export const runBuildController = async (
   );
 };
 
+const listedSchema = z.object({ listing_bytes: z.int().nonnegative() });
 const listingSchema = z.object({
   files: z.array(
     z.object({
@@ -75,6 +76,34 @@ export interface FetchedFile {
   readonly bytes: Buffer;
   readonly sha256: string;
 }
+
+/**
+ * Every regular file under a home folder with its size and digest, and what
+ * else the folder holds. The controller writes the list to a file beside the
+ * folder and REA reads it through `data/get`, within the size it answers, as
+ * it reads REA's own outputs: a large bundle's list outgrows the 1 MiB a
+ * command's output is cut at.
+ */
+const listFolder = async (
+  computer: ControlledComputer,
+  folder: string,
+  signal: AbortSignal | undefined,
+): Promise<z.infer<typeof listingSchema>> => {
+  const output = `${folder}.listing.json`;
+  const { listing_bytes: bytes } = listedSchema.parse(
+    await runBuildController(
+      computer,
+      "list",
+      { root: folder, output },
+      { timeoutS: 300, ...(signal === undefined ? {} : { signal }) },
+    ),
+  );
+  const content = (await computer.homeFiles([output], bytes, signal)).get(
+    output,
+  );
+  if (content === undefined) throw new Error(`The computer has no ${output}.`);
+  return listingSchema.parse(JSON.parse(content.toString("utf8")));
+};
 
 /** The answers for one home folder: files listed, then fetched in batches of about `FETCH_BATCH_BYTES`. */
 const batched = (files: z.infer<typeof listingSchema>["files"]) => {
@@ -105,14 +134,7 @@ export const fetchHomeFolder = async (
   sink: { readonly file: (file: FetchedFile) => Promise<void> },
   signal?: AbortSignal,
 ): Promise<{ readonly files: number; readonly bytes: number }> => {
-  const listing = listingSchema.parse(
-    await runBuildController(
-      computer,
-      "list",
-      { root: folder },
-      { timeoutS: 300, ...(signal === undefined ? {} : { signal }) },
-    ),
-  );
+  const listing = await listFolder(computer, folder, signal);
   if (listing.skipped.length > 0)
     throw new Error(
       `${folder} holds entries other than regular files: ${listing.skipped.join(", ")}.`,

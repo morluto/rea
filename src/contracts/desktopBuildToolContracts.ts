@@ -41,6 +41,12 @@ const checkResult = z.strictObject({
   id: z.string(),
   passed: z.boolean(),
   description: z.string(),
+  undecided: z
+    .literal(true)
+    .optional()
+    .describe(
+      "Present on a failure for want of a readable or whole view, such as a file the app could not read just then or a view cut short; it shows nothing about the task, so a witness stage counts no such failure.",
+    ),
 });
 const strings = z.array(z.string());
 const stageRecord = z.strictObject({
@@ -143,7 +149,7 @@ export const DESKTOP_BUILD_TOOL_CONTRACTS = [
     name: "act_on_build_computer",
     ...toolContractMetadata("act_on_build_computer"),
     kind: "application",
-    description: `Drive the app on a build computer: one action, ${COMPUTER_ACTIONS.join(", ")}. Each but reset is sent to the computer's computer_<action> tool with the fields given, which are the driver's own arguments; reset restores the app's data to its seed with data/reset, which relaunches the app, and returns once the computer is ready again. Points are pixels of the latest frame, so take a screenshot first, or space norm on a 0..norm_scale grid; count 2 double-clicks; keys names one chord in W3C names, and spellings such as ctrl+s are translated. Returns the driver's content unchanged, its images included, and its structured result; an action's screenshot is taken at once, so after one that opens a menu or a window, take it with a wait instead; a refusal, such as a stale frame, is an error with the computer's message. Each action is logged on the computer.`,
+    description: `Drive the app on a build computer: one action, ${COMPUTER_ACTIONS.join(", ")}. Each but reset is sent to the computer's computer_<action> tool with the fields given, which are the driver's own arguments; reset restores the app's data to its seed with data/reset, which relaunches the app, and returns once the computer is ready again. Points are pixels of the latest frame, so take a screenshot first, or space norm on a 0..norm_scale grid; count 2 double-clicks; keys names one chord in W3C names, and spellings such as ctrl+s are translated. Returns the driver's content unchanged, its images included, and its structured result; an action's screenshot is taken at once, so after one that opens a menu or a window, take it with a wait instead; a refusal, such as a stale frame, is an error with the computer's message. Each action is logged on the computer. Actions, capture steps and checks on one computer run one at a time, in the order they arrive; computers run side by side.`,
     inputSchema: computerActionInputSchema,
     outputSchema: z.strictObject({
       computer_id: z.uuid(),
@@ -333,7 +339,7 @@ export const DESKTOP_BUILD_TOOL_CONTRACTS = [
     name: "check_build_task",
     ...toolContractMetadata("check_build_task"),
     kind: "application",
-    description: `Grade a task's checks against the app's live state on a computer of an exported bundle: REA reads the app's data/get views and evaluates each check as the bundle's verifier does, one result per check. With stage, the check is part of the witness, in order: seed (give directory; REA begins recording) must fail a check; after_edit, after acting on the app from the task's prompt alone, must pass every check; near_miss, after a deliberately almost-right change, must fail one; after_reset, after act_on_build_computer action reset, must fail one. A stage that does not hold, or after_reset, ends the witness: REA ends the recording and writes witness.json, the record as Evidence, with the recording's segments into directory, and returns the record.`,
+    description: `Grade a task's checks against the app's live state on a computer of an exported bundle: REA reads the app's data/get views and evaluates each check as the bundle's verifier does, one result per check. With stage, the check is part of the witness, in order: seed (give directory; REA begins recording) must fail a check; after_edit, after acting on the app from the task's prompt alone, must pass every check; near_miss, after a deliberately almost-right change, must fail one; after_reset, after act_on_build_computer action reset, must fail one. Only a check that fails on what the app's view shows counts as failing: one that fails because the view could not be read or is cut short is undecided, and a stage only undecided checks would settle files nothing and is refused, to be checked again. A stage that does not hold, or after_reset, ends the witness: REA ends the recording and writes witness.json, the record as Evidence, with the recording's segments into directory, and returns the record.`,
     inputSchema: z.strictObject({
       computer_id: computerId,
       task: desktopTaskSchema,
@@ -383,7 +389,7 @@ export const DESKTOP_BUILD_TOOL_CONTRACTS = [
     ...toolContractMetadata("close_build_computer"),
     kind: "application",
     description:
-      "Tear a build computer down and discard its state. agentenv's teardown is tried first; if it leaves the computer up, REA removes that exact sandbox's containers, the one named agent-<sandbox id> and any labelled agentenv.sandbox=<sandbox id>, with REA_DOCKER_COMMAND. When neither confirms it, the error names what is left and the computer stays listed, so closing again retries.",
+      "Tear a build computer down and discard its state. agentenv's teardown is tried first; if it leaves the computer up, REA removes that exact sandbox's containers, the one named agent-<sandbox id> and any labelled agentenv.sandbox=<sandbox id>, with REA_DOCKER_COMMAND. When neither confirms it, the error names what is left and the computer stays listed, so closing again retries. Closing cancels the call in progress on the computer and refuses those waiting for it.",
     inputSchema: z.strictObject({ computer_id: computerId }),
     outputSchema: z.strictObject({
       computer_id: z.uuid(),

@@ -1,6 +1,9 @@
 import { randomUUID } from "node:crypto";
 
-import type { BuildSource } from "../../domain/desktop/appBuild.js";
+import type {
+  BuildRequest,
+  BuildSource,
+} from "../../domain/desktop/appBuild.js";
 import {
   driverCall,
   type ComputerAction,
@@ -37,6 +40,7 @@ import {
 } from "./DesktopBuildActionLog.js";
 import { writeRequestBundle } from "./DesktopBuildBundle.js";
 import { DesktopBuildCapture } from "./DesktopBuildCapture.js";
+import { DesktopBuildTurns } from "./DesktopBuildTurns.js";
 import { DesktopBuildWitness } from "./DesktopBuildWitness.js";
 
 const START = "start_build_computer";
@@ -48,6 +52,14 @@ export interface ForwardedResult<Value> {
   readonly value: Value;
   readonly content: DriverResult["content"];
 }
+
+/** What an action answers: its place in the log and the driver's structured result. */
+type Acted = ForwardedResult<{
+  readonly computer_id: string;
+  readonly action: ComputerAction;
+  readonly action_index: number;
+  readonly result: Readonly<Record<string, JsonValue>> | null;
+}>;
 
 /** What later stages read of a live build computer: its action log and recording hooks. */
 export interface BuildComputerSession {
@@ -67,14 +79,17 @@ interface HeldComputer {
   readonly actions: BuildComputerActionLog;
   /** REA's capture of the app and the task's witness, on a live computer. */
   readonly steps: BuildComputerSteps | undefined;
+  /** Every action, step and close on the computer takes its turn here. */
+  readonly turns: DesktopBuildTurns;
   closing: boolean;
 }
 
-/** What the build step tools work on: a live computer, its capture and its witness. */
+/** What the build step tools work on: a live computer, its capture, its witness and the turns they take. */
 export interface BuildComputerSteps {
   readonly computer: AgentEnvComputer;
   readonly capture: DesktopBuildCapture;
   readonly witness: DesktopBuildWitness;
+  readonly turns: DesktopBuildTurns;
 }
 
 /** A start still in progress, which shutdown cancels and joins. */
@@ -125,6 +140,30 @@ const reset = async (
     isError: shot.isError,
     content: shot.content,
     structured: { ...ready, frame: shot.structured },
+  };
+};
+
+/** A live computer as REA holds it: its action log, its capture and witness, and the turns all its calls take. */
+const liveComputer = (
+  computer: AgentEnvComputer,
+  workspace: PrivateRuntimeRoot | undefined,
+  request: BuildRequest | undefined,
+): HeldComputer => {
+  const actions = new BuildComputerActionLog();
+  const turns = new DesktopBuildTurns();
+  return {
+    computer,
+    release: () => computer.close(),
+    workspace,
+    actions,
+    steps: {
+      computer,
+      capture: new DesktopBuildCapture(computer, request),
+      witness: new DesktopBuildWitness(computer, actions),
+      turns,
+    },
+    turns,
+    closing: false,
   };
 };
 
@@ -274,27 +313,18 @@ export class DesktopBuildComputers {
               shot.value.arguments,
               signal,
             );
-      const live = computer;
-      const actions = new BuildComputerActionLog();
-      this.#computers.set(id, {
-        computer: live,
-        release: () => live.close(),
-        workspace: target.workspace,
-        actions,
-        steps: {
-          computer: live,
-          capture: new DesktopBuildCapture(
-            live,
-            source.kind === "request" ? source : undefined,
-          ),
-          witness: new DesktopBuildWitness(live, actions),
-        },
-        closing: false,
-      });
+      this.#computers.set(
+        id,
+        liveComputer(
+          computer,
+          target.workspace,
+          source.kind === "request" ? source : undefined,
+        ),
+      );
       return ok({
         value: {
           computer_id: id,
-          sandbox_id: live.sandboxId,
+          sandbox_id: computer.sandboxId,
           environment: target.name,
           screenshot: taken.isError ? null : taken.structured,
         },
@@ -314,6 +344,7 @@ export class DesktopBuildComputers {
         workspace: target.workspace,
         actions: new BuildComputerActionLog(),
         steps: undefined,
+        turns: new DesktopBuildTurns(),
         closing: true,
       });
       const release = await this.#retire(id);
@@ -325,17 +356,7 @@ export class DesktopBuildComputers {
   async act(
     input: ComputerActionInput,
     signal: AbortSignal,
-  ): Promise<
-    Result<
-      ForwardedResult<{
-        readonly computer_id: string;
-        readonly action: ComputerAction;
-        readonly action_index: number;
-        readonly result: Readonly<Record<string, JsonValue>> | null;
-      }>,
-      AnalysisError
-    >
-  > {
+  ): Promise<Result<Acted, AnalysisError>> {
     const { computer_id: id, action, ...fields } = input;
     const held = this.#computers.get(id);
     const computer = held?.computer;
@@ -358,21 +379,31 @@ export class DesktopBuildComputers {
           ],
         ),
       );
-    const logged = held.actions.begin(
-      action,
-      call.value.tool,
-      call.value.arguments,
+    return held.turns.run(ACT, signal, (turn) =>
+      this.#forward(held, computer, { id, action, ...call.value }, turn),
     );
+  }
+
+  /** Log and send one action on its turn, so the log holds no action still pending while another call runs. */
+  async #forward(
+    held: HeldComputer,
+    computer: AgentEnvComputer,
+    call: {
+      readonly id: string;
+      readonly action: ComputerAction;
+      readonly tool: string;
+      readonly arguments: Readonly<Record<string, JsonValue>>;
+    },
+    signal: AbortSignal,
+  ): Promise<Result<Acted, AnalysisError>> {
+    const { id, action } = call;
+    const logged = held.actions.begin(action, call.tool, call.arguments);
     let result: DriverResult;
     try {
       result =
         action === "reset"
-          ? await reset(computer, call.value.arguments, signal)
-          : await computer.callTool(
-              call.value.tool,
-              call.value.arguments,
-              signal,
-            );
+          ? await reset(computer, call.arguments, signal)
+          : await computer.callTool(call.tool, call.arguments, signal);
     } catch (cause: unknown) {
       logged.settle("failed");
       return err(failure(ACT, cause, signal));
@@ -412,8 +443,11 @@ export class DesktopBuildComputers {
       AnalysisError
     >
   > {
-    if (!this.#computers.has(id)) return err(unknownComputer(CLOSE));
-    const release = await this.#retire(id);
+    const held = this.#computers.get(id);
+    if (held === undefined) return err(unknownComputer(CLOSE));
+    held.closing = true;
+    // Tear down only once the call it cancels has ended; the calls waiting are refused.
+    const release = await held.turns.close(() => this.#retire(id));
     return release.verified
       ? ok({ computer_id: id, teardown: release.teardown })
       : err(

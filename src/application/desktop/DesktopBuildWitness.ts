@@ -18,7 +18,7 @@ import {
   admitWitnessStage,
   appStateViews,
   stageExpectation,
-  stageHeld,
+  stageVerdict,
   WITNESS_STAGES,
   type WitnessStage,
   type WitnessStageRecord,
@@ -118,6 +118,12 @@ const counted = (task: DesktopTask, results: TaskCheckOutcome[]) => {
  */
 export class DesktopBuildWitness {
   #witness: OpenWitness | undefined;
+  /**
+   * The request id of this computer's one witness recording, fixed before any
+   * start is sent: a seed retried after a lost reply asks for the same id,
+   * and the computer answers the recording it already began.
+   */
+  readonly #recordingRequest = `rea-witness:${randomUUID()}`;
 
   constructor(
     private readonly computer: WitnessedComputer,
@@ -188,7 +194,11 @@ export class DesktopBuildWitness {
     }
   }
 
-  /** File a stage's results; one that does not hold, or the last, ends the witness and writes its record. */
+  /**
+   * File a stage's results; one that does not hold, or the last, ends the
+   * witness and writes its record. One its checks leave undecided files
+   * nothing and can be checked again.
+   */
   async #file(
     stage: WitnessStage,
     actionsBefore: number,
@@ -197,7 +207,19 @@ export class DesktopBuildWitness {
   ): Promise<Result<WitnessSummary, AnalysisError>> {
     const witness = this.#witness;
     if (witness === undefined) throw new TypeError("the stage was admitted");
-    const held = stageHeld(stage, results);
+    const verdict = stageVerdict(stage, results);
+    if (verdict === "undecided")
+      return err(
+        refused(
+          `The checks cannot decide ${stage}: ${results
+            .flatMap((result) =>
+              result.undecided === true ? [result.description] : [],
+            )
+            .join("; ")}. Nothing was filed.`,
+          `Check ${stage} again once the app's files read whole; a view that is always cut short or unreadable needs a task whose checks read other files.`,
+        ),
+      );
+    const held = verdict === "held";
     const filed = {
       stage,
       actions_before: actionsBefore,
@@ -311,7 +333,7 @@ export class DesktopBuildWitness {
       );
     try {
       const { recording_id: recordingId } = await this.computer.startRecording(
-        `rea-witness:${randomUUID()}`,
+        this.#recordingRequest,
         signal,
       );
       const witness: OpenWitness = {

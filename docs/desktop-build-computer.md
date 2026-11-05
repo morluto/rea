@@ -147,6 +147,11 @@ larger than the MCP budget is refused with how to ask for a smaller image: a
 `computer_id` included, as `details.result`, since the action or start has
 happened.
 
+Actions, the capture steps and the task checks on one computer run one at a
+time, in the order REA receives them; one that has to wait for the call
+before it sends an MCP progress notification every five seconds meanwhile.
+Different computers run side by side.
+
 Every action is logged on the computer in order with the arguments sent, its
 start and end and whether it was applied, refused or failed. The log keeps the
 latest 256 actions within 256 KiB of JSON, dropping the oldest first. Each
@@ -171,7 +176,9 @@ containers of that exact sandbox: agentenv runs a computer as
 `agentenv.sandbox=<sandbox id>`, so REA lists both with `docker ps -aq
 --filter`, removes them with `docker rm -f`, and says
 `teardown: "container_label"`. When neither confirms it, the error names what
-is left and the computer stays listed, so closing it again retries. Closing the
+is left and the computer stays listed, so closing it again retries. A close
+cancels the call in progress on the computer, refuses the calls waiting for
+it, and tears down once that call has ended. Closing the
 MCP server closes every computer the same way, and a helper whose REA server
 exits sees its stdin close and tears down.
 

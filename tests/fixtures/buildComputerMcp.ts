@@ -69,11 +69,15 @@ export const buildComputerFakes = async (
   return { computer, runner };
 };
 
-/** An exported bundle's folder as far as the fake runner reads it. */
-export const bundleFolder = async (): Promise<string> => {
+/** An exported bundle's folder as far as the fake runner reads it; given a fake computer, the runner hands that one out for it. */
+export const bundleFolder = async (
+  computer?: Pick<FakeComputer, "url">,
+): Promise<string> => {
   const bundle = await createTestTempDirectory("exported-bundle-");
   await mkdir(join(bundle, "tasks"));
   await writeFile(join(bundle, "tasks", "smoke.json"), "[]\n");
+  if (computer !== undefined)
+    await writeFile(join(bundle, "fake-computer-url"), computer.url);
   return bundle;
 };
 
