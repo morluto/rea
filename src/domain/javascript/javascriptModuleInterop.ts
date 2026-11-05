@@ -92,6 +92,7 @@ export const createSemanticModuleInterop = (
     string,
     { targetBinding: JavaScriptSemanticBindingState; node: t.Node }
   >();
+  const aliasChangedCache = new Map<string, boolean>();
   const calls = new WeakMap<t.Node, InteropOrigin>();
   const intrinsicBindings = new Map<string, readonly string[] | null>();
   const writes: {
@@ -752,9 +753,12 @@ export const createSemanticModuleInterop = (
     },
     aliasMayHaveChanged: (binding: JavaScriptSemanticBindingState): boolean => {
       if (state.opaqueEffects.byScope.size === 0) return false;
+      const cached = aliasChangedCache.get(binding.bindingId);
+      if (cached !== undefined) return cached;
       origin(binding);
       let current: JavaScriptSemanticBindingState | undefined = binding;
       const seen = new Set<string>();
+      let changed = false;
       while (current !== undefined) {
         if (seen.has(current.bindingId)) break;
         seen.add(current.bindingId);
@@ -767,11 +771,13 @@ export const createSemanticModuleInterop = (
             state,
           )
         ) {
-          return true;
+          changed = true;
+          break;
         }
         current = next.targetBinding;
       }
-      return false;
+      aliasChangedCache.set(binding.bindingId, changed);
+      return changed;
     },
   };
 };
