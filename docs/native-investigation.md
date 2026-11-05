@@ -236,6 +236,11 @@ the index retains the complete selected names, addresses, provider facts and
 caveats. Failure details retain at most 32 rows within 2,048 JSON-encoded
 UTF-8 bytes; names may be omitted to keep complete addresses and reasons. The
 index retains every failure and its complete observed name.
+The manifest reports the procedure-inventory limitations of the current call in
+`inventory_limitations`. `decompile-index.json`'s `latest_run` records that
+call's filters, selected and excluded counts, and inventory limitations; older
+runs remain represented only by their retained function records, so a later
+inventory warning is not presented as the history of every file.
 Each function's `decompile-index.json` record, whatever its status, keeps the
 complete limitations of the observations it used.
 When available, `provider_source` records the source of that attempt's
