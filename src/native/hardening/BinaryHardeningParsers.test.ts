@@ -1439,9 +1439,29 @@ const machoCommand = (command: number, size: number, ...words: number[]) => {
 
 const LC_CODE_SIGNATURE = 0x1d;
 const LC_SEGMENT_64 = 0x19;
+const LC_ENCRYPTION_INFO = 0x21;
+const LC_ENCRYPTION_INFO_64 = 0x2c;
 const CPU_ARM64 = 0x0100000c;
 
 it.each([
+  [
+    "an eight-byte LC_ENCRYPTION_INFO_64",
+    {},
+    machoCommand(LC_ENCRYPTION_INFO_64, 8),
+    /LC_ENCRYPTION_INFO_64 has cmdsize 8, expected 24/u,
+  ],
+  [
+    "an encrypted range past the slice",
+    {},
+    machoCommand(LC_ENCRYPTION_INFO_64, 24, 0xfffffff0, 0x1000, 1),
+    /encrypted range ends at .* beyond the/u,
+  ],
+  [
+    "a 32-bit LC_ENCRYPTION_INFO in a 64-bit image",
+    {},
+    machoCommand(LC_ENCRYPTION_INFO, 24),
+    /LC_ENCRYPTION_INFO appears in a 64-bit image/u,
+  ],
   [
     "an eight-byte LC_CODE_SIGNATURE",
     { codeSignature: false },

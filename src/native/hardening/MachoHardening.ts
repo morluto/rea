@@ -277,6 +277,7 @@ const readSliceImage = async (
   }
   try {
     const facts = readCommandFacts(table, header.wide, ref.size);
+    admitEncryption(encrypted);
     const rows = buildRows(bytes, ref, header, facts, encrypted);
     return {
       format: "mach-o",
@@ -330,6 +331,19 @@ const readCommandFacts = (
   });
   if (framed.status !== "framed") malformed(framed.reason);
   return facts;
+};
+
+/**
+ * The encryption reader reports every defect as a malformed slice status. Two
+ * encryption commands are conflicting declarations and stay an `unknown` row.
+ * Any other defect, such as a short command, a range past the slice, or the
+ * wrong width, is structural and fails the slice before any row exists.
+ */
+const admitEncryption = (encrypted: MachoSliceEncryption): void => {
+  if (encrypted.status === "malformed" && encrypted.commands.length < 2)
+    malformed(
+      encrypted.reason ?? "Mach-O encryption load command is malformed",
+    );
 };
 
 const admitCodeSignature = (
