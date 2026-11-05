@@ -281,16 +281,18 @@ export const decodeObjcDispatchFacets = (input: {
   // the caller retains the independently decoded class (and its metaclass)
   // and reports the list as partial instead of discarding both rows.
   const readAdoptedProtocols = (
-    owner: string,
     list: () => string[],
-  ): { protocols: string[]; unreadable: boolean } => {
+  ): Result<
+    string[],
+    { readonly _tag: "ProtocolListUnreadable"; readonly reason: string }
+  > => {
     try {
-      return { protocols: list(), unreadable: false };
+      return ok(list());
     } catch (cause: unknown) {
-      failures.push(
-        `Protocol list of ${owner}: ${cause instanceof Error ? cause.message : String(cause)}`,
-      );
-      return { protocols: [], unreadable: true };
+      return err({
+        _tag: "ProtocolListUnreadable",
+        reason: cause instanceof Error ? cause.message : String(cause),
+      });
     }
   };
   const visited = new Set<string>();
@@ -377,16 +379,20 @@ export const decodeObjcDispatchFacets = (input: {
       location: hex(read.pointer(ro + 64n)),
       onTruncated,
     });
-    const { protocols, unreadable: protocolListUnreadable } =
-      readAdoptedProtocols(name, () =>
-        protocolReader.list(read.pointer(ro + 40n), onTruncated),
+    const adoptedProtocols = readAdoptedProtocols(() =>
+      protocolReader.list(read.pointer(ro + 40n), onTruncated),
+    );
+    if (!adoptedProtocols.ok)
+      failures.push(
+        `Protocol list of ${name}: ${adoptedProtocols.error.reason}`,
       );
+    const protocols = adoptedProtocols.ok ? adoptedProtocols.value : [];
     const classDecodeReasons = [
       ...(superclass.name === null && !root
         ? ["superclass_binding_unresolved"]
         : []),
       ...(classListTruncated ? ["max_records_reached"] : []),
-      ...(protocolListUnreadable ? ["protocol_list_unreadable"] : []),
+      ...(adoptedProtocols.ok ? [] : ["protocol_list_unreadable"]),
     ];
     result.objc_classes.push({
       name,
