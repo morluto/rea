@@ -297,6 +297,19 @@ export const elementText = (element: JsonValue): string => {
   return parts.join("");
 };
 
+/**
+ * Whether a string a pointer reaches is text of the document: a member of an
+ * element's `children` (a text node) or `attributes` (an attribute's value),
+ * rather than an element's name or a field of the DOCTYPE.
+ */
+const isTextAt = (view: JsonValue | null, pointer: string): boolean => {
+  const segments = pointer.split("/");
+  const field = segments.at(-2);
+  if (field !== "children" && field !== "attributes") return false;
+  const owner = locatePointer(view, segments.slice(0, -2).join("/"));
+  return owner.kind === "value" && isXmlElement(owner.value);
+};
+
 /** Why a text check's pointer into an archive goes into no XML entry's view, or undefined when it does or names an entry not listed. */
 const notXmlEntry = (
   check: Check<"text_equals" | "text_contains">,
@@ -351,8 +364,14 @@ const textVerdict = (
   if (located.kind === "unresolved") return fail(`${at}: ${located.problem}`);
   if (located.kind === "none") return noValue(at, located);
   const found = located.value;
-  if (typeof found !== "string" && !isXmlElement(found))
-    return fail(`${at} is ${shown(found)}, not an element or its text`);
+  if (
+    typeof found === "string"
+      ? !isTextAt(read.view, check.pointer)
+      : !isXmlElement(found)
+  )
+    return fail(
+      `${at} is ${shown(found)}, not an element, a text node or an attribute value`,
+    );
   // A text node is whole; an element's text is whole only if its view left nothing out.
   const truncated = zip
     ? zipLeavesOutAt(read.view, check.pointer)

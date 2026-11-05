@@ -4,9 +4,12 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import type { JsonValue } from "../jsonValue.js";
+import type { DesktopTaskCheck } from "./appTask.js";
+import { evaluateTaskChecks } from "./appTaskChecks.js";
 import { draftTaskFiles } from "./appTaskDraft.js";
 import type { DesktopStatePath } from "./desktopState.js";
 import { xmlView } from "./stateFormats.js";
+import { locatePointer } from "./viewPointer.js";
 
 type Format = DesktopStatePath["format"];
 
@@ -314,11 +317,11 @@ describe("draftTaskFiles for XML that uses namespaces", () => {
   });
 });
 
-describe("draftTaskFiles for text split into runs", () => {
+describe("draftTaskFiles for an AbiWord document", () => {
   const FIXTURES = join(import.meta.dirname, "../../../tests/fixtures");
   const PARAGRAPH = "/root/children/[name=section]/children/[name=p][@xid=3]";
 
-  it("suggests an AbiWord paragraph's whole text, and nothing inside it, once an edit split it", async () => {
+  it("suggests an AbiWord paragraph's whole text first, no save time, and nothing by position", async () => {
     const [before, after] = await Promise.all(
       ["before", "after"].map(async (end) =>
         xmlView(
@@ -331,34 +334,127 @@ describe("draftTaskFiles for text split into runs", () => {
     const [document] = draft({
       "Documents/meeting.abw": path("document", "xml", before, after),
     });
+    const suggested = document?.suggested ?? [];
 
-    expect(document?.suggested).toContainEqual({
+    expect(suggested[0]).toEqual({
       kind: "text_equals",
       file: "Documents/meeting.abw",
       pointer: PARAGRAPH,
       value: "The team meeting starts at 3:30 in room 4.",
     });
-    // The diff of an XML file lists the paragraph's runs by position.
-    const children = (value: unknown) =>
-      (value as { children: { name?: string; attributes?: object }[] })
-        .children;
-    const root = children((after as { root: unknown }).root);
-    const section = root.findIndex(({ name }) => name === "section");
-    const paragraph = children(root[section]).findIndex(
-      ({ attributes }) =>
-        (attributes as { xid?: string } | undefined)?.xid === "3",
+    const pointers = suggested.flatMap((check) =>
+      "pointer" in check ? [check.pointer] : [],
     );
-    const inside = [
-      PARAGRAPH,
-      `/root/children/${String(section)}/children/${String(paragraph)}`,
-    ];
+    expect(pointers).toHaveLength(suggested.length);
+    // AbiWord stamps its save time as asctime does: Thu Nov  5 09:20:31 2026.
     expect(
-      document?.suggested.filter(
+      suggested.filter(
         (check) =>
-          "pointer" in check &&
-          inside.some((pointer) => check.pointer.startsWith(`${pointer}/`)),
+          "value" in check &&
+          typeof check.value === "string" &&
+          check.value.includes("09:20:31"),
       ),
     ).toEqual([]);
+    // Every check names the elements it goes through, so a reordered save keeps it.
+    for (const pointer of pointers) {
+      const located = locatePointer(after, pointer);
+      expect([pointer, located.byPosition]).toEqual([pointer, []]);
+    }
+    expect(
+      pointers.filter((pointer) => pointer.startsWith(`${PARAGRAPH}/`)),
+    ).toEqual([]);
+  });
+});
+
+describe("draftTaskFiles for text split into runs", () => {
+  it("suggests a paragraph's text, not a run's, wherever an edit leaves it, and the check holds however a later save splits it", () => {
+    const run = (text: string) =>
+      xmlElement("c", { props: "lang:en-US" }, [text]);
+    const note = (sixth: JsonValue[]): JsonValue => ({
+      root: xmlElement("abiword", {}, [
+        xmlElement("section", { xid: "1" }, [
+          xmlElement("p", { style: "Normal", xid: "5" }, ["Agenda"]),
+          xmlElement("p", { style: "Normal", xid: "6" }, sixth),
+        ]),
+      ]),
+      truncated: false,
+    });
+    const sixth = "/root/children/[name=section]/children/[name=p][@xid=6]";
+    const edits: readonly (readonly [JsonValue[], JsonValue[], string])[] = [
+      // Text replaced by a run, as AbiWord types into a reopened document.
+      [["Meeting at 2:00"], [run("Meeting at 3:30")], "Meeting at 3:30"],
+      // Text edited inside the paragraph's only run.
+      [[run("Meeting at 2:00")], [run("Meeting at 3:30")], "Meeting at 3:30"],
+      // Text edited inside a run among the paragraph's own text.
+      [
+        ["Meeting at ", run("2:00")],
+        ["Meeting at ", run("3:30")],
+        "Meeting at 3:30",
+      ],
+    ];
+
+    for (const [old, edited, text] of edits) {
+      const [file] = draft({
+        "Documents/note.abw": path("document", "xml", note(old), note(edited)),
+      });
+
+      expect(file?.suggested).toEqual([
+        {
+          kind: "text_equals",
+          file: "Documents/note.abw",
+          pointer: sixth,
+          value: text,
+        },
+      ]);
+      const checks = (file?.suggested ?? []).map((check, index) => ({
+        ...check,
+        id: `c${String(index)}`,
+      })) as DesktopTaskCheck[];
+      for (const saved of [
+        edited,
+        [run("Meeting at "), run("3"), ":", run("30")],
+      ])
+        expect(
+          evaluateTaskChecks(
+            checks,
+            new Map([
+              ["Documents/note.abw", { format: "xml", view: note(saved) }],
+            ]),
+          ).map(({ passed }) => passed),
+        ).toEqual([true]);
+    }
+  });
+
+  it("suggests the paragraph's text in an archive when an edit turned its text into runs", () => {
+    const run = (text: string) =>
+      xmlElement("text:span", { "text:style-name": "T1" }, [text]);
+    const list = (paragraph: JsonValue[]) =>
+      listing([
+        zipEntry("content.xml", "xml", {
+          root: xmlElement("office:text", {}, [
+            xmlElement("text:p", { "text:style-name": "Body" }, paragraph),
+          ]),
+          truncated: false,
+        }),
+      ]);
+
+    const [file] = draft({
+      "Documents/list.odt": path(
+        "document",
+        "zip",
+        list(["Buy bread"]),
+        list([run("Buy "), run("oat milk")]),
+      ),
+    });
+
+    expect(file?.suggested).toEqual([
+      {
+        kind: "text_equals",
+        file: "Documents/list.odt",
+        pointer: "/entries/[name=content.xml]/view/root/children/[name=text:p]",
+        value: "Buy oat milk",
+      },
+    ]);
   });
 
   it("suggests the text of a paragraph in an archive and none of its runs, and nothing where only whitespace changed", () => {

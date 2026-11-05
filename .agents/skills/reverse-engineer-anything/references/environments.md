@@ -327,7 +327,8 @@ Checks must express only the observed change:
   the draft suggests counts of `SECTION`, `ENDSEC` and `CIRCLE`; only
   `CIRCLE` equals 9 is the user's change.
 - Never check unchanged content, whole files, or values the app stamps:
-  times, ids it assigns, window sizes. REA refuses ISO 8601 date-times; the
+  times, ids it assigns, window sizes. REA refuses ISO 8601 and `asctime`
+  date-times (`Thu Nov  5 09:20:31 2026`); the
   rest is your judgment.
 - Prefer a few robust checks: whole lines over positions, rows by meaningful
   columns over generated ids, `at_least` when the user may add more.

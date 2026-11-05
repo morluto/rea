@@ -105,6 +105,32 @@ const REFUSALS: readonly (readonly [Record<string, unknown>, string])[] = [
     {
       checks: [
         {
+          kind: "text_equals",
+          file: "a",
+          pointer: "/m",
+          value: "Thu Nov  5 22:03:14 2026\n",
+        },
+      ],
+    },
+    "looks like a time the app stamps",
+  ],
+  [
+    {
+      checks: [
+        {
+          kind: "row_present",
+          file: "a",
+          table: "t",
+          where: { saved: "Mon Jan 12 07:00:00 2026" },
+        },
+      ],
+    },
+    "looks like a time the app stamps",
+  ],
+  [
+    {
+      checks: [
+        {
           kind: "row_present",
           file: "a",
           table: "t",
@@ -174,7 +200,7 @@ const REFUSALS: readonly (readonly [Record<string, unknown>, string])[] = [
         },
       ],
     },
-    "text_contains needs a value with more than whitespace in it",
+    "text_contains",
   ],
   [
     {
@@ -372,91 +398,126 @@ describe("evaluateTaskChecks whole text", () => {
     evaluateTaskChecks(
       [{ id: "c", ...check } as never],
       new Map(Object.entries(CHECK_VIEWS)),
-    )[0]?.description;
+    )[0];
   const meeting = "Documents/meeting.xml";
+  const plate = "Documents/plate.FCStd";
   const time = "/root/children/[name=p][@id=time]";
+  /** A value as a description shows it: caller data and what the view holds, as JSON. */
+  const quoted = (value: unknown) => JSON.stringify(value);
+  const expectFacts = (
+    found: { passed: boolean; description: string } | undefined,
+    passed: boolean,
+    facts: readonly string[],
+  ) => {
+    expect(found?.passed).toBe(passed);
+    for (const fact of facts) expect(found?.description).toContain(fact);
+  };
 
-  it("says what text an element has, its runs joined, and how it was compared", () => {
-    expect(
+  it("reports the text an element has, its runs joined, beside the value it was compared with", () => {
+    expectFacts(
       outcome({
         kind: "text_equals",
         file: meeting,
         pointer: time,
         value: "Starts at 3:45 today.",
       }),
-    ).toBe(
-      `${meeting} at ${time} has the text "Starts at 3:30 today.", not "Starts at 3:45 today."`,
+      false,
+      [
+        meeting,
+        time,
+        quoted("Starts at 3:30 today."),
+        quoted("Starts at 3:45 today."),
+      ],
     );
-    expect(
-      outcome({
-        kind: "text_contains",
-        file: meeting,
-        pointer: "/root/children/[name=p][@id=spaced]",
-        value: "Doors  open",
-        normalize_whitespace: true,
-      }),
-    ).toBe(
-      `${meeting} at /root/children/[name=p][@id=spaced] has text containing "Doors open" with whitespace collapsed`,
-    );
-    expect(
+    expectFacts(
       outcome({
         kind: "text_contains",
         file: meeting,
         pointer: time,
         value: "3:45",
       }),
-    ).toBe(
-      `${meeting} at ${time} has the text "Starts at 3:30 today.", without "3:45"`,
+      false,
+      [quoted("Starts at 3:30 today."), quoted("3:45")],
     );
+    const collapsed = outcome({
+      kind: "text_contains",
+      file: meeting,
+      pointer: "/root/children/[name=p][@id=spaced]",
+      value: "Doors  open",
+      normalize_whitespace: true,
+    });
+    expectFacts(collapsed, true, [quoted("Doors open")]);
+    expect(collapsed?.description).not.toContain(quoted("Doors  open"));
   });
 
-  it("reads only XML elements and their text, and leaves an element of a truncated view undecided", () => {
+  it("reads only an XML element, a text node or an attribute value, and names what it reached instead", () => {
+    const refused: readonly (readonly [Record<string, unknown>, string[]])[] = [
+      [
+        { file: ".config/notes/settings.json", pointer: "/tags/0", value: "a" },
+        [".config/notes/settings.json", "json"],
+      ],
+      [
+        { file: meeting, pointer: "/root/attributes", value: "en" },
+        ["/root/attributes", quoted({ lang: "en" })],
+      ],
+      [
+        { file: meeting, pointer: "/root/name", value: "doc" },
+        ["/root/name", quoted("doc")],
+      ],
+      [
+        { file: meeting, pointer: "/doctype/system_id", value: "meeting.dtd" },
+        ["/doctype/system_id", quoted("meeting.dtd")],
+      ],
+      [
+        {
+          file: plate,
+          pointer: "/entries/[name=empty.json]/view/x",
+          value: "x",
+        },
+        ["empty.json", "json"],
+      ],
+      [
+        { file: plate, pointer: "/entries/0/name", value: "Document.xml" },
+        ["/entries/0/name"],
+      ],
+    ];
+
+    for (const [check, facts] of refused)
+      expectFacts(outcome({ kind: "text_equals", ...check }), false, facts);
+  });
+
+  it("leaves an element of a truncated view undecided as a value check is, while a text node there is decided", () => {
+    const cut = "Documents/cut.xml";
+
     expect(
       outcome({
         kind: "text_equals",
-        file: ".config/notes/settings.json",
-        pointer: "/tags/0",
-        value: "a",
-      }),
-    ).toBe(".config/notes/settings.json is read as json, not xml");
-    expect(
-      outcome({
-        kind: "text_equals",
-        file: meeting,
-        pointer: "/root/attributes",
-        value: "en",
-      }),
-    ).toBe(
-      `${meeting} at /root/attributes is {"lang":"en"}, not an element or its text`,
-    );
-    expect(
-      outcome({
-        kind: "text_equals",
-        file: "Documents/plate.FCStd",
-        pointer: "/entries/[name=empty.json]/view/x",
-        value: "x",
-      }),
-    ).toBe("Documents/plate.FCStd entry empty.json is read as json, not xml");
-    expect(
-      outcome({
-        kind: "text_equals",
-        file: "Documents/plate.FCStd",
-        pointer: "/entries/0/name",
-        value: "Document.xml",
-      }),
-    ).toBe(
-      "Documents/plate.FCStd at /entries/0/name does not point into an entry's view",
-    );
-    expect(
-      outcome({
-        kind: "text_equals",
-        file: "Documents/cut.xml",
+        file: cut,
         pointer: "/root/children/0",
         value: "",
       }),
-    ).toBe(
-      "the view of Documents/cut.xml is truncated, so what it leaves out is unknown",
+    ).toEqual(
+      outcome({
+        kind: "value_absent",
+        file: cut,
+        pointer: "/root/attributes/x",
+      }),
     );
+    expect(
+      outcome({
+        kind: "value_absent",
+        file: cut,
+        pointer: "/root/attributes/x",
+      })?.passed,
+    ).toBe(false);
+    expect(
+      outcome({
+        kind: "text_equals",
+        file: cut,
+        pointer: "/root/children/1",
+        value: "kept",
+      })?.passed,
+    ).toBe(true);
   });
 });
 

@@ -50,22 +50,31 @@ verifier's, agree.
   `normalize-space()` does.
 - Failures, worded alike in both evaluators: an absent file; a file of another
   format; a pointer into an archive outside an entry's `view`, or into an
-  entry of another format; a value that is neither an element nor text; and,
-  as undecided, an element in a view that leaves something out, or a selector
-  searching an array such a view may cut. A text node is whole, so it is
-  decided on a truncated view.
+  entry of another format; a value that is neither an element, a text node
+  (a string among an element's `children`) nor an attribute's value (one among
+  its `attributes`), so an element's `name` and the `doctype`'s fields fail;
+  and, as undecided, an element in a view that leaves something out, or a
+  selector searching an array such a view may cut. A text node is whole, so
+  it is decided on a truncated view.
 - Refusals: the task parser refuses the empty pointer, a pointer not starting
   with `/`, an empty `text_contains` value or one that is only whitespace
-  with `normalize_whitespace`, and a value that looks like an ISO 8601 date
-  and time; the export refuses a text check into a file read as text.
-- Draft: in XML, a file's or an archive entry's, each element holding a text
-  node that the diff lists with more than whitespace in it gets `text_equals`
-  with its final text, the outermost where one holds another, when it is an
-  element at both ends whose text changed, the final view holds it whole and
-  its text is at most 2,000 characters and no timestamp. In a file it is named
-  by the most general selector naming each member alone, by position where
-  none does; in an archive by the diff's own selectors, never through an
-  element by position. The text nodes and runs inside it get no other check.
+  with `normalize_whitespace`, and a value that looks like a date and time,
+  in ISO 8601 or C's `asctime` form (`Www Mmm dd hh:mm:ss yyyy`, as AbiWord
+  stamps a save); the export refuses a text check into a file read as text.
+- Draft: an XML file is drafted as an archive's entries are, from the keyed
+  diff that names members by selector: never through an element by position,
+  an element added or removed whole checked once, and no check of
+  whitespace-only text between elements. In XML, each element holding a text
+  node that the diff lists with more than whitespace in it, at either end of a
+  changed value, gets `text_equals` with its final text, ahead of the other
+  checks. The check goes up from an element in mixed content (its parent
+  holds text beside it) to the nearest that is not, then from one named by its
+  tag or position alone to the nearest ancestor below the root named by an
+  attribute, as AbiWord's `p` by `xid`, so it names a paragraph rather than a
+  run a later save may split or merge; it is kept when that element is the
+  outermost such, at both ends, named without positions, held whole by the
+  final view, its text changed, at most 2,000 characters and no timestamp.
+  The text nodes and runs inside it get no other check.
 
 ## Non-goals
 
@@ -78,3 +87,9 @@ verifier's, agree.
   space reads without it, since nothing tells that space from formatting.
 - No regular expressions, case folding or Unicode normalization in text
   checks.
+- No rule for save bookkeeping other than timestamps: a counter an app bumps
+  on save, such as AbiWord's `history` `version`, `edit-time` and
+  `last-saved`, is still suggested, by name, for the author to drop, since a
+  number that went up is as often the user's edit.
+- No paragraph for a run named by an attribute of its own, such as a run
+  among others of different formatting: its check names that run.

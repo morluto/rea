@@ -169,6 +169,7 @@ export const CHECK_VIEWS: Readonly<Record<string, TaskFileView>> = {
   "Documents/meeting.xml": {
     format: "xml",
     view: {
+      doctype: { name: "doc", public_id: null, system_id: "meeting.dtd" },
       root: element("doc", { lang: "en" }, [
         element("p", { id: "time" }, [
           "Starts at ",
@@ -515,6 +516,63 @@ const TOLERANCE_CASES: readonly (readonly [DesktopTaskCheckInput, boolean])[] =
 const meeting = "Documents/meeting.xml";
 const paragraph = (id: string) => `/root/children/[name=p][@id=${id}]`;
 
+/**
+ * Strings of an XML view that are no text of the document: a tag name, the
+ * DOCTYPE's fields. Each holds the value checked, and each fails; an
+ * attribute's value in an archive entry is text and passes.
+ */
+const METADATA_CASES: readonly (readonly [DesktopTaskCheckInput, boolean])[] = [
+  [
+    { kind: "text_equals", file: meeting, pointer: "/root/name", value: "doc" },
+    false,
+  ],
+  [
+    {
+      kind: "text_contains",
+      file: meeting,
+      pointer: `${paragraph("time")}/name`,
+      value: "p",
+    },
+    false,
+  ],
+  [
+    {
+      kind: "text_equals",
+      file: meeting,
+      pointer: "/doctype/system_id",
+      value: "meeting.dtd",
+    },
+    false,
+  ],
+  [
+    {
+      kind: "text_equals",
+      file: meeting,
+      pointer: "/doctype/name",
+      value: "doc",
+    },
+    false,
+  ],
+  [
+    {
+      kind: "text_equals",
+      file: plate,
+      pointer: "/entries/[name=Document.xml]/view/root/name",
+      value: "Document",
+    },
+    false,
+  ],
+  [
+    {
+      kind: "text_equals",
+      file: plate,
+      pointer: `${objects}/[name=Object][@name=Hole]/attributes/type`,
+      value: "Part::Cylinder",
+    },
+    true,
+  ],
+];
+
 /** An element's whole text, its runs and descendants included, compared or searched, exactly or with whitespace collapsed. */
 const TEXT_CASES: readonly (readonly [DesktopTaskCheckInput, boolean])[] = [
   [
@@ -636,6 +694,7 @@ const TEXT_CASES: readonly (readonly [DesktopTaskCheckInput, boolean])[] = [
     },
     false,
   ],
+  ...METADATA_CASES,
   [
     {
       kind: "text_equals",

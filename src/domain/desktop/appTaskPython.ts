@@ -283,6 +283,16 @@ def _collapse_whitespace(text: str) -> str:
     return WHITESPACE_RUN.sub(" ", text).strip(" ")
 
 
+def _text_at(view, pointer: str) -> bool:
+    """Whether a string a pointer reaches is text of the document: a member of an element's children (a text node)
+    or attributes (an attribute's value), rather than an element's name or a field of the DOCTYPE."""
+    segments = pointer.split("/")
+    if len(segments) < 3 or segments[-2] not in ("children", "attributes"):
+        return False
+    kind, owner, _ = _locate(view, "/".join(segments[:-2]))
+    return kind == "value" and _is_element(owner)
+
+
 def _not_xml_entry(check, view):
     """Why a text check's pointer into an archive goes into no XML entry's view, or None when it does or names an
     entry not listed."""
@@ -323,8 +333,8 @@ def _whole_text(check, entry):
         return False, f"{at}: {found}"
     if kind == "none":
         return False, f"{at} has no value" if found is None else f"{at}: {found}"
-    if not isinstance(found, str) and not _is_element(found):
-        return False, f"{at} is {_shown(found)}, not an element or its text"
+    if not (_text_at(view, check["pointer"]) if isinstance(found, str) else _is_element(found)):
+        return False, f"{at} is {_shown(found)}, not an element, a text node or an attribute value"
     # A text node is whole; an element's text is whole only if its view left nothing out.
     if form == "zip":
         truncated = _zip_leaves_out(view, check["pointer"])

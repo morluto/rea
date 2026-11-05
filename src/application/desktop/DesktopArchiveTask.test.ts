@@ -318,8 +318,11 @@ describe("paragraphs split into runs", () => {
         value: "Buy oat milk",
       },
     ]);
-    expect(
-      (first.result as Error & { userMessage: string }).userMessage,
-    ).toContain('is "Buy ", not "Buy oat milk"');
+    expect(first.result).toBeInstanceOf(Error);
+    // The first run holds only the text before the first span.
+    for (const fact of ['"check-2"', JSON.stringify("Buy ")])
+      expect(
+        (first.result as Error & { userMessage: string }).userMessage,
+      ).toContain(fact);
   });
 });

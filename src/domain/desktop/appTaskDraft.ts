@@ -1,25 +1,19 @@
 import type { JsonValue } from "../jsonValue.js";
 import { isTimestamp, type DesktopTaskCheckInput } from "./appTask.js";
-import { isXmlElement } from "./appTaskChecks.js";
-import { wholeTextSuggestions } from "./appTaskDraftText.js";
+import {
+  ARCHIVE,
+  escapeToken,
+  innermost,
+  namedSuggestions,
+  XML_FILE,
+} from "./appTaskDraftNamed.js";
 import {
   versionAt,
   type DesktopStatePath,
   type StateEnds,
 } from "./desktopState.js";
-import { diffStateViews, diffZipMembers } from "./stateChanges.js";
-import {
-  locatePointer,
-  namedPointer,
-  pairMembers,
-  resolvePointer,
-} from "./viewPointer.js";
-import {
-  entryWithoutView,
-  zipArrayLeavesOut,
-  zipEntryAt,
-  zipLeavesOutAt,
-} from "./zipView.js";
+import { diffStateViews } from "./stateChanges.js";
+import { resolvePointer } from "./viewPointer.js";
 
 type Version = DesktopStatePath["versions"][number];
 type Suggestion = DesktopTaskCheckInput;
@@ -123,9 +117,6 @@ const textSuggestions = (
   return suggestions;
 };
 
-const escapeToken = (token: string) =>
-  token.replaceAll("~", "~0").replaceAll("/", "~1");
-
 /** `group/key` entries of key file views as JSON pointers into the view. */
 const keyPointers = (
   views: readonly (JsonValue | null)[],
@@ -143,159 +134,20 @@ const keyPointers = (
     ),
   );
 
-/** Pointers without a listed descendant: a container listed with its members is suggested through them. */
-const innermost = (pointers: readonly string[]): readonly string[] =>
-  pointers.filter(
-    (pointer) => !pointers.some((other) => other.startsWith(`${pointer}/`)),
-  );
-
-/**
- * The entry a pointer into a zip view goes into, when it has a view and both
- * evaluators read it alike: JSON, a key file or XML. A binary or unread
- * entry also holds a `null` view, which is no JSON `null`.
- */
-const readableEntry = (view: JsonValue | null, pointer: string) => {
-  const entry = zipEntryAt(view, pointer);
-  return typeof entry === "object" &&
-    entryWithoutView(entry) === undefined &&
-    (entry.format === "json" ||
-      entry.format === "keyfile" ||
-      entry.format === "xml")
-    ? entry
-    : undefined;
-};
-
-/**
- * Where checks for a pointer the diff lists start: the view of an entry it
- * names whole, or its root element for XML; the pointer itself inside that;
- * undefined for an entry neither evaluator reads alike, or the entry's fields.
- */
-const checkRoot = (
-  view: JsonValue | null,
-  pointer: string,
-): string | undefined => {
-  const entry = readableEntry(view, pointer);
-  const [entryPointer] = /^\/entries\/[^/]+/u.exec(pointer) ?? [];
-  if (entry === undefined || entryPointer === undefined) return undefined;
-  const inner = pointer.slice(entryPointer.length).split("/").slice(1);
-  const root = entry.format === "xml" ? ["view", "root"] : ["view"];
-  const prefix = (short: readonly string[], long: readonly string[]) =>
-    short.length <= long.length &&
-    short.every((part, index) => long[index] === part);
-  if (prefix(inner, root)) return `${entryPointer}/${root.join("/")}`;
-  return prefix(root, inner) ? pointer : undefined;
-};
-
-/** Whether a check at a pointer is decided by name: no object or array reached by position, no array searched that the view may cut. */
-const byName = (view: JsonValue | null, pointer: string) => {
-  const located = locatePointer(view, pointer);
-  return (
-    located.kind !== "unresolved" &&
-    located.byPosition.length === 0 &&
-    !located.searched.some((array) => zipArrayLeavesOut(view, array))
-  );
-};
-
-/** An element of REA's XML view, by its tag name, or undefined for any other value. */
-const elementName = (value: JsonValue | undefined): string | undefined =>
-  isXmlElement(value) ? value.name : undefined;
-
-/**
- * Checks on the entries of an archive, by the selectors its diff names
- * members with: elements added or removed whole first, as the likeliest
- * record of what the user did, then values changed, added and removed. A
- * JSON value or an entry added whole is checked through its members.
- */
-const zipSuggestions = (
-  file: string,
-  baseline: Version,
-  final: Version,
-): Suggestion[] => {
-  const change = diffZipMembers(baseline.view, final.view);
-  const texts = wholeTextSuggestions(file, change, versions(baseline, final), {
-    limit: LIMIT,
-    inTree: (pointer) =>
-      readableEntry(final.view, pointer)?.format === "xml" &&
-      checkRoot(final.view, pointer) === pointer,
-    name: (pointer) =>
-      byName(final.view, pointer) && !zipLeavesOutAt(final.view, pointer)
-        ? pointer
-        : undefined,
-  });
-  const elements: Suggestion[] = [];
-  const values: Suggestion[] = [];
-  const equals = (pointer: string, value: JsonValue | undefined) => {
-    if (
-      values.length < MAX_SUGGESTIONS &&
-      !texts.covers(pointer) &&
-      value !== undefined &&
-      !(isRecord(value) && Object.keys(value).length > 0) &&
-      !isTimestamp(value) &&
-      byName(final.view, pointer)
-    )
-      values.push({ kind: "value_equals", file, pointer, value });
-  };
-  const added = (pointer: string, value: JsonValue | undefined): void => {
-    if (
-      (elements.length >= MAX_SUGGESTIONS &&
-        values.length >= MAX_SUGGESTIONS) ||
-      texts.covers(pointer)
-    )
-      return;
-    const name = elementName(value);
-    if (name !== undefined) {
-      if (
-        elements.length < MAX_SUGGESTIONS &&
-        byName(final.view, `${pointer}/name`)
-      )
-        elements.push({
-          kind: "value_equals",
-          file,
-          pointer: `${pointer}/name`,
-          value: name,
-        });
-    } else if (Array.isArray(value) && value.length > 0) {
-      const { keys } = pairMembers(value, []).newer;
-      value.forEach((item, index) =>
-        added(`${pointer}/${escapeToken(keys[index] ?? String(index))}`, item),
-      );
-    } else if (isRecord(value) && Object.keys(value).length > 0)
-      for (const [key, item] of Object.entries(value))
-        added(`${pointer}/${escapeToken(key)}`, item);
-    // A scalar, or an empty array or object, is checked as it is.
-    else equals(pointer, value);
-  };
-  for (const pointer of change.added) {
-    const root = checkRoot(final.view, pointer);
-    if (root !== undefined) added(root, resolvePointer(final.view, root));
-  }
-  for (const pointer of innermost(change.changed))
-    if (checkRoot(final.view, pointer) === pointer)
-      equals(pointer, resolvePointer(final.view, pointer));
-  // An absence is checked only where the entry still has a view to lack it in.
-  for (const pointer of change.removed)
-    if (
-      !texts.covers(pointer) &&
-      checkRoot(baseline.view, pointer) === pointer &&
-      checkRoot(final.view, pointer) === pointer &&
-      byName(baseline.view, pointer) &&
-      byName(final.view, pointer)
-    )
-      (elementName(resolvePointer(baseline.view, pointer)) === undefined
-        ? values
-        : elements
-      ).push({ kind: "value_absent", file, pointer });
-  return [...elements, ...texts.suggestions, ...values];
-};
-
 const valueSuggestions = (
   file: string,
   baseline: Version,
   final: Version,
 ): Suggestion[] => {
   const format = final.format;
-  if (format === "zip") return zipSuggestions(file, baseline, final);
-  if (format !== "json" && format !== "xml" && format !== "keyfile") return [];
+  if (format === "zip" || format === "xml")
+    return namedSuggestions(
+      file,
+      versions(baseline, final),
+      format === "zip" ? ARCHIVE : XML_FILE,
+      LIMIT,
+    );
+  if (format !== "json" && format !== "keyfile") return [];
   const change = diffStateViews(format, baseline.view, final.view);
   const pointers = keyPointers([baseline.view, final.view]);
   const pointer = (entry: string) =>
@@ -303,16 +155,7 @@ const valueSuggestions = (
   // Key file entries are flat; a group may hold `/`, so prefixes mean nothing there.
   const leaves = (entries: readonly string[]) =>
     format === "keyfile" ? entries : innermost(entries);
-  const truncated = isRecord(final.view) && final.view.truncated === true;
-  const texts =
-    format === "xml"
-      ? wholeTextSuggestions(file, change, versions(baseline, final), {
-          limit: LIMIT,
-          inTree: (at) => at === "/root" || at.startsWith("/root/"),
-          name: (at) => (truncated ? undefined : namedPointer(final.view, at)),
-        })
-      : { suggestions: [], covers: () => false };
-  const suggestions: Suggestion[] = [...texts.suggestions];
+  const suggestions: Suggestion[] = [];
   for (const entry of leaves([...change.added, ...change.changed])) {
     const at = pointer(entry);
     const value = at === undefined ? undefined : resolvePointer(final.view, at);
@@ -320,14 +163,13 @@ const valueSuggestions = (
       at !== undefined &&
       at !== "" &&
       value !== undefined &&
-      !isTimestamp(value) &&
-      !texts.covers(at)
+      !isTimestamp(value)
     )
       suggestions.push({ kind: "value_equals", file, pointer: at, value });
   }
   for (const entry of leaves(change.removed)) {
     const at = pointer(entry);
-    if (at !== undefined && at !== "" && !texts.covers(at))
+    if (at !== undefined && at !== "")
       suggestions.push({ kind: "value_absent", file, pointer: at });
   }
   return suggestions;

@@ -50,18 +50,22 @@ operation `describe_desktop_application_task` and predicate type
   role `document`, or of the app's own state files when no document changed.
   A text file gains `lines_present` for its new lines and `lines_absent` for
   lines it lost (when either is at most ten), and `line_count` for each line
-  holding a letter whose count changed; JSON, XML and key files gain
+  holding a letter whose count changed; JSON and key files gain
   `value_equals` and `value_absent` by pointer; SQLite tables gain rows added,
-  changed and removed, by primary key, and their new row count. A zip archive
-  gains checks inside the JSON, key file and XML views of its entries, by
-  [selectors](#pointers-and-selectors) and never through an element by
-  position: an element added whole that it exists, one removed whole that it
-  is absent, then values changed, added and removed, an entry or a JSON value
-  added whole through its members, and an empty array or object as it is. In
-  XML, a file's or an entry's, an element whose text changed gains
-  [`text_equals`](#whole-text) with its final text, named by selectors where
-  they name it, in place of checks on the text nodes and runs inside it.
-  Values that look like a time the app stamps are left out.
+  changed and removed, by primary key, and their new row count. An XML file,
+  and the JSON, key file and XML views of a zip archive's entries, gain checks
+  by [selectors](#pointers-and-selectors) and never through an element by
+  position: in XML, first [`text_equals`](#whole-text) for each element whose
+  text changed, then an element added whole that it exists, one removed whole
+  that it is absent, then values changed, added and removed, an entry or a
+  JSON value added whole through its members, and an empty array or object as
+  it is. The text check names the paragraph rather than a run inside it: it
+  goes up from an element sitting in its parent's text, and from one named by
+  its tag or position alone to the nearest ancestor named by an attribute, as
+  AbiWord's `p` by its `xid`; the text nodes and runs inside it get no other
+  check. Whitespace an app lays out between elements is not checked, and
+  values that look like a time the app stamps, in ISO 8601 or as C's
+  `asctime` writes it (`Thu Nov  5 09:20:31 2026`), are left out.
 
 The suggestions are a starting point. Keep the ones that say what the user
 did; drop the ones that only follow from how the app saves its file. A LibreCAD
@@ -145,7 +149,8 @@ capture host's name or `user@host` anywhere (which the
 [export removes from the seed](desktop-application-export.md#host-name-and-user)), a
 `tolerance` with a value that is not a number, an empty `text_contains`
 value, or one of only whitespace with `normalize_whitespace`, and a value that
-looks like an ISO 8601 date and time. Other volatile content, such as a
+looks like a date and time, in ISO 8601 or `asctime`'s form. Other volatile
+content, such as a
 counter the app bumps on every save, is for the author to leave out.
 
 ## Pointers and selectors
@@ -267,7 +272,8 @@ read the element's whole text instead:
 - The pointer names an element of an XML view, in a file or in an archive
   entry's `view`, or a text node or attribute value in one, whose text is its
   value. Another format, a pointer into an archive outside an XML entry's
-  view, or any other value fails.
+  view, or any other value fails, an element's `name` and the `doctype`'s
+  fields included: they are strings of the view, not text of the document.
 - An element's text is XPath's `string()` of what the view keeps: every text
   node in it and in its descendants, CDATA included, in document order, with
   nothing between them. The view drops whitespace-only text between child

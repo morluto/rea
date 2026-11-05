@@ -122,12 +122,19 @@ const isHomePath = (path: string): boolean =>
     .split("/")
     .every((segment) => segment !== "" && segment !== "." && segment !== "..");
 
-/** Whether a value looks like an ISO 8601 date and time, which the app stamps rather than the user writes. */
-export const isTimestamp = (value: JsonValue): boolean =>
-  typeof value === "string" &&
-  /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2}(?:[.,]\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?$/u.test(
-    value.trim(),
-  );
+/** An ISO 8601 date and time. */
+const ISO_TIMESTAMP =
+  /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2}(?:[.,]\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?$/u;
+/** C's `asctime` and `ctime` form, `Www Mmm dd hh:mm:ss yyyy`, the day padded with a space, as AbiWord stamps a save. */
+const ASCTIME_TIMESTAMP =
+  /^(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun) (?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) [ 0-3]?\d \d{2}:\d{2}:\d{2} \d{4}$/u;
+
+/** Whether a value looks like a date and time the app stamps rather than the user writes: ISO 8601, or `asctime`'s form. */
+export const isTimestamp = (value: JsonValue): boolean => {
+  if (typeof value !== "string") return false;
+  const trimmed = value.trim();
+  return ISO_TIMESTAMP.test(trimmed) || ASCTIME_TIMESTAMP.test(trimmed);
+};
 
 /** Expected values a check compares, for the timestamp guard. */
 const expectedValues = (check: DesktopTaskCheck): readonly JsonValue[] => {

@@ -19,9 +19,10 @@
    with `isXmlElement` and `elementText` in `appTaskChecks.ts`, and
    `_whole_text` in the verifier's evaluator, in the same order of failures;
    the export's refusal of a pointer into text covers them.
-5. Draft: `wholeTextSuggestions` in `appTaskDraft.ts`, used by the XML file
-   and archive suggestions, with `namedPointer` naming an XML file's members
-   by selector.
+5. Draft: `wholeTextSuggestions` in `appTaskDraftText.ts`, and the archive's
+   suggestions in `appTaskDraft.ts` generalized to a check tree, an archive's
+   entries or an XML file's root, over the keyed diff `diffNamedMembers`;
+   `isTimestamp` also reads `asctime`'s form.
 6. Docs and tests: a synthetic AbiWord save and a Writer `content.xml` split
    into runs, read alike by both readers and checked alike by both
    evaluators; the DOCTYPE cases each parser accepts and refuses; the shared

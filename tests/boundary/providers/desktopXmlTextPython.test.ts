@@ -178,12 +178,15 @@ describe("whole-text checks in both evaluators", () => {
     );
 
     expect(passes(before)).toEqual([false, false, false]);
-    expect(before?.[0]?.description).toBe(
-      `${NOTE} at ${PARAGRAPH} has the text "The team meeting starts at 2:00 in room 4.", not "${MEETING}"`,
-    );
+    for (const fact of [
+      PARAGRAPH,
+      JSON.stringify("The team meeting starts at 2:00 in room 4."),
+    ])
+      expect(before?.[0]?.description).toContain(fact);
     expect(passes(after)).toEqual([true, true, false]);
+    // The first text node holds only the text before the first run.
     expect(after?.[2]?.description).toContain(
-      'is "The team meeting starts at ", not',
+      JSON.stringify("The team meeting starts at "),
     );
   });
 
@@ -199,8 +202,7 @@ describe("whole-text checks in both evaluators", () => {
 
     expect(passes(before)).toEqual([false, false, false, false]);
     expect(passes(after)).toEqual([true, true, true, false]);
-    expect(after?.[1]?.description).toBe(
-      `${FLYER} at ${BODY} has text containing "9:30" with whitespace collapsed`,
-    );
+    // The value searched for is the collapsed one, " 9:30\n" read as "9:30".
+    expect(after?.[1]?.description).toContain(JSON.stringify("9:30"));
   });
 });

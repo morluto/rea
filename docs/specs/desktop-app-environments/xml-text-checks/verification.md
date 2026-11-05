@@ -73,3 +73,36 @@ failed and the 112 tests already there passed.
   the application, a capture whose `.odt` paragraph an edit split into runs
   drafts `text_equals` on it, and the export keeps a task with it, failing on
   the seed, while `value_equals` on its first run fails at the end.
+
+## Review fixes
+
+Run on 2026-11-05 with the same toolchain. Each fix has tests that fail on the
+reviewed commit, run from an export of it with only the changed tests and
+fixtures added (8 failed, 64 passed), and pass after it. The gates above pass
+again: lint and typed lint report nothing in the touched files, and the
+desktop set gives 497 passed and 18 skipped, the parity files 34 under each
+of Python 3.9 to 3.14.
+
+- A drafted text check names the paragraph, not a run. A changed value is read
+  at both ends, so text an app wraps in a run (`<p>old</p>` becoming
+  `<p><c>new</c></p>`) still marks its paragraph; the check goes up from an
+  element in mixed content, and from one named by its tag or position alone
+  to the nearest ancestor named by an attribute, as AbiWord's `p` by `xid`. Edits
+  that replace text with a run, change the text of a paragraph's only run, or
+  of a run among the paragraph's own text all draft `text_equals` on
+  `[name=p][@xid=6]`, which passes on the edited save and on one splitting the
+  text into other runs; in an archive, text turned into two spans drafts the
+  `text:p`.
+- Text checks read only an element, a text node or an attribute's value: an
+  element's `name` and the `doctype`'s fields fail in both evaluators, in a
+  file or an archive entry, while an attribute's value in an entry passes.
+- The tests of text checks assert outcomes and the facts in a description (the
+  pointer, the text found, the value compared) rather than its wording.
+  Rewording the descriptions in both evaluators passes them; showing the value
+  uncollapsed fails them.
+- The draft leaves out times in C's `asctime` form, as AbiWord stamps
+  `abiword.date_last_changed`, which the task parser also refuses, and drafts
+  an XML file as an archive's entries are: by selector, never through an
+  element by position, and without whitespace text between elements. For the
+  AbiWord note it suggests the paragraph's text first and no save time;
+  `history`'s `version`, `edit-time` and `last-saved` remain, named.
