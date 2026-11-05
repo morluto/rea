@@ -46,6 +46,7 @@ const handleSigterm = () => interruptHandler("SIGTERM");
 process.on("SIGINT", handleSigint);
 process.on("SIGTERM", handleSigterm);
 let supervisor;
+let primaryError;
 try {
   const project = join(scratch, "project");
   await mkdir(project);
@@ -128,6 +129,10 @@ try {
   const output = `${snapshot.stdout.text}\n${snapshot.stderr.text}`;
   assert.equal(snapshot.exitCode, 0, output);
   assert.match(output, /REA_PROTOTYPE_CONFLICT_OK/u, output.slice(-6000));
+} catch (error) {
+  // Preserve the probe failure before cleanup runs; a cleanup interruption
+  // must not replace the earlier diagnostics and captured Ghidra output.
+  primaryError = error;
 } finally {
   let cleanupError;
   let cleanupStep = "owned process cleanup";
@@ -164,8 +169,10 @@ try {
       console.error(
         `Retained failed Ghidra verification project at ${scratch}`,
       );
-    throw cleanupError;
+    // Preserve the probe's earlier failure when one exists.
+    throw primaryError ?? cleanupError;
   }
+  if (primaryError !== undefined) throw primaryError;
   if (controller.signal.aborted)
     throw new Error(
       "Ghidra prototype conflict probe interrupted by SIGINT/SIGTERM",
