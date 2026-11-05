@@ -141,7 +141,8 @@ export class ToolResultDelivery {
   /**
    * A plain result followed by the content blocks a forwarded tool returned,
    * such as a computer's screenshot, unchanged. When the whole response does
-   * not fit the budget, the caller gets the constraint and how to ask for less.
+   * not fit the budget, the error keeps the tool's own result, whose ids name
+   * what it started, and says how to ask for a smaller image.
    */
   toForwardedToolResult(
     result: Result<JsonValue, AnalysisError>,
@@ -166,7 +167,7 @@ export class ToolResultDelivery {
       constraint: "receive-buffer",
       effectiveResponseBytes: this.maximumResponseBytes,
       nextStep:
-        "Ask for a smaller image: a screenshot region, or format jpeg with a lower quality.",
+        "The tool's own result, without the forwarded content, is details.result; use its ids, and ask for a smaller image: a screenshot region, or format jpeg with a lower quality.",
     });
     return this.toErrorToolResult(
       new AnalysisResourceConstraintError(
@@ -182,6 +183,7 @@ export class ToolResultDelivery {
         { remediationAction: projected.remediationAction },
       ),
       contract.returnsTargetContent,
+      { result: result.ok ? result.value : null },
     );
   }
 

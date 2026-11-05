@@ -48,6 +48,19 @@ const coordinate = z
   .number()
   .describe("Frame pixels, or 0..norm_scale with space norm.");
 
+/** The driver's screenshot arguments that size its image. */
+const SCREENSHOT_FIELDS = {
+  region: fixedTupleSchema([z.number(), z.number(), z.number(), z.number()])
+    .optional()
+    .describe("screenshot: [x0, y0, x1, y1] to crop to."),
+  format: z.enum(["png", "jpeg"]).optional(),
+  quality: z.int().min(1).max(100).optional().describe("jpeg quality."),
+};
+
+/** How a build computer's first screenshot is taken; smaller images cost fewer tokens. */
+export const screenshotOptionsSchema = z.strictObject(SCREENSHOT_FIELDS);
+export type ScreenshotOptions = z.output<typeof screenshotOptionsSchema>;
+
 /** One action on a build computer: the driver's own argument names, passed through as given. */
 export const computerActionInputSchema = z.strictObject({
   computer_id: z.uuid().describe("The id start_build_computer returned."),
@@ -96,11 +109,7 @@ export const computerActionInputSchema = z.strictObject({
     ),
   repeat: z.int().positive().optional(),
   ms: z.int().nonnegative().optional().describe("wait: milliseconds."),
-  region: fixedTupleSchema([z.number(), z.number(), z.number(), z.number()])
-    .optional()
-    .describe("screenshot: [x0, y0, x1, y1] to crop to."),
-  format: z.enum(["png", "jpeg"]).optional(),
-  quality: z.int().min(1).max(100).optional().describe("jpeg quality."),
+  ...SCREENSHOT_FIELDS,
   screenshot: z
     .boolean()
     .optional()

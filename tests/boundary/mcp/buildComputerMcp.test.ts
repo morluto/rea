@@ -5,6 +5,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import type { CallToolResult } from "@modelcontextprotocol/server";
 import { expect, it, onTestFinished } from "vitest";
+import { z } from "zod";
 
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { createServer } from "../../../src/server/createServer.js";
@@ -14,6 +15,7 @@ import {
   fakeAgentEnvRunner,
   startFakeComputer,
   type FakeComputer,
+  type FakeComputerOptions,
 } from "../../fixtures/fakeAgentEnvComputer.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -57,7 +59,7 @@ const connect = async (environment: Readonly<Record<string, string>>) => {
   return client;
 };
 
-const fakes = async (options: { readonly notReadyPolls?: number } = {}) => {
+const fakes = async (options: FakeComputerOptions = {}) => {
   const computer = await startFakeComputer(options);
   onTestFinished(() => computer.close());
   const runner = await fakeAgentEnvRunner(computer);
@@ -254,6 +256,73 @@ it("reports the runner's failure with its output and leaves no helper behind", a
   );
   // The runner's own stdout went to the diagnostics, not the handshake.
   expect(JSON.stringify(error)).toContain("agentenv writing to stdout");
+});
+
+it("keeps the end of a long build's output, where its failure is", async () => {
+  const { runner } = await fakes();
+  const client = await connect({
+    ...runner.environment,
+    FAKE_CHATTER_BYTES: String(64 * 1024),
+    FAKE_FAIL: "Unable to locate package nosuchpkg",
+  });
+  const failed = await client.callTool({
+    name: "start_build_computer",
+    arguments: { source: { kind: "bundle", path: await bundleFolder() } },
+  });
+  const projected = JSON.stringify(parseMcpToolError(failed));
+  expect(projected).toContain("E: Unable to locate package nosuchpkg");
+  // The package-install chatter before it is what the bound drops.
+  expect(projected).not.toContain("chatter 00000:");
+});
+
+it("keeps the computer's id when its first screenshot does not fit the response", async () => {
+  const { computer, runner } = await fakes({
+    frameCharacters: 11 * 1024 * 1024,
+  });
+  const client = await connect({
+    ...runner.environment,
+    REA_MCP_MAX_RESPONSE_BYTES: String(10 * 1024 * 1024),
+  });
+  const refused = parseMcpToolError(
+    await client.callTool({
+      name: "start_build_computer",
+      arguments: { source: { kind: "bundle", path: await bundleFolder() } },
+    }),
+  );
+  const { computer_id: computerId } = z
+    .object({ computer_id: z.uuid() })
+    .parse(
+      z.object({ result: z.unknown() }).parse(refused.error.details).result,
+    );
+  // The id names the running computer: it can be driven and closed.
+  const shot = await client.callTool({
+    name: "act_on_build_computer",
+    arguments: { computer_id: computerId, action: "wait", ms: 10 },
+  });
+  expect(shot.isError).not.toBe(true);
+  const closed = await client.callTool({
+    name: "close_build_computer",
+    arguments: { computer_id: computerId },
+  });
+  expect(closed.structuredContent).toMatchObject({ teardown: "agentenv" });
+  expect(computer.calls[0]?.name).toBe("computer_screenshot");
+});
+
+it("takes the first screenshot with the caller's options", async () => {
+  const { computer, runner } = await fakes();
+  const client = await connect(runner.environment);
+  const started = await client.callTool({
+    name: "start_build_computer",
+    arguments: {
+      source: { kind: "bundle", path: await bundleFolder() },
+      screenshot: { region: [0, 0, 640, 400], format: "jpeg", quality: 40 },
+    },
+  });
+  expect(started.isError, JSON.stringify(started)).not.toBe(true);
+  expect(computer.calls[0]).toEqual({
+    name: "computer_screenshot",
+    arguments: { region: [0, 0, 640, 400], format: "jpeg", quality: 40 },
+  });
 });
 
 it("refuses to start without an absolute agentenv runner", async () => {

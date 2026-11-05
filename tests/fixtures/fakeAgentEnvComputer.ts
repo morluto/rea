@@ -15,12 +15,33 @@ import {
 } from "@modelcontextprotocol/server";
 import { z } from "zod";
 
+import { onTestFinished } from "vitest";
+
+import { DesktopBuildComputers } from "../../src/application/desktop/DesktopBuildComputers.js";
 import { createTestTempDirectory } from "./temporaryDirectory.js";
 
 /** A 1x1 PNG, the fake driver's every frame. */
 export const FAKE_FRAME_PNG =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
-export const FAKE_SEGMENT = Buffer.from("not really an mp4 segment");
+/** The fake recording's segments, in order, as the driver keeps them under `rec-000000000001/`. */
+export const FAKE_SEGMENTS = [
+  Buffer.from("not really an mp4 segment"),
+  Buffer.from("nor is this second one"),
+];
+const segmentPath = (index: number) =>
+  `rec-000000000001/${String(index).padStart(4, "0")}.mp4`;
+
+/** How the fake driver misbehaves, when a test asks it to. */
+export interface FakeComputerOptions {
+  /** Polls answered not ready before readiness passes. */
+  readonly notReadyPolls?: number;
+  /** Readiness reports a final failed check instead. */
+  readonly readinessFails?: boolean;
+  /** Base64 characters in each screenshot's image, in place of a 1x1 PNG. */
+  readonly frameCharacters?: number;
+  /** Bytes data/get appends to each segment beyond its manifest size. */
+  readonly segmentPadding?: number;
+}
 
 const COMPUTER_TOOLS = [
   "computer_screenshot",
@@ -41,6 +62,8 @@ export interface FakeComputer {
   /** Paths of framework-only routes called without the control token. */
   readonly unauthorized: string[];
   readonly recordingRequests: { path: string; body: unknown }[];
+  /** The paths each data/get asked for, one entry per request. */
+  readonly dataRequests: unknown[];
   /** Refuse the next call of a tool as the driver refuses one, with its message. */
   refuseNext(name: string, message: string): void;
   close(): Promise<void>;
@@ -61,7 +84,12 @@ const sendJson = (response: ServerResponse, status: number, value: unknown) => {
 const startFakeDriver = async (
   calls: FakeComputer["calls"],
   refusals: Map<string, string>,
+  options: FakeComputerOptions,
 ) => {
+  const frameData =
+    options.frameCharacters === undefined
+      ? FAKE_FRAME_PNG
+      : "A".repeat(options.frameCharacters);
   const mcp = new McpServer({ name: "fake-reference-driver", version: "1" });
   for (const name of COMPUTER_TOOLS)
     mcp.registerTool(
@@ -80,7 +108,7 @@ const startFakeDriver = async (
             ? [
                 {
                   type: "image" as const,
-                  data: FAKE_FRAME_PNG,
+                  data: frameData,
                   mimeType: "image/png",
                 },
               ]
@@ -102,23 +130,103 @@ const startFakeDriver = async (
   return { mcp, transport };
 };
 
-/** Start the fake driver; readiness reports not ready for the first `notReadyPolls` polls. */
+interface FakeState {
+  readonly options: FakeComputerOptions;
+  readonly recordingRequests: FakeComputer["recordingRequests"];
+  readonly dataRequests: unknown[];
+  polls: number;
+}
+
+const segments = FAKE_SEGMENTS.map((bytes, index) => ({
+  index,
+  path: segmentPath(index),
+  bytes: bytes.length,
+  sha256: createHash("sha256").update(bytes).digest("hex"),
+}));
+
+/** The framework-only routes the token guards: readiness, recording and the driver's data/get. */
+const frameworkRoute = (
+  state: FakeState,
+  path: string,
+  parsed: unknown,
+): unknown => {
+  if (path === "/agentenv/ext/computer-ready/status") {
+    state.polls += 1;
+    const ready =
+      state.options.readinessFails !== true &&
+      state.polls > (state.options.notReadyPolls ?? 0);
+    return {
+      ready,
+      checks: [
+        {
+          name: "display",
+          ok: ready,
+          detail: state.options.readinessFails === true ? "Xvfb exited" : "",
+          ...(state.options.readinessFails === true ? { final: true } : {}),
+        },
+      ],
+    };
+  }
+  if (path.startsWith("/agentenv/ext/computer-recording/")) {
+    state.recordingRequests.push({ path, body: parsed });
+    return path.endsWith("/start")
+      ? {
+          recording_id: "rec-000000000001",
+          started_at: "2026-11-05T00:00:00Z",
+          format: "video/mp4; codecs=avc1",
+        }
+      : {
+          recording_id: "rec-000000000001",
+          fps: 10,
+          started_at: "2026-11-05T00:00:00Z",
+          ended_at: "2026-11-05T00:00:15Z",
+          ended_by: "request",
+          segments,
+        };
+  }
+  const { id, params } = parsed as { id: number; params: { paths: string[] } };
+  state.dataRequests.push(params.paths);
+  const padding = Buffer.alloc(state.options.segmentPadding ?? 0, 0x20);
+  return {
+    jsonrpc: "2.0",
+    id,
+    result: {
+      parts: FAKE_SEGMENTS.flatMap((bytes, index) => {
+        const home = `.agentenv-recordings/${segmentPath(index)}`;
+        return params.paths.some(
+          (requested) => home === requested || home.startsWith(`${requested}/`),
+        )
+          ? [
+              {
+                kind: "file",
+                file: {
+                  bytes: Buffer.concat([bytes, padding]).toString("base64"),
+                  name: home.split("/").at(-1),
+                },
+                metadata: { "urn:agentenv:data-objects/v1": { path: home } },
+              },
+            ]
+          : [];
+      }),
+    },
+  };
+};
+
+/** Start the fake driver, with the misbehaviour a test asks for. */
 export const startFakeComputer = async (
-  options: { readonly notReadyPolls?: number } = {},
+  options: FakeComputerOptions = {},
 ): Promise<FakeComputer> => {
   const token = "fake-control-token-0123456789abcdef";
   const calls: FakeComputer["calls"] = [];
   const unauthorized: string[] = [];
-  const recordingRequests: FakeComputer["recordingRequests"] = [];
-  const refusals = new Map<string, string>();
-  let polls = 0;
-  const { mcp, transport } = await startFakeDriver(calls, refusals);
-  const segment = {
-    index: 0,
-    path: "rec-000000000001/0000.mp4",
-    bytes: FAKE_SEGMENT.length,
-    sha256: createHash("sha256").update(FAKE_SEGMENT).digest("hex"),
+  const state: FakeState = {
+    options,
+    recordingRequests: [],
+    dataRequests: [],
+    polls: 0,
   };
+  const refusals = new Map<string, string>();
+  const { mcp, transport } = await startFakeDriver(calls, refusals, options);
   const server = createServer((request, response) => {
     void (async () => {
       const url = new URL(request.url ?? "/", "http://127.0.0.1");
@@ -149,56 +257,7 @@ export const startFakeComputer = async (
         return;
       }
       const parsed: unknown = body.length === 0 ? {} : JSON.parse(String(body));
-      if (url.pathname === "/agentenv/ext/computer-ready/status") {
-        polls += 1;
-        const ready = polls > (options.notReadyPolls ?? 0);
-        sendJson(response, 200, {
-          ready,
-          checks: [{ name: "display", ok: ready, detail: "" }],
-        });
-      } else if (url.pathname.startsWith("/agentenv/ext/computer-recording/")) {
-        recordingRequests.push({ path: url.pathname, body: parsed });
-        sendJson(
-          response,
-          200,
-          url.pathname.endsWith("/start")
-            ? {
-                recording_id: "rec-000000000001",
-                started_at: "2026-11-05T00:00:00Z",
-                format: "video/mp4; codecs=avc1",
-              }
-            : {
-                recording_id: "rec-000000000001",
-                fps: 10,
-                started_at: "2026-11-05T00:00:00Z",
-                ended_at: "2026-11-05T00:00:15Z",
-                ended_by: "request",
-                segments: [segment],
-              },
-        );
-      } else if (url.pathname === "/agentenv") {
-        const { id } = parsed as { id: number };
-        sendJson(response, 200, {
-          jsonrpc: "2.0",
-          id,
-          result: {
-            parts: [
-              {
-                kind: "file",
-                file: {
-                  bytes: FAKE_SEGMENT.toString("base64"),
-                  name: "0000.mp4",
-                },
-                metadata: {
-                  "urn:agentenv:data-objects/v1": {
-                    path: `.agentenv-recordings/${segment.path}`,
-                  },
-                },
-              },
-            ],
-          },
-        });
-      } else sendJson(response, 404, {});
+      sendJson(response, 200, frameworkRoute(state, url.pathname, parsed));
     })().catch((cause: unknown) => {
       response.destroy(cause instanceof Error ? cause : undefined);
     });
@@ -210,7 +269,8 @@ export const startFakeComputer = async (
     token,
     calls,
     unauthorized,
-    recordingRequests,
+    recordingRequests: state.recordingRequests,
+    dataRequests: state.dataRequests,
     refuseNext: (name, message) => refusals.set(name, message),
     close: async () => {
       await mcp.close();
@@ -231,6 +291,7 @@ import json
 import os
 import shutil
 import signal
+import sys
 import time
 import types
 
@@ -271,7 +332,11 @@ def run_bundle(root, *, tasks=(), keep=False, emulate=True, sandbox=None, on_pro
     on_progress("deploying the computer")
     time.sleep(float(os.environ.get("FAKE_DEPLOY_SECONDS", "0")))
     signal.signal(signal.SIGTERM, previous)
+    chatter = int(os.environ.get("FAKE_CHATTER_BYTES", "0"))
+    for line in range(chatter // 80):
+        print(f"chatter {line:05d}: Get:1 http://ports.ubuntu.com/ubuntu-ports noble/main arm64 libfoo", file=sys.stderr)
     if os.environ.get("FAKE_FAIL"):
+        print(f"E: {os.environ['FAKE_FAIL']}", file=sys.stderr, flush=True)
         raise RuntimeError(os.environ["FAKE_FAIL"])
     url = os.environ["FAKE_COMPUTER_URL"]
     env = types.SimpleNamespace(environment_url=url, mcp_url=url + "/mcp", sandbox_id="sbx-fake",
@@ -331,4 +396,31 @@ export const fakeAgentEnvRunner = async (
         .map((line) => JSON.parse(line) as unknown);
     },
   };
+};
+
+/**
+ * A build computer owner over REA's real helper, a fake runner and a fake
+ * driver, and a bundle-folder start; the test closes what it starts.
+ */
+export const fakeBuildComputers = async (
+  options: FakeComputerOptions = {},
+  environment: Readonly<Record<string, string>> = {},
+) => {
+  const computer = await startFakeComputer(options);
+  onTestFinished(() => computer.close());
+  const runner = await fakeAgentEnvRunner(computer);
+  const computers = new DesktopBuildComputers({
+    ...process.env,
+    ...runner.environment,
+    ...environment,
+  });
+  const bundle = await createTestTempDirectory("exported-bundle-");
+  await mkdir(join(bundle, "tasks"));
+  await writeFile(join(bundle, "tasks", "smoke.json"), "[]\n");
+  const start = () =>
+    computers.start(
+      { source: { kind: "bundle", path: bundle } },
+      new AbortController().signal,
+    );
+  return { computer, runner, computers, start };
 };

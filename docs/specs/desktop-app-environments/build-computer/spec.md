@@ -28,7 +28,14 @@ it for building, or from an existing bundle folder.
   sandbox id it reported, the one named `agent-<sandbox id>` and any labelled
   `agentenv.sandbox=<sandbox id>`, through the absolute `REA_DOCKER_COMMAND`. An
   unconfirmed teardown keeps the computer listed for a retried close.
-  Cancelling a start stops the helper, whose deploy tears down what it began.
+  Cancelling a start stops the helper, whose deploy tears down what it began;
+  a helper that reported its failure finishes its own teardown first. The owner
+  holds each start from its helper's spawn: a failed start whose teardown is
+  unconfirmed stays held under the `computer_id` its error names, and shutdown
+  cancels and joins starts in progress before closing every computer.
+- Diagnostics: the helper's stderr is kept as its last 16 KiB, through the
+  shared supervisor's tail retention, so a failed build reports its error
+  rather than its first package downloads.
 - The control token never appears in a result, an error or a log; the helper's
   stderr is redacted of it.
 - Build bundle from a request: the app from the Ubuntu archive, an apt
@@ -44,10 +51,16 @@ it for building, or from an existing bundle folder.
   coordinates included. Common key spellings become W3C names. An argument the
   action does not take is refused before sending. Results carry the driver's
   content blocks unchanged after REA's JSON, which `ToolResultDelivery` measures
-  against the response budget as a whole. Each action is logged per computer.
+  against the response budget as a whole; a response over it is refused with
+  REA's own result, `computer_id` included, kept in the error. The first
+  screenshot takes `region`, `format` and `quality`. Each action is logged per
+  computer.
 - Recording hooks, internal: start and end `computer-recording/v1` under REA's
-  request id, and fetch the segments through the driver's `data/get`, each
-  checked against the manifest's size and SHA-256, before teardown.
+  request id, and fetch the segments through the driver's `data/get` one per
+  request, each answer read within its segment's base64 size and the segment
+  checked against the manifest's size and SHA-256, before teardown. A
+  recording over the caller's allowance, a quarter of the V8 heap by default,
+  is refused before any read.
 
 ## Non-goals
 

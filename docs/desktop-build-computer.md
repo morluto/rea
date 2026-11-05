@@ -77,12 +77,17 @@ REA runs the deploy with `run_bundle(keep=True, emulate=False)` on the local
 sandbox provider, so only the host's own architecture is built. The first start
 of a bundle builds its image and can take minutes; later starts reuse it. REA
 then waits until the computer's readiness checks pass, opens one MCP session
-to its driver and takes a screenshot. The result holds `computer_id`, agentenv's
-`sandbox_id`, the environment name or bundle folder, and the screenshot's frame
-as structured content beside its image.
+to its driver and takes a screenshot, with the `region`, `format` and `quality`
+given in `screenshot`. The result holds `computer_id`, agentenv's `sandbox_id`,
+the environment name or bundle folder, and the screenshot's frame as structured
+content beside its image.
 
-A failed start returns the helper's stderr tail and its exit status; a
-cancelled one stops the helper, which tears down whatever agentenv brought up.
+A failed start returns the last 16 KiB of the helper's stderr, where a failing
+build prints its error, and its exit status; a cancelled one stops the helper,
+which tears down whatever agentenv brought up. When that teardown is not
+confirmed, the error's `computer_id` names what REA keeps for
+`close_build_computer` to retry. Closing the server cancels starts still in
+progress and waits for them before closing every computer.
 
 ## Act
 
@@ -113,14 +118,17 @@ The result carries the driver's content unchanged, its text and images, after
 REA's own JSON: `action_index` and the driver's structured result. A refusal,
 such as a stale frame, is an error carrying the computer's message. A response
 larger than the MCP budget is refused with how to ask for a smaller image: a
-`region`, or `jpeg` with a lower `quality`.
+`region`, or `jpeg` with a lower `quality`. That error keeps REA's own result,
+`computer_id` included, as `details.result`, since the action or start has
+happened.
 
 Every action is logged on the computer in order with the arguments sent, its
 start and end and whether it was applied, refused or failed. The log and the
 computer's recording hooks (`computer-recording/v1` start and end under REA's
-own request id, and the segments fetched through the driver's `data/get` and
-checked against the manifest) are kept for later build stages; they are not
-tools.
+own request id, and the segments fetched through the driver's `data/get` one
+at a time, each read within its manifest size and checked against it) are kept
+for later build stages; they are not tools. A recording larger than a quarter
+of the V8 heap is refused before any segment is read.
 
 ## Close
 

@@ -19,11 +19,21 @@ agentenv were not used by the gates or the boundary tests.
   argument, close and a later unknown id; a request bundle with REA's payload,
   compiled by the fake runner; the missing payload and runner settings; a
   runner failure with its output; removal by name and label; an unconfirmed teardown
-  retried after Docker recovers; cancellation of a start stopping the helper.
-  No result carries the control token.
+  retried after Docker recovers; cancellation of a start stopping the helper;
+  a long build's failure reported from the end of its output; a first
+  screenshot too large for the response that keeps `computer_id` for act and
+  close; the first screenshot's options. No result carries the control token.
 - `tests/boundary/providers/buildComputerRecording.test.ts`: recording start,
-  end and segment fetch under REA's request id, the action log, and a segment
-  that differs from its manifest.
+  end and one fetch per segment under REA's request id, the action log, a
+  segment that differs from its manifest, a recording over the allowance
+  refused before any read, and an answer outgrowing its segment's size.
+- `tests/boundary/providers/buildComputerLifecycle.test.ts`: shutdown cancels
+  and joins a start in progress and refuses later starts; a failed start whose
+  teardown is unconfirmed stays held under the id its error names, keeps its
+  primary failure, and is released by a retried close and by shutdown.
+- `src/process/ProviderProcessOutput.test.ts`: the supervisor's tail retention
+  keeps each stream's latest bytes, reports checkpoints over dropped bytes as
+  incomplete, and drops a UTF-8 character the cut would split.
 - `tests/boundary/providers/buildComputerReal.test.ts`: opt-in with
   `REA_BUILD_COMPUTER_REAL=1`, `REA_AGENT_ENV_COMMAND`, `REA_DOCKER_COMMAND` and
   `REA_BUILD_COMPUTER_REA_ARCHIVE`; skipped here.

@@ -1,22 +1,18 @@
 import { randomUUID } from "node:crypto";
-import { copyFile, mkdir, readFile, stat, writeFile } from "node:fs/promises";
-import { dirname, isAbsolute, join } from "node:path";
 
-import {
-  renderBuildBundle,
-  type BuildRequest,
-  type BuildSource,
-  type ReaPayload,
-} from "../../domain/desktop/appBuild.js";
+import type { BuildSource } from "../../domain/desktop/appBuild.js";
 import {
   driverCall,
   type ComputerAction,
   type ComputerActionInput,
+  type ScreenshotOptions,
 } from "../../domain/desktop/computerActions.js";
-import { AnalysisError } from "../../domain/analysisErrorBase.js";
+import {
+  AnalysisError,
+  type AnalysisCapturedOutput,
+} from "../../domain/analysisErrorBase.js";
 import {
   AnalysisCancelledError,
-  AnalysisCapabilityUnavailableError,
   AnalysisInputError,
 } from "../../domain/analysisErrorCore.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
@@ -25,15 +21,20 @@ import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import {
   AgentEnvComputer,
+  ComputerStartFailure,
   type DriverResult,
 } from "../../desktop/AgentEnvComputer.js";
-import { AGENTENV_PROVIDER } from "../../desktop/AgentEnvComputerHelper.js";
-import { PrivateRuntimeRoot } from "../../process/PrivateRuntimeRoot.js";
+import {
+  AGENTENV_PROVIDER,
+  ComputerHelper,
+  type ComputerRelease,
+} from "../../desktop/AgentEnvComputerHelper.js";
+import type { PrivateRuntimeRoot } from "../../process/PrivateRuntimeRoot.js";
+import { writeRequestBundle } from "./DesktopBuildBundle.js";
 
 const START = "start_build_computer";
 const ACT = "act_on_build_computer";
 const CLOSE = "close_build_computer";
-const MAX_KEY_BYTES = 1024 * 1024;
 
 /** A result with the driver's content blocks, delivered after REA's own. */
 export interface ForwardedResult<Value> {
@@ -62,11 +63,20 @@ export interface BuildComputerSession {
   readonly recordingSegments: AgentEnvComputer["recordingSegments"];
 }
 
+/** A computer REA owns: a live one, or a failed start whose cleanup is still unconfirmed. */
 interface HeldComputer {
-  readonly computer: AgentEnvComputer;
+  readonly computer: AgentEnvComputer | undefined;
+  /** Brings the computer down; absent when no helper was spawned. */
+  readonly release: (() => Promise<ComputerRelease>) | undefined;
   readonly workspace: PrivateRuntimeRoot | undefined;
   readonly actions: BuildComputerAction[];
   closing: boolean;
+}
+
+/** A start still in progress, which shutdown cancels and joins. */
+interface PendingStart {
+  readonly settled: Promise<unknown>;
+  readonly stop: AbortController;
 }
 
 const unknownComputer = (operation: string) =>
@@ -90,102 +100,66 @@ const failure = (
   });
 };
 
-/** The archive the build layer unpacks REA from, as the operator configured it. */
-const reaPayload = async (
-  environment: Readonly<NodeJS.ProcessEnv>,
-): Promise<ReaPayload> => {
-  const path = environment.REA_BUILD_COMPUTER_REA_ARCHIVE;
-  const reason =
-    "A build computer from a request needs REA_BUILD_COMPUTER_REA_ARCHIVE, the absolute path of a tar archive of a runnable REA whose one top folder holds scripts/rea.mjs.";
-  if (
-    path === undefined ||
-    !isAbsolute(path) ||
-    !(await stat(path).then(
-      (entry) => entry.isFile(),
-      () => false,
-    ))
-  )
-    throw new AnalysisCapabilityUnavailableError(
-      AGENTENV_PROVIDER,
-      START,
-      reason,
-      {
-        userMessage: reason,
-        remediationAction:
-          "Pack a built REA with its production dependencies, set REA_BUILD_COMPUTER_REA_ARCHIVE to the archive and restart REA, or start from an exported bundle folder.",
-      },
-    );
-  return { kind: "file", path };
-};
-
-/** An apt repository's key file, read whole once it is known to be a small regular file. */
-const readAptKey = async (path: string): Promise<Buffer> => {
-  const refuse = (reason: string, cause?: unknown) =>
-    new AnalysisInputError(START, {
-      userMessage: `The apt key file ${path} ${reason}.`,
-      conformsToInputContract: true,
-      ...(cause === undefined ? {} : { cause }),
+/**
+ * Why a start failed, with the helper's output, and, when its teardown is
+ * unconfirmed, the id REA keeps that teardown under for close to retry.
+ */
+const startFailure = (
+  cause: unknown,
+  signal: AbortSignal,
+  output: AnalysisCapturedOutput | undefined,
+  kept: { readonly id: string; readonly release: ComputerRelease },
+): AnalysisError => {
+  if (cause instanceof AnalysisError && kept.release.verified) return cause;
+  const options = {
+    cause,
+    ...(output === undefined ? {} : { capturedOutput: output }),
+    ...(kept.release.verified
+      ? {}
+      : {
+          cleanup: {
+            reason: kept.release.reason,
+            resources: kept.release.resources,
+          },
+          diagnostics: { computer_id: kept.id },
+          remediationAction: `REA keeps this computer's teardown as ${kept.id}; once the reported problem is fixed, call close_build_computer with that computer_id.`,
+        }),
+  };
+  if (signal.aborted)
+    return new AnalysisCancelledError(START, {
+      ...options,
+      cause: signal.reason,
     });
-  const entry = await stat(path).catch((cause: unknown) => {
-    throw refuse("cannot be read", cause);
+  return new ProviderAdapterError(AGENTENV_PROVIDER, START, {
+    ...(cause instanceof ComputerStartFailure &&
+    cause.remediation !== undefined &&
+    kept.release.verified
+      ? { remediationAction: cause.remediation }
+      : {}),
+    userMessage: cause instanceof Error ? cause.message : String(cause),
+    ...options,
   });
-  if (!entry.isFile() || entry.size > MAX_KEY_BYTES)
-    throw refuse(
-      `is not a regular file of at most ${String(MAX_KEY_BYTES)} bytes, as a signing key is`,
-    );
-  return readFile(path).catch((cause: unknown) => {
-    throw refuse("cannot be read", cause);
-  });
-};
-
-/** Write the request's build bundle into a private folder, which the computer's owner removes on close. */
-const writeBuildBundle = async (
-  request: BuildRequest,
-  payload: ReaPayload,
-): Promise<{
-  readonly workspace: PrivateRuntimeRoot;
-  readonly bundle: string;
-  readonly name: string;
-}> => {
-  const key =
-    request.install.kind === "apt_repository"
-      ? await readAptKey(request.install.key_file)
-      : undefined;
-  const { name, files } = renderBuildBundle(request, payload, key);
-  const workspace = await PrivateRuntimeRoot.create({
-    prefix: "rea-build-computer-",
-  });
-  try {
-    const bundle = join(workspace.path, "bundle");
-    for (const file of files) {
-      const target = join(bundle, file.path);
-      await mkdir(dirname(target), { recursive: true });
-      if (
-        typeof file.content === "string" ||
-        file.content instanceof Uint8Array
-      )
-        await writeFile(target, file.content);
-      else await copyFile(file.content.copyFrom, target);
-    }
-    return { workspace, bundle, name };
-  } catch (cause: unknown) {
-    await workspace.close();
-    throw cause;
-  }
 };
 
 /**
  * Owns the build computers one REA server keeps up: starts each from a
  * request or a bundle, forwards actions to its driver with an action log,
- * and brings each down on close or when the server closes.
+ * and brings each down on close or when the server closes. A start in
+ * progress is owned from its helper's spawn; one that fails without a
+ * confirmed teardown stays held so close and shutdown can retry it.
  */
 export class DesktopBuildComputers {
   readonly #computers = new Map<string, HeldComputer>();
+  readonly #starts = new Set<PendingStart>();
+  #closed = false;
 
   constructor(private readonly environment: Readonly<NodeJS.ProcessEnv>) {}
 
   async start(
-    input: { readonly source: BuildSource },
+    input: {
+      readonly source: BuildSource;
+      readonly screenshot?: ScreenshotOptions | undefined;
+    },
     signal: AbortSignal,
   ): Promise<
     Result<
@@ -198,52 +172,93 @@ export class DesktopBuildComputers {
       AnalysisError
     >
   > {
+    if (this.#closed)
+      return err(
+        new AnalysisCancelledError(START, {
+          cause: new Error("REA is closing its build computers"),
+        }),
+      );
+    const stop = new AbortController();
+    const settled = this.#start(input, AbortSignal.any([signal, stop.signal]));
+    const pending = { settled, stop };
+    this.#starts.add(pending);
+    try {
+      return await settled;
+    } finally {
+      this.#starts.delete(pending);
+    }
+  }
+
+  async #start(
+    input: Parameters<DesktopBuildComputers["start"]>[0],
+    signal: AbortSignal,
+  ): ReturnType<DesktopBuildComputers["start"]> {
     const { source } = input;
-    let workspace: PrivateRuntimeRoot | undefined;
+    let target: {
+      readonly bundle: string;
+      readonly name: string;
+      readonly workspace?: PrivateRuntimeRoot;
+    };
+    try {
+      target =
+        source.kind === "bundle"
+          ? { bundle: source.path, name: source.path }
+          : await writeRequestBundle(source, this.environment);
+    } catch (cause: unknown) {
+      return err(failure(START, cause, signal));
+    }
+    const id = randomUUID();
+    let helper: ComputerHelper | undefined;
     let computer: AgentEnvComputer | undefined;
     try {
-      const target =
-        source.kind === "bundle"
-          ? { bundle: source.path, name: source.path, workspace: undefined }
-          : await writeBuildBundle(source, await reaPayload(this.environment));
-      workspace = target.workspace;
-      computer = await AgentEnvComputer.start({
+      helper = await ComputerHelper.spawn({
         bundle: target.bundle,
         environment: this.environment,
         signal,
         operation: START,
       });
-      const shot = await computer.callTool("computer_screenshot", {}, signal);
-      const id = randomUUID();
+      computer = await AgentEnvComputer.connect(helper, signal);
+      const shot = driverCall("screenshot", input.screenshot ?? {});
+      if (!shot.ok) throw new TypeError("screenshot options are its own");
+      const taken = await computer.callTool(
+        shot.value.tool,
+        shot.value.arguments,
+        signal,
+      );
+      const live = computer;
       this.#computers.set(id, {
-        computer,
-        workspace,
+        computer: live,
+        release: () => live.close(),
+        workspace: target.workspace,
         actions: [],
         closing: false,
       });
       return ok({
         value: {
           computer_id: id,
-          sandbox_id: computer.sandboxId,
+          sandbox_id: live.sandboxId,
           environment: target.name,
-          screenshot: shot.isError ? null : shot.structured,
+          screenshot: taken.isError ? null : taken.structured,
         },
-        content: shot.content,
+        content: taken.content,
       });
     } catch (cause: unknown) {
-      const release = await computer?.close();
-      await workspace?.close().catch(() => undefined);
-      const primary = failure(START, cause, signal);
-      return err(
-        release === undefined || release.verified
-          ? primary
-          : new ProviderCleanupError(
-              AGENTENV_PROVIDER,
-              release.resources,
-              { reason: release.reason },
-              { operation: START, cause: primary },
-            ),
-      );
+      const owner = helper;
+      const connected = computer;
+      this.#computers.set(id, {
+        computer: undefined,
+        release:
+          connected !== undefined
+            ? () => connected.close()
+            : owner === undefined
+              ? undefined
+              : () => owner.release(),
+        workspace: target.workspace,
+        actions: [],
+        closing: true,
+      });
+      const release = await this.#retire(id);
+      return err(startFailure(cause, signal, owner?.output(), { id, release }));
     }
   }
 
@@ -264,7 +279,9 @@ export class DesktopBuildComputers {
   > {
     const { computer_id: id, action, ...fields } = input;
     const held = this.#computers.get(id);
-    if (held === undefined || held.closing) return err(unknownComputer(ACT));
+    const computer = held?.computer;
+    if (held === undefined || computer === undefined || held.closing)
+      return err(unknownComputer(ACT));
     const call = driverCall(action, fields);
     if (!call.ok)
       return err(
@@ -302,7 +319,7 @@ export class DesktopBuildComputers {
     };
     let result: DriverResult;
     try {
-      result = await held.computer.callTool(
+      result = await computer.callTool(
         call.value.tool,
         call.value.arguments,
         signal,
@@ -346,39 +363,50 @@ export class DesktopBuildComputers {
       AnalysisError
     >
   > {
-    const held = this.#computers.get(id);
-    if (held === undefined) return err(unknownComputer(CLOSE));
-    held.closing = true;
-    const release = await held.computer.close();
-    if (!release.verified)
-      return err(
-        new ProviderCleanupError(
-          AGENTENV_PROVIDER,
-          release.resources,
-          { reason: release.reason },
-          { operation: CLOSE, remediationAction: release.reason },
-        ),
-      );
-    const { workspace } = held;
-    if (workspace !== undefined)
-      try {
-        await workspace.close();
-      } catch (cause: unknown) {
-        return err(
+    if (!this.#computers.has(id)) return err(unknownComputer(CLOSE));
+    const release = await this.#retire(id);
+    return release.verified
+      ? ok({ computer_id: id, teardown: release.teardown })
+      : err(
           new ProviderCleanupError(
             AGENTENV_PROVIDER,
-            [workspace.path],
-            { reason: "the build bundle folder could not be removed" },
-            { operation: CLOSE, cause },
+            release.resources,
+            { reason: release.reason },
+            { operation: CLOSE, remediationAction: release.reason },
           ),
         );
-      }
-    this.#computers.delete(id);
-    return ok({ computer_id: id, teardown: release.teardown });
   }
 
-  /** Bring every held computer down, as the server closes. */
+  /** Release a held computer and its bundle folder; it stays held while either is unconfirmed. */
+  async #retire(id: string): Promise<ComputerRelease> {
+    const held = this.#computers.get(id);
+    if (held === undefined) return { verified: true, teardown: "agentenv" };
+    held.closing = true;
+    const release = (await held.release?.()) ?? {
+      verified: true,
+      teardown: "agentenv",
+    };
+    if (!release.verified) return release;
+    try {
+      await held.workspace?.close();
+    } catch (cause: unknown) {
+      return {
+        verified: false,
+        reason: `the build bundle folder could not be removed: ${cause instanceof Error ? cause.message : String(cause)}`,
+        resources: [held.workspace?.path ?? id],
+      };
+    }
+    this.#computers.delete(id);
+    return release;
+  }
+
+  /** Cancel and join the starts in progress, then bring every held computer down, as the server closes. */
   async closeAll(): Promise<void> {
+    this.#closed = true;
+    const starts = [...this.#starts];
+    for (const start of starts)
+      start.stop.abort(new Error("REA is closing its build computers"));
+    await Promise.allSettled(starts.map((start) => start.settled));
     const results = await Promise.all(
       [...this.#computers.keys()].map((id) => this.close(id)),
     );
@@ -395,17 +423,14 @@ export class DesktopBuildComputers {
   /** A live computer's action log and recording hooks, for the witness. */
   session(id: string): BuildComputerSession | undefined {
     const held = this.#computers.get(id);
-    if (held === undefined) return undefined;
-    const { computer } = held;
+    const computer = held?.computer;
+    if (held === undefined || computer === undefined) return undefined;
     return {
       sandboxId: computer.sandboxId,
       actions: held.actions,
-      startRecording: (requestId, signal) =>
-        computer.startRecording(requestId, signal),
-      endRecording: (recordingId, signal) =>
-        computer.endRecording(recordingId, signal),
-      recordingSegments: (manifest, signal) =>
-        computer.recordingSegments(manifest, signal),
+      startRecording: (...request) => computer.startRecording(...request),
+      endRecording: (...request) => computer.endRecording(...request),
+      recordingSegments: (...request) => computer.recordingSegments(...request),
     };
   }
 }

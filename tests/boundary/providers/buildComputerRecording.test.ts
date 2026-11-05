@@ -1,33 +1,16 @@
-import { mkdir, writeFile } from "node:fs/promises";
-import { join } from "node:path";
-
 import { expect, it, onTestFinished } from "vitest";
 
-import { DesktopBuildComputers } from "../../../src/application/desktop/DesktopBuildComputers.js";
 import {
-  FAKE_SEGMENT,
-  fakeAgentEnvRunner,
-  startFakeComputer,
+  FAKE_SEGMENTS,
+  type FakeComputerOptions,
+  fakeBuildComputers,
 } from "../../fixtures/fakeAgentEnvComputer.js";
-import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 /** A build computer held up by REA's real helper over a fake runner and driver. */
-const startComputer = async () => {
-  const computer = await startFakeComputer();
-  onTestFinished(() => computer.close());
-  const runner = await fakeAgentEnvRunner(computer);
-  const computers = new DesktopBuildComputers({
-    ...process.env,
-    ...runner.environment,
-  });
+const startComputer = async (options: FakeComputerOptions = {}) => {
+  const { computer, computers, start } = await fakeBuildComputers(options);
   onTestFinished(() => computers.closeAll());
-  const bundle = await createTestTempDirectory("exported-bundle-");
-  await mkdir(join(bundle, "tasks"));
-  await writeFile(join(bundle, "tasks", "smoke.json"), "[]\n");
-  const started = await computers.start(
-    { source: { kind: "bundle", path: bundle } },
-    new AbortController().signal,
-  );
+  const started = await start();
   if (!started.ok) throw started.error;
   const id = started.value.value.computer_id;
   const session = computers.session(id);
@@ -45,7 +28,13 @@ it("records a build session under REA's request id and fetches its segments befo
   expect(acted.ok).toBe(true);
   const manifest = await session.endRecording(recording.recording_id);
   expect(await session.recordingSegments(manifest)).toEqual([
-    { path: "rec-000000000001/0000.mp4", bytes: FAKE_SEGMENT },
+    { path: "rec-000000000001/0000.mp4", bytes: FAKE_SEGMENTS[0] },
+    { path: "rec-000000000001/0001.mp4", bytes: FAKE_SEGMENTS[1] },
+  ]);
+  // One segment per request, so only one segment's body is held at a time.
+  expect(computer.dataRequests).toEqual([
+    [".agentenv-recordings/rec-000000000001/0000.mp4"],
+    [".agentenv-recordings/rec-000000000001/0001.mp4"],
   ]);
   expect(computer.recordingRequests).toEqual([
     {
@@ -83,4 +72,22 @@ it("refuses a segment whose bytes differ from the recording's manifest", async (
       })),
     }),
   ).rejects.toThrow(/rec-000000000001\/0000\.mp4/u);
+});
+
+it("refuses a recording larger than the allowance before reading any segment", async () => {
+  const { computer, session } = await startComputer();
+  const manifest = await session.endRecording("rec-000000000001");
+  const total = FAKE_SEGMENTS.reduce((sum, bytes) => sum + bytes.length, 0);
+  await expect(
+    session.recordingSegments(manifest, undefined, total - 1),
+  ).rejects.toThrow(String(total));
+  expect(computer.dataRequests).toEqual([]);
+});
+
+it("stops reading a segment whose answer outgrows its manifest size", async () => {
+  const { session } = await startComputer({ segmentPadding: 1024 * 1024 });
+  const manifest = await session.endRecording("rec-000000000001");
+  await expect(session.recordingSegments(manifest)).rejects.toThrow(
+    /rec-000000000001\/0000\.mp4.*more than/u,
+  );
 });

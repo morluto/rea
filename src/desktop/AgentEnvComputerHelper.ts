@@ -183,6 +183,8 @@ export class ComputerHelper {
   readonly #supervisor: ProviderProcessSupervisor;
   readonly #handshake: Promise<Handshake | undefined>;
   #sandboxId: string | undefined;
+  /** The helper said no computer came up, and exits on its own after its teardown. */
+  #failed = false;
   #token: string | null = null;
   #stopped:
     | Promise<{
@@ -205,7 +207,9 @@ export class ComputerHelper {
       },
       {
         captureStdout: false,
+        // A failed build's error comes last, after its package installs.
         maxDiagnosticBytes: { stdout: 0, stderr: STDERR_BYTES },
+        diagnosticRetention: "tail",
       },
     );
     // A helper that already exited must not crash REA when its stdin closes.
@@ -252,7 +256,7 @@ export class ComputerHelper {
       if ("sandbox_id" in first) {
         this.#sandboxId = first.sandbox_id;
         this.#token = first.control_token;
-      }
+      } else this.#failed = true;
       resolve(first);
     }
   }
@@ -286,13 +290,18 @@ export class ComputerHelper {
     };
   }
 
-  /** Close stdin once the helper holds a computer, else SIGTERM; SIGTERM after a grace; then clear its process group. */
+  /**
+   * Close stdin once the helper holds a computer; let one that reported its
+   * failure finish its own teardown; else SIGTERM. SIGTERM after a grace,
+   * then clear its process group.
+   */
   async #stop() {
     const child = this.spawned.process;
     const holding = this.#sandboxId !== undefined;
+    const waiting = holding || this.#failed;
     if (holding) child.stdin?.end();
-    else child.kill("SIGTERM");
-    if (!(await this.#supervisor.waitForExit(TEARDOWN_MS)) && holding) {
+    else if (!this.#failed) child.kill("SIGTERM");
+    if (!(await this.#supervisor.waitForExit(TEARDOWN_MS)) && waiting) {
       child.kill("SIGTERM");
       await this.#supervisor.waitForExit(TEARDOWN_MS);
     }

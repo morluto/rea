@@ -1,24 +1,25 @@
 import { createHash } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
+import { getHeapStatistics } from "node:v8";
 
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { z } from "zod";
 
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
-import type { AnalysisCleanupObservation } from "../domain/analysisErrorBase.js";
 import { jsonObjectSchema, type JsonValue } from "../domain/jsonValue.js";
-import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { StructuredContentMcpClient } from "../providers/StructuredContentMcpClient.js";
 import { validateMcpHttpResponse } from "../providers/Utf8McpResponse.js";
-import {
-  AGENTENV_PROVIDER,
+import type {
   ComputerHelper,
-  type ComputerRelease,
+  ComputerRelease,
 } from "./AgentEnvComputerHelper.js";
 
 const READY_TIMEOUT_MS = 180_000;
 const REQUEST_TIMEOUT_MS = 120_000;
 const RECORDINGS = ".agentenv-recordings";
+/** A control route's answer: readiness, or a recording's manifest, near 1.5 MB for a day of 15 s segments. */
+const CONTROL_RESPONSE_BYTES = 4 * 1024 * 1024;
+/** What a data/get answer holds around one file's base64 bytes. */
+const ENVELOPE_BYTES = 64 * 1024;
 
 const readinessSchema = z.object({
   ready: z.boolean(),
@@ -74,12 +75,35 @@ export interface DriverResult {
   readonly structured: Readonly<Record<string, JsonValue>> | null;
 }
 
-const cleanupOf = (
-  release: ComputerRelease,
-): { readonly cleanup?: AnalysisCleanupObservation } =>
-  release.verified
-    ? {}
-    : { cleanup: { reason: release.reason, resources: release.resources } };
+/** A response body read only while it stays within `maxBytes`. */
+const readBounded = async (
+  response: Response,
+  maxBytes: number,
+  what: string,
+): Promise<string> => {
+  const chunks: Uint8Array[] = [];
+  let bytes = 0;
+  if (response.body !== null)
+    for await (const chunk of response.body) {
+      bytes += chunk.byteLength;
+      if (bytes > maxBytes)
+        throw new Error(`${what} is more than ${String(maxBytes)} bytes.`);
+      chunks.push(chunk);
+    }
+  return Buffer.concat(chunks, bytes).toString("utf8");
+};
+
+/** Why a computer did not come up, with what the caller can do about it. */
+export class ComputerStartFailure extends Error {
+  constructor(
+    message: string,
+    readonly remediation: string | undefined,
+    options?: ErrorOptions,
+  ) {
+    super(message, options);
+    this.name = "ComputerStartFailure";
+  }
+}
 
 const connectDriver = async (
   mcpUrl: string,
@@ -128,31 +152,23 @@ export class AgentEnvComputer {
   }
 
   /**
-   * Keep a bundle's computer up with REA's helper, wait until the computer
-   * reports ready and open an MCP session to its driver. Failure or
-   * cancellation brings the computer down before the typed error returns.
+   * Connect to the computer a helper keeps up: wait for its handshake and
+   * readiness and open an MCP session to its driver. A failure throws a
+   * `ComputerStartFailure`, or the signal's reason when cancelled; the
+   * helper's owner releases it either way.
    */
-  static async start(options: {
-    readonly bundle: string;
-    readonly environment: Readonly<NodeJS.ProcessEnv>;
-    readonly signal: AbortSignal;
-    readonly operation: string;
-  }): Promise<AgentEnvComputer> {
-    const { signal, operation } = options;
-    const helper = await ComputerHelper.spawn(options);
+  static async connect(
+    helper: ComputerHelper,
+    signal: AbortSignal,
+  ): Promise<AgentEnvComputer> {
+    const handshake = await helper.handshake(signal);
+    if (handshake === undefined || "error" in handshake)
+      throw new ComputerStartFailure(
+        `agentenv did not bring the computer up: ${handshake?.error ?? "its helper ended without a handshake"}.`,
+        "Read the helper's output; `agent-env run <bundle> --task smoke --no-emulate` reproduces the deploy.",
+      );
     let client: StructuredContentMcpClient | undefined;
     try {
-      const handshake = await helper.handshake(signal);
-      if (handshake === undefined || "error" in handshake) {
-        const release = await helper.release();
-        throw new ProviderAdapterError(AGENTENV_PROVIDER, operation, {
-          userMessage: `agentenv did not bring the computer up: ${handshake?.error ?? "its helper ended without a handshake"}.`,
-          remediationAction:
-            "Read the helper's output; `agent-env run <bundle> --task smoke --no-emulate` reproduces the deploy.",
-          capturedOutput: helper.output(),
-          ...cleanupOf(release),
-        });
-      }
       client = await connectDriver(handshake.mcp_url, signal);
       const computer = new AgentEnvComputer({
         sandboxId: handshake.sandbox_id,
@@ -165,19 +181,12 @@ export class AgentEnvComputer {
       return computer;
     } catch (cause: unknown) {
       await client?.close().catch(() => undefined);
-      if (cause instanceof ProviderAdapterError) throw cause;
-      const cleanup = cleanupOf(await helper.release());
-      if (signal.aborted)
-        throw new AnalysisCancelledError(operation, {
-          cause: signal.reason,
-          ...cleanup,
-        });
-      throw new ProviderAdapterError(AGENTENV_PROVIDER, operation, {
-        userMessage: `The computer came up but REA could not use it: ${cause instanceof Error ? cause.message : String(cause)}`,
-        capturedOutput: helper.output(),
-        cause,
-        ...cleanup,
-      });
+      if (signal.aborted) throw signal.reason;
+      throw new ComputerStartFailure(
+        `The computer came up but REA could not use it: ${cause instanceof Error ? cause.message : String(cause)}`,
+        undefined,
+        { cause },
+      );
     }
   }
 
@@ -224,47 +233,73 @@ export class AgentEnvComputer {
     );
   }
 
-  /** Fetch an ended recording's segments through the driver's data plane, each checked against its manifest. */
+  /**
+   * Fetch an ended recording's segments through the driver's data plane,
+   * one request per segment, each read within its manifest size and checked
+   * against it. A recording larger than `maxBytes`, by default a quarter of
+   * the V8 heap as for retained Evidence, is refused before any read.
+   */
   async recordingSegments(
     manifest: RecordingManifest,
     signal?: AbortSignal,
+    maxBytes = Math.floor(getHeapStatistics().heap_size_limit / 4),
   ): Promise<readonly { readonly path: string; readonly bytes: Buffer }[]> {
+    const total = manifest.segments.reduce(
+      (sum, segment) => sum + segment.bytes,
+      0,
+    );
+    if (total > maxBytes)
+      throw new Error(
+        `Recording ${manifest.recording_id} holds ${String(total)} bytes, more than the ${String(maxBytes)} REA reads into memory for one recording; end recordings sooner so each stays smaller.`,
+      );
+    const segments: { readonly path: string; readonly bytes: Buffer }[] = [];
+    for (const segment of manifest.segments)
+      segments.push({
+        path: segment.path,
+        bytes: await this.#segment(segment, signal),
+      });
+    return segments;
+  }
+
+  async #segment(
+    segment: RecordingManifest["segments"][number],
+    signal: AbortSignal | undefined,
+  ): Promise<Buffer> {
+    const path = `${RECORDINGS}/${segment.path}`;
     const answer = dataGetSchema.parse(
       await this.#request(
         "/agentenv",
         {
           jsonrpc: "2.0",
-          id: 1,
+          id: segment.index + 1,
           method: "data/get",
-          params: { paths: [`${RECORDINGS}/${manifest.recording_id}`] },
+          params: { paths: [path] },
         },
         signal,
+        {
+          // Base64 plus the JSON-RPC envelope and the part's metadata.
+          bytes: Math.ceil(segment.bytes / 3) * 4 + ENVELOPE_BYTES,
+          what: `The computer's answer for recording segment ${segment.path}`,
+        },
       ),
     );
     if ("error" in answer)
       throw new Error(
-        `data/get of the recording failed: ${answer.error.message}`,
+        `data/get of recording segment ${segment.path} failed: ${answer.error.message}`,
       );
-    const files = new Map(
-      answer.result.parts.flatMap((part) => {
-        const path = Object.values(part.metadata ?? {})[0]?.path;
-        const bytes = part.file?.bytes;
-        return path === undefined || bytes === undefined
-          ? []
-          : [[path, Buffer.from(bytes, "base64")] as const];
-      }),
-    );
-    return manifest.segments.map((segment) => {
-      const bytes = files.get(`${RECORDINGS}/${segment.path}`);
-      if (
-        bytes?.length !== segment.bytes ||
-        createHash("sha256").update(bytes).digest("hex") !== segment.sha256
-      )
-        throw new Error(
-          `Recording segment ${segment.path} is missing or differs from its manifest.`,
-        );
-      return { path: segment.path, bytes };
-    });
+    const encoded = answer.result.parts.find(
+      (part) => Object.values(part.metadata ?? {})[0]?.path === path,
+    )?.file?.bytes;
+    const bytes =
+      encoded === undefined ? undefined : Buffer.from(encoded, "base64");
+    if (
+      bytes?.length !== segment.bytes ||
+      createHash("sha256").update(bytes).digest("hex") !== segment.sha256
+    )
+      throw new Error(
+        `Recording segment ${segment.path} is missing or differs from its manifest.`,
+      );
+    return bytes;
   }
 
   /** End REA's MCP session and bring the computer down; a failed release can be retried. */
@@ -296,11 +331,15 @@ export class AgentEnvComputer {
     }
   }
 
-  /** A framework-only route of the computer, with its control token. */
+  /** A framework-only route of the computer, with its control token; its answer is read within `limit`. */
   async #request(
     path: string,
     body: unknown,
     signal: AbortSignal | undefined,
+    limit = {
+      bytes: CONTROL_RESPONSE_BYTES,
+      what: `The computer's answer to ${path}`,
+    },
   ): Promise<unknown> {
     const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
     const response = await fetch(`${this.#baseUrl}${path}`, {
@@ -316,7 +355,7 @@ export class AgentEnvComputer {
       signal:
         signal === undefined ? timeout : AbortSignal.any([signal, timeout]),
     });
-    const text = await response.text();
+    const text = await readBounded(response, limit.bytes, limit.what);
     if (!response.ok)
       throw new Error(
         `The computer answered ${path} with HTTP ${String(response.status)}: ${text.slice(0, 512)}`,
