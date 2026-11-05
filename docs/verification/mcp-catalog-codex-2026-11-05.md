@@ -91,9 +91,13 @@ filtered tools, complex applications, or other clients/providers.
 ## Verification and exclusions
 
 The new runner separates execution workspaces from artifact output, holds the
-shared artifact lock, and checks runtime fingerprints again at completion. Its
+driver's artifact lock, pins one matrix runtime and checks freshness across
+trials and at completion. Its
 named usage parser preserves missing counts as unknown and rejects failed client
 profiles, wrong answers, unexpected actions, runtime drift and unverified cleanup.
+All 18 retained control transcripts were reassessed after the reporting fixes:
+verdicts and token comparisons stayed identical, and failed profiles retained
+their available usage, cleanup and resource observations.
 
 Exploratory cohorts remain recorded separately: repository-nested workspaces
 inherited project instructions/skills; a concurrent artifact rebuild interrupted

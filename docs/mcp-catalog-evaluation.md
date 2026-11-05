@@ -24,10 +24,13 @@ account configuration is changed. The runner copies only authentication into
 an external disposable profile and removes that profile after each trial.
 Execution stays outside both source checkouts even when results are saved inside
 one, so ancestor repository instructions and skills do not pollute the trial.
-The npm entrypoint holds the repository's artifact lock throughout the matrix;
-do not rebuild the selected runtime concurrently through an unguarded command.
-Each trial checks the complete runtime fingerprint again at completion. A changed
-or unreadable runtime invalidates the trial while preserving its observations.
+The npm entrypoint holds the driver's artifact lock throughout the matrix. A
+selected external checkout has its own lock, so the matrix also pins one runtime
+fingerprint and binds its catalog receipt to that manifest. Freshness checks
+stop further model calls if the runtime changes between trials. Each trial's
+before/after fingerprints must match the matrix pin; different builds never form
+a valid pair. Matrix admission/freshness audits sit outside individual guarded
+trial resource measurements. Do not rebuild the selected runtime concurrently.
 
 This lane requires Linux, Python 3, a working user systemd manager with cgroup v2,
 and an installed Codex CLI supporting the recorded flags. It reuses the existing
@@ -77,6 +80,11 @@ pair counts and the median/range of observed input-token differences. Failed
 pairs are explicit and excluded from the median. A small or negative delta can
 reflect client framing, randomized workspace paths, and measurement variation;
 it does not establish a negative schema cost.
+
+Usage, cleanup and resource receipts are collected independently of the verdict.
+A failed host, malformed event or wrong marker can retain observed usage and
+resource costs. Stage-specific issues explain invalidity; missing observations
+remain unknown. A changed matrix records its unattempted cells explicitly.
 
 Each trial retains its exact prompt, runtime file digests, requested model alias,
 Codex version, settings/source hashes, JSONL events, actual usage, answer, cleanup

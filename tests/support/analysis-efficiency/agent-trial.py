@@ -12,27 +12,7 @@ import tempfile
 import time
 
 from codex_context import capture_tool_context
-
-
-def file_digest(path):
-    digest = hashlib.sha256()
-    with path.open('rb') as data:
-        for chunk in iter(lambda: data.read(1024 * 1024), b''):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
-def runtime_fingerprint(root):
-    files = []
-    for name in ['dist', 'bridge']:
-        for path in sorted((root / name).rglob('*')):
-            if path.is_symlink():
-                raise ValueError('Runtime fingerprint does not follow symlinks')
-            if path.is_file():
-                files.append({'path': path.relative_to(root).as_posix(), 'sha256': file_digest(path)})
-    files.sort(key=lambda row: row['path'])
-    text = json.dumps(files, separators=(',', ':'), ensure_ascii=False)
-    return files, hashlib.sha256(text.encode()).hexdigest()
+from runtime_identity import file_digest, runtime_fingerprint
 
 
 def main():
@@ -261,7 +241,7 @@ def main():
             'package_lock_sha256': file_digest(repository / 'package-lock.json'),
             'experiment_sources_sha256': {
                 name: hashlib.sha256((experiment / name).read_bytes()).hexdigest()
-                for name in ['agent-trial.py', 'codex_context.py', 'provider-environment.json']
+                for name in ['agent-trial.py', 'codex_context.py', 'runtime_identity.py', 'provider-environment.json']
             },
             'developer_instructions': instruction,
             'developer_instructions_sha256': hashlib.sha256(instruction.encode()).hexdigest(),

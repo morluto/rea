@@ -9,6 +9,7 @@ import subprocess
 import sys
 
 from codex_context import token_counts
+from runtime_identity import runtime_fingerprint
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[2]
@@ -29,47 +30,86 @@ def usage_counts(value):
     return counts
 
 
-def assess_trial(directory, returncode):
-    """Keep failed trials visible; absent measurements never become zero."""
+def assess_trial(directory, returncode, expected_runtime_digest):
+    """Collect independent partial observations before grading the trial."""
     result = {'status': 'invalid', 'directory': str(directory), 'exit_code': returncode}
-    try:
-        summary = json.loads((directory / 'summary.json').read_text())
+    issues = []
+
+    def observe(stage, work):
+        try:
+            return work()
+        except (OSError, ValueError, KeyError, TypeError) as error:
+            issues.append({'stage': stage, 'reason': str(error)})
+            return None
+
+    def require(condition, stage, reason):
+        if not condition:
+            issues.append({'stage': stage, 'reason': reason})
+
+    def read_object(name):
+        value = json.loads((directory / name).read_text())
+        if not isinstance(value, dict):
+            raise ValueError('Expected an object in ' + name)
+        return value
+
+    summary = observe('summary', lambda: read_object('summary.json'))
+    settings = observe('settings', lambda: read_object('trial-settings.json'))
+    cleanup = observe('cleanup', lambda: read_object('cleanup.json'))
+    if summary is not None:
         result['summary'] = summary
-        settings = json.loads((directory / 'trial-settings.json').read_text())
-        if not isinstance(summary, dict) or not isinstance(settings, dict):
-            raise ValueError('Expected trial summary/settings objects')
-        if settings.get('catalog_load') is not True or settings.get('workspace_isolated_from_runtime') is not True:
-            raise ValueError('Trial was not an isolated catalog-load measurement')
-        events = [json.loads(line) for line in (directory / 'events.jsonl').read_text().splitlines() if line.strip()]
-        if any(not isinstance(event, dict) for event in events):
-            raise ValueError('Expected JSONL event objects')
-        if any(event.get('type') in ['error', 'turn.failed'] for event in events):
-            raise ValueError('Client reported an error or failed turn')
-        turns = [event for event in events if event.get('type') == 'turn.completed']
-        if len(turns) != 1:
-            raise ValueError('Expected exactly one completed turn')
-        result['usage'] = usage_counts(turns[0].get('usage'))
+        result['runtime_fingerprint_sha256'] = summary.get('runtime_files_sha256_before')
+        require(returncode == 0 and summary.get('exit_code') == 0 and summary.get('timeout') is False,
+                'completion', 'Trial failed or timed out')
+        require(expected_runtime_digest is not None and summary.get('runtime_bytes_unchanged') is True
+                and summary.get('runtime_files_sha256_before') == expected_runtime_digest
+                and summary.get('runtime_files_sha256_after') == expected_runtime_digest,
+                'identity', 'Runtime does not match the pinned matrix fingerprint')
+    if settings is not None:
+        require(settings.get('catalog_load') is True and settings.get('workspace_isolated_from_runtime') is True,
+                'settings', 'Trial was not an isolated catalog-load measurement')
+    if cleanup is not None:
+        result['cleanup'] = cleanup
+        require(cleanup.get('profile_removed') is True, 'cleanup', 'Trial profile cleanup was not verified')
+
+    events = []
+
+    def read_events():
+        with (directory / 'events.jsonl').open() as lines:
+            for ordinal, line in enumerate(lines, 1):
+                if not line.strip():
+                    continue
+                def parse():
+                    value = json.loads(line)
+                    if not isinstance(value, dict):
+                        raise ValueError('Expected a JSONL event object')
+                    return value
+                event = observe('events line ' + str(ordinal), parse)
+                if event is not None:
+                    events.append(event)
+
+    observe('events', read_events)
+    turns = [event for event in events if event.get('type') == 'turn.completed']
+    require(len(turns) == 1, 'usage', 'Expected exactly one completed turn')
+    usage = observe('usage', lambda: usage_counts(turns[0].get('usage'))) if len(turns) == 1 else None
+    if usage is not None:
+        result['usage'] = usage
         result['usage']['uncached_input_tokens'] = (
-            result['usage']['input_tokens'] - result['usage']['cached_input_tokens'])
-        items = [event.get('item') for event in events if event.get('type') in ['item.started', 'item.completed']]
-        for item in items:
-            if isinstance(item, dict) and item.get('type') == 'error':
-                raise ValueError('Client item error: ' + str(item.get('message')))
-        if any(not isinstance(item, dict) or item.get('type') not in ['agent_message', 'reasoning'] for item in items):
-            raise ValueError('A load-only trial performed a tool/action or an unknown item')
-        completed = [event['item'] for event in events if event.get('type') == 'item.completed']
-        answers = [item.get('text') for item in completed if item.get('type') == 'agent_message']
-        if answers != [MARKER]:
-            raise ValueError('Load-only answer did not match the oracle')
-        if returncode != 0 or summary.get('exit_code') != 0 or summary.get('timeout') is not False:
-            raise ValueError('Trial failed or timed out')
-        if summary.get('runtime_bytes_unchanged') is not True:
-            raise ValueError('Runtime fingerprint changed or could not be verified')
-        cleanup = json.loads((directory / 'cleanup.json').read_text())
-        if not isinstance(cleanup, dict) or cleanup.get('profile_removed') is not True:
-            raise ValueError('Trial profile cleanup was not verified')
-        # Reuse the existing observer's ownership-checked payload receipt. The
-        # live observer captures kernel peak/CPU before the transient cgroup exits.
+            usage['input_tokens'] - usage['cached_input_tokens'])
+    for event in events:
+        require(event.get('type') not in ['error', 'turn.failed'], 'client',
+                'Client reported an error or failed turn: ' + str(event.get('message', event.get('error'))))
+    items = [event.get('item') for event in events if event.get('type') in ['item.started', 'item.completed']]
+    for item in items:
+        if isinstance(item, dict) and item.get('type') == 'error':
+            require(False, 'client', 'Client item error: ' + str(item.get('message')))
+        else:
+            require(isinstance(item, dict) and item.get('type') in ['agent_message', 'reasoning'],
+                    'actions', 'A load-only trial performed a tool/action or an unknown item')
+    completed = [event.get('item') for event in events if event.get('type') == 'item.completed']
+    answers = [item.get('text') for item in completed if isinstance(item, dict) and item.get('type') == 'agent_message']
+    require(answers == [MARKER], 'answer', 'Load-only answer did not match the oracle')
+
+    def read_resources():
         receipts = []
         for line in directory.with_suffix('.log').read_text().splitlines():
             try:
@@ -80,25 +120,35 @@ def assess_trial(directory, returncode):
                 receipts.append(row)
         if len(receipts) != 1:
             raise ValueError('Missing or ambiguous resource receipt')
-        receipt = receipts[0]
+        return receipts[0]
+
+    receipt = observe('resources', read_resources)
+    if receipt is not None:
         result['resources'] = receipt
-        observation = receipt.get('payload_resource_observation') or {}
-        if receipt.get('abort') is not None or receipt.get('payload_resource_observation_verified') is not True \
-                or observation.get('payload_exit_code') != 0 or observation.get('payload_cleanup_verified') is not True:
-            raise ValueError('Resource stop, payload failure, or unverified process cleanup')
-        result['resource_metrics'] = {
-            'elapsed_seconds': receipt.get('elapsed_seconds'),
-            'cpu_seconds': observation['cpu_stat']['usage_usec'] / 1_000_000,
-            'peak_process_family_bytes': observation['memory_peak_bytes'],
-            'scope': 'Kernel cgroup counters at payload exit, including observer and file cache; not final scope counters.',
-        }
-        result['status'] = 'valid'
-    except (OSError, ValueError, KeyError, TypeError) as error:
-        result['reason'] = str(error)
+        observation = receipt.get('payload_resource_observation')
+        require(isinstance(observation, dict) and receipt.get('abort') is None
+                and receipt.get('payload_resource_observation_verified') is True
+                and observation.get('payload_exit_code') == 0 and observation.get('payload_cleanup_verified') is True,
+                'resources', 'Resource stop, payload failure, or unverified process cleanup')
+        def metrics():
+            cpu = observation['cpu_stat']['usage_usec']
+            peak = observation['memory_peak_bytes']
+            if any(not isinstance(value, int) or isinstance(value, bool) or value < 0 for value in [cpu, peak]):
+                raise ValueError('Invalid resource counters')
+            return {'elapsed_seconds': receipt.get('elapsed_seconds'), 'cpu_seconds': cpu / 1_000_000,
+                    'peak_process_family_bytes': peak,
+                    'scope': 'Kernel cgroup counters at payload exit, including observer and file cache; not final scope counters.'}
+        measured = observe('resource metrics', metrics)
+        if measured is not None:
+            result['resource_metrics'] = measured
+    result['status'] = 'invalid' if issues else 'valid'
+    if issues:
+        result['issues'] = issues
+        result['reason'] = '; '.join(issue['reason'] for issue in issues)
     return result
 
 
-def comparison(rows):
+def comparison(rows, expected_runtime_digest):
     """Pair each catalog with its same-mode, same-repetition no-server control."""
     controls = {(row['mode'], row['repetition']): row for row in rows if row['arm'] == 'none'}
     pairs = []
@@ -106,7 +156,9 @@ def comparison(rows):
         if row['arm'] == 'none':
             continue
         baseline = controls.get((row['mode'], row['repetition']))
-        valid = row['status'] == 'valid' and baseline is not None and baseline['status'] == 'valid'
+        valid = expected_runtime_digest is not None and row['status'] == 'valid' and baseline is not None and baseline['status'] == 'valid' \
+            and row.get('runtime_fingerprint_sha256') == expected_runtime_digest \
+            and baseline.get('runtime_fingerprint_sha256') == expected_runtime_digest
         pairs.append({
             'mode': row['mode'], 'arm': row['arm'], 'repetition': row['repetition'],
             'status': 'valid' if valid else 'invalid',
@@ -159,7 +211,13 @@ def main():
         parser.error('Repetitions/timeout must be positive; modes must be unique')
     root = args.runtime_root.resolve()
     output = args.output.resolve()
+    runtime_files, pinned_digest = (None, None) if args.plan else runtime_fingerprint(root)
     receipt = catalog_receipt(root, args.input_profile, args.selected_tools)
+    if not args.plan:
+        catalog_path = Path(receipt['path']).relative_to(root).as_posix()
+        pinned_catalog = next((row for row in runtime_files if row['path'] == catalog_path), None)
+        if pinned_catalog is None or pinned_catalog['sha256'] != receipt['sha256']:
+            raise ValueError('Catalog changed while pinning the matrix runtime; rebuild and retry')
     revision = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=root, text=True).strip()
     matrix = []
     for repetition in range(args.repetitions):
@@ -171,20 +229,34 @@ def main():
     experiment = {'version': 1, 'runtime_revision': revision, 'model': args.model, 'reasoning': args.reasoning,
                   'input_profile': args.input_profile, 'catalog': receipt, 'matrix': matrix,
                   'sources_sha256': {name: hashlib.sha256((HERE / name).read_bytes()).hexdigest()
-                                     for name in ['catalog-eval.py', 'agent-trial.py', 'codex_context.py',
+                                     for name in ['catalog-eval.py', 'agent-trial.py', 'codex_context.py', 'runtime_identity.py',
                                                   'resource-run.py', 'resource_payload.py', 'provider-environment.json']},
                   'scope': 'Fresh-session load-only usage. Warm OS/API caches are possible; no cache-miss claim or task-quality claim.',
                   'usage_scope': 'Codex turn.completed observed usage; deltas include server instructions and client framing, not an exact schema-only token count.'}
     if args.plan:
         print(json.dumps(experiment, indent=2))
         return 0
+    experiment['runtime_files_sha256'] = pinned_digest
     output.mkdir(parents=True, exist_ok=False, mode=0o700)
     write_json(output / 'experiment.json', experiment)
+    write_json(output / 'runtime-files.json', runtime_files)
     (output / 'prompt.txt').write_text(PROMPT)
     write_json(output / 'selected-tools.json', args.selected_tools)
     write_json(output / 'providers.json', {'REA_MCP_INPUT_SCHEMA_PROFILE': args.input_profile})
     rows = []
-    for cell in matrix:
+    for index, cell in enumerate(matrix):
+        reason = 'Runtime changed between trials; no further model calls were made'
+        try:
+            _, current_digest = runtime_fingerprint(root)
+        except (OSError, ValueError) as error:
+            current_digest = None
+            reason = 'Runtime identity unavailable; no further model calls were made: ' + str(error)
+        if current_digest != pinned_digest:
+            report = {'experiment': experiment, 'trials': rows, 'comparison': comparison(rows, pinned_digest),
+                      'unattempted': matrix[index:], 'observed_runtime_digest': current_digest, 'reason': reason}
+            write_json(output / 'report.json', report)
+            print(report['reason'], flush=True)
+            return 1
         directory = output / ('{repetition:02d}-{mode}-{arm}'.format(**cell))
         command = [sys.executable, str(HERE / 'resource-run.py'), '--observe-payload-exit', '--',
                    sys.executable, str(HERE / 'agent-trial.py'), '--runtime-root', str(root), '--revision', revision,
@@ -199,9 +271,9 @@ def main():
         print(json.dumps({'starting': cell}), flush=True)
         with directory.with_suffix('.log').open('w') as log:
             outcome = subprocess.run(command, stdout=log, stderr=subprocess.STDOUT, check=False)
-        row = {**cell, **assess_trial(directory, outcome.returncode)}
+        row = {**cell, **assess_trial(directory, outcome.returncode, pinned_digest)}
         rows.append(row)
-        report = {'experiment': experiment, 'trials': rows, 'comparison': comparison(rows)}
+        report = {'experiment': experiment, 'trials': rows, 'comparison': comparison(rows, pinned_digest)}
         write_json(output / 'report.json', report)
         print(json.dumps({'completed': cell, 'status': row['status'], 'usage': row.get('usage'), 'reason': row.get('reason')}), flush=True)
     print(json.dumps(report['comparison']['groups'], indent=2))
