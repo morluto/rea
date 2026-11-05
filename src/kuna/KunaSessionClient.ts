@@ -1114,7 +1114,7 @@ export class KunaSessionClient implements AnalysisClient {
             conformsToInputContract: true,
             remediationAction:
               field === "address"
-                ? "Inspect the target's supported symbol/export inventory and pass a verified address that Kuna's inventory contains. Do not repeat the unchanged call."
+                ? "Inspect the target's supported symbol/export inventory and pass a verified address; exact addresses are checked by the graph and do not need to appear in Kuna's inventory. Do not repeat the unchanged call."
                 : "Inspect list_procedures and select a discovered entry if it answers your question. An unlisted address is not proof of a function; REA cannot use it as a Kuna procedure in this session. Do not repeat the unchanged call.",
           }),
         );
@@ -1132,7 +1132,7 @@ export class KunaSessionClient implements AnalysisClient {
         remediationAction:
           matches.length === 0 && named.length === 0
             ? field === "address"
-              ? "Inspect the target's supported symbol/export inventory and pass a verified address that Kuna's inventory contains. Do not repeat the unchanged call."
+              ? "Inspect the target's supported symbol/export inventory and pass a verified address; exact addresses are checked by the graph and do not need to appear in Kuna's inventory. Do not repeat the unchanged call."
               : "Use search_procedures or list_procedures to inspect Kuna's discovered entries, then select a matching entry. Do not repeat the unchanged call."
             : matches.length === 0
               ? "Inspect the data addresses with address_name or xrefs, or select a procedure entry from list_procedures. Do not repeat the unchanged call."
