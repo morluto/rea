@@ -63,6 +63,7 @@ import {
 import { inspectPeCodeViewFromBuffer } from "../domain/binaryTarget.js";
 import { hasBinaryPlistSignature } from "../domain/apple/appleArchiveFormat.js";
 import { logicalPathNfc } from "../domain/artifactIdentity.js";
+import type { ArtifactAdmissionLimit } from "../domain/artifactOperationError.js";
 import { observeMzWindowsHeader } from "../domain/dosMz.js";
 import { evidenceSubjectFormatSchema } from "../domain/evidenceSubject.js";
 import { byteOrderMarkEncoding } from "../domain/textByteOrderMark.js";
@@ -2843,6 +2844,46 @@ const fileSizeRecovery = (maxFileBytes: number) =>
         remediationAction: `Raise max_file_bytes above ${String(maxFileBytes)} bytes or select a smaller artifact. The ceiling is ${String(MAX_RELEASE_EXPOSURE_FILE_BYTES)} bytes.`,
       };
 
+/**
+ * The header admission is its own bound, not the selected-file ceiling, so
+ * max_file_bytes cannot repair it. This tool reads the default admission, so
+ * the runtime setting the inventory owner names does not reach it either.
+ */
+const asarHeaderAdmissionFailure = (
+  cause: ArtifactReaderFailure,
+  admission: ArtifactAdmissionLimit,
+): AnalysisResourceConstraintError => {
+  const allowance = `The ASAR header/index admission of ${String(admission.maximumBytes)} bytes (${OPERATION} has no runtime override)`;
+  return new AnalysisResourceConstraintError(
+    OPERATION,
+    "capacity",
+    admission.requiredBytes === undefined
+      ? `An ASAR header/index exceeds ${String(admission.maximumBytes)} bytes.`
+      : `An ASAR header/index of ${String(admission.requiredBytes)} bytes exceeds ${String(admission.maximumBytes)} bytes.`,
+    {
+      asar_max_header_bytes: admission.maximumBytes,
+      ...(admission.requiredBytes === undefined
+        ? {}
+        : { required_header_bytes: admission.requiredBytes }),
+    },
+    { cause, ...fixedAllowanceOptions(allowance, "input") },
+  );
+};
+
+const releaseExposureLimitFailure = (
+  cause: ArtifactReaderFailure,
+  maxFileBytes: number,
+): AnalysisResourceConstraintError =>
+  cause.admission === undefined
+    ? new AnalysisResourceConstraintError(
+        OPERATION,
+        "file-size",
+        cause.message,
+        { max_file_bytes: maxFileBytes },
+        { cause, ...fileSizeRecovery(maxFileBytes) },
+      )
+    : asarHeaderAdmissionFailure(cause, cause.admission);
+
 const releaseExposureFailurePrimary = (
   facts: ArtifactFilePrimaryFacts,
   path: string,
@@ -2872,13 +2913,7 @@ const releaseExposureFailurePrimary = (
     cause instanceof ArtifactReaderFailure
   ) {
     if (cause.reason === "limit")
-      return new AnalysisResourceConstraintError(
-        OPERATION,
-        "file-size",
-        cause.message,
-        { max_file_bytes: maxFileBytes },
-        { cause, ...fileSizeRecovery(maxFileBytes) },
-      );
+      return releaseExposureLimitFailure(cause, maxFileBytes);
     if (cause.reason === "path" || cause.reason === "format")
       return new AnalysisInputError(OPERATION, { cause }, [
         { path: ["path"], reason: "invalid_format", message: cause.message },

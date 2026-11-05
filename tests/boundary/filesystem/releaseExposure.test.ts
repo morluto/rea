@@ -1,9 +1,11 @@
-import { mkdir, symlink, writeFile } from "node:fs/promises";
+import { mkdir, symlink, truncate, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createPackageWithOptions } from "@electron/asar";
 import { describe, expect, it } from "vitest";
 
 import { createReleaseExposureService } from "../../../src/composition/releaseExposure.js";
+import { DEFAULT_ASAR_MAX_HEADER_BYTES } from "../../../src/domain/analysisResourceLimits.js";
+import { AnalysisResourceConstraintError } from "../../../src/domain/analysisErrorCore.js";
 import { releaseExposureReportSchema } from "../../../src/domain/releaseExposure.js";
 import { thinFuseImage } from "../../fixtures/electron/fuseImage.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -170,6 +172,43 @@ describe("release exposure app bundle boundary", () => {
         .checks.find((item) => item.id === "electron.run_as_node");
       expect(check?.status).toBe("exposed");
       expect(JSON.stringify(check?.locations)).toContain("sidecar");
+    } finally {
+      await service.close();
+    }
+  });
+});
+
+describe("release exposure ASAR header admission", () => {
+  it("keeps a directory ASAR's header admission instead of the file-size ceiling", async () => {
+    const root = await createTestTempDirectory("rea-release-exposure-header-");
+    const archive = join(root, "app.asar");
+    const headerBytes = DEFAULT_ASAR_MAX_HEADER_BYTES + 4;
+    const json = Buffer.from("{}");
+    const prefix = Buffer.alloc(16);
+    prefix.writeUInt32LE(4, 0);
+    prefix.writeUInt32LE(headerBytes, 4);
+    prefix.writeUInt32LE(headerBytes - 4, 8);
+    prefix.writeUInt32LE(json.length, 12);
+    await writeFile(archive, Buffer.concat([prefix, json]));
+    // Declare the extent without allocating a header-sized buffer.
+    await truncate(archive, headerBytes + 8);
+    const service = createReleaseExposureService();
+    try {
+      const result = await service.inspect({ path: root });
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      const error = result.error;
+      expect(error).toBeInstanceOf(AnalysisResourceConstraintError);
+      if (!(error instanceof AnalysisResourceConstraintError)) return;
+      expect(error.resource).not.toBe("file-size");
+      expect(error.reportedLimits).not.toHaveProperty("max_file_bytes");
+      expect(error.reportedLimits).toMatchObject({
+        asar_max_header_bytes: DEFAULT_ASAR_MAX_HEADER_BYTES,
+        required_header_bytes: headerBytes,
+      });
+      expect(error.reason).toContain("ASAR header/index");
+      expect(error.fixedAllowance?.name).toContain("ASAR header/index");
+      expect(error.remediationAction).toBeUndefined();
     } finally {
       await service.close();
     }
