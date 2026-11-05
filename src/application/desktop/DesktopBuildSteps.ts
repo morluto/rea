@@ -2,7 +2,7 @@ import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
 import { err, ok, type Result } from "../../domain/result.js";
-import type { StoppedCapture } from "./DesktopBuildCapture.js";
+import type { StoppedCapture } from "./DesktopBuildSummary.js";
 import type {
   BuildComputerSteps,
   DesktopBuildComputers,

@@ -21,6 +21,7 @@ import {
   stageHeld,
   WITNESS_STAGES,
   type WitnessStage,
+  type WitnessStageRecord,
 } from "../../domain/desktop/buildWitness.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { err, ok, type Result } from "../../domain/result.js";
@@ -81,9 +82,34 @@ const usableFolder = async (directory: string): Promise<boolean> =>
       (cause as NodeJS.ErrnoException | undefined)?.code === "ENOENT",
   );
 
+/**
+ * A witness from its seed on: `open` while stages are checked, `saving`
+ * once a stage ended it and until its record is written, which a repeat of
+ * that stage's check retries, and `saved` after.
+ */
 interface OpenWitness extends EndedWitness {
-  ended: boolean;
+  state: "open" | "saving" | "saved";
 }
+
+/** What the witness says of one filed stage. */
+const summaryOf = (
+  filed: WitnessStageRecord,
+  next: WitnessStage | null,
+  record: WitnessRecord | null,
+): WitnessSummary => ({
+  stage: filed.stage,
+  expectation: filed.expectation,
+  held: filed.held,
+  status: !filed.held ? "failed" : record === null ? "open" : "held",
+  next_stage: next,
+  record,
+});
+
+/** The pass and fail counts of one set of results. */
+const counted = (task: DesktopTask, results: TaskCheckOutcome[]) => {
+  const passed = results.filter((result) => result.passed).length;
+  return { task: task.name, passed, failed: results.length - passed, results };
+};
 
 /**
  * Grades an exported task against a build computer's app, as the bundle's
@@ -116,6 +142,8 @@ export class DesktopBuildWitness {
       );
     const task = parsed.value;
     const { stage } = input;
+    if (stage !== undefined && this.#witness?.state === "saving")
+      return this.#resave(this.#witness, task, stage, signal);
     const admitted =
       stage === undefined
         ? undefined
@@ -124,13 +152,7 @@ export class DesktopBuildWitness {
     const graded = await this.#grade(task, signal);
     if (!graded.ok) return graded;
     const results = graded.value;
-    const passed = results.filter((result) => result.passed).length;
-    const checked = {
-      task: task.name,
-      passed,
-      failed: results.length - passed,
-      results,
-    };
+    const checked = counted(task, results);
     if (stage === undefined || admitted === undefined)
       return ok({ ...checked, witness: null });
     const filed = await this.#file(stage, admitted.value, results, signal);
@@ -176,26 +198,29 @@ export class DesktopBuildWitness {
     const witness = this.#witness;
     if (witness === undefined) throw new TypeError("the stage was admitted");
     const held = stageHeld(stage, results);
-    const expectation = stageExpectation(stage);
-    witness.stages.push({
+    const filed = {
       stage,
       actions_before: actionsBefore,
       checked_at: new Date().toISOString(),
-      expectation,
+      expectation: stageExpectation(stage),
       held,
       results,
-    });
-    const ends = !held || stage === WITNESS_STAGES.at(-1);
-    if (!ends)
-      return ok({
-        stage,
-        expectation,
-        held,
-        status: "open",
-        next_stage: WITNESS_STAGES[witness.stages.length] ?? null,
-        record: null,
-      });
-    witness.ended = true;
+    };
+    witness.stages.push(filed);
+    if (held && stage !== WITNESS_STAGES.at(-1))
+      return ok(
+        summaryOf(filed, WITNESS_STAGES[witness.stages.length] ?? null, null),
+      );
+    witness.state = "saving";
+    return this.#save(witness, filed, signal);
+  }
+
+  /** Write the ended witness's record; until that succeeds the witness keeps every stage for a retry. */
+  async #save(
+    witness: OpenWitness,
+    filed: WitnessStageRecord,
+    signal: AbortSignal,
+  ): Promise<Result<WitnessSummary, AnalysisError>> {
     const record = await writeWitnessRecord(
       this.computer,
       witness,
@@ -203,15 +228,33 @@ export class DesktopBuildWitness {
       signal,
     );
     if (!record.ok) return record;
-    const status = held ? "held" : "failed";
-    return ok({
-      stage,
-      expectation,
-      held,
-      status,
-      next_stage: null,
-      record: record.value,
-    });
+    witness.state = "saved";
+    return ok(summaryOf(filed, null, record.value));
+  }
+
+  /** Repeat the check of the stage that ended the witness to retry writing its record, without checking again. */
+  async #resave(
+    witness: OpenWitness,
+    task: DesktopTask,
+    stage: WitnessStage,
+    signal: AbortSignal,
+  ): Promise<Result<CheckedTask, AnalysisError>> {
+    const filed = witness.stages.at(-1);
+    if (
+      filed === undefined ||
+      filed.stage !== stage ||
+      taskDigest(task) !== witness.digest
+    )
+      return err(
+        refused(
+          "This witness has ended, but its record is not saved yet.",
+          `Check ${filed?.stage ?? "the last stage"} again with the same task to save it.`,
+        ),
+      );
+    const saved = await this.#save(witness, filed, signal);
+    return saved.ok
+      ? ok({ ...counted(task, filed.results), witness: saved.value })
+      : saved;
   }
 
   /** Open the witness at its seed, or admit the next stage of the open one; its value is where its actions end. */
@@ -249,8 +292,9 @@ export class DesktopBuildWitness {
     directory: string | undefined,
     signal: AbortSignal,
   ): Promise<Result<OpenWitness, AnalysisError>> {
-    if (this.#witness !== undefined)
-      return err(refused("This computer was already witnessed.", FRESH));
+    const unfinished = this.#witness;
+    if (unfinished !== undefined)
+      return this.#retrySeed(unfinished, digest, directory);
     if (directory === undefined)
       return err(
         refused(
@@ -270,13 +314,13 @@ export class DesktopBuildWitness {
         `rea-witness:${randomUUID()}`,
         signal,
       );
-      const witness = {
+      const witness: OpenWitness = {
         task,
         digest,
         directory,
         recordingId,
         stages: [],
-        ended: false,
+        state: "open",
       };
       this.#witness = witness;
       return ok(witness);
@@ -288,6 +332,28 @@ export class DesktopBuildWitness {
         }),
       );
     }
+  }
+
+  /**
+   * A seed whose check failed after the witness opened, such as on a failed
+   * read of the app's state, is checked again with the same task and folder,
+   * keeping the recording it began.
+   */
+  #retrySeed(
+    witness: OpenWitness,
+    digest: string,
+    directory: string | undefined,
+  ): Result<OpenWitness, AnalysisError> {
+    if (witness.state !== "open" || witness.stages.length > 0)
+      return err(refused("This computer was already witnessed.", FRESH));
+    return witness.digest === digest && witness.directory === directory
+      ? ok(witness)
+      : err(
+          refused(
+            "A seed check for another task or folder opened this witness and did not finish.",
+            "Check the seed again with the task and directory it was first given.",
+          ),
+        );
   }
 
   /** The open witness a later stage continues, for the same task and without a folder. */
@@ -303,7 +369,8 @@ export class DesktopBuildWitness {
           "Check the seed stage first, with directory.",
         ),
       );
-    if (witness.ended) return err(refused("This witness has ended.", FRESH));
+    if (witness.state !== "open")
+      return err(refused("This witness has ended.", FRESH));
     if (directory !== undefined)
       return err(
         refused(

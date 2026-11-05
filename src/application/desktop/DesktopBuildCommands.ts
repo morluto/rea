@@ -27,6 +27,7 @@ export const ENDS = [
 /** What REA's build controller answers a command with. */
 export const answerSchema = z.looseObject({
   error: z.string().optional(),
+  absent: z.boolean().optional(),
   line: z.string().optional(),
   exited: z.int().optional(),
   timed_out: z.boolean().optional(),

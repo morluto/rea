@@ -37,6 +37,8 @@ const COMPUTER_ARCHITECTURES = ["amd64", "arm64"] as const;
 /** The package of `gtk-launch`, which opens the app from its desktop entry. */
 const LAUNCHER_PACKAGE = "libgtk-3-bin";
 const REA_INSTALL_SCRIPT = "install-rea.sh";
+/** Where the build layer keeps a `.deb` the app came from, for the capture's `--package-file`. */
+export const BUILD_PACKAGE_FILE = "/opt/rea/package.deb";
 const REA_PAYLOAD = "rea-payload.tar";
 
 /** A URL agentenv downloads from: http or https in lowercase, without a user name or password. */
@@ -138,11 +140,22 @@ const download = (
 ): string =>
   `Download(url=${py(url)}, sha256=${py(sha256)}, to=${py(to)}${arch === undefined ? "" : `, arch=${py(arch)}`})`;
 
-/** The build-only step: unpack Node.js and REA into /opt/rea, as root and offline, and put both on PATH. */
-const renderReaInstallScript = (): string => `#!/bin/sh
+/**
+ * The build-only step: unpack Node.js and REA into /opt/rea, as root and
+ * offline, put both on PATH, and keep a copy of the app's `.deb`, which its
+ * own install step removes, for the capture to record.
+ */
+const renderReaInstallScript = (
+  packageFile: string | undefined,
+): string => `#!/bin/sh
 # Build-only layer, run as root with the network off: unpack Node.js and REA into /opt/rea and put both on PATH.
 set -eu
-mkdir -p /opt/rea/payload
+mkdir -p /opt/rea/payload${
+  packageFile === undefined
+    ? ""
+    : `
+cp ${packageFile} ${BUILD_PACKAGE_FILE}`
+}
 python3 - <<'PY'
 import glob
 import tarfile
@@ -235,9 +248,10 @@ const buildInstall = (
     key,
     packageFile,
     downloads,
+    // REA's layer runs first, so it can keep the .deb the install removes.
     scripts: [
-      ...(packageFile === null ? [] : [INSTALL_SCRIPT]),
       REA_INSTALL_SCRIPT,
+      ...(packageFile === null ? [] : [INSTALL_SCRIPT]),
     ],
   };
 };
@@ -306,7 +320,10 @@ export const renderBuildBundle = (
         appModuleFile(name),
         renderBuildModule(request, entry, plan, install),
       ),
-      file(REA_INSTALL_SCRIPT, renderReaInstallScript()),
+      file(
+        REA_INSTALL_SCRIPT,
+        renderReaInstallScript(install.packageFile?.path ?? undefined),
+      ),
       ...(install.packageFile === null
         ? []
         : [file(INSTALL_SCRIPT, renderInstallScript(install.packageFile))]),

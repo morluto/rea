@@ -54,6 +54,8 @@ export interface FakeComputerOptions {
     readonly home: string;
     readonly bin: string;
     readonly env?: Readonly<Record<string, string>>;
+    /** Controller commands, in order, whose command runs but whose reply is lost. */
+    readonly dropReplies?: string[];
   };
   /** The one app the card lists. */
   readonly app?: FakeApp;
@@ -77,6 +79,12 @@ export interface FakeApp {
   readonly seed: Record<string, unknown>;
   /** The data methods the app was asked, in order. */
   readonly methods: string[];
+  /** data/get calls still to answer with an error, as a busy app would. */
+  failGets?: number;
+  /** Readiness polls answered not ready after each data/reset, as a slow relaunch would. */
+  readonly unreadyAfterReset?: number;
+  /** Readiness polls left before the relaunched app is ready. */
+  unready?: number;
 }
 
 /** A local stand-in for an agentenv computer's driver: readiness, `computer_*` MCP tools, recording and data/get. */
@@ -212,6 +220,60 @@ const runExec = (
     });
   });
 
+/** A reply the fake loses after doing the work, as a dropped connection would. */
+const LOST = Symbol("lost reply");
+
+/** One of the app's data methods. */
+const appRoute = (app: FakeApp, request: { id?: number; method?: string }) => {
+  const method = request.method ?? "";
+  app.methods.push(method);
+  if (method === "data/get" && (app.failGets ?? 0) > 0) {
+    app.failGets = (app.failGets ?? 0) - 1;
+    return {
+      jsonrpc: "2.0",
+      id: request.id,
+      error: { code: -32000, message: "the app is busy", data: {} },
+    };
+  }
+  if (method === "data/reset") {
+    app.state = structuredClone(app.seed);
+    app.unready = app.unreadyAfterReset ?? 0;
+  }
+  return {
+    jsonrpc: "2.0",
+    id: request.id,
+    result:
+      method === "data/get"
+        ? {
+            parts: [
+              { kind: "file", file: { bytes: "eA==" } },
+              { kind: "data", data: { state: app.state } },
+            ],
+          }
+        : {},
+  };
+};
+
+/** Not ready while the app relaunches after a reset; undefined once it is, for the usual readiness. */
+const relaunching = (app: FakeApp | undefined) => {
+  if (app === undefined || (app.unready ?? 0) === 0) return undefined;
+  app.unready = (app.unready ?? 0) - 1;
+  return { ready: false, checks: [{ name: app.name, ok: false }] };
+};
+
+/** One command run as the computer would, its reply lost when the test asks. */
+const execRoute = async (
+  exec: NonNullable<FakeComputerOptions["exec"]>,
+  token: string,
+  argv: readonly string[],
+) => {
+  const answer = await runExec(exec, token, argv);
+  const { dropReplies } = exec;
+  if (dropReplies === undefined || dropReplies[0] !== argv[4]) return answer;
+  dropReplies.shift();
+  return LOST;
+};
+
 /** The card, the app's data methods, exec and home files, when the fake serves them; undefined for other routes. */
 const buildRoute = async (
   options: FakeComputerOptions,
@@ -234,27 +296,12 @@ const buildRoute = async (
           ? []
           : [{ name: app.name, url: `/svc/${app.name}/agentenv` }],
     };
-  if (app !== undefined && path === `/svc/${app.name}/agentenv`) {
-    const method = request.method ?? "";
-    app.methods.push(method);
-    if (method === "data/reset") app.state = structuredClone(app.seed);
-    return {
-      jsonrpc: "2.0",
-      id: request.id,
-      result:
-        method === "data/get"
-          ? {
-              parts: [
-                { kind: "file", file: { bytes: "eA==" } },
-                { kind: "data", data: { state: app.state } },
-              ],
-            }
-          : {},
-    };
-  }
+  if (app !== undefined && path === `/svc/${app.name}/agentenv`)
+    return appRoute(app, request);
+  if (path === "/agentenv/ext/computer-ready/status") return relaunching(app);
   if (exec === undefined) return undefined;
   if (path === "/agentenv/ext/computer-exec/run")
-    return runExec(exec, token, request.argv ?? []);
+    return execRoute(exec, token, request.argv ?? []);
   const paths = request.params?.paths ?? [];
   // Recordings keep the canned segment; other paths are the home's files.
   if (
@@ -396,12 +443,11 @@ export const startFakeComputer = async (
         return;
       }
       const parsed: unknown = body.length === 0 ? {} : JSON.parse(String(body));
-      sendJson(
-        response,
-        200,
+      const answer =
         (await buildRoute(options, token, url.pathname, parsed)) ??
-          frameworkRoute(state, url.pathname, parsed),
-      );
+        frameworkRoute(state, url.pathname, parsed);
+      if (answer === LOST) response.destroy();
+      else sendJson(response, 200, answer);
     })().catch((cause: unknown) => {
       response.destroy(cause instanceof Error ? cause : undefined);
     });

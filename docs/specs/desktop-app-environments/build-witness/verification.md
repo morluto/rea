@@ -82,6 +82,32 @@ driven as the building agent:
 - Every computer closed with `teardown: "agentenv"`; Docker held only the
   local registry it had before. The MCP server's log never names a token.
 
+## Review fixes
+
+Run on macOS after the first review; the VM was not used. Each new test
+failed on the reviewed head, with only the new tests and fixtures added, and
+passes now. The fake computer now runs a command and then loses its reply
+when a test asks, fails an app's `data/get` and keeps a relaunched app
+unready for some polls.
+
+- `buildWitness.test.ts`: a reset is neither the edit nor the near miss, and
+  a reset after the last input refuses them; a near miss made after a reset
+  is admitted.
+- `appBuild.test.ts`: the build layer copies a `.deb` to
+  `/opt/rea/package.deb` before the app's own install removes it.
+- `BuildComputerController.test.ts`: each checked answer is handed over
+  before the next is fetched.
+- `buildCaptureRetryMcp.test.ts`: a start whose reply was lost stops its
+  capture, and while that stop's reply is lost too REA refuses another start
+  naming the capture, then retries the stop first; a lost checkpoint reply
+  comes back on a repeat; a stop whose draft reply was lost finishes on a
+  repeat and repeats its result, and the export follows; apt's exit 100 and
+  message reach `package_lists_error`; a `.deb` request captures with
+  `--package-file` and exports with `--package-url`.
+- `buildWitnessMcp.test.ts`: a seed whose read failed is checked again with
+  the one recording; a record whose save was refused is saved on a repeat of
+  `after_reset` without reading the app again; a slow reset sends progress.
+
 ## Bounded action log
 
 Run on macOS after merging the build computer's bounded action log; the VM

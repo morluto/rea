@@ -76,17 +76,35 @@ export interface FetchedFile {
   readonly sha256: string;
 }
 
+/** The answers for one home folder: files listed, then fetched in batches of about `FETCH_BATCH_BYTES`. */
+const batched = (files: z.infer<typeof listingSchema>["files"]) => {
+  const batches: { files: typeof files; bytes: number }[] = [];
+  for (const file of files) {
+    const last = batches.at(-1);
+    if (last === undefined || last.bytes + file.size > FETCH_BATCH_BYTES)
+      batches.push({ files: [file], bytes: file.size });
+    else {
+      last.files.push(file);
+      last.bytes += file.size;
+    }
+  }
+  return batches;
+};
+
 /**
  * Bring every regular file under a home folder of the computer back to REA:
  * listed with sizes and digests in the computer, fetched through `data/get`
- * in answers of at most 8 MiB of files each (a larger file comes alone), and
- * each checked against its listing. A link or special file is refused.
+ * in answers of at most 8 MiB of files each (a larger file comes alone),
+ * each checked against its listing and handed to `sink` before the next
+ * answer is asked for, so one answer at a time is held. A link or special
+ * file is refused. The value counts the files and bytes handed over.
  */
 export const fetchHomeFolder = async (
   computer: ControlledComputer,
   folder: string,
+  sink: { readonly file: (file: FetchedFile) => Promise<void> },
   signal?: AbortSignal,
-): Promise<readonly FetchedFile[]> => {
+): Promise<{ readonly files: number; readonly bytes: number }> => {
   const listing = listingSchema.parse(
     await runBuildController(
       computer,
@@ -99,18 +117,8 @@ export const fetchHomeFolder = async (
     throw new Error(
       `${folder} holds entries other than regular files: ${listing.skipped.join(", ")}.`,
     );
-  const batches: { files: typeof listing.files; bytes: number }[] = [];
-  for (const file of listing.files) {
-    const last = batches.at(-1);
-    if (last === undefined || last.bytes + file.size > FETCH_BATCH_BYTES)
-      batches.push({ files: [file], bytes: file.size });
-    else {
-      last.files.push(file);
-      last.bytes += file.size;
-    }
-  }
-  const fetched: FetchedFile[] = [];
-  for (const { files: batch, bytes } of batches) {
+  let handed = { files: 0, bytes: 0 };
+  for (const { files: batch, bytes } of batched(listing.files)) {
     const files = await computer.homeFiles(
       batch.map((file) => file.path),
       bytes,
@@ -130,12 +138,13 @@ export const fetchHomeFolder = async (
         throw new Error(
           `${file.path} is missing from the computer's answer or differs from its listing.`,
         );
-      fetched.push({
+      await sink.file({
         path: file.path.slice(folder.length + 1),
         bytes: content,
         sha256,
       });
+      handed = { files: handed.files + 1, bytes: handed.bytes + file.size };
     }
   }
-  return fetched;
+  return handed;
 };

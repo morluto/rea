@@ -125,7 +125,79 @@ describe("build witness rules", () => {
       admit([...nearMiss, staged("after_reset", 6)], "after_reset", []),
     ).toMatchObject({ ok: false, error: expect.stringContaining("ended") });
   });
+});
 
+describe("build witness edits", () => {
+  it("never takes a reset as the edit or the near miss", () => {
+    const seed = [staged("seed", 0)];
+    // An edit made only of a reset, or undone by one, is no edit.
+    expect(admit(seed, "after_edit", [action("reset")])).toMatchObject({
+      ok: false,
+      error: expect.stringContaining("act on the app"),
+    });
+    expect(
+      admit(seed, "after_edit", [action("type"), action("reset")]),
+    ).toMatchObject({ ok: false });
+    const edited = [...seed, staged("after_edit", 1)];
+    const log = [action("type")];
+    // Reset after a passing edit, check near_miss on the seed: refused.
+    expect(admit(edited, "near_miss", [...log, action("reset")])).toMatchObject(
+      { ok: false, error: expect.stringContaining("reset") },
+    );
+    expect(
+      admit(edited, "near_miss", [
+        ...log,
+        action("key"),
+        action("reset"),
+        action("screenshot"),
+      ]),
+    ).toMatchObject({ ok: false });
+    // A near miss made after a reset is still a change of the app.
+    expect(
+      admit(edited, "near_miss", [...log, action("reset"), action("type")]),
+    ).toEqual({ ok: true, value: 3 });
+  });
+});
+
+describe("build witness over a long session", () => {
+  it("reads the count and the last applied actions, so it holds after the log drops its oldest entries", () => {
+    const seed = [staged("seed", 500)];
+    expect(
+      admitWitnessStage(seed, "after_edit", {
+        total: 1000,
+        lastApplied: { type: 999, reset: 10 },
+      }),
+    ).toEqual({ ok: true, value: 1000 });
+    expect(
+      admitWitnessStage(seed, "after_edit", {
+        total: 1000,
+        lastApplied: { type: 400 },
+      }),
+    ).toMatchObject({
+      ok: false,
+      error: expect.stringContaining("act on the app"),
+    });
+    const nearMiss = [
+      ...seed,
+      staged("after_edit", 600),
+      staged("near_miss", 800),
+    ];
+    expect(
+      admitWitnessStage(nearMiss, "after_reset", {
+        total: 1000,
+        lastApplied: { key: 700, reset: 900 },
+      }),
+    ).toEqual({ ok: true, value: 1000 });
+    expect(
+      admitWitnessStage(nearMiss, "after_reset", {
+        total: 1000,
+        lastApplied: { key: 950, reset: 900 },
+      }),
+    ).toMatchObject({ ok: false, error: expect.stringContaining("reset") });
+  });
+});
+
+describe("build witness state views", () => {
   it("reads the app's data/get state into the views the checks read, keeping each file's error", () => {
     expect(
       appStateViews([
@@ -173,43 +245,5 @@ describe("build witness rules", () => {
       ok: false,
       error: expect.stringContaining("no state views"),
     });
-  });
-});
-
-describe("build witness over a long session", () => {
-  it("reads the count and the last applied actions, so it holds after the log drops its oldest entries", () => {
-    const seed = [staged("seed", 500)];
-    expect(
-      admitWitnessStage(seed, "after_edit", {
-        total: 1000,
-        lastApplied: { type: 999, reset: 10 },
-      }),
-    ).toEqual({ ok: true, value: 1000 });
-    expect(
-      admitWitnessStage(seed, "after_edit", {
-        total: 1000,
-        lastApplied: { type: 400 },
-      }),
-    ).toMatchObject({
-      ok: false,
-      error: expect.stringContaining("act on the app"),
-    });
-    const nearMiss = [
-      ...seed,
-      staged("after_edit", 600),
-      staged("near_miss", 800),
-    ];
-    expect(
-      admitWitnessStage(nearMiss, "after_reset", {
-        total: 1000,
-        lastApplied: { key: 700, reset: 900 },
-      }),
-    ).toEqual({ ok: true, value: 1000 });
-    expect(
-      admitWitnessStage(nearMiss, "after_reset", {
-        total: 1000,
-        lastApplied: { key: 950, reset: 900 },
-      }),
-    ).toMatchObject({ ok: false, error: expect.stringContaining("reset") });
   });
 });

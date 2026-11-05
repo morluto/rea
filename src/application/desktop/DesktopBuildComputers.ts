@@ -280,7 +280,7 @@ export class DesktopBuildComputers {
           computer: live,
           capture: new DesktopBuildCapture(
             live,
-            source.kind === "request" ? source.desktop_entry : undefined,
+            source.kind === "request" ? source : undefined,
           ),
           witness: new DesktopBuildWitness(live, actions),
         },

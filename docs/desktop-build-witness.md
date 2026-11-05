@@ -23,10 +23,14 @@ Like the computer tools, these are MCP-only and act on a `computer_id` from
 1. `start_build_computer` from a request. REA is installed in the computer.
 2. `start_build_capture`. REA writes an apt configuration under
    `~/.rea-build/apt` and runs `apt-get update` as the computer's user, so the
-   capture finds the package's sources (`package_lists` counts the lists).
-   It then starts `rea capture-desktop-application --desktop-entry <entry>`
+   capture finds the package's sources (`package_lists` counts the lists,
+   and `package_lists_error` gives apt's exit status and last lines when the
+   download failed). It then starts `rea capture-desktop-application
+   --desktop-entry <entry>`
    in the computer, leaving `~/.rea-build` out of every checkpoint, and returns
-   once the app's window is open, with a screenshot. Do not open the app from
+   once the app's window is open, with a screenshot. For an app installed
+   from a `.deb` file, the build layer keeps that file at
+   `/opt/rea/package.deb` and the capture records it with `--package-file`. Do not open the app from
    the menu first: the capture refuses an app whose window is already open.
 3. Make the seed through the app with `act_on_build_computer`, saving it
    where the user keeps such files, such as `~/Documents`, then
@@ -44,9 +48,12 @@ Like the computer tools, these are MCP-only and act on a `computer_id` from
    The export runs inside the computer with `--seed-checkpoint seed
    --end-checkpoint end`, so it seeds what was saved at `seed`, scrubs the
    computer's host name and user from it, and refuses a task whose checks
-   all pass on the seed. REA lists the bundle's files with their sizes and
-   SHA-256 in the computer, brings them back through the driver's `data/get`
-   in answers of at most 8 MiB, checks each, and writes the folder.
+   all pass on the seed. For a `.deb` app, the export takes the request's
+   URL with `--package-url`. REA lists the bundle's files with their sizes
+   and SHA-256 in the computer, brings them back through the driver's
+   `data/get` in answers of at most 8 MiB, and checks and writes each answer
+   into the folder before asking for the next, so one answer at a time is
+   held; a failure leaves no partial folder.
 8. `close_build_computer`.
 
 A checkpoint name is lowercase letters, digits, dot, dash and underscore; the
@@ -54,6 +61,18 @@ capture's own `baseline`, `stop`, `time-limit` and `exit` are refused, and so
 is a name already taken. The acknowledgement comes from the capture after it
 has walked the home and retained what changed: `entries` walked, `changes`
 since the checkpoint before, `retained_files` and `retained_bytes`.
+
+Each step can be asked again after its answer was lost:
+
+- A start whose answer is lost, or whose window never opened, stops the
+  capture it may have left running. Until the computer confirms that stop,
+  REA keeps the capture and the next `start_build_capture` retries the stop
+  before starting another.
+- A checkpoint the capture took whose acknowledgement was lost comes back
+  from the capture's own log when the same name is marked again.
+- A stop whose summary or draft was not read finishes when stop is asked
+  again, and a finished stop repeats its result. The draft and the export
+  trust the checkpoints the capture's own Evidence records.
 
 The capture, the draft and the export run as the computer's user in its home,
 without any `AGENTENV_*` variable, so neither REA nor the app holds the
@@ -80,11 +99,14 @@ Then, with the task exactly as exported:
 beside the files and evaluates each check with REA's evaluator, the one the
 export validates tasks with and the exported verifier mirrors, one result per
 check. Without `stage` it only grades. The `seed` stage begins a recording
-of the display under REA's own request id. The stages come in order; the edit
-and the near miss each need an applied click, drag, scroll, type or key since
-the stage before, and `after_reset` needs the reset as the last change. A
-reset relaunches the app, and REA waits until the computer is ready again
-before answering.
+of the display under REA's own request id; a seed check that fails after it,
+such as on a failed read of the app's state, can be asked again with the same
+task and folder. The stages come in order. The edit and the near miss each
+need an applied click, drag, scroll, type or key since the stage before, with
+no reset after the last of them, since a reset puts the seed back rather than
+changing the app; `after_reset` needs the reset as the last change. A reset
+relaunches the app, and REA waits until the computer is ready again before
+answering, sending progress notifications while it waits.
 
 A stage whose checks do not show what it must ends the witness, and so does
 `after_reset`. REA then ends the recording, fetches its segments through
@@ -104,8 +126,11 @@ A stage whose checks do not show what it must ends the witness, and so does
 
 The stages' rules read the log's count of actions and the last applied
 action of each kind, which it keeps for the whole session, so they hold
-however many entries it dropped. The result returns the same record. A
-computer is witnessed once; witness again from a fresh computer.
+however many entries it dropped. The result returns the same record. When writing it fails, such as for a
+folder something else wrote into, the witness keeps its stages: check the
+stage that ended it again, with the same task, and REA writes the record
+without checking again. A computer is witnessed once; witness again from a
+fresh computer.
 
 See the [specification](specs/desktop-app-environments/build-witness/spec.md)
 for scope and verification.

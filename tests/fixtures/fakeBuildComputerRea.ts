@@ -60,6 +60,7 @@ if command == "capture-desktop-application":
         progress(f"Recorded checkpoint {name}.", {"kind": "checkpoint", "name": name, "trigger": "request",
                                                    "at_ms": 1000 * len(taken), "entries": 5, "changes": 1,
                                                    "retained_files": 1, "retained_bytes": 5})
+    note("stopped.jsonl", {"pid": os.getpid()})
     out = option(args, "--output")
     shutil.copytree(os.environ["FAKE_REA_CAPTURE"], out)
     with open(os.path.join(out, "capture.json")) as handle:
@@ -89,6 +90,11 @@ import sys
 
 with open(os.environ["APT_CONFIG"]) as handle:
     lists = re.search(r'Dir::State::Lists "([^"]+)"', handle.read()).group(1)
+code = int(os.environ.get("FAKE_APT_EXIT", "0"))
+if code != 0:
+    print("Err:1 http://archive.ubuntu.com/ubuntu noble InRelease")
+    print("E: Failed to fetch http://archive.ubuntu.com/ubuntu/dists/noble/InRelease  Temporary failure resolving 'archive.ubuntu.com'")
+    sys.exit(code)
 open(os.path.join(lists, "archive.ubuntu.com_ubuntu_dists_noble_universe_binary-amd64_Packages.lz4"), "w").close()
 open(os.path.join(lists, "archive.ubuntu.com_ubuntu_dists_noble_InRelease"), "w").close()
 print("Reading package lists... Done")

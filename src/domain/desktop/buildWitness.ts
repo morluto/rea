@@ -48,8 +48,8 @@ const EXPECTATIONS: Readonly<Record<WitnessStage, WitnessExpectation>> = {
   after_reset: "some_fail",
 };
 
-/** Actions that only look or wait, so they change no state. */
-const OBSERVING = new Set(["screenshot", "wait"]);
+/** Actions that change the app through its own interface; a reset restores the seed instead. */
+const INPUT = ["click", "drag", "scroll", "type", "key"] as const;
 
 export const stageExpectation = (stage: WitnessStage): WitnessExpectation =>
   EXPECTATIONS[stage];
@@ -63,22 +63,29 @@ export const stageHeld = (
     ? results.length > 0 && results.every((result) => result.passed)
     : results.some((result) => !result.passed);
 
-/** The index of the last applied action that changed the app's state, and whether it was a reset. */
-const lastChange = (log: WitnessActionLog) => {
-  const index = Math.max(
-    -1,
-    ...Object.entries(log.lastApplied).flatMap(([kind, at]) =>
-      OBSERVING.has(kind) || at === undefined ? [] : [at],
-    ),
-  );
-  return { index, reset: index >= 0 && log.lastApplied.reset === index };
+/** Why an edit or a near miss is not one: no input since the stage before, or a reset after the last input. */
+const notAnEdit = (
+  stage: WitnessStage,
+  since: string,
+  latest: {
+    readonly input: number;
+    readonly reset: number;
+    readonly from: number;
+  },
+): string | undefined => {
+  if (latest.input < latest.from)
+    return `Before checking ${stage}, act on the app with act_on_build_computer: no click, drag, scroll, type or key was applied since ${since}, and a reset does not count.`;
+  if (latest.reset > latest.input)
+    return `A reset since ${since} put the seed back; act on the app after it before checking ${stage}.`;
+  return undefined;
 };
 
 /**
  * Whether `stage` may be checked now, given the stages already checked and
  * the action log; its value is where this stage's actions end. The edit and
- * the near miss each need an applied action on the app since the stage
- * before, and the check after reset needs the reset as the last change.
+ * the near miss each need an applied click, drag, scroll, type or key since
+ * the stage before, with no reset after the last of them; the check after
+ * reset needs a reset since the stage before as the last change.
  */
 export const admitWitnessStage = (
   stages: readonly WitnessStageRecord[],
@@ -94,13 +101,20 @@ export const admitWitnessStage = (
     return err(
       `The witness checks ${WITNESS_STAGES.join(", ")} in that order; the next stage is ${expected}.`,
     );
-  const from = stages.at(-1)?.actions_before ?? 0;
-  const changed = lastChange(log);
-  if ((stage === "after_edit" || stage === "near_miss") && changed.index < from)
-    return err(
-      `Before checking ${stage}, act on the app with act_on_build_computer: no click, drag, scroll, type or key was applied since ${stages.at(-1)?.stage ?? "the start"}.`,
-    );
-  if (stage === "after_reset" && (changed.index < from || !changed.reset))
+  const latest = {
+    from: stages.at(-1)?.actions_before ?? 0,
+    input: Math.max(-1, ...INPUT.map((kind) => log.lastApplied[kind] ?? -1)),
+    reset: log.lastApplied.reset ?? -1,
+  };
+  const edit =
+    stage === "after_edit" || stage === "near_miss"
+      ? notAnEdit(stage, stages.at(-1)?.stage ?? "the start", latest)
+      : undefined;
+  if (edit !== undefined) return err(edit);
+  if (
+    stage === "after_reset" &&
+    (latest.reset < latest.from || latest.reset < latest.input)
+  )
     return err(
       "Before checking after_reset, reset the app with act_on_build_computer action reset, and change nothing after it.",
     );

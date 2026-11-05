@@ -64,6 +64,19 @@ and the recording and writes the record as Evidence.
   MCP progress notifications every five seconds while a computer starts and
   while the capture, draft, export and witness tools work.
 
+- Retries keep ownership: a start whose answer is lost stops its capture,
+  and REA keeps a capture whose stop is unconfirmed, retrying that stop
+  before another start; a lost checkpoint acknowledgement comes back from
+  the capture's log; a stop resumes reading its result or repeats it; the
+  draft and export read the checkpoints from the capture's Evidence; a seed
+  check that failed after opening is asked again with its task and folder;
+  a record whose save failed is written again on a repeat of its stage.
+- The edit and the near miss count only click, drag, scroll, type and key,
+  and a reset after the last of them refuses the stage.
+- A `.deb` app's file is kept in the build layer for `--package-file`, and
+  its URL reaches the export's `--package-url`. A failed `apt-get update`
+  reports its status and last lines. The bundle is written as it arrives.
+
 - The witness reads the build computer's bounded action log: its stage rules
   use the log's count and the last applied action of each kind, and the
   record holds the entries the log keeps, `actions_dropped`, and a

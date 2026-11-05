@@ -116,7 +116,8 @@ arguments for `computer_<action>`, which REA passes through:
 
 `reset` is not a driver tool: REA calls the app's `data/reset`, which restores
 the bundle's seed and relaunches the app, then waits until the computer's
-readiness checks pass again. A computer started from a request has no data
+readiness checks pass again, sending an MCP progress notification every five
+seconds while it waits. A computer started from a request has no data
 operations, so it refuses a reset.
 
 Pointer actions also take `frame_id`, `space` and `norm_scale`, and every

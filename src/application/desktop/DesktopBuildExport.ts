@@ -10,7 +10,6 @@ import { AGENTENV_PROVIDER } from "../../desktop/AgentEnvComputerHelper.js";
 import {
   fetchHomeFolder,
   type ControlledComputer,
-  type FetchedFile,
 } from "../../desktop/BuildComputerController.js";
 import {
   adapterError,
@@ -56,32 +55,50 @@ export type ExportedBuild = {
   readonly limitations: string[];
 };
 
-/** Write the fetched bundle into the caller's new or empty folder. */
+/**
+ * Bring the bundle back straight into the caller's new or empty folder, each
+ * checked answer written before the next is fetched; a failure leaves no
+ * partial folder.
+ */
 const writeBundle = async (
+  computer: ControlledComputer,
+  bundle: string,
   directory: string,
-  files: readonly FetchedFile[],
   signal: AbortSignal,
-): Promise<AnalysisError | undefined> => {
+): Promise<
+  Result<{ readonly files: number; readonly bytes: number }, AnalysisError>
+> => {
+  let fetched = { files: 0, bytes: 0 };
   const unclosed = await writeOutputTree(
     directory,
     async (tree) => {
-      for (const file of files)
-        await tree.write(
-          file.path,
-          Readable.from([file.bytes]),
-          { bytes: file.bytes.length, sha256: file.sha256 },
-          signal,
-        );
+      fetched = await fetchHomeFolder(
+        computer,
+        bundle,
+        {
+          file: async (file) => {
+            await tree.write(
+              file.path,
+              Readable.from([file.bytes]),
+              { bytes: file.bytes.length, sha256: file.sha256 },
+              signal,
+            );
+          },
+        },
+        signal,
+      );
     },
     { operation: EXPORT, field: "directory" },
     signal,
   );
   return unclosed === undefined
-    ? undefined
-    : writtenWithOpenHandles(
-        { provider: AGENTENV_PROVIDER, operation: EXPORT, what: "bundle" },
-        directory,
-        unclosed,
+    ? ok(fetched)
+    : err(
+        writtenWithOpenHandles(
+          { provider: AGENTENV_PROVIDER, operation: EXPORT, what: "bundle" },
+          directory,
+          unclosed,
+        ),
       );
 };
 
@@ -93,7 +110,12 @@ const writeBundle = async (
  */
 export const exportBuild = async (
   computer: ControlledComputer,
-  capture: { readonly folder: string; readonly attempt: number },
+  capture: {
+    readonly folder: string;
+    readonly attempt: number;
+    /** The URL a computer downloads the app's `.deb` from, when it came from one. */
+    readonly packageUrl?: string;
+  },
   request: BuildExportRequest,
   signal: AbortSignal,
 ): Promise<Result<ExportedBuild, AnalysisError>> => {
@@ -113,6 +135,9 @@ export const exportBuild = async (
         task,
         ...ENDS,
         ...(request.name === undefined ? [] : ["--name", request.name]),
+        ...(capture.packageUrl === undefined
+          ? []
+          : ["--package-url", capture.packageUrl]),
         "--json",
       ],
       {
@@ -134,14 +159,18 @@ export const exportBuild = async (
           : adapterError(EXPORT, output.failure.message),
       );
     const result = exportResultSchema.parse(output.result);
-    const files = await fetchHomeFolder(computer, bundle, signal);
-    const unwritten = await writeBundle(request.directory, files, signal);
-    if (unwritten !== undefined) return err(unwritten);
+    const written = await writeBundle(
+      computer,
+      bundle,
+      request.directory,
+      signal,
+    );
+    if (!written.ok) return written;
     return ok({
       directory: request.directory,
       environment: result.environment,
-      files: files.length,
-      bytes: files.reduce((sum, file) => sum + file.bytes.length, 0),
+      files: written.value.files,
+      bytes: written.value.bytes,
       task: result.task,
       seed_files: result.seed_files,
       scrubbed_files: result.scrubbed_files,

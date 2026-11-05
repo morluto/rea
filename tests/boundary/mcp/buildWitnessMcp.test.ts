@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { expect, it } from "vitest";
@@ -35,12 +35,13 @@ const lines = (...text: string[]) => ({
   },
 });
 
-const witnessed = async () => {
+const witnessed = async (slowReset = 0) => {
   const app: FakeApp = {
     name: "notes",
     state: lines("milk"),
     seed: lines("milk"),
     methods: [],
+    unreadyAfterReset: slowReset,
   };
   const { computer, runner } = await buildComputerFakes({ app });
   const client = await connectBuildServer(runner.environment);
@@ -60,7 +61,16 @@ const witnessed = async () => {
       action,
       ...fields,
     });
-  return { app, computer, client, directory, check, act };
+  return { app, computer, client, id, directory, check, act };
+};
+
+/** Act on the app and set its state as that act would leave it. */
+const edit = async (
+  witness: Awaited<ReturnType<typeof witnessed>>,
+  state: Record<string, unknown>,
+) => {
+  await witness.act("type", { text: "x" });
+  witness.app.state = state;
 };
 
 const parsed = (result: unknown) =>
@@ -216,20 +226,31 @@ it("refuses a witness without a folder for its record, or one already holding fi
   expect(
     parseMcpToolError(await check({ stage: "seed" })).error.message,
   ).toContain("directory");
+  const used = await createTestTempDirectory("witness-used-");
+  await writeFile(join(used, "keep"), "");
   expect(
-    parseMcpToolError(
-      await check({
-        stage: "seed",
-        directory: await createTestTempDirectory("witness-used-").then(
-          async (path) => {
-            const { writeFile } = await import("node:fs/promises");
-            await writeFile(join(path, "keep"), "");
-            return path;
-          },
-        ),
-      }),
-    ).error.message,
+    parseMcpToolError(await check({ stage: "seed", directory: used })).error
+      .message,
   ).toContain("not empty");
+});
+
+it("retries a seed whose state read failed, with the recording it began", async () => {
+  const witness = await witnessed();
+  witness.app.failGets = 1;
+  const failed = await witness.check({
+    stage: "seed",
+    directory: witness.directory,
+  });
+  expect(parseMcpToolError(failed).error.message).toContain("busy");
+  const seed = parsed(
+    await witness.check({ stage: "seed", directory: witness.directory }),
+  );
+  expect(seed.witness).toMatchObject({ held: true, next_stage: "after_edit" });
+  expect(
+    witness.computer.recordingRequests.filter(({ path }) =>
+      path.endsWith("/start"),
+    ),
+  ).toHaveLength(1);
 });
 
 it("records a long witness from the bounded action log, naming what it dropped and what it cut", async () => {
@@ -243,8 +264,7 @@ it("records a long witness from the bounded action log, naming what it dropped a
   expect(parsed(await check({ stage: "after_edit" })).witness).toMatchObject({
     held: true,
   });
-  await witness.act("type", { text: "x" });
-  app.state = lines("milk", "egg");
+  await edit(witness, lines("milk", "egg"));
   await check({ stage: "near_miss" });
   await witness.act("reset");
   const record = parsed(await check({ stage: "after_reset" })).witness?.record;
@@ -263,3 +283,46 @@ it("records a long witness from the bounded action log, naming what it dropped a
   );
   expect(limitations.join("\n")).toContain("truncated_arguments");
 });
+
+it("saves a witness record again after a failed save, without checking again", async () => {
+  const witness = await witnessed();
+  const { check, directory, app } = witness;
+  await check({ stage: "seed", directory });
+  await edit(witness, lines("milk", "eggs"));
+  await check({ stage: "after_edit" });
+  await edit(witness, lines("milk", "egg"));
+  await check({ stage: "near_miss" });
+  await witness.act("reset");
+  // Something else writes into the record's folder, so the save is refused.
+  await mkdir(directory, { recursive: true });
+  await writeFile(join(directory, "intruder"), "");
+  const refused = await check({ stage: "after_reset" });
+  expect(parseMcpToolError(refused).error.message).toContain("not empty");
+  await rm(join(directory, "intruder"));
+  const gets = app.methods.length;
+  const saved = parsed(await check({ stage: "after_reset" }));
+  expect(saved.witness).toMatchObject({
+    stage: "after_reset",
+    status: "held",
+    record: { verdict: "held" },
+  });
+  expect(saved.witness?.record?.stages).toHaveLength(4);
+  expect(app.methods.length).toBe(gets);
+  expect(
+    parseMcpToolError(await check({ stage: "after_reset" })).error.message,
+  ).toContain("ended");
+});
+
+it("sends progress while a reset waits for the relaunched app", async () => {
+  const witness = await witnessed(14);
+  const progress: unknown[] = [];
+  const reset = await witness.client.callTool(
+    {
+      name: "act_on_build_computer",
+      arguments: { computer_id: witness.id, action: "reset" },
+    },
+    { onprogress: (update) => progress.push(update) },
+  );
+  expect(reset.isError, JSON.stringify(reset)).not.toBe(true);
+  expect(progress.length).toBeGreaterThan(0);
+}, 30_000);

@@ -1,90 +1,22 @@
-import { readdir, readFile, writeFile } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { expect, it } from "vitest";
 
-import {
-  EDITED_NOTE,
-  seedEndCapture,
-  writeCaptureFolder,
-} from "../../../src/application/desktop/desktopCapture.fixture.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import {
-  buildComputerFakes,
+  BUILD_REQUEST as REQUEST,
+  BUILD_TASK as TASK,
+  buildCaptureFakes as fakes,
+} from "../../fixtures/buildCaptureFakes.js";
+import {
   bundleFolder,
   callOk,
-  connectBuildServer,
   expectNoToken,
   startBuildComputer,
 } from "../../fixtures/buildComputerMcp.js";
-import { fakeBuildComputerRea } from "../../fixtures/fakeBuildComputerRea.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { serveCli } from "../cli/cliServeHarness.js";
-
-const TASK = {
-  name: "add-eggs",
-  prompt: "Add eggs to today's list and save it.",
-  checks: [
-    { kind: "lines_present", file: "Documents/today.txt", lines: ["eggs"] },
-  ],
-};
-const ENDS = ["--seed-checkpoint", "seed", "--end-checkpoint", "end"];
-const REQUEST = {
-  kind: "request",
-  desktop_entry: "org.example.notes",
-  install: { kind: "archive", package: "notes" },
-};
-
-/** What the real CLI writes for a capture made between seed and end: the draft, and the export with TASK. */
-const realCliOutputs = async () => {
-  const capture = await writeCaptureFolder(seedEndCapture(), undefined, [
-    EDITED_NOTE,
-  ]);
-  const work = await createTestTempDirectory("build-cli-");
-  const task = join(work, "task.json");
-  await writeFile(task, JSON.stringify(TASK));
-  const bundle = join(work, "bundle");
-  const draft = await serveCli([
-    "describe-desktop-application-task",
-    capture,
-    ...ENDS,
-    "--json",
-  ]);
-  const exported = await serveCli([
-    "export-desktop-application",
-    capture,
-    bundle,
-    "--task",
-    task,
-    ...ENDS,
-    "--json",
-  ]);
-  expect(exported.exitCode, exported.stdout).toBe(0);
-  await writeFile(join(work, "draft.json"), draft.stdout);
-  await writeFile(join(work, "export.json"), exported.stdout);
-  return {
-    capture,
-    draft: join(work, "draft.json"),
-    export: join(work, "export.json"),
-    bundle,
-  };
-};
-
-const fakes = async () => {
-  const outputs = await realCliOutputs();
-  const rea = await fakeBuildComputerRea(outputs);
-  const { computer, runner } = await buildComputerFakes({
-    exec: { home: rea.home, bin: rea.bin, env: rea.env },
-  });
-  const payload = join(runner.state, "rea-prod.tar.xz");
-  await writeFile(payload, "a packed REA build");
-  const client = await connectBuildServer({
-    ...runner.environment,
-    REA_BUILD_COMPUTER_REA_ARCHIVE: payload,
-  });
-  return { rea, outputs, computer, client };
-};
 
 const files = async (root: string, prefix = ""): Promise<string[]> =>
   (

@@ -64,7 +64,10 @@ def _apt(work: str, timeout: float) -> dict:
                                   stdout=output, stderr=subprocess.STDOUT, timeout=timeout).returncode
     except (OSError, subprocess.TimeoutExpired) as error:
         return {"lists": count(), "updated": True, "error": f"{type(error).__name__}: {error}"}
-    return {"lists": count(), "updated": True, "exit_code": code, **({} if code == 0 else {"log": _tail(log)})}
+    if code == 0:
+        return {"lists": count(), "updated": True, "exit_code": code}
+    return {"lists": count(), "updated": True, "exit_code": code,
+            "error": f"apt-get update exited {code}: {_tail(log)[-1500:].strip()}"}
 
 
 def _exit_code(capture: str):
@@ -117,13 +120,18 @@ def start(arguments: dict) -> int:
     if os.path.exists(capture):
         return _say({"error": f"the capture folder {capture} is already used"})
     apt = _apt(work, arguments.get("apt_timeout_s", 600))
-    os.makedirs(capture)
+    try:
+        os.makedirs(capture)
+    except FileExistsError:
+        return _say({"error": f"a stop claimed {capture} before the capture launched", "apt": apt})
     control = os.path.join(capture, "control")
     os.mkfifo(control, 0o600)
     argv = [rea, "capture-desktop-application", "--desktop-entry", arguments["desktop_entry"],
             "--output", os.path.join(capture, "capture"), "--exclude", work, "--json"]
     for value in arguments.get("arguments", []):
         argv += ["--argument", value]
+    if arguments.get("package_file"):
+        argv += ["--package-file", arguments["package_file"]]
     # Reading and writing, so the capture never reads the end of its input between requests.
     reader = os.open(control, os.O_RDWR)
     try:
@@ -159,6 +167,10 @@ def mark(arguments: dict) -> int:
     log = os.path.join(capture, "progress.log")
     if code is not None:
         return _say({"exited": code, "progress": _tail(log)})
+    # A checkpoint already taken, whose answer was lost, is answered from the capture's own log.
+    taken = _event_line(log, 0, {"checkpoint"}, name)
+    if taken is not None:
+        return _say({"line": taken})
     offset = os.path.getsize(log)
     if not _request(capture, f"checkpoint {name}"):
         return _say({"error": "the capture is not reading its requests"})
@@ -167,6 +179,10 @@ def mark(arguments: dict) -> int:
 
 def stop(arguments: dict) -> int:
     capture = os.path.abspath(arguments["capture"])
+    if _exit_code(capture) is None and not os.path.exists(os.path.join(capture, "control")):
+        # Never launched: claim the folder, so a start still on its way finds it used and launches nothing.
+        os.makedirs(capture, exist_ok=True)
+        return _say({"absent": True})
     if _exit_code(capture) is None:
         _request(capture, "stop")
     deadline = time.monotonic() + arguments.get("timeout_s", 600)
