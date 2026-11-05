@@ -35,6 +35,7 @@ import type { OwnedLease } from "../process/OwnedLease.js";
 import {
   downloadHopperPackage,
   HOPPER_DOWNLOAD_BYTES,
+  HOPPER_METADATA_TIMEOUT_MS,
 } from "./HopperDownload.js";
 import {
   HOPPER_LINUX_PRIMARY_FINGERPRINT,
@@ -52,8 +53,6 @@ import { withRegularFile } from "./RegularFileRead.js";
 
 /** Metadata/key inspection budget, independent of the compressed package budget. */
 const RELEASE_METADATA_BYTES = 1024 * 1024;
-/** Small feed/key requests must not consume the full package-download deadline. */
-const RELEASE_METADATA_TIMEOUT_MS = 10_000;
 const cacheRecordSchema = z.object({
   format: z.literal("rea-signed-hopper-release-v1"),
   family: z.enum(["deb", "rpm", "arch"]),
@@ -122,7 +121,7 @@ export class LinuxHopperPublisher {
         const response = await downloadHopperPackage(HOPPER_RELEASES_URL, {
           ...(signal === undefined ? {} : { signal }),
           maxBytes: RELEASE_METADATA_BYTES,
-          timeoutMs: RELEASE_METADATA_TIMEOUT_MS,
+          timeoutMs: HOPPER_METADATA_TIMEOUT_MS,
         });
         if (!response.ok)
           throw HopperReleaseError.fromDownload("release_metadata", {
@@ -186,7 +185,7 @@ export class LinuxHopperPublisher {
         const response = await downloadHopperPackage(HOPPER_PUBLIC_KEY_URL, {
           ...(signal === undefined ? {} : { signal }),
           maxBytes: RELEASE_METADATA_BYTES,
-          timeoutMs: RELEASE_METADATA_TIMEOUT_MS,
+          timeoutMs: HOPPER_METADATA_TIMEOUT_MS,
         });
         if (!response.ok)
           throw HopperReleaseError.fromDownload("verification_unavailable", {

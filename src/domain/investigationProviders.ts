@@ -190,3 +190,10 @@ export const RELEASE_EXPOSURE_PROVIDER = Object.freeze({
   name: "REA release exposure audit",
   version: "1",
 } as const);
+
+/** Provider identity for portable ELF, PE, and Mach-O hardening inspection. */
+export const BINARY_HARDENING_PROVIDER = Object.freeze({
+  id: "rea-binary-hardening",
+  name: "REA binary hardening parser",
+  version: "1",
+} as const);

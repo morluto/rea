@@ -243,6 +243,7 @@ const pathRequests: readonly [string, Record<string, unknown>][] = [
   ["inspect_kernel_module", { path: nul }],
   ["inspect_pe_load_config", { path: nul }],
   ["audit_release_exposure", { path: nul }],
+  ["inspect_binary_hardening", { path: nul }],
   ["inspect_python_pyc", { path: nul }],
   ["inspect_erlang_beam", { path: nul }],
   ["inspect_binary_layout", { path: nul }],
@@ -319,28 +320,22 @@ const pathRequests: readonly [string, Record<string, unknown>][] = [
   ["start_gdb_session", { inferior_tty: nul }],
 ];
 
-it(
-  "rejects OS-invalid local inputs through the real advertised MCP contracts",
-  async () => {
-    const { call } = await connectLocalToolsMcp();
-    for (const [name, arguments_] of pathRequests) {
-      const response = await call(name, arguments_);
-      expect(response.isError, name).toBe(true);
-      expect(JSON.stringify(response.content), name).toContain("NUL");
-    }
-    const relative = await call("extract_firmware", {
-      path: "/tmp/firmware.bin",
-      output_directory: "relative-output",
-    });
-    expect(relative.isError).toBe(true);
-    expect(JSON.stringify(relative.content)).toContain(
-      "absolute local filesystem path",
-    );
-  },
-  // Sequential requests validate each advertised schema as well as its response.
-  // Allow for that work alongside the other acceptance tests.
-  60_000,
-);
+it("rejects OS-invalid local inputs through the real advertised MCP contracts", async () => {
+  const { call } = await connectLocalToolsMcp();
+  for (const [name, arguments_] of pathRequests) {
+    const response = await call(name, arguments_);
+    expect(response.isError, name).toBe(true);
+    expect(JSON.stringify(response.content), name).toContain("NUL");
+  }
+  const relative = await call("extract_firmware", {
+    path: "/tmp/firmware.bin",
+    output_directory: "relative-output",
+  });
+  expect(relative.isError).toBe(true);
+  expect(JSON.stringify(relative.content)).toContain(
+    "absolute local filesystem path",
+  );
+}, 60_000);
 
 const ignoredOptions = [
   { terminal: { columns: 80, row: 12 } },

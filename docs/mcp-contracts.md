@@ -331,6 +331,17 @@ unknown. Exhausted pages describe the recorded observations and do not establish
 complete native discovery. The same views work through the CLI with historical
 Evidence files or bundles and require no live provider.
 
+For retained `inspect_native_instruction` Evidence, use
+`view: {"kind":"native-instruction-references","collection":"incoming_references","offset":0,"limit":64}`
+to page typed references to the exact code or data address. Select `references`
+for outgoing instruction references. Rows preserve their original indices and
+provider-reported kind and provenance. `items.state` distinguishes available,
+unavailable, and not-recorded collections; coverage is null in the latter two
+cases. The fixed 1 MiB page projection allowance leaves room for Evidence and
+MCP encoding. An oversized single row remains in the complete parent, which
+can be exported. Page exhaustion describes retained rows, not discovery or
+runtime access.
+
 For oversized native function Evidence, `details.reported_limits.continuation`
 contains a ready-to-call `inspect_analysis_view` request for the retained
 pseudocode's first page. Use its `name` and `arguments` directly, then follow
@@ -874,6 +885,13 @@ later inventory summaries or pages; a one-shot CLI session cannot retain a
 parent for another invocation.
 
 ## Identity and discovery
+
+When an admitted `open_binary` attempt fails, its error details include
+`target_at_open_completion`: the selected binary target when that attempt
+settled, or `null` when none was selected. `provider_id_at_open_completion`
+names its bound deep provider, or `null` if none was bound. A later lifecycle
+operation can change either selection; call `binary_session` for current state. This field does
+not establish provider readiness or resource cleanup.
 
 `binary_session` reports the active package, server, SDK, and negotiated
 protocol details. `rea doctor` separately inspects supported JSON/TOML client
@@ -1580,6 +1598,26 @@ and reconstruction cannot treat it as unchanged.
 canonical `integrity_contradictions` records and marks application graph
 coverage partial when any mismatch is continued. Contradicted nested ASARs
 remain opaque.
+
+`extract_artifact` accepts optional `output_root` and `occurrence_ids` inputs.
+The CLI equivalents are `--output-root` and repeatable `--occurrence-id`.
+`output_root` is an absolute path on the REA host: its parent must exist and the
+root must not exist, even as an empty directory or a symbolic link. Omitting it
+keeps the fresh `rea-extracted-<uuid>` directory under Node's temporary directory
+(`TMPDIR` on POSIX). Successful output persists after the call and client close;
+the caller owns its later removal. A failed extraction rolls back only its own
+output and reports any cleanup failure.
+An output root inside the source directory, including a symlink alias, is refused.
+
+Obtain exact IDs from the active artifact's inventory. Omitting `occurrence_ids`
+extracts all regular entries exposed by the active reader. An explicit selection
+must be nonempty and unique; unknown IDs, directories, links, the root and nested
+archive members are rejected before output creation. Open the containing archive
+separately to extract its nested members. Selection is by occurrence, not content
+hash, so equal bytes at different paths remain independently selectable. Only
+selected files face destination name collisions; input path and integrity checks
+still cover the full inventory. The extraction manifest records exactly which
+occurrences were materialized and retains the source manifest identity.
 
 `extract_artifact` accepts the same policy in MCP and as `--integrity-policy`
 on `rea extract-artifact`. With `record-and-continue` it writes the observed

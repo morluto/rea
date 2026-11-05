@@ -151,10 +151,7 @@ const parseThinMachO = (
   if (!table.ok) return table;
   if (table.value === null) return err("unsupported binary format");
   const { identity } = table.value;
-  const architecture =
-    identity.cpuType === CPU_TYPE_ARM64_32
-      ? "arm64_32"
-      : machArchitecture(identity.cpuType);
+  const architecture = machoBinaryArchitecture(identity.cpuType);
   if (architecture === undefined) return err("unsupported Mach-O architecture");
   const commands = new MachoLoadCommandCursor(table.value);
   while (commands.nextOffset !== null) {
@@ -769,6 +766,12 @@ export const inspectPeCodeViewFromBuffer = (
     ? incomplete("PE CodeView records could not be decoded completely.")
     : ok(undefined);
 };
+
+/** CPU family a Mach-O cpu type names, or undefined when it names none here. */
+export const machoBinaryArchitecture = (
+  cpu: number,
+): HeaderArchitecture | "arm64_32" | undefined =>
+  cpu === CPU_TYPE_ARM64_32 ? "arm64_32" : machArchitecture(cpu);
 
 const machArchitecture = (cpu: number): HeaderArchitecture | undefined => {
   switch (cpu) {

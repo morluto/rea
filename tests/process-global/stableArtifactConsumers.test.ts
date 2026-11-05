@@ -1,6 +1,8 @@
 import { PeLoadConfigProvider } from "../../src/native/pe/PeLoadConfigProvider.js";
 import { ReleaseExposureReader } from "../../src/artifacts/ReleaseExposureReader.js";
+import { BinaryHardeningProvider } from "../../src/native/hardening/BinaryHardeningProvider.js";
 import { inspectPeLoadConfigInputSchema } from "../../src/domain/native/peLoadConfig.js";
+import { inspectBinaryHardeningInputSchema } from "../../src/domain/native/binaryHardening.js";
 import { open, writeFile, type FileHandle } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
@@ -1002,6 +1004,7 @@ const stableArtifactProviders = [
   ["PE certificates", () => new PeCertificatesProvider()],
   ["PE load configuration", () => new PeLoadConfigProvider()],
   ["release exposure", () => new ReleaseExposureReader()],
+  ["binary hardening", () => new BinaryHardeningProvider()],
   ["PE imports", () => new PeImportsProvider()],
   ["native exports", () => new NativeExportsProvider()],
   ["Python pyc", () => new PythonPycProvider()],
@@ -1046,6 +1049,11 @@ const inspectFileFailure = (
   if (provider instanceof PeLoadConfigProvider)
     return provider.inspect(
       inspectPeLoadConfigInputSchema.parse({ path }),
+      options,
+    );
+  if (provider instanceof BinaryHardeningProvider)
+    return provider.inspect(
+      inspectBinaryHardeningInputSchema.parse({ path }),
       options,
     );
   if (provider instanceof PeImportsProvider)
