@@ -2,7 +2,7 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
 import { createServer } from "../../../src/server/createServer.js";
-import { V8_CODE_CACHE_TOOL_CONTRACTS } from "../../../src/contracts/v8/v8CodeCacheToolContracts.js";
+import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { v8CodeCacheSchema } from "../../../src/domain/v8/v8CodeCache.js";
 import { v8CodeCacheFixture } from "../../../src/v8/V8CodeCache.fixture.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
@@ -10,10 +10,9 @@ import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { mcpTest, type TestMcp } from "../../support/mcp/mcpFixture.js";
 
-const completeEvidenceSchema =
-  V8_CODE_CACHE_TOOL_CONTRACTS[0].outputSchema.safeExtend({
-    normalized_result: v8CodeCacheSchema,
-  });
+const completeEvidenceSchema = toolContract(
+  "inspect_v8_code_cache",
+).outputSchema.safeExtend({ normalized_result: v8CodeCacheSchema });
 
 const connect = async (mcp: TestMcp) => {
   const session = createTestBinarySession(() => {
