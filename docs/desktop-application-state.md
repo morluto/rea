@@ -70,8 +70,10 @@ accepts an inactive rollback journal and refuses a hot one. A version is not
 read when its `-wal` or `-journal` file existed but was not retained, or when
 the capture did not record whether either existed, since the database alone
 could misstate its committed rows. The capture records them under its content
-roots, which include both beside a database selected on its own, and wherever
-they change; elsewhere an unchanged file and a missing one look alike. A table
+roots, which include both beside a database selected on its own, when its
+baseline walk listed every directory, did not stop early and recorded what it
+left out, and wherever they change; an excluded log, and any elsewhere, is
+unknown, since an unchanged file and a missing one look alike. A table
 that cannot be read keeps its `error` in place of its rows, and changes to that
 database are marked incomplete. dconf
 databases are read with `dconf dump /` against a private file profile, so the

@@ -412,6 +412,33 @@ describe("inspectDesktopApplicationState database selected on its own", () => {
       { view_error: null, view: { tables: { notes: { rows: [[1, "a"]] } } } },
     ]);
   });
+
+  it("refuses it when a walk left its log out or stopped early", async () => {
+    const logged = selecting([books, `${books}-wal`, `${books}-journal`]);
+    const [baseline, ...later] = logged.state.checkpoints;
+    if (baseline === undefined) throw new Error("missing baseline");
+    const { excluded: _unrecorded, ...older } = logged.state;
+    const unwalked = [
+      { ...logged.state, excluded: [`${books}-wal`] },
+      {
+        ...logged.state,
+        checkpoints: [{ ...baseline, truncated: true }, ...later],
+      },
+      older,
+    ];
+
+    for (const state of unwalked) {
+      const folder = await writeCaptureFolder({ ...logged, state });
+      const byPath = await statePathsOf(folder);
+      expect(byPath.get(null)?.versions).toMatchObject([
+        {
+          view: null,
+          view_error:
+            "the capture did not record whether the database's write-ahead log existed",
+        },
+      ]);
+    }
+  });
 });
 
 describe("inspectDesktopApplicationState view bounds", () => {
