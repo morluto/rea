@@ -383,6 +383,32 @@ const SELECTOR_CASES: readonly (readonly [DesktopTaskCheckInput, boolean])[] = [
     },
     true,
   ],
+  [
+    {
+      kind: "value_equals",
+      file: plate,
+      pointer: "/entries/[name=thumbnails~1Thumbnail.png]/view",
+      value: null,
+    },
+    false,
+  ],
+  [
+    {
+      kind: "value_absent",
+      file: plate,
+      pointer: "/entries/[name=thumbnails~1Thumbnail.png]/view/x",
+    },
+    false,
+  ],
+  [
+    {
+      kind: "value_equals",
+      file: plate,
+      pointer: "/entries/[name=thumbnails~1Thumbnail.png]/size",
+      value: 3,
+    },
+    true,
+  ],
   ...PARTIAL_SELECTOR_CASES,
 ];
 

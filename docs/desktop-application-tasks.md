@@ -191,8 +191,10 @@ selector must see every member to know it names one, so a check whose pointer
 searches an array the view may hold only part of fails as undecided: any array
 of a truncated XML view, of a truncated entry's view, or the listing when it
 is cut. A position is decided on what the view holds. Like a file, an entry
-that has no view fails every check into its `view`; its `null` there is no
-value, while an entry holding the JSON document `null` reads as `null`.
+that has no view (binary, not read, or a database or archive inside the
+archive) fails every check into its `view`; its `null` there is no value, while
+an entry holding the JSON document `null` reads as `null`. Checks on its `name`,
+`size`, `sha256` and `format` still read.
 
 XML that uses namespaces is named as the document spells it, in both
 evaluators: an element or attribute by its prefixed name, such as `text:p`

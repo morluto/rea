@@ -14,8 +14,9 @@ v22.23.1 and Python 3.11.14.
 - `npx vitest run src/domain/desktop src/application/desktop src/desktop` with
   `tests/boundary/providers/desktopExportPython.test.ts`,
   `desktopTaskPython.test.ts` and `tests/boundary/cli/cliStartupImports.test.ts`:
-  370 passed and 18 skipped (Linux-only cases). The new
-  `tests/boundary/providers/desktopZipPython.test.ts`: 8 passed. The desktop
+  371 passed and 18 skipped (Linux-only cases). The new
+  `tests/boundary/providers/desktopZipPython.test.ts`: 8 passed, and
+  `desktopJsonDepthHeap.test.ts`: 1 passed. The desktop
   CLI boundary tests `desktopApplicationCli`, `cliInputSchemaRequired` and
   `cliToolCoverage`: 28 passed.
 - Namespaced XML, on the same day and toolchain: the same gates passed, with
@@ -108,6 +109,14 @@ after it:
   4,000,001-byte array of 800,000 nulls, `_text_view` peaks at 6.7 MB of
   traced allocations, as before the check, against 58.2 MB when it queued
   every member.
+- A binary entry fails `value_equals null` and `value_absent` into its view in
+  both evaluators, its `size` still checked, and the draft suggests no absence
+  in an entry that ends binary.
+- REA's own depth check (`deeperThan`, from the state view) also holds one
+  iterator per level: on 800,000 nulls it grows the heap by 7.3 MB of
+  short-lived iterator results, against 72.7 MB when it queued a pair per
+  member, and runs under an 18 MiB old-space limit where the queue needed more
+  than 64 MiB. A test runs it under a 32 MiB limit.
 
 ## FreeCAD captures
 

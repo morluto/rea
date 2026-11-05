@@ -143,18 +143,36 @@ export const zipEntryAt = (
   return isRecord(entry.value) ? entry.value : undefined;
 };
 
-/** The entry whose view a pointer goes into when that view could not be read, so its `null` is no JSON value. */
-export const unreadEntryAt = (
+/** Formats an entry's view is read in; any other entry's `view` is `null` for want of one. */
+const VIEW_FORMATS: ReadonlySet<JsonValue> = new Set([
+  "text",
+  "json",
+  "keyfile",
+  "xml",
+]);
+
+/** Why an entry has no view a check can read: binary, unread, or of a format with none; undefined when it has one. */
+export const entryWithoutView = (
+  entry: Record<string, JsonValue>,
+): string | undefined => {
+  if (typeof entry.view_error === "string")
+    return `has no view: ${entry.view_error}`;
+  if (entry.format === "binary") return "is binary and has no view";
+  return VIEW_FORMATS.has(entry.format ?? null) ? undefined : "has no view";
+};
+
+/** The entry whose view a pointer goes into when it has none, so its `view` of `null` is no JSON value, and why. */
+export const viewlessEntryAt = (
   view: JsonValue | null,
   pointer: string,
-): { readonly name: string; readonly error: string } | undefined => {
+): { readonly name: string; readonly reason: string } | undefined => {
   const entry = zipEntryAt(view, pointer);
   if (typeof entry !== "object" || pointer.split("/")[3] !== "view")
     return undefined;
-  const { name, view_error: error } = entry;
-  return typeof error === "string"
-    ? { name: typeof name === "string" ? name : "", error }
-    : undefined;
+  const reason = entryWithoutView(entry);
+  return reason === undefined
+    ? undefined
+    : { name: typeof entry.name === "string" ? entry.name : "", reason };
 };
 
 /**

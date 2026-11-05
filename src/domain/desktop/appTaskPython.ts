@@ -5,6 +5,7 @@ import type { DesktopTask } from "./appTask.js";
 export const PYTHON_TASK_EVALUATOR = String.raw`
 MISSING = object()
 INDEX = re.compile(r"0|[1-9][0-9]*")
+VIEW_FORMATS = ("text", "json", "keyfile", "xml")
 NUMERAL = re.compile(r"[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?")
 
 
@@ -112,16 +113,24 @@ def _entry_leaves_out(entry) -> bool:
         and entry["view"].get("truncated") is True))
 
 
-def _unread_entry(view, pointer: str):
-    """The name and error of the entry whose view a pointer goes into when that view could not be read, so its
-    null is no JSON value; None otherwise."""
+def _viewless_entry(view, pointer: str):
+    """The name of the entry whose view a pointer goes into when it has none, so its null is no JSON value, and
+    why: binary, unread, or of a format without a view; None when it has one."""
     parts = pointer[1:].split("/")
     if len(parts) < 3 or parts[0] != "entries" or parts[2] != "view":
         return None
     kind, item, _ = _locate(view, "/entries/" + parts[1])
-    if kind != "value" or not isinstance(item, dict) or not isinstance(item.get("view_error"), str):
+    if kind != "value" or not isinstance(item, dict):
         return None
-    return (item["name"] if isinstance(item.get("name"), str) else ""), item["view_error"]
+    if isinstance(item.get("view_error"), str):
+        reason = f"has no view: {item['view_error']}"
+    elif item.get("format") == "binary":
+        reason = "is binary and has no view"
+    elif item.get("format") not in VIEW_FORMATS:
+        reason = "has no view"
+    else:
+        return None
+    return (item["name"] if isinstance(item.get("name"), str) else ""), reason
 
 
 def _array_leaves_out(form, view, array: str) -> bool:
@@ -224,9 +233,9 @@ def _value(check, entry):
         return False, problem
     kind, found, searched = ("none", None, []) if entry is None else _locate(view, check["pointer"])
     at = f"{check['file']} at {check['pointer']}"
-    unread = _unread_entry(view, check["pointer"]) if entry is not None and entry.get("format") == "zip" else None
-    if unread is not None:
-        return False, f"{check['file']} entry {unread[0]} has no view: {unread[1]}"
+    viewless = _viewless_entry(view, check["pointer"]) if entry is not None and entry.get("format") == "zip" else None
+    if viewless is not None:
+        return False, f"{check['file']} entry {viewless[0]} {viewless[1]}"
     # A selector tells one member from several only in an array the view holds whole.
     if any(_array_leaves_out(entry.get("format"), view, array) for array in searched):
         return _undecided(check)
