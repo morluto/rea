@@ -1,0 +1,239 @@
+# Desktop app environments from a request
+
+Use this when someone asks for an environment of a Linux desktop app with a
+task, such as "Build me an Inkscape environment where the agent changes a
+poster's headline and saves it". You are the building agent: you drive the
+app on a build computer through REA's MCP tools, write the task, export the
+bundle and witness it in a fresh computer. REA runs no model. The tools are
+MCP-only and need Docker, `REA_AGENT_ENV_COMMAND` and
+`REA_BUILD_COMPUTER_REA_ARCHIVE` where the REA server starts; when a start
+reports one missing, tell the person what to set and stop.
+
+For the whole build:
+
+- Drive the app only with `act_on_build_computer`. Never script it, run
+  commands in the computer or write its files another way.
+- Ask the upfront questions once, then work on your own. Pause only when
+  blocked.
+- The seed's content is synthetic. Never put real personal data in it.
+- Close every computer you start, on success and on failure.
+- Note the time you start; the report gives the build time.
+
+## Ask once, upfront
+
+In one message, ask only what the request leaves open, and keep the list for
+the report:
+
+1. The app and the task, if either is unclear: what changes, in which
+   document.
+2. Whether they have a starting file of their own; otherwise you make one.
+3. Whether they want solver runs after the witness: how many (the budget)
+   and with which model.
+4. If so, whether they want to review the task before those runs.
+
+## When you are blocked
+
+Stop, say what you need and wait only for:
+
+- a licence the app or its installer asks someone to accept: never accept it
+  yourself; name it and where to read it, and go on only once the person
+  says they accept it;
+- credentials: they may only be typed as handles you never see, and the
+  build tools have none yet, so say the app needs a sign-in and stop. Never
+  ask for a password in chat;
+- a signed-in state in the seed: ask before seeding one;
+- an install this flow cannot do, below.
+
+Decide everything else yourself and note it in the report.
+
+## Choose the install
+
+The computer is Ubuntu 24.04 (noble) on this host's architecture only. Use
+the first source that has the app:
+
+| Source                       | `install`                                                                         |
+| ---------------------------- | --------------------------------------------------------------------------------- |
+| Ubuntu archive               | `{"kind": "archive", "package": "inkscape"}`                                      |
+| PPA or vendor apt repository | `{"kind": "apt_repository", "package", "uri", "suite", "components", "key_file"}` |
+| `.deb` by URL                | `{"kind": "package_file", "url", "sha256", "architecture", "dependencies"}`       |
+
+- A PPA's `uri` is `https://ppa.launchpadcontent.net/OWNER/NAME/ubuntu`,
+  `suite` `noble`, `components` `["main"]`. `key_file` is the repository's
+  signing key saved on this host; for a PPA, fetch it from
+  keyserver.ubuntu.com by the fingerprint its Launchpad page shows.
+- For a `.deb`, ask the requester for its URL and SHA-256; do not fetch a
+  vendor's download page yourself. List its `Depends` as `dependencies`:
+  it installs with the network off.
+- Flatpak, AppImage and snaps are not supported yet: say so and stop. An
+  archive package that only installs a snap, such as noble's `firefox`,
+  counts as a snap. A package with no build for this host's architecture
+  (some PPAs are amd64 only) cannot be installed either.
+- `desktop_entry` is the package's `.desktop` file name under
+  `/usr/share/applications` without `.desktop`, such as
+  `org.inkscape.Inkscape`. Add `window_class` when you know it.
+
+## Drive the app
+
+- Take a `screenshot` before pointing: points are pixels of the latest
+  frame. If a response is too large, ask for a `region`, or `jpeg` with a
+  lower `quality`.
+- An action's own screenshot is taken at once. After opening a menu, a
+  dialog or a window, look with
+  `{"action": "wait", "ms": 500, "screenshot": true}`.
+- On a computer started from a request the app is not open at first, and
+  `start_build_capture` opens it: never open it yourself before that. Do not
+  close it while capturing; the capture ends when the app exits. When the
+  app is closed at any other time, open it from Applications → Other → the
+  environment's name.
+- Prefer shortcuts and typing to long pointer paths: `key` takes chords such
+  as `ctrl+s`, and `type` turns `\n` into Enter.
+- Save As opens in the home: type `Documents/<file name>` in its name field.
+  Answer the app's save questions, such as keeping the format, and check the
+  title bar shows no unsaved mark before you mark a checkpoint or check.
+- Give what the task changes a stable name where the app has one, such as an
+  id in Inkscape's Object Properties, so a check can select it.
+- Watch for apps that split text into runs. LibreOffice Writer stores
+  revision ids that split an edited paragraph into spans and give it an
+  automatic style such as `P1`: before the seed, turn off Tools → Options →
+  LibreOffice Writer → Comparison → "Store it when changing the document",
+  or choose checks the split does not break.
+
+## Build the seed and the edit
+
+1. `start_build_computer` with
+   `{"source": {"kind": "request", "desktop_entry": ..., "install": ...}}`.
+   The first start of an app builds its image and can take minutes. A
+   failed start returns the build's error: fix the request, or stop when the
+   install cannot work, and close any `computer_id` the error names.
+2. `start_build_capture`. It returns once the app's window is open. A
+   `package_lists_error` may stop the capture finding the package's
+   sources; the export says when that matters.
+3. Make the seed through the app and save it from the app under
+   `~/Documents`: build the document in the app, or write its source where
+   the app edits its format as text, then save it again from the app. Make
+   it look real but synthetic: the thing the task changes, plus a few things
+   the change must leave alone. For a starting file of the requester's,
+   read it here and rebuild it in the app with synthetic data in place of
+   personal data; REA cannot copy a file into the computer.
+4. Only once the seed is saved, `mark_build_checkpoint` with name `seed`.
+5. Make the change the task asks for, as a user would, and save it.
+6. Only once the change is saved, `mark_build_checkpoint` with name `end`.
+7. `stop_build_capture`. Read `draft.files` (each file that changed, with
+   its net change), `draft.task.checks` (suggested checks) and
+   `limitations`. A missing draft means a checkpoint is missing: capture
+   again on a new build computer.
+
+## Write the task
+
+Write `{"name", "prompt", "checks"}` from the draft and what you did.
+
+- `name`: lowercase letters, digits and hyphens, not `smoke`.
+- `prompt`: what the requester wants, in their words and the app's terms,
+  naming the document as a user would and ending with saving it: "Change the
+  poster's headline in Documents/poster.svg to Summer Bake Sale and save
+  it." Never say how the file stores it, and never give the checks.
+- Checks are file-based: content checks that prove the edit, never only that
+  a file exists or changed. Start from the suggestions; keep those that say
+  what the user did and drop what follows from how the app saves.
+- Compare exact values, so a typo or a wrong number fails.
+- Select elements by what they hold, never by position: SVG text by id,
+  `/root/children/[name=g][@inkscape:label=Layer 1]/children/[name=text][@id=headline]/children/[name=tspan]/children/0`,
+  or an ODF paragraph by style,
+  `/entries/[name=content.xml]/view/root/children/[name=office:body]/children/[name=office:text]/children/[name=text:p][@text:style-name=Title]/children/0`.
+  A selector must match exactly one element, so give the target a unique id
+  or style in the seed. The draft may suggest positional pointers; rewrite
+  them. Only an element's text is read by position, as `children/0`.
+- Where easy, add one check that the rest is untouched, such as another
+  text's value the edit must leave alone. It is the one unchanged value
+  worth checking; it passes on the seed too, which is fine, since the export
+  needs only one check to fail there.
+- Give `value_equals` a `tolerance` for a number the app writes as text.
+
+The kinds and pointer rules are in
+[the desktop tasks section](environments.md#pick-the-checks).
+
+## Export
+
+`export_build_environment` with `task` and `directory`, the absolute path of
+a new or empty folder here, such as `<home>/rea-builds/poster/bundle`. The
+export seeds what was saved at `seed`, scrubs the computer's host name and
+user, and checks the task against `seed` and `end`. It refuses a weak or
+invalid task with its reason, such as a check that already passes on the
+seed or a pointer that names nothing at the end: fix the task and export
+again, into another folder if that one is no longer empty. Keep
+`seed_files`, `scrubbed_files`, `unscrubbed_files` and `limitations` for the
+report.
+
+Keep the build computer open until the witness holds: a task fix exports
+again from it.
+
+## Witness
+
+Witness in a fresh computer of the bundle, from the prompt, as a solving
+agent would. Do not replay the build's actions or coordinates, and do not
+check between stages to steer the edit: a solving agent never sees the
+checks. Give every `check_build_task` the task exactly as exported.
+
+1. `start_build_computer` with
+   `{"source": {"kind": "bundle", "path": "<bundle>"}}`. The app opens with
+   the seed.
+2. `check_build_task` with `stage: "seed"` and `directory`, the absolute
+   path of a new or empty folder for the record. A check must fail.
+   Recording starts.
+3. Do the task from the prompt with `act_on_build_computer` and save.
+   `check_build_task` with `stage: "after_edit"`: every check must pass.
+4. Make a near miss on top of it: a plausible wrong edit, such as a typo or
+   a wrong number, and save. `check_build_task` with `stage: "near_miss"`:
+   a check must fail.
+5. `act_on_build_computer` with `action: "reset"`, then `check_build_task`
+   with `stage: "after_reset"`: a check must fail again.
+6. The last stage ends the witness: `witness.record` has the verdict, the
+   path of `witness.json` and the recording's segments in `directory`.
+   `close_build_computer` on the witness computer.
+
+A stage that does not hold ends the witness as `failed`. Read each check's
+result and decide:
+
+- `after_edit` failed though the saved file is right: the check is brittle.
+  Fix it, export again and witness in a new computer.
+- `after_edit` failed because your edit was wrong: witness again in a new
+  computer; a computer is witnessed once.
+- `near_miss` passed: the checks are too loose. Tighten them, export again
+  and witness again.
+- `after_reset` passed: the reset did not restore the seed. Report it as a
+  limitation.
+
+Stop after three witnesses and report what still fails.
+
+## Solver runs
+
+Only if the requester asked for them. If they wanted to review the task
+first, show them its prompt and checks and wait for their approval. Then run
+the bundle within the budget, one run at a time, with the runner
+`REA_AGENT_ENV_COMMAND` names:
+`agent-env run <bundle> --task <name> --agent claude-code --model <model>`.
+Count runs reported `passed`. A run `scored below 1` is a miss; one reported
+`failed` did not finish, so run it again if the budget allows instead of
+counting it. Never run past the budget.
+
+## Close and report
+
+`close_build_computer` on every computer still open, also after a failure.
+If a close fails, call it again; if it still fails, tell the requester what
+is left.
+
+Report:
+
+- the bundle path and the environment name;
+- the task's name and prompt;
+- each check, and why it proves the edit and fails the near miss;
+- each witness stage with its result, the verdict, and the paths of
+  `witness.json` and the recording;
+- the seed's contents: `seed_files` and what each holds;
+- `scrubbed_files` and `unscrubbed_files`; an unscrubbed file still names
+  the host or user, so it needs review before sharing;
+- limitations: the capture's, the export's and anything you could not do;
+- solver runs, if any: the model, the runs and the passes;
+- the build time and the questions you asked.
+
+Never publish or share the bundle yourself.

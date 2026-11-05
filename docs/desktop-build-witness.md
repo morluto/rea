@@ -18,6 +18,12 @@ grades the witness with the same checks the exported verifier runs.
 Like the computer tools, these are MCP-only and act on a `computer_id` from
 `start_build_computer`.
 
+REA's skill walks an agent from a request such as "build me an Inkscape
+environment where the agent changes a poster's headline" to a witnessed
+bundle with these tools: the questions it asks first, when it stops for the
+person, the install, the seed, the task, the witness and its final report.
+See [desktop builds](https://github.com/morluto/rea/blob/main/.agents/skills/reverse-engineer-anything/references/desktop-build.md).
+
 ## Build
 
 1. `start_build_computer` from a request. REA is installed in the computer.
