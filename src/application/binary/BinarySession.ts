@@ -39,6 +39,7 @@ import type {
   OpenSelectionReceipt,
   SavedAnalysisSnapshot,
 } from "./BinarySessionPort.js";
+import { binaryTargetSummary } from "./BinaryTargetSummary.js";
 import {
   SessionProviderRouter,
   type SessionProviderRoute,
@@ -537,9 +538,17 @@ export class BinarySession
         );
       };
       const result = await attempt();
-      return result.ok
-        ? result
-        : { ...result, selection: this.#openSelectionReceipt() };
+      if (result.ok) return result;
+      return {
+        ...result,
+        selection: this.#openSelectionReceipt(),
+        targetAtCompletion:
+          this.#active === undefined
+            ? null
+            : binaryTargetSummary(this.#active.target),
+        providerIdAtCompletion:
+          this.#active?.route.binding?.identity.id ?? null,
+      };
     });
   }
 
