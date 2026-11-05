@@ -166,13 +166,22 @@ describe("reverse engineering command services", () => {
         command: "wx 00 @ 0",
       });
       expect(result.ok).toBe(true);
-      if (result.ok)
+      if (result.ok) {
         expect(result.value.raw_result).toMatchObject({
           stdout: "captured partial output",
           exit_code: null,
           output_truncated: true,
           completion_status: "unknown",
         });
+        expect(result.value.limitations).toEqual(
+          expect.arrayContaining([
+            expect.stringContaining("16777216-byte cap"),
+          ]),
+        );
+        expect(result.value.limitations.join("\n")).not.toContain(
+          "terminated by signal",
+        );
+      }
     } finally {
       await rm(directory, { recursive: true, force: true });
     }

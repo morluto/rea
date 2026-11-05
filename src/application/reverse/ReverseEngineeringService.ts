@@ -453,6 +453,7 @@ export class ReverseEngineeringService {
     let cleanupIncomplete = false;
     let cleanupOnlyFailure = false;
     let completionStatus: "complete" | "unknown" = "complete";
+    let outputLimitReached = false;
     let failure: AnalysisError | undefined;
     let cleanupOwner: ProviderProcessSupervisor | undefined;
     let earlyFailure: AnalysisError | undefined;
@@ -507,6 +508,8 @@ export class ReverseEngineeringService {
         );
       const capture = execFileOutputFailure(cause);
       const code = capture?.code ?? commandFailureCode(cause);
+      if (code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER")
+        outputLimitReached = true;
       if (earlyFailure === undefined && code === "E2BIG")
         earlyFailure = new AnalysisResourceConstraintError(
           operation,
@@ -742,12 +745,16 @@ export class ReverseEngineeringService {
             )} bytes contain invalid or incomplete UTF-8; replacement characters in the text capture do not preserve the original bytes.`,
           ]
         : []),
-      ...(outputTruncated
+      ...(outputLimitReached
         ? [
-            "Captured provider output is partial because bytes were omitted; process completion is reported separately.",
+            `REA stopped collecting output at its ${String(MAX_COMBINED_OUTPUT_BYTES)}-byte cap and ended the provider process; the captured stdout and stderr are a prefix and command completion is unknown. Narrow the command or page its output.`,
           ]
-        : []),
-      ...(signalName === null
+        : outputTruncated
+          ? [
+              "Captured provider output is partial because bytes were omitted; process completion is reported separately.",
+            ]
+          : []),
+      ...(signalName === null || outputLimitReached
         ? []
         : [
             `The provider process terminated by signal ${signalName}; captured output may be partial and command completion is unknown.`,
