@@ -260,6 +260,7 @@ cliTest.for(fixtures)(
         inventory_complete: true,
       });
       if ("packaging_model" in projection) {
+        expect(projection.unclassified_components, mode).toEqual([]);
         expect(projection.packaging_model, mode).toBe(
           mode === "files" ? "stage" : "unknown",
         );
