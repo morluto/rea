@@ -12,7 +12,85 @@ import { mkdir, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { webSourceLocationFixture } from "../fixtures/webSourceLocation.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
-import { cliTest } from "../support/cli/cliFixture.js";
+import { cliTest, type TestCli } from "../support/cli/cliFixture.js";
+
+/** Out-of-range generated positions stay on the coordinate that ran past the script. */
+const expectPastEndSourcePosition = async ({
+  cli,
+  client,
+  manifest,
+  map,
+  sourceMap,
+  sourceLength,
+  sourcePath,
+}: {
+  readonly cli: TestCli;
+  readonly client: Client;
+  readonly manifest: string;
+  readonly map: string;
+  readonly sourceMap: { readonly url: string; readonly text: string };
+  readonly sourceLength: number;
+  readonly sourcePath: string;
+}): Promise<void> => {
+  const pastColumn = await client.callTool({
+    name: "trace_web_source_location",
+    arguments: {
+      manifest_path: manifest,
+      script_index: 0,
+      source_map: { path: map, url: sourceMap.url },
+      generated_position: { line: 1, column: 10 },
+    },
+  });
+  expect(parseMcpToolError(pastColumn).error).toMatchObject({
+    code: "invalid_request",
+    details: {
+      issues: [
+        {
+          path: ["generated_position", "column"],
+          reason: "out_of_range",
+          maximum: sourceLength,
+        },
+      ],
+    },
+  });
+  const invalid = await cli.run({
+    arguments: [
+      "trace-web-source-location",
+      manifest,
+      "0",
+      map,
+      sourceMap.url,
+      "2",
+      "0",
+      "--json",
+    ],
+    environment: { REA_LOG_LEVEL: "silent" },
+    timeoutMs: 45000,
+  });
+  expect(invalid.exitCode).toBe(1);
+  expect(invalid.json).toMatchObject({
+    code: "invalid_request",
+    details: {
+      issues: [
+        {
+          path: ["generated_position", "line"],
+          reason: "out_of_range",
+          maximum: 1,
+        },
+      ],
+      partial_observation: {
+        kind: "web-trace-observation",
+        analysis: "incomplete",
+        manifest: { path: manifest },
+        source: { path: sourcePath },
+        source_map: {
+          path: map,
+          sha256: createHash("sha256").update(sourceMap.text).digest("hex"),
+        },
+      },
+    },
+  });
+};
 
 cliTest(
   "accepts numeric UTF-16 coordinates and runs the actual owned source-map codec without a browser",
@@ -130,65 +208,14 @@ cliTest(
     });
     expect(mcpResponse.isError, JSON.stringify(mcpResponse)).not.toBe(true);
     expect(mcpResponse.structuredContent).toEqual(response.json);
-    const pastColumn = await client.callTool({
-      name: "trace_web_source_location",
-      arguments: {
-        manifest_path: manifest,
-        script_index: 0,
-        source_map: { path: map, url: fixture.sourceMap.url },
-        generated_position: { line: 1, column: 10 },
-      },
-    });
-    expect(parseMcpToolError(pastColumn).error).toMatchObject({
-      code: "invalid_request",
-      details: {
-        issues: [
-          {
-            path: ["generated_position", "column"],
-            reason: "out_of_range",
-            maximum: fixture.source.length,
-          },
-        ],
-      },
-    });
-    const invalid = await cli.run({
-      arguments: [
-        "trace-web-source-location",
-        manifest,
-        "0",
-        map,
-        fixture.sourceMap.url,
-        "2",
-        "0",
-        "--json",
-      ],
-      environment: { REA_LOG_LEVEL: "silent" },
-      timeoutMs: 45000,
-    });
-    expect(invalid.exitCode).toBe(1);
-    expect(invalid.json).toMatchObject({
-      code: "invalid_request",
-      details: {
-        issues: [
-          {
-            path: ["generated_position", "line"],
-            reason: "out_of_range",
-            maximum: 1,
-          },
-        ],
-        partial_observation: {
-          kind: "web-trace-observation",
-          analysis: "incomplete",
-          manifest: { path: manifest },
-          source: { path: join(root, "files", "modules", "main.js") },
-          source_map: {
-            path: map,
-            sha256: createHash("sha256")
-              .update(fixture.sourceMap.text)
-              .digest("hex"),
-          },
-        },
-      },
+    await expectPastEndSourcePosition({
+      cli,
+      client,
+      manifest,
+      map,
+      sourceMap: fixture.sourceMap,
+      sourceLength: fixture.source.length,
+      sourcePath: join(root, "files", "modules", "main.js"),
     });
   },
   // Allow cold CLI and MCP ownership preparation across the full parity sequence.
