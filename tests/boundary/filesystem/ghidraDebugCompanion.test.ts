@@ -20,6 +20,7 @@ import {
   readMachoFileUuidEntries,
 } from "../../../src/application/DebugCompanionAdmission.js";
 import { parseBinaryTarget } from "../../../src/application/BinaryTargetResolver.js";
+import { dsymPathSelectionOption } from "../../../src/cli/options.js";
 import { openBinaryInputSchema } from "../../../src/contracts/sessionLifecycleInputs.js";
 import { GhidraAdmissionError } from "../../../src/ghidra/GhidraAdmissionError.js";
 import { GhidraClient } from "../../../src/ghidra/GhidraClient.js";
@@ -408,11 +409,21 @@ it.each(["/", "/."])(
     await writeFile(target, bytes);
     await writeFile(join(directory, "member"), bytes);
 
+    expect(dsymPathSelectionOption.safeParse(dsymPath)).toMatchObject({
+      success: true,
+    });
     expect(
       openBinaryInputSchema.safeParse({ path: target, dsym_path: dsymPath }),
     ).toMatchObject({
       success: true,
     });
+    for (const invalid of ["", "relative.dSYM", "/tmp/with\x00nul.dSYM"]) {
+      expect(dsymPathSelectionOption.safeParse(invalid).success).toBe(false);
+      expect(
+        openBinaryInputSchema.safeParse({ path: target, dsym_path: invalid })
+          .success,
+      ).toBe(false);
+    }
     expect(await parseBinaryTarget(target, { dsymPath })).toMatchObject({
       ok: true,
       value: {

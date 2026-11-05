@@ -5,6 +5,7 @@ import {
   type ExecutableFormatHint,
 } from "../domain/dosCom.js";
 import type { BinaryArchitecture } from "../domain/binaryTargetTypes.js";
+import { absoluteLocalPathStringSchema } from "../domain/localPath.js";
 import {
   binaryArchitectureSchema,
   rawBinaryEntryPointSchema,
@@ -76,8 +77,7 @@ export const entryPointSelectionOption = rawBinaryEntryPointSchema
   );
 
 /** Caller-selected dSYM bundle; Mach-O targets only, UUID-matched at admission. */
-export const dsymPathSelectionOption = z
-  .string()
+export const dsymPathSelectionOption = absoluteLocalPathStringSchema
   .optional()
   .describe(
     "Absolute path to a .dSYM bundle whose DWARF member carries the Mach-O target's LC_UUID; omission analyzes without debug types",
