@@ -14,6 +14,7 @@ import type { DesktopApplicationCapture } from "./desktopCapture.js";
 import type { DesktopApplicationState } from "./desktopState.js";
 import { isWithinAny } from "./desktopStateDiff.js";
 import { SEED_HOME } from "./hostIdentity.js";
+import type { LaunchDocument } from "./seedDocument.js";
 import { stateDirectoryOf } from "./stateRoles.js";
 
 /** agentenv-framework release the exported class was checked against. */
@@ -42,12 +43,16 @@ export interface DesktopAppExportPlan {
   /** Whether the app is Electron, whose launch then runs without Chromium's sandbox. */
   readonly electron: boolean;
   readonly command: readonly string[];
+  /** What the launch opens: the seed's one document, a file the captured command names, or nothing. */
+  readonly opens: LaunchDocument;
   readonly windowClass: string;
   /** Home-relative paths the app owns for data add, get and reset. */
   readonly paths: readonly string[];
   readonly capturedHome: string;
   /** The checkpoint whose state the seed holds. */
   readonly seedCheckpoint: string;
+  /** Whether the seed was made for the task, as in a build computer, rather than taken from the user's own data. */
+  readonly syntheticSeed: boolean;
   /** Home-relative files copied into the computer's home before the first launch. */
   readonly seedFiles: readonly string[];
   /** Seed files read as text, which get the seed's home path respelled. */
@@ -361,7 +366,7 @@ export const renderAppClass = (plan: DesktopAppExportPlan): string => {
   return `"""${docText(plan.title)} as an agentenv computer app, exported by REA from a desktop application capture.
 
 Package: ${plan.aptPackage}${plan.packageVersion === null ? "" : ` (captured at ${plan.packageVersion})`}. Capture Evidence: ${plan.captureEvidenceId}.
-The seed is the user's state at checkpoint ${docText(plan.seedCheckpoint)}: keep this bundle local.
+${plan.syntheticSeed ? `The seed was made for the task, as saved at checkpoint ${docText(plan.seedCheckpoint)}.` : `The seed is the user's state at checkpoint ${docText(plan.seedCheckpoint)}: keep this bundle local.`}
 """
 
 ${PYTHON_IMPORTS}
@@ -451,6 +456,22 @@ const installNotes = (plan: DesktopAppExportPlan): string =>
     .map((line) => `\n${line}`)
     .join("");
 
+/** The limitation of a launch that opens no document; none when it opens one. */
+export const launchDocumentLimitation = (
+  opens: LaunchDocument,
+): string | undefined =>
+  opens.kind === "none"
+    ? `The app opens no document at launch, since ${opens.reason}.`
+    : undefined;
+
+/** The README line on what the launch opens; none when the captured command names its own file. */
+const launchDocumentNote = ({ opens }: DesktopAppExportPlan): string =>
+  opens.kind === "seed"
+    ? `\n- At launch the app opens \`~/${opens.document}\`, the seed's one document.`
+    : opens.kind === "none"
+      ? `\n- ${launchDocumentLimitation(opens)}`
+      : "";
+
 /** Bundle files: seeds the export rewrote to remove the capture host's identity, and files that still hold it. */
 export interface SeedScrubReport {
   readonly scrubbed: readonly string[];
@@ -490,10 +511,10 @@ ${DESKTOP_EXPORT_FRAMEWORK_VERSION}.
 
 - \`envs/${plan.name}/\` is a computer app on the \`ubuntu-24.04\` base with the \`reference\` driver, for
   ${plan.architectures.map((architecture) => `\`${architecture}\``).join(" and ")}. It installs ${installs(plan)}, launches \`${plan.command.join(" ")}\` at boot and is ready
-  when a window of class \`${plan.windowClass}\` appears.${installNotes(plan)}
+  when a window of class \`${plan.windowClass}\` appears.${installNotes(plan)}${launchDocumentNote(plan)}
 - Owned paths: ${plan.paths.length === 0 ? "none" : plan.paths.map((path) => `\`~/${path}\``).join(", ")}.
   \`data/get\` returns their files and a typed JSON view of each; \`data/reset\` restores the seed.
-- Seed: ${plan.seedFiles.length} file(s) from the user's home at checkpoint \`${plan.seedCheckpoint}\`${plan.dconf.length === 0 ? "" : ", and the application's dconf keys"}.
+- Seed: ${plan.seedFiles.length} file(s) ${plan.syntheticSeed ? "made for the task, as saved" : "from the user's home"} at checkpoint \`${plan.seedCheckpoint}\`${plan.dconf.length === 0 ? "" : ", and the application's dconf keys"}.
   Text files and dconf keys spell the capture host's name as \`localhost\`, \`user@host\` as \`user@localhost\`
   and the home as \`${SEED_HOME}\`, which the computer respells to its own at boot.${scrubNotes(scrub)}${
     plan.unseededFiles.length === 0
@@ -506,7 +527,7 @@ ${DESKTOP_EXPORT_FRAMEWORK_VERSION}.
 
 ${taskSection.length === 0 ? "Run it with `agent-env run <this folder>`." : "Run the task with `agent-env run <this folder>`, or only the deploy with `--task smoke`."}
 
-The seed is the user's real data. Keep this bundle local; do not publish it.
+${plan.syntheticSeed ? `The seed was made for this task, not taken from a user's own data; read \`envs/${plan.name}/seed/\` before publishing the bundle.` : "The seed is the user's real data. Keep this bundle local; do not publish it."}
 ${plan.dconf.length === 0 ? "" : "dconf keys are compiled into the user's dconf database, with `dconf-cli`, once when the app first starts; `data/reset` does not restore them.\n"}${taskSection}`;
 
 /** A smoke task that deploys the app. */

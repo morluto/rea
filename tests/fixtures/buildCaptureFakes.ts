@@ -66,6 +66,7 @@ const realCliOutputs = async (install: CapturedInstall | undefined) => {
     "--task",
     task,
     ...ENDS,
+    "--synthetic-seed",
     ...(install?.packageUrl === undefined
       ? []
       : ["--package-url", install.packageUrl]),

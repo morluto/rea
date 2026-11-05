@@ -26,10 +26,12 @@ const plan: DesktopAppExportPlan = {
   packageFile: null,
   electron: false,
   command: ["mousepad"],
+  opens: { kind: "empty" },
   windowClass: "Mousepad",
   paths: [".config/Mousepad", "Documents"],
   capturedHome: "/home/ada",
   seedCheckpoint: "baseline",
+  syntheticSeed: false,
   seedFiles: ["Documents/todo.txt"],
   textSeeds: ["Documents/todo.txt"],
   unseededFiles: [],
@@ -307,5 +309,64 @@ describe("renderers", () => {
     expect(readme).toContain(
       "such as a trial's terms, is the operator's to check",
     );
+  });
+});
+
+describe("README and class wording", () => {
+  it("says what the launch opens, and keeps the bundle local unless the seed was made for the task", () => {
+    const opened = renderReadme({
+      ...plan,
+      command: launchCommand(
+        ["mousepad", "/home/ada/Documents/todo.txt"],
+        "/home/ada",
+        "/home/ada",
+      ),
+      opens: { kind: "seed", document: "Documents/todo.txt" },
+    });
+    expect(opened).toContain(
+      `launches \`sh -c cd "$HOME" 2>/dev/null; exec 'mousepad' "$HOME"/'Documents/todo.txt'\` at boot`,
+    );
+    expect(opened).toContain(
+      "- At launch the app opens `~/Documents/todo.txt`, the seed's one document.",
+    );
+    expect(
+      renderReadme({
+        ...plan,
+        opens: {
+          kind: "none",
+          reason: "its desktop entry's Exec takes no file",
+        },
+      }),
+    ).toContain(
+      "- The app opens no document at launch, since its desktop entry's Exec takes no file.",
+    );
+    for (const opens of [{ kind: "captured" }, { kind: "empty" }] as const)
+      expect(renderReadme({ ...plan, opens })).not.toContain(
+        "document at launch",
+      );
+
+    const captured = renderReadme(plan);
+    expect(captured).toContain(
+      "- Seed: 1 file(s) from the user's home at checkpoint `baseline`",
+    );
+    expect(captured).toContain(
+      "The seed is the user's real data. Keep this bundle local; do not publish it.",
+    );
+    expect(renderAppClass(plan)).toContain(
+      "The seed is the user's state at checkpoint baseline: keep this bundle local.",
+    );
+    const made = { ...plan, syntheticSeed: true, seedCheckpoint: "seed" };
+    const synthetic = renderReadme(made);
+    expect(synthetic).toContain(
+      "- Seed: 1 file(s) made for the task, as saved at checkpoint `seed`",
+    );
+    expect(synthetic).toContain(
+      "The seed was made for this task, not taken from a user's own data; read `envs/mousepad/seed/` before publishing the bundle.",
+    );
+    expect(synthetic).not.toContain("real data");
+    expect(renderAppClass(made)).toContain(
+      "The seed was made for the task, as saved at checkpoint seed.",
+    );
+    expect(renderAppClass(made)).not.toContain("keep this bundle local");
   });
 });

@@ -25,6 +25,9 @@ a `.deb` file; see [Applications from a .deb file](#applications-from-a-deb-file
 `--seed-checkpoint` names the checkpoint whose state seeds the bundle, the
 baseline by default, and `--end-checkpoint` the one a task must pass on, the
 capture's last by default; see [The seed checkpoint](#the-seed-checkpoint).
+`--synthetic-seed` says the seed was made for the task, as a build agent makes
+it in a [build computer](desktop-build-witness.md), rather than taken from the
+user's own data; see [A seed made for the task](#a-seed-made-for-the-task).
 
 The command returns Evidence with operation `export_desktop_application` and
 predicate type `rea.desktop-application-export`, listing the environment name,
@@ -122,6 +125,16 @@ The class declares:
   desktop entry without `Path`), which a relative argument or program path
   such as `./app` also needs, and still starts if that folder is missing. The
   export refuses a capture that saw no application window.
+- The seed's document, opened at launch, so the app shows it rather than its
+  start screen: when the seed holds exactly one file the state view gives the
+  `document` role, and the desktop entry's `Exec` takes files (a `%f`, `%F`,
+  `%u` or `%U` field code), its path under `$HOME` is appended to the command.
+  A command that already names a file under the home, as one captured with
+  `--argument <file>` does, is kept as it is. A seed with no document launches
+  as captured. With several, no desktop entry or an `Exec` that takes no file,
+  the app launches as captured and the README and the result's limitations say
+  why. A reset
+  relaunches the app, so it opens the document again.
 - For an Electron application (the capture found its fuse sentinel or a
   `resources/app.asar`), `--no-sandbox` right after the program unless the
   command already has it: Chromium's sandbox needs user namespaces the
@@ -182,6 +195,16 @@ A file's state at a checkpoint is its last version recorded at or before it.
 The export refuses a name the capture does not hold exactly once, and an end
 checkpoint taken before the seed checkpoint; `inspect-desktop-application-state`
 lists the names in `capture.checkpoints`.
+
+## A seed made for the task
+
+By default the seed is the user's real data: the README and the result's
+limitations say to keep the bundle local and not publish it. With
+`--synthetic-seed` they say instead that the seed was made for the task, and
+to read `envs/<name>/seed/` before publishing the bundle; the export cannot
+tell the two apart, so the flag is the caller's word. `export_build_environment`
+passes it, since the building agent makes the seed in the build computer. The
+Evidence records it as `synthetic_seed`.
 
 ## Host name and user
 
@@ -334,6 +357,7 @@ when a DOCTYPE names a DTD. Known differences remain:
   and then gives the file an `error`, and so does a table or column name that
   is not UTF-8.
 
-The seed is the user's real data. Keep the bundle local and do not publish it.
+Unless it was [made for the task](#a-seed-made-for-the-task), the seed is the
+user's real data. Keep the bundle local and do not publish it.
 The class was checked against agentenv-framework 0.9.1431 with
 `python -m agentenv_protocol.computer._declare` and `agent-env run --dry-run`.

@@ -54,8 +54,12 @@ See [desktop builds](https://github.com/morluto/rea/blob/main/.agents/skills/rev
    The export runs inside the computer with `--seed-checkpoint seed
    --end-checkpoint end`, so it seeds what was saved at `seed`, scrubs the
    computer's host name and user from it, and refuses a task whose checks
-   all pass on the seed. A file moved to the desktop Trash is not seeded,
-   and the export's limitations name what the Trash held at `seed`. For a
+   all pass on the seed. It also passes `--synthetic-seed`, since the agent
+   made the seed for the task, so the README does not call it the user's real
+   data. When the seed holds exactly one document and the app's desktop entry
+   takes files, the bundle's app opens that document at launch. A file moved
+   to the desktop Trash is not seeded, and the export's limitations name what
+   the Trash held at `seed`. For a
    `.deb` app that no apt source the capture found offers, the export takes
    the request's URL with `--package-url`; one apt offers installs from apt. REA lists the bundle's files with their sizes
    and SHA-256 in the computer, into a file beside the bundle that it reads
@@ -107,7 +111,8 @@ cancels the call in progress on it and refuses the calls still waiting.
 ## Witness
 
 Start a fresh computer from the exported folder with `start_build_computer`
-and `{"kind": "bundle", "path": ...}`; agentenv boots the app with the seed.
+and `{"kind": "bundle", "path": ...}`; agentenv boots the app with the seed,
+on the seed's document when the export opens one.
 Then, with the task exactly as exported:
 
 | `stage`       | Before it                                                         | Its checks must          |

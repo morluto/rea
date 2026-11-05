@@ -83,6 +83,12 @@ and the recording and writes the record as Evidence.
   and the export's limitations name what the Trash held at the seed; a
   start from a bundle folder writes no bytecode into it; the first
   screenshot waits, briefly and bounded, until the frame is not one colour.
+- Gaps of the blind validation's solve runs: the exported app opens the
+  seed's one document at launch, when its desktop entry takes files, so a
+  solving agent starts in the document rather than on the app's start
+  screen; and `export_build_environment` passes `--synthetic-seed`, so the
+  README says the seed was made for the task instead of calling it the
+  user's real data.
 
 - Gaps of the second review: calls on one computer (actions, capture
   steps, checks and close) run one at a time in arrival order, so a stage's

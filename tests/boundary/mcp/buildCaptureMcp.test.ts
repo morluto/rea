@@ -169,8 +169,13 @@ it("captures the app inside the computer, acknowledges checkpoints, drafts the t
       "seed",
       "--end-checkpoint",
       "end",
+      // The agent made the seed in the computer, so the README need not keep it local.
+      "--synthetic-seed",
     ]),
   ]);
+  expect(await readFile(join(directory, "README.md"), "utf8")).toContain(
+    "The seed was made for this task, not taken from a user's own data",
+  );
   expectNoToken(computer, [started, seed, stopped, exported]);
 });
 

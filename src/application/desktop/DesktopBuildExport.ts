@@ -134,6 +134,8 @@ export const exportBuild = async (
         "--task",
         task,
         ...ENDS,
+        // The building agent made the seed in this computer for the task.
+        "--synthetic-seed",
         ...(request.name === undefined ? [] : ["--name", request.name]),
         ...(capture.packageUrl === undefined
           ? []

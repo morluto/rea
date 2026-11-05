@@ -5,6 +5,7 @@ import {
   className,
   exportedStateFiles,
   launchCommand,
+  launchDocumentLimitation,
   renderAppClass,
   renderEnvToml,
   renderInstallScript,
@@ -28,6 +29,7 @@ import {
 } from "../../domain/desktop/desktopState.js";
 import { isWithinAny } from "../../domain/desktop/desktopStateDiff.js";
 import type { HostIdentity } from "../../domain/desktop/hostIdentity.js";
+import { openSeedDocument } from "../../domain/desktop/seedDocument.js";
 import { scrubDconf } from "../../domain/desktop/seedScrub.js";
 import { isTextualFormat } from "../../domain/desktop/stateFormats.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
@@ -76,6 +78,8 @@ export interface DesktopExportRequest {
   readonly seedCheckpoint?: string | undefined;
   /** The checkpoint a task's end state is read at; the last when omitted. */
   readonly endCheckpoint?: string | undefined;
+  /** The seed was made for the task, as in a build computer, rather than taken from the user's own data. */
+  readonly syntheticSeed?: boolean | undefined;
 }
 
 /** What the export wrote. */
@@ -206,6 +210,16 @@ const planExport = (
     seeds.set(home, { sha256: version.sha256, format: version.format });
     if (isTextualFormat(version.format)) textSeeds.push(home);
   }
+  const launch = openSeedDocument(
+    electronLaunchArguments(application.argv, electron),
+    {
+      home: host.home,
+      exec: application.desktop_entry?.exec ?? null,
+      documents: [...seeds.keys()]
+        .filter((home) => files.get(home)?.role === "document")
+        .sort(),
+    },
+  );
   const plan: DesktopAppExportPlan = {
     name: source,
     className: className(source),
@@ -222,14 +236,16 @@ const planExport = (
       : { executablePackage: install.executablePackage }),
     electron,
     command: launchCommand(
-      electronLaunchArguments(application.argv, electron),
+      launch.argv,
       host.home,
       application.working_directory,
     ),
+    opens: launch.opens,
     windowClass,
     paths,
     capturedHome: host.home,
     seedCheckpoint: state.capture.checkpoints[context.seed] ?? "baseline",
+    syntheticSeed: request.syntheticSeed === true,
     seedFiles: [...seeds.keys()].sort(),
     textSeeds: textSeeds.sort(),
     unseededFiles: unseededFiles(capture, homePath, files, {
@@ -255,10 +271,8 @@ const planExport = (
   };
 };
 
-const EXPORT_LIMITATIONS = [
-  "The seed is the user's real state at the seed checkpoint; keep the bundle local.",
-  "Binary state files are seeded as captured; only text files, UTF-8 or UTF-16 with a byte-order mark, have the capture host's name, user@host and home path replaced.",
-];
+const SCRUB_LIMITATION =
+  "Binary state files are seeded as captured; only text files, UTF-8 or UTF-16 with a byte-order mark, have the capture host's name, user@host and home path replaced.";
 
 /** The bundle's generated files, the class module flagged when its dconf keys hold the identity, and its README, made once the seeds' scrub is known. */
 const bundleText = (
@@ -308,8 +322,13 @@ const exportLimitations = (
   },
 ): string[] => {
   const opened = capture.state.unretained_opened_directories;
+  const opens = launchDocumentLimitation(plan.opens);
   return [
-    ...EXPORT_LIMITATIONS,
+    plan.syntheticSeed
+      ? "The seed was made for the task, not taken from a user's own data; read it before publishing the bundle."
+      : "The seed is the user's real state at the seed checkpoint; keep the bundle local.",
+    SCRUB_LIMITATION,
+    ...(opens === undefined ? [] : [opens]),
     ...facts.install,
     ...(plan.unseededFiles.length === 0
       ? []
@@ -454,6 +473,7 @@ export const exportDesktopApplication = async (
         package_url: request.packageUrl !== undefined,
         seed_checkpoint: request.seedCheckpoint ?? null,
         end_checkpoint: request.endCheckpoint ?? null,
+        synthetic_seed: request.syntheticSeed === true,
       },
       result: {
         ...result,

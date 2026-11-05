@@ -27,7 +27,12 @@ state through `data/add`, `data/get` and `data/reset`.
   class match with a window ready check, `paths` from the state view's roles
   (state directories of application state files, or a folder beside one that
   differs only in letter case in the files' spelling, and folders of
-  documents, nested ones collapsed) and the skill file.
+  documents, nested ones collapsed) and the skill file. When the seed holds
+  exactly one document and the desktop entry's `Exec` takes files, the
+  launch appends its path under `$HOME`; a command that names a file under
+  the home already is kept, a seed with no document launches as captured,
+  and otherwise the README and the limitations say why the app opens no
+  document.
 - With paths, it declares all three data hooks and calls agentenv's helpers:
   seed the home once per boot then `keep_initial`, `add`, `reset`, and `get`
   plus a data part holding a typed JSON view of each file. Without paths it
@@ -38,7 +43,8 @@ state through `data/add`, `data/get` and `data/reset`.
   application are compiled into the user's dconf database with `dconf-cli`,
   without D-Bus.
 - The README and the result state the agentenv-framework release the class was
-  checked against (0.9.1431), and that the seed is real user data.
+  checked against (0.9.1431), and that the seed is real user data, unless
+  `--synthetic-seed` says it was made for the task.
 
 ## Non-goals
 
