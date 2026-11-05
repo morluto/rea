@@ -16,7 +16,15 @@ import {
   taskVerifierArtifact,
 } from "../../domain/desktop/appTaskPython.js";
 import type { DesktopAppExportPlan } from "../../domain/desktop/appExport.js";
-import type { DesktopStatePath } from "../../domain/desktop/desktopState.js";
+import {
+  versionAt,
+  type DesktopStatePath,
+  type StateEnds,
+} from "../../domain/desktop/desktopState.js";
+import {
+  hostIdentityIn,
+  type HostIdentity,
+} from "../../domain/desktop/hostIdentity.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
 import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
@@ -32,12 +40,14 @@ import { refuse } from "./DesktopExportInstall.js";
 const OPERATION = "export_desktop_application";
 const REWRITE = "Fix the task file and export again.";
 
-/** What the export knows of the app: its name, owned paths, captured home and state files by home path. */
+/** What the export knows of the app: its name, owned paths, captured home, host identity, state files by home path and the checkpoints it reads. */
 type TaskTarget = Pick<
   DesktopAppExportPlan,
   "name" | "paths" | "capturedHome"
 > & {
   readonly files: ReadonlyMap<string, DesktopStatePath>;
+  readonly identity: HostIdentity;
+  readonly ends: StateEnds;
 };
 
 /** A task the capture validated: the files it adds to the bundle, its README section and its summary. */
@@ -107,8 +117,12 @@ const targetProblem = (
 ): string | undefined => {
   if (!isWithinAny(check.file, target.paths))
     return `names ${check.file}, which is not under the app's owned paths (${target.paths.join(", ") || "none"}); data/get serves only those`;
-  if (JSON.stringify(check).includes(target.capturedHome))
+  const text = JSON.stringify(check);
+  if (text.includes(target.capturedHome))
     return `names the captured home ${target.capturedHome}, which the computer's home replaces`;
+  const named = hostIdentityIn(text, target.identity);
+  if (named !== undefined)
+    return `names ${named}, the capture host's name or user, which the export removes from the seed`;
   if (check.kind !== "value_equals" && check.kind !== "value_absent")
     return undefined;
   const versions = target.files.get(check.file)?.versions ?? [];
@@ -117,21 +131,17 @@ const targetProblem = (
     : undefined;
 };
 
-/** Views of every file at one end of the capture: its first or its last version. */
+/** Views of every file at the seed or the end checkpoint. */
 const viewsAt = (
   files: ReadonlyMap<string, DesktopStatePath>,
-  end: "baseline" | "final",
+  ends: StateEnds,
+  end: keyof StateEnds,
 ): ReadonlyMap<string, TaskFileView> => {
   const views = new Map<string, TaskFileView>();
   for (const [home, path] of files) {
-    const version =
-      end === "baseline" ? path.versions[0] : path.versions.at(-1);
-    // A file not retained at the baseline is not seeded, so the computer starts without it.
-    if (
-      end === "baseline" &&
-      version?.present === true &&
-      version.sha256 === null
-    )
+    const version = versionAt(path, ends[end]);
+    // A file not retained at the seed is not seeded, so the computer starts without it.
+    if (end === "seed" && version?.present === true && version.sha256 === null)
       continue;
     const view = version === undefined ? undefined : versionView(version);
     if (view !== undefined) views.set(home, view);
@@ -202,7 +212,10 @@ export const admitDesktopTask = async (
         REWRITE,
       );
   }
-  const end = evaluateTaskChecks(task.checks, viewsAt(target.files, "final"));
+  const end = evaluateTaskChecks(
+    task.checks,
+    viewsAt(target.files, target.ends, "end"),
+  );
   const failing = end.find((outcome) => !outcome.passed);
   if (failing !== undefined)
     throw refuse(
@@ -212,7 +225,7 @@ export const admitDesktopTask = async (
     );
   const failingOnSeed = evaluateTaskChecks(
     task.checks,
-    viewsAt(target.files, "baseline"),
+    viewsAt(target.files, target.ends, "seed"),
   )
     .filter((outcome) => !outcome.passed)
     .map((outcome) => outcome.id);

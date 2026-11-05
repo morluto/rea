@@ -13,6 +13,7 @@ import {
 import type { DesktopApplicationCapture } from "./desktopCapture.js";
 import type { DesktopApplicationState } from "./desktopState.js";
 import { isWithinAny } from "./desktopStateDiff.js";
+import { SEED_HOME } from "./hostIdentity.js";
 import { stateDirectoryOf } from "./stateRoles.js";
 
 /** agentenv-framework release the exported class was checked against. */
@@ -45,13 +46,15 @@ export interface DesktopAppExportPlan {
   /** Home-relative paths the app owns for data add, get and reset. */
   readonly paths: readonly string[];
   readonly capturedHome: string;
+  /** The checkpoint whose state the seed holds. */
+  readonly seedCheckpoint: string;
   /** Home-relative files copied into the computer's home before the first launch. */
   readonly seedFiles: readonly string[];
-  /** Seed files read as text, which get the captured home path respelled. */
+  /** Seed files read as text, which get the seed's home path respelled. */
   readonly textSeeds: readonly string[];
   /** Files under the owned paths that existed before the capture but whose bytes were not retained. */
   readonly unseededFiles: readonly string[];
-  /** `dconf dump` key file of the application's groups at the baseline, or empty. */
+  /** `dconf dump` key file of the application's groups at the seed, or empty. */
   readonly dconf: string;
   readonly captureEvidenceId: string;
 }
@@ -363,12 +366,12 @@ export const renderAppClass = (plan: DesktopAppExportPlan): string => {
   return `"""${docText(plan.title)} as an agentenv computer app, exported by REA from a desktop application capture.
 
 Package: ${plan.aptPackage}${plan.packageVersion === null ? "" : ` (captured at ${plan.packageVersion})`}. Capture Evidence: ${plan.captureEvidenceId}.
-The seed is the user's state before the capture: keep this bundle local.
+The seed is the user's state at checkpoint ${docText(plan.seedCheckpoint)}: keep this bundle local.
 """
 
 ${PYTHON_IMPORTS}
 HERE = Path(__file__).resolve().parent
-CAPTURED_HOME = ${py(plan.capturedHome)}
+SEED_HOME = ${py(SEED_HOME)}
 PATHS = ${pyList(plan.paths)}
 DCONF = ${py(plan.dconf)}
 TEXT_SEEDS = frozenset(${pyList(plan.textSeeds)})
@@ -453,10 +456,31 @@ const installNotes = (plan: DesktopAppExportPlan): string =>
     .map((line) => `\n${line}`)
     .join("");
 
+/** Seed files the export rewrote to remove the capture host's identity, and those that still hold it. */
+export interface SeedScrubReport {
+  readonly scrubbed: readonly string[];
+  readonly unscrubbed: readonly string[];
+}
+
+const homeList = (paths: readonly string[]) =>
+  paths.map((path) => `\`~/${path}\``).join(", ");
+
+const scrubNotes = ({ scrubbed, unscrubbed }: SeedScrubReport): string =>
+  [
+    ...(scrubbed.length === 0 ? [] : [`\n  Rewritten: ${homeList(scrubbed)}.`]),
+    ...(unscrubbed.length === 0
+      ? []
+      : [
+          `\n- Still naming the capture host or user, in bytes REA does not rewrite or a file name: ${homeList(unscrubbed)}.
+  Read them before sharing the bundle.`,
+        ]),
+  ].join("");
+
 /** The bundle README: what was exported, how to run it, and what to keep in mind; a task's section follows. */
 export const renderReadme = (
   plan: DesktopAppExportPlan,
   taskSection = "",
+  scrub: SeedScrubReport = { scrubbed: [], unscrubbed: [] },
 ): string =>
   `# ${plan.title} computer app
 
@@ -469,12 +493,13 @@ ${DESKTOP_EXPORT_FRAMEWORK_VERSION}.
   when a window of class \`${plan.windowClass}\` appears.${installNotes(plan)}
 - Owned paths: ${plan.paths.length === 0 ? "none" : plan.paths.map((path) => `\`~/${path}\``).join(", ")}.
   \`data/get\` returns their files and a typed JSON view of each; \`data/reset\` restores the seed.
-- Seed: ${plan.seedFiles.length} file(s) from the user's home before the capture, with the captured home path
-  respelled in text files${plan.dconf.length === 0 ? "" : ", and the application's dconf keys"}.${
+- Seed: ${plan.seedFiles.length} file(s) from the user's home at checkpoint \`${plan.seedCheckpoint}\`${plan.dconf.length === 0 ? "" : ", and the application's dconf keys"}.
+  Text files and dconf keys spell the capture host's name as \`localhost\`, \`user@host\` as \`user@localhost\`
+  and the home as \`${SEED_HOME}\`, which the computer respells to its own at boot.${scrubNotes(scrub)}${
     plan.unseededFiles.length === 0
       ? ""
       : `
-- Not seeded, because the capture did not retain their starting bytes: ${plan.unseededFiles.map((path) => `\`~/${path}\``).join(", ")}.
+- Not seeded, because the capture did not retain their bytes at the seed: ${homeList(plan.unseededFiles)}.
   Capture again with \`--state-path\` naming them, or a larger \`--max-file-bytes\`, to include them.`
   }
 - \`tasks/smoke.json\` deploys the app.

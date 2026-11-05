@@ -34,6 +34,11 @@ The work lands as one PR per step:
     archives (FreeCAD, OpenDocument, Office Open XML, EPUB) read as their
     entries, checked by name rather than position, namespaced XML included,
     and numbers compared within a tolerance, starting with FreeCAD.
+11. [Capture for building](capture-for-building/spec.md): one capture makes
+    the seed and then the change, at checkpoints the export and the task
+    draft are told; apt lists from a user-space `apt-get update` are found;
+    the application does not inherit the computer's control token; and the
+    bundle holds neither the capture host's name nor its user's.
 
 Version 1 covers Linux with X11, applications whose state lives in files or
 SQLite under the home directory, and real applications from public packages.

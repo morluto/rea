@@ -27,9 +27,15 @@ operation `describe_desktop_application_task` and predicate type
   window class.
 - `owned_paths`: the paths the export owns, the only ones whose files the
   app's `data/get` serves and checks can read.
-- `files`: each file under them whose state differs between the capture's
-  first and last version, with its home path, role, both versions and the net
-  change between them, from the state view's own diff (`lines`, `values`,
+- `checkpoints`: the two checkpoints compared, `baseline` for the seed and
+  `final` for the end. They are the capture's first and last unless
+  `--seed-checkpoint` and `--end-checkpoint` name others, as for the
+  [export](desktop-application-export.md#the-seed-checkpoint), which takes
+  the same options; a name the capture does not hold, or an end before the
+  seed, is refused.
+- `files`: each file under them whose state differs between those
+  checkpoints, with its home path, role, its versions at both (`baseline` and
+  `final`, the last recorded at or before each) and the net change between them, from the state view's own diff (`lines`, `values`,
   `keys` or `rows` with what was added, removed and changed, or `created`,
   `deleted`, `format`, `content`, `unreadable`; `content` also when the
   views hold only part of a file and match while the file changed). A
@@ -127,7 +133,9 @@ The rules both evaluators follow:
 
 The export refuses, naming the check, a file outside the owned paths, a file
 spelled with a leading slash, `.` or `..`, a pointer into a text file, the
-empty pointer (the whole file), a value that names the captured home, a
+empty pointer (the whole file), a value that names the captured home, or the
+capture host's name or `user@host` (which the
+[export removes from the seed](desktop-application-export.md#host-name-and-user)), a
 `tolerance` with a value that is not a number, and a value that looks like an
 ISO 8601 date and time. Other volatile content, such as a counter the app
 bumps on every save, is for the author to leave out.
@@ -230,8 +238,10 @@ document uses, so a check names the prefixes the app writes.
 ## Validation and export
 
 `rea export-desktop-application <capture> <directory> --task <task.json>`
-evaluates the checks on the capture's state view: on the first version of
-each file, which is the seed, and on its last version, the captured end state.
+evaluates the checks on the capture's state view: on each file as it was at
+the seed checkpoint, which is the seed, and at the end checkpoint, the
+captured end state. Those are the capture's first and last checkpoints unless
+`--seed-checkpoint` and `--end-checkpoint` name others.
 It refuses a task whose every check passes on the seed, and a check that fails
 on the end state, with that check's reason. A capture yields one task, so the
 option is taken once. The result's `task` names the task, its number of checks

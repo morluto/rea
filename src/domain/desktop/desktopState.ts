@@ -87,6 +87,19 @@ export const desktopStatePathSchema = z.strictObject({
 });
 export type DesktopStatePath = z.infer<typeof desktopStatePathSchema>;
 
+/** The checkpoints, by position, a bundle's seed is taken at and a task's end state is read at. */
+export interface StateEnds {
+  readonly seed: number;
+  readonly end: number;
+}
+
+/** A path's version as it stood at a checkpoint: the last one recorded at or before that position. */
+export const versionAt = (
+  path: DesktopStatePath,
+  checkpoint: number,
+): DesktopStatePath["versions"][number] | undefined =>
+  path.versions.findLast((version) => version.checkpoint_index <= checkpoint);
+
 /** The normalized result of `inspect_desktop_application_state`. */
 export const desktopApplicationStateSchema = z.strictObject({
   capture: z.strictObject({

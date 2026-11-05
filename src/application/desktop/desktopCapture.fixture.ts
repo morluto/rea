@@ -167,6 +167,53 @@ export const capture = (): DesktopApplicationCapture => ({
   limitations: [],
 });
 
+/** The note as saved before checkpoint `seed`, then as edited and saved before `end`. */
+export const SAVED_NOTE = "milk\n";
+export const EDITED_NOTE = "milk\neggs\n";
+
+/**
+ * The app launches, the user saves a new note and takes `seed`, edits and
+ * saves it and takes `end`, then stops; the app writes its settings as it
+ * exits. Write it with `EDITED_NOTE` as extra content.
+ */
+export const seedEndCapture = (): DesktopApplicationCapture => {
+  const base = capture();
+  const wrap = { before: "[ui]\nwrap=false\n", after: "[ui]\nwrap=true\n" };
+  return {
+    ...base,
+    state: {
+      ...base.state,
+      checkpoints: [
+        checkpoint(
+          "baseline",
+          "baseline",
+          [],
+          [retained(SETTINGS, wrap.before)],
+        ),
+        checkpoint(
+          "seed",
+          "request",
+          [change(NOTE, { after: SAVED_NOTE })],
+          [retained(NOTE, SAVED_NOTE)],
+        ),
+        checkpoint(
+          "end",
+          "request",
+          [change(NOTE, { before: SAVED_NOTE, after: EDITED_NOTE })],
+          [retained(NOTE, EDITED_NOTE)],
+        ),
+        { ...checkpoint("stop", "request", [], []), trigger: "stop" },
+        checkpoint(
+          "exit",
+          "exit",
+          [change(SETTINGS, wrap, { state: true })],
+          [retained(SETTINGS, wrap.after)],
+        ),
+      ],
+    },
+  };
+};
+
 export const writeCaptureFolder = async (
   result: DesktopApplicationCapture,
   operation = DESKTOP_OPERATION,

@@ -53,7 +53,13 @@ would claim other applications' groups.
 
 Each path lists its versions: the baseline, then its state after each
 checkpoint where it, or a database's `-wal` or `-journal` file, changed. A
-checkpoint that leaves an absent file absent adds no version. A version records
+checkpoint that leaves an absent file absent adds no version. A file's state
+at any checkpoint is its last version recorded at or before it, which is how
+the [export](desktop-application-export.md#the-seed-checkpoint) and the
+[task draft](desktop-application-tasks.md) read it at the seed and end
+checkpoints they are given; `capture.checkpoints` lists the names in order.
+Views hold the captured bytes as they are, the capture host's name and user
+included; the export removes those from the bundle. A version records
 whether the file was present, the SHA-256 of its retained bytes, and a view:
 
 | Format    | Detected by                                                            | View                                                                                    |

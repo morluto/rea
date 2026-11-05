@@ -75,7 +75,7 @@ const pythonUtf16Respelled = (files: readonly string[]) => {
     .filter((line) => !line.includes("agentenv_protocol"))
     .join("\n");
   const program = `${imports}
-CAPTURED_HOME = "/home/ada"
+SEED_HOME = "/home/ada"
 ${PYTHON_HELPERS}
 for data in json.load(sys.stdin):
     print(_respelled_utf16(bytes.fromhex(data), Path("/home/user")).hex())
@@ -145,7 +145,7 @@ const taskbarWindow = (bin: string, windowClass: string): string => {
       "-I",
       "-B",
       "-c",
-      `${imports}\nCAPTURED_HOME = "/home/ada"\n${PYTHON_HELPERS}\nprint(_taskbar_window(sys.argv[1]))`,
+      `${imports}\nSEED_HOME = "/home/ada"\n${PYTHON_HELPERS}\nprint(_taskbar_window(sys.argv[1]))`,
       windowClass,
     ],
     {

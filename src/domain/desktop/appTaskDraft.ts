@@ -1,6 +1,10 @@
 import type { JsonValue } from "../jsonValue.js";
 import { isTimestamp, type DesktopTaskCheckInput } from "./appTask.js";
-import type { DesktopStatePath } from "./desktopState.js";
+import {
+  versionAt,
+  type DesktopStatePath,
+  type StateEnds,
+} from "./desktopState.js";
 import { diffStateViews, diffZipMembers } from "./stateChanges.js";
 import { locatePointer, pairMembers, resolvePointer } from "./viewPointer.js";
 import { entryWithoutView, zipArrayLeavesOut, zipEntryAt } from "./zipView.js";
@@ -478,19 +482,20 @@ export interface TaskDraftFile {
 }
 
 /**
- * Each file under the owned paths whose state differs between the baseline and
- * the final version, with suggested checks for the files the user worked on:
- * documents, or the app's own state when no document changed.
+ * Each file under the owned paths whose state differs between its versions at
+ * the seed and end checkpoints, with suggested checks for the files the user
+ * worked on: documents, or the app's own state when no document changed.
  */
 export const draftTaskFiles = (
   files: ReadonlyMap<string, DesktopStatePath>,
   served: (home: string) => boolean,
+  ends: StateEnds,
 ): readonly TaskDraftFile[] => {
   const changed = [...files]
     .filter(([home]) => served(home))
     .flatMap(([home, path]) => {
-      const baseline = path.versions[0];
-      const final = path.versions.at(-1);
+      const baseline = versionAt(path, ends.seed);
+      const final = versionAt(path, ends.end);
       const change =
         baseline === undefined || final === undefined
           ? undefined

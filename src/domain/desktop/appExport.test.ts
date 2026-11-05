@@ -29,6 +29,7 @@ const plan: DesktopAppExportPlan = {
   windowClass: "Mousepad",
   paths: [".config/Mousepad", "Documents"],
   capturedHome: "/home/ada",
+  seedCheckpoint: "baseline",
   seedFiles: ["Documents/todo.txt"],
   textSeeds: ["Documents/todo.txt"],
   unseededFiles: [],

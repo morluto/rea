@@ -22,10 +22,15 @@ the capture, once REA has validated it against the capture; see
 [desktop application tasks](desktop-application-tasks.md). `--package-url`
 says where the computer downloads the package of an application installed from
 a `.deb` file; see [Applications from a .deb file](#applications-from-a-deb-file).
+`--seed-checkpoint` names the checkpoint whose state seeds the bundle, the
+baseline by default, and `--end-checkpoint` the one a task must pass on, the
+capture's last by default; see [The seed checkpoint](#the-seed-checkpoint).
 
 The command returns Evidence with operation `export_desktop_application` and
 predicate type `rea.desktop-application-export`, listing the environment name,
-owned paths, seed files and written files. A failed export, cancellation
+the seed and end `checkpoints`, owned paths, seed files, the seed files it
+rewrote to remove the capture host's name and user (`scrubbed_files`) and
+those still holding them (`unscrubbed_files`), and written files. A failed export, cancellation
 included, removes the bundle it had not yet published, so no partial copy of the
 user's data remains. If the bundle was published but its output handles could
 not be closed, the command reports a cleanup error that carries the export
@@ -38,7 +43,7 @@ Evidence; the bundle itself is complete.
 | `envs/<name>/env.toml`           | `type = "computer_app"`, the module and class, `computer = "ubuntu-24.04"`, `driver = "reference"` |
 | `envs/<name>/<file>.py`          | The `ComputerAppEnvironment` class                                                                 |
 | `envs/<name>/SKILL.md`           | What the app is, its window class and where its files live                                         |
-| `envs/<name>/seed/`              | The application's files from before the capture, by home-relative path                             |
+| `envs/<name>/seed/`              | The application's files at the seed checkpoint, by home-relative path                              |
 | `envs/<name>/apt-keys/`          | The signing key of each vendor apt repository the app installs from                                |
 | `envs/<name>/install-package.sh` | With `--package-url`: the run script that installs the downloaded package with dpkg                |
 | `tasks/smoke.json`               | A task that deploys the app                                                                        |
@@ -141,18 +146,14 @@ The class declares:
   with a typed JSON view of each, read in a worker thread. An application with
   no observed state declares no paths and no hooks.
 
-Seeded text files (text, JSON, key files and XML in the state view) have the
-captured home path respelled to the computer's home wherever it is followed by
-`/`, the end of the text, or a character that cannot continue a file name. A
-UTF-16 file that starts with a byte-order mark and holds the captured home is
-respelled the same way, keeping its mark; other files are copied as captured. A file under the owned paths whose starting
-bytes the capture did not retain is not seeded: one in the state view without
-retained baseline content, or one the capture omitted (for example too large
-or past the content budget). The result lists them in `unseeded_files` and the
-README names them. When the application held files open in folders whose
-starting content the capture did not retain, a limitation names those folders.
+A file under the owned paths whose bytes at the seed the capture did not
+retain is not seeded: one in the state view without retained content at that
+checkpoint, or one the capture omitted (for example too large or past the
+content budget). The result lists them in `unseeded_files` and the README
+names them. When the application held files open in folders whose starting
+content the capture did not retain, a limitation names those folders.
 
-The application's dconf keys at the baseline, if any, are written once when the
+The application's dconf keys at the seed, if any, are written once when the
 app first starts, also for an application that owns no files, and the class adds
 `dconf-cli` to its apt packages for that. The server starts before the
 desktop's D-Bus session, so the class does not use `dconf load`: it dumps any
@@ -161,6 +162,59 @@ on that dump and the captured keys, in that name order so the captured keys
 win, and replaces `~/.config/dconf/user`. If that fails, the server prints a
 one-line warning and the app starts without the captured keys. `data/reset` does
 not restore them.
+
+## The seed checkpoint
+
+By default the seed is the state before the capture, its `baseline`, and a
+task's end state is the capture's last checkpoint. `--seed-checkpoint` and
+`--end-checkpoint` name others, so one capture can make a seed and then a
+change: the user creates and saves a document and takes `checkpoint seed`,
+then edits and saves it and takes `checkpoint end`. Exported with
+`--seed-checkpoint seed --end-checkpoint end`, the bundle seeds the document
+as it was saved at `seed`, owned paths, dconf keys and unseeded files
+included, and a task must fail on that seed and pass on the state at `end`.
+A file's state at a checkpoint is its last version recorded at or before it.
+The export refuses a name the capture does not hold exactly once, and an end
+checkpoint taken before the seed checkpoint; `inspect-desktop-application-state`
+lists the names in `capture.checkpoints`.
+
+## Host name and user
+
+A seed can hold the capture host's name and the user's: Geany saved its mail
+template as `pref_template_mail=ada@e81232be457d`, the user `ada` on a
+container named `e81232be457d`, and many files hold the home path
+`/home/ada`. The capture records `host.hostname` and `host.user`, and the
+export removes them from what the bundle ships:
+
+- In seeded text files (text, JSON, key files and XML in the state view), in
+  UTF-16 files that start with a byte-order mark (keeping the mark and byte
+  order), and in the dconf keys, `user@host` becomes `user@localhost`, the
+  host name standing alone becomes `localhost`, and the captured home becomes
+  `/home/user` wherever it is followed by `/`, the end of the text, or a
+  character that cannot continue a file name. The host name counts only as a
+  whole name: not inside a longer word, before a `-`, or as a label of a
+  domain such as `e81232be457d.local`, so a host named `ubuntu` leaves
+  `ports.ubuntu.com/ubuntu-ports` alone. The user name alone is never
+  replaced, since a short one such as `ada` or `user` is also ordinary text.
+  A rewritten seed is written with its own SHA-256, and `scrubbed_files` and
+  the README list it.
+- `SEED_HOME` in the class is `/home/user`, the home the seed spells, which
+  the class respells to the computer's own home when it seeds the home at
+  boot, as it did the captured home before. The replacements read as the
+  computer's own: its user is `user`, with its home in `/home/user`, and
+  `localhost` is the name every host has for itself.
+- Binary files, SQLite databases among them, and text files over 256 MiB are
+  copied as captured. A seed whose shipped content still holds the host name
+  or the captured home anywhere, as a binary file can or a text file in
+  `host.local` or `/home/adam`, or whose file name holds the host name, is
+  listed in `unscrubbed_files` and the README, to check before sharing the
+  bundle. Text is searched as decoded, other files as UTF-8 bytes, so a
+  binary file that holds them in another encoding is not listed.
+- A task check whose values name `user@host` or the host name is refused, as
+  one naming the captured home is: the bundle does not hold them.
+
+A capture written before the host's name and user were recorded has only its
+home removed, with a limitation saying so; capture again to remove the rest.
 
 ## Applications from a .deb file
 

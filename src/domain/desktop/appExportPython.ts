@@ -64,8 +64,8 @@ NOT_READ_INSIDE = ((SQLITE_HEADER, "sqlite", "a SQLite database"), (GVDB_HEADER,
 
 
 def _respelled(text: str, home: Path) -> str:
-    """The captured home path respelled to this computer's home, only where a whole path segment ends after it."""
-    return re.sub(re.escape(CAPTURED_HOME) + r"(?![\w.@+~-])", lambda _: str(home), text)
+    """The seed's home path respelled to this computer's home, only where a whole path segment ends after it."""
+    return re.sub(re.escape(SEED_HOME) + r"(?![\w.@+~-])", lambda _: str(home), text)
 
 
 def _respelled_utf16(data: bytes, home: Path) -> bytes:
@@ -76,7 +76,7 @@ def _respelled_utf16(data: bytes, home: Path) -> bytes:
                 text = data[len(mark):].decode(codec)
             except UnicodeDecodeError:
                 return data
-            return mark + _respelled(text, home).encode(codec) if CAPTURED_HOME in text else data
+            return mark + _respelled(text, home).encode(codec) if SEED_HOME in text else data
     return data
 
 
@@ -100,7 +100,7 @@ def _taskbar_window(window_class: str) -> bool:
 
 
 def _seed_home(home: Path) -> None:
-    """Copy the captured files into this computer's home; text files, UTF-16 ones too, have the captured home path
+    """Copy the captured files into this computer's home; text files, UTF-16 ones too, have the seed's home path
     respelled."""
     seed = HERE / "seed"
     for source in sorted(seed.rglob("*")) if seed.is_dir() else []:
@@ -468,7 +468,7 @@ def _views(home: Path, paths: list) -> dict:
 /** Constants the class module assigns before the helpers. */
 const PYTHON_CONSTANTS = [
   "HERE",
-  "CAPTURED_HOME",
+  "SEED_HOME",
   "PATHS",
   "DCONF",
   "TEXT_SEEDS",

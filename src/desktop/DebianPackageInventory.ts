@@ -26,6 +26,7 @@ import {
 } from "../domain/desktop/linuxPackages.js";
 import {
   inspectAptRepositories,
+  resolveAptLocations,
   type AptRepositoryHost,
 } from "./AptRepositoryInventory.js";
 import { succeeded } from "./HostQuery.js";
@@ -278,8 +279,9 @@ export const debianPackage = async (
   const policy = succeeded(
     await host.runQuery("apt-cache", ["policy", name], signal),
   );
+  const apt = await resolveAptLocations(host.runQuery, signal, host.apt);
   const listsPresent = (
-    await readdir(host.apt.lists).catch(() => [] as string[])
+    await readdir(apt.lists).catch(() => [] as string[])
   ).some((list) => /_Packages(?:\.[a-z0-9]+)?$/u.test(list));
   if (!listsPresent)
     limitations.push(
@@ -311,6 +313,11 @@ export const debianPackage = async (
   };
   return {
     ...installed,
-    ...(await installFacts(installed, executable, context, origins)),
+    ...(await installFacts(
+      installed,
+      executable,
+      { ...context, host: { ...host, apt } },
+      origins,
+    )),
   };
 };

@@ -231,6 +231,9 @@ export const desktopApplicationCaptureSchema = z.strictObject({
     architecture: z.string().min(1),
     display: z.string().min(1),
     home: z.string().min(1),
+    /** The host's name and the user's, which captured state can hold; absent from captures written before they were recorded, or when the system could not say. */
+    hostname: z.string().min(1).optional(),
+    user: z.string().min(1).optional(),
   }),
   application: desktopApplicationInventorySchema,
   session: desktopSessionSchema,

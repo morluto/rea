@@ -52,7 +52,10 @@ application is already open, or if the window list cannot be read. A launch
 beside a running instance can hand off to it, and that instance's unsaved
 state would be missing from the baseline. It then records the starting state,
 launches the application in its own process group with a run token in its
-environment, and reads commands from stdin, one per line:
+environment, and reads commands from stdin, one per line. The application gets
+REA's environment without the `AGENTENV_*` variables an agent environment sets,
+such as its control token: an app the exported computer launches never has
+them, and an app captured inside a computer must not hold a credential to it.
 
 | Line                                        | Effect                                                      |
 | ------------------------------------------- | ----------------------------------------------------------- |
@@ -64,6 +67,15 @@ An unnamed checkpoint is named `checkpoint-<ms>` after its time in the
 session. A name that repeats an earlier checkpoint, or is one of the capture's
 own names (`baseline`, `stop`, `time-limit`, `exit`), is refused with a
 progress line on stderr; no checkpoint is taken and the session continues.
+
+Name the checkpoints a later step reads by what they mark. The
+[export](desktop-application-export.md) seeds the bundle from the baseline
+unless `--seed-checkpoint` names another, and a
+[task](desktop-application-tasks.md) is checked against the last checkpoint
+unless `--end-checkpoint` names another. So one capture can build a seed and
+then the change: launch the app, create and save the document, send
+`checkpoint seed`, make the edit and save it, send `checkpoint end`, then
+`stop`.
 
 The session also finishes when the launched process has exited and the
 application's processes and windows are all gone in two consecutive samples,
@@ -122,7 +134,13 @@ command makes it private (mode 0700). It holds:
   distinct content.
 
 The Evidence operation is `capture_desktop_application` and its predicate type
-is `rea.desktop-application-capture`. Its result has four parts.
+is `rea.desktop-application-capture`. Its `host` names the platform,
+architecture, display and home directory, and the host's name (`hostname`)
+and the user's (`user`), which captured state can hold, as in a mail
+template's `ada@e81232be457d`; the export removes them from the bundle. A
+capture written before they were recorded has neither, and one is left out
+when the system cannot say, as for a user with no passwd entry. The rest of
+the result has four parts.
 
 **Application.** The desktop entry (id, path, name, `Exec`, icon,
 `StartupWMClass`, categories, MIME types), the launch command and working
@@ -132,7 +150,14 @@ architecture and the apt sources that list the installed version, with the
 origin (`o=`) apt reports for each source in `source_origins`, such as `Ubuntu`
 for the Ubuntu archive and its mirrors or `LP-PPA-<name>` for a PPA; an empty
 source list means the version came from a local `.deb` or the package lists
-are missing, which `package_lists_present` tells apart.
+are missing, which `package_lists_present` tells apart. apt's lists folder,
+and the trusted keys below, are where `apt-config` resolves
+`Dir::State::Lists`, `Dir::Etc::TrustedParts` and `Dir::Etc::Trusted` under
+`Dir`, so an `APT_CONFIG` file that moves them is followed: on a computer
+without lists, an ordinary user can run `apt-get update` with an `APT_CONFIG`
+naming writable `Dir::State::Lists` and `Dir::Cache` folders and capture with
+the same `APT_CONFIG`. Without `apt-config`, or when it fails, they are
+`/var/lib/apt/lists`, `/etc/apt/trusted.gpg.d` and `/etc/apt/trusted.gpg`.
 
 The Debian package is the one `dpkg-query -S` names as the owner of the
 desktop entry the capture launched, or else of the executable, since the
@@ -173,8 +198,8 @@ and in `apt-get indextargets` and `apt-cache policy` output alike, so entries
 match whether or not apt prints it, and sets `uri_credentials_removed` on a repository whose URI held
 one (a capture written before this was recorded omits the field). The key is
 found by verification, not by name: the candidates are the
-entry's `signed-by` keyrings, or else every `.gpg` and `.asc` key in
-`/etc/apt/trusted.gpg.d` and `/etc/apt/trusted.gpg`, and each is checked with
+entry's `signed-by` keyrings, or else every `.gpg` and `.asc` key in apt's trusted
+parts folder and its trusted keyring, and each is checked with
 `gpgv` against the release's `InRelease` (or `Release` with `Release.gpg`)
 beside its index in apt's lists folder. A key counts when gpgv reports a
 valid signature by it and no bad, expired, revoked or unverifiable signature

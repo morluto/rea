@@ -46,6 +46,7 @@ const draft = (files: Record<string, DesktopStatePath>) =>
   draftTaskFiles(
     new Map(Object.entries(files)),
     (home) => home !== "elsewhere",
+    { seed: 0, end: 1 },
   );
 
 describe("draftTaskFiles", () => {
