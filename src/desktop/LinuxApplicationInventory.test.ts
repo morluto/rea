@@ -193,3 +193,34 @@ describe.skipIf(process.platform === "win32")("inspectLinuxApplication", () => {
     });
   });
 });
+
+describe.skipIf(process.platform === "win32")(
+  "inspectLinuxApplication state roots",
+  () => {
+    it("adds the dotfiles in the home named after the application, which it may only read", async () => {
+      const { home, environment } = await fixture();
+      const named = [".notes-app-cfg.ini", ".notesrc", ".notes.conf"];
+      for (const name of [...named, ".notesy", ".other.ini"])
+        await writeFile(join(home, name), "x\n");
+
+      const inspected = await inspectLinuxApplication({
+        desktopEntry: "org.example.notes",
+        executable: undefined,
+        arguments: [],
+        environment,
+        home,
+        callerDirectory: home,
+      });
+
+      if (!inspected.ok) throw new Error(inspected.error.reason);
+      const paths = inspected.value.inventory.state_directories.map(
+        (entry) => entry.path,
+      );
+      expect(paths).toEqual(
+        expect.arrayContaining(named.map((name) => join(home, name))),
+      );
+      expect(paths).not.toContain(join(home, ".notesy"));
+      expect(paths).not.toContain(join(home, ".other.ini"));
+    });
+  },
+);

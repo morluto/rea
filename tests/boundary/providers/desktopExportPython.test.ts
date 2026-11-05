@@ -43,3 +43,50 @@ it("detects key files by the state view's rule rather than a name or any group h
     ),
   );
 });
+
+/** The exported module's UTF-16 seed respelling of each file, from /home/ada to /home/user, as hex. */
+const pythonUtf16Respelled = (files: readonly string[]) => {
+  const imports = PYTHON_IMPORTS.split("\n")
+    .filter((line) => !line.includes("agentenv_protocol"))
+    .join("\n");
+  const program = `${imports}
+CAPTURED_HOME = "/home/ada"
+${PYTHON_HELPERS}
+for data in json.load(sys.stdin):
+    print(_respelled_utf16(bytes.fromhex(data), Path("/home/user")).hex())
+`;
+  return execFileSync("python3", ["-I", "-B", "-c", program], {
+    input: JSON.stringify(files),
+    encoding: "utf8",
+  })
+    .trim()
+    .split("\n");
+};
+
+const utf16 = (text: string, order: "le" | "be") => {
+  const le = Buffer.from(`﻿${text}`, "utf16le");
+  return order === "le" ? le : Buffer.from(le).swap16();
+};
+
+it("respells the captured home in UTF-16 seeds with a byte-order mark, keeping the mark and order", () => {
+  const work = "# build\n20260216;1;/home/ada/.varicad\n";
+  const files = [
+    utf16(work, "le"),
+    utf16(work, "be"),
+    utf16("/home/adam/x\n", "le"),
+    utf16("no home here\n", "le"),
+    Buffer.from([0xff, 0xfe, 0x41]),
+    Buffer.from("/home/ada/plain\n"),
+  ];
+
+  const respelled = pythonUtf16Respelled(
+    files.map((file) => file.toString("hex")),
+  );
+
+  const expected = "# build\n20260216;1;/home/user/.varicad\n";
+  expect(respelled).toEqual([
+    utf16(expected, "le").toString("hex"),
+    utf16(expected, "be").toString("hex"),
+    ...files.slice(2).map((file) => file.toString("hex")),
+  ]);
+});

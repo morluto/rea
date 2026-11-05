@@ -1,5 +1,5 @@
 import { constants } from "node:fs";
-import { access, lstat, realpath, stat } from "node:fs/promises";
+import { access, lstat, readdir, realpath, stat } from "node:fs/promises";
 import {
   basename,
   delimiter,
@@ -258,7 +258,20 @@ const electronMarkers = async (
   return markers;
 };
 
-/** Folder names under XDG and dot-directories where the application may keep state. */
+/** Whether a home entry is a dotfile named after the application, such as `.varicad-cfg.ini` or `.notesrc`. */
+const appNamedDotfile = (entry: string, names: ReadonlySet<string>): boolean =>
+  [...names].some((name) => {
+    // Short names would match unrelated dotfiles.
+    if (name.length < 3 || !entry.startsWith(`.${name}`)) return false;
+    const rest = entry.slice(name.length + 1);
+    return rest === "rc" || /^[-._]./u.test(rest);
+  });
+
+/**
+ * Folder names under XDG and dot-directories where the application may keep
+ * state, and the dotfiles in the home named after it, which an application
+ * may only read during a capture.
+ */
 const stateDirectories = async (
   names: readonly (string | null)[],
   request: LinuxApplicationRequest,
@@ -282,11 +295,15 @@ const stateDirectories = async (
       )
       .flatMap((name) => [name, name.toLowerCase()]),
   );
+  const dotfiles = (await readdir(home).catch(() => [] as string[]))
+    .filter((entry) => appNamedDotfile(entry, variants))
+    .map((entry) => join(home, entry));
   const paths = new Set([
     ...[...variants].flatMap((name) => [
       ...bases.map((base) => join(base, name)),
       join(home, `.${name}`),
     ]),
+    ...dotfiles,
     ...extra,
   ]);
   return Promise.all(

@@ -220,7 +220,7 @@ const planExport = (
 
 const EXPORT_LIMITATIONS = [
   "The seed is the user's real state before the capture; keep the bundle local.",
-  "Binary state files are seeded as captured; only text files have the captured home path respelled.",
+  "Binary state files are seeded as captured; only text files, UTF-8 or UTF-16 with a byte-order mark, have the captured home path respelled.",
 ];
 
 /**

@@ -40,8 +40,21 @@ def _respelled(text: str, home: Path) -> str:
     return re.sub(re.escape(CAPTURED_HOME) + r"(?![\w.@+~-])", lambda _: str(home), text)
 
 
+def _respelled_utf16(data: bytes, home: Path) -> bytes:
+    """A UTF-16 text file with a byte-order mark respelled like a text seed, its mark kept; any other bytes as given."""
+    for mark, codec in ((b"\xff\xfe", "utf-16-le"), (b"\xfe\xff", "utf-16-be")):
+        if data.startswith(mark):
+            try:
+                text = data[len(mark):].decode(codec)
+            except UnicodeDecodeError:
+                return data
+            return mark + _respelled(text, home).encode(codec) if CAPTURED_HOME in text else data
+    return data
+
+
 def _seed_home(home: Path) -> None:
-    """Copy the captured files into this computer's home; only text files have the captured home path respelled."""
+    """Copy the captured files into this computer's home; text files, UTF-16 ones too, have the captured home path
+    respelled."""
     seed = HERE / "seed"
     for source in sorted(seed.rglob("*")) if seed.is_dir() else []:
         if not source.is_file():
@@ -52,6 +65,8 @@ def _seed_home(home: Path) -> None:
         data = source.read_bytes()
         if relative in TEXT_SEEDS:
             data = _respelled(data.decode("utf-8"), home).encode("utf-8")
+        else:
+            data = _respelled_utf16(data, home)
         target.write_bytes(data)
 
 
