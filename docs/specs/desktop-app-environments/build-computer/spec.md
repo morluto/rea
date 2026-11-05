@@ -24,8 +24,9 @@ it for building, or from an existing bundle folder.
   `GET /agentenv/ext/computer-ready/status` with the token, then holds one MCP
   session to the driver's `/mcp`.
 - Teardown: closing stdin, then SIGTERM, then the process group. When the helper
-  does not confirm the teardown, REA removes the containers labelled with the
-  exact sandbox id it reported, through the absolute `REA_DOCKER_COMMAND`. An
+  does not confirm the teardown, REA removes the containers of the exact
+  sandbox id it reported, the one named `agent-<sandbox id>` and any labelled
+  `agentenv.sandbox=<sandbox id>`, through the absolute `REA_DOCKER_COMMAND`. An
   unconfirmed teardown keeps the computer listed for a retried close.
   Cancelling a start stops the helper, whose deploy tears down what it began.
 - The control token never appears in a result, an error or a log; the helper's

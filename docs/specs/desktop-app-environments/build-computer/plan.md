@@ -9,7 +9,7 @@
 3. Adapter: `src/desktop/AgentEnvComputer.ts` finds the runner's Python,
    spawns and supervises the helper, reads the handshake, waits for readiness,
    holds the driver MCP session and the token, serves the recording hooks and
-   releases the computer, removing its containers by label when needed.
+   releases the computer, removing its containers by name and label when needed.
 4. Application: `DesktopBuildComputers` renders request bundles into a private
    folder, starts and holds computers, forwards actions with their log, and
    closes them, keeping unconfirmed ones for retry.

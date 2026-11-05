@@ -24,7 +24,7 @@ export const DESKTOP_BUILD_TOOL_CONTRACTS = [
     ...toolContractMetadata("start_build_computer"),
     kind: "application",
     description:
-      "Start a local agentenv computer to build a desktop app environment on, and return its id with a first screenshot as an image. From a request, REA renders a bundle that installs the app from the Ubuntu archive, an apt repository or a .deb URL, opens it on demand from its desktop entry, and installs REA itself in a build-only layer from REA_BUILD_COMPUTER_REA_ARCHIVE; from a bundle folder, such as an exported one, it starts that bundle's smoke task as it is. Needs Docker and the agentenv runner named by REA_AGENT_ENV_COMMAND; the first start of a bundle builds its image, which downloads packages and can take minutes. The computer stays up, reachable on this host, until close_build_computer or the server closes.",
+      "Start a local agentenv computer to build a desktop app environment on, and return its id with a first screenshot as an image. From a request, REA renders a bundle that installs the app from the Ubuntu archive, an apt repository or a .deb URL, opens it on demand from its desktop entry (it is not open at first: open it from the desktop's Applications menu, under Other, by the environment's name), and installs REA itself in a build-only layer from REA_BUILD_COMPUTER_REA_ARCHIVE; from a bundle folder, such as an exported one, it starts that bundle's smoke task as it is. Needs Docker and the agentenv runner named by REA_AGENT_ENV_COMMAND; the first start of a bundle builds its image, which downloads packages and can take minutes. The computer stays up, reachable on this host, until close_build_computer or the server closes.",
     inputSchema: z.strictObject({ source: buildSourceSchema }),
     outputSchema: z.strictObject({
       computer_id: z.uuid(),
@@ -55,7 +55,7 @@ export const DESKTOP_BUILD_TOOL_CONTRACTS = [
     name: "act_on_build_computer",
     ...toolContractMetadata("act_on_build_computer"),
     kind: "application",
-    description: `Drive the app on a build computer: one action, ${COMPUTER_ACTIONS.join(", ")}, sent to the computer's computer_<action> tool with the fields given, which are the driver's own arguments. Points are pixels of the latest frame, so take a screenshot first, or space norm on a 0..norm_scale grid; count 2 double-clicks; keys names one chord in W3C names, and spellings such as ctrl+s are translated. Returns the driver's content unchanged, its images included, and its structured result; a refusal, such as a stale frame, is an error with the computer's message. Each action is logged on the computer.`,
+    description: `Drive the app on a build computer: one action, ${COMPUTER_ACTIONS.join(", ")}, sent to the computer's computer_<action> tool with the fields given, which are the driver's own arguments. Points are pixels of the latest frame, so take a screenshot first, or space norm on a 0..norm_scale grid; count 2 double-clicks; keys names one chord in W3C names, and spellings such as ctrl+s are translated. Returns the driver's content unchanged, its images included, and its structured result; an action's screenshot is taken at once, so after one that opens a menu or a window, take it with a wait instead; a refusal, such as a stale frame, is an error with the computer's message. Each action is logged on the computer.`,
     inputSchema: computerActionInputSchema,
     outputSchema: z.strictObject({
       computer_id: z.uuid(),
@@ -92,7 +92,7 @@ export const DESKTOP_BUILD_TOOL_CONTRACTS = [
     ...toolContractMetadata("close_build_computer"),
     kind: "application",
     description:
-      "Tear a build computer down and discard its state. agentenv's teardown is tried first; if it leaves the computer up, REA removes the containers of that exact sandbox by their agentenv.sandbox label with REA_DOCKER_COMMAND. When neither confirms it, the error names what is left and the computer stays listed, so closing again retries.",
+      "Tear a build computer down and discard its state. agentenv's teardown is tried first; if it leaves the computer up, REA removes that exact sandbox's containers, the one named agent-<sandbox id> and any labelled agentenv.sandbox=<sandbox id>, with REA_DOCKER_COMMAND. When neither confirms it, the error names what is left and the computer stays listed, so closing again retries.",
     inputSchema: z.strictObject({ computer_id: computerId }),
     outputSchema: z.strictObject({
       computer_id: z.uuid(),

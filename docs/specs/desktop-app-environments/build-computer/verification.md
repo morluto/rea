@@ -18,7 +18,7 @@ agentenv were not used by the gates or the boundary tests.
   argument pass-through and key translation, a driver refusal, a refused
   argument, close and a later unknown id; a request bundle with REA's payload,
   compiled by the fake runner; the missing payload and runner settings; a
-  runner failure with its output; removal by label; an unconfirmed teardown
+  runner failure with its output; removal by name and label; an unconfirmed teardown
   retried after Docker recovers; cancellation of a start stopping the helper.
   No result carries the control token.
 - `tests/boundary/providers/buildComputerRecording.test.ts`: recording start,
@@ -39,7 +39,24 @@ agentenv were not used by the gates or the boundary tests.
   both into `/opt/rea`, put `node` and `rea` on `PATH` and removed the
   archives.
 
-## Not verified
+## Real computer
 
-- A real computer: the opt-in test is for an amd64 host with agentenv and
-  Docker.
+Run on 2026-11-05 on Ubuntu 24.04 amd64 with Docker, agentenv-framework
+0.9.1431 and Node v24.22.1. REA's archive was packed from this tree with
+`npm pack`, then `npm ci --omit=dev --omit=optional` in its `rea-prod` folder,
+18.5 MB as `.tar.xz`.
+
+- `tests/boundary/providers/buildComputerReal.test.ts` passed in 25 s with the
+  image built; the first run, which builds it, took 109 s.
+- Through `rea mcp` over stdio: `start_build_computer` from the Mousepad
+  request came up in 31 s with its first screenshot as a PNG. Mousepad opened
+  from Applications, Other, `mousepad`; a typed line was saved with `ctrl+s`
+  through the Save As dialog; actions took 6 to 60 ms beside the driver's own
+  typing and waits. `rea --version` answered 6.8.0 in the computer for its user
+  and root. `close_build_computer` took 0.5 s with `teardown: "agentenv"` and
+  left no container. The exported Inkscape bundle started cold in 59 s and
+  closed the same way; a start cancelled at 60 s left nothing up.
+- With the helper killed, close removed the computer's container by its name,
+  `agent-<sandbox id>`: agentenv labels only its VM and closed-network
+  containers.
+- No result or log held the control token.

@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import { DesktopBuildComputers } from "../../../src/application/desktop/DesktopBuildComputers.js";
 
 const execute = promisify(execFile);
+const docker = process.env.REA_DOCKER_COMMAND ?? "";
 
 /**
  * Opt-in: starts a real computer with agentenv and Docker. Set
@@ -32,10 +33,30 @@ describe.skipIf(process.env.REA_BUILD_COMPUTER_REAL !== "1")(
       );
       if (!started.ok) throw started.error;
       const { computer_id: id, sandbox_id: sandbox } = started.value.value;
+      // agentenv runs a computer as agent-<sandbox id> without a label; its other modes label their containers.
+      const containers = async () =>
+        (
+          await Promise.all(
+            [
+              `name=^agent-${sandbox}$`,
+              `label=agentenv.sandbox=${sandbox}`,
+            ].map((filter) =>
+              execute(docker, ["ps", "-aq", "--filter", filter]),
+            ),
+          )
+        ).flatMap(({ stdout }) => stdout.split(/\s+/u).filter(Boolean));
       try {
         expect(started.value.content).toContainEqual(
           expect.objectContaining({ type: "image", mimeType: "image/png" }),
         );
+        expect(await containers()).not.toEqual([]);
+        const { stdout: version } = await execute(docker, [
+          "exec",
+          `agent-${sandbox}`,
+          "rea",
+          "--version",
+        ]);
+        expect(version.trim()).toMatch(/^\d+\.\d+\.\d+/u);
         const session = computers.session(id);
         if (session === undefined) throw new Error("no session");
         const recording = await session.startRecording(`rea-real:${id}`);
@@ -44,6 +65,12 @@ describe.skipIf(process.env.REA_BUILD_COMPUTER_REAL !== "1")(
           signal,
         );
         expect(typed.ok, JSON.stringify(typed)).toBe(true);
+        // The driver's stream delivers its first frame a moment after the recording starts.
+        const waited = await computers.act(
+          { computer_id: id, action: "wait", ms: 2000 },
+          signal,
+        );
+        expect(waited.ok, JSON.stringify(waited)).toBe(true);
         const manifest = await session.endRecording(recording.recording_id);
         const segments = await session.recordingSegments(manifest);
         expect(segments.length).toBeGreaterThan(0);
@@ -51,13 +78,7 @@ describe.skipIf(process.env.REA_BUILD_COMPUTER_REAL !== "1")(
         const closed = await computers.close(id);
         expect(closed.ok, JSON.stringify(closed)).toBe(true);
       }
-      const { stdout } = await execute(process.env.REA_DOCKER_COMMAND ?? "", [
-        "ps",
-        "-aq",
-        "--filter",
-        `label=agentenv.sandbox=${sandbox}`,
-      ]);
-      expect(stdout.trim()).toBe("");
+      expect(await containers()).toEqual([]);
     }, 1_800_000);
   },
 );

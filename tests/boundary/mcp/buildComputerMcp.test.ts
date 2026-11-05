@@ -18,6 +18,18 @@ import {
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
+/** The host's environment without the settings the opt-in real test exports, which would reach past these fakes. */
+const hostEnvironment = Object.fromEntries(
+  Object.entries(process.env).filter(
+    ([name]) =>
+      ![
+        "REA_AGENT_ENV_COMMAND",
+        "REA_DOCKER_COMMAND",
+        "REA_BUILD_COMPUTER_REA_ARCHIVE",
+      ].includes(name),
+  ),
+);
+
 const connect = async (environment: Readonly<Record<string, string>>) => {
   const session = createTestBinarySession(() => {
     throw new Error("build computers must not start a deep provider");
@@ -26,7 +38,7 @@ const connect = async (environment: Readonly<Record<string, string>>) => {
     { kind: "session", session },
     {
       environment: {
-        ...process.env,
+        ...hostEnvironment,
         REA_MCP_INPUT_SCHEMA_PROFILE: "full",
         ...environment,
       },
@@ -255,12 +267,13 @@ it("refuses to start without an absolute agentenv runner", async () => {
   expect(JSON.stringify(error)).toContain("REA_AGENT_ENV_COMMAND");
 });
 
-it("removes the sandbox's containers by label when agentenv's teardown leaves it up", async () => {
+it("removes the sandbox's containers by name and label when agentenv's teardown leaves it up", async () => {
   const { computer, runner } = await fakes();
   const docker = join(runner.state, "docker");
+  // agentenv runs a computer as agent-<sandbox id> without a label; only its other modes label containers.
   await writeFile(
     docker,
-    `#!/bin/sh\necho "$*" >> '${join(runner.state, "docker.log")}'\n[ "$1" = ps ] && echo c0ffee\nexit 0\n`,
+    `#!/bin/sh\necho "$*" >> '${join(runner.state, "docker.log")}'\ncase "$4" in name=*) echo c0ffee ;; label=*) printf 'c0ffee\\nbead00\\n' ;; esac\nexit 0\n`,
   );
   await chmod(docker, 0o755);
   const client = await connect({
@@ -280,8 +293,9 @@ it("removes the sandbox's containers by label when agentenv's teardown leaves it
   expect(
     (await readFile(join(runner.state, "docker.log"), "utf8")).split("\n"),
   ).toEqual([
+    "ps -aq --filter name=^agent-sbx-fake$",
     "ps -aq --filter label=agentenv.sandbox=sbx-fake",
-    "rm -f c0ffee",
+    "rm -f c0ffee bead00",
     "",
   ]);
 });
@@ -313,6 +327,7 @@ it("keeps a computer whose teardown is unconfirmed so close can be retried", asy
     "Cannot connect to the Docker daemon",
   );
   expect(JSON.stringify(first)).toContain("label=agentenv.sandbox=sbx-fake");
+  expect(JSON.stringify(first)).toContain("name=^agent-sbx-fake$");
   // The record stays, so a retry reaches the same sandbox once Docker answers.
   await rm(down);
   expect((await close()).structuredContent).toEqual({

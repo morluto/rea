@@ -118,25 +118,44 @@ export const agentEnvInterpreter = async (
   );
 };
 
-/** Remove the containers of one sandbox REA's helper named, by their exact label; undefined once removed. */
+/** What a Docker container name may hold, so a sandbox id outside it names no container. */
+const CONTAINER_NAME = /^[A-Za-z0-9_.-]+$/u;
+
+/**
+ * The `docker ps` filters that find one sandbox's containers: agentenv's
+ * local provider runs a computer as `agent-<sandbox id>` without a label, and
+ * labels only the containers and relays of its VM and closed-network modes.
+ */
+const sandboxFilters = (sandbox: string): readonly string[] => [
+  ...(CONTAINER_NAME.test(sandbox)
+    ? [`name=^agent-${sandbox.replaceAll(".", "\\.")}$`]
+    : []),
+  `label=agentenv.sandbox=${sandbox}`,
+];
+
+/** Remove the containers of one sandbox REA's helper named, by their exact name and label; undefined once removed. */
 const removeSandbox = async (
   environment: Readonly<NodeJS.ProcessEnv>,
   sandbox: string,
 ): Promise<string | undefined> => {
-  const filter = `label=agentenv.sandbox=${sandbox}`;
-  const manual = `Run docker rm -f $(docker ps -aq --filter ${filter}).`;
+  const filters = sandboxFilters(sandbox);
+  const manual = `Run docker rm -f ${filters.map((filter) => `$(docker ps -aq --filter '${filter}')`).join(" ")}.`;
   const docker = environment.REA_DOCKER_COMMAND;
   if (docker === undefined || !isAbsolute(docker))
     return `agentenv's teardown did not confirm sandbox ${sandbox} is gone, and REA_DOCKER_COMMAND is not an absolute path to remove its containers. ${manual}`;
   const options = { env: environment, timeout: TEARDOWN_MS };
   try {
-    const listed = await execFileAsync(
-      docker,
-      ["ps", "-aq", "--filter", filter],
-      options,
-    );
-    const containers = listed.stdout.split(/\s+/u).filter(Boolean);
-    if (containers.length > 0)
+    const containers = new Set<string>();
+    for (const filter of filters) {
+      const listed = await execFileAsync(
+        docker,
+        ["ps", "-aq", "--filter", filter],
+        options,
+      );
+      for (const id of listed.stdout.split(/\s+/u).filter(Boolean))
+        containers.add(id);
+    }
+    if (containers.size > 0)
       await execFileAsync(docker, ["rm", "-f", ...containers], options);
     return undefined;
   } catch (cause: unknown) {
@@ -308,7 +327,7 @@ export class ComputerHelper {
     if (sandbox === undefined)
       return {
         verified: false,
-        reason: `REA's agentenv helper ended (exit ${String(exit)}) before naming its sandbox; look for containers with docker ps --filter label=agentenv.sandbox.`,
+        reason: `REA's agentenv helper ended (exit ${String(exit)}) before naming its sandbox; look for its container with docker ps -a --filter name=agent- and docker ps -a --filter label=agentenv.sandbox.`,
         resources: ["an unnamed agentenv sandbox"],
       };
     const failure = await removeSandbox(this.environment, sandbox);

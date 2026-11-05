@@ -5,11 +5,11 @@ builds a desktop app environment. Claude Code cannot attach a new MCP server
 in the middle of a session, so REA keeps the computer up and forwards the
 agent's computer-use actions to it through three MCP tools:
 
-| Tool                    | What it does                                                                                     |
-| ----------------------- | ------------------------------------------------------------------------------------------------ |
-| `start_build_computer`  | Starts a computer from a request or a bundle folder; returns its id and a first screenshot       |
-| `act_on_build_computer` | Sends one action to the computer's driver and returns the driver's answer, images included       |
-| `close_build_computer`  | Tears the computer down, by agentenv's teardown or by removing its sandbox's containers by label |
+| Tool                    | What it does                                                                               |
+| ----------------------- | ------------------------------------------------------------------------------------------ |
+| `start_build_computer`  | Starts a computer from a request or a bundle folder; returns its id and a first screenshot |
+| `act_on_build_computer` | Sends one action to the computer's driver and returns the driver's answer, images included |
+| `close_build_computer`  | Tears the computer down, by agentenv's teardown or by removing its sandbox's containers    |
 
 The tools are MCP-only, like the debugger sessions: the computer lives as long
 as the REA MCP server that started it, or until it is closed.
@@ -36,7 +36,9 @@ that is already running.
 From a request, REA renders a bundle in a private temporary folder: a computer
 app on the `ubuntu-24.04` base with the `reference` driver that installs the
 app, opens it on demand with `gtk-launch <desktop entry>` and keeps no seed and
-no data hooks.
+no data hooks. The app is not open when the computer starts: agentenv lists it
+in the desktop's Applications menu under Other by the environment's name, such
+as `mousepad`, and that entry launches it through the app's server.
 
 ```json
 {
@@ -98,7 +100,9 @@ arguments for `computer_<action>`, which REA passes through:
 | `wait`       | `ms`                                                            |
 
 Pointer actions also take `frame_id`, `space` and `norm_scale`, and every
-action but `screenshot` takes `screenshot: true` for an image afterwards.
+action but `screenshot` takes `screenshot: true` for an image afterwards. That
+image is taken at once, so after an action that opens a menu or a window, ask
+for it with a `wait` of a few hundred milliseconds instead.
 Points are pixels of the latest frame, so take a screenshot first; with
 `space: "norm"` they are on a `0..norm_scale` grid over it. Keys are W3C names
 or one character; REA translates model spellings such as `ctrl+s`, `Return`,
@@ -123,8 +127,10 @@ tools.
 `close_build_computer` ends REA's MCP session and closes the helper's stdin,
 on which the helper runs agentenv's teardown. When agentenv confirms nothing is
 left, the result says `teardown: "agentenv"`. Otherwise REA removes the
-containers of that exact sandbox with `docker ps -aq --filter
-label=agentenv.sandbox=<sandbox id>` and `docker rm -f`, and says
+containers of that exact sandbox: agentenv runs a computer as
+`agent-<sandbox id>` without a label and labels its other containers
+`agentenv.sandbox=<sandbox id>`, so REA lists both with `docker ps -aq
+--filter`, removes them with `docker rm -f`, and says
 `teardown: "container_label"`. When neither confirms it, the error names what
 is left and the computer stays listed, so closing it again retries. Closing the
 MCP server closes every computer the same way, and a helper whose REA server
