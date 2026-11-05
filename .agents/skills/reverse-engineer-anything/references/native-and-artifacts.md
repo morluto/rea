@@ -320,6 +320,17 @@ cross-references. Addresses and recovered pseudocode are analysis observations,
 not original source. Provider unavailability and unsupported metadata remain
 unknown rather than false.
 
+For large pseudocode, request `procedure_pseudo_code` with `detail: "summary"`
+on the first MCP call. It retains the complete observation and returns the
+original selection, text availability and length without the body. Use
+`normalized_result.parent_evidence_id` with `inspect_analysis_view` and
+`view: {kind: "native", facet: "pseudocode", offset: 0, limit: 20000}`;
+follow `coverage.next_offset` for later pages. Offsets and limits count UTF-16
+code units, not lines or tokens. Pages reuse the same observation without
+repeating decompilation. Null and empty text remain distinct. Omitted or
+`complete` detail preserves full inline delivery. Summary delivery requires a
+retaining session and does not reduce the work or memory of decompilation.
+
 For a completed `analyze_function` dossier, use `inspect_analysis_view` with
 `view: {kind: "native", facet: "value_flow_operations", offset: 0, limit: 32}`
 and the exact retained Evidence ID to read selected facts without reanalysis.

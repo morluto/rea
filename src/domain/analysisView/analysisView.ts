@@ -62,6 +62,7 @@ import {
   createApiSurfaceAccumulator,
   projectWebNetworkApiSurfaceView,
 } from "./webNetworkApiSurfaceView.js";
+import { projectProcedurePseudocodeView } from "./procedurePseudocodeView.js";
 import { projectNativeFunctionView } from "./nativeFunctionView.js";
 import { projectEvmInterfaceView } from "./evmInterfaceView.js";
 import { projectArtifactInventoryView } from "./artifactInventoryView.js";
@@ -100,6 +101,7 @@ import {
   type InspectAnalysisViewInput,
 } from "./analysisViewRequest.js";
 import {
+  procedurePseudocodeSummaryViewResultSchema,
   nativeObservationSummaryViewResultSchemas,
   byteEntropySummaryViewResultSchema,
   nativeExportsSummaryViewResultSchema,
@@ -168,6 +170,7 @@ export {
   type AnalysisViewParent,
 };
 export {
+  procedurePseudocodeSummaryViewResultSchema,
   nativeObservationSummaryViewResultSchemas,
   nativeFeatureTraceSummaryViewResultSchema,
   byteEntropySummaryViewResultSchema,
@@ -309,6 +312,7 @@ const retain = (
 ): readonly [string, RetainedViewProjector] => [operation, project];
 
 const retainedViewProjectors = new Map<string, RetainedViewProjector>([
+  retain("procedure_pseudo_code", projectProcedurePseudocodeView),
   retain("inspect_native_instruction", projectNativeInstructionReferencesView),
   retain("trace_feature", projectNativeFeatureTraceView),
   ...NATIVE_OBSERVATION_OPERATIONS.map((operation) =>
@@ -448,6 +452,7 @@ export const projectAnalysisView = (
     parent.operation === "match_native_functions"
       ? NATIVE_FUNCTION_MATCHING_PREDICATE
       : parent.operation === "analyze_function" ||
+          parent.operation === "procedure_pseudo_code" ||
           parent.operation === "inspect_native_instruction" ||
           parent.operation === "trace_feature" ||
           parent.operation === "batch_decompile" ||
