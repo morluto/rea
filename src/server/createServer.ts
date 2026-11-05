@@ -18,6 +18,9 @@ import { registerEvmTools } from "./registerEvmTools.js";
 import type { SqliteDatabaseService } from "../application/sqlite/SqliteDatabaseService.js";
 import { createSqliteDatabaseService } from "../composition/sqlite.js";
 import { registerSqliteTools } from "./registerSqliteTools.js";
+import type { HwpDocumentService } from "../application/hwp/HwpDocumentService.js";
+import { createHwpDocumentService } from "../composition/hwp.js";
+import { registerHwpTools } from "./registerHwpTools.js";
 import { registerRecordedCrashTools } from "./registerRecordedCrashTools.js";
 import { createRecordedCrashService } from "../composition/binaryDiagnostics.js";
 import { createGoBinaryService } from "../composition/go.js";
@@ -155,6 +158,7 @@ export interface CreateServerOptions {
   readonly providerEnvironment?: Readonly<NodeJS.ProcessEnv>;
   readonly evmInterface?: EvmInterfaceService;
   readonly sqliteDatabase?: SqliteDatabaseService;
+  readonly hwpDocument?: HwpDocumentService;
   readonly logger?: Logger;
   readonly binaryLayout?: BinaryLayoutService;
   readonly goBinary?: GoBinaryService;
@@ -301,6 +305,8 @@ export const createServer = (
     options.evmInterface ?? evmInterfaceModule.create(environment);
   const sqliteDatabase =
     options.sqliteDatabase ?? createSqliteDatabaseService(environment);
+  const hwpDocument =
+    options.hwpDocument ?? createHwpDocumentService(environment);
   const binaryLayout =
     options.binaryLayout ?? createBinaryLayoutService(environment);
   const recordedCrash =
@@ -387,6 +393,7 @@ export const createServer = (
       pcap.close(),
       evmInterface.close(),
       sqliteDatabase.close(),
+      hwpDocument.close(),
       binaryLayout.close(),
       recordedCrash.close(),
       webSourceLocation.close(),
@@ -730,6 +737,13 @@ const registerConfiguredAnalysisTools = (
   registerSqliteTools(
     server,
     options.sqliteDatabase ?? createSqliteDatabaseService(environment),
+    toolLogger,
+    recordEvidence,
+    withAdmittedAnalysis,
+  );
+  registerHwpTools(
+    server,
+    options.hwpDocument ?? createHwpDocumentService(environment),
     toolLogger,
     recordEvidence,
     withAdmittedAnalysis,
