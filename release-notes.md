@@ -318,6 +318,7 @@
 * **cli:** reject missing mcp add option values ([#7996](https://github.com/morluto/rea/issues/7996)) ([094ec5e](https://github.com/morluto/rea/commit/094ec5eb3fbdb0c99e0b1950c6412d037b8f4501))
 * **cli:** reject non-decimal Android overload index tokens ([#7493](https://github.com/morluto/rea/issues/7493)) ([bcc6775](https://github.com/morluto/rea/commit/bcc6775dc1c29c06a08798b73049d0bf506e6b55))
 * **cli:** reject non-decimal byte-entropy window options ([#8919](https://github.com/morluto/rea/issues/8919)) ([f76be69](https://github.com/morluto/rea/commit/f76be69428078344673e2e1aa2a8355337587c65))
+* **cli:** reject project-scoped Amp registration ([#7979](https://github.com/morluto/rea/issues/7979)) ([e5f6383](https://github.com/morluto/rea/commit/e5f638310c2dca254637aa345345f3bfb72933c1))
 * **cli:** report failed browser cleanup retries ([3d311d9](https://github.com/morluto/rea/commit/3d311d9eca00eecf51f4c4c869c5e7607c332f26))
 * **cli:** report incomplete debugger cleanup as typed outcomes ([#8021](https://github.com/morluto/rea/issues/8021)) ([a108a1b](https://github.com/morluto/rea/commit/a108a1b817f1cd803448f6ba756883d84c7f630c))
 * **cli:** report JSON Lines selection refusals as caller errors ([#7124](https://github.com/morluto/rea/issues/7124)) ([e06be06](https://github.com/morluto/rea/commit/e06be06530fc214e25f25f357a78d3619f75dd35))
