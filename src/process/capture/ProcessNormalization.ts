@@ -231,7 +231,7 @@ export const createProcessIdentifierLookup = (
 /** Compile one ordered policy for both bounded retention and unrestricted text. */
 const createProcessTextRules = (
   scenario: ProcessScenario,
-  temporaryRoot: string,
+  temporaryRoot: string | undefined,
   pid: ProcessIdentifierSource,
 ): (() => readonly (ProcessTextRule | undefined)[]) => {
   const rules: (ProcessTextRule | undefined)[] = [];
@@ -278,7 +278,7 @@ const createProcessTextRules = (
 /** Prepare capture-local matchers while retaining a live terminal PID lookup. */
 export const createProcessTextNormalizer = (
   scenario: ProcessScenario,
-  temporaryRoot: string,
+  temporaryRoot: string | undefined,
   pid: ProcessIdentifierSource,
 ): ((value: string) => string) => {
   const rules = createProcessTextRules(scenario, temporaryRoot, pid);
@@ -298,7 +298,7 @@ export const createProcessTextNormalizer = (
 /** Normalize terminal text without materializing an intermediate over its byte budget. */
 export const createBoundedProcessTextNormalizer = (
   scenario: ProcessScenario,
-  temporaryRoot: string,
+  temporaryRoot: string | undefined,
   pid: ProcessIdentifierSource,
 ): ((value: string, maxBytes: number) => BoundedProcessTextNormalization) => {
   const rules = createProcessTextRules(scenario, temporaryRoot, pid);
@@ -339,7 +339,7 @@ export const createBoundedProcessTextNormalizer = (
 export const normalizeProcessText = (
   value: string,
   scenario: ProcessScenario,
-  temporaryRoot: string,
+  temporaryRoot: string | undefined,
   pid: number,
 ): string => createProcessTextNormalizer(scenario, temporaryRoot, pid)(value);
 
@@ -355,12 +355,12 @@ const directoryIdentity = (path: string): string => {
 /** Match original paths once, preferring the most specific selected identity. */
 const createPathRule = (
   scenario: ProcessScenario,
-  temporaryRoot: string,
+  temporaryRoot: string | undefined,
 ):
   | { readonly matcher: RegExp; readonly replace: RegexReplacement }
   | undefined => {
   const aliases = new Map<string, string>();
-  const selected: readonly (readonly [string, string])[] = [
+  const selected: readonly (readonly [string | undefined, string])[] = [
     [temporaryRoot, "<temporary-root>"],
     [directoryIdentity(scenario.working_directory), "<working-directory>"],
     [scenario.executable, "<executable>"],
@@ -372,7 +372,8 @@ const createPathRule = (
     ),
   ];
   for (const [path, alias] of selected)
-    if (path !== "" && !aliases.has(path)) aliases.set(path, alias);
+    if (path !== undefined && path !== "" && !aliases.has(path))
+      aliases.set(path, alias);
   const paths = [...aliases.keys()].sort(
     (left, right) => right.length - left.length,
   );
@@ -429,7 +430,7 @@ export const normalizeProcessSamples = (
   );
   const normalizeText = createProcessTextNormalizer(
     scenario,
-    "<no-temporary-root>",
+    undefined,
     identifiers,
   );
   const normalizeCommand = (command: string): string =>

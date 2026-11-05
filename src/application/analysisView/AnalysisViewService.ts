@@ -402,6 +402,7 @@ const createAnalysisViewEvidence = (
   const nativeObservationView =
     result.kind === "native-observation" ||
     result.kind === "native-context" ||
+    result.kind === "native-instruction-references" ||
     (result.kind === "summary" &&
       isNativeObservationOperation(result.parent_operation));
   return createEvidence(
