@@ -1170,6 +1170,7 @@ it("reads successive native source pages directly from a completed-result transp
   expect(Buffer.byteLength(JSON.stringify(first))).toBeLessThan(
     STDIO_DEFAULT_MAX_BUFFER_SIZE,
   );
+  if (page.coverage === null) throw new Error("Expected known coverage");
   const second = await client.callTool({
     name: call.name,
     arguments: {
