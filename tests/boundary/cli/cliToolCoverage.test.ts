@@ -96,6 +96,10 @@ const MCP_TOOLS_WITHOUT_DEDICATED_CLI = Object.freeze([
   "unload_frida_script",
   "frida_session_status",
   "close_frida_session",
+  // Build computers are held by the long-lived MCP server between actions.
+  "start_build_computer",
+  "act_on_build_computer",
+  "close_build_computer",
 ]);
 
 describe("CLI canonical tool coverage", () => {

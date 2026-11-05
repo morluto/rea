@@ -27,6 +27,7 @@ import {
 } from "../config/mcpResponseBudget.js";
 import {
   encodeToolResult,
+  measureMcpResultWithinBudget,
   MCP_RESULT_STRING_LIMIT,
   NODE_MAX_STRING_LENGTH,
   TARGET_CONTENT_RESULT_META,
@@ -135,6 +136,53 @@ export class ToolResultDelivery {
           recovery,
         )
       : this.toErrorToolResult(result.error, contract.returnsTargetContent);
+  }
+
+  /**
+   * A plain result followed by the content blocks a forwarded tool returned,
+   * such as a computer's screenshot, unchanged. When the whole response does
+   * not fit the budget, the caller gets the constraint and how to ask for less.
+   */
+  toForwardedToolResult(
+    result: Result<JsonValue, AnalysisError>,
+    contract: ToolContract,
+    forwarded: readonly Readonly<Record<string, JsonValue>>[],
+  ): CallToolResult {
+    const delivered = this.toCallToolResult(result, contract);
+    if (delivered.isError === true || forwarded.length === 0) return delivered;
+    // The blocks are the upstream MCP result's own, validated by its client.
+    const content = [
+      ...delivered.content,
+      ...(forwarded as CallToolResult["content"]),
+    ];
+    const combined = { ...delivered, content };
+    const measured = measureMcpResultWithinBudget(
+      combined,
+      this.resultBudgetBytes,
+    );
+    if (measured.ok) return combined;
+    const projected = mcpResponseOverflowProjection({
+      completed: true,
+      constraint: "receive-buffer",
+      effectiveResponseBytes: this.maximumResponseBytes,
+      nextStep:
+        "Ask for a smaller image: a screenshot region, or format jpeg with a lower quality.",
+    });
+    return this.toErrorToolResult(
+      new AnalysisResourceConstraintError(
+        contract.name,
+        "transport",
+        projected.reason,
+        {
+          boundary: "mcp-response",
+          result_budget_bytes: this.resultBudgetBytes,
+          response_bytes_at_least: measured.bytesAtLeast,
+          constraint: measured.constraint,
+        },
+        { remediationAction: projected.remediationAction },
+      ),
+      contract.returnsTargetContent,
+    );
   }
 
   /** Deliver Evidence using the producer's explicit recording acknowledgment. */

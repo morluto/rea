@@ -39,6 +39,9 @@ The work lands as one PR per step:
     draft are told; apt lists from a user-space `apt-get update` are found;
     the application does not inherit the computer's control token; and the
     bundle holds neither the capture host's name nor its user's.
+12. [Build computer](build-computer/spec.md): an agentenv computer REA keeps
+    up from a request or a bundle, with REA installed inside for building,
+    driven through REA's MCP tools while an agent builds the environment.
 
 Version 1 covers Linux with X11, applications whose state lives in files or
 SQLite under the home directory, and real applications from public packages.
