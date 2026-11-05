@@ -50,7 +50,7 @@ const printed = <Value>(output: string): Value[] =>
     .map((line) => JSON.parse(line) as Value);
 
 /** Write each file into a fresh folder, as data/get finds it under the home, keeping its suffix; their paths. */
-const writeFiles = async (files: readonly SavedFile[]) => {
+export const writeFiles = async (files: readonly SavedFile[]) => {
   const folder = await createTestTempDirectory("desktop-export-python-");
   return Promise.all(
     files.map(async ({ name, bytes }, index) => {

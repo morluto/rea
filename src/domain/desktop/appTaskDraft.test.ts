@@ -491,6 +491,33 @@ describe("draftTaskFiles archives added to whole", () => {
     ]);
   });
 
+  it("suggests no element by its position, even at the last step", () => {
+    const page = (paragraphs: string[]) =>
+      listing([
+        zipEntry("page.xml", "xml", {
+          root: xmlElement(
+            "page",
+            {},
+            paragraphs.map((text) => xmlElement("p", {}, [text])),
+          ),
+          truncated: false,
+        }),
+      ]);
+
+    const [file] = draft({
+      "Documents/page.zip": path(
+        "document",
+        "zip",
+        page(["a"]),
+        page(["a", "b"]),
+      ),
+    });
+
+    expect(file).toMatchObject({ change: { kind: "values" }, suggested: [] });
+  });
+});
+
+describe("draftTaskFiles archive entries without a view, and type changes", () => {
   it("checks no entry whose view could not be read, though JSON null is a value", () => {
     const [file] = draft({
       "Documents/a.zip": path(
@@ -535,29 +562,24 @@ describe("draftTaskFiles archives added to whole", () => {
     expect(file).toMatchObject({ change: { kind: "values" }, suggested: [] });
   });
 
-  it("suggests no element by its position, even at the last step", () => {
-    const page = (paragraphs: string[]) =>
-      listing([
-        zipEntry("page.xml", "xml", {
-          root: xmlElement(
-            "page",
-            {},
-            paragraphs.map((text) => xmlElement("p", {}, [text])),
-          ),
-          truncated: false,
-        }),
-      ]);
-
+  it("suggests no absence of a value a selector still names after a type change", () => {
     const [file] = draft({
-      "Documents/page.zip": path(
+      "Documents/a.zip": path(
         "document",
         "zip",
-        page(["a"]),
-        page(["a", "b"]),
+        listing([zipEntry("a.json", "json", { items: { "[name=x]": 1 } })]),
+        listing([zipEntry("a.json", "json", { items: [{ name: "x" }] })]),
       ),
     });
 
-    expect(file).toMatchObject({ change: { kind: "values" }, suggested: [] });
+    expect(file?.suggested).toEqual([
+      {
+        kind: "value_equals",
+        file: "Documents/a.zip",
+        pointer: "/entries/[name=a.json]/view/items/[name=x]/name",
+        value: "x",
+      },
+    ]);
   });
 });
 
