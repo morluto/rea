@@ -251,6 +251,19 @@ const tableOf = (
   };
 };
 
+/** Count every row satisfying a task predicate, including overlapping predicates. */
+export const countTaskRows = (
+  columns: readonly JsonValue[],
+  rows: readonly (readonly JsonValue[])[],
+  where: Readonly<Record<string, JsonValue>>,
+): number =>
+  rows.filter((row) =>
+    Object.entries(where).every(([column, value]) => {
+      const index = columns.indexOf(column);
+      return index >= 0 && sameJson(row[index], value);
+    }),
+  ).length;
+
 const rowVerdict = (
   check: Check<"row_present" | "row_absent" | "row_count">,
   entry: TaskFileView | undefined,
@@ -261,13 +274,11 @@ const rowVerdict = (
   if ("passed" in table) return table;
   const { columns, rows } = table;
   const name = `${check.file} table ${check.table}`;
-  const matches = (row: JsonValue) =>
-    Array.isArray(row) &&
-    Object.entries(check.where ?? {}).every(([column, value]) => {
-      const index = columns.indexOf(column);
-      return index >= 0 && sameJson(row[index], value);
-    });
-  const n = rows.filter(matches).length;
+  const n = countTaskRows(
+    columns,
+    rows.filter(Array.isArray),
+    check.where ?? {},
+  );
   if (check.kind === "row_present")
     return n > 0
       ? pass(`${name} has a row with ${shown(check.where)}`)

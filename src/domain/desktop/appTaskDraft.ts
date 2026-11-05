@@ -1,6 +1,10 @@
 import type { JsonValue } from "../jsonValue.js";
 import { isTimestamp, type DesktopTaskCheckInput } from "./appTask.js";
-import { namesXmlNamespace, resolvePointer } from "./appTaskChecks.js";
+import {
+  countTaskRows,
+  namesXmlNamespace,
+  resolvePointer,
+} from "./appTaskChecks.js";
 import type { DesktopStatePath } from "./desktopState.js";
 import { diffStateViews, sqliteRowIdentity } from "./stateChanges.js";
 
@@ -207,22 +211,16 @@ const keyedRows = (table: TableView) =>
     }),
   );
 
-/** Count the predicates a task can express after volatile values are omitted. */
-const rowConditionCounts = (table: TableView) => {
-  const counts = new Map<
-    string,
-    { where: Record<string, JsonValue>; count: number }
-  >();
+/** The predicates a task can express after volatile values are omitted. */
+const rowConditions = (table: TableView) => {
+  const conditions = new Map<string, Record<string, JsonValue>>();
   for (const row of table.rows) {
     if (sqliteRowIdentity(table.columns, table.key, row).keyed) continue;
     const where = rowWhere(table, row, () => true);
     if (Object.keys(where).length === 0) continue;
-    const identity = JSON.stringify(where);
-    const previous = counts.get(identity);
-    if (previous === undefined) counts.set(identity, { where, count: 1 });
-    else previous.count += 1;
+    conditions.set(JSON.stringify(where), where);
   }
-  return counts;
+  return conditions;
 };
 
 const unkeyedRowSuggestions = (
@@ -231,14 +229,20 @@ const unkeyedRowSuggestions = (
   baseline: TableView,
   final: TableView,
 ): Suggestion[] => {
-  const before = rowConditionCounts(baseline);
-  const after = rowConditionCounts(final);
+  const conditions = new Map([
+    ...rowConditions(final),
+    ...rowConditions(baseline),
+  ]);
   const suggestions: Suggestion[] = [];
-  for (const [identity, { where, count }] of after) {
-    const previous = before.get(identity)?.count ?? 0;
-    if (previous === 0)
+  for (const where of conditions.values()) {
+    const previous = countTaskRows(baseline.columns, baseline.rows, where);
+    const count = countTaskRows(final.columns, final.rows, where);
+    if (previous === count) continue;
+    if (count === 0)
+      suggestions.push({ kind: "row_absent", file, table, where });
+    else if (previous === 0)
       suggestions.push({ kind: "row_present", file, table, where });
-    else if (previous !== count)
+    else
       suggestions.push({
         kind: "row_count",
         file,
@@ -247,9 +251,6 @@ const unkeyedRowSuggestions = (
         equals: count,
       });
   }
-  for (const [identity, { where }] of before)
-    if (!after.has(identity))
-      suggestions.push({ kind: "row_absent", file, table, where });
   return suggestions;
 };
 

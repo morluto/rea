@@ -404,6 +404,72 @@ describe("draftTaskFiles with unkeyed row conditions", () => {
       ).map((outcome) => outcome.passed),
     ).toEqual([false, false]);
   });
+
+  it.each([
+    {
+      name: "counts all rows matching an overlapping predicate",
+      before: [
+        [null, "alpha", "2026-11-04 09:00:00"],
+        [null, "alpha", null],
+      ],
+      after: [
+        [null, "alpha", "2026-11-04 09:00:00"],
+        [null, "alpha", null],
+        [null, "alpha", "2026-11-04 10:00:00"],
+      ],
+      expected: [
+        { kind: "row_count", where: { id: null, body: "alpha" }, equals: 3 },
+        { kind: "row_count", equals: 3 },
+      ],
+    },
+    {
+      name: "does not suggest absence when a broader predicate still matches",
+      before: [
+        [null, "alpha", "2026-11-04 09:00:00"],
+        [null, "alpha", null],
+      ],
+      after: [[null, "alpha", null]],
+      expected: [
+        { kind: "row_count", where: { id: null, body: "alpha" }, equals: 1 },
+        { kind: "row_count", equals: 1 },
+      ],
+    },
+    {
+      name: "keeps the surviving broad predicate when a timestamp becomes NULL",
+      before: [[null, "alpha", "2026-11-04 09:00:00"]],
+      after: [[null, "alpha", null]],
+      expected: [
+        { kind: "row_present", where: { id: null, body: "alpha", at: null } },
+      ],
+    },
+  ])("$name", ({ before, after, expected }) => {
+    for (const key of [["id"], []]) {
+      const baseline = table(before);
+      const final = table(after);
+      baseline.tables.items.primary_key = key;
+      final.tables.items.primary_key = key;
+      const [database] = draft({
+        [file]: path("document", "sqlite", baseline, final),
+      });
+      expect(database?.suggested).toEqual(
+        expected.map((check) => ({ ...check, file, table: "items" })),
+      );
+      const checks = (database?.suggested ?? []).map((check, index) => ({
+        ...check,
+        id: String(index),
+      }));
+      for (const [view, passed] of [
+        [final, true],
+        [baseline, false],
+      ] as const)
+        expect(
+          evaluateTaskChecks(
+            checks,
+            new Map([[file, { format: "sqlite", view }]]),
+          ).map((outcome) => outcome.passed),
+        ).toEqual(checks.map(() => passed));
+    }
+  });
 });
 
 describe("draftTaskFiles with partial evidence", () => {
