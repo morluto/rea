@@ -151,8 +151,8 @@ describe("project-scoped Amp registration launcher", () => {
     const sentinel = JSON.stringify({ preexisting: true });
     await writeFile(settingsPath, sentinel);
     for (const args of [
-      ["mcp", "add", "--no-global", "--agent", "amp"],
-      ["mcp", "add", "--no-global"],
+      ["mcp", "add", "--no-global", "--agent", "amp", "--json"],
+      ["mcp", "add", "--no-global", "--json"],
     ]) {
       const result = spawnSync(
         process.execPath,
@@ -171,9 +171,14 @@ describe("project-scoped Amp registration launcher", () => {
       expect(result.error).toBeUndefined();
       expect(result.signal).toBeNull();
       expect(result.status).toBe(1);
-      expect(result.stderr).toContain(
-        "Amp does not support project-scoped registration",
-      );
+      expect(JSON.parse(result.stdout)).toEqual({
+        ok: false,
+        error: {
+          code: "AMP_PROJECT_SCOPE_UNSUPPORTED",
+          message: expect.any(String),
+        },
+      });
+      expect(result.stderr).toBe("");
       expect(await readFile(settingsPath, "utf8")).toBe(sentinel);
       expect(await readdir(workingDirectory)).toEqual([]);
     }

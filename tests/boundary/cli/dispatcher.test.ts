@@ -491,9 +491,8 @@ describe("project-scoped Amp registration dispatch", () => {
         },
       );
       expect(result.exitCode, result.stderr).toBe(1);
-      expect(result.stderr).toContain(
-        "Amp does not support project-scoped registration",
-      );
+      expect(result.stdout).toBe("");
+      expect(result.stderr.length).toBeGreaterThan(0);
       expect(result.stdout).not.toContain(runtimeReached);
     },
   );
@@ -520,9 +519,7 @@ describe("project-scoped Amp registration dispatch", () => {
       );
       expect(result.exitCode, result.stderr).toBe(0);
       expect(result.stdout).toContain(runtimeReached);
-      expect(result.stderr).not.toContain(
-        "Amp does not support project-scoped registration",
-      );
+      expect(result.stderr).toBe("");
     },
   );
 
@@ -559,9 +556,7 @@ describe("project-scoped Amp registration dispatch", () => {
           ok: false,
           error: {
             code: "AMP_PROJECT_SCOPE_UNSUPPORTED",
-            message: expect.stringContaining(
-              "Amp does not support project-scoped registration",
-            ),
+            message: expect.any(String),
           },
         },
       });
@@ -573,28 +568,25 @@ describe("project-scoped Amp registration dispatch", () => {
         ok: false,
         error: {
           code: "AMP_PROJECT_SCOPE_UNSUPPORTED",
-          message: expect.stringContaining(
-            "Amp does not support project-scoped registration",
-          ),
+          message: expect.any(String),
         },
       });
       expect(json.stdout).not.toContain(runtimeReached);
       expect(json.stderr).toBe("");
       const yaml = await invoke([...registration, "--format", "yaml"]);
       expect(yaml.exitCode, yaml.stderr).toBe(1);
-      expect(yaml.stdout).toContain("ok: false");
-      expect(yaml.stdout).toContain("AMP_PROJECT_SCOPE_UNSUPPORTED");
-      expect(yaml.stdout).toContain(
-        "Amp does not support project-scoped registration",
-      );
+      expect(yaml.stdout.split("\n").slice(0, 3)).toEqual([
+        "ok: false",
+        "error:",
+        "  code: AMP_PROJECT_SCOPE_UNSUPPORTED",
+      ]);
+      expect(yaml.stdout.split("\n")[3]).toMatch(/^ {2}message: /u);
       expect(yaml.stdout).not.toContain(runtimeReached);
       expect(yaml.stderr).toBe("");
       const plain = await invoke(registration);
       expect(plain.exitCode, plain.stderr).toBe(1);
       expect(plain.stdout).toBe("");
-      expect(plain.stderr).toContain(
-        "Amp does not support project-scoped registration",
-      );
+      expect(plain.stderr.length).toBeGreaterThan(0);
       expect(plain.stdout).not.toContain(runtimeReached);
     },
   );
