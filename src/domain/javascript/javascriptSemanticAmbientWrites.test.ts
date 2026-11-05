@@ -12,6 +12,7 @@ import {
 } from "./javascriptSemanticTraversal.js";
 import {
   createGlobalReferenceReader,
+  retainSemanticAmbientEffect,
   semanticAmbientPathMayHaveChangedAt,
 } from "./javascriptSemanticAmbientWrites.js";
 import { parseJavaScriptSource } from "./javascriptSourceParser.js";
@@ -408,4 +409,127 @@ it.each([
     },
   });
   expect(results).toEqual([changed]);
+});
+
+it("shares matching ambient records across reads instead of scanning unrelated effects again", () => {
+  const work = (count: number): number => {
+    const source =
+      Array.from(
+        { length: count },
+        (_value, index) =>
+          "new XMLHttpRequest().open('GET','/xhr');globalThis.unrelated" +
+          index +
+          "=replacement;",
+      ).join("") + "XMLHttpRequest.prototype.open=replacement;";
+    const parsed = parseJavaScriptSource(source);
+    if (parsed === null) throw new Error("Expected ambient work fixture");
+    const index = completeSemanticSteps(
+      indexJavaScriptBindingsWithReceiversSteps(parsed.program),
+    );
+    completeSemanticSteps(index.indexMemberMutationFactsSteps());
+    let reads = 0;
+    for (const effect of [
+      ...index.bindings.ambientWriteEffects,
+      ...index.bindings.ambientEscapeEffects,
+    ]) {
+      const path = effect.path;
+      Object.defineProperty(effect, "path", {
+        configurable: true,
+        get: () => {
+          reads += 1;
+          return path;
+        },
+      });
+    }
+    traverseJavaScriptAst(parsed.program, {
+      enter(node) {
+        if (
+          t.isCallExpression(node) &&
+          t.isMemberExpression(node.callee) &&
+          t.isIdentifier(node.callee.property, { name: "open" })
+        )
+          semanticAmbientPathMayHaveChangedAt(
+            node.callee,
+            index.bindings,
+            ["global", "XMLHttpRequest", "prototype", "open"],
+            node,
+          );
+      },
+    });
+    return reads;
+  };
+  expect(work(64)).toBeLessThan(3 * work(32));
+});
+
+it.each(["write", "escape"] as const)(
+  "refreshes cached ambient records when %s facts grow without caching read answers",
+  (kind) => {
+    const parsed = parseJavaScriptSource(
+      "before();inspect();after();inspect();",
+    );
+    if (parsed === null)
+      throw new Error("Expected growing ambient-effect fixture");
+    const state = completeSemanticSteps(
+      indexJavaScriptBindingsSteps(parsed.program),
+    );
+    const calls: t.CallExpression[] = [];
+    traverseJavaScriptAst(parsed.program, {
+      enter(node) {
+        if (t.isCallExpression(node)) calls.push(node);
+      },
+    });
+    const [before, first, after, second] = calls;
+    if (!before || !first || !after || !second)
+      throw new Error("Expected four call sites");
+    const path = ["global", "XMLHttpRequest", "prototype", "open"];
+    retainSemanticAmbientEffect(state, "write", path, after);
+    expect(semanticAmbientPathMayHaveChangedAt(first.callee, state, path)).toBe(
+      false,
+    );
+    expect(
+      semanticAmbientPathMayHaveChangedAt(second.callee, state, path),
+    ).toBe(true);
+    retainSemanticAmbientEffect(
+      state,
+      kind,
+      kind === "write" ? path : ["global", "XMLHttpRequest"],
+      before,
+    );
+    expect(semanticAmbientPathMayHaveChangedAt(first.callee, state, path)).toBe(
+      true,
+    );
+  },
+);
+
+it("keeps invocation exclusions outside the shared ambient record cache", () => {
+  const parsed = parseJavaScriptSource("function run(){invoke();}");
+  if (parsed === null) throw new Error("Expected invocation-effect fixture");
+  const state = completeSemanticSteps(
+    indexJavaScriptBindingsSteps(parsed.program),
+  );
+  let invocation: t.CallExpression | undefined;
+  traverseJavaScriptAst(parsed.program, {
+    enter(node) {
+      if (t.isCallExpression(node)) invocation = node;
+    },
+  });
+  if (invocation === undefined) throw new Error("Expected invocation");
+  const path = ["global", "XMLHttpRequest", "prototype", "open"];
+  retainSemanticAmbientEffect(
+    state,
+    "escape",
+    ["global", "XMLHttpRequest"],
+    invocation,
+  );
+  expect(
+    semanticAmbientPathMayHaveChangedAt(
+      invocation.callee,
+      state,
+      path,
+      invocation,
+    ),
+  ).toBe(false);
+  expect(
+    semanticAmbientPathMayHaveChangedAt(invocation.callee, state, path),
+  ).toBe(true);
 });
