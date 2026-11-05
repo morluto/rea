@@ -147,13 +147,17 @@ export class SessionRuntimeAvailability {
     for (const sibling of error.siblingOperations) {
       if (sibling !== currentOperation) {
         const siblingOutcomes = outcomes(this.#operations, sibling);
+        const activeFailure =
+          siblingOutcomes.failure !== undefined &&
+          siblingOutcomes.failure.dispatch > siblingOutcomes.succeeded
+            ? siblingOutcomes.failure
+            : undefined;
         const reason =
-          siblingOutcomes.failure?.reason ??
-          (error.userMessage !== undefined
-            ? error.userMessage.replaceAll(currentOperation, sibling)
-            : error.remediationAction !== undefined
-              ? `Provider ${error.providerId} cannot execute ${sibling}: ${error.reason}. ${error.remediationAction}`
-              : `Provider ${error.providerId} cannot execute ${sibling}: ${error.reason}`);
+          activeFailure?.reason ??
+          error.siblingReasons?.[sibling] ??
+          (error.remediationAction !== undefined
+            ? `Provider ${error.providerId} cannot execute ${sibling}: ${error.reason}. ${error.remediationAction}`
+            : `Provider ${error.providerId} cannot execute ${sibling}: ${error.reason}`);
         siblingOutcomes.failure = newer(siblingOutcomes.failure, {
           dispatch,
           reason,

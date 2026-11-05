@@ -767,6 +767,109 @@ it("preserves observed sibling recovery instructions when a later fallback repor
   });
 });
 
+it("replaces inactive past sibling failures with the current export failure when fallback reports sibling unavailability", async () => {
+  let assemblyFails = true;
+  const oldRefusal = "Import slot 0x4000 cannot be disassembled.";
+  const exportFailureMessage =
+    "Kuna's project export failed, so procedure_assembly is unavailable in this session.";
+  const respond = {
+    current: (operation: string): Promise<Reply> => {
+      if (operation === "procedure_assembly") {
+        if (assemblyFails)
+          return Promise.resolve(
+            err(
+              new AnalysisCapabilityUnavailableError(
+                FIXTURE.id,
+                operation,
+                oldRefusal,
+                { userMessage: oldRefusal },
+              ),
+            ),
+          );
+        return Promise.resolve(observed("mov eax, 1"));
+      }
+      if (operation === "procedure_pseudo_code")
+        return Promise.resolve(
+          ok(
+            createAnalysisExecution("int main() { return 0; }", FIXTURE, {
+              siblingUnavailability: new AnalysisCapabilityUnavailableError(
+                FIXTURE.id,
+                operation,
+                "project export failed",
+                {
+                  siblingOperations: ["procedure_assembly"],
+                  siblingReasons: {
+                    procedure_assembly: exportFailureMessage,
+                  },
+                },
+              ),
+            }),
+          ),
+        );
+      return Promise.resolve(observed("fixture-text"));
+    },
+  };
+  const { call, availability } = await connectScripted({
+    operations: [...DIRECT_OPERATIONS, "procedure_pseudo_code"],
+    respond,
+  });
+  // 1. Initial refusal on procedure_assembly
+  expect(await call("procedure_assembly", PROCEDURE)).toBe("error");
+  expect(await availability(["procedure_assembly"])).toEqual({
+    procedure_assembly: oldRefusal,
+  });
+
+  // 2. procedure_assembly succeeds later, resolving the active failure
+  assemblyFails = false;
+  expect(await call("procedure_assembly", PROCEDURE)).toBe("ok");
+  expect(await availability(["procedure_assembly"])).toEqual({
+    procedure_assembly: "available",
+  });
+
+  // 3. Fallback observes export failure: must show the new export failure, not resurrect oldRefusal
+  expect(await call("procedure_pseudo_code", PROCEDURE)).toBe("ok");
+  expect(await availability(["procedure_assembly"])).toEqual({
+    procedure_assembly: exportFailureMessage,
+  });
+});
+
+it("preserves source paths and diagnostics unchanged in structured sibling unavailability", async () => {
+  const pathWithOpName = "/var/log/procedure_pseudo_code/target.c";
+  const siblingMessage = `Kuna's project export failed, so procedure_assembly is unavailable in this session: Error compiling ${pathWithOpName}.`;
+  const respond = {
+    current: (operation: string): Promise<Reply> => {
+      if (operation === "procedure_pseudo_code")
+        return Promise.resolve(
+          ok(
+            createAnalysisExecution("int main() { return 0; }", FIXTURE, {
+              siblingUnavailability: new AnalysisCapabilityUnavailableError(
+                FIXTURE.id,
+                operation,
+                `export failed for ${pathWithOpName}`,
+                {
+                  siblingOperations: ["procedure_assembly"],
+                  siblingReasons: {
+                    procedure_assembly: siblingMessage,
+                  },
+                },
+              ),
+            }),
+          ),
+        );
+      return Promise.resolve(observed("fixture-text"));
+    },
+  };
+  const { call, availability } = await connectScripted({
+    operations: [...DIRECT_OPERATIONS, "procedure_pseudo_code"],
+    respond,
+  });
+  expect(await call("procedure_pseudo_code", PROCEDURE)).toBe("ok");
+  // The path containing "procedure_pseudo_code" must remain completely intact
+  expect(await availability(["procedure_assembly"])).toEqual({
+    procedure_assembly: siblingMessage,
+  });
+});
+
 it("keeps each provider's failures and ignores cancelled requests", async () => {
   let fixtureBroken = false;
   let auxiliaryBroken = true;

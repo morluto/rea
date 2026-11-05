@@ -25,14 +25,6 @@ const it = test.skipIf(process.platform === "win32");
 const decompilesOf = async (kuna: string) =>
   (await fakeKunaCalls(kuna)).filter(({ argv }) => argv[0] === "decompile");
 
-const deferred = <T>() => {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>((r) => {
-    resolve = r;
-  });
-  return { promise, resolve };
-};
-
 it("shares one single-function run among concurrent requests for one entry", async () => {
   const { kuna, open } = await session("rea-kuna-single-shared-", {
     project: "hang",
@@ -259,9 +251,21 @@ it("keeps answering repeats from the completed run after the export fails", asyn
   }
 });
 
+const deferred = <T>() => {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((r) => {
+    resolve = r;
+  });
+  return { promise, resolve };
+};
+
 it("reports sibling unavailability when fallback observes settled export failure without prior assembly call", async () => {
   const exportFailed = deferred<void>();
   const launcher: KunaProcessLauncher = async (options) => {
+    if (options.arguments[0] === "decompile") {
+      await exportFailed.promise;
+      await new Promise((r) => setTimeout(r, 100));
+    }
     const spawned = await spawnOwnedProviderProcess(options);
     if (options.arguments[0] === "decompile-project") {
       if (spawned.process.exitCode !== null) {
@@ -269,11 +273,6 @@ it("reports sibling unavailability when fallback observes settled export failure
       } else {
         spawned.process.once("exit", () => exportFailed.resolve());
       }
-      return spawned;
-    }
-    if (options.arguments[0] === "decompile") {
-      await exportFailed.promise;
-      return spawned;
     }
     return spawned;
   };

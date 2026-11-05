@@ -289,6 +289,16 @@ const redactFailure = (
         ...(error.siblingOperations === undefined
           ? {}
           : { siblingOperations: error.siblingOperations }),
+        ...(error.siblingReasons === undefined
+          ? {}
+          : {
+              siblingReasons: Object.fromEntries(
+                Object.entries(error.siblingReasons).map(([op, msg]) => [
+                  op,
+                  text(msg),
+                ]),
+              ),
+            }),
         ...(error.retryable ? { retryable: true } : {}),
       },
     );

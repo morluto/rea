@@ -234,6 +234,9 @@ export const analysisClientFailureForOperation = (
         ...(cause.siblingOperations === undefined
           ? {}
           : { siblingOperations: cause.siblingOperations }),
+        ...(cause.siblingReasons === undefined
+          ? {}
+          : { siblingReasons: cause.siblingReasons }),
         retryable: cause.retryable,
       },
     );

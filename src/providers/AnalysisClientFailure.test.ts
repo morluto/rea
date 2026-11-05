@@ -93,7 +93,7 @@ it("keeps a regex deadline's continuing-session guidance when attributing it to 
   });
 });
 
-it("preserves sibling operations and remediation action when rebuilding capability unavailable errors", () => {
+it("preserves sibling operations, sibling reasons, and remediation action when rebuilding capability unavailable errors", () => {
   const source = new AnalysisCapabilityUnavailableError(
     "kuna",
     "procedure_assembly",
@@ -102,6 +102,9 @@ it("preserves sibling operations and remediation action when rebuilding capabili
       userMessage: "Export failed",
       remediationAction: "Retry without project requirement",
       siblingOperations: ["procedure_assembly", "analyze_function"],
+      siblingReasons: {
+        analyze_function: "analyze_function export failed",
+      },
       retryable: true,
     },
   );
@@ -117,6 +120,9 @@ it("preserves sibling operations and remediation action when rebuilding capabili
     "procedure_assembly",
     "analyze_function",
   ]);
+  expect(attributed.siblingReasons).toEqual({
+    analyze_function: "analyze_function export failed",
+  });
   expect(attributed.remediationAction).toBe(
     "Retry without project requirement",
   );
