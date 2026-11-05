@@ -1,10 +1,27 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { mkdir, readFile, realpath, writeFile } from "node:fs/promises";
+import { isAbsolute, join, resolve } from "node:path";
 
 import { expect } from "vitest";
+import { z } from "zod";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
+
+/**
+ * Setup may record a PATH alias of the selected runtime or entry script, so
+ * the launcher is compared by resolved file identity rather than spelling.
+ */
+const assertSelectedLauncher = async (value: unknown) => {
+  const [runtime, entrypoint] = z
+    .tuple([z.string(), z.string(), z.literal("mcp")])
+    .parse(value);
+  expect(isAbsolute(runtime)).toBe(true);
+  expect(isAbsolute(entrypoint)).toBe(true);
+  expect(await realpath(runtime)).toBe(await realpath(process.execPath));
+  expect(await realpath(entrypoint)).toBe(
+    await realpath(resolve("scripts/rea.mjs")),
+  );
+};
 
 cliTest(
   "Kiro public CLI plans, requires approval, applies, diagnoses, repeats, and uninstalls only owned content",
@@ -38,7 +55,6 @@ cliTest(
     )}\n`;
     await mkdir(settings, { recursive: true });
     await writeFile(config, original);
-    const cliPath = resolve("scripts/rea.mjs");
     const run = (arguments_: readonly string[]) =>
       cli.run({
         arguments: arguments_,
@@ -90,8 +106,8 @@ cliTest(
       mcpServers: {
         other: { command: "other-server", args: [], disabled: true },
         rea: {
-          command: process.execPath,
-          args: [cliPath, "mcp"],
+          command: expect.any(String),
+          args: [expect.any(String), "mcp"],
           disabled: false,
           autoApprove: ["list_documents"],
           timeout: 180000,
@@ -99,6 +115,14 @@ cliTest(
       },
       powers: { mcpServers: {} },
     });
+    const launcher = z
+      .object({
+        mcpServers: z.object({
+          rea: z.object({ command: z.string(), args: z.array(z.string()) }),
+        }),
+      })
+      .parse(JSON.parse(configured)).mcpServers.rea;
+    await assertSelectedLauncher([launcher.command, ...launcher.args]);
     expect(await readFile(`${config}.rea.backup`, "utf8")).toBe(original);
     expect(await readFile(skill, "utf8")).toContain(
       "reverse-engineer-anything",
