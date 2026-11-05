@@ -1230,6 +1230,10 @@ package entrypoint as the script's first argument for package coverage.
 
 ## Agent evaluation and conformance records
 
+For catalog-loading measurements, use the real Codex
+[MCP catalog evaluation](mcp-catalog-evaluation.md). It separates observed usage
+from advertisement bytes and from completed-task correctness.
+
 `npm run verify:agent` evaluates investigation scenarios through a real local
 Codex CLI. The lane runs sequentially; select scenarios with
 `REA_AGENT_EVAL_SCENARIOS` and choose the installed client/model with
