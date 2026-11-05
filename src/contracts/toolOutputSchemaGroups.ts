@@ -4,6 +4,7 @@ import {
 } from "../domain/native/nativeObservation.js";
 import { overviewInventoryCoverageSchema } from "../domain/native/inventoryCoverage.js";
 import {
+  procedurePseudocodeSummaryViewResultSchema,
   nativeObservationSummaryViewResultSchemas,
   byteEntropySummaryViewResultSchema,
   nativeFunctionMatchingSummaryViewResultSchema,
@@ -223,7 +224,10 @@ export const officialOutputSchemas = {
     }),
   ),
   procedure_references: evidenceResultOf(procedureReferencesResultSchema),
-  procedure_pseudo_code: evidenceResultOf(nullableText),
+  procedure_pseudo_code: analysisDetailOutputSchemaOf(
+    nullableText,
+    procedurePseudocodeSummaryViewResultSchema,
+  ),
   resolve_containing_procedure: analysisDetailOutputSchemaOf(
     nativeObservationSourceSchemas.resolve_containing_procedure,
     nativeObservationSummaryViewResultSchemas.resolve_containing_procedure,

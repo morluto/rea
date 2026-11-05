@@ -43,6 +43,17 @@ focused tools such as `list_procedures` and `analyze_function` on the same sessi
 | What did the declared runtime scenario observe?              | [Desktop](#native-desktop-observation) or [call observation](#native-call-observation) |
 | What can this provider and host establish?                   | [Provider boundaries](#provider-and-verification-boundaries)                           |
 
+For large pseudocode, request `procedure_pseudo_code` with `detail: "summary"`
+on the first MCP call. It retains the complete observation and returns the
+original selection, text availability and length without the body. Use
+`normalized_result.parent_evidence_id` with `inspect_analysis_view` and
+`view: {kind: "native", facet: "pseudocode", offset: 0, limit: 20000}`;
+follow `coverage.next_offset` for later pages. Offsets and limits count UTF-16
+code units, not lines or tokens. Pages reuse the same observation without
+repeating decompilation. Null and empty text remain distinct. Omitted or
+`complete` detail preserves full inline delivery. Summary delivery requires a
+retaining session and does not reduce the work or memory of decompilation.
+
 ## Exact CLI selectors
 
 `function`, `instructions` and `decompile` accept `--procedure=<name-or-address>`;

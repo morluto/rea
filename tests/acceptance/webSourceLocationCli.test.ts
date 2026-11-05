@@ -12,11 +12,65 @@ import { mkdir, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { webSourceLocationFixture } from "../fixtures/webSourceLocation.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
-import {
-  cliTest,
-  type CliResult,
-  type TestCli,
-} from "../support/cli/cliFixture.js";
+import { cliTest } from "../support/cli/cliFixture.js";
+
+const expectInvalidSourceLocation = (
+  json: unknown,
+  manifest: string,
+  root: string,
+  map: string,
+  sourceMapText: string,
+) => {
+  expect(json).toMatchObject({
+    code: "invalid_request",
+    details: {
+      issues: [
+        {
+          path: ["generated_position", "line"],
+          reason: "out_of_range",
+          maximum: 1,
+        },
+      ],
+      partial_observation: {
+        kind: "web-trace-observation",
+        analysis: "incomplete",
+        manifest: { path: manifest },
+        source: { path: join(root, "files", "modules", "main.js") },
+        source_map: {
+          path: map,
+          sha256: createHash("sha256").update(sourceMapText).digest("hex"),
+        },
+      },
+    },
+  });
+};
+
+const expectSourceLocationLimitations = (json: unknown) => {
+  const limitation =
+    "Source names and sourceRoot are reported declarations. REA derives resolved URLs using WHATWG URL resolution; the pinned upstream codec decodes mappings. No original source is fetched or executed.";
+  expect(json).toMatchObject({
+    limitations: expect.arrayContaining([limitation]),
+    normalized_result: { limitations: expect.arrayContaining([limitation]) },
+  });
+};
+
+const expectColumnOutOfRange = (
+  response: Parameters<typeof parseMcpToolError>[0],
+  sourceLength: number,
+) => {
+  expect(parseMcpToolError(response).error).toMatchObject({
+    code: "invalid_request",
+    details: {
+      issues: [
+        {
+          path: ["generated_position", "column"],
+          reason: "out_of_range",
+          maximum: sourceLength,
+        },
+      ],
+    },
+  });
+};
 
 cliTest(
   "accepts numeric UTF-16 coordinates and runs the actual owned source-map codec without a browser",
@@ -92,137 +146,79 @@ cliTest(
         },
       },
     });
-    const limitation =
-      "Source names and sourceRoot are reported declarations. REA derives resolved URLs using WHATWG URL resolution; the pinned upstream codec decodes mappings. No original source is fetched or executed.";
-    expect(response.json).toMatchObject({
-      limitations: expect.arrayContaining([limitation]),
-      normalized_result: { limitations: expect.arrayContaining([limitation]) },
+    expectSourceLocationLimitations(response.json);
+    const transport = new StdioClientTransport({
+      command: process.execPath,
+      args: [
+        fileURLToPath(new URL("../../scripts/rea.mjs", import.meta.url)),
+        "mcp",
+      ],
+      env: {
+        ...getDefaultEnvironment(),
+        REA_LOG_LEVEL: "silent",
+        CLANG_MODULE_CACHE_PATH: map,
+      },
+      stderr: "pipe",
     });
-    await assertSourceMapFollowUp({
-      cli,
+    const client = new Client({
+      name: "source-location-cli-parity",
+      version: "1",
+    });
+    onTestFinished(async () => {
+      try {
+        await client.close();
+      } finally {
+        await transport.close();
+      }
+    });
+    await client.connect(transport);
+    const mcpResponse = await client.callTool({
+      name: "trace_web_source_location",
+      arguments: {
+        manifest_path: manifest,
+        script_index: 0,
+        source_map: { path: map, url: fixture.sourceMap.url },
+        generated_position: { line: 1, column: 0 },
+      },
+    });
+    expect(mcpResponse.isError, JSON.stringify(mcpResponse)).not.toBe(true);
+    expect(mcpResponse.structuredContent).toEqual(response.json);
+    const pastColumn = await client.callTool({
+      name: "trace_web_source_location",
+      arguments: {
+        manifest_path: manifest,
+        script_index: 0,
+        source_map: { path: map, url: fixture.sourceMap.url },
+        generated_position: { line: 1, column: 10 },
+      },
+    });
+    expectColumnOutOfRange(pastColumn, fixture.source.length);
+    const invalid = await cli.run({
+      arguments: [
+        "trace-web-source-location",
+        manifest,
+        "0",
+        map,
+        fixture.sourceMap.url,
+        "2",
+        "0",
+        "--json",
+      ],
+      environment: { REA_LOG_LEVEL: "silent" },
+      timeoutMs: 45000,
+    });
+    expect(invalid.exitCode).toBe(1);
+    expectInvalidSourceLocation(
+      invalid.json,
       manifest,
-      map,
-      fixture,
       root,
-      response,
-    });
+      map,
+      fixture.sourceMap.text,
+    );
   },
   // Allow cold CLI and MCP ownership preparation across the full parity sequence.
   180_000,
 );
-
-const assertSourceMapFollowUp = async ({
-  cli,
-  manifest,
-  map,
-  fixture,
-  root,
-  response,
-}: {
-  readonly cli: TestCli;
-  readonly manifest: string;
-  readonly map: string;
-  readonly fixture: ReturnType<typeof webSourceLocationFixture>;
-  readonly root: string;
-  readonly response: CliResult;
-}): Promise<void> => {
-  const transport = new StdioClientTransport({
-    command: process.execPath,
-    args: [
-      fileURLToPath(new URL("../../scripts/rea.mjs", import.meta.url)),
-      "mcp",
-    ],
-    env: {
-      ...getDefaultEnvironment(),
-      REA_LOG_LEVEL: "silent",
-      CLANG_MODULE_CACHE_PATH: map,
-    },
-    stderr: "pipe",
-  });
-  const client = new Client({
-    name: "source-location-cli-parity",
-    version: "1",
-  });
-  onTestFinished(async () => {
-    try {
-      await client.close();
-    } finally {
-      await transport.close();
-    }
-  });
-  await client.connect(transport);
-  const mcpResponse = await client.callTool({
-    name: "trace_web_source_location",
-    arguments: {
-      manifest_path: manifest,
-      script_index: 0,
-      source_map: { path: map, url: fixture.sourceMap.url },
-      generated_position: { line: 1, column: 0 },
-    },
-  });
-  expect(mcpResponse.isError, JSON.stringify(mcpResponse)).not.toBe(true);
-  expect(mcpResponse.structuredContent).toEqual(response.json);
-  const pastColumn = await client.callTool({
-    name: "trace_web_source_location",
-    arguments: {
-      manifest_path: manifest,
-      script_index: 0,
-      source_map: { path: map, url: fixture.sourceMap.url },
-      generated_position: { line: 1, column: 10 },
-    },
-  });
-  expect(parseMcpToolError(pastColumn).error).toMatchObject({
-    code: "invalid_request",
-    details: {
-      issues: [
-        {
-          path: ["generated_position", "column"],
-          reason: "out_of_range",
-          maximum: fixture.source.length,
-        },
-      ],
-    },
-  });
-  const invalid = await cli.run({
-    arguments: [
-      "trace-web-source-location",
-      manifest,
-      "0",
-      map,
-      fixture.sourceMap.url,
-      "2",
-      "0",
-      "--json",
-    ],
-    environment: { REA_LOG_LEVEL: "silent" },
-    timeoutMs: 45000,
-  });
-  expect(invalid.exitCode).toBe(1);
-  expect(invalid.json).toMatchObject({
-    code: "invalid_request",
-    details: {
-      issues: [
-        {
-          path: ["generated_position", "line"],
-          reason: "out_of_range",
-          maximum: 1,
-        },
-      ],
-      partial_observation: {
-        kind: "web-trace-observation",
-        analysis: "incomplete",
-        manifest: { path: manifest },
-        source: { path: join(root, "files", "modules", "main.js") },
-        source_map: {
-          path: map,
-          sha256: createHash("sha256")
-            .update(fixture.sourceMap.text)
-            .digest("hex"),
-        },
-      },
-    },
-  });
-};
 
 cliTest(
   "applies the shared version constraint to nested indexed maps through CLI and stdio MCP",
