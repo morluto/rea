@@ -10,6 +10,48 @@ import { cliTest } from "../../support/cli/cliFixture.js";
 const contract = toolContract("inspect_native_exports");
 
 cliTest(
+  "retains defined unversioned ELF globals and weak symbols at version index zero",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-elf-version-zero-");
+    const path = join(root, "unversioned.so");
+    await writeFile(
+      path,
+      elfExportImage({
+        symbols: [
+          { name: "global_symbol", version: 0 },
+          { name: "weak_symbol", binding: 2, version: 0 },
+          { name: "plain_symbol", version: 1 },
+          { name: "hidden_symbol", visibility: 2, version: 0 },
+          { name: "undefined_symbol", section: 0, version: 0 },
+          { name: "local_symbol", binding: 0, version: 0 },
+        ],
+      }),
+    );
+    const result = await cli.run({
+      arguments: ["inspect-native-exports", path, "--json"],
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    const report = nativeExportsSchema.parse(
+      contract.outputSchema.parse(result.json).normalized_result,
+    );
+    if (report.format !== "elf") throw new Error("Expected ELF export report");
+    expect(report.coverage).toMatchObject({ status: "complete", exports: 3 });
+    expect(report.issues).toEqual([]);
+    expect(
+      report.exports.map(({ name, binding, version }) => ({
+        name,
+        binding,
+        version,
+      })),
+    ).toEqual([
+      { name: "global_symbol", binding: "global", version: null },
+      { name: "weak_symbol", binding: "weak", version: null },
+      { name: "plain_symbol", binding: "global", version: null },
+    ]);
+  },
+);
+
+cliTest(
   "retains export rows when their ELF version metadata is unavailable",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-elf-version-coverage-");

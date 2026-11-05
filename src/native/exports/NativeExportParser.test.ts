@@ -358,7 +358,8 @@ describe("ELF dynamic symbol exports", () => {
     { name: "hidden_fn", visibility: 2 },
     { name: "undefined_fn", section: 0 },
     { name: "local_fn", binding: 0 },
-    { name: "local_version_fn", version: 0 },
+    { name: "unversioned_global", version: 0 },
+    { name: "unversioned_weak", binding: 2, version: 0 },
   ];
 
   it("lists defined default and protected globals with their versions", () => {
@@ -374,7 +375,7 @@ describe("ELF dynamic symbol exports", () => {
       bits: 64,
       byte_order: "little",
       architecture: "amd64",
-      coverage: { status: "complete", examined_entries: 10, exports: 6 },
+      coverage: { status: "complete", examined_entries: 11, exports: 8 },
       issues: [],
     });
     expect(
@@ -439,6 +440,20 @@ describe("ELF dynamic symbol exports", () => {
         type: "function",
         binding: "global",
         visibility: "protected",
+        version: null,
+      },
+      {
+        name: "unversioned_global",
+        type: "function",
+        binding: "global",
+        visibility: "default",
+        version: null,
+      },
+      {
+        name: "unversioned_weak",
+        type: "function",
+        binding: "weak",
+        visibility: "default",
         version: null,
       },
     ]);
