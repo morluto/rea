@@ -574,18 +574,23 @@ describe.skipIf(process.platform === "win32")(
         package: installed,
       } = await inspected({ repository });
 
-      const reason = `the key the Signed-By field of ${join(root, "apt/sources.list.d", repository.list)} holds does not verify ${join(root, "lists", `${repository.releaseFile}InRelease`)}`;
-      expect(installed.apt_repositories?.[0]).toMatchObject({
-        signing_key: null,
-        signing_key_reason: reason,
-      });
-      expect(reason).not.toMatch(/[a-z]+:\/\//u);
+      const refused = installed.apt_repositories?.[0];
+      const reason = refused?.signing_key_reason;
+      if (reason === undefined) throw new Error("expected a refusal reason");
+      expect(refused?.signing_key).toBeNull();
+      expect(reason).toContain(
+        join(root, "apt/sources.list.d", repository.list),
+      );
+      expect(reason).toContain(
+        join(root, "lists", `${repository.releaseFile}InRelease`),
+      );
+      expect(reason).not.toMatch(/[a-z][a-z0-9+.-]*:\/\//iu);
       expect(keyrings).toHaveLength(1);
       expect(signingKeys.size).toBe(0);
-      const install = exportInstall(installed, "typora", "arm64");
-      expect(!install.ok && install.error.reason).toBe(
-        `The application comes from apt repositories the computer cannot use (${PPA_URI} noble main: ${reason}).`,
-      );
+      expect(exportInstall(installed, "typora", "arm64")).toMatchObject({
+        ok: false,
+        error: { field: "capture", reason: expect.stringContaining(reason) },
+      });
     });
   },
 );

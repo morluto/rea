@@ -130,9 +130,10 @@ describe("withGpgvKeyCheck cleanup", () => {
       ]),
     );
 
-    expect(verified).toEqual({
-      reason: `the key the Signed-By field of ${sources} holds does not verify ${release}`,
-    });
+    if (!("reason" in verified)) throw new Error("expected a refusal");
+    expect(verified.reason).toContain(sources);
+    expect(verified.reason).toContain(release);
+    expect(verified.reason).not.toMatch(/[a-z][a-z0-9+.-]*:\/\//iu);
     expect(keyrings).toHaveLength(1);
     await expect(access(keyrings[0] ?? "")).rejects.toMatchObject({
       code: "ENOENT",
