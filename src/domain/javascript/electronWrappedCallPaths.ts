@@ -257,7 +257,7 @@ export function* collectElectronWrappedCallPathsSteps(
   source: string,
   accumulator: JavaScriptAnalysisAccumulator,
   identity: JavaScriptElectronIdentity,
-  indexMemberMutationFacts: () => void,
+  indexMemberMutationFactsSteps: () => Generator<void, void>,
 ): Generator<void, readonly ElectronCallPath[]> {
   // Bounds repeated interprocedural expansion independently of bundle bytes.
   // Exhaustion is reported as unknown coverage, never as a negative finding.
@@ -273,7 +273,7 @@ export function* collectElectronWrappedCallPathsSteps(
     state,
     program,
     identity,
-    indexMemberMutationFacts,
+    () => false,
   );
   const paths: ElectronCallPath[] = [];
   const seen = new Set<string>();
@@ -1560,7 +1560,13 @@ export function* collectElectronWrappedCallPathsSteps(
     for (;;) {
       const batch = traversal.next();
       for (const node of seeds) {
-        yield* seed(node);
+        for (;;) {
+          resolver.memberMutationFactsRequired = false;
+          yield* seed(node);
+          if (!resolver.memberMutationFactsRequired) break;
+          yield* indexMemberMutationFactsSteps();
+          resolver.memberMutationFactsIndexed();
+        }
         if (remainingVisits < 0) break;
       }
       seeds.length = 0;

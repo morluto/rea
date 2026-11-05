@@ -65,15 +65,6 @@ export interface JavaScriptSemanticMemberEffect {
 
 export type JavaScriptSemanticEffectTiming = "before" | "after" | "unknown";
 
-export type JavaScriptBuiltinPrototypeOwner =
-  | "Object"
-  | "Array"
-  | "String"
-  | "Number"
-  | "Boolean"
-  | "RegExp"
-  | "BigInt";
-
 export interface JavaScriptSemanticReferenceEffect {
   readonly kind: "binding-write" | "member-write" | "escape" | "ambient-write";
   readonly path?: JavaScriptSemanticPropertyPath;
@@ -182,8 +173,6 @@ export interface JavaScriptSemanticAnalysisState {
   readonly bindingWrites: Map<string, t.Node[]>;
   /** Source evidence that Object.prototype may supply a `require` property. */
   prototypeRequireMutationObserved: boolean | undefined;
-  /** Built-in prototypes whose members may have changed in this source. */
-  readonly prototypeRequireMutationOwners: Set<JavaScriptBuiltinPrototypeOwner>;
   /** Source evidence that Object.prototype may add inherited enumerable keys. */
   prototypeEnumerationMayAffect: boolean | undefined;
   readonly implicitPropertyReads: WeakMap<
