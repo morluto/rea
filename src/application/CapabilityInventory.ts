@@ -1079,7 +1079,7 @@ const availabilityFailurePriority = (
   }
 };
 
-/** Include only operations reachable through the ordered requirement groups. */
+/** Include operations the selected route can still dispatch, including runtime retries. */
 const reachableRequirements = (
   requirements: CompositionRequirements,
   descriptors: ReadonlyMap<string, ProviderDescriptor>,
@@ -1087,9 +1087,14 @@ const reachableRequirements = (
   const reached: string[] = [];
   for (const group of requirements) {
     const operations = typeof group === "string" ? [group] : group;
-    const available = operations.filter(
-      (operation) => descriptors.get(operation)?.available === true,
-    );
+    const available = operations.filter((operation) => {
+      const descriptor = descriptors.get(operation);
+      return (
+        descriptor?.available === true ||
+        (descriptor?.available === false &&
+          descriptor.runtime_unavailable === true)
+      );
+    });
     reached.push(...available);
     if (available.length === 0) break;
   }

@@ -41,6 +41,9 @@ it("retains network cleanup effects in session discovery for lifecycle tools", (
     "open_bundle_resources",
     "close_binary",
     "reset_investigation",
+    "start_rizin_debug_session",
+    "close_rizin_debug_session",
+    "close_gdb_session",
   ]) {
     expect(
       entries.find((entry) => entry.name === name),
@@ -50,6 +53,47 @@ it("retains network cleanup effects in session discovery for lifecycle tools", (
       annotations: { open_world: true },
     });
   }
+});
+
+it("keeps retryable IDA effects in composed discovery while preserving unavailability", () => {
+  const ida = idaCapabilities(IDA_COMPATIBILITY_PROFILES.legacy, false);
+  const statusFor = (runtimeUnavailable: boolean) => ({
+    open: true,
+    kind: "executable",
+    capabilities: providerCapabilitySets(
+      ida.map((descriptor) =>
+        descriptor.operation === "analyze_function"
+          ? {
+              ...descriptor,
+              available: false as const,
+              reason: "Transient IDA failure",
+              ...(runtimeUnavailable
+                ? { runtimeUnavailable: true as const }
+                : {}),
+            }
+          : descriptor,
+      ),
+    ),
+  });
+  const retryable = buildCapabilityInventory(
+    statusFor(true),
+    enabledPolicy,
+  ).find(({ name }) => name === "inspect_native_api");
+  expect(retryable).toMatchObject({
+    available: false,
+    reason: "provider_unavailable",
+    effects: { accessesNetwork: true, changesUiState: true },
+    annotations: { open_world: true },
+  });
+  const blocked = buildCapabilityInventory(
+    statusFor(false),
+    enabledPolicy,
+  ).find(({ name }) => name === "inspect_native_api");
+  expect(blocked).toMatchObject({
+    available: false,
+    effects: { accessesNetwork: false, changesUiState: false },
+    annotations: { open_world: false },
+  });
 });
 
 it.each([

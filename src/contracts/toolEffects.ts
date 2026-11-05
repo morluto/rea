@@ -113,6 +113,7 @@ const TOOL_EFFECT_AUDIT: Readonly<Record<string, EffectAudit>> = {
     mutatesTarget: true,
     mutatesSession: true,
     launchesProcess: true,
+    accessesNetwork: true,
     executesForeignCode: true,
     idempotent: false,
   }),
@@ -131,12 +132,14 @@ const TOOL_EFFECT_AUDIT: Readonly<Record<string, EffectAudit>> = {
   close_rizin_debug_session: effects({
     mutatesSession: true,
     launchesProcess: true,
+    accessesNetwork: true,
     mutatesTarget: true,
     executesForeignCode: true,
   }),
   close_gdb_session: effects({
     launchesProcess: true,
     mutatesSession: true,
+    accessesNetwork: true,
     mutatesTarget: true,
     executesForeignCode: true,
     idempotent: false,

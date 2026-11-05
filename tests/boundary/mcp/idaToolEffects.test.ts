@@ -145,6 +145,9 @@ it("advertises attached IDA UI and network effects in SDK and session discovery"
       "open_bundle_resources",
       "close_binary",
       "reset_investigation",
+      "start_rizin_debug_session",
+      "close_rizin_debug_session",
+      "close_gdb_session",
     ]) {
       const advertised = tools.find((tool) => tool.name === name);
       expect(advertised?.annotations?.openWorldHint, name).toBe(true);

@@ -306,6 +306,9 @@ it("audits network access during lifecycle cleanup across provider changes", () 
     "open_bundle_resources",
     "close_binary",
     "reset_investigation",
+    "start_rizin_debug_session",
+    "close_rizin_debug_session",
+    "close_gdb_session",
   ]) {
     expect(toolSessionEffects(name).accessesNetwork, name).toBe(true);
     expect(TOOL_EFFECTS[name]?.accessesNetwork, name).toBe(true);
