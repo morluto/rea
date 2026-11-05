@@ -373,6 +373,29 @@ const expectedExpandedCandidateCapabilities = [
 ];
 
 describe("binary session provider capability projection", () => {
+  it.each(["darwin", "win32"] as const)(
+    "reports private Mach-O operand writes in the %s capability inventory",
+    async (platform) => {
+      const capabilities = nativeMacOSCapabilities(platform);
+      const status = await project(capabilities, []);
+      const operations = expandCanonicalCapabilities(status.capabilities);
+      const effectsFor = (name: string) =>
+        operations.find(({ operation }) => operation === name)?.effects;
+      expect(effectsFor("inspect_macho")).toMatchObject({
+        launches_process: true,
+        may_write_filesystem: true,
+        mutates_artifact: false,
+      });
+      expect(effectsFor("inspect_signature")?.may_write_filesystem).toBe(true);
+      expect(effectsFor("list_architectures")?.may_write_filesystem).toBe(
+        false,
+      );
+      expect(
+        operations.find(({ operation }) => operation === "inspect_macho"),
+      ).toMatchObject({ available: platform === "darwin" });
+    },
+  );
+
   it("keeps the private dispatch reader profile out of public capability status", async () => {
     const capabilities = nativeMacOSCapabilities("darwin");
     const projected = await project(capabilities, [
