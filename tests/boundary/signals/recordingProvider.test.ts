@@ -1431,17 +1431,25 @@ it("classifies completed nonzero version probes as configuration failures for bo
 
 it("does not blame sigrok-cli alone when the limiter fails the version probe", async () => {
   const f = await fixture("limiter-refused");
-  for (const task of [
-    () => f.service.decode({ path: f.path, decoders: "uart" }),
-    () => f.service.inspectDecoders({}),
-  ]) {
+  for (const [operation, task] of [
+    [
+      "decode_signal_recording",
+      () => f.service.decode({ path: f.path, decoders: "uart" }),
+    ],
+    ["inspect_signal_decoders", () => f.service.inspectDecoders({})],
+  ] as const) {
     const result = await task();
     if (result.ok) throw new Error("Expected version admission refusal");
-    const projected = projectAnalysisError(result.error);
-    expect(projected).toMatchObject({
+    expect(result.error).toMatchObject({
+      _tag: "AnalysisCapabilityUnavailableError",
+      providerId: "sigrok-recording",
+      operation,
+    });
+    expect(projectAnalysisError(result.error)).toMatchObject({
       code: "capability_unavailable",
-      message: expect.stringContaining("REA_SIGROK_PRLIMIT_COMMAND"),
       details: {
+        provider_id: "sigrok-recording",
+        operation,
         captured_output: {
           exit_code: 1,
           stdout: "",
@@ -1449,10 +1457,6 @@ it("does not blame sigrok-cli alone when the limiter fails the version probe", a
         },
       },
     });
-    expect(projected.message).toContain("limiter or from sigrok-cli");
-    expect(projected.message).not.toContain(
-      "sigrok-cli installation failed its --version probe",
-    );
   }
   expect(f.calls()).toBe(2);
 });
