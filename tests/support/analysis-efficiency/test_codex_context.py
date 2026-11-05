@@ -681,8 +681,9 @@ class ContextCaptureTests(unittest.TestCase):
         spec = importlib.util.spec_from_file_location('agent_trial', Path(__file__).with_name('agent-trial.py'))
         agent = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(agent)
-        for control, drift in [(False, False), (True, False), (False, True)]:
-            with self.subTest(control=control, drift=drift), tempfile.TemporaryDirectory() as directory:
+        for control, drift, mode in [(False, False, 'direct'), (True, False, 'direct'),
+                                     (False, True, 'direct'), (False, False, 'client-code')]:
+            with self.subTest(control=control, drift=drift, mode=mode), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
                 runtime = root / 'runtime'
                 (runtime / 'scripts').mkdir(parents=True)
@@ -694,7 +695,7 @@ class ContextCaptureTests(unittest.TestCase):
                 question.write_text('Reply with exactly CATALOG_OK.')
                 output = runtime / '.cache/trial'
                 arguments = ['agent-trial.py', '--runtime-root', str(runtime), '--revision', 'fixture',
-                             '--prompt', str(question), '--output', str(output), '--catalog-load',
+                             '--prompt', str(question), '--output', str(output), '--catalog-load', '--mode', mode,
                              *(['--no-mcp'] if control else [])]
                 observed = {}
 
@@ -721,6 +722,9 @@ class ContextCaptureTests(unittest.TestCase):
                 self.assertEqual('[mcp_servers.rea]' in observed['config'], not control)
                 self.assertEqual('required = true' in observed['config'], not control)
                 self.assertNotIn('Use the registered REA MCP server', observed['config'])
+                self.assertIn('code_mode_host = ' + ('true' if mode == 'client-code' else 'false'), observed['config'])
+                self.assertNotIn('code_mode =', observed['config'])
+                self.assertNotIn('code_mode_only =', observed['config'])
                 self.assertTrue(json.loads((output / 'trial-settings.json').read_text())['workspace_isolated_from_runtime'])
                 self.assertEqual(json.loads((output / 'summary.json').read_text())['runtime_bytes_unchanged'], not drift)
                 self.assertFalse(list((root / '.cache/rea-agent-trials').glob('profile-*')))

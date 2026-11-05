@@ -37,7 +37,8 @@ def runtime_fingerprint(root):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--mode', choices=['direct', 'client-code'], default='direct')
+    parser.add_argument('--mode', choices=['direct', 'client-code'], default='direct',
+                        help='Disable/enable the Codex code_mode_host feature explicitly')
     parser.add_argument('--runtime-root', type=Path, required=True)
     parser.add_argument('--revision', required=True)
     parser.add_argument('--prompt', type=Path, required=True)
@@ -181,23 +182,21 @@ def main():
     config = '\n'.join([
         'approval_policy = "never"', 'sandbox_mode = "read-only"',
         'web_search = "disabled"', 'model = ' + quote(args.model),
-        'suppress_unstable_features_warning = true',
         'model_reasoning_effort = ' + quote(args.reasoning),
         'developer_instructions = ' + quote(instruction),
         '[features]', 'multi_agent = false', 'shell_snapshot = false',
         'shell_tool = false', 'unified_exec = false',
-        'code_mode = ' + ('true' if args.mode == 'client-code' else 'false'),
-        'code_mode_only = ' + ('true' if args.mode == 'client-code' else 'false'),
+        'code_mode_host = ' + ('true' if args.mode == 'client-code' else 'false'),
         '[history]', 'persistence = "none"',
     ]) + '\n'
     if not args.no_mcp:
         config += '\n'.join([
-        '[mcp_servers.rea]', 'required = true', 'command = ' + quote(node),
-        'args = ' + quote(command_args), 'startup_timeout_sec = 60',
-        'tool_timeout_sec = 600',
-        *([] if enabled_tools is None else ['enabled_tools = ' + quote(enabled_tools)]),
-        '[mcp_servers.rea.env]',
-        *[key + ' = ' + quote(value) for key, value in provider_env.items()],
+            '[mcp_servers.rea]', 'required = true', 'command = ' + quote(node),
+            'args = ' + quote(command_args), 'startup_timeout_sec = 60',
+            'tool_timeout_sec = 600',
+            *([] if enabled_tools is None else ['enabled_tools = ' + quote(enabled_tools)]),
+            '[mcp_servers.rea.env]',
+            *[key + ' = ' + quote(value) for key, value in provider_env.items()],
         ]) + '\n'
     # MCP read-only hints cover normal static tools. Explicitly authorize only
     # the session-opening primitive needed by the requested native tasks.
@@ -275,8 +274,7 @@ def main():
             'provider_environment_policy_sha256': hashlib.sha256(
                 provider_policy_text.encode()).hexdigest(),
             'features': {'shell_tool': False, 'unified_exec': False,
-                         'multi_agent': False, 'code_mode': args.mode == 'client-code',
-                         'code_mode_only': args.mode == 'client-code'},
+                         'multi_agent': False, 'code_mode_host': args.mode == 'client-code'},
         }, indent=2) + '\n')
         invocation = [args.codex, '--no-daemon', 'exec', '--strict-config',
                       *([] if args.capture_tool_context else ['--ephemeral']),

@@ -38,8 +38,11 @@ Each repetition compares no server, all REA tools, and a client-selected subset
 repetitions reverse ordering. All variants receive the same developer instructions
 and exact-response prompt. A valid loading trial completes one turn, returns
 `CATALOG_OK`, and performs no tool calls. REA is marked `required` in every
-server-enabled configuration. Client-code flags are experimental; the requested
-flags and CLI version are retained. Direct mode does not promise eager schema
+server-enabled configuration. The runner explicitly disables/enables the stable
+`code_mode_host` feature for direct/client-code modes. The old `code_mode` and
+`code_mode_only` switches do not override Codex 0.165's enabled host default.
+The requested flags and CLI version are retained; verify the actual call shape
+in completed-task traces too. Direct mode does not promise eager schema
 loading: discovery behavior still belongs to the client.
 
 Useful controls:
