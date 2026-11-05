@@ -106,6 +106,108 @@ const coverageNode = (): PropertyPathCoverageNode => ({
   selectors: new Map(),
 });
 
+const ensurePath = (
+  root: PropertyPathCoverageNode,
+  path: JavaScriptSemanticPropertyPath,
+  contexts?: readonly (string | undefined)[],
+): PropertyPathCoverageNode => {
+  let node = root;
+  for (const [offset, key] of path.entries()) {
+    const context = contexts?.[offset];
+    if (key !== null && typeof key !== "object") {
+      const name = JSON.stringify([String(key), context]);
+      let child = node.exact.get(name);
+      if (child === undefined) {
+        child = coverageNode();
+        node.exact.set(name, child);
+      }
+      node = child;
+    } else {
+      const identity = JSON.stringify([key, context]);
+      let selected = node.selectors.get(identity);
+      if (selected === undefined) {
+        selected = { key, context, node: coverageNode() };
+        node.selectors.set(identity, selected);
+      }
+      node = selected.node;
+    }
+  }
+  return node;
+};
+
+/** Earliest matching write, indexed by path without scanning unrelated slots. */
+export class SemanticPropertyPathWriteIndex {
+  readonly #root = coverageNode();
+  readonly #offsets = new WeakMap<PropertyPathCoverageNode, number>();
+
+  retain(path: JavaScriptSemanticPropertyPath, offset: number): void {
+    const node = ensurePath(this.#root, path);
+    this.#offsets.set(
+      node,
+      Math.min(this.#offsets.get(node) ?? Infinity, offset),
+    );
+  }
+
+  precedes(path: readonly string[], before: number): boolean {
+    const pending = [{ node: this.#root, offset: 0 }];
+    while (pending.length > 0) {
+      const current = pending.pop()!;
+      if ((this.#offsets.get(current.node) ?? Infinity) < before) return true;
+      const key = path[current.offset];
+      if (key === undefined) continue;
+      const exact = current.node.exact.get(JSON.stringify([key, undefined]));
+      if (exact !== undefined)
+        pending.push({ node: exact, offset: current.offset + 1 });
+      for (const selected of current.node.selectors.values())
+        if (semanticPropertyPathKeyMatches(selected.key, key))
+          pending.push({ node: selected.node, offset: current.offset + 1 });
+    }
+    return false;
+  }
+}
+
+/** Retain effects by path, selecting only overlapping ancestors and children. */
+export class SemanticPropertyPathEffectIndex<Effect> {
+  readonly #root = coverageNode();
+  readonly #effects = new WeakMap<PropertyPathCoverageNode, Effect[]>();
+
+  retain(path: JavaScriptSemanticPropertyPath, effect: Effect): void {
+    const node = ensurePath(this.#root, path);
+    const effects = this.#effects.get(node) ?? [];
+    effects.push(effect);
+    this.#effects.set(node, effects);
+  }
+
+  *matching(
+    path: JavaScriptSemanticPropertyPath,
+    descendants = true,
+  ): Generator<Effect> {
+    const pending = [{ node: this.#root, offset: 0 }];
+    while (pending.length > 0) {
+      const { node, offset } = pending.pop()!;
+      yield* this.#effects.get(node) ?? [];
+      if (offset === path.length && !descendants) continue;
+      const key = path[offset];
+      if (key === undefined || key === null || typeof key === "object") {
+        for (const child of node.exact.values())
+          pending.push({ node: child, offset: offset + 1 });
+      } else {
+        const child = node.exact.get(JSON.stringify([String(key), undefined]));
+        if (child !== undefined)
+          pending.push({ node: child, offset: offset + 1 });
+      }
+      for (const selected of node.selectors.values())
+        if (
+          key === undefined ||
+          key === null ||
+          typeof key === "object" ||
+          semanticPropertyPathKeyMatches(selected.key, String(key))
+        )
+          pending.push({ node: selected.node, offset: offset + 1 });
+    }
+  }
+}
+
 /** Index exact effect prefixes without widening distinct member paths. */
 export class SemanticPropertyPathCoverage {
   readonly #root = coverageNode();
@@ -116,27 +218,7 @@ export class SemanticPropertyPathCoverage {
     contexts?: readonly (string | undefined)[],
   ): boolean {
     if (this.covers(path, contexts)) return false;
-    let node = this.#root;
-    for (const [offset, key] of path.entries()) {
-      const context = contexts?.[offset];
-      if (key !== null && typeof key !== "object") {
-        const name = JSON.stringify([String(key), context]);
-        let child = node.exact.get(name);
-        if (child === undefined) {
-          child = coverageNode();
-          node.exact.set(name, child);
-        }
-        node = child;
-      } else {
-        const identity = JSON.stringify([key, context]);
-        let selected = node.selectors.get(identity);
-        if (selected === undefined) {
-          selected = { key, context, node: coverageNode() };
-          node.selectors.set(identity, selected);
-        }
-        node = selected.node;
-      }
-    }
+    const node = ensurePath(this.#root, path, contexts);
     node.terminal = true;
     node.exact.clear();
     node.selectors.clear();

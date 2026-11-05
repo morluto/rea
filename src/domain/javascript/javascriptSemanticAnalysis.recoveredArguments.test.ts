@@ -7,6 +7,8 @@ describe("JavaScript semantic analysis: recovered arguments", () => {
     { source: "0(,)", indexes: [] },
     { source: 'call(, "kept", , 42)', indexes: [1, 3] },
     { source: 'call?.(, "kept")', indexes: [1] },
+    { source: 'call.call(, "kept")', indexes: [1] },
+    { source: 'call.apply(, ["kept"])', indexes: [1] },
     { source: 'new Thing(, "kept")', indexes: [1] },
   ])(
     "retains argument positions in recovered syntax: $source",

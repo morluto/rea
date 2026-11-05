@@ -1,12 +1,66 @@
 import * as t from "@babel/types";
 
 import {
+  isPrimitiveJavaScriptExpression,
   readExactJavaScriptLiteral,
   semanticStaticPropertyKey,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 
-import { childNodes } from "./javascriptSemanticTraversal.js";
+import {
+  childNodes,
+  traverseJavaScriptAst,
+} from "./javascriptSemanticTraversal.js";
+
+/** Effectful inputs still evaluated when an expression returns a scalar. */
+export const javaScriptScalarEvaluationSources = (
+  expression: t.Node,
+): readonly t.Node[] => {
+  const sources: t.Node[] = [];
+  const ownedChildren = new WeakSet<t.Node>();
+  traverseJavaScriptAst(expression, {
+    skip: (node) =>
+      (t.isFunction(node) && !t.isObjectMethod(node)) ||
+      ownedChildren.has(node),
+    enter: (node) => {
+      if (node === expression) return;
+      if (t.isObjectMethod(node) || t.isObjectProperty(node)) {
+        if (node.computed) sources.push(node.key);
+        if (t.isObjectMethod(node))
+          for (const child of childNodes(node)) ownedChildren.add(child);
+      }
+      if (
+        t.isCallExpression(node) ||
+        t.isOptionalCallExpression(node) ||
+        t.isNewExpression(node) ||
+        t.isMemberExpression(node) ||
+        t.isOptionalMemberExpression(node) ||
+        t.isAwaitExpression(node) ||
+        t.isYieldExpression(node) ||
+        t.isClass(node) ||
+        t.isTaggedTemplateExpression(node) ||
+        t.isSpreadElement(node) ||
+        t.isUpdateExpression(node) ||
+        (t.isAssignmentExpression(node) &&
+          !["=", "||=", "&&=", "??="].includes(node.operator)) ||
+        ((t.isBinaryExpression(node) ||
+          t.isUnaryExpression(node) ||
+          t.isTemplateLiteral(node)) &&
+          !isPrimitiveJavaScriptExpression(node))
+      ) {
+        sources.push(node);
+        if (
+          (t.isMemberExpression(node) || t.isOptionalMemberExpression(node)) &&
+          node.computed
+        )
+          sources.push(node.property);
+        // The consumer follows each selected source's evaluated inputs.
+        for (const child of childNodes(node)) ownedChildren.add(child);
+      }
+    },
+  });
+  return sources;
+};
 
 const preserveGrouping = { stopAtParentheses: true } as const;
 

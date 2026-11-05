@@ -525,6 +525,29 @@ describe("Electron module interop capture and scope", () => {
     expect(analysis.electron.browser_windows).toHaveLength(1);
   });
 
+  it.each([
+    "polyfill();",
+    "invoke(polyfill);",
+    "const value = source.property;",
+    "const {value = polyfill()} = source;",
+    "class Setup { static { polyfill(); } }",
+    "const value = void polyfill();",
+    "const value = (polyfill(), 1);",
+    "const value = Object[(polyfill(), 'create')];",
+    "import './polyfill.js';",
+    "const value = Object.create; import './polyfill.js';",
+  ])(
+    "retains callable writes when activation can precede capture: %s",
+    (setup) => {
+      const analysis = analyzeJavaScriptStaticSource(`${setup}
+      ${ROLLDOWN_MODULE_INTEROP}
+      function polyfill() { Object.create = customCreate; }
+      ${IMPORT} ${WRAP} ${WINDOW}
+    `);
+      expect(analysis.electron.browser_windows).toEqual([]);
+    },
+  );
+
   it("keeps a shadowed namespace separate from the converted module", () => {
     const analysis = analyzeJavaScriptStaticSource(`${ROLLDOWN_MODULE_INTEROP}
       ${IMPORT} ${WRAP} ${WINDOW}

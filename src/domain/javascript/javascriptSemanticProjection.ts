@@ -12,7 +12,7 @@ import {
   type JavaScriptSemanticAnalysisState,
   type JavaScriptSemanticScopeState,
 } from "./javascriptSemanticState.js";
-import { semanticRequireOrigin } from "./javascriptSemanticRequireOrigin.js";
+import { readSemanticRequireOrigin } from "./javascriptSemanticRequireOriginSlot.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import {
   completeSemanticSteps,
@@ -428,7 +428,7 @@ const collectRequireLink = (
   node: t.VariableDeclarator,
   state: JavaScriptSemanticAnalysisState,
 ): void => {
-  const required = semanticRequireOrigin(node.init, state);
+  const required = readSemanticRequireOrigin(node.init, state);
   if (required === undefined) return;
   const { origin, call } = required;
   const bindings = requirePatternBindings(node.id, origin.importedPath);
@@ -453,7 +453,7 @@ const collectUnboundRequireLink = (
   state: JavaScriptSemanticAnalysisState,
 ): void => {
   if (state.linkedRequireCalls.has(node)) return;
-  const required = semanticRequireOrigin(node, state);
+  const required = readSemanticRequireOrigin(node, state);
   if (required === undefined) return;
   addModuleLink(
     state,
@@ -531,7 +531,7 @@ const addCommonJsExport = (
   while (t.isAssignmentExpression(value, { operator: "=" }))
     value = value.right;
   const required =
-    value === null ? undefined : semanticRequireOrigin(value, state);
+    value === null ? undefined : readSemanticRequireOrigin(value, state);
   // Copies retain their module provenance, but do not export the source object
   // itself. A wildcard with exclusions cannot express one module link.
   const origin = projection?.some(

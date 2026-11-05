@@ -105,6 +105,10 @@ it.each([
     "an assignment repeated by a loop",
     `var require; while (condition) { require = require("./maybe.cjs"); }`,
   ],
+  [
+    "a deferred assignment inside unconditional blocks",
+    `var require; function load() { { require = require("./maybe.cjs"); } } load(); load();`,
+  ],
 ])("keeps %s unknown", (_label, source) => {
   const analysis = analyzeJavaScriptStaticSource(source);
   expect(analysis.references).not.toContainEqual(

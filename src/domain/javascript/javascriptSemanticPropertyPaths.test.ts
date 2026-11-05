@@ -1,6 +1,48 @@
 import { expect, it } from "vitest";
 
-import { SemanticPropertyPathCoverage } from "./javascriptSemanticPropertyPaths.js";
+import {
+  SemanticPropertyPathCoverage,
+  SemanticPropertyPathEffectIndex,
+} from "./javascriptSemanticPropertyPaths.js";
+
+it("selects overlapping effects without discarding ancestors or descendants", () => {
+  const index = new SemanticPropertyPathEffectIndex<string>();
+  index.retain([], "root");
+  index.retain(["child"], "parent");
+  index.retain(["child", "value"], "slot");
+  index.retain(["child", "value", "nested"], "descendant");
+  index.retain(["sibling"], "unrelated");
+  expect([...index.matching(["child", "value"])].sort()).toEqual([
+    "descendant",
+    "parent",
+    "root",
+    "slot",
+  ]);
+  expect([...index.matching(["child", "value"], false)].sort()).toEqual([
+    "parent",
+    "root",
+    "slot",
+  ]);
+});
+
+it("preserves wildcard and copied-slot effects while excluding unrelated exact keys", () => {
+  const index = new SemanticPropertyPathEffectIndex<string>();
+  index.retain([null, "value"], "wildcard");
+  index.retain([{ excludedKeys: ["2"], startIndex: 1 }, "value"], "copy");
+  index.retain([1, "value"], "exact");
+  expect([...index.matching(["1", "value"])].sort()).toEqual([
+    "copy",
+    "exact",
+    "wildcard",
+  ]);
+  expect([...index.matching(["2", "value"])]).toEqual(["wildcard"]);
+  expect([...index.matching(["1", "other"])]).toEqual([]);
+  expect([...index.matching([null, "value"])].sort()).toEqual([
+    "copy",
+    "exact",
+    "wildcard",
+  ]);
+});
 
 it("covers deeper capture history only below the same captured receiver", () => {
   const coverage = new SemanticPropertyPathCoverage();
