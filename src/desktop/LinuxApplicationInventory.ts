@@ -54,7 +54,11 @@ export type LinuxApplicationRefusal =
       readonly searched: readonly string[];
     }
   | { readonly reason: "desktop_entry_invalid"; readonly detail: string }
-  | { readonly reason: "executable_not_found"; readonly program: string };
+  | { readonly reason: "executable_not_found"; readonly program: string }
+  | {
+      readonly reason: "executable_on_relative_path";
+      readonly program: string;
+    };
 
 /** The inventory plus limitations found while building it. */
 export interface LinuxApplicationFacts {
@@ -377,14 +381,20 @@ export const inspectLinuxApplication = async (
   // An `env` prefix's assignments are what the program sees: its PATH finds
   // the program and its XDG folders hold the program's state.
   const environment = { ...request.environment, ...wrapper.environment };
-  const path = await resolveProgram(
+  const found = await resolveProgram(
     wrapper.program,
     environment,
     workingDirectory,
-    wrapper.environment.PATH !== undefined,
   );
-  if (path === undefined)
+  if (found === undefined)
     return err({ reason: "executable_not_found", program: wrapper.program });
+  // The PATH an env prefix sets travels with the launch; the host's own does not.
+  if (found.fromRelativeEntry && wrapper.environment.PATH === undefined)
+    return err({
+      reason: "executable_on_relative_path",
+      program: wrapper.program,
+    });
+  const { path } = found;
   const resolved = await realpath(path).catch(() => null);
   const context: InventoryContext = {
     host,

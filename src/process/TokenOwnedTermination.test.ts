@@ -15,6 +15,7 @@ interface FakeProcess extends ProcessTableEntry {
 const fakeHost = (
   processes: readonly FakeProcess[],
   ignoresTerm: ReadonlySet<number> = new Set(),
+  groupUnread: ReadonlySet<number> = new Set(),
 ) => {
   const live = new Map(processes.map((entry) => [entry.pid, entry]));
   const terminate = (pid: number) => {
@@ -46,11 +47,13 @@ const fakeHost = (
                   state: "readable",
                   identity: `start:${String(pid)}`,
                   lifecycle: { state: "observed", lifecycle: "non-zombie" },
-                  relation: {
-                    state: "observed",
-                    parentPid: entry.parentPid,
-                    processGroupId: entry.processGroupId,
-                  },
+                  relation: groupUnread.has(pid)
+                    ? { state: "unavailable", reason: "stat unreadable" }
+                    : {
+                        state: "observed",
+                        parentPid: entry.parentPid,
+                        processGroupId: entry.processGroupId,
+                      },
                 },
           ];
         }),
@@ -114,6 +117,25 @@ describe("terminateTokenOwnedProcesses", () => {
 
     expect(signalGroup).not.toHaveBeenCalled();
     expect(signalProcess.mock.calls).toEqual([[200, "SIGTERM"]]);
+  });
+
+  it("signals a carrier whose current group is unknown on its own, not through the launch group", async () => {
+    const { host, signalGroup, signalProcess } = fakeHost(
+      [row(100, 100, "run")],
+      new Set(),
+      new Set([100]),
+    );
+
+    expect(
+      await terminateTokenOwnedProcesses(
+        { runId: "run", processGroupId: 100 },
+        1_000,
+        host,
+      ),
+    ).toEqual({ launchGroupSignalled: false });
+
+    expect(signalGroup).not.toHaveBeenCalled();
+    expect(signalProcess.mock.calls).toEqual([[100, "SIGTERM"]]);
   });
 
   it("waits for the grace period when a process ignores SIGTERM", async () => {

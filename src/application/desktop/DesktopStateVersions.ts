@@ -48,6 +48,7 @@ export const indexState = (capture: DesktopApplicationCapture): StateIndex => {
     first !== undefined &&
     !first.truncated &&
     first.unreadable_directories === 0 &&
+    first.unchecked_paths === 0 &&
     capture.state.excluded !== undefined;
   return {
     changes,

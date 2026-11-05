@@ -1,4 +1,11 @@
-import { lstat, mkdir, readdir, symlink, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  lstat,
+  mkdir,
+  readdir,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 import { describe, expect, it } from "vitest";
@@ -64,7 +71,33 @@ describe("walkHomeState", () => {
     const home = await createTestTempDirectory("desktop-walk-missing-");
     const walk = await walkHomeState([join(home, "missing")], [], 10);
     expect(walk.entries.size).toBe(0);
+    expect(walk.uncheckedPaths).toBe(0);
   });
+
+  // Root reads every path, so the unreadable entries exist only for other users.
+  it.skipIf(process.getuid?.() === 0)(
+    "counts entries and roots whose state it could not read as unchecked",
+    async () => {
+      const home = await createTestTempDirectory("desktop-walk-unread-");
+      const sealed = join(home, "sealed");
+      await mkdir(sealed);
+      await writeFile(join(sealed, "books.db-wal"), "wal");
+      // Listable but not searchable: names read, but no entry can be stated.
+      await chmod(sealed, 0o600);
+      try {
+        const walk = await walkHomeState(
+          [home, join(sealed, "books.db-journal")],
+          [],
+          100,
+        );
+
+        expect(walk.entries.has(join(sealed, "books.db-wal"))).toBe(false);
+        expect(walk.uncheckedPaths).toBe(2);
+      } finally {
+        await chmod(sealed, 0o700);
+      }
+    },
+  );
 
   // Linux mounts devpts, shm and mqueue under /dev, a root on its own device.
   it.skipIf(process.platform !== "linux")(
