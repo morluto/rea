@@ -82,6 +82,8 @@ export const liveBinaryTargetSummaryVariants = [
       "esp-image",
       "uf2",
       "dfuse",
+      "img-v2",
+      "anp3",
       "fit",
     ]),
     architecture: z.null(),

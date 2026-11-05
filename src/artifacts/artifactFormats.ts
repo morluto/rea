@@ -29,6 +29,7 @@ import { EspImageArtifactReader } from "./EspImageArtifactReader.js";
 import { FitArtifactReader } from "./FitArtifactReader.js";
 import type { GodotPckAdmission } from "./GodotPckLocation.js";
 import { GodotPckArtifactReader } from "./GodotPckArtifactReader.js";
+import { ImgAnp3ArtifactReader } from "./ImgAnp3ArtifactReader.js";
 import { InesArtifactReader, INES_LIMITATION } from "./InesArtifactReader.js";
 import { HexRecordArtifactReader } from "./HexRecordArtifactReader.js";
 import { MachOSliceArtifactReader } from "./MachOSliceArtifactReader.js";
@@ -401,6 +402,26 @@ const NON_ZIP_FORMATS = {
       "DfuSe inventory lists each target element as one region at its declared address. It does not establish CPU, byte order, memory map, or an entry point; an alternate setting selects a device memory, not an address space REA can interpret.",
     createReader: (path, options) =>
       new DfuSeArtifactReader(path, sourceOf(options)),
+  }),
+  "img-v2": container("img-v2", {
+    roleContainer: true,
+    retainClassifiedSource: true,
+    extractable: true,
+    absentInventory: "unavailable",
+    readerLimitation:
+      "IMG inventory lists the version 2 (VER2) directory and each member's stored sectors. Members are not decompressed or decoded; model, texture and collision streams inside members are not parsed.",
+    createReader: (path, options) =>
+      new ImgAnp3ArtifactReader("img-v2", path, sourceOf(options)),
+  }),
+  anp3: container("anp3", {
+    roleContainer: true,
+    retainClassifiedSource: true,
+    extractable: true,
+    absentInventory: "unavailable",
+    readerLimitation:
+      "ANP3 inventory lists each animation record with its objects, bone ids, keyframe counts and final keyframe time. Keyframe values are not decoded, and bone ids are not resolved against a skeleton.",
+    createReader: (path, options) =>
+      new ImgAnp3ArtifactReader("anp3", path, sourceOf(options)),
   }),
   "esp-flash-image": container("esp-flash-image", {
     roleContainer: true,

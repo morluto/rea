@@ -302,6 +302,8 @@ export type BinaryTarget =
           | "esp-image"
           | "uf2"
           | "dfuse"
+          | "img-v2"
+          | "anp3"
           | "fit";
       })
   | (BinaryTargetIdentity &

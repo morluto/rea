@@ -96,6 +96,8 @@ import {
   hasDfuSePrefix,
   isDfuSeFile,
 } from "../domain/firmware/dfuse.js";
+import { hasImgV2Header } from "../domain/imgArchiveFormat.js";
+import { hasAnp3Header } from "../domain/anp3AnimationFormat.js";
 import { hasFitImagesNode } from "../domain/firmware/fitImage.js";
 import {
   locateEspFlashLayout,
@@ -801,6 +803,8 @@ const detectArtifactFormat = async (
     )
   )
     return "dfuse";
+  if (hasImgV2Header(magic)) return "img-v2";
+  if (hasAnp3Header(magic)) return "anp3";
   // A C3 or S3 dump begins with its bootloader, so a layout comes first.
   const flash = await locateEspFlashLayout(
     initial.size,
@@ -897,6 +901,8 @@ const isArchiveFormat = (
     "esp-image",
     "uf2",
     "dfuse",
+    "img-v2",
+    "anp3",
     "esp-flash-image",
     "fit",
   ].includes(format);

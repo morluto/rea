@@ -124,6 +124,8 @@ const TARGETS: TargetFixtures = {
   uimage: { ...archive, format: "uimage" },
   uf2: { ...archive, format: "uf2" },
   dfuse: { ...archive, format: "dfuse" },
+  "img-v2": { ...archive, format: "img-v2" },
+  anp3: { ...archive, format: "anp3" },
   dmg: { ...archive, format: "dmg" },
   pkg: { ...archive, format: "pkg" },
   "intel-hex": { ...archive, format: "intel-hex" },

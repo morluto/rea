@@ -31,6 +31,7 @@ import {
 
 import { classifyArtifactBytesAtPath } from "../../../tests/fixtures/artifactClassification.js";
 import { asarHeaderBytes } from "../../../tests/fixtures/asarHeader.js";
+import { buildAnp3, buildImgV2 } from "../../../tests/fixtures/imgAnp3.js";
 import {
   ESP32C3_APP_SEGMENTS,
   esp8266Image,
@@ -539,6 +540,20 @@ it("classifies nested ESP images as containers by bytes", () => {
     kind: "resource",
     format: "file",
   });
+});
+
+it("classifies nested IMG archives and ANP3 packages as containers by bytes", () => {
+  const anp3 = buildAnp3("actor", [{ name: "walk", objects: [] }]);
+  expect(classifyArtifactBytesAtPath("anim/actor.dat", anp3)).toEqual({
+    kind: "container",
+    format: "anp3",
+  });
+  expect(
+    classifyArtifactBytesAtPath(
+      "anim.bin",
+      buildImgV2([{ name: "a", data: anp3 }]),
+    ),
+  ).toEqual({ kind: "container", format: "img-v2" });
 });
 
 it("classifies nested UF2 by block magics and DfuSe by prefix and suffix", () => {

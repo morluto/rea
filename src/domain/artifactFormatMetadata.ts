@@ -778,6 +778,58 @@ export type BunStandaloneEntryMetadata = z.infer<
   typeof bunStandaloneEntryMetadataSchema
 >;
 
+/** IMG version 2 (`VER2`) header facts; sizes are in 2048-byte sectors. */
+export const imgV2MetadataSchema = z.strictObject({
+  kind: z.literal("img-v2"),
+  version: z.literal(2),
+  entry_count: uint32,
+  sector_bytes: uint32,
+  directory_end: offset,
+});
+export type ImgV2Metadata = z.infer<typeof imgV2MetadataSchema>;
+
+/** One IMG directory row as declared; the selected size is the entry's size. */
+export const imgV2EntryMetadataSchema = z.strictObject({
+  kind: z.literal("img-v2-entry"),
+  index: uint32,
+  name: z.string(),
+  offset_sectors: uint32,
+  streaming_sectors: uint32,
+  archive_sectors: uint32,
+});
+
+/** ANP3 animation package header facts. */
+export const anp3MetadataSchema = z.strictObject({
+  kind: z.literal("anp3"),
+  signature: z.literal("ANP3"),
+  package_name: z.string(),
+  declared_end_offset: uint32,
+  animation_count: uint32,
+  trailing_bytes: offset,
+});
+export type Anp3Metadata = z.infer<typeof anp3MetadataSchema>;
+
+/** One ANP3 animation with its objects; duration is the latest final keyframe. */
+export const anp3AnimationMetadataSchema = z.strictObject({
+  kind: z.literal("anp3-animation"),
+  index: uint32,
+  name: z.string(),
+  object_count: uint32,
+  declared_frame_data_bytes: uint32,
+  flags: uint32,
+  keyframe_count: offset,
+  duration_seconds: z.number().nullable(),
+  bones: z.array(
+    z.strictObject({
+      name: z.string(),
+      bone_id: uint32,
+      frame_type: uint32,
+      frame_count: uint32,
+    }),
+  ),
+});
+export type Anp3AnimationMetadata = z.infer<typeof anp3AnimationMetadataSchema>;
+
 export const artifactFormatMetadataSchema = z.discriminatedUnion("kind", [
   godotPckMetadataSchema,
   godotPckEntryMetadataSchema,
@@ -807,6 +859,10 @@ export const artifactFormatMetadataSchema = z.discriminatedUnion("kind", [
   espFlashPartitionMetadataSchema,
   fitMetadataSchema,
   fitImageMetadataSchema,
+  imgV2MetadataSchema,
+  imgV2EntryMetadataSchema,
+  anp3MetadataSchema,
+  anp3AnimationMetadataSchema,
 ]);
 export type ArtifactFormatMetadata = z.infer<
   typeof artifactFormatMetadataSchema
@@ -996,6 +1052,22 @@ const declarationsByKind: {
       cipher_algo: metadata.cipher_algo,
     }),
     unreadable: (metadata) => metadata.unreadable_fields,
+  },
+  "img-v2": {
+    notCompared:
+      "Its fields come from the archive's own header, which content comparison covers.",
+  },
+  "img-v2-entry": {
+    notCompared:
+      "name restates the entry's path; index and sector fields are layout, and the stored bytes are compared by content.",
+  },
+  anp3: {
+    notCompared:
+      "Its fields come from the package's own header, which content comparison covers.",
+  },
+  "anp3-animation": {
+    notCompared:
+      "Its objects, bones, keyframe counts and duration come from the animation record's own bytes, which content comparison covers; index is layout.",
   },
 };
 

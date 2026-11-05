@@ -366,6 +366,18 @@ const probesFor = (
           },
         ]
       : [];
+  // Inventory classifies a nested ANP3 package without expanding it.
+  if (format === "img-v2")
+    return inventory.occurrences.some((row) => row.artifact_format === "anp3")
+      ? [
+          {
+            operation: "extract_artifact",
+            rationale:
+              "Extract the members whose artifact_format is anp3 with extract_artifact, then open one with open_binary and run inspect_artifact to list its animations.",
+            authority: "artifact-bytes",
+          },
+        ]
+      : [];
   if (format === "esp-image") return espFlashDumpProbes(inventory);
   if (format === "fit") return fitProbes(inventory);
   return format === "directory"
