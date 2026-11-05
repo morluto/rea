@@ -469,3 +469,99 @@ it("refuses existingProject + debugCompanion in GhidraClient.start before creati
     await client.close();
   }
 });
+
+it("clamps initial prefix reads to the remaining traversal budget and does not double-charge straddled window reads", async () => {
+  const root = await createTestTempDirectory("rea-dsym-budget-clamp-");
+  const traversalBudget = 64 * 1024 * 1024;
+  const thinPath = join(root, "thin-64k");
+  const thinBytes = Buffer.alloc(64 * 1024);
+  uuidImage("11111111-2222-3333-4444-555555555555").copy(thinBytes, 0);
+  await writeFile(thinPath, thinBytes);
+  const thinHandle = await open(thinPath, "r");
+  try {
+    expect(
+      await readMachoFileUuidEntries(thinHandle, thinBytes.length, {
+        ledger: { spent: traversalBudget - 56 },
+      }),
+    ).toEqual({
+      ok: true,
+      value: [
+        {
+          cpuType: 0x01000007,
+          cpuSubtypeBase: 0,
+          uuid: "11111111-2222-3333-4444-555555555555",
+        },
+      ],
+    });
+    expect(
+      await readMachoFileUuidEntries(thinHandle, thinBytes.length, {
+        ledger: { spent: traversalBudget - 55 },
+      }),
+    ).toMatchObject({
+      ok: false,
+      error: {
+        kind: "resource-limit",
+      },
+    });
+  } finally {
+    await thinHandle.close();
+  }
+
+  const fatPath = join(root, "fat-64k");
+  const fatBytes = Buffer.alloc(64 * 1024);
+  fatBytes.writeUInt32BE(0xcafebabe, 0);
+  fatBytes.writeUInt32BE(1, 4);
+  await writeFile(fatPath, fatBytes);
+  const fatHandle = await open(fatPath, "r");
+  try {
+    expect(
+      await readMachoFileUuidEntries(fatHandle, fatBytes.length, {
+        ledger: { spent: traversalBudget - 6 },
+      }),
+    ).toMatchObject({
+      ok: false,
+      error: {
+        kind: "resource-limit",
+      },
+    });
+  } finally {
+    await fatHandle.close();
+  }
+
+  const straddledPath = join(root, "straddled-32bit");
+  const straddledSize = 65548;
+  const straddledBytes = Buffer.alloc(straddledSize);
+  straddledBytes.writeUInt32LE(0xfeedface, 0); // 32-bit Mach-O (28-byte header, 4-byte command alignment)
+  straddledBytes.writeUInt32LE(7, 4); // x86
+  straddledBytes.writeUInt32LE(2, 12);
+  straddledBytes.writeUInt32LE(2, 16);
+  straddledBytes.writeUInt32LE(straddledSize - 28, 20);
+  straddledBytes.writeUInt32LE(0x77777777, 28);
+  straddledBytes.writeUInt32LE(65524 - 28, 32); // Ends at 65524, so LC_UUID header is 65524..65532 and UUID payload straddles 65536 (65532..65548)
+  straddledBytes.writeUInt32LE(0x1b, 65524);
+  straddledBytes.writeUInt32LE(24, 65528);
+  Buffer.from("11111111222233334444555555555555", "hex").copy(
+    straddledBytes,
+    65532,
+  );
+  await writeFile(straddledPath, straddledBytes);
+  const straddledHandle = await open(straddledPath, "r");
+  try {
+    expect(
+      await readMachoFileUuidEntries(straddledHandle, straddledBytes.length, {
+        ledger: { spent: traversalBudget - straddledSize },
+      }),
+    ).toEqual({
+      ok: true,
+      value: [
+        {
+          cpuType: 7,
+          cpuSubtypeBase: 0,
+          uuid: "11111111-2222-3333-4444-555555555555",
+        },
+      ],
+    });
+  } finally {
+    await straddledHandle.close();
+  }
+});

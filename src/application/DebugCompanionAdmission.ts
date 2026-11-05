@@ -255,20 +255,28 @@ const readThinUuidEntry = async (
       req.offset < range.length &&
       (req.offset < windowOffset || neededEnd > windowOffset + window.length)
     ) {
-      const remainingRange = range.length - req.offset;
+      const bufferedPrefix =
+        req.offset >= windowOffset && req.offset < windowOffset + window.length
+          ? window.subarray(req.offset - windowOffset)
+          : Buffer.alloc(0);
+      const unreadOffset = req.offset + bufferedPrefix.length;
+      const neededUnread = neededEnd - unreadOffset;
+      const remainingRange = range.length - unreadOffset;
       const desiredLength = Math.min(HEADER_READ_LIMIT, remainingRange);
       const remainingBudget = TRAVERSAL_BUDGET_BYTES - context.ledger.spent;
-      if (remainingBudget < neededEnd - req.offset)
-        return err(traversalLimit());
+      if (remainingBudget < neededUnread) return err(traversalLimit());
       const read = await readUuidWindow(
         handle,
-        range.offset + req.offset,
+        range.offset + unreadOffset,
         Math.min(desiredLength, remainingBudget),
         context,
       );
       if (!read.ok) return read;
       windowOffset = req.offset;
-      window = read.value;
+      window =
+        bufferedPrefix.length === 0
+          ? read.value
+          : Buffer.concat([bufferedPrefix, read.value]);
     }
     const slice =
       req.offset >= range.length
@@ -298,12 +306,12 @@ export const readMachoFileUuidEntries = async (
     ledger: options.ledger ?? { spent: 0 },
     signal: options.signal,
   };
-  const prefix = await readUuidWindow(
-    handle,
+  const remainingBudget = Math.max(
     0,
-    Math.min(fileSize, HEADER_READ_LIMIT),
-    context,
+    TRAVERSAL_BUDGET_BYTES - context.ledger.spent,
   );
+  const prefixLength = Math.min(fileSize, HEADER_READ_LIMIT, remainingBudget);
+  const prefix = await readUuidWindow(handle, 0, prefixLength, context);
   if (!prefix.ok) return prefix;
   const container = readFatContainerHeader(prefix.value, fileSize);
   if (container.state === "not-fat") {
@@ -325,7 +333,9 @@ export const readMachoFileUuidEntries = async (
   }
   if (container.state === "needs-data")
     return err(
-      invalidImage("the universal Mach-O container table is truncated"),
+      prefixLength < container.requiredBytes
+        ? traversalLimit()
+        : invalidImage("the universal Mach-O container table is truncated"),
     );
   if (container.state === "malformed")
     return err(invalidImage(container.reason));
