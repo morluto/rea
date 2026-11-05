@@ -28,6 +28,15 @@ The host must already provide util-linux `prlimit`, normally `/usr/bin/prlimit`;
 no system tools and changes no user configuration. [Upstream provenance and
 license](https://github.com/morluto/rea/blob/main/third_party/evmole/README.md) are packaged.
 
+Limiter discovery validates the selected path without launching it. A relative
+path or directory is reported as `not_configured`, a missing file as
+`executable_missing`, and denied access or another filesystem-probe failure as
+`runtime_unavailable`. Recovery names the selected path and
+`REA_EVM_PRLIMIT_COMMAND`; denied access asks for execute permission and
+filesystem access. The original admission or system code stays in diagnostics.
+An available filesystem probe does not verify the selected tool's version or
+util-linux compatibility, and REA does not substitute another command.
+
 ## Evidence semantics
 
 - `encoding` is required: raw bytes or UTF-8 hex, with optional `0x` prefix and

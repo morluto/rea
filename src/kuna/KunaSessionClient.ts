@@ -1,5 +1,5 @@
 import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
-import { basename } from "node:path";
+import { basename, join } from "node:path";
 import {
   regularFileCancellation,
   RegularFileCleanupFailure,
@@ -239,6 +239,9 @@ const descriptorCleanupError = (
   return error;
 };
 
+const FAILED_PROJECT_RECORDS_GUIDANCE =
+  "REA does not expose per-function records from a failed project export.";
+
 /**
  * How a request that needs the export reports the export's failure. A session
  * never rebuilds a failed export, so repeating the request cannot succeed; the
@@ -258,7 +261,7 @@ const exportUnavailable = (
     "REA reads Kuna settings when it starts, so restart REA, then reopen the target.";
   const next =
     failure instanceof AnalysisTimeoutError
-      ? `To retry, set REA_KUNA_PROJECT_TIMEOUT_MS above ${String(failure.timeoutMs)} ms or raise REA_KUNA_JOBS in the environment that starts REA. ${restart}`
+      ? `To retry, set REA_KUNA_PROJECT_TIMEOUT_MS above ${String(failure.timeoutMs)} ms in the environment that starts REA. ${restart}`
       : failure instanceof AnalysisResourceConstraintError &&
           failure.remediationAction !== undefined
         ? // A fixed buffer (`memory`) is no setting, so a restart cannot help.
@@ -276,11 +279,12 @@ const exportUnavailable = (
       diagnostics: {
         export_error: failure._tag,
         export_code: exported.code,
+        failed_project_records: "not_exposed",
         ...(exported.details === undefined
           ? {}
           : { export_details: exported.details }),
       },
-      userMessage: `Kuna's project export failed, so ${operation} is unavailable in this session: ${reason.replace(/\.?$/u, ".")} ${next}`,
+      userMessage: `Kuna's project export failed, so ${operation} is unavailable in this session: ${reason.replace(/\.?$/u, ".")} ${FAILED_PROJECT_RECORDS_GUIDANCE} Inspect any captured diagnostics. ${next}`,
     },
   );
 };
@@ -297,6 +301,10 @@ const kunaVerificationLimitations = (
 
 /** Kuna names a procedure by its inventory entry or by an exact entry address. */
 const procedureSelectorSchema = z.string().min(1);
+
+/** REA's Kuna integration does not supply a def-use model for any procedure. */
+export const KUNA_NATIVE_VALUE_FLOW_UNAVAILABLE =
+  "REA's Kuna provider does not report native def-use observations.";
 
 /**
  * One Kuna analysis session for one target.
@@ -624,6 +632,30 @@ export class KunaSessionClient implements AnalysisClient {
     // component once, including its producing file digest and byte range.
     const recordedFiles =
       files.length === 1 ? files[0] : files.length === 0 ? {} : { files };
+    const rawSource =
+      source === null
+        ? undefined
+        : source.kind === "single-function"
+          ? { kind: "single-function" }
+          : {
+              kind: "project-export",
+              key: source.project.key,
+              directory: source.project.directory,
+              ...recordedFiles,
+            };
+    const file = files.length === 1 ? files[0] : undefined;
+    const sourceDescriptor =
+      source?.kind === "single-function"
+        ? { kind: "single-function-decompile" as const }
+        : source?.kind === "project-export" && file?.file_sha256 != null
+          ? {
+              kind: "file-range" as const,
+              path: join(source.project.directory, file.file),
+              sha256: file.file_sha256,
+              byte_offset: file.byte_offset,
+              byte_length: file.byte_length,
+            }
+          : undefined;
     return createAnalysisExecution(
       answer.result,
       {
@@ -632,6 +664,7 @@ export class KunaSessionClient implements AnalysisClient {
         version: installation.version,
       },
       {
+        ...(sourceDescriptor === undefined ? {} : { sourceDescriptor }),
         // Kuna's identity is in the analysis profile; the raw result records
         // only where file-backed text came from.
         ...(source === null &&
@@ -643,15 +676,7 @@ export class KunaSessionClient implements AnalysisClient {
                 ...(source === null
                   ? {}
                   : {
-                      source:
-                        source.kind === "single-function"
-                          ? { kind: "single-function" }
-                          : {
-                              kind: "project-export",
-                              key: source.project.key,
-                              directory: source.project.directory,
-                              ...recordedFiles,
-                            },
+                      source: rawSource,
                       project_export: this.#exportState(),
                     }),
                 ...(answer.referenceSource === undefined
@@ -693,7 +718,11 @@ export class KunaSessionClient implements AnalysisClient {
       };
     if (this.#project === undefined) return { state: "not-started" };
     if (this.#exportFailure !== undefined)
-      return { state: "failed", reason: this.#exportFailure };
+      return {
+        state: "failed",
+        reason: this.#exportFailure,
+        failure_records: "not_exposed",
+      };
     return {
       state: "building",
       phase: this.#status?.phase ?? null,
@@ -1057,6 +1086,9 @@ export class KunaSessionClient implements AnalysisClient {
       err(
         new AnalysisInputError(operation, {
           userMessage: kunaDataEntryMessage(entry, index.data.get(entry)!),
+          conformsToInputContract: true,
+          remediationAction:
+            "Inspect the data address with address_name or xrefs, or select a procedure entry from list_procedures. Do not repeat the unchanged call.",
         }),
       );
     const selected = (entry: KunaInventoryFunction) => {
@@ -1076,6 +1108,9 @@ export class KunaSessionClient implements AnalysisClient {
         return err(
           new AnalysisInputError(operation, {
             userMessage: `${address} is not a procedure entry Kuna found; list_procedures shows the entries it found.`,
+            conformsToInputContract: true,
+            remediationAction:
+              "Inspect list_procedures and select a discovered entry if it answers your question. An unlisted address is not proof of a function; REA cannot use it as a Kuna procedure in this session. Do not repeat the unchanged call.",
           }),
         );
       return refused(entry) ? dataRefusal(entry) : selected(entry);
@@ -1088,9 +1123,20 @@ export class KunaSessionClient implements AnalysisClient {
       return dataRefusal(named[0]);
     return err(
       new AnalysisInputError(operation, {
+        conformsToInputContract: true,
+        remediationAction:
+          matches.length === 0 && named.length === 0
+            ? field === "procedure"
+              ? "Use search_procedures or list_procedures to inspect Kuna's discovered entries, then select a matching entry. Do not repeat the unchanged call."
+              : "Inspect the selected target for the intended address and use that address explicitly. Do not repeat the unchanged call."
+            : matches.length === 0
+              ? "Inspect the data addresses with address_name or xrefs, or select a procedure entry from list_procedures. Do not repeat the unchanged call."
+              : "Select the intended entry by its exact address. Do not repeat the unchanged call.",
         userMessage:
           matches.length === 0 && named.length === 0
-            ? `Kuna found no procedure named ${selector}; search_procedures finds similar names.`
+            ? field === "procedure"
+              ? `Kuna found no procedure named ${selector}; search_procedures finds similar names.`
+              : `Kuna found no inventory entry named ${selector}.`
             : matches.length === 0
               ? `${selector} names ${String(named.length)} Kuna entries that lie in Mach-O data regions (${named.map(({ address }) => address).join(", ")}); they are data, not procedures.`
               : `${selector} names ${String(matches.length)} Kuna entries (${matches.map(({ address }) => address).join(", ")}); select one by address.`,
@@ -1190,7 +1236,40 @@ export class KunaSessionClient implements AnalysisClient {
         options.signal,
       );
       if (outcome === EXPORT_READY) continue;
-      if (!outcome.ok) return outcome;
+      if (!outcome.ok) {
+        const failure = outcome.error;
+        if (
+          failure instanceof AnalysisResourceConstraintError &&
+          failure.resource === "memory" &&
+          failure.reportedLimits?.output_limit_bytes ===
+            KUNA_FUNCTION_TEXT_BYTES &&
+          !failure.cleanupIncomplete &&
+          this.#exportFailure === undefined &&
+          this.#project !== undefined
+        )
+          return err(
+            new AnalysisResourceConstraintError(
+              operation,
+              failure.resource,
+              failure.reason,
+              failure.reportedLimits,
+              {
+                cause: failure,
+                capturedOutput: failure.capturedOutput,
+                diagnostics: failure.diagnostics,
+                partialObservation: failure.partialObservation,
+                retryable: true,
+                remediationAction:
+                  "The standalone output exceeds REA's fixed buffer. Run rea function for this target with Kuna to build the project, then retry this function. If the project cannot supply pseudocode, consider another provider.",
+                continuingCallerGuidance: {
+                  remediationAction:
+                    "The standalone output exceeds REA's fixed buffer. If the original session is open, wait for its project export, for example by requesting procedure_assembly. Otherwise reopen the target and wait for its project. Then retry the function. If the project cannot supply pseudocode, consider another provider.",
+                },
+              },
+            ),
+          );
+        return outcome;
+      }
       const exportFailure = await this.#settledExportFailure();
       return ok({
         result: outcome.value,
@@ -1201,6 +1280,7 @@ export class KunaSessionClient implements AnalysisClient {
             ? []
             : [
                 `The project export failed, so later requests also use single-function runs: ${exportFailure}`,
+                FAILED_PROJECT_RECORDS_GUIDANCE,
               ]),
         ],
       });
@@ -1456,7 +1536,11 @@ export class KunaSessionClient implements AnalysisClient {
       referenced_names: [],
       basic_blocks: [],
       native_api: null,
-      native_value_flow: null,
+      native_value_flow: {
+        available: false,
+        reason: KUNA_NATIVE_VALUE_FLOW_UNAVAILABLE,
+        limitations: [],
+      },
       facet_availability: {
         pseudocode:
           text === null

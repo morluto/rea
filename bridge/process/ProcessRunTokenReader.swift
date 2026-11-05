@@ -228,6 +228,22 @@ func processRunTokenObservation(
   parse: Result<ParsedRunToken, RunTokenReadError>,
   codeSigningFlags: () -> UInt32?
 ) -> RunTokenObservation {
+  // Native inspection restrictions apply even when argv is incomplete or
+  // overwritten, before parsing reaches the environment. Keep this fact at
+  // the native boundary; cleanup still decides whether the process is related.
+  func withheldEnvironment() -> RunTokenObservation? {
+    guard let flags = codeSigningFlags() else { return nil }
+    if (flags & csPlatformBinary) != 0 {
+      return unavailable(pid: pid, reason: "platform_binary_environment_withheld")
+    }
+    if (flags & csRestrict) != 0 {
+      return unavailable(pid: pid, reason: "restricted_process_environment_withheld")
+    }
+    return nil
+  }
+  func unavailableEnvironment(_ reason: String) -> RunTokenObservation {
+    withheldEnvironment() ?? unavailable(pid: pid, reason: reason)
+  }
   switch parse {
   case .success(let parsed):
     if let runId = parsed.runId {
@@ -238,40 +254,25 @@ func processRunTokenObservation(
     if parsed.environmentEntryCount > 0 {
       return RunTokenObservation(pid: pid, state: "readable", run_id: nil, reason: nil)
     }
-    let flags = codeSigningFlags()
-    if let flags, (flags & csPlatformBinary) != 0 {
-      return unavailable(pid: pid, reason: "platform_binary_environment_withheld")
-    }
-    if let flags, (flags & csRestrict) != 0 {
-      return unavailable(pid: pid, reason: "restricted_process_environment_withheld")
-    }
+    if let withheld = withheldEnvironment() { return withheld }
     return RunTokenObservation(pid: pid, state: "readable", run_id: nil, reason: nil)
   case .failure(let failure):
     switch failure {
     case .environmentUnavailable:
-      let flags = codeSigningFlags()
-      if let flags, (flags & csPlatformBinary) != 0 {
-        return unavailable(pid: pid, reason: "platform_binary_environment_withheld")
-      }
-      if let flags, (flags & csRestrict) != 0 {
-        return unavailable(pid: pid, reason: "restricted_process_environment_withheld")
-      }
-      return unavailable(pid: pid, reason: "environment_unavailable")
+      return unavailableEnvironment("environment_unavailable")
     case .ambiguousEnvironmentBoundary:
-      if let flags = codeSigningFlags(), (flags & csRestrict) != 0 {
-        return unavailable(pid: pid, reason: "restricted_process_environment_withheld")
-      }
-      return unavailable(pid: pid, reason: "ambiguous_environment_boundary")
+      return unavailableEnvironment("ambiguous_environment_boundary")
+    // These failures already establish that token bytes were available.
     case .duplicateToken:
       return unavailable(pid: pid, reason: "duplicate_run_token")
     case .invalidTokenEncoding:
       return unavailable(pid: pid, reason: "invalid_run_token_encoding")
     case .appleVectorUnavailable:
-      return unavailable(pid: pid, reason: "apple_vector_unavailable")
+      return unavailableEnvironment("apple_vector_unavailable")
     case .invalidBuffer:
-      return unavailable(pid: pid, reason: "malformed_procargs")
+      return unavailableEnvironment("malformed_procargs")
     case .invalidBufferAt(let stage):
-      return unavailable(pid: pid, reason: "malformed_procargs_\(stage.rawValue)")
+      return unavailableEnvironment("malformed_procargs_\(stage.rawValue)")
     }
   }
 }
