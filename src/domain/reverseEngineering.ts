@@ -53,7 +53,7 @@ const objdumpDisassemblyInputSchema = objdumpArtifactInputSchema.extend({
       "Symbol must be well-formed Unicode.",
     )
     .describe(
-      "Native symbol to disassemble, expressed as well-formed Unicode. Matching and symbol boundaries follow GNU objdump; omitted means all code sections.",
+      "Native symbol to disassemble, expressed as well-formed Unicode. Matching and symbol boundaries follow the selected executable; omitted means all code sections.",
     )
     .optional(),
 });
