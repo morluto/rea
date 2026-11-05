@@ -565,6 +565,42 @@ it.each([64, 128])(
   },
 );
 
+it.each([64, 128])(
+  "bounds projected property key visits for %i distinct reads",
+  (size) => {
+    const names = Array.from({ length: size }, (_, i) => `p${i}`);
+    const source = `const { BrowserWindow } = require('electron');
+    const { ${names.map((name) => `${name}: { unrelated: ${name} }`).join(",")} } =
+      { ${names.map((name) => `${name}: {}`).join(",")} };
+    const webPreferences = { nodeIntegration: true };
+    function createWindow() { return new BrowserWindow({ webPreferences }); }
+    createWindow();`;
+    const parsed = parseJavaScriptSource(source);
+    const statement = parsed?.program.body[1];
+    if (parsed === null || statement?.type !== "VariableDeclaration")
+      throw new Error("fixture changed");
+    const object = statement.declarations[0]?.init;
+    if (object?.type !== "ObjectExpression") throw new Error("fixture changed");
+    let keyVisits = 0;
+    for (const property of object.properties) {
+      if (property.type === "SpreadElement") continue;
+      const key = property.key;
+      Object.defineProperty(property, "key", {
+        configurable: true,
+        get: () => {
+          keyVisits += 1;
+          return key;
+        },
+      });
+    }
+    expect(
+      analyzeParsedJavaScriptStaticSource(source, parsed).electron
+        .browser_windows[0],
+    ).toMatchObject({ web_preferences_status: "object-literal" });
+    expect(keyVisits).toBeLessThanOrEqual(32 * size);
+  },
+);
+
 describe("Classic-script global function activation", () => {
   it.each([
     "const { nested: { value } } = { nested: { value: 1 } };",

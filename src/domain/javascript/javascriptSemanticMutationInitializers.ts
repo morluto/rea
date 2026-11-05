@@ -18,7 +18,7 @@ import {
 } from "./javascriptSemanticEvaluationOrder.js";
 
 import {
-  staticObjectProperty,
+  staticObjectPropertyReader,
   staticObjectOwnMethodReader,
   semanticStaticPropertyKey,
   semanticWriteSiteReadsFirst,
@@ -946,6 +946,10 @@ const moduleFunctionFirstRead = (
     const classicScript =
       t.isProgram(program) && javaScriptRuntimeContext(program) === "unknown";
     const globalReceivers = new WeakMap<t.Node, boolean | null>();
+    const propertyReaders = new WeakMap<
+      t.Node,
+      ReturnType<typeof staticObjectPropertyReader>
+    >();
     const ownMethodReaders = new WeakMap<t.Node, (name: string) => boolean>();
     const ownMethodAtSource = (node: t.Node, name: string): boolean => {
       let read = ownMethodReaders.get(node);
@@ -1331,7 +1335,13 @@ const moduleFunctionFirstRead = (
                     receiver = undefined;
                     break;
                   }
-                  const selected = staticObjectProperty(receiver, String(key));
+                  if (receiver === undefined) break;
+                  let read = propertyReaders.get(receiver);
+                  if (read === undefined) {
+                    read = staticObjectPropertyReader(receiver);
+                    propertyReaders.set(receiver, read);
+                  }
+                  const selected = read(String(key));
                   receiver =
                     selected.status === "explicit" ? selected.value : undefined;
                   if (receiver === undefined) break;

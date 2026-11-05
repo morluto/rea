@@ -464,13 +464,43 @@ const readStaticObjectProperty = (
   return prototypeMaySupply ? { status: "dynamic" } : { status: "missing" };
 };
 
-/** Parse ordered members once for related property queries within one boundary. */
+/** Index effective keys once for related property queries within one boundary. */
 export const staticObjectPropertyReader = (
   object: t.Node | undefined,
   isNullish?: (node: t.Node) => boolean,
 ): ((name: string) => StaticObjectProperty) => {
   const source = staticObjectPropertySource(object, isNullish);
-  return (name) => readStaticObjectProperty(source, name);
+  if (typeof source === "string") return () => ({ status: source });
+  const properties = new Map<string, StaticObjectProperty>();
+  let fallback: "missing" | "dynamic" = "missing";
+  let hasIndexedSpread = false;
+  for (let index = source.length - 1; index >= 0; index--) {
+    const member = source[index]!;
+    if (member.kind === "prototype-setter") {
+      if (member.prototype === "unknown") fallback = "dynamic";
+    } else if (
+      member.kind === "primitive-indices" ||
+      member.kind === "array-indices"
+    ) {
+      hasIndexedSpread = true;
+    } else if (member.kind === "unknown" || member.key === null) {
+      fallback = "dynamic";
+      break;
+    } else if (!properties.has(member.key)) {
+      const { property, key } = member;
+      const value = objectDataPropertyValue(property);
+      properties.set(
+        key,
+        value === undefined
+          ? { status: "dynamic" }
+          : { status: "explicit", property, value },
+      );
+    }
+  }
+  return (name) =>
+    hasIndexedSpread && semanticArrayIndex(name) !== null
+      ? readStaticObjectProperty(source, name)
+      : (properties.get(name) ?? { status: fallback });
 };
 
 /** Find the effective explicit property, preserving unresolved overrides. */
