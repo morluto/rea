@@ -63,6 +63,122 @@ it.each(["ENOENT", "EACCES", "EPERM", "ENOTDIR"] as const)(
   },
 );
 
+it.each(["EAGAIN", "EMFILE", "ENFILE", "ENOMEM"] as const)(
+  "treats objdump host capacity spawn failure %s as retryable resource constraint without recording launch failure",
+  async (code) => {
+    const { directory, path } = await createArtifact();
+    const command = resolve(directory, "configured-objdump");
+    const hostFailure = Object.assign(
+      new Error("controlled host capacity rejection"),
+      { code },
+    );
+    const service = new TestReverseEngineeringService({
+      environment: { REA_OBJDUMP_COMMAND: command },
+      runOwned: async () => {
+        throw new OwnedCommandFailure("process", "launch failed", null, null, {
+          cause: hostFailure,
+        });
+      },
+    });
+    try {
+      for (const input of [
+        { operation: "architectures" },
+        { path, operation: "file_headers" },
+      ]) {
+        const result = await service.inspectWithObjdump(input);
+        if (result.ok)
+          throw new Error("Expected host capacity resource constraint failure");
+        const projected = projectAnalysisError(result.error);
+        expect(projected).toMatchObject({
+          code: "resource_constraint",
+          retryable: true,
+          details: {
+            resource: "capacity",
+            reported_limits: {
+              spawn_error: code,
+              command,
+            },
+            diagnostics: {
+              boundary: "host-capacity",
+              command,
+              system_code: code,
+            },
+          },
+          remediation: {
+            action: expect.stringContaining(
+              "REA_OBJDUMP_COMMAND does not need to change",
+            ),
+          },
+        });
+        expect(projected.message).toContain(code);
+        expect(projected.remediation.action).toContain(code);
+      }
+      expect(service.observedLaunchFailures()).toEqual({});
+    } finally {
+      await service.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);
+
+it.each(["EAGAIN", "EMFILE", "ENFILE", "ENOMEM"] as const)(
+  "treats rizin host capacity spawn failure %s as retryable resource constraint without recording launch failure",
+  async (code) => {
+    const { directory, path } = await createArtifact();
+    const command = resolve(directory, "configured-rizin");
+    const hostFailure = Object.assign(
+      new Error("controlled host capacity rejection"),
+      { code },
+    );
+    const service = new TestReverseEngineeringService({
+      environment: { REA_RIZIN_COMMAND: command },
+      runOwned: async () => {
+        throw new OwnedCommandFailure("process", "launch failed", null, null, {
+          cause: hostFailure,
+        });
+      },
+    });
+    try {
+      const result = await service.executeRizinCommand({
+        path,
+        command: "iI",
+      });
+      if (result.ok)
+        throw new Error(
+          "Expected rizin host capacity resource constraint failure",
+        );
+      const projected = projectAnalysisError(result.error);
+      expect(projected).toMatchObject({
+        code: "resource_constraint",
+        retryable: true,
+        details: {
+          resource: "capacity",
+          reported_limits: {
+            spawn_error: code,
+            command,
+          },
+          diagnostics: {
+            boundary: "host-capacity",
+            command,
+            system_code: code,
+          },
+        },
+        remediation: {
+          action: expect.stringContaining(
+            "REA_RIZIN_COMMAND does not need to change",
+          ),
+        },
+      });
+      expect(projected.message).toContain(code);
+      expect(projected.remediation.action).toContain(code);
+      expect(service.observedLaunchFailures()).toEqual({});
+    } finally {
+      await service.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);
+
 it("preserves target-read permission diagnostics before provider launch", async () => {
   let launches = 0;
   const path = resolve("read-denied-artifact");

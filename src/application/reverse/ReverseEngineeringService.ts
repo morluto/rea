@@ -40,6 +40,7 @@ import type {
 import {
   execFileOutput,
   execFileOutputFailure,
+  HOST_SPAWN_CAPACITY_CODES,
 } from "../../process/ExecFileOutput.js";
 import {
   OwnedCommandFailure,
@@ -579,6 +580,35 @@ export class ReverseEngineeringService {
           },
           { cause, ...ownedCleanupOptions(cause) },
         );
+      if (
+        earlyFailure === undefined &&
+        typeof code === "string" &&
+        HOST_SPAWN_CAPACITY_CODES.has(code)
+      ) {
+        const provider =
+          operation === "inspect_with_objdump" ? "objdump" : "rizin";
+        const setting =
+          operation === "inspect_with_objdump"
+            ? "REA_OBJDUMP_COMMAND"
+            : "REA_RIZIN_COMMAND";
+        earlyFailure = new AnalysisResourceConstraintError(
+          operation,
+          "capacity",
+          `The host ran out of process, memory or file-descriptor capacity (${code}) to start ${provider}.`,
+          { spawn_error: code, command },
+          {
+            cause,
+            retryable: true,
+            remediationAction: `The host ran out of process, memory or file-descriptor capacity (${code}). Close unused processes or files, or raise the process or open-file limit of the REA process, then retry; ${setting} does not need to change.`,
+            diagnostics: {
+              boundary: "host-capacity",
+              command,
+              system_code: code,
+            },
+            ...ownedCleanupOptions(cause),
+          },
+        );
+      }
       if (
         earlyFailure === undefined &&
         (capture === undefined ||
