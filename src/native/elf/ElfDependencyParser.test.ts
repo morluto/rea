@@ -35,6 +35,18 @@ const parse = (
 
 const defaultNeeded = ["libstdc++.so.6", "libm.so.6", "libc.so.6"];
 
+/** The version_unresolved issue a GNU version table reports at its own offset. */
+const versionTableIssue = (table: {
+  readonly location: { readonly offset: number } | null;
+}) => {
+  if (table.location === null)
+    throw new Error("Expected a version table range");
+  return expect.objectContaining({
+    code: "version_unresolved",
+    location: `0x${table.location.offset.toString(16)}`,
+  });
+};
+
 it.each([
   [64, true],
   [32, false],
@@ -392,12 +404,7 @@ it("keeps the readable prefix when a GNU version chain ends before its count", (
     "libc.so.6",
   ]);
   expect(verneed.issues).toContainEqual(
-    expect.objectContaining({
-      code: "version_unresolved",
-      message: expect.stringContaining(
-        "GNU version requirement chain ends before its declared count",
-      ),
-    }),
+    versionTableIssue(healthy.version_requirements),
   );
 
   // The file entry whose auxiliary chain ended early stays out of the join.
@@ -409,12 +416,7 @@ it("keeps the readable prefix when a GNU version chain ends before its count", (
   expect(vernaux.version_requirements.status).toBe("unreadable");
   expect(vernaux.version_requirements.files).toEqual([]);
   expect(vernaux.issues).toContainEqual(
-    expect.objectContaining({
-      code: "version_unresolved",
-      message: expect.stringContaining(
-        "GNU version requirement auxiliary chain ends before its declared count",
-      ),
-    }),
+    versionTableIssue(healthy.version_requirements),
   );
 });
 
@@ -491,6 +493,7 @@ it.each([
 });
 
 it("reports a GNU version chain that continues past its declared count", () => {
+  const healthy = parse(elfDependencyFixture());
   const verneed = parse(
     elfDependencyFixture({ danglingVersionLink: "verneed" }),
   );
@@ -501,12 +504,7 @@ it("reports a GNU version chain that continues past its declared count", () => {
     "libstdc++.so.6",
   ]);
   expect(verneed.issues).toContainEqual(
-    expect.objectContaining({
-      code: "version_unresolved",
-      message: expect.stringContaining(
-        "GNU version requirement chain continues past its declared count",
-      ),
-    }),
+    versionTableIssue(healthy.version_requirements),
   );
 
   // The file entry whose auxiliary chain is unfinished stays out of the join.
@@ -519,12 +517,7 @@ it("reports a GNU version chain that continues past its declared count", () => {
     "libc.so.6",
   ]);
   expect(vernaux.issues).toContainEqual(
-    expect.objectContaining({
-      code: "version_unresolved",
-      message: expect.stringContaining(
-        "GNU version requirement auxiliary chain continues past its declared count",
-      ),
-    }),
+    versionTableIssue(healthy.version_requirements),
   );
 
   const verdef = parse(elfDependencyFixture({ danglingVersionLink: "verdef" }));
@@ -534,12 +527,7 @@ it("reports a GNU version chain that continues past its declared count", () => {
     "libdemo.so.1",
   ]);
   expect(verdef.issues).toContainEqual(
-    expect.objectContaining({
-      code: "version_unresolved",
-      message: expect.stringContaining(
-        "GNU version definition chain continues past its declared count",
-      ),
-    }),
+    versionTableIssue(healthy.version_definitions),
   );
 });
 
