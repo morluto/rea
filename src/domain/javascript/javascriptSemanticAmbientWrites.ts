@@ -61,6 +61,31 @@ const canonicalAmbientPath = (
 
 type AmbientPath = readonly (string | null)[];
 
+/** Query retained ambient effects at a selected read, preserving unknown timing. */
+export const semanticAmbientPathMayHaveChangedAt = (
+  read: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+  path: readonly string[],
+  invocation?: t.Node,
+): boolean => {
+  if (!state.ambientWrites.covers(path) && !state.ambientEscapes.covers(path))
+    return false;
+  const mayAffect = (
+    effect: JavaScriptSemanticAnalysisState["ambientWriteEffects"][number],
+  ): boolean =>
+    // A receiver is exposed by the invocation after its method was selected.
+    (invocation === undefined || effect.node !== invocation) &&
+    effect.path.length <= path.length &&
+    effect.path.every((key, index) =>
+      semanticPropertyPathKeyMatches(key, path[index]!),
+    ) &&
+    semanticEffectTiming(read, effect.node, state) !== "after";
+  return (
+    state.ambientWriteEffects.some(mayAffect) ||
+    state.ambientEscapeEffects.some(mayAffect)
+  );
+};
+
 const retainedAmbientEffects = new WeakMap<
   JavaScriptSemanticAnalysisState,
   Map<t.Node | undefined, Set<string>>
@@ -835,7 +860,7 @@ export function* indexJavaScriptAmbientWritesSteps(
       state.ambientWrites.covers(["global", method]),
     )
   )
-    state.ambientEscapes.retain(["global", null]);
+    retainSemanticAmbientEffect(state, "escape", ["global"], undefined);
 }
 
 export type GlobalReferenceRead =

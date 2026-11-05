@@ -10,7 +10,10 @@ import {
   completeSemanticSteps,
   traverseJavaScriptAst,
 } from "./javascriptSemanticTraversal.js";
-import { createGlobalReferenceReader } from "./javascriptSemanticAmbientWrites.js";
+import {
+  createGlobalReferenceReader,
+  semanticAmbientPathMayHaveChangedAt,
+} from "./javascriptSemanticAmbientWrites.js";
 import { parseJavaScriptSource } from "./javascriptSourceParser.js";
 
 it("keeps wrapper module aliases distinct from global-object module properties", () => {
@@ -337,3 +340,72 @@ it.each([
     expect(statuses).toEqual(expected);
   },
 );
+
+it.each([
+  [
+    "an intact method",
+    "const xhr=new XMLHttpRequest();xhr.open('GET','/xhr');",
+    false,
+  ],
+  [
+    "a current function-local invocation",
+    "function run(){const xhr=new XMLHttpRequest();xhr.open('GET','/xhr');}",
+    false,
+  ],
+  [
+    "an earlier constructor escape",
+    "const xhr=new XMLHttpRequest();mutate(xhr.constructor);xhr.open('GET','/xhr');",
+    true,
+  ],
+  [
+    "a later constructor escape",
+    "const xhr=new XMLHttpRequest();xhr.open('GET','/xhr');mutate(xhr.constructor);",
+    false,
+  ],
+  [
+    "an escaped method value",
+    "const xhr=new XMLHttpRequest();mutate(XMLHttpRequest.prototype.open);xhr.open('GET','/xhr');",
+    false,
+  ],
+  [
+    "a selected method before argument effects",
+    "const xhr=new XMLHttpRequest();xhr.open('GET',(mutate(xhr.constructor),'/xhr'));",
+    false,
+  ],
+  [
+    "a later effect in a possibly repeated activation",
+    "function run(){const xhr=new XMLHttpRequest();xhr.open('GET','/xhr');mutate(xhr.constructor);}",
+    true,
+  ],
+  [
+    "an unlocated ambient escape",
+    "function request(){window.fetch('/other');}fetch=replacement;const xhr=new XMLHttpRequest();xhr.open('GET','/xhr');mutate(xhr.constructor);",
+    true,
+  ],
+])("retains timed ambient path effects for %s", (_label, source, changed) => {
+  const parsed = parseJavaScriptSource(source);
+  if (parsed === null) throw new Error("Expected ambient-effect fixture");
+  const index = completeSemanticSteps(
+    indexJavaScriptBindingsWithReceiversSteps(parsed.program),
+  );
+  completeSemanticSteps(index.indexMemberMutationFactsSteps());
+  const results: boolean[] = [];
+  traverseJavaScriptAst(parsed.program, {
+    enter(node) {
+      if (
+        t.isCallExpression(node) &&
+        t.isMemberExpression(node.callee) &&
+        t.isIdentifier(node.callee.property, { name: "open" })
+      )
+        results.push(
+          semanticAmbientPathMayHaveChangedAt(
+            node.callee,
+            index.bindings,
+            ["global", "XMLHttpRequest", "prototype", "open"],
+            node,
+          ),
+        );
+    },
+  });
+  expect(results).toEqual([changed]);
+});
