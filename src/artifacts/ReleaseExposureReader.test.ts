@@ -46,6 +46,7 @@ import {
 } from "../domain/releaseExposure.js";
 import { HTML_INLINE_SCRIPT_LOCATION_LIMIT } from "../domain/javascript/htmlArtifactReferences.js";
 import { ReleaseExposureReader } from "./ReleaseExposureReader.js";
+import type { AsarHeaderAdmission } from "../config/asarHeaderAdmission.js";
 
 const stableRead = vi.hoisted(() => ({
   impl: undefined as
@@ -1949,6 +1950,35 @@ describe("ReleaseExposureReader text recognition", () => {
   });
 });
 
+describe("ReleaseExposureReader nested ASAR admission", () => {
+  it("keeps a nested ASAR past the header admission unknown", async () => {
+    const root = await createTestTempDirectory(
+      "rea-release-nested-asar-limit-",
+    );
+    const map = embeddedSourceMap();
+    const json = JSON.stringify({
+      files: { "app.js.map": { size: map.length, offset: "0" } },
+    });
+    const inner = Buffer.concat([
+      asarHeaderBytes(`${" ".repeat(1100)}${json}`),
+      map,
+    ]);
+    await writeFile(
+      join(root, "app.dll"),
+      dotnetBundleFixture([{ path: "payload.json", bytes: inner }]).bytes,
+    );
+    const scanned = await inspect(join(root, "app.dll"), {
+      maximumBytes: 1024,
+      source: "runtime",
+    });
+    expect(scanned.coverage).toBe("unknown");
+    expect(sourceMapSourcesStatus(scanned)).toBe("unknown");
+    expect(scanned.limitations).toContain(
+      "Could not decide whether payload.json holds an ASAR within the header admission.",
+    );
+  });
+});
+
 describe("ReleaseExposureReader source spellings", () => {
   const decomposed = "caf\u0065\u0301";
   const key = "-----BEGIN PRIVATE KEY-----\n";
@@ -3053,8 +3083,8 @@ const sourceMapSourcesStatus = (scan: ReleaseExposureScan) =>
   }).checks.find((check) => check.id === "javascript.source_map_sources")
     ?.status;
 
-const inspect = async (path: string) => {
-  const reader = new ReleaseExposureReader();
+const inspect = async (path: string, admission?: AsarHeaderAdmission) => {
+  const reader = new ReleaseExposureReader(admission);
   try {
     const textLocations: string[] = [];
     const result = await reader.inspect({ path }, undefined, (_, location) => {

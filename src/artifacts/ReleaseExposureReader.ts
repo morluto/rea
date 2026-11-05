@@ -1090,9 +1090,7 @@ const examineMapMember = async (
     : { ...member, logical: `${member.logical}.js.map` };
   const read = await readMap(state, declared);
   const packaged =
-    read === null
-      ? null
-      : packagedFormatOfRead(member, read.loaded, state.asarHeaderAdmission);
+    read === null ? null : packagedFormatOfRead(state, member, read.loaded);
   if (packaged === "asar") {
     noteNestedPackage(state, "asar", member.location);
     return true;
@@ -1313,11 +1311,7 @@ const examineTextMember = async (
   const loaded = await member.read(
     Math.min(MAX_RELEASE_EXPOSURE_TEXT_MEMBER_BYTES, remaining),
   );
-  const packaged = packagedFormatOfRead(
-    member,
-    loaded,
-    state.asarHeaderAdmission,
-  );
+  const packaged = packagedFormatOfRead(state, member, loaded);
   if (packaged !== null) {
     state.textBytes += state.memberBytesRead - bytesReadBefore;
     if (packaged !== "asar")
@@ -1410,9 +1404,9 @@ const envProgram = (args: string[]): string | undefined => {
  * cost no further read. Only a kind the package owner stated is kept.
  */
 const packagedFormatOfRead = (
+  state: ScanState,
   member: MemberView,
   loaded: MemberRead,
-  asarHeaderAdmission: AsarHeaderAdmission,
 ): NativeFormat | "asar" | null => {
   if (member.packageFormat === null || member.kindStated) return null;
   if (loaded.kind === "unread") return null;
@@ -1423,7 +1417,14 @@ const packagedFormatOfRead = (
     loaded.kind === "bytes" ? header.length : member.declaredSize,
   );
   if (native !== null) return native;
-  return holdsAsarHeader(header, asarHeaderAdmission) ? "asar" : null;
+  return probeNestedAsar(
+    state,
+    member.location,
+    header,
+    loaded.kind === "bytes",
+  )
+    ? "asar"
+    : null;
 };
 
 /**
@@ -1773,7 +1774,7 @@ const examinePackagedBinary = async (
   if (
     native === null &&
     header !== null &&
-    holdsAsarHeader(header, state.asarHeaderAdmission)
+    probeNestedAsar(state, member.location, header, probe.kind === "bytes")
   ) {
     noteNestedPackage(state, "asar", member.location);
     return true;
@@ -2229,12 +2230,37 @@ const noteNestedPackage = (
   pushLimitation(state, `Nested package ${location} was not expanded.`);
 };
 
-/** The ASAR owner's signature test. A match does not establish a valid archive. */
-const holdsAsarHeader = (
+/**
+ * The ASAR owner's signature test. A match does not establish a valid archive.
+ * A probe that stops at the header admission, or runs out of a prefix read
+ * before it decides, leaves the member undecided rather than not an ASAR: the
+ * member may still carry a package nothing here reads, so coverage becomes
+ * unknown while the member is examined as whatever else it may be.
+ */
+const probeNestedAsar = (
+  state: ScanState,
+  location: string,
   bytes: Buffer,
-  admission: AsarHeaderAdmission,
-): boolean =>
-  createAsarHeaderSignatureProbe(admission).write(bytes).state === "matched";
+  complete: boolean,
+): boolean => {
+  const observed = createAsarHeaderSignatureProbe(
+    state.asarHeaderAdmission,
+  ).write(bytes);
+  if (observed.state === "matched") return true;
+  if (
+    observed.state === "limit" ||
+    (observed.state === "pending" &&
+      !complete &&
+      observed.extents !== undefined)
+  ) {
+    noteUnexaminedPackage(state);
+    pushLimitation(
+      state,
+      `Could not decide whether ${location} holds an ASAR within the header admission.`,
+    );
+  }
+  return false;
+};
 
 const readListedEntry = async (
   container: OpenContainer | undefined,
