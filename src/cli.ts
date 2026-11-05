@@ -28,6 +28,8 @@ import { Cli, z } from "incur";
 import {
   adaptCliOutputArgumentsForIncur,
   classifyMcpAddDiscovery,
+  expandMcpAddEqualsArguments,
+  mcpAddAgents,
   normalizeCliArguments,
   splitIncurBuiltinArguments,
 } from "./cliBuiltinArguments.js";
@@ -373,14 +375,9 @@ export const createCli = (
       // equals form like `--agent=amp` is silently ignored, which would drop
       // the requested agent and register against the default target. Normalize
       // equals forms back to spaced forms before handing over to Incur.
-      const serveArguments = normalized.flatMap((token) => {
-        if (token.startsWith("--agent=") || token.startsWith("--command=")) {
-          const separator = token.indexOf("=");
-          const value = token.slice(separator + 1);
-          return value === "" ? [token] : [token.slice(0, separator), value];
-        }
-        return [token];
-      });
+      // Shared with the project-scope guard through
+      // `expandMcpAddEqualsArguments`, so both read the same agent selection.
+      const serveArguments = expandMcpAddEqualsArguments(normalized);
       // Incur's Amp registration overwrites an existing rea entry (dropping its
       // environment map) and reports success even when the settings file
       // prevents a save. Guard that path: reject a settings file REA cannot
@@ -393,16 +390,7 @@ export const createCli = (
       normalized = serveArguments;
       const registration = splitIncurBuiltinArguments(serveArguments);
       const rest = registration.command.slice(builtin + 2);
-      const agents: string[] = [];
-      for (let index = 0; index < rest.length; index += 1) {
-        if (
-          (rest[index] === "--command" || rest[index] === "-c") &&
-          rest[index + 1]
-        )
-          index += 1;
-        else if (rest[index] === "--agent" && rest[index + 1])
-          agents.push(rest[++index]!);
-      }
+      const agents = mcpAddAgents(rest);
       const ampRequested =
         ![
           "--help",

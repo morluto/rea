@@ -124,6 +124,47 @@ describe("project-scoped Amp registration guard", () => {
     ).toBe(false);
   });
 
+  it("reads equals-form agents the same way dispatch does", () => {
+    // --agent=claude-code is a non-Amp registration, not the default Amp.
+    expect(
+      isProjectScopedAmpRegistration([
+        "mcp",
+        "add",
+        "--no-global",
+        "--agent=claude-code",
+      ]),
+    ).toBe(false);
+    expect(
+      isProjectScopedAmpRegistration([
+        "mcp",
+        "add",
+        "--no-global",
+        "--agent=amp",
+      ]),
+    ).toBe(true);
+    // A later equals-form Amp must not slip past an earlier spaced agent.
+    expect(
+      isProjectScopedAmpRegistration([
+        "mcp",
+        "add",
+        "--no-global",
+        "--agent",
+        "claude-code",
+        "--agent=amp",
+      ]),
+    ).toBe(true);
+    // A --command value is never read as an agent, even in equals form.
+    expect(
+      isProjectScopedAmpRegistration([
+        "mcp",
+        "add",
+        "--no-global",
+        "--command=--agent",
+        "amp",
+      ]),
+    ).toBe(true);
+  });
+
   it("passes other commands through", () => {
     expect(isProjectScopedAmpRegistration(["mcp", "doctor"])).toBe(false);
     expect(isProjectScopedAmpRegistration(["doctor"])).toBe(false);
@@ -153,6 +194,16 @@ describe("project-scoped Amp registration launcher", () => {
     for (const args of [
       ["mcp", "add", "--no-global", "--agent", "amp", "--json"],
       ["mcp", "add", "--no-global", "--json"],
+      ["mcp", "add", "--no-global", "--agent=amp", "--json"],
+      [
+        "mcp",
+        "add",
+        "--no-global",
+        "--agent",
+        "claude-code",
+        "--agent=amp",
+        "--json",
+      ],
     ]) {
       const result = spawnSync(
         process.execPath,
