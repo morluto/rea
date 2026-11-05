@@ -185,7 +185,7 @@ cliTest(
   },
 );
 
-const mipsPrpsinfoDescriptor = (little: boolean): Buffer => {
+const linuxPrpsinfo32Descriptor = (little: boolean): Buffer => {
   const descriptor = Buffer.alloc(128);
   descriptor[0] = 1;
   const write = little
@@ -202,16 +202,21 @@ const mipsPrpsinfoDescriptor = (little: boolean): Buffer => {
   return descriptor;
 };
 
-cliTest.for(["little", "big"] as const)(
-  "decodes Linux ELF32 MIPS process identity through CLI and MCP (%s endian)",
-  async (byteOrder, { cli }) => {
-    const root = await createTestTempDirectory("rea-elf-mips-core-");
+cliTest.for([
+  { name: "MIPS little", machine: 8, byteOrder: "little" },
+  { name: "MIPS big", machine: 8, byteOrder: "big" },
+  { name: "PowerPC big", machine: 20, byteOrder: "big" },
+  { name: "RISC-V little", machine: 243, byteOrder: "little" },
+] as const)(
+  "decodes Linux ELF32 process identity through CLI and MCP ($name)",
+  async ({ machine, byteOrder }, { cli }) => {
+    const root = await createTestTempDirectory("rea-elf-prpsinfo32-core-");
     const path = join(root, "core.elf");
     const little = byteOrder === "little";
-    const descriptor = mipsPrpsinfoDescriptor(little);
+    const descriptor = linuxPrpsinfo32Descriptor(little);
     const bytes = elfNoteFixture({
       bits: 32,
-      machine: 8,
+      machine,
       little,
       type: 4,
       ownership: "program",
@@ -241,7 +246,7 @@ cliTest.for(["little", "big"] as const)(
       expect(report).toMatchObject({
         format: "elf32",
         byte_order: byteOrder,
-        machine: 8,
+        machine,
         coverage: { status: "complete", examined_entries: 2 },
       });
       expect(report.entries[0]?.core?.prpsinfo).toEqual({

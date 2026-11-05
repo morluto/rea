@@ -324,8 +324,9 @@ const decodeCorePrpsinfo = (
   machine: number,
   text: TextBudget,
 ): ElfNotes["entries"][number]["core"] => {
-  // Linux ELF32 EM_MIPS uses 32-bit UID and GID with a 32-bit pr_flag.
-  const idSize = wide || machine === 8 ? 4 : 2;
+  // Linux ELF32 MIPS, PowerPC and RISC-V use 32-bit IDs with a 32-bit pr_flag.
+  const idSize =
+    wide || machine === 8 || machine === 20 || machine === 243 ? 4 : 2;
   const uidOff = wide ? 16 : 8;
   const gidOff = uidOff + idSize;
   const pidOff = gidOff + idSize;
