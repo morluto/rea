@@ -1,11 +1,17 @@
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import type { RetainedResourceScope } from "../application/AnalysisProvider.js";
 import type { AngrConfigurationSources } from "./AngrConfiguration.js";
 import { inspectAngrRegistration as inspectWithScope } from "./AngrDoctor.js";
 import { providerRegistrationEnvironment } from "../application/SetupRegistrationEnvironment.js";
+import { createSystemDoctorHost } from "../doctorRuntime.js";
+import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 const resourceScope: RetainedResourceScope = {
   retain: () => undefined,
@@ -56,7 +62,6 @@ it("keeps angr configuration for setup without copying credentials or claiming r
 });
 
 it("contributes angr's startup and request budgets to the client tool deadline", async () => {
-  const { createSystemDoctorHost } = await import("../doctorRuntime.js");
   const { recommendedMcpToolTimeoutMs } =
     await import("../mcpStartupPolicy.js");
   const root = await createTestTempDirectory("rea-angr-budget-");
@@ -123,4 +128,44 @@ it("contributes angr's startup and request budgets to the client tool deadline",
       providerRequestTimeoutMs: defaults.value,
     }),
   ).toBeGreaterThan(defaults.value);
+});
+
+it("finishes doctor and releases a registration whose close failed before later inspections", async () => {
+  const root = await createTestTempDirectory("rea-angr-doctor-close-");
+  const path = join(root, "registration.json");
+  await writeFile(path, JSON.stringify({ command: "python" }));
+  // An executable Kuna command makes the next inspection enter the doctor's scope.
+  const kuna = join(root, "kuna");
+  await writeFile(kuna, "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+  const close = OwnedFileHandle.prototype.close;
+  const denied: OwnedFileHandle[] = [];
+  let released = false;
+  vi.spyOn(OwnedFileHandle.prototype, "close").mockImplementation(function (
+    this: OwnedFileHandle,
+  ) {
+    if (denied.length === 0) {
+      denied.push(this);
+      return Promise.reject(new Error("descriptor close denied"));
+    }
+    if (denied.includes(this)) released = true;
+    return close.call(this);
+  });
+  const host = createSystemDoctorHost({
+    REA_ANGR_MCP_CONFIG: path,
+    REA_KUNA_COMMAND: kuna,
+  });
+  const settled = await Promise.race([
+    host.providerInspections!(),
+    new Promise<"hung">((resolve) => setTimeout(() => resolve("hung"), 2_000)),
+  ]);
+  if (settled === "hung")
+    throw new Error("doctor waited on its own inspection");
+  expect(settled.find(({ id }) => id === "angr")).toMatchObject({
+    available: false,
+    checks: [{ code: "invalid_configuration" }],
+  });
+  expect(settled.find(({ id }) => id === "kuna")).toBeDefined();
+  expect(released).toBe(false);
+  expect(await host.close?.()).toBeUndefined();
+  expect(released).toBe(true);
 });
