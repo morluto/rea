@@ -199,8 +199,11 @@ shapes: SQLite tables (at most 64 ordinary tables, `tables_truncated` past
 that, and per table `columns`, `primary_key`, at most 500 `rows` and
 `truncated`, with blobs, unsafe integers and text that is not UTF-8 tagged as
 REA tags them), JSON, XML as `{root, truncated}` with DOCTYPEs refused and REA's
-node, depth and whitespace rules, key file groups, and text as
-`{lines, line_count, truncated}` split on `\n` and `\r\n`. A JSON file
+node, depth and whitespace rules, key file groups, text as
+`{lines, line_count, truncated}` split on `\n` and `\r\n`, and zip archives
+as their entries, read with Python's `zipfile` from the file in place, with
+REA's entry, size, compression ratio and archive limits and its wording for an
+entry it does not read. A JSON file
 holding a number JavaScript cannot read exactly, such as an integer above 2^53,
 gets an `error` instead of a view, as in REA, while text that is not one JSON
 document, such as JSON Lines, stays text. Format detection follows REA's
@@ -211,7 +214,12 @@ and are not read. Known differences remain:
   spelling rather than REA's prefixed names, namespace declarations are not
   listed as attributes, and CDATA sections merge with the text around them, so
   they count as one node.
-- dconf databases are reported as binary, since REA reads them with `dconf`.
+- dconf databases are reported as binary, since REA reads them with `dconf`;
+  inside an archive, one is `dconf` with an error, as in REA.
+- Zip entry names: a name in an Info-ZIP Unicode Path extra field is used only
+  where Python's `zipfile` reads it (3.12 and later), and an entry whose local
+  header names it differently from the central directory is damaged rather
+  than read.
 - SQLite databases are read in place, read-only, rather than from a staged copy;
   a write lock the running app holds is waited out for a quarter of a second
   and then gives the file an `error`, and so does a table or column name that

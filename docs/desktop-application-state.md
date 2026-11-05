@@ -55,6 +55,7 @@ whether the file was present, the SHA-256 of its retained bytes, and a view:
 | --------- | ---------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
 | `sqlite`  | The `SQLite format 3` header                                           | Every ordinary table's columns, primary key and up to 500 rows                          |
 | `dconf`   | The `GVariant` header                                                  | Groups whose path names the application, plus the names of the other groups             |
+| `zip`     | A zip local file header, `PK\x03\x04`, whatever the name               | Its file entries in archive order, each with its own format and view                    |
 | `json`    | A `.json` name or a leading `{` or `[` that parses                     | The parsed value, from files up to 4 MiB nested up to 500 levels                        |
 | `xml`     | An XML name or declaration that parses                                 | An element tree (`name`, `attributes`, `children`); text kept exactly, DOCTYPEs refused |
 | `keyfile` | Only `[group]`, `key=value` and comment lines, with at least one group | Groups of `key` → string value, from files up to 4 MiB                                  |
@@ -84,6 +85,47 @@ A version has a `view_error` when its bytes were not retained, are over the 64
 MiB read limit, are missing or no longer match their digest, exceed a format's
 limit above, or its reader failed.
 
+## Archives
+
+Many applications save a document as a zip archive of XML and other files:
+FreeCAD's `.FCStd` and `.FCBak`, OpenDocument (`.odt`, `.ods`, whose
+`content.xml` is the document), Office Open XML, EPUB and JAR. Such a file is
+`zip`, and its view lists its file entries, without directories, in archive
+order:
+
+```json
+{
+  "entries": [
+    {
+      "name": "Document.xml",
+      "size": 11923,
+      "sha256": "…",
+      "format": "xml",
+      "view": {
+        "root": { "name": "Document", "attributes": {}, "children": [] },
+        "truncated": false
+      },
+      "view_error": null
+    }
+  ],
+  "entry_count": 15,
+  "truncated": false
+}
+```
+
+Each entry's bytes are read from the archive's verified bytes in memory,
+checked against its CRC-32 and declared size, and given a `format` and `view`
+by the rules and limits above, with the entry's name in place of a file name.
+Nothing is extracted to disk. An entry has a `view_error`, with `sha256`,
+`format` and `view` null, when it is encrypted, compressed other than stored or
+deflated, larger than 16 MiB, more than 100 times its compressed size, past the
+64 MiB read from one archive, or its data is damaged. A SQLite or dconf
+database, or an archive, inside an archive keeps its format and `sha256` and
+has a `view_error` instead of a view: it is not read. The view lists at most
+1,000 entries; `entry_count` counts them all, and `truncated` is true when some
+are not listed. An archive whose central directory cannot be read has a
+`view_error` of its own.
+
 ## Kinds of change
 
 Between consecutive versions a change is `created`, `deleted`, or a
@@ -94,6 +136,13 @@ each, with counts):
 - `values` for JSON and XML: JSON pointers to values, containers included, so
   an array that becomes an object with the same members is changed. A pointer
   longer than 4096 characters is counted but not listed.
+- `values` for zip archives too, with array members named by
+  [selectors](desktop-application-tasks.md#pointers-and-selectors) rather than
+  positions wherever a selector names one member in both versions: entries by
+  name, as `/entries/[name=Document.xml]`, and XML elements by tag and an
+  attribute, as `/view/root/children/[name=Object][@name=Hole]`, so an object
+  inserted before another does not shift it. A comparison is incomplete when
+  either view leaves out entries, or an entry's view is missing or truncated.
 - `keys` for key files and dconf: `group/key`, with `~` and `/` in the key
   written `~0` and `~1` as in a JSON pointer, so `[a/b]` `c` and `[a]` `b/c`
   stay apart.

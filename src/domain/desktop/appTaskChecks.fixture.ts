@@ -1,3 +1,4 @@
+import type { JsonValue } from "../jsonValue.js";
 import type { DesktopTaskCheckInput } from "./appTask.js";
 import type { TaskFileView } from "./appTaskChecks.js";
 
@@ -24,6 +25,7 @@ export const CHECK_VIEWS: Readonly<Record<string, TaskFileView>> = {
       zero: 0,
       tags: ["a", "b"],
       "a/b": { "~k": null },
+      scale: "1.2500",
     },
   },
   ".config/notes/app.ini": {
@@ -60,6 +62,67 @@ export const CHECK_VIEWS: Readonly<Record<string, TaskFileView>> = {
     format: "sqlite",
     view: { tables: {}, tables_truncated: true },
   },
+  "Documents/plate.FCStd": {
+    format: "zip",
+    view: {
+      entries: [
+        {
+          name: "Document.xml",
+          size: 300,
+          sha256: "a".repeat(64),
+          format: "xml",
+          view: {
+            root: {
+              name: "Document",
+              attributes: {},
+              children: [
+                element("Object", { name: "Plate", type: "Part::Box" }),
+                element("Object", { name: "Hole", type: "Part::Cylinder" }, [
+                  element("Property", { name: "Radius" }, [
+                    element("Float", { value: "5.0000000000000000" }),
+                  ]),
+                ]),
+                element("Object", { name: "Pad", type: "Part::Box" }),
+                "saved by hand",
+              ],
+            },
+            truncated: false,
+          },
+          view_error: null,
+        },
+        {
+          name: "thumbnails/Thumbnail.png",
+          size: 3,
+          sha256: "b".repeat(64),
+          format: "binary",
+          view: null,
+          view_error: null,
+        },
+        {
+          name: "shape.brp",
+          size: 9000,
+          sha256: "c".repeat(64),
+          format: "text",
+          view: { lines: ["a"], line_count: 6000, truncated: true },
+          view_error: null,
+        },
+        {
+          name: "huge.brp",
+          size: 17_000_000,
+          sha256: null,
+          format: null,
+          view: null,
+          view_error: "larger than the 16 MiB an entry's view reads",
+        },
+      ],
+      entry_count: 4,
+      truncated: false,
+    },
+  },
+  "Documents/many.zip": {
+    format: "zip",
+    view: { entries: [], entry_count: 1200, truncated: true },
+  },
   "Documents/photo.png": { format: "binary", view: null },
   "Documents/huge.txt": {
     format: null,
@@ -68,10 +131,221 @@ export const CHECK_VIEWS: Readonly<Record<string, TaskFileView>> = {
   },
 };
 
+/** An element of REA's XML view. */
+function element(
+  name: string,
+  attributes: Record<string, string>,
+  children: JsonValue[] = [],
+): JsonValue {
+  return { name, attributes, children };
+}
+
 const todo = "Documents/todo.txt";
 const settings = ".config/notes/settings.json";
 const db = ".local/share/notes/notes.db";
 const absent = "Documents/absent.txt";
+const plate = "Documents/plate.FCStd";
+const objects = "/entries/[name=Document.xml]/view/root/children";
+const radius = `${objects}/[name=Object][@name=Hole]/children/[name=Property][@name=Radius]/children/[name=Float]/attributes/value`;
+
+/** Selectors: one member matched, none, several, or a malformed one, through a zip view. */
+const SELECTOR_CASES: readonly (readonly [DesktopTaskCheckInput, boolean])[] = [
+  [
+    {
+      kind: "value_equals",
+      file: plate,
+      pointer: `${objects}/[name=Object][@name=Hole]/attributes/type`,
+      value: "Part::Cylinder",
+    },
+    true,
+  ],
+  [
+    {
+      kind: "value_equals",
+      file: plate,
+      pointer: `${objects}/[name=Object][@type=Part::Box]/attributes/name`,
+      value: "Plate",
+    },
+    false,
+  ],
+  [
+    {
+      kind: "value_equals",
+      file: plate,
+      pointer: `${objects}/[name=Object][@name=Gone]/attributes/name`,
+      value: "Gone",
+    },
+    false,
+  ],
+  [
+    {
+      kind: "value_equals",
+      file: plate,
+      pointer: `${objects}/[name=Object][@name=Gone]`,
+      value: "Gone",
+    },
+    false,
+  ],
+  [
+    {
+      kind: "value_absent",
+      file: plate,
+      pointer: `${objects}/[name=Object][@name=Gone]`,
+    },
+    true,
+  ],
+  [
+    {
+      kind: "value_absent",
+      file: plate,
+      pointer: `${objects}/[name=Object][@name=Gone]/attributes/type`,
+    },
+    false,
+  ],
+  [
+    {
+      kind: "value_absent",
+      file: plate,
+      pointer: `${objects}/[name=Object][@type=Part::Box]`,
+    },
+    false,
+  ],
+  [
+    { kind: "value_equals", file: settings, pointer: "/tags/[x]", value: "a" },
+    false,
+  ],
+  [{ kind: "value_absent", file: settings, pointer: "/tags/[name=a]" }, true],
+  [
+    {
+      kind: "value_equals",
+      file: plate,
+      pointer: "/entries/[name=thumbnails~1Thumbnail.png]/format",
+      value: "binary",
+    },
+    true,
+  ],
+  [
+    {
+      kind: "value_equals",
+      file: plate,
+      pointer: "/entries/0/name",
+      value: "Document.xml",
+    },
+    true,
+  ],
+  [
+    {
+      kind: "value_absent",
+      file: plate,
+      pointer: "/entries/[name=Document.xml]/view/root/attributes/x",
+    },
+    true,
+  ],
+  [
+    {
+      kind: "value_absent",
+      file: plate,
+      pointer: "/entries/[name=shape.brp]/view/lines/5",
+    },
+    false,
+  ],
+  [
+    {
+      kind: "value_absent",
+      file: plate,
+      pointer: "/entries/[name=huge.brp]/view/lines/0",
+    },
+    false,
+  ],
+  [
+    { kind: "value_absent", file: plate, pointer: "/entries/[name=gone.txt]" },
+    true,
+  ],
+  [
+    {
+      kind: "value_absent",
+      file: "Documents/many.zip",
+      pointer: "/entries/[name=gone.txt]",
+    },
+    false,
+  ],
+  [{ kind: "lines_present", file: plate, lines: ["a"] }, false],
+];
+
+/** Numbers within a tolerance, numeral strings read as numbers, anything else refused. */
+const TOLERANCE_CASES: readonly (readonly [DesktopTaskCheckInput, boolean])[] =
+  [
+    [
+      {
+        kind: "value_equals",
+        file: plate,
+        pointer: radius,
+        value: 5,
+        tolerance: 0.01,
+      },
+      true,
+    ],
+    [
+      {
+        kind: "value_equals",
+        file: plate,
+        pointer: radius,
+        value: 5.1,
+        tolerance: 0.01,
+      },
+      false,
+    ],
+    [
+      {
+        kind: "value_equals",
+        file: plate,
+        pointer: `${objects}/[name=Object][@name=Hole]/attributes/type`,
+        value: 5,
+        tolerance: 1,
+      },
+      false,
+    ],
+    [
+      {
+        kind: "value_equals",
+        file: settings,
+        pointer: "/ratio",
+        value: 0.49,
+        tolerance: 0.02,
+      },
+      true,
+    ],
+    [
+      {
+        kind: "value_equals",
+        file: settings,
+        pointer: "/wrap",
+        value: 1,
+        tolerance: 0,
+      },
+      false,
+    ],
+    [
+      {
+        kind: "value_equals",
+        file: settings,
+        pointer: "/scale",
+        value: 1.25,
+        tolerance: 0,
+      },
+      true,
+    ],
+    [
+      {
+        kind: "value_equals",
+        file: settings,
+        pointer: "/missing",
+        value: 1,
+        tolerance: 0,
+      },
+      false,
+    ],
+  ];
 
 /** Every kind of check against those views, each with the outcome both evaluators must give. */
 export const CHECK_CASES: readonly (readonly [
@@ -319,4 +593,6 @@ export const CHECK_CASES: readonly (readonly [
   [{ kind: "row_count", file: db, table: "notes", at_least: 3 }, false],
   [{ kind: "row_count", file: db, table: "big", at_least: 1 }, false],
   [{ kind: "row_count", file: absent, table: "notes", equals: 0 }, true],
+  ...SELECTOR_CASES,
+  ...TOLERANCE_CASES,
 ];

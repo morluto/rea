@@ -28,14 +28,17 @@ generation reads the kinds of change.
   `dconf dump /` on a private file profile, keeping only
   groups whose path names the application; JSON up to 4 MiB and 500 levels
   with exact numbers; XML through the shared strict parser with DOCTYPEs
-  refused; key files up to 4 MiB whose every line parses; text; binary.
+  refused; key files up to 4 MiB whose every line parses; zip archives by
+  their local file header, as their entries with each entry's own format and
+  view ([document views](../document-views/spec.md)); text; binary.
 - Changes between versions are created, deleted, or lines, values, keys or
   rows with added, removed and changed lists (100 each, with counts); content
   for binary files and unreadable when a view is missing. Values are JSON
   pointers to every value, containers included, compared on one shared path
   so memory follows depth, and a pointer over 4096 characters is counted but
   not listed; keys are `group/key` with the key escaped as a JSON pointer
-  segment, so distinct entries never share a name.
+  segment, so distinct entries never share a name. Zip values name array
+  members by selector where one names a member in both versions.
 - The Evidence has operation `inspect_desktop_application_state`, predicate
   type `rea.desktop-application-state` and confidence `inferred`.
 

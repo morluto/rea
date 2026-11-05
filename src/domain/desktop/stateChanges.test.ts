@@ -193,3 +193,107 @@ describe("diffStateViews fidelity", () => {
     ).toBe(true);
   });
 });
+
+describe("diffStateViews zip archives", () => {
+  it("matches zip entries and XML elements by name, so an inserted one shifts nothing", () => {
+    const element = (name: string, attributes: Record<string, string>) => ({
+      name,
+      attributes,
+      children: [],
+    });
+    const archive = (objects: JsonValue[], radius: string): JsonValue => ({
+      entries: [
+        {
+          name: "thumb.png",
+          size: 3,
+          sha256: "a",
+          format: "binary",
+          view: null,
+        },
+        {
+          name: "Document.xml",
+          size: 9,
+          sha256: radius,
+          format: "xml",
+          view: {
+            root: { name: "Document", attributes: {}, children: objects },
+            truncated: false,
+          },
+          view_error: null,
+        },
+      ],
+      entry_count: 2,
+      truncated: false,
+    });
+    const plate = element("Object", { name: "Plate", type: "Part::Box" });
+    const hole = element("Object", { name: "Hole", type: "Part::Cylinder" });
+
+    const difference = diffStateViews(
+      "zip",
+      archive([plate], "1"),
+      archive(
+        [hole, { ...plate, attributes: { name: "Plate", type: "Part::Cut" } }],
+        "2",
+      ),
+    );
+
+    const objects = "/entries/[name=Document.xml]/view/root/children";
+    expect(difference).toMatchObject({
+      kind: "values",
+      added: [
+        `${objects}/[name=Object][@name=Hole]`,
+        `${objects}/[name=Object][@name=Hole]/name`,
+        `${objects}/[name=Object][@name=Hole]/attributes`,
+        `${objects}/[name=Object][@name=Hole]/attributes/name`,
+        `${objects}/[name=Object][@name=Hole]/attributes/type`,
+        `${objects}/[name=Object][@name=Hole]/children`,
+      ],
+      removed: [],
+      changed: [
+        "/entries/[name=Document.xml]/sha256",
+        `${objects}/[name=Object][@name=Plate]/attributes/type`,
+      ],
+      complete: true,
+    });
+  });
+
+  it("marks a zip comparison incomplete when an entry was left unread or its view cut", () => {
+    const listing = (entry: JsonValue): JsonValue => ({
+      entries: [entry],
+      entry_count: 1,
+      truncated: false,
+    });
+    const read = {
+      name: "a.txt",
+      size: 1,
+      format: "text",
+      view: { lines: [] },
+      view_error: null,
+    };
+
+    expect(
+      diffStateViews(
+        "zip",
+        listing(read),
+        listing({ ...read, view_error: "encrypted, so it is not read" }),
+      ).complete,
+    ).toBe(false);
+    expect(
+      diffStateViews(
+        "zip",
+        listing(read),
+        listing({ ...read, view: { lines: [], truncated: true } }),
+      ).complete,
+    ).toBe(false);
+    expect(
+      diffStateViews("zip", listing(read), {
+        entries: [],
+        entry_count: 1001,
+        truncated: true,
+      }).complete,
+    ).toBe(false);
+    expect(diffStateViews("zip", listing(read), listing(read)).complete).toBe(
+      true,
+    );
+  });
+});

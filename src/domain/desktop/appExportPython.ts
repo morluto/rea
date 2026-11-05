@@ -10,6 +10,7 @@ export const PYTHON_READY_CHECK = `
 export const PYTHON_IMPORTS = `from __future__ import annotations
 
 import contextlib
+import hashlib
 import json
 import math
 import os
@@ -19,6 +20,8 @@ import subprocess
 import sys
 import tempfile
 import xml.etree.ElementTree as ElementTree
+import zipfile
+import zlib
 from pathlib import Path
 
 from agentenv_protocol import add_data, get_data, reset_data
@@ -33,6 +36,8 @@ XML_SUFFIXES = (".xml", ".xbel", ".plist", ".svg", ".ui")
 GROUP_HEADER = re.compile(r"^\[([^\]]+)\]$")
 LINE_BREAK = re.compile(r"\r?\n")
 SQLITE_HEADER = b"SQLite format 3\x00"
+GVDB_HEADER = b"GVariant"
+ZIP_HEADER = b"PK\x03\x04"
 XML_SPACE = "{http://www.w3.org/XML/1998/namespace}space"
 MAX_VIEW_BYTES = 64 * 1024 * 1024
 MAX_SAFE_INTEGER = 2**53 - 1
@@ -42,6 +47,14 @@ MAX_LINES = 5000
 MAX_XML_NODES = 5000
 MAX_XML_DEPTH = 64
 SQLITE_BUSY_S = 0.25
+MAX_PARSED_BYTES = 4 * 1024 * 1024
+MAX_ZIP_ENTRIES = 1000
+MAX_ZIP_ENTRY_BYTES = 16 * 1024 * 1024
+MAX_ZIP_BYTES = 64 * 1024 * 1024
+MAX_ZIP_RATIO = 100
+#: Formats an archive entry may have whose reader needs a tool, a worker or another archive opened.
+NOT_READ_INSIDE = ((SQLITE_HEADER, "sqlite", "a SQLite database"), (GVDB_HEADER, "dconf", "a dconf database"),
+                   (ZIP_HEADER, "zip", "an archive"))
 
 
 def _respelled(text: str, home: Path) -> str:
@@ -347,6 +360,79 @@ def _text_view(name: str, text: str) -> dict:
     return _text(text)
 
 
+def _entry_view(name: str, data: bytes) -> dict:
+    """An archive entry's format and view by the rules a file's follow; a database or an archive inside is not
+    read."""
+    for header, form, inside in NOT_READ_INSIDE:
+        if data.startswith(header):
+            return {"format": form, "view": None, "error": f"{inside} inside an archive is not read"}
+    try:
+        text = data.decode("utf-8-sig") if b"\x00" not in data[:8192] else None
+    except UnicodeDecodeError:
+        text = None
+    if text is None:
+        return {"format": "binary", "view": None}
+    view = _text_view(name, text)
+    if view["format"] in ("json", "keyfile") and len(data) > MAX_PARSED_BYTES:
+        return {"format": view["format"], "view": None,
+                "error": "larger than the 4 MiB limit for JSON and key file views"}
+    return view
+
+
+def _zip_refusal(info, spent: int):
+    """Why an entry is not read, checked in REA's order, or None; spent is the archive's bytes read so far."""
+    if info.flag_bits & 0x1:
+        return "encrypted, so it is not read"
+    if info.compress_type not in (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED):
+        return f"compressed with method {info.compress_type}, which the view does not read"
+    if info.file_size > MAX_ZIP_ENTRY_BYTES:
+        return "larger than the 16 MiB an entry's view reads"
+    if info.file_size > MAX_ZIP_RATIO * info.compress_size:
+        return f"expands more than {MAX_ZIP_RATIO} times, so it is not read"
+    if spent + info.file_size > MAX_ZIP_BYTES:
+        return "past the 64 MiB read from one archive"
+    return None
+
+
+def _zip_entry(archive, info, refusal):
+    """One entry of a zip view: its name, size and digest, and its own format and view, or why it was not read."""
+    entry = {"name": info.filename, "size": info.file_size, "sha256": None, "format": None, "view": None,
+             "view_error": refusal}
+    if refusal is not None:
+        return entry
+    try:
+        with archive.open(info) as member:
+            data = member.read()
+    except (zipfile.BadZipFile, zlib.error, EOFError, OSError, ValueError):
+        data = None
+    if data is None or len(data) != info.file_size:
+        return {**entry, "view_error": "its compressed data is damaged"}
+    view = _entry_view(info.filename, data)
+    return {**entry, "sha256": hashlib.sha256(data).hexdigest(), "format": view["format"],
+            "view": view.get("view"), "view_error": view.get("error")}
+
+
+def _zip(path: Path) -> dict:
+    """A zip archive's file entries in archive order, up to REA's entry, size, ratio and archive limits; nothing is
+    extracted to disk and no archive inside is opened."""
+    entries, count, spent = [], 0, 0
+    try:
+        with zipfile.ZipFile(path) as archive:
+            for info in archive.infolist():
+                if info.is_dir():
+                    continue
+                count += 1
+                if len(entries) >= MAX_ZIP_ENTRIES:
+                    continue
+                refusal = _zip_refusal(info, spent)
+                spent += info.file_size if refusal is None else 0
+                entries.append(_zip_entry(archive, info, refusal))
+    except (zipfile.BadZipFile, zlib.error, EOFError, NotImplementedError, OSError, ValueError):
+        return {"format": "zip", "view": None, "error": "not a readable zip archive"}
+    view = {"entries": entries, "entry_count": count, "truncated": count > len(entries)}
+    return {"format": "zip", "view": view, "truncated": view["truncated"]}
+
+
 def _view(path: Path) -> dict:
     """A typed JSON view of one file in the shapes of REA's state view; truncated says the view is partial."""
     too_large = {"format": None, "view": None, "error": "larger than 64 MiB, the most the view reads"}
@@ -358,6 +444,8 @@ def _view(path: Path) -> dict:
         data += file.read(MAX_VIEW_BYTES + 1 - len(data)) if whole else b""
     if data.startswith(SQLITE_HEADER):
         return _sqlite(path)
+    if data.startswith(ZIP_HEADER):
+        return _zip(path)
     if len(data) > MAX_VIEW_BYTES:
         return too_large
     try:

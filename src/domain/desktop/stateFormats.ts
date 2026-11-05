@@ -14,6 +14,7 @@ export type DesktopStateFormat =
   | "xml"
   | "sqlite"
   | "dconf"
+  | "zip"
   | "binary";
 
 const SQLITE_HEADER = "SQLite format 3\0";
@@ -23,6 +24,8 @@ export const SQLITE_SIDECARS = [
   { suffix: "-journal", label: "rollback journal" },
 ] as const;
 const GVDB_HEADER = "GVariant";
+/** A zip archive's local file header, which FreeCAD, ODF, OOXML, EPUB and JAR files begin with. */
+const ZIP_HEADER = "PK\u0003\u0004";
 const XML_EXTENSIONS = /\.(?:xml|xbel|plist|svg|ui)$/iu;
 const MAX_TEXT_LINES = 5000;
 const MAX_XML_NODES = 5000;
@@ -88,6 +91,7 @@ export const detectStateFormat = (
   const header = new TextDecoder("latin1").decode(bytes.subarray(0, 16));
   if (header === SQLITE_HEADER) return "sqlite";
   if (header.startsWith(GVDB_HEADER)) return "dconf";
+  if (header.startsWith(ZIP_HEADER)) return "zip";
   const text = decodeStateText(bytes);
   if (text === undefined) return "binary";
   const trimmed = text.trimStart();
@@ -255,4 +259,40 @@ export const xmlView = (text: string): JsonValue | undefined => {
   return tree === undefined
     ? undefined
     : { root: tree, truncated: budget.truncated };
+};
+
+const MIB = 1024 * 1024;
+/** Largest JSON or key file read into a view, whose whole value enters Evidence. */
+const MAX_PARSED_VIEW_BYTES = 4 * MIB;
+
+/** Formats read from a file's bytes alone, without a tool or worker. */
+export type TextualStateFormat = "text" | "json" | "keyfile" | "xml";
+
+/** A text, JSON, key file or XML file's view, or why it has none. */
+export const textualView = (
+  format: TextualStateFormat,
+  bytes: Uint8Array,
+): Result<JsonValue, string> => {
+  if (
+    (format === "json" || format === "keyfile") &&
+    bytes.length > MAX_PARSED_VIEW_BYTES
+  )
+    return err(
+      `larger than the ${String(MAX_PARSED_VIEW_BYTES / MIB)} MiB limit for JSON and key file views`,
+    );
+  const text = decodeStateText(bytes) ?? "";
+  switch (format) {
+    case "text":
+      return ok(textView(text));
+    case "json":
+      return jsonView(text);
+    case "keyfile":
+      return ok({ groups: keyfileView(text) });
+    case "xml": {
+      const tree = xmlView(text);
+      return tree === undefined
+        ? err("not well-formed XML, or it declares a DOCTYPE")
+        : ok(tree);
+    }
+  }
 };

@@ -11,6 +11,7 @@ const format = z.enum([
   "xml",
   "sqlite",
   "dconf",
+  "zip",
   "binary",
 ]);
 const index = z.int().min(0);

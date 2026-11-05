@@ -30,6 +30,10 @@ The work lands as one PR per step:
    installed from a downloaded `.deb` file, which the computer downloads from
    an operator's URL and checks by its captured SHA-256, starting with
    VariCAD.
+10. [Document views](document-views/spec.md): documents saved as zip
+    archives (FreeCAD, OpenDocument, Office Open XML, EPUB) read as their
+    entries, checked by name rather than position, and numbers compared
+    within a tolerance, starting with FreeCAD.
 
 Version 1 covers Linux with X11, applications whose state lives in files or
 SQLite under the home directory, and real applications from public packages.

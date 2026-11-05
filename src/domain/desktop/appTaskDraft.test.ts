@@ -349,3 +349,112 @@ describe("draftTaskFiles with partial evidence", () => {
     });
   });
 });
+
+describe("draftTaskFiles archives", () => {
+  it("suggests checks inside an archive's XML by name: elements added or removed whole, then values", () => {
+    const element = (
+      name: string,
+      attributes: Record<string, string>,
+      children: JsonValue[] = [],
+    ): JsonValue => ({ name, attributes, children });
+    const archive = (objects: JsonValue[], saved: string): JsonValue => ({
+      entries: [
+        {
+          name: "Document.xml",
+          size: 1,
+          sha256: saved,
+          format: "xml",
+          view: {
+            root: element("Document", { saved }, [
+              element("Objects", {}, objects),
+            ]),
+            truncated: false,
+          },
+          view_error: null,
+        },
+        {
+          name: "thumb.png",
+          size: 1,
+          sha256: saved,
+          format: "binary",
+          view: null,
+          view_error: null,
+        },
+      ],
+      entry_count: 2,
+      truncated: false,
+    });
+    const plate = { name: "Plate", type: "Part::Box" };
+    const box = element("Object", { ...plate, count: "1" });
+    const sketch = element("Object", { name: "Sketch", type: "Sketcher" });
+    const hole = element("Object", { name: "Hole", type: "Part::Cylinder" }, [
+      element("Property", { name: "Radius" }, [
+        element("Float", { value: "5.0" }),
+      ]),
+    ]);
+
+    const [document] = draft({
+      "Documents/plate.FCStd": path(
+        "document",
+        "zip",
+        archive([box, sketch], "2026-11-04T10:12:00Z"),
+        archive(
+          [element("Object", { ...plate, count: "2" }), hole],
+          "2026-11-04T10:13:00Z",
+        ),
+      ),
+    });
+
+    const objects =
+      "/entries/[name=Document.xml]/view/root/children/[name=Objects]/children";
+    expect(document?.suggested).toEqual([
+      {
+        kind: "value_equals",
+        file: "Documents/plate.FCStd",
+        pointer: `${objects}/[name=Object][@name=Hole]/name`,
+        value: "Object",
+      },
+      {
+        kind: "value_absent",
+        file: "Documents/plate.FCStd",
+        pointer: `${objects}/[name=Object][@name=Sketch]`,
+      },
+      {
+        kind: "value_equals",
+        file: "Documents/plate.FCStd",
+        pointer: `${objects}/[name=Object][@name=Plate]/attributes/count`,
+        value: "2",
+      },
+    ]);
+  });
+
+  it("suggests nothing inside XML that uses namespaces, which the verifier names differently", () => {
+    const odt = (text: string): JsonValue => ({
+      entries: [
+        {
+          name: "content.xml",
+          size: 1,
+          sha256: text,
+          format: "xml",
+          view: {
+            root: {
+              name: "office:text",
+              attributes: {},
+              children: [{ name: "text:p", attributes: {}, children: [text] }],
+            },
+            truncated: false,
+          },
+          view_error: null,
+        },
+      ],
+      entry_count: 1,
+      truncated: false,
+    });
+
+    const [list] = draft({
+      "Documents/list.odt": path("document", "zip", odt("a"), odt("b")),
+    });
+
+    expect(list).toMatchObject({ change: { kind: "values" }, suggested: [] });
+  });
+});

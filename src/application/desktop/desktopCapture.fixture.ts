@@ -15,9 +15,11 @@ export { change, checkpoint, retained };
 
 /** A synthetic capture of a notes app: a settings key file, a document and a SQLite database. */
 export const HOME = "/home/ada";
-const sha256 = (text: string) =>
+/** A retained file's content: text, or bytes such as a zip archive's. */
+type Content = string | Buffer;
+const sha256 = (text: Content) =>
   createHash("sha256").update(text).digest("hex");
-const facts = (text: string) => ({
+const facts = (text: Content) => ({
   type: "file" as const,
   size: text.length,
   mode: 0o644,
@@ -26,7 +28,7 @@ const facts = (text: string) => ({
 });
 const change = (
   path: string,
-  versions: { readonly before?: string; readonly after: string },
+  versions: { readonly before?: Content; readonly after: Content },
   marks: { readonly state?: boolean } = {},
 ) => ({
   path,
@@ -39,7 +41,7 @@ const change = (
   in_state_directory: marks.state === true,
   opened_by_application: false,
 });
-const retained = (path: string, text: string) => ({
+const retained = (path: string, text: Content) => ({
   path,
   sha256: sha256(text),
   size: text.length,
@@ -168,7 +170,7 @@ export const capture = (): DesktopApplicationCapture => ({
 export const writeCaptureFolder = async (
   result: DesktopApplicationCapture,
   operation = DESKTOP_OPERATION,
-  extraContent: readonly string[] = [],
+  extraContent: readonly Content[] = [],
 ) => {
   const folder = await createTestTempDirectory("desktop-state-");
   await mkdir(join(folder, "content"));

@@ -46,7 +46,11 @@ operation `describe_desktop_application_task` and predicate type
   lines it lost (when either is at most ten), and `line_count` for each line
   holding a letter whose count changed; JSON, XML and key files gain
   `value_equals` and `value_absent` by pointer; SQLite tables gain rows added,
-  changed and removed, by primary key, and their new row count. Values that
+  changed and removed, by primary key, and their new row count. A zip archive
+  gains checks inside the JSON, key file and namespace-free XML views of its
+  entries, by [selectors](#pointers-and-selectors) and never through an
+  element by position: an element added whole that it exists, one removed
+  whole that it is absent, then values changed, added and removed. Values that
   look like a time the app stamps are left out.
 
 The suggestions are a starting point. Keep the ones that say what the user
@@ -86,7 +90,7 @@ file, in the shapes of the state view.
 | `lines_present` | `lines`                                                      | Every listed line is a whole line of the text view                       |
 | `lines_absent`  | `lines`                                                      | None of the listed lines is                                              |
 | `line_count`    | `exact` or `contains`; `equals`, `at_least` or `at_most`     | The number of lines equal to `exact`, or holding `contains`, compares so |
-| `value_equals`  | `pointer`, `value`                                           | The JSON pointer names a value equal to `value`                          |
+| `value_equals`  | `pointer`, `value`; optional `tolerance`                     | The pointer names a value equal to `value`, or within `tolerance` of it  |
 | `value_absent`  | `pointer`                                                    | The pointer names no value                                               |
 | `row_present`   | `table`, `where`                                             | A row of the SQLite table has every column in `where` equal              |
 | `row_absent`    | `table`, `where`                                             | No row does                                                              |
@@ -102,9 +106,16 @@ The rules both evaluators follow:
 - Equality is JSON equality: numbers by value, never a boolean for a number,
   objects by their keys whatever their order, arrays in order.
 - Pointers follow RFC 6901 (`~1` for `/`, `~0` for `~`) and must start with
-  `/`. Key files read as `{"groups": {"GROUP": {"KEY": "VALUE"}}}`, so a
-  setting is `/groups/GROUP/KEY`; XML as
-  `{"root": {"name", "attributes", "children"}}`; SQLite as `{"tables": {"TABLE": {"columns", "rows"}}}`.
+  `/`; on an array a segment may be a selector, below. Key files read as
+  `{"groups": {"GROUP": {"KEY": "VALUE"}}}`, so a setting is
+  `/groups/GROUP/KEY`; XML as `{"root": {"name", "attributes", "children"}}`;
+  SQLite as `{"tables": {"TABLE": {"columns", "rows"}}}`; a zip archive as
+  `{"entries": [{"name", "format", "view", …}]}`.
+- With `tolerance`, a non-negative number, `value` must be a number, and the
+  value found passes when it is a number, or a string that is a decimal
+  numeral such as `"5.0000000000000000"`, at most `tolerance` from `value`.
+  `tolerance: 0` compares numerically, so `"1.2500"` equals `1.25`. Anything
+  else fails as not a number.
 - `contains` matches a line that holds it anywhere, case and all. Checks take
   no regular expressions: a pattern run on what the agent wrote could stall
   the verifier, and JavaScript and Python read some patterns differently.
@@ -115,10 +126,67 @@ The rules both evaluators follow:
 
 The export refuses, naming the check, a file outside the owned paths, a file
 spelled with a leading slash, `.` or `..`, a pointer into a text file or into
-XML that uses namespaces (the verifier's reader names them differently), the
-empty pointer (the whole file), a value that names the captured home, and a
+XML that uses namespaces, including an archive entry's (the verifier's reader
+names them differently), the empty pointer (the whole file), a value that
+names the captured home, a `tolerance` with a value that is not a number, and a
 value that looks like an ISO 8601 date and time. Other volatile content, such
 as a counter the app bumps on every save, is for the author to leave out.
+
+## Pointers and selectors
+
+An app that rewrites a document moves things: FreeCAD 1.0 records more
+properties than 0.21, so a hole's radius sits at another position among its
+siblings, and a plate's entry moves once a hole is added before it. A pointer
+segment applied to an array may therefore name a member by what it holds
+rather than by its position:
+
+- `[KEY=VALUE]` names the member whose string field `KEY` is `VALUE`, such as
+  a zip entry by `[name=Document.xml]` or an XML element by its tag,
+  `[name=Object]`.
+- `[@KEY=VALUE]` names the member whose `attributes` hold `KEY="VALUE"`, as
+  the XML view keeps an element's attributes.
+- Conditions can follow one another, `[name=Object][@name=Hole]`, and all must
+  hold. They compare strings only, the selector is escaped like any pointer
+  segment (`~1` for `/`), and a value cannot hold `][`.
+
+A selector must name exactly one member. When several match, or none does
+before the last segment, the check fails and says which selector matched what.
+When the last segment's selector matches none, the pointer names no value:
+`value_absent` passes, which is how a check says an element was removed, and
+`value_equals` fails. On an object, a bracketed segment is an ordinary key.
+
+A FreeCAD task that checks the user cut a 10 mm hole through the plate, in
+FreeCAD 0.21 and 1.0 alike:
+
+```json
+{
+  "name": "cut-hole",
+  "prompt": "Cut a 10 mm hole through the middle of the plate and save it.",
+  "checks": [
+    {
+      "id": "cut",
+      "kind": "value_equals",
+      "file": "Documents/plate.FCStd",
+      "pointer": "/entries/[name=Document.xml]/view/root/children/[name=Objects]/children/[name=Object][@type=Part::Cut]/attributes/type",
+      "value": "Part::Cut"
+    },
+    {
+      "id": "radius",
+      "kind": "value_equals",
+      "file": "Documents/plate.FCStd",
+      "pointer": "/entries/[name=Document.xml]/view/root/children/[name=ObjectData]/children/[name=Object][@name=Hole]/children/[name=Properties]/children/[name=Property][@name=Radius]/children/[name=Float]/attributes/value",
+      "value": 5,
+      "tolerance": 0.01
+    }
+  ]
+}
+```
+
+Before the edit the archive has no `Part::Cut` and no `Hole`, so both checks
+fail on the seed; after it, `Radius` is `"5.0000000000000000"` and both pass.
+A check decided by what a view leaves out depends, in an archive, on the entry
+its pointer goes into: it fails when that entry's view is missing or
+truncated, or when the entry is not listed and the listing is truncated.
 
 ## Validation and export
 

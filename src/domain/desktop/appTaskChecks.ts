@@ -1,6 +1,8 @@
 import type { JsonValue } from "../jsonValue.js";
 import { countComparison, type DesktopTaskCheck } from "./appTask.js";
 import type { DesktopStatePath } from "./desktopState.js";
+import { locatePointer } from "./viewPointer.js";
+import { zipLeavesOutAt } from "./zipView.js";
 
 /** One file as the app's data/get reports it: its view, or why it has none. An absent file has no entry. */
 export interface TaskFileView {
@@ -62,24 +64,15 @@ export const sameJson = (
   return actual === expected;
 };
 
-/** The value a JSON pointer names, or undefined when it names none. */
-export const resolvePointer = (
-  view: JsonValue | null,
-  pointer: string,
-): JsonValue | undefined => {
-  let current: JsonValue | null = view;
-  for (const raw of pointer.slice(1).split("/")) {
-    const token = raw.replaceAll("~1", "/").replaceAll("~0", "~");
-    if (Array.isArray(current)) {
-      if (!/^(?:0|[1-9][0-9]*)$/u.test(token)) return undefined;
-      const index = Number(token);
-      if (index >= current.length) return undefined;
-      current = current[index] ?? null;
-    } else if (isRecord(current) && Object.hasOwn(current, token))
-      current = current[token] ?? null;
-    else return undefined;
-  }
-  return current ?? null;
+/** A decimal numeral as FreeCAD and other apps write numbers in text, such as `5.0000000000000000`. */
+const NUMERAL = /^[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?$/u;
+
+/** A number, or a numeral string read as one; undefined for anything else or a numeral past the doubles. */
+const numberOf = (value: JsonValue): number | undefined => {
+  if (typeof value === "number") return value;
+  if (typeof value !== "string" || !NUMERAL.test(value)) return undefined;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : undefined;
 };
 
 /** A file's version as the app's data/get serves it, or undefined when it is absent. */
@@ -196,33 +189,62 @@ const lineVerdict = (
   );
 };
 
+/** A value compared within a tolerance: numbers, and numeral strings, by their difference. */
+const nearVerdict = (
+  at: string,
+  found: JsonValue,
+  expected: number,
+  tolerance: number,
+): Verdict => {
+  const number = numberOf(found);
+  const within = `within ${shown(tolerance)} of ${shown(expected)}`;
+  if (number === undefined)
+    return fail(`${at} is ${shown(found)}, not a number`);
+  return Math.abs(number - expected) <= tolerance
+    ? pass(`${at} is ${shown(found)}, ${within}`)
+    : fail(`${at} is ${shown(found)}, not ${within}`);
+};
+
 const valueVerdict = (
   check: Check<"value_equals" | "value_absent">,
   entry: TaskFileView | undefined,
 ): Verdict => {
   const read = viewOf(check, entry, undefined);
   if ("passed" in read) return read;
-  const found =
-    entry === undefined ? undefined : resolvePointer(read.view, check.pointer);
+  const located =
+    entry === undefined
+      ? ({ kind: "none" } as const)
+      : locatePointer(read.view, check.pointer);
   const at = `${check.file} at ${check.pointer}`;
+  if (located.kind === "unresolved") return fail(`${at}: ${located.problem}`);
+  // A zip view's truncation that matters is the entry the pointer goes into.
+  const truncated =
+    entry?.format === "zip"
+      ? zipLeavesOutAt(read.view, check.pointer)
+      : read.truncated;
   // A whole object or array equals the expected one only if nothing of it was left out.
   const whole =
     check.kind === "value_equals" &&
     typeof check.value === "object" &&
     check.value !== null;
-  if (whole && read.truncated) return undecided(check.file);
-  if (check.kind === "value_equals")
-    return found !== undefined && sameJson(found, check.value)
+  if (whole && truncated) return undecided(check.file);
+  if (check.kind === "value_equals") {
+    if (located.kind === "none")
+      return fail(
+        located.reason === undefined
+          ? `${at} has no value`
+          : `${at}: ${located.reason}`,
+      );
+    if (check.tolerance !== undefined && typeof check.value === "number")
+      return nearVerdict(at, located.value, check.value, check.tolerance);
+    return sameJson(located.value, check.value)
       ? pass(`${at} is ${shown(check.value)}`)
-      : fail(
-          found === undefined
-            ? `${at} has no value`
-            : `${at} is ${shown(found)}, not ${shown(check.value)}`,
-        );
-  if (read.truncated) return undecided(check.file);
-  return found === undefined
+      : fail(`${at} is ${shown(located.value)}, not ${shown(check.value)}`);
+  }
+  if (truncated) return undecided(check.file);
+  return located.kind === "none"
     ? pass(`${at} has no value`)
-    : fail(`${at} is ${shown(found)}`);
+    : fail(`${at} is ${shown(located.value)}`);
 };
 
 /** A table's columns and rows; a table the view lacks has none, unless the view left tables out. */

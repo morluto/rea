@@ -118,6 +118,34 @@ const REFUSALS: readonly (readonly [Record<string, unknown>, string])[] = [
     { checks: [{ kind: "row_present", file: "a", table: "t", where: {} }] },
     "name at least one column",
   ],
+  [
+    {
+      checks: [
+        {
+          kind: "value_equals",
+          file: "a",
+          pointer: "/x",
+          value: "5",
+          tolerance: 0.1,
+        },
+      ],
+    },
+    "tolerance compares numbers, so value must be a number",
+  ],
+  [
+    {
+      checks: [
+        {
+          kind: "value_equals",
+          file: "a",
+          pointer: "/x",
+          value: 5,
+          tolerance: -1,
+        },
+      ],
+    },
+    "at checks.0.tolerance",
+  ],
 ];
 
 describe("evaluateTaskChecks", () => {
@@ -149,6 +177,72 @@ describe("evaluateTaskChecks", () => {
     expect(outcomes[15]?.description).toBe(
       '2 line(s) of Documents/todo.txt match "buy milk", expected at least 3',
     );
+  });
+});
+
+describe("evaluateTaskChecks selectors and tolerance", () => {
+  const plate = "Documents/plate.FCStd";
+  const objects = "/entries/[name=Document.xml]/view/root/children";
+  const outcome = (check: Record<string, unknown>) =>
+    evaluateTaskChecks(
+      [{ id: "c", file: plate, ...check } as never],
+      new Map(Object.entries(CHECK_VIEWS)),
+    )[0];
+
+  it("fails a selector that matches several members or, on the way, none, and says which", () => {
+    expect(
+      outcome({
+        kind: "value_equals",
+        pointer: `${objects}/[name=Object][@type=Part::Box]/attributes/name`,
+        value: "Plate",
+      }),
+    ).toMatchObject({
+      passed: false,
+      description: `${plate} at ${objects}/[name=Object][@type=Part::Box]/attributes/name: [name=Object][@type=Part::Box] matches 2 members, not one`,
+    });
+    expect(
+      outcome({
+        kind: "value_absent",
+        pointer: `${objects}/[name=Object][@name=Gone]/attributes/type`,
+      })?.description,
+    ).toMatch(/: \[name=Object\]\[@name=Gone\] matches no member$/u);
+    expect(
+      outcome({
+        kind: "value_equals",
+        pointer: `${objects}/[name=Object][@name=Gone]`,
+        value: 1,
+      })?.description,
+    ).toMatch(/matches no member$/u);
+    expect(
+      outcome({
+        kind: "value_equals",
+        pointer: `${objects}/[Object]`,
+        value: 1,
+      })?.description,
+    ).toMatch(/: \[Object\] is not a selector of the form \[KEY=VALUE\]$/u);
+  });
+
+  it("compares numbers and numeral strings within a tolerance, and nothing else", () => {
+    const radius = `${objects}/[name=Object][@name=Hole]/children/[name=Property][@name=Radius]/children/[name=Float]/attributes/value`;
+
+    expect(
+      outcome({
+        kind: "value_equals",
+        pointer: radius,
+        value: 5.1,
+        tolerance: 0.01,
+      })?.description,
+    ).toBe(
+      `${plate} at ${radius} is "5.0000000000000000", not within 0.01 of 5.1`,
+    );
+    expect(
+      outcome({
+        kind: "value_equals",
+        pointer: `${objects}/[name=Object][@name=Hole]/attributes/type`,
+        value: 5,
+        tolerance: 1,
+      })?.description,
+    ).toMatch(/is "Part::Cylinder", not a number$/u);
   });
 });
 

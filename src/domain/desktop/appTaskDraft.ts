@@ -1,8 +1,10 @@
 import type { JsonValue } from "../jsonValue.js";
 import { isTimestamp, type DesktopTaskCheckInput } from "./appTask.js";
-import { namesXmlNamespace, resolvePointer } from "./appTaskChecks.js";
+import { namesXmlNamespace } from "./appTaskChecks.js";
 import type { DesktopStatePath } from "./desktopState.js";
-import { diffStateViews } from "./stateChanges.js";
+import { diffStateViews, diffZipMembers } from "./stateChanges.js";
+import { resolvePointer } from "./viewPointer.js";
+import { zipEntryAt } from "./zipView.js";
 
 type Version = DesktopStatePath["versions"][number];
 type Suggestion = DesktopTaskCheckInput;
@@ -124,12 +126,80 @@ const innermost = (pointers: readonly string[]): readonly string[] =>
     (pointer) => !pointers.some((other) => other.startsWith(`${pointer}/`)),
   );
 
+/**
+ * Whether a pointer goes into the view of an entry both evaluators read alike
+ * (JSON, a key file, or XML without namespaces), through no member by position.
+ */
+const intoReadableEntry = (pointer: string, view: JsonValue | null) => {
+  const entry = zipEntryAt(view, pointer);
+  const segments = pointer.split("/");
+  return (
+    typeof entry === "object" &&
+    segments[3] === "view" &&
+    segments.slice(2, -1).every((segment) => !/^[0-9]+$/u.test(segment)) &&
+    (entry.format === "json" ||
+      entry.format === "keyfile" ||
+      (entry.format === "xml" && !namesXmlNamespace(entry.view ?? null)))
+  );
+};
+
+/** An element of REA's XML view, by its tag name, or undefined for any other value. */
+const elementName = (value: JsonValue | undefined): string | undefined =>
+  isRecord(value) &&
+  typeof value.name === "string" &&
+  isRecord(value.attributes) &&
+  Array.isArray(value.children)
+    ? value.name
+    : undefined;
+
+/**
+ * Checks on the entries of an archive, by the selectors its diff names
+ * members with: elements added or removed whole first, as the likeliest
+ * record of what the user did, then values changed, added and removed.
+ */
+const zipSuggestions = (
+  file: string,
+  baseline: Version,
+  final: Version,
+): Suggestion[] => {
+  const change = diffZipMembers(baseline.view, final.view);
+  const into = (pointers: readonly string[], view: JsonValue | null) =>
+    pointers.filter((pointer) => intoReadableEntry(pointer, view));
+  const elements: Suggestion[] = [];
+  const values: Suggestion[] = [];
+  const equals = (pointer: string, value: JsonValue | undefined) => {
+    if (value !== undefined && !isRecord(value) && !isTimestamp(value))
+      values.push({ kind: "value_equals", file, pointer, value });
+  };
+  for (const pointer of into(change.added, final.view)) {
+    const value = resolvePointer(final.view, pointer);
+    const name = elementName(value);
+    if (name === undefined) equals(pointer, value);
+    else
+      elements.push({
+        kind: "value_equals",
+        file,
+        pointer: `${pointer}/name`,
+        value: name,
+      });
+  }
+  for (const pointer of innermost(into(change.changed, final.view)))
+    equals(pointer, resolvePointer(final.view, pointer));
+  for (const pointer of into(change.removed, baseline.view))
+    (elementName(resolvePointer(baseline.view, pointer)) === undefined
+      ? values
+      : elements
+    ).push({ kind: "value_absent", file, pointer });
+  return [...elements, ...values];
+};
+
 const valueSuggestions = (
   file: string,
   baseline: Version,
   final: Version,
 ): Suggestion[] => {
   const format = final.format;
+  if (format === "zip") return zipSuggestions(file, baseline, final);
   if (format !== "json" && format !== "xml" && format !== "keyfile") return [];
   if (format === "xml" && [baseline.view, final.view].some(namesXmlNamespace))
     return [];
