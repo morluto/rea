@@ -120,6 +120,20 @@ const COMPONENTS: Repository = {
   others: [{ source: EXTRAS, indexTarget: vendorTarget("extras") }],
 };
 
+/** A vendor repository whose sources entry holds a user name and password, which apt-get indextargets prints too. */
+const PRIVATE: Repository = {
+  list: "private.list",
+  line: () =>
+    "deb https://rea-user:hunter2@apt.vendor.example/repo stable main\n",
+  source: "https://apt.vendor.example/repo stable/main arm64 Packages",
+  release: "o=Vendor,a=stable,n=stable,l=Vendor,c=main,b=arm64",
+  indexTarget: vendorTarget("main").replaceAll(
+    "https://",
+    "https://rea-user:hunter2@",
+  ),
+  releaseFile: "apt.vendor.example_repo_dists_stable_",
+};
+
 interface FixtureOptions {
   readonly repository?: Repository;
   /** The bytes of trusted.gpg.d/typora.gpg (or .asc when armored). */
@@ -309,6 +323,7 @@ describe.skipIf(process.platform === "win32")("vendor repositories", () => {
           source: TYPORA.source,
           sources_file: join(root, "apt/sources.list.d/typora.list"),
           uri: "https://downloads.typora.io/linux",
+          uri_credentials_removed: false,
           suite: "./",
           components: [],
           architectures: [],
@@ -376,6 +391,30 @@ describe.skipIf(process.platform === "win32")("vendor repositories", () => {
         }),
       }),
     ]);
+  });
+
+  it("records a repository whose sources entry holds a user name and password without them, and marks it", async () => {
+    const { inspect } = await vendorFixture({ repository: PRIVATE });
+
+    const result = await inspect();
+
+    if (!result.ok) throw new Error(result.error.reason);
+    const { inventory, limitations } = result.value;
+    expect(inventory.package.apt_repositories).toEqual([
+      expect.objectContaining({
+        source: PRIVATE.source,
+        uri: "https://apt.vendor.example/repo",
+        suite: "stable",
+        components: ["main"],
+        uri_credentials_removed: true,
+        signing_key: expect.objectContaining({
+          fingerprint: VENDOR_A.fingerprint,
+        }),
+      }),
+    ]);
+    expect(JSON.stringify({ inventory, limitations })).not.toMatch(
+      /rea-user|hunter2/u,
+    );
   });
 
   it("does not check an Ubuntu Pro repository, whose credentials the computer lacks", async () => {

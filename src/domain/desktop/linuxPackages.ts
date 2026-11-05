@@ -1,3 +1,5 @@
+import { withoutCredentialsIn } from "./aptRepositories.js";
+
 /** Facts `dpkg-query -W` reports for one installed package. */
 export interface DebianPackageStatus {
   readonly name: string;
@@ -57,6 +59,12 @@ const POLICY_VERSION = /^ (?:\*\*\*| {3}) (?<version>\S+) -?\d+$/u;
 const POLICY_SOURCE = /^ {8}-?\d+ (?<source>.+)$/u;
 const DPKG_STATUS_SOURCE = "/var/lib/dpkg/status";
 
+/** The source a policy line names, without any user name or password in its URI. */
+const policySource = (pattern: RegExp, line: string): string | undefined => {
+  const source = pattern.exec(line)?.groups?.source?.trim();
+  return source === undefined ? undefined : withoutCredentialsIn(source);
+};
+
 /**
  * The package sources `apt-cache policy` lists for the installed version,
  * excluding the dpkg status database every installed version carries.
@@ -70,7 +78,7 @@ export const parseAptPolicySources = (output: string): readonly string[] => {
       installed = line.startsWith(" ***");
       continue;
     }
-    const source = POLICY_SOURCE.exec(line)?.groups?.source?.trim();
+    const source = policySource(POLICY_SOURCE, line);
     if (installed && source !== undefined && source !== DPKG_STATUS_SOURCE)
       sources.push(source);
   }
@@ -96,7 +104,7 @@ export const parseAptPolicyPackageSources = (
       packages.set(name, current);
       continue;
     }
-    const source = POLICY_SOURCE.exec(line)?.groups?.source?.trim();
+    const source = policySource(POLICY_SOURCE, line);
     if (
       current !== undefined &&
       source !== undefined &&
@@ -123,7 +131,7 @@ export const parseAptPolicyOrigins = (
   let source: string | undefined;
   for (const line of output.split("\n")) {
     if (line.startsWith("Pinned packages:")) break;
-    const listed = GLOBAL_POLICY_SOURCE.exec(line)?.groups?.source?.trim();
+    const listed = policySource(GLOBAL_POLICY_SOURCE, line);
     if (listed !== undefined) {
       source = listed;
       if (!origins.has(source)) origins.set(source, null);

@@ -69,8 +69,11 @@ The class declares:
   such as one repository listed for two architectures, are declared once, with
   their components merged; one with a different key is left out. A repository
   whose key the capture did not verify, an Ubuntu Pro (ESM) repository, one
-  not reached over http or https, or one whose `arch=` restriction leaves out
-  the capture host's architecture is refused with its reason (a capture
+  whose sources entry's URI held a user name or password (which the capture
+  did not record and the export never writes; the reason names neither them
+  nor the URI), one not reached over http or https, or one whose `arch=`
+  restriction leaves out the capture host's architecture is refused with its
+  reason (a capture
   written before restrictions were recorded counts as unrestricted); when
   another usable repository lists the same version it is left out instead,
   with a limitation. The export also refuses local `.deb` files, snaps,
