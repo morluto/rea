@@ -1443,15 +1443,17 @@ function* collectDefinitionsSteps(
     )
       continue;
     const [receiver, key] = invocation.arguments ?? [];
-    if (invocation.arguments !== undefined && !t.isExpression(receiver))
-      continue;
+    const receiverUnknown =
+      invocation.arguments === undefined || t.isSpreadElement(receiver);
+    if (!receiverUnknown && !t.isExpression(receiver)) continue;
     const selected =
-      t.isStringLiteral(key) || t.isNumericLiteral(key) ? key.value : null;
+      !receiverUnknown && (t.isStringLiteral(key) || t.isNumericLiteral(key))
+        ? key.value
+        : null;
     state.implicitPropertyReads.set(node, [
       {
-        node: receiver ?? node,
-        projection:
-          invocation.arguments === undefined ? [null, selected] : [selected],
+        node: receiverUnknown ? node : (receiver ?? node),
+        projection: receiverUnknown ? [null, selected] : [selected],
         mutation: node,
         lookup: "prototype",
       },

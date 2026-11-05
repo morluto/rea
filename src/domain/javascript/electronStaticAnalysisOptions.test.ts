@@ -440,6 +440,7 @@ const CLASSIC_GLOBAL_ACTIVATIONS = [
   "function fail() { throw globalThis; } try { fail(); } catch ({ createWindow: start }) { start(); }",
   "function fail() { throw globalThis; } try { if (true) fail(); } catch ({ createWindow: start }) { start(); }",
   "const args = [globalThis, 'createWindow']; Reflect.get.apply(Reflect, args)();",
+  "const args = [globalThis, 'createWindow']; Reflect.get(...args)();",
   "Object.assign(Object.prototype, globalThis); ({}).createWindow();",
   "Object.setPrototypeOf(String.prototype, globalThis); ''.createWindow();",
   "Object.setPrototypeOf(this.Array.prototype, globalThis); [].createWindow();",
