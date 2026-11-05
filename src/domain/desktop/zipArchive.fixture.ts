@@ -10,6 +10,10 @@ export interface ZipMember {
   readonly crc?: number;
   /** General purpose flags; bit 0 marks the member encrypted. */
   readonly flags?: number;
+  /** "Version made by": its high byte names the host, 0 for MS-DOS and 3 for Unix. */
+  readonly madeBy?: number;
+  /** External attributes; a slash-ended name gets the MS-DOS directory bit. */
+  readonly external?: number;
 }
 
 const UTF8_NAME = 0x800;
@@ -46,7 +50,7 @@ export const zipArchive = (members: readonly ZipMember[]): Buffer => {
     local.writeUInt16LE(name.length, 26);
     const central = Buffer.alloc(46);
     central.writeUInt32LE(0x02014b50, 0);
-    central.writeUInt16LE(20, 4);
+    central.writeUInt16LE(member.madeBy ?? 20, 4);
     central.writeUInt16LE(20, 6);
     central.writeUInt16LE(fields.flags, 8);
     central.writeUInt16LE(fields.method, 10);
@@ -55,7 +59,10 @@ export const zipArchive = (members: readonly ZipMember[]): Buffer => {
     central.writeUInt32LE(fields.compressed, 20);
     central.writeUInt32LE(fields.size, 24);
     central.writeUInt16LE(name.length, 28);
-    central.writeUInt32LE(member.name.endsWith("/") ? 0x10 : 0, 38);
+    central.writeUInt32LE(
+      member.external ?? (member.name.endsWith("/") ? 0x10 : 0),
+      38,
+    );
     central.writeUInt32LE(offset, 42);
     locals.push(local, name, stored);
     centrals.push(central, name);
@@ -64,8 +71,9 @@ export const zipArchive = (members: readonly ZipMember[]): Buffer => {
   const directory = Buffer.concat(centrals);
   const end = Buffer.alloc(22);
   end.writeUInt32LE(0x06054b50, 0);
-  end.writeUInt16LE(members.length, 8);
-  end.writeUInt16LE(members.length, 10);
+  // Past 65,535 members the 16-bit counts wrap, as writers without Zip64 leave them.
+  end.writeUInt16LE(members.length & 0xffff, 8);
+  end.writeUInt16LE(members.length & 0xffff, 10);
   end.writeUInt32LE(directory.length, 12);
   end.writeUInt32LE(offset, 16);
   return Buffer.concat([...locals, directory, end]);
@@ -96,3 +104,64 @@ export const odtArchive = (
     },
     ...others,
   ]);
+
+/** An archive of `count` empty stored entries named `e/0`, `e/1` and so on, written straight into one buffer. */
+export const emptyEntriesArchive = (count: number): Buffer => {
+  const names = Array.from({ length: count }, (_, index) =>
+    Buffer.from(`e/${String(index)}`),
+  );
+  const named = names.reduce((total, name) => total + name.length, 0);
+  const directory = 30 * count + named;
+  const archive = Buffer.alloc(directory + 46 * count + named + 22);
+  let local = 0;
+  let central = directory;
+  for (const name of names) {
+    archive.writeUInt32LE(0x04034b50, local);
+    archive.writeUInt16LE(20, local + 4);
+    archive.writeUInt16LE(name.length, local + 26);
+    name.copy(archive, local + 30);
+    archive.writeUInt32LE(0x02014b50, central);
+    archive.writeUInt16LE(20, central + 4);
+    archive.writeUInt16LE(20, central + 6);
+    archive.writeUInt16LE(name.length, central + 28);
+    archive.writeUInt32LE(local, central + 42);
+    name.copy(archive, central + 46);
+    local += 30 + name.length;
+    central += 46 + name.length;
+  }
+  archive.writeUInt32LE(0x06054b50, central);
+  // Past 65,535 entries the 16-bit counts wrap, as writers without Zip64 leave them.
+  archive.writeUInt16LE(count & 0xffff, central + 8);
+  archive.writeUInt16LE(count & 0xffff, central + 10);
+  archive.writeUInt32LE(central - directory, central + 12);
+  archive.writeUInt32LE(directory, central + 16);
+  return archive;
+};
+
+/** The same archive ended by Zip64 records: a Zip64 end record and its locator, and a classic one that defers to them. */
+export const withZip64End = (archive: Buffer): Buffer => {
+  const end = archive.length - 22;
+  const entries = archive.readUInt16LE(end + 10);
+  const size = archive.readUInt32LE(end + 12);
+  const offset = archive.readUInt32LE(end + 16);
+  const record = Buffer.alloc(56);
+  record.writeUInt32LE(0x06064b50, 0);
+  record.writeBigUInt64LE(44n, 4);
+  record.writeUInt16LE(45, 12);
+  record.writeUInt16LE(45, 14);
+  record.writeBigUInt64LE(BigInt(entries), 24);
+  record.writeBigUInt64LE(BigInt(entries), 32);
+  record.writeBigUInt64LE(BigInt(size), 40);
+  record.writeBigUInt64LE(BigInt(offset), 48);
+  const locator = Buffer.alloc(20);
+  locator.writeUInt32LE(0x07064b50, 0);
+  locator.writeBigUInt64LE(BigInt(end), 8);
+  locator.writeUInt32LE(1, 16);
+  const classic = Buffer.alloc(22);
+  classic.writeUInt32LE(0x06054b50, 0);
+  classic.writeUInt16LE(0xffff, 8);
+  classic.writeUInt16LE(0xffff, 10);
+  classic.writeUInt32LE(0xffffffff, 12);
+  classic.writeUInt32LE(0xffffffff, 16);
+  return Buffer.concat([archive.subarray(0, end), record, locator, classic]);
+};

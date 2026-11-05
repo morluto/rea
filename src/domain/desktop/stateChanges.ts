@@ -1,6 +1,6 @@
 import type { JsonValue } from "../jsonValue.js";
 import type { DesktopStateFormat } from "./stateFormats.js";
-import { memberAt, pairMembers } from "./viewPointer.js";
+import { memberLookup, pairMembers } from "./viewPointer.js";
 import { zipLeavesOut } from "./zipView.js";
 
 const MAX_LISTED = 100;
@@ -81,14 +81,11 @@ const keyedMembers = (
   const others = Array.isArray(other) ? other : [];
   const pairing = older ? pairMembers(others, from) : pairMembers(from, others);
   const side = older ? pairing.older : pairing.newer;
+  const lookup = memberLookup(other);
   return side.keys.map((key, index) => {
     const partner = side.partners[index];
     // Once the array became another type, a member's counterpart is what its pointer names there.
-    if (!Array.isArray(other))
-      return {
-        key,
-        counterpart: memberAt(other, key),
-      };
+    if (!Array.isArray(other)) return { key, counterpart: lookup(key) };
     return {
       key,
       counterpart: partner === undefined ? undefined : others[partner],
@@ -127,13 +124,17 @@ const walk = (
       const member = members[index];
       if (member !== undefined) visit(member.key, item, member.counterpart);
     });
-  } else if (Array.isArray(from))
+  } else if (Array.isArray(from)) {
+    const lookup = memberLookup(other);
     from.forEach((item, index) =>
-      visit(String(index), item, memberAt(other, String(index))),
+      visit(String(index), item, lookup(String(index))),
     );
-  else if (isRecord(from))
+  } else if (isRecord(from)) {
+    // One lookup serves every key, so an array compared with an object is indexed once.
+    const lookup = memberLookup(other);
     for (const [key, item] of Object.entries(from))
-      visit(key, item, memberAt(other, key));
+      visit(key, item, lookup(key));
+  }
 };
 
 /**

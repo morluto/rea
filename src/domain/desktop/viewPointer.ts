@@ -136,21 +136,64 @@ export const locatePointer = (
   return { kind: "value", value: current, ...steps };
 };
 
-/**
- * What one pointer token names in a value by the evaluator's rules: an own
- * key, an index, or the one member a selector matches; undefined for none.
- */
-export const memberAt = (
-  value: JsonValue | undefined,
-  token: string,
-): JsonValue | undefined => {
-  if (Array.isArray(value)) {
-    const step = arrayStep(value, token, true);
-    return "member" in step ? step.member : undefined;
+/** The field a condition reads from a member, when it is a string. */
+const fieldOf = (member: JsonValue, { attribute, key }: Condition) => {
+  if (!isRecord(member)) return undefined;
+  const fields = attribute ? own(member, "attributes") : member;
+  const value = isRecord(fields) ? own(fields, key) : undefined;
+  return typeof value === "string" ? value : undefined;
+};
+
+/** Marks selector values several members share, which therefore name none. */
+const SHARED = Symbol("shared");
+
+/** The members of an array by their values for one set of selector fields, or SHARED where several have them. */
+const selectorIndex = (
+  items: readonly JsonValue[],
+  conditions: readonly Condition[],
+): ReadonlyMap<string, JsonValue | typeof SHARED> => {
+  const index = new Map<string, JsonValue | typeof SHARED>();
+  for (const item of items) {
+    const values = conditions.map((condition) => fieldOf(item, condition));
+    if (values.some((value) => value === undefined)) continue;
+    const key = JSON.stringify(values);
+    index.set(key, index.has(key) ? SHARED : item);
   }
-  return isRecord(value) && Object.hasOwn(value, token)
-    ? value[token]
-    : undefined;
+  return index;
+};
+
+/**
+ * What pointer tokens name in one value by the evaluator's rules: an own key,
+ * an index, or the one member a selector matches. An array is indexed once per
+ * set of selector fields asked for, so many tokens cost one pass, not one each.
+ */
+export const memberLookup = (
+  value: JsonValue | undefined,
+): ((token: string) => JsonValue | undefined) => {
+  if (!Array.isArray(value))
+    return (token) =>
+      isRecord(value) && Object.hasOwn(value, token) ? value[token] : undefined;
+  const indexes = new Map<
+    string,
+    ReadonlyMap<string, JsonValue | typeof SHARED>
+  >();
+  return (token) => {
+    if (INDEX.test(token)) return value[Number(token)];
+    const conditions = selectorOf(token);
+    if (conditions === undefined) return undefined;
+    const fields = JSON.stringify(
+      conditions.map(({ attribute, key }) => [attribute, key]),
+    );
+    let index = indexes.get(fields);
+    if (index === undefined) {
+      index = selectorIndex(value, conditions);
+      indexes.set(fields, index);
+    }
+    const member = index.get(
+      JSON.stringify(conditions.map(({ value }) => value)),
+    );
+    return member === SHARED ? undefined : member;
+  };
 };
 
 /** The value a pointer names, or undefined when it names none or a selector on its way is unresolved. */
