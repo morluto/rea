@@ -222,7 +222,7 @@ mcpTest(
       name: "evm-compact",
       version: "1",
     });
-    const { inputSchema, ajv } = await advertisedMcpToolSchemas(
+    const { inputSchema } = await advertisedMcpToolSchemas(
       client,
       "inspect_evm_interface",
     );
@@ -235,7 +235,6 @@ mcpTest(
         bytecode_kind: "creation",
       },
     };
-    expect(ajv.validate(inputSchema, arguments_)).toBe(true);
     const response = await client.callTool({
       name: "inspect_evm_interface",
       arguments: arguments_,

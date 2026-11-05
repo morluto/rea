@@ -369,7 +369,7 @@ describe("executable dispatcher JavaScript shutdown", () => {
       await installCliRuntime(
         workspace,
         `export const closeCliResources = () => { globalThis.cleaned = true; ${cleanupFails ? 'return Promise.reject(new Error("worker still owned"));' : ""} }; export const createCli = () => ({ serve: (_args, options) => { options.stdout("pending document"); options.exit(0); } });\n`,
-        `export const createCliResultOutput = () => ({ handled: false, failed: false, captureSdkOutput: () => true, finishSdkOutput: async () => { if (!globalThis.cleaned) throw new Error("output preceded cleanup"); await new Promise(resolve => setTimeout(resolve, 10)); ${finish} } });\n`,
+        `export const createCliResultOutput = () => ({ handled: false, failed: false, captureSdkOutput: () => true, finishSdkOutput: async (status) => { if (!globalThis.cleaned) throw new Error("output preceded cleanup"); if (status !== ${cleanupFails ? 1 : 0}) throw new Error("unexpected finish status: " + status); await new Promise(resolve => setTimeout(resolve, 10)); ${finish} } });\n`,
       );
       const result = await processes.run(
         process.execPath,
@@ -383,6 +383,7 @@ describe("executable dispatcher JavaScript shutdown", () => {
         scenario === "success" || cleanupFails ? "complete document\n" : "",
       );
       expect(result.stderr).not.toContain("output preceded cleanup");
+      expect(result.stderr).not.toContain("unexpected finish status");
       if (cleanupFails) expect(result.stderr).toContain("worker still owned");
       if (scenario === "write-failure")
         expect(result.stderr).toContain("final write failed");
@@ -404,6 +405,44 @@ describe("executable dispatcher JavaScript shutdown", () => {
       );
       expect(result.exitCode).toBe(1);
       expect(result.stderr).toContain("worker still owned");
+    },
+  );
+
+  workspaceCliTest(
+    "reports a failed JavaScript worker shutdown when exit is called without a code and passes failure status to SDK output",
+    async ({ processes, workspace }) => {
+      await installCliRuntime(
+        workspace,
+        'export const closeCliResources = () => Promise.reject(new Error("worker still owned")); export const createCli = () => ({ serve: (_args, options) => { options.exit(); } });\n',
+        'export const createCliResultOutput = () => ({ handled: false, failed: false, captureSdkOutput: () => false, finishSdkOutput: async (status) => { if (status !== 1) throw new Error("unexpected finish status: " + status); } });\n',
+      );
+      const result = await processes.run(
+        process.execPath,
+        [workspace.path("scripts/rea.mjs"), "fixture"],
+        { cwd: workspace.root },
+      );
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain("worker still owned");
+      expect(result.stderr).not.toContain("unexpected finish status");
+    },
+  );
+
+  workspaceCliTest(
+    "reports a failed SDK finalization when exit is called without a code",
+    async ({ processes, workspace }) => {
+      await installCliRuntime(
+        workspace,
+        "export const closeCliResources = () => Promise.resolve(); export const createCli = () => ({ serve: (_args, options) => { options.exit(); } });\n",
+        'export const createCliResultOutput = () => ({ handled: false, failed: false, captureSdkOutput: () => false, finishSdkOutput: async (status) => { if (status !== 0) throw new Error("unexpected finish status: " + status); throw new Error("SDK finalization failed"); } });\n',
+      );
+      const result = await processes.run(
+        process.execPath,
+        [workspace.path("scripts/rea.mjs"), "fixture"],
+        { cwd: workspace.root },
+      );
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain("SDK finalization failed");
+      expect(result.stderr).not.toContain("unexpected finish status");
     },
   );
 

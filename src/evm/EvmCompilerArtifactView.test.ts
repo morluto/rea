@@ -18,27 +18,23 @@ const compilerParent = (object?: string): AnalysisViewParent => {
     contract_name: "C",
     bytecode_kind: "creation" as const,
   };
-  const selected = selectSolcArtifact(
-    new TextEncoder().encode(
-      JSON.stringify({
-        contracts: {
-          "a.sol": {
-            C: {
-              evm: { bytecode: object === undefined ? {} : { object } },
-              metadata: JSON.stringify({
-                compiler: { version: "0.8.30" },
-                settings: { optimizer: { enabled: true } },
-              }),
-            },
+  const carrier = new TextEncoder().encode(
+    JSON.stringify({
+      contracts: {
+        "a.sol": {
+          C: {
+            evm: { bytecode: object === undefined ? {} : { object } },
+            metadata: JSON.stringify({
+              compiler: { version: "0.8.30" },
+              settings: { optimizer: { enabled: true } },
+            }),
           },
         },
-        errors: [
-          { severity: "error", message: "Recorded compiler diagnostic" },
-        ],
-      }),
-    ),
-    selection,
+      },
+      errors: [{ severity: "error", message: "Recorded compiler diagnostic" }],
+    }),
   );
+  const selected = selectSolcArtifact(carrier, selection);
   if (!selected.ok) throw selected.error;
   const decodedHex =
     selected.value.bytes === null
@@ -49,6 +45,8 @@ const compilerParent = (object?: string): AnalysisViewParent => {
     artifact: {
       ...evmInterfaceFixture().artifact,
       encoding: "solc-json" as const,
+      bytes: carrier.byteLength,
+      sha256: createHash("sha256").update(carrier).digest("hex"),
     },
     bytecode: {
       ...evmInterfaceFixture().bytecode,
@@ -184,6 +182,13 @@ it.each([undefined, {}])(
       {
         ...compilerParent(),
         normalizedResult: evmInterfaceFixture(),
+        subject: {
+          format: "file",
+          architecture: null,
+          name: "historical hex",
+          local_path: evmInterfaceFixture().artifact.path,
+          digest: { sha256: evmInterfaceFixture().artifact.sha256 },
+        },
         parameters,
       },
       { kind: "summary" },
@@ -309,6 +314,8 @@ it.each([
   "absent-with-settings",
   "malformed-with-version",
   "resource-limited-with-settings",
+  "malformed-with-valid-source",
+  "resource-limited-with-valid-source",
 ])("rejects contradictory compiler metadata: %s", (problem) => {
   const parent = compilerParent("6001");
   const report = parent.normalizedResult as EvmInterface;
@@ -335,14 +342,68 @@ it.each([
     if (problem === "absent-with-version") metadata.settings_json = null;
     else metadata.compiler_version = null;
   } else {
-    metadata.parse_status =
-      problem === "malformed-with-version" ? "malformed" : "resource-limited";
-    if (problem === "malformed-with-version") metadata.settings_json = null;
+    metadata.parse_status = problem.startsWith("malformed")
+      ? "malformed"
+      : "resource-limited";
+    if (problem.endsWith("valid-source")) {
+      metadata.compiler_version = null;
+      metadata.settings_json = null;
+    } else if (problem === "malformed-with-version")
+      metadata.settings_json = null;
     else metadata.compiler_version = null;
   }
   expect(solcArtifactSchema.safeParse(compiler).success).toBe(false);
   expect(projectAnalysisView(parent, { kind: "summary" }).ok).toBe(false);
 });
+
+it.each([
+  "carrier-size",
+  "short-object",
+  "short-metadata",
+  "overlapping-metadata",
+  "diagnostic-severity",
+  "diagnostic-pointer",
+  "diagnostic-range",
+  "diagnostic-carrier-size",
+] as const)(
+  "rejects impossible retained compiler provenance: %s",
+  (problem) => {
+    const parent = compilerParent("6000");
+    const report = parent.normalizedResult as EvmInterface;
+    const compiler = report.compiler_artifact!;
+    expect(projectAnalysisView(parent, { kind: "summary" }).ok).toBe(true);
+    const diagnostic = compiler.diagnostics![0]!;
+    switch (problem) {
+      case "carrier-size":
+        report.artifact.bytes = 1;
+        break;
+      case "short-object":
+        compiler.object_range!.end = compiler.object_range!.start + 1;
+        break;
+      case "short-metadata":
+        compiler.metadata.source_range!.end =
+          compiler.metadata.source_range!.start + 1;
+        break;
+      case "overlapping-metadata":
+        compiler.bytecode_range = { ...compiler.contract_range };
+        break;
+      case "diagnostic-severity":
+        diagnostic.severity = "warning";
+        break;
+      case "diagnostic-pointer":
+        diagnostic.json_pointer = "/errors/99";
+        break;
+      case "diagnostic-range":
+        diagnostic.source_range.end = diagnostic.source_range.start;
+        break;
+      case "diagnostic-carrier-size":
+        diagnostic.source_range.start += report.artifact.bytes;
+        diagnostic.source_range.end += report.artifact.bytes;
+        break;
+    }
+    expect(projectAnalysisView(parent, { kind: "summary" }).ok).toBe(false);
+  },
+);
 
 it.each(["link_references", "immutable_references"] as const)(
   "rejects imported %s with the other owner's identity",

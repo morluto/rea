@@ -965,7 +965,7 @@ it.runIf(!unsupportedHost).each(["directory", "missing-interpreter"])(
     });
     if (scenario === "directory")
       expect(result.error).toMatchObject({
-        reason: "prlimit_not_file",
+        reason: expect.stringContaining("absolute executable regular file"),
         diagnostics: {
           limiter_path: limiter,
           code: "prlimit_not_file",
@@ -975,5 +975,69 @@ it.runIf(!unsupportedHost).each(["directory", "missing-interpreter"])(
     if (ownedRoot !== undefined)
       await expect(access(ownedRoot)).rejects.toMatchObject({ code: "ENOENT" });
     expect(await readFile(path, "utf8")).toBe("0x60006000f3\n");
+  },
+);
+
+it
+  .runIf(!unsupportedHost)
+  .each(["valid", "missing", "wrong", "invalid-omission", "rows-and-omission"])(
+  "binds compiler failures and omission evidence to their carrier: %s",
+  async (scenario) => {
+    const { path } = await fixture();
+    await writeFile(path, "{}");
+    const provider = new EvmoleInterfaceProvider({}, async (spawn) => {
+      const request = evmWorkerRequestSchema.parse(
+        JSON.parse(await readFile(spawn.arguments.at(-1)!, "utf8")),
+      );
+      const digest = createHash("sha256")
+        .update(await readFile(request.snapshot_path))
+        .digest("hex");
+      await writeFile(
+        request.reply_path,
+        JSON.stringify({
+          ok: false,
+          reason:
+            scenario === "rows-and-omission" ? "output-limit" : "selection",
+          message: "Selected contract is absent",
+          ...(scenario === "missing"
+            ? {}
+            : {
+                carrier_sha256: scenario === "wrong" ? "a".repeat(64) : digest,
+              }),
+          ...(["invalid-omission", "rows-and-omission"].includes(scenario)
+            ? { compiler_diagnostics_omitted: "reply-budget" }
+            : {}),
+          ...(scenario === "rows-and-omission"
+            ? { compiler_diagnostics: [] }
+            : {}),
+        }),
+      );
+      return spawnOwnedProviderProcess({
+        ...spawn,
+        command: process.execPath,
+        arguments: ["-e", ""],
+      });
+    });
+    const result = await provider.inspect({
+      path,
+      encoding: {
+        kind: "solc-json",
+        source_unit: "a.sol",
+        contract_name: "C",
+        bytecode_kind: "creation",
+      },
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("Expected compiler failure");
+    expect(result.error._tag).toBe(
+      scenario === "valid" ? "AnalysisInputError" : "AnalysisOutputError",
+    );
+    if (scenario === "valid") {
+      const projected = projectAnalysisError(result.error);
+      expect(projected.recovery).toBeUndefined();
+      expect(projected.remediation.action).toContain(
+        "exact source-unit and contract keys",
+      );
+    }
   },
 );

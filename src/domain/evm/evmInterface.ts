@@ -129,6 +129,18 @@ export const evmInterfaceSchema = z
           "Metadata range must match the terminal length suffix in selected bytecode.",
       });
     const compiler = value.compiler_artifact;
+    if (
+      compiler !== undefined &&
+      (compiler.contract_range.end > value.artifact.bytes ||
+        compiler.diagnostics?.some(
+          (diagnostic) => diagnostic.source_range.end > value.artifact.bytes,
+        ))
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["compiler_artifact"],
+        message: "Compiler source coordinates exceed the retained carrier size",
+      });
     const compilerObject =
       compiler?.object == null
         ? null

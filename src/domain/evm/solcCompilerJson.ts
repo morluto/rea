@@ -32,6 +32,12 @@ export const child = (
     ? node.children?.find((property) => property.children?.[0]?.value === name)
         ?.children?.[1]
     : undefined;
+
+/** Diagnostic severity is a derived fact of its retained JSON value. */
+export const compilerDiagnosticSeverity = (node: Node): string | null => {
+  const severity = child(node, "severity");
+  return severity?.type === "string" ? (severity.value as string) : null;
+};
 /** Validate syntax, duplicate identities and depth before allocating the AST. */
 export function strictTree(text: string): Result<Node, SolcJsonError> {
   let depth = 0;

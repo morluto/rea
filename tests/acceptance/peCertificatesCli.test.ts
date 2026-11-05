@@ -273,6 +273,40 @@ cliTest(
 );
 
 cliTest(
+  "rejects a certificate validity date that is not a calendar day through the public CLI",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-pe-cert-cli-validity-");
+    const path = join(root, "validity.exe");
+    const payload = pkcs7SignedDataFixture();
+    const timeAt = payload.indexOf(Buffer.from("250101000000Z"));
+    expect(timeAt).toBeGreaterThanOrEqual(0);
+    // 2025 has no 29 February; the equal-length edit keeps every DER length.
+    payload.write("250229000000Z", timeAt, "ascii");
+    await writeFile(path, peCertificateFixture(false, payload));
+    const invalid = await cli.run({
+      arguments: ["inspect-pe-certificates", path, "--json"],
+    });
+    expect(invalid.exitCode).toBe(1);
+    expect(invalid.json).toMatchObject({
+      code: "invalid_request",
+      details: { operation: "inspect_pe_certificates" },
+    });
+    payload.write("240229000000Z", timeAt, "ascii");
+    await writeFile(path, peCertificateFixture(false, payload));
+    const valid = await cli.run({
+      arguments: ["inspect-pe-certificates", path, "--json"],
+    });
+    expect(valid.exitCode, valid.stderr).toBe(0);
+    const evidence = toolContract("inspect_pe_certificates").outputSchema.parse(
+      valid.json,
+    );
+    expect(
+      evidence.normalized_result.entries[0]?.pkcs7?.certificates[0]?.not_before,
+    ).toBe("240229000000Z");
+  },
+);
+
+cliTest(
   "inventories repeated certificates within both decoder allowances",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-pe-cert-cli-repeated-");

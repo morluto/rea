@@ -128,8 +128,8 @@ owner to complete. Never attest to human review on their behalf. Draft status
 is optional; preserve the PR's current draft status unless the user asks to change
 it. Later pushes do not invalidate the readiness declaration or require another
 human sign-off. Keep the PR body and affected validation current as work changes.
-The readiness check validates
-the filled declaration; CI and automated review results do not establish that
+The readiness check validates the filled declaration or the author exemption
+listed in CONTRIBUTING.md; CI and automated review results do not establish that
 human review occurred, maintainer scope approval, or merge permission.
 
 <!-- BEGIN:turborepo-agent-rules -->

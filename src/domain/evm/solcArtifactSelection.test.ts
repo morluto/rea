@@ -29,6 +29,90 @@ const successful = (text: string, chosen = selection) => {
   return result.value;
 };
 
+describe("retained compiler provenance", () => {
+  it.each(
+    [{}, [], null, 42, true, "{}", "{broken"].map((metadata) => ({ metadata })),
+  )(
+    "retains and validates the source kind of metadata $metadata",
+    ({ metadata }) => {
+      const artifact = successful(
+        JSON.stringify({
+          contracts: {
+            [selection.source_unit]: { C: { metadata } },
+          },
+        }),
+      ).artifact;
+      expect(solcArtifactSchema.safeParse(artifact).success).toBe(true);
+      expect(artifact.metadata).toMatchObject({
+        source_kind: typeof metadata === "string" ? "string" : "non-string",
+        parse_status: metadata === "{}" ? "valid" : "malformed",
+      });
+    },
+  );
+
+  it.each(["", "6000"])(
+    "rejects undersized object string ranges: %j",
+    (object) => {
+      const artifact = successful(carrier(object)).artifact;
+      expect(solcArtifactSchema.safeParse(artifact).success).toBe(true);
+      artifact.object_range!.end =
+        artifact.object_range!.start + object.length + 1;
+      expect(solcArtifactSchema.safeParse(artifact).success).toBe(false);
+    },
+  );
+
+  it.each(["contract", "bytecode"])(
+    "rejects empty %s syntax ranges without nested facts",
+    (kind) => {
+      const artifact = successful(
+        JSON.stringify({
+          contracts: {
+            [selection.source_unit]: {
+              C: kind === "contract" ? {} : { evm: { bytecode: {} } },
+            },
+          },
+        }),
+      ).artifact;
+      expect(solcArtifactSchema.safeParse(artifact).success).toBe(true);
+      const range =
+        kind === "contract"
+          ? artifact.contract_range
+          : artifact.bytecode_range!;
+      range.end = range.start;
+      expect(solcArtifactSchema.safeParse(artifact).success).toBe(false);
+    },
+  );
+
+  it.each(["linkReferences", "immutableReferences"])(
+    "rejects empty %s record coordinates",
+    (facet) => {
+      const spans = [{ start: 0, length: 1 }];
+      const artifact = successful(
+        carrier("6000", {
+          [facet]:
+            facet === "linkReferences"
+              ? { "lib.sol": { L: spans } }
+              : { "0": spans },
+        }),
+      ).artifact;
+      expect(solcArtifactSchema.safeParse(artifact).success).toBe(true);
+      const reference = (
+        facet === "linkReferences"
+          ? artifact.link_references
+          : artifact.immutable_references
+      )![0]!;
+      reference.source_range.end = reference.source_range.start;
+      expect(solcArtifactSchema.safeParse(artifact).success).toBe(false);
+    },
+  );
+
+  it("accepts longer escaped tokens and preserves opaque numeric diagnostic lexemes", () => {
+    const text = String.raw`{"contracts":{"src/雪~.sol":{"C":{"metadata":"{\u0022compiler\u0022:{}}","evm":{"bytecode":{"object":"\u0036\u0030\u0030\u0030"}}}}},"errors":[{"severity":"warning","number":9007199254740993}]}`;
+    const artifact = successful(text).artifact;
+    expect(solcArtifactSchema.safeParse(artifact).success).toBe(true);
+  });
+});
+
 describe("exact recorded solc artifact selection", () => {
   it("retains exact syntax coordinates and opaque Unicode source identity", () => {
     const text = carrier("60Ab");

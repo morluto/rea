@@ -3,6 +3,7 @@ import { STDIO_DEFAULT_MAX_BUFFER_SIZE } from "@modelcontextprotocol/server";
 
 import type { ToolContract } from "../contracts/toolContractTypes.js";
 import type { EvidenceWriter } from "../application/investigation/InvestigationRecordPort.js";
+import type { BinaryOpenResult } from "../application/binary/BinarySessionPort.js";
 import type { Evidence } from "../domain/evidence.js";
 import { safeParseEvidence } from "../domain/evidenceValidation.js";
 import {
@@ -10,6 +11,7 @@ import {
   type AnalysisErrorProjection,
 } from "../domain/analysisErrorProjection.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
+import { NoBinaryOpenError } from "../domain/configurationErrors.js";
 import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 import type { Result } from "../domain/result.js";
 import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
@@ -104,10 +106,20 @@ export class ToolResultDelivery {
       selected?: JsonValue,
       viewSource?: JsonValue,
     ) => Readonly<Record<string, JsonValue>> = () => ({}),
+    private readonly noTargetRecovery?: string,
   ) {
     this.maximumResponseBytes = maximumResponseBytes;
     this.resultBudgetBytes = maximumResponseBytes - 1024;
     Object.freeze(this);
+  }
+
+  /** Bind scope-specific recovery without mutating a shared delivery policy. */
+  withNoTargetRecovery(recovery: string): ToolResultDelivery {
+    return new ToolResultDelivery(
+      this.maximumResponseBytes,
+      this.nativeContinuation,
+      recovery,
+    );
   }
 
   /** Serialize a plain application result or its actionable error. */
@@ -183,9 +195,44 @@ export class ToolResultDelivery {
   toErrorToolResult(
     error: AnalysisError,
     targetContent: boolean,
+    details?: Readonly<Record<string, JsonValue>>,
   ): CallToolResult {
+    const base = projectAnalysisError(error);
+    const projected =
+      details === undefined
+        ? base
+        : { ...base, details: { ...base.details, ...details } };
+    if (
+      error instanceof NoBinaryOpenError &&
+      this.noTargetRecovery !== undefined
+    )
+      return this.projectedErrorResult(
+        {
+          ...projected,
+          message: this.noTargetRecovery,
+          remediation: { action: this.noTargetRecovery },
+        },
+        targetContent,
+      );
+    return this.projectedErrorResult(projected, targetContent);
+  }
+
+  /** Include the session owner's selection at the end of this open attempt. */
+  toOpenFailureToolResult(
+    failure: Extract<BinaryOpenResult, { ok: false }>,
+    targetContent: boolean,
+  ): CallToolResult {
+    const projected = projectAnalysisError(failure.error);
     return this.projectedErrorResult(
-      projectAnalysisError(error),
+      {
+        ...projected,
+        details: {
+          ...projected.details,
+          selection_at_failure: failure.selection,
+          target_at_open_completion: failure.targetAtCompletion,
+          provider_id_at_open_completion: failure.providerIdAtCompletion,
+        },
+      },
       targetContent,
     );
   }

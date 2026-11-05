@@ -20,7 +20,8 @@ export const registerEvmCommands = (
 ): void => {
   const service = evmInterfaceModule.create(environment);
   cli.command(evmInterfaceModule.cliCommand, {
-    description: "Infer interface candidates from explicit local EVM bytecode",
+    description:
+      "Infer interface candidates from explicit local EVM bytecode. solc-json requires --source-unit, --contract-name, and --bytecode-kind together.",
     args: z.object({
       path: localPathStringSchema.describe(
         "Local bytecode or compiler-output carrier",

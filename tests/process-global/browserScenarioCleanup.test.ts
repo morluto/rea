@@ -1,3 +1,4 @@
+import { awaitAcknowledgement } from "../fixtures/lifecycleAcknowledgement.js";
 import { EventEmitter } from "node:events";
 import { Cli } from "incur";
 import { resolve } from "node:path";
@@ -315,7 +316,11 @@ it("retries a late Playwright open after cancellation before accepting another c
   });
   const failures: unknown[] = [];
   try {
-    await launchStarted;
+    await awaitAcknowledgement(
+      launchStarted,
+      firstCapture,
+      "Playwright launch",
+    );
     expect(launchCount).toBe(1);
     cancellation.abort();
     const cancelled = await firstCapture;

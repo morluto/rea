@@ -10,7 +10,6 @@ import {
   evmInterfaceSchema,
   matchesEvmInterfaceInput,
 } from "../../domain/evm/evmInterface.js";
-import { jsonValueSchema } from "../../domain/jsonValue.js";
 import { err, type Result } from "../../domain/result.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
 import { parseAnalysisInput } from "../AnalysisInput.js";
@@ -65,7 +64,7 @@ export class EvmInterfaceService {
     return completeProviderEvidence(
       evmInterfaceEvidence(input.value, {
         ...execution,
-        result: jsonValueSchema.parse(report.data),
+        result: report.data,
       }),
       options?.signal,
       outputOptions?.capturedOutput,

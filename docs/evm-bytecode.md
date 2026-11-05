@@ -29,6 +29,15 @@ The host must already provide util-linux `prlimit`, normally `/usr/bin/prlimit`;
 no system tools and changes no user configuration. [Upstream provenance and
 license](https://github.com/morluto/rea/blob/main/third_party/evmole/README.md) are packaged.
 
+Limiter discovery validates the selected path without launching it. A relative
+path or directory is reported as `not_configured`, a missing file as
+`executable_missing`, and denied access or another filesystem-probe failure as
+`runtime_unavailable`. Recovery names the selected path and
+`REA_EVM_PRLIMIT_COMMAND`; denied access asks for execute permission and
+filesystem access. The original admission or system code stays in diagnostics.
+An available filesystem probe does not verify the selected tool's version or
+util-linux compatibility, and REA does not substitute another command.
+
 ## Evidence semantics
 
 - `encoding` is required: `"raw"`, `"hex"`, or an exact compiler-selection object
@@ -95,6 +104,10 @@ recorded metadata. Ranges count UTF-16 code units in the UTF-8-decoded JSON text
 and include JSON syntax. Duplicate properties, malformed objects and invalid
 reference spans fail precisely. Recorded compiler/settings metadata remains
 unauthenticated; source paths and URLs do not trigger reads or acquisition.
+Metadata records its source kind (`string`, `non-string`, or null when absent),
+so malformed non-string values remain evidence. Retained views reject metadata
+or diagnostic interpretations that contradict their raw text, and source ranges
+that cannot contain the recorded values; these consistency checks do not authenticate the compiler.
 
 Concrete selected hex enters the existing EVMole inference engine. Missing
 objects and unresolved library placeholders retain compiler evidence with

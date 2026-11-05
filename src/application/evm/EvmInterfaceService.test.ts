@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { expect, it } from "vitest";
 import { EvmInterfaceService } from "./EvmInterfaceService.js";
 import type { EvmInterfaceExecution } from "./EvmInterfacePort.js";
@@ -152,22 +153,25 @@ it.each([false, true])(
       bytecode_kind: "creation" as const,
     };
     const fixture = evmInterfaceFixture();
-    const selected = selectSolcArtifact(
-      new TextEncoder().encode(
-        JSON.stringify({
-          contracts: {
-            "source.sol": {
-              C: { evm: { bytecode: { object: fixture.bytecode.hex } } },
-            },
+    const carrier = new TextEncoder().encode(
+      JSON.stringify({
+        contracts: {
+          "source.sol": {
+            C: { evm: { bytecode: { object: fixture.bytecode.hex } } },
           },
-        }),
-      ),
-      selection,
+        },
+      }),
     );
+    const selected = selectSolcArtifact(carrier, selection);
     if (!selected.ok) throw selected.error;
     const report = {
       ...fixture,
-      artifact: { ...fixture.artifact, encoding: "solc-json" as const },
+      artifact: {
+        ...fixture.artifact,
+        encoding: "solc-json" as const,
+        bytes: carrier.byteLength,
+        sha256: createHash("sha256").update(carrier).digest("hex"),
+      },
       bytecode: { ...fixture.bytecode, kind: "creation" as const },
       compiler_artifact: selected.value.artifact,
       inference_status: "examined" as const,

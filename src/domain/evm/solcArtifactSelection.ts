@@ -2,6 +2,7 @@ import type { Node } from "jsonc-parser";
 import {
   child,
   compilerMetadataFacts,
+  compilerDiagnosticSeverity,
   SOLC_JSON_LIMITS,
   strictTree,
 } from "./solcCompilerJson.js";
@@ -180,10 +181,7 @@ function compilerDiagnostics(
           raw_json: text.slice(node.offset, node.offset + node.length),
           source_range: range(node),
           json_pointer: `/errors/${index}`,
-          severity:
-            child(node, "severity")?.type === "string"
-              ? (child(node, "severity")?.value as string)
-              : null,
+          severity: compilerDiagnosticSeverity(node),
         }));
   return ok(diagnostics);
 }
@@ -279,6 +277,12 @@ function compilerMetadata(
           );
   return {
     raw,
+    source_kind:
+      metadataNode === undefined
+        ? null
+        : metadataNode.type === "string"
+          ? "string"
+          : "non-string",
     source_range: nullableRange(metadataNode),
     ...(metadataNode?.type === "string" || metadataNode === undefined
       ? compilerMetadataFacts(raw)

@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { artifactMcpCall } from "./lib/artifact-e2e.mjs";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -96,7 +97,7 @@ try {
       );
     let value;
     if (mode === "mcp") {
-      const reply = await mcpClient.callTool({
+      const reply = await artifactMcpCall(mcpClient, {
         name: "inspect_evm_interface",
         arguments: input,
       });
@@ -595,27 +596,26 @@ try {
   try {
     await cancellationClient.connect(cancellationTransport);
     let settled = false;
-    const cancelled = cancellationClient
-      .callTool(
-        {
-          name: "inspect_evm_interface",
-          arguments: {
-            path: expandedPath,
-            encoding: { kind: "solc-json", ...selection },
-          },
+    const cancelled = artifactMcpCall(
+      cancellationClient,
+      {
+        name: "inspect_evm_interface",
+        arguments: {
+          path: expandedPath,
+          encoding: { kind: "solc-json", ...selection },
         },
-        { signal: controller.signal },
-      )
-      .then(
-        (value) => {
-          settled = true;
-          return { value };
-        },
-        (error) => {
-          settled = true;
-          return { error };
-        },
-      );
+      },
+      { signal: controller.signal },
+    ).then(
+      (value) => {
+        settled = true;
+        return { value };
+      },
+      (error) => {
+        settled = true;
+        return { error };
+      },
+    );
     const worker = await waitForEvmVerifierWorker(
       cancellationTransport.pid,
       () => settled,
@@ -727,6 +727,9 @@ try {
       });
       const diagnostics = (mode === "mcp" ? failure.error : failure).details
         .diagnostics;
+      const error = mode === "mcp" ? failure.error : failure;
+      assert.equal(error.retryable, false);
+      assert.match(error.remediation.action, /no runtime override/);
       assert.equal(diagnostics.carrier_sha256, sha256(await readFile(path)));
       assert.deepEqual(diagnostics.compiler_selection, selection);
     }
@@ -743,10 +746,16 @@ try {
   await writeFile(duplicatePath, '{"contracts":{},"contracts":{}}');
   for (const mode of ["cli", "mcp"]) {
     await inspect(mode, linkedPath, "solc-json", { expectedError: true });
-    await inspect(mode, linkedPath, "solc-json", {
+    const missingSource = await inspect(mode, linkedPath, "solc-json", {
       selection: { ...selection, source_unit: "compiler-artifacts.sol" },
       expectedError: true,
     });
+    const selectionError = mode === "mcp" ? missingSource.error : missingSource;
+    assert.equal(selectionError.recovery, undefined);
+    assert.match(
+      selectionError.remediation.action,
+      /exact source-unit and contract keys/,
+    );
     await inspect(mode, linkedPath, "solc-json", {
       selection: { ...selection, contract_name: "MissingFixture" },
       expectedError: true,
@@ -766,7 +775,7 @@ try {
     compiler_selection: selection,
   };
   assert.equal(validate.validate(inputSchema, invalidRawInput), false);
-  const rawRejection = await client.callTool({
+  const rawRejection = await artifactMcpCall(client, {
     name: "inspect_evm_interface",
     arguments: invalidRawInput,
   });
@@ -806,7 +815,7 @@ try {
   assert.equal(unavailableView.coverage.status, "unknown");
   assert.equal(unavailableView.coverage.total, null);
   assert.equal(unavailableView.coverage.exhausted, null);
-  const unavailableHex = await client.callTool({
+  const unavailableHex = await artifactMcpCall(client, {
     name: "inspect_analysis_view",
     arguments: {
       source: {
@@ -822,7 +831,7 @@ try {
     "invalid_input",
   );
   cases++;
-  const exported = await client.callTool({
+  const exported = await artifactMcpCall(client, {
     name: "export_evidence_bundle",
     arguments: { path: bundlePath },
   });

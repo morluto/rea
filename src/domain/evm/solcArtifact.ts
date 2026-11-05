@@ -1,5 +1,9 @@
 import { z } from "zod";
-import { compilerMetadataFacts } from "./solcCompilerJson.js";
+import {
+  compilerMetadataFacts,
+  compilerDiagnosticSeverity,
+  strictTree,
+} from "./solcCompilerJson.js";
 import { inspectSolcBytecodeObject } from "./solcBytecodeObject.js";
 
 /** Exact compiler identities; source-unit names are not filesystem paths. */
@@ -11,6 +15,8 @@ export const compilerSelectionSchema = z.strictObject({
 export type CompilerSelection = z.infer<typeof compilerSelectionSchema>;
 
 const coordinate = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
+const spanLength = (range: { start: number; end: number }) =>
+  range.end - range.start;
 /** JSON syntax coordinates in the strictly decoded original carrier. */
 export const solcSourceRangeSchema = z
   .strictObject({
@@ -34,6 +40,14 @@ const reference = z
     (value) =>
       value.length > 0 && Number.isSafeInteger(value.start + value.length),
     { message: "Reference requires a positive safe byte span" },
+  )
+  .refine(
+    (value) =>
+      spanLength(value.source_range) >=
+      JSON.stringify({ start: value.start, length: value.length }).length,
+    {
+      message: "Reference source range cannot contain its start/length record",
+    },
   );
 
 const linkReference = reference.refine(
@@ -60,6 +74,25 @@ export const solcCompilerDiagnosticsSchema = z
       severity: z.string().nullable(),
     }),
   )
+  .superRefine((values, context) => {
+    for (const [index, value] of values.entries()) {
+      const parsed = strictTree(value.raw_json);
+      if (
+        !parsed.ok ||
+        parsed.value.offset !== 0 ||
+        parsed.value.length !== value.raw_json.length ||
+        compilerDiagnosticSeverity(parsed.value) !== value.severity ||
+        spanLength(value.source_range) !== value.raw_json.length ||
+        value.json_pointer !== `/errors/${index}`
+      )
+        context.addIssue({
+          code: "custom",
+          path: [index],
+          message:
+            "Diagnostic facts and coordinates must match the retained JSON value",
+        });
+    }
+  })
   .nullable();
 
 /** Recorded compiler output facts, independently of interface inference. */
@@ -85,6 +118,7 @@ export const solcArtifactSchema = z
     diagnostics: solcCompilerDiagnosticsSchema,
     metadata: z.strictObject({
       raw: z.string().nullable(),
+      source_kind: z.enum(["string", "non-string"]).nullable(),
       source_range: solcSourceRangeSchema.nullable(),
       compiler_version: z.string().nullable(),
       settings_json: z.string().nullable(),
@@ -97,6 +131,24 @@ export const solcArtifactSchema = z
     }),
   })
   .superRefine((value, context) => {
+    if (
+      spanLength(value.contract_range) < 2 ||
+      (value.bytecode_range !== null && spanLength(value.bytecode_range) < 2)
+    )
+      context.addIssue({
+        code: "custom",
+        message: "Compiler object ranges must contain at least an object token",
+      });
+    if (
+      value.object !== null &&
+      value.object_range !== null &&
+      spanLength(value.object_range) < JSON.stringify(value.object).length
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["object_range"],
+        message: "Object range cannot contain the retained JSON string",
+      });
     const contains = (
       parent: { start: number; end: number },
       nested: { start: number; end: number },
@@ -146,6 +198,17 @@ export const solcArtifactSchema = z
         code: "custom",
         message: "Metadata range is outside selected contract",
       });
+    if (
+      value.metadata.source_range !== null &&
+      value.bytecode_range !== null &&
+      value.metadata.source_range.start < value.bytecode_range.end &&
+      value.bytecode_range.start < value.metadata.source_range.end
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["metadata", "source_range"],
+        message: "Sibling metadata and bytecode source ranges overlap",
+      });
   })
   .superRefine((value, context) => {
     const issue = (message: string) =>
@@ -179,10 +242,10 @@ export const solcArtifactSchema = z
       issue("Placeholder presence differs from compiler object status");
     const metadata = value.metadata;
     const metadataAbsent = metadata.parse_status === "absent";
-    if (metadata.parse_status === "valid") {
+    if (metadata.source_kind !== "non-string") {
       const parsed = compilerMetadataFacts(metadata.raw);
       if (
-        parsed.parse_status !== "valid" ||
+        parsed.parse_status !== metadata.parse_status ||
         parsed.compiler_version !== metadata.compiler_version ||
         parsed.settings_json !== metadata.settings_json
       )
@@ -191,9 +254,23 @@ export const solcArtifactSchema = z
           path: ["metadata"],
           message: "Compiler metadata facts must match the retained source.",
         });
+    } else {
+      const parsed = metadata.raw === null ? null : strictTree(metadata.raw);
+      if (
+        parsed === null ||
+        !parsed.ok ||
+        parsed.value.type === "string" ||
+        parsed.value.offset !== 0 ||
+        parsed.value.length !== metadata.raw?.length ||
+        metadata.parse_status !== "malformed"
+      )
+        issue(
+          "Non-string metadata must retain the original JSON value as malformed metadata",
+        );
     }
     if (
       (metadata.raw === null) !== metadataAbsent ||
+      (metadata.source_kind === null) !== metadataAbsent ||
       (metadata.source_range === null) !== metadataAbsent ||
       (metadata.parse_status !== "valid" &&
         (metadata.compiler_version !== null || metadata.settings_json !== null))
@@ -204,6 +281,15 @@ export const solcArtifactSchema = z
         message:
           "Compiler metadata status requires retained source and consistent parsed fact availability.",
       });
+    if (metadata.raw !== null && metadata.source_range !== null) {
+      const length = spanLength(metadata.source_range);
+      if (
+        metadata.source_kind === "string"
+          ? length < JSON.stringify(metadata.raw).length
+          : length !== metadata.raw.length
+      )
+        issue("Metadata range cannot contain the retained source token");
+    }
   })
   .superRefine((value, context) => {
     const issue = (message: string) =>

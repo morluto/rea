@@ -45,22 +45,33 @@ export const evmWorkerReplySchema = z.discriminatedUnion("ok", [
       .regex(/^[a-f0-9]{64}$/)
       .optional(),
   }),
-  z.strictObject({
-    ok: z.literal(false),
-    reason: z.enum([
-      "format",
-      "selection",
-      "resource",
-      "decoder",
-      "output-limit",
-      "unsupported",
-    ]),
-    message: z.string(),
-    compiler_diagnostics: solcCompilerDiagnosticsSchema.optional(),
-    compiler_diagnostics_omitted: z.literal("reply-budget").optional(),
-    carrier_sha256: z
-      .string()
-      .regex(/^[a-f0-9]{64}$/)
-      .optional(),
-  }),
+  z
+    .strictObject({
+      ok: z.literal(false),
+      reason: z.enum([
+        "format",
+        "selection",
+        "resource",
+        "decoder",
+        "output-limit",
+        "unsupported",
+      ]),
+      message: z.string(),
+      compiler_diagnostics: solcCompilerDiagnosticsSchema.optional(),
+      compiler_diagnostics_omitted: z.literal("reply-budget").optional(),
+      carrier_sha256: z
+        .string()
+        .regex(/^[a-f0-9]{64}$/)
+        .optional(),
+    })
+    .refine(
+      (value) =>
+        value.compiler_diagnostics_omitted === undefined ||
+        (value.reason === "output-limit" &&
+          value.compiler_diagnostics === undefined),
+      {
+        message:
+          "Diagnostic omission requires an output-limit failure without retained rows",
+      },
+    ),
 ]);

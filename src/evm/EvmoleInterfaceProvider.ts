@@ -1,4 +1,5 @@
 import { EvmAdmissionError } from "./EvmAdmissionError.js";
+import type { ProviderRejectionCode } from "../domain/providerSelection.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { safeParseUtf8Json } from "../domain/safeJson.js";
@@ -80,6 +81,8 @@ import {
   EVM_FILE_SIZE_FAILURE_EXIT,
 } from "./EvmoleRelease.js";
 import { evmWorkerReplySchema } from "./EvmInterfaceWorkerContract.js";
+import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
+import { SOLC_JSON_LIMITS } from "../domain/evm/solcCompilerJson.js";
 import { EVMOLE_PROVIDER_IDENTITY } from "./EvmoleProviderIdentity.js";
 import { decodeEvmBytecodeCarrier } from "./EvmBytecodeCarrier.js";
 import {
@@ -115,6 +118,7 @@ type EvmLimiterSelection = {
   readonly diagnostics: Readonly<Record<string, JsonValue>>;
 };
 type EvmLimiterUnavailable = EvmLimiterSelection & {
+  readonly code: ProviderRejectionCode;
   readonly reason: string;
   readonly cause: unknown;
 };
@@ -159,16 +163,39 @@ const selectEvmLimiter = async (
     if (cause instanceof EvmAdmissionError)
       return err({
         path,
+        code: "not_configured",
         diagnostics: {
           ...diagnostics,
           code: cause.code,
           ...cause.detail,
         },
-        reason: cause.code,
+        reason: `Set REA_EVM_PRLIMIT_COMMAND to an absolute executable regular file for caller-supplied util-linux prlimit. The selected path ${path} ${cause.code === "prlimit_not_absolute" ? "is not absolute" : "is not a regular file"}.`,
         cause,
       });
-    const reason = `Offline EVM interface inspection requires caller-supplied util-linux prlimit: ${path}; ${cause instanceof Error ? cause.message : String(cause)}`;
-    return err({ path, diagnostics, reason, cause });
+    const systemCode =
+      cause instanceof Error &&
+      "code" in cause &&
+      typeof cause.code === "string"
+        ? cause.code
+        : undefined;
+    const permissionDenied = systemCode === "EACCES" || systemCode === "EPERM";
+    const missing = systemCode === "ENOENT" || systemCode === "ENOTDIR";
+    const recovery = permissionDenied
+      ? "Grant execute permission and filesystem access to the selected file, or set REA_EVM_PRLIMIT_COMMAND to an accessible absolute executable regular file for util-linux prlimit."
+      : missing
+        ? "Set REA_EVM_PRLIMIT_COMMAND to an existing absolute executable regular file for util-linux prlimit."
+        : "Check the selected file and filesystem access, or set REA_EVM_PRLIMIT_COMMAND to an accessible absolute executable regular file for util-linux prlimit.";
+    const reason = `Offline EVM interface inspection requires caller-supplied util-linux prlimit: ${path}; ${cause instanceof Error ? cause.message : String(cause)}. ${recovery}`;
+    return err({
+      path,
+      code: missing ? "executable_missing" : "runtime_unavailable",
+      diagnostics: {
+        ...diagnostics,
+        ...(systemCode === undefined ? {} : { system_code: systemCode }),
+      },
+      reason,
+      cause,
+    });
   }
 };
 
@@ -193,7 +220,7 @@ export const evmLimiterAvailability = async (
       }
     : {
         status: "unavailable",
-        code: "executable_missing",
+        code: selected.error.code,
         reason: selected.error.reason,
         // The limiter owner does not yet author a separate repair (#8508).
         remediation: selected.error.reason,
@@ -680,13 +707,15 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
       }
       if (!reply.ok) {
         if (
-          reply.compiler_diagnostics !== undefined &&
-          (compilerSelection === undefined ||
-            reply.carrier_sha256 !== carrier.sha256)
+          compilerSelection !== undefined
+            ? reply.carrier_sha256 !== carrier.sha256
+            : reply.compiler_diagnostics !== undefined ||
+              reply.compiler_diagnostics_omitted !== undefined ||
+              reply.carrier_sha256 !== undefined
         )
           throw new AnalysisOutputError(
             OPERATION,
-            "Compiler failure diagnostics do not bind to the selected carrier.",
+            "Compiler failure evidence does not bind to the selected carrier.",
             { capturedOutput },
           );
         const diagnostics =
@@ -720,12 +749,29 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
             "capacity",
             reply.message,
             null,
-            { capturedOutput, diagnostics },
+            {
+              capturedOutput,
+              diagnostics,
+              ...fixedAllowanceOptions(
+                `Compiler JSON limits of ${SOLC_JSON_LIMITS.inputBytes} input bytes, ${SOLC_JSON_LIMITS.depth} nesting levels and ${SOLC_JSON_LIMITS.nodes} AST nodes (no runtime override)`,
+                "parser",
+              ),
+            },
           );
         if (reply.reason === "format" || reply.reason === "selection")
           throw new AnalysisInputError(
             OPERATION,
-            { capturedOutput, diagnostics },
+            {
+              capturedOutput,
+              diagnostics,
+              conformsToInputContract: true,
+              remediationAction:
+                reply.reason === "selection"
+                  ? "Check the exact source-unit and contract keys in the selected compiler output and select an existing contract."
+                  : compilerSelection !== undefined
+                    ? "Select a complete, well-formed solc Standard JSON output with valid bytecode and reference records."
+                    : "Check the selected file contains valid bytecode in the requested raw or hex encoding.",
+            },
             [
               {
                 path: reply.reason === "selection" ? ["encoding"] : ["path"],

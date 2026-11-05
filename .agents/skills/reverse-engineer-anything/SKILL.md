@@ -2,7 +2,7 @@
 name: reverse-engineer-anything
 description: Reverse engineer native, managed, Electron/JavaScript, packaged, firmware, and browser targets with REA, and build agent environments (AgentEnv bundles) of web applications from a live instance or a capture. Use shipped-artifact or requested runtime evidence to explain features, compare versions, decompile code, or guide a reconstruction. Skip REA for ordinary source-repository architecture analysis.
 metadata:
-  version: "59"
+  version: "60"
 ---
 
 # REA
@@ -121,6 +121,15 @@ explicit path or endpoint and do not need it.
   cleanup effects, and do not require a preliminary static session unless their
   own contract says so.
 - User-owned browser page already open: `list_browser_targets`.
+- Passive traffic capture of a SPA: the default scope is the page's own origin,
+  and data APIs usually live on another origin. Discover API origins from
+  absolute URLs in loaded bundles or script text via JavaScript analysis tools
+  (another passive capture without those origins still scopes to the page
+  origin, and `completeness.excluded` counts lack URLs). Pass both the page
+  origin and those API origins in `allowed_origins` — the list replaces the
+  default scope — and read `completeness.excluded` before reporting that an
+  API is absent. For long captures with body shapes, use
+  `export_evidence_bundle` instead of expecting an inline result.
 - Browser action the agent must perform (click, type, navigate):
   `capture_browser_scenario` with declared actions. See
   [runtime observation](references/runtime-observation.md) for connect/launch
@@ -128,6 +137,9 @@ explicit path or endpoint and do not need it.
 - Agent environment (AgentEnv bundle) of a web application: read
   [environments](references/environments.md) before recording; it records with
   `capture_browser_scenario` and writes the bundle with `export_environment_bundle`.
+- Task for a desktop application's exported environment, from a
+  `capture-desktop-application` folder: read
+  [desktop application tasks](references/environments.md#tasks-for-a-desktop-application-environment).
 - Fiddler Everywhere traffic or a native `.saz` capture: read the
   [Fiddler workflow](references/runtime-observation.md#fiddler-everywhere-traffic-debugging).
   Inspect saved SAZ with `inspect_web_network_capture` and `format: "saz"`;
@@ -514,6 +526,8 @@ as complete while required questions remain open.
 - Agent environments (AgentEnv bundles) of a web application, recorded from
   a live instance or a HAR:
   [references/environments.md](references/environments.md)
+- Tasks for a desktop application's exported environment:
+  [references/environments.md](references/environments.md#tasks-for-a-desktop-application-environment)
 
 ## Finish the task
 
