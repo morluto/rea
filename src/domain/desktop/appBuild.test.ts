@@ -44,7 +44,7 @@ describe("build bundle renderer", () => {
       'packages=Packages(apt=["mousepad", "libgtk-3-bin"])',
     );
     expect(module).toContain(
-      'launch=Launch(at="demand", command=["gtk-launch", "org.xfce.mousepad"]),',
+      `launch=Launch(at="demand", command=["sh", "-c", "cd \\"$HOME\\" 2>/dev/null; exec gtk-launch 'org.xfce.mousepad'"]),`,
     );
     expect(module).toContain('"arch": ["amd64", "arm64"]');
     expect(module).toContain(

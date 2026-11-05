@@ -13,6 +13,7 @@ import {
   renderEnvToml,
   renderInstallScript,
   renderSmokeTask,
+  shellQuote,
 } from "./appExport.js";
 import { INSTALL_SCRIPT, type ExportPackageFile } from "./appExportInstall.js";
 import { isArmoredKey } from "./aptRepositories.js";
@@ -269,7 +270,7 @@ from agentenv_protocol.computer import AptSource, ComputerAppEnvironment, Downlo
     packages=Packages(apt=${pyList(install.packages)}),${sources}
     downloads=[${install.downloads.join(", ")}],
     run=[${install.scripts.map((script) => `RunScript(script=${py(script)})`).join(", ")}],
-    launch=Launch(at="demand", command=${pyList(["gtk-launch", entry])}${window}),
+    launch=Launch(at="demand", command=${pyList(["sh", "-c", `cd "$HOME" 2>/dev/null; exec gtk-launch ${shellQuote(entry)}`])}${window}),
 )
 class ${plan.className}(ComputerAppEnvironment):
     """${entry}, opened on demand for building: it keeps no seed and serves no data operations."""

@@ -1,0 +1,134 @@
+import type { AnalysisError } from "../../domain/analysisErrorBase.js";
+import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
+import type { JsonValue } from "../../domain/jsonValue.js";
+import { err, ok, type Result } from "../../domain/result.js";
+import type { StoppedCapture } from "./DesktopBuildCapture.js";
+import type {
+  BuildComputerSteps,
+  DesktopBuildComputers,
+  ForwardedResult,
+} from "./DesktopBuildComputers.js";
+import type { ExportedBuild } from "./DesktopBuildExport.js";
+import type {
+  CheckedTask,
+  DesktopBuildWitness,
+} from "./DesktopBuildWitness.js";
+
+const unknownComputer = (operation: string) =>
+  new AnalysisInputError(operation, {
+    userMessage:
+      "No build computer has this id in this REA server; start one with start_build_computer.",
+    remediationAction: "Start one with start_build_computer.",
+    conformsToInputContract: true,
+  });
+
+type Identified<Value> = { readonly computer_id: string } & Value;
+
+/**
+ * The build steps on a held computer: REA's capture of its app, the draft,
+ * the export and the task's witness, each named by the computer's id.
+ */
+export class DesktopBuildSteps {
+  constructor(
+    private readonly computers: Pick<DesktopBuildComputers, "steps">,
+  ) {}
+
+  /** Start REA's capture of the computer's app, inside the computer, and show the opened app. */
+  async startCapture(
+    input: {
+      readonly computer_id: string;
+      readonly arguments?: readonly string[] | undefined;
+    },
+    signal: AbortSignal,
+  ): Promise<
+    Result<
+      ForwardedResult<
+        Identified<{
+          readonly desktop_entry: string;
+          readonly package_lists: number;
+          readonly package_lists_error: string | null;
+          readonly screenshot: Readonly<Record<string, JsonValue>> | null;
+        }>
+      >,
+      AnalysisError
+    >
+  > {
+    const steps = this.computers.steps(input.computer_id);
+    if (steps === undefined) return err(unknownComputer("start_build_capture"));
+    const started = await steps.capture.start(
+      input.arguments === undefined ? {} : { arguments: input.arguments },
+      signal,
+    );
+    if (!started.ok) return started;
+    const shot = await steps.computer
+      .callTool("computer_screenshot", {}, signal)
+      .catch(() => undefined);
+    return ok({
+      value: {
+        computer_id: input.computer_id,
+        ...started.value,
+        screenshot: shot === undefined || shot.isError ? null : shot.structured,
+      },
+      content: shot === undefined || shot.isError ? [] : shot.content,
+    });
+  }
+
+  markCheckpoint(
+    input: { readonly computer_id: string; readonly name: string },
+    signal: AbortSignal,
+  ) {
+    return this.#on(
+      input.computer_id,
+      "mark_build_checkpoint",
+      async (steps) => {
+        const taken = await steps.capture.mark(input.name, signal);
+        return taken.ok ? ok({ checkpoint: taken.value }) : taken;
+      },
+    );
+  }
+
+  stopCapture(
+    input: { readonly computer_id: string },
+    signal: AbortSignal,
+  ): Promise<Result<Identified<StoppedCapture>, AnalysisError>> {
+    return this.#on(input.computer_id, "stop_build_capture", (steps) =>
+      steps.capture.stop(signal),
+    );
+  }
+
+  exportEnvironment(
+    input: Parameters<BuildComputerSteps["capture"]["export"]>[0] & {
+      readonly computer_id: string;
+    },
+    signal: AbortSignal,
+  ): Promise<Result<Identified<ExportedBuild>, AnalysisError>> {
+    const { computer_id: id, ...request } = input;
+    return this.#on(id, "export_build_environment", (steps) =>
+      steps.capture.export(request, signal),
+    );
+  }
+
+  checkTask(
+    input: Parameters<DesktopBuildWitness["check"]>[0] & {
+      readonly computer_id: string;
+    },
+    signal: AbortSignal,
+  ): Promise<Result<Identified<CheckedTask>, AnalysisError>> {
+    const { computer_id: id, ...request } = input;
+    return this.#on(id, "check_build_task", (steps) =>
+      steps.witness.check(request, signal),
+    );
+  }
+
+  /** Run one step on a held computer and name the computer in its result. */
+  async #on<Value extends object>(
+    id: string,
+    operation: string,
+    run: (steps: BuildComputerSteps) => Promise<Result<Value, AnalysisError>>,
+  ): Promise<Result<Identified<Value>, AnalysisError>> {
+    const steps = this.computers.steps(id);
+    if (steps === undefined) return err(unknownComputer(operation));
+    const result = await run(steps);
+    return result.ok ? ok({ computer_id: id, ...result.value }) : result;
+  }
+}

@@ -116,11 +116,12 @@ The class declares:
   taskbar or says it is a splash, and an app whose splash shows first would
   otherwise count as ready before its own window opens. Arguments that are the captured home or under it, and
   `<option>=<path>` values under it, are respelled under the computer user's
-  `$HOME`. agentenv starts the app in its own folder, so when an argument, or
-  the program's own path such as `./app`, is relative the command first
-  changes to the captured working directory
-  (`"$HOME"` when that was the home), and still starts if that folder is
-  missing. The export refuses a capture that saw no application window.
+  `$HOME`. agentenv starts the app in its own folder, where an open or save
+  dialog would show the framework's files, so the command first changes to the
+  captured working directory (`"$HOME"` when that was the home, as for a
+  desktop entry without `Path`), which a relative argument or program path
+  such as `./app` also needs, and still starts if that folder is missing. The
+  export refuses a capture that saw no application window.
 - For an Electron application (the capture found its fuse sentinel or a
   `resources/app.asar`), `--no-sandbox` right after the program unless the
   command already has it: Chromium's sandbox needs user namespaces the

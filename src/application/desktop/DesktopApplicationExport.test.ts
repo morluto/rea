@@ -396,7 +396,7 @@ describe("exportDesktopApplication from a vendor repository", () => {
     );
     expect(module).toContain('"arch": ["amd64"]');
     expect(module).toContain(
-      `command=["sh", "-c", "exec 'typora' '--no-sandbox' \\"$HOME\\"/'Documents/today.txt'"]`,
+      `command=["sh", "-c", "cd \\"$HOME\\" 2>/dev/null; exec 'typora' '--no-sandbox' \\"$HOME\\"/'Documents/today.txt'"]`,
     );
     expect(result.limitations.join("\n")).toContain(
       "Chromium's sandbox is off inside the computer",

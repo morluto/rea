@@ -1,13 +1,21 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { access, chmod, mkdir, readFile, writeFile } from "node:fs/promises";
+import {
+  access,
+  chmod,
+  mkdir,
+  readFile,
+  readdir,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import {
   createServer,
   type IncomingMessage,
   type ServerResponse,
 } from "node:http";
 import type { AddressInfo } from "node:net";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 
 import {
   McpServer,
@@ -41,6 +49,14 @@ export interface FakeComputerOptions {
   readonly frameCharacters?: number;
   /** Bytes data/get appends to each segment beyond its manifest size. */
   readonly segmentPadding?: number;
+  /** Run computer-exec commands on this host in `home`, with `bin` first on PATH and `env` added. */
+  readonly exec?: {
+    readonly home: string;
+    readonly bin: string;
+    readonly env?: Readonly<Record<string, string>>;
+  };
+  /** The one app the card lists. */
+  readonly app?: FakeApp;
 }
 
 const COMPUTER_TOOLS = [
@@ -52,6 +68,16 @@ const COMPUTER_TOOLS = [
   "computer_key",
   "computer_wait",
 ] as const;
+
+/** The one app a fake computer lists, serving data/get with its state views and data/reset to its seed. */
+export interface FakeApp {
+  readonly name: string;
+  /** The views data/get answers now; a test sets them as the app's state changes. */
+  state: Record<string, unknown>;
+  readonly seed: Record<string, unknown>;
+  /** The data methods the app was asked, in order. */
+  readonly methods: string[];
+}
 
 /** A local stand-in for an agentenv computer's driver: readiness, `computer_*` MCP tools, recording and data/get. */
 export interface FakeComputer {
@@ -128,6 +154,119 @@ const startFakeDriver = async (
   });
   await mcp.connect(transport);
   return { mcp, transport };
+};
+
+/** Every file under home-relative paths, as the driver's data plane answers data/get. */
+const homeFileParts = async (home: string, paths: readonly string[]) => {
+  const parts: unknown[] = [];
+  const visit = async (path: string): Promise<void> => {
+    const entry = await stat(path).catch(() => undefined);
+    if (entry?.isDirectory() === true)
+      for (const name of (await readdir(path)).sort())
+        await visit(join(path, name));
+    else if (entry?.isFile() === true)
+      parts.push({
+        kind: "file",
+        file: { bytes: (await readFile(path)).toString("base64") },
+        metadata: {
+          "urn:agentenv:data-objects/v1": { path: relative(home, path) },
+        },
+      });
+  };
+  for (const path of paths) await visit(join(home, path));
+  return parts;
+};
+
+/** Run one computer-exec command on this host as the computer would: in the home, its stdin closed. */
+const runExec = (
+  exec: NonNullable<FakeComputerOptions["exec"]>,
+  token: string,
+  argv: readonly string[],
+) =>
+  new Promise<Record<string, unknown>>((resolve, reject) => {
+    const [command = "", ...rest] = argv;
+    const child = spawn(command, rest, {
+      cwd: exec.home,
+      env: {
+        ...process.env,
+        ...exec.env,
+        HOME: exec.home,
+        PATH: `${exec.bin}:${process.env.PATH ?? ""}`,
+        AGENTENV_CONTROL_TOKEN: token,
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk: Buffer) => (stdout += String(chunk)));
+    child.stderr.on("data", (chunk: Buffer) => (stderr += String(chunk)));
+    child.once("error", reject);
+    child.once("close", (code) => {
+      resolve({
+        exit_code: code,
+        stdout,
+        stderr,
+        truncated: false,
+        timed_out: false,
+      });
+    });
+  });
+
+/** The card, the app's data methods, exec and home files, when the fake serves them; undefined for other routes. */
+const buildRoute = async (
+  options: FakeComputerOptions,
+  token: string,
+  path: string,
+  parsed: unknown,
+): Promise<unknown> => {
+  const { app, exec } = options;
+  const request = parsed as {
+    id?: number;
+    method?: string;
+    argv?: string[];
+    params?: { paths?: string[] };
+  };
+  if (path === "/.well-known/agent-env.json")
+    return {
+      name: "fake-computer",
+      children_environments:
+        app === undefined
+          ? []
+          : [{ name: app.name, url: `/svc/${app.name}/agentenv` }],
+    };
+  if (app !== undefined && path === `/svc/${app.name}/agentenv`) {
+    const method = request.method ?? "";
+    app.methods.push(method);
+    if (method === "data/reset") app.state = structuredClone(app.seed);
+    return {
+      jsonrpc: "2.0",
+      id: request.id,
+      result:
+        method === "data/get"
+          ? {
+              parts: [
+                { kind: "file", file: { bytes: "eA==" } },
+                { kind: "data", data: { state: app.state } },
+              ],
+            }
+          : {},
+    };
+  }
+  if (exec === undefined) return undefined;
+  if (path === "/agentenv/ext/computer-exec/run")
+    return runExec(exec, token, request.argv ?? []);
+  const paths = request.params?.paths ?? [];
+  // Recordings keep the canned segment; other paths are the home's files.
+  if (
+    path !== "/agentenv" ||
+    (paths[0] ?? ".agentenv-recordings/").startsWith(".agentenv-recordings/")
+  )
+    return undefined;
+  return {
+    jsonrpc: "2.0",
+    id: request.id,
+    result: { parts: await homeFileParts(exec.home, paths) },
+  };
 };
 
 interface FakeState {
@@ -257,7 +396,12 @@ export const startFakeComputer = async (
         return;
       }
       const parsed: unknown = body.length === 0 ? {} : JSON.parse(String(body));
-      sendJson(response, 200, frameworkRoute(state, url.pathname, parsed));
+      sendJson(
+        response,
+        200,
+        (await buildRoute(options, token, url.pathname, parsed)) ??
+          frameworkRoute(state, url.pathname, parsed),
+      );
     })().catch((cause: unknown) => {
       response.destroy(cause instanceof Error ? cause : undefined);
     });

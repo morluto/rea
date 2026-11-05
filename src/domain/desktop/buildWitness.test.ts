@@ -1,0 +1,215 @@
+import { describe, expect, it } from "vitest";
+
+import {
+  admitWitnessStage,
+  appStateViews,
+  stageHeld,
+  type WitnessActionLog,
+  type WitnessStageRecord,
+} from "./buildWitness.js";
+import type { ComputerAction } from "./computerActions.js";
+
+type Logged = {
+  readonly action: ComputerAction;
+  readonly outcome: "applied" | "refused" | "failed";
+};
+
+const action = (
+  name: ComputerAction,
+  outcome: Logged["outcome"] = "applied",
+): Logged => ({ action: name, outcome });
+
+/** The log the witness reads of these actions, in order: their count and the last applied of each kind. */
+const logOf = (actions: readonly Logged[]): WitnessActionLog => ({
+  total: actions.length,
+  lastApplied: Object.fromEntries(
+    actions.flatMap(({ action: name, outcome }, index) =>
+      outcome === "applied" ? [[name, index]] : [],
+    ),
+  ),
+});
+
+const admit = (
+  stages: readonly WitnessStageRecord[],
+  stage: WitnessStageRecord["stage"],
+  actions: readonly Logged[],
+) => admitWitnessStage(stages, stage, logOf(actions));
+
+const staged = (
+  stage: WitnessStageRecord["stage"],
+  actionsBefore: number,
+): WitnessStageRecord => ({
+  stage,
+  actions_before: actionsBefore,
+  checked_at: "2026-11-05T00:00:00.000Z",
+  expectation: stage === "after_edit" ? "all_pass" : "some_fail",
+  held: true,
+  results: [],
+});
+
+describe("build witness rules", () => {
+  it("expects a failing check on the seed, after the near miss and after reset, and every check passing after the edit", () => {
+    const failing = [
+      { id: "a", passed: true, description: "" },
+      { id: "b", passed: false, description: "" },
+    ];
+    const passing = [{ id: "a", passed: true, description: "" }];
+    expect(stageHeld("seed", failing)).toBe(true);
+    expect(stageHeld("seed", passing)).toBe(false);
+    expect(stageHeld("after_edit", passing)).toBe(true);
+    expect(stageHeld("after_edit", failing)).toBe(false);
+    expect(stageHeld("near_miss", failing)).toBe(true);
+    expect(stageHeld("near_miss", passing)).toBe(false);
+    expect(stageHeld("after_reset", failing)).toBe(true);
+    expect(stageHeld("after_reset", passing)).toBe(false);
+  });
+
+  it("takes the stages in order, each after the actions it follows", () => {
+    expect(admit([], "seed", [])).toEqual({ ok: true, value: 0 });
+    expect(admit([], "after_edit", [])).toMatchObject({
+      ok: false,
+      error: expect.stringContaining("seed"),
+    });
+    const seed = [staged("seed", 1)];
+    const log = [action("screenshot")];
+    // Only looking and waiting since the seed is no edit.
+    expect(
+      admit(seed, "after_edit", [
+        ...log,
+        action("screenshot"),
+        action("wait"),
+        action("type", "refused"),
+      ]),
+    ).toMatchObject({
+      ok: false,
+      error: expect.stringContaining("act on the app"),
+    });
+    expect(admit(seed, "after_edit", [...log, action("type")])).toEqual({
+      ok: true,
+      value: 2,
+    });
+    expect(admit(seed, "seed", log)).toMatchObject({
+      ok: false,
+      error: expect.stringContaining("after_edit"),
+    });
+    const edited = [...seed, staged("after_edit", 2)];
+    const nearMiss = [...edited, staged("near_miss", 4)];
+    const acted = [action("screenshot"), action("type"), action("key")];
+    expect(admit(edited, "near_miss", [...acted, action("key")])).toMatchObject(
+      { ok: true },
+    );
+    // A reset must be the last change before the check after it.
+    expect(
+      admit(nearMiss, "after_reset", [...acted, action("key"), action("type")]),
+    ).toMatchObject({
+      ok: false,
+      error: expect.stringContaining("reset"),
+    });
+    expect(
+      admit(nearMiss, "after_reset", [
+        ...acted,
+        action("key"),
+        action("reset"),
+        action("type"),
+      ]),
+    ).toMatchObject({ ok: false });
+    expect(
+      admit(nearMiss, "after_reset", [
+        ...acted,
+        action("key"),
+        action("reset"),
+        action("screenshot"),
+      ]),
+    ).toMatchObject({ ok: true });
+    expect(
+      admit([...nearMiss, staged("after_reset", 6)], "after_reset", []),
+    ).toMatchObject({ ok: false, error: expect.stringContaining("ended") });
+  });
+
+  it("reads the app's data/get state into the views the checks read, keeping each file's error", () => {
+    expect(
+      appStateViews([
+        { kind: "file", file: { bytes: "eA==" } },
+        {
+          kind: "data",
+          data: {
+            state: {
+              "Documents/todo.txt": {
+                format: "text",
+                view: { lines: ["milk"], truncated: false },
+                truncated: false,
+              },
+              "Documents/big.bin": {
+                format: null,
+                view: null,
+                error: "larger than 64 MiB, the most the view reads",
+              },
+            },
+          },
+        },
+      ]),
+    ).toEqual({
+      ok: true,
+      value: new Map([
+        [
+          "Documents/todo.txt",
+          {
+            format: "text",
+            view: { lines: ["milk"], truncated: false },
+            error: null,
+          },
+        ],
+        [
+          "Documents/big.bin",
+          {
+            format: null,
+            view: null,
+            error: "larger than 64 MiB, the most the view reads",
+          },
+        ],
+      ]),
+    });
+    expect(appStateViews([{ kind: "file" }])).toMatchObject({
+      ok: false,
+      error: expect.stringContaining("no state views"),
+    });
+  });
+});
+
+describe("build witness over a long session", () => {
+  it("reads the count and the last applied actions, so it holds after the log drops its oldest entries", () => {
+    const seed = [staged("seed", 500)];
+    expect(
+      admitWitnessStage(seed, "after_edit", {
+        total: 1000,
+        lastApplied: { type: 999, reset: 10 },
+      }),
+    ).toEqual({ ok: true, value: 1000 });
+    expect(
+      admitWitnessStage(seed, "after_edit", {
+        total: 1000,
+        lastApplied: { type: 400 },
+      }),
+    ).toMatchObject({
+      ok: false,
+      error: expect.stringContaining("act on the app"),
+    });
+    const nearMiss = [
+      ...seed,
+      staged("after_edit", 600),
+      staged("near_miss", 800),
+    ];
+    expect(
+      admitWitnessStage(nearMiss, "after_reset", {
+        total: 1000,
+        lastApplied: { key: 700, reset: 900 },
+      }),
+    ).toEqual({ ok: true, value: 1000 });
+    expect(
+      admitWitnessStage(nearMiss, "after_reset", {
+        total: 1000,
+        lastApplied: { key: 950, reset: 900 },
+      }),
+    ).toMatchObject({ ok: false, error: expect.stringContaining("reset") });
+  });
+});

@@ -30,11 +30,14 @@ import {
   type ComputerRelease,
 } from "../../desktop/AgentEnvComputerHelper.js";
 import type { PrivateRuntimeRoot } from "../../process/PrivateRuntimeRoot.js";
+import type { ProgressReporter } from "../ProgressReporter.js";
 import {
   BuildComputerActionLog,
   type ReadonlyActionLog,
 } from "./DesktopBuildActionLog.js";
 import { writeRequestBundle } from "./DesktopBuildBundle.js";
+import { DesktopBuildCapture } from "./DesktopBuildCapture.js";
+import { DesktopBuildWitness } from "./DesktopBuildWitness.js";
 
 const START = "start_build_computer";
 const ACT = "act_on_build_computer";
@@ -62,7 +65,16 @@ interface HeldComputer {
   readonly release: (() => Promise<ComputerRelease>) | undefined;
   readonly workspace: PrivateRuntimeRoot | undefined;
   readonly actions: BuildComputerActionLog;
+  /** REA's capture of the app and the task's witness, on a live computer. */
+  readonly steps: BuildComputerSteps | undefined;
   closing: boolean;
+}
+
+/** What the build step tools work on: a live computer, its capture and its witness. */
+export interface BuildComputerSteps {
+  readonly computer: AgentEnvComputer;
+  readonly capture: DesktopBuildCapture;
+  readonly witness: DesktopBuildWitness;
 }
 
 /** A start still in progress, which shutdown cancels and joins. */
@@ -90,6 +102,30 @@ const failure = (
     userMessage: cause instanceof Error ? cause.message : String(cause),
     cause,
   });
+};
+
+/**
+ * Restore the app's data to its seed with `data/reset`, which relaunches the
+ * app, and wait until the computer reports ready again; a screenshot after,
+ * when asked.
+ */
+const reset = async (
+  computer: AgentEnvComputer,
+  fields: Readonly<Record<string, JsonValue>>,
+  signal: AbortSignal,
+): Promise<DriverResult> => {
+  const startedAt = Date.now();
+  await computer.appData("data/reset", signal);
+  await computer.waitUntilReady(signal);
+  const ready = { reset: true, ready_ms: Date.now() - startedAt };
+  if (fields.screenshot !== true)
+    return { isError: false, content: [], structured: ready };
+  const shot = await computer.callTool("computer_screenshot", {}, signal);
+  return {
+    isError: shot.isError,
+    content: shot.content,
+    structured: { ...ready, frame: shot.structured },
+  };
 };
 
 /**
@@ -153,6 +189,7 @@ export class DesktopBuildComputers {
       readonly screenshot?: ScreenshotOptions | undefined;
     },
     signal: AbortSignal,
+    progress?: ProgressReporter,
   ): Promise<
     Result<
       ForwardedResult<{
@@ -171,7 +208,11 @@ export class DesktopBuildComputers {
         }),
       );
     const stop = new AbortController();
-    const settled = this.#start(input, AbortSignal.any([signal, stop.signal]));
+    const settled = this.#start(
+      input,
+      AbortSignal.any([signal, stop.signal]),
+      progress,
+    );
     const pending = { settled, stop };
     this.#starts.add(pending);
     try {
@@ -184,6 +225,7 @@ export class DesktopBuildComputers {
   async #start(
     input: Parameters<DesktopBuildComputers["start"]>[0],
     signal: AbortSignal,
+    progress: ProgressReporter | undefined,
   ): ReturnType<DesktopBuildComputers["start"]> {
     const { source } = input;
     let target: {
@@ -209,7 +251,17 @@ export class DesktopBuildComputers {
         signal,
         operation: START,
       });
-      computer = await AgentEnvComputer.connect(helper, signal);
+      computer = await AgentEnvComputer.connect(
+        helper,
+        signal,
+        progress === undefined
+          ? undefined
+          : (message) => {
+              void progress
+                .report({ phase: START, completed: 0, total: null, message })
+                .catch(() => undefined);
+            },
+      );
       const shot = driverCall("screenshot", input.screenshot ?? {});
       if (!shot.ok) throw new TypeError("screenshot options are its own");
       const taken = await computer.callTool(
@@ -218,11 +270,20 @@ export class DesktopBuildComputers {
         signal,
       );
       const live = computer;
+      const actions = new BuildComputerActionLog();
       this.#computers.set(id, {
         computer: live,
         release: () => live.close(),
         workspace: target.workspace,
-        actions: new BuildComputerActionLog(),
+        actions,
+        steps: {
+          computer: live,
+          capture: new DesktopBuildCapture(
+            live,
+            source.kind === "request" ? source.desktop_entry : undefined,
+          ),
+          witness: new DesktopBuildWitness(live, actions),
+        },
         closing: false,
       });
       return ok({
@@ -247,6 +308,7 @@ export class DesktopBuildComputers {
               : () => owner.release(),
         workspace: target.workspace,
         actions: new BuildComputerActionLog(),
+        steps: undefined,
         closing: true,
       });
       const release = await this.#retire(id);
@@ -298,11 +360,14 @@ export class DesktopBuildComputers {
     );
     let result: DriverResult;
     try {
-      result = await computer.callTool(
-        call.value.tool,
-        call.value.arguments,
-        signal,
-      );
+      result =
+        action === "reset"
+          ? await reset(computer, call.value.arguments, signal)
+          : await computer.callTool(
+              call.value.tool,
+              call.value.arguments,
+              signal,
+            );
     } catch (cause: unknown) {
       logged.settle("failed");
       return err(failure(ACT, cause, signal));
@@ -397,6 +462,12 @@ export class DesktopBuildComputers {
         failures,
         "Build computer teardown is incomplete",
       );
+  }
+
+  /** A live computer's capture and witness, for the build step tools; undefined for an unknown or closing id. */
+  steps(id: string): BuildComputerSteps | undefined {
+    const held = this.#computers.get(id);
+    return held === undefined || held.closing ? undefined : held.steps;
   }
 
   /** A live computer's action log and recording hooks, for the witness. */

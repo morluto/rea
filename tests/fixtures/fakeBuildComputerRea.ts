@@ -1,0 +1,157 @@
+import { execFileSync } from "node:child_process";
+import { access, chmod, mkdir, readFile, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+
+import { createTestTempDirectory } from "./temporaryDirectory.js";
+
+/**
+ * A stand-in for REA inside a build computer: `capture-desktop-application`
+ * reads its requests from stdin and acknowledges each as REA's capture does,
+ * then publishes a prepared capture folder on stop; `describe-...` and
+ * `export-...` print outputs the real CLI wrote for that folder, and the
+ * export copies the bundle it wrote. Each call notes its arguments, its
+ * working folder and which AGENTENV_ variables and APT_CONFIG it saw.
+ */
+const FAKE_REA = String.raw`
+import json
+import os
+import shutil
+import sys
+
+NOTES = os.environ["FAKE_REA_NOTES"]
+
+
+def note(name, value):
+    with open(os.path.join(NOTES, name), "a") as handle:
+        handle.write(json.dumps(value) + "\n")
+
+
+def progress(message, event=None):
+    line = {"rea_progress": {"phase": "desktop_capture", "message": message}}
+    if event is not None:
+        line["rea_progress"]["event"] = event
+    sys.stderr.write(json.dumps(line) + "\n")
+    sys.stderr.flush()
+
+
+def option(args, name):
+    return args[args.index(name) + 1] if name in args else None
+
+
+command, args = sys.argv[1], sys.argv[2:]
+note("calls.jsonl", {"argv": sys.argv[1:], "cwd": os.getcwd(), "apt_config": os.environ.get("APT_CONFIG"),
+                     "agentenv": sorted(name for name in os.environ if name.startswith("AGENTENV_"))})
+if command == "capture-desktop-application":
+    progress("Recorded checkpoint baseline.", {"kind": "checkpoint", "name": "baseline", "trigger": "baseline",
+                                                "at_ms": 0, "entries": 4, "changes": 0, "retained_files": 1,
+                                                "retained_bytes": 17})
+    progress("The application window is open.", {"kind": "window_open"})
+    taken = set()
+    for line in sys.stdin:
+        text = line.strip()
+        if text == "stop":
+            break
+        name = text[len("checkpoint "):].strip()
+        if name in taken:
+            progress("refused", {"kind": "checkpoint_refused", "name": name,
+                                 "reason": f"A checkpoint named {name} was already recorded."})
+            continue
+        taken.add(name)
+        progress(f"Recorded checkpoint {name}.", {"kind": "checkpoint", "name": name, "trigger": "request",
+                                                   "at_ms": 1000 * len(taken), "entries": 5, "changes": 1,
+                                                   "retained_files": 1, "retained_bytes": 5})
+    out = option(args, "--output")
+    shutil.copytree(os.environ["FAKE_REA_CAPTURE"], out)
+    with open(os.path.join(out, "capture.json")) as handle:
+        sys.stdout.write(handle.read())
+elif command == "describe-desktop-application-task":
+    with open(os.environ["FAKE_REA_DRAFT"]) as handle:
+        sys.stdout.write(handle.read())
+elif command == "export-desktop-application":
+    with open(option(args, "--task")) as handle:
+        note("tasks.jsonl", json.load(handle))
+    exported = os.environ["FAKE_REA_EXPORT"]
+    with open(exported) as handle:
+        output = handle.read()
+    if "code" not in json.loads(output):
+        shutil.copytree(os.environ["FAKE_REA_BUNDLE"], args[1])
+    sys.stdout.write(output)
+    sys.exit(0 if "code" not in json.loads(output) else 1)
+else:
+    sys.exit(f"unexpected command {command}")
+`;
+
+/** apt-get update as an ordinary user under APT_CONFIG: one Packages list in the folder it names. */
+const FAKE_APT_GET = String.raw`
+import os
+import re
+import sys
+
+with open(os.environ["APT_CONFIG"]) as handle:
+    lists = re.search(r'Dir::State::Lists "([^"]+)"', handle.read()).group(1)
+open(os.path.join(lists, "archive.ubuntu.com_ubuntu_dists_noble_universe_binary-amd64_Packages.lz4"), "w").close()
+open(os.path.join(lists, "archive.ubuntu.com_ubuntu_dists_noble_InRelease"), "w").close()
+print("Reading package lists... Done")
+sys.exit(0)
+`;
+
+/** Prepared outputs of the real CLI for the fake REA to print. */
+export interface FakeReaOutputs {
+  readonly capture: string;
+  readonly draft: string;
+  readonly export: string;
+  readonly bundle: string;
+}
+
+export interface FakeBuildComputerRea {
+  readonly home: string;
+  readonly bin: string;
+  readonly env: Readonly<Record<string, string>>;
+  notes(name: string): Promise<unknown[]>;
+}
+
+/** A computer home and REA stand-in whose capture, draft and export answer with `outputs`. */
+export const fakeBuildComputerRea = async (
+  outputs: FakeReaOutputs,
+): Promise<FakeBuildComputerRea> => {
+  const root = await createTestTempDirectory("fake-build-rea-");
+  const home = join(root, "home");
+  const bin = join(root, "bin");
+  const notes = join(root, "notes");
+  await Promise.all([home, bin, notes].map((path) => mkdir(path)));
+  const python = execFileSync(
+    "python3",
+    ["-c", "import sys; print(sys.executable)"],
+    { encoding: "utf8" },
+  ).trim();
+  for (const [name, source] of [
+    ["rea", FAKE_REA],
+    ["apt-get", FAKE_APT_GET],
+  ] as const) {
+    await writeFile(join(bin, name), `#!${python}\n${source}`);
+    await chmod(join(bin, name), 0o755);
+  }
+  return {
+    home,
+    bin,
+    env: {
+      FAKE_REA_NOTES: notes,
+      FAKE_REA_CAPTURE: outputs.capture,
+      FAKE_REA_DRAFT: outputs.draft,
+      FAKE_REA_EXPORT: outputs.export,
+      FAKE_REA_BUNDLE: outputs.bundle,
+    },
+    notes: async (name) => {
+      const path = join(notes, name);
+      try {
+        await access(path);
+      } catch {
+        return [];
+      }
+      return (await readFile(path, "utf8"))
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line) as unknown);
+    },
+  };
+};

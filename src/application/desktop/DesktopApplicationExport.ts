@@ -1,13 +1,3 @@
-import { mkdir } from "node:fs/promises";
-import { dirname } from "node:path";
-
-import { SafeOutputTree } from "../../artifacts/SafeOutputTree.js";
-import {
-  ArtifactResourceScope,
-  type ArtifactCleanupAttempt,
-} from "../../artifacts/ArtifactResourceScope.js";
-import { outputDirectoryAdmissionRefusal } from "../../artifacts/SafeOutputTreeAdmission.js";
-import { SafeOutputTreeCreationFailure } from "../../artifacts/SafeOutputTreeCreationFailure.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   DESKTOP_EXPORT_FRAMEWORK_VERSION,
@@ -41,7 +31,6 @@ import type { HostIdentity } from "../../domain/desktop/hostIdentity.js";
 import { scrubDconf } from "../../domain/desktop/seedScrub.js";
 import { isTextualFormat } from "../../domain/desktop/stateFormats.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
-import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
 import {
   inspectDesktopApplicationState,
@@ -56,6 +45,10 @@ import {
   admitApplication,
   exportEnvironmentName,
 } from "./DesktopExportInstall.js";
+import {
+  writeOutputTree,
+  writtenWithOpenHandles,
+} from "./DesktopOutputTree.js";
 import {
   retainedCopies,
   shippedSeedViews,
@@ -128,11 +121,6 @@ const seedDconf = (
 };
 
 type StatePath = DesktopApplicationState["paths"][number];
-type FailedRelease = Extract<
-  ArtifactCleanupAttempt,
-  { readonly kind: "failed" }
->;
-
 /** Files under the owned paths that existed at the seed without retained bytes, in the state view or omitted. */
 const unseededFiles = (
   capture: DesktopApplicationCapture,
@@ -248,58 +236,6 @@ const EXPORT_LIMITATIONS = [
   "The seed is the user's real state at the seed checkpoint; keep the bundle local.",
   "Binary state files are seeded as captured; only text files, UTF-8 or UTF-16 with a byte-order mark, have the capture host's name, user@host and home path replaced.",
 ];
-
-/**
- * Write the bundle through the safe output tree, rolling an unpublished tree
- * back on any failure so no partial copy of the user's data remains. A
- * published bundle is kept; a failed release of its handles is returned.
- */
-const writeBundle = async (
-  directory: string,
-  write: (tree: SafeOutputTree) => Promise<void>,
-  signal: AbortSignal | undefined,
-): Promise<FailedRelease | undefined> => {
-  await mkdir(dirname(directory), { recursive: true, mode: 0o700 });
-  const resources = new ArtifactResourceScope();
-  let tree: SafeOutputTree | undefined;
-  let outcome:
-    | { readonly kind: "completed" }
-    | { readonly kind: "failed"; readonly cause: unknown };
-  try {
-    try {
-      tree = await SafeOutputTree.create(directory, process.platform, {
-        acceptExistingEmpty: true,
-      });
-    } catch (cause: unknown) {
-      if (cause instanceof SafeOutputTreeCreationFailure) tree = cause.tree;
-      throw cause;
-    }
-    await write(tree);
-    await tree.commit(signal);
-    outcome = { kind: "completed" };
-  } catch (cause: unknown) {
-    outcome = { kind: "failed", cause };
-  }
-  if (tree !== undefined) {
-    const released = await resources.release({
-      kind: "output-tree",
-      resource: directory,
-      tree,
-    });
-    if (released.kind === "failed") {
-      if (tree.published) return released;
-      throw resources.cleanupFailure(outcome, [released]);
-    }
-    if (tree.published) return undefined;
-  }
-  if (outcome.kind === "failed")
-    throw outputDirectoryAdmissionRefusal(
-      OPERATION,
-      "directory",
-      outcome.cause,
-    );
-  return undefined;
-};
 
 /** The bundle's generated files, the class module flagged when its dconf keys hold the identity, and its README, made once the seeds' scrub is known. */
 const bundleText = (
@@ -425,12 +361,13 @@ const runExport = async (
   const unclosed = await withRetainedContent(
     request.capture,
     (content) =>
-      writeBundle(
+      writeOutputTree(
         request.directory,
         async (tree) => {
           const bundle = { generated, copies, identity, readme };
           scrub = await writeFiles(tree, content, bundle, signal);
         },
+        { operation: OPERATION, field: "directory" },
         signal,
       ),
     SEED_MAX_BYTES,
@@ -463,28 +400,6 @@ const runExport = async (
     task: admitted?.summary ?? null,
   };
   return { result, captureEvidenceId: evidence.evidence_id, unclosed };
-};
-
-/** A complete bundle whose output handles could not be closed, reported with its Evidence. */
-const writtenWithOpenHandles = (
-  directory: string,
-  evidence: Evidence,
-  release: FailedRelease,
-): ProviderAdapterError => {
-  const reason =
-    release.cause instanceof Error
-      ? release.cause.message
-      : String(release.cause);
-  const error = new ProviderAdapterError(DESKTOP_PROVIDER.id, OPERATION, {
-    userMessage: `The bundle was written to ${directory} and is complete, but its output handles could not be closed: ${reason}.`,
-    remediationAction:
-      "Use the written bundle; the handles are released when this process exits.",
-    cleanup: { reason, resources: [directory] },
-    partialObservation: evidence,
-    diagnostics: { output_directory: directory },
-  });
-  release.lease.bindCleanupError(error);
-  return error;
 };
 
 /** Export one capture folder as an agentenv computer app bundle, reported as Evidence. */
@@ -527,7 +442,16 @@ export const exportDesktopApplication = async (
     });
     return unclosed === undefined
       ? evidence
-      : writtenWithOpenHandles(request.directory, evidence, unclosed);
+      : writtenWithOpenHandles(
+          {
+            provider: DESKTOP_PROVIDER.id,
+            operation: OPERATION,
+            what: "bundle",
+          },
+          request.directory,
+          unclosed,
+          evidence,
+        );
   } catch (cause: unknown) {
     return desktopOperationFailure(cause, signal, OPERATION, "Desktop export");
   }

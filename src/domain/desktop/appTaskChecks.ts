@@ -16,11 +16,11 @@ export interface TaskFileView {
 }
 
 /** How one check came out against one set of views. */
-export interface TaskCheckOutcome {
+export type TaskCheckOutcome = {
   readonly id: string;
   readonly passed: boolean;
   readonly description: string;
-}
+};
 
 type Verdict = Omit<TaskCheckOutcome, "id">;
 type Check<Kind extends DesktopTaskCheck["kind"]> = Extract<

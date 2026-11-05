@@ -1,84 +1,27 @@
-import { chmod, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
-import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
+import type { Client } from "@modelcontextprotocol/client";
 import type { CallToolResult } from "@modelcontextprotocol/server";
-import { expect, it, onTestFinished } from "vitest";
+import { expect, it } from "vitest";
 import { z } from "zod";
 
 import { toolContract } from "../../../src/contracts/toolContracts.js";
-import { createServer } from "../../../src/server/createServer.js";
-import { createTestBinarySession } from "../../fixtures/binarySession.js";
+import {
+  buildComputerFakes as fakes,
+  bundleFolder,
+  connectBuildServer as connect,
+  expectNoToken,
+} from "../../fixtures/buildComputerMcp.js";
 import {
   FAKE_FRAME_PNG,
-  fakeAgentEnvRunner,
-  startFakeComputer,
   type FakeComputer,
-  type FakeComputerOptions,
 } from "../../fixtures/fakeAgentEnvComputer.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
-import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-
-/** The host's environment without the settings the opt-in real test exports, which would reach past these fakes. */
-const hostEnvironment = Object.fromEntries(
-  Object.entries(process.env).filter(
-    ([name]) =>
-      ![
-        "REA_AGENT_ENV_COMMAND",
-        "REA_DOCKER_COMMAND",
-        "REA_BUILD_COMPUTER_REA_ARCHIVE",
-      ].includes(name),
-  ),
-);
-
-const connect = async (environment: Readonly<Record<string, string>>) => {
-  const session = createTestBinarySession(() => {
-    throw new Error("build computers must not start a deep provider");
-  });
-  const server = createServer(
-    { kind: "session", session },
-    {
-      environment: {
-        ...hostEnvironment,
-        REA_MCP_INPUT_SCHEMA_PROFILE: "full",
-        ...environment,
-      },
-    },
-  );
-  const client = new Client({ name: "build-computer-mcp", version: "1" });
-  onTestFinished(async () => {
-    await client.close();
-    await server.close();
-    await session.close();
-  });
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
-  await server.connect(serverTransport);
-  await client.connect(clientTransport);
-  return client;
-};
-
-const fakes = async (options: FakeComputerOptions = {}) => {
-  const computer = await startFakeComputer(options);
-  onTestFinished(() => computer.close());
-  const runner = await fakeAgentEnvRunner(computer);
-  return { computer, runner };
-};
-
-const bundleFolder = async (): Promise<string> => {
-  const bundle = await createTestTempDirectory("exported-bundle-");
-  await mkdir(join(bundle, "tasks"));
-  await writeFile(join(bundle, "tasks", "smoke.json"), "[]\n");
-  return bundle;
-};
 
 const images = (result: CallToolResult) =>
   result.content.filter((block) => block.type === "image");
-
-/** No delivered text, success or failure, may hold the control token. */
-const expectNoToken = (computer: FakeComputer, result: CallToolResult) =>
-  expect(JSON.stringify(result)).not.toContain(computer.token);
 
 const startFromBundle = async (client: Client, computer: FakeComputer) => {
   const started = await client.callTool({
