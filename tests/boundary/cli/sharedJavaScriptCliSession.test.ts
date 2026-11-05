@@ -899,7 +899,10 @@ test("closes the real JavaScript CLI worker through its resource cleanup", async
   expect(worker?.exitCode).toBeNull();
   expect(worker?.signalCode).toBeNull();
   await session.close();
-  expect(worker?.exitCode).toBe(0);
+  expect(
+    worker?.exitCode,
+    `worker signal after cleanup: ${String(worker?.signalCode)}`,
+  ).toBe(0);
   expect(worker?.signalCode).toBeNull();
   expect(session.processId()).toBeUndefined();
 });

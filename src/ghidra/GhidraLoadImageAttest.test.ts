@@ -21,6 +21,12 @@ import {
 } from "./GhidraLoadImage.fixture.js";
 import { fixtureRawBinaryLoadImage } from "./GhidraRawBinaryLoadImage.fixture.js";
 import { attestGhidraNativeLoadImage } from "./GhidraLoadImageAttest.js";
+import { limitationsFor } from "./GhidraProviderCapabilities.js";
+import {
+  GHIDRA_VERIFIED_LOAD_IMAGE_FORMATS,
+  ghidraLoadImageVerificationNote,
+  ghidraUnverifiedLoadImageReason,
+} from "./GhidraVerifiedLoadImageFormats.js";
 import { GhidraSessionError } from "./GhidraSessionError.js";
 
 const dosFixture = (format: "dos-mz" | "dos-com") => {
@@ -100,6 +106,44 @@ it.each(["dos-mz", "dos-com", "raw-binary"] as const)(
     });
   },
 );
+
+it("records which formats receive independent load-image verification", () => {
+  expect(GHIDRA_VERIFIED_LOAD_IMAGE_FORMATS).toEqual([
+    "dos-mz",
+    "dos-com",
+    "raw-binary",
+    "gamecube-dol",
+  ]);
+  expect(limitationsFor("inspect_native_load_image")).toContain(
+    ghidraLoadImageVerificationNote(),
+  );
+});
+
+it("declines another format with the owned verification reason", async () => {
+  const { observation } = fixtureRawBinaryLoadImage();
+  const result = await attestGhidraNativeLoadImage({
+    operation: "inspect_native_load_image",
+    target: {
+      path: "/controlled/load-image",
+      sha256: "a".repeat(64),
+      kind: "executable",
+      format: "elf",
+      architecture: "x86_64",
+      availableArchitectures: ["x86_64"],
+    },
+    measured: observation,
+    client: {},
+    mapSessionError: (cause) =>
+      new ProviderAdapterError("ghidra", "inspect_native_load_image", {
+        cause,
+      }),
+  });
+  if (!result.ok) throw result.error;
+  expect(result.value).toMatchObject({
+    status: "unsupported",
+    reason: ghidraUnverifiedLoadImageReason(),
+  });
+});
 
 it.each([null, "caller stopped", new Error("caller stopped")])(
   "preserves an already-cancelled caller's reason and measured facts (%s)",

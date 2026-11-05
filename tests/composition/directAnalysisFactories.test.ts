@@ -1,7 +1,13 @@
 import { projectCliAnalysisResult } from "../../src/cli/projectCliAnalysisResult.js";
-import { EvidenceFileError } from "../../src/domain/evidenceErrors.js";
+import {
+  AnalysisSnapshotMismatchError,
+  EvidenceFileError,
+} from "../../src/domain/evidenceErrors.js";
+import { analysisErrorRemediationAction } from "../../src/domain/analysisErrorPresentation.js";
 import { err, ok as resultOk } from "../../src/domain/result.js";
 import { dirname, join } from "node:path";
+import { createHash } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import { parseConfig } from "../../src/config/parseConfig.js";
 import { describe, expect, it, vi } from "vitest";
 import {
@@ -312,11 +318,25 @@ it("direct analysis snapshot target mismatch retains actionable snapshot recover
     {},
     { snapshotPath },
   ).then(projectCliAnalysisResult);
+  const sha = async (input: string) =>
+    createHash("sha256")
+      .update(await readFile(input))
+      .digest("hex");
   expect(mismatch).toMatchObject({
     code: "evidence_integrity_mismatch",
     remediation: {
-      action:
-        "Run analysis without this snapshot, then save a fresh snapshot using the intended artifact, provider, and analysis profile.",
+      action: analysisErrorRemediationAction(
+        new AnalysisSnapshotMismatchError(""),
+      ),
+    },
+    details: {
+      binding_mismatch: {
+        target: {
+          snapshot: { sha256: await sha(path) },
+          selected: { sha256: await sha(other) },
+        },
+        profile_comparison: "not_compared",
+      },
     },
   });
   expect(
