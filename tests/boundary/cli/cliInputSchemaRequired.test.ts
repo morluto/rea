@@ -5,12 +5,16 @@ import { describe, expect, it, vi } from "vitest";
 
 import { createCli } from "../../../src/cli.js";
 import { createCliInventory } from "../../../scripts/lib/catalog-cli.mjs";
+import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
 import { registerAdbCommands } from "../../../src/cli/adbCommands.js";
 import { presentCliArgumentErrors } from "../../../src/cli/argumentErrors.js";
 import { AnalysisInputError } from "../../../src/domain/analysisErrorCore.js";
-import { err } from "../../../src/domain/result.js";
+import { err, ok } from "../../../src/domain/result.js";
 import { silentLogger } from "../../../src/logger.js";
-import { adbInputSchemas } from "../../../src/domain/adb/adbDeviceAnalysis.js";
+import {
+  adbInputSchemas,
+  type AdbRequest,
+} from "../../../src/domain/adb/adbDeviceAnalysis.js";
 import {
   apktoolInputSchemas,
   MAX_SELECTED_LOCALES,
@@ -499,8 +503,25 @@ it("advertises and enforces the canonical ADB setting key", async () => {
     inspectAvailability: vi.fn(async (): Promise<never> => {
       throw new Error("unexpected availability probe");
     }),
-    execute: vi.fn(async (): Promise<never> => {
-      throw new Error("unexpected provider execution");
+    execute: vi.fn(async (request: AdbRequest) => {
+      if (request.operation !== "read_adb_setting")
+        throw new Error("unexpected provider operation");
+      return ok(
+        createAnalysisExecution(
+          {
+            client: {
+              binary_path: "/fixture/adb",
+              path_source: "environment",
+              version: "fixture",
+              installed_path: null,
+            },
+            ...request.input,
+            value: "fixture value",
+            device_reported_null: false,
+          },
+          { id: "adb", name: "ADB fixture", version: "fixture" },
+        ),
+      );
     }),
     close: vi.fn(async () => undefined),
   };
@@ -527,8 +548,18 @@ it("advertises and enforces the canonical ADB setting key", async () => {
     );
     expect(parser?.safeParse(args).success).toBe(valid);
     expect(validate(args)).toBe(valid);
-    if (constraint === null) continue;
     const result = await serve(cli, [command, "S", "secure", key, "--json"]);
+    if (constraint === null) {
+      expect(result.exitCode).toBe(0);
+      expect(provider.execute).toHaveBeenLastCalledWith(
+        { operation: "read_adb_setting", input: args },
+        expect.anything(),
+      );
+      expect(JSON.parse(result.stdout)).toMatchObject({
+        normalized_result: { ...args, value: "fixture value" },
+      });
+      continue;
+    }
     expect(result.exitCode).toBe(1);
     expect(JSON.parse(result.stdout)).toMatchObject({
       code: "VALIDATION_ERROR",
@@ -537,7 +568,8 @@ it("advertises and enforces the canonical ADB setting key", async () => {
     expect(result.stdout).not.toContain(key);
   }
   expect(provider.inspectAvailability).not.toHaveBeenCalled();
-  expect(provider.execute).not.toHaveBeenCalled();
+  expect(provider.execute).toHaveBeenCalledTimes(2);
+  expect(provider.close).toHaveBeenCalledTimes(2);
 });
 
 describe("ADB selector input schemas: dispatch", () => {
