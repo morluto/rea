@@ -10,10 +10,12 @@ import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory
 import { AnalysisCapabilityUnavailableError } from "../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { FIRMWARE_LIMITS } from "./FirmwareRelease.js";
+import { firmwareSignalLimitError } from "./FirmwareFailures.js";
 import { FirmwareFileAccess } from "./FirmwareFiles.js";
 import {
   resolveFirmwareCommand,
   runFirmwareCommand,
+  type FirmwareLauncher,
 } from "./FirmwareCommand.js";
 import {
   spawnOwnedProviderProcess,
@@ -204,7 +206,11 @@ it("rejects a directory configured as the resource limiter executable", async ()
   });
 });
 
-it("keeps captured tool output when firmware stops on SIGXCPU", async () => {
+// A launched producer that writes its output, then stops on a limit signal.
+const signalledLauncher = (
+  signal: NodeJS.Signals,
+  output: { stdout: string; stderr: string },
+): FirmwareLauncher => {
   const stdout = new PassThrough();
   const stderr = new PassThrough();
   const emitter = new EventEmitter();
@@ -216,20 +222,40 @@ it("keeps captured tool output when firmware stops on SIGXCPU", async () => {
     stdout,
     stderr,
     exitCode: null,
-    signalCode: "SIGXCPU",
+    signalCode: signal,
     kill: () => false,
   };
   let ended = 0;
   const close = () => {
     ended += 1;
-    if (ended === 2) emitter.emit("close", null, "SIGXCPU");
+    if (ended === 2) emitter.emit("close", null, signal);
   };
   stdout.once("end", close);
   stderr.once("end", close);
   setTimeout(() => {
-    stdout.end("partial scan\n");
-    stderr.end("cpu limit\n");
+    stdout.end(output.stdout);
+    stderr.end(output.stderr);
   }, 15);
+  return () =>
+    Promise.resolve({
+      process: child,
+      ownership: {
+        runId: "rea-firmware-signal",
+        leaderPid: 4242,
+        processGroupId: 4242,
+      },
+      cleanup: () => Promise.resolve({ cleaned: true, signaled: false }),
+    });
+};
+
+const analysisDeadline = (signal: AbortSignal) => ({
+  phase: "analysis" as const,
+  signal,
+  timeoutMs: 30_000,
+  expiresAtMs: performance.now() + 30_000,
+});
+
+it("keeps captured tool output when firmware stops on SIGXCPU", async () => {
   const analysis = new AbortController();
   const failure: unknown = await runFirmwareCommand({
     fileSizeCeiling: Number.MAX_SAFE_INTEGER,
@@ -241,22 +267,11 @@ it("keeps captured tool output when firmware stops on SIGXCPU", async () => {
     cwd: await createTestTempDirectory("rea-firmware-signal-"),
     environment: process.env,
     signal: analysis.signal,
-    deadline: {
-      phase: "analysis",
-      signal: analysis.signal,
-      timeoutMs: 30_000,
-      expiresAtMs: performance.now() + 30_000,
-    },
-    launcher: () =>
-      Promise.resolve({
-        process: child,
-        ownership: {
-          runId: "rea-firmware-signal",
-          leaderPid: 4242,
-          processGroupId: 4242,
-        },
-        cleanup: () => Promise.resolve({ cleaned: true, signaled: false }),
-      }),
+    deadline: analysisDeadline(analysis.signal),
+    launcher: signalledLauncher("SIGXCPU", {
+      stdout: "partial scan\n",
+      stderr: "cpu limit\n",
+    }),
     retainCleanup: vi.fn(),
   }).catch((cause: unknown) => cause);
   expect(failure).toMatchObject({
@@ -279,6 +294,54 @@ it("keeps captured tool output when firmware stops on SIGXCPU", async () => {
   });
 });
 
+const sixteenMiB = 16 * 1024 * 1024;
+it.each([
+  {
+    inherited: Number.MAX_SAFE_INTEGER,
+    limit: sixteenMiB + 1,
+    adjustable: true,
+  },
+  { inherited: sixteenMiB + 1, limit: sixteenMiB + 1, adjustable: false },
+])(
+  "recommends a larger max_output_bytes on SIGXFSZ only when it raises the limit (inherited $inherited)",
+  async ({ inherited, limit, adjustable }) => {
+    const root = await createTestTempDirectory("rea-firmware-fsize-signal-");
+    const analysis = new AbortController();
+    const failure: unknown = await runFirmwareCommand({
+      fileSizeCeiling: inherited,
+      engine: "unblob",
+      operation: "extract_firmware",
+      command: "/opt/unblob",
+      limiter: "/usr/bin/prlimit",
+      args: [],
+      cwd: root,
+      environment: process.env,
+      signal: analysis.signal,
+      deadline: analysisDeadline(analysis.signal),
+      launcher: signalledLauncher("SIGXFSZ", { stdout: "", stderr: "" }),
+      outputBudget: { root, bytes: sixteenMiB, entries: 10 },
+      retainCleanup: vi.fn(),
+    }).catch((cause: unknown) => cause);
+    expect(failure).toMatchObject({
+      _tag: "AnalysisResourceConstraintError",
+      resource: "file-size",
+      reportedLimits: { file_size_bytes: limit },
+      retryable: false,
+    });
+    // Compare with the recovery owner instead of its wording; the two branches
+    // must differ for the comparison to pin the selected one.
+    const recovery = (fileSizeAdjustable: boolean) =>
+      firmwareSignalLimitError(
+        "extract_firmware",
+        "SIGXFSZ",
+        limit,
+        fileSizeAdjustable,
+      )?.remediationAction;
+    expect(recovery(true)).not.toBe(recovery(false));
+    expect(failure).toHaveProperty("remediationAction", recovery(adjustable));
+  },
+);
+
 const executableFixture = async (root: string, name: string) => {
   const path = join(root, name);
   await writeFile(path, "#!/bin/sh\n");
@@ -290,11 +353,16 @@ test.each([
   {
     selected: 1,
     inherited: Number.MAX_SAFE_INTEGER,
-    expected: 8 * 1024 * 1024,
+    expected: 8 * 1024 * 1024 + 1,
   },
   {
     selected: 16 * 1024 * 1024,
     inherited: Number.MAX_SAFE_INTEGER,
+    expected: 16 * 1024 * 1024 + 1,
+  },
+  {
+    selected: 16 * 1024 * 1024,
+    inherited: 16 * 1024 * 1024,
     expected: 16 * 1024 * 1024,
   },
   { selected: 16 * 1024 * 1024, inherited: 1024, expected: 1024 },

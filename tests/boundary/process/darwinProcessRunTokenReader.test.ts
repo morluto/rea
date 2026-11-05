@@ -1317,6 +1317,29 @@ it.skipIf(!onDarwin)(
         missingAppleBoundaryFailsClosed: true,
         malformedBuffersRejected: true,
         invalidPointerSizeFailsClosed: true,
+        incompleteRestrictedArguments: [
+          "malformed_procargs_path_padding",
+          "malformed_procargs_arguments",
+          "apple_vector_unavailable",
+        ].map((reason) => [
+          {
+            state: "unavailable",
+            reason: "platform_binary_environment_withheld",
+          },
+          {
+            state: "unavailable",
+            reason: "restricted_process_environment_withheld",
+          },
+          { state: "unavailable", reason },
+        ]),
+        signedReadableTokens: [true, true],
+        signedInvalidTokens: [
+          "duplicate_run_token",
+          "invalid_run_token_encoding",
+        ].map((reason) => [
+          { state: "unavailable", reason },
+          { state: "unavailable", reason },
+        ]),
         malformedStages: [
           { state: "unavailable", reason: "malformed_procargs_header" },
           { state: "unavailable", reason: "malformed_procargs_argument_count" },

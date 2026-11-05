@@ -27,10 +27,12 @@ import type { FridaInstrumentationPort } from "./application/frida/FridaInstrume
 import { Cli, Filter, SyncMcp, z } from "incur";
 import {
   adaptCliOutputArgumentsForIncur,
+  declaredSensitiveValues,
   normalizeCliArguments,
   normalizeMcpAddArguments,
   splitIncurBuiltinArguments,
 } from "./cliBuiltinArguments.js";
+import { redactExplicitText } from "./domain/explicitSensitiveValues.js";
 import {
   parseCliOutputArguments,
   renderCliDocument,
@@ -79,7 +81,10 @@ import { registerReverseEngineeringCommands } from "./cli/reverseEngineeringComm
 import { registerCutterCommands } from "./cli/cutterCommands.js";
 import { excludeDeclaredSensitiveArguments } from "./cli/explicitSensitiveArguments.js";
 import { rejectSurplusCliArguments } from "./cli/strictPositionals.js";
-import { presentCliArgumentErrors } from "./cli/argumentErrors.js";
+import {
+  encodeCliArgumentErrors,
+  presentCliArgumentErrors,
+} from "./cli/argumentErrors.js";
 import { completionHelpNote, createCliCompletions } from "./cli/completions.js";
 import {
   closeCliGuidanceResources,
@@ -247,6 +252,7 @@ export const createCli = (
   const serveStrict = rejectSurplusCliArguments(cli);
   presentCliArgumentErrors(cli);
   const serveDeclared = excludeDeclaredSensitiveArguments(cli);
+  encodeCliArgumentErrors(cli);
   const serve = cli.serve.bind(cli);
   const complete = createCliCompletions(
     cli as unknown as Parameters<typeof createCliCompletions>[0],
@@ -254,8 +260,9 @@ export const createCli = (
   );
   cli.serve = (arguments_ = process.argv.slice(2), options) => {
     if (complete(arguments_, options ?? {})) return Promise.resolve();
+    const normalizedArguments = normalizeCliArguments(arguments_);
     const normalized = normalizeMcpAddArguments(
-      normalizeCliArguments(arguments_),
+      normalizedArguments,
       PRODUCT_IDENTITY.cliBinary,
     );
     const { command, flags } = splitIncurBuiltinArguments(normalized);
@@ -308,6 +315,71 @@ export const createCli = (
         )(1);
         return Promise.resolve();
       }
+      // Incur's `mcp add` silently skips a valued option with no value and
+      // swallows the next flag as the value: the registration succeeds without
+      // the requested agent or command. Reject a trailing --agent/--command/-c,
+      // a value position occupied by another flag, and an empty `--flag=` form
+      // up front.
+      // Validate the caller tokens before equals expansion, so bound values
+      // cannot be reinterpreted as registration options by this guard.
+      const originalCommand =
+        splitIncurBuiltinArguments(normalizedArguments).command;
+      const valued = ["--agent", "--command", "-c"];
+      let missingValue: string | undefined;
+      for (let index = 0; index < originalCommand.length; index += 1) {
+        const next = originalCommand[index + 1];
+        if (
+          valued.includes(originalCommand[index]!) &&
+          (next === undefined || next.startsWith("-"))
+        ) {
+          missingValue = originalCommand[index];
+          break;
+        }
+      }
+      const emptyValue = originalCommand.find(
+        (token) =>
+          (token.startsWith("--agent=") ||
+            token.startsWith("--command=") ||
+            token.startsWith("-c=")) &&
+          token.length === token.indexOf("=") + 1,
+      );
+      if (missingValue !== undefined || emptyValue !== undefined) {
+        const flag = missingValue ?? emptyValue!;
+        const message = `Missing value for flag: ${flag.replace(/=.*$/, "")}`;
+        const field =
+          flag.includes("command") || flag === "-c" || flag.startsWith("-c=")
+            ? "command"
+            : "agent";
+        const output = parseCliOutputArguments(normalized);
+        if (!output.validation.ok)
+          write(renderCliOutputArgumentError(output.validation));
+        else
+          write(
+            renderCliDocument(
+              {
+                code: "VALIDATION_ERROR",
+                message,
+                fieldErrors: [
+                  {
+                    code: "invalid_value",
+                    missing: false,
+                    path: field,
+                    message,
+                  },
+                ],
+              },
+              output.format,
+              process.stdout.isTTY === true,
+            ),
+          );
+        (
+          options?.exit ??
+          ((code: number) => {
+            process.exitCode = code;
+          })
+        )(1);
+        return Promise.resolve();
+      }
       const output = parseCliOutputArguments(normalized);
       const jsonRegistration =
         output.validation.ok &&
@@ -315,6 +387,9 @@ export const createCli = (
         !flags.has("--mcp") &&
         !flags.has("--update") &&
         !flags.has("--incur-update-check");
+      const sensitiveValues = declaredSensitiveValues(command);
+      const redactRegistrationText = (text: string): string =>
+        redactExplicitText(text, sensitiveValues);
       let registrationDocument: string | undefined;
       let registrationFailed = false;
       const flushRegistration = (): void => {
@@ -348,8 +423,9 @@ export const createCli = (
         }).then(
           (result) => {
             const registered = {
-              name: PRODUCT_IDENTITY.cliBinary,
-              ...result,
+              name: redactRegistrationText(PRODUCT_IDENTITY.cliBinary),
+              command: redactRegistrationText(result.command),
+              agents: result.agents.map(redactRegistrationText),
             };
             // Amp verification must finish before a success document is sent.
             // Incur filters successful data before formatting; keep that
@@ -370,8 +446,9 @@ export const createCli = (
               renderCliDocument(
                 {
                   code: "MCP_ADD_FAILED",
-                  message:
+                  message: redactRegistrationText(
                     cause instanceof Error ? cause.message : String(cause),
+                  ),
                 },
                 "json",
                 process.stdout.isTTY === true,

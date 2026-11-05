@@ -427,6 +427,12 @@ cliTest(
 );
 
 it("registration expansion preserves values and existing modes", () => {
+  expect(
+    normalizeMcpAddArguments(
+      ["mcp", "add", "--", "--command=operand", "--agent=cursor"],
+      "rea",
+    ),
+  ).toEqual(["mcp", "add", "--", "--command", "operand", "--agent", "cursor"]);
   for (const tail of [
     ["--command", "--agent=cursor"],
     ["-c", "--command=literal"],
@@ -434,7 +440,6 @@ it("registration expansion preserves values and existing modes", () => {
     ["--sensitive-value", "--command=secret"],
     ["--sensitiveValue", "--agent=private"],
     ["--command", "--sensitive-value", "--command=secret"],
-    ["--", "--command=operand", "--agent=operand"],
     ["--filter-output", "--command=data"],
     ["--help", "--command=--mcp"],
     ["--llms", "--agent=--mcp"],
@@ -459,18 +464,46 @@ it("registration expansion preserves values and existing modes", () => {
 });
 
 cliTest(
-  "spaced registration values retain equals-shaped literal data",
+  "spaced flag-shaped registration values fail before settings or runners",
   async ({ cli }) => {
     const fixture = await registrationFixture();
-    for (const option of ["--command", "-c"]) {
+    await mkdir(join(fixture.home, ".config", "amp"), { recursive: true });
+    await writeFile(fixture.settings, "malformed settings\n");
+    for (const option of ["--command", "-c", "--agent"]) {
+      const result = await cli.run({
+        arguments: ["mcp", "add", option, "--agent=cursor", "--json"],
+        cwd: fixture.home,
+        environment: fixture.environment,
+        timeoutMs: 20_000,
+      });
+      expect(result.exitCode, result.stdout).toBe(1);
+      expect(JSON.parse(result.stdout)).toMatchObject({
+        code: "VALIDATION_ERROR",
+        message: `Missing value for flag: ${option}`,
+      });
+      expect(await readFile(fixture.settings, "utf8")).toBe(
+        "malformed settings\n",
+      );
+      expect(await readFile(fixture.log, "utf8")).toBe("");
+      await expect(
+        access(`${fixture.settings}.rea.backup`),
+      ).rejects.toMatchObject({ code: "ENOENT" });
+    }
+  },
+);
+
+cliTest(
+  "equals-bound flag-shaped commands retain main's accepted value contract",
+  async ({ cli }) => {
+    const fixture = await registrationFixture();
+    for (const value of ["--agent=cursor", "--command="]) {
       const result = await cli.run({
         arguments: [
           "mcp",
           "add",
           "--agent",
           "claude-code",
-          option,
-          "--agent=cursor",
+          `--command=${value}`,
           "--json",
         ],
         cwd: fixture.home,
@@ -479,41 +512,20 @@ cliTest(
       });
       expect(result.exitCode, result.stdout).toBe(0);
       expect(JSON.parse(result.stdout)).toMatchObject({
-        command: "--agent=cursor",
+        command: value,
         agents: ["Fixture {client}"],
       });
     }
-    const agent = await cli.run({
-      arguments: [
-        "mcp",
-        "add",
-        "--agent",
-        "--command=fixture",
-        "--command",
-        "fixture-server",
-        "--json",
-      ],
-      cwd: fixture.home,
-      environment: fixture.environment,
-      timeoutMs: 20_000,
-    });
-    expect(agent.exitCode, agent.stdout).toBe(0);
     const calls = (await readFile(fixture.log, "utf8"))
       .trim()
       .split("\n")
       .map((line) => JSON.parse(line));
+    expect(calls).toHaveLength(2);
     expect(calls[0]).toContain("--agent=cursor");
-    expect(calls[1]).toContain("--agent=cursor");
-    expect(calls[2]).toEqual([
-      "add-mcp",
-      "fixture-server",
-      "--name",
-      "rea",
-      "-y",
-      "-g",
-      "-a",
-      "--command=fixture",
-    ]);
+    expect(calls[1]).toContain("--command=");
+    await expect(access(fixture.settings)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
   },
 );
 
@@ -567,7 +579,7 @@ registerHooks({ resolve(specifier, context, next) {
 );
 
 cliTest(
-  "declaration-shaped command values retain the entire sensitive literal",
+  "rejected declaration-shaped command values remain private",
   async ({ cli }) => {
     const fixture = await registrationFixture();
     const literal = "--command=fixture-secret-8071";
@@ -586,12 +598,157 @@ cliTest(
         environment: fixture.environment,
         timeoutMs: 20_000,
       });
+      expect(result.exitCode).toBe(1);
+      expect(result.json).toMatchObject({ code: "VALIDATION_ERROR" });
+      expect(await readFile(fixture.log, "utf8")).toBe("");
       expect(result.stdout + result.stderr).not.toContain(
         "fixture-secret-8071",
       );
       expect(await readFile(fixture.log, "utf8")).not.toContain(
         "fixture-secret-8071",
       );
+    }
+  },
+);
+
+cliTest(
+  "JSON registration redacts complete equals-shaped declared command values",
+  async ({ cli }) => {
+    const fixture = await registrationFixture();
+    const literal = "--command=fixture-secret-8071";
+    for (const declaration of ["--sensitive-value", "--sensitiveValue"]) {
+      const result = await cli.run({
+        arguments: [
+          "mcp",
+          "add",
+          "--agent",
+          "claude-code",
+          `--command=${literal}`,
+          declaration,
+          literal,
+          "--json",
+        ],
+        cwd: fixture.home,
+        environment: fixture.environment,
+        timeoutMs: 20_000,
+      });
+      expect(result.exitCode, result.stdout).toBe(0);
+      expect(JSON.parse(result.stdout)).toMatchObject({
+        command: "[REDACTED]",
+      });
+      expect(result.stdout + result.stderr).not.toContain(
+        "fixture-secret-8071",
+      );
+    }
+    const calls = (await readFile(fixture.log, "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    expect(calls).toHaveLength(2);
+    for (const call of calls) expect(call).toContain(literal);
+    await expect(access(fixture.settings)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    const amp = await cli.run({
+      arguments: [
+        "mcp",
+        "add",
+        "--agent",
+        "amp",
+        "--command=fixture-secret-8071",
+        "--sensitive-value",
+        "fixture-secret-8071",
+        "--json",
+      ],
+      cwd: fixture.home,
+      environment: fixture.environment,
+      timeoutMs: 20_000,
+    });
+    expect(amp.exitCode, amp.stdout).toBe(0);
+    expect(JSON.parse(amp.stdout)).toMatchObject({ command: "[REDACTED]" });
+    expect(
+      JSON.parse(await readFile(fixture.settings, "utf8"))["amp.mcpServers"].rea
+        .command,
+    ).toBe("fixture-secret-8071");
+  },
+);
+
+cliTest(
+  "JSON registration failure redacts declarations without changing error codes",
+  async ({ cli }) => {
+    const fixture = await registrationFixture();
+    const result = await cli.run({
+      arguments: [
+        "mcp",
+        "add",
+        "--agent",
+        "claude-code",
+        "--command",
+        "fixture-server",
+        "--sensitive-value",
+        "fixture failure",
+        "--sensitive-value",
+        "MCP_ADD_FAILED",
+        "--json",
+        "--filter-output",
+        "agents",
+      ],
+      cwd: fixture.home,
+      environment: { ...fixture.environment, REA_TEST_RUNNER_FAIL: "1" },
+      timeoutMs: 20_000,
+    });
+    expect(result.exitCode).toBe(1);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      code: "MCP_ADD_FAILED",
+      message: expect.stringContaining("[REDACTED]"),
+    });
+    expect(result.stdout + result.stderr).not.toContain("fixture failure");
+  },
+);
+
+cliTest(
+  "registration preserves explicit targets after a separator without touching Amp",
+  async ({ cli }) => {
+    const fixture = await registrationFixture();
+    await mkdir(join(fixture.home, ".config", "amp"), { recursive: true });
+    const original = "malformed Amp settings\n";
+    await writeFile(fixture.settings, original);
+    for (const format of ["json", "md"]) {
+      const result = await cli.run({
+        arguments: [
+          "mcp",
+          "add",
+          "--",
+          "--agent=cursor",
+          "--command=fixture",
+          "--format",
+          format,
+        ],
+        cwd: fixture.home,
+        environment: fixture.environment,
+        timeoutMs: 20_000,
+      });
+      expect(result.exitCode, result.stdout + result.stderr).toBe(0);
+      if (format === "json")
+        expect(JSON.parse(result.stdout)).toEqual({
+          name: "rea",
+          command: "fixture",
+          agents: ["Fixture {client}"],
+        });
+      expect(await readFile(fixture.settings, "utf8")).toBe(original);
+      await expect(
+        access(`${fixture.settings}.rea.backup`),
+      ).rejects.toMatchObject({ code: "ENOENT" });
+    }
+    const calls = (await readFile(fixture.log, "utf8"))
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as string[]);
+    expect(calls).toHaveLength(2);
+    for (const call of calls) {
+      expect(call).toContain("cursor");
+      expect(call).toContain("fixture");
     }
   },
 );

@@ -10,7 +10,6 @@ import {
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { batchDecompileResultSchema } from "../../../src/domain/native/batchDecompile.js";
 import { ENHANCED_TOOL_CONTRACTS } from "../../../src/contracts/enhancedToolContracts.js";
-import { NULL_PSEUDOCODE_GUIDANCE } from "../../../src/application/EnhancedTools.js";
 import type { RelationshipCoverage } from "../../../src/domain/relationshipCoverage.js";
 import { err, ok as resultOk } from "../../../src/domain/result.js";
 
@@ -664,33 +663,20 @@ describe("enhanced MCP batch answers without pseudocode", () => {
     if (contract === undefined)
       throw new Error("Missing batch_decompile contract");
     const evidence = contract.outputSchema.parse(result.structuredContent);
-    const noPseudocode = (
-      guidance: (typeof NULL_PSEUDOCODE_GUIDANCE)[keyof typeof NULL_PSEUDOCODE_GUIDANCE],
-    ) => ({
-      code: "capability_unavailable",
-      retryable: false,
-      message: guidance.userMessage,
-      remediation: { action: guidance.remediationAction },
-      details: {
-        provider_id: "fixture",
-        operation: "procedure_pseudo_code",
-        reason: "provider returned null pseudocode",
-      },
-    });
     expect(evidence.normalized_result).toMatchObject({
       items: [
         { address: "0x1", status: "ok", pseudocode: answers["0x1"]?.result },
         {
           address: "0x2",
-          status: "error",
-          error: noPseudocode(NULL_PSEUDOCODE_GUIDANCE.reported),
+          status: "unavailable",
+          reason: "no_pseudocode",
           limitations: answers["0x2"]?.limitations,
         },
-        // Without caveats, the guidance does not point at an absent field.
+        // An unclassified absence has no invented reason or retry policy.
         {
           address: "0x3",
-          status: "error",
-          error: noPseudocode(NULL_PSEUDOCODE_GUIDANCE.none),
+          status: "unavailable",
+          reason: "no_pseudocode",
         },
         {
           address: "0x4",
