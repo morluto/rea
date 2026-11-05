@@ -221,6 +221,18 @@ it.each([
   },
 );
 
+it("keeps unrelated routes that share the unisolated data object", () => {
+  // Rejecting the runtime identity must not claim the whole source object:
+  // the sibling route property is independent data and stays reported.
+  const facts = analyze(
+    "var SHARED={query:{path:'/data',Component:View},route:{path:'/independent',Component:View}};const HOLD=SHARED;router.push({pathname:'/reports',query:HOLD.query});",
+  );
+  expect(facts.candidates.map(({ path }) => path).sort()).toEqual([
+    "/independent",
+    "/reports",
+  ]);
+});
+
 it("keeps literal child routes that an unisolated children array carries", () => {
   // The parent proof is unknown, but the child records are still source-owned.
   // Only the ancestry is in doubt, so the literal paths must stay reported next

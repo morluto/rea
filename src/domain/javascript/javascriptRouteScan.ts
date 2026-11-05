@@ -1183,13 +1183,15 @@ export class JavaScriptRouteScan {
         }
         const selected = this.#resolve(node, undefined, this.index);
         if (selected === undefined) continue;
-        if (selected.unproven !== undefined) {
-          // The slot is navigation data, only its runtime identity is unproven.
-          // Report the object as consumed data so a later independent scan does
-          // not reclassify it as a route literal, but never follow it as a path.
-          if (mechanism === "navigation-target") yield selected.node;
+        // A rejected runtime identity does not stop the property selection: the
+        // slot is navigation data and the caller needs its ownership. It only
+        // stops when the selected value would be trusted as a route, which is
+        // every consumer except the navigation-target data walk.
+        if (
+          selected.unproven !== undefined &&
+          mechanism !== "navigation-target"
+        )
           continue;
-        }
         if (
           !t.isObjectExpression(selected.node) &&
           !t.isArrayExpression(selected.node)
