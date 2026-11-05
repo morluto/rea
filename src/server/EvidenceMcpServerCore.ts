@@ -334,6 +334,7 @@ export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
           }
         }
       },
+      () => this.delivery,
     );
     this.progressiveCatalog = catalog;
     const { name, ...config } = DISCOVER_TOOLS;

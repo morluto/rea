@@ -1871,6 +1871,10 @@ call can use the returned arguments contract. Output schemas remain in
 20 per page, and returns `total_matches` and `next_offset`. Exact names preserve
 request order and reject unknown or excluded names before loading anything.
 Use fewer keywords when no result matches; search requires every word to match.
+Both reply representations must fit the configured response budget before any
+tools load. An oversized page returns a resource constraint; reduce `limit` or
+request fewer exact names and retry. Input schemas are retained in full within
+the selected input profile.
 
 Loaded definitions retain their original names, complete configured schemas,
 annotations, handlers and client approval rules. Loading does not execute an

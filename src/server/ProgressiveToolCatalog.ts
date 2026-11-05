@@ -1,6 +1,13 @@
 import type { RegisteredTool } from "@modelcontextprotocol/server";
 import type { z } from "zod";
 import {
+  AnalysisInputError,
+  AnalysisResourceConstraintError,
+} from "../domain/analysisErrorCore.js";
+import { ownedJsonObjectSchema } from "../domain/jsonValue.js";
+import { encodeToolResult } from "./toolResultEncoding.js";
+import type { ToolResultDelivery } from "./ToolResultDelivery.js";
+import {
   DISCOVER_TOOLS,
   HOT_TOOL_NAMES,
   progressiveCatalogIdentity,
@@ -19,6 +26,7 @@ export class ProgressiveToolCatalog {
     registrations: ReadonlyMap<string, RegisteredTool>,
     identity: CatalogIdentity,
     private readonly batchChanges: (change: () => void) => void,
+    private readonly delivery: () => ToolResultDelivery,
   ) {
     this.identity = progressiveCatalogIdentity(identity);
     // Disabled family registrations are outside the discoverable scope. Never
@@ -54,20 +62,24 @@ export class ProgressiveToolCatalog {
       input.names === undefined ? undefined : [...new Set(input.names)];
     const unknown = names?.filter((name) => !this.tools.has(name)) ?? [];
     if (unknown.length > 0)
-      return {
-        isError: true,
-        content: [
+      return this.delivery().toErrorToolResult(
+        new AnalysisInputError(
+          DISCOVER_TOOLS.name,
           {
-            type: "text" as const,
-            text: JSON.stringify({
-              code: "unknown_tools",
-              names: unknown,
-              remediation:
-                "Search with query to find exact in-scope names. No tools were loaded.",
-            }),
+            userMessage:
+              "Unknown or excluded tool names. No tools were loaded.",
+            remediationAction:
+              "Search with query to find exact in-scope names.",
+            conformsToInputContract: true,
           },
-        ],
-      };
+          unknown.map((name) => ({
+            path: ["names"],
+            reason: "invalid_value",
+            message: name,
+          })),
+        ),
+        false,
+      );
     const words = (input.query ?? "")
       .toLowerCase()
       .split(/\s+/u)
@@ -88,18 +100,14 @@ export class ProgressiveToolCatalog {
     const page =
       names ?? matches.slice(input.offset, input.offset + input.limit);
     const selected = page.map((name) => ({ name, ...this.tools.get(name)! }));
-    this.batchChanges(() => {
-      for (const { registered } of selected) {
-        if (!registered.enabled) registered.enable();
-      }
-    });
     const result: z.infer<typeof DISCOVER_TOOLS.outputSchema> = {
       profile: "hot-cold",
       inventory_count: this.tools.size + 1,
       loaded_count:
         1 +
         [...this.tools.values()].filter(({ registered }) => registered.enabled)
-          .length,
+          .length +
+        selected.filter(({ registered }) => !registered.enabled).length,
       total_matches: matches.length,
       next_offset:
         names === undefined && input.offset + page.length < matches.length
@@ -117,9 +125,39 @@ export class ProgressiveToolCatalog {
           ? "No matches. Try fewer or different task keywords, or browse without query."
           : "Call the returned tool by its original name using input_schema. Your client must refresh tools/list first; if it cannot, reconnect with REA_MCP_TOOL_CATALOG_PROFILE=full.",
     };
+    // This reply borrows read-only SDK schema projections for synchronous
+    // encoding; validate the new reply without copying their complete trees.
+    const payload = ownedJsonObjectSchema.parse(result);
+    const delivery = this.delivery();
+    const encoded = encodeToolResult(payload, delivery.resultBudgetBytes);
+    if (!encoded.ok)
+      return delivery.toErrorToolResult(
+        new AnalysisResourceConstraintError(
+          DISCOVER_TOOLS.name,
+          "transport",
+          "The discovery page exceeds the reply budget. No tools were loaded.",
+          {
+            result_budget_bytes: delivery.resultBudgetBytes,
+            response_bytes_at_least: encoded.bytesAtLeast,
+            constraint: encoded.constraint,
+          },
+          {
+            remediationAction:
+              "Reduce limit or request fewer exact names, then retry. For one oversized input contract, reconnect with REA_MCP_INPUT_SCHEMA_PROFILE=compact.",
+          },
+        ),
+        false,
+      );
+    // Visibility changes only after both reply representations fit. A failed
+    // page can be retried without silently enabling unreported definitions.
+    this.batchChanges(() => {
+      for (const { registered } of selected) {
+        if (!registered.enabled) registered.enable();
+      }
+    });
     return {
-      content: [{ type: "text" as const, text: JSON.stringify(result) }],
-      structuredContent: result,
+      content: [{ type: "text" as const, text: encoded.text }],
+      structuredContent: payload,
     };
   }
 }

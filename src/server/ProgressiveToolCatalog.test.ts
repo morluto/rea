@@ -9,16 +9,28 @@ afterEach(async () => {
   for (const close of cleanup.splice(0).reverse()) await close();
 });
 
-const connect = async () => {
+const connect = async (
+  options: { replyBytes?: number; bulk?: boolean } = {},
+) => {
+  const bulkNames = options.bulk
+    ? Array.from(
+        { length: 20 },
+        (_, index) => `bulk_${String(index).padStart(2, "0")}`,
+      )
+    : [];
   const server = new EvidenceMcpServerCore(
     { name: "catalog-test", version: "1" },
     { capabilities: {} },
     undefined,
-    new ToolResultDelivery(1024 * 1024),
+    new ToolResultDelivery(options.replyBytes ?? 1024 * 1024),
     undefined,
     "full",
     {
-      counts: { cli_commands: 0, mcp_tools: 3, mcp_prompts: 0 },
+      counts: {
+        cli_commands: 0,
+        mcp_tools: 3 + bulkNames.length,
+        mcp_prompts: 0,
+      },
       digests: {
         tools_sha256: "tools",
         prompts_sha256: "prompts",
@@ -32,12 +44,17 @@ const connect = async () => {
     "alpha_sqlite",
     "beta_sqlite",
     "excluded_sqlite",
+    ...bulkNames,
   ]) {
     const registration = server.registerTool(
       name,
       {
         description: `${name} SQLite database inspection`,
-        inputSchema: z.strictObject({}),
+        inputSchema: name.startsWith("bulk_")
+          ? z.strictObject({
+              payload: z.string().describe("schema guidance ".repeat(64)),
+            })
+          : z.strictObject({}),
       },
       () => {
         if (name === "excluded_sqlite") forbidden();
@@ -62,6 +79,63 @@ const connect = async () => {
     client.callTool({ name: "discover_tools", arguments: args });
   return { server, client, changed, discover, forbidden };
 };
+
+it("refuses an oversized maximum page before loading, then delivers every original contract in smaller pages", async () => {
+  const replyBytes = 8 * 1024;
+  const f = await connect({ replyBytes, bulk: true });
+  const initial = await f.client.listTools();
+  const refused = await f.discover({ query: "bulk", limit: 20 });
+  expect(refused.isError).toBe(true);
+  expect(Buffer.byteLength(JSON.stringify(refused))).toBeLessThanOrEqual(
+    replyBytes - 1024,
+  );
+  const text = refused.content.find((part) => part.type === "text")?.text;
+  expect(JSON.parse(text ?? "null")).toMatchObject({
+    error: {
+      code: "resource_constraint",
+      remediation: { action: expect.stringContaining("Reduce limit") },
+    },
+  });
+  expect(await f.client.listTools()).toEqual(initial);
+  expect(f.changed).not.toHaveBeenCalled();
+  const seen: string[] = [];
+  for (let offset = 0; offset < 20; offset++) {
+    const result = await f.discover({ query: "bulk", limit: 1, offset });
+    expect(result.isError).not.toBe(true);
+    expect(Buffer.byteLength(JSON.stringify(result))).toBeLessThanOrEqual(
+      replyBytes - 1024,
+    );
+    expect(result.structuredContent).toMatchObject({
+      total_matches: 20,
+      next_offset: offset === 19 ? null : offset + 1,
+      loaded_count: offset + 3,
+    });
+    const page = JSON.parse(
+      result.content.find((part) => part.type === "text")?.text ?? "null",
+    );
+    const tool = page.tools[0];
+    seen.push(tool.name);
+    expect(
+      (await f.client.listTools()).tools.find(({ name }) => name === tool.name)
+        ?.inputSchema,
+    ).toEqual(tool.input_schema);
+  }
+  expect(new Set(seen).size).toBe(20);
+  expect(f.changed).toHaveBeenCalledTimes(20);
+});
+
+it("bounds an oversized unknown-name failure without changing visibility", async () => {
+  const replyBytes = 8 * 1024;
+  const f = await connect({ replyBytes });
+  const initial = await f.client.listTools();
+  const result = await f.discover({ names: ["unknown".repeat(4096)] });
+  expect(result.isError).toBe(true);
+  expect(Buffer.byteLength(JSON.stringify(result))).toBeLessThanOrEqual(
+    replyBytes - 1024,
+  );
+  expect(await f.client.listTools()).toEqual(initial);
+  expect(f.changed).not.toHaveBeenCalled();
+});
 
 it("batches visibility changes, pages searches, and keeps excluded tools outside discovery", async () => {
   const f = await connect();
