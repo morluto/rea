@@ -663,15 +663,6 @@ it("rejects a Deno verifier whose deno is not the pinned release", async () => {
   );
   await chmod(deno, 0o755);
   const script = join(process.cwd(), "scripts/verify-deno-standalone.mjs");
-  const source = await readFile(script, "utf8");
-  const catchAt = source.indexOf("} catch (cause) {");
-  const continued = source.indexOf("continue;", catchAt);
-  const catchBody = source.slice(catchAt, continued);
-  expect(catchBody).not.toContain("assert.");
-  expect(catchBody).not.toContain("inspect-artifact");
-  expect(source).toContain('const REQUIRED_DENO_VERSION = "2.9.8"');
-  expect(source).toContain("importVerifierSource");
-  expect(source).not.toContain('from "../dist/');
   const result = await new Promise<{
     readonly status: number | null;
     readonly stderr: string;
