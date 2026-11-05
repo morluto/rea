@@ -297,6 +297,32 @@ it("waits for the desktop to draw before it returns the first screenshot", async
   );
 });
 
+it("returns the latest frame when a retried screenshot outlasts the wait for the desktop, sending progress meanwhile", async () => {
+  // The third screenshot would answer a minute later, well past the 10 s wait.
+  const { computer, runner } = await fakes({
+    blankFrames: 10_000,
+    screenshotDelaysMs: [0, 0, 60_000],
+  });
+  const client = await connect(runner.environment);
+  const progress: { message?: string | undefined }[] = [];
+  const startedAt = Date.now();
+  const started = await client.callTool(
+    {
+      name: "start_build_computer",
+      arguments: { source: { kind: "bundle", path: await bundleFolder() } },
+    },
+    { onprogress: (update) => progress.push(update) },
+  );
+
+  expect(started.isError, JSON.stringify(started)).not.toBe(true);
+  expect(Date.now() - startedAt).toBeLessThan(20_000);
+  expect(computer.calls).toHaveLength(3);
+  expect(images(started)).toHaveLength(1);
+  expect(progress.map(({ message }) => message)).toContainEqual(
+    expect.stringContaining("waiting for the desktop to draw"),
+  );
+}, 40_000);
+
 it("leaves the bundle folder's files as they were when it starts a computer from it", async () => {
   const { runner } = await fakes();
   // Python caches bytecode unless told not to; this host does not tell it.

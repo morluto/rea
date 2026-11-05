@@ -92,9 +92,11 @@ agentenv's latest line, so a client that resets its request timeout on
 progress keeps waiting. REA then waits until the computer's readiness checks
 pass and opens one MCP session to its driver. Readiness can pass before the
 desktop has drawn, so REA takes a whole-screen PNG screenshot every 500 ms
-while it is one colour throughout, for at most 10 s, and returns the latest;
-given `screenshot` with a `region`, `format` or `quality`, it then takes one
-with them, a `region` cropping that frame. The result holds
+while it is one colour throughout. The retries share 10 s, each given only
+what is left of it, and when that runs out REA returns the latest frame;
+progress notifications continue meanwhile. Given `screenshot` with a
+`region`, `format` or `quality`, REA then takes one with them, a `region`
+cropping that frame. The result holds
 `computer_id`, agentenv's `sandbox_id`, the environment name or bundle folder,
 and the screenshot's frame as structured content beside its image.
 

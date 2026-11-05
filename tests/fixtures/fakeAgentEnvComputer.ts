@@ -16,10 +16,12 @@ import {
 } from "node:http";
 import type { AddressInfo } from "node:net";
 import { join, relative } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 
 import {
   McpServer,
   WebStandardStreamableHTTPServerTransport,
+  type ServerContext,
 } from "@modelcontextprotocol/server";
 import { z } from "zod";
 
@@ -52,6 +54,8 @@ export interface FakeComputerOptions {
   readonly frameCharacters?: number;
   /** Screenshots answered with one black frame before the desktop is drawn. */
   readonly blankFrames?: number;
+  /** How long each screenshot, in order, waits before its reply, unless its request is cancelled. */
+  readonly screenshotDelaysMs?: readonly number[];
   /** Bytes data/get appends to each segment beyond its manifest size. */
   readonly segmentPadding?: number;
   /** Run computer-exec commands on this host in `home`, with `bin` first on PATH and `env` added. */
@@ -130,13 +134,23 @@ const startFakeDriver = async (
       ? FAKE_FRAME_PNG
       : "A".repeat(options.frameCharacters);
   let blankFrames = options.blankFrames ?? 0;
+  let screenshots = 0;
   const mcp = new McpServer({ name: "fake-reference-driver", version: "1" });
   for (const name of COMPUTER_TOOLS)
     mcp.registerTool(
       name,
       { description: name, inputSchema: z.looseObject({}) },
-      (args: Record<string, unknown>) => {
+      async (args: Record<string, unknown>, context: ServerContext) => {
         calls.push({ name, arguments: args });
+        if (name === "computer_screenshot") {
+          screenshots += 1;
+          const wait = options.screenshotDelaysMs?.[screenshots - 1] ?? 0;
+          if (wait > 0)
+            await delay(wait, undefined, {
+              signal: context.mcpReq.signal,
+              ref: false,
+            }).catch(() => undefined);
+        }
         const refusal = refusals.get(name);
         if (refusal !== undefined) {
           refusals.delete(name);

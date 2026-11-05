@@ -251,7 +251,7 @@ export class DesktopBuildComputers {
         signal,
         operation: START,
       });
-      computer = await AgentEnvComputer.connect(
+      const connected = await AgentEnvComputer.connect(
         helper,
         signal,
         progress === undefined
@@ -262,13 +262,13 @@ export class DesktopBuildComputers {
                 .catch(() => undefined);
             },
       );
+      computer = connected.computer;
       const shot = driverCall("screenshot", input.screenshot ?? {});
       if (!shot.ok) throw new TypeError("screenshot options are its own");
       // The caller's region, format or quality apply to the drawn frame.
-      const drawn = await computer.drawnScreenshot(signal);
       const taken =
         Object.keys(shot.value.arguments).length === 0
-          ? drawn
+          ? connected.frame
           : await computer.callTool(
               shot.value.tool,
               shot.value.arguments,

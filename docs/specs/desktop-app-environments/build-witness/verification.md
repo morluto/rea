@@ -132,6 +132,11 @@ and its fixture changes added, unless noted, and passes now.
   third, drawn one; a `region`, `format` or `quality` applies to a screenshot
   taken after it. The fake's frame is now a 2x1 PNG of two colours.
   `PngVisualDiff.test.ts` covers the new one-colour check.
+- `buildComputerMcp.test.ts`, after review: with every frame black and the
+  third screenshot's reply a minute late, the start returns the second frame
+  at the 10 s bound and reports `waiting for the desktop to draw` as
+  progress meanwhile. Before, the retry kept its 120 s request timeout and
+  progress stopped once readiness passed, so the test ran out of time.
 - `buildCaptureRetryMcp.test.ts`: a `.deb` request whose captured package
   apt also offers exports without `--package-url`; one that no apt source
   offers exports with it, from the real CLI's output for that capture (this
@@ -143,11 +148,10 @@ and its fixture changes added, unless noted, and passes now.
 `verify:module-boundaries` and `mcp-catalog:check` passed; `lint` and
 `lint:typed` fail only on main's `tests/acceptance/webSourceLocationCli.test.ts`.
 The desktop source tests ran 453 passed (Linux-only cases skipped), and the
-build and desktop boundary tests 66 passed with the real test skipped.
+build and desktop boundary tests 67 passed with the real test skipped.
 
 Not verified on a real computer: that the first frame not of one colour
-shows the panel on the computer's desktop, and the 10 s bound, which no
-test waits out.
+shows the panel on the computer's desktop.
 
 ## Bounded action log
 
