@@ -633,6 +633,51 @@ it("marks declared sibling operations unavailable when a shared prerequisite fai
   });
 });
 
+it("marks declared sibling operations unavailable when fallback reports export failure", async () => {
+  const respond = {
+    current: (operation: string): Promise<Reply> => {
+      if (operation === "procedure_pseudo_code")
+        return Promise.resolve(
+          ok(
+            createAnalysisExecution("int main() { return 0; }", FIXTURE, {
+              siblingUnavailability: new AnalysisCapabilityUnavailableError(
+                FIXTURE.id,
+                operation,
+                "project export failed",
+                {
+                  siblingOperations: ["procedure_assembly", "procedure_info"],
+                },
+              ),
+            }),
+          ),
+        );
+      return Promise.resolve(observed("fixture-text"));
+    },
+  };
+  const { call, availability } = await connectScripted({
+    operations: [...DIRECT_OPERATIONS, "procedure_pseudo_code"],
+    respond,
+  });
+  expect(await call("procedure_pseudo_code", PROCEDURE)).toBe("ok");
+  // Independent operations remain available.
+  expect(await call("address_name", ADDRESS)).toBe("ok");
+  expect(
+    await availability([
+      "procedure_pseudo_code",
+      "procedure_assembly",
+      "procedure_info",
+      "address_name",
+      "list_procedures",
+    ]),
+  ).toEqual({
+    procedure_pseudo_code: "available",
+    procedure_assembly: refusal("procedure_assembly", "project export failed"),
+    procedure_info: refusal("procedure_info", "project export failed"),
+    address_name: "available",
+    list_procedures: "available",
+  });
+});
+
 it("keeps each provider's failures and ignores cancelled requests", async () => {
   let fixtureBroken = false;
   let auxiliaryBroken = true;

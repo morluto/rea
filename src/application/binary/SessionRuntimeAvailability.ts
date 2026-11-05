@@ -97,8 +97,23 @@ export class SessionRuntimeAvailability {
     if (result.ok) {
       operation.succeeded = Math.max(operation.succeeded, dispatch);
       provider.succeeded = Math.max(provider.succeeded, dispatch);
-      // A success can only remove unavailability.
-      if (this.#projected.size === 0) return false;
+      const siblingUnavailability =
+        typeof result.value === "object" &&
+        result.value !== null &&
+        "siblingUnavailability" in result.value &&
+        result.value.siblingUnavailability instanceof
+          AnalysisCapabilityUnavailableError
+          ? result.value.siblingUnavailability
+          : undefined;
+      if (siblingUnavailability !== undefined) {
+        this.#observeSiblingUnavailability(
+          dispatch,
+          capability.operation,
+          siblingUnavailability,
+        );
+      } else if (this.#projected.size === 0) {
+        return false;
+      }
     } else {
       const reason = runtimeFailureReason(result.error);
       if (reason === undefined) return false;
@@ -107,15 +122,11 @@ export class SessionRuntimeAvailability {
         result.error instanceof AnalysisCapabilityUnavailableError &&
         result.error.siblingOperations !== undefined
       ) {
-        for (const sibling of result.error.siblingOperations) {
-          if (sibling !== capability.operation) {
-            const siblingOutcomes = outcomes(this.#operations, sibling);
-            siblingOutcomes.failure = newer(siblingOutcomes.failure, {
-              dispatch,
-              reason: `Provider ${result.error.providerId} cannot execute ${sibling}: ${result.error.reason}`,
-            });
-          }
-        }
+        this.#observeSiblingUnavailability(
+          dispatch,
+          capability.operation,
+          result.error,
+        );
       }
       if (PROVIDER_WIDE_FAILURES.has(result.error._tag))
         provider.failure = newer(provider.failure, {
@@ -125,6 +136,23 @@ export class SessionRuntimeAvailability {
         });
     }
     return this.#project(route);
+  }
+
+  #observeSiblingUnavailability(
+    dispatch: number,
+    currentOperation: string,
+    error: AnalysisCapabilityUnavailableError,
+  ): void {
+    if (error.siblingOperations === undefined) return;
+    for (const sibling of error.siblingOperations) {
+      if (sibling !== currentOperation) {
+        const siblingOutcomes = outcomes(this.#operations, sibling);
+        siblingOutcomes.failure = newer(siblingOutcomes.failure, {
+          dispatch,
+          reason: `Provider ${error.providerId} cannot execute ${sibling}: ${error.reason}`,
+        });
+      }
+    }
   }
 
   /** Forget runtime outcomes when the active provider client is replaced. */

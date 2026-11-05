@@ -235,7 +235,35 @@ it("keeps answering repeats from the completed run after the export fails", asyn
       expect(answer.limitations).toContainEqual(
         expect.stringContaining("The project export failed"),
       );
+      expect(answer.siblingUnavailability?.siblingOperations).toEqual([
+        "procedure_assembly",
+        "analyze_function",
+      ]);
     }
+    expect(await decompilesOf(kuna)).toHaveLength(1);
+  } finally {
+    expect(await client.close()).toEqual({ ok: true, value: null });
+  }
+});
+
+it("reports sibling unavailability when fallback observes settled export failure without prior assembly call", async () => {
+  const { kuna, open } = await session("rea-kuna-single-fallback-unavail-", {
+    project: "exit-failure",
+  });
+  const client = open();
+  try {
+    const answer = await run(client, "procedure_pseudo_code", {
+      procedure: "main",
+    });
+    expect(answer.rawResult).toMatchObject({
+      source: { kind: "single-function" },
+    });
+    expect(answer.siblingUnavailability).toBeDefined();
+    expect(answer.siblingUnavailability?.siblingOperations).toEqual([
+      "procedure_assembly",
+      "analyze_function",
+    ]);
+    expect(answer.siblingUnavailability?.providerId).toBe("kuna");
     expect(await decompilesOf(kuna)).toHaveLength(1);
   } finally {
     expect(await client.close()).toEqual({ ok: true, value: null });

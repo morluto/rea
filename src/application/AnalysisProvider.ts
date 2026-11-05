@@ -9,6 +9,7 @@ import type { NativeToolName } from "../contracts/native/nativeToolContracts.js"
 import type { ArtifactAnalysisOperation } from "../contracts/artifactToolContracts.js";
 import type { ManagedToolName } from "../contracts/managed/managedToolContracts.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
+import type { AnalysisCapabilityUnavailableError } from "../domain/analysisErrorCore.js";
 import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { Result } from "../domain/result.js";
@@ -67,6 +68,11 @@ export interface AnalysisExecution extends AnalysisObservation {
    * output.
    */
   readonly referencesTruncated?: boolean;
+  /**
+   * Sibling operations known to be unavailable at the provider level when this
+   * operation answered from a standalone or fallback path.
+   */
+  readonly siblingUnavailability?: AnalysisCapabilityUnavailableError;
 }
 
 interface CreateAnalysisExecutionOptions {
@@ -76,6 +82,7 @@ interface CreateAnalysisExecutionOptions {
   readonly limitations?: readonly string[];
   readonly relationshipCoverage?: RelationshipCoverage;
   readonly referencesTruncated?: boolean;
+  readonly siblingUnavailability?: AnalysisCapabilityUnavailableError;
   readonly locations?: readonly EvidenceLocation[];
   readonly sourceEvidence?: readonly Evidence[];
   readonly subject?: EvidenceSubjectTarget | null;
@@ -127,6 +134,9 @@ export function createAnalysisExecution(
     ...(options.referencesTruncated === undefined
       ? {}
       : { referencesTruncated: options.referencesTruncated }),
+    ...(options.siblingUnavailability === undefined
+      ? {}
+      : { siblingUnavailability: options.siblingUnavailability }),
     locations: [...(options.locations ?? [])],
     ...(options.sourceEvidence === undefined
       ? {}

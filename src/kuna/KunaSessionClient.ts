@@ -180,6 +180,7 @@ interface Answer {
   readonly referenceSource?: JsonValue;
   readonly stringSource?: JsonValue;
   readonly relationshipCoverage?: RelationshipCoverage;
+  readonly siblingUnavailability?: AnalysisCapabilityUnavailableError;
 }
 
 /**
@@ -681,6 +682,9 @@ export class KunaSessionClient implements AnalysisClient {
         ...(answer.relationshipCoverage === undefined
           ? {}
           : { relationshipCoverage: answer.relationshipCoverage }),
+        ...(answer.siblingUnavailability === undefined
+          ? {}
+          : { siblingUnavailability: answer.siblingUnavailability }),
         locations: [
           { kind: "artifact-path", path: this.#target.path },
           ...answer.locations,
@@ -1219,18 +1223,21 @@ export class KunaSessionClient implements AnalysisClient {
       );
       if (outcome === EXPORT_READY) continue;
       if (!outcome.ok) return outcome;
-      const exportFailure = await this.#settledExportFailure();
+      const exportUnavailable = await this.#settledExportUnavailable(operation);
       return ok({
         result: outcome.value,
         source: { kind: "single-function" },
         limitations: [
           KUNA_SINGLE_FUNCTION_LIMITATION,
-          ...(exportFailure === undefined
+          ...(exportUnavailable === undefined
             ? []
             : [
-                `The project export failed, so later requests also use single-function runs: ${exportFailure}`,
+                `The project export failed, so later requests also use single-function runs: ${exportUnavailable.reason}`,
               ]),
         ],
+        ...(exportUnavailable === undefined
+          ? {}
+          : { siblingUnavailability: exportUnavailable }),
       });
     }
   }
@@ -2002,8 +2009,14 @@ export class KunaSessionClient implements AnalysisClient {
     return error;
   }
 
-  /** The export's failure once it has settled; undefined while it builds or after success. */
-  async #settledExportFailure(): Promise<string | undefined> {
+  /**
+   * The export's structured unavailability once it has settled as failed;
+   * undefined while it builds, after success, or when the failure was
+   * cancellation or incomplete cleanup.
+   */
+  async #settledExportUnavailable(
+    operation: string,
+  ): Promise<AnalysisCapabilityUnavailableError | undefined> {
     const settled = await Promise.race([
       this.#project,
       Promise.resolve(undefined),
@@ -2014,7 +2027,10 @@ export class KunaSessionClient implements AnalysisClient {
       settled.error instanceof KunaPublishedProjectCleanupError
     )
       return undefined;
-    return settled.error.userMessage ?? settled.error.message;
+    const unavailable = exportUnavailable(operation, settled.error);
+    return unavailable instanceof AnalysisCapabilityUnavailableError
+      ? unavailable
+      : undefined;
   }
 
   /** Wait for the export, reporting progress, without cancelling it for other callers. */
