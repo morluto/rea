@@ -24,29 +24,34 @@ const positive = (fallback: number) => z.int().positive().default(fallback);
 const captureOptions = z.object({
   desktopEntry: z
     .string()
+    .min(1)
     .optional()
     .describe("Desktop entry id (org.xfce.mousepad) or absolute .desktop path"),
   executable: z
     .string()
+    .min(1)
     .optional()
     .describe(
       "Executable path or program name on PATH, instead of a desktop entry",
     ),
+  // An empty argument reaches the application as is. Path options refuse
+  // one, because normalizing it would select the current directory.
   argument: z
     .array(z.string())
     .optional()
     .describe("Argument appended to the launch command (repeatable)"),
   output: z
     .string()
+    .min(1)
     .describe("New or empty directory for capture.json and retained content"),
   statePath: z
-    .array(z.string())
+    .array(z.string().min(1))
     .optional()
     .describe(
       "File (with its SQLite -wal and -journal) or directory whose starting content is retained in addition to the application's state directories (repeatable)",
     ),
   exclude: z
-    .array(z.string())
+    .array(z.string().min(1))
     .optional()
     .describe("Path left out of every checkpoint walk (repeatable)"),
   maxDurationSeconds: positive(

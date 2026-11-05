@@ -6,15 +6,13 @@ import type {
   OwnedProcessGroup,
   ProcessOwnershipFact,
   ProcessOwnershipHost,
-  ProcessTableEntry,
 } from "./ProcessOwnership.js";
 import {
   readNativeProcessIdentityMap,
   readProcessOwnershipFacts,
   systemProcessOwnershipHost,
 } from "./ProcessOwnershipObservation.js";
-import { liveProcesses } from "./ProcessOwnershipProcessTree.js";
-import { readProcessRunTokens } from "./ProcessRunTokenObservations.js";
+import { readRunTokenCarriers } from "./ProcessRunTokenObservations.js";
 
 const EXIT_POLL_INTERVAL_MS = 100;
 
@@ -35,22 +33,19 @@ const systemTerminationHost: TokenOwnedTerminationHost = {
 const tokenOwnedFacts = async (
   runId: string,
   host: ProcessOwnershipHost,
-): Promise<readonly ProcessOwnershipFact[]> => {
-  const candidates: ProcessTableEntry[] = [];
-  for await (const { process, observation } of readProcessRunTokens(
-    host,
-    liveProcesses(await host.listProcesses()),
-  ))
-    if (observation.state === "readable" && observation.runId === runId)
-      candidates.push(process);
-  return (await readProcessOwnershipFacts(candidates, host)).filter(
+): Promise<readonly ProcessOwnershipFact[]> =>
+  (
+    await readProcessOwnershipFacts(
+      await readRunTokenCarriers(host, runId),
+      host,
+    )
+  ).filter(
     (fact) =>
       fact.state === "same-generation" &&
       fact.token.state === "readable" &&
       fact.token.runId === runId &&
       !processIdentityHasExited(fact.identityAfter),
   );
-};
 
 const processGroupOf = ({ identityAfter, process }: ProcessOwnershipFact) =>
   identityAfter.state === "readable" &&

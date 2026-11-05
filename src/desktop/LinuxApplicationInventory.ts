@@ -368,10 +368,9 @@ const electronMarkers = async (
 /** Folder names under XDG and dot-directories where the application may keep state. */
 const stateDirectories = async (
   names: readonly (string | null)[],
-  request: LinuxApplicationRequest,
+  { environment, home }: Pick<LinuxApplicationRequest, "environment" | "home">,
   extra: readonly string[],
 ): Promise<DesktopApplicationInventory["state_directories"]> => {
-  const { environment, home } = request;
   const bases = [
     environment.XDG_CONFIG_HOME || join(home, ".config"),
     environment.XDG_DATA_HOME || join(home, ".local/share"),
@@ -467,8 +466,9 @@ const launchCommand = async (
 };
 
 /**
- * Names the application's state folders may carry. The executable is null for
- * a `flatpak run` launch, whose `flatpak` launcher names flatpak's own folders.
+ * Names the application's state folders may carry, including the entry's
+ * full reverse-DNS id and its last part. The executable is null for a
+ * `flatpak run` launch, whose `flatpak` launcher names flatpak's own folders.
  */
 const stateNames = (
   package_: Package,
@@ -479,6 +479,7 @@ const stateNames = (
     ? (package_.name?.split(":")[0] ?? null)
     : package_.name,
   executable === null ? null : basename(executable),
+  entry?.id ?? null,
   entry?.id?.split(".").at(-1) ?? null,
   entry?.startup_wm_class ?? null,
   entry?.name ?? null,
@@ -493,10 +494,12 @@ export const inspectLinuxApplication = async (
   if (!command.ok) return command;
   const { argv, workingDirectory, entry } = command.value;
   const wrapper = unwrapDesktopCommand(argv);
-  const program = wrapper.kind === "direct" ? wrapper.program : (argv[0] ?? "");
-  const path = await resolveProgram(program, request.environment);
+  // An `env` prefix's assignments are what the program sees: its PATH finds
+  // the program and its XDG folders hold the program's state.
+  const environment = { ...request.environment, ...wrapper.environment };
+  const path = await resolveProgram(wrapper.program, environment);
   if (path === undefined)
-    return err({ reason: "executable_not_found", program });
+    return err({ reason: "executable_not_found", program: wrapper.program });
   const resolved = await realpath(path).catch(() => null);
   const limitations: string[] = [];
   const flatpak = wrapper.kind === "flatpak" ? wrapper.application_id : null;
@@ -531,7 +534,7 @@ export const inspectLinuxApplication = async (
       package: package_,
       state_directories: await stateDirectories(
         names,
-        request,
+        { environment, home: request.home },
         sandboxDirectories,
       ),
     },

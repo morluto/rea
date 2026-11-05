@@ -20,27 +20,35 @@ folder to build the environment; this step builds nothing.
   or at the time limit. One queued line is handled per sample, and stdin
   reading pauses while 16 wait. A repeated name or one of the capture's own
   names (`baseline`, `stop`, `time-limit`, `exit`) is refused on stderr and
-  the session continues.
+  the session continues. The application has exited only after two
+  consecutive samples with the launched process gone, no process carrying the
+  run token left, and a window list that was read and holds none of its
+  windows; an unreadable list counts as unknown and is named in the
+  limitations.
 - It runs only on Linux with `DISPLAY` set and `xprop` available (or
   `REA_XPROP_COMMAND`). Before writing or launching anything it refuses other
   hosts, a request naming neither or both of `--desktop-entry` and
-  `--executable`, an output folder that is not new or empty or is owned by
-  another user, an unreadable window list, a window manager that does not
-  publish `_NET_CLIENT_LIST` (EWMH), and an application that already has a
-  window open. The output folder is made private (0700) and its files are
+  `--executable`, an empty `--state-path`, `--exclude` or `--output` value,
+  an output folder that is not new or empty or is owned by another user, an
+  unreadable window list, a window manager that does not publish
+  `_NET_CLIENT_LIST` (EWMH), and an application that already has a window
+  open. The output folder is made private (0700) and its files are
   created exclusively (0600).
 - The inventory resolves a desktop entry id through `$XDG_DATA_HOME` and
   `$XDG_DATA_DIRS`, following an entry installed as a symbolic link, expands
   its `Exec` line with no files and appends `--argument` values, resolves the
-  program on `PATH`, and identifies the package: snap, flatpak and AppImage
-  from paths (and the AppImage magic, and a `flatpak run` launch), otherwise
+  program on `PATH` (the one an `env NAME=value` prefix sets, whose XDG
+  folders also name the state directories), and identifies the package:
+  snap, flatpak and AppImage from paths (and the AppImage magic, and a
+  `flatpak run` launch), otherwise
   the dpkg owner with its version, architecture, the apt sources listing the
   installed version and the `o=` origin apt reports for each source. It marks
   Electron applications by the fuse sentinel or `resources/app.asar`, and
   lists candidate state directories under the XDG folders and dot-folders
-  named after the package, executable, desktop entry id and name; a
-  `flatpak run` launch uses the application id instead of the launcher's name
-  and adds `~/.var/app/<id>`. An `--executable` runs from the caller's
+  named after the package, executable, desktop entry's full id and last part,
+  and name; a `flatpak run` launch uses the application id (its first operand
+  after options and their values) instead of the launcher's name and adds
+  `~/.var/app/<id>`. An `--executable` runs from the caller's
   directory, which also resolves a relative path to it.
 - Paths are compared in their physical spelling. The walked roots are the
   home directory and every content root outside it: the state directories,
@@ -55,7 +63,8 @@ folder to build the environment; this step builds nothing.
   existing directory completely; the rest are counted as unconfirmed. Walks
   do not follow symbolic links, do not enter a directory on another device
   than their root (the limitations name each such mount point), leave out the
-  output folder and `--exclude` paths, and stop at `--max-entries`.
+  output folder and `--exclude` paths, and stop at `--max-entries`, roots
+  included.
 - Retention opens files without following links or blocking, keeps a file
   only if it is still the version the walk recorded and does not change while
   read, respects `--max-file-bytes`, and charges `--max-content-bytes` only

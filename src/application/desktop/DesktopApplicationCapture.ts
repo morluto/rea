@@ -87,6 +87,7 @@ const limitationsFor = (
   facts: {
     readonly unretained: readonly string[];
     readonly broadArguments: readonly string[];
+    readonly unreadableWindowSamples: number;
   },
 ): string[] => {
   const limitations = [
@@ -123,6 +124,10 @@ const limitationsFor = (
     `The argument ${facts.broadArguments.join(", ")} is / or contains the home directory, so it was not walked or retained as a content root.`,
   );
   add(session.first_window_ms === null, "No application window was seen.");
+  add(
+    facts.unreadableWindowSamples > 0,
+    `The window list could not be read in ${String(facts.unreadableWindowSamples)} sample(s); windows open only then are missing, and those samples were not taken as the application having exited.`,
+  );
   add(
     session.processes.some((process) => !process.started_by_capture),
     "An application window belonged to a process the capture did not start; that process was left running.",
@@ -228,7 +233,7 @@ const recordCapture = async (
   await host.report("Recording the starting state.");
   await recorder.record("baseline", "baseline", 0, signal);
   await host.report(`Launching ${inventory.argv.join(" ")}.`);
-  const { session, unreleased } = await runDesktopSession({
+  const outcome = await runDesktopSession({
     argv: inventory.argv,
     workingDirectory: inventory.working_directory,
     environment: host.environment,
@@ -246,6 +251,7 @@ const recordCapture = async (
     report: host.report,
     signal,
   });
+  const { session, unreleased } = outcome;
   const unretained = unique(
     session.opened_files
       .map((file) => dirname(file.path))
@@ -275,6 +281,7 @@ const recordCapture = async (
       ...limitationsFor(session, recorder, {
         unretained,
         broadArguments: context.scope.broadArguments,
+        unreadableWindowSamples: outcome.unreadableWindowSamples,
       }),
     ],
   };
