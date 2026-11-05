@@ -18,7 +18,34 @@ const CONSUMER =
 const electronOf = (source: string) =>
   analyzeJavaScriptStaticSource(source).electron;
 
+const expectUnresolved = (source: string) => {
+  const electron = electronOf(source);
+  expect(electron.browser_windows).toEqual([]);
+  // Only direct observations come from this identity; the separate
+  // wrapper-substitution path keeps its own resolution basis.
+  expect(
+    electron.ipc.filter(
+      ({ resolution_basis: basis }) => basis !== "wrapper-substitution",
+    ),
+  ).toEqual([]);
+};
+
 describe("Electron identity through Webpack externals", () => {
+  it.each([
+    ["const key=45840;n.m[key]=local;", 0],
+    ["const key='45840';delete n.m[key];", 0],
+    ["n.m[runtimeKey]=local;", 0],
+    ["const key=45841;n.m[key]=local;", 1],
+  ] as const)(
+    "preserves only unmodified external slots after %s",
+    (write, expected) => {
+      expect(
+        electronOf(bootstrap(EXTERNAL, CONSUMER, `n.m=m;${write}n(100);`))
+          .browser_windows,
+      ).toHaveLength(expected);
+    },
+  );
+
   it("follows the default-export getter produced by webpack n.n", () => {
     const source = bootstrap(
       EXTERNAL,
@@ -58,6 +85,14 @@ describe("Electron identity through Webpack externals", () => {
     ["delete", "delete n.n;"],
     ["a destructuring write", "({g:n.n}={g:e=>()=>0});"],
     ["an unknown key", "n[key]=e=>()=>0;"],
+    [
+      "a stable loader alias",
+      "const copy=n;copy.n=e=>()=>({BrowserWindow:class{}});",
+    ],
+    [
+      "a reflective write through a loader alias",
+      "const copy=n;Reflect.set(copy,'n',e=>()=>({BrowserWindow:class{}}));",
+    ],
   ])(
     "does not infer Electron after a getter write through %s",
     (_name, write) => {
@@ -142,15 +177,7 @@ describe("Electron identity through Webpack externals", () => {
       bootstrap(EXTERNAL, CONSUMER.replace("n(45840)", "n(45841)")),
     ],
   ])("keeps %s unresolved", (_name, source) => {
-    const electron = electronOf(source);
-    expect(electron.browser_windows).toEqual([]);
-    // Only direct observations come from this identity; the separate
-    // wrapper-substitution path keeps its own resolution basis.
-    expect(
-      electron.ipc.filter(
-        ({ resolution_basis: basis }) => basis !== "wrapper-substitution",
-      ),
-    ).toEqual([]);
+    expectUnresolved(source);
   });
 });
 
@@ -214,19 +241,43 @@ describe("Webpack externals with a tampered runtime", () => {
       ),
     ],
   ])("keeps %s unresolved", (_name, source) => {
-    const electron = electronOf(source);
-    expect(electron.browser_windows).toEqual([]);
-    // Only direct observations come from this identity; the separate
-    // wrapper-substitution path keeps its own resolution basis.
-    expect(
-      electron.ipc.filter(
-        ({ resolution_basis: basis }) => basis !== "wrapper-substitution",
-      ),
-    ).toEqual([]);
+    expectUnresolved(source);
   });
 });
 
 describe("Webpack externals with a tampered loader or module object", () => {
+  it.each([
+    ["invoked", "n.i(runtimeChunks);"],
+    ["read through an alias", "const install=n.i;install(runtimeChunks);"],
+    ["read through a dynamic key", "n[runtimeMember](runtimeChunks);"],
+    ["exposed with its namespace", "publish(n);"],
+    [
+      "reachable through a helper receiver",
+      "n.run=function(){this.i(runtimeChunks)};n.run();",
+    ],
+  ])(
+    "keeps an unknown chunk installation unresolved when %s",
+    (_name, invoke) => {
+      expectUnresolved(
+        bootstrap(
+          EXTERNAL,
+          CONSUMER,
+          `n.m=m;n.i=e=>{for(var k in e)n.m[k]=e[k]};${invoke}n(100);`,
+        ),
+      );
+    },
+  );
+
+  it("does not treat a called assignment value as an unused installer", () => {
+    expectUnresolved(
+      bootstrap(
+        EXTERNAL,
+        CONSUMER,
+        "n.m=m;(n.i=e=>{for(var k in e)n.m[k]=e[k]})(runtimeChunks);n(100);",
+      ),
+    );
+  });
+
   it.each([
     [
       "cached exports rewritten through the runtime exposure",
@@ -287,15 +338,7 @@ describe("Webpack externals with a tampered loader or module object", () => {
       ),
     ],
   ])("keeps %s unresolved", (_name, source) => {
-    const electron = electronOf(source);
-    expect(electron.browser_windows).toEqual([]);
-    // Only direct observations come from this identity; the separate
-    // wrapper-substitution path keeps its own resolution basis.
-    expect(
-      electron.ipc.filter(
-        ({ resolution_basis: basis }) => basis !== "wrapper-substitution",
-      ),
-    ).toEqual([]);
+    expectUnresolved(source);
   });
 
   it.each([
@@ -330,4 +373,127 @@ describe("Webpack externals with a tampered loader or module object", () => {
       { preload_path: "./preload.js" },
     ]);
   });
+});
+
+describe("Webpack externals through the loader's completion paths", () => {
+  const MISS_RETURN = "return m[t](o,o.exports,n),o.exports}";
+  const missPath = (tail: string) =>
+    bootstrap(EXTERNAL, CONSUMER).replace(MISS_RETURN, tail);
+
+  // Falling off the end returns undefined, not the dispatched exports.
+  it.each([
+    ["returns only cached exports", missPath("m[t](o,o.exports,n)}")],
+    [
+      "has no returns",
+      bootstrap(EXTERNAL, CONSUMER).replace(
+        `var r=c[t];if(void 0!==r)return r.exports;var o=c[t]={exports:{}};${MISS_RETURN}`,
+        "var o=c[t]={exports:{}};m[t](o,o.exports,n)}",
+      ),
+    ],
+    [
+      "returns from one branch",
+      missPath("m[t](o,o.exports,n);if(t)return o.exports}"),
+    ],
+    [
+      "returns from a try whose catch falls through",
+      missPath("try{return m[t](o,o.exports,n),o.exports}catch(x){}}"),
+    ],
+    [
+      "falls through a catch past a completing finally",
+      missPath(
+        "try{return m[t](o,o.exports,n),o.exports}catch(x){}finally{t}}",
+      ),
+    ],
+    [
+      "returns another value from a finally",
+      missPath(
+        "try{return m[t](o,o.exports,n),o.exports}finally{return local}}",
+      ),
+    ],
+  ])("keeps a loader that %s unresolved", (_name, source) => {
+    expectUnresolved(source);
+  });
+
+  it.each([
+    [
+      "returns exports from both branches",
+      missPath(
+        "m[t](o,o.exports,n);if(t)return o.exports;else return o.exports}",
+      ),
+    ],
+    [
+      "returns exports from a finally after a falling-through catch",
+      missPath("try{m[t](o,o.exports,n)}catch(x){}finally{return o.exports}}"),
+    ],
+  ])("still resolves a loader that %s", (_name, source) => {
+    expect(electronOf(source).browser_windows).toMatchObject([
+      { preload_path: "./preload.js" },
+    ]);
+  });
+});
+
+describe("Webpack identity through erased TypeScript syntax", () => {
+  it.each([
+    [
+      "the module table",
+      bootstrap(
+        EXTERNAL,
+        CONSUMER,
+        "interface RuntimeShape { m(): void } n(100);",
+      ),
+    ],
+    [
+      "the fresh module object",
+      bootstrap(EXTERNAL, CONSUMER).replace(
+        "return m[t](o,o.exports,n)",
+        "interface ModuleShape { o(): void } return m[t](o,o.exports,n)",
+      ),
+    ],
+    [
+      "the module table through a type query",
+      bootstrap(EXTERNAL, CONSUMER, "type RuntimeShape = typeof m; n(100);"),
+    ],
+    [
+      "the fresh module object through a type query",
+      bootstrap(EXTERNAL, CONSUMER).replace(
+        "return m[t](o,o.exports,n)",
+        "type ModuleShape = typeof o; return m[t](o,o.exports,n)",
+      ),
+    ],
+    [
+      "the loader beside an uncalled installer",
+      bootstrap(
+        EXTERNAL,
+        CONSUMER,
+        "n.m=m;n.i=e=>{for(var k in e)n.m[k]=e[k]};interface RuntimeShape { n(): void } n(100);",
+      ),
+    ],
+    [
+      "the loader through a type query beside an uncalled installer",
+      bootstrap(
+        EXTERNAL,
+        CONSUMER,
+        "n.m=m;n.i=e=>{for(var k in e)n.m[k]=e[k]};type RuntimeShape = typeof n; n(100);",
+      ),
+    ],
+  ])("does not let erased TypeScript syntax escape %s", (_name, source) => {
+    const electron = electronOf(source);
+    expect(electron.browser_windows).toMatchObject([
+      { preload_path: "./preload.js" },
+    ]);
+    expect(electron.ipc).toMatchObject([
+      { channel: "get-connections", side: "main" },
+    ]);
+  });
+
+  it.each([
+    "const shape = { [m]: true }; n(100);",
+    "const kind = typeof m; n(100);",
+    "m.extra; n(100);",
+  ])(
+    "keeps an actual table reference outside the loader unproven: %s",
+    (entry) => {
+      expectUnresolved(bootstrap(EXTERNAL, CONSUMER, entry));
+    },
+  );
 });

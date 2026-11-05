@@ -18,7 +18,10 @@ import {
   electronPageInspectionSchema,
   electronTargetListSchema,
 } from "../../domain/javascript/electronObservation.js";
-import { completeProviderEvidence } from "../ProviderOperationExecution.js";
+import {
+  completeProviderEvidence,
+  keepIncompleteObservation,
+} from "../ProviderOperationExecution.js";
 
 /** List local file pages exposed by the explicitly selected endpoint. */
 export const listElectronTargets = async (
@@ -79,34 +82,32 @@ export const inspectElectronPage = async (
       partial.kind === "electron-page-observation"
     ) {
       const report = electronPageInspectionSchema.safeParse(partial.inspection);
-      if (!report.success) {
-        if (result.error instanceof AnalysisCancelledError)
-          return err(
-            new AnalysisOutputError(
-              "inspect_electron_page",
-              "Electron provider retained a malformed completed page inspection.",
-              { cause: report.error },
-            ),
-          );
+      if (report.success) {
+        const inspection = {
+          ...report.data,
+          limitations: [
+            ...report.data.limitations,
+            partial.cleanup === "transport-closed"
+              ? "REA closed its CDP transport; this does not imply target shutdown."
+              : "CDP transport cleanup remains incomplete.",
+          ],
+        } satisfies ElectronPageInspection;
+        result.error.partialObservation = createElectronEvidence(
+          "inspect_electron_page",
+          input,
+          inspection,
+          ready.value.identity(),
+        );
         return result;
       }
-      const inspection = {
-        ...report.data,
-        limitations: [
-          ...report.data.limitations,
-          partial.cleanup === "transport-closed"
-            ? "REA closed its CDP transport; this does not imply target shutdown."
-            : "CDP transport cleanup remains incomplete.",
-        ],
-      } satisfies ElectronPageInspection;
-      result.error.partialObservation = createElectronEvidence(
-        "inspect_electron_page",
-        input,
-        inspection,
-        ready.value.identity(),
-      );
     }
-    return result;
+    return err(
+      keepIncompleteObservation(
+        result.error,
+        "inspect_electron_page",
+        "Electron provider retained a non-JSON incomplete observation.",
+      ),
+    );
   }
   const report = electronPageInspectionSchema.safeParse(result.value);
   if (!report.success)

@@ -3,8 +3,19 @@ import { z } from "zod";
 import { localPathStringSchema } from "../domain/localPath.js";
 import type { ToolContract } from "./toolContractTypes.js";
 import { evidenceResultOf } from "./toolOutputSchemaPrimitives.js";
+import { analysisDetailOutputSchemaOf } from "./analysisDetail.js";
 import { toolContractMetadata } from "./toolEffects.js";
-import { isValidFridaRemoteAddress } from "./fridaRemoteAddress.js";
+import { isValidFridaRemoteAddress } from "../domain/fridaRemoteAddress.js";
+import {
+  fridaSessionObservationSchema,
+  fridaSessionStatusInputSchema,
+  fridaSessionStatusSchema,
+} from "../domain/fridaSessionStatus.js";
+import { fridaSessionStatusSummaryViewResultSchema } from "../domain/analysisView/analysisView.js";
+import {
+  fridaDeviceListSchema,
+  fridaProcessListSchema,
+} from "../domain/fridaDiscovery.js";
 
 export const FRIDA_KEEPALIVE_INTERVAL_DESCRIPTION =
   "Remote keepalive interval in seconds";
@@ -17,7 +28,6 @@ const remoteConnection = z.strictObject({
   certificate: z.string().min(1).optional(),
   origin: z.string().min(1).optional(),
   keepalive_interval: z
-    .number()
     .int()
     .positive()
     .describe(FRIDA_KEEPALIVE_INTERVAL_DESCRIPTION)
@@ -45,15 +55,6 @@ const exclusiveDeviceSelector = <Schema extends z.ZodTypeAny>(schema: Schema) =>
 
 const sessionId = z.string().uuid();
 
-const sessionOutput = z.strictObject({
-  session_id: sessionId,
-  device_id: z.string(),
-  target: z.string(),
-  pid: z.number().int().nonnegative(),
-  mode: z.enum(["attach", "spawn"]),
-  state: z.enum(["paused", "running", "detached"]),
-});
-
 const scriptOutput = z.strictObject({
   script_id: z.string().uuid(),
   source_kind: z.enum(["inline", "file"]),
@@ -72,16 +73,7 @@ export const FRIDA_TOOL_CONTRACTS = [
     description:
       "List Frida devices currently available to this host, optionally connecting to the caller-selected remote Frida endpoint. Remote authentication options are used for this call only and are never returned or recorded.",
     inputSchema: z.strictObject({ remote: remoteConnection.optional() }),
-    outputSchema: z.strictObject({
-      devices: z.array(
-        z.strictObject({
-          device_id: z.string(),
-          name: z.string(),
-          type: z.string(),
-        }),
-      ),
-      cleanup_error: z.string().nullable(),
-    }),
+    outputSchema: fridaDeviceListSchema,
     examples: [{ title: "List Frida devices", input: {} }],
   },
   {
@@ -98,17 +90,7 @@ export const FRIDA_TOOL_CONTRACTS = [
       .describe(
         'Provide exactly one of device_id or remote. device_id selects a device (use "local" for this host); remote requires an address.',
       ),
-    outputSchema: z.strictObject({
-      device_id: z.string(),
-      processes: z.array(
-        z.strictObject({
-          pid: z.number().int().nonnegative(),
-          name: z.string(),
-          identifier: z.string().nullable(),
-        }),
-      ),
-      cleanup_error: z.string().nullable(),
-    }),
+    outputSchema: fridaProcessListSchema,
     examples: [
       {
         title: "List local Frida processes",
@@ -126,7 +108,7 @@ export const FRIDA_TOOL_CONTRACTS = [
       .strictObject({
         mode: z.enum(["attach", "spawn"]),
         ...deviceSelector.shape,
-        pid: z.number().int().positive().optional(),
+        pid: z.int().positive().optional(),
         program: localPathStringSchema.optional(),
         argv: z.array(z.string()).optional(),
       })
@@ -142,7 +124,7 @@ export const FRIDA_TOOL_CONTRACTS = [
           !(value.device_id !== undefined && value.remote !== undefined),
         "Select one device; attach requires pid; spawn requires program and rejects pid",
       ),
-    outputSchema: sessionOutput,
+    outputSchema: fridaSessionObservationSchema,
     examples: [
       {
         title: "Attach to a process",
@@ -226,22 +208,11 @@ export const FRIDA_TOOL_CONTRACTS = [
     ...toolContractMetadata("frida_session_status"),
     kind: "native-provider",
     description:
-      "Return observed Frida session state and queued script messages. Message history is bounded by the provider capture budget and reports truncation.",
-    inputSchema: z.strictObject({ session_id: sessionId }),
-    outputSchema: evidenceResultOf(
-      z.strictObject({
-        session_id: sessionId,
-        device_id: z.string(),
-        state: z.enum(["paused", "running", "detached"]),
-        target: z.string(),
-        pid: z.number().int().nonnegative(),
-        mode: z.enum(["attach", "spawn"]),
-        scripts: z.array(
-          z.strictObject({ script_id: z.string().uuid(), name: z.string() }),
-        ),
-        messages: z.array(z.unknown()),
-        messages_truncated: z.boolean(),
-      }),
+      "Read observed Frida session state on each call. Default detail=complete returns queued script messages and capture truncation. detail=summary retains the complete observation in this session and returns identity, state, scripts, retained message count and truncation without payloads. Export the complete parent with export_evidence_bundle; retained summaries are historical and never refresh live state.",
+    inputSchema: fridaSessionStatusInputSchema,
+    outputSchema: analysisDetailOutputSchemaOf(
+      fridaSessionStatusSchema,
+      fridaSessionStatusSummaryViewResultSchema,
     ),
     examples: [
       {
@@ -275,13 +246,13 @@ export const FRIDA_TOOL_CONTRACTS = [
       .strictObject({
         mode: z.enum(["attach", "spawn"]),
         ...deviceSelector.shape,
-        pid: z.number().int().positive().optional(),
+        pid: z.int().positive().optional(),
         program: localPathStringSchema.optional(),
         argv: z.array(z.string()).optional(),
         source_kind: z.enum(["inline", "file"]),
         source: z.string().optional(),
         path: localPathStringSchema.optional(),
-        duration_ms: z.number().int().min(0).max(60_000).default(1_000),
+        duration_ms: z.int().min(0).max(60_000).default(1_000),
       })
       .refine(
         (value) =>
@@ -302,13 +273,7 @@ export const FRIDA_TOOL_CONTRACTS = [
         "Select one device and provide fields matching the mode and source_kind",
       ),
     outputSchema: evidenceResultOf(
-      z.strictObject({
-        ...sessionOutput.shape,
-        scripts: z.array(
-          z.strictObject({ script_id: sessionId, name: z.string() }),
-        ),
-        messages: z.array(z.unknown()),
-        messages_truncated: z.boolean(),
+      fridaSessionStatusSchema.extend({
         source_kind: z.enum(["inline", "file"]),
         source_path: z.string().nullable(),
         source_sha256: z.string().regex(/^[a-f0-9]{64}$/u),

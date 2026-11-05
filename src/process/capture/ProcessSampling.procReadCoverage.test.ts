@@ -36,6 +36,7 @@ const fixture = vi.hoisted(() => ({
   >(),
   runId: "fixture-run-token",
   runIdFailure: undefined as string | undefined,
+  runIdAvailability: undefined as "absent" | "unavailable" | undefined,
   runIdReads: 0,
 }));
 
@@ -147,6 +148,15 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 vi.mock("../ProcessOwnership.js", () => ({
   readProcessRunId: async () => {
     fixture.runIdReads += 1;
+    if (
+      fixture.runIdFailure !== undefined &&
+      fixture.runIdAvailability !== undefined
+    )
+      throw new ProcessRunTokenReadError(
+        100,
+        fixture.runIdAvailability,
+        fixture.runIdFailure,
+      );
     if (fixture.runIdFailure !== undefined)
       throw Object.assign(new Error(fixture.runIdFailure), {
         code: fixture.runIdFailure,
@@ -166,6 +176,7 @@ vi.mock("../ExecFileOutput.js", () => ({
   },
 }));
 
+import { ProcessRunTokenReadError } from "../ProcessRunTokenObservations.js";
 import { startProcessSampler } from "./ProcessSampling.js";
 import { readLinuxProcessStat } from "./LinuxProcessSampling.js";
 import type { ProcessSample } from "../../domain/process/processCapture.js";
@@ -242,6 +253,7 @@ const setUpFixture = (): void => {
   fixture.statReads.clear();
   fixture.statMutations.clear();
   fixture.runIdFailure = undefined;
+  fixture.runIdAvailability = undefined;
   fixture.runIdReads = 0;
   for (const pid of [100, 200, 300, 400]) fixture.tasks.set(pid, [String(pid)]);
   fixture.children.set("100:100", "200 400");
@@ -272,7 +284,7 @@ const waitFor = async (condition: () => boolean): Promise<void> => {
   }
 };
 
-it("rejects a mismatched stat PID and zero process-group/session IDs at sampling admission", async () => {
+it("rejects a mismatched stat PID at sampling admission", async () => {
   setUpFixture();
   fixture.statMutations.set(100, { read: 1, pid: 200 });
   const wrongPid = await readLinuxProcessStat(
@@ -280,19 +292,29 @@ it("rejects a mismatched stat PID and zero process-group/session IDs at sampling
     new AbortController().signal,
   );
   expect(wrongPid.value).toBeUndefined();
-
-  setUpFixture();
-  fixture.statMutations.set(100, {
-    read: 1,
-    processGroupId: 0,
-    sessionId: 0,
+  expect(wrongPid.diagnostics).toMatchObject({
+    count: 1,
+    first: "/proc/100/stat: malformed process identity",
   });
-  const zeroGroups = await readLinuxProcessStat(
-    100,
-    new AbortController().signal,
-  );
-  expect(zeroGroups.value).toBeUndefined();
 });
+
+it.each([0, -1])(
+  "does not classify native unavailable relations (%s) as malformed identity",
+  async (relation) => {
+    setUpFixture();
+    fixture.statMutations.set(100, {
+      read: 1,
+      processGroupId: relation,
+      sessionId: relation,
+    });
+    const observed = await readLinuxProcessStat(
+      100,
+      new AbortController().signal,
+    );
+    expect(observed.value).toBeUndefined();
+    expect(observed.diagnostics).toMatchObject({ count: 0, first: null });
+  },
+);
 
 const flushImmediateProcPass = async (): Promise<void> => {
   await new Promise((resolve) => setTimeout(resolve, 0));
@@ -578,6 +600,31 @@ it.each([
   },
 );
 
+it.each([0, -1])(
+  "keeps completed samples without false failures when root relations disappear (%s)",
+  async (relation) => {
+    setUpFixture();
+    fixture.children.set("100:100", "");
+    // Reads 1/2 establish PTY readiness; 3/4 bracket the retained root sample.
+    // The next pass sees a valid kernel record whose relations are unavailable.
+    fixture.statMutations.set(100, {
+      read: 5,
+      processGroupId: relation,
+      sessionId: relation,
+    });
+    const { samples, stop } = start();
+    await waitFor(() => (fixture.statReads.get(100) ?? 0) >= 5);
+    await flushImmediateProcPass();
+    const result = await stop();
+    expect(samples.map(({ pid }) => pid)).toEqual([100]);
+    expect(result.coverage).toMatchObject({
+      sampling_failures: 0,
+      first_sampling_failure: null,
+    });
+    expect(result.partial).toBe(false);
+  },
+);
+
 it("marks a completed clean pass as neither partial nor interrupted", async () => {
   setUpFixture();
   const { samples, stop } = start();
@@ -591,3 +638,41 @@ it("marks a completed clean pass as neither partial nor interrupted", async () =
   expect(result.coverage.sampling_failures).toBe(0);
   expect(result.coverage.first_sampling_failure).toBeNull();
 });
+
+it.each(["absent", "unavailable"] as const)(
+  "classifies native token availability during Darwin sampler initialization: %s",
+  async (availability) => {
+    setUpFixture();
+    Object.defineProperty(process, "platform", {
+      configurable: true,
+      value: "darwin",
+    });
+    fixture.runIdAvailability = availability;
+    fixture.runIdFailure =
+      availability === "absent"
+        ? "process_not_in_snapshot"
+        : "permission_denied";
+    try {
+      const { samples, stop } = start();
+      await waitFor(() => fixture.runIdReads > 0);
+      await flushImmediateProcPass();
+      const result = await stop();
+      expect(samples).toEqual([]);
+      expect(result.partial).toBe(availability !== "absent");
+      if (availability === "absent") {
+        expect(result.coverage.sampling_failures).toBe(0);
+        expect(result.coverage.first_sampling_failure).toBeNull();
+      } else {
+        expect(result.coverage.sampling_failures).toBeGreaterThan(0);
+        expect(result.coverage.first_sampling_failure).toContain(
+          "permission_denied",
+        );
+      }
+    } finally {
+      Object.defineProperty(process, "platform", {
+        configurable: true,
+        value: "linux",
+      });
+    }
+  },
+);

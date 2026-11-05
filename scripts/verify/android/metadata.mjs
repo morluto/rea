@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { delimiter, join, resolve } from "node:path";
 import { verifyAndroidMethodBodies } from "./method-bodies.mjs";
 import { verifyAndroidDirectInvokes } from "./direct-invokes.mjs";
+import { verifyAndroidExternalReferences } from "./external-invokes.mjs";
 
 /** Prove cold metadata stays unmaterialized and overload identities survive code generation. */
 export const verifyAndroidMetadata = async ({
@@ -48,6 +49,10 @@ export const verifyAndroidMetadata = async ({
           repository,
           "tests/conformance/android/ReaJadxMetadataRegression.java",
         ),
+        resolve(
+          repository,
+          "tests/conformance/android/ReaJadxExternalReferencesRegression.java",
+        ),
       ],
       { timeout: 30_000 },
     );
@@ -79,6 +84,14 @@ export const verifyAndroidMetadata = async ({
     );
     assert.match(
       result.stdout,
+      /RAW_CLASS_SELECTOR_REGRESSION_PASS nested=true metadata=true references=true/u,
+    );
+    assert.match(
+      result.stdout,
+      /DEFAULT_PACKAGE_SELECTOR_REGRESSION_PASS raw=true display=true metadata=true method=true references=true frozen=true/u,
+    );
+    assert.match(
+      result.stdout,
       /INITIALIZER_REGRESSION_PASS folded=2 bounded=true/u,
     );
     assert.match(
@@ -87,17 +100,40 @@ export const verifyAndroidMetadata = async ({
     );
     assert.match(
       result.stdout,
+      /NATIVE_DECLARATION_REGRESSION_PASS raw=true native_only=true unicode=true overloads=true duplicate_dex=true partial=true no_source=true/u,
+    );
+    assert.match(
+      result.stdout,
+      /NATIVE_DECLARATION_COLD_PASS no_apk_load=true raw=true/u,
+    );
+    assert.match(
+      result.stdout,
       /MERGED_METHOD_REGRESSION_PASS exact=true overloaded=true handlers=true/u,
     );
     assert.match(
       result.stdout,
+      /CONSTANT_FIELD_REGRESSION_PASS encoded=9 absent=4 opt_in=true/u,
+    );
+    assert.match(
+      result.stdout,
+      /RAW_MEMBER_NAME_REGRESSION_PASS reserved=true overloads=2 inner=true/u,
+    );
+    assert.match(
+      result.stdout,
       /DIRECT_INVOKE_REGRESSION_PASS nodes=1 offsets=0,3 cross_dex=true/u,
+    );
+    assert.match(
+      result.stdout,
+      /MANIFEST_REGRESSION_PASS root=true namespaces=true entities=true reload=true missing=true bounded=true/u,
     );
     console.log(
       "PASS real cold metadata, full generic types and stable overloaded method selection",
     );
     console.log(
       "PASS real Java filtered pages, nonzero inventory cursors and complete combined results",
+    );
+    console.log(
+      "PASS real nested class binary selectors preserve metadata and reference identity",
     );
     console.log(
       "PASS real folded and mixed static initializers, absent bodies and bounded smali",
@@ -107,6 +143,9 @@ export const verifyAndroidMetadata = async ({
     );
     console.log(
       "PASS real raw DEX direct-invoke offsets and cross-DEX source identity",
+    );
+    console.log(
+      "PASS root manifest selection, namespace/entity values and session cache identity",
     );
     await verifyAndroidMethodBodies({
       apk: resolve(classes, "initializers.apk"),
@@ -130,6 +169,16 @@ export const verifyAndroidMetadata = async ({
       entrypoint,
       environment,
       execute,
+    });
+    await verifyAndroidExternalReferences({
+      java,
+      jar,
+      classes,
+      repository,
+      execute,
+      entrypoint,
+      environment,
+      jvmArguments,
     });
   } finally {
     await rm(classes, { recursive: true, force: true });

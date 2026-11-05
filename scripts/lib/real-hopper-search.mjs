@@ -126,6 +126,7 @@ async function verifySearchModes(call, address) {
   assert.ok(literalProcedure);
   const dossier = await call("analyze_function", {
     procedure: literalProcedure.address,
+    detail: "complete",
   });
   const referenced = dossier.referenced_strings.find(
     (item) => item.address === longItem.address,

@@ -1,6 +1,7 @@
 import { expect, it } from "vitest";
 import {
   parseJadxEnvelope,
+  parseJadxClassPage,
   parseJadxJson,
   normalizeJadxText,
   parseJadxFailure,
@@ -30,13 +31,34 @@ it("recognizes named bridge failures without reinterpreting arbitrary engine tex
     expect(parseJadxFailure(value)).toBeUndefined();
 });
 
+it("recognizes only complete external-reference allowance diagnostics", () => {
+  const failure = {
+    kind: "reference-output-limit",
+    stage: "caller_inventory",
+    limit_bytes: 1_048_448,
+  };
+  expect(parseJadxFailure(JSON.stringify(failure))).toEqual(failure);
+  for (const changed of [
+    { stage: "arbitrary" },
+    { limit_bytes: 0 },
+    { limit_bytes: 0.5 },
+    { extra: "unrelated" },
+  ])
+    expect(
+      parseJadxFailure(JSON.stringify({ ...failure, ...changed })),
+    ).toBeUndefined();
+});
+
 it("validates provider text envelopes and rejects unsupported content rather than dropping it", () => {
   expect(
     parseJadxEnvelope(
       { content: [{ type: "text", text: "reported error" }], isError: true },
       "inspect_android_package",
     ),
-  ).toEqual({ text: "reported error", failed: true });
+  ).toEqual({
+    content: [{ type: "text", text: "reported error" }],
+    isError: true,
+  });
   for (const response of [
     { content: [] },
     { content: [{ type: "image", data: "AA==", mimeType: "image/png" }] },
@@ -108,4 +130,45 @@ it("rejects invalid APK selectors and accepts an explicit zero overload without 
       query: "",
     }).success,
   ).toBe(true);
+});
+
+it("preserves JSON page and envelope annotations while rejecting unsupported inventory scope", () => {
+  const page = {
+    scope: "top_level",
+    total_classes: 1,
+    offset: 0,
+    next_offset: 1,
+    limit: 4096,
+    items: ["fixture.Target"],
+    audit: { source: "雪", missing: null },
+  };
+  Object.defineProperty(page, "__proto__", {
+    value: { observed: "page" },
+    enumerable: true,
+  });
+  expect(parseJadxClassPage(page)).toEqual(page);
+  expect(Object.hasOwn(parseJadxClassPage(page), "__proto__")).toBe(true);
+  expect(() => parseJadxClassPage({ ...page, scope: "all_dex" })).toThrow();
+  const response = {
+    content: [
+      {
+        type: "text",
+        text: JSON.stringify(page),
+        annotations: { audience: ["assistant"] },
+      },
+    ],
+    _meta: { page: 1 },
+  };
+  Object.defineProperty(response, "__proto__", {
+    value: { observed: "envelope" },
+    enumerable: true,
+  });
+  Object.defineProperty(response.content[0], "__proto__", {
+    value: { observed: "content" },
+    enumerable: true,
+  });
+  const parsed = parseJadxEnvelope(response, "search_android_classes");
+  expect(parsed).toEqual(response);
+  expect(Object.hasOwn(parsed, "__proto__")).toBe(true);
+  expect(Object.hasOwn(parsed.content[0], "__proto__")).toBe(true);
 });

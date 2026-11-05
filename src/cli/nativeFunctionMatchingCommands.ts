@@ -3,6 +3,7 @@ import type { Logger } from "pino";
 import { matchNativeFunctionsFromBundles } from "../application/native/NativeFunctionMatchingService.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { matchNativeFunctionsInputSchema } from "../contracts/native/functionMatchingContracts.js";
+import { FUNCTION_COMPARISON_PROVIDER } from "../domain/comparisonEvidenceIdentity.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { parseCliJsonInput } from "../cliJsonInput.js";
 import { logCliCommand } from "../cliLogging.js";
@@ -16,11 +17,13 @@ import {
 } from "./analysisEvidenceDelivery.js";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
 import type { CliInstance } from "./types.js";
+import { parseNativeMatchingAllowance } from "../config/nativeMatchingAllowance.js";
 
 /** Resolve portable input bundles, then use the same read-only matching service as MCP. */
 export const registerNativeFunctionMatchingCommands = (
   cli: CliInstance,
   logger: Logger,
+  environment: Readonly<NodeJS.ProcessEnv>,
 ): void => {
   cli.command(CLI_COMMANDS.matchNativeFunctions, {
     description:
@@ -66,7 +69,7 @@ export const registerNativeFunctionMatchingCommands = (
               ),
             );
           const delivery = {
-            providerId: "rea-function-comparison",
+            providerId: FUNCTION_COMPARISON_PROVIDER.id,
             operation: "match_native_functions",
             signal,
             detail: parsed.data.detail,
@@ -74,6 +77,8 @@ export const registerNativeFunctionMatchingCommands = (
           };
           const invalid = cliEvidenceDeliveryInputError(delivery);
           if (invalid !== undefined) return projectAnalysisError(invalid);
+          const allowance = parseNativeMatchingAllowance(environment);
+          if (!allowance.ok) return projectAnalysisError(allowance.error);
           const resources = new ArtifactResourceScope();
           let sources: readonly Evidence[] = [];
           const complete = await finishAnalysisCommand(
@@ -82,7 +87,7 @@ export const registerNativeFunctionMatchingCommands = (
                 parsed.data,
                 options.source_bundle,
                 resources,
-                { signal },
+                { signal, representationAllowance: allowance.value },
               );
               if (!result.ok) return result;
               sources = result.value.sources;

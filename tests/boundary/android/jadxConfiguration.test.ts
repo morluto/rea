@@ -1,9 +1,18 @@
+import { AnalysisSettings } from "../../../src/application/AnalysisSettings.js";
+import { JadxProvider } from "../../../src/android/JadxProvider.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 import { createInspectionResources } from "../../fixtures/inspectionResources.js";
-import { chmod, mkdir, readFile, realpath, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  readFile,
+  realpath,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { join } from "node:path";
 
-import { expect, it as test, onTestFinished } from "vitest";
+import { expect, it as test, onTestFinished, vi } from "vitest";
 
 import {
   inspectJadxAvailability as inspectAvailability,
@@ -11,6 +20,10 @@ import {
   validateJadxConfiguration,
 } from "../../../src/android/JadxConfiguration.js";
 import { AnalysisCapabilityUnavailableError } from "../../../src/domain/analysisErrorCore.js";
+import {
+  LinuxOwnedProcessPrerequisiteError,
+  systemProcessOwnershipHost,
+} from "../../../src/process/ProcessOwnershipObservation.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { writeOrderedZip } from "../../fixtures/artifactEntryOrder.js";
 import { writeJadxJarInventory } from "../../fixtures/android/jadxJar.js";
@@ -44,6 +57,25 @@ const resolveConfiguration = async (
   });
   return configuration;
 };
+
+it("uses the JDK selected through a symlink parent traversal", async () => {
+  const root = await createTestTempDirectory("rea-jadx-java-traversal-");
+  const intended = join(root, "selected");
+  await mkdir(join(intended, "child"), { recursive: true });
+  const javaHome = await createFakeJdk(intended);
+  await symlink(await createFakeJdk(root, false), join(root, "fake-jdk"));
+  await symlink(join(intended, "child"), join(root, "alias"));
+  const selectedHome = `${root}/alias/../fake-jdk`;
+  expect(await realpath(selectedHome)).toBe(await realpath(javaHome));
+  const jar = join(root, "jadx.jar");
+  await writeJadxJarInventory(jar);
+  await expect(
+    resolveConfiguration(
+      { REA_JADX_MCP_JAR: jar, JAVA_HOME: selectedHome },
+      "inspect_android_package",
+    ),
+  ).resolves.toMatchObject({ java: `${selectedHome}/bin/java` });
+});
 
 it("rejects malformed or unrelated engine archives with JAR-specific recovery", async () => {
   const root = await createTestTempDirectory("rea-jadx-invalid-jar-");
@@ -216,12 +248,10 @@ it("distinguishes a runnable JRE from a missing Java executable", async () => {
   expect(availability).toMatchObject({
     status: "unavailable",
     code: "runtime_missing",
-    reason: expect.stringContaining("spawn java ENOENT"),
+    reason: expect.stringContaining("Cannot find an executable java"),
     diagnostics: {
       java_executable: "java",
-      phase: "module-inspection",
-      exit_code: null,
-      process_error_code: "ENOENT",
+      phase: "path-lookup",
     },
   });
 });
@@ -249,7 +279,8 @@ it("preserves exact Java probe output and marks max-buffer capture as truncated"
   );
   expect(failure).toBeInstanceOf(AnalysisCapabilityUnavailableError);
   if (!(failure instanceof AnalysisCapabilityUnavailableError)) return;
-  expect(failure.reason).toContain("exceeded the 1 MiB output budget");
+  expect(failure.reason).toContain("1048576-byte");
+  expect(failure.reason).toContain("no runtime override");
   expect(failure.reason).not.toContain("Select a full JDK");
   expect(failure.capturedOutput).toMatchObject({
     stdout: expect.stringMatching(/^x/u),
@@ -359,7 +390,7 @@ it("reports a killed Java probe as unresolved instead of missing runtime", async
   expect(availability).toMatchObject({
     status: "unavailable",
     code: "version_unresolved",
-    reason: expect.stringContaining("within 10 seconds"),
+    reason: expect.stringContaining("10000 ms"),
     diagnostics: {
       java_executable: java,
       failure: "probe_terminated",
@@ -367,6 +398,7 @@ it("reports a killed Java probe as unresolved instead of missing runtime", async
       deadline_ms: 10_000,
     },
   });
+  expect(availability.reason).toContain("no runtime override");
   expect(availability.reason).not.toContain("Select a full JDK");
 });
 
@@ -548,3 +580,86 @@ it.each([
       expect(reason.cleanupIncomplete).toBe(true);
   },
 );
+
+it("reports the runtime JADX repair and restores invalid launch availability on reset", async () => {
+  const root = await createTestTempDirectory("rea-jadx-runtime-availability-");
+  const jar = join(root, "jadx-headless-mcp.jar");
+  const javaHome = await createFakeJdk(root);
+  await writeJadxJarInventory(jar);
+  const environment = {
+    REA_JADX_MCP_JAR: jar,
+    JAVA_HOME: javaHome,
+    REA_JADX_OPERATION_TIMEOUT_MS: "0",
+  };
+  const settings = new AnalysisSettings(environment);
+  const provider = new JadxProvider(environment, undefined, settings.read);
+  try {
+    const unavailable = {
+      status: "unavailable",
+      code: "open_options_invalid",
+      diagnostics: { failure_kind: "operation_timeout" },
+    };
+    await expect(
+      settings.run(() => provider.inspectAvailability()),
+    ).resolves.toMatchObject(unavailable);
+    expect(
+      settings.update({
+        changes: [
+          { setting: "jadx.operation_timeout_ms", action: "set", value: 42000 },
+        ],
+      }).ok,
+    ).toBe(true);
+    await expect(
+      settings.run(() => provider.inspectAvailability()),
+    ).resolves.toMatchObject({
+      status: "available",
+      diagnostics: { operation_timeout_ms: 42000 },
+    });
+    expect(
+      settings.update({
+        changes: [{ setting: "jadx.operation_timeout_ms", action: "reset" }],
+      }).ok,
+    ).toBe(true);
+    await expect(
+      settings.run(() => provider.inspectAvailability()),
+    ).resolves.toMatchObject(unavailable);
+  } finally {
+    await provider.close();
+  }
+});
+
+it("reports the owned-process prerequisite as JADX unavailability, not a probe failure", async () => {
+  const root = await createTestTempDirectory("rea-jadx-ps-prerequisite-");
+  const jar = join(root, "jadx-headless-mcp.jar");
+  const javaHome = await createFakeJdk(root);
+  await writeJadxJarInventory(jar);
+  const environment = { REA_JADX_MCP_JAR: jar, JAVA_HOME: javaHome };
+  await expect(inspectJadxAvailability(environment)).resolves.toMatchObject({
+    status: "available",
+  });
+
+  vi.spyOn(systemProcessOwnershipHost, "prepare").mockImplementation(
+    async () => {
+      throw new LinuxOwnedProcessPrerequisiteError(
+        new Error("spawn ps ENOENT"),
+      );
+    },
+  );
+  onTestFinished(() => {
+    vi.restoreAllMocks();
+  });
+
+  await expect(inspectJadxAvailability(environment)).resolves.toMatchObject({
+    status: "unavailable",
+    code: "runtime_unavailable",
+    reason: expect.stringContaining("procps-compatible ps") as unknown,
+    diagnostics: { stage: "ownership_preparation" },
+  });
+  await expect(
+    resolveConfiguration(environment, "inspect_android_package"),
+  ).rejects.toMatchObject({
+    _tag: "AnalysisCapabilityUnavailableError",
+    providerId: "process-ownership",
+    reason: expect.stringContaining("spawn ps ENOENT") as unknown,
+  });
+});

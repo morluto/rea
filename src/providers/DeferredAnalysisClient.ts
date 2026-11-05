@@ -1,6 +1,6 @@
 import type {
   AnalysisClient,
-  FileCloseResourceOwner,
+  RetainedResourceScope,
   ProviderRuntimeLineageSnapshot,
   ProviderRequestActivitySnapshot,
 } from "../application/AnalysisProvider.js";
@@ -29,7 +29,7 @@ export class DeferredAnalysisClient implements AnalysisClient {
   constructor(
     loadClient: (
       signal: AbortSignal,
-      resourceOwner: FileCloseResourceOwner,
+      resourceOwner: RetainedResourceScope,
     ) => Promise<AnalysisClient>,
     providerId: string,
   ) {

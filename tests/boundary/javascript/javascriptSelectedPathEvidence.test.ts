@@ -140,3 +140,28 @@ cliTest(
     ).toBe(true);
   },
 );
+
+// Anchoring must not turn an empty selection into the working directory.
+cliTest.for([
+  {
+    command: "analyze-javascript-application",
+    rejection: {
+      code: "invalid_request",
+      details: { issues: [expect.objectContaining({ path: ["input_path"] })] },
+    },
+  },
+  { command: "analyze", rejection: { code: "VALIDATION_ERROR" } },
+])(
+  "$command rejects an empty path instead of analyzing the working directory",
+  async ({ command, rejection }, { cli }) => {
+    const root = await createTestTempDirectory("rea-js-empty-path-");
+    await writeFile(join(root, "main.js"), "export const value = 7;\n");
+    const response = await cli.run({
+      arguments: [command, "", "--json"],
+      cwd: root,
+      environment: { REA_LOG_LEVEL: "silent" },
+    });
+    expect(response.exitCode, response.stderr).toBe(1);
+    expect(response.json).toMatchObject(rejection);
+  },
+);

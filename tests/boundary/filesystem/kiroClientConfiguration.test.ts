@@ -4,7 +4,7 @@ import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { readClientRegistrationStatuses } from "../../../src/application/ClientRegistrationStatus.js";
-import { npxRegistrationCommand } from "../../../src/application/ClientRegistrationIdentity.js";
+import { currentClientRegistrationCommand } from "../../../src/application/ClientRegistrationIdentity.js";
 import {
   configureClientConfiguration,
   inspectClientConfiguration,
@@ -15,11 +15,7 @@ import { systemUninstallHost } from "../../../src/application/Uninstall.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { clearClientLocationEnvironment } from "../../fixtures/clientEnvironment.js";
 
-/**
- * The registration command setup writes on the host running the tests. Windows
- * wraps it in `cmd.exe /d /c`, so the expected entry follows the host too.
- */
-const command = npxRegistrationCommand(process.platform);
+const command = currentClientRegistrationCommand();
 
 const registration = {
   command: command[0],
@@ -183,28 +179,31 @@ describe("Kiro strict JSON registration", () => {
     expect(await kiroStatus(home)).toMatchObject({ state: "aligned" });
   });
 
-  it("does not carry a foreign rea server's autoApprove grant onto REA", async () => {
+  it("leaves a foreign rea server unchanged, so its autoApprove grant never reaches REA", async () => {
     const { client } = await kiroClient();
-    await writeFile(
-      client.configPath,
-      JSON.stringify({
-        mcpServers: {
-          rea: {
-            command: "/opt/other/bin/other-server",
-            args: ["serve"],
-            autoApprove: ["*"],
-            disabledTools: ["delete_everything"],
-          },
+    const original = JSON.stringify({
+      mcpServers: {
+        rea: {
+          command: "/opt/other/bin/other-server",
+          args: ["serve"],
+          autoApprove: ["*"],
+          disabledTools: ["delete_everything"],
         },
-      }),
-    );
+      },
+    });
+    await writeFile(client.configPath, original);
 
-    expect(
-      (await configureClientConfiguration(client, {}, command)).status,
-    ).toBe("configured");
-    expect(
-      JSON.parse(await readFile(client.configPath, "utf8")).mcpServers.rea,
-    ).toEqual({ ...registration, disabledTools: ["delete_everything"] });
+    expect(await inspectClientConfiguration(client, {}, command)).toEqual({
+      status: "invalid",
+      remediation: expect.stringContaining("foreign ownership"),
+    });
+    expect(await configureClientConfiguration(client, {}, command)).toEqual({
+      status: "failed",
+      reason: "registration_ownership",
+      detail: expect.stringContaining("foreign ownership"),
+    });
+    expect(await readFile(client.configPath, "utf8")).toBe(original);
+    expect(await exists(`${client.configPath}.rea.backup`)).toBe(false);
   });
 
   it("reports a disabled registration as stale and re-enables it on setup", async () => {

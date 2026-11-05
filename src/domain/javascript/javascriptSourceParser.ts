@@ -1,5 +1,6 @@
 import { parse, type ParserOptions, type ParserPlugin } from "@babel/parser";
 import * as t from "@babel/types";
+import { javaScriptDefinitionExpression } from "./javascriptAstValues.js";
 import {
   hasOnlyInlineTypeExportSpecifiers,
   hasOnlyInlineTypeImportSpecifiers,
@@ -15,6 +16,13 @@ export type ParsedJavaScriptSource = ReturnType<typeof parse>;
 // Babel's module classification includes erased TypeScript syntax. Keep the
 // runtime proof separate, including explicit filename mode, for every parser entry.
 type JavaScriptRuntimeContext = "module" | "commonjs" | "unknown";
+/** Package scope observed inside a source inventory; missing scope is unknown. */
+export type JavaScriptPackageType =
+  | "module"
+  | "commonjs"
+  | "unspecified"
+  | "unknown";
+
 const runtimeContextByProgram = new WeakMap<
   t.Program,
   JavaScriptRuntimeContext
@@ -25,6 +33,20 @@ export const javaScriptRuntimeContext = (
   program: t.Program,
 ): JavaScriptRuntimeContext =>
   runtimeContextByProgram.get(program) ?? "unknown";
+
+/** Runtime strictness follows parser-owned mode, not erased TypeScript syntax. */
+export const javaScriptProgramStrictness = (
+  program: t.Program,
+): "strict" | "sloppy" | "unknown" => {
+  if (program.directives.some(({ value }) => value.value === "use strict"))
+    return "strict";
+  const context = javaScriptRuntimeContext(program);
+  return context === "module"
+    ? "strict"
+    : context === "commonjs"
+      ? "sloppy"
+      : "unknown";
+};
 
 const hasRuntimeModuleDeclaration = (program: t.Program): boolean =>
   program.body.some((node) => {
@@ -53,6 +75,7 @@ const parseWithRuntimeContext = (
   source: string,
   sourcePath: string | undefined,
   options: ParserOptions,
+  packageContext?: JavaScriptPackageType,
 ): ParsedJavaScriptSource => {
   const file = parse(source, options);
   runtimeContextByProgram.set(
@@ -63,13 +86,19 @@ const parseWithRuntimeContext = (
         : "commonjs"
       : isExplicitModuleSourcePath(sourcePath)
         ? "module"
-        : file.program.body.some((node) => t.isTSExportAssignment(node))
-          ? // CommonJS isolation does not establish strict ESM semantics.
-            "commonjs"
-          : file.program.sourceType === "module" &&
-              hasRuntimeModuleDeclaration(file.program)
-            ? "module"
-            : "unknown",
+        : packageContext === "module" || packageContext === "commonjs"
+          ? packageContext
+          : packageContext === "unspecified" && /\.js$/iu.test(sourcePath ?? "")
+            ? file.program.sourceType === "module"
+              ? "module"
+              : "commonjs"
+            : file.program.body.some((node) => t.isTSExportAssignment(node))
+              ? // CommonJS isolation does not establish strict ESM semantics.
+                "commonjs"
+              : file.program.sourceType === "module" &&
+                  hasRuntimeModuleDeclaration(file.program)
+                ? "module"
+                : "unknown",
   );
   return file;
 };
@@ -87,6 +116,7 @@ const parseWithRuntimeContext = (
  *   `.ts/.cts/.mts` (angle-bracket assertions, not JSX) and for all
  *   declaration files. `.mts` (including `.d.mts`) sets
  *   `disallowAmbiguousJSXLike`, matching tsc's `.mts` mode.
+ * - `sourcePhaseImports` retains Node-supported WASM source imports as AST data.
  * - `decorators-legacy` always present: without it decorated sources fail
  *   hard instead of reporting recovered syntax, losing every derived fact.
  * - Unknown paths retain the existing JSX- and TypeScript-capable contract
@@ -94,7 +124,8 @@ const parseWithRuntimeContext = (
  */
 export const parserPluginsForPath = (sourcePath?: string): ParserPlugin[] => {
   const path = sourcePath ?? "";
-  if (/\.(?:js|jsx|mjs|cjs)$/iu.test(path)) return ["decorators-legacy", "jsx"];
+  const syntax: ParserPlugin[] = ["decorators-legacy", "sourcePhaseImports"];
+  if (/\.(?:js|jsx|mjs|cjs)$/iu.test(path)) return [...syntax, "jsx"];
   const dts = /\.d\.(?:ts|mts|cts)$/iu.test(path);
   const isTsLike = /\.(?:ts|cts|mts)$/iu.test(path);
   const isTsx = /\.tsx$/iu.test(path);
@@ -107,9 +138,7 @@ export const parserPluginsForPath = (sourcePath?: string): ParserPlugin[] => {
     },
   ];
   const jsxCapable = !dts && (isTsx || !isTsLike);
-  return jsxCapable
-    ? ["decorators-legacy", "jsx", typescript]
-    : ["decorators-legacy", typescript];
+  return jsxCapable ? [...syntax, "jsx", typescript] : [...syntax, typescript];
 };
 
 /** `.mjs` and `.mts` explicitly select module mode. */
@@ -141,8 +170,25 @@ export const parseRecoveredJavaScript = (
   source: string,
   sourcePath: string | undefined,
   options: Omit<ParserOptions, "sourceType" | "errorRecovery">,
+  observedPackageType?: JavaScriptPackageType,
 ): RecoveredJavaScriptParse => {
-  const sourceType = runtimeSourceTypeForPath(sourcePath);
+  const filenameType = runtimeSourceTypeForPath(sourcePath);
+  // Node package facts apply to .js/.ts sources, not explicit suffixes,
+  // declaration wrappers, or an unknown JSX compilation pipeline.
+  const packageContext =
+    /\.(?:js|ts)$/iu.test(sourcePath ?? "") &&
+    !/\.d\.ts$/iu.test(sourcePath ?? "")
+      ? observedPackageType
+      : undefined;
+  // Retain TypeScript import syntax for later CommonJS compilation.
+  const sourceType =
+    filenameType !== "unambiguous"
+      ? filenameType
+      : packageContext === "module"
+        ? "module"
+        : packageContext === "commonjs" && /\.js$/iu.test(sourcePath ?? "")
+          ? "commonjs"
+          : "unambiguous";
   if (sourceType !== "unambiguous") {
     const normalizedOptions = { ...options };
     if (sourceType === "commonjs") {
@@ -153,32 +199,50 @@ export const parseRecoveredJavaScript = (
       delete normalizedOptions.allowNewTargetOutsideFunction;
     }
     return {
-      file: parseWithRuntimeContext(source, sourcePath, {
-        ...normalizedOptions,
-        sourceType,
-        errorRecovery: true,
-      }),
+      file: parseWithRuntimeContext(
+        source,
+        sourcePath,
+        {
+          ...normalizedOptions,
+          sourceType,
+          errorRecovery: true,
+        },
+        packageContext,
+      ),
       moduleOnlyErrors: [],
     };
   }
-  const file = parseWithRuntimeContext(source, sourcePath, {
-    ...options,
-    sourceType: "unambiguous",
-    errorRecovery: true,
-  });
+  const file = parseWithRuntimeContext(
+    source,
+    sourcePath,
+    {
+      ...options,
+      sourceType: "unambiguous",
+      errorRecovery: true,
+    },
+    packageContext,
+  );
   if (file.program.sourceType !== "script" || file.errors.length === 0)
     return { file, moduleOnlyErrors: [] };
-  const script = parseWithRuntimeContext(source, sourcePath, {
-    ...options,
-    sourceType: "script",
-    errorRecovery: true,
-  });
+  const script = parseWithRuntimeContext(
+    source,
+    sourcePath,
+    {
+      ...options,
+      sourceType: "script",
+      errorRecovery: true,
+    },
+    packageContext,
+  );
   const scriptErrors = new Set(script.errors.map((error) => error.message));
   return {
     file: script,
-    moduleOnlyErrors: file.errors
-      .map((error) => error.message)
-      .filter((message) => !scriptErrors.has(message)),
+    moduleOnlyErrors:
+      javaScriptRuntimeContext(script.program) === "commonjs"
+        ? []
+        : file.errors
+            .map((error) => error.message)
+            .filter((message) => !scriptErrors.has(message)),
   };
 };
 
@@ -219,3 +283,51 @@ export const parseJavaScriptSource = (
     return null;
   }
 };
+
+/** A script's top-level lexical this may be its ambient global; wrappers and modules isolate it. */
+export const javaScriptThisOwner = (
+  node: t.ThisExpression,
+  program: t.Program,
+  parents: WeakMap<t.Node, t.Node>,
+): "global" | "caller" | "isolated" => {
+  let child: t.Node = node;
+  let classDefinitionExpression = false;
+  let current: t.Node | undefined = parents.get(node);
+  while (current !== undefined && current !== program) {
+    const definitionExpression = javaScriptDefinitionExpression(current, child);
+    if (definitionExpression && !t.isObjectMethod(current))
+      classDefinitionExpression = true;
+    if (
+      (t.isClassProperty(current) ||
+        t.isClassPrivateProperty(current) ||
+        t.isClassAccessorProperty(current)) &&
+      current.value === child
+    )
+      return "isolated";
+    if (t.isStaticBlock(current)) return "isolated";
+    if (
+      t.isFunction(current) &&
+      !t.isArrowFunctionExpression(current) &&
+      !definitionExpression
+    )
+      return "caller";
+    if (
+      t.isClass(current) &&
+      current.superClass !== child &&
+      !classDefinitionExpression
+    )
+      return "isolated";
+    if (t.isClass(current)) classDefinitionExpression = false;
+    child = current;
+    current = parents.get(current);
+  }
+  return current === program && javaScriptRuntimeContext(program) === "unknown"
+    ? "global"
+    : "isolated";
+};
+
+export const javaScriptTopLevelThisMayBeGlobal = (
+  node: t.ThisExpression,
+  program: t.Program,
+  parents: WeakMap<t.Node, t.Node>,
+): boolean => javaScriptThisOwner(node, program, parents) === "global";

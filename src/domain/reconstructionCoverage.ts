@@ -1,17 +1,16 @@
-import { createHash } from "node:crypto";
-
-import canonicalize from "canonicalize";
+import { reconstructionCoverageScope } from "./reconstructionCoverageScope.js";
 import { z } from "zod";
+import { AnalysisInputError } from "./analysisErrorCore.js";
+import type { EvidenceIntegrityError } from "./evidenceErrors.js";
+import { projectInputIssues } from "./inputIssueProjection.js";
+import { err, ok, type Result } from "./result.js";
 
 import {
   compareUnicodeCodePoints,
   compositeKey,
 } from "./unicodeCodePointOrder.js";
 
-import {
-  authenticateParsedEvidenceBundle,
-  evidenceBundleSchema,
-} from "./evidenceBundle.js";
+import { readEvidenceBundle, evidenceBundleSchema } from "./evidenceBundle.js";
 import type { Evidence } from "./evidence.js";
 import {
   evaluateReconstructionClaims,
@@ -21,8 +20,8 @@ import {
   recommendedReconstructionProbes,
   type ReconstructionEvaluationContext,
 } from "./reconstructionCoverageEvaluation.js";
-import { digestSchema } from "./../domain/digests.js";
-import { prefixedDigestSchema } from "./../domain/digests.js";
+import { digestSchema, prefixedDigestSchema } from "./../domain/digests.js";
+import { digestCanonicalValue } from "./canonicalDigest.js";
 import {
   offsetDateTimeInstantFromEpochMilliseconds,
   offsetDateTimeSchema,
@@ -98,7 +97,7 @@ const claimSchema = z.strictObject({
   ]),
 });
 
-const verifierContractBaseSchema = z.strictObject({
+const verifierContractSchema = z.strictObject({
   verifier_id: stableIdSchema,
   claim_ids: z.array(stableIdSchema).min(1),
   dimensions: z.array(stableIdSchema).min(1),
@@ -108,13 +107,10 @@ const verifierContractBaseSchema = z.strictObject({
     "live-observation",
     "external",
   ]),
-  max_age_ms: z.number().int().min(1),
-  minimum_repeats: z.number().int().min(1),
+  max_age_ms: z.int().min(1),
+  minimum_repeats: z.int().min(1),
   normalization_sha256: digestSchema,
   normalization_removes_dimensions: z.literal(false),
-});
-
-const verifierContractSchema = verifierContractBaseSchema.extend({
   contract_sha256: digestSchema,
 });
 
@@ -135,7 +131,7 @@ const verifierResultSchema = z.strictObject({
   artifact_sha256s: z.array(digestSchema).min(1),
   owner_sha256s: z.array(digestSchema),
   normalization_sha256: digestSchema,
-  repeats: z.number().int().min(1),
+  repeats: z.int().min(1),
   evidence_ids: z.array(evidenceIdSchema).min(1),
 });
 
@@ -214,15 +210,42 @@ export interface ParsedReconstructionCoverage {
   >;
 }
 
-/** Parse inline coverage data and validate every evidence and authority link. */
-export const createReconstructionCoverageData = (
-  input: unknown,
-): ReconstructionCoverageData => parseCoverageData(input).coverage;
+const coverageEnvelopeSchema = reconstructionCoverageDataSchema.extend({
+  evidence_bundle: z.unknown(),
+});
 
-/** Retain authenticated Evidence facts alongside the validated coverage snapshot. */
-const parseCoverageData = (input: unknown): ParsedReconstructionCoverage => {
-  const coverage = reconstructionCoverageDataSchema.parse(input);
-  return { coverage, ...validateCoverageReferences(coverage) };
+/** Own workspace shape, source authentication, and reference lookup facts once. */
+export const readReconstructionCoverageData = (
+  input: unknown,
+  path: readonly (string | number)[] = [],
+): Result<
+  ParsedReconstructionCoverage,
+  AnalysisInputError | EvidenceIntegrityError
+> => {
+  const parsed = coverageEnvelopeSchema.safeParse(input);
+  if (!parsed.success)
+    return err(
+      new AnalysisInputError(
+        "evaluate_reconstruction_coverage",
+        { cause: parsed.error },
+        projectInputIssues(parsed.error.issues, input).map((issue) => ({
+          ...issue,
+          path: [...path, ...issue.path],
+        })),
+      ),
+    );
+  const bundle = readEvidenceBundle(parsed.data.evidence_bundle, {
+    operation: "evaluate_reconstruction_coverage",
+    path: [...path, "evidence_bundle"],
+  });
+  if (!bundle.ok) return bundle;
+  const coverage = { ...parsed.data, evidence_bundle: bundle.value };
+  try {
+    return ok({ coverage, ...validateCoverageReferences(coverage, path) });
+  } catch (cause: unknown) {
+    if (cause instanceof AnalysisInputError) return err(cause);
+    throw cause;
+  }
 };
 
 const closureReasonSchema = z.strictObject({
@@ -261,9 +284,9 @@ export const reconstructionClosureResultSchema = z.strictObject({
   boundary_id: stableIdSchema,
   status: z.enum(["partial", "failed", "unknown", "ready"]),
   summary: z.strictObject({
-    required_surfaces: z.number().int().min(0),
-    required_claims: z.number().int().min(0),
-    reasons: z.number().int().min(0),
+    required_surfaces: z.int().min(0),
+    required_claims: z.int().min(0),
+    reasons: z.int().min(0),
   }),
   reasons: z.array(closureReasonSchema),
   recommended_probes: z.array(
@@ -282,33 +305,27 @@ export type ReconstructionClosureResult = z.infer<
 
 type ClosureReason = z.infer<typeof closureReasonSchema>;
 
-/** Build a verifier contract whose digest prevents retrospective coverage edits. */
-export const createReconstructionVerifierContract = (
-  input: z.input<typeof verifierContractBaseSchema>,
-): ReconstructionVerifierContract => {
-  const parsed = verifierContractBaseSchema.parse(input);
-  return verifierContractSchema.parse({
-    ...parsed,
-    contract_sha256: digest(parsed),
-  });
-};
-
-/** Evaluate inline coverage data against one named fail-closed boundary. */
-export const evaluateReconstructionClosure = (
-  coverageInput: unknown,
+/** Evaluate the owner's authenticated workspace and lookup facts. */
+export const evaluateParsedReconstructionClosure = (
+  parsed: ParsedReconstructionCoverage,
   boundaryId: string,
   nowEpochMs: number,
-): ReconstructionClosureResult => {
-  const parsed = parseCoverageData(coverageInput);
+): Result<ReconstructionClosureResult, AnalysisInputError> => {
   const boundary = parsed.coverage.boundaries.find(
     ({ boundary_id: id }) => id === boundaryId,
   );
   if (boundary === undefined)
-    throw new TypeError(`Unknown reconstruction boundary: ${boundaryId}`);
+    return err(
+      coverageInputError(
+        ["boundary_id"],
+        `Unknown reconstruction boundary: ${boundaryId}`,
+      ),
+    );
   const nowInstant = offsetDateTimeInstantFromEpochMilliseconds(nowEpochMs);
   const context: ReconstructionEvaluationContext = {
     ...parsed,
     boundary,
+    scope: reconstructionCoverageScope(parsed, boundary),
     nowEpochMs,
     nowInstant,
     reasons: [],
@@ -319,107 +336,163 @@ export const evaluateReconstructionClosure = (
   evaluateReconstructionCoverageRisks(context);
   evaluateReconstructionPackageProofs(context);
   const reasons = [...context.reasons].sort(reasonOrder);
-  return reconstructionClosureResultSchema.parse({
-    boundary_id: boundary.boundary_id,
-    status: closureStatus(reasons),
-    summary: {
-      required_surfaces: boundary.required_surface_ids.length,
-      required_claims: boundary.required_claim_ids.length,
-      reasons: reasons.length,
-    },
-    reasons,
-    recommended_probes: recommendedReconstructionProbes(reasons),
-    evidence_ids: [...context.evidenceIds].sort(),
-  });
+  return ok(
+    reconstructionClosureResultSchema.parse({
+      boundary_id: boundary.boundary_id,
+      status: closureStatus(reasons),
+      summary: {
+        required_surfaces: context.scope.surfaceIds.size,
+        required_claims: context.scope.claimIds.size,
+        reasons: reasons.length,
+      },
+      reasons,
+      recommended_probes: recommendedReconstructionProbes(reasons),
+      evidence_ids: [...context.evidenceIds].sort(),
+    }),
+  );
 };
 
 const validateCoverageReferences = (
   workspace: ReconstructionCoverageData,
+  path: readonly (string | number)[],
 ): Omit<ParsedReconstructionCoverage, "coverage"> => {
-  const evidenceBundle = authenticateParsedEvidenceBundle(
-    workspace.evidence_bundle,
-  );
+  const invalid = (location: readonly (string | number)[], message: string) =>
+    coverageInputError([...path, ...location], message);
   const evidenceById = new Map(
-    evidenceBundle.records.map((record) => [record.evidence_id, record]),
+    workspace.evidence_bundle.records.map((record) => [
+      record.evidence_id,
+      record,
+    ]),
   );
   const unknownIds = new Set(
-    evidenceBundle.unknowns.map(({ unknown_id: id }) => id),
+    workspace.evidence_bundle.unknowns.map(({ unknown_id: id }) => id),
   );
-  const artifacts = indexUnique(workspace.artifacts, "artifact_id");
-  const surfaces = indexUnique(workspace.surfaces, "surface_id");
-  const claims = indexUnique(workspace.claims, "claim_id");
-  const contracts = indexUnique(workspace.verifier_contracts, "verifier_id");
-  indexUnique(workspace.contradictions, "contradiction_id");
-  indexUnique(workspace.package_proofs, "proof_id");
-  indexUnique(workspace.boundaries, "boundary_id");
-  for (const contract of workspace.verifier_contracts) {
+  const artifacts = indexUnique(workspace.artifacts, "artifact_id", [
+    ...path,
+    "artifacts",
+  ]);
+  const surfaces = indexUnique(workspace.surfaces, "surface_id", [
+    ...path,
+    "surfaces",
+  ]);
+  const claims = indexUnique(workspace.claims, "claim_id", [...path, "claims"]);
+  const contracts = indexUnique(workspace.verifier_contracts, "verifier_id", [
+    ...path,
+    "verifier_contracts",
+  ]);
+  indexUnique(workspace.contradictions, "contradiction_id", [
+    ...path,
+    "contradictions",
+  ]);
+  indexUnique(workspace.package_proofs, "proof_id", [
+    ...path,
+    "package_proofs",
+  ]);
+  indexUnique(workspace.boundaries, "boundary_id", [...path, "boundaries"]);
+  for (const [index, contract] of workspace.verifier_contracts.entries()) {
     const { contract_sha256: contractSha256, ...base } = contract;
-    if (contractSha256 !== digest(verifierContractBaseSchema.parse(base)))
-      throw new TypeError(
+    if (
+      contractSha256 !== digestCanonicalValue(base, "Reconstruction coverage")
+    )
+      throw invalid(
+        ["verifier_contracts", index, "contract_sha256"],
         `Verifier contract digest is invalid: ${contract.verifier_id}`,
       );
   }
-  for (const surface of workspace.surfaces)
+  for (const [index, surface] of workspace.surfaces.entries())
     if (!artifacts.has(surface.artifact_id))
-      throw new TypeError(`Surface artifact is missing: ${surface.surface_id}`);
+      throw invalid(
+        ["surfaces", index, "artifact_id"],
+        `Surface artifact is missing: ${surface.surface_id}`,
+      );
   const ownersBySurface = new Map<
     string,
     ReconstructionCoverageData["owners"][number][]
   >();
-  for (const owner of workspace.owners) {
+  for (const [index, owner] of workspace.owners.entries()) {
     if (!surfaces.has(owner.surface_id))
-      throw new TypeError(`Owner surface is missing: ${owner.surface_id}`);
+      throw invalid(
+        ["owners", index, "surface_id"],
+        `Owner surface is missing: ${owner.surface_id}`,
+      );
     const owners = ownersBySurface.get(owner.surface_id);
     if (owners === undefined) ownersBySurface.set(owner.surface_id, [owner]);
     else owners.push(owner);
   }
-  for (const claim of workspace.claims)
-    if (claim.surface_ids.some((id) => !surfaces.has(id)))
-      throw new TypeError(`Claim surface is missing: ${claim.claim_id}`);
-  for (const contract of workspace.verifier_contracts)
-    if (contract.claim_ids.some((id) => !claims.has(id)))
-      throw new TypeError(`Verifier claim is missing: ${contract.verifier_id}`);
-  for (const result of workspace.verifier_results)
+  for (const [index, claim] of workspace.claims.entries()) {
+    const missingSurface = claim.surface_ids.findIndex(
+      (id) => !surfaces.has(id),
+    );
+    if (missingSurface !== -1)
+      throw invalid(
+        ["claims", index, "surface_ids", missingSurface],
+        `Claim surface is missing: ${claim.claim_id}`,
+      );
+  }
+  for (const [index, contract] of workspace.verifier_contracts.entries()) {
+    const missingClaim = contract.claim_ids.findIndex((id) => !claims.has(id));
+    if (missingClaim !== -1)
+      throw invalid(
+        ["verifier_contracts", index, "claim_ids", missingClaim],
+        `Verifier claim is missing: ${contract.verifier_id}`,
+      );
+  }
+  for (const [index, result] of workspace.verifier_results.entries())
     if (!contracts.has(result.verifier_id))
-      throw new TypeError(
+      throw invalid(
+        ["verifier_results", index, "verifier_id"],
         `Verifier result contract is missing: ${result.verifier_id}`,
       );
-  const referencedEvidenceIds = [
-    ...workspace.artifacts.flatMap(({ evidence_ids: ids }) => ids),
-    ...workspace.surfaces.flatMap(({ evidence_ids: ids }) => ids),
-    ...workspace.verifier_results.flatMap(({ evidence_ids: ids }) => ids),
-    ...workspace.contradictions.flatMap(({ evidence_ids: ids }) => ids),
-    ...workspace.package_proofs.flatMap(({ evidence_ids: ids }) => ids),
-  ];
-  const danglingEvidence = referencedEvidenceIds.find(
-    (id) => !evidenceById.has(id),
-  );
-  if (danglingEvidence !== undefined)
-    throw new TypeError(
-      `Coverage workspace Evidence is missing: ${danglingEvidence}`,
-    );
-  const danglingUnknown = workspace.residual_unknown_ids.find(
-    (id) => !unknownIds.has(id),
-  );
-  if (danglingUnknown !== undefined)
-    throw new TypeError(
-      `Coverage workspace residual unknown is missing: ${danglingUnknown}`,
-    );
+  const evidenceSources = [
+    ["artifacts", workspace.artifacts],
+    ["surfaces", workspace.surfaces],
+    ["verifier_results", workspace.verifier_results],
+    ["contradictions", workspace.contradictions],
+    ["package_proofs", workspace.package_proofs],
+  ] as const;
+  for (const [collection, items] of evidenceSources)
+    for (const [index, item] of items.entries())
+      for (const [referenceIndex, id] of item.evidence_ids.entries())
+        if (!evidenceById.has(id))
+          throw invalid(
+            [collection, index, "evidence_ids", referenceIndex],
+            `Coverage workspace Evidence is missing: ${id}`,
+          );
+  for (const [index, id] of workspace.residual_unknown_ids.entries())
+    if (!unknownIds.has(id))
+      throw invalid(
+        ["residual_unknown_ids", index],
+        `Coverage workspace residual unknown is missing: ${id}`,
+      );
   return { evidenceById, artifacts, surfaces, claims, ownersBySurface };
 };
 
 const indexUnique = <Item extends Record<Key, string>, Key extends keyof Item>(
   items: readonly Item[],
   key: Key,
+  path: readonly (string | number)[],
 ): ReadonlyMap<string, Item> => {
   const values = new Map<string, Item>();
-  for (const item of items) {
+  for (const [index, item] of items.entries()) {
     if (values.has(item[key]))
-      throw new TypeError(`Duplicate reconstruction coverage ${String(key)}`);
+      throw coverageInputError(
+        [...path, index, String(key)],
+        `Duplicate reconstruction coverage ${String(key)}`,
+      );
     values.set(item[key], item);
   }
   return values;
 };
+
+const coverageInputError = (
+  path: readonly (string | number)[],
+  message: string,
+): AnalysisInputError =>
+  new AnalysisInputError(
+    "evaluate_reconstruction_coverage",
+    { userMessage: message },
+    [{ path, reason: "invalid_value", message }],
+  );
 
 const closureStatus = (
   reasons: readonly ClosureReason[],
@@ -462,10 +535,3 @@ const reasonOrder = (left: ClosureReason, right: ClosureReason): number =>
     compositeKey([left.code, left.subject_id]),
     compositeKey([right.code, right.subject_id]),
   );
-
-const digest = (value: unknown): string => {
-  const encoded = canonicalize(value);
-  if (encoded === undefined)
-    throw new TypeError("Reconstruction coverage value is not canonical JSON");
-  return createHash("sha256").update(encoded).digest("hex");
-};

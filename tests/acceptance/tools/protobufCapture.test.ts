@@ -1,8 +1,15 @@
 import { z } from "zod";
-import { readFile, unlink, writeFile, mkdir, truncate } from "node:fs/promises";
+import {
+  readFile,
+  unlink,
+  writeFile,
+  mkdir,
+  truncate,
+  symlink,
+} from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
-import { cliTest } from "../../support/cli/cliFixture.js";
+import { cliTest, runFileCli } from "../../support/cli/cliFixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import {
   protobufCaptureDescriptor,
@@ -156,6 +163,15 @@ captureTest(
     });
     const missingError = parseMcpToolError(missing).error;
     expect(missingError.code).toBe("invalid_request");
+    expect(missingError.details).toMatchObject({
+      issues: [
+        {
+          path: ["protobuf", "schema", "message_type"],
+          reason: "invalid_value",
+          message: expect.stringContaining("capture.Missing"),
+        },
+      ],
+    });
     const retainedSource = retainedCaptureDetailsSchema.parse(
       missingError.details,
     ).partial_observation;
@@ -345,11 +361,18 @@ captureTest(
     await mkdir(directory);
     await writeFile(oversized, "");
     await truncate(oversized, 32 * 1024 * 1024 + 1);
-    for (const [path, reason] of [
+    const failures: Array<readonly [string, string]> = [
       [join(root, "missing.pb"), "invalid_value"],
       [directory, "invalid_format"],
       [oversized, "out_of_range"],
-    ] as const) {
+    ];
+    // A single component exceeds POSIX NAME_MAX. Windows path limits vary by host.
+    if (process.platform !== "win32") {
+      failures.push([join(root, "x".repeat(300)), "invalid_value"]);
+      await symlink("loop", join(root, "loop"));
+      failures.push([join(root, "loop", "descriptor.pb"), "invalid_value"]);
+    }
+    for (const [path, reason] of failures) {
       const response = await call("inspect_web_network_capture", {
         ...args,
         sensitive_values: ["unrelated fixture exclusion"],
@@ -367,6 +390,18 @@ captureTest(
           { path: ["protobuf", "schema", "descriptor_set_path"], reason },
         ],
       });
+      if (path.endsWith("x".repeat(300)))
+        expect(error.details?.issues).toEqual([
+          expect.objectContaining({
+            message: expect.stringContaining("ENAMETOOLONG"),
+          }),
+        ]);
+      if (path === join(root, "loop", "descriptor.pb"))
+        expect(error.details?.issues).toEqual([
+          expect.objectContaining({
+            message: expect.stringContaining("ELOOP"),
+          }),
+        ]);
       expect(
         retainedCaptureDetailsSchema.parse(error.details).partial_observation
           .kind,
@@ -557,70 +592,129 @@ captureTest(
   },
 );
 
-captureTest(
-  "keeps malformed gRPC-web trailers partial through CLI and MCP without changing capture bytes",
-  async ({ cli, mcp }) => {
+const trailerCases = [
+  ["valid", "grpc-status", "0", "complete"],
+  [
+    "opaque",
+    "grpc-status",
+    "0\r\nx-note: caf\u00e9\r\nx-after: kept",
+    "partial",
+  ],
+  ["uppercase", "Grpc-Status", "0", "partial"],
+  ["nul", "grpc-status", "0\u0000bad", "partial"],
+  ["lf", "grpc-status", "0\nbad", "partial"],
+  ["cr", "grpc-status", "0\rbad", "partial"],
+  ["vt", "grpc-status", "0\u000bbad", "partial"],
+  ["del", "grpc-status", "0\u007fbad", "partial"],
+] as const;
+
+captureTest.for(
+  (["grpc-web", "grpc-web-text"] as const).flatMap((framing) =>
+    trailerCases.map(([name, headerName, value, status]) => ({
+      framing,
+      name,
+      headerName,
+      value,
+      status,
+    })),
+  ),
+)(
+  "preserves $framing trailer case $name through CLI and MCP without changing capture bytes",
+  async ({ framing, name, headerName, value, status }, { cli, mcp }) => {
     const root = await createTestTempDirectory("rea-grpc-web-trailers-");
-    for (const framing of ["grpc-web", "grpc-web-text"] as const)
-      for (const [name, headerName, value, status] of [
-        ["valid", "grpc-status", "0", "complete"],
-        ["uppercase", "Grpc-Status", "0", "partial"],
-        ["nul", "grpc-status", "0\u0000bad", "partial"],
-        ["lf", "grpc-status", "0\nbad", "partial"],
-        ["cr", "grpc-status", "0\rbad", "partial"],
-        ["vt", "grpc-status", "0\u000bbad", "partial"],
-        ["del", "grpc-status", "0\u007fbad", "partial"],
-      ] as const) {
-        const path = join(root, `${framing}-${name}.har`);
-        const trailer = Buffer.from(`${headerName}: ${value}\r\n`);
-        const body = Buffer.concat([
-          protobufFrame(Buffer.from([8, 1])),
-          protobufFrame(trailer, 128),
-        ]);
-        const original = protobufHar(
-          framing === "grpc-web-text"
-            ? Buffer.from(body.toString("base64"))
-            : body,
-          `application/${framing}`,
-        );
-        await writeFile(path, original);
-        const response = await cli.run({
-          arguments: [
-            "inspect-web-network-capture",
-            path,
-            "har",
-            "--record",
-            "0",
-            "--protobuf-framing",
-            "auto",
-            "--json",
-          ],
-        });
-        expect(response.exitCode, response.stdout + response.stderr).toBe(0);
-        const evidence = parseEvidence(response.json);
-        const report = webNetworkCaptureSchema.parse(
-          evidence.normalized_result,
-        );
-        expect(report.protobuf_coverage?.status, name).toBe(status);
-        expect(report.records[0]?.protobuf?.[0]).toMatchObject({
-          status,
-          framing,
-          examined_bytes: body.length,
-          frames: [
-            { kind: "data", status: "complete", examined_bytes: 2 },
-            { kind: "trailer", status, examined_bytes: trailer.length },
-          ],
-          fields: [{ number: 1, wire_type: "varint", value: "1" }],
-        });
-        const reply = await mcp.call("inspect_web_network_capture", {
-          capture_path: path,
-          format: "har",
-          record_ordinals: [0],
-          protobuf: { framing: "auto" },
-        });
-        expect(reply.isError, JSON.stringify(reply)).not.toBe(true);
-        expect(reply.structuredContent).toEqual(response.json);
-        expect(await readFile(path, "utf8")).toBe(original);
-      }
+    const path = join(root, `${framing}-${name}.har`);
+    const trailer = Buffer.from(
+      `${headerName}: ${value}\r\n`,
+      name === "opaque" ? "latin1" : "utf8",
+    );
+    const body = Buffer.concat([
+      protobufFrame(Buffer.from([8, 1])),
+      protobufFrame(trailer, 128),
+    ]);
+    const original = protobufHar(
+      framing === "grpc-web-text" ? Buffer.from(body.toString("base64")) : body,
+      `application/${framing}`,
+    );
+    await writeFile(path, original);
+    const options = {
+      arguments: [
+        "inspect-web-network-capture",
+        path,
+        "har",
+        "--record",
+        "0",
+        "--protobuf-framing",
+        "auto",
+        "--json",
+      ],
+    };
+    const response = await (name === "valid"
+      ? cli.run(options)
+      : runFileCli(cli, options));
+    expect(response.exitCode, response.stdout + response.stderr).toBe(0);
+    const evidence = parseEvidence(response.json);
+    const report = webNetworkCaptureSchema.parse(evidence.normalized_result);
+    expect(report.protobuf_coverage?.status, name).toBe(status);
+    expect(report.records[0]?.protobuf?.[0]).toMatchObject({
+      status,
+      framing,
+      examined_bytes: body.length,
+      frames: [
+        { kind: "data", status: "complete", examined_bytes: 2 },
+        { kind: "trailer", status, examined_bytes: trailer.length },
+      ],
+      fields: [{ number: 1, wire_type: "varint", value: "1" }],
+    });
+    if (name === "opaque") {
+      expect(report.records[0]?.protobuf?.[0]?.frames[1]?.trailers).toEqual([
+        { name: "grpc-status", value: "0" },
+        { name: "x-after", value: "kept" },
+      ]);
+    }
+    const reply = await mcp.call("inspect_web_network_capture", {
+      capture_path: path,
+      format: "har",
+      record_ordinals: [0],
+      protobuf: { framing: "auto" },
+    });
+    expect(reply.isError, JSON.stringify(reply)).not.toBe(true);
+    expect(reply.structuredContent).toEqual(response.json);
+    expect(await readFile(path, "utf8")).toBe(original);
+  },
+);
+
+captureTest(
+  "keeps automatic framing partial when a HAR mimeType is excluded through MCP",
+  async ({ mcp }) => {
+    const root = await createTestTempDirectory("rea-protobuf-mime-");
+    const path = join(root, "capture.har");
+    await writeFile(path, protobufHar());
+    const reply = await mcp.call("inspect_web_network_capture", {
+      capture_path: path,
+      format: "har",
+      record_ordinals: [0],
+      sensitive_values: ["grpc-web+proto"],
+    });
+    expect(reply.isError, JSON.stringify(reply)).not.toBe(true);
+    const report = webNetworkCaptureSchema.parse(
+      parseEvidence(reply.structuredContent).normalized_result,
+    );
+    expect(report.records[0]?.redactions).toContainEqual({
+      pointer: "/response/content/mimeType",
+      reason: "explicit-sensitive-value",
+    });
+    expect(report.records[0]?.binary_fields[0]).toMatchObject({
+      pointer: "/response/content/text",
+      state: "retained",
+    });
+    expect(report.records[0]?.protobuf).toBeUndefined();
+    expect(report.records[0]?.limitations).toContainEqual(
+      expect.stringMatching(/^Selected body's MIME metadata is excluded/),
+    );
+    expect(report.protobuf_coverage).toEqual({
+      status: "partial",
+      selected_records: 1,
+      inspected_records: 1,
+    });
   },
 );

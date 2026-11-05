@@ -1,48 +1,6 @@
 import { expect, it } from "vitest";
-import { Cli } from "incur";
-import pino from "pino";
 
-import type { ApktoolResourceAnalysisPort } from "../../../src/application/apktool/ApktoolResourceAnalysisPort.js";
-import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
-import { registerApktoolCommands } from "../../../src/cli/apktoolCommands.js";
-import { presentOmittableDefaults } from "../../../src/cli/omittableDefaults.js";
-import type { ApktoolRequest } from "../../../src/domain/apktool/apktoolResourceAnalysis.js";
-import { ok } from "../../../src/domain/result.js";
-
-const invoke = async (argv: readonly string[]) => {
-  const requests: ApktoolRequest[] = [];
-  const provider: ApktoolResourceAnalysisPort = {
-    async inspectAvailability() {
-      throw new Error("unexpected provider probe");
-    },
-    async close() {},
-    async execute(request) {
-      requests.push(request);
-      return ok(
-        createAnalysisExecution(
-          { strings: [] },
-          { id: "apktool", name: "Apktool", version: null },
-        ),
-      );
-    },
-  };
-  const cli = Cli.create("rea", { sync: false });
-  registerApktoolCommands(cli, pino({ level: "silent" }), {}, provider);
-  presentOmittableDefaults(cli);
-
-  let stdout = "";
-  let exitCode = 0;
-  await cli.serve([...argv], {
-    env: {},
-    exit: (code) => {
-      exitCode = code;
-    },
-    stdout: (text) => {
-      stdout += text;
-    },
-  });
-  return { exitCode, stdout, requests };
-};
+import { invokeApktoolCli } from "../../support/cli/apktoolCli.js";
 
 /**
  * Locales the apktool input owner admits. The owner's own rejection message
@@ -64,7 +22,7 @@ const OWNER_ADMITTED_LOCALES = [
 ] as const;
 
 it("forwards the table-only string choice through the CLI", async () => {
-  const result = await invoke([
+  const result = await invokeApktoolCli([
     "decode-android-resources",
     "/targets/app.apk",
     "--string-tables-only",
@@ -88,7 +46,7 @@ it("forwards the table-only string choice through the CLI", async () => {
 
 it("forwards every locale the apktool input owner admits", async () => {
   for (const locale of OWNER_ADMITTED_LOCALES) {
-    const result = await invoke([
+    const result = await invokeApktoolCli([
       "decode-android-resources",
       "/targets/app.apk",
       "--locale",
@@ -107,7 +65,7 @@ it("forwards every locale the apktool input owner admits", async () => {
 });
 
 it("forwards repeated --locales to project multiple localized tables", async () => {
-  const result = await invoke([
+  const result = await invokeApktoolCli([
     "decode-android-resources",
     "/targets/app.apk",
     "--locales",
@@ -133,7 +91,7 @@ it("forwards repeated --locales to project multiple localized tables", async () 
 it.each(["not a locale", "en-r419", "es-r419"])(
   "refuses the invalid locale %s before invoking Apktool",
   async (locale) => {
-    const result = await invoke([
+    const result = await invokeApktoolCli([
       "decode-android-resources",
       "/targets/app.apk",
       "--locale",
@@ -151,7 +109,7 @@ it.each(["not a locale", "en-r419", "es-r419"])(
 );
 
 it("forwards --no-strings with --locale preserving caller options", async () => {
-  const result = await invoke([
+  const result = await invokeApktoolCli([
     "decode-android-resources",
     "/targets/app.apk",
     "--no-strings",

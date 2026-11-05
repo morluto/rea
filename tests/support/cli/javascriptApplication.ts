@@ -6,7 +6,8 @@ import { z } from "zod";
 
 import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/javascript/javascriptApplicationAnalysis.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
-import type { TestCli } from "./cliFixture.js";
+import { INLINE_EVIDENCE_MCP_ENVIRONMENT } from "../../../scripts/lib/mcp-verification-environment.mjs";
+import type { SharedMcpCall, TestCli } from "./cliFixture.js";
 
 const execute = promisify(execFile);
 
@@ -21,7 +22,25 @@ export const runNodeJsonControl = async (
   return JSON.parse(stdout) as unknown;
 };
 
-/** Analyze a directory; a supplied MCP caller reuses its test-owned connection. */
+/**
+ * Use an explicit caller when the test owns the server. Otherwise reuse the
+ * file-scoped session from `cliTest`, and start a fresh server only for
+ * drivers created outside that fixture.
+ */
+export const resolveJavaScriptApplicationMcpCall = async (
+  cli: TestCli,
+  mcpCall: SharedMcpCall | undefined,
+): Promise<SharedMcpCall> => {
+  if (mcpCall !== undefined) return mcpCall;
+  if (cli.sharedMcpCall !== undefined) return cli.sharedMcpCall();
+  return (await connectLocalToolsMcp(INLINE_EVIDENCE_MCP_ENVIRONMENT)).call;
+};
+
+/**
+ * Analyze a directory. A supplied MCP caller reuses its test-owned connection.
+ * CLI uses the driver's file-scoped process when present, and a fresh process
+ * otherwise.
+ */
 export const analyzeJavaScriptDirectory = async (
   surface: "CLI" | "stdio MCP",
   cli: TestCli,
@@ -31,14 +50,13 @@ export const analyzeJavaScriptDirectory = async (
     mcpCall,
   }: {
     readonly sourcePaths?: readonly string[];
-    readonly mcpCall?:
-      | Awaited<ReturnType<typeof connectLocalToolsMcp>>["call"]
-      | undefined;
+    readonly mcpCall?: SharedMcpCall | undefined;
   } = {},
 ) => {
   let document: unknown;
   if (surface === "CLI") {
-    const response = await cli.run({
+    const run = cli.sharedCliRun ?? ((invocation) => cli.run(invocation));
+    const response = await run({
       arguments: [
         "analyze-javascript-application",
         root,
@@ -51,7 +69,7 @@ export const analyzeJavaScriptDirectory = async (
     expect(response.exitCode, response.stderr).toBe(0);
     document = response.json;
   } else {
-    const call = mcpCall ?? (await connectLocalToolsMcp()).call;
+    const call = await resolveJavaScriptApplicationMcpCall(cli, mcpCall);
     const response = await call("analyze_javascript_application", {
       input_path: root,
       format: "directory",

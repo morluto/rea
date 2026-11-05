@@ -160,6 +160,11 @@ describe("TypeScript type-only module links", () => {
       export type { hiddenFunction };
     `);
 
+    expect(ir.bindings.map(({ name }) => name).sort()).toEqual([
+      "hiddenFunction",
+      "value",
+    ]);
+
     const externalLinks = ir.moduleLinks
       .filter(({ specifier }) => specifier !== null)
       .map(

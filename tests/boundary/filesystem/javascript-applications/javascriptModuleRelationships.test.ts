@@ -9,11 +9,12 @@ import { parseJavaScriptApplicationGraph } from "../../../../src/domain/javascri
 import { compareJavaScriptApplicationVersions } from "../../../../src/domain/javascript/javascriptApplicationVersionComparison.js";
 import { semanticResourceLimitReason } from "../../../../src/domain/javascript/javascriptSemanticResourceLimits.js";
 import { getterExpansionSource } from "../../../fixtures/javascriptGetterExpansion.js";
+import { primitiveCandidateExpansionExpression } from "../../../fixtures/javascriptPrimitiveExpansion.js";
 import { scanCanonicalArtifactInventory } from "../../../fixtures/artifactInventory.js";
 import { readJavaScriptArtifactFiles } from "../../../support/javascriptApplicationScope.js";
 import { createJavaScriptArtifactReader } from "../../../../src/artifacts/javascript/JavaScriptArtifactReader.js";
-import { analyzeJavaScriptArtifactFiles } from "../../../../src/application/javascript/JavaScriptArtifactAnalysis.js";
-import { buildJavaScriptArtifactGraph } from "../../../../src/application/javascript/JavaScriptArtifactGraphBuilder.js";
+import { analyzeArtifactFiles } from "../../../fixtures/javascriptArtifactAnalysis.js";
+import { immutableArtifactGraph } from "../../../fixtures/javascriptArtifactGraph.js";
 
 import {
   findExportNode,
@@ -28,11 +29,8 @@ const relationshipGraph = async (root: string) => {
   const reader = createJavaScriptArtifactReader(root, "directory");
   try {
     const files = await readJavaScriptArtifactFiles(reader, snapshot);
-    return buildJavaScriptArtifactGraph(
-      snapshot,
-      files,
-      analyzeJavaScriptArtifactFiles(files),
-    );
+    const { analysis } = await analyzeArtifactFiles(files);
+    return await immutableArtifactGraph(snapshot, files, analysis);
   } finally {
     await reader.close();
   }
@@ -83,7 +81,7 @@ it.each(["browser", "module", "renderer", "main"] as const)(
             kind === "electron-renderer" &&
             observations.some(
               ({ properties }) =>
-                properties.mechanism === "package.json:renderer" &&
+                properties.mechanism === `package.json:${field}` &&
                 properties.resolved_path === "lib/window.cjs",
             ),
         ),
@@ -95,7 +93,7 @@ it.each([
   ["getter-expansion", getterExpansionSource()],
   [
     "primitive-candidates",
-    `const result = ${Array.from({ length: 20 }, () => '(true ? "a" : "b")').join(" + ")};`,
+    `const result = ${primitiveCandidateExpansionExpression()};`,
   ],
 ] as const)(
   "deduplicates %s limitations on import and export relationships",
@@ -137,11 +135,13 @@ it.each([
 describe("cross-version source module identity", () => {
   it("keeps exact source identity without claiming unchanged unresolved relationships", async () => {
     const root = await createTestTempDirectory("rea-source-module-sibling-");
+    const mainSource = 'require("./util.js");\n';
+    const sourceSha256 = createHash("sha256").update(mainSource).digest("hex");
     const versions = await Promise.all(
       ["left", "right"].map(async (name) => {
         const path = join(root, name);
         await writeFixtureFiles(path, {
-          "main.js": 'require("./util.js");\n',
+          "main.js": mainSource,
           "util.js": `module.exports = ${JSON.stringify(name)};\n`,
         });
         return reconstructJavaScriptFixture(path);
@@ -160,12 +160,34 @@ describe("cross-version source module identity", () => {
     const rightObservation = rightModule.observations.find(
       ({ properties }) => properties.semantic_role === "source-module",
     );
-    expect(leftObservation?.properties).not.toHaveProperty("container_sha256");
-    expect(rightObservation?.properties).not.toHaveProperty("container_sha256");
-    expect(leftObservation?.properties).toEqual(rightObservation?.properties);
-    expect(leftObservation?.properties.source_sha256).toBe(
-      rightObservation?.properties.source_sha256,
-    );
+    if (leftObservation === undefined || rightObservation === undefined)
+      throw new Error("Missing main source observation");
+    expect(left.root_artifact_sha256).not.toBe(right.root_artifact_sha256);
+    expect(leftModule.node_id).not.toBe(rightModule.node_id);
+    expect(leftObservation.properties).not.toHaveProperty("container_sha256");
+    expect(rightObservation.properties).not.toHaveProperty("container_sha256");
+    const { file_occurrence: leftOccurrence, ...leftSourceFacts } =
+      leftObservation.properties;
+    const { file_occurrence: rightOccurrence, ...rightSourceFacts } =
+      rightObservation.properties;
+    expect(leftOccurrence).toEqual({
+      container_sha256: left.root_artifact_sha256,
+      path: "main.js",
+      sha256: sourceSha256,
+    });
+    expect(rightOccurrence).toEqual({
+      container_sha256: right.root_artifact_sha256,
+      path: "main.js",
+      sha256: sourceSha256,
+    });
+    expect(leftSourceFacts).toEqual(rightSourceFacts);
+    expect(leftSourceFacts.source_sha256).toBe(sourceSha256);
+    expect(leftObservation.evidence).toEqual(rightObservation.evidence);
+    expect(leftObservation.evidence.artifact).toMatchObject({
+      available: true,
+      artifact_id: `art_${sourceSha256}`,
+      sha256: sourceSha256,
+    });
 
     const comparison = compareJavaScriptApplicationVersions({
       left: {

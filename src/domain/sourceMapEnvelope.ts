@@ -78,6 +78,11 @@ export const classifySourceMapSection = (
       reason:
         "Indexed source-map section requires an embedded map or external URL.",
     };
+  if (!isVersion3Map(section.map))
+    return {
+      kind: "invalid",
+      reason: "Indexed source-map section map is not a version 3 map.",
+    };
   return { kind: "embedded", map: section.map };
 };
 
@@ -169,11 +174,6 @@ export const inspectSourceMapEnvelope = (root: unknown): SourceMapEnvelope => {
           externalSections.push({ path, url: classification.url });
         else if (classification.kind === "invalid")
           invalidSections.push({ path, reason: classification.reason });
-        else if (!isVersion3Map(classification.map))
-          invalidSections.push({
-            path,
-            reason: "Indexed source-map section map is not a version 3 map.",
-          });
         else children.push({ map: classification.map, path });
       }
       for (let index = children.length - 1; index >= 0; index -= 1) {

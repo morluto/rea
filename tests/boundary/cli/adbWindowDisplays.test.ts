@@ -56,10 +56,10 @@ if (args.length === 1 && args[0] === 'version') {
         harness.client,
         "inspect_adb_window",
       );
-      const response = await harness.client.callTool({
-        name: schemas.name,
-        arguments: { serial },
-      });
+      const response = await harness.client.callTool(
+        { name: schemas.name, arguments: { serial } },
+        { toolDefinition: schemas.toolDefinition },
+      );
       expect(response.isError).not.toBe(true);
       expect(
         schemas.ajv.validate(schemas.outputSchema, response.structuredContent),

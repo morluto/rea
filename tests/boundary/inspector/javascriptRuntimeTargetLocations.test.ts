@@ -1,23 +1,15 @@
-import { rm, writeFile } from "node:fs/promises";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { afterEach, expect, test } from "vitest";
+import { expect, test } from "vitest";
 
 import { V8InspectorProvider } from "../../../src/inspector/V8InspectorProvider.js";
 import { startFakeV8Inspector } from "../../fixtures/inspector/fakeV8Inspector.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
-const roots: string[] = [];
-afterEach(async () => {
-  await Promise.all(
-    roots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
-  );
-});
-
 async function entryFile(name: string): Promise<string> {
   const root = await createTestTempDirectory("rea-node-discovery-");
-  roots.push(root);
   const entry = join(root, name);
   await writeFile(entry, "setInterval(() => {}, 1000);\n");
   return entry;

@@ -87,37 +87,69 @@ const createPackedRefRepository = async () => {
   return { root, looseRef, packedRefs };
 };
 
-it("retains failed .gitignore cleanup under the caller's scope", async () => {
-  const root = await createTestTempDirectory("rea-reference-ignore-owner-");
-  const path = join(root, ".gitignore");
-  await writeFile(path, "generated/\n");
+it.each([".", "nested"])(
+  "retains failed %s/.gitignore cleanup under the caller's scope",
+  async (directory) => {
+    const root = await createTestTempDirectory("rea-reference-ignore-owner-");
+    await mkdir(join(root, directory), { recursive: true });
+    const path = join(root, directory, ".gitignore");
+    await writeFile(path, "generated/\n");
+    const resources = new ArtifactResourceScope();
+    const close = failCloseUntilAllowed(path);
+    onTestFinished(async () => {
+      close.allow();
+      await resources.close().catch(() => undefined);
+    });
+
+    const result = await importReferenceSource(
+      {
+        root,
+        caller: "reference-source-metadata-cleanup-test",
+        policy: { secretPatterns: [] },
+      },
+      resources,
+    );
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        code: "io",
+        cleanup: {
+          resources: [path],
+          reason: expect.stringContaining("injected metadata close failure"),
+        },
+      },
+    });
+    expect(close.calls()).toBe(2);
+
+    close.allow();
+    await resources.close();
+    expect(close.calls()).toBe(3);
+  },
+);
+
+it("retains local Git configuration cleanup before trusting ignore policy", async () => {
+  const root = await createTestTempDirectory("rea-reference-config-owner-");
+  await execFileOutput("git", ["init", "--initial-branch=main"], { cwd: root });
+  const path = join(root, ".git", "config");
   const resources = new ArtifactResourceScope();
   const close = failCloseUntilAllowed(path);
   onTestFinished(async () => {
     close.allow();
     await resources.close().catch(() => undefined);
   });
-
   const result = await importReferenceSource(
     {
       root,
-      caller: "reference-source-metadata-cleanup-test",
+      caller: "reference-source-config-cleanup-test",
       policy: { secretPatterns: [] },
     },
     resources,
   );
   expect(result).toMatchObject({
     ok: false,
-    error: {
-      code: "io",
-      cleanup: {
-        resources: [path],
-        reason: expect.stringContaining("injected metadata close failure"),
-      },
-    },
+    error: { code: "io", cleanup: { resources: [path] } },
   });
   expect(close.calls()).toBe(2);
-
   close.allow();
   await resources.close();
   expect(close.calls()).toBe(3);
@@ -135,7 +167,7 @@ it("preserves Git metadata cleanup failure and the completed source read", async
   const bytes = "export const value = 1;\n";
   await writeFile(source, bytes);
   await writeFile(join(sourceRoot, ".git"), "gitdir: ../repository/.git\n");
-  const head = join(sourceRoot, ".git");
+  const head = join(repository, ".git", "HEAD");
   const resources = new ArtifactResourceScope();
   const close = failCloseUntilAllowed(head);
   onTestFinished(async () => {

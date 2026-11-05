@@ -10,6 +10,10 @@ export const failedConfigurationMessage = (
   result: Extract<ClientConfigurationResult, { readonly status: "failed" }>,
 ): string => {
   switch (result.reason) {
+    case "registration_ownership":
+      return result.detail;
+    case "conflict":
+      return "Agent configuration changed during setup. Review the current file and rerun setup.";
     case "target_changed":
       return "The client began reading a different configuration file after the plan was shown, so no change was made. Rerun setup to review the new target.";
     case "target_unavailable":
@@ -18,8 +22,24 @@ export const failedConfigurationMessage = (
       return "Agent configuration path could not be safely verified. Check its permissions and, if it is a symbolic link, verify that the link resolves to a regular file owned by the current user, then rerun setup.";
     case "backup":
       return "Agent configuration could not be backed up, so no change was made. Check file permissions, then rerun setup.";
-    case "write":
-      return "Agent configuration could not be updated. Check file permissions, then rerun setup.";
+    case "write": {
+      if (result.failure === undefined)
+        return "Agent configuration could not be updated. Check file permissions, then rerun setup.";
+      const failure = result.failure;
+      const operation =
+        failure.operation === "preserve_ownership"
+          ? `preserve owner/group${failure.requestedOwnership === undefined ? "" : ` ${failure.requestedOwnership.uid}:${failure.requestedOwnership.gid}`}`
+          : failure.operation.replaceAll("_", " ");
+      const reason =
+        failure.systemCode === undefined
+          ? failure.detail
+          : `${failure.systemCode}: ${failure.detail}`;
+      const recovery =
+        result.backupPath === undefined
+          ? ""
+          : ` The backup remains at ${result.backupPath}.`;
+      return `Agent configuration could not ${operation} at ${failure.path}: ${reason}.${recovery} Review the reported operation and file ownership or permissions before rerunning setup.`;
+    }
     case "shadowed_member":
       return `Agent configuration repeats the member at ${JSON.stringify(result.path)}; removing the member the client reads would activate an earlier duplicate, so no change was made. Remove the duplicate members, then rerun setup.`;
     case "rollback":

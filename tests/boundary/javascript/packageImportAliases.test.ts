@@ -7,13 +7,11 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
-import {
-  resolveArtifactPathByContext,
-  type ArtifactPathResolution,
-} from "../../../src/application/javascript/JavaScriptArtifactPathResolution.js";
+import type { ArtifactPathResolution } from "../../../src/application/javascript/JavaScriptArtifactPathResolution.js";
 import type { JavaScriptArtifactFile } from "../../../src/domain/javascript/javascriptArtifactFiles.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { writeFixtureFiles } from "../../support/workspace/writeFixtureFiles.js";
+import { resolveStandaloneArtifactPath } from "../../support/javascriptArtifactPathResolution.js";
 
 const execute = promisify(execFile);
 const nodeOutcomeSchema = z.strictObject({
@@ -101,7 +99,7 @@ const resolveAlias = (
   sourcePath: string,
   moduleKind: "import" | "require",
 ): ArtifactPathResolution =>
-  resolveArtifactPathByContext({
+  resolveStandaloneArtifactPath({
     declaredPath,
     sourcePath,
     context: "module-specifier",

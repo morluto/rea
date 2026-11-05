@@ -4,7 +4,10 @@ import { createServer as createNetServer, type Socket } from "node:net";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { CdpConnection } from "../../../src/browser/CdpConnection.js";
+import {
+  CdpConnection,
+  type CdpTransportEvent,
+} from "../../../src/browser/CdpConnection.js";
 import {
   AnalysisCancelledError,
   AnalysisOutputError,
@@ -104,7 +107,7 @@ describe("CDP connection admission cancellation", () => {
 
 describe("CDP connection response correlation", () => {
   it("correlates concurrent command responses over a real WebSocket", async () => {
-    const browser = await startFakeCdpBrowser();
+    const browser = await startFakeCdpBrowser({ hangOnMethod: "Page.enable" });
     browsers.push(browser);
     const connection = await CdpConnection.connect(
       browser.browserWebSocketUrl,
@@ -121,6 +124,64 @@ describe("CDP connection response correlation", () => {
       });
       browser.emitRawMessage(JSON.stringify({ id: 999 }));
       await expect(connection.send("Runtime.enable")).resolves.toEqual({});
+      const first = connection.send("Page.enable", { selected: "first" });
+      const second = connection.send("Page.enable", { selected: "second" });
+      const replies = Promise.all([first, second]);
+      await vi.waitFor(() => expect(browser.commands).toHaveLength(5));
+      const firstCommand = browser.commands[3];
+      const secondCommand = browser.commands[4];
+      if (firstCommand === undefined || secondCommand === undefined)
+        throw new Error("Fake browser did not receive both pending commands");
+      browser.emitRawMessage(
+        JSON.stringify({
+          id: secondCommand.id,
+          result: { selected: "second" },
+        }),
+      );
+      browser.emitRawMessage(
+        JSON.stringify({ id: firstCommand.id, result: { selected: "first" } }),
+      );
+      await expect(replies).resolves.toEqual([
+        { selected: "first" },
+        { selected: "second" },
+      ]);
+      await expect(connection.send("Runtime.enable")).resolves.toEqual({});
+    } finally {
+      await connection.close();
+    }
+  });
+
+  it("carries the original event payload byte count before parsing", async () => {
+    const browser = await startFakeCdpBrowser();
+    browsers.push(browser);
+    const connection = await CdpConnection.connect(
+      browser.browserWebSocketUrl,
+      "inspect_web_page",
+    );
+    try {
+      const eventMessage = String.raw` { "method" : "Fixture.event", "params" : {"text":"escaped quote: \" slash: \\ unicode: \u96ea"}, "sessionId" : "session-1", "extra" : "counted from source bytes" } `;
+      let deliveredEvents = 0;
+      const eventPromise = new Promise<CdpTransportEvent>((resolve) => {
+        connection.onEvent((event) => {
+          deliveredEvents += 1;
+          if (event.method === "Fixture.event") resolve(event);
+        });
+      });
+      browser.emitRawMessage(eventMessage);
+      const event = await eventPromise;
+
+      expect(event.wireBytes).toBe(Buffer.byteLength(eventMessage, "utf8"));
+      expect(event.params).toEqual({
+        text: 'escaped quote: " slash: \\ unicode: 雪',
+      });
+      expect(deliveredEvents).toBe(1);
+
+      const protocolFailure = new Promise((resolve) =>
+        connection.onProtocolFailure(resolve),
+      );
+      browser.emitRawMessage("{not-json");
+      await protocolFailure;
+      expect(deliveredEvents).toBe(1);
     } finally {
       await connection.close();
     }

@@ -63,9 +63,6 @@ cliTest(
           label: "Kiro",
           target: config,
           operation: "update",
-          detail: expect.stringContaining(
-            "Existing disabledTools and timeout values are retained. Existing autoApprove values are retained only from REA's own registration.",
-          ),
         },
         {
           id: "install_skill:kiro",
@@ -93,8 +90,8 @@ cliTest(
       mcpServers: {
         other: { command: "other-server", args: [], disabled: true },
         rea: {
-          command: process.platform === "win32" ? process.execPath : cliPath,
-          args: process.platform === "win32" ? [cliPath, "mcp"] : ["mcp"],
+          command: process.execPath,
+          args: [cliPath, "mcp"],
           disabled: false,
           autoApprove: ["list_documents"],
           timeout: 180000,

@@ -5,7 +5,7 @@ import { toolContract } from "../contracts/toolContracts.js";
 import type { Logger } from "pino";
 import { createEvidenceToolHandler } from "./contractToolHandler.js";
 import type { WithAdmittedAnalysis } from "./analysisAdmission.js";
-import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
+import { applicationToolRegistrationOptions } from "./toolRegistrationOptions.js";
 
 /** Register the explicit-file PE resource workflow and retain its complete Evidence. */
 export const registerPeResourcesTool = (
@@ -25,7 +25,7 @@ export const registerPeResourcesTool = (
   );
   server.registerTool(
     contract.name,
-    toolRegistrationOptions(contract),
+    applicationToolRegistrationOptions(contract),
     handler(contract),
   );
 };

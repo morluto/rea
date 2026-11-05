@@ -1,7 +1,8 @@
 # Recorded crash evidence
 
 `inspect_recorded_crash` / `rea inspect-recorded-crash` inspect a caller-selected
-Linux ELF64 little-endian core independently of an active binary target. Two
+Linux ELF64 little-endian core independently of an active binary target. Apple
+`.ips` crash reports use the separate [Apple IPS](apple-ips.md) workflow. Two
 architecture profiles are interpreted, x86-64 and AArch64; each binds registers
 to its own `NT_PRSTATUS` layout, and any other `e_machine` is refused as
 `unsupported_target` before note interpretation.
@@ -25,8 +26,22 @@ note interpretation; an unspecified OSABI alone does not prove OS origin.
   are inline through CLI and MCP.
 - Original program headers and recorded segment file/memory ranges. Undumped
   memory and current executable/library identity remain unknown.
+- Program headers and notes retain their original numeric `type_id` separately
+  from the decoder's `type` label. Source binding and semantic decisions use the
+  numeric identity; an architecture-specific display name does not establish
+  support for that segment's payload semantics.
+  Header `type` names follow the pinned parser's machine-specific projection:
+  `PT_AARCH64_ARCHEXT` and `PT_AARCH64_UNWIND` denote `0x70000000` and
+  `0x70000001` only for AArch64. The same codes on x86-64 remain numeric, as
+  does AArch64's `0x70000002` in pyelftools 0.33. These display projections
+  are checked against the architecture and source-bound `type_id`; they do not
+  decode architecture compatibility, unwind or MTE payloads.
 - Every note's original identity, owner/descriptor bytes and source ranges,
   including unfamiliar owners and note kinds.
+  CORE symbolic note labels apply only to the exact `CORE\0` owner. Other
+  owners keep numeric types, so GNU/type 3 remains opaque instead of acquiring
+  CORE process-info semantics, and a GNU-owned numeric NT_FILE collision does
+  not acquire debugger mapping authority.
 - Every exact Linux CORE PRSTATUS note as a separate recorded thread, with
   historical PID, signal and lossless uint64 registers bound to source bytes.
   Each supported note has exactly one interpretation; each thread contains the
@@ -105,8 +120,14 @@ GDB/Python/pwndbg/strace. Fixture generation explicitly launches its owned test
 program; subsequent inspection only reads the resulting core. Real acceptance
 checks recorded threads, high registers, missing/malformed notes, opaque owners,
 CLI/MCP parity, optional debugger context and historical PID collision with an
-owned live sentinel. An observed Node thread group must launch the exact ownership
-`ps` inventory before it can read that live process's `stat` or `status` for native
+owned live sentinel. Authored AArch64 auxiliary-header and numeric-unknown
+carriers also pass through the configured decoder and both public adapters;
+they are metadata fixtures, rather than captured AArch64 crashes. Their expected
+names follow [pyelftools 0.33's enums](https://github.com/eliben/pyelftools/blob/v0.33/elftools/elf/enums.py#L431-L435)
+and [machine-specific selection](https://github.com/eliben/pyelftools/blob/v0.33/elftools/elf/structs.py#L179-L184).
+The [AArch64 ELF ABI](https://github.com/ARM-software/abi-aa/blob/2025Q1/aaelf64/aaelf64.rst#program-header)
+defines their raw codes. An observed Node thread group must launch the exact
+ownership `ps` inventory before it can read that live process's `stat` or `status` for native
 identity/UID facts. Only traced `CLONE_THREAD` members share this allowance;
 exec-replaced threads, ordinary children, debugger and decoder processes cannot
 use it. The purpose of stat/status reads within the same Node thread group

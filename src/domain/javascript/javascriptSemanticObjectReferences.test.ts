@@ -40,20 +40,14 @@ it("resolves exact keys with source-order overrides, spreads and accessors", () 
   const fixture = objectAndState(
     `const o = { a: 1, ...base, b: 2, a: 3, [dynamic]: 4, __proto__: proto, ...{ b: 5 }, get c() { return 6; }, c: 7 };`,
   );
-  // Expectations match the full source-order scan these exact keys replace.
+  // Later definite own fields exclude earlier computed-key alternatives.
   expect(spelled(fixture, "a")).toEqual([
     ["{ b: 5 }", '["a"]'],
     ["4", "[]"],
     ["3", "[]"],
   ]);
-  expect(spelled(fixture, "b")).toEqual([
-    ["{ b: 5 }", '["b"]'],
-    ["4", "[]"],
-  ]);
-  expect(spelled(fixture, "c")).toEqual([
-    ["7", "[]"],
-    ["4", "[]"],
-  ]);
+  expect(spelled(fixture, "b")).toEqual([["{ b: 5 }", '["b"]']]);
+  expect(spelled(fixture, "c")).toEqual([["7", "[]"]]);
   expect(spelled(fixture, "missing")).toEqual([
     ["{ b: 5 }", '["missing"]'],
     ["proto", '["missing"]'],

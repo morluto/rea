@@ -1,29 +1,21 @@
 import * as t from "@babel/types";
 
 import { sanitizeBrowserUrl } from "./browserObservation.js";
+import { hasScheme } from "./artifactPathSyntax.js";
 import {
+  isNullishJavaScriptSyntax,
   readExactJavaScriptLiteral,
-  semanticStaticPropertyName,
+  staticObjectProperty,
+  type ObjectDataPropertyValue,
 } from "./javascript/javascriptAstValues.js";
 
-/** Pick the endpoint argument for common network-call patterns. */
-
+/** Read a statically known own property value from an object expression. */
 export const objectValue = (
   object: t.ObjectExpression,
   name: string,
-): t.ObjectProperty["value"] | undefined => {
-  let value: t.ObjectProperty["value"] | undefined;
-  for (const property of object.properties) {
-    if (t.isSpreadElement(property)) {
-      value = undefined;
-      continue;
-    }
-    const key = semanticStaticPropertyName(property.key, property.computed);
-    if (key === "" && !t.isStringLiteral(property.key)) value = undefined;
-    else if (key === name)
-      value = t.isObjectProperty(property) ? property.value : undefined;
-  }
-  return value;
+): ObjectDataPropertyValue | undefined => {
+  const result = staticObjectProperty(object, name, isNullishJavaScriptSyntax);
+  return result.status === "explicit" ? result.value : undefined;
 };
 
 export const objectString = (
@@ -43,7 +35,7 @@ export const isUrlLikeModuleSpecifier = (specifier: string): boolean =>
   specifier.startsWith("/") ||
   specifier.startsWith("./") ||
   specifier.startsWith("../") ||
-  /^[A-Za-z][A-Za-z0-9+.-]*:/u.test(specifier);
+  hasScheme(specifier);
 
 export const resolveSpecifier = (
   specifier: string,

@@ -8,12 +8,13 @@ import type { AnalysisProfileCommitment } from "../../domain/analysisProfile.js"
 import type {
   AnalysisClient,
   AnalysisClientContext,
+  AnalysisProviderBoundClientFactory,
   AnalysisProvider,
   CapabilityDescriptor,
   ExecutionOptions,
   ProviderIdentity,
 } from "../AnalysisProvider.js";
-import { closeAnalysisClient } from "../../providers/AnalysisClientCleanup.js";
+import { closeAnalysisClient } from "../AnalysisClientCleanup.js";
 import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js";
 
 /** Synthetic identity for a deterministic provider set. */
@@ -129,8 +130,19 @@ export class CompositeProvider implements AnalysisProvider {
   readonly #identity: ProviderIdentity;
   readonly #capabilities: readonly CapabilityDescriptor[];
   readonly #providerByOperation: ReadonlyMap<string, AnalysisProvider>;
+  readonly #boundClientFactories: ReadonlyMap<
+    string,
+    AnalysisProviderBoundClientFactory
+  >;
 
-  constructor(readonly providers: readonly AnalysisProvider[]) {
+  constructor(
+    readonly providers: readonly AnalysisProvider[],
+    boundClientFactories: ReadonlyMap<
+      string,
+      AnalysisProviderBoundClientFactory
+    > = new Map(),
+  ) {
+    this.#boundClientFactories = boundClientFactories;
     if (providers.length === 0)
       throw new RangeError("CompositeProvider requires at least one provider");
     this.#identity = Object.freeze(
@@ -177,11 +189,13 @@ export class CompositeProvider implements AnalysisProvider {
     const clientFor = (provider: AnalysisProvider): AnalysisClient => {
       const existing = clients.get(provider);
       if (existing !== undefined) return existing;
-      const created = provider.createClient(
-        target,
-        profile?.provider.id === provider.identity().id ? profile : undefined,
-        context,
-      );
+      const providerProfile =
+        profile?.provider.id === provider.identity().id ? profile : undefined;
+      const factory = this.#boundClientFactories.get(provider.identity().id);
+      const created =
+        factory !== undefined && providerProfile !== undefined
+          ? factory(target, providerProfile, context)
+          : provider.createClient(target, providerProfile, context);
       clients.set(provider, created);
       return created;
     };

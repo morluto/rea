@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { utcDateTimeSchema } from "./offsetDateTime.js";
 import {
   webRuntimeLocationSchema,
   webRuntimeScopeSchema,
@@ -18,14 +19,14 @@ export type InspectWebEventListenersInput = z.infer<
 >;
 
 /** A listener declaration and its source location do not establish that it ran. */
-export const webEventListenersSchema = z.object({
+export const webEventListenersObservationSchema = z.object({
   browser: browserVersionSchema,
   target: webRuntimeTargetSchema,
-  inspected_at: z.iso.datetime(),
+  inspected_at: utcDateTimeSchema,
   selected_node: z.object({
     selector: z.string(),
     match: z.enum(["found", "not_found"]),
-    backend_node_id: z.number().int().min(1).nullable(),
+    backend_node_id: z.int().min(1).nullable(),
   }),
   listeners: z.array(
     z.object({
@@ -38,7 +39,15 @@ export const webEventListenersSchema = z.object({
     }),
   ),
   sources: z.array(webRuntimeSourceSchema),
-  cleanup: z.literal("confirmed"),
+  cleanup: z.enum(["confirmed", "unconfirmed"]),
   limitations: z.array(z.string()),
 });
+/** Successful operations require the cleanup owner's acknowledgement. */
+export const webEventListenersSchema =
+  webEventListenersObservationSchema.extend({
+    cleanup: z.literal("confirmed"),
+  });
+export type WebEventListenersObservation = z.infer<
+  typeof webEventListenersObservationSchema
+>;
 export type WebEventListeners = z.infer<typeof webEventListenersSchema>;

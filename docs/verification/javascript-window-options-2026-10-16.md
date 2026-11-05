@@ -8,7 +8,7 @@ The [compact measurements](javascript-window-options-2026-10-16.json) retain bot
 
 ## Correctness
 
-Both trial pairs match the independent export-and-filter oracle and exact complete CLI/MCP view Evidence. The pinned [Joplin checker](../../experiments/analysis-efficiency/joplin-window-options-check.py) verifies exact settings, explicit unknowns, source ranges and stable window identity. Manual negative controls reject a wrong boolean, numeric0 substituted for false, a changed identity and observed instead of inferred provenance.
+Both trial pairs match the independent export-and-filter oracle and exact complete CLI/MCP view Evidence. The pinned [Joplin checker](https://github.com/morluto/rea/blob/42e1a17d6e6c0487f17be0bae248553c4caba7f7/experiments/analysis-efficiency/joplin-window-options-check.py) verifies exact settings, explicit unknowns, source ranges and stable window identity. Manual negative controls reject a wrong boolean, numeric0 substituted for false, a changed identity and observed instead of inferred provenance.
 
 A raw semantic graph digest changes because the semantic graph commits its parent `application_graph_id`. The final record separately checks complete semantic content after excluding exactly that foreign key and its dependent top-level `graph_id`; original raw digests remain recorded and linked to the independent complete CLI observations. These exclusions follow the canonical semantic graph schema and builder, rather than filtering differing nodes or relations.
 
@@ -45,7 +45,7 @@ python3 experiments/analysis-efficiency/joplin-window-options-check.py \
   docs/verification/javascript-window-options-2026-10-16.json
 ```
 
-Apply the linked resource observer from the earlier Joplin record to each costly command. Complete CLI observations use the same source selection through `analyze-javascript-application --format json`. The preserved [content comparator](../../experiments/analysis-efficiency/compare-javascript-semantic-content.mjs) takes the baseline CLI JSON, candidate CLI JSON and this measurement record, then emits the semantic proof while retaining both original graph identifiers and raw digests. It reads sequentially and reports a concise failure rather than printing full graphs. The baseline backend is unchanged main `2c7583599b9ac1c847bd77b1940930fd8d4594c7`; only the matching verification harness is applied there. Source and runtime pins distinguish measurement versions from later documentation changes.
+Apply the linked resource observer from the earlier Joplin record to each costly command. Complete CLI observations use the same source selection through `analyze-javascript-application --format json`. The preserved [content comparator](https://github.com/morluto/rea/blob/42e1a17d6e6c0487f17be0bae248553c4caba7f7/experiments/analysis-efficiency/compare-javascript-semantic-content.mjs) takes the baseline CLI JSON, candidate CLI JSON and this measurement record, then emits the semantic proof while retaining both original graph identifiers and raw digests. It reads sequentially and reports a concise failure rather than printing full graphs. The baseline backend is unchanged main `2c7583599b9ac1c847bd77b1940930fd8d4594c7`; only the matching verification harness is applied there. Source and runtime pins distinguish measurement versions from later documentation changes.
 
 ## Ordering review follow-up
 
@@ -59,7 +59,7 @@ The stored-alias example raised in review already returns unknown on the reviewe
 
 The repeated-effects cost was reproducible. Candidate discovery needed only lexical identity but collected full mutation reports; each later capture also materialized every effect before checking for a prior escape. The shared index now offers lexical-only lookup and an early-exit predicate. Windows and request analysis use those operations. The same owner still supplies complete effects to the require-source consumer, which needs filtered effect kinds; no second interpretation or persistent cache was added.
 
-The [preserved scaling control](../../experiments/analysis-efficiency/window-option-scaling.mjs) measures real production source analysis on synthetic capacity inputs; it is not a real-application or agent task. All samples and module hashes are retained. CPU medians across three sequential samples were:
+The [preserved scaling control](https://github.com/morluto/rea/blob/42e1a17d6e6c0487f17be0bae248553c4caba7f7/experiments/analysis-efficiency/window-option-scaling.mjs) measures real production source analysis on synthetic capacity inputs; it is not a real-application or agent task. All samples and module hashes are retained. CPU medians across three sequential samples were:
 
 | Shared-options constructors | Before (CPU s) | After (CPU s) |
 | --------------------------- | -------------: | ------------: |

@@ -9,7 +9,7 @@ import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {
   assertArtifactReadActive,
-  artifactFilePrimaryFailure,
+  artifactFilePrimaryFacts,
   artifactFileCancellationCause,
   bindArtifactFileCleanup,
   withArtifactRegularFile,
@@ -102,7 +102,7 @@ export const observeGhidraEndpoint = async (
         endpoint.path,
         resources,
         options.signal,
-        async (file) => {
+        async ({ handle: file }) => {
           const initial = await file.stat({ bigint: true });
           assertArtifactReadActive(options.signal);
           if (initial.size > BigInt(MAX_TCP_ENDPOINT_BYTES))
@@ -175,9 +175,9 @@ const observationFailure = (
   endpoint: GhidraEndpoint,
   cause: unknown,
 ): GhidraSessionError => {
-  const primary = artifactFilePrimaryFailure(cause);
+  const { cause: primary, origin } = artifactFilePrimaryFacts(cause);
   let failure =
-    primary instanceof GhidraSessionError
+    origin === "owned-or-classified" && primary instanceof GhidraSessionError
       ? primary
       : cause instanceof ArtifactReaderFailure && cause.reason === "cancelled"
         ? bindGhidraSessionFailure(() => ({
@@ -189,7 +189,7 @@ const observationFailure = (
         : endpointFailure(
             endpoint,
             "Ghidra endpoint observation failed",
-            primary,
+            cause,
           );
   if (cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined) {
     const cleanup = new ProviderCleanupError(

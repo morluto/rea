@@ -30,6 +30,9 @@ or network dependencies.
 
 `readiness/` adds source-only generated JavaScript CLI and Electron fixtures for
 the repository's reconstruction-readiness verifier. `npm run verify:readiness`
-combines them with the compiled native fixtures, exercises CLI and MCP parity
-for real analysis operations, and checks the internal machine-readable report
-documented in `docs/reconstruction-readiness.md`.
+inspects the compiled native fixture through CLI and checks JavaScript/Electron
+static-analysis Evidence identity through CLI and MCP. It does not execute the
+fixture applications. The development-owned evaluator under `readiness/report/`
+separately checks synthetic report conformance; its nine stages do not describe
+observed runtime journeys. The report keeps these scopes separate as documented
+in `docs/reconstruction-readiness.md`.

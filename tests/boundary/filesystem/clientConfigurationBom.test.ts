@@ -42,8 +42,10 @@ describe.each(["vscode", "copilot_cli", "opencode", "commandcode"])(
         ).replaceAll("\n", "\r\n")}\r\n`;
         await mkdir(dirname(client.configPath), { recursive: true });
         await writeFile(client.configPath, original);
-        const currentCommandPath = join(home, "rea");
-        const command = [currentCommandPath, "mcp"];
+        const currentCommandPath = CURRENT_ENTRYPOINT_PATH;
+        if (currentCommandPath === undefined)
+          throw new Error("test runner entrypoint is unavailable");
+        const command = [process.execPath, currentCommandPath, "mcp"];
         expect(await inspectClientConfiguration(client, {}, command)).toEqual({
           status: "update",
           backupPath: `${client.configPath}.rea.backup`,
@@ -96,10 +98,18 @@ describe.each(["vscode", "copilot_cli", "opencode", "commandcode"])(
             status: "unchanged",
           },
         );
-        expect(await readFile(client.configPath)).toEqual(Buffer.from(updated));
-        expect(await readFile(`${client.configPath}.rea.backup`)).toEqual(
-          Buffer.from(original),
-        );
+        expect(
+          Buffer.compare(
+            await readFile(client.configPath),
+            Buffer.from(updated),
+          ),
+        ).toBe(0);
+        expect(
+          Buffer.compare(
+            await readFile(`${client.configPath}.rea.backup`),
+            Buffer.from(original),
+          ),
+        ).toBe(0);
       },
     );
   },
@@ -125,7 +135,9 @@ it.each(['\uFEFF{"servers": {"rea": @}}', '\uFEFF{"setting":\uFEFFtrue}'])(
     expect(
       await configureClientConfiguration(client, {}, ["rea", "mcp"]),
     ).toEqual({ status: "failed", reason: "readback" });
-    expect(await readFile(configPath)).toEqual(Buffer.from(original));
+    expect(
+      Buffer.compare(await readFile(configPath), Buffer.from(original)),
+    ).toBe(0);
     expect(await readdir(home)).toEqual(["mcp.json"]);
   },
 );
@@ -171,9 +183,12 @@ it("preserves BOM-prefixed JSONC values and comments through update and removal"
   expect(parseClientConfiguration(removed, client.format).document).toEqual(
     parseClientConfiguration(original, client.format).document,
   );
-  expect(await readFile(`${client.configPath}.rea.backup`)).toEqual(
-    Buffer.from(original),
-  );
+  expect(
+    Buffer.compare(
+      await readFile(`${client.configPath}.rea.backup`),
+      Buffer.from(original),
+    ),
+  ).toBe(0);
 });
 
 it.each(["", "\n  \n", "\uFEFF"])(
@@ -187,7 +202,7 @@ it.each(["", "\n  \n", "\uFEFF"])(
       throw new Error("missing Antigravity JSON config");
     await mkdir(dirname(client.configPath), { recursive: true });
     await writeFile(client.configPath, original);
-    const command = [join(home, "rea"), "mcp"];
+    const command = ["rea", "mcp"];
 
     expect(await inspectClientConfiguration(client, {}, command)).toEqual({
       status: "update",

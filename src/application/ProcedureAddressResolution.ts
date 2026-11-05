@@ -18,12 +18,18 @@ export const resolveProcedureAddress = async (
 ): Promise<Result<string, AnalysisError>> => {
   const result = await call("procedure_address", { procedure }, signal);
   if (!result.ok) return result;
-  return typeof result.value === "string" && result.value.length > 0
-    ? ok(result.value)
+  return parseProcedureAddress(result.value);
+};
+
+/** Validate the provider-owned canonical identity without changing its source value. */
+export const parseProcedureAddress = (
+  value: JsonValue,
+): Result<string, AnalysisError> =>
+  typeof value === "string" && value.length > 0
+    ? ok(value)
     : err(
         new AnalysisOutputError(
           "procedure_address",
           "provider returned no canonical procedure address",
         ),
       );
-};

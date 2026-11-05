@@ -34,6 +34,10 @@ it.each([
     true,
   ],
   [
+    'const { app } = require("electron"); const copy = { ...{ app } }; copy.app.setAppPath("./other");',
+    true,
+  ],
+  [
     'const { app } = require("electron"); const change = app.setAppPath; change("./other");',
     true,
   ],

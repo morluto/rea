@@ -3,10 +3,22 @@ import { createHash } from "node:crypto";
 import { jsonStringByteLength } from "../domain/jsonStringByteLength.js";
 
 import type { ManagedMetadataLayout } from "./ManagedMetadataLayout.js";
-import { managedFailure } from "./ManagedReaderFailure.js";
+import { ManagedReaderFailure } from "./ManagedReaderFailure.js";
 
 /** Per-inspection capacity for eagerly retained metadata and its JSON projection. */
 const MAX_METADATA_REPRESENTATION_BYTES = 64 * 1024 * 1024;
+
+/** The capacity owner's diagnostic, also used to admit a recovery envelope. */
+export class ManagedRepresentationFailure extends ManagedReaderFailure {
+  constructor(offset: number | null) {
+    super({
+      code: "resource-limit",
+      scope: "metadata.representation",
+      detail: `Managed metadata exceeds the ${String(MAX_METADATA_REPRESENTATION_BYTES)} byte representation budget`,
+      offset,
+    });
+  }
+}
 
 interface CachedString {
   readonly value: string;
@@ -56,12 +68,7 @@ export class ManagedDecodeBudget {
       bytes < 0 ||
       bytes > this.#remaining - this.#transient
     )
-      throw managedFailure(
-        "resource-limit",
-        "metadata.representation",
-        `Managed metadata exceeds the ${String(MAX_METADATA_REPRESENTATION_BYTES)} byte representation budget`,
-        offset,
-      );
+      throw new ManagedRepresentationFailure(offset);
   }
 
   /** UTF-8 cannot decode to more UTF-16 units than bytes; JSON uses at most six bytes per unit. */

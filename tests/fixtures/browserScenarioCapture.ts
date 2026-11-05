@@ -1,6 +1,7 @@
+import { analysisViewRequestSchema } from "../../src/domain/analysisView/analysisView.js";
 import { createHash } from "node:crypto";
 
-import { inspectAnalysisView } from "../../src/application/analysisView/AnalysisViewService.js";
+import { inspectAnalysisViewValidated } from "../../src/application/analysisView/AnalysisViewService.js";
 import { createBrowserScenarioEvidence } from "../../src/application/BrowserScenarioEvidence.js";
 import { sanitizeBrowserUrl } from "../../src/domain/browserObservation.js";
 import { browserScenarioSchema } from "../../src/domain/browserScenario.js";
@@ -26,7 +27,31 @@ export interface ScenarioExchange {
   readonly body?: string | Buffer;
   readonly requestMediaType?: string;
   readonly requestBody?: string;
+  /** A request body Playwright did not expose. */
+  readonly requestBodyHidden?: true;
+  /** The request event's header names. */
+  readonly requestHeaderNames?: readonly string[];
+  /** Header values as `header_values` retains them; a null value is one the capture excluded. */
+  readonly requestHeaders?: readonly ScenarioHeader[];
+  readonly responseHeaders?: readonly ScenarioHeader[];
 }
+
+export interface ScenarioHeader {
+  readonly name: string;
+  readonly value: string | null;
+}
+
+const retainedHeaders = (headers: readonly ScenarioHeader[] | undefined) =>
+  headers === undefined
+    ? { state: "not_requested" as const }
+    : {
+        state: "captured" as const,
+        items: headers.map(({ name, value }) => ({
+          name,
+          value,
+          redacted: value === null,
+        })),
+      };
 
 export const SCENARIO_ORIGIN = "http://127.0.0.1:3101";
 
@@ -124,13 +149,15 @@ const exchangeEvents = (
     method: exchange.method,
     url: exchange.redactedUrl === true ? { ...url, redacted: true } : url,
     resource_type: exchange.resourceType ?? "fetch",
-    header_names: [],
+    header_names: [...(exchange.requestHeaderNames ?? [])],
   };
   const content = (
     sequence: number,
     source: number,
     phase: "request" | "response",
-    body: ReturnType<typeof capturedBody>,
+    body:
+      | ReturnType<typeof capturedBody>
+      | { readonly state: "not_requested" | "not_exposed" },
   ) => ({
     sequence,
     step_index: 1,
@@ -138,7 +165,9 @@ const exchangeEvents = (
     transaction_id: transaction,
     source_event_sequence: source,
     phase,
-    headers: { state: "not_requested" as const },
+    headers: retainedHeaders(
+      phase === "request" ? exchange.requestHeaders : exchange.responseHeaders,
+    ),
     body,
   });
   const events: unknown[] = [
@@ -151,17 +180,25 @@ const exchangeEvents = (
     },
   ];
   let next = first + 1;
-  if (exchange.requestBody !== undefined) {
+  if (
+    exchange.requestBody !== undefined ||
+    exchange.requestBodyHidden === true ||
+    exchange.requestHeaders !== undefined
+  ) {
     events.push(
       content(
         next,
         first,
         "request",
-        capturedBody(
-          exchange.requestBody,
-          "browser-exposed-request-bytes",
-          exchange.requestMediaType ?? null,
-        ),
+        exchange.requestBodyHidden === true
+          ? { state: "not_exposed" }
+          : exchange.requestBody === undefined
+            ? { state: "not_requested" }
+            : capturedBody(
+                exchange.requestBody,
+                "browser-exposed-request-bytes",
+                exchange.requestMediaType ?? null,
+              ),
       ),
     );
     next += 1;
@@ -185,17 +222,19 @@ const exchangeEvents = (
     failure: null,
   });
   next += 1;
-  if (exchange.body !== undefined) {
+  if (exchange.body !== undefined || exchange.responseHeaders !== undefined) {
     events.push(
       content(
         next,
         response,
         "response",
-        capturedBody(
-          exchange.body,
-          "playwright-response-body-bytes",
-          exchange.mediaType ?? null,
-        ),
+        exchange.body === undefined
+          ? { state: "not_requested" }
+          : capturedBody(
+              exchange.body,
+              "playwright-response-body-bytes",
+              exchange.mediaType ?? null,
+            ),
       ),
     );
     next += 1;
@@ -304,13 +343,23 @@ export const scenarioCaptureEvidence = (
 export const scenarioServeFixture = (
   capture: Evidence = scenarioCaptureEvidence(),
 ): EnvironmentServeFixture => {
-  const manifest = inspectAnalysisView({
+  const manifest = inspectAnalysisViewValidated({
     source: { kind: "inline", evidence: capture },
-    view: {
+    view: analysisViewRequestSchema.parse({
       kind: "environment-manifest",
       template_rules: [...ALL_TEMPLATE_RULES],
-    },
+    }),
   });
   if (!manifest.ok) throw manifest.error;
   return { manifest: manifest.value, capture };
 };
+
+/** A scenario capture that kept header values but no bodies: it yields a manifest but no environment state. */
+export const scenarioHeaderOnlyCaptureEvidence = (): Evidence =>
+  scenarioCaptureEvidence(
+    scenarioCaptureFixture(undefined, {
+      request_body: false,
+      response_body: false,
+      header_values: true,
+    }),
+  );

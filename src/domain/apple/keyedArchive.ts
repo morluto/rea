@@ -1,7 +1,13 @@
 import { z } from "zod";
+import { bundleResourceBoundResultSchema } from "./bundleResourceRoot.js";
 import { AnalysisInputError } from "../analysisErrorCore.js";
-import { jsonValueSchema, type JsonValue } from "../jsonValue.js";
+import {
+  jsonObjectSchema,
+  jsonValueSchema,
+  type JsonValue,
+} from "../jsonValue.js";
 import { localPathStringSchema } from "../localPath.js";
+import { plistUidValue } from "./plistUid.js";
 import { projectPlistValue } from "./plistValue.js";
 
 /**
@@ -28,44 +34,51 @@ export const keyedArchiveInputSchema = z.strictObject({
   limit: z.number().int().min(1).max(20_000).default(20_000),
 });
 const linkSchema = z.strictObject({
-  source: z.number().int().nonnegative().nullable(),
-  path: z.array(z.union([z.string(), z.number().int().nonnegative()])),
-  target: z.number().int().nonnegative().nullable(),
+  source: z.int().nonnegative().nullable(),
+  path: z.array(z.union([z.string(), z.int().nonnegative()])),
+  target: z.int().nonnegative().nullable(),
   status: z.enum(["resolved", "nil", "unresolved", "malformed"]),
   raw: jsonValueSchema,
 });
 /** Archive object identity is its original $objects index, never a recursive copy. */
-export const keyedArchiveResultSchema = z.strictObject({
-  target_sha256: z.string(),
-  archive_path: z.string(),
-  archive_sha256: z.string(),
-  archive_format: z.enum(["binary-plist", "xml-plist"]),
-  roots: z.record(z.string(), jsonValueSchema),
-  objects: z.array(
-    z.strictObject({
-      id: z.number().int().nonnegative(),
-      kind: z.enum([
-        "nil",
-        "scalar",
-        "array",
-        "dictionary",
-        "class-descriptor",
-        "archived-object",
-      ]),
-      class_id: z.number().int().nonnegative().nullable(),
-      class_name: z.string().nullable(),
-      status: z.enum(["observed", "unknown-class", "unresolved-class", "nil"]),
-      value: jsonValueSchema,
-    }),
-  ),
-  references: z.array(linkSchema),
-  total_objects: z.number().int().nonnegative(),
-  total_references: z.number().int().nonnegative(),
-  offset: z.number().int().nonnegative(),
-  next_offset: z.number().int().nonnegative().nullable(),
-  truncated: z.boolean(),
-  limitations: z.array(z.string()),
-});
+export const keyedArchiveResultSchema = bundleResourceBoundResultSchema(
+  z.string(),
+  {
+    archive_path: z.string(),
+    archive_sha256: z.string(),
+    archive_format: z.enum(["binary-plist", "xml-plist"]),
+    roots: jsonObjectSchema,
+    objects: z.array(
+      z.strictObject({
+        id: z.int().nonnegative(),
+        kind: z.enum([
+          "nil",
+          "scalar",
+          "array",
+          "dictionary",
+          "class-descriptor",
+          "archived-object",
+        ]),
+        class_id: z.int().nonnegative().nullable(),
+        class_name: z.string().nullable(),
+        status: z.enum([
+          "observed",
+          "unknown-class",
+          "unresolved-class",
+          "nil",
+        ]),
+        value: jsonValueSchema,
+      }),
+    ),
+    references: z.array(linkSchema),
+    total_objects: z.int().nonnegative(),
+    total_references: z.int().nonnegative(),
+    offset: z.int().nonnegative(),
+    next_offset: z.int().nonnegative().nullable(),
+    truncated: z.boolean(),
+    limitations: z.array(z.string()),
+  },
+);
 
 const record = (
   value: JsonValue | undefined,
@@ -77,20 +90,13 @@ const record = (
   !wrappedScalars.has(value)
     ? value
     : undefined;
-/**
- * A UID decodes as a one-key `UID` (binary) or `CF$UID` (XML) dictionary with
- * a numeric value. Any other value means an ordinary dictionary, such as a
- * `$top` that holds a root encoded under the key `UID`.
- */
+/** Only producer-marked binary UIDs or the XML UID convention form references. */
 const uid = (
   value: JsonValue | undefined,
   wrappedScalars: WeakSet<object>,
 ): number | undefined => {
   const object = record(value, wrappedScalars);
-  if (object === undefined || Object.keys(object).length !== 1)
-    return undefined;
-  const marker = Object.hasOwn(object, "UID") ? object.UID : object["CF$UID"];
-  return typeof marker === "number" ? marker : undefined;
+  return object === undefined ? undefined : plistUidValue(object);
 };
 
 const archiverMismatch = (

@@ -1,3 +1,4 @@
+import { artifactMcpCall } from "../../../scripts/lib/artifact-e2e.mjs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { Client } from "@modelcontextprotocol/client";
@@ -272,7 +273,7 @@ async function verifyGeneratedLauncher(
     expect((await client.listTools()).tools.map(({ name }) => name)).toContain(
       "binary_session",
     );
-    const session = await client.callTool({
+    const session = await artifactMcpCall(client, {
       name: "binary_session",
       arguments: {},
     });

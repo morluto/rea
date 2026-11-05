@@ -64,7 +64,7 @@ export const decodeSazMetadata = (bytes: Buffer): JsonValue => {
     if (depth > WEB_NETWORK_CAPTURE_LIMITS.depth)
       throw new CaptureFormatError(
         "input-limit",
-        "SAZ metadata exceeds the complete-evidence nesting budget.",
+        "SAZ metadata exceeds the complete-evidence nesting budget. This release has no runtime override.",
       );
     const children: JsonValue[] = [];
     for (let child = node.firstChild; child !== null; child = child.nextSibling)

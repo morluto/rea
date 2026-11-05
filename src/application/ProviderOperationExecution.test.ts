@@ -1,8 +1,18 @@
 import { expect, it, vi } from "vitest";
 import { z } from "zod";
 
-import { AnalysisInputError } from "../domain/analysisErrorCore.js";
-import { executeProviderOperation } from "./ProviderOperationExecution.js";
+import {
+  AnalysisCancelledError,
+  AnalysisInputError,
+  AnalysisOutputError,
+} from "../domain/analysisErrorCore.js";
+import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import {
+  executeProviderOperation,
+  keepIncompleteObservation,
+} from "./ProviderOperationExecution.js";
 
 it("projects request-schema issues without exposing the request envelope", async () => {
   const execute = vi.fn();
@@ -86,4 +96,85 @@ it("preserves operation correction outside the input envelope", async () => {
     { path: ["operation"], reason: "invalid_value", expected: ["known"] },
   ]);
   expect(execute).not.toHaveBeenCalled();
+});
+
+const cancelledScenario = (partial: unknown) =>
+  new AnalysisCancelledError("capture_browser_scenario", {
+    cause: { requested: "stop during capture" },
+    partialObservation: partial as never,
+  });
+
+const wrapScenarioCleanup = (primary: AnalysisCancelledError) =>
+  analysisErrorWithCleanupFailure(
+    primary,
+    new ProviderCleanupError("fixture", ["browser"], {}),
+    "capture_browser_scenario",
+  );
+
+it("clears a non-JSON partial from the cleanup primary projection returns after retry", () => {
+  const partial = { steps: [] as unknown[] };
+  const primary = cancelledScenario(partial);
+  const composed = wrapScenarioCleanup(primary);
+  partial.steps.push(undefined);
+  const reason =
+    "Browser scenario provider retained a non-JSON incomplete observation.";
+  const retained = keepIncompleteObservation(
+    composed,
+    "capture_browser_scenario",
+    reason,
+  );
+
+  expect(retained).toBe(composed);
+  expect(composed.partialObservation).toBeUndefined();
+  expect(primary.partialObservation).toBeUndefined();
+  expect(composed.secondaryFailures).toMatchObject([
+    { _tag: "AnalysisOutputError", reason },
+  ]);
+  expect(primary.secondaryFailures[0]).toBeInstanceOf(AnalysisOutputError);
+  expect(projectAnalysisError(composed).code).toBe("cleanup_incomplete");
+
+  composed.resolveCleanup();
+  expect(projectAnalysisError(composed)).toMatchObject({
+    code: "cancelled",
+    category: "cancelled",
+  });
+  expect(projectAnalysisError(composed).details).not.toHaveProperty(
+    "partial_observation",
+  );
+});
+
+it("freezes one shared snapshot for a cleanup wrapper and its primary", () => {
+  const partial = { steps: ["kept"] };
+  const primary = cancelledScenario(partial);
+  const composed = wrapScenarioCleanup(primary);
+  keepIncompleteObservation(
+    composed,
+    "capture_browser_scenario",
+    "unused because the partial is JSON",
+  );
+
+  expect(composed.partialObservation).toBe(primary.partialObservation);
+  expect(composed.partialObservation).toEqual({ steps: ["kept"] });
+  expect(Object.isFrozen(composed.partialObservation)).toBe(true);
+  expect(composed.secondaryFailures).toHaveLength(0);
+  expect(primary.secondaryFailures).toHaveLength(0);
+});
+
+it("freezes a retained partial so a later mutation cannot break projection", () => {
+  const partial = { steps: [] as unknown[] };
+  const primary = cancelledScenario(partial);
+  keepIncompleteObservation(
+    primary,
+    "capture_browser_scenario",
+    "unused because the partial is JSON",
+  );
+  partial.steps.push(undefined);
+
+  expect(primary.partialObservation).toEqual({ steps: [] });
+  expect(Object.isFrozen(primary.partialObservation)).toBe(true);
+  expect(primary.secondaryFailures).toHaveLength(0);
+  expect(projectAnalysisError(primary)).toMatchObject({
+    code: "cancelled",
+    details: { partial_observation: { steps: [] } },
+  });
 });

@@ -7,7 +7,7 @@ it("rejects a 12-byte load command in a 64-bit Go Mach-O image", () => {
     readGoBinaryImage(Buffer.from(machoImageWithUnknownCommand(true, 12))),
   ).toThrow(
     expect.objectContaining({
-      name: "GoBinaryFormatFailure",
+      name: "BinaryFormatFailure",
       kind: "malformed",
     }),
   );

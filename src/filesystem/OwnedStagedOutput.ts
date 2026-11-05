@@ -1,3 +1,4 @@
+import { StagedOutputError } from "./StagedOutputError.js";
 import { lstat, readdir, rmdir, unlink } from "node:fs/promises";
 import type { Stats } from "node:fs";
 
@@ -48,7 +49,7 @@ export class OwnedStagedOutput {
 
   setFile(file: OwnedFileHandle): void {
     if (this.#file !== undefined)
-      throw new Error("Staged output already owns a file handle");
+      throw new StagedOutputError("handle_already_owned");
     this.#file = file;
   }
 
@@ -58,7 +59,7 @@ export class OwnedStagedOutput {
     if (this.#file !== undefined && !this.#fileClosed)
       await this.#observeFileIdentity();
     if (this.#fileIdentity === undefined)
-      throw new Error("Cannot verify staged file identity", {
+      throw new StagedOutputError("identity_unverified", undefined, {
         cause: this.#identityFailure,
       });
     const stagedFile = await lstat(content);
@@ -67,7 +68,7 @@ export class OwnedStagedOutput {
       stagedFile.isSymbolicLink() ||
       !sameIdentity(stagedFile, this.#fileIdentity)
     )
-      throw new Error(`Staged file identity changed: ${content}`);
+      throw new StagedOutputError("identity_changed", { path: content });
   }
 
   /** Observe the descriptor's identity after its last write, then close it. */
@@ -120,54 +121,58 @@ export class OwnedStagedOutput {
     await this.closeFile();
     await this.#verifiedDirectory();
 
-    const content = `${this.directory}/content`;
-    let stagedFile: Stats | undefined;
-    try {
-      stagedFile = await lstat(content);
-    } catch (cause: unknown) {
-      if (
-        errorCode(cause) === "ENOENT" &&
-        (this.#file === undefined ||
-          this.#fileRemovedByOwner ||
-          this.#publishedRename)
-      ) {
-        stagedFile = undefined;
-      } else if (errorCode(cause) === "ENOENT") {
-        throw new Error(`Owned staged file disappeared: ${content}`, {
-          cause,
-        });
-      } else {
-        throw cause;
+    // No descriptor was acquired when creating /content failed. Enumerate
+    // the owned directory instead of probing a possibly overlong child path.
+    if (this.#file !== undefined) {
+      const content = `${this.directory}/content`;
+      let stagedFile: Stats | undefined;
+      try {
+        stagedFile = await lstat(content);
+      } catch (cause: unknown) {
+        if (
+          errorCode(cause) === "ENOENT" &&
+          (this.#fileRemovedByOwner || this.#publishedRename)
+        ) {
+          stagedFile = undefined;
+        } else if (errorCode(cause) === "ENOENT") {
+          throw new StagedOutputError(
+            "file_disappeared",
+            { path: content },
+            { cause },
+          );
+        } else {
+          throw cause;
+        }
       }
-    }
-    if (stagedFile !== undefined) {
-      if (
-        !stagedFile.isFile() ||
-        stagedFile.isSymbolicLink() ||
-        this.#fileIdentity === undefined ||
-        !sameIdentity(stagedFile, this.#fileIdentity)
-      )
-        throw new Error(`Staged file identity changed: ${content}`);
-      await unlink(content);
-      this.#fileRemovedByOwner = true;
+      if (stagedFile !== undefined) {
+        if (
+          !stagedFile.isFile() ||
+          stagedFile.isSymbolicLink() ||
+          this.#fileIdentity === undefined ||
+          !sameIdentity(stagedFile, this.#fileIdentity)
+        )
+          throw new StagedOutputError("identity_changed", { path: content });
+        await unlink(content);
+        this.#fileRemovedByOwner = true;
+      }
     }
 
     const remaining = await readdir(this.directory);
     if (remaining.length > 0)
-      throw new Error(
-        `Unexpected staging entries remain in ${this.directory}: ${remaining.join(", ")}`,
-      );
+      throw new StagedOutputError("unexpected_entries", {
+        count: remaining.length,
+        entries: remaining.join(","),
+      });
     await this.#verifiedDirectory();
     await rmdir(this.directory);
   }
 
   async #verifiedDirectory(): Promise<void> {
     if (this.directoryIdentity === undefined)
-      throw new Error(
-        `Cannot verify staging directory ownership: ${this.directory}`,
-        {
-          cause: this.#identityFailure,
-        },
+      throw new StagedOutputError(
+        "directory_unverified",
+        { directory: this.directory },
+        { cause: this.#identityFailure },
       );
     const directory = await lstat(this.directory);
     if (
@@ -175,7 +180,9 @@ export class OwnedStagedOutput {
       directory.isSymbolicLink() ||
       !sameIdentity(directory, this.directoryIdentity)
     )
-      throw new Error(`Staging directory identity changed: ${this.directory}`);
+      throw new StagedOutputError("directory_identity_changed", {
+        directory: this.directory,
+      });
   }
 }
 

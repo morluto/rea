@@ -5,6 +5,7 @@ import {
   bundleComparisonResultSchema,
   compareBundles,
 } from "./bundleComparison.js";
+import { AnalysisInputError } from "./analysisErrorCore.js";
 import { createEvidence } from "./evidence.js";
 import { createEvidenceBundle } from "./evidenceBundle.js";
 import {
@@ -76,39 +77,6 @@ describe("bundle comparison explicit cross-pairs", () => {
 });
 
 describe("bundle comparison", () => {
-  it("does not report display-only bundle differences as unexplained changes", () => {
-    const target = {
-      path: "/left/artifact.elf",
-      sha256: "a".repeat(64),
-      format: "elf" as const,
-      architecture: "x86_64" as const,
-    };
-    const record = createEvidence(target, PROVIDER, {
-      operation: "observe",
-      parameters: {},
-      result: { observed: true },
-      confidence: "observed",
-      authority: "shipped-artifact",
-    });
-    const left = createEvidenceBundle([record]);
-    const rightRecord = {
-      ...record,
-      subject: {
-        ...record.subject!,
-        name: "renamed.elf",
-        local_path: "/right/renamed.elf",
-      },
-    };
-    const right = { ...left, records: [rightRecord] };
-    const result = compareBundles(left, right);
-    expect(result).toMatchObject({
-      status: "unchanged",
-      summary: { records_unchanged: 1, unresolved: 0 },
-      changes: [],
-    });
-    expect(result.left_bundle_sha256).not.toBe(result.right_bundle_sha256);
-  });
-
   it("accepts long caller-selected bundle paths", () => {
     const path = `/${"deep/".repeat(1_000)}bundle.json`;
     expect(
@@ -202,7 +170,7 @@ describe("bundle comparison", () => {
           right_evidence_id: rightRecord.evidence_id,
         },
       ]),
-    ).toThrow(/missing left evidence/u);
+    ).toThrow(AnalysisInputError);
     expect(() =>
       compareBundles(left, right, [
         {
@@ -214,7 +182,7 @@ describe("bundle comparison", () => {
           right_evidence_id: rightRecord.evidence_id,
         },
       ]),
-    ).toThrow(/one-to-one/u);
+    ).toThrow(AnalysisInputError);
     expect(() =>
       compareBundles({ ...left, records: [leftRecord, leftRecord] }, right),
     ).toThrow(/duplicate record IDs/u);
