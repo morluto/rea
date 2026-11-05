@@ -202,6 +202,10 @@ function registerPromptRenderingContracts(): void {
       "inspect_android_package",
       "inspect_managed_artifact",
       "open_bundle_resources",
+      "inspect_plist",
+      "decode_interface_builder",
+      "inspect_asset_catalog",
+      "inspect_keyed_archive",
       "inspect_artifact",
     ])
       expect(content.text).toContain(`\`${tool}\``);

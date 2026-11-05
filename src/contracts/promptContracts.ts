@@ -186,10 +186,21 @@ export const PROMPT_CONTRACTS = [
           "For managed PE/CLI metadata, call inspect_managed_artifact with path=target_path directly, then use focused managed tools as needed. No open_binary call is required, and inspection does not load or execute the assembly. Native code questions use the native route below.",
       },
       {
-        tools: ["open_bundle_resources"],
+        tools: ["open_bundle_resources", "inspect_plist"],
         availability: "optional",
         instruction:
-          "For Apple app plist, Interface Builder, asset catalog, or keyed archive resources, open_bundle_resources with path=target_path establishes a resource-only session for the selected resource tools. It needs neither CFBundleExecutable nor a deep provider. Use open_binary when the question requires executable analysis.",
+          "For an Apple app plist, open_bundle_resources with path=target_path establishes a resource-only session, then inspect_plist reads the selected plist. This switches away from any active binary session and needs neither CFBundleExecutable nor a deep provider. Use open_binary when the question requires executable analysis.",
+      },
+      {
+        tools: [
+          "open_bundle_resources",
+          "decode_interface_builder",
+          "inspect_asset_catalog",
+          "inspect_keyed_archive",
+        ],
+        availability: "optional",
+        instruction:
+          "For Apple Interface Builder, asset catalog, or keyed archive resources, open_bundle_resources with path=target_path establishes a resource-only session, then use decode_interface_builder, inspect_asset_catalog, or inspect_keyed_archive for the selected resource. This switches away from any active binary session and needs neither CFBundleExecutable nor a deep provider.",
       },
       {
         tools: ["open_binary"],

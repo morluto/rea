@@ -8,8 +8,10 @@ import { toolFamilyId } from "../../../src/contracts/toolFamilies.js";
 it.each([
   ["full", ""],
   ["compact", ""],
-  ["full", ",artifact,android,managed"],
-  ["compact", ",artifact,android,managed"],
+  ["full", ",native,artifact,android,managed"],
+  ["compact", ",native,artifact,android,managed"],
+  ["full", ",native"],
+  ["full", ",artifact"],
   ["full", ",android"],
 ])(
   "preserves workflow contracts through the production %s MCP server with extra families '%s'",
@@ -55,17 +57,28 @@ it.each([
     );
     if (contract === undefined) throw new Error("missing scoped workflow");
     expect(text.text).toBe(renderGuidedPrompt(contract, arguments_));
+    const appleReaders = [
+      "inspect_plist",
+      "decode_interface_builder",
+      "inspect_asset_catalog",
+      "inspect_keyed_archive",
+    ];
+    const selectedFamilies = new Set(families.split(","));
+    const advertised = (tool: string) => {
+      const family = toolFamilyId(tool);
+      return family !== undefined && selectedFamilies.has(family);
+    };
     for (const tool of [
       "inspect_android_package",
       "inspect_managed_artifact",
-      "open_bundle_resources",
       "inspect_artifact",
+      ...appleReaders,
     ]) {
-      const family = toolFamilyId(tool);
-      expect(text.text.includes(tool), tool).toBe(
-        family !== undefined && families.split(",").includes(family),
-      );
+      expect(text.text.includes(tool), tool).toBe(advertised(tool));
     }
+    expect(text.text.includes("open_bundle_resources")).toBe(
+      advertised("open_bundle_resources") && appleReaders.some(advertised),
+    );
     expect(text.text).toContain("open_binary");
     expect(text.text).toContain("analyze_javascript_application");
     expect(rendered.structuredContent).toEqual({

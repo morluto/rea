@@ -53,6 +53,10 @@ A `REA_MCP_TOOL_FAMILIES` scope advertises a workflow when its required tools
 belong to selected families. Optional APK, managed, Apple-resource, and archive
 routes in `investigate_feature` are omitted when their tools are disabled;
 they do not make the existing native and JavaScript workflow unavailable.
+Apple plist guidance requires both the session opener and the native plist
+reader. Interface Builder, asset catalog, and keyed archive guidance requires
+the opener and the artifact readers. An opener alone never advertises an Apple
+resource route; opening resources switches away from the active binary session.
 Workflows missing a required tool are omitted from `prompts/list`, and
 `prompts/get` reports them as not found. Rendering, the server identity digest,
 and `rea mcp doctor` use the same scoped contracts, so guidance never directs
