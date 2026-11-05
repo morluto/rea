@@ -70,6 +70,7 @@ export interface SetupClient {
 interface ClientPathFailure {
   readonly path: string;
   readonly message: string;
+  readonly msixPackage?: MsixPackageView;
 }
 
 type ClientPathResult = Result<string, ClientPathFailure>;
@@ -904,6 +905,9 @@ export const supportedClients = (
           format: definition.format,
           configPath: location.error.path,
           configPathError: location.error.message,
+          ...(location.error.msixPackage === undefined
+            ? {}
+            : { msixPackage: location.error.msixPackage }),
         };
       const { configPath, markerPath, msixPackage } = location.value;
       return {

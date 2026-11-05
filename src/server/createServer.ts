@@ -23,6 +23,7 @@ import { registerAppleIpsTool } from "./registerAppleIpsTool.js";
 import { registerKernelModuleTool } from "./registerKernelModuleTool.js";
 import { registerElfDependenciesTool } from "./registerElfDependenciesTool.js";
 import { registerPeLoadConfigTool } from "./registerPeLoadConfigTool.js";
+import { registerBinaryHardeningTool } from "./registerBinaryHardeningTool.js";
 import { registerPeCertificatesTool } from "./registerPeCertificatesTool.js";
 import { registerPeImportsTool } from "./registerPeImportsTool.js";
 import { registerPeResourcesTool } from "./registerPeResourcesTool.js";
@@ -213,6 +214,7 @@ export const createServer = (
     kernelModule,
     elfDependencies,
     peLoadConfig,
+    binaryHardening,
     peCertificates,
     peImports,
     electronFuses,
@@ -488,6 +490,13 @@ export const createServer = (
       registerPeLoadConfigTool(
         server,
         peLoadConfig,
+        toolLogger,
+        recordEvidence,
+        analysisAdmission,
+      );
+      registerBinaryHardeningTool(
+        server,
+        binaryHardening,
         toolLogger,
         recordEvidence,
         analysisAdmission,

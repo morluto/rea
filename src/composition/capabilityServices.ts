@@ -64,6 +64,7 @@ import { persistentDebuggerHostSupported } from "../process/PersistentDebuggerHo
 import { pcapCaptureHostSupported } from "../domain/pcap/pcapAnalysis.js";
 import {
   createPeLoadConfigService,
+  createBinaryHardeningService,
   createPeCertificatesService,
   createPeImportsService,
   createNativeExportsService,
@@ -340,6 +341,7 @@ const modules = {
   kernelModule: service(() => createKernelModuleService()),
   elfDependencies: service(() => createElfDependenciesService()),
   peLoadConfig: service(() => createPeLoadConfigService()),
+  binaryHardening: service(() => createBinaryHardeningService()),
   peCertificates: service(() => createPeCertificatesService()),
   peImports: service(() => createPeImportsService()),
   electronFuses: service(
