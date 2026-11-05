@@ -249,3 +249,55 @@ describe("byte-entropy window options", () => {
     },
   );
 });
+
+describe("artifact decimal options", () => {
+  // Same admission as byte-entropy windows. One option takes every malformed
+  // spelling; siblings in artifactCommands.ts take one coercion each.
+  for (const [command, flag, field, values] of [
+    ["inspect-keyed-archive", "--offset", "offset", NON_INTEGER_OPTION_TEXT],
+    ["inspect-keyed-archive", "--limit", "limit", ["", "0x10", "1e2"]],
+    ["inspect-asset-catalog", "--offset", "offset", ["", "0x10"]],
+    ["inspect-asset-catalog", "--limit", "limit", ["1e2"]],
+    ["decode-interface-builder", "--max-documents", "maxDocuments", ["0x10"]],
+    ["decode-interface-builder", "--max-objects", "maxObjects", [""]],
+    [
+      "decode-interface-builder",
+      "--max-connections",
+      "maxConnections",
+      ["1e2"],
+    ],
+  ] as const) {
+    cliTest.for(values)(
+      `rejects %j as ${command} ${flag}`,
+      async (value, { cli }) => {
+        const result = await runFileCli(cli, {
+          arguments: [
+            command,
+            "/nonexistent/missing-artifact",
+            `${flag}=${value}`,
+            "--json",
+          ],
+        });
+
+        expectCliValidationError(result, field);
+      },
+    );
+  }
+
+  cliTest("keeps decimal keyed-archive offset and limit", async ({ cli }) => {
+    const result = await runFileCli(cli, {
+      arguments: [
+        "inspect-keyed-archive",
+        "/nonexistent/missing-archive",
+        "--offset=016",
+        "--limit=1",
+        "--json",
+      ],
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      code: "target_unavailable",
+    });
+  });
+});
