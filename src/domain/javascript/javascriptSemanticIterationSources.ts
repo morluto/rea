@@ -13,6 +13,7 @@ import {
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 
 import { semanticCopiedReferencePath } from "./javascriptSemanticCopiedReferencePaths.js";
+import { semanticMethodDefinitionExpression } from "./javascriptSemanticEvaluationOrder.js";
 import { childNodes } from "./javascriptSemanticTraversal.js";
 import type {
   IterationSourceValue,
@@ -280,19 +281,21 @@ const emptySourceFacts: SemanticSourceFacts = {
 // Property reads can invoke getters; tags and coercions can execute user code.
 const guardedExecutions = new WeakMap<t.Node, boolean>();
 const guardedBodyMayCall = (body: t.BlockStatement): boolean => {
-  const pending = [{ node: body as t.Node, finish: false }];
+  const pending: { node: t.Node; parent: t.Node | null; finish: boolean }[] = [
+    { node: body, parent: null, finish: false },
+  ];
   while (pending.length > 0) {
     const frame = pending.pop();
     if (frame === undefined || guardedExecutions.has(frame.node)) continue;
-    const node = frame.node;
-    if (t.isFunction(node)) {
-      guardedExecutions.set(node, false);
-      continue;
-    }
+    const { node, parent } = frame;
+    const children = [...childNodes(node)].filter(
+      (child) =>
+        !t.isFunction(node) || semanticMethodDefinitionExpression(node, child),
+    );
     if (!frame.finish) {
-      pending.push({ node, finish: true });
-      for (const child of childNodes(node))
-        pending.push({ node: child, finish: false });
+      pending.push({ node, parent, finish: true });
+      for (const child of children)
+        pending.push({ node: child, parent: node, finish: false });
     } else {
       const direct =
         t.isCallExpression(node) ||
@@ -306,13 +309,13 @@ const guardedBodyMayCall = (body: t.BlockStatement): boolean => {
         t.isUpdateExpression(node) ||
         t.isSpreadElement(node) ||
         t.isForOfStatement(node) ||
-        t.isAwaitExpression(node);
+        t.isAwaitExpression(node) ||
+        ((t.isVariableDeclarator(node) || t.isAssignmentExpression(node)) &&
+          semanticSourceFacts(node, parent).propertyReads.length > 0);
       guardedExecutions.set(
         node,
         direct ||
-          [...childNodes(node)].some(
-            (child) => guardedExecutions.get(child) === true,
-          ),
+          children.some((child) => guardedExecutions.get(child) === true),
       );
     }
   }

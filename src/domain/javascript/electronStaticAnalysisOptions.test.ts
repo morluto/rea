@@ -428,6 +428,8 @@ it.each([
 });
 
 const CLASSIC_GLOBAL_ACTIVATIONS = [
+  "const box = { get value() { throw globalThis; } }; try { const { value } = box; } catch ({ createWindow: start }) { start(); }",
+  "function fail() { throw globalThis; } try { const box = { [fail()]() {} }; } catch ({ createWindow: start }) { start(); }",
   "Object.setPrototypeOf(Number.prototype, globalThis); (0).createWindow();",
   "Object.setPrototypeOf(Boolean.prototype, globalThis); true.createWindow();",
   "Object.setPrototypeOf(RegExp.prototype, globalThis); /x/.createWindow();",
