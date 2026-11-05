@@ -1231,6 +1231,12 @@ export class JavaScriptSymbolicBindings {
       !LOADER_FREE_AMBIENT_VALUES.has(node.name)
     )
       return false;
+    const path = ["global", node.name] as const;
+    if (
+      this.state.ambientWrites.covers(path) ||
+      this.state.ambientEscapes.covers(path)
+    )
+      return false;
     const parent = this.state.parentsByNode.get(node);
     if (
       !(t.isMemberExpression(parent) || t.isOptionalMemberExpression(parent)) ||
@@ -1239,10 +1245,10 @@ export class JavaScriptSymbolicBindings {
       return true;
     const key = semanticStaticPropertyKey(parent.property, parent.computed);
     if (key === null) return false;
-    const path = ["global", node.name, key] as const;
+    const memberPath = [...path, key] as const;
     return (
-      !this.state.ambientWrites.covers(path) &&
-      !this.state.ambientEscapes.covers(path)
+      !this.state.ambientWrites.covers(memberPath) &&
+      !this.state.ambientEscapes.covers(memberPath)
     );
   }
 
