@@ -14,31 +14,66 @@ import { webSourceLocationFixture } from "../fixtures/webSourceLocation.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
 
+const prepareSourceLocationFixture = async () => {
+  const root = await createTestTempDirectory("rea-source-map-cli-");
+  const fixture = webSourceLocationFixture(
+    JSON.stringify({
+      version: 3,
+      sources: ["dir/original.ts", "dir//original.ts"],
+      sourcesContent: ["original", "second"],
+      names: [],
+      mappings: "AAAA,ACAA",
+    }),
+  );
+  await mkdir(join(root, "files", "modules"), { recursive: true });
+  await writeFile(join(root, "files", "modules", "main.js"), fixture.source);
+  let manifest = join(root, "manifest.json").replaceAll("\\", "/");
+  const map = join(root, "app.js.map");
+  await writeFile(manifest, JSON.stringify(fixture.manifest));
+  if (process.platform !== "win32") {
+    await mkdir(join(root, "lexical"));
+    await mkdir(join(root, "nested"));
+    await symlink(join(root, "nested"), join(root, "lexical", "link"));
+    manifest = `${root}/lexical/link/../manifest.json`;
+  }
+  await writeFile(map, fixture.sourceMap.text);
+  return { root, fixture, manifest, map };
+};
+
+const connectSourceLocationMcp = async (map: string) => {
+  const transport = new StdioClientTransport({
+    command: process.execPath,
+    args: [
+      fileURLToPath(new URL("../../scripts/rea.mjs", import.meta.url)),
+      "mcp",
+    ],
+    env: {
+      ...getDefaultEnvironment(),
+      REA_LOG_LEVEL: "silent",
+      CLANG_MODULE_CACHE_PATH: map,
+    },
+    stderr: "pipe",
+  });
+  const client = new Client({
+    name: "source-location-cli-parity",
+    version: "1",
+  });
+  onTestFinished(async () => {
+    try {
+      await client.close();
+    } finally {
+      await transport.close();
+    }
+  });
+  await client.connect(transport);
+  return client;
+};
+
 cliTest(
   "accepts numeric UTF-16 coordinates and runs the actual owned source-map codec without a browser",
   async ({ cli }) => {
-    const root = await createTestTempDirectory("rea-source-map-cli-");
-    const fixture = webSourceLocationFixture(
-      JSON.stringify({
-        version: 3,
-        sources: ["dir/original.ts", "dir//original.ts"],
-        sourcesContent: ["original", "second"],
-        names: [],
-        mappings: "AAAA,ACAA",
-      }),
-    );
-    await mkdir(join(root, "files", "modules"), { recursive: true });
-    await writeFile(join(root, "files", "modules", "main.js"), fixture.source);
-    let manifest = join(root, "manifest.json").replaceAll("\\", "/");
-    const map = join(root, "app.js.map");
-    await writeFile(manifest, JSON.stringify(fixture.manifest));
-    if (process.platform !== "win32") {
-      await mkdir(join(root, "lexical"));
-      await mkdir(join(root, "nested"));
-      await symlink(join(root, "nested"), join(root, "lexical", "link"));
-      manifest = `${root}/lexical/link/../manifest.json`;
-    }
-    await writeFile(map, fixture.sourceMap.text);
+    const { root, fixture, manifest, map } =
+      await prepareSourceLocationFixture();
     const response = await cli.run({
       arguments: [
         "trace-web-source-location",
@@ -94,31 +129,7 @@ cliTest(
       limitations: expect.arrayContaining([limitation]),
       normalized_result: { limitations: expect.arrayContaining([limitation]) },
     });
-    const transport = new StdioClientTransport({
-      command: process.execPath,
-      args: [
-        fileURLToPath(new URL("../../scripts/rea.mjs", import.meta.url)),
-        "mcp",
-      ],
-      env: {
-        ...getDefaultEnvironment(),
-        REA_LOG_LEVEL: "silent",
-        CLANG_MODULE_CACHE_PATH: map,
-      },
-      stderr: "pipe",
-    });
-    const client = new Client({
-      name: "source-location-cli-parity",
-      version: "1",
-    });
-    onTestFinished(async () => {
-      try {
-        await client.close();
-      } finally {
-        await transport.close();
-      }
-    });
-    await client.connect(transport);
+    const client = await connectSourceLocationMcp(map);
     const mcpResponse = await client.callTool({
       name: "trace_web_source_location",
       arguments: {
