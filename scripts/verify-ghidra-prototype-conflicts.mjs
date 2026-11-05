@@ -33,6 +33,18 @@ const scratch = await mkdtemp(
     "rea-prototype-conflicts-",
   ),
 );
+const controller = new AbortController();
+let interruptHandler;
+const interrupted = new Promise((resolve) => {
+  interruptHandler = (signal) => {
+    controller.abort(new Error(`${signal} requested`));
+    resolve(false);
+  };
+});
+const handleSigint = () => interruptHandler("SIGINT");
+const handleSigterm = () => interruptHandler("SIGTERM");
+process.on("SIGINT", handleSigint);
+process.on("SIGTERM", handleSigterm);
 let supervisor;
 try {
   const project = join(scratch, "project");
@@ -89,6 +101,7 @@ try {
     expectedCommand: null,
     cwd: scratch,
     env: { JAVA_HOME: process.env.JAVA_HOME },
+    signal: controller.signal,
   });
   supervisor = new ProviderProcessSupervisor(
     {
@@ -98,10 +111,15 @@ try {
     },
     { maxDiagnosticBytes: 8 * 1024 * 1024 },
   );
-  assert.ok(
-    await supervisor.waitForExit(180_000),
-    "Ghidra prototype conflict probe timed out",
-  );
+  const exited = await Promise.race([
+    supervisor.waitForExit(180_000),
+    interrupted,
+  ]);
+  if (controller.signal.aborted)
+    throw new Error(
+      "Ghidra prototype conflict probe interrupted by SIGINT/SIGTERM",
+    );
+  assert.ok(exited, "Ghidra prototype conflict probe timed out");
   assert.ok(
     await supervisor.waitForOutputClose(1_000),
     "Ghidra prototype conflict probe output did not close",
@@ -111,6 +129,7 @@ try {
   assert.equal(snapshot.exitCode, 0, output);
   assert.match(output, /REA_PROTOTYPE_CONFLICT_OK/u, output.slice(-6000));
 } finally {
+  let cleanupError;
   try {
     if (supervisor !== undefined) {
       const stopped = await supervisor.stop();
@@ -122,8 +141,21 @@ try {
         }`,
       );
     }
+  } catch (error) {
+    cleanupError = error;
   } finally {
+    // Keep cleanup handlers installed until the stop has finished so a
+    // second interrupt is still routed through owned cleanup.
+    process.off("SIGINT", handleSigint);
+    process.off("SIGTERM", handleSigterm);
+  }
+  if (cleanupError === undefined) {
     await rm(scratch, { recursive: true, force: true });
+  } else {
+    // Retain the project so an unverified cleanup can be diagnosed instead
+    // of deleting evidence while the process family may survive.
+    console.error(`Retained failed Ghidra verification project at ${scratch}`);
+    throw cleanupError;
   }
 }
 console.log("REA_PROTOTYPE_CONFLICT_OK");
