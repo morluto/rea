@@ -312,6 +312,8 @@ it("reports an external cleanup blocker until its exact owner confirms release",
     expect(await session.open(target)).toEqual({
       ok: false,
       error: failure,
+      targetAtCompletion: null,
+      providerIdAtCompletion: null,
       selection: { kind: "none" },
     });
     await session.close({ cleanupRetry: { operation: "close_binary" } });
@@ -1869,6 +1871,8 @@ describe("no replacement start", () => {
     expect(await session.open(second)).toEqual({
       ok: false,
       error: cleanupError,
+      targetAtCompletion: null,
+      providerIdAtCompletion: null,
       selection: { kind: "none" },
     });
     expect(created).toBe(1);
@@ -1932,6 +1936,8 @@ it("blocks analysis rebinding until the external writer cleanup settles", async 
   expect(await session.open(target)).toEqual({
     ok: false,
     error: failure,
+    targetAtCompletion: null,
+    providerIdAtCompletion: null,
     selection: { kind: "none" },
   });
   const anotherMutation = vi.fn(async () => resultOk("unrelated command"));
