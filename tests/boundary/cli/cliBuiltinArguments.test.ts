@@ -1,4 +1,10 @@
+import { spawnSync } from "node:child_process";
+import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { join, resolve } from "node:path";
+
 import { describe, expect, it } from "vitest";
+
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 import {
   classifyMcpAddDiscovery,
@@ -130,5 +136,46 @@ describe("project-scoped Amp registration guard", () => {
         "Amp",
       ]),
     ).toBe(false);
+  });
+});
+
+describe("project-scoped Amp registration launcher", () => {
+  it("refuses explicit Amp and default-agent requests without writing settings", async () => {
+    const home = await createTestTempDirectory("rea-amp-launcher-home-");
+    const workingDirectory = await createTestTempDirectory(
+      "rea-amp-launcher-cwd-",
+    );
+    const ampDirectory = join(home, ".config", "amp");
+    await mkdir(ampDirectory, { recursive: true });
+    const settingsPath = join(ampDirectory, "settings.json");
+    const sentinel = JSON.stringify({ preexisting: true });
+    await writeFile(settingsPath, sentinel);
+    for (const args of [
+      ["mcp", "add", "--no-global", "--agent", "amp"],
+      ["mcp", "add", "--no-global"],
+    ]) {
+      const result = spawnSync(
+        process.execPath,
+        [resolve("scripts/rea.mjs"), ...args],
+        {
+          cwd: workingDirectory,
+          env: {
+            PATH: process.env.PATH ?? "",
+            HOME: home,
+            REA_LOG_LEVEL: "silent",
+          },
+          encoding: "utf8",
+          timeout: 60_000,
+        },
+      );
+      expect(result.error).toBeUndefined();
+      expect(result.signal).toBeNull();
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain(
+        "Amp does not support project-scoped registration",
+      );
+      expect(await readFile(settingsPath, "utf8")).toBe(sentinel);
+      expect(await readdir(workingDirectory)).toEqual([]);
+    }
   });
 });
