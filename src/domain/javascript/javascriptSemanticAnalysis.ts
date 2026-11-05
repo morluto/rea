@@ -895,7 +895,8 @@ export function* indexJavaScriptElectronIdentitySteps(
       const binding = resolveSemanticBindingState(state, root, root.name);
       if (
         binding !== undefined &&
-        semanticOpaqueBindingReadMayHaveChanged(binding, root, state)
+        (semanticOpaqueBindingReadMayHaveChanged(binding, root, state) ||
+          interop.aliasMayHaveChanged(binding))
       )
         return undefined;
     }

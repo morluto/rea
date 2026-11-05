@@ -64,6 +64,7 @@ import {
   BINARY_LAYOUT_TEST_PROVIDER,
   binaryLayoutFixture,
 } from "../../fixtures/binaryDiagnostics/layout.js";
+import { kernelModuleFixture } from "../../../src/native/elf/KernelModule.fixture.js";
 import { wasmArtifactFixture } from "../../fixtures/wasm/artifact.js";
 import { evmInterfaceFixture } from "../../fixtures/evm/interface.js";
 import type { RelationshipCoverage } from "../../../src/domain/relationshipCoverage.js";
@@ -276,20 +277,20 @@ it("preserves native relationship coverage through inline and retained MCP views
 });
 
 it("directs unsupported parent views to the original Evidence", async () => {
-  const { client, session } = await connect();
+  const { client } = await connect();
   const root = await createTestTempDirectory("rea-unsupported-view-mcp-");
   const file = join(root, "evidence.json");
   const bundle = join(root, "bundle.json");
-  const parent = createEvidence(
-    { path: "/fixtures/native.exe", format: "pe", sha256: "a".repeat(64) },
-    { id: "fixture", name: "Fixture", version: "1" },
-    {
-      operation: "trace_feature",
-      parameters: { query: "marker" },
-      result: { matches: [], references: [] },
-    },
+  const modulePath = join(root, "fixture.ko");
+  await writeFile(modulePath, kernelModuleFixture());
+  const inspected = await client.callTool({
+    name: "inspect_kernel_module",
+    arguments: { path: modulePath },
+  });
+  expect(inspected.isError).not.toBe(true);
+  const parent = toolContract("inspect_kernel_module").outputSchema.parse(
+    inspected.structuredContent,
   );
-  expect(session.recordEvidence(parent).ok).toBe(true);
   await writeFile(file, JSON.stringify(parent));
   const errorSchema = JSON.parse(
     await readFile("docs/error-contract.schema.json", "utf8"),
@@ -311,7 +312,7 @@ it("directs unsupported parent views to the original Evidence", async () => {
       details: {
         operation: "inspect_analysis_view",
         reason: expect.stringContaining(
-          'Parent Evidence operation "trace_feature"',
+          'Parent Evidence operation "inspect_kernel_module"',
         ),
       },
     });
