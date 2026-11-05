@@ -71,6 +71,7 @@
 * **artifacts:** read UnityFS AssetBundle containers ([#7699](https://github.com/morluto/rea/issues/7699)) ([e78ac1a](https://github.com/morluto/rea/commit/e78ac1a55b4a4902efb6074412227c29eba9ad00))
 * **artifacts:** read WeChat mini-program wxapkg containers ([#8148](https://github.com/morluto/rea/issues/8148)) ([5990ff0](https://github.com/morluto/rea/commit/5990ff0324de38042ea95ecdf5c369b295aa4bbd))
 * **artifacts:** read Zstandard ZIP members ([#7780](https://github.com/morluto/rea/issues/7780)) ([fc24b08](https://github.com/morluto/rea/commit/fc24b08851f32eb7d42733ef5c786840d31a4d5f))
+* **artifacts:** select extraction entries and output destination ([#4031](https://github.com/morluto/rea/issues/4031)) ([ad518cf](https://github.com/morluto/rea/commit/ad518cff65cc71564f678b26bcae4a3862689ad4))
 * **binary-layout:** admit ELF64 AArch64 and name the refused host ([#8711](https://github.com/morluto/rea/issues/8711)) ([6442ea0](https://github.com/morluto/rea/commit/6442ea02cbdabd8cbaa4106bdbe934ea07d0dcef))
 * **browser:** retain compact scenario summaries and selected views ([#7120](https://github.com/morluto/rea/issues/7120)) ([fc43e28](https://github.com/morluto/rea/commit/fc43e285eaae2155d32e2ca0ab5d2181a4e2f1b5))
 * **browser:** reuse saved response values across scenario steps ([#7267](https://github.com/morluto/rea/issues/7267)) ([3fcbabe](https://github.com/morluto/rea/commit/3fcbabe593611435ebc26e1eac86706fe60abb6e))
