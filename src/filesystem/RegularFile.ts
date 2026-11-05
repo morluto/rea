@@ -100,12 +100,20 @@ export interface StableRegularFileDescriptor {
   readonly initial: Stats;
 }
 
+/**
+ * Whether admission waits out a fresh Windows ChangeTime.
+ * External files settle. A private file REA just wrote is recorded as written.
+ */
+export type ChangeTimeAdmission = "settle" | "as-written";
+
 /** Admit a non-blocking regular-file descriptor with its validated initial facts. */
 export const openRegularFile = async (
   path: string,
   options: {
     readonly symlinks: "follow" | "reject";
     readonly signal?: AbortSignal | undefined;
+    /** Omission settles. Private files REA just wrote pass "as-written". */
+    readonly changeTime?: ChangeTimeAdmission | undefined;
   },
 ): Promise<StableRegularFileDescriptor> => {
   assertRegularFileActive(options.signal);
@@ -128,24 +136,27 @@ export const openRegularFile = async (
   try {
     assertRegularFileActive(options.signal);
     // The admitted facts become the baseline every later comparison tests
-    // against, so a ChangeTime still settling on Windows must not be recorded
-    // as an established one. The first observation still validates the file
-    // type, so a directory is refused before any settling delay.
-    const metadata = await settleChangeTimeBaseline(
-      async () => {
-        assertRegularFileActive(options.signal);
-        const observed = await handle.stat();
-        if (!observed.isFile())
-          throw new NonRegularFileReadError(path, observed.isDirectory());
-        return observed;
-      },
-      {
-        signal: options.signal,
-        // Callers match on this type to tell cancellation from a read fault.
-        cancellationError: (reason) =>
-          new RegularFileOperationCancelled(reason),
-      },
-    );
+    // against. External files wait out a Windows ChangeTime that can still
+    // move. A private file REA just wrote is recorded as written: settling
+    // each one costs about a second, and a compressed PYZ spool does that
+    // once per image. The first observation still validates the file type,
+    // so a directory is refused before any settling delay.
+    const readMetadata = async (): Promise<Stats> => {
+      assertRegularFileActive(options.signal);
+      const observed = await handle.stat();
+      if (!observed.isFile())
+        throw new NonRegularFileReadError(path, observed.isDirectory());
+      return observed;
+    };
+    const metadata =
+      options.changeTime === "as-written"
+        ? await readMetadata()
+        : await settleChangeTimeBaseline(readMetadata, {
+            signal: options.signal,
+            // Callers match on this type to tell cancellation from a read fault.
+            cancellationError: (reason) =>
+              new RegularFileOperationCancelled(reason),
+          });
     assertRegularFileActive(options.signal);
     // O_NOFOLLOW is unavailable on Windows. Recheck the name only on hosts
     // where open could have followed a symlink, while the descriptor is owned.
