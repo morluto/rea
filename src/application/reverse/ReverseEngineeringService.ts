@@ -19,6 +19,7 @@ import {
 } from "../../domain/analysisErrorCore.js";
 import {
   AnalysisError,
+  type AnalysisCapturedOutput,
   type AnalysisCleanupObservation,
 } from "../../domain/analysisErrorBase.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
@@ -48,6 +49,7 @@ import {
   OwnedCommandFailure,
   runOwnedCommand,
 } from "../../process/OwnedCommand.js";
+import { DarwinProcessOwnershipInspectionError } from "../../process/DarwinProcessRunTokenReader.js";
 import type { ProviderProcessSupervisor } from "../../process/ProviderProcess.js";
 import { boundedUtf8Text } from "../../process/boundedUtf8Text.js";
 import {
@@ -155,7 +157,7 @@ export class ReverseEngineeringService {
   readonly #digest: typeof digestFile;
   readonly #stat: (path: string) => Promise<Stats>;
   readonly #pendingCleanup = new Map<
-    ProviderProcessSupervisor,
+    RetainedCleanupOwner,
     {
       readonly observation: AnalysisCleanupObservation;
       readonly failures: Set<AnalysisError>;
@@ -550,7 +552,7 @@ export class ReverseEngineeringService {
     let cleanupOnlyFailure = false;
     let completionStatus: "complete" | "unknown" = "complete";
     let failure: AnalysisError | undefined;
-    let cleanupOwner: ProviderProcessSupervisor | undefined;
+    let cleanupOwner: RetainedCleanupOwner | undefined;
     let earlyFailure: AnalysisError | undefined;
     try {
       const output = await this.#run(identification.executable, args, {
@@ -654,6 +656,10 @@ export class ReverseEngineeringService {
                 command,
                 system_code: code ?? null,
               },
+              ...(cause instanceof OwnedOutputFailure &&
+              cause.preparationOutput !== undefined
+                ? { capturedOutput: cause.preparationOutput }
+                : {}),
               ...ownedCleanupOptions(cause),
             },
           );
@@ -1288,7 +1294,7 @@ export class ReverseEngineeringService {
 
   #registerCleanupFailure(
     failure: AnalysisError,
-    cleanupOwner: ProviderProcessSupervisor | undefined,
+    cleanupOwner: RetainedCleanupOwner | undefined,
   ): AnalysisError {
     if (cleanupOwner !== undefined && failure.cleanupIncomplete)
       this.#pendingCleanup.get(cleanupOwner)?.failures.add(failure);
@@ -1401,6 +1407,9 @@ const versionProbeDiagnostics = (
   };
 };
 
+/** What retries an incomplete cleanup: a command's process or a preparation's helper. */
+type RetainedCleanupOwner = Pick<ProviderProcessSupervisor, "stop">;
+
 interface OwnedOutputFailureOptions {
   readonly stdout: string;
   readonly stderr: string;
@@ -1414,9 +1423,10 @@ interface OwnedOutputFailureOptions {
   readonly capabilityError?: AnalysisCapabilityUnavailableError;
   readonly collectionFailure?: boolean;
   readonly cleanup?: AnalysisCleanupObservation;
-  readonly cleanupOwner?: ProviderProcessSupervisor;
+  readonly cleanupOwner?: RetainedCleanupOwner;
   readonly cause?: unknown;
   readonly launchFailure?: boolean;
+  readonly preparationOutput?: AnalysisCapturedOutput | undefined;
 }
 
 class OwnedOutputFailure extends Error {
@@ -1432,8 +1442,10 @@ class OwnedOutputFailure extends Error {
   readonly capabilityError: AnalysisCapabilityUnavailableError | undefined;
   readonly collectionFailure: boolean;
   readonly cleanup: AnalysisCleanupObservation | undefined;
-  readonly cleanupOwner: ProviderProcessSupervisor | undefined;
+  readonly cleanupOwner: RetainedCleanupOwner | undefined;
   readonly launchFailure: boolean;
+  /** What ownership preparation captured when the command never started. */
+  readonly preparationOutput: AnalysisCapturedOutput | undefined;
 
   constructor(options: OwnedOutputFailureOptions) {
     super("Owned provider command did not produce a complete result.", {
@@ -1453,14 +1465,41 @@ class OwnedOutputFailure extends Error {
     this.cleanup = options.cleanup;
     this.cleanupOwner = options.cleanupOwner;
     this.launchFailure = options.launchFailure ?? false;
+    this.preparationOutput = options.preparationOutput;
   }
 }
+
+/** Preparation's retained helper, retried through the command owners' stop. */
+const preparationCleanup = (
+  preparation: DarwinProcessOwnershipInspectionError | undefined,
+):
+  | {
+      readonly observation: AnalysisCleanupObservation;
+      readonly owner: RetainedCleanupOwner;
+    }
+  | undefined => {
+  const failure = preparation?.cleanupFailure;
+  if (preparation === undefined || failure?.cleanupIncomplete !== true)
+    return undefined;
+  const reason = failure.cleanup?.reason ?? failure.message;
+  return {
+    observation: { reason, resources: failure.cleanupResources },
+    owner: {
+      stop: async () => {
+        if (failure.cleanupIncomplete) await preparation.cleanupOwner?.close();
+        return failure.cleanupIncomplete
+          ? { status: "incomplete", reason }
+          : { status: "verified-cleanup" };
+      },
+    },
+  };
+};
 
 const runOwnedCommandOutput =
   (
     runOwned: typeof runOwnedCommand,
     onCleanupOwner: (
-      owner: ProviderProcessSupervisor,
+      owner: RetainedCleanupOwner,
       cleanup: AnalysisCleanupObservation,
     ) => void,
   ): ReverseEngineeringCommandRunner =>
@@ -1517,14 +1556,30 @@ const runOwnedCommandOutput =
         stdoutBytes: snapshot.stdout.bytes,
         stderrBytes: snapshot.stderr.bytes,
       };
-    } catch (cause) {
+    } catch (thrown) {
+      // Preparation throws its own failure, and an interruption wraps it. The
+      // command never started in either case.
+      const cause =
+        thrown instanceof DarwinProcessOwnershipInspectionError
+          ? new OwnedCommandFailure("process", thrown.message, null, null, {
+              cause: thrown,
+              preparationFailure: thrown,
+            })
+          : thrown;
       if (!(cause instanceof OwnedCommandFailure)) throw cause;
       if (cause.cleanupOwner !== undefined && cause.cleanupFailure !== null)
         onCleanupOwner(cause.cleanupOwner, {
           reason: cause.cleanupFailure,
           resources: cause.resources,
         });
+      const preparation = preparationCleanup(cause.preparationFailure);
+      if (preparation !== undefined)
+        onCleanupOwner(preparation.owner, preparation.observation);
       const snapshot = cause.snapshot;
+      const preparationOutput =
+        snapshot === null
+          ? cause.preparationFailure?.capturedOutput
+          : undefined;
       const launchErrorCode =
         cause.cause instanceof Error
           ? Reflect.get(cause.cause, "code")
@@ -1544,22 +1599,33 @@ const runOwnedCommandOutput =
                     : "ERR_PROVIDER_LAUNCH"
                   : (snapshot.exitCode ?? null);
       throw new OwnedOutputFailure({
-        stdout: snapshot?.stdout.text ?? "",
-        stderr: snapshot?.stderr.text ?? "",
+        stdout: snapshot?.stdout.text ?? preparationOutput?.stdout ?? "",
+        stderr: snapshot?.stderr.text ?? preparationOutput?.stderr ?? "",
         code,
         launchFailure: cause.reason === "process" && snapshot === null,
         signal: snapshot?.signal ?? null,
-        outputTruncated: snapshot?.diagnosticTruncated === true,
-        stdoutInvalidUtf8: snapshot?.stdout.invalidUtf8 === true,
-        stderrInvalidUtf8: snapshot?.stderr.invalidUtf8 === true,
-        stdoutBytes: snapshot?.stdout.bytes ?? 0,
-        stderrBytes: snapshot?.stderr.bytes ?? 0,
+        outputTruncated:
+          snapshot?.diagnosticTruncated === true ||
+          preparationOutput?.truncated === true,
+        stdoutInvalidUtf8:
+          snapshot?.stdout.invalidUtf8 === true ||
+          preparationOutput?.stdout_invalid_utf8 === true,
+        stderrInvalidUtf8:
+          snapshot?.stderr.invalidUtf8 === true ||
+          preparationOutput?.stderr_invalid_utf8 === true,
+        stdoutBytes:
+          snapshot?.stdout.bytes ?? preparationOutput?.stdout_bytes ?? 0,
+        stderrBytes:
+          snapshot?.stderr.bytes ?? preparationOutput?.stderr_bytes ?? 0,
+        preparationOutput,
         ...(cause.cause instanceof AnalysisCapabilityUnavailableError
           ? { capabilityError: cause.cause }
           : {}),
         ...(cause.collectionFailure ? { collectionFailure: true } : {}),
         ...(cause.cleanupFailure === null
-          ? {}
+          ? preparation === undefined
+            ? {}
+            : { cleanup: preparation.observation }
           : {
               cleanup: {
                 reason: cause.cleanupFailure,
@@ -1567,7 +1633,9 @@ const runOwnedCommandOutput =
               },
             }),
         ...(cause.cleanupOwner === undefined
-          ? {}
+          ? preparation === undefined
+            ? {}
+            : { cleanupOwner: preparation.owner }
           : { cleanupOwner: cause.cleanupOwner }),
         cause,
       });

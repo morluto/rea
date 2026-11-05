@@ -20,6 +20,8 @@ import {
   type ReverseEngineeringProcesses,
   VERSION_PROBE_FAILURE_REASONS,
 } from "../../../src/application/reverse/ReverseEngineeringService.js";
+import { AnalysisOutputError } from "../../../src/domain/analysisErrorCore.js";
+import { DarwinProcessOwnershipInspectionError } from "../../../src/process/DarwinProcessRunTokenReader.js";
 import { lookupExecutable } from "../../../src/process/ExecutableLookup.js";
 import { FileWork } from "../../../src/process/FileWork.js";
 import { RIZIN_VERSION_PROBE } from "../../../src/rizin/RizinCommand.js";
@@ -1084,6 +1086,132 @@ posix(
     stopped = true;
     expect(await service.retryCleanup()).toEqual({ ok: true, value: null });
     expect(failed.ok ? undefined : failed.error.cleanupIncomplete).toBe(false);
+  },
+);
+
+const COMPILER_OUTPUT = {
+  stdout: "",
+  stderr: "swiftc: error: no such module",
+  truncated: false,
+  stdout_bytes: 0,
+  stderr_bytes: 28,
+  exit_code: 1,
+  signal: null,
+};
+
+/** A failed helper build with a retained compiler, resolved by its owner. */
+const retainedPreparationFailure = () => {
+  const cleanupFailure = new AnalysisOutputError(
+    "darwin_helper",
+    "helper compiler still running",
+    {
+      cleanup: {
+        reason: "helper compiler still running",
+        resources: ["pid:7"],
+      },
+    },
+  );
+  const close = vi.fn(async () => {
+    cleanupFailure.resolveCleanup();
+  });
+  return {
+    close,
+    failure: new DarwinProcessOwnershipInspectionError("helper build failed", {
+      capturedOutput: COMPILER_OUTPUT,
+      cleanupFailure,
+      cleanupOwner: { close },
+    }),
+  };
+};
+
+posix(
+  "ends the call and retries the helper's cleanup when probe preparation retains it",
+  async () => {
+    const { executable, path } = await rizinExecutableFixture();
+    const { close, failure } = retainedPreparationFailure();
+    const runOwned = vi.fn(async () => {
+      throw failure;
+    });
+    const service = new TestReverseEngineeringService({
+      runOwned,
+      lookup: lookupExecutable,
+      environment: { REA_RIZIN_COMMAND: executable },
+    });
+    const failed = await service.executeRizinCommand({ path, command: "iI" });
+    expect(failed).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "AnalysisOutputError",
+        capturedOutput: { stderr: COMPILER_OUTPUT.stderr },
+        cleanup: {
+          reason: "helper compiler still running",
+          resources: ["pid:7"],
+        },
+      },
+    });
+    expect(runOwned).toHaveBeenCalledOnce();
+
+    expect(await service.retryCleanup()).toEqual({ ok: true, value: null });
+    expect(close).toHaveBeenCalledOnce();
+    expect(failed.ok ? undefined : failed.error.cleanupIncomplete).toBe(false);
+  },
+);
+
+posix(
+  "keeps an interrupted preparation's output and helper cleanup",
+  async () => {
+    const { executable, path } = await rizinExecutableFixture();
+    const { close, failure } = retainedPreparationFailure();
+    const service = new TestReverseEngineeringService({
+      runOwned: async () => {
+        throw new OwnedCommandFailure(
+          "timeout",
+          "Command deadline elapsed during ownership preparation.",
+          null,
+          null,
+          { cause: failure, preparationFailure: failure },
+        );
+      },
+      lookup: lookupExecutable,
+      environment: { REA_RIZIN_COMMAND: executable },
+    });
+    const failed = await service.executeRizinCommand({ path, command: "iI" });
+    expect(failed).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "AnalysisTimeoutError",
+        capturedOutput: { stderr: COMPILER_OUTPUT.stderr },
+        cleanup: { reason: "helper compiler still running" },
+      },
+    });
+    expect(await service.retryCleanup()).toEqual({ ok: true, value: null });
+    expect(close).toHaveBeenCalledOnce();
+  },
+);
+
+posix(
+  "reports a failed preparation's compiler output when no cleanup remains",
+  async () => {
+    const { executable, path } = await rizinExecutableFixture();
+    const runOwned = vi.fn(async () => {
+      throw new DarwinProcessOwnershipInspectionError("helper build failed", {
+        capturedOutput: COMPILER_OUTPUT,
+      });
+    });
+    const service = new TestReverseEngineeringService({
+      runOwned,
+      lookup: lookupExecutable,
+      environment: { REA_RIZIN_COMMAND: executable },
+    });
+    expect(
+      await service.executeRizinCommand({ path, command: "iI" }),
+    ).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "AnalysisCapabilityUnavailableError",
+        capturedOutput: COMPILER_OUTPUT,
+      },
+    });
   },
 );
 
