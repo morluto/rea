@@ -170,12 +170,15 @@ it("compares recoverable symlink bytes across old and current captures", () => {
       after: target,
       reason: "Target bytes were not retained.",
     };
+    const files = [target];
     return {
       ...base,
+      files_before: files,
+      files_after: files,
       filesystem_effects: [effect],
       filesystem_checkpoints: base.filesystem_checkpoints.map((checkpoint) => ({
         ...checkpoint,
-        files: [target],
+        files,
         effects: checkpoint.name === "after_settlement" ? [effect] : [],
       })),
     };
