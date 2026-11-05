@@ -3,9 +3,23 @@ import { AnalysisInputError } from "../../../src/domain/analysisErrorCore.js";
 import { NoBinaryOpenError } from "../../../src/domain/configurationErrors.js";
 import { err } from "../../../src/domain/result.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
+import { valueTraceDiamond } from "../../../src/application/native/NativeValueTrace.fixture.js";
 import { closeEnhancedToolResources, connect } from "./enhancedToolsHarness.js";
 
 afterEach(closeEnhancedToolResources);
+
+it("refuses a completed trace when the adapter has no source Evidence owner", async () => {
+  const client = await connect(valueTraceDiamond().port);
+  const result = await client.callTool({
+    name: "trace_native_values",
+    arguments: { procedure: "0x1000" },
+  });
+  expect(result.isError).toBe(true);
+  expect(parseMcpToolError(result).error).toMatchObject({
+    code: "capability_unavailable",
+    message: expect.stringContaining("source Evidence"),
+  });
+});
 
 it.each([
   {

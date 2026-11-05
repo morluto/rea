@@ -378,17 +378,31 @@ a particular caller-supplied input will be valid. See
 
 Select the part you want to check:
 
-| Task                                | Readiness check                                                          |
-| ----------------------------------- | ------------------------------------------------------------------------ |
-| Static JavaScript/Electron analysis | Run `rea analyze-javascript-application PATH --json` directly.           |
-| One analysis engine                 | `rea doctor --provider ghidra --json` (or `hopper`, `ida`, `kuna`)       |
-| One agent registration              | `rea doctor --client codex --json` (see [client IDs](#supported-agents)) |
-| Installed workflow instructions     | `rea doctor --skill --json`                                              |
+| Task                                | Readiness check                                                            |
+| ----------------------------------- | -------------------------------------------------------------------------- |
+| Static JavaScript/Electron analysis | Run `rea analyze-javascript-application PATH --json` directly.             |
+| One analysis engine                 | `rea doctor --provider ghidra --json` (or `hopper`, `ida`, `jadx`, `kuna`) |
+| One agent registration              | `rea doctor --client codex --json` (see [client IDs](#supported-agents))   |
+| Installed workflow instructions     | `rea doctor --skill --json`                                                |
 
 A scoped report has `scope.mode: "explicit"`. Its `scope_checks` determine
 `healthy` and the exit status. Other checks appear in `informational_checks`;
 `environment_healthy` summarizes the full audit. `--target` adds a target check,
 but the report remains audit-wide unless a scope option is also supplied.
+
+Provider checks read the terminal running doctor. A client-started server may
+receive a different environment, and doctor cannot observe it. When an available
+provider relies on a setting that a registration's file does not record, or
+records with other text, doctor adds a non-blocking
+`registration_environment:<client>` check with `classification: "unknown"`. The
+setting names appear in that registration's `provider_settings`. Selecting the
+client or an affected provider places the check in `scope_checks`; it never
+changes `healthy`, because the client may still pass the setting on. Preview
+`rea setup --client <client-id> --skill=false --dry-run` from that terminal and
+approve it to record the settings, then restart the client. To see what the
+running server can use, call `binary_session` in the client and read
+`result.tool_availability`. For Hopper, only an explicit `HOPPER_LAUNCHER_PATH`
+is compared.
 
 An invalid `REA_LOG_LEVEL` fails every scope, including one client or the
 installed skill, because the executable rejects it before any command. A
@@ -641,6 +655,7 @@ hosted connector; see [its configuration](client-configuration.md#other-client-s
 | Factory Droid      | `droid`           |
 | Trae               | `trae`            |
 | WorkBuddy          | `workbuddy`       |
+| LM Studio          | `lm_studio`       |
 | ZCode              | `zcode`           |
 | DeepSeek Harness   | `dsh`             |
 | FreeBuff           | `freebuff`        |
@@ -649,6 +664,8 @@ hosted connector; see [its configuration](client-configuration.md#other-client-s
 `rea-agents@6.5.0` or later. The 6.4.0 registry check above does not cover them.
 `freebuff` requires `rea-agents@6.8.0` or later. Older releases reject
 `rea setup --client freebuff` as an unsupported client.
+
+`lm_studio` requires a release after 6.8.0.
 
 See [client configuration and troubleshooting](client-configuration.md) for
 configuration paths, profiles, trust policies, and schema-limit workarounds.
@@ -667,7 +684,8 @@ Hopper is separate commercial software with its own license. Its free demo has
 vendor-defined limits, and a paid license is optional. REA reuses any detected
 installation and preserves Hopper during uninstall.
 
-The automated Hopper installer supports macOS 12+ and x86_64 hosts running
+The automated Hopper installer supports macOS 12+, subject to the minimum
+macOS version of the current Hopper release, and x86_64 hosts running
 Ubuntu 24.04+, Fedora 41+, Nobara 44+, Arch Linux, CachyOS, or Omarchy. The
 official Linux packages are x86_64-only, so setup does not offer Hopper on other
 Linux architectures; configure [Ghidra](#ghidra) there instead. REA itself runs on any
@@ -676,18 +694,48 @@ an existing Hopper launcher is selected through `HOPPER_LAUNCHER_PATH`. Ghidra
 and IDA have their own provider-specific host requirements; Windows Ghidra uses
 the [experimental P0 boundary](windows-ghidra-p0.md).
 
-If the Linux package download receives an HTTP failure, setup includes the
-observed HTTP status in its `download_failed` diagnostic. The status does not
-establish the underlying cause or guarantee that retrying will succeed.
+Bazzite uses RPM packages, but REA does not install Hopper automatically on it.
+Setup skips the Hopper offer because Bazzite is outside the supported host list,
+regardless of whether Xvfb is installed. Bazzite documents
+[containers for installing Linux packages](https://docs.bazzite.gg/Installing_and_Managing_Software/Containers/).
+If using a container, check its distribution and architecture against the list
+above. Install REA and Hopper in that container, give it access to the files you
+want to analyze, and configure your agent to launch REA there. Verify installation
+and analysis before relying on that workflow.
+
+`rea doctor` checks health; it does not offer to install Hopper. Run `rea setup`
+for installation. Setup cannot prompt when its output is redirected or during a
+container image build. To approve Hopper installation without prompts, run
+`rea setup --yes --install-hopper`.
+
+If a Hopper request fails on macOS or Linux, the setup result's `download`
+field names the request (`release_feed`, `package` or `public_key`), its `url`,
+and the observed outcome `kind`: `http_status` with `httpStatus`, `timeout`,
+`network`, `response_too_large`, or `url_refused`. The remediation names the
+same URL and outcome. HTTP 404 or 410 means the file is missing, so an
+immediate retry is unlikely to help; 5xx, 408 and 429 indicate a temporary
+service failure. The status does not establish the underlying cause or guarantee
+that retrying will succeed. Doctor and Linux launches report the same request
+and status when publisher verification cannot download the current package.
 
 Hopper metadata and package downloads require HTTPS throughout the redirect
-chain; a redirect to HTTP is refused before that destination is requested.
+chain; a redirect to HTTP or to a URL carrying credentials is refused before
+that destination is requested, and those credentials are not reported.
 
 On macOS, approved setup downloads the official DMG, checks its published size
 and digest, validates the application bundle, and atomically installs it to
 `~/Applications/Hopper Disassembler.app`. REA then opens Hopper so the
 operator can choose its demo mode or activate an existing license. Homebrew and
 administrator access are not used.
+
+Each Hopper release declares its own minimum macOS version, so the setup plan
+cannot confirm support before approval. Setup compares this Mac's version with
+the release metadata's `deployment_target` before downloading the DMG, and with
+the signed application's `LSMinimumSystemVersion` before copying it. If this Mac
+is older, setup fails with `incompatible_host_version`, names both versions, and
+installs nothing. Update macOS, or install a Hopper release that supports this
+macOS version yourself and set `HOPPER_LAUNCHER_PATH`. An existing Hopper
+installation is not checked against the current release's minimum.
 
 The Hopper launcher action used by REA creates a document from an executable;
 its supported command-line interface does not attach to an already-open
@@ -729,6 +777,12 @@ Rotating signing subkeys remain bound to that primary identity.
 The feed row itself is not PGP-signed; doctor labels its display version as
 `reported_release_version`, separately from the authenticated launcher identity.
 
+Even a correctly signed package can contain a launcher whose hash disagrees with
+the feed. REA stops before installing that package. When reporting this error,
+include the release version, package format and both hashes from the diagnostic.
+Each format needs its own check: a matching Ubuntu DEB does not establish that
+the Fedora RPM matches.
+
 The approval plan includes the caller-selected cache location. Approved setup
 retains the signed archive, public key and release metadata under
 `${XDG_CACHE_HOME:-$HOME/.cache}/rea/hopper-releases/<launcher-sha256>`.
@@ -761,6 +815,16 @@ mount namespace with a private mode-1777 tmpfs over that directory only. The
 host mount and the rest of `/tmp` remain unchanged; this fallback never invokes
 `sudo`. `rea doctor --provider hopper --json` reports the selected
 strategy and both host and effective mount facts.
+
+You do not need to start a separate `Xvfb :99` server. REA starts and manages its
+own display. After installation, run `rea doctor --provider hopper --json` and
+check `hopper-demo-runtime` for display and Python problems. Setup also runs these
+health checks: installing the package is only one step toward a working provider.
+
+If an image build ends with `exit status 1`, read the setup output immediately
+before that summary to find the failing step. On minimal Ubuntu images, run
+`apt-get update` before setup if an earlier layer deleted the package indexes.
+REA's package installation commands do not refresh those indexes.
 
 Hopper also embeds Python; the Python executable and standard library alone
 are insufficient on Ubuntu. Approved setup checks the system interpreter
@@ -972,7 +1036,9 @@ including while a shutdown request is in flight. A helper exit alone is
 insufficient, and an application that never authenticated has no verified
 process identity. If no matching bridge becomes available, inspect and close
 the reported document in Hopper before ending the owning REA connection.
-Export the Evidence bundle before `close_binary` clears session records.
+`close_binary` preserves Evidence and complete Unknown history in memory on the
+same connection. Export the bundle before ending the REA process to resume later;
+`reset_investigation(save_path)` checkpoints and explicitly clears those records.
 `binary_session.cleanup_pending` remains true while provider cleanup is retained,
 and provider health remains visible even with `open: false`; that flag alone
 does not establish successful cleanup.
@@ -994,6 +1060,14 @@ When Hopper cannot start in CI, run
 `rea doctor --provider hopper --json` in the failing runner.
 Structured failures distinguish private-display dependencies, an unsupported
 demo dialog or build, process-ownership conflicts, and an early lifecycle exit.
+Once launcher authentication succeeds, an absent first-run dialog is reported as
+`demo_dialog_absent` rather than a build or publisher rejection. The watcher
+waits 10 seconds by default. Set `REA_HOPPER_DEMO_DIALOG_TIMEOUT_MS` in the
+environment that starts REA to a positive decimal integer of milliseconds from
+1 to 2147483647 when a slower host needs a longer window. An invalid value is
+`invalid_dialog_timeout`: the error names that setting, shows the rejected
+value and its source, lists the allowed range, and asks you to correct the
+setting and restart REA.
 If a private-display probe times out or is cancelled and its process cleanup
 fails, REA retains that exact probe owner and reports `cleanup_incomplete`.
 Session close retries the probe before releasing its cleanup marker; doctor
@@ -1090,7 +1164,11 @@ selected formula's `libexec/openjdk.jdk/Contents/Home`, for example
 Java version bounds declared by your Ghidra installation; REA does not select
 another JDK when `JAVA_HOME` is explicit or the PATH JVM runs. On macOS,
 when the PATH launcher cannot start a JVM, it tries executable Homebrew
-`opt/openjdk` candidates, preferring the host architecture's prefix. Failed
+`opt/openjdk` and installed `opt/openjdk@<major>` candidates, preferring the host
+architecture's prefix and the unversioned formula within each prefix. Versioned
+aliases are considered in ascending major order within Ghidra's declared Java
+bounds; the selected executable still undergoes the normal Java probe and
+admission checks. REA does not invoke Homebrew or install a JDK. Failed
 discovery probes remain available in installation diagnostics. Doctor distinguishes an absent Java
 command from a command that runs and fails, and retains bounded probe output
 and any parsed properties when the selected runtime cannot be admitted.
@@ -1218,8 +1296,10 @@ bridge, and health readiness. Large binaries can need more: set
 milliseconds in the server environment. An absent setting uses the default;
 empty, invalid or out-of-range supplied values fail configuration validation.
 When the deadline elapses, the `provider_timeout` error names
-`REA_GHIDRA_STARTUP_TIMEOUT_MS` with the deadline that was applied and suggests
-`REA_GHIDRA_DISABLED_ANALYZERS` for analyzers that dominate the time.
+`REA_GHIDRA_STARTUP_TIMEOUT_MS` with the deadline that was applied. In
+fresh-import mode it also suggests `REA_GHIDRA_DISABLED_ANALYZERS` for analyzers
+that dominate the time and `REA_GHIDRA_PROJECT_PATH` for reusing a completed
+analysis; in existing-project mode it omits that import and analyzer advice.
 REA parses the supplied configuration environment and
 passes the deadline to each provider client; a startup failure is returned by the query that triggered it,
 without exposing partial analysis. This deadline is separate from MCP transport
@@ -1273,7 +1353,8 @@ fails with `provider_timeout` and that message; other Ghidra tools stay
 available. If the caller also cancels while the timeout settles, the session
 still closes and the message says so. Session reuse concerns an active MCP or
 library session; a standalone CLI command still closes its own session when it
-finishes. In MCP, `ghidra.decompile_timeout_seconds` can override the launch
+finishes, so its timeout names `REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS` for a new
+invocation instead. In MCP, `ghidra.decompile_timeout_seconds` can override the launch
 value for newly accepted operations on the existing Program; explicit `null`
 removes the deadline. A transient timeout remains uncached so the same function
 can be retried after an update. See the
@@ -1349,6 +1430,20 @@ in the project root; when omitted it defaults to the selected target's filename.
 Paths, globs and command flags are not program names. The matching `.rep`
 directory must be present; restore `.grez` archives with Ghidra first.
 
+For a `.gzf` packed program, first import it into a new Ghidra project in an
+existing, caller-selected directory. A packed program is not a `.grez` project
+archive:
+
+```bash
+"$GHIDRA_INSTALL_DIR/support/analyzeHeadless" "/absolute/new-project-directory" "new-project" \
+  -import "/absolute/program.gzf" -noanalysis
+```
+
+Select the resulting `new-project.gpr` with `REA_GHIDRA_PROJECT_PATH`. If the
+imported program name differs from the selected target's filename, set
+`REA_GHIDRA_PROGRAM_NAME` to the name reported by Ghidra's import. REA then
+opens its own read-only project copy; it does not import the packed program.
+
 ```bash
 export REA_ANALYSIS_PROVIDER=ghidra
 export REA_GHIDRA_PROJECT_PATH=/absolute/projects/app-analysis.gpr
@@ -1370,17 +1465,30 @@ the original database; REA reads selected files only for fingerprinting and copy
 This mode does not copy unrelated sibling projects, rerun repair scripts, or
 admit bridge database edits. Cleanup removes the owned copy.
 The bridge checks the program's recorded import SHA-256 against the admitted
-target digest; mismatches and project changes fail explicitly. Reopen the target
-to resolve a new profile after intentionally changing the source project.
+target digest. An unavailable or malformed recorded digest is reported as an
+unverified identity, distinct from a known mismatch; neither admits the program
+or triggers a fresh import. Select a matching target or explicitly configure a
+different project or program. Changes to the source project also fail admission;
+reopen the target to resolve a new profile after intentionally changing it.
 
 The profile records the caller path, resolved project/name, program and content
 fingerprint. Original analysis settings and completeness remain **unknown**;
 prior annotations or edits are caller-project state, not fresh REA discoveries.
+For supported header-selected MIPS ELF targets, the profile also binds the
+selected target's ELF metadata; it does not claim a fresh-import MIPS lane was
+used for the saved project.
 A matching recorded import digest does not claim that the database is unedited.
 Saved REA seed/analyzer reports remain historical facts in retained source Evidence;
 they are not interpreted as overrides applied by this session.
 Project content participates in snapshot identity, so different project states
 cannot reuse the same profile's cached observations.
+
+If a function selector is missing, use `list_procedures` or `search_procedures`
+to inspect the selected project's observed inventory. A missing entry does not
+prove the function is absent from the executable. To explicitly compare with a
+fresh import, start another REA process without `REA_GHIDRA_PROJECT_PATH` and
+`REA_GHIDRA_PROGRAM_NAME`; the fresh analysis will not include the selected
+project's annotations.
 
 To prepare a new project explicitly, use your existing Ghidra installation in a
 new directory you own (this writes that project; REA does not save it for you):
@@ -1409,6 +1517,33 @@ export REA_GHIDRA_COMPILER_SPEC_ID="borlandcpp"   # optional; requires a languag
 REA passes `-processor`/`-cspec`, checks both against the installation's `.ldefs`, and records them in the analysis profile. DOS imports reject an override.
 
 Language definitions must be well-formed XML encoded as UTF-8 or BOM-marked UTF-16, with any encoding declaration matching the bytes. Literal Unicode replacement characters (U+FFFD) are accepted; malformed source bytes are rejected.
+
+Ghidra imports little-endian ARM ELF files, including Cortex-M
+(`arm-none-eabi`) firmware, as `ARM:LE:32:v8`. That language defaults to ARM
+state, and its ELF loader marks code as Thumb only where `$t` mapping symbols
+or odd function-symbol addresses say so. Cortex-M cores run only Thumb code, so
+the gap matters mainly for code without those markers, such as stripped images
+and handlers reached only through the vector table. REA has no M-profile ARM
+lane. As an unverified interim, select an M-profile language, which decodes in
+Thumb state by default. For ARMv6-M, ARMv7-M and ARMv7E-M cores:
+
+```bash
+export REA_GHIDRA_LANGUAGE_ID="ARM:LE:32:Cortex"
+```
+
+For ARMv8-M cores, use `ARM:LE:32:v8-m` instead. REA has not verified either
+language for Cortex-M analysis. While the variable is set, it applies to every
+Ghidra import in the REA server:
+
+- raw-binary, DOS, GameCube DOL and PSP opens are refused, as are opens in
+  lanes that reject a different language, such as RISC-V;
+- REA asks Ghidra to import everything else in the selected ARM language,
+  including x86, x86-64, arm64, PowerPC and Hexagon ELF files and PE and
+  Mach-O files, because it does not check that the override's processor
+  matches the target.
+
+Restart REA without the variable before you analyze other targets. A future
+M-profile lane may refuse it; remove the setting then.
 
 To seed code that auto-analysis cannot reach (computed jumps, pointers in data):
 
