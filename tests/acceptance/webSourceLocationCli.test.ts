@@ -151,6 +151,22 @@ cliTest(
         ],
       },
     });
+  },
+  // Allow cold CLI and MCP ownership preparation across the full parity sequence.
+  180_000,
+);
+
+cliTest(
+  "reports out-of-range generated lines with the retained partial observation through CLI",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-source-map-line-bounds-");
+    const fixture = webSourceLocationFixture();
+    await mkdir(join(root, "files", "modules"), { recursive: true });
+    await writeFile(join(root, "files", "modules", "main.js"), fixture.source);
+    const manifest = join(root, "manifest.json").replaceAll("\\", "/");
+    const map = join(root, "app.js.map");
+    await writeFile(manifest, JSON.stringify(fixture.manifest));
+    await writeFile(map, fixture.sourceMap.text);
     const invalid = await cli.run({
       arguments: [
         "trace-web-source-location",
@@ -191,7 +207,6 @@ cliTest(
       },
     });
   },
-  // Allow cold CLI and MCP ownership preparation across the full parity sequence.
   180_000,
 );
 
