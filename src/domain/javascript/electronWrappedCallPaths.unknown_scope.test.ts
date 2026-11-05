@@ -447,6 +447,37 @@ describe("later initializer loader input proof", () => {
   });
 });
 
+describe("later initializer loader input edge cases", () => {
+  it("keeps the unknown when a spread shifts a loader into a later parameter", () => {
+    const result = analyzeJavaScriptStaticSource(`
+      const args = [0, require];
+      function register() {
+        load(...args, "safe")("electron").ipcMain.on("ping", () => {});
+      }
+      var load = (first, second) => second;
+      register();
+    `);
+
+    expect(result.parse_error_count).toBe(0);
+    expect(result.parse_status).toBe("partial");
+    expect(result.limitations).toContainEqual(UNKNOWN_LIMITATION);
+  });
+
+  it("keeps the unknown when a late function returns new.target", () => {
+    const result = analyzeJavaScriptStaticSource(`
+      function register() {
+        Reflect.construct(load, [], require)("electron").ipcMain.on("x", () => {});
+      }
+      var load = function () { return new.target; };
+      register();
+    `);
+
+    expect(result.parse_error_count).toBe(0);
+    expect(result.parse_status).toBe("partial");
+    expect(result.limitations).toContainEqual(UNKNOWN_LIMITATION);
+  });
+});
+
 describe("later initializer mutation proof", () => {
   it("keeps the unknown when a called function changes a late function's object", () => {
     const result = analyzeJavaScriptStaticSource(`
@@ -552,6 +583,39 @@ describe("later initializer mutation proof", () => {
         load().ipcMain.on("x", () => {});
       }
       var load = () => String.load(name);
+      register();
+    `);
+
+    expect(result.parse_error_count).toBe(0);
+    expect(result.parse_status).toBe("partial");
+    expect(result.limitations).toContainEqual(UNKNOWN_LIMITATION);
+  });
+
+  it("keeps the unknown when an ambient value receives a computed loader member", () => {
+    const result = analyzeJavaScriptStaticSource(`
+      const key = "load";
+      const name = "electron";
+      String.load = require;
+      function register() {
+        load().ipcMain.on("x", () => {});
+      }
+      var load = () => String[key](name);
+      register();
+    `);
+
+    expect(result.parse_error_count).toBe(0);
+    expect(result.parse_status).toBe("partial");
+    expect(result.limitations).toContainEqual(UNKNOWN_LIMITATION);
+  });
+
+  it("keeps the unknown for an inherited loader on a function value", () => {
+    const result = analyzeJavaScriptStaticSource(`
+      const name = "electron";
+      Object.prototype.load = require;
+      function register() {
+        load().ipcMain.on("x", () => {});
+      }
+      var load = () => (() => {}).load(name);
       register();
     `);
 
@@ -665,6 +729,10 @@ describe("later initializer precision", () => {
   it.each([
     "alias = {}; alias.other = 1;",
     "alias = []; alias.other = 1;",
+    "alias = () => {}; alias.other = 1;",
+    "alias = function () {}; alias.other = 1;",
+    "alias = class {}; alias.other = 1;",
+    "alias = /value/; alias.other = 1;",
     "alias = {}; alias[key] = 1;",
     "alias = {}; const replacement = alias; replacement.other = 1;",
   ])("keeps bridge methods after replacement alias writes: %s", (writes) => {
@@ -746,6 +814,43 @@ describe("later initializer alias write bounds", () => {
     expect(result.parse_error_count).toBe(0);
     expect(result.parse_status).toBe("complete");
   }, 30_000);
+
+  it("indexes one very large alias group without exceeding the argument limit", () => {
+    const aliases = Array.from(
+      { length: 150_000 },
+      (_, index) => `const alias${index} = value;`,
+    ).join("\n");
+    const result = analyzeJavaScriptStaticSource(`
+      const value = {};
+      ${aliases}
+      value.property = 1;
+    `);
+
+    expect(result.parse_error_count).toBe(0);
+    expect(result.parse_status).toBe("complete");
+  }, 30_000);
+});
+
+it("keeps require.resolve-only Electron references outside the call-path gate", () => {
+  const result = analyzeJavaScriptStaticSource(`
+    require.resolve("electron");
+    function run() {
+      format("value");
+    }
+    var format = value => value;
+    run();
+  `);
+
+  expect(result.references).toContainEqual(
+    expect.objectContaining({
+      kind: "require",
+      operation: "resolve",
+      specifier: "electron",
+    }),
+  );
+  expect(result.parse_error_count).toBe(0);
+  expect(result.parse_status).toBe("complete");
+  expect(result.limitations).not.toContainEqual(UNKNOWN_LIMITATION);
 });
 
 describe("later initializer loader proof bounds", () => {
