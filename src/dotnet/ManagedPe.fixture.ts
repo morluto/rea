@@ -861,6 +861,32 @@ const fixtureIndexWidths = ({
   };
 };
 
+const typeDefTable = (
+  options: ManagedPeFixtureOptions,
+  indexes: FixtureMetadataRowContext["indexes"],
+  heapSizes: FixtureMetadataRowContext["heapSizes"],
+  widths: FixtureIndexWidths,
+  nestedRows: ReadonlySet<number>,
+): readonly [number, readonly Buffer[]] => [
+  2,
+  [...indexes.additionalTypeNames, indexes.typeName].map((name, index) =>
+    typeDefRow({
+      name,
+      flags: nestedRows.has(index + 1) ? 0x0010_0002 : 0x0010_0001,
+      namespace: indexes.typeNamespace,
+      fieldList: index === 0 ? 1 : 1 + (options.firstTypeFieldRowCount ?? 0),
+      methodList: index === 0 ? 1 : 1 + (options.firstTypeMethodRowCount ?? 0),
+      stringSize: heapSizes.strings,
+      typeDefOrRefSize: widths.typeDefOrRef,
+      fieldListSize: widths.table(4),
+      methodListSize: widths.table(6),
+      ...(options.extendsRaw === undefined
+        ? {}
+        : { extendsRaw: options.extendsRaw }),
+    }),
+  ),
+];
+
 const fixtureMetadataRows = ({
   options,
   methodRva,
@@ -886,27 +912,7 @@ const fixtureMetadataRows = ({
       ),
     ],
     typeRefTable(options, indexes, heapSizes, widths),
-    [
-      2,
-      [...indexes.additionalTypeNames, indexes.typeName].map((name, index) =>
-        typeDefRow({
-          name,
-          flags: nestedRows.has(index + 1) ? 0x0010_0002 : 0x0010_0001,
-          namespace: indexes.typeNamespace,
-          fieldList:
-            index === 0 ? 1 : 1 + (options.firstTypeFieldRowCount ?? 0),
-          methodList:
-            index === 0 ? 1 : 1 + (options.firstTypeMethodRowCount ?? 0),
-          stringSize: heapSizes.strings,
-          typeDefOrRefSize: widths.typeDefOrRef,
-          fieldListSize: widths.table(4),
-          methodListSize: widths.table(6),
-          ...(options.extendsRaw === undefined
-            ? {}
-            : { extendsRaw: options.extendsRaw }),
-        }),
-      ),
-    ],
+    typeDefTable(options, indexes, heapSizes, widths, nestedRows),
     [
       4,
       Array.from({ length: options.fieldRowCount ?? 1 }, (_, index) =>
