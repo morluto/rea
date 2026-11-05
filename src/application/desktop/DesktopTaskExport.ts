@@ -26,6 +26,7 @@ import {
   type HostIdentity,
 } from "../../domain/desktop/hostIdentity.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
+import type { JsonValue } from "../../domain/jsonValue.js";
 import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
 import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
 import { EvidenceFileError } from "../../domain/evidenceErrors.js";
@@ -112,23 +113,45 @@ const readTaskFile = async (
   throw primary ?? typed(loaded.error);
 };
 
+/** The task's views of every file at its seed, as the bundle ships it, and at its end. */
+interface TaskViews {
+  readonly seed: ReadonlyMap<string, TaskFileView>;
+  readonly end: ReadonlyMap<string, TaskFileView>;
+}
+
+/** Every string in a value, member names included. */
+const valueStrings = (value: JsonValue | undefined): string[] => {
+  if (typeof value === "string") return [value];
+  if (Array.isArray(value)) return value.flatMap(valueStrings);
+  if (typeof value !== "object" || value === null) return [];
+  return Object.entries(value).flatMap(([name, member]) => [
+    name,
+    ...valueStrings(member),
+  ]);
+};
+
 /** Why a check cannot be validated against this app, or undefined. */
 const targetProblem = (
   check: DesktopTaskCheck,
   target: TaskTarget,
+  views: TaskViews,
 ): string | undefined => {
   if (!isWithinAny(check.file, target.paths))
     return `names ${check.file}, which is not under the app's owned paths (${target.paths.join(", ") || "none"}); data/get serves only those`;
-  const text = JSON.stringify(check);
-  if (text.includes(target.capturedHome))
-    return `names the captured home ${target.capturedHome}, which the computer's home replaces`;
-  const named = identityLeftIn(text, target.identity);
-  if (named !== undefined)
-    return `names ${named}, the capture host's name or user, which the export removes from the seed`;
+  // What the check compares and names; its field names, kind and id label it.
+  const { id: _id, kind: _kind, ...fields } = check;
+  for (const value of Object.values(fields).flatMap(valueStrings)) {
+    if (value.includes(target.capturedHome))
+      return `names the captured home ${target.capturedHome}, which the computer's home replaces`;
+    const named = identityLeftIn(value, target.identity);
+    if (named !== undefined)
+      return `names ${named}, the capture host's name or user, which the export removes from the seed`;
+  }
   if (check.kind !== "value_equals" && check.kind !== "value_absent")
     return undefined;
-  const versions = target.files.get(check.file)?.versions ?? [];
-  return versions.some((version) => version.format === "text")
+  return [views.seed, views.end].some(
+    (at) => at.get(check.file)?.format === "text",
+  )
     ? `points into ${check.file}, which is text; use lines_present, lines_absent or line_count`
     : undefined;
 };
@@ -206,8 +229,12 @@ export const admitDesktopTask = async (
       REWRITE,
     );
   const task = parsed.value;
+  const views: TaskViews = {
+    seed: viewsAt(target, "seed"),
+    end: viewsAt(target, "end"),
+  };
   for (const check of task.checks) {
-    const problem = targetProblem(check, target);
+    const problem = targetProblem(check, target, views);
     if (problem !== undefined)
       throw refuse(
         `Check ${JSON.stringify(check.id)} ${problem}.`,
@@ -215,7 +242,7 @@ export const admitDesktopTask = async (
         REWRITE,
       );
   }
-  const end = evaluateTaskChecks(task.checks, viewsAt(target, "end"));
+  const end = evaluateTaskChecks(task.checks, views.end);
   const failing = end.find((outcome) => !outcome.passed);
   if (failing !== undefined)
     throw refuse(
@@ -223,7 +250,7 @@ export const admitDesktopTask = async (
       "task",
       "Write checks that the captured end state passes; describe-desktop-application-task shows its views.",
     );
-  const failingOnSeed = evaluateTaskChecks(task.checks, viewsAt(target, "seed"))
+  const failingOnSeed = evaluateTaskChecks(task.checks, views.seed)
     .filter((outcome) => !outcome.passed)
     .map((outcome) => outcome.id);
   if (failingOnSeed.length === 0)

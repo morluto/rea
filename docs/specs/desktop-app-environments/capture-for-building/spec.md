@@ -41,8 +41,12 @@ and the bundle holds neither the capture host's name nor its user's.
   is still replaced. The user name alone is never replaced. JSON is scrubbed
   by its string values, decoded, never its member names, and XML by its
   decoded character data and attribute values, plus comments and CDATA, so
-  neither's syntax or names change and escapes hide nothing. A rewritten seed
-  is a generated file with its own SHA-256. The class's `SEED_HOME` is `/home/user`, which it respells
+  neither's syntax or names change and escapes hide nothing; a UTF-16 seed is
+  scrubbed by the format its text would have in UTF-8. dconf keys are
+  scrubbed by their decoded GVariant strings, never group names, keys,
+  dictionary keys or other values, and a value that does not parse or holds
+  an object path or signature ships as captured. A rewritten seed is a
+  generated file with its own SHA-256. The class's `SEED_HOME` is `/home/user`, which it respells
   to the computer's home at boot as before. A capture whose home is already
   `/home/user`, as inside a computer, has no home to replace. A capture
   without the host's name and user has only its home replaced, with a
@@ -53,8 +57,11 @@ and the bundle holds neither the capture host's name nor its user's.
   aside. `scrubbed_files` lists the rewritten seeds and `unscrubbed_files`
   every file found, by bundle path; the README lists both.
 - Tasks: checks whose values name `user@host` or the host name by that rule
-  are refused, like those that name the captured home, and the checks that
-  must fail on the seed are evaluated on the seed as the bundle ships it.
+  are refused, like those that name the captured home, but not for their
+  field names, kind or id; and the checks that must fail on the seed are
+  evaluated on the seed as the bundle ships it. A value check is refused as
+  pointing into text only when its file is text at the seed or the end
+  checkpoint, so versions before or after them do not count.
 
 ## Non-goals
 

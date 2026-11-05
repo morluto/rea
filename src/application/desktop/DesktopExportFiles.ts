@@ -24,6 +24,8 @@ import type { RetainedContent } from "./DesktopRetainedContent.js";
 export interface GeneratedFile {
   readonly path: string;
   readonly bytes: Buffer;
+  /** Whether what it was made from holds the identity in a spelling its bytes do not show, such as a decoded escape. */
+  readonly holdsIdentity?: boolean;
 }
 
 /** A seed file's retained digest and the format the state view read it as. */
@@ -102,7 +104,7 @@ export const shippedSeedViews = async (
     const seed = copy.seed;
     if (seed === undefined || !isTextualFormat(seed.format)) continue;
     const bytes = await retainedBytes(content, copy, signal);
-    const shipped = scrubSeed(bytes, seed.format, identity).bytes;
+    const shipped = scrubSeed(bytes, seed, identity).bytes;
     if (shipped === undefined) continue;
     const format = detectStateFormat(seed.home, shipped);
     const view = isTextualFormat(format)
@@ -156,8 +158,9 @@ export const writeFiles = async (
   const generated = (file: GeneratedFile) =>
     write(file.path, file.bytes, {
       holdsIdentity:
+        file.holdsIdentity === true ||
         identityLeftIn(file.bytes.toString("utf8"), bundle.identity) !==
-        undefined,
+          undefined,
     });
   for (const file of bundle.generated) await generated(file);
   for (const copy of bundle.copies) {
@@ -165,7 +168,7 @@ export const writeFiles = async (
     const scrub =
       copy.seed === undefined
         ? undefined
-        : scrubSeed(bytes, copy.seed.format, bundle.identity);
+        : scrubSeed(bytes, copy.seed, bundle.identity);
     const holdsIdentity = scrub?.holdsIdentity === true;
     if (scrub?.bytes === undefined)
       await write(copy.path, bytes, { sha256: copy.digest, holdsIdentity });

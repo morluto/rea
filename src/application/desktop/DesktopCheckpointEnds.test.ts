@@ -4,12 +4,16 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
+import type { DesktopApplicationCapture } from "../../domain/desktop/desktopCapture.js";
 import { exportDesktopApplication } from "./DesktopApplicationExport.js";
 import { draftDesktopApplicationTask } from "./DesktopTaskDraft.js";
 import {
   EDITED_NOTE,
+  HOME,
   SAVED_NOTE,
+  change,
   readers,
+  retained,
   seedEndCapture,
   writeCaptureFolder,
 } from "./desktopCapture.fixture.js";
@@ -18,6 +22,48 @@ const NOTE = "Documents/today.txt";
 
 const folder = () =>
   writeCaptureFolder(seedEndCapture(), undefined, [EDITED_NOTE]);
+
+const STATE = `${HOME}/.config/notes/state.json`;
+const UNSET = '{"eggs": false}';
+const SET = '{"eggs": true}';
+/** The state file's versions after the baseline, where it is empty, which reads as text. */
+const STATE_VERSIONS: Readonly<
+  Record<string, { readonly before: string; readonly after: string }>
+> = {
+  seed: { before: "", after: UNSET },
+  end: { before: UNSET, after: SET },
+  exit: { before: SET, after: "" },
+};
+
+/** The capture with a JSON state file that is empty before `seed` and again after `end`. */
+const emptiedStateFolder = () => {
+  const base = seedEndCapture();
+  const emptied: DesktopApplicationCapture = {
+    ...base,
+    state: {
+      ...base.state,
+      checkpoints: base.state.checkpoints.map((point) => {
+        if (point.name === "baseline")
+          return {
+            ...point,
+            retained: [...point.retained, retained(STATE, "")],
+          };
+        const version = STATE_VERSIONS[point.name];
+        return version === undefined
+          ? point
+          : {
+              ...point,
+              changes: [
+                ...point.changes,
+                change(STATE, version, { state: true }),
+              ],
+              retained: [...point.retained, retained(STATE, version.after)],
+            };
+      }),
+    },
+  };
+  return writeCaptureFolder(emptied, undefined, [EDITED_NOTE, "", UNSET, SET]);
+};
 
 const eggs = { id: "eggs", kind: "lines_present", file: NOTE, lines: ["eggs"] };
 const wrapped = {
@@ -32,6 +78,7 @@ const wrapped = {
 const exportBetween = async (
   ends: { seedCheckpoint?: string; endCheckpoint?: string },
   checks: readonly unknown[] = [],
+  captured = folder,
 ) => {
   const scratch = await createTestTempDirectory("desktop-ends-");
   const task = join(scratch, "task.json");
@@ -46,7 +93,7 @@ const exportBetween = async (
   const directory = join(scratch, "bundle");
   const result = await exportDesktopApplication(
     {
-      capture: await folder(),
+      capture: await captured(),
       directory,
       name: undefined,
       tasks: checks.length === 0 ? [] : [task],
@@ -112,6 +159,36 @@ describe("exportDesktopApplication between named checkpoints", () => {
       checkpoints: { seed: "seed", end: "exit" },
       task: { failing_on_seed: ["eggs", "wrap"] },
     });
+  });
+
+  it("reads a value check's format at the seed and end only, so a version read as text before or after them does not refuse it", async () => {
+    const eggsSet = {
+      id: "eggs",
+      kind: "value_equals",
+      file: ".config/notes/state.json",
+      pointer: "/eggs",
+      value: true,
+    };
+
+    const between = await exportBetween(
+      { seedCheckpoint: "seed", endCheckpoint: "end" },
+      [eggsSet],
+      emptiedStateFolder,
+    );
+    const fromBaseline = await exportBetween(
+      { endCheckpoint: "end" },
+      [eggsSet],
+      emptiedStateFolder,
+    );
+
+    if (between.result instanceof Error) throw between.result;
+    expect(between.result.normalized_result).toMatchObject({
+      checkpoints: { seed: "seed", end: "end" },
+      task: { failing_on_seed: ["eggs"] },
+    });
+    expect(
+      (fromBaseline.result as { userMessage: string }).userMessage,
+    ).toContain("points into .config/notes/state.json, which is text");
   });
 
   it.each([

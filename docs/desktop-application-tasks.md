@@ -132,8 +132,9 @@ The rules both evaluators follow:
   is decided on it.
 
 The export refuses, naming the check, a file outside the owned paths, a file
-spelled with a leading slash, `.` or `..`, a pointer into a text file, the
-empty pointer (the whole file), a value that names the captured home, or the
+spelled with a leading slash, `.` or `..`, a pointer into a file that is text
+at the seed, as the bundle ships it, or at the end checkpoint, the empty
+pointer (the whole file), a value that names the captured home, or the
 capture host's name or `user@host` anywhere (which the
 [export removes from the seed](desktop-application-export.md#host-name-and-user)), a
 `tolerance` with a value that is not a number, and a value that looks like an

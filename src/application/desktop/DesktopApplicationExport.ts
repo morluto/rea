@@ -37,10 +37,8 @@ import {
   type DesktopApplicationState,
 } from "../../domain/desktop/desktopState.js";
 import { isWithinAny } from "../../domain/desktop/desktopStateDiff.js";
-import {
-  scrubHostIdentity,
-  type HostIdentity,
-} from "../../domain/desktop/hostIdentity.js";
+import type { HostIdentity } from "../../domain/desktop/hostIdentity.js";
+import { scrubDconf } from "../../domain/desktop/seedScrub.js";
 import { isTextualFormat } from "../../domain/desktop/stateFormats.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
@@ -111,11 +109,12 @@ const isRecord = (
 ): value is Record<string, JsonValue> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
-/** The application's dconf groups at the seed, as a dconf key file. */
+/** The application's dconf groups at the seed, as a dconf key file with the identity scrubbed from its strings. */
 const seedDconf = (
   state: DesktopApplicationState,
   seed: number,
-): { text: string; groups: number } => {
+  identity: HostIdentity,
+): { text: string; groups: number; holdsIdentity: boolean } => {
   const database = state.paths.find(
     (path) => path.format === "dconf" && path.role === "application_state",
   );
@@ -123,16 +122,9 @@ const seedDconf = (
     database === undefined ? undefined : versionAt(database, seed);
   const view = version?.view;
   if (version?.present !== true || !isRecord(view) || !isRecord(view.groups))
-    return { text: "", groups: 0 };
-  const lines: string[] = [];
-  for (const [group, keys] of Object.entries(view.groups)) {
-    if (!isRecord(keys)) continue;
-    lines.push(`[${group}]`);
-    for (const [key, value] of Object.entries(keys))
-      if (typeof value === "string") lines.push(`${key}=${value}`);
-    lines.push("");
-  }
-  return { text: lines.join("\n"), groups: Object.keys(view.groups).length };
+    return { text: "", groups: 0, holdsIdentity: false };
+  const groups = Object.keys(view.groups).length;
+  return { ...scrubDconf(view.groups, identity), groups };
 };
 
 type StatePath = DesktopApplicationState["paths"][number];
@@ -183,6 +175,7 @@ const planExport = (
   readonly limitations: readonly string[];
   readonly collisions: readonly HomePathCollision[];
   readonly files: ReadonlyMap<string, StatePath>;
+  readonly dconf: { readonly groups: number; readonly holdsIdentity: boolean };
 } => {
   const { application, host } = capture;
   const source = exportEnvironmentName(capture, request.name);
@@ -195,6 +188,11 @@ const planExport = (
   const { homePath, files, collisions, paths } = exportedStateFiles(
     capture,
     state,
+  );
+  const { text: dconf, ...dconfScrub } = seedDconf(
+    state,
+    context.seed,
+    context.identity,
   );
   const seeds = new Map<string, SeedVersion>();
   const textSeeds: string[] = [];
@@ -235,10 +233,7 @@ const planExport = (
       paths,
       seed: context.seed,
     }),
-    dconf: scrubHostIdentity(
-      seedDconf(state, context.seed).text,
-      context.identity,
-    ),
+    dconf,
     captureEvidenceId: context.evidenceId,
   };
   const limitations = installLimitations(
@@ -246,7 +241,7 @@ const planExport = (
     application.package,
     electron,
   );
-  return { plan, seeds, limitations, collisions, files };
+  return { plan, seeds, limitations, collisions, files, dconf: dconfScrub };
 };
 
 const EXPORT_LIMITATIONS = [
@@ -306,22 +301,28 @@ const writeBundle = async (
   return undefined;
 };
 
-/** The bundle's generated files, and its README, made once the seeds' scrub is known. */
+/** The bundle's generated files, the class module flagged when its dconf keys hold the identity, and its README, made once the seeds' scrub is known. */
 const bundleText = (
   plan: DesktopAppExportPlan,
   admitted: AdmittedTask | undefined,
+  dconfHoldsIdentity: boolean,
 ) => {
   const environment = `envs/${plan.name}`;
-  const text = (path: string, content: string) => ({
+  const text = (path: string, content: string, holdsIdentity = false) => ({
     path,
     bytes: Buffer.from(content),
+    holdsIdentity,
   });
   return {
     readme: (scrub: SeedScrubReport) =>
       text("README.md", renderReadme(plan, admitted?.readme, scrub)),
     generated: [
       text(`${environment}/env.toml`, renderEnvToml(plan)),
-      text(`${environment}/${appModuleFile(plan.name)}`, renderAppClass(plan)),
+      text(
+        `${environment}/${appModuleFile(plan.name)}`,
+        renderAppClass(plan),
+        dconfHoldsIdentity,
+      ),
       text(`${environment}/SKILL.md`, renderSkill(plan)),
       ...(plan.packageFile === null
         ? []
@@ -398,7 +399,7 @@ const runExport = async (
   );
   const { home, hostname, user } = capture.host;
   const identity = { home, hostname: hostname ?? null, user: user ?? null };
-  const { plan, seeds, collisions, files, ...install } = planExport(
+  const { plan, seeds, collisions, files, dconf, ...install } = planExport(
     request,
     capture,
     state,
@@ -419,7 +420,7 @@ const runExport = async (
     { ...plan, files, identity, ends, seedViews },
     signal,
   );
-  const { generated, readme } = bundleText(plan, admitted);
+  const { generated, readme } = bundleText(plan, admitted, dconf.holdsIdentity);
   let scrub: SeedScrubReport = { scrubbed: [], unscrubbed: [] };
   const unclosed = await withRetainedContent(
     request.capture,
@@ -452,7 +453,7 @@ const runExport = async (
     unseeded_files: plan.unseededFiles,
     scrubbed_files: [...scrub.scrubbed].sort(),
     unscrubbed_files: [...scrub.unscrubbed].sort(),
-    dconf_groups: seedDconf(state, ends.seed).groups,
+    dconf_groups: dconf.groups,
     files: [
       "README.md",
       ...generated.map((file) => file.path),

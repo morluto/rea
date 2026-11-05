@@ -1,10 +1,11 @@
+import type { JsonValue } from "../jsonValue.js";
 import {
   identityLeftIn,
   identitySpellings,
   scrubHostIdentity,
   type HostIdentity,
 } from "./hostIdentity.js";
-import { isTextualFormat } from "./stateFormats.js";
+import { detectStateFormat, isTextualFormat } from "./stateFormats.js";
 
 /** What the export ships for one seed. */
 export interface SeedScrub {
@@ -26,18 +27,19 @@ interface TextScrub {
 /** Whitespace JSON allows between tokens. */
 const JSON_SPACE = new Set([" ", "\t", "\n", "\r"]);
 
-/** Where the string literal opening at `start` ends, just past its closing quote: the first quote no odd run of backslashes escapes. */
-const jsonStringEnd = (text: string, start: number): number => {
-  for (let quote = text.indexOf('"', start + 1); quote !== -1;) {
+/** Where the string literal opening at `start` ends, just past its closing quote: the first of its quotes no odd run of backslashes escapes, or -1. */
+const stringEnd = (text: string, start: number): number => {
+  const mark = text[start] ?? "";
+  for (let quote = text.indexOf(mark, start + 1); quote !== -1;) {
     let slashes = 0;
     while (text[quote - 1 - slashes] === "\\") slashes += 1;
     if (slashes % 2 === 0) return quote + 1;
-    quote = text.indexOf('"', quote + 1);
+    quote = text.indexOf(mark, quote + 1);
   }
-  return text.length;
+  return -1;
 };
 
-/** Whether the token after a string literal is a colon, which makes it a member name. */
+/** Whether the token after a string literal is a colon, which makes it a member name or dictionary key. */
 const isMemberName = (text: string, end: number): boolean => {
   let next = end;
   while (JSON_SPACE.has(text[next] ?? "")) next += 1;
@@ -57,7 +59,8 @@ const scrubJson = (text: string, identity: HostIdentity): TextScrub => {
   const strings: string[] = [];
   let copied = 0;
   for (let start = text.indexOf('"'); start !== -1;) {
-    const end = jsonStringEnd(text, start);
+    const end = stringEnd(text, start);
+    if (end === -1) break;
     const value = JSON.parse(text.slice(start, end)) as string;
     const clean = isMemberName(text, end)
       ? value
@@ -150,7 +153,142 @@ const scrubXml = (text: string, identity: HostIdentity): TextScrub => {
   return { text: scrubbed, decoded: decodeXml(scrubbed) };
 };
 
-/** Text, key files and UTF-16 seeds, which hold the identity as written. */
+/** GVariant escapes that stand for one character, as `g_variant_parse` reads them; a backslash before a line break joins lines. */
+const GVARIANT_ESCAPES: Readonly<Record<string, string>> = {
+  a: "\u0007",
+  b: "\b",
+  f: "\f",
+  n: "\n",
+  r: "\r",
+  t: "\t",
+  v: "\v",
+  "\n": "",
+};
+const GVARIANT_ESCAPE = /\\(?:u([0-9a-fA-F]{4})|U([0-9a-fA-F]{8})|([\s\S]))/gu;
+/** What, outside quotes, types a GVariant literal as an object path or signature rather than a string. */
+const GVARIANT_PATH_OR_SIGNATURE =
+  /\b(?:objectpath|signature)\b|@[a-z(){}]*[og]/u;
+
+/** Whether a code point is one a GVariant string can hold: not NUL, a surrogate or past Unicode. */
+const isCharacter = (point: number): boolean =>
+  point > 0 && point <= 0x10ffff && (point < 0xd800 || point >= 0xe000);
+
+/** A GVariant string literal's body decoded, or undefined where `g_variant_parse` refuses it. */
+const decodeGVariant = (body: string): string | undefined => {
+  let refused = body.includes("\0");
+  const value = body.replace(
+    GVARIANT_ESCAPE,
+    (_escape, short?: string, long?: string, other?: string) => {
+      if (other !== undefined) {
+        refused ||= other === "u" || other === "U";
+        return GVARIANT_ESCAPES[other] ?? other;
+      }
+      const point = Number.parseInt(short ?? long ?? "0", 16);
+      if (isCharacter(point)) return String.fromCodePoint(point);
+      refused = true;
+      return "";
+    },
+  );
+  return refused ? undefined : value;
+};
+
+/** A GVariant string literal in the given quote, escaping what would end it or break its key file line. */
+const encodeGVariant = (value: string, quote: string): string =>
+  `${quote}${value.replace(/[\\'"\p{Cc}]/gu, (character) => {
+    if (character === "\\" || character === quote) return `\\${character}`;
+    if (character === "'" || character === '"') return character;
+    return `\\u${(character.codePointAt(0) ?? 0).toString(16).padStart(4, "0")}`;
+  })}${quote}`;
+
+/** Whether the literal opening at `start` is a bytestring, its `b` starting a token. */
+const isBytestring = (text: string, start: number): boolean =>
+  text[start - 1] === "b" && !/[A-Za-z0-9]/u.test(text[start - 2] ?? "");
+
+/**
+ * A dconf value, GVariant text as `dconf dump` prints it, with each string
+ * scrubbed as its decoded value and rewritten only when that changed, as JSON
+ * strings are: dictionary keys, bytestrings and everything outside quotes
+ * keep their spelling. Undefined, so the value ships as captured, when a
+ * literal does not parse or the value holds an object path or signature,
+ * whose quoted literals are not strings.
+ */
+const scrubGVariant = (
+  text: string,
+  identity: HostIdentity,
+): TextScrub | undefined => {
+  const parts: string[] = [];
+  const strings: string[] = [];
+  const quotes = /['"]/gu;
+  let outside = "";
+  let last = 0;
+  let copied = 0;
+  for (
+    let match = quotes.exec(text);
+    match !== null;
+    match = quotes.exec(text)
+  ) {
+    const start = match.index;
+    const end = stringEnd(text, start);
+    if (end === -1) return undefined;
+    outside += ` ${text.slice(last, start)}`;
+    last = end;
+    quotes.lastIndex = end;
+    if (isBytestring(text, start)) continue;
+    const value = decodeGVariant(text.slice(start + 1, end - 1));
+    if (value === undefined) return undefined;
+    const clean = isMemberName(text, end)
+      ? value
+      : scrubHostIdentity(value, identity);
+    strings.push(clean);
+    if (clean !== value) {
+      parts.push(text.slice(copied, start), encodeGVariant(clean, match[0]));
+      copied = end;
+    }
+  }
+  if (GVARIANT_PATH_OR_SIGNATURE.test(`${outside} ${text.slice(last)}`))
+    return undefined;
+  parts.push(text.slice(copied));
+  const scrubbed = parts.join("");
+  return { text: scrubbed, decoded: [scrubbed, ...strings].join("\n") };
+};
+
+const isRecord = (
+  value: JsonValue | undefined,
+): value is Record<string, JsonValue> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+/**
+ * A dconf view's groups as the key file the computer compiles, each value's
+ * strings scrubbed, and whether it still holds the identity, strings decoded.
+ * Group names and keys are kept, so no two can collide; a value that does
+ * not parse ships as captured.
+ */
+export const scrubDconf = (
+  groups: Readonly<Record<string, JsonValue>>,
+  identity: HostIdentity,
+): { readonly text: string; readonly holdsIdentity: boolean } => {
+  const lines: string[] = [];
+  const decoded: string[] = [];
+  for (const [group, keys] of Object.entries(groups)) {
+    if (!isRecord(keys)) continue;
+    lines.push(`[${group}]`);
+    for (const [key, value] of Object.entries(keys)) {
+      if (typeof value !== "string") continue;
+      const scrub = scrubGVariant(value, identity);
+      lines.push(`${key}=${scrub?.text ?? value}`);
+      if (scrub !== undefined) decoded.push(scrub.decoded);
+    }
+    lines.push("");
+  }
+  const text = lines.join("\n");
+  return {
+    text,
+    holdsIdentity:
+      identityLeftIn([text, ...decoded].join("\n"), identity) !== undefined,
+  };
+};
+
+/** Text and key files, which hold the identity as written. */
 const plainScrub = (text: string, identity: HostIdentity): TextScrub => {
   const scrubbed = scrubHostIdentity(text, identity);
   return { text: scrubbed, decoded: scrubbed };
@@ -179,10 +317,25 @@ const utf16Text = (bytes: Buffer) => {
   }
 };
 
-/** The seed's text and how to encode it again: UTF-8 for a text format, or UTF-16 after a byte-order mark. */
-const seedText = (bytes: Buffer, format: string | null) => {
+/** A seed by its home path and the format the state view read it as. */
+interface Seed {
+  readonly home: string;
+  readonly format: string | null;
+}
+
+/**
+ * The seed's text, the format it is scrubbed as, and how to encode it again:
+ * UTF-8 for a text format, or UTF-16 after a byte-order mark, whose format is
+ * the one its text would have in UTF-8.
+ */
+const seedText = (bytes: Buffer, { home, format }: Seed) => {
   if (bytes.length > MAX_SCRUBBED_BYTES) return undefined;
-  if (!isTextualFormat(format)) return utf16Text(bytes);
+  if (!isTextualFormat(format)) {
+    const utf16 = utf16Text(bytes);
+    return utf16 === undefined
+      ? undefined
+      : { ...utf16, format: detectStateFormat(home, Buffer.from(utf16.text)) };
+  }
   try {
     return {
       // The byte-order mark is kept, as Python's utf-8 codec keeps it.
@@ -190,6 +343,7 @@ const seedText = (bytes: Buffer, format: string | null) => {
         bytes,
       ),
       encode: (scrubbed: string) => Buffer.from(scrubbed, "utf8"),
+      format,
     };
   } catch {
     return undefined;
@@ -215,23 +369,24 @@ const holdsIdentity = (bytes: Buffer, identity: HostIdentity): boolean => {
 
 /**
  * Rewrite a seed as the computer reads it at boot: a text format as UTF-8,
- * JSON by its strings and XML by its character data and attribute values so
- * neither's syntax changes, and another file as UTF-16 when it starts with a
- * byte-order mark. Other bytes ship as captured. Either way what ships is
+ * and another file as UTF-16 when it starts with a byte-order mark, keeping
+ * the mark and byte order. JSON is scrubbed by its strings and XML by its
+ * character data and attribute values, in either encoding, so neither's
+ * syntax changes. Other bytes ship as captured. Either way what ships is
  * searched, its escapes decoded, for what is left.
  */
 export const scrubSeed = (
   bytes: Buffer,
-  format: string | null,
+  seed: Seed,
   identity: HostIdentity,
 ): SeedScrub => {
-  const decoded = seedText(bytes, format);
+  const decoded = seedText(bytes, seed);
   if (decoded === undefined)
     return { bytes: undefined, holdsIdentity: holdsIdentity(bytes, identity) };
   const scrub =
-    format === "json"
+    decoded.format === "json"
       ? scrubJson(decoded.text, identity)
-      : format === "xml"
+      : decoded.format === "xml"
         ? scrubXml(decoded.text, identity)
         : plainScrub(decoded.text, identity);
   return {

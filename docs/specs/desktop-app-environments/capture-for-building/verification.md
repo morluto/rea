@@ -144,6 +144,26 @@ files; the desktop tests ran 483 passed and 20 skipped on macOS, and 500
 passed and 3 skipped in the container, where the Mousepad run above gave the
 same result, its rewritten seed now listed by bundle path.
 
+A third review found four more. Each new test failed on the reviewed head and
+passes now; `src/domain/desktop`, `src/application/desktop` and
+`tests/boundary/providers/desktop` ran 404 passed and 11 skipped on macOS.
+
+- dconf keys were scrubbed as one text, so on a host named `true` the setting
+  `wrap=true` became `wrap=localhost`, which `dconf compile` refuses, and
+  keys and group names could be renamed. Only decoded GVariant strings change
+  now; a value that does not parse ships as captured and the class module is
+  listed in `unscrubbed_files`.
+- A task's check was searched as serialized JSON, so on a host named `file`
+  or `kind` every check was refused for its field names. Only its values are
+  searched now, not its field names, kind or id.
+- A value check was refused when its file was text at any recorded version;
+  an empty `.json` before `seed` or after `end` refused a task whose file is
+  JSON at both. Only the seed, as shipped, and the end are read now.
+- UTF-16 JSON and XML were scrubbed as plain text, so on a host named
+  `ubuntu` `{"ubuntu": 1, "localhost": 2}` got two `localhost` keys. They are
+  scrubbed by the format their text would have in UTF-8, in their own byte
+  order.
+
 ## Limits of this verification
 
 - The bundle was not run in an agentenv computer, and REA was not run inside

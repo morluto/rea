@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { SEED_HOME, type HostIdentity } from "./hostIdentity.js";
-import { scrubSeed } from "./seedScrub.js";
+import { scrubDconf, scrubSeed } from "./seedScrub.js";
 import { detectStateFormat } from "./stateFormats.js";
 
 const GEANY: HostIdentity = {
@@ -16,8 +16,11 @@ const utf16 = (text: string, order: "le" | "be") => {
   return order === "be" ? bytes.swap16() : bytes;
 };
 
+/** A seed at a home path that says nothing of its format. */
+const seed = (format: string) => ({ home: "seed", format });
+
 const scrubbed = (text: string, format: string, identity = GEANY) => {
-  const outcome = scrubSeed(Buffer.from(text), format, identity);
+  const outcome = scrubSeed(Buffer.from(text), seed(format), identity);
   return {
     text: outcome.bytes?.toString("utf8"),
     holdsIdentity: outcome.holdsIdentity,
@@ -41,7 +44,7 @@ describe("scrubSeed on text", () => {
     (order) => {
       const outcome = scrubSeed(
         utf16("20260216;/home/ada/.varicad;ada@e81232be457d\n", order),
-        "binary",
+        seed("binary"),
         GEANY,
       );
 
@@ -110,7 +113,7 @@ describe("scrubSeed on JSON and XML", () => {
     const note = "x".repeat(16_000_000);
     const text = `{"note": "${note}", "mail": "ada@e81232be457d"}`;
 
-    const outcome = scrubSeed(Buffer.from(text), "json", GEANY);
+    const outcome = scrubSeed(Buffer.from(text), seed("json"), GEANY);
 
     expect(outcome.holdsIdentity).toBe(false);
     expect(outcome.bytes?.length).toBe(text.length - 2);
@@ -151,6 +154,44 @@ describe("scrubSeed on JSON and XML", () => {
     expect(items.text).toBe('<item kind="localhost">localhost</item>');
   });
 
+  it.each(["le", "be"] as const)(
+    "scrubs UTF-16 %s JSON and XML by value, as their UTF-8 forms are, in their own byte order",
+    (order) => {
+      const named = { ...GEANY, hostname: "ubuntu" };
+      const json = '{"ubuntu": 1, "localhost": 2, "dock": "ubuntu"}';
+      const xml = `<?xml version="1.0" encoding="UTF-16"?>\n<ubuntu a="ubuntu">ubuntu</ubuntu>`;
+
+      const outcomes = [
+        { text: json, home: ".config/dock.json" },
+        { text: xml, home: ".config/dock.xml" },
+      ].map(({ text, home }) =>
+        scrubSeed(utf16(text, order), { home, format: "binary" }, named),
+      );
+
+      expect(
+        outcomes.map(({ bytes, holdsIdentity }) => [
+          bytes?.toString("hex"),
+          holdsIdentity,
+        ]),
+      ).toEqual([
+        [
+          utf16(
+            '{"ubuntu": 1, "localhost": 2, "dock": "localhost"}',
+            order,
+          ).toString("hex"),
+          true,
+        ],
+        [
+          utf16(
+            `<?xml version="1.0" encoding="UTF-16"?>\n<ubuntu a="localhost">localhost</ubuntu>`,
+            order,
+          ).toString("hex"),
+          true,
+        ],
+      ]);
+    },
+  );
+
   it("finds an identity XML references hide inside a domain, which it does not rewrite", () => {
     expect(scrubbed("<m>http://&#x65;81232be457d.local/</m>", "xml")).toEqual({
       text: undefined,
@@ -177,10 +218,14 @@ describe("scrubSeed on bytes it does not rewrite", () => {
       Buffer.from("e81232be457d"),
     ]);
     const outcomes = [
-      scrubSeed(database, "sqlite", GEANY),
-      scrubSeed(Buffer.from("url=http://e81232be457d.local/\n"), "text", GEANY),
-      scrubSeed(Buffer.from("SQLite format 3\0ada"), "sqlite", GEANY),
-      scrubSeed(Buffer.from([0xff, 0xfe, 0x41]), "binary", GEANY),
+      scrubSeed(database, seed("sqlite"), GEANY),
+      scrubSeed(
+        Buffer.from("url=http://e81232be457d.local/\n"),
+        seed("text"),
+        GEANY,
+      ),
+      scrubSeed(Buffer.from("SQLite format 3\0ada"), seed("sqlite"), GEANY),
+      scrubSeed(Buffer.from([0xff, 0xfe, 0x41]), seed("binary"), GEANY),
     ];
 
     expect(
@@ -199,12 +244,90 @@ describe("scrubSeed on bytes it does not rewrite", () => {
     expect(
       scrubSeed(
         Buffer.from(`SQLite format 3\0${SEED_HOME}/x`),
-        "sqlite",
+        seed("sqlite"),
         inside,
       ),
     ).toEqual({ bytes: undefined, holdsIdentity: false });
     expect(
       scrubbed(`${SEED_HOME}/x user@4f0c1d2e3a4b`, "text", inside),
     ).toEqual({ text: `${SEED_HOME}/x user@localhost`, holdsIdentity: false });
+  });
+});
+
+describe("scrubDconf", () => {
+  const named = { ...GEANY, hostname: "true" };
+
+  it("rewrites GVariant strings by their decoded values, keeping groups, keys, dictionary keys, literals and bytestrings", () => {
+    const outcome = scrubDconf(
+      {
+        "org/true": {
+          true: "true",
+          mail: String.raw`'ada@\u0074rue'`,
+          quoted: `"it's true"`,
+          list: "['true', \"a 'true'\", 'x']",
+          hosts: "{'true': <'true'>}",
+          blob: "b'true'",
+          count: "uint32 7",
+        },
+      },
+      named,
+    );
+
+    expect(outcome.text).toBe(
+      [
+        "[org/true]",
+        "true=true",
+        "mail='user@localhost'",
+        `quoted="it's localhost"`,
+        "list=['localhost', \"a 'localhost'\", 'x']",
+        "hosts={'true': <'localhost'>}",
+        "blob=b'true'",
+        "count=uint32 7",
+        "",
+      ].join("\n"),
+    );
+    expect(outcome.holdsIdentity).toBe(true);
+  });
+
+  it("escapes what a rewritten string holds that would end it or its line", () => {
+    const outcome = scrubDconf(
+      { "org/notes": { note: String.raw`'true\nit\'s \\ true'` } },
+      named,
+    );
+
+    expect(outcome.text).toBe(
+      String.raw`[org/notes]
+note='localhost\u000ait\'s \\ localhost'
+`,
+    );
+  });
+
+  it.each([
+    ["an unterminated string", "'ada@e81232be457d"],
+    ["an escape naming no character", String.raw`'ada@e81232be457d\u0000'`],
+    ["an object path", "[objectpath '/e81232be457d', '/x']"],
+    ["a signature", "@mg 'e81232be457d'"],
+  ])(
+    "keeps a value holding %s as captured and finds the host in it",
+    (_name, value) => {
+      expect(scrubDconf({ "org/notes": { key: value } }, GEANY)).toEqual({
+        text: `[org/notes]\nkey=${value}\n`,
+        holdsIdentity: true,
+      });
+    },
+  );
+
+  it("finds a host its escapes spell where the scrub does not replace it", () => {
+    expect(
+      scrubDconf(
+        { "org/notes": { url: String.raw`'http://\u006581232be457d.local/'` } },
+        GEANY,
+      ),
+    ).toEqual({
+      text: String.raw`[org/notes]
+url='http://\u006581232be457d.local/'
+`,
+      holdsIdentity: true,
+    });
   });
 });

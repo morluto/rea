@@ -209,7 +209,13 @@ export removes them from what the bundle ships:
   the host is listed in `unscrubbed_files` instead. In XML only character
   data, attribute values, comments and CDATA change, character references
   decoded the same way; element and attribute names and processing
-  instructions stay.
+  instructions stay. A UTF-16 file is scrubbed by the format its text would
+  have in UTF-8, so JSON or XML in UTF-16 follows these rules too.
+- In the dconf keys only GVariant strings change, each read as its decoded
+  value and written back in its own quotes only when it changed. Group names,
+  keys, dictionary keys, bytestrings and everything outside quotes stay, so a
+  host named `true` leaves `wrap=true` alone. A value whose string does not
+  parse, or that holds an object path or signature, ships as captured.
 - `SEED_HOME` in the class is `/home/user`, the home the seed spells, which
   the class respells to the computer's own home when it seeds the home at
   boot, as it did the captured home before. The replacements read as the
@@ -220,18 +226,19 @@ export removes them from what the bundle ships:
   its dconf keys and the README included, is searched by a looser rule than
   the replacement's: the host name and `user@host` anywhere, as in
   `e81232be457d.local` or a seed named `e81232be457d-notes.txt`, and the
-  captured home as a whole path, in its path and its content, JSON strings and
-  XML references decoded and the replacements themselves set aside. Each one
-  found is listed in `unscrubbed_files`, and in the README unless it is the
-  README, to check before sharing the bundle. Bytes that are not text are
+  captured home as a whole path, in its path and its content, JSON and dconf
+  strings and XML references decoded and the replacements themselves set
+  aside. Each one found is listed in `unscrubbed_files`, and in the README
+  unless it is the README, to check before sharing the bundle. Bytes that are not text are
   searched as they are, so a binary file that holds the host in another
   encoding is not listed.
 - A task check whose values name `user@host` or the host name anywhere, by
   that rule, is refused, as one naming the captured home is: the bundle does
-  not hold them. A task's checks must fail on the seed as the bundle ships
-  it, scrubbed, so a check the scrub itself satisfies, such as a mail setting
-  the user changed from `ada@e81232be457d` to `user@localhost`, does not count
-  as failing there.
+  not hold them. Its field names, kind and id are not values, so a host named
+  `file` or `kind` refuses no check. A task's checks must fail on the seed as
+  the bundle ships it, scrubbed, so a check the scrub itself satisfies, such
+  as a mail setting the user changed from `ada@e81232be457d` to
+  `user@localhost`, does not count as failing there.
 
 A capture written before the host's name and user were recorded has only its
 home removed, with a limitation saying so; capture again to remove the rest.

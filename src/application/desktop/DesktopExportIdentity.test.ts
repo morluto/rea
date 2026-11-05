@@ -281,3 +281,68 @@ describe("exportDesktopApplication of a capture that names its host", () => {
     );
   });
 });
+
+describe("exportDesktopApplication where names, syntax or an unparsed value spell the host", () => {
+  it.each(["file", "kind", "check"])(
+    "keeps a task on a host named %s, which only a check's field names, kind and id spell",
+    async (hostname) => {
+      const { result } = await exportIdentity(
+        identityCapture({ hostname, user: "ada" }),
+        [
+          {
+            kind: "lines_present",
+            file: "Documents/today.txt",
+            lines: ["milk"],
+          },
+        ],
+      );
+
+      if (result instanceof Error) throw result;
+      expect(result.normalized_result).toMatchObject({
+        task: { failing_on_seed: ["check-1"] },
+      });
+    },
+  );
+
+  it("scrubs dconf strings by their decoded values, so a host named true keeps every key, group and literal", async () => {
+    const dconf = String.raw`[org/notes/true]
+wrap=true
+true=uint32 1
+mail='ada@true'
+hosts={'true': <'true'>, 'b': <"it's true">}
+blob=b'true'
+`;
+
+    const { result, directory } = await exportIdentity(
+      identityCapture({ hostname: "true", user: "ada" }),
+      [],
+      dconf,
+    );
+
+    if (result instanceof Error) throw result;
+    const module = await readFile(join(directory, "envs/notes/notes_app.py"));
+    expect(module.toString("utf8")).toContain(
+      `DCONF = ${JSON.stringify(`[org/notes/true]\nwrap=true\ntrue=uint32 1\nmail='user@localhost'\nhosts={'true': <'localhost'>, 'b': <"it's localhost">}\nblob=b'true'\n`)}`,
+    );
+  });
+
+  it("keeps a dconf value whose string does not parse as captured, and lists the module holding it", async () => {
+    const { result, directory } = await exportIdentity(
+      identityCapture(),
+      [],
+      `[org/notes]\nmail='ada@${HOSTNAME}\nrecent='${HOME}/x'\n`,
+    );
+
+    if (result instanceof Error) throw result;
+    const module = await readFile(join(directory, "envs/notes/notes_app.py"));
+    expect(module.toString("utf8")).toContain(
+      `DCONF = ${JSON.stringify(`[org/notes]\nmail='ada@${HOSTNAME}\nrecent='/home/user/x'\n`)}`,
+    );
+    expect(result.normalized_result).toMatchObject({
+      unscrubbed_files: [
+        "envs/notes/notes_app.py",
+        "envs/notes/seed/.local/share/notes/notes.db",
+      ],
+    });
+  });
+});
