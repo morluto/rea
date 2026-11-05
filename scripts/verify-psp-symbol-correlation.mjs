@@ -150,6 +150,30 @@ assert.throws(
   () => parsePspSymbols("08005000 unbounded,nothex\n", "sym"),
   /Invalid/u,
 );
+const commaLabel = parsePspSymbols("08005000 pair<int,int>,0020\n", "sym");
+assert.equal(commaLabel.entries[0].name, "pair<int,int>");
+assert.equal(commaLabel.entries[0].size, 0x20n);
+
+// Validate skipped records against PPSSPP's written .ppsym layouts.
+// Data records may have an empty name; bare labels must be named.
+assert.equal(
+  parsePspSymbols(".ppsym 1\ncrc 0\nD 00001080 00000004 word\n", "ppsym")
+    .omittedNonfunctions,
+  1,
+);
+for (const invalid of [
+  "D definitely-not-a-valid-data-record",
+  "L definitely-not-a-valid-label-record",
+  "D 00001080 wrong-size word counter",
+  "D 00001080 00000004 bogus counter",
+  "L 00001090",
+]) {
+  assert.throws(
+    () => parsePspSymbols(`.ppsym 1\ncrc 12345678\n${invalid}\n`, "ppsym"),
+    /Invalid \.ppsym nonfunction/u,
+    invalid,
+  );
+}
 assert.throws(
   () =>
     correlatePspSymbols(legacy, inventory, {

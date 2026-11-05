@@ -53,12 +53,22 @@ export function parsePspSymbols(source, format) {
       continue;
     }
     if (format === "ppsym" && /^(D|L)\s/u.test(line)) {
+      // Names are optional on data records, but required on bare labels.
+      const pattern =
+        line[0] === "D"
+          ? /^D\s+[0-9a-f]{1,8}\s+[0-9a-f]{1,8}\s+(?:byte|halfword|word|ascii)(?:\s+.+)?$/iu
+          : /^L\s+[0-9a-f]{1,8}\s+.+$/iu;
+      assert.match(
+        line,
+        pattern,
+        "Invalid .ppsym nonfunction on line " + (index + 1),
+      );
       omittedNonfunctions++;
       continue;
     }
     const match =
       format === "sym"
-        ? /^([0-9a-f]{1,8})\s+([^,\s]+),([0-9a-f]{1,8})$/iu.exec(line)
+        ? /^([0-9a-f]{1,8})\s+(\S+),([0-9a-f]{1,8})$/iu.exec(line)
         : /^F\s+([0-9a-f]{1,8})\s+([0-9a-f]{1,8})\s+(.+)$/iu.exec(line);
     assert.ok(match, "Invalid " + format + " function on line " + (index + 1));
     const address = hex32(match[1], "symbol address");
