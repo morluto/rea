@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { crc32 } from "node:zlib";
 
 import { describe, expect, it } from "vitest";
 
@@ -139,6 +140,8 @@ describe("zip views in the exported module", () => {
   });
 
   it("refuses the same entries for the same reasons, and an archive it cannot read", async () => {
+    // A short declared size with the checksum of that prefix still leaves data the entry does not declare.
+    const helCrc = crc32(Buffer.from("hel"));
     const archive = zipArchive([
       { name: "secret.txt", data: "x", flags: 1 },
       { name: "bzip2.txt", data: "x", method: 12 },
@@ -146,6 +149,14 @@ describe("zip views in the exported module", () => {
       { name: "bomb.txt", data: "a".repeat(200_000) },
       { name: "crc.txt", data: "hello", crc: 1 },
       { name: "short.txt", data: "hello", declaredSize: 3 },
+      { name: "prefix.txt", data: "hello", declaredSize: 3, crc: helCrc },
+      {
+        name: "prefix-stored.txt",
+        data: "hello",
+        method: 0,
+        declaredSize: 3,
+        crc: helCrc,
+      },
       { name: "fine.txt", data: "ok\n" },
     ]);
     const damaged = Buffer.concat([
@@ -165,6 +176,11 @@ describe("zip views in the exported module", () => {
         { view_error: "expands more than 100 times, so it is not read" },
         { view_error: "its compressed data is damaged" },
         { view_error: "its compressed data is damaged" },
+        { name: "prefix.txt", view_error: "its compressed data is damaged" },
+        {
+          name: "prefix-stored.txt",
+          view_error: "its compressed data is damaged",
+        },
         { format: "text", view_error: null },
       ],
     });
@@ -229,6 +245,34 @@ print(json.dumps([_zip_refusal(SimpleNamespace(flag_bits=0, compress_type=8, fil
       null,
     ]);
     expect(theirs).toEqual(ours);
+  });
+});
+
+describe("zip entries the exported module cannot fully read", () => {
+  it("keeps a JSON entry nested too deeply on that entry and reads its siblings, as REA does", async () => {
+    const nested = (levels: number) =>
+      `${"[".repeat(levels)}${"]".repeat(levels)}`;
+    const archive = zipArchive([
+      { name: "Document.xml", data: "<doc/>" },
+      { name: "deep.json", data: nested(1100) },
+      { name: "edge.json", data: nested(501) },
+    ]);
+
+    await expectSameViews([archive]);
+    const read = await readZipView(archive);
+    if (!read.ok) throw new Error(read.error);
+    expect(read.value).toMatchObject({
+      entries: [
+        { name: "Document.xml", format: "xml", view_error: null },
+        {
+          name: "deep.json",
+          format: "json",
+          view: null,
+          view_error: "nested deeper than the 500 levels a JSON view keeps",
+        },
+        { name: "edge.json", format: "json", view_error: null },
+      ],
+    });
   });
 });
 

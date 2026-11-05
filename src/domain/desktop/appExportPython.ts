@@ -10,6 +10,7 @@ export const PYTHON_READY_CHECK = `
 export const PYTHON_IMPORTS = `from __future__ import annotations
 
 import contextlib
+import copy
 import hashlib
 import json
 import math
@@ -48,6 +49,8 @@ MAX_XML_NODES = 5000
 MAX_XML_DEPTH = 64
 SQLITE_BUSY_S = 0.25
 MAX_PARSED_BYTES = 4 * 1024 * 1024
+MAX_JSON_VIEW_DEPTH = 500
+JSON_TOO_DEEP = f"nested deeper than the {MAX_JSON_VIEW_DEPTH} levels a JSON view keeps"
 MAX_ZIP_ENTRIES = 1000
 MAX_ZIP_ENTRY_BYTES = 16 * 1024 * 1024
 MAX_ZIP_BYTES = 64 * 1024 * 1024
@@ -337,6 +340,20 @@ def _holds_inexact(value) -> bool:
     return False
 
 
+def _deeper_than(root, limit: int) -> bool:
+    """Whether a parsed JSON value nests deeper than a limit, checked without recursion as REA checks it."""
+    pending = [(root, 0)]
+    while pending:
+        value, depth = pending.pop()
+        if depth > limit:
+            return True
+        if isinstance(value, dict):
+            pending.extend((item, depth + 1) for item in value.values())
+        elif isinstance(value, list):
+            pending.extend((item, depth + 1) for item in value)
+    return False
+
+
 def _text_view(name: str, text: str) -> dict:
     """The format REA's state view detects for decoded text, and its view."""
     trimmed = re.sub(r"^[\s﻿]+", "", text)
@@ -344,12 +361,17 @@ def _text_view(name: str, text: str) -> dict:
         # The whole text must parse, and duplicate keys settle, before an inexact number makes it JSON with an error.
         try:
             view = json.loads(text, parse_constant=_not_json, parse_float=_number_or_mark, parse_int=_number_or_mark)
+        except RecursionError:
+            # Nesting too deep for Python to parse is far deeper than REA's view keeps.
+            return {"format": "json", "view": None, "error": JSON_TOO_DEEP}
         except ValueError:
             pass
         else:
             if _holds_inexact(view):
                 return {"format": "json", "view": None,
                         "error": "a number in it cannot be read exactly, such as an integer above 2^53"}
+            if _deeper_than(view, MAX_JSON_VIEW_DEPTH):
+                return {"format": "json", "view": None, "error": JSON_TOO_DEEP}
             return {"format": "json", "view": view, "truncated": False}
     lowered = name.lower()
     if lowered.endswith(XML_SUFFIXES) or trimmed.startswith("<?xml"):
@@ -394,18 +416,27 @@ def _zip_refusal(info, spent: int):
     return None
 
 
+def _entry_bytes(archive, info):
+    """An entry's uncompressed bytes, or None when they fail its CRC-32 or are not exactly its declared size: reading
+    allows one byte more, which data past a short declared size fills."""
+    probe = copy.copy(info)
+    probe.file_size = info.file_size + 1
+    try:
+        with archive.open(probe) as member:
+            data = member.read()
+    except (zipfile.BadZipFile, zlib.error, EOFError, OSError, ValueError):
+        return None
+    return data if len(data) == info.file_size else None
+
+
 def _zip_entry(archive, info, refusal):
     """One entry of a zip view: its name, size and digest, and its own format and view, or why it was not read."""
     entry = {"name": info.filename, "size": info.file_size, "sha256": None, "format": None, "view": None,
              "view_error": refusal}
     if refusal is not None:
         return entry
-    try:
-        with archive.open(info) as member:
-            data = member.read()
-    except (zipfile.BadZipFile, zlib.error, EOFError, OSError, ValueError):
-        data = None
-    if data is None or len(data) != info.file_size:
+    data = _entry_bytes(archive, info)
+    if data is None:
         return {**entry, "view_error": "its compressed data is damaged"}
     view = _entry_view(info.filename, data)
     return {**entry, "sha256": hashlib.sha256(data).hexdigest(), "format": view["format"],

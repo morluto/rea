@@ -205,7 +205,8 @@ as their entries, read with Python's `zipfile` from the file in place, with
 REA's entry, size, compression ratio and archive limits and its wording for an
 entry it does not read. A JSON file
 holding a number JavaScript cannot read exactly, such as an integer above 2^53,
-gets an `error` instead of a view, as in REA, while text that is not one JSON
+or nested more than 500 levels deep, gets an `error` instead of a view, as in
+REA, while text that is not one JSON
 document, such as JSON Lines, stays text. Format detection follows REA's
 rules. Files larger than 64 MiB get an `error` instead of a view
 and are not read. Known differences remain:
@@ -224,7 +225,6 @@ and are not read. Known differences remain:
   a write lock the running app holds is waited out for a quarter of a second
   and then gives the file an `error`, and so does a table or column name that
   is not UTF-8.
-- JSON nested deeper than Python's recursion limit gives the file an `error`.
 
 The seed is the user's real data. Keep the bundle local and do not publish it.
 The class was checked against agentenv-framework 0.9.1431 with

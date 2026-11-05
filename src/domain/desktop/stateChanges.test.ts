@@ -195,6 +195,51 @@ describe("diffStateViews fidelity", () => {
 });
 
 describe("diffStateViews zip archives", () => {
+  it("pairs each element with at most one in the other version, so one split in two is an addition", () => {
+    const item = (attributes: Record<string, string>) => ({
+      name: "item",
+      attributes,
+      children: [],
+    });
+    const archive = (items: JsonValue[]): JsonValue => ({
+      entries: [
+        {
+          name: "list.xml",
+          size: 1,
+          sha256: String(items.length),
+          format: "xml",
+          view: {
+            root: { name: "list", attributes: {}, children: items },
+            truncated: false,
+          },
+          view_error: null,
+        },
+      ],
+      entry_count: 1,
+      truncated: false,
+    });
+
+    const difference = diffStateViews(
+      "zip",
+      archive([item({ a: "x", b: "y" })]),
+      archive([item({ b: "y" }), item({ a: "x" })]),
+    );
+
+    const items = "/entries/[name=list.xml]/view/root/children";
+    expect(difference).toMatchObject({
+      added: [
+        `${items}/1`,
+        `${items}/1/name`,
+        `${items}/1/attributes`,
+        `${items}/1/attributes/a`,
+        `${items}/1/children`,
+      ],
+      removed: [`${items}/[name=item][@b=y]/attributes/a`],
+      changed: ["/entries/[name=list.xml]/sha256"],
+      complete: true,
+    });
+  });
+
   it("matches zip entries and XML elements by name, so an inserted one shifts nothing", () => {
     const element = (name: string, attributes: Record<string, string>) => ({
       name,

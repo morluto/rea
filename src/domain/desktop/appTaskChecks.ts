@@ -1,8 +1,8 @@
 import type { JsonValue } from "../jsonValue.js";
 import { countComparison, type DesktopTaskCheck } from "./appTask.js";
 import type { DesktopStatePath } from "./desktopState.js";
-import { locatePointer } from "./viewPointer.js";
-import { zipLeavesOutAt } from "./zipView.js";
+import { locatePointer, type Located } from "./viewPointer.js";
+import { zipArrayLeavesOut, zipLeavesOutAt } from "./zipView.js";
 
 /** One file as the app's data/get reports it: its view, or why it has none. An absent file has no entry. */
 export interface TaskFileView {
@@ -211,11 +211,17 @@ const valueVerdict = (
 ): Verdict => {
   const read = viewOf(check, entry, undefined);
   if ("passed" in read) return read;
-  const located =
+  const located: Located =
     entry === undefined
-      ? ({ kind: "none" } as const)
+      ? { kind: "none", searched: [], byPosition: [] }
       : locatePointer(read.view, check.pointer);
   const at = `${check.file} at ${check.pointer}`;
+  // A selector tells one member from several only in an array the view holds whole.
+  const partial = (array: string) =>
+    entry?.format === "zip"
+      ? zipArrayLeavesOut(read.view, array)
+      : read.truncated;
+  if (located.searched.some(partial)) return undecided(check.file);
   if (located.kind === "unresolved") return fail(`${at}: ${located.problem}`);
   // A zip view's truncation that matters is the entry the pointer goes into.
   const truncated =

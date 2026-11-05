@@ -1,6 +1,6 @@
 import type { JsonValue } from "../jsonValue.js";
 import type { DesktopStateFormat } from "./stateFormats.js";
-import { memberKeys, selectorIndex } from "./viewPointer.js";
+import { pairMembers } from "./viewPointer.js";
 import { zipLeavesOut } from "./zipView.js";
 
 const MAX_LISTED = 100;
@@ -72,11 +72,30 @@ interface WalkOptions {
   readonly outermost?: boolean;
 }
 
-/** What a walk notes, and how. */
+/** What a walk notes, and how; `older` when it walks the earlier version against the later one. */
 interface Noting extends WalkOptions {
   readonly missing: Found;
   readonly changed?: Found;
+  readonly older?: boolean;
 }
+
+/** Each member's key and the other version's member it pairs with, one to one, both walks pairing alike. */
+const keyedMembers = (
+  from: readonly JsonValue[],
+  other: JsonValue | undefined,
+  older: boolean,
+) => {
+  const others = Array.isArray(other) ? other : [];
+  const pairing = older ? pairMembers(others, from) : pairMembers(from, others);
+  const side = older ? pairing.older : pairing.newer;
+  return side.keys.map((key, index) => {
+    const partner = side.partners[index];
+    return {
+      key,
+      counterpart: partner === undefined ? undefined : others[partner],
+    };
+  });
+};
 
 /**
  * Walk `from` in document order against `other`, noting each value `other`
@@ -103,33 +122,29 @@ const walk = (
     path.segments.pop();
     path.length -= segment.length + 1;
   };
-  if (Array.isArray(from)) {
-    const named =
-      into.keyed === true && Array.isArray(other)
-        ? selectorIndex(other)
-        : undefined;
-    const keys = into.keyed === true ? memberKeys(from, named) : undefined;
+  if (Array.isArray(from) && into.keyed === true) {
+    const members = keyedMembers(from, other, into.older === true);
     from.forEach((item, index) => {
-      const key = keys?.[index] ?? String(index);
-      visit(
-        key,
-        item,
-        other === undefined
-          ? undefined
-          : key.startsWith("[")
-            ? named?.get(key)
-            : memberOf(other, key),
-      );
+      const member = members[index];
+      if (member !== undefined) visit(member.key, item, member.counterpart);
     });
-  } else if (isRecord(from))
+  } else if (Array.isArray(from))
+    from.forEach((item, index) =>
+      visit(
+        String(index),
+        item,
+        other === undefined ? undefined : memberOf(other, String(index)),
+      ),
+    );
+  else if (isRecord(from))
     for (const [key, item] of Object.entries(from))
       visit(key, item, other === undefined ? undefined : memberOf(other, key));
 };
 
 /**
  * Values added, removed and changed between two JSON documents, by JSON
- * pointer; keyed, an array member is matched by the selector naming it among
- * its siblings, so an inserted member does not shift the ones after it.
+ * pointer; keyed, array members are paired one to one by the selectors naming
+ * them, so an inserted member does not shift the ones after it.
  */
 const compareTrees = (
   before: JsonValue,
@@ -139,7 +154,7 @@ const compareTrees = (
   const [added, removed, changed] = [found(), found(), found()];
   const start = () => ({ segments: [], length: 0 });
   walk(after, before, start(), { ...options, missing: added, changed });
-  walk(before, after, start(), { ...options, missing: removed });
+  walk(before, after, start(), { ...options, missing: removed, older: true });
   return {
     kind: "values",
     added: added.listed,

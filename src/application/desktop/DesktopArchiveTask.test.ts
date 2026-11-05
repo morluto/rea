@@ -178,6 +178,29 @@ describe("documents saved as zip archives", () => {
     );
   });
 
+  it("refuses a check on the whole listing whose value holds namespaced XML", async () => {
+    const folder = await archiveCapture();
+    const evidence = await inspectDesktopApplicationState(folder, readers);
+    if (!("normalized_result" in evidence)) throw evidence;
+    const state = desktopApplicationStateSchema.parse(
+      evidence.normalized_result,
+    );
+    const end = state.paths
+      .find((entry) => entry.home_path === LIST)
+      ?.versions.at(-1)?.view;
+    const entries = (end as { entries: unknown[] } | undefined)?.entries;
+    expect(entries).toHaveLength(3);
+
+    const { result } = await exportTask(folder, [
+      { kind: "value_equals", file: LIST, pointer: "/entries", value: entries },
+    ]);
+
+    expect(result).toBeInstanceOf(Error);
+    expect((result as Error & { userMessage: string }).userMessage).toContain(
+      "points into content.xml in Documents/list.odt, whose XML uses namespaces the verifier names differently",
+    );
+  });
+
   it("drafts name-addressed checks of the archive that the export then accepts", async () => {
     const folder = await archiveCapture();
 

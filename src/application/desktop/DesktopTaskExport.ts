@@ -25,6 +25,7 @@ import { EvidenceFileError } from "../../domain/evidenceErrors.js";
 import { err } from "../../domain/result.js";
 import { describeValidationFailure } from "../../domain/validationFailure.js";
 import { isWithinAny } from "../../domain/desktop/desktopStateDiff.js";
+import { resolvePointer } from "../../domain/desktop/viewPointer.js";
 import { zipEntryAt } from "../../domain/desktop/zipView.js";
 import { isPortableBundleName } from "../environment/environmentBundle.js";
 import { readJsonFile } from "../JsonFiles.js";
@@ -102,20 +103,36 @@ const readTaskFile = async (
   throw primary ?? typed(loaded.error);
 };
 
-/** The XML views a pointer goes into across a file's versions: the file's own, or in an archive the entry's. */
+/**
+ * The XML views a pointer touches across a file's versions: the file's own, or
+ * in an archive the entry it goes into, or every entry the value it names
+ * holds, such as the whole listing.
+ */
 const pointedXml = (
   file: string,
   pointer: string,
   versions: readonly DesktopStatePath["versions"][number][],
 ) =>
   versions.flatMap((version) => {
-    const entry =
-      version.format === "zip" ? zipEntryAt(version.view, pointer) : undefined;
-    if (typeof entry === "object")
-      return entry.format === "xml" && typeof entry.name === "string"
-        ? [{ name: `${entry.name} in ${file}`, view: entry.view }]
-        : [];
-    return version.format === "xml" ? [{ name: file, view: version.view }] : [];
+    if (version.format === "xml") return [{ name: file, view: version.view }];
+    if (version.format !== "zip") return [];
+    const entry = zipEntryAt(version.view, pointer);
+    const named = resolvePointer(version.view, pointer);
+    const entries =
+      typeof entry === "object"
+        ? [entry]
+        : entry === undefined && Array.isArray(named)
+          ? named
+          : [];
+    return entries.flatMap((item) =>
+      typeof item === "object" &&
+      item !== null &&
+      !Array.isArray(item) &&
+      item.format === "xml" &&
+      typeof item.name === "string"
+        ? [{ name: `${item.name} in ${file}`, view: item.view ?? null }]
+        : [],
+    );
   });
 
 /** Why a check cannot be validated against this app, or undefined. */
