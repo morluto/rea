@@ -40,6 +40,13 @@ describe("DWARF compile-unit stable filesystem boundary", () => {
           ],
         });
       }
+      const aliased = await service.inspect({ path: alias });
+      if (aliased.ok) throw new Error("Expected a rejected symlink");
+      expect(aliased.error).toMatchObject({
+        remediationAction: expect.stringContaining(
+          `Retry with the resolved regular file path ${path}`,
+        ),
+      });
       const foreignResult = await service.inspect({ path: foreign });
       if (foreignResult.ok) throw new Error("Expected an unsupported file");
       expect(foreignResult.error).toBeInstanceOf(
