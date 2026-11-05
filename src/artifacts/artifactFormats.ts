@@ -40,6 +40,7 @@ import { PyInstallerArtifactReader } from "./PyInstallerArtifactReader.js";
 import { Uf2ArtifactReader } from "./Uf2ArtifactReader.js";
 import { UImageArtifactReader } from "./UImageArtifactReader.js";
 import { UnityFsArtifactReader } from "./UnityFsArtifactReader.js";
+import { WxapkgArtifactReader } from "./WxapkgArtifactReader.js";
 import { ZipArtifactReader } from "./ZipArtifactReader.js";
 
 /** How inventory describes a format when no reader was constructed. */
@@ -285,6 +286,16 @@ const NON_ZIP_FORMATS = {
       "UnityFS inventory establishes packaged bytes and metadata; serialized objects, textures, meshes and runtime asset behavior were not decoded. LZMA-compressed members are unsupported.",
     createReader: (path, options) =>
       new UnityFsArtifactReader(path, sourceOf(options)),
+  }),
+  wxapkg: container("wxapkg", {
+    roleContainer: true,
+    retainClassifiedSource: true,
+    extractable: true,
+    absentInventory: "unavailable",
+    readerLimitation:
+      "wxapkg inventory establishes packaged member names and stored bytes; wxml/wxss sources, compiled bundles and runtime behavior are not reconstructed. V1MMWX-encrypted packages are unsupported.",
+    createReader: (path, options) =>
+      new WxapkgArtifactReader(path, sourceOf(options)),
   }),
   uimage: container("uimage", {
     roleContainer: true,

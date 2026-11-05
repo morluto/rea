@@ -360,6 +360,12 @@ describe("configuration failure diagnostics", () => {
     "accepts Swift compile deadline %s without changing Hopper's deadline",
     (value) => {
       expect(
+        parseEnvironmentValues({ REA_SWIFTC_COMPILE_TIMEOUT_MS: value }),
+      ).toMatchObject({
+        ok: true,
+        value: { REA_SWIFTC_COMPILE_TIMEOUT_MS: Number(value) },
+      });
+      expect(
         parseConfig({ REA_SWIFTC_COMPILE_TIMEOUT_MS: value }),
       ).toMatchObject({
         ok: true,

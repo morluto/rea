@@ -1508,6 +1508,31 @@ it.each([
   },
 );
 
+it("retains late UI Evidence through the default server capability composition", async () => {
+  const state = await fixture({ status_offline: true, cancel_offline: true });
+  const harness = await createApplicationMcpHarness({
+    serverOptions: { environment: state.environment },
+  });
+  const record = vi.spyOn(harness.session, "recordEvidence");
+  onTestFinished(async () => {
+    await state.setMode({});
+    await harness.close();
+  });
+  const reply = await harness.client.callTool({
+    name: "inspect_adb_ui",
+    arguments: scope,
+  });
+  expect(parseMcpToolError(reply).error.code).toBe("cleanup_incomplete");
+  expect(record).not.toHaveBeenCalled();
+  await state.setMode({});
+  await harness.close();
+  expect(record).toHaveBeenCalledOnce();
+  expect(parseEvidence(record.mock.calls[0]?.[0])).toMatchObject({
+    operation: "inspect_adb_ui",
+    normalized_result: { serial: scope.serial },
+  });
+});
+
 it("records a terminal observation recovered after the original response", async () => {
   const recorded: unknown[] = [];
   const state = await fixture(

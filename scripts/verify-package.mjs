@@ -270,7 +270,6 @@ await withVerifierCleanup(async () => {
     extractedPluginMcp: true,
     targetFree: true,
     targetLifecycle: true,
-    boundedRegexBridge: true,
     update,
     mcpStartup,
     mcpModuleLoading,

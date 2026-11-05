@@ -4,6 +4,8 @@ import {
   runOwnedCommand,
 } from "../dist/process/OwnedCommand.js";
 import { prepareProcessOwnershipInspection } from "../dist/process/ProcessOwnershipObservation.js";
+import { resolveWindowsProviderExecutable } from "../dist/process/WindowsProviderExecutable.js";
+import { snapshotEnvironment } from "../dist/process/snapshotEnvironment.js";
 
 /** Settle every retained command before dependent resources can be reconciled. */
 export async function settleCommandOwners(owners) {
@@ -42,6 +44,13 @@ export async function withCommands(work) {
   process.once("SIGINT", abort);
   process.once("SIGTERM", abort);
   const run = async (command, args, options = {}) => {
+    const environment = snapshotEnvironment(options.environment ?? process.env);
+    const selectedCommand =
+      process.platform === "win32"
+        ? resolveWindowsProviderExecutable(command, environment, {
+            cwd: options.cwd,
+          })
+        : command;
     try {
       await prepareProcessOwnershipInspection(controller.signal);
     } catch (cause) {
@@ -57,14 +66,12 @@ export async function withCommands(work) {
     }
     const result = await runOwnedCommand(
       {
-        command,
+        command: selectedCommand,
         arguments: args,
         runId: randomUUID(),
         expectedCommand: null,
         ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
-        ...(options.environment === undefined
-          ? {}
-          : { hostEnvironment: options.environment }),
+        hostEnvironment: environment,
       },
       {
         timeoutMs: options.timeoutMs ?? 60_000,

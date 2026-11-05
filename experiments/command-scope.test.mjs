@@ -3,7 +3,28 @@ import test from "node:test";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { fileURLToPath } from "node:url";
+import { basename, dirname } from "node:path";
 import { withCommands } from "./command-scope.mjs";
+
+test("resolves bare commands from the captured selected environment", async () => {
+  const environment = {
+    ...process.env,
+    PATH: dirname(process.execPath),
+    PATHEXT: ".EXE;.COM",
+    REA_EXPERIMENT_ENV: "selected",
+  };
+  const result = await withCommands((run) => {
+    const pending = run(
+      basename(process.execPath),
+      ["-e", "process.stdout.write(process.env.REA_EXPERIMENT_ENV)"],
+      { environment },
+    );
+    environment.REA_EXPERIMENT_ENV = "changed after admission";
+    return pending;
+  });
+  assert.equal(result.stdout, "selected");
+  assert.equal(result.code, 0);
+});
 
 test("retains bounded producer diagnostics and a nonzero process outcome", async () => {
   await assert.rejects(

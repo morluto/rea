@@ -18,6 +18,7 @@ import { reconstructionVerificationInputSchema } from "../domain/reconstructionV
 import { sessionOutputSchemas } from "./toolOutputSchemaGroups.js";
 import {
   closeBinaryInputSchema,
+  resetInvestigationInputSchema,
   openBundleResourcesInputSchema,
   openBinaryInputSchema,
 } from "./sessionLifecycleInputs.js";
@@ -67,7 +68,7 @@ export const exportEvidenceBundleInputSchema = z.strictObject({
 export const SESSION_TOOL_CONTRACTS = [
   session(
     "open_binary",
-    "Open a local executable, application bundle, archive, JavaScript, source map, plist, or analysis database after validation. format=dos-com explicitly interprets 1..65280 headerless bytes as a DOS COM analysis image. format=raw-binary interprets headerless bytes with a required architecture and entry_point; file offset 0 maps at that address. Omission preserves header-based detection. provider_id selects one deep provider or deterministic auto selection; the binding remains stable until close or an explicit switch, with no failure fallback. Reopening the same target and profile retains its active database and metadata edits. An optional analysis snapshot is imported atomically and must match the binary identity, concrete provider, and canonical analysis profile exactly; importing into a session with metadata mutations requires closing and reopening it first. Call close_binary when the investigation is finished.",
+    "Open a local executable, application bundle, archive, JavaScript, source map, plist, or analysis database after validation. format=dos-com explicitly interprets 1..65280 headerless bytes as a DOS COM analysis image. format=raw-binary interprets headerless bytes with a required architecture and entry_point; file offset 0 maps at that address. Omission preserves header-based detection. provider_id selects one deep provider or deterministic auto selection; the binding remains stable until close or an explicit switch, with no failure fallback. Reopening the same target and profile retains its active database and metadata edits. An optional analysis snapshot is imported atomically and must match the binary identity, concrete provider, and canonical analysis profile exactly; importing into a session with metadata mutations requires closing and reopening it first. Switching targets preserves investigation records. A failed admitted open reports the selection at failure in error.details.selection_at_failure; later calls can change it, so use binary_session for current state. Call close_binary to release engine resources; reset_investigation explicitly clears investigation records.",
     openBinaryInputSchema,
   ),
   session(
@@ -77,8 +78,13 @@ export const SESSION_TOOL_CONTRACTS = [
   ),
   session(
     "close_binary",
-    "When the investigation is finished, drain earlier provider requests, optionally write a provider-neutral analysis snapshot atomically to the caller-supplied path, then close the active analysis session and every provider resource started for it. Resource-only app sessions have no binary snapshot binding, so close them without snapshot_path. Later provider requests wait until this lifecycle operation finishes. Existing files require explicit overwrite; a failed save leaves the session open so cached analysis is not lost. Metadata edits prevent immutable snapshot saves until the session is recreated; export_evidence_bundle preserves mutable observations before closing without a snapshot.",
+    "Drain earlier requests and release the active engine, replay cache and owned resources while retaining investigation Evidence references and complete Unknown history in memory. Optionally save a target-bound analysis snapshot before closing; resource-only sessions have no binary snapshot binding. Later requests wait for this transition. Existing files require overwrite; a failed snapshot save keeps the engine open. Metadata edits prevent snapshot saves until the engine is recreated. Use reset_investigation to clear records explicitly, optionally saving a complete cross-domain Evidence bundle for import in a new process. Closing does not automatically persist records.",
     closeBinaryInputSchema,
+  ),
+  session(
+    "reset_investigation",
+    "Explicitly clear all retained Evidence and Unknown revision history, including engine replay/source bindings, while keeping a healthy active engine open. Drain earlier admitted work and queue later requests. Optional save_path writes the complete canonical Evidence bundle with file sync and atomic publication before clearing; import_evidence_bundle restores its original IDs and Unknown history in another process. Cancellation, save failure or incomplete cleanup preserves records; a published checkpoint remains reported on a later failure. Without save_path this discards in-memory records. No automatic persistence or eviction occurs; binary_session reports the representation budget.",
+    resetInvestigationInputSchema,
   ),
   session(
     "binary_session",
@@ -92,7 +98,7 @@ export const SESSION_TOOL_CONTRACTS = [
   ),
   session(
     "import_evidence_bundle",
-    "Read the JSON bundle at the supplied local path, validate every Evidence ID and canonical manifest, then atomically merge it. Imported content is data only and is never executed.",
+    "Read the JSON bundle at the supplied local path, validate every Evidence ID and canonical manifest, then atomically merge it. Imported content is data only and is never executed. Import restores registry entries present in the bundle; questions embedded in Evidence do not automatically become Unknown registry entries.",
     importEvidenceBundleInputSchema,
   ),
   session(
@@ -112,7 +118,7 @@ export const SESSION_TOOL_CONTRACTS = [
   ),
   session(
     "match_native_functions",
-    "Match two retained list_procedures inventories by unique exact reported symbols, then unique identical observed function bytes. Optional same-context list_names/procedure_info/read_bytes/analyze_function Evidence supplies symbol origin, exact bodies, bytes and dossier links as supplied static facts. Optional compatible CFG/call/string fingerprints from supplied dossiers propose unresolved groups only. Duplicate candidates remain unresolved groups; only_left/right mean unpaired within supplied observations, never proof of addition/removal. Default summary retains complete Evidence for filtered, selected-column, paged function-matches views. Complete detail returns every group. Existing dossier pairs provide direct retained-reference compare_functions inputs.",
+    "Match two retained list_procedures inventories by unique exact reported symbols, then unique identical observed function bytes. Optional same-context list_names/procedure_info/read_bytes/analyze_function Evidence supplies symbol origin, exact bodies, bytes and dossier links as supplied static facts. Optional compatible CFG/call/string fingerprints from supplied dossiers propose unresolved groups only. Duplicate candidates remain unresolved groups; only_left/right mean unpaired within supplied observations, never proof of addition/removal. Default summary retains complete Evidence for filtered, selected-column, paged function-matches views. The byte-sources collection identifies selected read_bytes Evidence and its limitations; intersect its IDs with each function's evidence_links to identify its sources. Complete detail returns every group. Existing dossier pairs provide direct retained-reference compare_functions inputs.",
     matchNativeFunctionsInputSchema,
   ),
   session(
@@ -147,7 +153,7 @@ export const SESSION_TOOL_CONTRACTS = [
   ),
   session(
     "list_unknowns",
-    "List current residual-unknown heads in deterministic ID order, with optional exact status, severity, and domain filters. Results are complete inline by default; supply offset and limit to page the filtered order. total is the matching-head count and next_offset is null when the page exhausts the result. This is read-only; unresolved, contradicted, and non-truth dispositions remain distinct.",
+    "List current residual-unknown heads in deterministic ID order, with optional exact status, severity, and domain filters. Results are complete inline by default; supply offset and limit to page the filtered order. total is the matching-head count and next_offset is null when the page exhausts the result. This is read-only; unresolved, contradicted, and non-truth dispositions remain distinct. An empty registry does not mean retained Evidence has no residual questions; inspect the relevant Evidence or its analysis view.",
     listUnknownsInputSchema,
   ),
   session(
@@ -167,7 +173,7 @@ export const SESSION_TOOL_CONTRACTS = [
   ),
   session(
     "get_evidence_bundle",
-    "Return every retained Evidence record and residual unknown as a complete canonical bundle by default. detail=summary discovers retained records without copying or transferring their payloads; optionally filter by exact Evidence ID, operation, target SHA-256, analysis-profile digest or canonical native procedure address. Metadata distinguishes complete record retention from native value-flow truncation or unavailable/unknown coverage. Use a discovered evidence_id with inspect_analysis_view without restarting a provider. Filters apply only to summary delivery.",
+    "Return every retained Evidence record and residual unknown as a complete canonical bundle by default. detail=summary discovers retained records without copying or transferring their payloads; optionally filter by exact Evidence ID, operation, target SHA-256, analysis-profile digest or canonical native procedure address. Metadata distinguishes complete record retention from native value-flow truncation or unavailable/unknown coverage. detail=records returns a page (offset, limit) of the matching complete records with unchanged IDs and their missing direct evidence_links; it is not an importable bundle. detail=links reads which evidence_links of the selected records this session or bundle retains, without their payloads: traversal retained-closure also follows retained links, the walk composed workflows require, and rows default to missing links. Use a discovered evidence_id with inspect_analysis_view without restarting a provider. Filters apply to summary, records and links delivery.",
     getEvidenceBundleInputSchema,
   ),
   {
@@ -178,9 +184,12 @@ export const SESSION_TOOL_CONTRACTS = [
     ),
     requiresActiveTarget: true,
   },
-  session(
-    "inspect_address_context",
-    "Inspect one explicit reproducible address for its analyzed name, containing procedure, regular and inline comments, and matching bookmarks. Each unsupported facet returns a typed unavailable outcome; use xrefs, assembly, or pseudocode for those deeper views.",
-    addressContextInputSchema,
-  ),
+  {
+    ...session(
+      "inspect_address_context",
+      "Inspect one explicit reproducible address for its analyzed name, containing procedure, regular and inline comments, and matching bookmarks. Each unsupported facet returns a typed unavailable outcome. A facet rejected for invalid input retains its canonical error and issues alongside any successful facets. Use xrefs, assembly, or pseudocode for those deeper views.",
+      addressContextInputSchema,
+    ),
+    requiresActiveTarget: true,
+  },
 ] as const satisfies readonly ToolContract[];

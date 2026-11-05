@@ -99,6 +99,49 @@ include the smallest useful reproduction, impact and coverage limits. Do not
 claim autonomous-agent selection from a scripted trace. Check related reports
 before proposing another issue, and avoid treating lack of API parity as a bug.
 
+## Design recovery around the failure
+
+Distinguish a request that violates its input contract from a valid selection
+that the current target, provider inventory, or project cannot resolve. The
+same `invalid_request` code can represent either. Suggest schema inspection
+only when the input contract is the problem; for a valid lookup, preserve the
+caller's exact selector, the observed reason and any candidates, and give a
+next step that addresses that outcome. An inventory miss does not prove that
+the artifact lacks the requested item.
+
+For prerequisite failures, identify what the requested operation actually needs.
+A missing executable, a wrong path, an incompatible host or version, denied
+permission, and a download timeout need different repairs. Preserve the observed
+failure instead of calling all of them "not installed".
+
+Derive the required engine from the operation's execution contract. For example,
+`inspect_firmware_regions` needs Binwalk; `extract_firmware` needs Unblob.
+Configuring the other tool cannot enable the requested operation. An installed
+JDK outside the selected PATH may need `JAVA_HOME`, not another installation.
+Say where a setting must change: a shell export does not change an already
+running MCP server's environment.
+
+Keep repair instructions with the contract that owns the failure, and preserve
+them through provider readiness, capability discovery, doctor and CLI/MCP output.
+An error description is not a repair instruction. Do not make each consumer
+guess the fix from diagnostic text or invent another list of prerequisites.
+
+Keep recovery within the selected target, provider, project and authority. If
+another context could help, describe it as an explicit choice and state any
+relevant loss of state; do not switch or select a candidate automatically.
+Preserve uncertainty, partial observations, and session or cleanup state. A
+suggested retry must be safe and explain any required change or wait.
+
+Verify recovery through the public workflow: reproduce the failure, follow
+the suggested next step when feasible, and check the result and session state.
+Include a malformed-input control so schema guidance remains available when it
+is actually needed. Compare CLI and MCP when both expose the operation.
+
+For each confirmed bug, check sibling adapters and other consumers of the same
+facts. Reproduce suspected matches and retain a working comparison where one
+exists. Group reports and fixes around the shared cause; similar wording alone
+does not establish another instance.
+
 ## Define the contract
 
 - Use strict inputs with explicit target identity and required fields. Preserve
@@ -227,6 +270,47 @@ state what it cannot distinguish. Static inspection does not establish that the
 artifact can execute successfully.
 
 ## Own the lifecycle
+
+The investigation owns authenticated Evidence and complete Unknown revision
+history independently of an engine. `close_binary` drains earlier admitted work,
+releases engine resources and clears replay/invalidation state; investigation
+references survive, including target-free closes and cleanup failures. A target
+switch does not make historical observations current for its new engine.
+
+`reset_investigation` is the explicit destructive boundary. It drains earlier
+analysis, imports, exports and Unknown operations, then clears investigation and
+replay/source bindings while retaining a healthy active engine. Metadata mutation
+invalidation remains in force until that engine is recreated. Later admitted work
+waits for the transition; earlier late results cannot repopulate cleared history.
+Runtime disposal seals new acquisitions and releases records after successful
+owned engine/file cleanup; failed cleanup keeps the owner available for retry.
+
+Records are retained in memory under a fixed per-owner representation allowance
+derived from one quarter of initial available V8 heap. Admission accounts for
+Evidence, Unknown history and indexes before atomic commit; metadata replacement
+uses its size delta and duplicates do not accumulate. There is no silent eviction.
+`binary_session.investigation` reports committed counts, estimated representation
+bytes and the allowance; these estimates are not process RSS measurements. Live
+authentication headroom is checked separately. On refusal, export a checkpoint,
+reset, and import only the required investigation, or start a process with a
+larger heap. Retention does not promise automatic persistence.
+
+An MCP request retains its original session admission until its handler cleanup
+and response send settle. A reset queued behind that request therefore cannot
+invalidate Evidence before its reply is sent. Nested work borrows the same
+admission. Cancellation before sending releases a suppressed reply after handler
+cleanup; cancellation after sending starts still waits for transport settlement.
+Lifecycle tools drain earlier admissions without acquiring one themselves.
+
+`reset_investigation(save_path)` saves the complete cross-domain canonical bundle
+once before clearing. It awaits file sync, atomic publication and staging cleanup;
+failed save, incomplete cleanup or cancellation observed before reset commit
+preserves all records. Publication
+can precede cancellation or cleanup failure; the error retains its committed file
+receipt. Import that bundle to restore original Evidence IDs and all Unknown
+revisions in a new process. Engine replay snapshots remain a separate target and
+profile-bound mechanism. This checkpoint contract does not promise recovery from
+an uncheckpointed process exit or parent-directory loss after a host crash.
 
 `SafeOutputTree` publishes only after file readback, nested-directory fsync
 from children to parents, and root-parent fsync on hosts that support directory
