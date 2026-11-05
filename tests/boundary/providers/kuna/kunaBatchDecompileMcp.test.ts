@@ -131,15 +131,8 @@ test("keeps each Kuna no-pseudocode observation's limitations on its batch item"
     expect(main).toMatchObject({ address: "main", status: "ok" });
     expect(main).not.toHaveProperty("limitations");
     const noPseudocode = {
-      status: "error",
-      error: {
-        code: "capability_unavailable",
-        retryable: false,
-        details: {
-          provider_id: "kuna",
-          operation: "procedure_pseudo_code",
-        },
-      },
+      status: "unavailable",
+      reason: "no_pseudocode",
     };
     // The item keeps exactly the facts the provider reported for its own
     // observation, as the single-function Evidence does.

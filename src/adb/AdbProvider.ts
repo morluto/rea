@@ -95,6 +95,7 @@ import {
 import {
   adbCommandOutputFailure,
   adbArguments,
+  adbSpawnCapacityError,
   runAdb,
   runAdbCapture,
   packageChangeRefusal,
@@ -1317,6 +1318,18 @@ export class AdbProvider {
             { prerequisite_operation: "inspect_adb_client" },
           ),
         );
+      if (
+        cause instanceof AdbConfigurationFailure &&
+        cause.code === "host_capacity"
+      )
+        return err(
+          adbSpawnCapacityError(
+            request.operation,
+            String(cause.diagnostics.filesystem_error),
+            cause,
+            cause.diagnostics,
+          ),
+        );
       if (cause instanceof AdbConfigurationFailure)
         return err(
           providerConfigurationRefusal(
@@ -2501,10 +2514,16 @@ export class AdbProvider {
         if (!deviceDigest.ok) {
           const cancelled =
             deviceDigest.error instanceof AnalysisCancelledError;
+          // The check never started and the push already completed, so a
+          // retryable error would invite a repeat that overwrite=false refuses.
+          const hostCapacity =
+            deviceDigest.error instanceof AnalysisResourceConstraintError &&
+            deviceDigest.error.resource === "capacity";
           const verificationFailed =
             cancelled ||
-            deviceDigest.error instanceof AnalysisResourceConstraintError ||
-            deviceDigest.error instanceof AnalysisTimeoutError;
+            (!hostCapacity &&
+              (deviceDigest.error instanceof AnalysisResourceConstraintError ||
+                deviceDigest.error instanceof AnalysisTimeoutError));
           const completed = receipt({
             device_sha256: null,
             device_digest_source: "unavailable",
@@ -2512,7 +2531,9 @@ export class AdbProvider {
               ? "The device-side digest check was cancelled after push completed"
               : verificationFailed
                 ? `Device-side digest verification failed after push completed: ${deviceDigest.error.message}`
-                : "The device did not answer sha256sum, so the transfer is not device-side verified",
+                : hostCapacity
+                  ? `Push completed, but the transfer is not device-side verified: ${deviceDigest.error.reason}`
+                  : "The device did not answer sha256sum, so the transfer is not device-side verified",
           });
           if (verificationFailed)
             deviceDigest.error.retainPartialObservation(
