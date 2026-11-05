@@ -5,11 +5,16 @@ import { describe, expect, it, vi } from "vitest";
 
 import { createCli } from "../../../src/cli.js";
 import { createCliInventory } from "../../../scripts/lib/catalog-cli.mjs";
+import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
 import { registerAdbCommands } from "../../../src/cli/adbCommands.js";
+import { presentCliArgumentErrors } from "../../../src/cli/argumentErrors.js";
 import { AnalysisInputError } from "../../../src/domain/analysisErrorCore.js";
-import { err } from "../../../src/domain/result.js";
+import { err, ok } from "../../../src/domain/result.js";
 import { silentLogger } from "../../../src/logger.js";
-import { adbInputSchemas } from "../../../src/domain/adb/adbDeviceAnalysis.js";
+import {
+  adbInputSchemas,
+  type AdbRequest,
+} from "../../../src/domain/adb/adbDeviceAnalysis.js";
 import {
   apktoolInputSchemas,
   MAX_SELECTED_LOCALES,
@@ -490,6 +495,81 @@ describe("ADB selector input schemas: package and activity", () => {
       }
     }
   });
+});
+
+it("advertises and enforces the canonical ADB setting key", async () => {
+  const cli = Cli.create("rea-adb-setting-key-test", { sync: false });
+  const provider = {
+    inspectAvailability: vi.fn(async (): Promise<never> => {
+      throw new Error("unexpected availability probe");
+    }),
+    execute: vi.fn(async (request: AdbRequest) => {
+      if (request.operation !== "read_adb_setting")
+        throw new Error("unexpected provider operation");
+      return ok(
+        createAnalysisExecution(
+          {
+            client: {
+              binary_path: "/fixture/adb",
+              path_source: "environment",
+              version: "fixture",
+              installed_path: null,
+            },
+            ...request.input,
+            value: "fixture value",
+            device_reported_null: false,
+          },
+          { id: "adb", name: "ADB fixture", version: "fixture" },
+        ),
+      );
+    }),
+    close: vi.fn(async () => undefined),
+  };
+  registerAdbCommands(cli, silentLogger, {}, provider);
+  presentCliArgumentErrors(cli);
+  const command = "read-adb-setting";
+  const advertised = await advertisedSchema(cli, command);
+  const parser = parserSchema(cli, command, "args");
+  const validate = new Ajv2020({
+    strict: false,
+    validateFormats: false,
+  }).compile(advertised.args!);
+  for (const [key, constraint] of [
+    ["key with space", { expected: "regex" }],
+    ["key!", { expected: "regex" }],
+    ["a".repeat(257), { maximum: 256 }],
+    ["screen.brightness", null],
+    ["a".repeat(256), null],
+  ] as const) {
+    const args = { serial: "S", namespace: "secure", key };
+    const valid = constraint === null;
+    expect(adbInputSchemas.read_adb_setting.safeParse(args).success).toBe(
+      valid,
+    );
+    expect(parser?.safeParse(args).success).toBe(valid);
+    expect(validate(args)).toBe(valid);
+    const result = await serve(cli, [command, "S", "secure", key, "--json"]);
+    if (constraint === null) {
+      expect(result.exitCode).toBe(0);
+      expect(provider.execute).toHaveBeenLastCalledWith(
+        { operation: "read_adb_setting", input: args },
+        expect.anything(),
+      );
+      expect(JSON.parse(result.stdout)).toMatchObject({
+        normalized_result: { ...args, value: "fixture value" },
+      });
+      continue;
+    }
+    expect(result.exitCode).toBe(1);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      code: "VALIDATION_ERROR",
+      fieldErrors: [expect.objectContaining({ path: "key", ...constraint })],
+    });
+    expect(result.stdout).not.toContain(key);
+  }
+  expect(provider.inspectAvailability).not.toHaveBeenCalled();
+  expect(provider.execute).toHaveBeenCalledTimes(2);
+  expect(provider.close).toHaveBeenCalledTimes(2);
 });
 
 describe("ADB selector input schemas: dispatch", () => {

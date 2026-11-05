@@ -244,19 +244,9 @@ export const registerAdbCommands = (
   });
   cli.command(CLI_COMMANDS.readAdbSetting, {
     description: "Read one settings value from system, secure, or global",
-    args: z.object({
-      serial,
-      namespace: z
-        .enum(["system", "secure", "global"])
-        .describe("Settings namespace to read"),
-      key: z.string().min(1).describe("Setting key to read"),
-    }),
+    args: adbInputSchemas.read_adb_setting,
     run: ({ args }) =>
-      execute(CLI_COMMANDS.readAdbSetting, "read_adb_setting", {
-        serial: args.serial,
-        namespace: args.namespace,
-        key: args.key,
-      }),
+      execute(CLI_COMMANDS.readAdbSetting, "read_adb_setting", args),
   });
   cli.command(CLI_COMMANDS.collectAdbBugreport, {
     description: "Collect and digest one device-generated bugreport archive",
