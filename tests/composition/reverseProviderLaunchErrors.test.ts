@@ -8,6 +8,7 @@ import {
   providerSnapshot,
 } from "../support/reverseEngineeringCompositionFixtures.js";
 import { TestReverseEngineeringService } from "../support/reverseEngineeringService.js";
+import { awaitAcknowledgement } from "../fixtures/lifecycleAcknowledgement.js";
 
 it.each(["ENOENT", "EACCES", "EPERM", "ENOTDIR"] as const)(
   "preserves provider-launch %s and executable recovery independently of target admission",
@@ -193,13 +194,20 @@ it("preserves newer launch failure when older successful launch completes out of
       return providerSnapshot();
     },
   });
+  let call1Promise:
+    | ReturnType<TestReverseEngineeringService["inspectWithObjdump"]>
+    | undefined;
   try {
     expect(service.observedLaunchFailures()).toEqual({});
 
-    const call1Promise = service.inspectWithObjdump({
+    call1Promise = service.inspectWithObjdump({
       operation: "architectures",
     });
-    await call1Started.promise;
+    await awaitAcknowledgement(
+      call1Started.promise,
+      call1Promise,
+      "provider command",
+    );
 
     const call2Result = await service.inspectWithObjdump({
       operation: "architectures",
@@ -231,6 +239,9 @@ it("preserves newer launch failure when older successful launch completes out of
     expect(service.observedLaunchFailures()).toEqual({});
   } finally {
     call1Release.resolve();
+    if (call1Promise !== undefined) {
+      await call1Promise.catch(() => {});
+    }
     await service.close();
     await rm(directory, { recursive: true, force: true });
   }
@@ -264,13 +275,20 @@ it("ignores older launch failure when newer successful launch completes first an
       throw launchError();
     },
   });
+  let call1Promise:
+    | ReturnType<TestReverseEngineeringService["inspectWithObjdump"]>
+    | undefined;
   try {
     expect(service.observedLaunchFailures()).toEqual({});
 
-    const call1Promise = service.inspectWithObjdump({
+    call1Promise = service.inspectWithObjdump({
       operation: "architectures",
     });
-    await call1Started.promise;
+    await awaitAcknowledgement(
+      call1Started.promise,
+      call1Promise,
+      "provider command",
+    );
 
     const call2Result = await service.inspectWithObjdump({
       operation: "architectures",
@@ -297,6 +315,9 @@ it("ignores older launch failure when newer successful launch completes first an
     });
   } finally {
     call1Release.resolve();
+    if (call1Promise !== undefined) {
+      await call1Promise.catch(() => {});
+    }
     await service.close();
     await rm(directory, { recursive: true, force: true });
   }
