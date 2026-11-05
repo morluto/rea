@@ -3,6 +3,7 @@ import {
   bindArtifactFileCleanup,
 } from "../../artifacts/ArtifactFileOperation.js";
 import { completedStableArtifactObservation } from "../../artifacts/StableArtifactObservation.js";
+import { stableArtifactInputRecovery } from "../../artifacts/StableArtifactFailure.js";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import {
   AnalysisError,
@@ -274,6 +275,7 @@ const classifyPwntoolsDecoderFailure = (
         context.operation,
         {
           cause,
+          ...stableArtifactInputRecovery(cause),
           ...(cause.reason === "limit"
             ? {
                 userMessage: `${cause.message} Admitted artifact bytes use REA_PWNTOOLS_MAX_INPUT_BYTES (default ${String(PWNTOOLS_LIMITS.inputBytes)} bytes, maximum 1073741824). The 1073741824-byte maximum has no runtime override. Restart REA after changing the environment value. pwntools_timeout_ms does not raise this allowance. ${fixedPwntoolsBudgets}`,
