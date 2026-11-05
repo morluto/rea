@@ -199,3 +199,32 @@ describe("packageFromPath", () => {
     expect(isAppImageHeader(header.subarray(0, 8))).toBe(false);
   });
 });
+
+describe("credentials in apt-cache policy", () => {
+  it("leaves out a user name and password apt prints in a source's URI", () => {
+    const printed =
+      "https://rea-user:p@ss@apt.example.com/repo stable/main amd64 Packages";
+    const clean = "https://apt.example.com/repo stable/main amd64 Packages";
+    const versions = [
+      "typora:",
+      "  Version table:",
+      " *** 1.0-1 500",
+      `        500 ${printed}`,
+      "        100 /var/lib/dpkg/status",
+    ].join("\n");
+
+    expect(parseAptPolicySources(versions)).toEqual([clean]);
+    expect(parseAptPolicyPackageSources(versions).get("typora")).toEqual([
+      clean,
+    ]);
+    expect([
+      ...parseAptPolicyOrigins(
+        [
+          "Package files:",
+          ` 500 ${printed}`,
+          "     release o=Example,a=stable,c=main,b=amd64",
+        ].join("\n"),
+      ).keys(),
+    ]).toEqual([clean]);
+  });
+});

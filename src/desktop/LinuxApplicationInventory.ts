@@ -161,16 +161,21 @@ const readDesktopEntry = async (
   return ok(parsed.value);
 };
 
-/** Find a program the way a shell would, without running a shell. */
+/**
+ * Find a program the way a shell would, without running a shell: a relative
+ * path, or an empty or relative PATH entry, is read from the directory the
+ * program is started in.
+ */
 export const resolveProgram = async (
   program: string,
   environment: LinuxApplicationRequest["environment"],
+  startedIn: string,
 ): Promise<string | undefined> => {
-  if (program.includes("/"))
-    return (await isExecutable(program)) ? program : undefined;
-  for (const directory of (environment.PATH ?? "").split(delimiter)) {
-    if (!isAbsolute(directory)) continue;
-    const candidate = join(directory, program);
+  const directories = program.includes("/")
+    ? [""]
+    : (environment.PATH?.split(delimiter) ?? []);
+  for (const directory of directories) {
+    const candidate = resolve(startedIn, directory, program);
     if (await isExecutable(candidate)) return candidate;
   }
   return undefined;
@@ -408,7 +413,11 @@ export const inspectLinuxApplication = async (
   // An `env` prefix's assignments are what the program sees: its PATH finds
   // the program and its XDG folders hold the program's state.
   const environment = { ...request.environment, ...wrapper.environment };
-  const path = await resolveProgram(wrapper.program, environment);
+  const path = await resolveProgram(
+    wrapper.program,
+    environment,
+    workingDirectory,
+  );
   if (path === undefined)
     return err({ reason: "executable_not_found", program: wrapper.program });
   const resolved = await realpath(path).catch(() => null);

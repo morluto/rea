@@ -1,4 +1,5 @@
 import { err, ok, type Result } from "../result.js";
+import { withoutCredentials } from "./aptRepositories.js";
 import { dependencyPackages } from "./debianPackageFile.js";
 import type { AptRepository, DesktopPackage } from "./desktopCapture.js";
 import { unwrapDesktopCommand } from "./desktopEntry.js";
@@ -92,12 +93,19 @@ const refusal = (
 const describe = (repository: AptRepository): string =>
   repository.uri === null
     ? repository.source
-    : `${repository.uri} ${[repository.suite, ...repository.components].join(" ")}`;
+    : `${withoutCredentials(repository.uri)} ${[repository.suite, ...repository.components].join(" ")}`;
 
 /** Why the computer cannot install from a vendor repository, or undefined when the export can declare it. */
 export const repositoryRefusal = (
   repository: AptRepository,
 ): string | undefined => {
+  // A capture written before credentials were removed still holds them in its URI.
+  if (
+    repository.uri_credentials_removed === true ||
+    (repository.uri !== null &&
+      withoutCredentials(repository.uri) !== repository.uri)
+  )
+    return "its sources entry's URI held a user name or password, which REA neither records nor exports";
   if (repository.signing_key === null)
     return repository.signing_key_reason ?? "its signing key was not verified";
   if (repository.uri === null || repository.suite === null)

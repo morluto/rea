@@ -90,7 +90,8 @@ each, with counts):
 
 - `lines` for text: lines added and removed, as a multiset.
 - `values` for JSON and XML: JSON pointers to values, containers included, so
-  an array that becomes an object with the same members is changed.
+  an array that becomes an object with the same members is changed. A pointer
+  longer than 4096 characters is counted but not listed.
 - `keys` for key files and dconf: `group/key`, with `~` and `/` in the key
   written `~0` and `~1` as in a JSON pointer, so `[a/b]` `c` and `[a]` `b/c`
   stay apart.

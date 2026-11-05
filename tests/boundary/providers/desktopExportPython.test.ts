@@ -50,6 +50,25 @@ it("detects key files by the state view's rule rather than a name or any group h
   );
 });
 
+it("keeps JSON Lines holding a number it cannot read exactly as text, as REA does", () => {
+  const lines = '{"id":9007199254740993}\n{"id":2}\n';
+  const files = [
+    ["events.jsonl", lines],
+    ["events.json", lines],
+    ["big.json", '{"id":9007199254740993}'],
+    ["long.json", `{"id":${"9".repeat(5000)}}`],
+  ] as const;
+
+  const formats = pythonFormats(files);
+
+  expect(formats).toEqual(["text", "text", "json", "json"]);
+  expect(formats).toEqual(
+    files.map(([name, text]) =>
+      detectStateFormat(name, new TextEncoder().encode(text)),
+    ),
+  );
+});
+
 /** The exported module's UTF-16 seed respelling of each file, from /home/ada to /home/user, as hex. */
 const pythonUtf16Respelled = (files: readonly string[]) => {
   const imports = PYTHON_IMPORTS.split("\n")

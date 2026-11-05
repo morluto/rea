@@ -9,8 +9,10 @@ export interface AptSourceStanza {
   readonly file: string;
   /** apt's number for the entry: a one-line entry's line, a deb822 entry's stanza, counted from 1. */
   readonly position: number;
-  /** Without trailing slashes, as `apt-cache policy` prints them. */
+  /** Without trailing slashes, as `apt-cache policy` prints them, and without a user name or password. */
   readonly uris: readonly string[];
+  /** The URIs of `uris` whose entry held a user name or password. */
+  readonly credentialed: readonly string[];
   readonly suites: readonly string[];
   readonly components: readonly string[];
   readonly architectures: readonly string[];
@@ -23,9 +25,11 @@ export interface AptSourceStanza {
 /** One `deb` entry of an apt sources file for one URI and suite. */
 export interface AptSourceEntry extends Omit<
   AptSourceStanza,
-  "uris" | "suites"
+  "uris" | "credentialed" | "suites"
 > {
   readonly uri: string;
+  /** Whether the entry's URI held a user name or password, which `uri` leaves out. */
+  readonly credentials: boolean;
   readonly suite: string;
   /** Empty for a flat repository, whose suite is a path ending in `/`. */
   readonly components: readonly string[];
@@ -39,6 +43,17 @@ const listValues = (value: string | undefined): readonly string[] =>
 
 const withoutTrailingSlashes = (uri: string): string =>
   uri.replace(/\/+$/u, "");
+
+/** A URI's user name and password: up to the last `@` before its path, as apt reads them. */
+const USER_INFO = /^(?<scheme>[a-z][a-z0-9+.-]*:\/\/)[^/]*@/iu;
+
+/** A URI without the user name and password it may hold before its host. */
+export const withoutCredentials = (uri: string): string =>
+  uri.replace(USER_INFO, "$<scheme>");
+
+/** A line of apt's output with every URI in it stripped of a user name and password, whether or not apt printed them. */
+export const withoutCredentialsIn = (text: string): string =>
+  text.replace(/(?<scheme>[a-z][a-z0-9+.-]*:\/\/)[^\s/]*@/giu, "$<scheme>");
 
 /** Whether a suite as an entry writes it is a target's release, which apt leaves empty for the flat suite `/`. */
 const isRelease = (suite: string, release: string): boolean =>
@@ -55,9 +70,13 @@ const stanza = (
 ): AptSourceStanza => {
   const signedBy = fields.options.get("signed-by") ?? "";
   const inlineKey = signedBy.includes(ARMOR_BEGIN);
+  const uris = fields.uris.map(withoutCredentials);
   return {
     ...at,
-    uris: fields.uris.map(withoutTrailingSlashes),
+    uris: uris.map(withoutTrailingSlashes),
+    credentialed: uris
+      .filter((uri, index) => uri !== fields.uris[index])
+      .map(withoutTrailingSlashes),
     suites: fields.suites,
     components: fields.components,
     architectures: listValues(fields.options.get("arch")),
@@ -157,6 +176,7 @@ export interface AptIndexTarget {
   /** The sources file and position of the entry apt read it from. */
   readonly sourcesFile: string;
   readonly position: number;
+  /** Without a user name or password, as `baseUri`, whether or not apt printed them. */
   readonly repoUri: string;
   /** The suite as the entry writes it; empty for the flat suite `/`. */
   readonly release: string;
@@ -196,13 +216,13 @@ export const parseAptIndexTargets = (
     const optional = (name: string) => fields.get(name) || null;
     return [
       {
-        description,
+        description: withoutCredentialsIn(description),
         sourcesFile: at.file,
         position: Number(at.position),
-        repoUri,
+        repoUri: withoutCredentials(repoUri),
         release: fields.get("release") ?? "",
         component: optional("component"),
-        baseUri,
+        baseUri: withoutCredentials(baseUri),
         filename,
         origin: optional("origin"),
         suite: optional("suite"),
@@ -225,7 +245,7 @@ export const entryForTarget = (
       candidate.position === target.position,
   );
   if (at === undefined) return undefined;
-  const { uris, suites, ...entry } = at;
+  const { uris, credentialed, suites, ...entry } = at;
   const single = uris.length === 1 && suites.length === 1;
   const repoUri = withoutTrailingSlashes(target.repoUri);
   const uri = single ? uris[0] : uris.find((listed) => listed === repoUri);
@@ -236,6 +256,7 @@ export const entryForTarget = (
   return {
     ...entry,
     uri,
+    credentials: credentialed.includes(uri),
     suite,
     components: suite.endsWith("/") ? [] : entry.components,
   };

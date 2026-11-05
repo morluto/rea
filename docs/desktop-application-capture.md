@@ -39,7 +39,8 @@ and Nix do, is followed to its file. The entry's `Exec` line is expanded with no
 `--argument` values are appended in its place, and the application runs in the
 entry's `Path` or the home directory. When the line starts with
 `env NAME=value`, the program is found on the `PATH` those assignments set,
-and their XDG folders name the state directories. An `--executable` runs from
+with an empty or relative entry read from the folder the application runs
+in, and their XDG folders name the state directories. An `--executable` runs from
 the current directory, as it would from a shell, and a relative path to it is
 resolved there.
 
@@ -138,7 +139,12 @@ suite is `./` (Typora's `deb https://downloads.typora.io/linux ./`) or `/`
 `components`, none for a flat repository, and `architectures`, the entry's
 `arch=` or `Architectures:` restriction, empty when it has none), `release`,
 the release's Suite (apt's `a=`) or else its Codename, and the key that signs
-it. The key is found by verification, not by name: the candidates are the
+it. A user name or password in an entry's URI (`https://user:password@host/…`)
+is never recorded: REA removes it from every URI it reads, in the sources file
+and in `apt-get indextargets` and `apt-cache policy` output alike, so entries
+match whether or not apt prints it, and sets `uri_credentials_removed` on a repository whose URI held
+one (a capture written before this was recorded omits the field). The key is
+found by verification, not by name: the candidates are the
 entry's `signed-by` keyrings, or else every `.gpg` and `.asc` key in
 `/etc/apt/trusted.gpg.d` and `/etc/apt/trusted.gpg`, and each is checked with
 `gpgv` against the release's `InRelease` (or `Release` with `Release.gpg`)

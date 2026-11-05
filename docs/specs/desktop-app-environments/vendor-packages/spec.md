@@ -19,9 +19,15 @@ that key, with those libraries, and starts it.
   (suite `./` or `/`, no components), `[signed-by=…]` and `Signed-By:` options
   and architecture options are read; a deb822 stanza's URIs and suites are
   kept as lists, never expanded into every pair. `release` is the release's
-  Suite (`a=`), or else its Codename, from the same index target. Captures
-  written before `architectures` and `release` were recorded omit them, and
-  still open.
+  Suite (`a=`), or else its Codename, from the same index target. A user name
+  or password in a URI, up to the last `@` before its path as apt reads it,
+  is removed from every sources entry, from `apt-get indextargets`'
+  `Description`, `Repo-URI` and `Base-URI`, and from the sources
+  `apt-cache policy` lists, as they are parsed, so no stanza, entry, record,
+  reason or limitation holds it and entries match whether or not apt prints
+  it; `uri_credentials_removed` records that the entry's URI held one.
+  Captures written before `architectures`, `release` and
+  `uri_credentials_removed` were recorded omit them, and still open.
 - The repository's key is the candidate that verifies the release beside the
   index in apt's lists folder (`InRelease`, or `Release` with `Release.gpg`,
   named from the target's `Base-URI`) with
@@ -68,9 +74,12 @@ that key, with those libraries, and starts it.
   suite; the package is named `<package>/<release>` from the first declared
   repository, so its release wins over the archive, and the bundle supports
   only the capture host's architecture. A repository is usable when its key
-  was verified, it is reached over http or https, and its architecture
-  restriction includes the host's; with none usable, the export is refused
-  naming each repository and its reason. A capture written before
+  was verified, its sources entry's URI held no user name or password
+  (`uri_credentials_removed`, or one still in `uri` in a capture written
+  before that field), it is reached over http or https, and its architecture
+  restriction includes the host's. With none usable, the export is refused
+  naming each repository, by its URI without credentials, and its reason; the
+  credentials reason names no URI. A capture written before
   restrictions and releases were recorded counts its repositories as
   unrestricted and names the package alone. For a vendor package, library
   packages follow the application's package in `Packages(apt=[…])`, and
@@ -89,5 +98,7 @@ that key, with those libraries, and starts it.
   http or https.
 - Pinning the captured version, carrying the host's apt pinning over, or
   checking that the capture host's suite suits Ubuntu 24.04.
-- Ubuntu Pro repositories, which need the host's credentials.
+- Ubuntu Pro repositories, which need the host's credentials, and other
+  repositories that need a user name or password: one held in an entry's URI
+  is refused, and apt's `auth.conf` is not read.
 - Libraries an application opens with `dlopen` rather than DT_NEEDED.
