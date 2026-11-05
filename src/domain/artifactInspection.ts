@@ -312,7 +312,10 @@ const contradictions = (
       statement:
         value.logical_path === "."
           ? "The container's declared integrity contradicts its observed bytes."
-          : `Declared integrity for ${value.logical_path} contradicts observed bytes.`,
+          : "signing_explanation" in value &&
+              value.signing_explanation !== undefined
+            ? `Declared integrity for ${value.logical_path} contradicts observed bytes; removing the Authenticode certificate table restores the declared SHA-256.`
+            : `Declared integrity for ${value.logical_path} contradicts observed bytes.`,
       occurrence_id: value.occurrence_id,
       ...artifactIntegrityPairOf(value),
       evidence_id: evidenceId,

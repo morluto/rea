@@ -558,8 +558,13 @@ const buildIntegrityContradictions = (
       unpacked: contradiction.unpacked,
       trust: "observed-untrusted",
       provenance: "container-integrity-metadata-versus-observed-bytes",
+      ...(contradiction.signingExplanation === undefined
+        ? {}
+        : { signing_explanation: contradiction.signingExplanation }),
       limitations: [
-        "Observed bytes contradict declared integrity metadata and cannot support equivalence.",
+        contradiction.signingExplanation === undefined
+          ? "Observed bytes contradict declared integrity metadata and cannot support equivalence."
+          : "Observed bytes contradict declared integrity metadata; stripping IMAGE_DIRECTORY_ENTRY_SECURITY restores the declared SHA-256 (signed-after-packing). Bytes remain observed-untrusted and cannot support equivalence.",
       ],
     };
   });
