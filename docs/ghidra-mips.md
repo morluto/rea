@@ -39,9 +39,9 @@ bridge-reported `language_id` after import. A caller-selected
 pin; combining the pinned profile with an environment override is a typed
 refusal. A header that declares an ABI field but carries no record is still
 refused. Two further boundaries apply: an inspection that could not examine
-every ABI declaration source (for example a carved ELF whose section table
-extends past the captured bytes without a program-header record) does not
-establish the recordless admission, and an `EF_MIPS_ARCH_1` or
+every ABI declaration source does not establish the recordless admission
+(target opening already refuses a carved ELF whose section table extends past
+the captured bytes, as described below), and an `EF_MIPS_ARCH_1` or
 `EF_MIPS_ARCH_32` header that _declares_ an ABI is refused rather than
 relabeled, because the declared-ABI lane is verified for
 `EF_MIPS_ARCH_32R2` headers only. The recordless MIPS-I lane pins the same
@@ -77,13 +77,16 @@ argument ABI and unknown nonzero MSA values remain unsupported. Without a
 separate ABI flags record, FP attribute values are admitted only when absent,
 `ANY` (0), double precision (1), or FPXX (5), the values covered by the
 recordless profile. Parsed values are retained in the MIPS analysis profile.
-For carved ELFs whose section table extends
-beyond the captured file, REA examines every complete captured section header
-and records the unavailable headers as a limitation. The provider refuses an
-incomplete ABI declaration inspection even when a program-header ABI record is
-valid, because an unavailable section header could carry an unsupported or
-conflicting declaration. A missing program-header record does not make ABI
-declarations in uncaptured sections absent or supply a default ABI.
+A carved ELF whose section header table extends beyond the captured file is
+refused when the target is opened, before provider selection, as is every ELF
+declaration beyond EOF ([installation](installation.md#ghidra)). The refusal
+names the declared range and the file size. It applies even when a
+program-header ABI record was captured: an uncaptured section header could
+carry an unsupported or conflicting declaration, so the captured bytes are not
+analyzed as a complete smaller program. The provider also refuses any ABI
+declaration inspection that reports unexamined headers. A missing
+program-header record does not make ABI declarations in uncaptured sections
+absent or supply a default ABI.
 The field layout follows
 [`Elf_MIPS_ABIFlags_v0`](https://github.com/bminor/glibc/blob/master/elf/elf.h).
 
@@ -257,11 +260,13 @@ observations and does not relabel the upstream result as verified.
 
 CLI/MCP discovery and decompilation, direct calls, target/profile/Evidence
 identity, snapshot round-trip and final process cleanup remain covered.
-For both byte orders, the lane also carves away the section table while retaining
-all program-header payloads. It checks the actual Ghidra language, entry-address
-decompilation, distinct artifact digest and missing-section limitations through
-CLI Evidence and an MCP-produced snapshot. Caller-selected Ghidra heap limits
-are passed to these child workflows.
+For both byte orders, the lane also cuts the image one byte before its section
+header table, after checking that every program header and payload stays
+captured. `open_binary` and the CLI must both refuse that copy before provider
+selection as `target_unavailable` with constraint `file_format_rejected`,
+naming the declared section-table range and the captured size, and leave it
+unchanged. Caller-selected Ghidra heap limits are passed to the lane's CLI and
+MCP child workflows.
 For soft-float fixtures the lane also checks, through `inspect_native_api`, the
 exact parameter and return types and storage of float, double, mixed (pair
 alignment and stack spill) and struct-returning functions; that a caller's

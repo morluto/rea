@@ -14,12 +14,17 @@ interpreter: the npm launcher's `#!/usr/bin/env node` still searches `PATH` for
 Node. Running that command successfully in a terminal does not establish that
 the client can launch it.
 
-For direct JavaScript installations, setup registers the selected runtime
+For JavaScript installations, setup registers the selected runtime
 executable and REA script by absolute path. On POSIX, it prefers executable
 `node` or `bun` and REA aliases on setup's `PATH` only when they resolve to the
 same selected files. This preserves manager-owned aliases across version updates;
-otherwise setup uses the selected paths directly. Package-runner registrations keep
-their selected runner. Setup does not copy your ambient environment into client
+otherwise setup uses the selected paths directly. This also applies when setup
+runs through a package runner: retain the selected cache entry and runtime while
+the registration uses them. Clearing either makes startup fail without resolving
+another package from the client's project. Restore the same installation before
+repairing it; an unidentified registration remains untouched. See
+[installation and recovery](installation.md#package-runners-and-global-installation).
+Setup does not copy your ambient environment into client
 settings. To refresh an older registration, preview
 `rea setup --client <client-id> --skill=false --dry-run`, then run the same command
 without `--dry-run` and approve the displayed changes. Setup preserves unrelated
@@ -39,6 +44,10 @@ executable and environment of the terminal running doctor. It does not launch
 the client's configured command or reproduce the client's environment. If doctor
 passes but the client disconnects, inspect the client's startup error and registered
 launcher; see [verification scope](client-verification.md#launch-environment-verification).
+
+`rea doctor` has the same limit for provider checks, and reports a provider setting
+the registration's file does not carry as a
+[non-blocking unknown](installation.md#check-readiness-for-your-task).
 
 ## Runtime settings and client deadlines
 
@@ -268,7 +277,7 @@ This headroom is a practical default, not a guarantee for every analysis
 duration. Setup preserves positive timeout values already in the `rea` entry.
 
 Setup also forwards explicitly selected input/output schema profiles,
-`REA_MCP_MAX_RESPONSE_BYTES`, provider paths and supported Ghidra, JADX and Kuna
+`REA_MCP_MAX_RESPONSE_BYTES`, `REA_MCP_MAX_INPUT_ELEMENTS`, provider paths and supported Ghidra, JADX and Kuna
 settings. It also forwards explicit executable and resource selections for ADB,
 apktool, packet capture, GDB/Rizin/objdump, Cutter, WABT, Wakaru, firmware and
 signal tools, browser inspection, and pwntools/pwndbg. This includes their
@@ -278,8 +287,9 @@ patterns. A provider being unavailable does not discard its selected paths;
 doctor reports its readiness separately. Explicit selections override discovered
 defaults, including when setup runs again with a changed selection. Unrelated
 environment variables, process ownership tokens and one-shot target paths are not
-copied. Existing client environment overrides remain intact unless setup supplies
-the same key.
+copied. For an explicitly configured startup target, see the
+[initial-target settings](mcp-contracts.md#initial-target-at-startup). Existing
+client environment overrides remain intact unless setup supplies the same key.
 You can edit `startupTimeoutMs` and `toolTimeoutMs` there; doctor keeps positive
 caller-selected values aligned and reports a non-blocking advisory when a tool
 timeout is shorter than the known provider allowance.
@@ -299,6 +309,22 @@ Kimi Code also discovers personal skills in `~/.agents/skills` and project-local
 `.agents/skills`, so no separate skill root is required; setup still installs
 and verifies the matching skill files through the normal shared-skill flow.
 Start a new Kimi Code session to pick up MCP and skill changes.
+
+## LM Studio
+
+For [LM Studio](https://lmstudio.ai/docs/app/mcp), setup writes `mcpServers.rea`
+into `mcp.json` in the LM Studio home directory. Setup finds that directory as
+LM Studio does: the path stored in `~/.lmstudio-home-pointer`, otherwise
+`~/.cache/lm-studio` when it exists, otherwise `~/.lmstudio`. Setup only reads
+the pointer file. LM Studio parses `mcp.json` as strict JSON, so setup rejects
+a file with comments, trailing commas, or a byte order mark without a backup
+or a write. The entry carries `command`, `args`, and `env`, and setup keeps
+every other server. Local models often have small context windows, so setup
+selects `REA_MCP_INPUT_SCHEMA_PROFILE=compact` unless the stored entry or the
+setup environment selects a profile explicitly. Doctor reports an entry with no
+explicit profile as stale, as for Kimi Code. LM Studio 0.4.26 on macOS loaded
+this registration, and a local model called an REA tool through it. Linux and
+Windows remain unverified.
 
 ## Pi
 
@@ -611,9 +637,10 @@ the fallback file untouched. Existing REA environment overrides are preserved
 when refreshing its command. A malformed or unreadable fallback file fails setup instead of
 being silently suppressed; repair or remove it and rerun. Uninstall removes an
 REA-owned `rea` entry from both the native table and the fallback, backing up
-each changed file, so an emptied native table cannot load a leftover fallback
-registration; other fallback servers, settings and a foreign `rea` entry are
-kept. ZCode disables a
+each changed file. If removing the last native server would activate a retained
+fallback server, uninstall refuses before changing either file; review the
+fallback configuration before retrying. Other fallback servers, settings and a
+foreign `rea` entry are kept. ZCode disables a
 server with `enable: false` on its entry; doctor reports such a registration
 as stale, and rerunning setup removes the flag to repair it. Native configuration
 uses strict JSON; setup refuses comments, trailing commas and a BOM rather than
@@ -621,21 +648,20 @@ writing a registration ZCode cannot load.
 
 ## FreeBuff
 
-For FreeBuff, the proposed integration writes `mcpServers.rea` into the user-scope
-`~/.agents/mcp.json` shared-agent file. Entries carry `command`, `args`, and
-`env`; stdio is the default transport. The proposed personal skill location is
-`~/.agents/skills`, so setup installs its skill copy there. Because the same
+For FreeBuff, `rea setup --client freebuff` writes `mcpServers.rea` into the
+user-scope `~/.agents/mcp.json` shared-agent file. Entries carry `command`,
+`args`, and `env`; stdio is the default transport. The personal skill location
+is `~/.agents/skills`, so setup installs its skill copy there. Because the same
 file doubles as ZCode's user-scope fallback (see above), a `freebuff`
-registration is also in the file ZCode uses until ZCode defines its own native server.
-Setup and doctor detect FreeBuff from its own profile directory
-(`~/.config/freebuff-desktop`), not from the shared `.agents` folder that
-REA's skill installs create for every client.
+registration is also in the file ZCode uses until ZCode defines its own native
+server. Setup and doctor detect FreeBuff from its own profile directory
+(`~/.config/freebuff-desktop`), not from the shared `.agents` folder that REA's
+skill installs create for every client.
 
-The configuration write and personal skill locations are proposed integration
-boundaries. FreeBuff MCP loading and skill discovery have not been verified
-with an installed native FreeBuff client/version; filesystem tests cover REA's
-editing, discovery, and ownership behavior only. Automatic applicability
-requires the FreeBuff profile directory even when the shared MCP file exists.
+FreeBuff MCP loading and skill discovery have not been verified with an
+installed native FreeBuff client/version; filesystem tests cover REA's editing,
+discovery, and ownership behavior only. Automatic applicability requires the
+FreeBuff profile directory even when the shared MCP file exists.
 When uninstall cannot establish FreeBuff or another shared-storage reader from
 product discovery, a malformed or unreadable shared MCP file is retained
 unchanged and does not stop other REA removals, including `--purge-data`. When
@@ -643,8 +669,9 @@ FreeBuff or ZCode product applicability is established or unresolved, the same
 malformed shared file stops uninstall before removals. See
 [Diagnose, update, and remove](installation.md#diagnose-update-and-remove).
 
-FreeBuff setup support requires `rea-agents@6.8.0` or later. Older versions
-reject `rea setup --client freebuff` as an unsupported client. See the
+FreeBuff setup support requires `rea-agents@6.8.0` or later (including the
+current npm `latest` release). Older versions reject
+`rea setup --client freebuff` as an unsupported client. See the
 [installation guide](installation.md#supported-agents) for client availability.
 
 ## DeepSeek Harness

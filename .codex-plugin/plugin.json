@@ -1,7 +1,7 @@
 {
   "name": "rea",
   "version": "6.8.0",
-  "description": "Reverse engineer anything from your terminal or agent with one CLI and MCP server.",
+  "description": "Reverse engineer anything with agents, from app behavior down to native binaries.",
   "author": {
     "name": "morluto",
     "url": "https://github.com/morluto"
@@ -19,8 +19,8 @@
   "mcpServers": "./.codex-plugin/mcp.json",
   "interface": {
     "displayName": "REA",
-    "shortDescription": "Reverse engineer anything with agents",
-    "longDescription": "Use REA to explain shipped behavior from native binaries, managed assemblies, Electron and JavaScript bundles, packages, firmware, and browser targets, with evidence that separates observations from inferences.",
+    "shortDescription": "Reverse engineer anything",
+    "longDescription": "Reverse engineer anything with agents, from app behavior down to native binaries.",
     "developerName": "morluto",
     "category": "Developer Tools",
     "capabilities": [
@@ -33,6 +33,8 @@
       "Use REA to explain how this binary implements a feature.",
       "Use REA to compare two versions of this application.",
       "Use REA to recover the sources from this JavaScript bundle."
-    ]
+    ],
+    "composerIcon": "./assets/rea-plugin.png",
+    "logo": "./assets/rea-plugin.png"
   }
 }

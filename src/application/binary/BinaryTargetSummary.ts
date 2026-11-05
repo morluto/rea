@@ -24,6 +24,12 @@ export const binaryTargetSummary = (target: BinaryTarget) => {
               member_sha256: target.debugCompanion.memberSha256,
             },
           }),
+    ...(target.format === "esp-flash-image"
+      ? {
+          flash_offset: target.espFlash.flashOffset,
+          partition_table_offset: target.espFlash.partitionTableOffset,
+        }
+      : {}),
   };
   liveBinaryTargetSummarySchema.parse(summary);
   return summary;

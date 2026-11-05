@@ -1,10 +1,11 @@
+import { PRODUCT_IDENTITY } from "../../../src/identity.js";
 import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { readClientRegistrationStatuses } from "../../../src/application/ClientRegistrationStatus.js";
-import { setupRegistrationCommand } from "../../../src/application/SetupHost.js";
+import { currentClientRegistrationCommand } from "../../../src/application/ClientRegistrationIdentity.js";
 import { configureClientConfiguration } from "../../../src/application/SetupClientConfiguration.js";
 import {
   clientSkillDirectories,
@@ -14,9 +15,8 @@ import { systemUninstallHost } from "../../../src/application/Uninstall.js";
 import { MCP_STARTUP_POLICY } from "../../../src/mcpStartupPolicy.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { clearClientLocationEnvironment } from "../../fixtures/clientEnvironment.js";
-import { npxRegistrationCommand } from "../../../src/application/ClientRegistrationIdentity.js";
 
-const command = npxRegistrationCommand();
+const command = currentClientRegistrationCommand();
 
 beforeEach(clearClientLocationEnvironment);
 afterEach(() => vi.unstubAllEnvs());
@@ -366,10 +366,28 @@ describe("Kimi Code package launchers", () => {
     ["npx", "win32"],
     ["bunx", "win32"],
   ] as const)(
-    "keeps the %s launcher aligned on %s",
+    "migrates the legacy %s launcher on %s",
     async (runner, platform) => {
       const { home, client } = await kimiClient();
-      const launcher = setupRegistrationCommand(platform, runner, undefined);
+      const pinned = PRODUCT_IDENTITY.registrationPackageSpecifier;
+      const previous =
+        runner === "npx"
+          ? ["npx", "-y", pinned, "mcp"]
+          : ["bunx", pinned, "mcp"];
+      const legacy =
+        platform === "win32" ? ["cmd.exe", "/d", "/c", ...previous] : previous;
+      expect(
+        (await configureClientConfiguration(client, {}, legacy)).status,
+      ).toBe("configured");
+      expect(
+        (
+          await readClientRegistrationStatuses(home, undefined, {
+            platform,
+            environment: {},
+          })
+        ).find(({ client: name }) => name === "kimi"),
+      ).toMatchObject({ state: "stale" });
+      const launcher = currentClientRegistrationCommand({ platform });
       expect(
         (await configureClientConfiguration(client, {}, launcher)).status,
       ).toBe("configured");

@@ -1,7 +1,6 @@
 import {
   appendFile,
   mkdir,
-  rename,
   readFile,
   stat,
   symlink,
@@ -12,6 +11,7 @@ import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
+import { renameOpenParent } from "../../../tests/fixtures/renameOpenParent.js";
 import { buildGodotPck } from "../../../tests/fixtures/godotPck.js";
 import { ArtifactResourceScope } from "../ArtifactResourceScope.js";
 import { GodotPckArtifactReader } from "../GodotPckArtifactReader.js";
@@ -301,9 +301,14 @@ it.each(cases)(
   },
 );
 
-it.each(cases)(
-  "rejects a replacement at the admitted $format pathname",
-  async ({ inputFormat, reader, bytes }) => {
+it.each(
+  cases.flatMap((item) => [
+    { ...item, simulateWindowsRefusal: false },
+    { ...item, simulateWindowsRefusal: true },
+  ]),
+)(
+  "handles attempted replacement at the admitted $format pathname (simulated refusal: $simulateWindowsRefusal)",
+  async ({ inputFormat, reader, bytes, simulateWindowsRefusal }) => {
     const directory = await createTestTempDirectory(
       "rea-embedded-extraction-replacement-",
     );
@@ -311,34 +316,66 @@ it.each(cases)(
     await mkdir(selectedDirectory);
     const path = join(selectedDirectory, "source");
     const output = join(directory, "out");
-    await writeFile(path, bytes());
+    const originalBytes = bytes();
+    await writeFile(path, originalBytes);
     const scope = new ArtifactResourceScope();
     const originalClose = reader.prototype.close;
     let closes = 0;
+    let deniedRename: unknown;
     const close = vi
       .spyOn(reader.prototype, "close")
       .mockImplementation(async function (this: { close(): Promise<void> }) {
         await originalClose.call(this);
         if (++closes === 1) {
           // Moving the parent leaves the admitted regular file's metadata intact.
-          await rename(selectedDirectory, join(directory, "admitted"));
+          const swap = await renameOpenParent(
+            selectedDirectory,
+            join(directory, "admitted"),
+            simulateWindowsRefusal
+              ? {
+                  platform: "win32",
+                  rename: async () => {
+                    throw Object.assign(new Error("injected EPERM"), {
+                      code: "EPERM",
+                    });
+                  },
+                }
+              : {},
+          );
+          if (swap.kind === "blocked") {
+            deniedRename = swap.cause;
+            throw swap.cause;
+          }
           await mkdir(selectedDirectory);
           await writeFile(path, Buffer.from("replacement"));
         }
       });
     try {
-      await expect(
-        extractArtifact({
-          inputPath: path,
-          inputFormat,
-          outputRoot: output,
-          environment: {},
-          integrityPolicy: "fail",
-          resourceScope: scope,
-        }),
-      ).rejects.toMatchObject({ reason: "integrity" });
+      const failure = await extractArtifact({
+        inputPath: path,
+        inputFormat,
+        outputRoot: output,
+        environment: {},
+        integrityPolicy: "fail",
+        resourceScope: scope,
+      }).then(
+        () => undefined,
+        (cause: unknown) => cause,
+      );
+      if (deniedRename === undefined)
+        expect(failure).toMatchObject({ reason: "integrity" });
+      else
+        expect(failure).toMatchObject({
+          reason: "io",
+          message: expect.stringContaining("EPERM"),
+        });
       await expect(stat(output)).rejects.toMatchObject({ code: "ENOENT" });
       expect(closes).toBe(1);
+      if (deniedRename !== undefined) {
+        expect((await readFile(path)).equals(originalBytes)).toBe(true);
+        expect(scope.hasPending).toBe(true);
+        await scope.close();
+      }
       expect(scope.hasPending).toBe(false);
     } finally {
       await scope.close();

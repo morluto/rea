@@ -12,6 +12,11 @@ const MAX_SYMLINK_HOPS = 32;
 
 export type PathLookup =
   | { readonly kind: "file"; readonly path: string }
+  | {
+      readonly kind: "undetermined";
+      readonly path: string;
+      readonly targetHex: string;
+    }
   | { readonly kind: "absent" | "escapes" | "not-file" };
 
 /**
@@ -40,6 +45,8 @@ export const resolveTreePath = async (
     const entry = await view.entry(path);
     if (entry === undefined) return { kind: "absent" };
     if (entry.kind === "symlink") {
+      if (entry.target === null)
+        return { kind: "undetermined", path, targetHex: entry.targetHex };
       hops += 1;
       if (hops > MAX_SYMLINK_HOPS) return { kind: "absent" };
       if (entry.target.startsWith("/")) return { kind: "escapes" };

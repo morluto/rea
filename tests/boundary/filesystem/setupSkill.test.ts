@@ -22,6 +22,7 @@ import {
   canonicalSkillNeedsInstall,
   existingSkillDestinations,
   installCanonicalSkill,
+  readSkillFile,
   readInstalledSkillIdentity,
   skillDestinations,
   type SkillInstallFileOperations,
@@ -36,6 +37,21 @@ import { PRODUCT_IDENTITY } from "../../../src/identity.js";
 import { SkillFilePublication } from "../../../src/application/SkillFilePublication.js";
 import { z } from "zod";
 import { skillReferenceIssues } from "../../../scripts/lib/docs-facts.mjs";
+
+describe("managed skill file read boundary", () => {
+  it("rejects linked and oversized managed guide files", async () => {
+    const root = await createTestTempDirectory("rea-guidance-file-boundary-");
+    const target = join(root, "guide.md");
+    const link = join(root, "linked-guide.md");
+    const oversized = join(root, "oversized-guide.md");
+    await writeFile(target, "safe guide content");
+    await symlink(target, link);
+    await writeFile(oversized, "larger than limit");
+
+    await expect(readSkillFile(link)).rejects.toThrow();
+    await expect(readSkillFile(oversized, undefined, 4)).rejects.toThrow();
+  });
+});
 
 const expectPermissionMode = async (
   path: string,

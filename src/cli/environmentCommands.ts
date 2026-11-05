@@ -429,6 +429,7 @@ const buildEnvironmentCommand = async (
       "evidence",
       capturePath,
       ENVIRONMENT_BUILD_OPERATION,
+      ["capture"],
     );
     if (!read.ok) return cliError(read.error);
     capture = read.value;

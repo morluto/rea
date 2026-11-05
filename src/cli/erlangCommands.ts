@@ -50,6 +50,7 @@ export const registerErlangCommands = (
           if (!delivery.ok) return projectAnalysisError(delivery.error);
           const service = createBeamService();
           return deliverCliAnalysisEvidence({
+            callerInputPath: args.path,
             run: () =>
               service.inspect(
                 {

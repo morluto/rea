@@ -73,12 +73,23 @@ const formatSchema = z.enum([
   "hsp",
   "app-pack",
   "asar",
+  "ines",
   "godot-pck",
+  "unityfs",
+  "wxapkg",
   "dmg",
   "pkg",
+  "intel-hex",
+  "srec",
+  "esp-image",
+  "uf2",
+  "dfuse",
+  "esp-flash-image",
+  "fit",
   "plist",
   "javascript",
   "source-map",
+  "uimage",
 ]);
 const kindSchema = z.enum(["executable", "database", "archive", "artifact"]);
 const subjectBaseSchema = z.object({
@@ -104,7 +115,10 @@ const targetSchema = z.discriminatedUnion("format", [
   targetIdentitySchema.extend({
     format: z.enum(
       formatSchema.options.filter(
-        (format) => format !== "raw-binary" && format !== "gamecube-dol",
+        (format) =>
+          format !== "raw-binary" &&
+          format !== "gamecube-dol" &&
+          format !== "esp-flash-image",
       ),
     ),
     architecture: architectureSchema
@@ -122,6 +136,14 @@ const targetSchema = z.discriminatedUnion("format", [
     kind: z.literal("executable"),
     architecture: z.literal("powerpc"),
     entry_point: rawBinaryEntryPointSchema,
+  }),
+  // The caller's inputs select how the dump is read, so they are identity.
+  targetIdentitySchema.extend({
+    format: z.literal("esp-flash-image"),
+    kind: z.literal("archive"),
+    architecture: z.null(),
+    flash_offset: z.number().int().min(0).max(0xffff_ffff).nullable(),
+    partition_table_offset: z.number().int().min(0).max(0xffff_ffff).nullable(),
   }),
 ]);
 const bindingSchema = z
@@ -176,6 +198,27 @@ export type AnalysisSnapshotEntry = z.infer<typeof entrySchema>;
 export type AnalysisSnapshotWorkflowEntry = z.infer<typeof workflowEntrySchema>;
 export type AnalysisSnapshotTarget = z.infer<typeof targetSchema>;
 export type AnalysisSnapshotBinding = z.infer<typeof bindingSchema>;
+
+/** Recognize an already-parsed JSON file envelope; this does not validate or authenticate a snapshot. */
+export const resemblesAnalysisSnapshot = (value: unknown): boolean => {
+  if (typeof value !== "object" || value === null || Array.isArray(value))
+    return false;
+  const record = value as Record<string, unknown>;
+  const objectMember = (key: string) =>
+    Object.hasOwn(record, key) &&
+    typeof record[key] === "object" &&
+    record[key] !== null &&
+    !Array.isArray(record[key]);
+  return (
+    objectMember("target") &&
+    objectMember("binding") &&
+    objectMember("evidence_bundle") &&
+    Object.hasOwn(record, "entries") &&
+    Array.isArray(record.entries) &&
+    Object.hasOwn(record, "workflow_entries") &&
+    Array.isArray(record.workflow_entries)
+  );
+};
 
 // These handles only represent entries parsed in this realm. File readers can
 // release their payloads while retaining an authenticated comparison operand.
@@ -393,13 +436,23 @@ export const snapshotTarget = (target: BinaryTarget): AnalysisSnapshotTarget =>
           format: target.format,
           entry_point: target.entryPoint,
         }
-      : {
-          sha256: target.sha256,
-          kind: target.kind,
-          architecture: target.architecture ?? null,
-          debug_companion: machOCompanionIdentity(target),
-          format: target.format,
-        };
+      : target.format === "esp-flash-image"
+        ? {
+            sha256: target.sha256,
+            kind: target.kind,
+            architecture: null,
+            debug_companion: null,
+            format: target.format,
+            flash_offset: target.espFlash.flashOffset,
+            partition_table_offset: target.espFlash.partitionTableOffset,
+          }
+        : {
+            sha256: target.sha256,
+            kind: target.kind,
+            architecture: target.architecture ?? null,
+            debug_companion: machOCompanionIdentity(target),
+            format: target.format,
+          };
 
 /** A dSYM change is a different analysis input, not the same target. */
 const machOCompanionIdentity = (
@@ -438,7 +491,12 @@ export const snapshotMatchesTarget = (
       snapshot.entry_point === target.entryPoint)) &&
   (snapshot.format !== "gamecube-dol" ||
     (target.format === "gamecube-dol" &&
-      snapshot.entry_point === target.entryPoint));
+      snapshot.entry_point === target.entryPoint)) &&
+  (snapshot.format !== "esp-flash-image" ||
+    (target.format === "esp-flash-image" &&
+      snapshot.flash_offset === target.espFlash.flashOffset &&
+      snapshot.partition_table_offset ===
+        target.espFlash.partitionTableOffset));
 
 /** A dSYM change is a different analysis input, not the same target. */
 const sameDebugCompanion = (
@@ -468,14 +526,72 @@ export const snapshotMatchesProfile = (
   committedProvidersEqual(binding.provider, profile.provider) &&
   analysisProfilesEqual(binding.analysis_profile, profile);
 
-/** Require an exact target and selected provider/profile cache partition. */
-export const snapshotMatchesBinding = (
+/** Confirmed differences in the same target and profile commitments used for replay. */
+export interface SnapshotBindingMismatch {
+  readonly target?: {
+    readonly snapshot: AnalysisSnapshotTarget;
+    readonly selected: AnalysisSnapshotTarget;
+  };
+  readonly provider?: {
+    readonly snapshot: AnalysisSnapshotBinding["provider"];
+    readonly selected: AnalysisProfileCommitment["provider"];
+  };
+  readonly profile_digest?: {
+    readonly snapshot: string;
+    readonly selected: string;
+  };
+  /** A selected profile was not available at this validation boundary. */
+  readonly profile_comparison?: "not_compared";
+  /** A matching profileless binding contains workflows outside its permitted scope. */
+  readonly workflow_scope?: "incompatible";
+  /** Staged internal state has no complete binding to compare. */
+  readonly staged_binding?: "incomplete";
+}
+
+/** Explain only comparisons made against authenticated binding facts. */
+export const snapshotBindingMismatch = (
   snapshot: Pick<AnalysisSnapshot, "target" | "binding">,
   target: BinaryTarget,
-  profile: AnalysisProfileCommitment,
-): boolean =>
-  snapshotMatchesTarget(snapshot.target, target) &&
-  snapshotMatchesProfile(snapshot.binding, profile);
+  profile: AnalysisProfileCommitment | undefined,
+): SnapshotBindingMismatch | undefined => {
+  const targetMatches = snapshotMatchesTarget(snapshot.target, target);
+  const profileMatches =
+    profile !== undefined && snapshotMatchesProfile(snapshot.binding, profile);
+  if (targetMatches && profileMatches) return undefined;
+  return {
+    ...(targetMatches
+      ? {}
+      : {
+          target: {
+            snapshot: { ...snapshot.target },
+            selected: snapshotTarget(target),
+          },
+        }),
+    ...(profile === undefined
+      ? { profile_comparison: "not_compared" as const }
+      : {
+          ...(committedProvidersEqual(
+            snapshot.binding.provider,
+            profile.provider,
+          )
+            ? {}
+            : {
+                provider: {
+                  snapshot: { ...snapshot.binding.provider },
+                  selected: { ...profile.provider },
+                },
+              }),
+          ...(profileMatches
+            ? {}
+            : {
+                profile_digest: {
+                  snapshot: snapshot.binding.analysis_profile.digest,
+                  selected: profile.digest,
+                },
+              }),
+        }),
+  };
+};
 
 /** Find exact persisted CLI Evidence without starting an analysis provider. */
 export const snapshotEvidenceForQuery = (
@@ -497,7 +613,7 @@ export const snapshotEvidenceForQuery = (
     provider,
     evidenceProfile,
   } = query;
-  if (!snapshotMatchesBinding(snapshot, target, bindingProfile))
+  if (snapshotBindingMismatch(snapshot, target, bindingProfile) !== undefined)
     return undefined;
   const encodedParameters = canonicalJson(parameters);
   const queryId = analysisQueryId(
@@ -709,7 +825,7 @@ const restoreSnapshot = (
     scopedEvidence.unknowns.length !== bundle.unknowns.length
   )
     throw new TypeError(
-      "Analysis snapshot evidence contains records for another target",
+      "Analysis snapshot evidence contains records unrelated to the selected target and its linked sources",
     );
   if (!hasCanonicalQueryOrder(providerRows.map(({ entry }) => entry)))
     throw new TypeError("Analysis snapshot entries are not canonical");

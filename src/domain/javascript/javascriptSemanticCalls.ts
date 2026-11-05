@@ -12,12 +12,13 @@ import type {
 import { semanticIdentifierRole } from "./javascriptSemanticProjection.js";
 import { createSemanticCallableStack } from "./javascriptSemanticCallableStack.js";
 import {
+  javaScriptExpressionWrapperTarget,
+  readExactJavaScriptLiteral,
   semanticStaticPropertyKey,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import {
   resolveSemanticBindingState,
-  isUnshadowedGlobal,
   type JavaScriptSemanticAnalysisState,
   type JavaScriptSemanticBindingState,
 } from "./javascriptSemanticState.js";
@@ -30,6 +31,7 @@ import { traverseJavaScriptValueAst } from "./javascriptSemanticTraversal.js";
 import { range } from "./javascriptStaticAnalysisHelpers.js";
 import { semanticCallableResultKind } from "./javascriptSemanticCallableResults.js";
 import { assignedSemanticResultBindings } from "./javascriptSemanticDataEffectHelpers.js";
+import { semanticPrimitiveSet } from "./javascriptSemanticPrimitives.js";
 
 /** Local call, flow, capture, and unsupported-frontier facts. */
 export interface JavaScriptSemanticCallAnalysis {
@@ -123,6 +125,32 @@ export const collectJavaScriptSemanticCalls = (
   };
 };
 
+/** TypeScript and grouping wrappers do not consume a call result. */
+const callResultIsUsed = (
+  call: t.Node,
+  parent: t.Node | null,
+  ancestors: readonly t.Node[],
+): boolean => {
+  let current = parent;
+  let child = call;
+  let index = ancestors.length - 1;
+  while (
+    current !== null &&
+    javaScriptExpressionWrapperTarget(current) !== undefined
+  ) {
+    child = current;
+    index -= 1;
+    current = index >= 0 ? (ancestors[index] ?? null) : null;
+  }
+  if (t.isExpressionStatement(current)) return false;
+  // for/of and for/in heads use their expressions. A C-style for initializer
+  // or update discards the value.
+  return !(
+    t.isForStatement(current) &&
+    (current.init === child || current.update === child)
+  );
+};
+
 const collectCallSite = (
   node: t.CallExpression | t.OptionalCallExpression | t.NewExpression,
   parent: t.Node | null,
@@ -138,13 +166,14 @@ const collectCallSite = (
     bindingCache: context.bindingResolutionCache,
   });
   const callSiteId = semanticCallSiteId(node);
-  const argumentsValue = retainedArguments(node.arguments);
+  const argumentsValue = retainedArguments(node.arguments, state);
   const site: JavaScriptSemanticCallSite = {
     callSiteId,
     kind: t.isNewExpression(node) ? "construct" : "call",
     callerCallableId: owner?.callableId ?? null,
     location: range(node),
     calleeLocation: range(node.callee),
+    resultUsed: callResultIsUsed(node, parent, context.ancestors),
     resolution:
       resolution.callableIds.length === 1 && resolution.complete
         ? "exact"
@@ -209,6 +238,7 @@ const retainedArguments = (
     | t.ArgumentPlaceholder
     | null
   )[],
+  state: JavaScriptSemanticAnalysisState,
 ): JavaScriptSemanticCallSite["arguments"] => {
   const retained: JavaScriptSemanticCallSite["arguments"][number][] = [];
   for (const [index, node] of nodes.entries()) {
@@ -223,9 +253,32 @@ const retainedArguments = (
       location: range(node),
       valueExpressionLocation: valueNode === null ? null : range(valueNode),
       spread: t.isSpreadElement(node),
+      ...(valueNode === null ? {} : directLiteral(valueNode, state)),
     });
   }
   return retained;
+};
+
+/** Retain direct scalar syntax only; do not infer values through bindings. */
+const directLiteral = (
+  node: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): {
+  readonly literal?: string | number | boolean | null;
+  readonly literalResourceLimit?: "primitive-bytes";
+} => {
+  const literal = readExactJavaScriptLiteral(node);
+  if (!literal.found) return {};
+  const parsed = semanticPrimitiveSet([literal.value]);
+  if (parsed.status === "literal") return { literal: parsed.value };
+  if (
+    parsed.status === "unknown" &&
+    parsed.resourceLimit === "primitive-bytes"
+  ) {
+    state.valueResourceLimits.add(parsed.resourceLimit);
+    return { literalResourceLimit: parsed.resourceLimit };
+  }
+  return {};
 };
 
 const collectArgumentFlows = (

@@ -15,7 +15,7 @@ const readJson = async (path: string): Promise<unknown> =>
 const versionedDocumentation = [
   {
     path: "docs/installation.md",
-    examples: ["doctor --provider ghidra --json", '"command": "npx"'],
+    examples: ["doctor --provider ghidra --json"],
   },
 ] as const;
 const pluginManifests = [
@@ -339,8 +339,13 @@ describe("plugin release pins", () => {
       "longDescription",
       "developerName",
       "category",
+      "composerIcon",
+      "logo",
     ])
       expect(manifest.interface[field]).toEqual(expect.stringMatching(/\S/u));
+    expect(
+      String(manifest.interface.shortDescription).length,
+    ).toBeLessThanOrEqual(30);
     expect(manifest.interface.capabilities).toEqual(
       expect.arrayContaining([expect.stringMatching(/\S/u)]),
     );

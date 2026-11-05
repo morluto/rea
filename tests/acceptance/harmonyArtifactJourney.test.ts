@@ -46,10 +46,7 @@ const expectProjectionParity = (
   });
 };
 
-test("preserves Harmony archive formats through the public CLI/MCP lifecycle", async ({
-  cli,
-  workspace,
-}) => {
+const harmonyFixture = async () => {
   const writer = new ZipWriter(new Uint8ArrayWriter());
   await writer.add(
     "module.json",
@@ -59,12 +56,61 @@ test("preserves Harmony archive formats through the public CLI/MCP lifecycle", a
     "ets/modules.abc",
     new TextReader("opaque bytecode fixture"),
   );
+  await writer.add("ets/current", new TextReader("modules.abc"), {
+    unixMode: 0o120777,
+  });
+  await writer.add("pkgContextInfo.json", new TextReader("{}"));
+  await writer.add(".pages.info", new TextReader("page metadata fixture"));
   const javascriptPaths = ["cts", "jsx", "mts", "ts", "tsx"].map(
     (extension) => `assets/js/index.${extension}`,
   );
   for (const path of javascriptPaths)
     await writer.add(path, new TextReader("export const value = 1;"));
-  const bytes = await writer.close();
+  return { bytes: await writer.close(), javascriptPaths };
+};
+
+/** Assert the projected Harmony graph for one archive format over the MCP adapter. */
+const expectHarmonyProjection = (
+  graph: HarmonyApplicationProjectionResult,
+  format: string,
+  sha256: string,
+  javascriptPaths: readonly string[],
+): void => {
+  expect(graph).toMatchObject({
+    root_format: format,
+    root_sha256: sha256,
+    coverage: { status: "complete-within-inventory" },
+    unavailable_components: [],
+    unclassified_components: [
+      expect.objectContaining({
+        path: ".pages.info",
+        sha256: createHash("sha256")
+          .update("page metadata fixture")
+          .digest("hex"),
+      }),
+      expect.objectContaining({
+        path: "pkgContextInfo.json",
+        sha256: createHash("sha256").update("{}").digest("hex"),
+      }),
+    ],
+  });
+  expect(graph.components.manifests.map(({ path: member }) => member)).toEqual([
+    "module.json",
+  ]);
+  expect(graph.components.bytecode.map(({ path: member }) => member)).toEqual([
+    "ets/modules.abc",
+  ]);
+  expect(graph.components.javascript.map(({ path: member }) => member)).toEqual(
+    javascriptPaths,
+  );
+  expect(graph.runtime_families).toEqual(["ark", "javascript"]);
+};
+
+test("preserves Harmony archive formats through the public CLI/MCP lifecycle", async ({
+  cli,
+  workspace,
+}) => {
+  const { bytes, javascriptPaths } = await harmonyFixture();
   const environment = {
     PATH: process.env.PATH ?? "",
     HOME: workspace.root,
@@ -101,6 +147,14 @@ test("preserves Harmony archive formats through the public CLI/MCP lifecycle", a
       const cliEvidence = parseEvidence(cliReply.json);
       const cliInventory = artifactInspectionResultSchema.parse(
         cliEvidence.normalized_result,
+      );
+      expect(
+        cliInventory.substeps[0]?.evidence.normalized_result.occurrences,
+      ).toContainEqual(
+        expect.objectContaining({
+          logical_path: "ets/current",
+          entry_kind: "symlink",
+        }),
       );
       expect(cliInventory.subject).toMatchObject({
         root_format: format,
@@ -142,21 +196,7 @@ test("preserves Harmony archive formats through the public CLI/MCP lifecycle", a
       const graph = harmonyApplicationProjectionResultSchema.parse(
         parseEvidence(projected.structuredContent).normalized_result,
       );
-      expect(graph).toMatchObject({
-        root_format: format,
-        root_sha256: sha256,
-        coverage: { status: "complete-within-inventory" },
-      });
-      expect(
-        graph.components.manifests.map(({ path: member }) => member),
-      ).toEqual(["module.json"]);
-      expect(
-        graph.components.bytecode.map(({ path: member }) => member),
-      ).toEqual(["ets/modules.abc"]);
-      expect(
-        graph.components.javascript.map(({ path: member }) => member),
-      ).toEqual(javascriptPaths);
-      expect(graph.runtime_families).toEqual(["ark", "javascript"]);
+      expectHarmonyProjection(graph, format, sha256, javascriptPaths);
       const projectionInput = workspace.path("projection-input.json");
       await writeFile(
         projectionInput,

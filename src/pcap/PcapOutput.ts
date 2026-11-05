@@ -4,7 +4,7 @@ import {
   AnalysisProtocolError,
   AnalysisResourceConstraintError,
 } from "../domain/analysisErrorCore.js";
-import { parseRecordedTransportUrl } from "../domain/recordedTransportUrl.js";
+import { parsePcapHttpUri } from "./PcapHttpUri.js";
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { parseDnsMessageRaw } from "./PcapDnsWire.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
@@ -528,11 +528,11 @@ export const parseTsharkJsonOutput = async (
     const fullUris = field("http.request.full_uri");
     const fullUriCandidates = fullUris.map((value) => ({
       value,
-      parsed: parseRecordedTransportUrl(value),
+      parsed: parsePcapHttpUri(value, "full-uri"),
     }));
     const requestUriCandidates = field("http.request.uri").map((value) => ({
       value,
-      parsed: parseRecordedTransportUrl(value),
+      parsed: parsePcapHttpUri(value, "request-target"),
     }));
     // Wireshark emits full_uri alongside each request URI it can resolve.
     // Raw absolute-form targets stand on their own; relative targets need a
@@ -571,7 +571,7 @@ export const parseTsharkJsonOutput = async (
       ...fullUriCandidates,
       ...http2Uris.map((value) => ({
         value,
-        parsed: parseRecordedTransportUrl(value),
+        parsed: parsePcapHttpUri(value, "full-uri"),
       })),
       ...requestUriCandidates.filter(({ parsed }) => parsed.origin !== null),
     ]) {

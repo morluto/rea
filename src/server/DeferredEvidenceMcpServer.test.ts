@@ -51,6 +51,7 @@ const catalog: RecordedMcpCatalog = {
       outputSchema: z.toJSONSchema(output),
     },
   ],
+  evidenceReferenceAlternatives: [],
   prompts: [
     {
       name: "explain",
@@ -77,6 +78,8 @@ const fixture = async (
     readonly failLoad?: boolean;
     readonly invalidOutput?: boolean;
     readonly failAfterTool?: boolean;
+    readonly maximumInputElements?: number;
+    readonly evidenceReferenceAlternative?: boolean;
   } = {},
 ) => {
   const started = barrier();
@@ -84,7 +87,9 @@ const fixture = async (
   const closed = vi.fn();
   let loads = 0;
   const server = new DeferredEvidenceMcpServer(
-    catalog,
+    options.evidenceReferenceAlternative
+      ? { ...catalog, evidenceReferenceAlternatives: ["fixture"] }
+      : catalog,
     new ToolResultDelivery(1024 * 1024),
     async (target) => {
       loads++;
@@ -138,6 +143,7 @@ const fixture = async (
         );
       });
     },
+    options.maximumInputElements,
   );
   const client = new Client({ name: "deferred-fixture-client", version: "1" });
   const [clientTransport, serverTransport] =
@@ -158,6 +164,53 @@ const fixture = async (
     loads: () => loads,
   };
 };
+
+it("refuses excess input before loading a deferred runtime, then admits a valid call", async () => {
+  const f = await fixture({ maximumInputElements: 2 });
+  const result = await f.client.callTool({
+    name: "fixture",
+    arguments: { n: 3, other: [0] },
+  });
+  expect(result.isError).toBe(true);
+  const text = result.content.find((part) => part.type === "text")?.text;
+  expect(JSON.parse(text ?? "null")).toMatchObject({
+    error: {
+      code: "resource_constraint",
+      details: { reported_limits: { max_input_elements: 2 } },
+    },
+  });
+  expect(f.loads()).toBe(0);
+  expect(f.calls).not.toHaveBeenCalled();
+  await f.client.ping();
+  const admitted = await f.client.callTool({
+    name: "fixture",
+    arguments: { n: 4 },
+  });
+  expect(admitted.isError).not.toBe(true);
+  expect(admitted.structuredContent).toEqual({ n: 4 });
+  expect(f.loads()).toBe(1);
+  expect(f.calls).toHaveBeenCalledOnce();
+});
+
+it("uses recorded Evidence-reference guidance without loading the deferred runtime", async () => {
+  const f = await fixture({
+    maximumInputElements: 2,
+    evidenceReferenceAlternative: true,
+  });
+  const result = await f.client.callTool({
+    name: "fixture",
+    arguments: { n: 3, other: [0] },
+  });
+  const text = result.content.find((part) => part.type === "text")?.text;
+  expect(JSON.parse(text ?? "null")).toMatchObject({
+    error: {
+      code: "resource_constraint",
+      remediation: { action: expect.stringContaining("retained-evidence") },
+    },
+  });
+  expect(f.loads()).toBe(0);
+  expect(f.calls).not.toHaveBeenCalled();
+});
 
 it("discovers without initialization, then shares one canonical runtime and preserves request metadata", async () => {
   const hold = barrier();
