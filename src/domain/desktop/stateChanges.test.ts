@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import type { JsonValue } from "../jsonValue.js";
 import { diffStateViews } from "./stateChanges.js";
 
 describe("diffStateViews", () => {
@@ -98,6 +99,25 @@ describe("diffStateViews fidelity", () => {
     ).toMatchObject({ added: [], removed: [], changed: ["/items"] });
     expect(diffStateViews("json", [[1]], { "0": [1] })).toMatchObject({
       changed: [""],
+      changed_count: 1,
+    });
+  });
+
+  it("lists added subtrees in document order and counts a pointer too long to list", () => {
+    expect(
+      diffStateViews("json", { a: 1 }, { a: 1, b: { c: [true] }, d: null }),
+    ).toMatchObject({
+      added: ["/b", "/b/c", "/b/c/0", "/d"],
+      added_count: 4,
+    });
+    const key = "k".repeat(1000);
+    const deep = (leaf: number) => {
+      let value: JsonValue = leaf;
+      for (let level = 0; level < 8; level += 1) value = { [key]: value };
+      return value;
+    };
+    expect(diffStateViews("json", deep(1), deep(2))).toMatchObject({
+      changed: [],
       changed_count: 1,
     });
   });
