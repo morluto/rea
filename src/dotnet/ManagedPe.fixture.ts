@@ -21,6 +21,12 @@ interface ManagedPeFixtureOptions {
   /** Field rows; the last TypeDef owns them all, as with MethodDef rows. */
   readonly fieldRowCount?: number;
   /**
+   * Field rows owned by the first TypeDef; the last TypeDef owns the rest.
+   * Lets a test select a type with a few members while the bulk of the
+   * member inventory stays on another type.
+   */
+  readonly firstTypeFieldRowCount?: number;
+  /**
    * Give every Field, MethodDef and MemberRef row its own name, like a real
    * assembly, instead of sharing one name across all rows.
    */
@@ -31,6 +37,8 @@ interface ManagedPeFixtureOptions {
   readonly metadataExtraData?: number;
   readonly metadataValidMaskExtra?: bigint;
   readonly methodRowCount?: number;
+  /** MethodDef rows owned by the first TypeDef; the last TypeDef owns the rest. */
+  readonly firstTypeMethodRowCount?: number;
   readonly methodName?: string;
   readonly methodFlags?: number;
   readonly methodSignature?: Buffer;
@@ -885,8 +893,10 @@ const fixtureMetadataRows = ({
           name,
           flags: nestedRows.has(index + 1) ? 0x0010_0002 : 0x0010_0001,
           namespace: indexes.typeNamespace,
-          fieldList: 1,
-          methodList: 1,
+          fieldList:
+            index === 0 ? 1 : 1 + (options.firstTypeFieldRowCount ?? 0),
+          methodList:
+            index === 0 ? 1 : 1 + (options.firstTypeMethodRowCount ?? 0),
           stringSize: heapSizes.strings,
           typeDefOrRefSize: widths.typeDefOrRef,
           fieldListSize: widths.table(4),

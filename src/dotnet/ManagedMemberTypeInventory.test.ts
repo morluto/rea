@@ -82,7 +82,10 @@ it("decodes a single selected type to completion on a game-scale assembly", () =
   // Slay the Spire 2 sts2.dll scale from #8980: 9,409 TypeDefs, 49,738
   // MethodDefs, 40,037 Fields, 11,442 MemberRefs, 58,698 CustomAttributes.
   // A single-type selection must not spend the representation budget on the
-  // whole assembly before the selection is applied.
+  // whole assembly before the selection is applied. The selected type owns
+  // one field and one method while the rest of the member inventory stays
+  // on the last type, so this also proves the selected members decode
+  // instead of merely proving that skipping unselected rows saves budget.
   const bytes = buildManagedPeFixture({
     additionalEmptyTypes: 9400,
     fieldRowCount: 40037,
@@ -90,26 +93,66 @@ it("decodes a single selected type to completion on a game-scale assembly", () =
     memberRefRowCount: 11442,
     customAttributeRowCount: 58698,
     distinctMemberNames: true,
+    firstTypeFieldRowCount: 1,
+    firstTypeMethodRowCount: 1,
   });
   const target = managedPeFixtureTarget(bytes);
   const inventory = inspectManagedMembersBytes(bytes, target);
-  const empty = inventory.types.find((type) => type.method_list.count === 0);
-  expect(empty).toBeDefined();
+  const selected = inventory.types.find(
+    (type) => type.full_name === "Fixture.Empty0",
+  );
+  expect(selected).toMatchObject({
+    token: "0x02000001",
+    field_list: { count: 1 },
+    method_list: { count: 1 },
+  });
   const result = inspectManagedMembersBytes(bytes, target, {
-    typeNames: [empty!.full_name],
+    typeNames: ["Fixture.Empty0"],
   });
   expect(result.coverage).toEqual({ state: "complete", issues: [] });
   expect(result.selection).toEqual({
-    type_names: [empty!.full_name],
+    type_names: ["Fixture.Empty0"],
     unmatched_type_names: [],
   });
   expect(result.types).toHaveLength(1);
-  expect(result.types[0]?.token).toBe(empty?.token);
-  expect(result.fields).toEqual([]);
-  expect(result.methods).toEqual([]);
+  expect(result.types[0]?.token).toBe(selected?.token);
+  expect(result.fields).toHaveLength(1);
+  expect(result.fields[0]).toMatchObject({
+    name: "Field0",
+    declaring_type: "Fixture.Empty0",
+    declaring_type_token: "0x02000001",
+  });
+  expect(result.methods).toHaveLength(1);
+  expect(result.methods[0]).toMatchObject({
+    name: "Method0",
+    declaring_type: "Fixture.Empty0",
+    declaring_type_token: "0x02000001",
+  });
+  expect(result.methods[0]?.body.status).toBe("present");
+  expect(result.methods[0]?.body.instruction_count).toBe(4);
+  expect(result.methods[0]?.body.decoded_instruction_count).toBe(4);
+  // The selected body references the selected field and a member reference;
+  // both resolve to their tokens instead of staying anonymous.
+  expect(result.methods[0]?.body.anchors).toContainEqual(
+    expect.objectContaining({
+      opcode: "ldfld",
+      operand_kind: "field",
+      operand: "0x04000001",
+    }),
+  );
+  expect(result.methods[0]?.body.anchors).toContainEqual(
+    expect.objectContaining({
+      opcode: "call",
+      operand_kind: "method",
+      operand: "0x0a000001",
+    }),
+  );
   // Member references stay assembly-wide: the selection narrows declaring
   // types, not the reference inventory behind call edges.
   expect(result.member_refs).toHaveLength(11442);
+  expect(
+    result.member_refs.find((ref) => ref.token === "0x0a000001"),
+  ).toMatchObject({ name: "Member0" });
 });
 
 it("preserves explicit type selection when its selected body exhausts capacity", () => {
