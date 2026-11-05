@@ -130,6 +130,26 @@ describe("lipo numeric field observations", () => {
 });
 
 describe("lipo architecture facts", () => {
+  it.each([
+    ["constructor", "CPU_SUBTYPE_ARM64_ALL", null, 0],
+    ["CPU_TYPE_ARM64", "toString", 0x0100000c, null],
+  ])(
+    "keeps CPU names without inventing numeric codes: %s / %s",
+    (type, subtype, typeCode, subtypeCode) => {
+      const { architectures } = parseLipoOutput(
+        fatRecords
+          .replace("CPU_TYPE_ARM64", type)
+          .replace("CPU_SUBTYPE_ARM64_ALL", subtype),
+      );
+      expect(architectures[0]).toMatchObject({
+        cpu_type: type,
+        cpu_type_code: typeCode,
+        cpu_subtype: subtype,
+        cpu_subtype_code: subtypeCode,
+      });
+    },
+  );
+
   it("preserves Apple's declared and hidden ARM64 architecture scopes", () => {
     const output = parseLipoOutput(`fat_magic 0xcafebabe
 nfat_arch 1 (+1 hidden)
