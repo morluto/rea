@@ -115,6 +115,33 @@ it("reports the network provider type only when ValidNetType is set", async () =
   });
 });
 
+it("ignores device names when ValidDevice is clear", async () => {
+  const bytes = windowsShortcutBytes({
+    flags: LINK_FLAG.HasLinkInfo | LINK_FLAG.IsUnicode,
+    linkInfo: {
+      netName: "\\\\fileserver\\docs",
+      deviceName: "Z:",
+      networkFlags: 0x2,
+      commonPathSuffix: "report.docx",
+    },
+    extraData: [],
+  });
+  // Point the ignored DeviceNameOffset fields outside the block.
+  const block =
+    bytes.indexOf(Buffer.from("\\\\fileserver\\docs\0", "latin1")) - 0x1c;
+  bytes.writeUInt32LE(0xffff, block + 12);
+  bytes.writeUInt32LE(0xffff, block + 24);
+  const report = await parse(bytes);
+  expect(report.link_info?.common_network_relative_link).toMatchObject({
+    net_name: "\\\\fileserver\\docs",
+    device_name: null,
+    device_name_unicode: null,
+    network_provider_type: 0x00020000,
+  });
+  expect(report.issues).toEqual([]);
+  expect(report.coverage.status).toBe("complete");
+});
+
 it("derives Tracker version-1 MAC and timestamp facts", async () => {
   const report = await parse(
     windowsShortcutBytes({ extraData: [{ kind: "tracker" }] }),

@@ -614,11 +614,17 @@ const parseNetwork = (
     return null;
   }
   const block = view.subarray(offset, offset + size);
+  // MS-SHLLINK 2.3.2: DeviceNameOffset (and its Unicode twin) are only
+  // meaningful when ValidDevice is set; otherwise the fields are ignored.
+  const flags = block.readUInt32LE(4);
+  const validDevice = (flags & 0x1) !== 0;
+  const validNetType = (flags & 0x2) !== 0;
   const netNameOffset = block.readUInt32LE(8);
-  const deviceNameOffset = block.readUInt32LE(12);
+  const deviceNameOffset = validDevice ? block.readUInt32LE(12) : 0;
   const unicode = netNameOffset > 0x14 && size >= 0x1c;
   const netNameOffsetUnicode = unicode ? block.readUInt32LE(20) : 0;
-  const deviceNameOffsetUnicode = unicode ? block.readUInt32LE(24) : 0;
+  const deviceNameOffsetUnicode =
+    unicode && validDevice ? block.readUInt32LE(24) : 0;
   return {
     net_name: readAnsiAt(block, base + offset, netNameOffset, 8, walk),
     net_name_unicode: readUtf16At(
@@ -636,8 +642,7 @@ const parseNetwork = (
       24,
       walk,
     ),
-    network_provider_type:
-      (block.readUInt32LE(4) & 0x2) !== 0 ? block.readUInt32LE(16) : null,
+    network_provider_type: validNetType ? block.readUInt32LE(16) : null,
   };
 };
 
