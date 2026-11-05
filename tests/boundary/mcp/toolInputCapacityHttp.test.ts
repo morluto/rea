@@ -126,16 +126,23 @@ processTest(
       const error = parseMcpToolError(result).error;
       if (count === 1_019) {
         // Three root members and two address members fill the remaining five.
-        // Keep ordinary canonical validation observable at the admitted edge.
-        expect(error.code).toBe("invalid_request");
+        // Admitted source carriers reach the Evidence owner, which rejects
+        // the first invalid record without expanding every missing field.
+        expect(error).toMatchObject({
+          code: "evidence_integrity_mismatch",
+          category: "integrity_mismatch",
+          message: expect.stringContaining("at evidence_id"),
+          details: { diagnostics: { input_path: ["functions", 0] } },
+        });
       } else {
         expect(error.code).toBe("resource_constraint");
+        expect(error.remediation.action).toContain("retained-evidence");
         expect(error.details).toMatchObject({
           resource: "transport",
           reported_limits: { max_input_elements: 1_024 },
         });
-        expect(Buffer.byteLength(JSON.stringify(result))).toBeLessThan(4096);
       }
+      expect(Buffer.byteLength(JSON.stringify(result))).toBeLessThan(4096);
       observations.push({
         count,
         code: error.code,
@@ -177,6 +184,9 @@ processTest(
     });
     const calibratedError = parseMcpToolError(calibration).error;
     expect(calibratedError.code).toBe("resource_constraint");
+    expect(calibratedError.remediation.action).not.toContain(
+      "retained-evidence",
+    );
     expect(calibratedError.details).toMatchObject({
       resource: "transport",
       reported_limits: { max_input_elements: 1_024 },

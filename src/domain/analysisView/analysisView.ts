@@ -1,5 +1,10 @@
-import { NATIVE_OBSERVATION_OPERATIONS } from "../native/nativeObservation.js";
+import {
+  isNativeObservationOperation,
+  NATIVE_OBSERVATION_OPERATIONS,
+} from "../native/nativeObservation.js";
 import { projectNativeObservationView } from "./nativeObservationView.js";
+import { projectNativeInstructionReferencesView } from "./nativeInstructionReferencesView.js";
+import { projectNativeValueTraceView } from "./nativeValueTraceView.js";
 import { projectDevicetreeView } from "./devicetreeView.js";
 import { projectApkSignatureView } from "./apkSignatureView.js";
 import { byteEntropySchema } from "../native/byteEntropy.js";
@@ -14,6 +19,9 @@ import {
 import { projectJavaScriptRoutesView } from "./javascriptRoutesView.js";
 import { projectWebBundleView } from "./webBundleView.js";
 import { projectSourceToBundleView } from "./sourceToBundleView.js";
+import { projectFeatureTraceView } from "./featureTraceView.js";
+import { projectNativeFeatureTraceView } from "./nativeFeatureTraceView.js";
+import { projectBatchDecompileView } from "./batchDecompileView.js";
 import { projectGpuCodeObjectsView } from "./gpuCodeObjectsView.js";
 import { projectModelArtifactView } from "./modelArtifactView.js";
 import { projectCommandObservationView } from "./commandObservationView.js";
@@ -22,7 +30,12 @@ import { projectGoBinaryView } from "./goBinaryView.js";
 import { projectRustBinaryView } from "./rustBinaryView.js";
 import { projectNativeFunctionMatchingView } from "./nativeFunctionMatchingView.js";
 import { projectNativeInventoryView } from "./nativeInventoryView.js";
-import { NATIVE_INVENTORY_OPERATIONS } from "../native/nativeInventory.js";
+import {
+  isNativeInventoryOperation,
+  NATIVE_INVENTORY_OPERATIONS,
+} from "../native/nativeInventory.js";
+import { ANALYSIS_EVIDENCE_PREDICATE } from "../evidence.js";
+import { NATIVE_FUNCTION_MATCHING_PREDICATE } from "../native/functionMatching.js";
 import { z } from "zod";
 import { projectBrowserScenarioView } from "./browserScenarioView.js";
 import { projectNativeLoadImageView } from "./nativeLoadImageView.js";
@@ -82,7 +95,6 @@ import type { AnalysisViewParent } from "./analysisViewParent.js";
 import type { GroupingViewKind } from "./analysisViewShape.js";
 import {
   analysisViewRequestSchema,
-  analysisViewSourceSchema,
   inspectAnalysisViewInputSchema,
   type AnalysisViewRequest,
   type InspectAnalysisViewInput,
@@ -104,7 +116,6 @@ import {
   rustBinaryPageViewResultSchema,
   binaryLayoutSummaryViewResultSchema,
   javascriptApplicationSummaryViewResultSchema,
-  javascriptModuleReferencesViewResultSchema,
   artifactInventorySummaryViewResultSchema,
   desktopApplicationSummaryViewResultSchema,
   wasmArtifactSummaryViewResultSchema,
@@ -136,27 +147,29 @@ import {
   modelArtifactPageViewResultSchema,
   il2cppMetadataSummaryViewResultSchema,
   nativeInventorySummaryViewResultSchema,
+  nativeFeatureTraceSummaryViewResultSchema,
   nativeLoadImageSummaryViewResultSchema,
   nativeFunctionMatchingSummaryViewResultSchema,
-  nativeFunctionSummarySchema,
   nativeFunctionSummaryViewResultSchema,
   sourceToBundleSummaryViewResultSchema,
   sourceToBundlePageViewResultSchema,
+  featureTraceSummaryViewResultSchema,
+  batchDecompileSummaryViewResultSchema,
+  featureTraceViewResultSchema,
   analysisViewResultSchema,
   type AnalysisViewResult,
   type UnsignedAnalysisView,
 } from "./analysisViewResult.js";
 export {
   analysisViewRequestSchema,
-  analysisViewSourceSchema,
   inspectAnalysisViewInputSchema,
   type AnalysisViewRequest,
   type InspectAnalysisViewInput,
   type AnalysisViewParent,
 };
-export { type GroupingViewKind };
 export {
   nativeObservationSummaryViewResultSchemas,
+  nativeFeatureTraceSummaryViewResultSchema,
   byteEntropySummaryViewResultSchema,
   nativeExportsSummaryViewResultSchema,
   devicetreeSummaryViewResultSchema,
@@ -172,7 +185,6 @@ export {
   rustBinaryPageViewResultSchema,
   binaryLayoutSummaryViewResultSchema,
   javascriptApplicationSummaryViewResultSchema,
-  javascriptModuleReferencesViewResultSchema,
   artifactInventorySummaryViewResultSchema,
   desktopApplicationSummaryViewResultSchema,
   wasmArtifactSummaryViewResultSchema,
@@ -206,10 +218,12 @@ export {
   nativeInventorySummaryViewResultSchema,
   nativeLoadImageSummaryViewResultSchema,
   nativeFunctionMatchingSummaryViewResultSchema,
-  nativeFunctionSummarySchema,
   nativeFunctionSummaryViewResultSchema,
   sourceToBundleSummaryViewResultSchema,
   sourceToBundlePageViewResultSchema,
+  featureTraceSummaryViewResultSchema,
+  batchDecompileSummaryViewResultSchema,
+  featureTraceViewResultSchema,
   analysisViewResultSchema,
   type AnalysisViewResult,
   type UnsignedAnalysisView,
@@ -291,9 +305,12 @@ const retain = (
 ): readonly [string, RetainedViewProjector] => [operation, project];
 
 const retainedViewProjectors = new Map<string, RetainedViewProjector>([
+  retain("inspect_native_instruction", projectNativeInstructionReferencesView),
+  retain("trace_feature", projectNativeFeatureTraceView),
   ...NATIVE_OBSERVATION_OPERATIONS.map((operation) =>
     retain(operation, projectNativeObservationView),
   ),
+  retain("trace_native_values", projectNativeValueTraceView),
   retain("inspect_erlang_beam", projectErlangBeamView),
   retain("inspect_devicetree", projectDevicetreeView),
   retain("inspect_native_exports", projectNativeExportsView),
@@ -326,6 +343,8 @@ const retainedViewProjectors = new Map<string, RetainedViewProjector>([
   retain("inspect_gpu_code_objects", projectGpuCodeObjectsView),
   retain("match_native_functions", projectNativeFunctionMatchingView),
   retain("compare_source_to_bundle", projectSourceToBundleView),
+  retain("trace_application_feature", projectFeatureTraceView),
+  retain("batch_decompile", projectBatchDecompileView),
   retain("inspect_artifact", projectArtifactInventoryView),
   retain("inventory_artifact", projectArtifactInventoryView),
   retain("analyze_web_bundle", projectWebBundleView),
@@ -418,6 +437,31 @@ export const projectAnalysisView = (
           path: ["source"],
           reason: "invalid_format",
           message: "Parent Evidence ID is not a digest-backed identifier.",
+        },
+      ]),
+    );
+  const expectedPredicate =
+    parent.operation === "match_native_functions"
+      ? NATIVE_FUNCTION_MATCHING_PREDICATE
+      : parent.operation === "analyze_function" ||
+          parent.operation === "inspect_native_instruction" ||
+          parent.operation === "trace_feature" ||
+          parent.operation === "batch_decompile" ||
+          isNativeObservationOperation(parent.operation) ||
+          isNativeInventoryOperation(parent.operation)
+        ? ANALYSIS_EVIDENCE_PREDICATE
+        : undefined;
+  if (
+    expectedPredicate !== undefined &&
+    parent.predicateType !== expectedPredicate
+  )
+    return err(
+      analysisViewInputError([
+        {
+          path: ["source", "predicate_type"],
+          reason: "invalid_value",
+          expected: expectedPredicate,
+          message: `${parent.operation} requires ${expectedPredicate} Evidence; received ${parent.predicateType}.`,
         },
       ]),
     );

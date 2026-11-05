@@ -32,11 +32,13 @@ import { isX86OnlyTarget } from "./IdaCallGraph.js";
 import { IdaOperationRunner } from "./IdaOperationRunner.js";
 import {
   IDA_LIMITATIONS,
-  IDA_OPERATIONS,
-  IDA_PROVIDER_IDENTITY,
   idaOperationUnavailableReason,
   type IdaOperation,
 } from "./IdaProviderCapabilities.js";
+import {
+  IDA_OPERATIONS,
+  IDA_PROVIDER_IDENTITY,
+} from "./IdaProviderMetadata.js";
 import {
   absentDatabaseCloseSchema,
   closeDatabaseSchema,
