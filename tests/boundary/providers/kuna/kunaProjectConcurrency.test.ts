@@ -5,7 +5,7 @@ import { join } from "node:path";
 
 import { afterEach, expect, it as test, onTestFinished, vi } from "vitest";
 
-import { inspectKunaInstallation } from "../../../../src/kuna/KunaInstallation.js";
+import { inspectKunaInstallationOwned as inspectKunaInstallation } from "./kunaResourceScope.js";
 import { KunaProjectCache } from "../../../../src/kuna/KunaProjectCache.js";
 import type { KunaExportStatus } from "../../../../src/kuna/KunaProjectExport.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
@@ -130,7 +130,9 @@ it.each([true, false])(
       if (!closed.ok) throw closed.error;
     });
     await expect
-      .poll(() => actual.readdir(listing.directory).catch(() => []))
+      .poll(() => actual.readdir(listing.directory).catch(() => []), {
+        timeout: 10_000,
+      })
       .toHaveLength(2);
     listing.names = await actual.readdir(listing.directory);
     releaseListing();

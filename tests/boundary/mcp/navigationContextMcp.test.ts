@@ -45,8 +45,16 @@ it.each([
     selection: { current_document: "fixture", current_address: null },
     operation: "current_address",
   },
+  {
+    selection: {
+      current_document: "fixture",
+      current_address: "0x401000",
+      resolve_containing_procedure: null,
+    },
+    operation: "resolve_containing_procedure",
+  },
 ])(
-  "delivers a typed MCP failure when $operation is not a string",
+  "delivers a typed MCP failure when $operation returns malformed output",
   async ({ selection, operation }) => {
     const result = await navigate(selection);
     expect(JSON.stringify(result.content)).not.toContain(
@@ -58,3 +66,40 @@ it.each([
     });
   },
 );
+
+it.each([
+  null,
+  {},
+  { found: true, procedure: null },
+  { query_address: "0x401000", found: false, procedure: null },
+])(
+  "rejects malformed procedure resolution rather than reporting absence: %j",
+  async (resolution) => {
+    const result = await navigate({
+      current_document: "fixture",
+      current_address: "0x401000",
+      resolve_containing_procedure: resolution,
+    });
+    expect(parseMcpToolError(result).error).toMatchObject({
+      code: "unreadable_output",
+      details: { operation: "resolve_containing_procedure" },
+    });
+  },
+);
+
+it("keeps explicit procedure absence successful", async () => {
+  const result = await navigate({
+    current_document: "fixture",
+    current_address: "0x401000",
+    resolve_containing_procedure: {
+      query_address: "0x401000",
+      found: false,
+      procedure: null,
+      reason: "not_in_procedure",
+    },
+  });
+  expect(result.isError).not.toBe(true);
+  expect(result.structuredContent).toMatchObject({
+    result: { document: "fixture", address: "0x401000", procedure: null },
+  });
+});

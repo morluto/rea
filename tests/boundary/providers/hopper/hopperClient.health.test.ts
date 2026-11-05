@@ -64,6 +64,55 @@ const start = async (owned: boolean) => {
   return { client, launcher };
 };
 
+it("reports launch work until the first authenticated handshake completes", async () => {
+  const fixture = new HopperFixtureLauncher(undefined, "quiet", "gated");
+  let enterLaunch: (() => void) | undefined;
+  let releaseLaunch: (() => void) | undefined;
+  const entered = new Promise<void>((resolve) => {
+    enterLaunch = resolve;
+  });
+  const release = new Promise<void>((resolve) => {
+    releaseLaunch = resolve;
+  });
+  const client = new HopperClient({
+    startupTimeoutMs: 10_000,
+    launcher: {
+      async launch(session) {
+        enterLaunch?.();
+        await release;
+        return fixture.launch(session);
+      },
+    },
+  });
+  onTestFinished(async () => {
+    releaseLaunch?.();
+    await client.close();
+  });
+  const starting = client.callTool("current_document");
+  await entered;
+  expect(client.requestActivity()).toBeNull();
+  expect(client.operationHealth()).toMatchObject({
+    state: "busy",
+    stage: "launch",
+    retryAction: "wait",
+  });
+  releaseLaunch?.();
+  const handshake = await fixture.waitForRequest("health");
+  expect(client.operationHealth()).toMatchObject({
+    state: "busy",
+    stage: "launch",
+    retryAction: "wait",
+  });
+  await fixture.release(handshake);
+  const result = await starting;
+  if (!result.ok) throw result.error;
+  expect(result.value).toBe("fixture");
+  expect(client.operationHealth()).toMatchObject({
+    state: "idle",
+    stage: null,
+  });
+});
+
 describe("Hopper provider lifecycle health", () => {
   it("settles disconnected requests without attributing the helper exit to the GUI", async () => {
     const { client, launcher } = await start(false);

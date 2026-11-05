@@ -57,3 +57,38 @@ it("leaves a response replaced by a non-request value without an endpoint", () =
     `),
   ).toEqual([expect.objectContaining({ method: "json", endpoint: null })]);
 });
+
+it.each([
+  [
+    "ordered",
+    `async function load() { const res = await fetch("https://example.invalid/api"); return res.json(); }`,
+    "https://example.invalid/api",
+  ],
+  [
+    "parameter-replaced-before",
+    `async function load(res) { res = await fetch("https://example.invalid/api"); return res.json(); }`,
+    "https://example.invalid/api",
+  ],
+  [
+    "parameter-conditional",
+    `async function load(res, maybe) { if (maybe) res = await fetch("https://example.invalid/api"); return res.json(); }`,
+    null,
+  ],
+  [
+    "parameter-later",
+    `async function load(res) { const value = await res.json(); res = await fetch("https://example.invalid/api"); return value; }`,
+    null,
+  ],
+  [
+    "multiple-requests",
+    `async function load(maybe) { let res = await fetch("https://example.invalid/a"); if (maybe) res = await fetch("https://example.invalid/b"); return res.json(); }`,
+    null,
+  ],
+] as const)(
+  "keeps a response endpoint only when its request reaches the read: %s",
+  (_name, source, endpoint) => {
+    expect(responses(source)).toEqual([
+      expect.objectContaining({ method: "json", endpoint }),
+    ]);
+  },
+);

@@ -41,6 +41,10 @@ cannot be established from that URL alone; choose the context explicitly when
 known. `import_map` is optional and reads local JSON only. Its exact bytes and
 base URL are retained; selecting it does not prove the map was installed in the
 captured page. HTTP(S) importer contexts without URL userinfo are supported initially.
+An unusable reported URL leaves the importer context unavailable; supply
+`importer_url` explicitly when its value is known. An explicitly supplied malformed
+URL is reported against that input field. URLs using unsupported schemes remain
+capability limitations.
 
 ## Interpret the evidence
 
@@ -65,6 +69,9 @@ The selected source is loaded from `files/` under the manifest's current
 directory. Relocation retains the manifest's originally reported paths and the
 actual current source path separately. Unsafe paths, symlink source directories,
 nonregular files, wrong digests/sizes and malformed UTF-8 fail explicitly.
+Malformed source bytes or unsafe source paths declared by the manifest are
+artifact failures. Malformed caller-selected manifest or import-map files identify
+the supplied input field.
 
 ## Engine and lifecycle
 
@@ -79,7 +86,15 @@ and import map have 32 MiB, 16 MiB and 4 MiB input limits. Native resolution has
 one 20-second deadline; cleanup may extend that deadline. One renderer is
 requested, and there is no aggregate host memory-limit claim. Cancellation
 closes only the owned browser; cleanup failure cannot return a successful trace.
-`REA_BROWSER_NO_SANDBOX=true` passes Chromium's corresponding launch option when
-the host requires it; it does not enable an REA security boundary.
+Chromium keeps its sandbox, except under Termux on Android, which always
+launches it without one. On hosts that cannot provide one, such as root in a
+container, `REA_BROWSER_NO_SANDBOX=true` launches it without the sandbox; the
+variable does not enable an REA security boundary.
 
 See [testing](testing.md) for the native loading oracle and CLI/MCP real lane.
+
+The selected local source filename supplies the parser grammar. JavaScript files
+retain native dynamic imports even in relational expressions; TypeScript files
+use the shared TypeScript grammar and omit erased import-type expressions from
+runtime module tracing. Historical-source import retains those type dependencies
+separately. Parser observations and native URL resolution do not prove execution.

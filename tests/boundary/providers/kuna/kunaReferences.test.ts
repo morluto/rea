@@ -268,13 +268,25 @@ it.each(["not-json", "miscounted", "with-bodies"] as const)(
   async (graph) => {
     const { open, kuna } = await session("rea-kuna-bad-graph-", { graph });
     const client = open();
+    const operation = "procedure_callees";
     try {
       expect(
-        await client.execute("procedure_callees", { procedure: "main" }),
-      ).toMatchObject({ ok: false, error: { _tag: "ProviderAdapterError" } });
+        await client.execute(operation, { procedure: "main" }),
+      ).toMatchObject({
+        ok: false,
+        error: {
+          _tag: "AnalysisOutputError",
+          operation,
+          diagnostics: { producer_operation: "kuna:call-graph" },
+          cause: expect.objectContaining({
+            _tag: "AnalysisOutputError",
+            operation: "kuna:call-graph",
+          }),
+        },
+      });
       await setFakeKunaBehavior(kuna, { functions: FUNCTIONS });
       expect(
-        (await run(client, "procedure_callees", { procedure: "main" })).result,
+        (await run(client, operation, { procedure: "main" })).result,
       ).toEqual(["0x1040"]);
       expect(
         (await fakeKunaCalls(kuna)).filter(

@@ -23,17 +23,3 @@ export const cdpSnapshotValueString = (
   numberValue(index) === CDP_EMPTY_STRING_INDEX
     ? ""
     : cdpSnapshotString(strings, index);
-
-/** Whether flattened name/value attribute indexes all resolve. */
-export const cdpSnapshotAttributesResolve = (
-  strings: readonly (string | undefined)[],
-  attributes: readonly (number | undefined)[],
-): boolean =>
-  attributes.length % 2 === 0 &&
-  attributes.every(
-    (attribute, offset) =>
-      attribute !== undefined &&
-      (offset % 2 === 0
-        ? cdpSnapshotString(strings, attribute)
-        : cdpSnapshotValueString(strings, attribute)) !== undefined,
-  );

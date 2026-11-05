@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { expect } from "vitest";
@@ -60,6 +60,50 @@ const fixtureApp = async (): Promise<string> => {
   await writeFile(join(resources, "Second.nib"), nib);
   return app;
 };
+
+mcpTest(
+  "retains omitted-archive coverage and source truncation on Interface Builder pages",
+  async ({ mcp, onTestFinished }) => {
+    const app = await fixtureApp();
+    await symlink(
+      "unexamined",
+      join(app, "Contents", "Resources", "Linked.nib"),
+    );
+    const client = await openArtifactTarget(mcp, onTestFinished, app);
+    const decoded = await client.callTool({
+      name: "decode_interface_builder",
+      arguments: { detail: "summary" },
+    });
+    expect(decoded.isError, JSON.stringify(decoded.content)).not.toBe(true);
+    const summary = evidenceOf(summarySchema).parse(
+      decoded.structuredContent,
+    ).normalized_result;
+    const paged = await client.callTool({
+      name: "inspect_analysis_view",
+      arguments: {
+        source: {
+          kind: "retained-evidence",
+          evidence_id: summary.parent_evidence_id,
+        },
+        view: { kind: "interface-builder", collection: "coverage" },
+      },
+    });
+    expect(paged.isError, JSON.stringify(paged.content)).not.toBe(true);
+    const page = evidenceOf(
+      pageSchema.extend({ source_truncated: z.boolean() }),
+    ).parse(paged.structuredContent).normalized_result;
+    expect(page.source_truncated).toBe(true);
+    expect(page.items).toContainEqual(
+      expect.objectContaining({
+        facet: "archive_decode",
+        status: "partial",
+        reason: "archive_symlink_not_followed",
+        examined: 2,
+        omitted: 1,
+      }),
+    );
+  },
+);
 
 mcpTest(
   "retains complete Interface Builder Evidence and pages one document's rows",

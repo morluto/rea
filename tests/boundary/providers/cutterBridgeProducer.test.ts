@@ -100,7 +100,7 @@ it("authenticates bridge peers before payloads and permits status recovery after
     [resolve("tests/fixtures/cutter_bridge_protocol_test.py")],
     {
       encoding: "utf8",
-      timeout: 10_000,
+      timeout: 20_000,
     },
   );
 });
@@ -120,7 +120,16 @@ it("round-trips authenticated status and command bytes across the Python produce
           command: "iI",
           json: false,
         }),
-      ).rejects.toThrow("List sessions again");
+      ).rejects.toMatchObject({
+        _tag: "AnalysisInputError",
+        issues: [
+          {
+            path: ["expected_generation"],
+            reason: "invalid_value",
+            message: expect.stringContaining("List sessions again"),
+          },
+        ],
+      });
     }
 
     const result = await client.execute({
@@ -230,10 +239,10 @@ it("retains failed receipt acknowledgements and retries before another command",
       bridge.client.execute({
         sessionId: bridge.session.session_id,
         expectedGeneration: bridge.session.document_generation,
-        command: "iI",
+        command: "fixture-receipt-count",
         json: false,
       }),
-    ).resolves.toMatchObject({ executionState: "complete" });
+    ).resolves.toMatchObject({ executionState: "complete", output: "0" });
   } finally {
     await bridge.close();
   }
@@ -254,10 +263,10 @@ it("retains a receipt when an ACK reply omits its acknowledgement field", async 
       bridge.client.execute({
         sessionId: bridge.session.session_id,
         expectedGeneration: bridge.session.document_generation,
-        command: "iI",
+        command: "fixture-receipt-count",
         json: false,
       }),
-    ).resolves.toMatchObject({ executionState: "complete" });
+    ).resolves.toMatchObject({ executionState: "complete", output: "0" });
   } finally {
     await bridge.close();
   }

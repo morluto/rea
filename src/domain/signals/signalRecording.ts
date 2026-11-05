@@ -1,5 +1,8 @@
 import { z } from "zod";
-import { localPathStringSchema } from "../localPath.js";
+import {
+  absoluteLocalPathStringSchema,
+  localPathStringSchema,
+} from "../localPath.js";
 import { windowAnnotationText } from "./annotationTextWindow.js";
 
 // These strings are single sigrok arguments, never shell fragments.
@@ -61,10 +64,16 @@ export const signalRecordingSelectorBudgetIssue = {
   message:
     "Signal selectors exceed the 32 KiB encoded argument budget; reduce decoder, format or annotation selections.",
 };
-export const decodeSignalRecordingInputSchema = signalInputShape.refine(
+const signalRecordingSelectionSchema = signalInputShape.refine(
   withinSignalRecordingSelectorBudget,
   signalRecordingSelectorBudgetIssue,
 );
+export const decodeSignalRecordingInputSchema =
+  signalRecordingSelectionSchema.safeExtend({
+    path: absoluteLocalPathStringSchema.describe(
+      "Absolute local recording path",
+    ),
+  });
 export const signalRecordingOptionsSchema = signalInputShape
   .omit({ path: true })
   .refine(
@@ -82,7 +91,7 @@ export const signalRecordingSchema = z
       sha256: z.string().regex(/^[a-f0-9]{64}$/),
       bytes: z.number().int().nonnegative(),
     }),
-    selection: decodeSignalRecordingInputSchema,
+    selection: signalRecordingSelectionSchema,
     annotations_text: z
       .string()
       .describe(

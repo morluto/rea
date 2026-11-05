@@ -1,70 +1,31 @@
-import { execFile } from "node:child_process";
 import { lstat } from "node:fs/promises";
-import { dirname, join } from "node:path";
-import { promisify } from "node:util";
 import { Ajv2020 } from "ajv/dist/2020.js";
 
 /**
- * `mcp-verifier-results.mjs` reaches into `dist/` at module load, so eager
- * importing it propagates that build dependency to every consumer in this
- * file. `verifyCompleteToolCatalog` is the only consumer, so we lazy-load
- * the module there and keep the other helpers (`exec`, `run`, `json`,
- * `pathExists`) usable from `test:fast` callers that only need `dist/`-free
- * utilities — see docs/testing.md § test scripts, which promises `test:fast`
- * runs "without build".
+ * Verify canonical names, converted JSON Schemas, and session catalog metadata.
+ * Only this operation needs built contracts; path checks remain source-only.
  */
-const loadMcpVerifierResults = () => import("./mcp-verifier-results.mjs");
-
-/** Promisified child_process execution helper. */
-export const exec = promisify(execFile);
-
-/** Run npm through its JavaScript entry point so Windows command scripts are not required. */
-export const execNpm = (arguments_, options = {}) => {
-  const environment = options.env ?? process.env;
-  const selectedEntry = environment.npm_execpath;
-  if (
-    selectedEntry !== undefined &&
-    (typeof selectedEntry !== "string" || selectedEntry.length === 0)
-  )
-    throw new Error("npm_execpath must name the selected npm CLI entry point");
-  const entry =
-    selectedEntry ??
-    (process.platform === "win32"
-      ? join(dirname(process.execPath), "node_modules/npm/bin/npm-cli.js")
-      : undefined);
-  return entry === undefined
-    ? exec("npm", arguments_, options)
-    : exec(process.execPath, [entry, ...arguments_], options);
-};
-
-/** Run a command and return its stdout. */
-export const run = async (command, args, env) =>
-  (await exec(command, args, { env })).stdout;
-
-/** Run a command and treat exit code 1 as a non-throwing status result. */
-export const runWithStatus = async (command, args, env) => {
-  try {
-    return { stdout: await run(command, args, env), status: 0 };
-  } catch (cause) {
-    if (
-      typeof cause === "object" &&
-      cause !== null &&
-      cause.code === 1 &&
-      typeof cause.stdout === "string"
-    )
-      return { stdout: cause.stdout, status: 1 };
-    throw cause;
-  }
-};
-
-/** Parse JSON from a command output string. */
-export const json = (text) => JSON.parse(text);
-
-/** Verify schema validity and that the MCP catalog matches session metadata. */
 export const verifyCompleteToolCatalog = async (client, options) => {
-  const { requireMcpLifecycleResult, sortVerifierNames } =
-    await loadMcpVerifierResults();
+  const [{ requireMcpLifecycleResult, sortVerifierNames }, { TOOL_CONTRACTS }] =
+    await Promise.all([
+      import("./mcp-verifier-results.mjs"),
+      import("../../dist/contracts/toolContracts.js"),
+    ]);
   const listed = await client.listTools(undefined, options);
+  const canonical = sortVerifierNames(TOOL_CONTRACTS.map(({ name }) => name));
+  const observed = sortVerifierNames(listed.tools.map(({ name }) => name));
+  if (JSON.stringify(observed) !== JSON.stringify(canonical)) {
+    const canonicalNames = new Set(canonical);
+    const observedNames = new Set(observed);
+    const unknown = observed.filter((name) => !canonicalNames.has(name));
+    const missing = canonical.filter((name) => !observedNames.has(name));
+    const duplicates = observed.filter(
+      (name, index) => index > 0 && name === observed[index - 1],
+    );
+    throw new Error(
+      `packaged MCP exposed an invalid canonical tool catalog (${observed.length} tools, unknown: ${unknown.join(", ") || "none"}, missing: ${missing.join(", ") || "none"}, duplicates: ${duplicates.join(", ") || "none"})`,
+    );
+  }
   const ajv = new Ajv2020({ strict: false, validateFormats: false });
   for (const tool of listed.tools) {
     for (const kind of ["inputSchema", "outputSchema"]) {
@@ -75,14 +36,20 @@ export const verifyCompleteToolCatalog = async (client, options) => {
         );
     }
   }
+  const sessionDefinition = listed.tools.find(
+    ({ name }) => name === "binary_session",
+  );
+  if (sessionDefinition === undefined)
+    throw new Error("packaged MCP omitted the binary_session definition");
   const status = await client.callTool(
     { name: "binary_session", arguments: {} },
-    options,
+    // The SDK otherwise compiles every listed output schema on the first call.
+    // Keep its default validation for the actual named tool being exercised.
+    { ...options, toolDefinition: sessionDefinition },
   );
   const expanded = requireMcpLifecycleResult(status, "binary_session");
   const availability = expanded.tool_availability;
   const expected = sortVerifierNames(availability.map(({ name }) => name));
-  const observed = sortVerifierNames(listed.tools.map(({ name }) => name));
   if (JSON.stringify(observed) !== JSON.stringify(expected))
     throw new Error(
       "packaged MCP tool inventory diverged from session metadata",

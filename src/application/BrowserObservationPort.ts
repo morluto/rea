@@ -35,6 +35,8 @@ import type { ExecutionOptions } from "./AnalysisProvider.js";
 
 /** Provider-neutral application boundary for passive browser observation. */
 export interface BrowserObservationPort {
+  /** Release provider-owned transports during command or server shutdown. */
+  close?(): Promise<void>;
   identity(): ProviderIdentity;
   listTargets(
     input: ListBrowserTargetsInput,

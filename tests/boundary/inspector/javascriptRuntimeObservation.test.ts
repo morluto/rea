@@ -19,10 +19,14 @@ import type {
   JavaScriptRuntimeObservation,
   ObserveJavaScriptRuntimeInput,
 } from "../../../src/domain/javascript/javascriptRuntimeObservation.js";
-import { observeJavaScriptRuntimeInputSchema } from "../../../src/domain/javascript/javascriptRuntimeObservation.js";
+import {
+  javascriptRuntimeObservationSchema,
+  observeJavaScriptRuntimeInputSchema,
+} from "../../../src/domain/javascript/javascriptRuntimeObservation.js";
 import { inspectWebPageInputSchema } from "../../../src/domain/browserObservation.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
 import { javascriptRuntimeReconciliationResultSchema } from "../../../src/domain/javascript/javascriptRuntimeReconciliationSchemas.js";
+import { parseRuntimeCaptures } from "../../../src/domain/javascript/javascriptRuntimeReconciliationCaptureParsing.js";
 import { startFakeV8Inspector } from "../../fixtures/inspector/fakeV8Inspector.js";
 import { startFakeCdpBrowser } from "../../fixtures/fakeCdpBrowser.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -205,6 +209,65 @@ describe("Inspector execution-context lifecycle metadata", () => {
       await fake.close();
     }
   });
+
+  test.each([
+    ["malformed", "2", "1"],
+    ["valid", 2, 1],
+  ] as const)(
+    "accounts for %s context IDs in lifecycle events",
+    async (mode, createdId, destroyedId) => {
+      const fixture = await runtimeFixture();
+      const fake = await startFakeV8Inspector({
+        targetUrl: pathToFileURL(fixture.entry).href,
+        runtimeEvents: [
+          {
+            method: "Runtime.executionContextCreated",
+            params: { context: { id: 1, name: "main", origin: "" } },
+          },
+          {
+            method: "Runtime.executionContextCreated",
+            params: { context: { id: createdId, name: "worker", origin: "" } },
+          },
+          {
+            method: "Runtime.executionContextDestroyed",
+            params: { executionContextId: destroyedId },
+          },
+        ],
+        scriptEvents: [],
+      });
+      try {
+        const result = await new V8InspectorProvider().observe(
+          observeInput(fake.endpoint, fake.targetId, "node"),
+        );
+        if (!result.ok) throw result.error;
+        const invalidContextUnknowns = result.value.unknowns.filter((text) =>
+          text.includes("malformed execution-context ID"),
+        );
+        expect(result.value.capture).toMatchObject({
+          events_observed: 3,
+          events_retained: 3,
+          events_dropped: 0,
+          truncated: false,
+        });
+        if (mode === "malformed") {
+          expect(result.value.execution_contexts).toEqual([
+            { context_key: "1", state: "created", name: "main", origin: "" },
+          ]);
+          expect(invalidContextUnknowns).toEqual([
+            "2 execution-context lifecycle events with a missing or malformed execution-context ID were excluded; the affected contexts' lifecycle state is unknown.",
+          ]);
+          return;
+        }
+        expect(result.value.execution_contexts).toEqual([
+          { context_key: "1", state: "destroyed", name: "main", origin: "" },
+          { context_key: "2", state: "created", name: "worker", origin: "" },
+        ]);
+        expect(invalidContextUnknowns).toEqual([]);
+      } finally {
+        await fake.close();
+      }
+    },
+  );
 });
 
 test("rejects unknown runtime observation fields", () => {
@@ -347,7 +410,11 @@ test("captures complete metadata with two enable commands", async () => {
     expect(new Set(fake.commands.map(({ method }) => method))).toEqual(
       new Set(["Runtime.enable", "Debugger.enable"]),
     );
-    expect(JSON.stringify(result.value)).toContain(outside);
+    expect(result.value.scripts.items).toContainEqual(
+      expect.objectContaining({
+        location: expect.objectContaining({ file_path: outside }),
+      }),
+    );
     expect(result.value.unavailable_without_instrumentation).toContain(
       "Electron IPC messages and handlers",
     );
@@ -625,7 +692,7 @@ describe("passive V8 Inspector evidence", () => {
     });
     if (!reconciled.ok) throw reconciled.error;
     const result = javascriptRuntimeReconciliationResultSchema.parse(
-      reconciled.value.normalized_result,
+      reconciled.value.evidence.normalized_result,
     );
     expect(result.runtime_captures[0]?.kind).toBe("v8-inspector");
     expect(result.summary.runtime_scripts).toBe(1);
@@ -686,7 +753,7 @@ describe("passive V8 Inspector evidence", () => {
     });
     if (!reconciled.ok) throw reconciled.error;
     const result = javascriptRuntimeReconciliationResultSchema.parse(
-      reconciled.value.normalized_result,
+      reconciled.value.evidence.normalized_result,
     );
     expect(result.summary.runtime_scripts).toBe(2);
     expect(result.reconciliations).toContainEqual(
@@ -696,10 +763,155 @@ describe("passive V8 Inspector evidence", () => {
         reason: "runtime-location-unresolved",
       }),
     );
-    expect(JSON.stringify(result.graph)).toContain(rawUrl);
-    expect(JSON.stringify(result.graph)).toContain("v8-hash");
-    expect(JSON.stringify(result.graph)).toContain('"reported_url":""');
+    const runtimeProperties = result.graph.nodes
+      .filter(({ kind }) => kind === "runtime-script-instance")
+      .flatMap(({ observations }) =>
+        observations.map(({ properties }) => properties),
+      );
+    expect(runtimeProperties).toContainEqual(
+      expect.objectContaining({ reported_url: rawUrl, cdp_hash: "v8-hash" }),
+    );
+    expect(runtimeProperties).toContainEqual(
+      expect.objectContaining({ reported_url: "", cdp_hash: null }),
+    );
   });
+});
+
+test("keeps Inspector parse failures separate and preserves file URL script identity through reconciliation", async () => {
+  const fixture = await runtimeFixture();
+  const firstUrl = `${pathToFileURL(fixture.entry).href}?instance=1#first`;
+  const secondUrl = `${pathToFileURL(fixture.entry).href}?instance=2#second`;
+  const fake = await startFakeV8Inspector({
+    targetUrl: pathToFileURL(fixture.entry).href,
+    scriptEvents: [
+      ...[firstUrl, secondUrl].map((url, index) => ({
+        method: "Debugger.scriptParsed",
+        params: {
+          scriptId: String(index + 1),
+          url,
+          executionContextId: 1,
+          hash: "same-source-hash",
+          length: 42,
+          isModule: true,
+        },
+      })),
+      {
+        method: "Debugger.scriptFailedToParse",
+        params: { scriptId: "failed", url: firstUrl },
+      },
+    ],
+  });
+  try {
+    const observed = await new V8InspectorProvider().observe(
+      observeInput(fake.endpoint, fake.targetId, "node"),
+    );
+    if (!observed.ok) throw observed.error;
+    expect(observed.value.scripts.items).toHaveLength(2);
+    expect(observed.value.scripts.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          location: { kind: "file", file_path: fixture.entry },
+          reported_url: firstUrl,
+        }),
+        expect.objectContaining({
+          location: { kind: "file", file_path: fixture.entry },
+          reported_url: secondUrl,
+        }),
+      ]),
+    );
+    expect(
+      new Set(observed.value.scripts.items.map(({ script_key }) => script_key))
+        .size,
+    ).toBe(2);
+    expect(observed.value.scripts).toMatchObject({
+      parse_failed_total: 1,
+      excluded: {
+        unsupported_location: 0,
+        invalid_protocol_value: 0,
+      },
+    });
+
+    const evidence = createJavaScriptRuntimeObservationEvidence(
+      "observe_javascript_runtime",
+      {
+        inspector_endpoint: fake.endpoint,
+        target_id: fake.targetId,
+        runtime_kind: "node",
+        observation_ms: 100,
+      },
+      observed.value,
+      V8_INSPECTOR_PROVIDER_IDENTITY,
+    );
+    const reconciled = reconcileJavaScriptRuntimeEvidence({
+      static_layers: JAVASCRIPT_RUNTIME_RECONCILIATION_EXAMPLE.static_layers,
+      runtime_observations: [evidence],
+    });
+    if (!reconciled.ok) throw reconciled.error;
+    const result = javascriptRuntimeReconciliationResultSchema.parse(
+      reconciled.value.evidence.normalized_result,
+    );
+    const runtimeScripts = result.graph.nodes.filter(
+      (node) => node.kind === "runtime-script-instance",
+    );
+    const reportedUrls = runtimeScripts.flatMap((node) =>
+      node.observations
+        .map(({ properties }) => properties.reported_url)
+        .filter((url): url is string => typeof url === "string"),
+    );
+    expect(reportedUrls).toEqual(expect.arrayContaining([firstUrl, secondUrl]));
+    expect(new Set(reportedUrls).size).toBe(2);
+    const scriptKeys = runtimeScripts.flatMap((node) =>
+      node.identity.strategy === "runtime-instance"
+        ? [node.identity.runtime_key]
+        : [],
+    );
+    expect(new Set(scriptKeys).size).toBe(2);
+
+    const parsedCapture = parseRuntimeCaptures([evidence])[0];
+    if (parsedCapture?.kind !== "v8-inspector")
+      throw new Error("Expected the Inspector Evidence to parse as V8 capture");
+    expect(
+      parsedCapture.inspection.completeness.unavailable_sections,
+    ).not.toContain("scripts");
+
+    const legacySnapshot = {
+      ...observed.value,
+      scripts: {
+        ...observed.value.scripts,
+      },
+    };
+    delete legacySnapshot.scripts.parse_failed_total;
+    const parsedLegacySnapshot =
+      javascriptRuntimeObservationSchema.parse(legacySnapshot);
+    expect("parse_failed_total" in parsedLegacySnapshot.scripts).toBe(false);
+  } finally {
+    await fake.close();
+  }
+});
+
+test("keeps malformed scriptFailedToParse protocol values in the invalid count", async () => {
+  const fixture = await runtimeFixture();
+  const fake = await startFakeV8Inspector({
+    targetUrl: pathToFileURL(fixture.entry).href,
+    scriptEvents: [
+      {
+        method: "Debugger.scriptFailedToParse",
+        params: { url: pathToFileURL(fixture.entry).href },
+      },
+    ],
+  });
+  try {
+    const observed = await new V8InspectorProvider().observe(
+      observeInput(fake.endpoint, fake.targetId, "node"),
+    );
+    if (!observed.ok) throw observed.error;
+    expect(observed.value.scripts.excluded).toMatchObject({
+      invalid_protocol_value: 1,
+    });
+    expect(observed.value.scripts.parse_failed_total).toBe(0);
+  } finally {
+    await fake.close();
+  }
 });
 
 const runtimeFixture = async () => {

@@ -1,20 +1,62 @@
-import { z } from "zod";
+import { decodeBinaryPlistValue } from "../../artifacts/apple/BinaryPlistMaterializer.js";
 
-import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
-import type { JsonValue } from "../../domain/jsonValue.js";
 import {
+  AnalysisOutputError,
+  AnalysisResourceConstraintError,
+} from "../../domain/analysisErrorCore.js";
+import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
+import { MAX_JSON_DEPTH, type JsonValue } from "../../domain/jsonValue.js";
+import {
+  binaryDatePrecisionOverlapLimitation,
+  negativeZeroReal,
+  negativeZeroRealLimitation,
+  nonFiniteRealLimitation,
   projectPlistValue,
   unknownDateLimitation,
+  unknownScalarLimitation,
   type ProjectedPlistValue,
+  PlistNestingLimitError,
 } from "../../domain/apple/plistValue.js";
-import {
-  omitPrototypeKeys,
-  omittedPrototypeKeysLimitation,
-  parseXmlPropertyList,
-} from "../../domain/propertyListKeys.js";
+import { parseXmlPropertyList } from "../../domain/propertyListKeys.js";
 import { err, ok, type Result } from "../../domain/result.js";
 
-const plistObject = z.record(z.string(), z.unknown());
+import {
+  incompletePlistNumberLimitation,
+  createPlistNumberProjection,
+  resolvePlistNumberSource,
+  type PlistNumberLiterals,
+} from "../../domain/apple/plistNumbers.js";
+import {
+  scanBinaryPlistScalars,
+  UnsupportedBinaryPlistUidError,
+} from "../../artifacts/apple/PlistScalars.js";
+import {
+  estimateBinaryPlistExpansion,
+  preflightPropertyListDecode,
+  PropertyListDecodeBudgetFailure,
+} from "../../artifacts/apple/PropertyListDecodeBudget.js";
+import { hasBinaryPlistSignature } from "../../domain/apple/appleArchiveFormat.js";
+import {
+  decodeXmlPlistText,
+  XmlPlistTextDecodeError,
+} from "../../domain/propertyListXmlText.js";
+
+/**
+ * Input ceiling matches native command output; projection is bounded separately.
+ * Provisional byte allowance. This release has no runtime override.
+ */
+export const MAX_NATIVE_PLIST_BYTES = 64 * 1024 * 1024;
+/** Provisional decode allowance. This release has no runtime override. */
+const MAX_NATIVE_PLIST_DECODE_BYTES = 64 * 1024 * 1024;
+
+// Reserve one level for typed scalar fields and one for normalized_result.value.
+export const MAX_NATIVE_PLIST_NESTING_DEPTH = MAX_JSON_DEPTH - 2;
+
+const mebibytes = (bytes: number): string =>
+  `${String(bytes / (1024 * 1024))} MiB`;
+
+/** Recovery name for the fixed source-size ceiling. */
+export const NATIVE_PLIST_INPUT_ALLOWANCE = `the fixed ${mebibytes(MAX_NATIVE_PLIST_BYTES)} (${String(MAX_NATIVE_PLIST_BYTES)}-byte) native plist input allowance (no runtime override)`;
 
 /** Stable bundle metadata projected from one plist value. */
 export interface PlistBundleMetadata {
@@ -35,94 +77,178 @@ export interface ParsedPlist {
 /** Digits of a JSON number literal that has no fraction or exponent. */
 const INTEGRAL_LITERAL = /^-?\d+$/u;
 
-/**
- * Decode plutil JSON, passing each integral number literal beyond the exact
- * range of a JavaScript number, with its source digits, to `unsafe`.
- */
-const decodePlistJson = (
-  output: string,
-  unsafe: (item: number, digits: string) => unknown,
-): unknown => {
-  // plutil output can carry a UTF-8 BOM, which JSON.parse rejects outright.
-  const text = output.replace(/^\uFEFF/u, "");
-  return JSON.parse(
-    text,
-    (_key: string, item: unknown, context?: { readonly source?: string }) => {
-      const source = context?.source;
-      return typeof item !== "number" ||
-        Number.isSafeInteger(item) ||
-        source === undefined ||
-        !INTEGRAL_LITERAL.test(source)
-        ? item
-        : unsafe(item, source);
+/** An unsafe integral JSON literal, kept separate from caller-authored objects. */
+class PlistJsonIntegerLiteral {
+  constructor(
+    readonly value: number,
+    readonly digits: string,
+  ) {}
+}
+
+/** One JSON parse attempt, retaining its facts or failure for final projection. */
+export interface PlistJsonParseAttempt {
+  readonly rootKind: "container" | "scalar" | "invalid";
+  readonly nonFiniteNumberObserved: boolean;
+  /** Whether plutil should supply XML number types; false for malformed JSON. */
+  readonly needsNumberTypes: boolean;
+  project(xmlConversion?: string): Result<ParsedPlist, PlistParseError>;
+}
+
+type PlistParseError = AnalysisOutputError | AnalysisResourceConstraintError;
+
+const plistNestingError = (cause: unknown): AnalysisResourceConstraintError =>
+  new AnalysisResourceConstraintError(
+    "inspect_plist",
+    "memory",
+    cause instanceof Error ? cause.message : String(cause),
+    { maximum_nesting_depth: MAX_NATIVE_PLIST_NESTING_DEPTH },
+    {
+      cause,
+      ...fixedAllowanceOptions(
+        `The ${String(MAX_NATIVE_PLIST_NESTING_DEPTH)}-level native plist nesting allowance (no runtime override)`,
+        "parser",
+      ),
     },
   );
-};
 
-/**
- * Whether plutil JSON holds an integral number beyond the exact range of a
- * JSON number. JSON prints an integral `<real>` and an `<integer>` alike, so
- * such a number's element type must be read from plutil's XML conversion.
- */
-export const plistJsonNeedsNumberTypes = (output: string): boolean => {
-  let found = false;
-  try {
-    decodePlistJson(output, (item) => {
-      found = true;
-      return item;
-    });
-  } catch {
-    // Malformed JSON is reported by `parsePlistJson`.
-  }
-  return found;
-};
-
-/**
- * Parse plutil JSON output and project stable bundle metadata. An integer
- * beyond the exact range of a JSON number keeps its decimal text when
- * `xmlConversion`, plutil's XML form of the same plist, shows that it came
- * from an `<integer>` rather than a `<real>`.
- */
-export const parsePlistJson = (
-  output: string,
-  xmlConversion?: string,
-): Result<ParsedPlist, AnalysisOutputError> => {
-  const literals =
-    xmlConversion === undefined ? undefined : xmlNumberLiterals(xmlConversion);
-  let exactIntegerCount = 0;
-  let ambiguousNumberCount = 0;
-  const classify = (item: number, digits: string): unknown => {
-    const exact = BigInt(digits).toString();
-    const integer = literals?.integers.get(item)?.has(exact) === true;
-    const real = literals?.reals.has(item) === true;
-    if (integer && !real) {
-      exactIntegerCount += 1;
-      return { $plist_type: "integer", decimal: digits };
-    }
-    // An integral <real> decodes exactly; only its JSON spelling is integral.
-    if (real && !integer) return item;
-    ambiguousNumberCount += 1;
-    return item;
-  };
-  let decoded: ReturnType<typeof omitPrototypeKeys>;
-  try {
-    decoded = omitPrototypeKeys(decodePlistJson(output, classify));
-  } catch (cause: unknown) {
-    return err(
-      new AnalysisOutputError(
+const plistOutputError = (cause: unknown, reason?: string): PlistParseError =>
+  cause instanceof PlistNestingLimitError
+    ? plistNestingError(cause)
+    : new AnalysisOutputError(
         "inspect_plist",
-        cause instanceof Error ? cause.message : String(cause),
+        reason ?? (cause instanceof Error ? cause.message : String(cause)),
         { cause },
+      );
+
+/**
+ * Read plutil JSON once, retaining exact unsafe integral literals. Optional XML
+ * classification and each independent output projection use these same facts.
+ */
+export const readPlistJson = (output: string): PlistJsonParseAttempt => {
+  let decoded: Result<unknown, unknown>;
+  let needsNumberTypes = false;
+  let nonFiniteNumberObserved = false;
+  try {
+    // plutil output can carry a UTF-8 BOM, which JSON.parse rejects outright.
+    const text = output.replace(/^\uFEFF/u, "");
+    decoded = ok(
+      JSON.parse(
+        text,
+        (
+          _key: string,
+          item: unknown,
+          context?: { readonly source?: string },
+        ) => {
+          const source = context?.source;
+          if (typeof item === "number" && !Number.isFinite(item))
+            nonFiniteNumberObserved = true;
+          if (
+            typeof item !== "number" ||
+            Number.isSafeInteger(item) ||
+            source === undefined ||
+            !INTEGRAL_LITERAL.test(source)
+          )
+            return item;
+          // JSON prints integral <real> and <integer> values alike.
+          needsNumberTypes = true;
+          return new PlistJsonIntegerLiteral(item, source);
+        },
       ),
     );
+  } catch (cause: unknown) {
+    decoded = err(cause);
   }
-  const { value } = decoded;
+  return {
+    rootKind: !decoded.ok
+      ? "invalid"
+      : decoded.value !== null &&
+          typeof decoded.value === "object" &&
+          !(decoded.value instanceof PlistJsonIntegerLiteral)
+        ? "container"
+        : "scalar",
+    needsNumberTypes: decoded.ok && needsNumberTypes,
+    nonFiniteNumberObserved: decoded.ok && nonFiniteNumberObserved,
+    project: (xmlConversion) => projectPlistJsonAttempt(decoded, xmlConversion),
+  };
+};
+
+/** Recognize JSON source using fatal UTF-8; other encodings retain conversion. */
+export const readPlistJsonSource = (
+  bytes: Buffer,
+): PlistJsonParseAttempt | undefined => {
+  try {
+    return readPlistJson(
+      new TextDecoder("utf-8", { fatal: true }).decode(bytes),
+    );
+  } catch {
+    return undefined;
+  }
+};
+
+const projectPlistJsonAttempt = (
+  attempt: Result<unknown, unknown>,
+  xmlConversion: string | undefined,
+): Result<ParsedPlist, PlistParseError> => {
+  let literals: PlistNumberLiterals | undefined;
+  let exactIntegerCount = 0;
+  let ambiguousNumberCount = 0;
+  let negativeZeroRealCount = 0;
+  const project = (item: unknown, depth: number): unknown => {
+    if (depth > MAX_NATIVE_PLIST_NESTING_DEPTH)
+      throw new PlistNestingLimitError(MAX_NATIVE_PLIST_NESTING_DEPTH);
+    // A plist integer has no signed zero, so -0 can only come from a real.
+    if (typeof item === "number" && Object.is(item, -0)) {
+      negativeZeroRealCount += 1;
+      return negativeZeroReal();
+    }
+    if (item instanceof PlistJsonIntegerLiteral) {
+      const source = resolvePlistNumberSource(
+        item.value,
+        literals,
+        item.digits,
+      );
+      if (source.kind === "integer") {
+        exactIntegerCount += 1;
+        return { $plist_type: "integer", decimal: source.decimal };
+      }
+      // An integral <real> decodes exactly; only its JSON spelling is integral.
+      if (source.kind === "real") return item.value;
+      ambiguousNumberCount += 1;
+      return item.value;
+    }
+    if (Array.isArray(item))
+      return item.map((child) => project(child, depth + 1));
+    if (item !== null && typeof item === "object")
+      return Object.fromEntries(
+        Object.entries(item).map(([key, value]) => [
+          key,
+          project(value, depth + 1),
+        ]),
+      );
+    return item;
+  };
+  let value: unknown;
+  try {
+    // Preserve XML-before-JSON failure precedence during final projection.
+    literals =
+      xmlConversion === undefined
+        ? undefined
+        : parseXmlPropertyList(xmlConversion, MAX_NATIVE_PLIST_NESTING_DEPTH)
+            .numberLiterals;
+    if (!attempt.ok) return err(plistOutputError(attempt.error));
+    value = project(attempt.value, 0);
+  } catch (cause: unknown) {
+    return err(plistOutputError(cause));
+  }
   return ok({
     value,
     bundle: projectPlistBundle(value),
     limitations: [
+      ...negativeZeroLimitations(negativeZeroRealCount),
+      ...(literals?.incomplete === true
+        ? [incompletePlistNumberLimitation]
+        : []),
       ...numberLimitations(exactIntegerCount, ambiguousNumberCount),
-      ...prototypeKeyLimitations(decoded.omittedPrototypeKeys),
     ],
   });
 };
@@ -133,92 +259,203 @@ export const parsePlistJson = (
  */
 export const parsePlistXml = (
   output: string,
-): Result<ParsedPlist, AnalysisOutputError> => {
-  let projected: ProjectedPlistValue;
-  let omittedPrototypeKeys: number;
+): Result<ParsedPlist, PlistParseError> => {
+  const parsed = projectPlistXml(
+    output,
+    "plutil XML conversion was not a readable plist",
+  );
+  return !parsed.ok
+    ? parsed
+    : ok({
+        ...parsed.value,
+        limitations: [
+          'plutil cannot express this plist as JSON, so it was decoded from plutil\'s XML conversion; data and date values are typed objects such as { "$plist_type": "data", "base64": ... }.',
+          ...parsed.value.limitations,
+        ],
+      });
+};
+
+/** Decode original XML bytes with their own numeric types and no conversion claim. */
+export const parsePlistXmlSource = (
+  bytes: Buffer,
+): Result<ParsedPlist, PlistParseError | XmlPlistTextDecodeError> => {
   try {
-    const decoded = parseXmlPropertyList(output);
-    omittedPrototypeKeys = decoded.omittedPrototypeKeys;
-    projected = projectPlistValue(decoded.value);
+    const text = decodeXmlPlistText(bytes);
+    preflightPropertyListDecode(bytes, MAX_NATIVE_PLIST_DECODE_BYTES, text, {
+      numberProjection: true,
+      budget: "the native plist decode budget",
+    });
+    return projectPlistXml(text);
   } catch (cause: unknown) {
-    return err(
-      new AnalysisOutputError(
-        "inspect_plist",
-        "plutil XML conversion was not a readable plist",
-        { cause },
-      ),
+    if (cause instanceof XmlPlistTextDecodeError) return err(cause);
+    if (cause instanceof PropertyListDecodeBudgetFailure)
+      return err(
+        new AnalysisResourceConstraintError(
+          "inspect_plist",
+          "memory",
+          cause.message,
+          { maximum_decoded_bytes: MAX_NATIVE_PLIST_DECODE_BYTES },
+          {
+            cause,
+            ...fixedAllowanceOptions(
+              `The ${mebibytes(MAX_NATIVE_PLIST_DECODE_BYTES)} (${String(MAX_NATIVE_PLIST_DECODE_BYTES)}-byte) native XML plist decode allowance (no runtime override)`,
+              "parser",
+            ),
+          },
+        ),
+      );
+    return err(plistOutputError(cause));
+  }
+};
+
+const projectPlistXml = (
+  output: string,
+  failureReason?: string,
+): Result<ParsedPlist, PlistParseError> => {
+  let projected: ProjectedPlistValue;
+  let literals: PlistNumberLiterals;
+  try {
+    const decoded = parseXmlPropertyList(
+      output,
+      MAX_NATIVE_PLIST_NESTING_DEPTH,
     );
+    literals = decoded.numberLiterals;
+    projected = projectPlistValue(
+      decoded.value,
+      undefined,
+      MAX_NATIVE_PLIST_NESTING_DEPTH,
+    );
+  } catch (cause: unknown) {
+    return err(plistOutputError(cause, failureReason));
   }
   // The XML decoder turns <integer> and <real> into numbers before REA sees
   // them, rounding integers beyond the exact range.
-  const literals = xmlNumberLiterals(output);
   let exactIntegerCount = 0;
   let ambiguousNumberCount = 0;
   const value = mapJsonNumbers(projected.value, (item) => {
-    const decimals = literals.integers.get(item);
-    if (decimals === undefined) return item;
-    const [decimal] = decimals;
-    if (
-      decimals.size !== 1 ||
-      decimal === undefined ||
-      literals.reals.has(item)
-    ) {
+    if (!literals.integers.has(item)) return item;
+    const source = resolvePlistNumberSource(item, literals);
+    if (source.kind !== "integer") {
       ambiguousNumberCount += 1;
       return item;
     }
     exactIntegerCount += 1;
-    return { $plist_type: "integer", decimal };
+    return { $plist_type: "integer", decimal: source.decimal };
   });
   return ok({
     value,
     bundle: projectPlistBundle(value),
     limitations: [
-      'plutil cannot express this plist as JSON, so it was decoded from plutil\'s XML conversion; data and date values are typed objects such as { "$plist_type": "data", "base64": ... }.',
-      ...(projected.unknownRealCount === 0
-        ? []
-        : [
-            `${String(projected.unknownRealCount)} non-finite real value(s) are reported as { "$plist_type": "real", "value": null } because the XML decoder does not distinguish NaN from infinity.`,
-          ]),
-      ...(projected.unknownDateCount === 0
-        ? []
-        : [unknownDateLimitation(projected.unknownDateCount)]),
+      ...projectedScalarLimitations(projected),
+      ...(literals.incomplete ? [incompletePlistNumberLimitation] : []),
       ...numberLimitations(exactIntegerCount, ambiguousNumberCount),
-      ...prototypeKeyLimitations(omittedPrototypeKeys),
     ],
   });
 };
 
-/** `<integer>` and `<real>` element literals in plutil's XML conversion. */
-interface XmlNumberLiterals {
-  /** Exact integer literals beyond the safe range, keyed by decoded number. */
-  readonly integers: ReadonlyMap<number, ReadonlySet<string>>;
-  readonly reals: ReadonlySet<number>;
-}
-
-// plutil escapes "<" in keys and strings, so these element literals can be
-// read from the XML text.
-const xmlNumberLiterals = (xml: string): XmlNumberLiterals => {
-  const integers = new Map<number, Set<string>>();
-  for (const [, decimal = ""] of xml.matchAll(
-    /<integer>\s*([+-]?\d+)\s*<\/integer>/gu,
-  )) {
-    const rounded = Number(decimal);
-    if (Number.isSafeInteger(rounded)) continue;
-    integers.set(
-      rounded,
-      (integers.get(rounded) ?? new Set()).add(BigInt(decimal).toString()),
+/** Decode binary plist source bytes before conversion can erase scalar facts. */
+export const parsePlistBinary = (
+  bytes: Buffer,
+): Result<
+  ParsedPlist,
+  | AnalysisOutputError
+  | AnalysisResourceConstraintError
+  | UnsupportedBinaryPlistUidError
+> => {
+  try {
+    if (!hasBinaryPlistSignature(bytes))
+      throw new TypeError("selected file does not have a binary plist header");
+    const expansion = estimateBinaryPlistExpansion(
+      bytes,
+      MAX_NATIVE_PLIST_DECODE_BYTES,
+      {
+        budget: "the native plist decode budget",
+        numberProjection: true,
+        uidProjection: true,
+        maximumDepth: MAX_NATIVE_PLIST_NESTING_DEPTH,
+        fail: (kind, message) =>
+          kind === "cycle"
+            ? new TypeError(
+                "binary plist object references form a cycle, which a property list cannot represent",
+              )
+            : new PropertyListDecodeBudgetFailure(kind, message),
+      },
+    );
+    const scalarMetadata = scanBinaryPlistScalars(bytes, expansion);
+    const decoded = decodeBinaryPlistValue(bytes, expansion, scalarMetadata);
+    const projected = projectPlistValue(
+      decoded,
+      undefined,
+      MAX_NATIVE_PLIST_NESTING_DEPTH,
+    );
+    const numbers = createPlistNumberProjection(scalarMetadata.literals);
+    const value = numbers.project(projected.value);
+    return ok({
+      value,
+      bundle: projectPlistBundle(value),
+      limitations: [
+        ...projectedScalarLimitations(projected),
+        ...(expansion.datePrecisionOverlapCount === 0
+          ? []
+          : [
+              binaryDatePrecisionOverlapLimitation(
+                expansion.datePrecisionOverlapCount,
+              ),
+            ]),
+        ...numbers.limitations(),
+      ],
+    });
+  } catch (cause: unknown) {
+    if (cause instanceof UnsupportedBinaryPlistUidError) return err(cause);
+    if (
+      cause instanceof PlistNestingLimitError ||
+      (cause instanceof PropertyListDecodeBudgetFailure &&
+        cause.kind === "depth")
+    )
+      return err(plistNestingError(cause));
+    if (cause instanceof PropertyListDecodeBudgetFailure)
+      return err(
+        new AnalysisResourceConstraintError(
+          "inspect_plist",
+          "memory",
+          cause.message,
+          { maximum_decoded_bytes: MAX_NATIVE_PLIST_DECODE_BYTES },
+          {
+            cause,
+            ...fixedAllowanceOptions(
+              `The ${mebibytes(MAX_NATIVE_PLIST_DECODE_BYTES)} (${String(MAX_NATIVE_PLIST_DECODE_BYTES)}-byte) native binary plist decode allowance (no runtime override)`,
+              "parser",
+            ),
+          },
+        ),
+      );
+    return err(
+      new AnalysisOutputError(
+        "inspect_plist",
+        cause instanceof Error ? cause.message : String(cause),
+        { cause },
+      ),
     );
   }
-  const reals = new Set(
-    [...xml.matchAll(/<real>([^<]*)<\/real>/gu)].map(([, text = ""]) =>
-      Number.parseFloat(text),
-    ),
-  );
-  return { integers, reals };
 };
 
-const prototypeKeyLimitations = (count: number): string[] =>
-  count === 0 ? [] : [omittedPrototypeKeysLimitation(count)];
+const projectedScalarLimitations = (
+  projected: ProjectedPlistValue,
+): string[] => [
+  ...(projected.nonFiniteRealCount === 0
+    ? []
+    : [nonFiniteRealLimitation(projected.nonFiniteRealCount)]),
+  ...negativeZeroLimitations(projected.negativeZeroRealCount),
+  ...(projected.unknownDateCount === 0
+    ? []
+    : [unknownDateLimitation(projected.unknownDateCount)]),
+  ...(projected.unknownScalarCount === 0
+    ? []
+    : [unknownScalarLimitation(projected.unknownScalarCount)]),
+];
+
+const negativeZeroLimitations = (count: number): string[] =>
+  count === 0 ? [] : [negativeZeroRealLimitation(count)];
 
 const numberLimitations = (
   exactIntegerCount: number,
@@ -254,10 +491,13 @@ const mapJsonNumbers = (
 };
 
 const projectPlistBundle = (value: unknown): PlistBundleMetadata => {
-  const object = plistObject.safeParse(value);
+  const object =
+    value !== null && typeof value === "object" && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : undefined;
   const field = (name: string): string | null => {
-    if (!object.success) return null;
-    const candidate = object.data[name];
+    if (object === undefined || !Object.hasOwn(object, name)) return null;
+    const candidate = object[name];
     return typeof candidate === "string" ? candidate : null;
   };
   return {

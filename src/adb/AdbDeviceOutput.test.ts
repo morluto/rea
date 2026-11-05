@@ -18,7 +18,7 @@ describe("parseAdbDevicesOutput", () => {
     ].join("\n");
     const { devices, unparsedLines, daemonStarted } =
       parseAdbDevicesOutput(output);
-    expect(unparsedLines).toEqual([]);
+    expect(unparsedLines).toEqual({ sample: [], total: 0 });
     expect(daemonStarted).toBe(false);
     expect(devices).toEqual([
       {
@@ -88,7 +88,7 @@ describe("ADB daemon startup notices", () => {
       stderr,
     );
     expect(daemonStarted).toBe(true);
-    expect(unparsedLines).toEqual([]);
+    expect(unparsedLines).toEqual({ sample: [], total: 0 });
     expect(devices).toHaveLength(1);
   });
 
@@ -98,7 +98,7 @@ describe("ADB daemon startup notices", () => {
       "* daemon started successfully *\r\n",
     );
     expect(daemonStarted).toBe(true);
-    expect(unparsedLines).toEqual([]);
+    expect(unparsedLines).toEqual({ sample: [], total: 0 });
   });
 
   it("does not treat a daemon startup error containing the success phrase as success", () => {
@@ -107,7 +107,7 @@ describe("ADB daemon startup notices", () => {
       "* daemon not started successfully\r\n",
     );
     expect(daemonStarted).toBe(false);
-    expect(unparsedLines).toEqual([]);
+    expect(unparsedLines).toEqual({ sample: [], total: 0 });
   });
 
   it("ignores non-startup lines and device strings on stderr", () => {
@@ -126,7 +126,7 @@ describe("ADB daemon startup notices", () => {
       stderr,
     );
     expect(daemonStarted).toBe(false);
-    expect(unparsedLines).toEqual([]);
+    expect(unparsedLines).toEqual({ sample: [], total: 0 });
     expect(devices).toHaveLength(1);
     expect(devices[0]?.serial).toBe("emulator-5554");
   });
@@ -158,11 +158,14 @@ describe("ADB device states", () => {
     expect(devices.map(({ serial, state }) => [serial, state])).toEqual([
       ["serial-no-permission", "no permissions"],
     ]);
-    expect(unparsedLines).toEqual([
-      "serial-bad-device deviceXYZ  ",
-      "serial-bad-offline offline-ish",
-      "serial-bad-auth unauthorizedXYZ",
-    ]);
+    expect(unparsedLines).toEqual({
+      sample: [
+        "serial-bad-device deviceXYZ  ",
+        "serial-bad-offline offline-ish",
+        "serial-bad-auth unauthorizedXYZ",
+      ],
+      total: 3,
+    });
   });
 
   it("returns unrecognized lines instead of dropping them", () => {
@@ -172,7 +175,10 @@ describe("ADB device states", () => {
       "",
     ].join("\n");
     const { unparsedLines } = parseAdbDevicesOutput(output);
-    expect(unparsedLines).toEqual(["this is not a device line"]);
+    expect(unparsedLines).toEqual({
+      sample: ["this is not a device line"],
+      total: 1,
+    });
   });
 
   it("reports a non-numeric transport_id as unknown", () => {
@@ -259,7 +265,7 @@ describe("parsePackageListOutput", () => {
       "",
     ].join("\n");
     const { packages, unparsedLines } = parsePackageListOutput(output);
-    expect(unparsedLines).toEqual([]);
+    expect(unparsedLines).toEqual({ sample: [], total: 0 });
     expect(packages).toEqual([
       {
         package_name: "com.example",
@@ -278,7 +284,19 @@ describe("parsePackageListOutput", () => {
       "package:/data/app/x/base.apk=com.ok\n  garbage line  \n",
     );
     expect(packages).toHaveLength(1);
-    expect(unparsedLines).toEqual(["  garbage line  "]);
+    expect(unparsedLines).toEqual({ sample: ["  garbage line  "], total: 1 });
+  });
+
+  it("samples the first ten unrecognized lines and counts every one", () => {
+    const rows = Array.from(
+      { length: 11 },
+      (_, index) => `row ${String(index + 1)}`,
+    );
+    const { packages, unparsedLines } = parsePackageListOutput(
+      ["package:/data/app/x/base.apk=com.ok", ...rows].join("\n"),
+    );
+    expect(packages).toHaveLength(1);
+    expect(unparsedLines).toEqual({ sample: rows.slice(0, 10), total: 11 });
   });
 });
 
@@ -291,7 +309,7 @@ describe("parsePmPathOutput", () => {
       "",
     ].join("\n");
     const { paths, unparsedLines } = parsePmPathOutput(output);
-    expect(unparsedLines).toEqual([]);
+    expect(unparsedLines).toEqual({ sample: [], total: 0 });
     expect(paths).toEqual([
       {
         device_path: "/data/app/~~a==/com.example.b==/base.apk",
@@ -325,6 +343,7 @@ describe("parsePmPathOutput", () => {
     const devicePath = "/data/app/My App/résumé:final\\draft*.apk";
     const { paths, rejectedPaths, unparsedLines } = parsePmPathOutput(
       `package:${devicePath}\r\n`,
+      "linux",
     );
     expect(paths).toEqual([
       {
@@ -334,7 +353,7 @@ describe("parsePmPathOutput", () => {
       },
     ]);
     expect(rejectedPaths).toEqual([]);
-    expect(unparsedLines).toEqual([]);
+    expect(unparsedLines).toEqual({ sample: [], total: 0 });
   });
 
   it("rejects an empty final component without normalizing the source", () => {
@@ -349,6 +368,6 @@ describe("parsePmPathOutput", () => {
   it("retains malformed lines including surrounding whitespace", () => {
     expect(
       parsePmPathOutput(" package:/data/app/pkg/base.apk \n").unparsedLines,
-    ).toEqual([" package:/data/app/pkg/base.apk "]);
+    ).toEqual({ sample: [" package:/data/app/pkg/base.apk "], total: 1 });
   });
 });

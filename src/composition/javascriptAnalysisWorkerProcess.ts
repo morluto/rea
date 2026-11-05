@@ -18,7 +18,7 @@ import {
 
 const analyze: JavaScriptSourceWorkerAnalyzer = async (
   file,
-  nodeBudget,
+  capacity,
   callbacks,
 ) => {
   if (!file.text.included)
@@ -47,6 +47,7 @@ const analyze: JavaScriptSourceWorkerAnalyzer = async (
     analyzeParsedJavaScriptSemanticsSteps(
       parsed,
       moduleResolutionModeForJavaScriptReference(file.path, "static-import"),
+      capacity.nodes,
     ),
   );
   parsed = null;
@@ -70,7 +71,7 @@ const analyze: JavaScriptSourceWorkerAnalyzer = async (
     projectJavaScriptSemanticFileSteps(
       file,
       ir,
-      nodeBudget,
+      capacity,
       facts.electron.call_paths,
     ),
   );

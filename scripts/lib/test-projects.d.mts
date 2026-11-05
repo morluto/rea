@@ -1,6 +1,7 @@
 export interface TestProjectDefinition {
   readonly name: string;
   readonly group: "source" | "built";
+  readonly isolate?: boolean;
   readonly include: readonly string[];
   readonly exclude?: readonly string[];
 }

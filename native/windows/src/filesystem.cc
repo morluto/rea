@@ -482,14 +482,31 @@ static void dispose(HANDLE handle, const std::wstring& path) {
   require(SetFileInformationByHandle(handle, FileDispositionInfo, &deletion, sizeof(deletion)), "Delete owned object by handle failed", path);
 }
 
+static void parkUnresolved(Runtime& root, Handle& handle) noexcept {
+  if (handle.fullyReleased()) return;
+  handle.release();
+  if (handle.fullyReleased()) return;
+  try {
+    root.unreleased.push_back(std::move(handle));
+  } catch (...) {
+    // The owning Handle remains live. Its destructor retains the same value.
+  }
+}
+
+static void parkUnresolved(Runtime& root, std::vector<Handle>& handles) noexcept {
+  for (auto& handle : handles) parkUnresolved(root, handle);
+  handles.clear();
+}
+
 static void disposeSnapshot(Runtime& root, Handle& file, const std::wstring& path) {
   // Snapshot readers do not share DELETE access. Release the writer only for
   // failed-copy cleanup, with its parent pinned and its identity recorded.
+  // A failed close keeps this writer; opening a second handle would drop it.
   auto parent = runtimeDirectory(root, path.substr(0, path.find_last_of(L'\\')));
   FILE_ID_INFO expected{};
   require(GetFileInformationByHandleEx(file.get(), FileIdInfo, &expected, sizeof(expected)),
           "Read incomplete snapshot identity failed", path);
-  file.reset();
+  requireReleased(file, "Close incomplete snapshot writer failed", path);
   auto cleanup = openRelative(parent->get(), path.substr(path.find_last_of(L'\\') + 1),
                               DELETE | GENERIC_READ | FILE_WRITE_ATTRIBUTES,
                               FILE_SHARE_READ, FILE_NON_DIRECTORY_FILE, path);
@@ -505,12 +522,24 @@ static void disposeSnapshot(Runtime& root, Handle& file, const std::wstring& pat
 }
 
 void closeRuntime(Runtime& root) {
+  retryRetainedNativeHandles();
   if (root.closed) return;
   root.closing = true;
   // Windows keeps the bearer descriptor and snapshot leases until this owner
   // cleanup. POSIX removes its consumed descriptor earlier. Abrupt owner death
   // closes process jobs but cannot run this walk, so private files can remain.
+  for (auto& handle : root.unreleased)
+    requireReleased(handle, "Close retained runtime handle failed", root.path);
+  root.unreleased.clear();
+  // Writers share only FILE_SHARE_READ, which blocks a later delete open.
+  // Release them before the walk. A failed close stays on this owner and does
+  // not open a second delete handle.
+  for (auto& handle : root.immutableFiles)
+    requireReleased(handle, "Close retained runtime file failed", root.path);
   root.immutableFiles.clear();
+  // Once the root directory handle is released, another walk would duplicate
+  // an invalid handle and never reach surviving parents.
+  if (!root.treeReleased) {
   // Enumerate and open children through the retained directory handles. Paths
   // below are diagnostic labels only: renames and ancestor junction replacement
   // cannot redirect cleanup into an unrelated tree.
@@ -567,6 +596,7 @@ void closeRuntime(Runtime& root) {
     std::wstring name;
     if (!frame.next(name)) {
       dispose(frame.directory.get(), frame.path);
+      requireReleased(frame.directory, "Close runtime directory handle failed", frame.path);
       frames.pop_back();
       continue;
     }
@@ -578,10 +608,17 @@ void closeRuntime(Runtime& root) {
     require(GetFileInformationByHandleEx(child.get(), FileAttributeTagInfo, &info, sizeof(info)), "Read cleanup object tag failed", path);
     if ((info.FileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0 && (info.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) == 0)
       frames.push_back(std::make_unique<Frame>(std::move(child), path));
-    else dispose(child.get(), path);
+    else {
+      dispose(child.get(), path);
+      requireReleased(child, "Close runtime child handle failed", path);
+    }
   }
   // Failed walks retain the root's identity leases for a later cleanup retry.
-  root.directory.reset();
+  requireReleased(root.directory, "Close runtime root handle failed", root.path);
+  root.treeReleased = true;
+  }
+  for (auto& parent : root.parents)
+    requireReleased(parent, "Close runtime parent handle failed", root.path);
   root.parents.clear();
   root.closed = true;
 }
@@ -642,9 +679,10 @@ static void completeSnapshot(napi_env env, napi_status status, void* pointer) {
       disposeSnapshot(*work->root, work->destination, work->path);
       napi_reject_deferred(env, work->deferred, failureValue(env, failure));
     } catch (const Failure& cleanupFailure) {
-      const Failure combined(
-          failure.constraint + "; incomplete snapshot cleanup failed: " + cleanupFailure.constraint,
-          work->path, cleanupFailure.win32);
+      Failure combined = failure;
+      combined.cleanupConstraint = cleanupFailure.constraint;
+      combined.cleanupWin32 = cleanupFailure.win32;
+      combined.cleanupPath = cleanupFailure.path;
       napi_reject_deferred(env, work->deferred, failureValue(env, combined));
     }
   };
@@ -656,12 +694,17 @@ static void completeSnapshot(napi_env env, napi_status status, void* pointer) {
     set(env, result, "source", identity(env, work->source->get(), work->source->requestedPath));
     set(env, result, "snapshot", identity(env, work->destination.get(), work->path));
     work->root->immutableFiles.push_back(std::move(work->destination));
+    // The digest is the byte outcome. Source handles that fail close stay on
+    // the runtime and are retried by runtime close; they do not erase the copy.
+    if (work->source != nullptr) parkUnresolved(*work->root, work->source->handles);
     check(napi_resolve_deferred(env, work->deferred, result));
   } catch (const Failure& failure) {
     reject(failure);
   } catch (const std::exception& failure) {
     reject(Failure(failure.what(), work->path, ERROR_GEN_FAILURE));
   }
+  if (work->source != nullptr) parkUnresolved(*work->root, work->source->handles);
+  parkUnresolved(*work->root, work->destination);
   napi_delete_reference(env, work->rootReference);
   napi_delete_async_work(env, work->work);
 }
@@ -706,8 +749,14 @@ napi_value filesystemCall(napi_env env, const std::wstring& operation,
     return result;
   }
   if (operation == L"close") {
+    retryRetainedNativeHandles();
     auto& file = static_cast<File&>(resource(env, args[0], Kind::File));
-    file.handles.clear(); file.closed = true;
+    // Leave a failed handle on this File. The private runtime keeps that
+    // wrapper and retries this close before runtime_close.
+    for (auto& handle : file.handles)
+      requireReleased(handle, "Close admitted file handle failed", file.path);
+    file.handles.clear();
+    file.closed = true;
     return null(env);
   }
   if (operation == L"read") {

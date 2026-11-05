@@ -1,3 +1,4 @@
+import { ProcessAdmissionError } from "./ProcessAdmissionError.js";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -9,9 +10,23 @@ import {
   DEFAULT_SWIFTC_COMPILE_TIMEOUT_MS,
   providerStartupTimeoutSchema,
 } from "../config/providerStartupTimeout.js";
+import { MAX_NODE_TIMER_DELAY_MS } from "../domain/analysisResourceLimits.js";
+import { err, ok, type Result } from "../domain/result.js";
+import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import type {
+  AnalysisCapturedOutput,
+  AnalysisError,
+} from "../domain/analysisErrorBase.js";
+import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { safeParseJson } from "../domain/safeJson.js";
 import { boundedUtf8Text } from "./boundedUtf8Text.js";
-import { execFileOutput, execFileOutputFailure } from "./ExecFileOutput.js";
+import { createDarwinHelperCache } from "./DarwinHelperCache.js";
+import { snapshotEnvironment } from "./snapshotEnvironment.js";
+import {
+  execFileOutput,
+  execFileOutputFailure,
+  execFileFailureCapturedOutput,
+} from "./ExecFileOutput.js";
 import type {
   ProcessIdentityObservation,
   ProcessRunTokenObservation,
@@ -22,13 +37,13 @@ const responseSchema = z.strictObject({
   results: z.array(
     z.discriminatedUnion("state", [
       z.strictObject({
-        pid: z.number().int().positive(),
+        pid: z.int().positive(),
         state: z.literal("readable"),
         run_id: z.string().optional(),
         reason: z.null().optional(),
       }),
       z.strictObject({
-        pid: z.number().int().positive(),
+        pid: z.int().positive(),
         state: z.literal("unavailable"),
         run_id: z.union([z.string(), z.null()]).optional(),
         reason: z.string().min(1),
@@ -40,13 +55,29 @@ const identityResponseSchema = z.strictObject({
   results: z.array(
     z.discriminatedUnion("state", [
       z.strictObject({
-        pid: z.number().int().positive(),
+        pid: z.int().positive(),
+        state: z.literal("absent"),
+        identity: z.null().optional(),
+        reason: z.literal("not-in-snapshot"),
+      }),
+      z.strictObject({
+        pid: z.int().positive(),
         state: z.literal("readable"),
         identity: z.string().min(1),
+        effective_uid: z.int().nonnegative().optional(),
+        lifecycle: z.enum(["non-zombie", "zombie"]).optional(),
+        relation: z
+          .strictObject({
+            state: z.literal("observed"),
+            parent_pid: z.int().nonnegative(),
+            process_group_id: z.int().nonnegative(),
+          })
+          .optional(),
+        name: z.string().optional(),
         reason: z.null().optional(),
       }),
       z.strictObject({
-        pid: z.number().int().positive(),
+        pid: z.int().positive(),
         state: z.literal("unavailable"),
         identity: z.null().optional(),
         reason: z.string().min(1),
@@ -83,7 +114,9 @@ export const SWIFTC_INTERRUPT = "SIGINT";
  * Swift SDK cache on the supported Intel macOS VM (about 88s), so compilation
  * stays bounded independently of short provider version probes. Invalid ambient
  * values fall back to the default; `parseConfig` still rejects them at CLI/MCP
- * admission.
+ * admission. The resolved value is captured when the reader is created.
+ * Production creates that reader from the launch environment at process start,
+ * so a change applies after REA restarts, on the next ownership-helper compile.
  */
 export const resolveSwiftcCompileTimeoutMs = (
   options: {
@@ -99,24 +132,78 @@ export const resolveSwiftcCompileTimeoutMs = (
   return parsed.success ? parsed.data : DEFAULT_SWIFTC_COMPILE_TIMEOUT_MS;
 };
 
+/** Name the existing swiftc deadline when a helper compile times out. */
+export const swiftcCompileTimeoutRecovery = (timeoutMs: number): string =>
+  `The effective REA_SWIFTC_COMPILE_TIMEOUT_MS value is ${String(timeoutMs)} ms (integer range 1..${String(MAX_NODE_TIMER_DELAY_MS)}; omitted default ${String(DEFAULT_SWIFTC_COMPILE_TIMEOUT_MS)} ms). Set it in the environment that starts REA and restart REA; the next ownership-helper compile uses the new value.`;
+
 /** Bound on compiler diagnostics embedded in the inspection failure text. */
 const STDERR_EXCERPT_LIMIT = 512;
 
 /** The native Darwin process-ownership reader could not be prepared. */
 export class DarwinProcessOwnershipInspectionError extends Error {
+  readonly #cleanupOwner: { close(): Promise<void> } | undefined;
+  get cleanupOwner(): { close(): Promise<void> } | undefined {
+    return this.#cleanupOwner;
+  }
   constructor(
     message: string,
     options?: ErrorOptions & {
       readonly compilerOutcome?: DarwinCompilerOutcome;
+      readonly capturedOutput?: AnalysisCapturedOutput;
+      readonly cleanupOwner?: { close(): Promise<void> } | undefined;
+      readonly cleanupFailure?: AnalysisError;
+      readonly cancellation?: { readonly reason: unknown };
     },
   ) {
-    const { compilerOutcome, ...errorOptions } = options ?? {};
+    const {
+      compilerOutcome,
+      capturedOutput,
+      cleanupFailure,
+      cleanupOwner,
+      cancellation,
+      ...errorOptions
+    } = options ?? {};
     super(message, errorOptions);
     this.name = "DarwinProcessOwnershipInspectionError";
     this.compilerOutcome = compilerOutcome;
+    this.capturedOutput = capturedOutput;
+    this.#cleanupOwner = cleanupOwner;
+    this.cleanupFailure = cleanupFailure;
+    this.cancellation = cancellation;
   }
 
   readonly compilerOutcome: DarwinCompilerOutcome | undefined;
+  readonly capturedOutput: AnalysisCapturedOutput | undefined;
+  readonly cleanupFailure: AnalysisError | undefined;
+  readonly cancellation: { readonly reason: unknown } | undefined;
+
+  /** Preserve the physical preparation failure while following the exact cleanup owner. */
+  withCleanupFailure(
+    cleanup: AnalysisError,
+    owner?: { close(): Promise<void> },
+  ): DarwinProcessOwnershipInspectionError {
+    const combined =
+      this.cleanupFailure === undefined || this.cleanupFailure === cleanup
+        ? cleanup
+        : analysisErrorWithCleanupFailure(
+            this.cleanupFailure,
+            cleanup,
+          ).bindCleanupDependencies([this.cleanupFailure, cleanup]);
+    return new DarwinProcessOwnershipInspectionError(this.message, {
+      ...(Object.hasOwn(this, "cause") ? { cause: this.cause } : {}),
+      ...(this.compilerOutcome === undefined
+        ? {}
+        : { compilerOutcome: this.compilerOutcome }),
+      ...(this.capturedOutput === undefined
+        ? {}
+        : { capturedOutput: this.capturedOutput }),
+      cleanupFailure: combined,
+      cleanupOwner: owner ?? this.cleanupOwner,
+      ...(this.cancellation === undefined
+        ? {}
+        : { cancellation: this.cancellation }),
+    });
+  }
 }
 
 /** Explicit, bounded outcome from compiling REA's Darwin ownership helper. */
@@ -130,22 +217,28 @@ export interface DarwinCompilerOutcome {
   readonly code: string | number | null;
   readonly signal: string | null;
   readonly stderr: string;
-  readonly stderrBytes: number;
+  readonly stderrBytes?: number;
   readonly stderrTruncated: boolean;
   readonly outputTruncated: boolean;
   readonly killed: boolean;
   readonly timeoutMs?: number;
 }
 
-const MAX_COMPILER_STDERR_BYTES = 8 * 1024;
+const MAX_COMPILER_OUTPUT_BYTES = 8 * 1024;
 
-const compilerOutcome = (
+const compilerFailureFacts = (
   cause: unknown,
   timeoutMs: number,
-): DarwinCompilerOutcome | undefined => {
+):
+  | {
+      readonly outcome: DarwinCompilerOutcome;
+      readonly capturedOutput: AnalysisCapturedOutput;
+    }
+  | undefined => {
   const failure = execFileOutputFailure(cause);
   if (failure === undefined) return undefined;
-  const stderr = boundedUtf8Text(failure.stderr, MAX_COMPILER_STDERR_BYTES);
+  const stderr = boundedUtf8Text(failure.stderr, MAX_COMPILER_OUTPUT_BYTES);
+  const stdout = boundedUtf8Text(failure.stdout, MAX_COMPILER_OUTPUT_BYTES);
   const outcome =
     failure.code === "ETIMEDOUT"
       ? "timed_out"
@@ -157,15 +250,26 @@ const compilerOutcome = (
             ? "spawn_failed"
             : "failed";
   return {
-    outcome,
-    code: failure.code,
-    signal: failure.signal,
-    stderr: stderr.text,
-    stderrBytes: Buffer.byteLength(failure.stderr, "utf8"),
-    stderrTruncated: stderr.truncated,
-    outputTruncated: failure.outputTruncated,
-    killed: failure.killed,
-    ...(outcome === "timed_out" ? { timeoutMs } : {}),
+    outcome: {
+      outcome,
+      code: failure.code,
+      signal: failure.signal,
+      stderr: stderr.text,
+      ...(failure.stderrBytes === undefined
+        ? {}
+        : { stderrBytes: failure.stderrBytes }),
+      stderrTruncated: stderr.truncated,
+      outputTruncated: failure.outputTruncated,
+      killed: failure.killed,
+      ...(outcome === "timed_out" ? { timeoutMs } : {}),
+    },
+    capturedOutput: {
+      ...execFileFailureCapturedOutput(failure),
+      stdout: stdout.text,
+      stderr: stderr.text,
+      truncated:
+        stdout.truncated || stderr.truncated || failure.outputTruncated,
+    },
   };
 };
 
@@ -176,8 +280,11 @@ const compilerOutcomeDescription = (
   if (outcome === undefined) return `compiler result: ${String(fallbackCode)}`;
   if (outcome.outcome === "exited")
     return `compiler result: exit code ${String(outcome.code)}`;
-  if (outcome.outcome === "timed_out")
-    return `compiler result: timed out after ${String(outcome.timeoutMs)} ms`;
+  if (outcome.outcome === "timed_out") {
+    if (outcome.timeoutMs === undefined)
+      return "compiler result: timed out. The effective REA_SWIFTC_COMPILE_TIMEOUT_MS value was not reported.";
+    return `compiler result: timed out after ${String(outcome.timeoutMs)} ms. ${swiftcCompileTimeoutRecovery(outcome.timeoutMs)}`;
+  }
   if (outcome.outcome === "signaled")
     return `compiler result: stopped by signal ${outcome.signal ?? "an unknown signal"}`;
   return `compiler result: ${String(outcome.code)}`;
@@ -188,7 +295,8 @@ const compilerInspectionError = (
   timeoutMs: number,
   compiler: DarwinProcessReaderCompiler,
 ): DarwinProcessOwnershipInspectionError => {
-  const outcome = compilerOutcome(cause, timeoutMs);
+  const facts = compilerFailureFacts(cause, timeoutMs);
+  const outcome = facts?.outcome;
   const code = outcome?.code ?? "unknown";
   const description = compilerOutcomeDescription(outcome, code);
   const launcher =
@@ -205,8 +313,13 @@ const compilerInspectionError = (
     stderr.truncated ||
     outcome?.stderrTruncated === true ||
     outcome?.outputTruncated === true;
+  const truncationNote = !truncated
+    ? ""
+    : stderr.truncated
+      ? `… [diagnostics truncated at ${String(STDERR_EXCERPT_LIMIT)} bytes; this release has no runtime override]`
+      : "… [diagnostics truncated; this release has no runtime override]";
   const suffix = diagnostics
-    ? `: ${diagnostics}${truncated ? "… [diagnostics truncated]" : ""}`
+    ? `: ${diagnostics}${truncationNote}`
     : outcome === undefined
       ? `: ${cause instanceof Error ? cause.message : String(cause)}`
       : ": no compiler diagnostics were captured";
@@ -214,14 +327,27 @@ const compilerInspectionError = (
     `${prefix} (${description})${suffix}`,
     {
       cause,
-      ...(outcome === undefined ? {} : { compilerOutcome: outcome }),
+      ...(facts === undefined
+        ? {}
+        : {
+            compilerOutcome: facts.outcome,
+            capturedOutput: facts.capturedOutput,
+          }),
     },
   );
 };
 
+/** One allocated helper root, including its shared finalization and live cleanup status. */
+interface ProcessReaderRoot {
+  readonly path: string;
+  cleanupPromise?: Promise<void> | undefined;
+  cleanupAnchor?: ProviderCleanupError | undefined;
+}
+
 interface ProcessReaderCompilation {
   readonly controller: AbortController;
-  promise: Promise<string>;
+  promise: Promise<Result<string, unknown>>;
+  primaryFailure?: { readonly cause: unknown };
   waiters: number;
   aborting: boolean;
   settled: boolean;
@@ -239,28 +365,48 @@ const isExpectedAbort = (cause: unknown, signal: AbortSignal): boolean =>
   (cause === signal.reason ||
     (cause instanceof Error && cause.name === "AbortError"));
 
+type CompilationWaitOutcome =
+  | { readonly kind: "completed"; readonly result: Result<string, unknown> }
+  | { readonly kind: "cancelled"; readonly reason: unknown };
+
 const waitForCompilation = async (
-  promise: Promise<string>,
+  operation: ProcessReaderCompilation,
   signal: AbortSignal | undefined,
-): Promise<string> => {
-  if (signal === undefined) return promise;
-  if (signal.aborted) throw abortReason(signal);
-  return new Promise((resolve, reject) => {
+): Promise<CompilationWaitOutcome> => {
+  if (signal === undefined)
+    return { kind: "completed", result: await operation.promise };
+  return new Promise((resolve) => {
     let completed = false;
-    const finish = (callback: () => void) => {
+    const finish = (outcome: CompilationWaitOutcome) => {
       if (completed) return;
       completed = true;
       signal.removeEventListener("abort", onAbort);
-      callback();
+      resolve(outcome);
     };
-    const onAbort = () => finish(() => reject(abortReason(signal)));
+    const onAbort = () => {
+      // Finalization belongs to an already observed physical failure.
+      if (operation.primaryFailure !== undefined) return;
+      finish({ kind: "cancelled", reason: signal.reason });
+    };
     signal.addEventListener("abort", onAbort, { once: true });
-    promise.then(
-      (value) => finish(() => resolve(value)),
-      (cause: unknown) => finish(() => reject(cause)),
+    void operation.promise.then((result) =>
+      finish({ kind: "completed", result }),
     );
     if (signal.aborted) onAbort();
   });
+};
+
+/** The kernel or policy refused to launch the file, before it could answer. */
+const helperLaunchFailed = (cause: unknown): boolean => {
+  const failure = execFileOutputFailure(cause);
+  // spawn rejects with the bare errno before any output exists.
+  const code =
+    failure?.code ??
+    (cause instanceof Error && "code" in cause ? cause.code : undefined);
+  return (
+    ["EACCES", "EPERM", "ENOEXEC", "ENOENT"].includes(String(code)) ||
+    (failure?.signal === "SIGKILL" && !failure.killed)
+  );
 };
 
 /** Explicit tool selection; direct Swift compilation also needs its matching SDK. */
@@ -278,7 +424,7 @@ export const createDarwinProcessRunTokenReader = (
     readonly compiler?: DarwinProcessReaderCompiler;
     /** Deadline for helper compilation, independent of provider execution. */
     readonly compileTimeoutMs?: number;
-    /** Environment consulted when `compileTimeoutMs` is omitted. */
+    /** Captured compiler/helper environment and default compile deadline. */
     readonly environment?: Readonly<Record<string, string | undefined>>;
     /**
      * Caller-owned directory holding the compiler's module cache. Unset keeps
@@ -286,35 +432,89 @@ export const createDarwinProcessRunTokenReader = (
      * reader because cleanup only removes the per-run helper root.
      */
     readonly moduleCachePath?: string;
+    /**
+     * REA-owned per-user directory that reuses a verified compiled helper
+     * across processes with the xcrun compiler. Unset compiles once per
+     * reader, as callers selecting their own compiler, module cache, or write
+     * boundary expect.
+     */
+    readonly helperCacheDirectory?: string;
   } = {},
 ) => {
   const compiler = options.compiler ?? {
     kind: "xcrun",
     executable: "/usr/bin/xcrun",
   };
-  const compilerTimeoutMs = resolveSwiftcCompileTimeoutMs(options);
+  const environment = snapshotEnvironment(options.environment ?? process.env);
+  const compilerTimeoutMs = resolveSwiftcCompileTimeoutMs({
+    ...options,
+    environment,
+  });
   const moduleCachePath = options.moduleCachePath ?? "";
-  let root: string | undefined;
+  const helperCache =
+    options.helperCacheDirectory === undefined || compiler.kind !== "xcrun"
+      ? undefined
+      : createDarwinHelperCache({
+          directory: options.helperCacheDirectory,
+          sources: sourceFiles,
+          xcrun: compiler.executable,
+          environment,
+        });
+  let root: ProcessReaderRoot | undefined;
   let executable: string | undefined;
+  // The shared copy runs while it launches; this reader's own helper is kept.
+  let sharedExecutable: string | undefined;
+  let perRunExecutable: string | undefined;
+  let bypassCache = false;
   let compilation: ProcessReaderCompilation | undefined;
   let closePromise: Promise<void> | undefined;
   let closed = false;
   let exitCleanupInstalled = false;
+  const activeCommands = new Set<Promise<string>>();
 
   const cleanupAtExit = () => {
-    if (root !== undefined) rmSync(root, { recursive: true, force: true });
+    if (root !== undefined) rmSync(root.path, { recursive: true, force: true });
   };
-  const cleanupRoot = async (target = root): Promise<void> => {
-    if (target === undefined) return;
-    await rm(target, { recursive: true, force: true });
-    if (root !== target) return;
-    root = undefined;
-    executable = undefined;
-    if (exitCleanupInstalled) process.removeListener("exit", cleanupAtExit);
-    exitCleanupInstalled = false;
+  const cleanupRoot = (target = root): Promise<void> => {
+    if (target === undefined) return Promise.resolve();
+    target.cleanupPromise ??= Promise.resolve()
+      .then(async () => {
+        try {
+          await rm(target.path, { recursive: true, force: true });
+        } catch (cause: unknown) {
+          const failure = new ProviderCleanupError(
+            "process-ownership",
+            [target.path],
+            {
+              reason:
+                "The Darwin ownership helper root remains owned until removal succeeds.",
+            },
+            { cause, operation: "prepare_owned_process" },
+          );
+          if (target.cleanupAnchor === undefined)
+            target.cleanupAnchor = failure;
+          else failure.bindCleanupDependencies([target.cleanupAnchor]);
+          throw failure;
+        }
+        target.cleanupAnchor?.resolveCleanup();
+        target.cleanupAnchor = undefined;
+        if (root !== target) return;
+        root = undefined;
+        executable = undefined;
+        if (exitCleanupInstalled) process.removeListener("exit", cleanupAtExit);
+        exitCleanupInstalled = false;
+      })
+      .catch((cause: unknown) => {
+        target.cleanupPromise = undefined;
+        throw cause;
+      });
+    return target.cleanupPromise;
   };
-  const runCompilation = async (signal: AbortSignal): Promise<string> => {
-    let operationRoot: string | undefined;
+  const runCompilation = async (
+    operation: ProcessReaderCompilation,
+  ): Promise<string> => {
+    const signal = operation.controller.signal;
+    let operationRoot: ProcessReaderRoot | undefined;
     try {
       if (
         compiler.kind === "swiftc" &&
@@ -324,18 +524,30 @@ export const createDarwinProcessRunTokenReader = (
           "Direct Darwin helper compilation requires absolute REA_DARWIN_SWIFTC_PATH and SDKROOT paths selecting a compatible installed Swift compiler and macOS SDK.",
         );
       }
-      operationRoot = await mkdtemp(join(tmpdir(), "rea-process-token-"));
+      const cached = bypassCache
+        ? undefined
+        : await helperCache?.lookup(signal);
+      if (signal.aborted || closed) throw abortReason(signal);
+      // A verified shared entry needs no per-run root and is never removed.
+      if (cached?.kind === "hit") {
+        sharedExecutable = cached.executable;
+        executable = cached.executable;
+        return cached.executable;
+      }
+      operationRoot = {
+        path: await mkdtemp(join(tmpdir(), "rea-process-token-")),
+      };
       root = operationRoot;
       process.once("exit", cleanupAtExit);
       exitCleanupInstalled = true;
       if (signal.aborted || closed) throw abortReason(signal);
-      const output = join(operationRoot, "reader");
+      const output = join(operationRoot.path, "reader");
       // swiftc keeps intermediate objects under TMPDIR, so keep them inside
       // the root that cleanup removes.
-      const compilerTemporary = join(operationRoot, "tmp");
+      const compilerTemporary = join(operationRoot.path, "tmp");
       await mkdir(compilerTemporary);
       const compilerEnvironment: NodeJS.ProcessEnv = {
-        ...process.env,
+        ...environment,
         TMPDIR: compilerTemporary,
       };
       const compilerArguments =
@@ -357,6 +569,7 @@ export const createDarwinProcessRunTokenReader = (
           maxBuffer: 1024 * 1024,
           signal,
           stopSignal: SWIFTC_INTERRUPT,
+          lifetimePipe: true,
           env: compilerEnvironment,
         });
       } catch (cause: unknown) {
@@ -364,13 +577,37 @@ export const createDarwinProcessRunTokenReader = (
         throw compilerInspectionError(cause, compilerTimeoutMs, compiler);
       }
       if (signal.aborted || closed) throw abortReason(signal);
-      executable = output;
-      return output;
+      // The per-run root stays owned until close even when the shared copy runs.
+      const shared =
+        cached?.kind === "miss"
+          ? await helperCache?.publish(cached.key, output, signal)
+          : undefined;
+      if (signal.aborted || closed) throw abortReason(signal);
+      perRunExecutable = output;
+      sharedExecutable = shared;
+      executable = shared ?? output;
+      return executable;
     } catch (cause: unknown) {
-      const ownsRoot = operationRoot !== undefined && root === operationRoot;
+      operation.primaryFailure = { cause };
       if (operationRoot !== undefined) {
-        if (ownsRoot) await cleanupRoot(operationRoot);
-        else await rm(operationRoot, { recursive: true, force: true });
+        // The extra pipe keeps settlement pending for Swift frontend writers
+        // that inherit it after the driver and its standard streams close.
+        // It cannot establish completion of a child that did not inherit it.
+        try {
+          await cleanupRoot(operationRoot);
+        } catch (cleanup: unknown) {
+          if (!(cleanup instanceof ProviderCleanupError)) throw cleanup;
+          const primary =
+            cause instanceof DarwinProcessOwnershipInspectionError
+              ? cause
+              : new DarwinProcessOwnershipInspectionError(
+                  "Darwin process ownership helper preparation failed",
+                  { cause },
+                );
+          throw primary.withCleanupFailure(cleanup, {
+            close: () => cleanupRoot(operationRoot),
+          });
+        }
       }
       throw cause;
     }
@@ -380,10 +617,13 @@ export const createDarwinProcessRunTokenReader = (
     const controller = new AbortController();
     const operation: ProcessReaderCompilation = {
       controller,
-      promise: runCompilation(controller.signal).finally(() => {
-        operation.settled = true;
-        if (compilation === operation) compilation = undefined;
-      }),
+      promise: Promise.resolve()
+        .then(() => runCompilation(operation))
+        .then(ok, err)
+        .finally(() => {
+          operation.settled = true;
+          if (compilation === operation) compilation = undefined;
+        }),
       waiters: 0,
       aborting: false,
       settled: false,
@@ -393,10 +633,10 @@ export const createDarwinProcessRunTokenReader = (
   };
 
   const compile = async (signal?: AbortSignal): Promise<string> => {
-    if (closed) throw new Error("Darwin process token reader is closed");
+    if (closed) throw new ProcessAdmissionError("reader_closed");
     signal?.throwIfAborted();
     while (true) {
-      if (closed) throw new Error("Darwin process token reader is closed");
+      if (closed) throw new ProcessAdmissionError("reader_closed");
       signal?.throwIfAborted();
       if (executable !== undefined) return executable;
       if (compilation === undefined && root !== undefined) {
@@ -405,31 +645,88 @@ export const createDarwinProcessRunTokenReader = (
       }
       let operation = compilation;
       if (operation?.aborting === true) {
-        try {
-          await waitForCompilation(operation.promise, signal);
-        } catch (cause: unknown) {
-          if (signal !== undefined && isExpectedAbort(cause, signal))
-            throw cause;
-        }
+        const waited = await waitForCompilation(operation, signal);
+        if (waited.kind === "cancelled") throw waited.reason;
+        if (
+          !waited.result.ok &&
+          waited.result.error instanceof
+            DarwinProcessOwnershipInspectionError &&
+          waited.result.error.cleanupFailure !== undefined
+        )
+          throw waited.result.error;
         continue;
       }
       operation ??= beginCompilation();
       operation.waiters += 1;
-      try {
-        return await waitForCompilation(operation.promise, signal);
-      } finally {
-        operation.waiters -= 1;
+      const waited = await waitForCompilation(operation, signal);
+      operation.waiters -= 1;
+      if (
+        operation.waiters === 0 &&
+        !operation.settled &&
+        !operation.aborting
+      ) {
+        operation.aborting = true;
+        operation.controller.abort();
+        const finalized = await operation.promise;
         if (
-          operation.waiters === 0 &&
-          !operation.settled &&
-          !operation.aborting
+          waited.kind === "cancelled" &&
+          !finalized.ok &&
+          finalized.error instanceof DarwinProcessOwnershipInspectionError &&
+          finalized.error.cleanupFailure !== undefined
         ) {
-          operation.aborting = true;
-          operation.controller.abort();
-          await operation.promise.catch(() => undefined);
+          throw new DarwinProcessOwnershipInspectionError(
+            "Darwin process ownership helper preparation was cancelled",
+            {
+              cause: waited.reason,
+              cancellation: { reason: waited.reason },
+              cleanupFailure: finalized.error.cleanupFailure,
+              cleanupOwner: finalized.error.cleanupOwner,
+            },
+          );
         }
       }
+      if (waited.kind === "cancelled") throw waited.reason;
+      if (!waited.result.ok) throw waited.result.error;
+      return waited.result.value;
     }
+  };
+
+  const runHelper = (
+    arguments_: readonly string[],
+    signal?: AbortSignal,
+  ): Promise<string> => {
+    if (closed)
+      return Promise.reject(new ProcessAdmissionError("reader_closed"));
+    const execute = async (binary: string) => {
+      const { stdout } = await execFileOutput(binary, arguments_, {
+        env: environment,
+        timeout: 15_000,
+        stopSignal: "SIGTERM",
+        ...(signal === undefined ? {} : { signal }),
+      });
+      signal?.throwIfAborted();
+      return stdout;
+    };
+    const pending = (async () => {
+      const binary = await compile(signal);
+      // Decide before awaiting: a concurrent fallback may already switch.
+      const usedShared = binary === sharedExecutable;
+      try {
+        return await execute(binary);
+      } catch (cause: unknown) {
+        if (!usedShared || !helperLaunchFailed(cause)) throw cause;
+        // The shared copy cannot run here, for example from a noexec home
+        // volume; this reader keeps its own helper from now on.
+        bypassCache = true;
+        sharedExecutable = undefined;
+        if (executable === binary) executable = perRunExecutable;
+        return execute(await compile(signal));
+      }
+    })();
+    activeCommands.add(pending);
+    return pending.finally(() => {
+      activeCommands.delete(pending);
+    });
   };
 
   const read = async (
@@ -438,34 +735,25 @@ export const createDarwinProcessRunTokenReader = (
   ): Promise<ReadonlyMap<number, ProcessRunTokenObservation>> => {
     signal?.throwIfAborted();
     if (processes.length === 0) return new Map();
-    const binary = await compile(signal);
     const pids = processes.map(({ pid }) => String(pid));
-    const { stdout } = await execFileOutput(binary, pids, {
-      timeout: 15_000,
-      ...(signal === undefined ? {} : { signal }),
-    });
-    signal?.throwIfAborted();
+    const stdout = await runHelper(pids, signal);
     const decoded = safeParseJson(stdout);
     if (!decoded.ok)
-      throw new Error(
-        `macOS process token helper returned invalid JSON: ${decoded.error}`,
+      throw new ProcessAdmissionError(
+        "token_json_invalid",
+        { parser: decoded.error },
         { cause: decoded.cause },
       );
     const parsed = responseSchema.safeParse(decoded.value);
     if (!parsed.success)
-      throw new Error(
-        "macOS process token helper returned an invalid response",
-        {
-          cause: parsed.error,
-        },
-      );
+      throw new ProcessAdmissionError("token_response_invalid", undefined, {
+        cause: parsed.error,
+      });
     const requested = new Set(processes.map(({ pid }) => pid));
     const observations = new Map<number, ProcessRunTokenObservation>();
     for (const result of parsed.data.results) {
       if (!requested.has(result.pid) || observations.has(result.pid))
-        throw new Error(
-          "macOS process token helper returned an unexpected PID set",
-        );
+        throw new ProcessAdmissionError("token_pid_set");
       observations.set(
         result.pid,
         result.state === "readable"
@@ -478,9 +766,7 @@ export const createDarwinProcessRunTokenReader = (
       );
     }
     if (observations.size !== requested.size)
-      throw new Error(
-        "macOS process token helper returned an incomplete PID set",
-      );
+      throw new ProcessAdmissionError("token_pid_incomplete");
     return observations;
   };
 
@@ -489,44 +775,62 @@ export const createDarwinProcessRunTokenReader = (
     signal?: AbortSignal,
   ): Promise<ReadonlyMap<number, ProcessIdentityObservation>> => {
     if (processes.length === 0) return new Map();
-    const binary = await compile(signal);
     const pids = processes.map(({ pid }) => String(pid));
-    const { stdout } = await execFileOutput(binary, ["--identities", ...pids], {
-      timeout: 15_000,
-      ...(signal === undefined ? {} : { signal }),
-    });
+    const stdout = await runHelper(["--identities", ...pids], signal);
     const decoded = safeParseJson(stdout);
     if (!decoded.ok)
-      throw new Error(
-        `macOS process identity helper returned invalid JSON: ${decoded.error}`,
+      throw new ProcessAdmissionError(
+        "identity_json_invalid",
+        { parser: decoded.error },
         { cause: decoded.cause },
       );
     const parsed = identityResponseSchema.safeParse(decoded.value);
     if (!parsed.success)
-      throw new Error(
-        "macOS process identity helper returned an invalid response",
-        {
-          cause: parsed.error,
-        },
-      );
+      throw new ProcessAdmissionError("identity_response_invalid", undefined, {
+        cause: parsed.error,
+      });
     const requested = new Set(processes.map(({ pid }) => pid));
     const observations = new Map<number, ProcessIdentityObservation>();
     for (const result of parsed.data.results) {
       if (!requested.has(result.pid) || observations.has(result.pid))
-        throw new Error(
-          "macOS process identity helper returned an unexpected PID set",
-        );
+        throw new ProcessAdmissionError("identity_pid_set");
       observations.set(
         result.pid,
         result.state === "readable"
-          ? { state: "readable", identity: result.identity }
-          : { state: "unavailable", reason: result.reason },
+          ? {
+              state: "readable",
+              identity: result.identity,
+              ...(result.effective_uid === undefined
+                ? {}
+                : { effectiveUid: result.effective_uid }),
+              ...(result.lifecycle === undefined
+                ? {}
+                : {
+                    lifecycle: {
+                      state: "observed" as const,
+                      lifecycle: result.lifecycle,
+                    },
+                  }),
+              ...(result.relation === undefined
+                ? {}
+                : {
+                    relation: {
+                      state: "observed" as const,
+                      parentPid: result.relation.parent_pid,
+                      processGroupId: result.relation.process_group_id,
+                    },
+                  }),
+              ...(result.name === undefined || result.name === ""
+                ? {}
+                : { name: result.name }),
+            }
+          : result.state === "absent"
+            ? { state: "absent", reason: result.reason }
+            : { state: "unavailable", reason: result.reason },
       );
     }
     if (observations.size !== requested.size)
-      throw new Error(
-        "macOS process identity helper returned an incomplete PID set",
-      );
+      throw new ProcessAdmissionError("identity_pid_incomplete");
     return observations;
   };
 
@@ -538,9 +842,27 @@ export const createDarwinProcessRunTokenReader = (
       if (operation !== undefined && !operation.settled) {
         operation.aborting = true;
         operation.controller.abort();
-        await operation.promise.catch(() => undefined);
+        await operation.promise;
       }
-      await cleanupRoot();
+      await Promise.allSettled(activeCommands);
+      // Each owner keeps its own failed cleanup for the next close attempt;
+      // a failure of both stays incomplete until both owners recover.
+      const [rootCleanup, cacheCleanup] = await Promise.allSettled([
+        cleanupRoot(),
+        helperCache?.close(),
+      ]);
+      if (
+        rootCleanup.status === "rejected" &&
+        cacheCleanup.status === "rejected" &&
+        rootCleanup.reason instanceof ProviderCleanupError &&
+        cacheCleanup.reason instanceof ProviderCleanupError
+      )
+        throw analysisErrorWithCleanupFailure(
+          rootCleanup.reason,
+          cacheCleanup.reason,
+        ).bindCleanupDependencies([rootCleanup.reason, cacheCleanup.reason]);
+      if (rootCleanup.status === "rejected") throw rootCleanup.reason;
+      if (cacheCleanup.status === "rejected") throw cacheCleanup.reason;
     })().catch((cause: unknown) => {
       if (closePromise === pendingClose) closePromise = undefined;
       throw cause;

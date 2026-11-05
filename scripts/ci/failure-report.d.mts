@@ -1,38 +1,5 @@
-import type { NormalizedWorkflowRun } from "./workflow-run.mjs";
-import type { StaticDiagnostic } from "./artifacts.mjs";
-export type { StaticDiagnostic } from "./artifacts.mjs";
+import type { CiRun, CiJob, StaticEvidence } from "./artifacts.mjs";
 import type { StaticTaskContext } from "./static-task-context.mjs";
-export type { StaticTaskContext } from "./static-task-context.mjs";
-export interface CiRun {
-  readonly id?: string | number;
-  readonly run_attempt?: number;
-  readonly status?: string;
-  readonly conclusion?: string | null;
-  readonly event?: string;
-  readonly path?: string;
-  readonly head_sha?: string;
-  readonly head_branch?: string;
-  readonly repository?: { readonly full_name?: string };
-  readonly pull_requests?: readonly {
-    readonly base?: {
-      readonly sha?: string;
-      readonly repo?: { readonly full_name?: string };
-    };
-  }[];
-}
-
-export interface CiJob {
-  readonly name?: string;
-  readonly status?: string;
-  readonly conclusion?: string | null;
-  readonly run_id?: number;
-  readonly run_attempt?: number;
-}
-
-export interface StaticEvidence {
-  readonly context: StaticTaskContext;
-  readonly diagnostics: readonly StaticDiagnostic[];
-}
 
 export interface CiFailureReport {
   readonly version: 1;
@@ -98,25 +65,6 @@ export interface FailureReportApi {
     paths: readonly string[],
   ): Promise<Readonly<Record<string, boolean>>>;
 }
-
-export function classifyFailure(input: {
-  repository: string;
-  defaultBranch: string;
-  run: CiRun & NormalizedWorkflowRun;
-  job: CiJob;
-  diagnostics: readonly StaticDiagnostic[];
-  context: StaticTaskContext;
-  mainRun: CiRun & NormalizedWorkflowRun;
-  mainJob: CiJob;
-  mainDiagnostics: readonly StaticDiagnostic[];
-  mainContext: StaticTaskContext;
-  executionSourcesVerified: boolean;
-  ancestry: { status: string; mergeBaseSha: string | null };
-  blobs: Readonly<Record<string, boolean>>;
-}): {
-  classification: "matching-main-diagnostics" | "unknown";
-  reason: string;
-};
 
 export function reportCiFailures(options: {
   repository: string;

@@ -73,14 +73,34 @@ def probe(path, socket_path, mode):
             if "event" not in value:
                 return value
 
+    def finish(shutdown_count):
+        worker.join(2)
+        assert not worker.is_alive(), "Bridge pinned its execution thread"
+        assert not failures, failures
+        assert not Path(socket_path).exists(), "Bridge retained its closed listener"
+        assert requests.count("shutdown_document") == shutdown_count
+        return {"mode": mode, "requests": requests, "listener_removed": True, "thread_released": True}
+
+    if mode == "initial-expiry":
+        return finish(0)
+
     # bind() creates the socket path before listen() makes it connectable.
     client, file = connect(wait_until_listening=True)
+    if mode == "silent-expiry":
+        result = finish(0)
+        file.close()
+        client.close()
+        return result
     send(file, "health", "foreign-token" if mode == "unauthorized" else "owned-token")
     if mode == "lost-reply":
         assert entered.wait(2)
     elif mode == "unauthorized":
         assert reply(file)["error"]["type"] == "authorization"
     else:
+        assert reply(file)["result"]["run_id"] == "owned-run"
+    if mode == "authenticated-idle":
+        time.sleep(0.3)
+        send(file, "health")
         assert reply(file)["result"]["run_id"] == "owned-run"
     file.close()
     client.close()
@@ -95,14 +115,9 @@ def probe(path, socket_path, mode):
         assert reply(file)["result"]["document_closed"] is True
         file.close()
         client.close()
-    worker.join(2)
-    assert not worker.is_alive(), "Bridge pinned its execution thread"
-    assert not failures, failures
-    assert not Path(socket_path).exists(), "Bridge retained its closed listener"
-    assert requests.count("shutdown_document") == (0 if mode == "expiry" else 2)
-    return {"mode": mode, "requests": requests, "listener_removed": True, "thread_released": True}
+    return finish(0 if mode == "expiry" else 2)
 
 
 if __name__ == "__main__":
     print(json.dumps([probe(sys.argv[1], str(Path(sys.argv[2]) / (mode + ".sock")), mode)
-                      for mode in ("unauthorized", "disconnect", "lost-reply", "expiry")]))
+                      for mode in ("unauthorized", "disconnect", "lost-reply", "authenticated-idle", "expiry", "initial-expiry", "silent-expiry")]))

@@ -1,13 +1,13 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { expect, it } from "vitest";
+import { afterAll, expect, it } from "vitest";
 import { Ajv2020 } from "ajv/dist/2020.js";
 
 import { createApplicationMcpHarness } from "../fixtures/applicationMcpHarness.js";
 import { parseMcpToolError } from "../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
-import { createCli } from "../../src/cli.js";
+import { closeCliResources, createCli } from "../../src/cli.js";
 import { createEvidence, parseEvidence } from "../../src/domain/evidence.js";
 import type { JsonValue } from "../../src/domain/jsonValue.js";
 import { analysisCliErrorEnvelopeSchema } from "../../src/contracts/errorSchemas.js";
@@ -17,6 +17,10 @@ import { javaScriptSemanticTraceResultSchema } from "../../src/domain/javascript
 import { resolveJavaScriptSemanticEvidence } from "../../src/domain/javascript/javascriptSemanticGraph.js";
 
 const SEMANTIC_GRAPH_ID = `jsrg_${"0".repeat(64)}`;
+
+// In-process serve keeps the CLI worker for this file. Stop it before the
+// worker process exits so the private runtime root is not left behind.
+afterAll(closeCliResources);
 
 it("reports invalid nested semantic graph Evidence as caller input through CLI and SDK MCP", async () => {
   const root = await createTestTempDirectory("rea-semantic-trace-input-");
@@ -197,6 +201,162 @@ it("excludes local exports from writes-only traces through CLI and MCP", async (
   }
 });
 
+it("traces exact empty property names through CLI and MCP", async () => {
+  const root = await createTestTempDirectory("rea-semantic-empty-property-");
+  await writeFile(
+    join(root, "main.js"),
+    "const routes = {'': 'HOME', x: 'NAMED'}; const root = routes['']; const named = routes.x;\n",
+  );
+  const cli = createCli({});
+  const analyzed = await serveCli(cli, [
+    "analyze-javascript-application",
+    root,
+    "--json",
+  ]);
+  expect(analyzed.exitCode).toBe(0);
+  const application = parseEvidence(JSON.parse(analyzed.stdout));
+  const { semantic_graph: graph } =
+    javascriptApplicationAnalysisResultSchema.parse(
+      application.normalized_result,
+    );
+  const harness = await createApplicationMcpHarness();
+  try {
+    for (const name of ["", "x"]) {
+      const slots = graph.nodes.filter(
+        (node) =>
+          node.kind === "property-slot" && node.properties.name === name,
+      );
+      expect(slots).toHaveLength(1);
+      const slot = slots[0];
+      if (slot === undefined)
+        throw new Error("Expected retained property slot");
+      const exact = await assertSuccessfulTraceParity(
+        cli,
+        harness,
+        application,
+        {
+          seed: { kind: "semantic-node", node_id: slot.node_id },
+          direction: "forward-influence",
+        },
+      );
+      const selected = await assertSuccessfulTraceParity(
+        cli,
+        harness,
+        application,
+        {
+          seed: { kind: "property", name },
+          direction: "forward-influence",
+        },
+      );
+      expect(selected.seed_node_ids).toEqual([slot.node_id]);
+      expect(selected.nodes).toEqual(exact.nodes);
+      expect(selected.relations).toEqual(exact.relations);
+      expect(selected.nodes).toHaveLength(2);
+      expect(selected.relations).toHaveLength(1);
+      expect(selected.coverage.status).toBe("partial");
+    }
+    const absent = await assertSuccessfulTraceParity(
+      cli,
+      harness,
+      application,
+      {
+        seed: { kind: "property", name: "missing" },
+        direction: "forward-influence",
+      },
+    );
+    expect(absent.seed_node_ids).toEqual([]);
+    expect(absent.nodes).toEqual([]);
+    expect(absent.relations).toEqual([]);
+    expect(absent.coverage.status).toBe("partial");
+  } finally {
+    await harness.close();
+  }
+});
+
+it("traces transformed operands through CLI and advertised MCP output", async () => {
+  const root = await createTestTempDirectory("rea-semantic-expression-trace-");
+  await writeFile(
+    join(root, "main.js"),
+    'const base = "https://example.test"; const url = base + "/x"; fetch(url); consume("only-direct"); const nested = "nested-token"; const box = { url: wrap(nested + "/x") };',
+  );
+  const cli = createCli({});
+  const analyzed = await serveCli(cli, [
+    "analyze-javascript-application",
+    root,
+    "--json",
+  ]);
+  expect(analyzed.exitCode, analyzed.stdout).toBe(0);
+  const application = parseEvidence(JSON.parse(analyzed.stdout));
+  const harness = await createApplicationMcpHarness();
+  try {
+    const result = await assertSuccessfulTraceParity(
+      cli,
+      harness,
+      application,
+      {
+        seed: { kind: "literal", value: "https://example.test" },
+        direction: "forward-influence",
+      },
+    );
+    expect(result.nodes.map((node) => node.label)).toContain("argument 0");
+    expect(
+      result.relations.some((edge) => edge.relation === "influences"),
+    ).toBe(true);
+    const direct = await assertSuccessfulTraceParity(
+      cli,
+      harness,
+      application,
+      {
+        seed: { kind: "literal", value: "only-direct" },
+        direction: "forward-influence",
+      },
+    );
+    expect(direct.summary.total_seed_matches).toBe(1);
+    expect(
+      direct.nodes.find((node) => node.node_id === direct.seed_node_ids[0])
+        ?.label,
+    ).toBe("argument 0");
+    const nested = await assertSuccessfulTraceParity(
+      cli,
+      harness,
+      application,
+      {
+        seed: { kind: "literal", value: "nested-token" },
+        direction: "forward-influence",
+      },
+    );
+    expect(nested.status).not.toBe("found");
+    expect(nested.unknowns.map((unknown) => unknown.detail)).toContain(
+      "The dynamic call's return dependency on this argument is unknown.",
+    );
+  } finally {
+    await harness.close();
+  }
+});
+
+it("reports offered semantic capacity when a large template exceeds it", async () => {
+  const root = await createTestTempDirectory("rea-semantic-expression-budget-");
+  const expressions = Array.from({ length: 500 }, () => "${base}").join("");
+  await writeFile(
+    join(root, "main.js"),
+    `const base = "token"; const value = \`${expressions}\`;`,
+  );
+  const analyzed = await serveCli(createCli({}), [
+    "analyze-javascript-application",
+    root,
+    "--max-semantic-nodes-per-file",
+    "4",
+    "--json",
+  ]);
+  expect(analyzed.exitCode, analyzed.stdout).toBe(0);
+  const application = parseEvidence(JSON.parse(analyzed.stdout));
+  const result = javascriptApplicationAnalysisResultSchema.parse(
+    application.normalized_result,
+  );
+  expect(result.semantic_graph.coverage.truncated).toBe(true);
+  expect(result.semantic_graph.coverage.status).toBe("partial");
+});
+
 const assertSuccessfulTraceParity = async (
   cli: ReturnType<typeof createCli>,
   harness: Awaited<ReturnType<typeof createApplicationMcpHarness>>,
@@ -213,10 +373,30 @@ const assertSuccessfulTraceParity = async (
     JSON.stringify(arguments_),
     "--json",
   ]);
+  expect(cliResponse.exitCode, cliResponse.stdout).toBe(0);
+  expect(JSON.parse(cliResponse.stdout), cliResponse.stdout).not.toHaveProperty(
+    "error",
+  );
   const cliEvidence = parseEvidence(JSON.parse(cliResponse.stdout));
   const cliResult = javaScriptSemanticTraceResultSchema.parse(
     cliEvidence.normalized_result,
   );
+  expect(cliEvidence.parameters.query).toMatchObject({
+    seed: query.seed,
+    direction: query.direction,
+    include_ambiguous_dynamic_edges: false,
+    expected: null,
+  });
+  if (query.allowed_relations === undefined)
+    expect(cliEvidence.parameters.query).not.toHaveProperty(
+      "allowed_relations",
+    );
+  else
+    expect(cliEvidence.parameters.query).toHaveProperty(
+      "allowed_relations",
+      query.allowed_relations,
+    );
+
   assertTraceContextsResolve(cliResult);
 
   const mcpResponse = await harness.client.callTool({
@@ -274,7 +454,6 @@ const assertTraceContextsResolve = (
   expect([...referencedIds].toSorted()).toEqual(
     [...contexts.keys()].toSorted(),
   );
-  expect(contexts.size).toBeGreaterThan(0);
 };
 
 const serveCli = async (

@@ -170,6 +170,33 @@ describe("headless IDA callee edges on x86 targets", () => {
     }
   });
 
+  it("keeps omitted x86 callee truncation as unknown coverage", async () => {
+    const { client, producer } = await session({ callees: [] }, "x86_64");
+    const inner = producer.overrideCall;
+    producer.overrideCall = (name, args) =>
+      name === "callees"
+        ? [
+            {
+              callees: [{ addr: "0x2000", name: "square", type: "internal" }],
+            },
+          ]
+        : inner?.(name, args);
+    try {
+      const execution = await callees(client);
+
+      expect(execution.result, "observed callees are still returned").toEqual([
+        "0x2000",
+      ]);
+      expect(execution.relationshipCoverage).toMatchObject({
+        status: "unknown",
+        reason:
+          "Upstream callees omitted an explicit truncation marker; additional callees remain unknown.",
+      });
+    } finally {
+      expect((await client.close()).ok).toBe(true);
+    }
+  });
+
   it("keeps an empty x86 callees reply an observed empty list without any limitation", async () => {
     const { client, producer } = await session({ callees: [] }, "x86_64");
     try {

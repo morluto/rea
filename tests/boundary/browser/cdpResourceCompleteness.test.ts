@@ -1,16 +1,21 @@
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, onTestFinished } from "vitest";
 
 import { CdpBrowserProvider } from "../../../src/browser/CdpBrowserProvider.js";
 import { inspectWebPageInputSchema } from "../../../src/domain/browserObservation.js";
-import type { WebPageInspection } from "../../../src/domain/browserObservationSchemas.js";
+import {
+  webPageInspectionSchema,
+  type WebPageInspection,
+} from "../../../src/domain/browserObservationSchemas.js";
+import { parseEvidence } from "../../../src/domain/evidence.js";
 import { compareWebCaptures } from "../../../src/domain/webCaptureDiff.js";
 import { compareWebCapturesInputSchema } from "../../../src/domain/webCaptureDiffSchemas.js";
 import { startFakeCdpBrowser } from "../../fixtures/fakeCdpBrowser.js";
-import { runCliJson } from "../../fixtures/cliJsonProcess.js";
+import { cliTest } from "../../support/cli/cliFixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { trackBrowser } from "./cdpBrowserProvider.support.js";
+import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
 
 type ResourceMode =
   | "valid"
@@ -120,7 +125,12 @@ const startBrowser = async () => {
     if (!result.ok) throw result.error;
     return result.value;
   };
-  return { state, inspect, origin: browser.allowedOrigin };
+  return {
+    state,
+    inspect,
+    origin: browser.allowedOrigin,
+    endpoint: browser.endpoint,
+  };
 };
 
 const compareResources = (
@@ -134,7 +144,7 @@ const compareResources = (
     }),
   ).dimensions.resources;
 
-describe("resource inventory omissions through CDP", () => {
+describe("resource metadata through CDP", () => {
   it.each([
     { fields: { type: undefined }, retained: false },
     { fields: { type: null }, retained: false },
@@ -205,10 +215,15 @@ describe("resource inventory omissions through CDP", () => {
       expect(capture.completeness.unavailable_sections).not.toContain(
         "resources",
       );
-      expect(compareResources(capture, capture).status).toBe("unchanged");
+      // Omitted contentSize is valid metadata, but cannot prove equal resource size.
+      expect(compareResources(capture, capture).status).toBe(
+        size === null ? "unknown" : "unchanged",
+      );
     },
   );
+});
 
+describe("resource inventory omissions through CDP", () => {
   it.each([
     "missing",
     "null",
@@ -288,35 +303,179 @@ describe("resource inventory omissions through CDP", () => {
   });
 });
 
-describe("resource uncertainty in public CLI Evidence", () => {
-  it("preserves partial membership while complete inventories still prove removal", async () => {
-    const { state, inspect } = await startBrowser();
-    const root = await createTestTempDirectory("rea-resource-comparison-");
-    const before = join(root, "before.json");
-    const after = join(root, "after.json");
-    await writeFile(before, JSON.stringify({ inspection: await inspect() }));
-    for (const { mode, fields } of [
-      { mode: "invalid-entry", fields: undefined },
-      { mode: "valid", fields: { type: undefined } },
-      { mode: "valid", fields: { contentSize: -1 } },
-      { mode: "empty", fields: undefined },
+describe("resource uncertainty in production MCP registration", () => {
+  it("delivers partial resources and preserves comparison uncertainty through the SDK", async () => {
+    const { state, origin, endpoint } = await startBrowser();
+    const harness = await createApplicationMcpHarness({
+      serverOptions: { browserObservation: new CdpBrowserProvider() },
+    });
+    onTestFinished(harness.close);
+    const capture = async () => {
+      const reply = await harness.client.callTool({
+        name: "inspect_web_page",
+        arguments: {
+          cdp_endpoint: endpoint,
+          allowed_origins: [origin],
+          target_id: "allowed-page",
+          observation_ms: 0,
+        },
+      });
+      expect(reply.isError).not.toBe(true);
+      expect(reply.structuredContent).toMatchObject({
+        operation: "inspect_web_page",
+      });
+      return webPageInspectionSchema.parse(
+        parseEvidence(reply.structuredContent).normalized_result,
+      );
+    };
+    const expectedResource = (
+      name: string,
+      contentSize: number | null = 128,
+    ) => ({
+      resource_key: expect.any(String),
+      url: `${origin}/${name}`,
+      origin,
+      type: "Script",
+      mime_type: "text/javascript",
+      content_size: contentSize,
+    });
+    const resourceExclusions = (inspection: WebPageInspection) =>
+      inspection.completeness.excluded.filter(
+        ({ section }) => section === "resources",
+      );
+    const before = await capture();
+    expect(
+      before.resources.toSorted((left, right) =>
+        left.url.localeCompare(right.url),
+      ),
+    ).toEqual([expectedResource("keep.js"), expectedResource("peer.js")]);
+    expect(before.completeness.unavailable_sections).not.toContain("resources");
+    expect(resourceExclusions(before)).toEqual([]);
+    for (const { mode, fields, resources, excludedCount } of [
+      {
+        mode: "missing",
+        fields: undefined,
+        resources: [],
+        excludedCount: null,
+      },
+      {
+        mode: "invalid-entry",
+        fields: undefined,
+        resources: [expectedResource("keep.js")],
+        excludedCount: 1,
+      },
+      {
+        mode: "valid",
+        fields: { type: undefined },
+        resources: [expectedResource("keep.js")],
+        excludedCount: 1,
+      },
+      {
+        mode: "valid",
+        fields: { contentSize: -1 },
+        resources: [
+          expectedResource("keep.js"),
+          expectedResource("peer.js", null),
+        ],
+        excludedCount: 1,
+      },
+      { mode: "empty", fields: undefined, resources: [], excludedCount: 0 },
     ] as const) {
       state.mode = mode;
       state.peerFields = fields;
-      await writeFile(after, JSON.stringify({ inspection: await inspect() }));
+      const after = await capture();
       expect(
-        await runCliJson(["compare-web-captures", before, after, "--json"]),
-      ).toMatchObject({
-        operation: "compare_web_captures",
-        normalized_result: {
-          dimensions: {
-            resources: {
-              status: mode === "empty" ? "changed" : "unknown",
-              total_changes: mode === "empty" ? 2 : 0,
+        after.resources.toSorted((left, right) =>
+          left.url.localeCompare(right.url),
+        ),
+      ).toEqual(resources);
+      expect(resourceExclusions(after)).toEqual(
+        mode === "empty"
+          ? []
+          : [
+              {
+                section: "resources",
+                reason: "invalid_protocol_value",
+                count: excludedCount,
+              },
+            ],
+      );
+      if (mode !== "empty")
+        expect(after.completeness.unavailable_sections).toContain("resources");
+      else
+        expect(after.completeness.unavailable_sections).not.toContain(
+          "resources",
+        );
+      for (const [left, right] of [
+        [before, after],
+        [after, before],
+        [after, after],
+      ] as const) {
+        const reply = await harness.client.callTool({
+          name: "compare_web_captures",
+          arguments: {
+            before: { inspection: left },
+            after: { inspection: right },
+          },
+        });
+        expect(reply.isError).not.toBe(true);
+        expect(reply.structuredContent).toMatchObject({
+          operation: "compare_web_captures",
+          normalized_result: {
+            dimensions: {
+              resources: {
+                status:
+                  mode !== "empty"
+                    ? "unknown"
+                    : left === right
+                      ? "unchanged"
+                      : "changed",
+                total_changes: mode === "empty" && left !== right ? 2 : 0,
+              },
             },
           },
-        },
-      });
+        });
+      }
     }
   });
+});
+
+describe("resource uncertainty in public CLI Evidence", () => {
+  cliTest(
+    "preserves partial membership while complete inventories still prove removal",
+    async ({ cli }) => {
+      const { state, inspect } = await startBrowser();
+      const root = await createTestTempDirectory("rea-resource-comparison-");
+      const before = join(root, "before.json");
+      const after = join(root, "after.json");
+      await writeFile(before, JSON.stringify({ inspection: await inspect() }));
+      for (const { mode, fields } of [
+        { mode: "invalid-entry", fields: undefined },
+        { mode: "valid", fields: { type: undefined } },
+        { mode: "valid", fields: { contentSize: -1 } },
+        { mode: "empty", fields: undefined },
+      ] as const) {
+        state.mode = mode;
+        state.peerFields = fields;
+        await writeFile(after, JSON.stringify({ inspection: await inspect() }));
+        const cliResult = await cli.run({
+          arguments: ["compare-web-captures", before, after, "--json"],
+          environment: process.env,
+        });
+        expect(cliResult.exitCode).toBe(0);
+        expect(cliResult.signal).toBeNull();
+        expect(cliResult.json).toMatchObject({
+          operation: "compare_web_captures",
+          normalized_result: {
+            dimensions: {
+              resources: {
+                status: mode === "empty" ? "changed" : "unknown",
+                total_changes: mode === "empty" ? 2 : 0,
+              },
+            },
+          },
+        });
+      }
+    },
+  );
 });

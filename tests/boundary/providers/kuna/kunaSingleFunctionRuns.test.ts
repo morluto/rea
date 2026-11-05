@@ -1,5 +1,8 @@
 import { expect, it as test } from "vitest";
 
+import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
+import { kunaTimeoutRecovery } from "../../../../src/kuna/KunaCommand.js";
+
 import {
   fakeKunaCalls,
   fakeKunaExits,
@@ -91,10 +94,13 @@ it("admits no more concurrent single-function runs than its slots", async () => 
       (left, right) => left.at - right.at,
     );
     const exits = await fakeKunaExits(kuna);
-    expect(first).toBeDefined();
-    expect(second).toBeDefined();
+    if (first === undefined || second === undefined)
+      throw new Error("Expected both single-function runs");
+    const firstExit = exits.get(first.pid);
+    expect(firstExit).toBeDefined();
+    if (firstExit === undefined) throw new Error("Missing first process exit");
     // The second run starts only after the first one's process finished.
-    expect(second?.at).toBeGreaterThanOrEqual(exits.get(first?.pid ?? 0) ?? 0);
+    expect(second.at).toBeGreaterThanOrEqual(firstExit);
   } finally {
     expect(await client.close()).toEqual({ ok: true, value: null });
   }
@@ -184,5 +190,137 @@ it("keeps the slot of a run whose stop is unproven until close proves it", async
     waiter.abort();
     unproven.release();
     await client.close();
+  }
+});
+
+it("answers a repeated request from the completed run while the export builds", async () => {
+  const { kuna, open } = await session("rea-kuna-single-kept-", {
+    project: "hang",
+  });
+  const client = open();
+  try {
+    const first = await run(client, "procedure_pseudo_code", {
+      procedure: "main",
+    });
+    // A repeat by name or by address reuses the text; no run re-analyzes.
+    for (const procedure of ["main", "0x1000"])
+      expect(
+        await run(client, "procedure_pseudo_code", { procedure }),
+      ).toMatchObject({
+        result: first.result,
+        rawResult: { source: { kind: "single-function" } },
+      });
+    expect(await decompilesOf(kuna)).toHaveLength(1);
+  } finally {
+    expect(await client.close()).toEqual({ ok: true, value: null });
+  }
+});
+
+it("keeps answering repeats from the completed run after the export fails", async () => {
+  const { kuna, open } = await session("rea-kuna-single-kept-failed-", {
+    project: "exit-failure",
+  });
+  const client = open();
+  try {
+    expect(
+      await client.execute("procedure_assembly", { procedure: "main" }),
+    ).toMatchObject({ ok: false, error: { retryable: false } });
+    for (let repeat = 0; repeat < 2; repeat += 1) {
+      const answer = await run(client, "procedure_pseudo_code", {
+        procedure: "main",
+      });
+      expect(answer.rawResult).toMatchObject({
+        source: { kind: "single-function" },
+      });
+      expect(answer.limitations).toContainEqual(
+        expect.stringContaining("The project export failed"),
+      );
+    }
+    expect(await decompilesOf(kuna)).toHaveLength(1);
+  } finally {
+    expect(await client.close()).toEqual({ ok: true, value: null });
+  }
+});
+
+it("does not keep a failed run, so a repeat runs again", async () => {
+  const { kuna, open } = await session(
+    "rea-kuna-single-failed-not-kept-",
+    { project: "hang", decompile: "hang" },
+    { REA_KUNA_TIMEOUT_MS: "200" },
+  );
+  const client = open();
+  try {
+    for (let repeat = 0; repeat < 2; repeat += 1)
+      expect(
+        await client.execute("procedure_pseudo_code", { procedure: "main" }),
+      ).toMatchObject({ ok: false });
+    expect(await decompilesOf(kuna)).toHaveLength(2);
+  } finally {
+    expect(await client.close()).toEqual({ ok: true, value: null });
+  }
+});
+
+it("drops the least recently used text beyond the session's 16 MiB budget", async () => {
+  // Two 6 MiB texts fit the budget and a third does not. Reading main again
+  // makes parse the least recently used, so keeping broken drops parse.
+  const { kuna, open } = await session("rea-kuna-single-kept-budget-", {
+    project: "hang",
+    decompilePadding: 6 * 1024 * 1024,
+  });
+  const client = open();
+  try {
+    for (const procedure of [
+      "main",
+      "parse",
+      "main",
+      "broken",
+      "main",
+      "parse",
+    ])
+      await run(client, "procedure_pseudo_code", { procedure });
+    expect((await decompilesOf(kuna)).map(({ argv }) => argv[2])).toEqual([
+      "0x1000",
+      "0x1040",
+      "0x1080",
+      "0x1040",
+    ]);
+  } finally {
+    expect(await client.close()).toEqual({ ok: true, value: null });
+  }
+});
+
+it("names the setting that owns a single-function deadline", async () => {
+  const { open } = await session(
+    "rea-kuna-function-deadline-",
+    { project: "hang", decompile: "hang" },
+    { REA_KUNA_TIMEOUT_MS: "300" },
+  );
+  const client = open();
+  try {
+    const result = await client.execute("procedure_pseudo_code", {
+      procedure: "main",
+    });
+    if (result.ok) throw new Error("the hanging run answered");
+    expect(projectAnalysisError(result.error)).toMatchObject({
+      code: "provider_timeout",
+      message:
+        "kuna decompile did not finish within REA_KUNA_TIMEOUT_MS (300 ms).",
+      remediation: {
+        action: expect.stringMatching(
+          /^Raise REA_KUNA_TIMEOUT_MS .* restart REA.*project export/u,
+        ),
+      },
+      details: { timeout_ms: 300 },
+    });
+    // A finished invocation cannot read a later export from this session.
+    const recovery = kunaTimeoutRecovery("REA_KUNA_TIMEOUT_MS", "decompile");
+    expect(
+      projectAnalysisError(result.error, "invocation").remediation.action,
+    ).toBe(recovery.remediationAction);
+    expect(projectAnalysisError(result.error).remediation.action).toBe(
+      recovery.continuingCallerGuidance?.remediationAction,
+    );
+  } finally {
+    expect(await client.close()).toEqual({ ok: true, value: null });
   }
 });

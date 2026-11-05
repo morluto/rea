@@ -1,6 +1,9 @@
 import { z } from "zod";
 import { fixedTupleSchema } from "../fixedTupleSchema.js";
-import { localPathStringSchema } from "../localPath.js";
+import {
+  absoluteLocalPathStringSchema,
+  localPathStringSchema,
+} from "../localPath.js";
 
 const argument = z
   .string()
@@ -82,10 +85,14 @@ export const packetCaptureSelectorBudgetIssue = {
   message:
     "Packet selectors exceed the 32 KiB encoded argument budget; reduce fields, decode-as rules or filter text.",
 };
-export const inspectPacketCaptureInputSchema = captureInputShape.refine(
+const packetCaptureSelectionSchema = captureInputShape.refine(
   withinPacketCaptureSelectorBudget,
   packetCaptureSelectorBudgetIssue,
 );
+export const inspectPacketCaptureInputSchema =
+  packetCaptureSelectionSchema.safeExtend({
+    path: absoluteLocalPathStringSchema.describe("Absolute local capture path"),
+  });
 export const packetCaptureOptionsSchema = captureInputShape
   .omit({ path: true })
   .refine(withinPacketCaptureSelectorBudget, packetCaptureSelectorBudgetIssue);
@@ -106,7 +113,7 @@ export const packetCaptureSchema = z
       sha256: z.string().regex(/^[a-f0-9]{64}$/),
       bytes: z.number().int().nonnegative(),
     }),
-    selection: inspectPacketCaptureInputSchema,
+    selection: packetCaptureSelectionSchema,
     packets: z.array(packetFieldsSchema),
     output_window: z.strictObject({
       matching_packets: z
@@ -123,6 +130,11 @@ export const packetCaptureSchema = z
     diagnostics: z.string(),
     tool: z.strictObject({
       configured_path: z.string(),
+      selection_source: z
+        .enum(["environment", "path"])
+        .describe(
+          "Whether REA_TSHARK_COMMAND selected the tool or PATH located it",
+        ),
       path: z.string(),
       sha256: z.string().regex(/^[a-f0-9]{64}$/),
       version_banner: z.string(),

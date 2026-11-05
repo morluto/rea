@@ -1,10 +1,16 @@
-import { expect, it } from "vitest";
+import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
+import * as v8 from "node:v8";
+
+import { expect, it, vi } from "vitest";
 
 import { normalizeKunaAddress } from "../../../../src/kuna/KunaAddress.js";
 import {
-  parseKunaCallGraph,
+  KunaCallGraphReader,
   parseKunaIncomingReferences,
 } from "../../../../src/kuna/KunaReferenceFiles.js";
+
+vi.mock("node:v8", { spy: true });
 
 const input = "/snapshot/program";
 // Fixture-only numeric placeholders preserve decimal u64 tokens in JSON text.
@@ -44,8 +50,19 @@ const graph = () => ({
   ],
 });
 
-it("preserves u64 numeric tokens and excludes non-call edges", () => {
-  const result = parseKunaCallGraph(wire(graph()), input);
+/** Stream a graph through the reader in small pieces, as Kuna's stdout arrives. */
+const parseKunaCallGraph = async (text: string, selected: string) => {
+  const bytes = Buffer.from(text);
+  const chunks: Buffer[] = [];
+  for (let offset = 0; offset < bytes.byteLength; offset += 7)
+    chunks.push(bytes.subarray(offset, offset + 7));
+  const reader = new KunaCallGraphReader();
+  await pipeline(Readable.from(chunks), reader);
+  return reader.finish(selected);
+};
+
+it("preserves u64 numeric tokens and excludes non-call edges", async () => {
+  const result = await parseKunaCallGraph(wire(graph()), input);
   expect(result.ok).toBe(true);
   if (!result.ok) return;
   expect([...result.value.nodes.keys()]).toEqual([
@@ -62,9 +79,9 @@ it("preserves u64 numeric tokens and excludes non-call edges", () => {
   expect(result.value.callers.has("0x1")).toBe(false);
 });
 
-it("keeps a forwarding instruction address separate from function identity", () => {
+it("keeps a forwarding instruction address separate from function identity", async () => {
   const value = graph();
-  const result = parseKunaCallGraph(
+  const result = await parseKunaCallGraph(
     wire({
       ...value,
       functions: value.functions.map((fn, index) =>
@@ -135,16 +152,21 @@ it.each([
   ],
 ] as const)(
   "rejects graph %s rather than returning an empty relationship set",
-  (_name, mutate) => {
+  async (_name, mutate) => {
     const value = graph();
     mutate(value);
-    expect(parseKunaCallGraph(wire(value), input).ok).toBe(false);
+    expect(await parseKunaCallGraph(wire(value), input)).toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisOutputError", operation: "kuna:call-graph" },
+    });
   },
 );
 
-it("rejects unrequested bodies and a document for a different input", () => {
+it("rejects unrequested bodies and a document for a different input", async () => {
   const value = graph();
-  expect(parseKunaCallGraph(wire(value), "/other/program").ok).toBe(false);
+  expect((await parseKunaCallGraph(wire(value), "/other/program")).ok).toBe(
+    false,
+  );
   const body = {
     ...value,
     functions: value.functions.map((fn) => ({
@@ -152,7 +174,82 @@ it("rejects unrequested bodies and a document for a different input", () => {
       codeC: "must not be materialized as reference data",
     })),
   };
-  expect(parseKunaCallGraph(wire(body), input).ok).toBe(false);
+  expect(await parseKunaCallGraph(wire(body), input)).toMatchObject({
+    ok: false,
+    error: {
+      reason: "row_must_be_null",
+      diagnostics: { member: "functions", field: "codeC" },
+    },
+  });
+});
+
+it("admits the edge index while edges stream and refuses it under low headroom", async () => {
+  const nodes = Array.from({ length: 300 }, (_, index) =>
+    node(String(index + 1), `f${String(index)}`),
+  );
+  const edges = Array.from({ length: 3000 }, (_, index) => ({
+    callerAddress: `@${String((index % 10) + 1)}`,
+    calleeAddress: `@${String(Math.floor(index / 10) + 1)}`,
+    kind: "call",
+    calleeOrder: Math.floor(index / 10),
+  }));
+  const text = wire({
+    schemaVersion: 4,
+    binary: { sourcePath: input, functionCount: 300, edgeCount: 3000 },
+    functions: nodes,
+    edges,
+  });
+  expect(await parseKunaCallGraph(text, input)).toMatchObject({
+    ok: true,
+    value: { edgeCount: 3000 },
+  });
+  const heap = v8.getHeapStatistics();
+  let samples = 0;
+  // Headroom runs out after the node rows have been admitted.
+  vi.mocked(v8.getHeapStatistics).mockImplementation(() => ({
+    ...heap,
+    total_available_size:
+      (samples += 1) <= 2 ? heap.total_available_size : 1024,
+  }));
+  try {
+    const refused = await parseKunaCallGraph(text, input);
+    expect(refused).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "AnalysisResourceConstraintError",
+        resource: "memory",
+      },
+    });
+    if (refused.ok) return;
+    const retained = (
+      refused.error as unknown as {
+        reportedLimits: { retained_rows: number };
+      }
+    ).reportedLimits.retained_rows;
+    expect(retained).toBeGreaterThan(nodes.length);
+    expect(retained).toBeLessThan(nodes.length + edges.length);
+  } finally {
+    vi.mocked(v8.getHeapStatistics).mockReset();
+  }
+});
+
+it("skips fields it does not interpret, including nested parameters", async () => {
+  const value = graph();
+  const result = await parseKunaCallGraph(
+    wire({
+      ...value,
+      binary: { ...value.binary, name: "program", analysisImageBase: 0 },
+      functions: value.functions.map((fn) => ({
+        ...fn,
+        size: 16,
+        parameters: [{ name: "a0", type: "int" }],
+        signature: "int f(int a0)",
+        isEntryPoint: false,
+      })),
+    }),
+    input,
+  );
+  expect(result).toMatchObject({ ok: true, value: { edgeCount: 2 } });
 });
 
 const identity = (name: string, value: number) => ({
@@ -222,6 +319,21 @@ it.each([
     expect(parseKunaIncomingReferences(wire(value), input, "0x2000").ok).toBe(
       false,
     );
+  },
+);
+
+it.each([
+  ["not-an-address", "invalid_address"],
+  ["@18446744073709551616", "address_exceeds_u64"],
+] as const)(
+  "keeps the failed address field for incoming reference %s",
+  (token, code) => {
+    const value = xrefs();
+    value.xrefs[0]!.from_address = token;
+    expect(parseKunaIncomingReferences(wire(value), input, "0x2000")).toEqual({
+      ok: false,
+      error: { code, field: "from_address" },
+    });
   },
 );
 

@@ -3,6 +3,7 @@ import { readdir, realpath } from "node:fs/promises";
 import { join } from "node:path";
 
 import { runKunaCommand } from "../../dist/kuna/KunaCommand.js";
+import { kunaProjectDeadline } from "../../dist/kuna/KunaConfiguration.js";
 import { inspectKunaInstallation } from "../../dist/kuna/KunaInstallation.js";
 
 const entries = (path) =>
@@ -18,11 +19,15 @@ export const nativeKunaStrings = async ({
   workspace,
   binary,
   retain,
+  resourceScope,
 }) => {
-  const installed = await inspectKunaInstallation({
-    REA_KUNA_COMMAND: executable,
-    REA_KUNA_CACHE_DIR: cacheRoot,
-  });
+  const installed = await inspectKunaInstallation(
+    {
+      REA_KUNA_COMMAND: executable,
+      REA_KUNA_CACHE_DIR: cacheRoot,
+    },
+    { resourceScope },
+  );
   assert.ok(installed.ok, "Native string oracle could not inspect Kuna");
   const input = await realpath(binary);
   const outcome = await runKunaCommand({
@@ -42,9 +47,11 @@ export const nativeKunaStrings = async ({
     workspace,
     operation: "verify:kuna-native-strings",
     timeoutMs: installed.value.configuration.projectTimeoutMs,
-    reportedTimeoutMs: installed.value.configuration.projectTimeoutMs,
+    deadline: kunaProjectDeadline(installed.value.configuration),
     outputBytes: 16 * 1024 * 1024,
     signal: new AbortController().signal,
+    retainFailedFileClose: (owner, resource) =>
+      resourceScope.retain(owner, resource),
   });
   if (outcome.kind === "retained") retain(outcome);
   if (outcome.kind !== "ok") throw outcome.error;

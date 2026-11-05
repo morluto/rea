@@ -2,7 +2,7 @@ import { setImmediate } from "node:timers/promises";
 
 import { expect, it as test, vi } from "vitest";
 
-import { inspectKunaInstallation } from "../../../../src/kuna/KunaInstallation.js";
+import { inspectKunaInstallationOwned as inspectKunaInstallation } from "./kunaResourceScope.js";
 import { KunaRunSlots } from "../../../../src/kuna/KunaRunSlots.js";
 import { KunaTargetCommands } from "../../../../src/kuna/KunaTargetCommands.js";
 import { spawnOwnedProviderProcess } from "../../../../src/process/ProviderProcess.js";
@@ -104,7 +104,7 @@ it("keeps an admission lease until retained native cleanup is proven", async () 
     installation: installed.value,
     operation: "lease-probe",
     arguments: (input) => ["functions", input, "--json"],
-    timeoutMs: 10_000,
+    deadline: { setting: "REA_KUNA_TIMEOUT_MS", ms: 10_000 },
     outputBytes: 16384,
     signal: caller.signal,
     releaseRun: lease!,

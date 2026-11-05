@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { attestGhidraDosComLoadImage } from "./GhidraLoadImageValues.js";
 import { fixtureDosComLoadImage } from "./GhidraLoadImage.fixture.js";
-import type { NativeLoadImageObservation } from "../domain/native/nativeLoadImage.js";
+import {
+  nativeLoadImageObservationSchema,
+  nativeLoadImageSchema,
+  type NativeLoadImageObservation,
+} from "../domain/native/nativeLoadImage.js";
 
 const mutations: ReadonlyArray<
   readonly [string, (o: NativeLoadImageObservation) => void]
@@ -120,6 +124,29 @@ describe("COM independent load-image checks", () => {
       value: { status: "mismatch", observations: f.observation },
     });
   });
+  it("accepts an older observation without measured permissions", () => {
+    const f = fixtureDosComLoadImage();
+    for (const mapping of f.observation.mappings) {
+      delete mapping.readable;
+      delete mapping.writable;
+      delete mapping.executable;
+    }
+    expect(
+      nativeLoadImageObservationSchema.safeParse(f.observation).success,
+    ).toBe(true);
+    const result = attestGhidraDosComLoadImage(
+      f.bytes,
+      f.sha256,
+      f.observation,
+    );
+    expect(result).toMatchObject({
+      ok: true,
+      value: { status: "verified", format: "dos-com" },
+    });
+    if (!result.ok) throw new Error(result.error);
+    expect(nativeLoadImageSchema.safeParse(result.value).success).toBe(true);
+  });
+
   it("rejects stale snapshot identity", () => {
     const f = fixtureDosComLoadImage();
     expect(

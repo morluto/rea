@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { analyzeCommonJsStaticFixture } from "../../../tests/fixtures/javascriptCommonJsAnalysis.js";
 import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
 
 describe("native addon type-only TypeScript imports", () => {
@@ -64,8 +65,23 @@ describe("native addon type-only re-exports", () => {
 });
 
 describe("native addon loader provenance", () => {
-  it("distinguishes CommonJS and ESM re-exports", () => {
+  it("does not give ESM fixtures an ambient CommonJS loader", () => {
     const analysis = analyzeJavaScriptStaticSource(`
+      import imported from "./addon.node";
+      const required = require("./other.node");
+      module.exports = require("./exported.node");
+    `);
+    expect(analysis.electron.native_addon_bindings).toEqual([
+      expect.objectContaining({
+        specifier: "./addon.node",
+        binding_kind: "import",
+        module_kind: "import",
+      }),
+    ]);
+  });
+
+  it("distinguishes CommonJS and ESM re-exports", () => {
+    const analysis = analyzeCommonJsStaticFixture(`
       const required = require("./addon.node#literal.node");
       module.exports = require("./addon.node#literal.node");
       import imported from "./addon.node#literal.node";
@@ -97,7 +113,7 @@ describe("native addon loader provenance", () => {
   it.each(["#", "?"])(
     "classifies require filenames literally for %s",
     (punctuation) => {
-      const analysis = analyzeJavaScriptStaticSource(`
+      const analysis = analyzeCommonJsStaticFixture(`
       const script = require("./addon.node${punctuation}helper.js");
       import native from "./addon.node${punctuation}helper.js";
     `);

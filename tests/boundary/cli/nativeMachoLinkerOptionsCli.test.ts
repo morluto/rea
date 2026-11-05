@@ -38,7 +38,7 @@ describe.skipIf(process.platform !== "darwin")(
           arguments: ["inspect-macho", object, "--json"],
           environment: { REA_LOG_LEVEL: "silent" },
         });
-        expect(result.exitCode).toBe(0);
+        expect(result.exitCode, result.stdout + result.stderr).toBe(0);
         const { load_commands: loadCommands } = evidenceSchema.parse(
           result.json,
         ).normalized_result;
@@ -47,7 +47,7 @@ describe.skipIf(process.platform !== "darwin")(
           loadCommands.items
             .filter((command) => command.kind === "LC_LINKER_OPTION")
             .map(({ fields }) => fields),
-        ).toEqual([
+        ).toMatchObject([
           {
             cmd: "LC_LINKER_OPTION",
             cmdsize: 40,

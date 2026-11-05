@@ -1,10 +1,9 @@
-import { afterAll } from "vitest";
+import { onTestFinished } from "vitest";
 import { spawn } from "@lydell/node-pty";
 import { RizinDebugSessionManager } from "../../../src/rizin/RizinDebugSessionManager.js";
 import { stopOwnedDebuggerProcess } from "../../../src/process/ownedDebuggerSession.js";
 
 let ttyPathPromise: Promise<string> | undefined;
-let terminal: ReturnType<typeof spawn> | undefined;
 
 export const rizinTestInferiorTty = (): Promise<string> => {
   if (process.platform === "win32")
@@ -12,7 +11,7 @@ export const rizinTestInferiorTty = (): Promise<string> => {
       new Error("The Rizin test TTY requires a POSIX host."),
     );
   ttyPathPromise ??= new Promise<string>((resolve, reject) => {
-    terminal = spawn("sh", ["-c", "tty; exec sleep 600"], {
+    const terminal = spawn("sh", ["-c", "tty; exec sleep 600"], {
       name: "xterm",
       cols: 80,
       rows: 24,
@@ -23,6 +22,21 @@ export const rizinTestInferiorTty = (): Promise<string> => {
       () => reject(new Error("test TTY path timeout")),
       2_000,
     );
+    let exited = false;
+    const ended = new Promise<void>((resolveExit) =>
+      terminal.onExit(() => {
+        exited = true;
+        resolveExit();
+      }),
+    );
+    // MCP workers reuse this module across files. A file-scoped afterAll would
+    // leave later files holding a cached path whose native TTY was destroyed.
+    onTestFinished(async () => {
+      clearTimeout(timer);
+      ttyPathPromise = undefined;
+      if (!exited) terminal.kill();
+      await ended;
+    });
     terminal.onData((chunk) => {
       output += chunk;
       const pattern =
@@ -38,8 +52,6 @@ export const rizinTestInferiorTty = (): Promise<string> => {
   });
   return ttyPathPromise;
 };
-
-afterAll(() => terminal?.kill());
 
 /** These fixture processes do not launch or attach an inferior. */
 export const stopFakeNoInferior = async (

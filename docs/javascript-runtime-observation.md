@@ -44,10 +44,18 @@ launch does not, by itself, show that fuse.
 
 The caller supplies the literal-loopback HTTP endpoint directly. Selecting an endpoint exposes all targets it serves and their local script locations or renderer origins. A target must match the exact requested target ID and expose a same-port WebSocket reported by that endpoint. Targets explicitly marked attached are rejected rather than displacing another debugger. Node's `/json/list` omits attachment state, so REA preserves it as `null` (unknown), reports that limitation, and permits observation unless the endpoint explicitly reports `attached: true`. Local paths are canonicalized after symlink resolution.
 
-The `attached` field in JavaScript runtime and browser target results is nullable: `true` and `false` are reported only when discovery supplied a boolean; `null` means the endpoint omitted or could not report the state. CDP `TargetInfo` worker records require an `attached` boolean; REA excludes a worker record with a missing or malformed value as an invalid protocol value.
+The `attached` field in JavaScript runtime and browser target results is nullable: `true` and `false` are reported only when discovery supplied a boolean; `null` means the endpoint omitted or could not report the state. HTTP `/json/list` discovery parses target rows independently. Malformed optional attachment metadata becomes `null` with a row and field diagnostic in `limitations`; usable siblings remain available. Rows with malformed target identity are excluded with diagnostics, and socket authority is still validated before connection. CDP `TargetInfo` worker records require an `attached` boolean; REA excludes a worker record with a missing or malformed value as an invalid protocol value.
 
 `list_javascript_runtime_targets` returns every available target in one inline
 array.
+
+Attachment refusals identify `attached: true` and ask the caller to disconnect
+the other debugger or select another target. A declared-role mismatch names
+`runtime_kind` and the target protocol type; correct the role or omit it to
+retain an unknown role. A role-only disagreement in supplied runtime Evidence
+is attributed to `parameters.runtime_kind`, separately from a target-ID
+disagreement. Partial-capture warnings count retained distinct script records;
+`observed_total` retains the raw script-event count before deduplication.
 
 For the MCP follow-up call, pass the same literal-loopback endpoint and the selected target ID to `observe_javascript_runtime`. REA rediscovers targets and validates the ID against the live endpoint before observation.
 
@@ -91,9 +99,12 @@ The provider sends exactly two protocol commands:
 - `Debugger.enable`
 
 It never sends `Runtime.evaluate`, reads script source, installs breakpoints,
-pauses or resumes execution, calls `Runtime.runIfWaitingForDebugger`, launches
-the target, instruments JavaScript, or invokes Electron APIs. Closing a call
-closes only REA's WebSocket.
+sends pause/resume commands, calls `Runtime.runIfWaitingForDebugger`, launches
+the target, instruments JavaScript, or invokes Electron APIs. Enabling
+`Debugger` can make target-authored `debugger` statements pause execution.
+REA does not send `Debugger.setSkipAllPauses` or resume these pauses; passive
+observation is not a guarantee of uninterrupted target execution. Closing a
+call closes only REA's WebSocket.
 
 Each WebSocket handshake and command response has its own 20-second deadline,
 separate from the caller-selected observation window. A stalled handshake or
@@ -105,17 +116,27 @@ The direct observations are:
 - `Debugger.scriptParsed`, establishing that a bounded script location was
   parsed in the observed execution context;
 - `Debugger.scriptFailedToParse`, retained only as a bounded invalid-script
-  count;
+  count in `scripts.parse_failed_total`. A well-formed parse-failure
+  event is distinct from malformed protocol data and does not make loaded
+  script coverage unavailable. Older Evidence may omit this count;
 - `Runtime.executionContextCreated`,
   `Runtime.executionContextDestroyed`, and
   `Runtime.executionContextsCleared`, establishing context lifecycle within
-  the capture window.
+  the capture window. A created or destroyed event whose context ID is
+  missing or not a safe integer adds no context record; it is retained only
+  as a count reported in `unknowns`.
 
 The Inspector protocol does not directly expose require/import caller edges,
 EventEmitter emissions or listener invocation, Electron IPC messages or
 handlers, or script-unload events. Those facts remain explicit unknowns.
 `scriptParsed` proves script presence, not the importing module, feature
 execution, initialization order, or causality.
+
+For an authorized file script, `location.file_path` is the verified filesystem
+identity and optional script-item `reported_url` preserves the exact Inspector
+URL. Script identity includes that reported URL, so query and fragment
+variants of one file remain separate observations. Older Evidence may omit
+`reported_url` and remains readable.
 
 ## Node and Electron roles
 
@@ -125,6 +146,10 @@ target of type `node`; preload and renderer declarations require `page`.
 Inspector does not authenticate the operating-system PID or distinguish an
 Electron role, so Evidence records the role authority as
 `caller-declared-unverified`.
+
+If final script-location authorization fails, collected script and context facts
+remain available in the typed failure with explicitly unverified locations.
+Descriptor cleanup status and its retry owner remain independent of that capture.
 
 Electron main, preload, and renderer behavior can therefore be observed only
 as separate Inspector targets. The provider does not infer that two
@@ -149,6 +174,15 @@ Inspector attach is inherently incomplete. Enabling `Debugger` reports known
 and uncollected scripts, but scripts collected before attachment may be
 missing. Absence from the observation window never proves that a script or
 behavior does not occur.
+
+Cancellation stops new target-file authorization after the current filesystem
+operation settles. Cancellation diagnostics retain the examined target prefix;
+unexamined targets remain unknown. Observation cancellation keeps its original
+reason and any completed Evidence. Finalization waits for REA's bounded socket
+close (up to two seconds for graceful and forced confirmation). A failed close
+retains its exact transport owner and blocks replacement connections until
+cleanup succeeds; CLI finalization and MCP shutdown also retry retained cleanup.
+Closing REA's connection does not stop the caller-owned runtime.
 
 ## Static correlation
 

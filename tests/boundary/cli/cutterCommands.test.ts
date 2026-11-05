@@ -1,12 +1,17 @@
 import { createServer } from "node:net";
-import { createHmac } from "node:crypto";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { createHmac, randomUUID } from "node:crypto";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
+import ts from "typescript6";
 
 import { serveCli } from "./cliServeHarness.js";
+import {
+  spawnOwnedProviderProcess,
+  ProviderProcessSupervisor,
+} from "../../../src/process/ProviderProcess.js";
 
 const SESSION_ID = "27d3e3f1-f1e5-49ae-91ec-95af1f343a5a";
 const listen = async (
@@ -17,6 +22,64 @@ const listen = async (
   if (address === null || typeof address === "string")
     throw new Error("Expected an ephemeral TCP listener");
   return address.port;
+};
+
+const assertRealVerifierJsonInspection = async (
+  directory: string,
+  commandJsonModes: readonly boolean[],
+): Promise<void> => {
+  // Exercise the actual real-verifier command selection against the public CLI.
+  const source = ts.createSourceFile(
+    "verify-real-cutter.mjs",
+    await readFile("scripts/verify-real-cutter.mjs", "utf8"),
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.JS,
+  );
+  const observations: string[][] = [];
+  const visit = (node: ts.Node): void => {
+    if (
+      ts.isCallExpression(node) &&
+      ts.isIdentifier(node.expression) &&
+      node.expression.text === "runCli" &&
+      ts.isStringLiteral(node.arguments[0]!) &&
+      node.arguments[0].text === "cutter-command" &&
+      node.arguments[3] !== undefined &&
+      ts.isStringLiteral(node.arguments[3]) &&
+      node.arguments[3].text === "ij"
+    ) {
+      observations.push(
+        node.arguments.slice(4).map((argument) => {
+          if (!ts.isStringLiteral(argument))
+            throw new Error(
+              "Verifier inspection flags must be explicit arguments",
+            );
+          return argument.text;
+        }),
+      );
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  expect(observations).toHaveLength(1);
+  const verification = await serveCli(
+    [
+      "cutter-command",
+      SESSION_ID,
+      "0",
+      "ij",
+      ...observations[0]!,
+      "--format",
+      "json",
+    ],
+    { REA_CUTTER_BRIDGE_DIR: directory },
+  );
+  expect(verification.exitCode).toBe(0);
+  expect(commandJsonModes.at(-1)).toBe(true);
+  expect(JSON.parse(verification.stdout)).toMatchObject({
+    predicate_type: "rea.cutter.command-observation",
+    raw_result: { answer: 42 },
+  });
 };
 
 describe("Cutter CLI commands", () => {
@@ -46,6 +109,72 @@ describe("Cutter CLI commands", () => {
       bridge_directory: directory,
     });
   });
+
+  it.skipIf(process.platform === "win32")(
+    "awaits discovery cancellation on SIGINT and returns its typed outcome with exit130",
+    async () => {
+      directory = await mkdtemp(join(tmpdir(), "rea-cutter-cli-cancel-"));
+      const sockets = new Set<import("node:net").Socket>();
+      let accepted = 0;
+      server = createServer((socket) => {
+        accepted += 1;
+        sockets.add(socket);
+        socket.on("error", () => undefined);
+        socket.on("close", () => sockets.delete(socket));
+        socket.resume();
+      });
+      const port = await listen(server);
+      for (let index = 0; index < 9; index += 1) {
+        const id = randomUUID();
+        await writeFile(
+          join(directory, `cutter-${process.pid}-${id}.json`),
+          JSON.stringify({
+            session_id: id,
+            pid: process.pid,
+            host: "127.0.0.1",
+            port,
+            token: "cli-discovery-test-transport-token",
+            document_generation: 0,
+            current_file: null,
+            cutter_version: null,
+            identity_status: "partial",
+          }),
+          { mode: 0o600 },
+        );
+      }
+      const launched = await spawnOwnedProviderProcess({
+        command: process.execPath,
+        arguments: ["scripts/rea.mjs", "list-cutter-sessions", "--json"],
+        runId: randomUUID(),
+        hostEnvironment: {
+          ...process.env,
+          REA_CUTTER_BRIDGE_DIR: directory,
+          REA_LOG_LEVEL: "silent",
+        },
+      });
+      const supervisor = new ProviderProcessSupervisor({
+        ...launched,
+        ownsProcessLifetime: true,
+      });
+      try {
+        await expect.poll(() => accepted, { timeout: 5_000 }).toBe(8);
+        launched.process.kill("SIGINT");
+        expect(await supervisor.waitForExit(5_000)).toBe(true);
+        expect(await supervisor.waitForOutputClose(1_000)).toBe(true);
+        expect(launched.process.exitCode).toBe(130);
+        expect(launched.process.signalCode).toBeNull();
+        expect(JSON.parse(supervisor.snapshot().stdout.text)).toMatchObject({
+          code: "cancelled",
+        });
+        await expect.poll(() => sockets.size).toBe(0);
+        expect(accepted).toBe(8);
+      } finally {
+        for (const socket of sockets) socket.destroy();
+        const stopped = await supervisor.stop();
+        expect(stopped.status).not.toBe("incomplete");
+      }
+    },
+  );
 
   it("reports an unavailable selected session for a command", async () => {
     directory = await mkdtemp(join(tmpdir(), "rea-cutter-cli-test-"));
@@ -169,7 +298,7 @@ describe("Cutter CLI command output flags", () => {
     );
 
     const result = await serveCli(
-      ["cutter-command", SESSION_ID, "0", "pdi", "--json-output"],
+      ["cutter-command", SESSION_ID, "000", "pdi", "--json-output"],
       { REA_CUTTER_BRIDGE_DIR: directory },
     );
 
@@ -186,19 +315,34 @@ describe("Cutter CLI command output flags", () => {
     expect(() => JSON.parse(formatted.stdout)).not.toThrow();
 
     for (const [flags, expected] of [
-      [["--json=true"], true],
-      [["--json=false"], false],
-      [["--json=true", "--json-output=false"], false],
-      [["--json=false", "--json-output=true"], true],
-      [["--json-output=false", "--json=true"], false],
-      [["--json-output=true", "--json=false"], true],
+      [["--json-output=true"], true],
+      [["--json-output=false"], false],
+      [["--json", "--json-output=false"], false],
+      [["--json", "--json-output=true"], true],
+      [["--json-output=false", "--json"], false],
+      [["--json-output=true", "--json"], true],
     ] as const) {
-      const compatible = await serveCli(
+      const selected = await serveCli(
         ["cutter-command", SESSION_ID, "0", "pdi", ...flags],
         { REA_CUTTER_BRIDGE_DIR: directory },
       );
-      expect(compatible.exitCode).toBe(0);
+      expect(selected.exitCode).toBe(0);
       expect(commandJsonModes.at(-1)).toBe(expected);
+      if (flags.some((flag) => flag === "--json"))
+        expect(() => JSON.parse(selected.stdout)).not.toThrow();
     }
+
+    const commandsBeforeRejectedFlags = commandJsonModes.length;
+    for (const flag of ["--json=true", "--json=false"]) {
+      const rejected = await serveCli(
+        ["cutter-command", SESSION_ID, "0", "pdi", flag],
+        { REA_CUTTER_BRIDGE_DIR: directory },
+      );
+      expect(rejected.exitCode).toBe(1);
+      expect(rejected.stdout).toContain("Unknown flag: --json");
+    }
+    expect(commandJsonModes).toHaveLength(commandsBeforeRejectedFlags);
+
+    await assertRealVerifierJsonInspection(directory, commandJsonModes);
   });
 });

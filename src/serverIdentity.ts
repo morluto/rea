@@ -1,10 +1,7 @@
 import { dirname, basename, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import {
-  CATALOG_IDENTITY,
-  type createCatalogIdentity,
-} from "./catalogIdentity.js";
+import type { createCatalogIdentity } from "./catalogIdentity.js";
 import { PRODUCT_IDENTITY, SDK_IDENTITY } from "./identity.js";
 
 /** Optional observations supplied by a client comparing its expected server. */
@@ -34,9 +31,9 @@ export const createServerIdentity = (input: {
   readonly expected?: ExpectedServerIdentity;
   readonly client?: ConnectedClientIdentity;
   readonly protocolVersion?: string | undefined;
-  readonly catalog?: ReturnType<typeof createCatalogIdentity>;
+  readonly catalog: ReturnType<typeof createCatalogIdentity>;
 }) => {
-  const catalog = input.catalog ?? CATALOG_IDENTITY;
+  const catalog = input.catalog;
   const serverPath = input.commandPath || undefined;
   const reasons: string[] = [];
   if (

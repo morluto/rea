@@ -32,11 +32,13 @@ class ExternalBridgeLauncher implements BridgeLauncher {
   constructor(
     readonly identity: "matching" | "wrong-run" | "wrong-token" = "matching",
     healthMode: "ready" | "gated" = "ready",
+    shutdownMode: "acknowledge" | "exit-without-ack" = "acknowledge",
   ) {
     this.fixture = new HopperFixtureLauncher(
       identity === "wrong-token" ? "foreign-token" : undefined,
       "quiet",
       healthMode,
+      shutdownMode,
     );
   }
 
@@ -62,8 +64,13 @@ class ExternalBridgeLauncher implements BridgeLauncher {
 const setup = (
   identity?: "matching" | "wrong-run" | "wrong-token",
   healthMode?: "ready" | "gated",
+  shutdownMode?: "acknowledge" | "exit-without-ack",
 ) => {
-  const launcher = new ExternalBridgeLauncher(identity, healthMode);
+  const launcher = new ExternalBridgeLauncher(
+    identity,
+    healthMode,
+    shutdownMode,
+  );
   const client = new HopperClient({ launcher, startupTimeoutMs: 2_000 });
   onTestFinished(async () => {
     await client.close();
@@ -244,4 +251,68 @@ it("preserves launcher diagnostics after a health deadline and reauthenticates f
     "health",
     "shutdown_document",
   ]);
+});
+
+it("recovers an application exit after the first valid handshake occurs during cleanup", async () => {
+  const { client, launcher } = setup("matching", "gated", "exit-without-ack");
+  const starting = client.start();
+  const first = await launcher.fixture.waitForRequest("health");
+  const started = await starting;
+  if (started.ok) throw new Error("Expected the first handshake to time out");
+  expect(projectAnalysisError(started.error)).toMatchObject({
+    code: "cleanup_incomplete",
+    remediation: {
+      action: expect.stringContaining("restart the MCP connection"),
+    },
+    details: {
+      diagnostics: {
+        primary_error: { code: "provider_timeout" },
+        cleanup_error: {
+          details: {
+            diagnostics: { authenticated_application: "not_observed" },
+          },
+        },
+      },
+    },
+  });
+
+  const closing = client.close();
+  const next = await vi.waitFor(() => {
+    const request = launcher.fixture.requests.find(
+      ({ method, id }) => method === "health" && id !== first.id,
+    );
+    if (request === undefined)
+      throw new Error("Waiting for cleanup authentication");
+    return request;
+  });
+  await launcher.fixture.release(next);
+  const closed = await closing;
+  if (!closed.ok) throw closed.error;
+  expect(launcher.fixture.requests.map(({ method }) => method)).toEqual([
+    "health",
+    "health",
+    "shutdown_document",
+  ]);
+  const session = launcher.sessions[0];
+  if (session === undefined) throw new Error("Fixture did not launch");
+  await expect(access(session.directory)).rejects.toMatchObject({
+    code: "ENOENT",
+  });
+  const restarted = client.start();
+  const health = await vi.waitFor(() => {
+    const request = launcher.fixture.requests.find(
+      ({ method, id }) => method === "health" && id > next.id,
+    );
+    if (request === undefined)
+      throw new Error("Waiting for restarted authentication");
+    return request;
+  });
+  await launcher.fixture.release(health);
+  const ready = await restarted;
+  if (!ready.ok) throw ready.error;
+  const observed = await client.callTool("current_document");
+  if (!observed.ok) throw observed.error;
+  expect(observed.value).toBe("fixture");
+  const reclosed = await client.close();
+  if (!reclosed.ok) throw reclosed.error;
 });
