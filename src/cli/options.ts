@@ -20,6 +20,25 @@ export const cliIntegerArgument = (min: number) =>
     .regex(/^[0-9]+$/u, "Expected a decimal integer")
     .pipe(z.coerce.number<string>().safe().min(min));
 
+/** Parse a decimal token, then let the canonical numeric field own bounds and defaults. */
+export function cliDecimalField(
+  field: z.ZodDefault<z.ZodNumber>,
+): z.ZodType<number>;
+export function cliDecimalField(
+  field: z.ZodOptional<z.ZodNumber>,
+): z.ZodType<number | undefined>;
+export function cliDecimalField(
+  field: z.ZodDefault<z.ZodNumber> | z.ZodOptional<z.ZodNumber>,
+): z.ZodType<number | undefined> {
+  const parsed = z
+    .string()
+    .regex(/^[0-9]+$/u, "Expected a decimal integer")
+    .pipe(z.coerce.number<string>())
+    .pipe(field.unwrap());
+  const omitted = field.parse(undefined);
+  return omitted === undefined ? parsed.optional() : parsed.default(omitted);
+}
+
 export const providerSelectionOption = analysisProviderSelectorSchema
   .optional()
   .describe(
