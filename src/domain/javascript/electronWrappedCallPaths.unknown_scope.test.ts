@@ -608,6 +608,21 @@ describe("later initializer mutation proof", () => {
     expect(result.limitations).toContainEqual(UNKNOWN_LIMITATION);
   });
 
+  it("keeps the unknown when a qualified write replaces an ambient value", () => {
+    const result = analyzeJavaScriptStaticSource(`
+      globalThis.String = require;
+      function register() {
+        load()("electron").ipcMain.on("ping", () => {});
+      }
+      var load = () => String;
+      register();
+    `);
+
+    expect(result.parse_error_count).toBe(0);
+    expect(result.parse_status).toBe("partial");
+    expect(result.limitations).toContainEqual(UNKNOWN_LIMITATION);
+  });
+
   it("keeps the unknown for an inherited loader on a function value", () => {
     const result = analyzeJavaScriptStaticSource(`
       const name = "electron";
