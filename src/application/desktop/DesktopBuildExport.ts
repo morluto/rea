@@ -113,7 +113,7 @@ export const exportBuild = async (
   capture: {
     readonly folder: string;
     readonly attempt: number;
-    /** The URL a computer downloads the app's `.deb` from, when it came from one. */
+    /** The URL a computer downloads the app's `.deb` from, when the capture says apt does not install it. */
     readonly packageUrl?: string;
   },
   request: BuildExportRequest,

@@ -5,6 +5,7 @@ import { getHeapStatistics } from "node:v8";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { z } from "zod";
 
+import { isOneColourPng } from "../browser/PngVisualDiff.js";
 import { jsonObjectSchema, type JsonValue } from "../domain/jsonValue.js";
 import { StructuredContentMcpClient } from "../providers/StructuredContentMcpClient.js";
 import { validateMcpHttpResponse } from "../providers/Utf8McpResponse.js";
@@ -16,6 +17,9 @@ import type {
 const READY_TIMEOUT_MS = 180_000;
 const REQUEST_TIMEOUT_MS = 120_000;
 const PROGRESS_MS = 5_000;
+/** How often, and for how long at most, REA retakes a first screenshot the desktop has not drawn on. */
+const DRAWN_POLL_MS = 500;
+const DRAWN_WAIT_MS = 10_000;
 const RECORDINGS = ".agentenv-recordings";
 /** A control route's answer: readiness, or a recording's manifest, near 1.5 MB for a day of 15 s segments. */
 const CONTROL_RESPONSE_BYTES = 4 * 1024 * 1024;
@@ -123,6 +127,14 @@ const readBounded = async (
       chunks.push(chunk);
     }
   return Buffer.concat(chunks, bytes).toString("utf8");
+};
+
+/** Whether a screenshot's PNG is one colour throughout, as a display is before the desktop draws. */
+const undrawn = (result: DriverResult): boolean => {
+  const image = result.content.find(
+    (block) => block.type === "image" && block.mimeType === "image/png",
+  );
+  return typeof image?.data === "string" && isOneColourPng(image.data) === true;
 };
 
 /** Why a computer did not come up, with what the caller can do about it. */
@@ -275,6 +287,21 @@ export class AgentEnvComputer {
       content: result.content.map((block) => jsonObjectSchema.parse(block)),
       structured: structured.success ? structured.data : null,
     };
+  }
+
+  /**
+   * A whole-screen PNG screenshot once the desktop has drawn: readiness can
+   * pass while the display is still one colour, so REA takes another every
+   * 500 ms while it is, for at most 10 s, and then returns the latest.
+   */
+  async drawnScreenshot(signal: AbortSignal): Promise<DriverResult> {
+    const deadline = Date.now() + DRAWN_WAIT_MS;
+    let shot = await this.callTool("computer_screenshot", {}, signal);
+    while (!shot.isError && undrawn(shot) && Date.now() < deadline) {
+      await delay(DRAWN_POLL_MS, undefined, { signal });
+      shot = await this.callTool("computer_screenshot", {}, signal);
+    }
+    return shot;
   }
 
   /** Start a recording under the caller's request id; repeating the id answers the same recording. */

@@ -80,14 +80,21 @@ starts that bundle's `tasks/smoke.json` as it is:
 { "source": { "kind": "bundle", "path": "/home/ada/mousepad-bundle" } }
 ```
 
+REA runs its helper with `PYTHONDONTWRITEBYTECODE=1`, which agentenv's own
+import of the bundle's app class inherits, so a start leaves no `__pycache__`
+in the folder and its files stay as they were shared.
+
 REA runs the deploy with `run_bundle(keep=True, emulate=False)` on the local
 sandbox provider, so only the host's own architecture is built. The first start
 of a bundle builds its image and can take minutes; later starts reuse it.
 While it waits, REA sends an MCP progress notification every five seconds with
 agentenv's latest line, so a client that resets its request timeout on
 progress keeps waiting. REA then waits until the computer's readiness checks
-pass, opens one MCP session to its driver and takes a screenshot, with the
-`region`, `format` and `quality` given in `screenshot`. The result holds
+pass and opens one MCP session to its driver. Readiness can pass before the
+desktop has drawn, so REA takes a whole-screen PNG screenshot every 500 ms
+while it is one colour throughout, for at most 10 s, and returns the latest;
+given `screenshot` with a `region`, `format` or `quality`, it then takes one
+with them, a `region` cropping that frame. The result holds
 `computer_id`, agentenv's `sandbox_id`, the environment name or bundle folder,
 and the screenshot's frame as structured content beside its image.
 

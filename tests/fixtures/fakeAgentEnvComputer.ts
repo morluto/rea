@@ -28,9 +28,12 @@ import { onTestFinished } from "vitest";
 import { DesktopBuildComputers } from "../../src/application/desktop/DesktopBuildComputers.js";
 import { createTestTempDirectory } from "./temporaryDirectory.js";
 
-/** A 1x1 PNG, the fake driver's every frame. */
+/** A 2x1 PNG of a black and a white pixel, the fake driver's drawn desktop. */
 export const FAKE_FRAME_PNG =
-  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+  "iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAIAAAB7QOjdAAAAD0lEQVR42mNgYGD4//8/AAYBAv67yYXpAAAAAElFTkSuQmCC";
+/** A 2x1 PNG of two black pixels, a display the desktop has not drawn on yet. */
+const FAKE_BLANK_PNG =
+  "iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAIAAAB7QOjdAAAAC0lEQVR42mNgAAMAAAcAASEi2xMAAAAASUVORK5CYII=";
 /** The fake recording's segments, in order, as the driver keeps them under `rec-000000000001/`. */
 export const FAKE_SEGMENTS = [
   Buffer.from("not really an mp4 segment"),
@@ -45,8 +48,10 @@ export interface FakeComputerOptions {
   readonly notReadyPolls?: number;
   /** Readiness reports a final failed check instead. */
   readonly readinessFails?: boolean;
-  /** Base64 characters in each screenshot's image, in place of a 1x1 PNG. */
+  /** Base64 characters in each screenshot's image, in place of a drawn PNG. */
   readonly frameCharacters?: number;
+  /** Screenshots answered with one black frame before the desktop is drawn. */
+  readonly blankFrames?: number;
   /** Bytes data/get appends to each segment beyond its manifest size. */
   readonly segmentPadding?: number;
   /** Run computer-exec commands on this host in `home`, with `bin` first on PATH and `env` added. */
@@ -124,6 +129,7 @@ const startFakeDriver = async (
     options.frameCharacters === undefined
       ? FAKE_FRAME_PNG
       : "A".repeat(options.frameCharacters);
+  let blankFrames = options.blankFrames ?? 0;
   const mcp = new McpServer({ name: "fake-reference-driver", version: "1" });
   for (const name of COMPUTER_TOOLS)
     mcp.registerTool(
@@ -137,12 +143,14 @@ const startFakeDriver = async (
           return { content: [{ type: "text", text: refusal }], isError: true };
         }
         const frame = { frame_id: `f${String(calls.length)}`, width: 1280 };
+        const blank = name === "computer_screenshot" && blankFrames > 0;
+        if (blank) blankFrames -= 1;
         const image =
           name === "computer_screenshot" || args.screenshot === true
             ? [
                 {
                   type: "image" as const,
-                  data: frameData,
+                  data: blank ? FAKE_BLANK_PNG : frameData,
                   mimeType: "image/png",
                 },
               ]
@@ -472,8 +480,10 @@ export const startFakeComputer = async (
 
 /**
  * A stand-in `agent_env.bundle.run_bundle`, which REA's real helper imports:
- * it notes each call, checks the bundle's Python compiles, copies the bundle
- * and writes to stdout as a build would, then hands out the fake computer.
+ * it notes each call, loads each of the bundle's Python files in a child
+ * Python as agentenv's `_declare` does, which compiles it and caches its
+ * bytecode beside it unless Python is told not to, copies the bundle and
+ * writes to stdout as a build would, then hands out the fake computer.
  */
 const FAKE_BUNDLE_MODULE = String.raw`
 import glob
@@ -481,11 +491,19 @@ import json
 import os
 import shutil
 import signal
+import subprocess
 import sys
 import time
 import types
 
 STATE = os.environ["FAKE_STATE"]
+DECLARE = """
+import importlib.util, sys
+folder, file = sys.argv[1], sys.argv[2]
+sys.path.insert(0, folder)
+spec = importlib.util.spec_from_file_location("computer_driver_module", folder + "/" + file)
+spec.loader.get_code(spec.name)
+"""
 
 
 def _note(name, value):
@@ -514,8 +532,7 @@ def run_bundle(root, *, tasks=(), keep=False, emulate=True, sandbox=None, on_pro
     _note("runs.jsonl", {"root": str(root), "tasks": list(tasks), "keep": keep, "emulate": emulate,
                          "sandbox": sandbox})
     for path in glob.glob(os.path.join(root, "envs", "*", "*.py")):
-        with open(path) as handle:
-            compile(handle.read(), path, "exec")
+        subprocess.run([sys.executable, "-c", DECLARE, os.path.dirname(path), os.path.basename(path)], check=True)
     shutil.copytree(root, os.path.join(STATE, "bundle"), dirs_exist_ok=True)
     os.system("echo a build writing to stdout")
     print("agentenv writing to stdout")

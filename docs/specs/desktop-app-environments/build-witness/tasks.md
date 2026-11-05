@@ -8,3 +8,4 @@
 - [x] Pack REA's runtime, start apps in the home, report start progress.
 - [x] Document the tools.
 - [x] Add the tests and run the build and witness on an amd64 host.
+- [x] Fix the blind validation run's gaps and the export's install source for a `.deb`.

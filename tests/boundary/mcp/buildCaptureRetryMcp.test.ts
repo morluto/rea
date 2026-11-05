@@ -5,6 +5,10 @@ import { expect, it } from "vitest";
 
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import {
+  VARICAD_URL,
+  varicadPackage,
+} from "../../../src/domain/desktop/debianPackageFile.fixture.js";
+import {
   BUILD_REQUEST,
   BUILD_TASK,
   buildCaptureFakes as fakes,
@@ -118,9 +122,12 @@ it("reports a failed package list download with apt's own message", async () => 
   await callOk(client, "stop_build_capture", { computer_id: id });
 });
 
-it("captures and exports an app installed from a .deb file with the file and its URL", async () => {
-  const { rea, client } = await fakes();
-  const url = "https://downloads.example.com/notes_1.0_amd64.deb";
+/** Capture and export an app the request installs from a .deb at `url`; the stand-in's argv for capture and export. */
+const captureDebRequest = async (
+  fakeSet: Awaited<ReturnType<typeof fakes>>,
+  url: string,
+) => {
+  const { rea, client } = fakeSet;
   const id = await startBuildComputer(client, {
     kind: "request",
     desktop_entry: "org.example.notes",
@@ -136,11 +143,15 @@ it("captures and exports an app installed from a .deb file with the file and its
   for (const name of ["seed", "end"])
     await callOk(client, "mark_build_checkpoint", { computer_id: id, name });
   await callOk(client, "stop_build_capture", { computer_id: id });
-  await callOk(client, "export_build_environment", {
-    computer_id: id,
-    task: BUILD_TASK,
-    directory: join(await createTestTempDirectory("build-out-"), "bundle"),
-  });
+  const exported = toolContract("export_build_environment").outputSchema.parse(
+    (
+      await callOk(client, "export_build_environment", {
+        computer_id: id,
+        task: BUILD_TASK,
+        directory: join(await createTestTempDirectory("build-out-"), "bundle"),
+      })
+    ).structuredContent,
+  );
   const calls = ((await rea.notes("calls.jsonl")) as { argv: string[] }[]).map(
     ({ argv }) => argv,
   );
@@ -149,7 +160,30 @@ it("captures and exports an app installed from a .deb file with the file and its
   expect(argv("capture-desktop-application")).toEqual(
     expect.arrayContaining(["--package-file", "/opt/rea/package.deb"]),
   );
-  expect(argv("export-desktop-application")).toEqual(
-    expect.arrayContaining(["--package-url", url]),
+  return { exported, exportArgv: argv("export-desktop-application") };
+};
+
+it("exports an app from its .deb file, at the request's URL, when no apt source offers it", async () => {
+  const { exported, exportArgv } = await captureDebRequest(
+    await fakes({
+      install: { package: varicadPackage(), packageUrl: VARICAD_URL },
+    }),
+    VARICAD_URL,
   );
+
+  expect(exportArgv).toEqual(
+    expect.arrayContaining(["--package-url", VARICAD_URL]),
+  );
+  expect(exported.files).toBeGreaterThan(0);
+});
+
+it("exports an app from apt, without the .deb's URL, when an apt source offers the captured version too", async () => {
+  // The capture found notes in noble/universe, so the export installs it by name.
+  const { exported, exportArgv } = await captureDebRequest(
+    await fakes(),
+    "https://downloads.example.com/notes_1.0_amd64.deb",
+  );
+
+  expect(exportArgv).not.toContain("--package-url");
+  expect(exported.files).toBeGreaterThan(0);
 });

@@ -5,6 +5,7 @@ import {
   END_CHECKPOINT,
   SEED_CHECKPOINT,
 } from "../../domain/desktop/buildCapture.js";
+import { installsFromPackageFile } from "../../domain/desktop/appExportInstall.js";
 import { desktopApplicationCaptureSchema } from "../../domain/desktop/desktopCapture.js";
 import {
   jsonObjectSchema,
@@ -121,8 +122,9 @@ const draftTask = async (
 /**
  * What a capture that has exited recorded, read from its own Evidence: the
  * checkpoints it holds, which the draft and the export trust over the
- * acknowledgements REA happened to receive, and the stop's summary with the
- * draft between `seed` and `end`. A capture that reported a failure is one.
+ * acknowledgements REA happened to receive, whether the export installs the
+ * app from its package file, and the stop's summary with the draft between
+ * `seed` and `end`. A capture that reported a failure is one.
  */
 export const summarizeCapture = async (
   computer: ControlledComputer,
@@ -130,7 +132,11 @@ export const summarizeCapture = async (
   signal: AbortSignal,
 ): Promise<
   Result<
-    { readonly checkpoints: Set<string>; readonly stopped: StoppedCapture },
+    {
+      readonly checkpoints: Set<string>;
+      readonly packageFile: boolean;
+      readonly stopped: StoppedCapture;
+    },
     AnalysisError
   >
 > => {
@@ -151,6 +157,7 @@ export const summarizeCapture = async (
   const { package: installed } = recorded.application;
   return ok({
     checkpoints,
+    packageFile: installsFromPackageFile(installed, recorded.host.architecture),
     stopped: {
       end_reason: recorded.session.end_reason,
       checkpoints: recorded.state.checkpoints.map((checkpoint) => ({

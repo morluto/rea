@@ -147,6 +147,20 @@ const unseededFiles = (
   return [...new Set([...listed, ...omitted])].sort();
 };
 
+/** Files in the desktop Trash at the seed, which the state view never makes the app's, so the seed leaves them out. */
+const trashedFiles = (
+  files: ReadonlyMap<string, StatePath>,
+  seed: number,
+): readonly string[] =>
+  [...files]
+    .filter(
+      ([, path]) =>
+        path.reasons.includes("desktop_trash") &&
+        versionAt(path, seed)?.present === true,
+    )
+    .map(([home]) => home)
+    .sort();
+
 /** Decide the bundle from the capture and its state view at the seed, with each seed's digest. */
 const planExport = (
   request: DesktopExportRequest,
@@ -163,6 +177,7 @@ const planExport = (
   readonly limitations: readonly string[];
   readonly collisions: readonly HomePathCollision[];
   readonly files: ReadonlyMap<string, StatePath>;
+  readonly trashed: readonly string[];
   readonly dconf: { readonly groups: number; readonly holdsIdentity: boolean };
 } => {
   const { application, host } = capture;
@@ -229,7 +244,15 @@ const planExport = (
     application.package,
     electron,
   );
-  return { plan, seeds, limitations, collisions, files, dconf: dconfScrub };
+  return {
+    plan,
+    seeds,
+    limitations,
+    collisions,
+    files,
+    trashed: trashedFiles(files, context.seed),
+    dconf: dconfScrub,
+  };
 };
 
 const EXPORT_LIMITATIONS = [
@@ -281,6 +304,7 @@ const exportLimitations = (
     readonly install: readonly string[];
     readonly collisions: readonly HomePathCollision[];
     readonly identity: HostIdentity;
+    readonly trashed: readonly string[];
   },
 ): string[] => {
   const opened = capture.state.unretained_opened_directories;
@@ -291,6 +315,11 @@ const exportLimitations = (
       ? []
       : [
           `${String(plan.unseededFiles.length)} file(s) under the owned paths existed at the seed but were not retained, so they are not seeded.`,
+        ]),
+    ...(facts.trashed.length === 0
+      ? []
+      : [
+          `The desktop Trash held ${String(facts.trashed.length)} file(s) at the seed checkpoint, which are not seeded: ${facts.trashed.map((home) => `~/${home}`).join(", ")}. Restore one the task needs and capture again.`,
         ]),
     ...(facts.identity.hostname === null || facts.identity.user === null
       ? [
@@ -335,12 +364,12 @@ const runExport = async (
   );
   const { home, hostname, user } = capture.host;
   const identity = { home, hostname: hostname ?? null, user: user ?? null };
-  const { plan, seeds, collisions, files, dconf, ...install } = planExport(
-    request,
-    capture,
-    state,
-    { evidenceId: evidence.evidence_id, seed: ends.seed, identity },
-  );
+  const { plan, seeds, collisions, files, trashed, dconf, ...install } =
+    planExport(request, capture, state, {
+      evidenceId: evidence.evidence_id,
+      seed: ends.seed,
+      identity,
+    });
   const copies = retainedCopies(plan, seeds);
   // A task's seed checks read the seeds as the bundle ships them, scrubbed.
   const seedViews =
@@ -376,6 +405,7 @@ const runExport = async (
     install: install.limitations,
     collisions,
     identity,
+    trashed,
   });
   const result: DesktopExportResult = {
     directory: request.directory,

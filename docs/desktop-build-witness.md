@@ -48,8 +48,10 @@ Like the computer tools, these are MCP-only and act on a `computer_id` from
    The export runs inside the computer with `--seed-checkpoint seed
    --end-checkpoint end`, so it seeds what was saved at `seed`, scrubs the
    computer's host name and user from it, and refuses a task whose checks
-   all pass on the seed. For a `.deb` app, the export takes the request's
-   URL with `--package-url`. REA lists the bundle's files with their sizes
+   all pass on the seed. A file moved to the desktop Trash is not seeded,
+   and the export's limitations name what the Trash held at `seed`. For a
+   `.deb` app that no apt source the capture found offers, the export takes
+   the request's URL with `--package-url`; one apt offers installs from apt. REA lists the bundle's files with their sizes
    and SHA-256 in the computer, brings them back through the driver's
    `data/get` in answers of at most 8 MiB, and checks and writes each answer
    into the folder before asking for the next, so one answer at a time is

@@ -108,6 +108,47 @@ unready for some polls.
   the one recording; a record whose save was refused is saved on a repeat of
   `after_reset` without reading the app again; a slow reset sends progress.
 
+## Validation-run fixes
+
+Run on macOS after a blind validation run of the build flow and a review
+finding; the VM was not used. Each new test failed on be30603ec with only it
+and its fixture changes added, unless noted, and passes now.
+
+- `stateRoles.test.ts`: a path in `~/.local/share/Trash` has the reason
+  `desktop_trash` and the role `shared_desktop`, whatever else names it,
+  a window title included; `~/.local/share/Trashcan` is not the Trash.
+- `DesktopApplicationExport.test.ts`: a file named in the window title and
+  moved to the Trash before the seed checkpoint is neither owned nor seeded,
+  and a limitation names both of the Trash's files. Before,
+  `.local/share/Trash/files` was owned and the file seeded, as the run saw
+  with `poster.svg`.
+- `buildComputerMcp.test.ts`: the fake runner loads each of the bundle's
+  Python files in a child Python as agentenv's `_declare` does, and a start
+  from a bundle folder leaves its file list unchanged. Before,
+  `envs/notes/__pycache__/notes_app.cpython-311.pyc` appeared. In
+  agentenv-framework 0.9.1444 that child is the only Python that imports the
+  bundle's files, and it inherits the helper's environment.
+- `buildComputerMcp.test.ts`: after two black frames, the start returns the
+  third, drawn one; a `region`, `format` or `quality` applies to a screenshot
+  taken after it. The fake's frame is now a 2x1 PNG of two colours.
+  `PngVisualDiff.test.ts` covers the new one-colour check.
+- `buildCaptureRetryMcp.test.ts`: a `.deb` request whose captured package
+  apt also offers exports without `--package-url`; one that no apt source
+  offers exports with it, from the real CLI's output for that capture (this
+  case passed before too). `appExportInstall.test.ts`: the new check agrees
+  with the export's own install choice.
+
+`typecheck`, `format:check`, `build:cached`, `knip`, `jscpd`, `docs:check`,
+`docs:build`, `verify:test-discovery`, `verify:architecture-guards`,
+`verify:module-boundaries` and `mcp-catalog:check` passed; `lint` and
+`lint:typed` fail only on main's `tests/acceptance/webSourceLocationCli.test.ts`.
+The desktop source tests ran 453 passed (Linux-only cases skipped), and the
+build and desktop boundary tests 66 passed with the real test skipped.
+
+Not verified on a real computer: that the first frame not of one colour
+shows the panel on the computer's desktop, and the 10 s bound, which no
+test waits out.
+
 ## Bounded action log
 
 Run on macOS after merging the build computer's bounded action log; the VM

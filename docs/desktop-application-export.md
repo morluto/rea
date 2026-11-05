@@ -153,7 +153,10 @@ retain is not seeded: one in the state view without retained content at that
 checkpoint, or one the capture omitted (for example too large or past the
 content budget). The result lists them in `unseeded_files` and the README
 names them. When the application held files open in folders whose starting
-content the capture did not retain, a limitation names those folders.
+content the capture did not retain, a limitation names those folders. The
+desktop Trash, `~/.local/share/Trash`, is never the application's, so a file
+the user moved there is neither owned nor seeded, even when a window title
+names it; a limitation lists the files the Trash held at the seed.
 
 The application's dconf keys at the seed, if any, are written once when the
 app first starts, also for an application that owns no files, and the class adds

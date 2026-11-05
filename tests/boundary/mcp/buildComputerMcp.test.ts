@@ -1,4 +1,11 @@
-import { chmod, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  readFile,
+  readdir,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
@@ -11,8 +18,10 @@ import { toolContract } from "../../../src/contracts/toolContracts.js";
 import {
   buildComputerFakes as fakes,
   bundleFolder,
+  callOk,
   connectBuildServer as connect,
   expectNoToken,
+  startBuildComputer,
 } from "../../fixtures/buildComputerMcp.js";
 import {
   FAKE_FRAME_PNG,
@@ -262,10 +271,58 @@ it("takes the first screenshot with the caller's options", async () => {
     },
   });
   expect(started.isError, JSON.stringify(started)).not.toBe(true);
-  expect(computer.calls[0]).toEqual({
-    name: "computer_screenshot",
-    arguments: { region: [0, 0, 640, 400], format: "jpeg", quality: 40 },
+  // The region crops the drawn frame REA waited for.
+  expect(computer.calls).toEqual([
+    { name: "computer_screenshot", arguments: {} },
+    {
+      name: "computer_screenshot",
+      arguments: { region: [0, 0, 640, 400], format: "jpeg", quality: 40 },
+    },
+  ]);
+});
+
+it("waits for the desktop to draw before it returns the first screenshot", async () => {
+  const { computer, runner } = await fakes({ blankFrames: 2 });
+  const client = await connect(runner.environment);
+  const { started } = await startFromBundle(client, computer);
+
+  expect(images(started)).toEqual([
+    { type: "image", data: FAKE_FRAME_PNG, mimeType: "image/png" },
+  ]);
+  expect(computer.calls).toEqual(
+    Array.from({ length: 3 }, () => ({
+      name: "computer_screenshot",
+      arguments: {},
+    })),
+  );
+});
+
+it("leaves the bundle folder's files as they were when it starts a computer from it", async () => {
+  const { runner } = await fakes();
+  // Python caches bytecode unless told not to; this host does not tell it.
+  const client = await connect({
+    ...runner.environment,
+    PYTHONDONTWRITEBYTECODE: "",
   });
+  const bundle = await bundleFolder();
+  await mkdir(join(bundle, "envs", "notes"), { recursive: true });
+  await writeFile(
+    join(bundle, "envs", "notes", "notes_app.py"),
+    "class Notes:\n    pass\n",
+  );
+  const files = async () => (await readdir(bundle, { recursive: true })).sort();
+  const before = await files();
+
+  const id = await startBuildComputer(client, { kind: "bundle", path: bundle });
+  await callOk(client, "close_build_computer", { computer_id: id });
+
+  expect(
+    await readFile(
+      join(runner.state, "bundle", "envs", "notes", "notes_app.py"),
+      "utf8",
+    ),
+  ).toContain("class Notes");
+  expect(await files()).toEqual(before);
 });
 
 it("refuses to start without an absolute agentenv runner", async () => {

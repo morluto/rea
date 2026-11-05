@@ -8,6 +8,7 @@ import {
   seedEndCapture,
   writeCaptureFolder,
 } from "../../src/application/desktop/desktopCapture.fixture.js";
+import type { DesktopPackage } from "../../src/domain/desktop/desktopCapture.js";
 import { serveCli } from "../boundary/cli/cliServeHarness.js";
 import { buildComputerFakes, connectBuildServer } from "./buildComputerMcp.js";
 import { fakeBuildComputerRea } from "./fakeBuildComputerRea.js";
@@ -29,11 +30,25 @@ export const BUILD_REQUEST = {
 };
 const ENDS = ["--seed-checkpoint", "seed", "--end-checkpoint", "end"];
 
+/** The app's package as the capture records it, and the URL the export downloads its file from, if it needs one. */
+export interface CapturedInstall {
+  readonly package: DesktopPackage;
+  readonly packageUrl?: string;
+}
+
 /** What the real CLI writes for a capture made between seed and end: the draft, and the export with BUILD_TASK. */
-const realCliOutputs = async () => {
-  const capture = await writeCaptureFolder(seedEndCapture(), undefined, [
-    EDITED_NOTE,
-  ]);
+const realCliOutputs = async (install: CapturedInstall | undefined) => {
+  const recorded = seedEndCapture();
+  const capture = await writeCaptureFolder(
+    install === undefined
+      ? recorded
+      : {
+          ...recorded,
+          application: { ...recorded.application, package: install.package },
+        },
+    undefined,
+    [EDITED_NOTE],
+  );
   const work = await createTestTempDirectory("build-cli-");
   const task = join(work, "task.json");
   await writeFile(task, JSON.stringify(BUILD_TASK));
@@ -51,6 +66,9 @@ const realCliOutputs = async () => {
     "--task",
     task,
     ...ENDS,
+    ...(install?.packageUrl === undefined
+      ? []
+      : ["--package-url", install.packageUrl]),
     "--json",
   ]);
   expect(exported.exitCode, exported.stdout).toBe(0);
@@ -68,15 +86,17 @@ const realCliOutputs = async () => {
  * A REA server whose build computers run REA's controller on this host
  * against a REA stand-in printing the real CLI's outputs. `dropReplies`
  * names controller commands, in order, whose reply is lost after they run;
- * `env` adds to the stand-in's environment.
+ * `env` adds to the stand-in's environment; `install` replaces the captured
+ * package, the archive's `notes`.
  */
 export const buildCaptureFakes = async (
   options: {
     readonly dropReplies?: string[];
     readonly env?: Readonly<Record<string, string>>;
+    readonly install?: CapturedInstall;
   } = {},
 ) => {
-  const outputs = await realCliOutputs();
+  const outputs = await realCliOutputs(options.install);
   const rea = await fakeBuildComputerRea(outputs);
   const { computer, runner } = await buildComputerFakes({
     exec: {

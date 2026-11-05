@@ -378,12 +378,53 @@ const packageFileInstall = (
 };
 
 /**
- * Install from the Ubuntu 24.04 archive by name, or from each vendor
- * repository listing the installed version whose signing key the capture
- * verified and retained, taking the package from the first one's release
- * for the capture host's architecture. A package neither installs, given
- * `--package-url`, is downloaded from it and installed from its captured
- * package file; anything else is refused with the reason.
+ * Install a Debian package by name from the Ubuntu 24.04 archive, or from
+ * each vendor repository listing the installed version whose signing key the
+ * capture verified and retained, taking the package from the first one's
+ * release for the capture host's architecture; or why apt cannot.
+ */
+const aptInstall = (
+  installed: DesktopPackage,
+  aptPackage: string,
+  environment: string,
+  hostArchitecture: string,
+): ReturnType<typeof vendorInstall> =>
+  // An archive package's declared dependencies are complete; a vendor package's may not be.
+  fromUbuntuNobleArchive(installed.sources, installed.source_origins)
+    ? ok({
+        aptPackage,
+        release: null,
+        ...suppliedLibraries(installed, []),
+        libraryPackages: [],
+        sources: [],
+        skipped: [],
+        architectures: [...COMPUTER_ARCHITECTURES.values()],
+        packageFile: null,
+      })
+    : vendorInstall(installed, aptPackage, environment, hostArchitecture);
+
+/**
+ * Whether the export installs the captured package from its package file,
+ * and so takes `--package-url`: a Debian package apt does not install by
+ * name. The environment name only names key files, so any name answers.
+ */
+export const installsFromPackageFile = (
+  installed: DesktopPackage,
+  hostArchitecture: string,
+): boolean =>
+  installed.kind === "deb" &&
+  installed.name !== null &&
+  !aptInstall(
+    installed,
+    installed.name.split(":")[0] ?? installed.name,
+    "app",
+    hostArchitecture,
+  ).ok;
+
+/**
+ * Install by name from apt where it can; a package apt does not install,
+ * given `--package-url`, is downloaded from it and installed from its
+ * captured package file; anything else is refused with the reason.
  */
 const packageInstall = (
   installed: DesktopPackage,
@@ -398,22 +439,12 @@ const packageInstall = (
       ),
     );
   const aptPackage = installed.name.split(":")[0] ?? installed.name;
-  // An archive package's declared dependencies are complete; a vendor package's may not be.
-  const named = fromUbuntuNobleArchive(
-    installed.sources,
-    installed.source_origins,
-  )
-    ? ok({
-        aptPackage,
-        release: null,
-        ...suppliedLibraries(installed, []),
-        libraryPackages: [],
-        sources: [],
-        skipped: [],
-        architectures: [...COMPUTER_ARCHITECTURES.values()],
-        packageFile: null,
-      })
-    : vendorInstall(installed, aptPackage, environment, hostArchitecture);
+  const named = aptInstall(
+    installed,
+    aptPackage,
+    environment,
+    hostArchitecture,
+  );
   if (named.ok)
     return packageUrl === undefined
       ? named

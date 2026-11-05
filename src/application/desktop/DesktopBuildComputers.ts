@@ -264,11 +264,16 @@ export class DesktopBuildComputers {
       );
       const shot = driverCall("screenshot", input.screenshot ?? {});
       if (!shot.ok) throw new TypeError("screenshot options are its own");
-      const taken = await computer.callTool(
-        shot.value.tool,
-        shot.value.arguments,
-        signal,
-      );
+      // The caller's region, format or quality apply to the drawn frame.
+      const drawn = await computer.drawnScreenshot(signal);
+      const taken =
+        Object.keys(shot.value.arguments).length === 0
+          ? drawn
+          : await computer.callTool(
+              shot.value.tool,
+              shot.value.arguments,
+              signal,
+            );
       const live = computer;
       const actions = new BuildComputerActionLog();
       this.#computers.set(id, {

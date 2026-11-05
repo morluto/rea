@@ -74,8 +74,15 @@ and the recording and writes the record as Evidence.
 - The edit and the near miss count only click, drag, scroll, type and key,
   and a reset after the last of them refuses the stage.
 - A `.deb` app's file is kept in the build layer for `--package-file`, and
-  its URL reaches the export's `--package-url`. A failed `apt-get update`
-  reports its status and last lines. The bundle is written as it arrives.
+  its URL reaches the export's `--package-url` only when the capture's
+  package facts say apt does not install it, as the export itself decides.
+  A failed `apt-get update` reports its status and last lines. The bundle is
+  written as it arrives.
+- Gaps of a blind validation run: the desktop Trash is never the app's state
+  or a document, so a file the builder trashed is neither owned nor seeded,
+  and the export's limitations name what the Trash held at the seed; a
+  start from a bundle folder writes no bytecode into it; the first
+  screenshot waits, briefly and bounded, until the frame is not one colour.
 
 - The witness reads the build computer's bounded action log: its stage rules
   use the log's count and the last applied action of each kind, and the

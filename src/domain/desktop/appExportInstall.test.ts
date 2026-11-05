@@ -4,6 +4,7 @@ import {
   electronLaunchArguments,
   exportInstall,
   fromUbuntuNobleArchive,
+  installsFromPackageFile,
   repositoryRefusal,
 } from "./appExportInstall.js";
 import { installLimitations } from "./appExportInstallLimitations.js";
@@ -695,6 +696,39 @@ describe("exportInstall from a package file", () => {
     expect(install.ok && install.value.skipped).toEqual([
       "https://downloads.typora.io/linux ./: gpgv is not installed",
     ]);
+  });
+});
+
+describe("installsFromPackageFile", () => {
+  it("is true only for a package the export installs from its file rather than from apt", () => {
+    const archive = {
+      sources: [
+        "http://archive.ubuntu.com/ubuntu noble/universe amd64 Packages",
+      ],
+      source_origins: ["Ubuntu"],
+    };
+    expect(installsFromPackageFile(varicad(), "x64")).toBe(true);
+    expect(installsFromPackageFile(varicad(archive), "x64")).toBe(false);
+    expect(
+      installsFromPackageFile(
+        varicad({
+          sources: [TYPORA_SOURCE],
+          source_origins: ["typora.io"],
+          apt_repositories: [repository()],
+        }),
+        "x64",
+      ),
+    ).toBe(false);
+    expect(installsFromPackageFile(varicad({ kind: "snap" }), "x64")).toBe(
+      false,
+    );
+    // The export takes the URL exactly when the package needs it.
+    expect(
+      exportInstall(varicad(archive), "varicad", "x64", VARICAD_URL).ok,
+    ).toBe(false);
+    expect(exportInstall(varicad(), "varicad", "x64", VARICAD_URL).ok).toBe(
+      true,
+    );
   });
 });
 

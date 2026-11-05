@@ -70,6 +70,8 @@ interface CaptureRun {
   status: "running" | "unreleased" | "stopped" | "released";
   /** Checkpoints the capture acknowledged, then those its own Evidence records. */
   checkpoints: Set<string>;
+  /** The capture's package installs only from its file, so the export takes the request's URL. */
+  packageFile?: boolean;
   outputBytes?: number;
   stopped?: StoppedCapture;
   exports: number;
@@ -313,6 +315,7 @@ export class DesktopBuildCapture {
         return summary;
       }
       run.checkpoints = summary.value.checkpoints;
+      run.packageFile = summary.value.packageFile;
       run.stopped = summary.value.stopped;
       return ok(summary.value.stopped);
     } catch (cause: unknown) {
@@ -348,7 +351,7 @@ export class DesktopBuildCapture {
       {
         folder: run.folder,
         attempt: run.exports,
-        ...(this.#packageFile === undefined
+        ...(this.#packageFile === undefined || run.packageFile !== true
           ? {}
           : { packageUrl: this.#packageFile.url }),
       },
