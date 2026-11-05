@@ -153,4 +153,9 @@ it("holds readiness until a window of the app's class that the taskbar lists is 
   expect(taskbarWindow(await fakeXprop({ "0x3": other }), "Mousepad")).toBe(
     "True",
   );
+  const typedSplash =
+    'WM_CLASS(STRING) = "varicad", "varicad"\n_NET_WM_STATE(ATOM) = \n_NET_WM_WINDOW_TYPE(ATOM) = _NET_WM_WINDOW_TYPE_SPLASH';
+  expect(
+    taskbarWindow(await fakeXprop({ "0x4": typedSplash }), "varicad"),
+  ).toBe("False");
 });

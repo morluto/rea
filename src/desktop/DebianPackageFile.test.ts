@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
@@ -174,5 +174,29 @@ describe.skipIf(!hasDpkgDeb)("inspectPackageFile with dpkg-deb", () => {
       pre_depends: ["dpkg (>= 1.15.6)"],
     });
     expect(facts.package_file?.sha256).toMatch(/^[0-9a-f]{64}$/u);
+  });
+});
+
+describe("inspectPackageFile while the file changes", () => {
+  it("records why when the file is replaced between dpkg-deb's read and the hash", async () => {
+    const folder = await createTestTempDirectory("desktop-deb-swap-");
+    const path = join(folder, "varicad2026-en_2.03_amd64.deb");
+    await writeFile(path, BYTES);
+
+    const facts = await inspectPackageFile(
+      path,
+      INSTALLED,
+      async () => {
+        // Another package takes the file's place after dpkg-deb has read it.
+        await writeFile(join(folder, "other.deb"), `${BYTES}other\n`);
+        await rename(join(folder, "other.deb"), path);
+        return { stdout: DPKG_DEB_OUTPUT, exitCode: 0 };
+      },
+      undefined,
+    );
+
+    expect(facts).toEqual({
+      package_file_reason: `${path} changed while it was read, so its control fields and its hash could describe different files`,
+    });
   });
 });

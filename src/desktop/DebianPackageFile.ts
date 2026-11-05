@@ -1,3 +1,4 @@
+import { stat } from "node:fs/promises";
 import { basename } from "node:path";
 
 import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
@@ -10,8 +11,12 @@ import {
 import type { DesktopPackage } from "../domain/desktop/desktopCapture.js";
 import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
 import {
+  sameRegularFileState,
+  type RegularFileState,
+} from "../filesystem/RegularFile.js";
+import {
   StableFileHashFailure,
-  hashStableFile,
+  observeStableFile,
   stableFileHashCause,
 } from "../filesystem/StableFileHash.js";
 import { isHostFile, isRefusedRead } from "./HostFileRead.js";
@@ -23,26 +28,34 @@ type PackageFileFacts = Pick<
 >;
 
 /**
- * The file's SHA-256 and size, streamed through one admitted descriptor that
- * must hold still while it is read, or why it could not be read. A close that
- * fails is thrown with the handle's cleanup owner, which fails the capture.
+ * The file's SHA-256, size and identity, streamed through one admitted
+ * descriptor that must hold still while it is read, or why it could not be
+ * read. A close that fails is thrown with the handle's cleanup owner, which
+ * fails the capture, even when the capture was also cancelled.
  */
 const hashPackageFile = async (
   path: string,
   signal: AbortSignal | undefined,
-): Promise<{ readonly sha256: string; readonly bytes: number } | string> => {
+): Promise<
+  | {
+      readonly sha256: string;
+      readonly bytes: number;
+      readonly state: RegularFileState;
+    }
+  | string
+> => {
   let lease: AnalysisCleanupLease | undefined;
   try {
-    return await hashStableFile(path, {
+    return await observeStableFile(path, {
       ...(signal === undefined ? {} : { signal }),
       retainFailedClose: (owner) => {
         lease = new AnalysisCleanupLease(() => owner.close(), [path]);
       },
     });
   } catch (cause: unknown) {
-    signal?.throwIfAborted();
     if (cause instanceof RegularFileCleanupFailure && lease !== undefined)
       throw new ArtifactFileCleanupFailure(cause, lease);
+    signal?.throwIfAborted();
     const read = stableFileHashCause(cause);
     if (!(cause instanceof StableFileHashFailure) || !isRefusedRead(read))
       throw cause;
@@ -75,6 +88,9 @@ export const inspectPackageFile = async (
     );
   if (!(await isHostFile(path)))
     return refused(`${path} is not a regular file`);
+  // dpkg-deb and the hash read the file apart; its identity must hold across both.
+  const before = await stat(path).catch(() => undefined);
+  if (before === undefined) return refused(`${path} could not be read`);
   const outcome = await runQuery(
     "dpkg-deb",
     ["--field", path, ...PACKAGE_FILE_FIELDS],
@@ -95,6 +111,10 @@ export const inspectPackageFile = async (
   if (mismatch !== undefined) return refused(`${path} ${mismatch}`);
   const hashed = await hashPackageFile(path, signal);
   if (typeof hashed === "string") return refused(hashed);
+  if (!sameRegularFileState(hashed.state, before))
+    return refused(
+      `${path} changed while it was read, so its control fields and its hash could describe different files`,
+    );
   return {
     package_file: {
       name: basename(path),

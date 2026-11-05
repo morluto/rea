@@ -185,8 +185,10 @@ reads the file once more for its SHA-256 and size and records `package_file`:
 the file's `name` without its folder, `sha256`, `size`, `package`, `version`,
 `architecture`, and the `depends` and `pre_depends` entries as the file
 declares them. Otherwise `package_file_reason` says why, for example that
-`dpkg-deb` is not installed or that the file holds another version than the
-installed one. The capture never copies the file: it is the vendor's, and only
+`dpkg-deb` is not installed, that the file holds another version than the
+installed one, or that the file changed between the two reads (its device,
+inode, size and times are compared), since its fields and its hash could then
+describe different files. The capture never copies the file: it is the vendor's, and only
 these facts are kept.
 
 Snaps, flatpaks and

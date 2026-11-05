@@ -60,6 +60,10 @@ def _respelled_utf16(data: bytes, home: Path) -> bytes:
     return data
 
 
+#: What marks a window as not yet the app's own: skipping the taskbar, as splash screens and dialogs do, or a splash type.
+SPLASH_MARKS = ("_NET_WM_STATE_SKIP_TASKBAR", "_NET_WM_WINDOW_TYPE_SPLASH")
+
+
 def _taskbar_window(window_class: str) -> bool:
     """Whether a top-level window of the given class that the taskbar lists is shown; a splash screen or a dialog
     skips the taskbar."""
@@ -68,9 +72,9 @@ def _taskbar_window(window_class: str) -> bool:
         return done.stdout if done.returncode == 0 else ""
 
     for window in re.findall(r"0x[0-9a-f]+", xprop("-root", "_NET_CLIENT_LIST").partition("#")[2]):
-        props = xprop("-id", window, "WM_CLASS", "_NET_WM_STATE")
+        props = xprop("-id", window, "WM_CLASS", "_NET_WM_STATE", "_NET_WM_WINDOW_TYPE")
         classes = re.findall(r'"((?:[^"\\]|\\.)*)"', props.partition("WM_CLASS")[2].split("\n", 1)[0])
-        if window_class in classes and "_NET_WM_STATE_SKIP_TASKBAR" not in props:
+        if window_class in classes and not any(mark in props for mark in SPLASH_MARKS):
             return True
     return False
 

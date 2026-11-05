@@ -236,20 +236,19 @@ const vendorInstall = (
 
 /** Why agentenv cannot download from a URL, or undefined when it can: http or https, spelled so, without a user name or password. */
 const packageUrlRefusal = (url: string): string | undefined => {
+  // No refusal repeats the URL, and credentials are checked first, so a password in it is never echoed.
   let parsed: URL;
   try {
     parsed = new URL(url);
   } catch {
-    return `--package-url ${url} is not a URL`;
+    return "--package-url is not a URL";
   }
-  if (
-    !/^https?:\/\//u.test(url) ||
-    (parsed.protocol !== "http:" && parsed.protocol !== "https:")
-  )
-    return `--package-url ${url} is not an http or https URL, which is all the computer downloads`;
-  return parsed.username === "" && parsed.password === ""
+  if (parsed.username !== "" || parsed.password !== "")
+    return "--package-url holds a user name or password, which the bundle would keep in plain text";
+  return /^https?:\/\//u.test(url) &&
+    (parsed.protocol === "http:" || parsed.protocol === "https:")
     ? undefined
-    : "--package-url holds a user name or password, which the bundle would keep in plain text";
+    : "--package-url does not start with http:// or https:// in lowercase, the only URLs the computer downloads";
 };
 
 /** The captured package file from the caller's URL, after its dependencies and library packages, for the file's architecture. */

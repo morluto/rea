@@ -563,14 +563,15 @@ describe("exportInstall refusals for a package file", () => {
   ])("refuses --package-url %s, which agentenv does not download", (url) => {
     expect(refusedWith(varicad(), url)).toMatchObject({
       field: "package_url",
-      reason: `--package-url ${url} is not an http or https URL, which is all the computer downloads`,
+      reason:
+        "--package-url does not start with http:// or https:// in lowercase, the only URLs the computer downloads",
     });
   });
 
   it("refuses a --package-url that is not a URL", () => {
     expect(refusedWith(varicad(), "mirror.example.com/v.deb")).toMatchObject({
       field: "package_url",
-      reason: "--package-url mirror.example.com/v.deb is not a URL",
+      reason: "--package-url is not a URL",
     });
   });
 
@@ -583,6 +584,17 @@ describe("exportInstall refusals for a package file", () => {
     );
 
     expect(refused.field).toBe("package_url");
+    expect(refused.reason).toContain("holds a user name or password");
+    expect(JSON.stringify(refused)).not.toContain("hunter2");
+  });
+
+  it("refuses credentials before the scheme, so an uppercase URL never echoes them", () => {
+    const userinfo = ["ada", "hunter2"].join(":");
+    const refused = refusedWith(
+      varicad(),
+      `HTTPS://${userinfo}@mirror.example.com/v.deb`,
+    );
+
     expect(refused.reason).toContain("holds a user name or password");
     expect(JSON.stringify(refused)).not.toContain("hunter2");
   });
