@@ -27,9 +27,8 @@ BIOS loaders claim without `-n`. It also selects an arch that no host uses by
 default, an arch plugin that Rizin does not have, and a bits value that the
 arch lacks. The test names the Rizin version it ran. It skips when no Rizin is
 on `PATH`; to check another build, put its directory first on `PATH`. It has
-passed with Rizin 0.9.1 (Homebrew, macOS arm64). Rizin 0.7.4 (official static
-build, Linux x86_64) passed before the `asm_cpu` decode and `base_address`-only
-cases were added.
+passed with Rizin 0.9.1 (Homebrew, macOS arm64) and Rizin 0.7.4 (official static
+build, Linux x86_64).
 
 Each real-toolchain command must require only the host tools needed to prove
 its stated claim. Use a host-native fixture for host/provider acceptance, and
