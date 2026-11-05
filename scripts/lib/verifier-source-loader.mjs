@@ -103,6 +103,37 @@ const loadSource = (url, context, nextLoad) => {
   };
 };
 
+/** Remediation shared by every development runtime failure. */
+export const DEVELOPMENT_RUNTIME_GUIDANCE =
+  "This REA source loader requires the Node.js version pinned in .nvmrc; run nvm use and invoke source build and verifier scripts with node and npm. Installed REA packages have separate runtime support.";
+
+const DEVELOPMENT_RUNTIME_REASONS = {
+  register_hooks_unavailable: "node:module registerHooks is unavailable",
+  strip_typescript_types_unavailable:
+    "node:module stripTypeScriptTypes is unavailable",
+  transform_mode_unavailable:
+    'node:module stripTypeScriptTypes does not accept mode "transform"; Node.js 26 removed TypeScript transform type stripping (nodejs/node#61803)',
+};
+
+/**
+ * Thrown when this Node.js runtime cannot load the checkout's TypeScript
+ * source. `code` and `reason` are stable facts for callers and tests; the
+ * message is explanatory text that may change.
+ */
+export class DevelopmentRuntimeError extends Error {
+  code = "ERR_REA_DEVELOPMENT_RUNTIME";
+
+  constructor(reason, runtime, options) {
+    super(
+      `Node.js ${runtime} cannot load REA source: ${DEVELOPMENT_RUNTIME_REASONS[reason]}. ${DEVELOPMENT_RUNTIME_GUIDANCE}`,
+      options,
+    );
+    this.name = "DevelopmentRuntimeError";
+    this.reason = reason;
+    this.runtime = runtime;
+  }
+}
+
 /**
  * Report why this Node.js runtime cannot load the checkout's TypeScript source,
  * or undefined when it can. Source files use parameter properties and other
@@ -113,15 +144,15 @@ const loadSource = (url, context, nextLoad) => {
  */
 const developmentRuntimeProblem = () => {
   if (typeof nodeModule.registerHooks !== "function")
-    return "node:module registerHooks is unavailable";
+    return { reason: "register_hooks_unavailable" };
   if (typeof nodeModule.stripTypeScriptTypes !== "function")
-    return "node:module stripTypeScriptTypes is unavailable";
+    return { reason: "strip_typescript_types_unavailable" };
   try {
     nodeModule.stripTypeScriptTypes("", { mode: "transform" });
     return undefined;
   } catch (cause) {
     if (errorCode(cause) === "ERR_INVALID_ARG_VALUE")
-      return 'node:module stripTypeScriptTypes does not accept mode "transform" (Node.js 26 removed TypeScript transform type stripping)';
+      return { reason: "transform_mode_unavailable", cause };
     throw cause;
   }
 };
@@ -135,8 +166,10 @@ export const importVerifierSource = async (url, parent) => {
   if (hooks === undefined) {
     const problem = developmentRuntimeProblem();
     if (problem !== undefined)
-      throw new Error(
-        `Node.js ${process.version} cannot load REA source: ${problem}. This REA source loader requires the Node.js version pinned in .nvmrc; run nvm use and invoke source build and verifier scripts with node and npm. Installed REA packages have separate runtime support.`,
+      throw new DevelopmentRuntimeError(
+        problem.reason,
+        process.version,
+        problem.cause === undefined ? undefined : { cause: problem.cause },
       );
     hooks = nodeModule.registerHooks({
       resolve: resolveSource,

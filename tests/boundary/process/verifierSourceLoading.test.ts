@@ -5,6 +5,10 @@ import { pathToFileURL } from "node:url";
 import { expect, onTestFinished } from "vitest";
 import { z } from "zod";
 
+import {
+  DEVELOPMENT_RUNTIME_GUIDANCE,
+  type DevelopmentRuntimeReason,
+} from "../../../scripts/lib/verifier-source-loader.mjs";
 import { processTest } from "../../support/process/processFixture.js";
 import {
   createTestWorkspace,
@@ -14,12 +18,24 @@ import {
 const scriptUrl = (path: string) =>
   JSON.stringify(pathToFileURL(resolve("scripts/lib", path)).href);
 
-const unsupportedRuntimes = [
-  ...["registerHooks", "stripTypeScriptTypes"].map((missing) => ({
-    name: `${missing} is unavailable`,
-    patch: `module[${JSON.stringify(missing)}] = undefined;`,
-    reason: `${missing} is unavailable`,
-  })),
+const unsupportedRuntimes: ReadonlyArray<{
+  readonly name: string;
+  readonly patch: string;
+  readonly reason: DevelopmentRuntimeReason;
+  readonly causeCode: string | undefined;
+}> = [
+  {
+    name: "registerHooks is unavailable",
+    patch: "module.registerHooks = undefined;",
+    reason: "register_hooks_unavailable",
+    causeCode: undefined,
+  },
+  {
+    name: "stripTypeScriptTypes is unavailable",
+    patch: "module.stripTypeScriptTypes = undefined;",
+    reason: "strip_typescript_types_unavailable",
+    causeCode: undefined,
+  },
   {
     // Node.js 26 keeps stripTypeScriptTypes but rejects mode "transform"
     // (nodejs/node#61803), which the checkout's parameter properties need.
@@ -32,33 +48,57 @@ module.stripTypeScriptTypes = (source, options) => {
   failure.code = "ERR_INVALID_ARG_VALUE";
   throw failure;
 };`,
-    reason: 'does not accept mode "transform"',
+    reason: "transform_mode_unavailable",
+    causeCode: "ERR_INVALID_ARG_VALUE",
   },
 ];
 
+const developmentRuntimeFailure = z.object({
+  name: z.string(),
+  code: z.string(),
+  reason: z.string(),
+  runtime: z.string(),
+  causeCode: z.string().optional(),
+  message: z.string(),
+});
+
 for (const runtime of unsupportedRuntimes) {
   processTest(
-    `explains the development runtime requirement when ${runtime.name}`,
+    `reports the development runtime requirement when ${runtime.name}`,
     async ({ processes }) => {
       const source = `
 import module from "node:module";
 ${runtime.patch}
 module.syncBuiltinESMExports();
 const { importVerifierSource } = await import(${scriptUrl("verifier-source-loader.mjs")});
-await importVerifierSource(new URL("./src/domain/skillManifest.ts", import.meta.url));
+try {
+  await importVerifierSource(new URL("./src/domain/skillManifest.ts", import.meta.url));
+  console.log(JSON.stringify({ loaded: true }));
+} catch (failure) {
+  console.log(JSON.stringify({
+    name: failure.name, code: failure.code, reason: failure.reason, runtime: failure.runtime,
+    causeCode: failure.cause?.code, message: failure.message,
+  }));
+  process.exitCode = 1;
+}
 `;
       const result = await processes.run(
         process.execPath,
         ["--input-type=module", "--eval", source],
         { timeoutMs: 20_000 },
       );
-      expect(result.exitCode).toBe(1);
-      expect(result.stderr).toContain(
-        `Node.js ${process.version} cannot load REA source`,
+      expect(result.exitCode, result.stderr).toBe(1);
+      const failure = developmentRuntimeFailure.parse(
+        JSON.parse(result.stdout),
       );
-      expect(result.stderr).toContain(runtime.reason);
-      expect(result.stderr).toContain("Node.js version pinned in .nvmrc");
-      expect(result.stderr).toContain("source build and verifier scripts");
+      expect(failure).toMatchObject({
+        name: "DevelopmentRuntimeError",
+        code: "ERR_REA_DEVELOPMENT_RUNTIME",
+        reason: runtime.reason,
+        runtime: process.version,
+      });
+      expect(failure.causeCode).toBe(runtime.causeCode);
+      expect(failure.message).toContain(DEVELOPMENT_RUNTIME_GUIDANCE);
     },
   );
 }
