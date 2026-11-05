@@ -21,7 +21,7 @@ rea decompile /absolute/path/to/program main --json
 
 ## Register an explicit MCP command or endpoint
 
-`REA_ANGR_MCP_CONFIG` names a JSON file with either a stdio command or a local Streamable HTTP endpoint. When both settings are present, the file wins.
+`REA_ANGR_MCP_CONFIG` names a JSON file with either a stdio command or a local Streamable HTTP endpoint. The file must be a regular file of at most 64 KiB; REA refuses a FIFO, socket or device instead of waiting on it. When both settings are present, the file wins.
 
 ```json
 {

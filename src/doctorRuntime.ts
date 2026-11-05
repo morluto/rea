@@ -54,6 +54,35 @@ export const createSystemDoctorHost = (
     }
     return registration;
   };
+  const angrReads = new WeakMap<
+    RetainedResourceScope,
+    Map<string, ReturnType<typeof readAngrConfiguration>>
+  >();
+  const readAngr = (
+    registrationEnvironment: Readonly<NodeJS.ProcessEnv>,
+    resourceScope: RetainedResourceScope,
+    inspectionSignal: AbortSignal,
+  ) => {
+    const sources = {
+      mcpConfigPath: registrationEnvironment.REA_ANGR_MCP_CONFIG,
+      pythonPath: registrationEnvironment.REA_ANGR_PYTHON,
+    };
+    let bySources = angrReads.get(resourceScope);
+    if (bySources === undefined) {
+      bySources = new Map();
+      angrReads.set(resourceScope, bySources);
+    }
+    const key = JSON.stringify([sources.mcpConfigPath, sources.pythonPath]);
+    let registration = bySources.get(key);
+    if (registration === undefined) {
+      registration = readAngrConfiguration(sources, {
+        resourceScope,
+        signal: inspectionSignal,
+      });
+      bySources.set(key, registration);
+    }
+    return { sources, registration };
+  };
   return systemDoctorHost({
     environment,
     ...(signal === undefined ? {} : { signal }),
@@ -80,15 +109,15 @@ export const createSystemDoctorHost = (
         }
       }
       if (analysisProvider === "angr" || analysisProvider === "auto") {
-        const sources = {
-          mcpConfigPath: registrationEnvironment.REA_ANGR_MCP_CONFIG,
-          pythonPath: registrationEnvironment.REA_ANGR_PYTHON,
-        };
         if (
-          sources.mcpConfigPath !== undefined ||
-          sources.pythonPath !== undefined
+          registrationEnvironment.REA_ANGR_MCP_CONFIG !== undefined ||
+          registrationEnvironment.REA_ANGR_PYTHON !== undefined
         ) {
-          const registration = readAngrConfiguration(sources);
+          const registration = await readAngr(
+            registrationEnvironment,
+            resourceScope,
+            inspectionSignal,
+          ).registration;
           if (registration.ok)
             budgets.push(angrRequestBudgetMs(registration.value));
           else if (analysisProvider === "angr") return registration;
@@ -115,10 +144,19 @@ export const createSystemDoctorHost = (
             ),
       ),
       await inspectJadxProvider(environment, resourceScope, inspectionSignal),
-      inspectAngrRegistration({
-        mcpConfigPath: environment.REA_ANGR_MCP_CONFIG,
-        pythonPath: environment.REA_ANGR_PYTHON,
-      }),
+      await (() => {
+        const { sources, registration } = readAngr(
+          environment,
+          resourceScope,
+          inspectionSignal,
+        );
+        return inspectAngrRegistration(
+          sources,
+          resourceScope,
+          inspectionSignal,
+          registration,
+        );
+      })(),
       await inspectKunaProvider(environment, process.platform, {
         resourceScope,
         signal: inspectionSignal,

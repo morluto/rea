@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { requireMcpToolError } from "./lib/mcp-verifier-results.mjs";
+import { withVerifierResourceOwner } from "./lib/verifier-file-resources.mjs";
 
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
@@ -48,12 +49,19 @@ const [
   importBuilt("angr/AngrConfiguration.js"),
   importBuilt("angr/AngrMcpConnection.js"),
 ]);
-const registration = readAngrConfiguration({
-  mcpConfigPath: process.env.REA_ANGR_MCP_CONFIG,
-  pythonPath: process.env.REA_ANGR_PYTHON,
+const config = await withVerifierResourceOwner(async (resourceScope) => {
+  const registration = await readAngrConfiguration(
+    {
+      mcpConfigPath: process.env.REA_ANGR_MCP_CONFIG,
+      pythonPath: process.env.REA_ANGR_PYTHON,
+    },
+    {
+      resourceScope,
+    },
+  );
+  if (!registration.ok) throw registration.error;
+  return registration.value;
 });
-if (!registration.ok) throw registration.error;
-const config = registration.value;
 // A first request runs load_binary and get_cfg, each up to startupTimeoutMs,
 // then a function analysis makes several more angr requests.
 const firstRequestBudgetMs = angrRequestBudgetMs(config) + 2 * config.timeoutMs;

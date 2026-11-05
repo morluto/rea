@@ -23,6 +23,7 @@ import {
 } from "./AngrProviderCapabilities.js";
 import { AngrEditRunner } from "./AngrEditRunner.js";
 import { matchRegexValues } from "../process/RegexMatcher.js";
+import { literalSubstringPredicate } from "../domain/analysisSearch.js";
 import type { RegexMatchingDeadline } from "../config/regexMatchingDeadline.js";
 import type { RegexWorkerHeapRequest } from "../config/regexWorkerHeapRequest.js";
 import {
@@ -552,7 +553,10 @@ export class AngrOperationRunner {
       return items.filter((_, index) => selected.has(index));
     }
     if (query !== undefined) {
-      const matches = this.searchPredicate(query);
+      const matches = literalSubstringPredicate(
+        query.pattern,
+        query.case_sensitive,
+      );
       return items.filter(({ value }) => matches(value));
     }
     if (operation === "list_strings" && parameters.address !== undefined) {
@@ -560,16 +564,6 @@ export class AngrOperationRunner {
       return items.filter((item) => item.address === address);
     }
     return items;
-  }
-
-  private searchPredicate(
-    query: z.infer<typeof searchQuerySchema>,
-  ): (value: string) => boolean {
-    const needle = query.case_sensitive
-      ? query.pattern
-      : query.pattern.toLowerCase();
-    return (value) =>
-      (query.case_sensitive ? value : value.toLowerCase()).includes(needle);
   }
 
   async dossier(fn: AngrFunction): Promise<JsonValue> {

@@ -1,37 +1,29 @@
-import { rm } from "node:fs/promises";
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import { AngrProvider } from "../../src/angr/AngrProvider.js";
 import { AngrSessionClient } from "../../src/angr/AngrSessionClient.js";
 import { AnalysisProtocolError } from "../../src/domain/analysisErrorCore.js";
-import { readAngrConfiguration } from "../../src/angr/AngrConfiguration.js";
-import { createAngrTarget, RecordingAngrMcp } from "../fixtures/angrMcp.js";
+import {
+  angrTestConfiguration,
+  createAngrTarget,
+  RecordingAngrMcp,
+} from "../fixtures/angrMcp.js";
 import { createTestBinarySession } from "../fixtures/binarySession.js";
 import { parseConfig } from "../../src/config/parseConfig.js";
 import { functionDossierSchema } from "../../src/domain/native/functionDossier.js";
 import { angrLoadOptions } from "../../src/angr/AngrProtocolValues.js";
 import type { BinaryTarget } from "../../src/domain/binaryTargetTypes.js";
 
-const roots: string[] = [];
-afterEach(async () => {
-  for (const root of roots.splice(0))
-    await rm(root, { recursive: true, force: true });
-});
-
-const configuration = () => {
-  const parsed = readAngrConfiguration({ pythonPath: process.execPath });
-  if (!parsed.ok) throw parsed.error;
-  return parsed.value;
-};
+const testConfiguration = await angrTestConfiguration();
+const configuration = () => testConfiguration;
 
 describe("angr provider composition", () => {
   it("discovers without connecting and binds one owned project per session", async () => {
-    const { root, target } = await createAngrTarget();
-    roots.push(root);
+    const { target } = await createAngrTarget();
     const config = parseConfig({ REA_ANGR_PYTHON: process.execPath });
     if (!config.ok) throw config.error;
     const producer = new RecordingAngrMcp(target);
     const provider = new AngrProvider(config.value, {}, () => producer);
-    expect(provider.inspectAvailability()).toMatchObject({
+    expect(await provider.inspectAvailability()).toMatchObject({
       status: "available",
       diagnostics: { live_connection_probed: false },
     });
@@ -87,8 +79,7 @@ describe("angr provider composition", () => {
 
 describe("angr session client boundaries", () => {
   it("reports caller selectors angr cannot resolve as invalid input", async () => {
-    const { root, target } = await createAngrTarget();
-    roots.push(root);
+    const { target } = await createAngrTarget();
     const client = new AngrSessionClient(
       configuration(),
       target,
@@ -117,8 +108,7 @@ describe("angr session client boundaries", () => {
     }
   });
   it("verifies target identity by digest, or by path on a digest-less angr", async () => {
-    const { root, target } = await createAngrTarget();
-    roots.push(root);
+    const { target } = await createAngrTarget();
     // A matching digest proves identity even when the server's path differs.
     const otherPath = new RecordingAngrMcp(target);
     otherPath.loadedPath = `${target.path}.container-view`;
@@ -160,8 +150,7 @@ describe("angr session client boundaries", () => {
     await client4.close();
   });
   it("refuses a server that lacks the required tools without calling it", async () => {
-    const { root, target } = await createAngrTarget();
-    roots.push(root);
+    const { target } = await createAngrTarget();
     const limited = new RecordingAngrMcp(target);
     limited.tools = ["load_binary"];
     const client = new AngrSessionClient(configuration(), target, limited);
@@ -176,8 +165,7 @@ describe("angr session client boundaries", () => {
 
 describe("angr session client degradation and teardown", () => {
   it("omits call-graph edges to unlisted functions and reports them", async () => {
-    const { root, target } = await createAngrTarget();
-    roots.push(root);
+    const { target } = await createAngrTarget();
     const producer = new RecordingAngrMcp(target);
     producer.overrideCall = (name) =>
       name === "get_callgraph"
@@ -217,8 +205,7 @@ describe("angr session client degradation and teardown", () => {
     }
   });
   it("drains cancellation and retains partial Evidence from completed replies", async () => {
-    const { root, target } = await createAngrTarget();
-    roots.push(root);
+    const { target } = await createAngrTarget();
     const producer = new RecordingAngrMcp(target);
     const controller = new AbortController();
     producer.beforeCall = async (name) => {
@@ -243,8 +230,7 @@ describe("angr session client degradation and teardown", () => {
     }
   });
   it("ends an owned server when its project cannot be closed, but retains an attached one", async () => {
-    const { root, target } = await createAngrTarget();
-    roots.push(root);
+    const { target } = await createAngrTarget();
     const owned = new RecordingAngrMcp(target);
     owned.overrideCall = (name) =>
       name === "close_project"
@@ -284,8 +270,7 @@ describe("angr session client degradation and teardown", () => {
 
 describe("angr loader options and regex search", () => {
   it("forwards supported raw-image options without guessing universal slices", async () => {
-    const { root, target } = await createAngrTarget();
-    roots.push(root);
+    const { target } = await createAngrTarget();
     expect(angrLoadOptions(target)).toEqual({});
     const universal: BinaryTarget = {
       ...target,
@@ -335,9 +320,26 @@ describe("angr loader options and regex search", () => {
       expect(result.error.message).toContain("does not accept loader options");
     await client2.close();
   });
+  it("matches literal searches with the shared Unicode case rule", async () => {
+    const { target } = await createAngrTarget();
+    const producer = new RecordingAngrMcp(target);
+    producer.names.set("0x1000", "ος");
+    producer.names.set("0x1040", "İ");
+    const client = new AngrSessionClient(configuration(), target, producer);
+    try {
+      const search = async (pattern: string) => {
+        const result = await client.execute("search_procedures", { pattern });
+        if (!result.ok) throw result.error;
+        return result.value.result;
+      };
+      expect(await search("Σ")).toEqual([{ address: "0x1000", value: "ος" }]);
+      expect(await search("i")).toEqual([]);
+    } finally {
+      await client.close();
+    }
+  });
   it("matches regex searches in a cancellable worker and rejects bad patterns as input", async () => {
-    const { root, target } = await createAngrTarget();
-    roots.push(root);
+    const { target } = await createAngrTarget();
     const client = new AngrSessionClient(
       configuration(),
       target,

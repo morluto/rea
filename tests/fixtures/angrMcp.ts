@@ -1,7 +1,11 @@
 import { createHash } from "node:crypto";
-import { mkdtemp, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import {
+  readAngrConfiguration,
+  type AngrConfiguration,
+} from "../../src/angr/AngrConfiguration.js";
+import { createTestTempDirectory } from "./temporaryDirectory.js";
 import type { BinaryTarget } from "../../src/domain/binaryTargetTypes.js";
 import type { JsonValue } from "../../src/domain/jsonValue.js";
 import { AnalysisProtocolError } from "../../src/domain/analysisErrorCore.js";
@@ -12,9 +16,24 @@ import {
 } from "../../src/angr/AngrProviderCapabilities.js";
 import { elf } from "../../src/domain/binaryTarget.fixture.js";
 
+/** The owned stdio registration for this test process's interpreter path. */
+export const angrTestConfiguration = async (): Promise<AngrConfiguration> => {
+  const parsed = await readAngrConfiguration(
+    { pythonPath: process.execPath },
+    {
+      resourceScope: {
+        retain: () => undefined,
+        run: (operation) => operation(),
+      },
+    },
+  );
+  if (!parsed.ok) throw parsed.error;
+  return parsed.value;
+};
+
 /** Create a test-owned executable without invoking an engine. */
 export const createAngrTarget = async () => {
-  const root = await mkdtemp(join(tmpdir(), "rea-angr-test-"));
+  const root = await createTestTempDirectory("rea-angr-test-");
   const path = join(root, "target.elf");
   const bytes = elf(2, 1, 62);
   await writeFile(path, bytes);

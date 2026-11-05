@@ -1,28 +1,21 @@
-import { rm } from "node:fs/promises";
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import { AngrSessionClient } from "../../src/angr/AngrSessionClient.js";
-import { readAngrConfiguration } from "../../src/angr/AngrConfiguration.js";
-import { createAngrTarget, RecordingAngrMcp } from "../fixtures/angrMcp.js";
+import {
+  angrTestConfiguration,
+  createAngrTarget,
+  RecordingAngrMcp,
+} from "../fixtures/angrMcp.js";
 import {
   nativeDecompilationEditsSchema,
   nativeDecompilationFlavorSchema,
 } from "../../src/domain/native/nativeDecompilationEdits.js";
 import { nativeFunctionAnnotationsSchema } from "../../src/domain/native/nativeFunctionAnnotations.js";
 
-const roots: string[] = [];
-afterEach(async () => {
-  for (const root of roots.splice(0))
-    await rm(root, { recursive: true, force: true });
-});
-
-const configuration = (flavor?: string) => {
-  const parsed = readAngrConfiguration({ pythonPath: process.execPath });
-  if (!parsed.ok) throw parsed.error;
-  return flavor === undefined ? parsed.value : { ...parsed.value, flavor };
-};
+const testConfiguration = await angrTestConfiguration();
+const configuration = (flavor?: string) =>
+  flavor === undefined ? testConfiguration : { ...testConfiguration, flavor };
 const open = async (flavor?: string) => {
-  const { root, target } = await createAngrTarget();
-  roots.push(root);
+  const { target } = await createAngrTarget();
   const producer = new RecordingAngrMcp(target);
   const client = new AngrSessionClient(configuration(flavor), target, producer);
   return { producer, client };
@@ -242,8 +235,7 @@ describe("angr batch edits and decompilation flavor", () => {
 
 describe("angr without decompilation-flavor tools", () => {
   it("reports flavor operations unavailable on an angr without flavor tools", async () => {
-    const { root, target } = await createAngrTarget();
-    roots.push(root);
+    const { target } = await createAngrTarget();
     const producer = new RecordingAngrMcp(target);
     producer.tools = [
       "load_binary",

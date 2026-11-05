@@ -1,9 +1,11 @@
 import { STDIO_DEFAULT_MAX_BUFFER_SIZE } from "@modelcontextprotocol/server";
-import { rm } from "node:fs/promises";
-import { afterEach, describe, expect, it } from "vitest";
-import { createAngrTarget, RecordingAngrMcp } from "../../fixtures/angrMcp.js";
+import { describe, expect, it } from "vitest";
+import {
+  angrTestConfiguration,
+  createAngrTarget,
+  RecordingAngrMcp,
+} from "../../fixtures/angrMcp.js";
 import { AngrSessionClient } from "../../../src/angr/AngrSessionClient.js";
-import { readAngrConfiguration } from "../../../src/angr/AngrConfiguration.js";
 import {
   ANGR_MUTATING_OPERATIONS,
   angrCapabilities,
@@ -15,12 +17,6 @@ import type { JsonValue } from "../../../src/domain/jsonValue.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 
 const delivery = createToolResultDelivery(STDIO_DEFAULT_MAX_BUFFER_SIZE);
-
-const roots: string[] = [];
-afterEach(async () => {
-  for (const root of roots.splice(0))
-    await rm(root, { recursive: true, force: true });
-});
 
 const parametersFor = (
   operation: string,
@@ -73,14 +69,9 @@ describe("angr caller-visible contracts", () => {
   it.each(ANGR_OPERATIONS)(
     "serializes %s against its named advertised output contract",
     async (operation) => {
-      const { root, target } = await createAngrTarget();
-      roots.push(root);
-      const configuration = readAngrConfiguration({
-        pythonPath: process.execPath,
-      });
-      if (!configuration.ok) throw configuration.error;
+      const { target } = await createAngrTarget();
       const client = new AngrSessionClient(
-        configuration.value,
+        await angrTestConfiguration(),
         target,
         new RecordingAngrMcp(target),
       );

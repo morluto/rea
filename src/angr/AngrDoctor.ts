@@ -1,18 +1,28 @@
 import type { DoctorProviderInspection } from "../application/Doctor.js";
+import type { RetainedResourceScope } from "../application/AnalysisProvider.js";
+import type { ConfigurationError } from "../domain/configurationErrors.js";
+import type { Result } from "../domain/result.js";
 import {
   ANGR_MCP_CONFIG_SETTING,
   ANGR_PYTHON_SETTING,
   readAngrConfiguration,
+  type AngrConfiguration,
   type AngrConfigurationSources,
 } from "./AngrConfiguration.js";
 
 /** Check the registration without launching angr, retaining only the configured references. */
-export const inspectAngrRegistration = (
+export const inspectAngrRegistration = async (
   sources: AngrConfigurationSources,
-): DoctorProviderInspection => {
+  resourceScope: RetainedResourceScope,
+  signal?: AbortSignal,
+  registration?: Promise<Result<AngrConfiguration, ConfigurationError>>,
+): Promise<DoctorProviderInspection> => {
   const configured =
     sources.mcpConfigPath !== undefined || sources.pythonPath !== undefined;
-  const parsed = configured ? readAngrConfiguration(sources) : undefined;
+  const parsed = configured
+    ? await (registration ??
+        readAngrConfiguration(sources, { resourceScope, signal }))
+    : undefined;
   const valid = parsed?.ok === true;
   return {
     id: "angr",

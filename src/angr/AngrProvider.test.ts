@@ -1,4 +1,7 @@
+import { writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 
 import { parseConfig } from "../config/parseConfig.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
@@ -18,18 +21,18 @@ const identity = {
 } as const;
 
 describe("angr provider discovery", () => {
-  it("reports configuration state without starting a process", () => {
+  it("reports configuration state without starting a process", async () => {
     const unconfigured = parseConfig({});
     if (!unconfigured.ok) throw unconfigured.error;
     expect(
-      new AngrProvider(unconfigured.value, {}).inspectAvailability(),
+      await new AngrProvider(unconfigured.value, {}).inspectAvailability(),
     ).toMatchObject({ status: "unavailable", code: "not_configured" });
     const missing = parseConfig({ REA_ANGR_PYTHON: "/nonexistent/python" });
     if (!missing.ok) throw missing.error;
     expect(
-      new AngrProvider(missing.value, {}).inspectAvailability(),
+      await new AngrProvider(missing.value, {}).inspectAvailability(),
     ).toMatchObject({ status: "unavailable", code: "executable_missing" });
-    expect(configured().inspectAvailability()).toMatchObject({
+    expect(await configured().inspectAvailability()).toMatchObject({
       status: "available",
       diagnostics: {
         mode: "headless",
@@ -82,39 +85,72 @@ describe("angr provider discovery", () => {
     ).toMatchObject({ status: "unsupported", code: "target_kind_unsupported" });
   });
   it("derives process and network effects from the transport, not the mode", async () => {
-    const { mkdtemp, writeFile, rm } = await import("node:fs/promises");
-    const { tmpdir } = await import("node:os");
-    const { join } = await import("node:path");
-    const root = await mkdtemp(join(tmpdir(), "rea-angr-provider-"));
-    try {
-      const path = join(root, "mcp.json");
-      await writeFile(
-        path,
-        JSON.stringify({ command: "proxy", args: [], mode: "attached" }),
-      );
+    const root = await createTestTempDirectory("rea-angr-provider-");
+    const path = join(root, "mcp.json");
+    const effects = async () => {
       const config = parseConfig({ REA_ANGR_MCP_CONFIG: path });
       if (!config.ok) throw config.error;
-      const [capability] = new AngrProvider(config.value, {}).capabilities();
-      expect(capability?.effects).toMatchObject({
-        launchesProcess: true,
-        mayWriteFilesystem: true,
-        mayAccessNetwork: true,
-      });
-      await writeFile(
-        path,
-        JSON.stringify({ url: "http://127.0.0.1:8000/mcp" }),
-      );
-      const http = parseConfig({ REA_ANGR_MCP_CONFIG: path });
-      if (!http.ok) throw http.error;
-      const [remote] = new AngrProvider(http.value, {}).capabilities();
-      expect(remote?.effects).toMatchObject({
-        launchesProcess: false,
-        mayWriteFilesystem: false,
-        mayAccessNetwork: true,
-      });
-    } finally {
-      await rm(root, { recursive: true, force: true });
-    }
+      const snapshot = await new AngrProvider(
+        config.value,
+        {},
+      ).inspectReadinessSnapshot();
+      return snapshot.capabilities[0]?.effects;
+    };
+    await writeFile(
+      path,
+      JSON.stringify({ command: "proxy", args: [], mode: "attached" }),
+    );
+    expect(await effects()).toMatchObject({
+      launchesProcess: true,
+      mayWriteFilesystem: true,
+      mayAccessNetwork: true,
+    });
+    await writeFile(path, JSON.stringify({ url: "http://127.0.0.1:8000/mcp" }));
+    expect(await effects()).toMatchObject({
+      launchesProcess: false,
+      mayWriteFilesystem: false,
+      mayAccessNetwork: true,
+    });
+  });
+  it("declares every effect a registration could have before reading one", () => {
+    const unconfigured = parseConfig({});
+    if (!unconfigured.ok) throw unconfigured.error;
+    expect(
+      new AngrProvider(unconfigured.value, {})
+        .capabilities()
+        .every(
+          ({ effects }) =>
+            effects.launchesProcess &&
+            effects.mayWriteFilesystem &&
+            effects.mayAccessNetwork,
+        ),
+    ).toBe(true);
+  });
+  it("hands out clients only through the resolved binding", async () => {
+    const target = { ...identity, format: "elf" } as const;
+    const provider = configured();
+    const resolution = await provider.resolveAnalysisProfile(target);
+    if (!resolution.ok) throw resolution.error;
+    const { profile, createClient } = resolution.value;
+    if (profile === null || createClient === undefined)
+      throw new Error("expected a bound profile");
+    const unbound = await provider
+      .createClient(target, profile)
+      .execute("list_procedures", {});
+    expect(unbound).toMatchObject({
+      ok: false,
+      error: { message: expect.stringContaining("selected profile binding") },
+    });
+    const mismatched = await createClient(
+      { ...target, sha256: "c".repeat(64) },
+      profile,
+    ).execute("list_procedures", {});
+    expect(mismatched).toMatchObject({
+      ok: false,
+      error: {
+        message: expect.stringContaining("different from the resolved"),
+      },
+    });
   });
   it("commits a live profile that never persists the registration itself", async () => {
     const resolution = await configured().resolveAnalysisProfile({

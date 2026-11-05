@@ -1,8 +1,21 @@
-import { readFileSync, statSync } from "node:fs";
+import { statSync } from "node:fs";
 import { isAbsolute } from "node:path";
 import { z } from "zod";
+import type { RetainedResourceScope } from "../application/AnalysisProvider.js";
+import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
+import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { err, ok, type Result } from "../domain/result.js";
+import {
+  regularFileCancellation,
+  RegularFileCleanupFailure,
+  withOwnedRegularFile,
+} from "../filesystem/OwnedRegularFile.js";
+import {
+  NonRegularFileReadError,
+  RegularFileOperationCancelled,
+} from "../filesystem/RegularFile.js";
+import { readBoundedFileBytes } from "../process/BoundedFileBytes.js";
 
 export const ANGR_MCP_CONFIG_SETTING = "REA_ANGR_MCP_CONFIG";
 export const ANGR_PYTHON_SETTING = "REA_ANGR_PYTHON";
@@ -73,12 +86,19 @@ export interface AngrConfigurationSources {
 export const angrRequestBudgetMs = (config: AngrConfiguration): number =>
   2 * config.startupTimeoutMs + config.timeoutMs;
 
+/** Owner and cancellation for reading a registration file. */
+export interface AngrConfigurationReadOptions {
+  readonly signal?: AbortSignal | undefined;
+  readonly resourceScope: RetainedResourceScope;
+}
+
 /** Read one explicit registration without starting or installing a provider. */
-export const readAngrConfiguration = (
+export const readAngrConfiguration = async (
   sources: AngrConfigurationSources,
-): Result<AngrConfiguration, ConfigurationError> => {
+  options: AngrConfigurationReadOptions,
+): Promise<Result<AngrConfiguration, ConfigurationError>> => {
   if (sources.mcpConfigPath !== undefined)
-    return readAngrRegistrationFile(sources.mcpConfigPath);
+    return readAngrRegistrationFile(sources.mcpConfigPath, options);
   if (sources.pythonPath !== undefined)
     return pythonRegistration(sources.pythonPath);
   return err(
@@ -126,40 +146,148 @@ const pythonRegistration = (
   );
 };
 
-const readAngrRegistrationFile = (
-  path: string,
+const MAXIMUM_REGISTRATION_BYTES = 65_536;
+
+const registrationTooLarge = (): ConfigurationError =>
+  angrConfigurationError(
+    `${ANGR_MCP_CONFIG_SETTING} exceeds the 64 KiB registration size.`,
+  );
+
+const cleanupReason = (cause: unknown): string =>
+  cause instanceof Error ? cause.message : String(cause);
+
+const parseRegistration = (
+  text: string,
 ): Result<AngrConfiguration, ConfigurationError> => {
-  try {
-    if (statSync(path).size > 65_536)
-      return err(
+  const input: unknown = JSON.parse(text);
+  const envelope = z
+    .object({ mcpServers: z.object({ angr: z.unknown() }) })
+    .safeParse(input);
+  const parsed = registrationSchema.safeParse(
+    envelope.success ? envelope.data.mcpServers.angr : input,
+  );
+  return parsed.success
+    ? ok(parsed.data)
+    : err(
         angrConfigurationError(
-          `${ANGR_MCP_CONFIG_SETTING} exceeds the 64 KiB registration size.`,
+          `${ANGR_MCP_CONFIG_SETTING} must contain an angr MCP command/args or local url registration; see docs/angr-provider.md.`,
+          parsed.error,
         ),
       );
-    const input: unknown = JSON.parse(readFileSync(path, "utf8"));
-    const envelope = z
-      .object({ mcpServers: z.object({ angr: z.unknown() }) })
-      .safeParse(input);
-    const parsed = registrationSchema.safeParse(
-      envelope.success ? envelope.data.mcpServers.angr : input,
-    );
-    return parsed.success
-      ? ok(parsed.data)
-      : err(
-          angrConfigurationError(
-            `${ANGR_MCP_CONFIG_SETTING} must contain an angr MCP command/args or local url registration; see docs/angr-provider.md.`,
-            parsed.error,
-          ),
-        );
-  } catch (cause: unknown) {
-    return err(
+};
+
+/**
+ * Open without blocking and require a regular file, so a FIFO, socket or
+ * device cannot stall discovery while it waits for a producer.
+ */
+const readAngrRegistrationFile = (
+  path: string,
+  options: AngrConfigurationReadOptions,
+): Promise<Result<AngrConfiguration, ConfigurationError>> =>
+  options.resourceScope.run(async () => {
+    let closeLease: AnalysisCleanupLease | undefined;
+    const notRegular = (cause: unknown) =>
+      angrConfigurationError(
+        `${ANGR_MCP_CONFIG_SETTING} must select a regular JSON file: ${path}`,
+        cause,
+      );
+    const unreadable = (cause: unknown) =>
       angrConfigurationError(
         `Cannot read angr MCP registration ${path}; provide a readable JSON configuration.`,
         cause,
-      ),
-    );
-  }
-};
+      );
+    try {
+      const text = await withOwnedRegularFile<string>(
+        path,
+        {
+          ...(options.signal === undefined ? {} : { signal: options.signal }),
+          retainFailedClose: (owner) => {
+            const lease = AnalysisCleanupLease.forCloseOwner(owner, path);
+            closeLease = lease;
+            options.resourceScope.retain(
+              {
+                close: () => lease.release(),
+                get cleanupResources() {
+                  return lease.cleanupResources;
+                },
+              },
+              path,
+            );
+          },
+        },
+        async ({ handle, initial }) => {
+          if (initial.size > MAXIMUM_REGISTRATION_BYTES)
+            throw registrationTooLarge();
+          const bytes = await readBoundedFileBytes(
+            handle,
+            MAXIMUM_REGISTRATION_BYTES,
+            {
+              signal: options.signal,
+              cancellationFailure: (reason) =>
+                new RegularFileOperationCancelled(reason),
+            },
+          );
+          if (bytes === undefined) throw registrationTooLarge();
+          return bytes.toString("utf8");
+        },
+      );
+      try {
+        return parseRegistration(text);
+      } catch (cause: unknown) {
+        return err(unreadable(cause));
+      }
+    } catch (cause: unknown) {
+      if (cause instanceof ConfigurationError) return err(cause);
+      if (cause instanceof NonRegularFileReadError)
+        return err(notRegular(cause));
+      if (cause instanceof AnalysisCancelledError) throw cause;
+      const cancellation = regularFileCancellation(cause);
+      if (cancellation !== undefined) {
+        const error = new AnalysisCancelledError("angr:registration", {
+          cause: cancellation.reason,
+          ...(cause instanceof RegularFileCleanupFailure
+            ? {
+                cleanup: {
+                  reason: cleanupReason(cause.cleanupCause),
+                  resources: [path],
+                },
+              }
+            : {}),
+        });
+        if (cause instanceof RegularFileCleanupFailure)
+          closeLease?.bindCleanupError(error);
+        throw error;
+      }
+      if (cause instanceof RegularFileCleanupFailure) {
+        const primary =
+          cause.outcome.kind === "failed" ? cause.outcome.cause : undefined;
+        const base =
+          primary instanceof ConfigurationError
+            ? primary
+            : primary instanceof NonRegularFileReadError
+              ? notRegular(primary)
+              : primary !== undefined
+                ? unreadable(primary)
+                : undefined;
+        const constraint = `Close remains incomplete for ${path}`;
+        const error = new ConfigurationError(
+          base?.message ??
+            `Cannot close angr MCP registration ${path}; provide a readable JSON configuration.`,
+          {
+            cause,
+            cleanup: {
+              reason: cleanupReason(cause.cleanupCause),
+              resources: [path],
+            },
+            settings: [{ setting: ANGR_MCP_CONFIG_SETTING, constraint }],
+          },
+        );
+        closeLease?.bindCleanupError(error);
+        return err(error);
+      }
+      return err(unreadable(cause));
+    }
+  });
 
 /** A rejection that names the angr setting it concerns. */
 export const angrConfigurationError = (

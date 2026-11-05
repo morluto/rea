@@ -1,20 +1,27 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
-import { readAngrConfiguration } from "./AngrConfiguration.js";
+import { promisify } from "node:util";
+import { describe, expect, it } from "vitest";
+import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
+import type { RetainedResourceScope } from "../application/AnalysisProvider.js";
+import {
+  readAngrConfiguration,
+  type AngrConfigurationSources,
+} from "./AngrConfiguration.js";
 import { decodeAngrToolResult } from "./AngrMcpConnection.js";
 
-const roots: string[] = [];
-afterEach(async () => {
-  for (const root of roots.splice(0))
-    await rm(root, { recursive: true, force: true });
-});
+const resourceScope: RetainedResourceScope = {
+  retain: () => undefined,
+  run: (operation) => operation(),
+};
+const read = (sources: AngrConfigurationSources) =>
+  readAngrConfiguration(sources, { resourceScope });
 
 describe("angr registration and MCP result boundaries", () => {
-  it("expands an interpreter path into an owned stdio registration", () => {
-    const parsed = readAngrConfiguration({ pythonPath: process.execPath });
-    expect(parsed).toMatchObject({
+  it("expands an interpreter path into an owned stdio registration", async () => {
+    expect(await read({ pythonPath: process.execPath })).toMatchObject({
       ok: true,
       value: {
         command: process.execPath,
@@ -23,21 +30,20 @@ describe("angr registration and MCP result boundaries", () => {
         autoLoadLibs: false,
       },
     });
-    expect(readAngrConfiguration({ pythonPath: "python3" })).toMatchObject({
+    expect(await read({ pythonPath: "python3" })).toMatchObject({
       ok: false,
       error: { settings: [{ setting: "REA_ANGR_PYTHON" }] },
     });
     expect(
-      readAngrConfiguration({ pythonPath: join(tmpdir(), "missing-python") }),
+      await read({ pythonPath: join(tmpdir(), "missing-python") }),
     ).toMatchObject({ ok: false });
-    expect(readAngrConfiguration({})).toMatchObject({
+    expect(await read({})).toMatchObject({
       ok: false,
       error: { settings: [{ setting: "REA_ANGR_MCP_CONFIG" }] },
     });
   });
   it("reads direct or mcpServers registrations and prefers the explicit file", async () => {
-    const root = await mkdtemp(join(tmpdir(), "rea-angr-config-"));
-    roots.push(root);
+    const root = await createTestTempDirectory("rea-angr-config-");
     const path = join(root, "mcp.json");
     for (const input of [
       { command: "python", args: ["-m", "angr.mcp"] },
@@ -50,10 +56,7 @@ describe("angr registration and MCP result boundaries", () => {
     ]) {
       await writeFile(path, JSON.stringify(input));
       expect(
-        readAngrConfiguration({
-          mcpConfigPath: path,
-          pythonPath: process.execPath,
-        }),
+        await read({ mcpConfigPath: path, pythonPath: process.execPath }),
       ).toMatchObject({
         ok: true,
         value: {
@@ -67,14 +70,13 @@ describe("angr registration and MCP result boundaries", () => {
       path,
       JSON.stringify({ url: "http://127.0.0.1:8000/mcp", timeoutMs: 5 }),
     );
-    expect(readAngrConfiguration({ mcpConfigPath: path })).toMatchObject({
+    expect(await read({ mcpConfigPath: path })).toMatchObject({
       ok: true,
       value: { url: "http://127.0.0.1:8000/mcp", mode: "attached" },
     });
   });
   it("rejects remote endpoints, owned HTTP servers, credentials, and malformed files", async () => {
-    const root = await mkdtemp(join(tmpdir(), "rea-angr-config-"));
-    roots.push(root);
+    const root = await createTestTempDirectory("rea-angr-config-");
     const path = join(root, "mcp.json");
     for (const input of [
       { url: "https://example.com/mcp" },
@@ -85,7 +87,7 @@ describe("angr registration and MCP result boundaries", () => {
       [],
     ]) {
       await writeFile(path, JSON.stringify(input));
-      const parsed = readAngrConfiguration({ mcpConfigPath: path });
+      const parsed = await read({ mcpConfigPath: path });
       expect(parsed.ok).toBe(false);
       if (!parsed.ok)
         expect(parsed.error.settings).toEqual([
@@ -93,11 +95,31 @@ describe("angr registration and MCP result boundaries", () => {
         ]);
     }
     await writeFile(path, "{not json");
-    expect(readAngrConfiguration({ mcpConfigPath: path }).ok).toBe(false);
-    expect(
-      readAngrConfiguration({ mcpConfigPath: join(root, "absent.json") }).ok,
-    ).toBe(false);
+    expect((await read({ mcpConfigPath: path })).ok).toBe(false);
+    expect((await read({ mcpConfigPath: join(root, "absent.json") })).ok).toBe(
+      false,
+    );
+    await writeFile(path, " ".repeat(65_537));
+    expect(await read({ mcpConfigPath: path })).toMatchObject({
+      ok: false,
+      error: { message: expect.stringContaining("64 KiB") },
+    });
   });
+  it.skipIf(process.platform === "win32")(
+    "refuses a FIFO registration without waiting for a writer",
+    async () => {
+      const root = await createTestTempDirectory("rea-angr-config-");
+      const fifo = join(root, "mcp.json");
+      await promisify(execFile)("mkfifo", [fifo]);
+      expect(await read({ mcpConfigPath: fifo })).toMatchObject({
+        ok: false,
+        error: {
+          message: expect.stringContaining("must select a regular JSON file"),
+          settings: [{ setting: "REA_ANGR_MCP_CONFIG" }],
+        },
+      });
+    },
+  );
   it("decodes FastMCP structured results and reports tool errors", () => {
     expect(
       decodeAngrToolResult({

@@ -1,18 +1,20 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { afterEach, expect, it } from "vitest";
-import { inspectAngrRegistration } from "./AngrDoctor.js";
+import { expect, it } from "vitest";
+import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
+import type { RetainedResourceScope } from "../application/AnalysisProvider.js";
+import type { AngrConfigurationSources } from "./AngrConfiguration.js";
+import { inspectAngrRegistration as inspectWithScope } from "./AngrDoctor.js";
 import { providerRegistrationEnvironment } from "../application/SetupRegistrationEnvironment.js";
 
-const roots: string[] = [];
-afterEach(async () => {
-  for (const root of roots.splice(0))
-    await rm(root, { recursive: true, force: true });
-});
+const resourceScope: RetainedResourceScope = {
+  retain: () => undefined,
+  run: (operation) => operation(),
+};
+const inspectAngrRegistration = (sources: AngrConfigurationSources) =>
+  inspectWithScope(sources, resourceScope);
 it("keeps angr configuration for setup without copying credentials or claiming runtime verification", async () => {
-  const root = await mkdtemp(join(tmpdir(), "rea-angr-doctor-"));
-  roots.push(root);
+  const root = await createTestTempDirectory("rea-angr-doctor-");
   const path = join(root, "registration.json");
   await writeFile(
     path,
@@ -21,7 +23,7 @@ it("keeps angr configuration for setup without copying credentials or claiming r
       headers: { Authorization: "Bearer fixture-secret" },
     }),
   );
-  const inspection = inspectAngrRegistration({ mcpConfigPath: path });
+  const inspection = await inspectAngrRegistration({ mcpConfigPath: path });
   expect(inspection).toMatchObject({
     id: "angr",
     configured: true,
@@ -37,16 +39,16 @@ it("keeps angr configuration for setup without copying credentials or claiming r
   expect(JSON.stringify(inspection)).not.toContain("fixture-secret");
   expect(
     providerRegistrationEnvironment([
-      inspectAngrRegistration({ pythonPath: process.execPath }),
+      await inspectAngrRegistration({ pythonPath: process.execPath }),
     ]),
   ).toEqual({ REA_ANGR_PYTHON: process.execPath });
   await writeFile(path, JSON.stringify({ url: "https://example.com/mcp" }));
-  expect(inspectAngrRegistration({ mcpConfigPath: path })).toMatchObject({
+  expect(await inspectAngrRegistration({ mcpConfigPath: path })).toMatchObject({
     available: false,
     registrationEnvironment: {},
     checks: [{ code: "invalid_configuration" }],
   });
-  expect(inspectAngrRegistration({})).toMatchObject({
+  expect(await inspectAngrRegistration({})).toMatchObject({
     configured: false,
     available: false,
     checks: [{ code: "not_configured" }],
@@ -57,8 +59,7 @@ it("contributes angr's startup and request budgets to the client tool deadline",
   const { createSystemDoctorHost } = await import("../doctorRuntime.js");
   const { recommendedMcpToolTimeoutMs } =
     await import("../mcpStartupPolicy.js");
-  const root = await mkdtemp(join(tmpdir(), "rea-angr-budget-"));
-  roots.push(root);
+  const root = await createTestTempDirectory("rea-angr-budget-");
   const angrFile = join(root, "angr.json");
   const idaFile = join(root, "ida.json");
   await writeFile(

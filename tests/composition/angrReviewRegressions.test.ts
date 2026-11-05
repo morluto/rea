@@ -1,17 +1,19 @@
-import { rm } from "node:fs/promises";
 import { parseConfig } from "../../src/config/parseConfig.js";
 import { AngrProvider } from "../../src/angr/AngrProvider.js";
 import { createTestBinarySession } from "../fixtures/binarySession.js";
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import { AngrSessionClient } from "../../src/angr/AngrSessionClient.js";
-import { readAngrConfiguration } from "../../src/angr/AngrConfiguration.js";
 import { ANGR_PROVIDER_IDENTITY } from "../../src/angr/AngrProviderMetadata.js";
 import { createAnalysisProfile } from "../../src/domain/analysisProfile.js";
 import {
   AnalysisProtocolError,
   AnalysisTimeoutError,
 } from "../../src/domain/analysisErrorCore.js";
-import { createAngrTarget, RecordingAngrMcp } from "../fixtures/angrMcp.js";
+import {
+  angrTestConfiguration,
+  createAngrTarget,
+  RecordingAngrMcp,
+} from "../fixtures/angrMcp.js";
 import {
   AngrTransportError,
   decodeAngrToolResult,
@@ -20,20 +22,10 @@ import {
 } from "../../src/angr/AngrMcpConnection.js";
 import { SdkError, SdkErrorCode } from "@modelcontextprotocol/client";
 
-const roots: string[] = [];
-afterEach(async () => {
-  for (const root of roots.splice(0))
-    await rm(root, { recursive: true, force: true });
-});
-
-const configuration = () => {
-  const parsed = readAngrConfiguration({ pythonPath: process.execPath });
-  if (!parsed.ok) throw parsed.error;
-  return parsed.value;
-};
+const testConfiguration = await angrTestConfiguration();
+const configuration = () => testConfiguration;
 const open = async () => {
-  const { root, target } = await createAngrTarget();
-  roots.push(root);
+  const { target } = await createAngrTarget();
   const producer = new RecordingAngrMcp(target);
   return {
     target,
@@ -763,10 +755,7 @@ describe("dead session detection", () => {
     expect(client.operationHealthSnapshot()).toBeUndefined();
   });
   it("replaces a dead client when the same target is reopened", async () => {
-    const { target } = await createAngrTarget().then((created) => {
-      roots.push(created.root);
-      return created;
-    });
+    const { target } = await createAngrTarget();
     const config = parseConfig({ REA_ANGR_PYTHON: process.execPath });
     if (!config.ok) throw config.error;
     const producers: RecordingAngrMcp[] = [];
@@ -887,11 +876,8 @@ describe("connection-loss classification", () => {
 
 describe("attached project closed by another client", () => {
   it("replaces the client on the first reopen after an external close", async () => {
-    const { target } = await createAngrTarget().then((created) => {
-      roots.push(created.root);
-      return created;
-    });
-    const path = `${roots[roots.length - 1]}/attached.json`;
+    const { root, target } = await createAngrTarget();
+    const path = `${root}/attached.json`;
     const { writeFile } = await import("node:fs/promises");
     await writeFile(path, JSON.stringify({ url: "http://127.0.0.1:8000/mcp" }));
     const config = parseConfig({ REA_ANGR_MCP_CONFIG: path });
@@ -923,11 +909,8 @@ describe("attached project closed by another client", () => {
     }
   });
   it("reuses a live attached client on reopen", async () => {
-    const { target } = await createAngrTarget().then((created) => {
-      roots.push(created.root);
-      return created;
-    });
-    const path = `${roots[roots.length - 1]}/attached.json`;
+    const { root, target } = await createAngrTarget();
+    const path = `${root}/attached.json`;
     const { writeFile } = await import("node:fs/promises");
     await writeFile(path, JSON.stringify({ url: "http://127.0.0.1:8000/mcp" }));
     const config = parseConfig({ REA_ANGR_MCP_CONFIG: path });
@@ -955,10 +938,7 @@ describe("attached project closed by another client", () => {
 
 describe("failed startup", () => {
   it("reports a failed startup so a reopen closes the project and starts fresh", async () => {
-    const { target } = await createAngrTarget().then((created) => {
-      roots.push(created.root);
-      return created;
-    });
+    const { target } = await createAngrTarget();
     const config = parseConfig({ REA_ANGR_PYTHON: process.execPath });
     if (!config.ok) throw config.error;
     const producers: RecordingAngrMcp[] = [];
