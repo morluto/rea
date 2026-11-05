@@ -253,6 +253,7 @@ def _exact_number(text: str):
 
 
 _INEXACT = object()
+_INEXACT_END = object()
 
 
 def _number_or_mark(spelling: str):
@@ -264,16 +265,19 @@ def _number_or_mark(spelling: str):
 
 
 def _holds_inexact(value) -> bool:
-    """Whether a parsed JSON value still holds a marked number once duplicate keys kept their last value."""
-    pending = [value]
-    while pending:
-        item = pending.pop()
-        if item is _INEXACT:
+    """Whether a parsed JSON value still holds a marked number once duplicate keys kept their last value; one
+    iterator per nesting level, so no child list is copied."""
+    levels = [iter((value,))]
+    while levels:
+        item = next(levels[-1], _INEXACT_END)
+        if item is _INEXACT_END:
+            levels.pop()
+        elif item is _INEXACT:
             return True
-        if isinstance(item, dict):
-            pending.extend(item.values())
+        elif isinstance(item, dict):
+            levels.append(iter(item.values()))
         elif isinstance(item, list):
-            pending.extend(item)
+            levels.append(iter(item))
     return False
 
 
