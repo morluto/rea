@@ -206,7 +206,12 @@ listed, and neither is the application's own package. One batched
 recorded vendor repository with a verified key offers, in any component its
 sources entry lists, since the export declares them all; the rest, such as
 packages from a PPA or a local `.deb`, are listed in
-`uninstallable_library_packages`. Sonames found nowhere are listed in
+`uninstallable_library_packages`. The same query checks `executable_package`.
+Each recorded repository's `supplies` lists the kept packages, and the
+executable's package, that the archive does not offer and its package files
+list, so the export can leave out those only a repository it does not declare
+supplies, such as one whose key the content budget later dropped. Sonames
+found nowhere are listed in
 `missing_libraries`, and libraries no package owns in `unpackaged_libraries`.
 `library_packages_reason` says why the lists are incomplete: the executable is
 not an ELF image (a launcher script, for example), `ldconfig`, `dpkg-query` or

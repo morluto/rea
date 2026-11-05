@@ -227,17 +227,15 @@ export const installablePackages = async (
 /**
  * Keep the library packages the computer can install: those some version of
  * which the Ubuntu 24.04 archive or a declared vendor source offers, as
- * `apt-cache policy` lists them; the rest are recorded as uninstallable.
+ * `apt-cache policy` listed them for `installablePackages`; the rest are
+ * recorded as uninstallable.
  */
-export const installableLibraries = async (
+export const installableLibraries = (
   libraries: LibraryPackages,
-  available: Parameters<typeof installablePackages>[1],
-  runQuery: QueryRunner,
-  signal: AbortSignal | undefined,
-): Promise<LibraryPackages> => {
+  split: Awaited<ReturnType<typeof installablePackages>>,
+): LibraryPackages => {
   const names = libraries.library_packages;
-  const split = await installablePackages(names, available, runQuery, signal);
-  if (split === undefined)
+  if (split === undefined && names.length > 0)
     return {
       ...libraries,
       library_packages: [],
@@ -249,9 +247,11 @@ export const installableLibraries = async (
         .filter((reason) => reason !== undefined)
         .join("; "),
     };
+  const installable = (name: string) =>
+    split?.installable.includes(name) === true;
   return {
     ...libraries,
-    library_packages: split.installable,
-    uninstallable_library_packages: split.uninstallable,
+    library_packages: names.filter(installable),
+    uninstallable_library_packages: names.filter((name) => !installable(name)),
   };
 };

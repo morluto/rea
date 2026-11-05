@@ -4,9 +4,9 @@ import {
   electronLaunchArguments,
   exportInstall,
   fromUbuntuNobleArchive,
-  installLimitations,
   repositoryRefusal,
 } from "./appExportInstall.js";
+import { installLimitations } from "./appExportInstallLimitations.js";
 import {
   VARICAD_FILE,
   VARICAD_URL,
@@ -269,6 +269,82 @@ describe("exportInstall with the program in another package", () => {
         field: "capture",
         reason: `The desktop entry belongs to vim-common, but the program it runs belongs to vim, which the computer cannot install: ${reason}.`,
       }),
+    });
+  });
+});
+
+describe("exportInstall with repositories the export leaves out", () => {
+  const mirror = (supplies: readonly string[]) =>
+    repository({
+      source: "https://mirror.typora.example/linux ./ Packages",
+      uri: "https://mirror.typora.example/linux",
+      signing_key: { ...KEY, sha256: "c".repeat(64) },
+      supplies: [...supplies],
+    });
+  // The capture could not retain this repository's key, so the export leaves it out.
+  const dropped = (supplies: readonly string[]) =>
+    repository({
+      signing_key: null,
+      signing_key_reason:
+        "the verified key /etc/apt/trusted.gpg.d/typora.gpg did not fit the capture's content budget, so it was not retained",
+      supplies: [...supplies],
+    });
+  const installed = (
+    repositories: readonly AptRepository[],
+    extra: Partial<DesktopPackage> = {},
+  ): DesktopPackage => ({
+    ...typora(repositories),
+    library_packages: ["libgbm1", "libvendor1", "libshared1"],
+    ...extra,
+  });
+
+  it("refuses the program's package when only a repository it leaves out supplies it", () => {
+    const refused = exportInstall(
+      installed([dropped(["typora-bin"]), mirror([])], {
+        executable_package: "typora-bin",
+      }),
+      "typora",
+      "arm64",
+    );
+
+    expect(refused).toEqual({
+      ok: false,
+      error: expect.objectContaining({
+        reason:
+          "The desktop entry belongs to typora, but the program it runs belongs to typora-bin, which the computer cannot install: only apt repositories the export leaves out offer it.",
+      }),
+    });
+  });
+
+  it("installs only the library packages a declared repository or the archive still offers, and says which it left out", () => {
+    const vendor = exportInstall(
+      installed([
+        dropped(["libshared1", "libvendor1"]),
+        mirror(["libshared1"]),
+      ]),
+      "typora",
+      "arm64",
+    );
+    const fromFile = exportInstall(
+      varicadPackage({ apt_repositories: [dropped(["libxt6t64"])] }),
+      "varicad",
+      "x64",
+      VARICAD_URL,
+    );
+
+    if (!vendor.ok) throw new Error(vendor.error.reason);
+    expect(vendor.value).toMatchObject({
+      libraryPackages: ["libgbm1", "libshared1"],
+      strandedPackages: ["libvendor1"],
+    });
+    expect(
+      installLimitations(vendor.value, installed([]), false).join("\n"),
+    ).toContain(
+      "in packages only the apt repositories left out offer: libvendor1",
+    );
+    expect(fromFile).toMatchObject({
+      ok: true,
+      value: { libraryPackages: ["libgl1"], strandedPackages: ["libxt6t64"] },
     });
   });
 });

@@ -8,8 +8,14 @@ import {
   fromUbuntuNobleArchive,
   repositoryRefusal,
 } from "../domain/desktop/appExportInstall.js";
-import { declaredPackageFiles } from "../domain/desktop/aptRepositories.js";
-import type { DesktopApplicationInventory } from "../domain/desktop/desktopCapture.js";
+import {
+  declaredPackageFiles,
+  repositorySupplies,
+} from "../domain/desktop/aptRepositories.js";
+import type {
+  AptRepository,
+  DesktopApplicationInventory,
+} from "../domain/desktop/desktopCapture.js";
 import {
   DPKG_STATUS_FORMAT,
   ownershipCandidates,
@@ -136,41 +142,42 @@ const installFacts = async (
   context.limitations.push(...vendor.limitations);
   for (const [sha256, bytes] of vendor.keys)
     context.signingKeys.set(sha256, bytes);
+  const usable = (repository: AptRepository) =>
+    repositoryRefusal(repository) === undefined;
   const declared = declaredPackageFiles(
-    vendor.repositories.filter(
-      (repository) => repositoryRefusal(repository) === undefined,
-    ),
+    vendor.repositories.filter(usable),
     vendor.indexTargets,
   );
   const program = installed.executable_package;
+  const split = await installablePackages(
+    [
+      ...(libraries?.library_packages ?? []),
+      ...(program === undefined ? [] : [program]),
+    ],
+    { origins, declared },
+    runQuery,
+    context.signal,
+  );
+  // The export checks these against the repositories it still declares.
+  const supplies = (repository: AptRepository) =>
+    split === undefined || !usable(repository)
+      ? []
+      : repositorySupplies(repository, split.supplied, vendor.indexTargets);
   return {
-    apt_repositories: [...vendor.repositories],
-    ...(libraries === undefined
-      ? {}
-      : await installableLibraries(
-          libraries,
-          { origins, declared },
-          runQuery,
-          context.signal,
-        )),
-    ...(program === undefined
-      ? {}
-      : await executablePackageFacts(program, { origins, declared }, context)),
+    apt_repositories: vendor.repositories.map((repository) => ({
+      ...repository,
+      supplies: [...supplies(repository)],
+    })),
+    ...(libraries === undefined ? {} : installableLibraries(libraries, split)),
+    ...(program === undefined ? {} : executablePackageFacts(program, split)),
   };
 };
 
 /** Why the computer cannot install the executable's package by name beside the entry's, by the library packages' rule; nothing when it can. */
-const executablePackageFacts = async (
+const executablePackageFacts = (
   name: string,
-  available: Parameters<typeof installablePackages>[1],
-  { host, signal }: InventoryContext,
-): Promise<Pick<Package, "executable_package_reason">> => {
-  const split = await installablePackages(
-    [name],
-    available,
-    host.runQuery,
-    signal,
-  );
+  split: Awaited<ReturnType<typeof installablePackages>>,
+): Pick<Package, "executable_package_reason"> => {
   if (split?.installable.includes(name) === true) return {};
   return {
     executable_package_reason:

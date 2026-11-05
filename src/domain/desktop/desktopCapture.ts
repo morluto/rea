@@ -90,6 +90,8 @@ const aptRepositorySchema = z.strictObject({
   signing_key: aptSigningKeySchema.nullable(),
   /** Why no signing key was verified, or why the repository was not checked. */
   signing_key_reason: z.string().optional(),
+  /** Installable library packages, and the executable's package, that the Ubuntu 24.04 archive does not offer and this repository's package files list; absent from captures written before it was recorded. */
+  supplies: z.array(z.string()).optional(),
 });
 export type AptRepository = z.infer<typeof aptRepositorySchema>;
 

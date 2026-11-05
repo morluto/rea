@@ -182,7 +182,8 @@ export const libraryPackageNames = (
 /**
  * Library packages the computer can install, and the rest: a package is
  * installable when some version of it comes from the Ubuntu 24.04 archive
- * or from one of the vendor sources the export declares.
+ * or from one of the vendor sources the export declares. `supplied` names the
+ * declared sources of each installable package the archive does not offer.
  */
 export const installableLibraryPackages = (
   names: readonly string[],
@@ -193,21 +194,26 @@ export const installableLibraryPackages = (
     readonly origins: ReadonlyMap<string, string | null> | undefined;
     readonly declared: ReadonlySet<string>;
   },
-): { readonly installable: string[]; readonly uninstallable: string[] } => {
+): {
+  readonly installable: string[];
+  readonly uninstallable: string[];
+  readonly supplied: ReadonlyMap<string, readonly string[]>;
+} => {
   const installable: string[] = [];
   const uninstallable: string[] = [];
+  const supplied = new Map<string, readonly string[]>();
   for (const name of names) {
     const sources = available.sources.get(name) ?? [];
-    const offered =
-      sources.some((source) => available.declared.has(source)) ||
-      fromUbuntuNobleArchive(
-        sources,
-        available.origins === undefined
-          ? undefined
-          : sources.map((source) => available.origins?.get(source) ?? null),
-      );
-    if (offered) installable.push(name);
+    const declared = sources.filter((source) => available.declared.has(source));
+    const archive = fromUbuntuNobleArchive(
+      sources,
+      available.origins === undefined
+        ? undefined
+        : sources.map((source) => available.origins?.get(source) ?? null),
+    );
+    if (archive || declared.length > 0) installable.push(name);
     else uninstallable.push(name);
+    if (!archive && declared.length > 0) supplied.set(name, declared);
   }
-  return { installable, uninstallable };
+  return { installable, uninstallable, supplied };
 };

@@ -52,7 +52,10 @@ folder to build the environment; this step builds nothing.
   runs belongs to `libreoffice-common`, which does not depend on Writer. When
   the two differ, `executable_package` names the executable's, with
   `executable_package_reason` when neither the Ubuntu 24.04 archive nor a
-  declared vendor repository offers it or apt could not say. A `dpkg-query`
+  declared vendor repository offers it or apt could not say; each vendor
+  repository records in `supplies` the library packages and executable's
+  package only vendor repositories offer that its package files list. A
+  `dpkg-query`
   lookup that does not finish or exits with an error leaves the package
   `unknown`, with a limitation naming the path. It marks
   Electron applications by the fuse sentinel or `resources/app.asar`, and

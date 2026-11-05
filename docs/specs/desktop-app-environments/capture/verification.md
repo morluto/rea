@@ -103,13 +103,22 @@ failed on the first fix:
   now leaves the package `unknown` with a limitation naming the path, for the
   entry and the executable, after a timeout or an exit status of 2.
 
+A later review found that both the program's package and library packages
+were approved at capture against every repository with a verified key, while
+the content budget can then drop a repository's key and the export leaves that
+repository out. Repositories now record what they `supply`, and the export
+leaves out library packages, and refuses a program's package, that only
+repositories it leaves out supply. A capture adapter test, two export domain
+tests and a key-retention service test that drops one of two keys under the
+per-file limit cover it.
+
 Each new test failed on the code before its fix, run in a copy of that commit
 with only the new tests added. `npm run typecheck`, `lint`, `lint:typed`
 (no diagnostics in the touched files), `format:check`, `build:cached`,
 `knip`, `jscpd`, `docs:check`, `docs:build`, `verify:test-discovery` and
 `verify:architecture-guards` passed, and
 `npx vitest run src/domain/desktop src/application/desktop src/desktop tests/boundary/cli/cliStartupImports.test.ts`
-ran 344 passed and 18 skipped. Neither application was captured again.
+ran 347 passed and 18 skipped. Neither application was captured again.
 
 ## Limits of this verification
 

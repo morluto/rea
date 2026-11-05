@@ -63,13 +63,15 @@ The class declares:
   leaves out dependencies on the libraries it loads, as Typora's Electron
   package does, still starts; library packages the capture found neither the
   Ubuntu 24.04 archive nor a declared repository offers are left out, with a
-  limitation. An archive package's declared dependencies are trusted as they
+  limitation, and so are those only repositories the export leaves out supply
+  (a repository's `supplies`), such as one whose key the capture could not
+  retain. An archive package's declared dependencies are trusted as they
   are. When the desktop entry's package is not the one that owns the program
   it runs, as `vim-common`'s entry runs `vim`'s program, the program's package
   (`executable_package`) follows the app's by name, since the entry's package
   need not depend on it; a capture that found no archive or declared
   repository offering it records why, and the export refuses it with that
-  reason. The package must come from the Ubuntu 24.04 archive or a mirror of it,
+  reason, as it does when only repositories it leaves out supply it. The package must come from the Ubuntu 24.04 archive or a mirror of it,
   or from a vendor apt repository whose signing key the capture verified and
   retained. A source counts as the archive when apt reports its origin as
   `Ubuntu` for a noble suite; a capture made before origins were recorded

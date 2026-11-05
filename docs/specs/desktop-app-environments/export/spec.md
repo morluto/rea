@@ -18,7 +18,9 @@ state through `data/add`, `data/get` and `data/reset`.
   without an application window, and environment names that are not portable.
 - The class declares the apt package, and the package of the program the
   desktop entry runs when another one owns it (refused when the capture found
-  no source the computer can install that package from), the captured launch
+  no source the computer can install that package from, or only repositories
+  the export leaves out supply it, as library packages so supplied are left
+  out), the captured launch
   command with
   arguments under the captured home respelled under `$HOME`, an exact window
   class match with a window ready check, `paths` from the state view's roles

@@ -29,8 +29,8 @@ import {
 import {
   INSTALL_SCRIPT,
   electronLaunchArguments,
-  installLimitations,
 } from "../../domain/desktop/appExportInstall.js";
+import { installLimitations } from "../../domain/desktop/appExportInstallLimitations.js";
 import type { DesktopApplicationCapture } from "../../domain/desktop/desktopCapture.js";
 import {
   desktopApplicationStateSchema,

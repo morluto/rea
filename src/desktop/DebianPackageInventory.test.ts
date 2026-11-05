@@ -553,6 +553,8 @@ describe.skipIf(process.platform === "win32")("library packages", () => {
           signing_key: expect.objectContaining({
             fingerprint: VENDOR_A.fingerprint,
           }),
+          // libnss3 comes from the archive, which does not depend on the repository.
+          supplies: ["libnspr4"],
         },
       ],
       library_packages: ["libnspr4", "libnss3"],
