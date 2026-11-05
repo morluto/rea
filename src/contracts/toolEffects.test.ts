@@ -263,3 +263,11 @@ it("advertises signature inspection's temporary snapshot filesystem writes", () 
     launchesProcess: true,
   });
 });
+
+it("advertises inspect_macho's temporary private operand filesystem writes", () => {
+  expect(TOOL_EFFECTS.inspect_macho).toMatchObject({
+    writesFilesystem: true,
+    mutatesTarget: false,
+    launchesProcess: true,
+  });
+});

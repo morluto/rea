@@ -3,6 +3,7 @@ import {
   NATIVE_OBSERVATION_OPERATIONS,
 } from "../native/nativeObservation.js";
 import { projectNativeObservationView } from "./nativeObservationView.js";
+import { projectNativeInstructionReferencesView } from "./nativeInstructionReferencesView.js";
 import { projectNativeValueTraceView } from "./nativeValueTraceView.js";
 import { projectDevicetreeView } from "./devicetreeView.js";
 import { projectApkSignatureView } from "./apkSignatureView.js";
@@ -19,6 +20,7 @@ import { projectJavaScriptRoutesView } from "./javascriptRoutesView.js";
 import { projectWebBundleView } from "./webBundleView.js";
 import { projectSourceToBundleView } from "./sourceToBundleView.js";
 import { projectFeatureTraceView } from "./featureTraceView.js";
+import { projectNativeFeatureTraceView } from "./nativeFeatureTraceView.js";
 import { projectBatchDecompileView } from "./batchDecompileView.js";
 import { projectGpuCodeObjectsView } from "./gpuCodeObjectsView.js";
 import { projectModelArtifactView } from "./modelArtifactView.js";
@@ -145,6 +147,7 @@ import {
   modelArtifactPageViewResultSchema,
   il2cppMetadataSummaryViewResultSchema,
   nativeInventorySummaryViewResultSchema,
+  nativeFeatureTraceSummaryViewResultSchema,
   nativeLoadImageSummaryViewResultSchema,
   nativeFunctionMatchingSummaryViewResultSchema,
   nativeFunctionSummaryViewResultSchema,
@@ -166,6 +169,7 @@ export {
 };
 export {
   nativeObservationSummaryViewResultSchemas,
+  nativeFeatureTraceSummaryViewResultSchema,
   byteEntropySummaryViewResultSchema,
   nativeExportsSummaryViewResultSchema,
   devicetreeSummaryViewResultSchema,
@@ -258,7 +262,11 @@ const unsupportedParent = (
   new AnalysisUnsupportedTargetError(
     INSPECT_ANALYSIS_VIEW_OPERATION,
     parentArtifactPath(parent),
-    `Parent Evidence operation ${JSON.stringify(parent.operation)} does not support analysis views. Use completed Evidence from a supported parent operation with a compatible view. For a summary receipt, use its normalized_result.parent_evidence_id rather than the receipt's own evidence_id.`,
+    `Parent Evidence operation ${JSON.stringify(parent.operation)} does not support analysis views.`,
+    {
+      remediationAction:
+        "For an analysis view, select completed Evidence from a supported parent operation and a compatible view. For a summary receipt, use normalized_result.parent_evidence_id. To read this record, use the original complete Evidence directly; for session-retained records, request get_evidence_bundle with detail complete or use export_evidence_bundle. Complete bundle delivery may exceed the MCP response budget.",
+    },
   );
 
 const parentArtifactPath = (parent: AnalysisViewParent): string => {
@@ -301,6 +309,8 @@ const retain = (
 ): readonly [string, RetainedViewProjector] => [operation, project];
 
 const retainedViewProjectors = new Map<string, RetainedViewProjector>([
+  retain("inspect_native_instruction", projectNativeInstructionReferencesView),
+  retain("trace_feature", projectNativeFeatureTraceView),
   ...NATIVE_OBSERVATION_OPERATIONS.map((operation) =>
     retain(operation, projectNativeObservationView),
   ),
@@ -438,6 +448,8 @@ export const projectAnalysisView = (
     parent.operation === "match_native_functions"
       ? NATIVE_FUNCTION_MATCHING_PREDICATE
       : parent.operation === "analyze_function" ||
+          parent.operation === "inspect_native_instruction" ||
+          parent.operation === "trace_feature" ||
           parent.operation === "batch_decompile" ||
           isNativeObservationOperation(parent.operation) ||
           isNativeInventoryOperation(parent.operation)

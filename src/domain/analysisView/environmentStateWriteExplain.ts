@@ -32,6 +32,7 @@ import {
   slugSpellings,
   sortedStrings,
   type ClockFormat,
+  type ClockReading,
 } from "./environmentStateWriteValues.js";
 import {
   composedValue,
@@ -664,6 +665,11 @@ export const responseShapeOf = (
   return { ordinal, shape: "recorded", pointer: null };
 };
 
+const compareClockReadings = (
+  left: ClockReading,
+  right: ClockReading,
+): number => left.ms - right.ms || left.subMillisecond - right.subMillisecond;
+
 /** Order two field values as numbers, instants or text; undefined when they are not comparable. */
 export const compareValues = (
   left: JsonValue | undefined,
@@ -672,8 +678,7 @@ export const compareValues = (
   const [a, b] = [integerOf(left), integerOf(right)];
   if (a !== undefined && b !== undefined) return a - b;
   const [c, d] = [readClock(left), readClock(right)];
-  if (c !== undefined && d !== undefined)
-    return c.ms - d.ms || c.subMillisecond - d.subMillisecond;
+  if (c !== undefined && d !== undefined) return compareClockReadings(c, d);
   return typeof left === "string" && typeof right === "string"
     ? compare(left, right)
     : undefined;
@@ -702,7 +707,8 @@ const UUID_V4 =
 
 /**
  * Whether a collection's identities order nothing: version 4 UUIDs, or values every creation clock
- * lists in another order. Time-ordered ids (ObjectId, ULID, TSID, version 7 UUIDs) follow a clock.
+ * lists in another order. Only recognized clock observations establish that order.
+ * Time-ordered ids (ObjectId, ULID, TSID, version 7 UUIDs) follow a clock.
  */
 export const randomIdentities = (
   members: readonly JsonObject[],
@@ -718,16 +724,16 @@ export const randomIdentities = (
     (left, right) =>
       compareValues(ownMember(left, idField), ownMember(right, idField)) ?? 0,
   );
-  return clocks.every((clock) =>
-    byId.some(
-      (member, index) =>
-        index > 0 &&
-        (compareValues(
-          ownMember(byId[index - 1]!, clock),
-          ownMember(member, clock),
-        ) ?? 1) > 0,
-    ),
-  );
+  return clocks.every((clock) => {
+    const values = byId.flatMap((member) => {
+      const reading = readClock(ownMember(member, clock));
+      return reading === undefined ? [] : [reading];
+    });
+    return values.some((value, index) => {
+      if (index === 0) return false;
+      return compareClockReadings(values[index - 1]!, value) > 0;
+    });
+  });
 };
 
 /**
