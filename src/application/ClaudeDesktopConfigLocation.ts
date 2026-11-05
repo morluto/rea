@@ -120,6 +120,20 @@ export const resolveWindowsClaudeDesktopLocation = (
       path: join(packagesDirectory, foreign[0] ?? ""),
       message: `MSIX package storage ${foreign.map((name) => join(packagesDirectory, name)).join(", ")} has an unrecognized Claude Desktop package identity or deployment (the supported identity is ${CLAUDE_DESKTOP_PACKAGE_FAMILY}). REA cannot establish which ${CONFIG_FILE} that package reads and does not fall back to ${appDataConfigPath}. Quit Claude Desktop fully and register REA in the configuration the installed app reads.`,
     });
+  const migratedDirectory = join(
+    roots.local,
+    "Claude-Data",
+    CLAUDE_DESKTOP_PACKAGE_FAMILY.toLowerCase(),
+  );
+  const migrated = present(fileSystem, migratedDirectory);
+  if (!migrated.ok) return migrated;
+  if (migrated.value) {
+    const configPath = join(migratedDirectory, CONFIG_FILE);
+    return err({
+      path: configPath,
+      message: `Found migrated Claude Desktop storage at ${migratedDirectory}. REA cannot verify which configuration the installed app reads. Quit Claude Desktop fully, verify whether it reads ${configPath}, then register REA manually in the active file.`,
+    });
+  }
   const family = families[0];
   if (family === undefined)
     return ok({ configPath: appDataConfigPath, markerPath: appDataDirectory });

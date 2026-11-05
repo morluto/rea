@@ -130,7 +130,7 @@ in the file the installed app reads:
 
 - Without Claude Desktop's MSIX package storage, setup uses
   `%APPDATA%\Claude\claude_desktop_config.json`.
-- The MSIX build (package family `Claude_pzs8sxrjxfjjc`, installed under
+- The legacy MSIX storage layout (package family `Claude_pzs8sxrjxfjjc`, installed under
   `C:\Program Files\WindowsApps\Claude_<version>_x64__pzs8sxrjxfjjc`)
   virtualizes AppData writes. Once it has saved its configuration, it reads
   the package-private copy
@@ -139,6 +139,11 @@ in the file the installed app reads:
   private copy when it exists. Before the package has saved one, they use the
   `%APPDATA%` file it still reads; with neither file, setup creates the
   private copy.
+- If `%LOCALAPPDATA%\Claude-Data\claude_pzs8sxrjxfjjc` exists, setup, doctor
+  and uninstall report an unresolved location. Migrated MSIX installations
+  have been observed reading `claude_desktop_config.json` in this directory.
+  Quit Claude Desktop and verify its active configuration before registering
+  manually. See [#8968](https://github.com/morluto/rea/issues/8968).
 - If `%LOCALAPPDATA%\Packages` holds a `Claude_<publisher ID>` package from
   another publisher, an `AnthropicPBC.Claude_<publisher ID>` package, or cannot
   be read, REA cannot establish which file Claude
