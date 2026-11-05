@@ -543,6 +543,7 @@ const publishOne = async (input: {
     decompiled.value.sourceDescriptor === undefined
       ? { status: "unknown", reason: "source_not_available" }
       : { status: "reported", source: decompiled.value.sourceDescriptor };
+  const facts = pseudocodeExportFacts(decompiled.value);
   const pseudocode = decompiled.value.result;
   if (typeof pseudocode !== "string" || pseudocode.length === 0) {
     const reason = pseudocodeFailure(pseudocode);
@@ -552,12 +553,12 @@ const publishOne = async (input: {
         failureRecord(input.procedure, body.fact, reason, {
           limitations: caveats,
           providerSource: observationSource,
+          ...establishedPseudocodeFields(facts),
         }),
       ),
       bodySupport: body.support,
     };
   }
-  const facts = pseudocodeExportFacts(decompiled.value);
   const relativePath = input.session.pathFor(input.procedure.address);
   const bytes = Buffer.from(
     functionFileText({

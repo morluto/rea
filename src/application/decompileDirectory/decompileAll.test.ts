@@ -224,6 +224,9 @@ const harness = (options?: {
             ok(
               createAnalysisExecution("", provider, {
                 analysisProfile: profile,
+                ...(options?.pseudocodeRawResult === undefined
+                  ? {}
+                  : { rawResult: options.pseudocodeRawResult }),
               }),
             ),
           );
@@ -232,6 +235,9 @@ const harness = (options?: {
             ok(
               createAnalysisExecution(null, provider, {
                 analysisProfile: profile,
+                ...(options?.pseudocodeRawResult === undefined
+                  ? {}
+                  : { rawResult: options.pseudocodeRawResult }),
               }),
             ),
           );
@@ -476,6 +482,45 @@ describe("decompile_all pseudocode language facts", () => {
       }),
     ]);
   });
+
+  it.each([
+    ["null", "no_pseudocode"],
+    ["empty", "empty_pseudocode"],
+  ] as const)(
+    "keeps retained facts on the failure record when pseudocode is %s",
+    async (failure, code) => {
+      const { tools } = harness({
+        procedures: [{ address: "0x1000", name: "main" }],
+        fail: { "0x1000": failure },
+        pseudocodeRawResult: {
+          language: "c",
+          representation: "provider-pseudocode",
+          source: { kind: "project-export" },
+        },
+      });
+      const result = await run(tools, directory());
+      if (!result.ok) throw result.error;
+
+      const index = decompileDirectoryIndexSchema.parse(
+        JSON.parse(
+          await readFile(
+            join(directory(), DECOMPILE_DIRECTORY_INDEX_NAME),
+            "utf8",
+          ),
+        ),
+      );
+      expect(index.functions).toEqual([
+        expect.objectContaining({
+          address: "0x1000",
+          status: "failed",
+          failure: expect.objectContaining({ code }),
+          language: "c",
+          representation: "provider-pseudocode",
+          source: "project-export",
+        }),
+      ]);
+    },
+  );
 });
 
 describe("decompile_all external functions", () => {
