@@ -541,6 +541,7 @@
 * **javascript:** report SVG script references and skipped bodies ([#8627](https://github.com/morluto/rea/issues/8627)) ([20a282a](https://github.com/morluto/rea/commit/20a282a1813f45d66f4ab2e76880a8eebba0f9bc))
 * **javascript:** require exactly one fork IPC channel ([#8017](https://github.com/morluto/rea/issues/8017)) ([007e181](https://github.com/morluto/rea/commit/007e181f680250f8b2325c6e0c2d993058d0dd2a))
 * **javascript:** resolve inline Request URLs in fetch calls ([09c889b](https://github.com/morluto/rea/commit/09c889b3b5c6df26c47565cc1b8fcad8864c8710))
+* **javascript:** resolve module-level Electron options in functions ([#8960](https://github.com/morluto/rea/issues/8960)) ([a2134b3](https://github.com/morluto/rea/commit/a2134b3a74f335cdabd99582ee2dda4ddc336070))
 * **javascript:** resolve preceding exported variable initializers and computed method keys ([#5387](https://github.com/morluto/rea/issues/5387)) ([cbeeeda](https://github.com/morluto/rea/commit/cbeeeda97b33c1ea7e00890b17b9b5870389043f))
 * **javascript:** resolve relative ESM backslash paths ([#4323](https://github.com/morluto/rea/issues/4323)) ([1903220](https://github.com/morluto/rea/commit/19032204aacde0f6d36b2f55006bd0e51a43d54c))
 * **javascript:** resolve variable initializers before computed method keys ([cbeeeda](https://github.com/morluto/rea/commit/cbeeeda97b33c1ea7e00890b17b9b5870389043f))
