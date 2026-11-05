@@ -195,7 +195,10 @@ AppImages are recognised from their paths, and flatpaks also from a
 the fuse sentinel in their binary or a `resources/app.asar` beside it. State
 directories are the XDG config, data, state and cache folders and the
 dot-folder named after the package, the executable, the desktop entry id and
-name, with whether each existed at the start. A `flatpak run` launch is named
+name, with whether each existed at the start. Dotfiles in the home named after
+the application (`.<name>rc`, or `.<name>` followed by `-`, `.` or `_`, for a
+name of three or more characters) that exist at the start join them, since an
+application may only read such a file during the capture. A `flatpak run` launch is named
 after its application id rather than the `flatpak` launcher, and adds
 `~/.var/app/<id>`.
 

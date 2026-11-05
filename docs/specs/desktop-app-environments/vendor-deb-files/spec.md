@@ -73,6 +73,16 @@ capture nor the bundle holds the package.
   version. A dependency entry whose first alternative names no package is
   listed as not installed.
 
+- Found by VariCAD, the first such application, and needed by any like it:
+  - The capture's state roots include dotfiles in the home named after the
+    application (`.<name>rc`, or `.<name>` followed by `-`, `.` or `_`), so a
+    file it writes on its first run and only reads afterwards is seeded.
+  - Seeding respells the captured home in UTF-16 text files that start with a
+    byte-order mark, keeping the mark.
+  - Readiness also waits for a window of the application's class that the
+    taskbar lists, so a splash screen of the class does not count as the
+    application being ready.
+
 ## Non-goals
 
 - Downloading the package from the vendor's site, or keeping it in the

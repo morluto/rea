@@ -88,7 +88,9 @@ The class declares:
   A vendor package captured on any other architecture is refused. A package
   installed from its `.deb` file supports only that file's architecture.
 - A launch at boot with the captured command, ready when a window of the
-  captured class appears. Arguments that are the captured home or under it, and
+  captured class appears and one of them is listed in the taskbar: a splash
+  screen or a dialog of the class skips the taskbar, and an app whose splash
+  shows first would otherwise count as ready before its own window opens. Arguments that are the captured home or under it, and
   `<option>=<path>` values under it, are respelled under the computer user's
   `$HOME`. agentenv starts the app in its own folder, so when an argument is
   relative the command first changes to the captured working directory
@@ -118,8 +120,9 @@ The class declares:
 
 Seeded text files (text, JSON, key files and XML in the state view) have the
 captured home path respelled to the computer's home wherever it is followed by
-`/`, the end of the text, or a character that cannot continue a file name;
-other files are copied as captured. A file under the owned paths whose starting
+`/`, the end of the text, or a character that cannot continue a file name. A
+UTF-16 file that starts with a byte-order mark and holds the captured home is
+respelled the same way, keeping its mark; other files are copied as captured. A file under the owned paths whose starting
 bytes the capture did not retain is not seeded: one in the state view without
 retained baseline content, or one the capture omitted (for example too large
 or past the content budget). The result lists them in `unseeded_files` and the
