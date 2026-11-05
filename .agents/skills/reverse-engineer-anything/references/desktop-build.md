@@ -116,11 +116,11 @@ the first source that has the app:
   time", may not reach the seed, so expect the dialog in the witness too.
 - Give what the task changes a stable name where the app has one, such as an
   id in Inkscape's Object Properties, so a check can select it.
-- Watch for apps that split text into runs. LibreOffice Writer stores
-  revision ids that split an edited paragraph into spans and give it an
-  automatic style such as `P1`: before the seed, turn off Tools → Options →
-  LibreOffice Writer → Comparison → "Store it when changing the document",
-  or choose checks the split does not break.
+- Expect apps to split text into runs: Writer's revision ids split an
+  edited paragraph into spans and may give it an automatic style such as
+  `P1`, and AbiWord wraps each insertion in `<c>`. Check such text whole
+  with `text_equals` (see Write the task), and find the paragraph by
+  something the edit keeps, such as AbiWord's `xid`.
 
 ## Build the seed and the edit
 
@@ -168,21 +168,26 @@ Write `{"name", "prompt", "checks"}` from the draft and what you did.
   A selector must match exactly one element, so give the target a unique id
   or style in the seed. The draft may suggest positional pointers; rewrite
   them. Only an element's text is read by position, as `children/0`.
+- When an app may split an element's text into runs, check it whole:
+  `text_equals` (or `text_contains` for a value inside a sentence) on the
+  element compares all its text, however it is split. Add
+  `normalize_whitespace: true` when the app may reflow spaces. Example, an
+  AbiWord paragraph by its stable id:
+  `{"kind": "text_contains", "file": "Documents/memo.abw", "pointer": "/root/children/[name=section]/children/[name=p][@xid=6]", "value": "at 3:30 PM"}`.
 - Where easy, add one check that the rest is untouched, such as another
   text's value the edit must leave alone. It is the one unchanged value
   worth checking; it passes on the seed too, which is fine, since the export
   needs only one check to fail there.
 - Give `value_equals` a `tolerance` for a number the app writes as text.
 - When the draft shows an XML document's changes as `lines`, REA read it
-  as text; AbiWord's `.abw`, whose DOCTYPE REA refuses, is one. Selectors
-  are impossible there, and `line_count` with `contains` only approximates
-  a value: `3:30` also matches `13:30`. Bound it with neighbouring text the
-  same edit types where you can, and name the check as approximate in the
-  report's limitations.
+  as text, for example because its DOCTYPE declares entities. Selectors are
+  impossible there, and `line_count` with `contains` only approximates a
+  value: `3:30` also matches `13:30`. Bound it with neighbouring text and
+  name the check as approximate in the report's limitations.
 - Some apps save a document reloaded from disk differently from one typed
   in the same session: AbiWord wraps each new insertion in its own markup.
-  Your build's end state hides this, so keep text checks inside what one
-  insertion types, and expect the witness to show the real format.
+  Your build's end state hides this, which is why whole-text checks matter;
+  expect the witness to show the real format.
 
 The kinds and pointer rules are in
 [the desktop tasks section](environments.md#pick-the-checks).
