@@ -370,6 +370,7 @@
 * **elf:** share section-table presence validation with notes ([#7706](https://github.com/morluto/rea/issues/7706)) ([c01ed78](https://github.com/morluto/rea/commit/c01ed783ac970a47546d664b6792f69cacc2fca9))
 * **elf:** validate completed note coverage ([3655dfd](https://github.com/morluto/rea/commit/3655dfd7d5db25f52a0a68c2651527d80935be2d))
 * **enhanced:** bound batch decompile input size ([#5937](https://github.com/morluto/rea/issues/5937)) ([585fe56](https://github.com/morluto/rea/commit/585fe56712105bf4d791def65fda054b4b28d5f6))
+* **enhanced:** restore batch input record limit ([146064c](https://github.com/morluto/rea/commit/146064c2e95a91245ce10d41674afb9a317d13ba))
 * **enhanced:** stop call graph traversals at unconfirmed provider cleanup ([#8516](https://github.com/morluto/rea/issues/8516)) ([35ae723](https://github.com/morluto/rea/commit/35ae7232bf5ddc0e26954557055f9c01fc4b8d6c))
 * **environment:** align comparison collection identity ([87e2cc2](https://github.com/morluto/rea/commit/87e2cc26d893a89c7f72ac35744634bb0e2dcb7a))
 * **environment:** align recorded probe chronology ([4bbd879](https://github.com/morluto/rea/commit/4bbd87953fa0ac78ca22e4321cce458558319205))
