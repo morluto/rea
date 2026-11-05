@@ -10,7 +10,7 @@ import {
   withPassiveDroppedEvents,
 } from "../../fixtures/passiveNetworkCapture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { cliTest } from "../../support/cli/cliFixture.js";
+import { cliTest, runFileCli } from "../../support/cli/cliFixture.js";
 
 const comparisonCases = () => {
   const before = passiveNetworkCapture();
@@ -187,10 +187,13 @@ cliTest.for(cases)(
     await Promise.all(
       paths.map((path, index) => writeFile(path, serialized[index]!)),
     );
-    const response = await cli.run({
+    const options = {
       arguments: ["compare-web-captures", ...paths, "--json"],
       environment: { REA_LOG_LEVEL: "silent" },
-    });
+    };
+    const response = await (name === "added" || name === "removed"
+      ? cli.run(options)
+      : runFileCli(cli, options));
     expect(response.exitCode, response.stderr).toBe(0);
     expectComparison(response.json, name, change);
     expect(

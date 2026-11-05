@@ -528,6 +528,12 @@ message names one reason:
 | `image-range-overlap`     | Two images claim the same type definitions.                                                                      |
 | `invalid-string`          | A name index is outside the strings section, its string is unterminated, or it is not valid UTF-8.               |
 
+Record extents are checked for the decoded images, types, methods, fields,
+properties, events, parameters, string literals, nested types, generic
+containers, generic parameters and interface offsets. Other header sections
+are checked for file bounds and overlap; their internal record layouts are not
+decoded or validated by this inventory.
+
 A version field that disagrees with the file's layout, for example a version
 39 file relabeled as 29, usually surfaces as `unexpected-header-size` or
 `record-size-mismatch`.

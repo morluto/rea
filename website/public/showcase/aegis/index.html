@@ -712,9 +712,16 @@ code = pad_with_zeroes(code, 6)</span></code></pre>
           <section class="article-section" id="try">
             <h2>Inspect the APK yourself</h2>
             <p>
-              <a href="../../get-started/">Set up REA</a> on macOS or Linux,
-              then download these two files into the same folder. On Windows,
-              use a Linux environment such as WSL.
+              <a href="../../get-started/">Set up REA</a>, then download these
+              two files into the same folder. On Windows x64, use a package with
+              matching Windows native controls and owned protocol stdin support;
+              see the
+              <a
+                href="https://github.com/morluto/rea/blob/main/docs/android-analysis.md"
+                >Android provider guide</a
+              >
+              for prerequisites and PowerShell setup. A Linux environment such
+              as WSL is another option.
             </p>
             <p>
               Android analysis needs a full JDK 17 or later. Select it with

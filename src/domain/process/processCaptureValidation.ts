@@ -310,15 +310,20 @@ const validateCoverage = (
       ),
     ],
   ] as const) {
-    // Whole frames are retained or omitted, so retained bytes are exactly the
-    // retained frames' bytes, and nothing is unretained when no frame was omitted.
+    const accountedBytes =
+      retention.retained_bytes +
+      (name === "raw_terminal"
+        ? (details.raw_terminal.redacted_bytes ?? 0)
+        : 0);
+    // Retained bytes describe the safe frames exactly. Removed private bytes
+    // remain charged to admitted input even when no whole frame was omitted.
     require(retention.retained_frames === count &&
       retention.observed_frames >= count &&
       retention.retained_bytes === bytes &&
-      retention.observed_bytes >= retention.retained_bytes &&
+      retention.observed_bytes >= accountedBytes &&
       (retention.observed_frames > count ||
-        retention.observed_bytes === retention.retained_bytes) &&
-      retention.retained_bytes <= retention.budget_bytes &&
+        retention.observed_bytes === accountedBytes) &&
+      accountedBytes <= retention.budget_bytes &&
       (retention.unknown_size_frames ?? 0) <=
         retention.observed_frames -
           retention.retained_frames, `truncation_details.${name}`, "retained observations and budget accounting do not agree");

@@ -24,6 +24,7 @@ import { PRODUCT_IDENTITY } from "../identity.js";
 import { isCliOperationFailure, logCliCommand } from "../cliLogging.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { swiftSymbolsSchema } from "../contracts/native/nativeToolContracts.js";
+import { localPathStringSchema } from "../domain/localPath.js";
 import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
 import { registerNativeCallCommands } from "./nativeCallCommands.js";
@@ -96,7 +97,7 @@ const registerNativeUiCommands = (
   runProviderAnalysis: DirectAnalysis["runProviderAnalysis"],
 ): void => {
   const pathArgument = z.object({
-    path: z.string().describe("Local native executable or app path"),
+    path: localPathStringSchema.describe("Local native executable or app path"),
   });
   cli.command(CLI_COMMANDS.observeNativeUi, {
     description:
@@ -198,7 +199,9 @@ const registerNativeCommands = (
   ] as const) {
     cli.command(command, {
       description: `Run ${tool} without launching Hopper`,
-      args: z.object({ path: z.string().describe("Mach-O or app path") }),
+      args: z.object({
+        path: localPathStringSchema.describe("Mach-O or app path"),
+      }),
       options: z.object({
         nativeCommandTimeoutMs: nativeCommandTimeoutField,
       }),
@@ -217,7 +220,9 @@ const registerNativeCommands = (
   }
   cli.command(CLI_COMMANDS.inspectPlist, {
     description: "Parse app plist metadata without launching Hopper",
-    args: z.object({ path: z.string().describe("App or Mach-O path") }),
+    args: z.object({
+      path: localPathStringSchema.describe("App or Mach-O path"),
+    }),
     options: z.object({
       relativePath: z
         .string()
@@ -247,7 +252,9 @@ const registerNativeCommands = (
   cli.command(CLI_COMMANDS.demangleSwift, {
     description: "Demangle Swift symbols without Hopper",
     args: z.object({
-      path: z.string().describe("Artifact path used for evidence identity"),
+      path: localPathStringSchema.describe(
+        "Artifact path used for evidence identity",
+      ),
       symbols: swiftSymbolsSchema.describe("Swift mangled symbols to demangle"),
     }),
     options: z.object({

@@ -270,11 +270,35 @@ it("keeps relevant dynamic frontiers unknown", () => {
       direction: "forward-influence",
     }),
   );
-  expect(result.status).toBe("found");
+  expect(result.status).toBe("partial");
   expect(result.coverage.status).toBe("partial");
   expect(result.unknowns).toMatchObject([
     { reason: "dynamic-call", relation_kinds: ["calls"] },
   ]);
+});
+
+it("reports partial status when retained graph facts were truncated", () => {
+  const graph = semanticFixtureGraph();
+  const partial = createJavaScriptSemanticGraph({
+    ...constructionInput(graph),
+    coverage: {
+      ...graph.coverage,
+      status: "partial",
+      truncated: true,
+      omitted_nodes: null,
+      omitted_relations: null,
+      limits: [{ name: "nodes", value: 1, unit: "items" }],
+    },
+    limitations: ["The node ceiling left omission extents unknown."],
+  });
+  const result = queryJavaScriptSemanticGraph(
+    partial,
+    javaScriptSemanticQueryInputSchema.parse({
+      seed: { kind: "literal", value: "TOKEN" },
+      direction: "forward-influence",
+    }),
+  );
+  expect(result.status).toBe("partial");
 });
 
 it("excludes candidate edges unless the caller explicitly opts in", () => {

@@ -16,7 +16,7 @@ import {
 import type {
   JavaScriptRpcEndpoint,
   JavaScriptRpcScan,
-} from "./javascriptRpcEndpoints.js";
+} from "./javascriptRpcEndpoint.js";
 
 /**
  * Find source-body string values owned by a GraphQL Source-shaped literal.

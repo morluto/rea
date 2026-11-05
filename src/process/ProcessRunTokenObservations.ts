@@ -68,8 +68,15 @@ export async function* readProcessRunTokens(
       } catch (cause: unknown) {
         signal?.throwIfAborted();
         const reason = errorMessage(cause);
+        const code =
+          cause instanceof Error &&
+          "code" in cause &&
+          typeof cause.code === "string"
+            ? cause.code
+            : undefined;
         observation = {
           state: "unavailable",
+          ...(code === undefined ? {} : { code }),
           reason:
             batchFailure === undefined
               ? reason
