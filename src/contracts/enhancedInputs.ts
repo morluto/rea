@@ -9,6 +9,8 @@ const traceLiteralInputSchema = z.strictObject({
   case_sensitive: z.boolean().default(false),
 });
 
+export const MAX_ENHANCED_RECORDS = 20_000;
+
 export const DEFAULT_CALL_RELATIONSHIP_DIRECTION = "forward";
 const callRelationshipDirectionSchema = z
   .enum(["forward", "backward"])
