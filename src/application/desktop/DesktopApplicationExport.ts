@@ -214,10 +214,12 @@ const planExport = (
     electronLaunchArguments(application.argv, electron),
     {
       home: host.home,
+      workingDirectory: application.working_directory,
       exec: application.desktop_entry?.exec ?? null,
       documents: [...seeds.keys()]
         .filter((home) => files.get(home)?.role === "document")
         .sort(),
+      isDocument: (home) => files.get(home)?.role === "document",
     },
   );
   const plan: DesktopAppExportPlan = {

@@ -129,8 +129,9 @@ The class declares:
   start screen: when the seed holds exactly one file the state view gives the
   `document` role, and the desktop entry's `Exec` takes files (a `%f`, `%F`,
   `%u` or `%U` field code), its path under `$HOME` is appended to the command.
-  A command that already names a file under the home, as one captured with
-  `--argument <file>` does, is kept as it is. A seed with no document launches
+  A command that already names a document, absolute or from its working
+  directory, as one captured with `--argument <file>` does, is kept as it is;
+  a settings path under the home does not count. A seed with no document launches
   as captured. With several, no desktop entry or an `Exec` that takes no file,
   the app launches as captured and the README and the result's limitations say
   why. A reset

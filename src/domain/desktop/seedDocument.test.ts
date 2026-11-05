@@ -5,11 +5,17 @@ import { openSeedDocument } from "./seedDocument.js";
 
 const HOME = "/home/ada";
 const poster = ["Documents/poster.svg"];
+/** The capture's home and working directory, with documents under `Documents`. */
+const AT_HOME = {
+  home: HOME,
+  workingDirectory: HOME,
+  isDocument: (path: string) => path.startsWith("Documents/"),
+};
 
 describe("openSeedDocument", () => {
   it("appends the seed's one document when Exec takes files, respelled under $HOME by the launch", () => {
     const opened = openSeedDocument(["inkscape"], {
-      home: HOME,
+      ...AT_HOME,
       exec: "inkscape %F",
       documents: poster,
     });
@@ -29,7 +35,7 @@ describe("openSeedDocument", () => {
     "opens the document for Exec %j",
     (exec) => {
       expect(
-        openSeedDocument(["app"], { home: HOME, exec, documents: poster })
+        openSeedDocument(["app"], { ...AT_HOME, exec, documents: poster })
           .opens,
       ).toEqual({ kind: "seed", document: "Documents/poster.svg" });
     },
@@ -37,7 +43,7 @@ describe("openSeedDocument", () => {
 
   it("keeps the launch and says why when the seed holds several documents or none", () => {
     const several = openSeedDocument(["inkscape"], {
-      home: HOME,
+      ...AT_HOME,
       exec: "inkscape %F",
       documents: ["Documents/a.svg", "Documents/b.svg"],
     });
@@ -51,7 +57,7 @@ describe("openSeedDocument", () => {
     });
     expect(
       openSeedDocument(["inkscape"], {
-        home: HOME,
+        ...AT_HOME,
         exec: "inkscape %F",
         documents: [],
       }),
@@ -64,7 +70,7 @@ describe("openSeedDocument", () => {
   it("keeps the launch when Exec takes no file or there is no desktop entry", () => {
     for (const exec of ["xcalc", "app %i %c"])
       expect(
-        openSeedDocument(["app"], { home: HOME, exec, documents: poster }),
+        openSeedDocument(["app"], { ...AT_HOME, exec, documents: poster }),
       ).toEqual({
         argv: ["app"],
         opens: {
@@ -74,7 +80,7 @@ describe("openSeedDocument", () => {
         },
       });
     expect(
-      openSeedDocument(["app"], { home: HOME, exec: null, documents: poster })
+      openSeedDocument(["app"], { ...AT_HOME, exec: null, documents: poster })
         .opens,
     ).toMatchObject({
       kind: "none",
@@ -82,15 +88,34 @@ describe("openSeedDocument", () => {
     });
   });
 
-  it("leaves a command that already names a file under the home alone", () => {
-    const argv = ["typora", `${HOME}/Documents/trip.md`];
+  it("leaves a command that already names a document alone, absolute or from its working directory", () => {
+    for (const [argv, workingDirectory] of [
+      [["typora", `${HOME}/Documents/trip.md`], HOME],
+      [["typora", "Documents/trip.md"], HOME],
+      [["typora", "trip.md"], `${HOME}/Documents`],
+    ] as const)
+      expect(
+        openSeedDocument(argv, {
+          ...AT_HOME,
+          workingDirectory,
+          exec: "typora %U",
+          documents: poster,
+        }),
+      ).toEqual({ argv, opens: { kind: "captured" } });
+  });
+
+  it("still opens the seed's document when the command names only settings under the home", () => {
+    const argv = ["geany", "--config", `${HOME}/.config/geany`];
 
     expect(
       openSeedDocument(argv, {
-        home: HOME,
-        exec: "typora %U",
+        ...AT_HOME,
+        exec: "geany %F",
         documents: poster,
       }),
-    ).toEqual({ argv, opens: { kind: "captured" } });
+    ).toEqual({
+      argv: [...argv, `${HOME}/Documents/poster.svg`],
+      opens: { kind: "seed", document: "Documents/poster.svg" },
+    });
   });
 });

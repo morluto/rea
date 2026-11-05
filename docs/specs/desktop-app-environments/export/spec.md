@@ -29,8 +29,8 @@ state through `data/add`, `data/get` and `data/reset`.
   differs only in letter case in the files' spelling, and folders of
   documents, nested ones collapsed) and the skill file. When the seed holds
   exactly one document and the desktop entry's `Exec` takes files, the
-  launch appends its path under `$HOME`; a command that names a file under
-  the home already is kept, a seed with no document launches as captured,
+  launch appends its path under `$HOME`; a command that already names a
+  document, absolute or from its working directory, is kept, a seed with no document launches as captured,
   and otherwise the README and the limitations say why the app opens no
   document.
 - With paths, it declares all three data hooks and calls agentenv's helpers:
