@@ -56,6 +56,7 @@ import { registerAdbCommands } from "./cli/adbCommands.js";
 import { registerEvidenceCommands } from "./cliEvidenceCommands.js";
 import { registerEnvironmentCommands } from "./cli/environmentCommands.js";
 import { registerProcessCommands } from "./cli/processCommands.js";
+import { registerDesktopCaptureCommands } from "./cli/desktopCaptureCommands.js";
 import { registerBrowserCommands } from "./cli/browserCommands.js";
 import { registerWebScriptCommands } from "./cli/webScriptCommands.js";
 import { registerWebModuleCommands } from "./cli/webModuleCommands.js";
@@ -234,6 +235,7 @@ export const createCli = (
       registerEvidenceCommands(cli, logger);
       registerEnvironmentCommands(cli, logger, environment);
       registerProcessCommands(cli, logger, environment);
+      registerDesktopCaptureCommands(cli, logger, environment);
       registerJavaScriptRecoveryCommands(cli, logger, environment);
       registerWebScriptCommands(cli, logger);
       registerWebModuleCommands(cli, logger, environment);

@@ -24,8 +24,8 @@ the registration uses them. Clearing either makes startup fail without resolving
 another package from the client's project. Restore the same installation before
 repairing it; an unidentified registration remains untouched. See
 [installation and recovery](installation.md#package-runners-and-global-installation).
-Setup does not copy your ambient environment into client
-settings. To refresh an older registration, preview
+Setup forwards supported, explicitly selected REA settings into client
+configuration, but does not copy unrelated ambient environment values. To refresh an older registration, preview
 `rea setup --client <client-id> --skill=false --dry-run`, then run the same command
 without `--dry-run` and approve the displayed changes. Setup preserves unrelated
 settings, backs up changed configuration and leaves an aligned registration
@@ -48,6 +48,31 @@ launcher; see [verification scope](client-verification.md#launch-environment-ver
 `rea doctor` has the same limit for provider checks, and reports a provider setting
 the registration's file does not carry as a
 [non-blocking unknown](installation.md#check-readiness-for-your-task).
+
+## Setting launch variables in PowerShell
+
+Shell examples that prefix a command with `REA_MCP_INPUT_SCHEMA_PROFILE=compact`
+use POSIX shell syntax. In PowerShell, set the process environment before
+launching REA:
+
+```powershell
+$env:REA_MCP_INPUT_SCHEMA_PROFILE = "compact"
+rea mcp doctor --json
+```
+
+The assignment applies to the current PowerShell process and commands it launches.
+Restore the previous value when finished, or use
+`Remove-Item Env:REA_MCP_INPUT_SCHEMA_PROFILE` if it was previously unset. It does
+not update an already running MCP server or desktop client.
+
+To select this profile for an agent, set `REA_MCP_INPUT_SCHEMA_PROFILE` in that
+client's existing REA registration `env` object (`environment` for OpenCode) and
+restart the client, preserving its other settings. A successful terminal doctor run does not verify the client's
+launch environment. See [launch-environment verification](client-verification.md#launch-environment-verification)
+and the client-specific instructions below. REA setup forwards supported selections,
+including `REA_MCP_INPUT_SCHEMA_PROFILE`, from its environment into the registration;
+it does not copy unrelated environment values. Restoring the shell's previous
+value does not undo a selection already saved by setup.
 
 ## Runtime settings and client deadlines
 

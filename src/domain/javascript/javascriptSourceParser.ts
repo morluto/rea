@@ -1,5 +1,6 @@
 import { parse, type ParserOptions, type ParserPlugin } from "@babel/parser";
 import * as t from "@babel/types";
+import { javaScriptDefinitionExpression } from "./javascriptAstValues.js";
 import { explicitJavaScriptLoaderMode } from "./javascriptModuleResolutionMode.js";
 import {
   hasOnlyInlineTypeExportSpecifiers,
@@ -280,3 +281,51 @@ export const parseJavaScriptSource = (
     return null;
   }
 };
+
+/** A script's top-level lexical this may be its ambient global; wrappers and modules isolate it. */
+export const javaScriptThisOwner = (
+  node: t.ThisExpression,
+  program: t.Program,
+  parents: WeakMap<t.Node, t.Node>,
+): "global" | "caller" | "isolated" => {
+  let child: t.Node = node;
+  let classDefinitionExpression = false;
+  let current: t.Node | undefined = parents.get(node);
+  while (current !== undefined && current !== program) {
+    const definitionExpression = javaScriptDefinitionExpression(current, child);
+    if (definitionExpression && !t.isObjectMethod(current))
+      classDefinitionExpression = true;
+    if (
+      (t.isClassProperty(current) ||
+        t.isClassPrivateProperty(current) ||
+        t.isClassAccessorProperty(current)) &&
+      current.value === child
+    )
+      return "isolated";
+    if (t.isStaticBlock(current)) return "isolated";
+    if (
+      t.isFunction(current) &&
+      !t.isArrowFunctionExpression(current) &&
+      !definitionExpression
+    )
+      return "caller";
+    if (
+      t.isClass(current) &&
+      current.superClass !== child &&
+      !classDefinitionExpression
+    )
+      return "isolated";
+    if (t.isClass(current)) classDefinitionExpression = false;
+    child = current;
+    current = parents.get(current);
+  }
+  return current === program && javaScriptRuntimeContext(program) === "unknown"
+    ? "global"
+    : "isolated";
+};
+
+export const javaScriptTopLevelThisMayBeGlobal = (
+  node: t.ThisExpression,
+  program: t.Program,
+  parents: WeakMap<t.Node, t.Node>,
+): boolean => javaScriptThisOwner(node, program, parents) === "global";
