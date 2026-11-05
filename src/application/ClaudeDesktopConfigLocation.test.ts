@@ -99,6 +99,11 @@ describe("Claude Desktop MSIX process view", () => {
         error: {
           path: join(migratedDirectory, "claude_desktop_config.json"),
           message: expect.stringContaining("migrated Claude Desktop storage"),
+          ...(hasLegacyStorage
+            ? {
+                msixPackage: expect.objectContaining({ processView: "direct" }),
+              }
+            : {}),
         },
       });
     },
