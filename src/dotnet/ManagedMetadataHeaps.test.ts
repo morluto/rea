@@ -39,6 +39,17 @@ describe("managed metadata heaps", () => {
     const layout = readManagedMetadataLayout(bytes, 0, bytes.length);
     expect(layout.streamNames).toEqual(["#GUID", "#Strings", "#~"]);
     expect(layout.blob).toBeNull();
+
+    bytes[16] = 0xff;
+    expect(() => readManagedMetadataLayout(bytes, 0, bytes.length)).toThrow(
+      expect.objectContaining({
+        issue: expect.objectContaining({
+          code: "invalid-metadata-root",
+          scope: "metadata.version",
+          offset: 16,
+        }),
+      }),
+    );
   });
 
   it("accepts the empty blob entry when an empty #Blob stream is omitted", () => {
