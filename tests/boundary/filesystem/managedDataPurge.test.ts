@@ -1,4 +1,11 @@
-import { lstat, mkdir, readFile, symlink, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  lstat,
+  mkdir,
+  readFile,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 
@@ -284,3 +291,160 @@ it("reports a retained Kuna cache reached through symlink parent traversal", asy
     await host.close?.();
   }
 });
+
+/** One caller selection that purge must not delete, with the namespace that holds it. */
+interface NestedSelection {
+  readonly label: string;
+  readonly namespace: "kuna" | "cache";
+  readonly skip?: boolean;
+  /** Create the selection's files and return the spellings purge receives. */
+  readonly prepare: (home: string) => Promise<{
+    readonly cacheHome: string;
+    readonly custom: string;
+    readonly evidence: string;
+  }>;
+}
+
+const withEvidence = async (directory: string): Promise<string> => {
+  await mkdir(directory, { recursive: true });
+  const evidence = join(directory, "evidence");
+  await writeFile(evidence, "caller evidence");
+  return evidence;
+};
+
+const nestedSelections: readonly NestedSelection[] = [
+  {
+    label: "inside the default Kuna cache",
+    namespace: "kuna",
+    prepare: async (home) => {
+      const cacheHome = join(home, "xdg-cache");
+      const custom = join(cacheHome, "rea", "kuna", "selected");
+      return { cacheHome, custom, evidence: await withEvidence(custom) };
+    },
+  },
+  {
+    label: "inside ~/.rea/cache",
+    namespace: "cache",
+    prepare: async (home) => {
+      const custom = join(home, ".rea", "cache", "selected");
+      return {
+        cacheHome: join(home, "xdg-cache"),
+        custom,
+        evidence: await withEvidence(custom),
+      };
+    },
+  },
+  {
+    label: "equal to ~/.rea/cache",
+    namespace: "cache",
+    prepare: async (home) => {
+      const custom = join(home, ".rea", "cache");
+      return {
+        cacheHome: join(home, "xdg-cache"),
+        custom,
+        evidence: await withEvidence(custom),
+      };
+    },
+  },
+  {
+    label: "with parent traversal in the cache home",
+    namespace: "kuna",
+    prepare: async (home) => {
+      const cacheHome = join(home, "xdg-cache");
+      const custom = join(cacheHome, "rea", "kuna", "selected");
+      return {
+        cacheHome: `${cacheHome}/../xdg-cache`,
+        custom,
+        evidence: await withEvidence(custom),
+      };
+    },
+  },
+  {
+    label: "reached through a symbolic link and parent traversal",
+    namespace: "cache",
+    skip: process.platform === "win32",
+    prepare: async (home) => {
+      const inner = join(home, ".rea", "cache", "inner");
+      await mkdir(inner, { recursive: true });
+      await mkdir(join(home, "outside"), { recursive: true });
+      await symlink(inner, join(home, "outside", "alias"), "dir");
+      const evidence = await withEvidence(
+        join(home, ".rea", "cache", "selected"),
+      );
+      return {
+        cacheHome: join(home, "xdg-cache"),
+        custom: `${home}/outside/alias/../selected`,
+        evidence,
+      };
+    },
+  },
+];
+
+it.for(nestedSelections.filter(({ skip }) => skip !== true))(
+  "keeps the namespace whole when a caller-selected Kuna cache is $label",
+  async ({ namespace, prepare }) => {
+    const home = await createTestTempDirectory("rea-managed-cache-nested-");
+    const { cacheHome, custom, evidence } = await prepare(home);
+    const host = systemUninstallHost(
+      home,
+      undefined,
+      { XDG_CACHE_HOME: cacheHome, REA_KUNA_CACHE_DIR: custom },
+      "linux",
+    );
+    try {
+      expect(await host.purgeData()).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            name: "kuna-custom-cache",
+            status: "retained",
+          }),
+          expect.objectContaining({ name: namespace, status: "retained" }),
+        ]),
+      );
+      expect(await readFile(evidence, "utf8")).toBe("caller evidence");
+    } finally {
+      await host.close?.();
+    }
+  },
+);
+
+it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+  "keeps the namespaces whole when the selection's location cannot be established",
+  async () => {
+    const home = await createTestTempDirectory("rea-managed-cache-unknown-");
+    const outside = join(home, "outside");
+    await mkdir(join(home, ".rea", "state"), { recursive: true });
+    const evidence = await withEvidence(
+      join(home, ".rea", "cache", "selected"),
+    );
+    await mkdir(outside);
+    await symlink(join(home, ".rea", "cache"), join(outside, "alias"), "dir");
+    const unrelated = await withEvidence(join(home, "unrelated"));
+    const host = systemUninstallHost(
+      home,
+      undefined,
+      {
+        XDG_CACHE_HOME: join(home, "xdg-cache"),
+        REA_KUNA_CACHE_DIR: `${outside}/alias/../cache/selected`,
+      },
+      "linux",
+    );
+    await chmod(outside, 0o000);
+    try {
+      expect(await host.purgeData()).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            name: "kuna-custom-cache",
+            status: "retained",
+          }),
+          expect.objectContaining({ name: "cache", status: "retained" }),
+        ]),
+      );
+      expect(await readFile(evidence, "utf8")).toBe("caller evidence");
+      expect(await readFile(unrelated, "utf8")).toBe("caller evidence");
+    } finally {
+      await chmod(outside, 0o755);
+      await host.close?.();
+    }
+  },
+);

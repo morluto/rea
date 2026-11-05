@@ -23,10 +23,8 @@ import {
   type JavaScriptBindingIndex,
   type JavaScriptSemanticBindingState,
 } from "./javascriptSemanticState.js";
-import {
-  semanticCopiedReferencePath,
-  semanticReferenceSourcesInactive,
-} from "./javascriptSemanticReferenceSources.js";
+import { semanticReferenceSourcesInactive } from "./javascriptSemanticReferenceSources.js";
+import { semanticCopiedReferencePath } from "./javascriptSemanticCopiedReferencePaths.js";
 import {
   semanticAliasSelectionChoices,
   type SemanticAliasSelectionPath,
@@ -470,7 +468,7 @@ export class JavaScriptRouteScan {
             const binding = semanticBindingAtRead(
               declared,
               node,
-              this.index.bindings.parentsByNode,
+              this.index.bindings,
             ).binding;
             for (const initializers of [
               binding.initializers,
@@ -1073,11 +1071,7 @@ export class JavaScriptRouteScan {
         javaScriptRuntimeContext(index.bindings.program) === "unknown"
       )
         unproven = node;
-      const read = semanticBindingAtRead(
-        binding,
-        node,
-        index.bindings.parentsByNode,
-      );
+      const read = semanticBindingAtRead(binding, node, index.bindings);
       if (!read.hasDefiniteInitializer) return;
       const initializer = semanticStableInitializer(
         read.binding,
