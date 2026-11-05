@@ -10,8 +10,9 @@ import type {
   JavaScriptSemanticResourceOperation,
 } from "./javascriptSemanticIr.js";
 import {
-  semanticStaticPropertyName,
+  isNullishJavaScriptSyntax,
   readExactJavaScriptLiteral,
+  semanticStaticPropertyName,
   staticObjectProperty,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
@@ -73,10 +74,11 @@ export const collectJavaScriptSemanticResources = (
       if (rejectsSocketPortLiteral(candidate.node, context)) return false;
       // `net.connect({ port })` and `tls.connect({ port })` validate the same
       // values inside an options object, so a provably bad one throws before a
-      // socket exists.
-      const options = socketOptionsObject(candidate.node);
-      if (options === undefined) return true;
-      return !rejectsOptionsPortLiteral(options, candidate.specifier, context);
+      // socket exists. `tls` merges a later options object over the first, so the
+      // effective port is read across every options argument.
+      const objects = socketOptionsObjects(candidate.node, candidate.specifier);
+      if (objects === undefined) return true;
+      return !rejectsOptionsPortLiteral(objects, candidate.specifier, context);
     },
   );
   return [
@@ -555,20 +557,98 @@ const socketPortInFirstArgument = (
 ): boolean => candidate.specifier === "net" || candidate.specifier === "tls";
 
 /**
- * The options object whose own `port` Node validates, or undefined.
+ * Whether a later argument may evaluate to an options object.
+ *
+ * Measured on Node 24.22.1: `tls.connect({port:-1}, null)`, `(…, undefined)`,
+ * `(…, 0)`, `(…, "x")` and `(…, [80])` all still throw, so only an object
+ * argument overrides the port. Those primitive shapes are decided exactly; an
+ * expression that could hold an object stays undecided.
+ */
+const laterArgumentMayBeOptionsObject = (argument: t.Node): boolean => {
+  if (t.isSpreadElement(argument)) return true;
+  const value = unwrapJavaScriptExpression(argument).node;
+  if (t.isObjectExpression(value)) return true;
+  if (isExactlyNonObjectExpression(value)) return false;
+  return true;
+};
+
+/** Expressions whose runtime value can never supply an options `port`. */
+const isExactlyNonObjectExpression = (value: t.Node): boolean => {
+  if (
+    t.isFunctionExpression(value) ||
+    t.isArrowFunctionExpression(value) ||
+    t.isStringLiteral(value) ||
+    t.isNumericLiteral(value) ||
+    t.isBooleanLiteral(value) ||
+    t.isBigIntLiteral(value) ||
+    t.isRegExpLiteral(value) ||
+    isNullishJavaScriptSyntax(value)
+  )
+    return true;
+  // An array literal owns only index keys, so merging it never replaces `port`,
+  // `path` or `socket`: `tls.connect({port:-1}, [80])` still throws on Node 24.22.1.
+  if (t.isArrayExpression(value)) return true;
+  // The unbound `undefined` global is `undefined`; a shadowed or reassigned name is
+  // not decided here.
+  if (t.isIdentifier(value) && value.name === "undefined") return true;
+  return (
+    t.isUnaryExpression(value) &&
+    (value.operator === "-" || value.operator === "+" || value.operator === "!")
+  );
+};
+
+/**
+ * The options objects whose own `port` Node validates, in argument order.
  *
  * Only a first argument that is an object literal reaches this path. A positional
  * port or Unix socket path in slot 0 takes precedence, so
  * `net.connect(80, { port: -1 })` still connects and its options `port` is never
  * validated.
+ *
+ * `tls.connect` merges every later options object over the earlier ones, so
+ * `tls.connect({ port: -1 }, { port: 80 })` connects while
+ * `tls.connect({ port: 80 }, { port: -1 })` throws. `net` does not merge: it reads
+ * only the first argument, so `net.connect({ port: -1 }, { port: 80 })` still
+ * throws. A callback or a primitive argument is not an override.
+ *
+ * Returns undefined when a later argument could hold an object that is not an
+ * exactly readable literal, because the effective port is then undecided.
  */
-const socketOptionsObject = (
+const socketOptionsObjects = (
   node: t.CallExpression | t.OptionalCallExpression,
-): t.ObjectExpression | undefined => {
+  specifier: string,
+): readonly t.ObjectExpression[] | undefined => {
   const first = node.arguments[0];
   if (first === undefined || t.isSpreadElement(first)) return undefined;
   const value = unwrapJavaScriptExpression(first).node;
-  return t.isObjectExpression(value) ? value : undefined;
+  if (!t.isObjectExpression(value)) return undefined;
+  const objects = [value];
+  if (specifier !== "tls") return objects;
+  for (let index = 1; index < node.arguments.length; index += 1) {
+    const argument = node.arguments[index];
+    if (argument === undefined) continue;
+    if (t.isSpreadElement(argument)) return undefined;
+    const later = unwrapJavaScriptExpression(argument).node;
+    if (t.isObjectExpression(later)) {
+      objects.push(later);
+      continue;
+    }
+    if (isExactlyNonObjectExpression(later)) continue;
+    return undefined;
+  }
+  return objects;
+};
+
+/** The effective member across merged options objects; later ones win. */
+const mergedOptionsProperty = (
+  objects: readonly t.ObjectExpression[],
+  name: string,
+): ReturnType<typeof staticObjectProperty> => {
+  for (let index = objects.length - 1; index >= 0; index -= 1) {
+    const read = staticObjectProperty(objects[index]!, name);
+    if (read.status !== "missing") return read;
+  }
+  return { status: "missing" };
 };
 
 /**
@@ -585,18 +665,18 @@ const socketOptionsObject = (
  *
  * A `socket` member on `net` is not honoured, so it does not rescue there.
  *
- * `undefined` and `{}` throw `ERR_MISSING_ARGS`, which is a missing option rather
- * than a bad port, so those stay undecided.
+ * An absent port throws `ERR_MISSING_ARGS`, which is a missing option rather than a
+ * bad port, so it stays undecided.
  */
 const rejectsOptionsPortLiteral = (
-  options: t.ObjectExpression,
+  objects: readonly t.ObjectExpression[],
   specifier: string,
   context: DataEffectTraversalContext,
 ): boolean => {
-  const read = staticObjectProperty(options, "port");
+  const read = mergedOptionsProperty(objects, "port");
   if (read.status !== "explicit") return false;
   // A non-empty `path` selects a Unix socket; Node never validates the port.
-  const path = staticObjectProperty(options, "path");
+  const path = mergedOptionsProperty(objects, "path");
   if (path.status === "dynamic") return false;
   if (path.status === "explicit") {
     if (!t.isStringLiteral(path.value)) return false;
@@ -604,13 +684,31 @@ const rejectsOptionsPortLiteral = (
   }
   // `tls.connect` wraps a supplied socket instead of connecting.
   if (specifier === "tls") {
-    const socket = staticObjectProperty(options, "socket");
+    const socket = mergedOptionsProperty(objects, "socket");
     if (socket.status !== "missing") return false;
   }
-  const value = unwrapJavaScriptExpression(read.value as t.Node).node;
-  // `null` and booleans are not ports: both throw `ERR_INVALID_ARG_TYPE`.
+  return rejectsOptionsPortValue(
+    unwrapJavaScriptExpression(read.value as t.Node).node,
+    context,
+  );
+};
+
+/**
+ * Whether a `port` member's exactly readable value is one Node rejects.
+ *
+ * `null` and booleans are not ports. `NaN`, `Infinity` and a numeric literal that
+ * overflows to a non-finite number are all out of range, but `void anything` is
+ * `undefined`: Node then treats the port as absent, so it is not a bad port and
+ * stays undecided.
+ */
+const rejectsOptionsPortValue = (
+  value: t.Node,
+  context: DataEffectTraversalContext,
+): boolean => {
   if (t.isNullLiteral(value) || t.isBooleanLiteral(value)) return true;
   if (t.isBigIntLiteral(value)) return true;
+  // `null`-like syntax reads as an absent port, which throws `ERR_MISSING_ARGS`.
+  if (isNullishJavaScriptSyntax(value)) return false;
   // `NaN` and `Infinity` are unshadowed globals, and neither is a port.
   if (
     t.isIdentifier(value) &&
@@ -618,15 +716,26 @@ const rejectsOptionsPortLiteral = (
     isUnmodifiedGlobalReference(value, context.state, value.name)
   )
     return true;
-  // A unary operator over one is the same non-finite number.
-  if (t.isUnaryExpression(value)) {
+  if (t.isNumericLiteral(value))
+    return (
+      !Number.isInteger(value.value) || value.value < 0 || value.value > 65535
+    );
+  // A sign over one is the same non-finite number, but `void` is `undefined`: it
+  // is not a sign, so only `+` and `-` are decided here.
+  if (
+    t.isUnaryExpression(value) &&
+    (value.operator === "+" || value.operator === "-")
+  ) {
     const operand = unwrapJavaScriptExpression(value.argument).node;
     if (
       t.isIdentifier(operand) &&
-      (operand.name === "NaN" || operand.name === "Infinity") &&
-      isUnmodifiedGlobalReference(operand, context.state, operand.name)
+      (operand.name === "NaN" || operand.name === "Infinity")
     )
-      return true;
+      return isUnmodifiedGlobalReference(operand, context.state, operand.name);
+    return (
+      t.isNumericLiteral(operand) &&
+      (value.operator === "-" || !Number.isInteger(operand.value))
+    );
   }
   const literal = readExactJavaScriptLiteral(value);
   if (!literal.found) return false;

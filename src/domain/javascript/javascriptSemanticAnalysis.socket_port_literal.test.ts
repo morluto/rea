@@ -136,3 +136,88 @@ it.each([
     { kind: "acquire", method: "connect" },
   ]);
 });
+/**
+ * A later options argument, a `void` port and an overflowing literal.
+ *
+ * Measured on Node 24.22.1:
+ *
+ *   tls.connect({port:-1}, {port:80})       -> Socket created (tls merges)
+ *   tls.connect({port:80}, {port:-1})       -> THREW ERR_SOCKET_BAD_PORT
+ *   tls.connect({port:-1}, () => {})        -> THREW (callback is not an override)
+ *   tls.connect({port:-1}, undefined)        -> THREW
+ *   tls.connect({port:-1}, 0) / "x" / [80]   -> THREW (only an object overrides)
+ *   net.connect({port:-1}, {port:80})        -> THREW (net does not merge)
+ *   net.connect({port:80}, {port:-1})        -> Socket created
+ *   net.connect({port:void 0})               -> THREW ERR_MISSING_ARGS (undecided)
+ *   net.connect({port:void 0, path:""})      -> Socket created (port reads as 0)
+ *   net.connect({port:void Infinity,path:""}) -> Socket created
+ *   net.connect({port:1e400}) / 1e309 / -1e400 -> THREW ERR_SOCKET_BAD_PORT
+ *   net.connect({port:-Infinity}) / -NaN     -> THREW ERR_SOCKET_BAD_PORT
+ */
+it.each([
+  [
+    "a tls port overridden by a later bad object",
+    `tls.connect({port: 80}, {port: -1})`,
+  ],
+  ["a tls port beside a callback", `tls.connect({port: -1}, () => {})`],
+  ["a tls port beside undefined", `tls.connect({port: -1}, undefined)`],
+  ["a tls port beside a number", `tls.connect({port: -1}, 0)`],
+  ["a tls port beside a string", `tls.connect({port: -1}, "x")`],
+  ["a tls port beside an array", `tls.connect({port: -1}, [80])`],
+  [
+    "a net port beside a valid later object",
+    `net.connect({port: -1}, {port: 80})`,
+  ],
+  [
+    "a net port beside a later socket path",
+    `net.connect({port: -1}, {path: "/tmp/x"})`,
+  ],
+  ["an overflowing numeric port", `net.connect({port: 1e400})`],
+  ["a just-overflowing numeric port", `net.connect({port: 1e309})`],
+  ["a negative overflowing numeric port", `net.connect({port: -1e400})`],
+  ["a tls overflowing numeric port", `tls.connect({port: 1e400})`],
+  ["a negative Infinity member", `net.connect({port: -Infinity})`],
+  ["a negated NaN member", `net.connect({port: -NaN})`],
+] as const)("emits no socket acquisition for %s", (_name, call) => {
+  expect(socketAcquisitionsFor(call)).toEqual([]);
+});
+
+it.each([
+  [
+    "a tls port overridden by a later valid object",
+    `tls.connect({port: -1}, {port: 80})`,
+    "connect",
+  ],
+  [
+    "a tls port rescued by a later path",
+    `tls.connect({port: -1}, {path: "/tmp/x"})`,
+    "connect",
+  ],
+  [
+    "a net port beside a later valid object",
+    `net.connect({port: 80}, {port: -1})`,
+    "connect",
+  ],
+  [
+    "an undefined port with an empty path",
+    `net.connect({port: void 0, path: ""})`,
+    "connect",
+  ],
+  [
+    "a void non-finite port with an empty path",
+    `net.connect({port: void Infinity, path: ""})`,
+    "connect",
+  ],
+  [
+    "an undefined port with a socket path",
+    `net.connect({port: void 0, path: "/tmp/x"})`,
+    "connect",
+  ],
+  [
+    "a tls undefined port with an empty path",
+    `tls.connect({port: void 0, path: ""})`,
+    "connect",
+  ],
+] as const)("keeps the socket acquisition for %s", (_name, call, method) => {
+  expect(socketAcquisitionsFor(call)).toEqual([{ kind: "acquire", method }]);
+});
