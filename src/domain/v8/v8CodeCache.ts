@@ -1,13 +1,17 @@
 import { z } from "zod";
 
 import { digestSchema } from "../digests.js";
-import { localPathStringSchema } from "../localPath.js";
+import { absoluteLocalPathStringSchema } from "../localPath.js";
 
 const uint = z.number().int().min(0).max(0xffffffff);
 const offset = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
 
-/** Hard ceiling on the caller-selected input read budget. */
-export const MAX_INSPECT_V8_CODE_CACHE_FILE_BYTES = 536870912;
+/**
+ * Hard ceiling on the caller-selected input read budget. The payload scan is a
+ * single synchronous pass, so this bounds how long one request can hold the
+ * process; it matches the pinned CPython pyc reader's 64 MiB ceiling.
+ */
+export const MAX_INSPECT_V8_CODE_CACHE_FILE_BYTES = 67108864;
 /** Hard ceiling on the V8 code cache container header this reader accepts. */
 export const V8_CODE_CACHE_HEADER_BYTES = 32;
 /**
@@ -29,7 +33,7 @@ export const V8_CODE_CACHE_SOURCE_LENGTH_MASK = 0x1fffffff;
 
 /** Bounded inspection of one V8 code cache container. Never executes the payload. */
 export const inspectV8CodeCacheInputSchema = z.strictObject({
-  path: localPathStringSchema.describe(
+  path: absoluteLocalPathStringSchema.describe(
     "Absolute filesystem path to the selected V8 code cache (.jsc) file",
   ),
   max_file_bytes: z
@@ -37,7 +41,7 @@ export const inspectV8CodeCacheInputSchema = z.strictObject({
     .int()
     .min(36)
     .max(MAX_INSPECT_V8_CODE_CACHE_FILE_BYTES)
-    .default(64 * 1024 * 1024)
+    .default(32 * 1024 * 1024)
     .describe(
       "Maximum stable artifact bytes to read; exceeding the budget fails without partial success",
     ),
@@ -116,7 +120,7 @@ const embeddedStringSchema = z.strictObject({
 export const v8CodeCacheSchema = z
   .strictObject({
     artifact: z.strictObject({
-      path: localPathStringSchema,
+      path: absoluteLocalPathStringSchema,
       sha256: digestSchema,
       bytes: offset,
     }),
