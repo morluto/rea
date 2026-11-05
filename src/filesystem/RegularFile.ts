@@ -130,7 +130,12 @@ export const openRegularFile = async (
           throw new NonRegularFileReadError(path, observed.isDirectory());
         return observed;
       },
-      { signal: options.signal },
+      {
+        signal: options.signal,
+        // Callers match on this type to tell cancellation from a read fault.
+        cancellationError: (reason) =>
+          new RegularFileOperationCancelled(reason),
+      },
     );
     assertRegularFileActive(options.signal);
     // O_NOFOLLOW is unavailable on Windows. Recheck the name only on hosts

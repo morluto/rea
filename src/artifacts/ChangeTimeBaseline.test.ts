@@ -204,3 +204,24 @@ it("stops settling as soon as the owning operation is cancelled", async () => {
   // One observation, one sleep: it never re-read after the abort.
   expect(reads()).toBe(1);
 });
+
+it("throws the caller's typed cancellation rather than the raw reason", async () => {
+  // Callers recognise cancellation through their own error class; a raw
+  // signal reason reads as a read failure to each of them
+  // (greptile review on rea#8979).
+  class Cancelled extends Error {}
+  const controller = new AbortController();
+  const { read } = scriptedRead([1_000]);
+  const seams = advancingSeams(1_001, 25);
+  await expect(
+    settleChangeTimeBaseline(read, {
+      ...seams,
+      sleep: async (delayMs: number) => {
+        await seams.sleep(delayMs);
+        controller.abort(new Error("raw reason"));
+      },
+      signal: controller.signal,
+      cancellationError: (reason) => new Cancelled(String(reason)),
+    }),
+  ).rejects.toBeInstanceOf(Cancelled);
+});

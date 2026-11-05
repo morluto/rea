@@ -33,6 +33,12 @@ export interface ChangeTimeSettleSeams {
   readonly limits?: WindowsChangeTimeSettleLimits | undefined;
   /** Cancels the wait; the last observation is not returned once aborted. */
   readonly signal?: AbortSignal | undefined;
+  /**
+   * Builds the error a cancellation throws. Callers that recognise their own
+   * typed cancellation must supply it: throwing the raw `signal.reason` reads
+   * as a read failure to everyone matching on their own error class.
+   */
+  readonly cancellationError?: ((reason: unknown) => Error) | undefined;
 }
 
 const limitsFrom = (
@@ -47,8 +53,10 @@ const limitsFrom = (
 };
 
 /** Stop settling as soon as the owning operation is cancelled. */
-const throwIfAborted = (signal: AbortSignal | undefined): void => {
-  if (signal?.aborted === true) throw signal.reason;
+const throwIfAborted = (seams: ChangeTimeSettleSeams): void => {
+  if (seams.signal?.aborted !== true) return;
+  const reason = seams.signal.reason;
+  throw seams.cancellationError ? seams.cancellationError(reason) : reason;
 };
 
 const defaultSleep = (delayMs: number): Promise<void> =>
@@ -95,17 +103,17 @@ export const settleChangeTimeBaseline = async (
   const limits = limitsFrom(seams);
   const settled = { ...seams, limits };
   const sleep = seams.sleep ?? defaultSleep;
-  throwIfAborted(seams.signal);
+  throwIfAborted(seams);
   let observed = await read();
   for (let poll = 0; poll < limits.maxPolls; poll += 1) {
     if (!changeTimeMayStillDrift(observed, settled)) return observed;
     // A settle window is bounded by driftMs, not by the poll budget, so a
     // cancelled scope must not keep an inventory waiting it out.
-    throwIfAborted(seams.signal);
+    throwIfAborted(seams);
     await sleep(limits.pollMs);
-    throwIfAborted(seams.signal);
+    throwIfAborted(seams);
     observed = await read();
   }
-  throwIfAborted(seams.signal);
+  throwIfAborted(seams);
   return observed;
 };
