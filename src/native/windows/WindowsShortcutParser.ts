@@ -270,11 +270,15 @@ const normalizePath = (path: string): string => {
   if (DEVICE_PATH.test(folded)) return folded;
   const unc = folded.startsWith("\\\\");
   if (!unc && !/^[a-z]:\\/u.test(folded)) return folded;
-  const parts = folded.slice(unc ? 2 : 0).split("\\");
+  // Empty parts drop out first, so `\\server\\share` keeps its share in the root.
+  const parts = folded
+    .slice(unc ? 2 : 0)
+    .split("\\")
+    .filter((part) => part !== "");
   const root = parts.slice(0, unc ? 2 : 1);
   const segments: string[] = [];
   for (const part of parts.slice(root.length)) {
-    if (part === "" || part === ".") continue;
+    if (part === ".") continue;
     if (part === "..") segments.pop();
     else segments.push(part);
   }

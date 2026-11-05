@@ -668,6 +668,19 @@ it("compares an icon with a target after collapsing dot segments as text", async
   expect(
     await iconFor("\\\\server\\share\\..\\app.exe", "\\\\server\\app.exe"),
   ).toBe(true);
+  // A repeated separator after the host still leaves the share in the root.
+  expect(
+    await iconFor(
+      "\\\\server\\\\shareA\\..\\app.exe",
+      "\\\\server\\\\shareB\\..\\app.exe",
+    ),
+  ).toBe(true);
+  expect(
+    await iconFor(
+      "\\\\server\\\\share\\..\\app.exe",
+      "\\\\server\\share\\app.exe",
+    ),
+  ).toBe(false);
   expect(await iconFor("C:\\Tools\\..\\app.exe", "C:\\Tools\\app.exe")).toBe(
     true,
   );
