@@ -10,44 +10,56 @@ export interface HostIdentity {
 export const SEED_HOME = "/home/user";
 const SEED_HOST = "localhost";
 const SEED_LOGIN = `user@${SEED_HOST}`;
+/** What the scrub writes, which a search for what is left must not take for what it replaced. */
+const REPLACEMENTS = [SEED_LOGIN, SEED_HOME, SEED_HOST];
 
-/** Seeds up to this size are decoded and rewritten, well inside a JavaScript string; a larger one is only searched. */
-const MAX_SCRUBBED_BYTES = 256 * 1024 * 1024;
 const WORD = String.raw`\p{L}\p{N}_`;
+/** A home path ends where no file name character follows, as the computer's boot respelling reads it. */
+const HOME_END = String.raw`(?![${WORD}.@+~-])`;
 /** A host name ends where no name character or `.name` follows, so `host.example.com` is left whole. */
 const HOST_END = String.raw`(?![${WORD}-]|\.[${WORD}])`;
 
 const escaped = (text: string): string =>
   text.replace(/[\\^$.*+?()[\]{}|/]/gu, "\\$&");
 
-/** Whether a home is one the bundle must not spell: not the root, and not the seed's own. */
-const hidden = (home: string): boolean => home.length > 1 && home !== SEED_HOME;
+/** The captured home, unless it is the root or the seed's own home. */
+const homeOf = ({ home }: HostIdentity): string | undefined =>
+  home.length > 1 && home !== SEED_HOME ? home : undefined;
+
+/** The captured `user@host`, unless it is already what the scrub writes. */
+const loginOf = ({ hostname, user }: HostIdentity): string | undefined =>
+  hostname === null || user === null || `${user}@${hostname}` === SEED_LOGIN
+    ? undefined
+    : `${user}@${hostname}`;
+
+/** The host name, unless it is `localhost`, which every host calls itself. */
+const hostOf = ({ hostname }: HostIdentity): string | undefined =>
+  hostname === null || hostname === SEED_HOST ? undefined : hostname;
+
+/** The spellings a bundle must not hold: the captured home, `user@host` and the host name. */
+export const identitySpellings = (identity: HostIdentity): readonly string[] =>
+  [homeOf(identity), loginOf(identity), hostOf(identity)].filter(
+    (spelling): spelling is string => spelling !== undefined,
+  );
 
 /**
- * The identity's spellings: the home path where a whole path segment ends
- * after it, as the computer respells it at boot; `user@host`; and the host
- * name as a whole name. The user name alone is never matched, since a short
- * one such as `ada` is also ordinary text.
+ * The identity's spellings the scrub replaces: the home path where a whole
+ * path segment ends after it, as the computer respells it at boot;
+ * `user@host`; and the host name as a whole name. The user name alone is
+ * never matched, since a short one such as `ada` is also ordinary text.
  */
-const identityPattern = ({
-  home,
-  hostname,
-  user,
-}: HostIdentity): RegExp | undefined => {
-  const host =
-    hostname === null || hostname === SEED_HOST ? undefined : escaped(hostname);
+const identityPattern = (identity: HostIdentity): RegExp | undefined => {
+  const home = homeOf(identity);
+  const login = loginOf(identity);
+  const host = hostOf(identity);
   const alternatives = [
-    ...(hidden(home)
-      ? [String.raw`(?<home>${escaped(home)})(?![${WORD}.@+~-])`]
-      : []),
-    ...(host === undefined || user === null
+    ...(home === undefined ? [] : [`(?<home>${escaped(home)})${HOME_END}`]),
+    ...(login === undefined
       ? []
-      : [
-          String.raw`(?<![${WORD}.+-])(?<login>${escaped(user)}@${host})${HOST_END}`,
-        ]),
+      : [`(?<![${WORD}.+-])(?<login>${escaped(login)})${HOST_END}`]),
     ...(host === undefined
       ? []
-      : [String.raw`(?<![${WORD}.-])(?<host>${host})${HOST_END}`]),
+      : [`(?<![${WORD}.-])(?<host>${escaped(host)})${HOST_END}`]),
   ];
   return alternatives.length === 0
     ? undefined
@@ -69,99 +81,26 @@ export const scrubHostIdentity = (
       });
 };
 
-/** The first spelling of the identity a text holds, or undefined. */
-export const hostIdentityIn = (
+/**
+ * The first of the identity's spellings a text still holds, by the rule for
+ * what a bundle may not ship and a check may not name: the captured home where
+ * a whole path segment ends after it, and `user@host` and the host name
+ * anywhere, as in `host.local` or `host-notes.txt`. The scrub's own
+ * replacements are set aside first, so a host named `host` is not found in
+ * `localhost`.
+ */
+export const identityLeftIn = (
   text: string,
   identity: HostIdentity,
-): string | undefined => identityPattern(identity)?.exec(text)?.[0];
-
-/** What the export ships for one seed. */
-export interface SeedScrub {
-  /** The rewritten bytes, or undefined when the seed ships as captured. */
-  readonly bytes: Buffer | undefined;
-  /** Whether the shipped bytes still hold the host name or the captured home, as in a binary file or `host.local`. */
-  readonly holdsIdentity: boolean;
-}
-
-const UTF16_MARKS = [
-  { mark: [0xff, 0xfe], swap: false },
-  { mark: [0xfe, 0xff], swap: true },
-] as const;
-
-/** UTF-16 text after a byte-order mark, decoded and encoded as the computer's boot respelling does; undefined otherwise. */
-const utf16Text = (
-  bytes: Buffer,
-):
-  | { readonly text: string; readonly encode: (text: string) => Buffer }
-  | undefined => {
-  const order = UTF16_MARKS.find(({ mark }) =>
-    mark.every((byte, index) => bytes[index] === byte),
-  );
-  if (order === undefined) return undefined;
-  const little = Buffer.from(bytes.subarray(2));
-  if (order.swap && little.length % 2 === 0) little.swap16();
-  try {
-    const text = new TextDecoder("utf-16le", { fatal: true }).decode(little);
-    return {
+): string | undefined => {
+  const home = homeOf(identity);
+  return identitySpellings(identity).find((spelling) => {
+    const rest = REPLACEMENTS.filter((own) => own.includes(spelling)).reduce(
+      (remaining, own) => remaining.replaceAll(own, "\u0000"),
       text,
-      encode: (scrubbed) => {
-        const encoded = Buffer.from(scrubbed, "utf16le");
-        if (order.swap) encoded.swap16();
-        return Buffer.concat([Buffer.from(order.mark), encoded]);
-      },
-    };
-  } catch {
-    return undefined;
-  }
-};
-
-/** The seed's text and how to encode it again: UTF-8 for a text seed, or UTF-16 after a byte-order mark. */
-const seedText = (bytes: Buffer, text: boolean) => {
-  if (bytes.length > MAX_SCRUBBED_BYTES) return undefined;
-  if (!text) return utf16Text(bytes);
-  try {
-    return {
-      // The byte-order mark is kept, as Python's utf-8 codec keeps it.
-      text: new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
-        bytes,
-      ),
-      encode: (scrubbed: string) => Buffer.from(scrubbed, "utf8"),
-    };
-  } catch {
-    return undefined;
-  }
-};
-
-/** Whether text, or bytes read as UTF-8, hold the captured home or the host name, which `user@host` contains, anywhere. */
-const holdsIdentity = (
-  content: string | Buffer,
-  { home, hostname }: HostIdentity,
-) =>
-  [hidden(home) ? home : null, hostname === SEED_HOST ? null : hostname].some(
-    (value) => value !== null && content.includes(value),
-  );
-
-/**
- * Rewrite a seed's text as the computer reads it at boot: a text seed as
- * UTF-8, another as UTF-16 when it starts with a byte-order mark. Other bytes
- * ship as captured. Either way the shipped bytes are searched for what is left.
- */
-export const scrubSeed = (
-  bytes: Buffer,
-  text: boolean,
-  identity: HostIdentity,
-): SeedScrub => {
-  const decoded = seedText(bytes, text);
-  const scrubbed =
-    decoded === undefined
-      ? undefined
-      : scrubHostIdentity(decoded.text, identity);
-  const rewritten =
-    decoded === undefined || scrubbed === decoded.text
-      ? undefined
-      : decoded.encode(scrubbed ?? "");
-  return {
-    bytes: rewritten,
-    holdsIdentity: holdsIdentity(scrubbed ?? bytes, identity),
-  };
+    );
+    return spelling === home
+      ? new RegExp(`${escaped(home)}${HOME_END}`, "u").test(rest)
+      : rest.includes(spelling);
+  });
 };

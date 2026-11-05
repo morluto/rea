@@ -28,9 +28,10 @@ capture's last by default; see [The seed checkpoint](#the-seed-checkpoint).
 
 The command returns Evidence with operation `export_desktop_application` and
 predicate type `rea.desktop-application-export`, listing the environment name,
-the seed and end `checkpoints`, owned paths, seed files, the seed files it
-rewrote to remove the capture host's name and user (`scrubbed_files`) and
-those still holding them (`unscrubbed_files`), and written files. A failed export, cancellation
+the seed and end `checkpoints`, owned paths, seed files, the seeds it
+rewrote to remove the capture host's name and user (`scrubbed_files`), the
+bundle files that still hold them (`unscrubbed_files`), and written files,
+the last three by their path in the bundle. A failed export, cancellation
 included, removes the bundle it had not yet published, so no partial copy of the
 user's data remains. If the bundle was published but its output handles could
 not be closed, the command reports a cleanup error that carries the export
@@ -194,24 +195,40 @@ export removes them from what the bundle ships:
   character that cannot continue a file name. The host name counts only as a
   whole name: not inside a longer word, before a `-`, or as a label of a
   domain such as `e81232be457d.local`, so a host named `ubuntu` leaves
-  `ports.ubuntu.com/ubuntu-ports` alone. The user name alone is never
-  replaced, since a short one such as `ada` or `user` is also ordinary text.
-  A rewritten seed is written with its own SHA-256, and `scrubbed_files` and
-  the README list it.
+  `ports.ubuntu.com/ubuntu-ports` alone. A host named `localhost` is left
+  alone, but its `user@localhost` still takes the computer's user. The user
+  name alone is never replaced, since a short one such as `ada` or `user` is
+  also ordinary text. A rewritten seed is written with its own SHA-256, and
+  `scrubbed_files` and the README list it.
+- JSON and XML keep their syntax. In JSON only strings change, each read as
+  its decoded value, so `\u0065` escapes cannot hide the host, and is written
+  back as JSON only when it changed; keys, numbers and `true`, `false` and
+  `null` stay as they are even for a host named `true`. In XML only character
+  data, attribute values, comments and CDATA change, character references
+  decoded the same way; element and attribute names and processing
+  instructions stay.
 - `SEED_HOME` in the class is `/home/user`, the home the seed spells, which
   the class respells to the computer's own home when it seeds the home at
   boot, as it did the captured home before. The replacements read as the
   computer's own: its user is `user`, with its home in `/home/user`, and
   `localhost` is the name every host has for itself.
 - Binary files, SQLite databases among them, and text files over 256 MiB are
-  copied as captured. A seed whose shipped content still holds the host name
-  or the captured home anywhere, as a binary file can or a text file in
-  `host.local` or `/home/adam`, or whose file name holds the host name, is
-  listed in `unscrubbed_files` and the README, to check before sharing the
-  bundle. Text is searched as decoded, other files as UTF-8 bytes, so a
-  binary file that holds them in another encoding is not listed.
-- A task check whose values name `user@host` or the host name is refused, as
-  one naming the captured home is: the bundle does not hold them.
+  copied as captured. Then every file the bundle ships, the class module with
+  its dconf keys and the README included, is searched by a looser rule than
+  the replacement's: the host name and `user@host` anywhere, as in
+  `e81232be457d.local` or a seed named `e81232be457d-notes.txt`, and the
+  captured home as a whole path, in its path and its content, JSON strings and
+  XML references decoded and the replacements themselves set aside. Each one
+  found is listed in `unscrubbed_files`, and in the README unless it is the
+  README, to check before sharing the bundle. Bytes that are not text are
+  searched as they are, so a binary file that holds the host in another
+  encoding is not listed.
+- A task check whose values name `user@host` or the host name anywhere, by
+  that rule, is refused, as one naming the captured home is: the bundle does
+  not hold them. A task's checks must fail on the seed as the bundle ships
+  it, scrubbed, so a check the scrub itself satisfies, such as a mail setting
+  the user changed from `ada@e81232be457d` to `user@localhost`, does not count
+  as failing there.
 
 A capture written before the host's name and user were recorded has only its
 home removed, with a limitation saying so; capture again to remove the rest.

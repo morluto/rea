@@ -22,7 +22,7 @@ import {
   type StateEnds,
 } from "../../domain/desktop/desktopState.js";
 import {
-  hostIdentityIn,
+  identityLeftIn,
   type HostIdentity,
 } from "../../domain/desktop/hostIdentity.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
@@ -48,6 +48,8 @@ type TaskTarget = Pick<
   readonly files: ReadonlyMap<string, DesktopStatePath>;
   readonly identity: HostIdentity;
   readonly ends: StateEnds;
+  /** Views of the seeds the export rewrites, as it ships them. */
+  readonly seedViews: ReadonlyMap<string, TaskFileView>;
 };
 
 /** A task the capture validated: the files it adds to the bundle, its README section and its summary. */
@@ -120,7 +122,7 @@ const targetProblem = (
   const text = JSON.stringify(check);
   if (text.includes(target.capturedHome))
     return `names the captured home ${target.capturedHome}, which the computer's home replaces`;
-  const named = hostIdentityIn(text, target.identity);
+  const named = identityLeftIn(text, target.identity);
   if (named !== undefined)
     return `names ${named}, the capture host's name or user, which the export removes from the seed`;
   if (check.kind !== "value_equals" && check.kind !== "value_absent")
@@ -131,19 +133,20 @@ const targetProblem = (
     : undefined;
 };
 
-/** Views of every file at the seed or the end checkpoint. */
+/** Views of every file at the end checkpoint, or at the seed as the bundle ships it. */
 const viewsAt = (
-  files: ReadonlyMap<string, DesktopStatePath>,
-  ends: StateEnds,
+  target: TaskTarget,
   end: keyof StateEnds,
 ): ReadonlyMap<string, TaskFileView> => {
   const views = new Map<string, TaskFileView>();
-  for (const [home, path] of files) {
-    const version = versionAt(path, ends[end]);
+  for (const [home, path] of target.files) {
+    const version = versionAt(path, target.ends[end]);
     // A file not retained at the seed is not seeded, so the computer starts without it.
     if (end === "seed" && version?.present === true && version.sha256 === null)
       continue;
-    const view = version === undefined ? undefined : versionView(version);
+    const shipped = end === "seed" ? target.seedViews.get(home) : undefined;
+    const view =
+      shipped ?? (version === undefined ? undefined : versionView(version));
     if (view !== undefined) views.set(home, view);
   }
   return views;
@@ -212,10 +215,7 @@ export const admitDesktopTask = async (
         REWRITE,
       );
   }
-  const end = evaluateTaskChecks(
-    task.checks,
-    viewsAt(target.files, target.ends, "end"),
-  );
+  const end = evaluateTaskChecks(task.checks, viewsAt(target, "end"));
   const failing = end.find((outcome) => !outcome.passed);
   if (failing !== undefined)
     throw refuse(
@@ -223,10 +223,7 @@ export const admitDesktopTask = async (
       "task",
       "Write checks that the captured end state passes; describe-desktop-application-task shows its views.",
     );
-  const failingOnSeed = evaluateTaskChecks(
-    task.checks,
-    viewsAt(target.files, target.ends, "seed"),
-  )
+  const failingOnSeed = evaluateTaskChecks(task.checks, viewsAt(target, "seed"))
     .filter((outcome) => !outcome.passed)
     .map((outcome) => outcome.id);
   if (failingOnSeed.length === 0)

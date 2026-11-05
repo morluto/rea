@@ -2,9 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import {
   SEED_HOME,
-  hostIdentityIn,
+  identityLeftIn,
   scrubHostIdentity,
-  scrubSeed,
   type HostIdentity,
 } from "./hostIdentity.js";
 
@@ -14,11 +13,8 @@ const GEANY: HostIdentity = {
   user: "ada",
 };
 
-/** Text as UTF-16 after a byte-order mark, in either byte order. */
-const utf16 = (text: string, order: "le" | "be") => {
-  const bytes = Buffer.from(`\uFEFF${text}`, "utf16le");
-  return order === "be" ? bytes.swap16() : bytes;
-};
+/** A capture whose host is named localhost, so only user@host gives it away. */
+const LOCAL: HostIdentity = { ...GEANY, hostname: "localhost" };
 
 describe("scrubHostIdentity", () => {
   it("replaces user@host, keeping a short user name standing alone", () => {
@@ -72,85 +68,43 @@ describe("scrubHostIdentity", () => {
   });
 });
 
-describe("hostIdentityIn", () => {
-  it("names the first spelling of the identity a text holds, and none for the user name alone", () => {
-    expect(hostIdentityIn('["mail=ada@e81232be457d"]', GEANY)).toBe(
-      "ada@e81232be457d",
-    );
-    expect(hostIdentityIn('["e81232be457d"]', GEANY)).toBe("e81232be457d");
-    expect(hostIdentityIn('["author=ada"]', GEANY)).toBeUndefined();
+describe("scrubHostIdentity on a host named localhost", () => {
+  it("replaces the captured user@localhost and leaves localhost alone", () => {
     expect(
-      hostIdentityIn("localhost", { ...GEANY, hostname: "localhost" }),
-    ).toBeUndefined();
+      scrubHostIdentity("mail=ada@localhost\nhost=localhost\n", LOCAL),
+    ).toBe("mail=user@localhost\nhost=localhost\n");
   });
 });
 
-const hex = (bytes: Buffer | undefined) => bytes?.toString("hex");
-
-describe("scrubSeed", () => {
-  it("rewrites a UTF-8 text seed, keeping its byte-order mark, and leaves a clean one as it is", () => {
-    const scrubbed = scrubSeed(
-      Buffer.from("\uFEFFmail=ada@e81232be457d\n"),
-      true,
-      GEANY,
-    );
-
-    expect(hex(scrubbed.bytes)).toBe(
-      hex(Buffer.from("\uFEFFmail=user@localhost\n")),
-    );
-    expect(scrubbed.holdsIdentity).toBe(false);
-    expect(scrubSeed(Buffer.from("wrap=true\n"), true, GEANY)).toEqual({
-      bytes: undefined,
-      holdsIdentity: false,
-    });
-  });
-
-  it.each(["le", "be"] as const)(
-    "rewrites a UTF-16 %s seed with a byte-order mark in its own order",
-    (order) => {
-      const scrubbed = scrubSeed(
-        utf16("20260216;/home/ada/.varicad;ada@e81232be457d\n", order),
-        false,
-        GEANY,
-      );
-
-      expect(hex(scrubbed.bytes)).toBe(
-        hex(utf16(`20260216;${SEED_HOME}/.varicad;user@localhost\n`, order)),
-      );
-    },
-  );
-
-  it("reports a seed whose shipped bytes still hold the host name or the captured home", () => {
-    const database = Buffer.concat([
-      Buffer.from("SQLite format 3\0"),
-      Buffer.from([0, 1, 2]),
-      Buffer.from("e81232be457d"),
-    ]);
-    const outcomes = [
-      scrubSeed(database, false, GEANY),
-      scrubSeed(Buffer.from("url=http://e81232be457d.local/\n"), true, GEANY),
-      scrubSeed(Buffer.from("SQLite format 3\0ada"), false, GEANY),
-      scrubSeed(Buffer.from([0xff, 0xfe, 0x41]), false, GEANY),
+describe("identityLeftIn", () => {
+  it("finds the host name and user@host anywhere, the home as a whole path, and not the user name alone", () => {
+    const texts = [
+      '["mail=ada@e81232be457d"]',
+      "e81232be457d-notes.txt",
+      "http://e81232be457d.local/",
+      "x/home/ada/y",
+      "/home/adam/x",
+      '["author=ada"]',
     ];
 
-    expect(
-      outcomes.map(({ bytes, holdsIdentity }) => [bytes, holdsIdentity]),
-    ).toEqual([
-      [undefined, true],
-      [undefined, true],
-      [undefined, false],
-      [undefined, false],
+    expect(texts.map((text) => identityLeftIn(text, GEANY))).toEqual([
+      "ada@e81232be457d",
+      "e81232be457d",
+      "e81232be457d",
+      "/home/ada",
+      undefined,
+      undefined,
     ]);
   });
 
-  it("leaves the seed's own home alone, as a capture inside the computer spells it", () => {
-    const inside = { home: SEED_HOME, hostname: "4f0c1d2e3a4b", user: "user" };
+  it("does not take the replacements for what they replaced", () => {
+    const host = { home: "/home", hostname: "host", user: "user" };
 
     expect(
-      scrubSeed(Buffer.from(`SQLite format 3\0${SEED_HOME}/x`), false, inside),
-    ).toEqual({ bytes: undefined, holdsIdentity: false });
-    expect(scrubHostIdentity(`${SEED_HOME}/x user@4f0c1d2e3a4b`, inside)).toBe(
-      `${SEED_HOME}/x user@localhost`,
-    );
+      identityLeftIn(`mail=user@localhost on localhost in ${SEED_HOME}`, host),
+    ).toBeUndefined();
+    expect(identityLeftIn("ghost /home/ada", host)).toBe("/home");
+    expect(identityLeftIn("mail=ada@localhost", LOCAL)).toBe("ada@localhost");
+    expect(identityLeftIn("mail=user@localhost", LOCAL)).toBeUndefined();
   });
 });

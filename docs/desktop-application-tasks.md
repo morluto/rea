@@ -134,7 +134,7 @@ The rules both evaluators follow:
 The export refuses, naming the check, a file outside the owned paths, a file
 spelled with a leading slash, `.` or `..`, a pointer into a text file, the
 empty pointer (the whole file), a value that names the captured home, or the
-capture host's name or `user@host` (which the
+capture host's name or `user@host` anywhere (which the
 [export removes from the seed](desktop-application-export.md#host-name-and-user)), a
 `tolerance` with a value that is not a number, and a value that looks like an
 ISO 8601 date and time. Other volatile content, such as a counter the app
@@ -239,7 +239,8 @@ document uses, so a check names the prefixes the app writes.
 
 `rea export-desktop-application <capture> <directory> --task <task.json>`
 evaluates the checks on the capture's state view: on each file as it was at
-the seed checkpoint, which is the seed, and at the end checkpoint, the
+the seed checkpoint, which is the seed, as the bundle ships it with the
+capture host's name and user removed, and at the end checkpoint, the
 captured end state. Those are the capture's first and last checkpoints unless
 `--seed-checkpoint` and `--end-checkpoint` name others.
 It refuses a task whose every check passes on the seed, and a check that fails

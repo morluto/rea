@@ -456,7 +456,7 @@ const installNotes = (plan: DesktopAppExportPlan): string =>
     .map((line) => `\n${line}`)
     .join("");
 
-/** Seed files the export rewrote to remove the capture host's identity, and those that still hold it. */
+/** Bundle files: seeds the export rewrote to remove the capture host's identity, and files that still hold it. */
 export interface SeedScrubReport {
   readonly scrubbed: readonly string[];
   readonly unscrubbed: readonly string[];
@@ -465,14 +465,19 @@ export interface SeedScrubReport {
 const homeList = (paths: readonly string[]) =>
   paths.map((path) => `\`~/${path}\``).join(", ");
 
+const bundleList = (paths: readonly string[]) =>
+  paths.map((path) => `\`${path}\``).join(", ");
+
 const scrubNotes = ({ scrubbed, unscrubbed }: SeedScrubReport): string =>
   [
-    ...(scrubbed.length === 0 ? [] : [`\n  Rewritten: ${homeList(scrubbed)}.`]),
+    ...(scrubbed.length === 0
+      ? []
+      : [`\n  Rewritten: ${bundleList(scrubbed)}.`]),
     ...(unscrubbed.length === 0
       ? []
       : [
-          `\n- Still naming the capture host or user, in bytes REA does not rewrite or a file name: ${homeList(unscrubbed)}.
-  Read them before sharing the bundle.`,
+          `\n- Still holding the capture host's name, user@host or home, in their name or in content REA does not rewrite:
+  ${bundleList(unscrubbed)}. Read them before sharing the bundle.`,
         ]),
   ].join("");
 

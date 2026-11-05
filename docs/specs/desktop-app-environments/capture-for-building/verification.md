@@ -100,6 +100,38 @@ org.xfce.mousepad` ran while `xdotool` typed `milk` and
   0.9.1431 declared the class, and `agent-env run --task smoke --dry-run`
   planned the deploy.
 
+## Review fixes
+
+Run on 2026-11-05 on the same toolchains, after the first review. Each new
+test failed on the reviewed head, with only the new tests added, and passes
+now.
+
+- A task's seed checks read the seed as the bundle ships it. A mail setting
+  changed from `ada@e81232be457d` to `user@localhost` already reads
+  `user@localhost` in the scrubbed seed, so its check is no longer counted as
+  failing there: `failing_on_seed` went from `mail` and `note` to `note`.
+- JSON is scrubbed by its strings' decoded values, so a host named `true`
+  leaves `{"enabled": true}` valid and a `\u0065` escape no longer hides the
+  host; an untouched string keeps its escapes. XML is scrubbed in its decoded
+  character data and attribute values, comments and CDATA, so a host named
+  `item` leaves `<item>` alone and `&#x65;` references hide nothing; the
+  output is still read as XML.
+- One search for what is left covers every shipped file, in its path and its
+  content: a clean seed named `e81232be457d-notes.txt`, the class module
+  whose dconf keys hold `ada@e81232be457d.local` and the README that lists
+  them are listed in `unscrubbed_files`, which now names bundle paths and
+  equals an independent search of the bundle. A task check holding
+  `e81232be457d.local` is refused by the same rule. The replacements are set
+  aside, so a host named `host` is not found in `localhost`.
+- A host named `localhost` keeps that name, but `ada@localhost` becomes
+  `user@localhost`, and a binary file holding it is reported.
+
+The gates passed as before, `lint` and `lint:typed` again failing only on
+main's `webSourceLocationCli.test.ts` with no diagnostics in this change's
+files; the desktop tests ran 483 passed and 20 skipped on macOS, and 500
+passed and 3 skipped in the container, where the Mousepad run above gave the
+same result, its rewritten seed now listed by bundle path.
+
 ## Limits of this verification
 
 - The bundle was not run in an agentenv computer, and REA was not run inside

@@ -9,8 +9,10 @@ import { exportDesktopApplication } from "./DesktopApplicationExport.js";
 import {
   DATABASE,
   HOME,
+  NOTE,
   SETTINGS,
   capture,
+  change,
   checkpoint,
   readers,
   retained,
@@ -23,6 +25,13 @@ const CONFIG = `[ui]\npref_template_mail=ada@${HOSTNAME}\npref_template_develope
 const DB = `SQLite format 3\0rows from ${HOSTNAME}`;
 const DCONF_DB = "GVariant database";
 const DCONF = `[org/notes]\nmail='ada@${HOSTNAME}'\nrecent='${HOME}/x'\n`;
+/** A mail setting the user changed from the captured user@host to the value the scrub writes. */
+const MAIL = {
+  before: `[ui]\nmail=ada@${HOSTNAME}\n`,
+  after: "[ui]\nmail=user@localhost\n",
+};
+const NAMED = `${HOME}/.config/notes/${HOSTNAME}-notes.txt`;
+const EXTRA_CONTENT = [MAIL.before, MAIL.after, "clean\n"];
 
 /** A capture whose seed names the host and user in a text file, a database and dconf keys. */
 const identityCapture = (
@@ -54,15 +63,11 @@ const identityCapture = (
   };
 };
 
-const identityReaders = {
-  ...readers,
-  dconf: async () => ({ ok: true as const, text: DCONF }),
-};
-
-/** Export the capture, with a task holding these checks when any are given. */
+/** Export the capture, with a task holding these checks when any are given, and these dconf keys. */
 const exportIdentity = async (
   local: DesktopApplicationCapture,
   checks: readonly unknown[] = [],
+  dconf = DCONF,
 ) => {
   const scratch = await createTestTempDirectory("desktop-identity-");
   const task = join(scratch, "task.json");
@@ -77,12 +82,13 @@ const exportIdentity = async (
         CONFIG,
         DB,
         DCONF_DB,
+        ...EXTRA_CONTENT,
       ]),
       directory,
       name: undefined,
       tasks: checks.length === 0 ? [] : [task],
     },
-    identityReaders,
+    { ...readers, dconf: async () => ({ ok: true as const, text: dconf }) },
   );
   return { result, directory };
 };
@@ -101,37 +107,133 @@ const bundleFiles = async (directory: string) => {
   return files;
 };
 
+/** The bundle files whose path or content holds the host name, `ada@` or the captured home, sorted. */
+const leaking = (files: ReadonlyMap<string, string>) =>
+  [...files]
+    .filter(([path, text]) =>
+      [HOSTNAME, "ada@", HOME].some(
+        (spelling) => path.includes(spelling) || text.includes(spelling),
+      ),
+    )
+    .map(([path]) => path)
+    .sort();
+
 describe("exportDesktopApplication of a capture that names its host", () => {
   it("ships no host name, user@host or captured home outside the seeds it cannot rewrite, and lists both", async () => {
     const { result, directory } = await exportIdentity(identityCapture());
 
     if (result instanceof Error) throw result;
     expect(result.normalized_result).toMatchObject({
-      scrubbed_files: [".config/notes/settings.ini"],
-      unscrubbed_files: [".local/share/notes/notes.db"],
+      scrubbed_files: ["envs/notes/seed/.config/notes/settings.ini"],
+      unscrubbed_files: ["envs/notes/seed/.local/share/notes/notes.db"],
     });
     const files = await bundleFiles(directory);
     const seed = "envs/notes/seed/.config/notes/settings.ini";
     expect(files.get(seed)).toBe(
       "[ui]\npref_template_mail=user@localhost\npref_template_developer=ada\nlast=/home/user/Documents/today.txt\n",
     );
-    const leaking = [...files]
-      .filter(([, text]) =>
-        [HOSTNAME, "ada@", HOME].some((spelling) => text.includes(spelling)),
-      )
-      .map(([path]) => path);
-    expect(leaking).toEqual(["envs/notes/seed/.local/share/notes/notes.db"]);
+    expect(leaking(files)).toEqual([
+      "envs/notes/seed/.local/share/notes/notes.db",
+    ]);
     const module = files.get("envs/notes/notes_app.py") ?? "";
     expect(module).toContain('SEED_HOME = "/home/user"');
     expect(module).toContain("mail='user@localhost'");
     const readme = files.get("README.md") ?? "";
-    expect(readme).toContain("`~/.config/notes/settings.ini`");
-    expect(readme).toContain("`~/.local/share/notes/notes.db`");
+    expect(readme).toContain("`envs/notes/seed/.config/notes/settings.ini`");
+    expect(readme).toContain("`envs/notes/seed/.local/share/notes/notes.db`");
+  });
+
+  it("lists every shipped file that still holds the host name, by its name or content, generated ones included", async () => {
+    const base = identityCapture();
+    const [baseline, ...later] = base.state.checkpoints;
+    const named = {
+      ...base,
+      state: {
+        ...base.state,
+        checkpoints: [
+          {
+            ...checkpoint("baseline", "baseline", [], []),
+            retained: [
+              ...(baseline?.retained ?? []),
+              retained(NAMED, "clean\n"),
+            ],
+          },
+          ...later,
+        ],
+      },
+    };
+
+    const { result, directory } = await exportIdentity(
+      named,
+      [],
+      `[org/notes]\nmail='ada@${HOSTNAME}.local'\n`,
+    );
+
+    if (result instanceof Error) throw result;
+    const shipped = leaking(await bundleFiles(directory));
+    expect(shipped).toEqual([
+      "README.md",
+      "envs/notes/notes_app.py",
+      `envs/notes/seed/.config/notes/${HOSTNAME}-notes.txt`,
+      "envs/notes/seed/.local/share/notes/notes.db",
+    ]);
+    expect(result.normalized_result).toMatchObject({
+      unscrubbed_files: shipped,
+    });
+  });
+
+  it("checks a task's seed as the bundle ships it, so a check the scrub satisfies does not count as failing there", async () => {
+    const base = capture();
+    const mailCapture = {
+      ...identityCapture(),
+      state: {
+        ...base.state,
+        checkpoints: [
+          checkpoint(
+            "baseline",
+            "baseline",
+            [],
+            [retained(SETTINGS, MAIL.before)],
+          ),
+          checkpoint(
+            "edited",
+            "request",
+            [
+              change(SETTINGS, MAIL, { state: true }),
+              change(NOTE, { after: "milk\n" }),
+            ],
+            [retained(SETTINGS, MAIL.after), retained(NOTE, "milk\n")],
+          ),
+        ],
+      },
+    };
+
+    const { result } = await exportIdentity(mailCapture, [
+      {
+        id: "mail",
+        kind: "value_equals",
+        file: ".config/notes/settings.ini",
+        pointer: "/groups/ui/mail",
+        value: "user@localhost",
+      },
+      {
+        id: "note",
+        kind: "lines_present",
+        file: "Documents/today.txt",
+        lines: ["milk"],
+      },
+    ]);
+
+    if (result instanceof Error) throw result;
+    expect(result.normalized_result).toMatchObject({
+      task: { failing_on_seed: ["note"] },
+    });
   });
 
   it.each([
     [`pref_template_mail=ada@${HOSTNAME}`, `ada@${HOSTNAME}`],
     [HOSTNAME, HOSTNAME],
+    [`url=http://${HOSTNAME}.local/`, HOSTNAME],
   ])("refuses a check whose value names %s", async (line, named) => {
     const { result } = await exportIdentity(identityCapture(), [
       {
@@ -160,7 +262,7 @@ describe("exportDesktopApplication of a capture that names its host", () => {
 
     if (result instanceof Error) throw result;
     expect(result.normalized_result).toMatchObject({
-      scrubbed_files: [".config/notes/settings.ini"],
+      scrubbed_files: ["envs/notes/seed/.config/notes/settings.ini"],
       unscrubbed_files: [],
     });
     expect(

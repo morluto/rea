@@ -6,11 +6,17 @@ import type {
   DesktopAppExportPlan,
   SeedScrubReport,
 } from "../../domain/desktop/appExport.js";
+import type { TaskFileView } from "../../domain/desktop/appTaskChecks.js";
 import {
-  hostIdentityIn,
-  scrubSeed,
+  identityLeftIn,
   type HostIdentity,
 } from "../../domain/desktop/hostIdentity.js";
+import { scrubSeed } from "../../domain/desktop/seedScrub.js";
+import {
+  detectStateFormat,
+  isTextualFormat,
+  textualView,
+} from "../../domain/desktop/stateFormats.js";
 import { refuse } from "./DesktopExportInstall.js";
 import type { RetainedContent } from "./DesktopRetainedContent.js";
 
@@ -20,12 +26,18 @@ export interface GeneratedFile {
   readonly bytes: Buffer;
 }
 
-/** A bundle file copied from retained content: a seed, with its home path and whether it is read as text, or an apt key. */
+/** A seed file's retained digest and the format the state view read it as. */
+export interface SeedVersion {
+  readonly sha256: string;
+  readonly format: string | null;
+}
+
+/** A bundle file copied from retained content: a seed, with its home path and format, or an apt key. */
 export interface RetainedCopy {
   readonly path: string;
   readonly digest: string;
   readonly name: string;
-  readonly seed?: { readonly home: string; readonly text: boolean };
+  readonly seed?: { readonly home: string; readonly format: string | null };
 }
 
 /** The files a bundle holds; the README is made last, from what the seeds' scrub found. */
@@ -39,32 +51,78 @@ export interface ExportBundle {
 /** Each seed by its home path, then each distinct apt key in the environment folder. */
 export const retainedCopies = (
   plan: DesktopAppExportPlan,
-  seeds: ReadonlyMap<string, string>,
-): readonly RetainedCopy[] => {
-  const text = new Set(plan.textSeeds);
-  return [
-    ...[...seeds].map(([seed, digest]) => ({
-      path: `envs/${plan.name}/seed/${seed}`,
-      digest,
-      name: `~/${seed}`,
-      seed: { home: seed, text: text.has(seed) },
-    })),
-    ...[
-      ...new Map(
-        plan.aptSources.map((source) => [source.keyFile, source.keySha256]),
-      ),
-    ].map(([keyFile, digest]) => ({
-      path: `envs/${plan.name}/${keyFile}`,
-      digest,
-      name: `the apt key ${keyFile}`,
-    })),
-  ];
+  seeds: ReadonlyMap<string, SeedVersion>,
+): readonly RetainedCopy[] => [
+  ...[...seeds].map(([seed, { sha256, format }]) => ({
+    path: `envs/${plan.name}/seed/${seed}`,
+    digest: sha256,
+    name: `~/${seed}`,
+    seed: { home: seed, format },
+  })),
+  ...[
+    ...new Map(
+      plan.aptSources.map((source) => [source.keyFile, source.keySha256]),
+    ),
+  ].map(([keyFile, digest]) => ({
+    path: `envs/${plan.name}/${keyFile}`,
+    digest,
+    name: `the apt key ${keyFile}`,
+  })),
+];
+
+/** A retained file's bytes, refused when they cannot be read. */
+const retainedBytes = async (
+  content: RetainedContent,
+  copy: RetainedCopy,
+  signal: AbortSignal | undefined,
+): Promise<Buffer> => {
+  signal?.throwIfAborted();
+  const bytes = await content.read(copy.digest, signal);
+  if (!bytes.ok)
+    throw refuse(
+      `The retained content of ${copy.name} ${bytes.error}.`,
+      "capture",
+      "Capture the application again, leaving a seed file out of its state paths if it cannot be retained.",
+    );
+  return bytes.value;
+};
+
+/**
+ * The view of each text seed the scrub rewrites, as the bundle ships it, for
+ * a task's checks on the seed: the computer starts from these bytes.
+ */
+export const shippedSeedViews = async (
+  content: RetainedContent,
+  copies: readonly RetainedCopy[],
+  identity: HostIdentity,
+  signal: AbortSignal | undefined,
+): Promise<ReadonlyMap<string, TaskFileView>> => {
+  const views = new Map<string, TaskFileView>();
+  for (const copy of copies) {
+    const seed = copy.seed;
+    if (seed === undefined || !isTextualFormat(seed.format)) continue;
+    const bytes = await retainedBytes(content, copy, signal);
+    const shipped = scrubSeed(bytes, seed.format, identity).bytes;
+    if (shipped === undefined) continue;
+    const format = detectStateFormat(seed.home, shipped);
+    const view = isTextualFormat(format)
+      ? textualView(format, shipped)
+      : undefined;
+    views.set(
+      seed.home,
+      view === undefined || view.ok
+        ? { format, view: view?.value ?? null }
+        : { format, view: null, error: view.error },
+    );
+  }
+  return views;
 };
 
 /**
  * Write the generated files, then each retained file as it is read, so one at
  * a time is in memory: a seed whose text names the capture host becomes a
- * generated file with its own digest. The README follows, listing them.
+ * generated file with its own digest. The README follows, listing them. Every
+ * file is listed as unscrubbed whose path or content still holds the identity.
  */
 export const writeFiles = async (
   tree: SafeOutputTree,
@@ -72,47 +130,50 @@ export const writeFiles = async (
   bundle: ExportBundle,
   signal: AbortSignal | undefined,
 ): Promise<SeedScrubReport> => {
-  const write = (path: string, bytes: Buffer, sha256?: string) =>
-    tree.write(
+  const scrubbed: string[] = [];
+  const unscrubbed: string[] = [];
+  const write = async (
+    path: string,
+    bytes: Buffer,
+    shipped: { readonly sha256?: string; readonly holdsIdentity: boolean },
+  ) => {
+    await tree.write(
       path,
       Readable.from([bytes]),
       {
         bytes: bytes.length,
-        sha256: sha256 ?? createHash("sha256").update(bytes).digest("hex"),
+        sha256:
+          shipped.sha256 ?? createHash("sha256").update(bytes).digest("hex"),
       },
       signal,
     );
-  for (const file of bundle.generated) await write(file.path, file.bytes);
-  const scrubbed: string[] = [];
-  const unscrubbed: string[] = [];
-  for (const copy of bundle.copies) {
-    signal?.throwIfAborted();
-    const bytes = await content.read(copy.digest, signal);
-    if (!bytes.ok)
-      throw refuse(
-        `The retained content of ${copy.name} ${bytes.error}.`,
-        "capture",
-        "Capture the application again, leaving a seed file out of its state paths if it cannot be retained.",
-      );
-    const seed = copy.seed;
-    const scrub =
-      seed === undefined
-        ? undefined
-        : scrubSeed(bytes.value, seed.text, bundle.identity);
-    if (seed !== undefined && scrub?.bytes !== undefined)
-      scrubbed.push(seed.home);
     if (
-      seed !== undefined &&
-      (scrub?.holdsIdentity === true ||
-        hostIdentityIn(seed.home, bundle.identity) !== undefined)
+      shipped.holdsIdentity ||
+      identityLeftIn(path, bundle.identity) !== undefined
     )
-      unscrubbed.push(seed.home);
+      unscrubbed.push(path);
+  };
+  const generated = (file: GeneratedFile) =>
+    write(file.path, file.bytes, {
+      holdsIdentity:
+        identityLeftIn(file.bytes.toString("utf8"), bundle.identity) !==
+        undefined,
+    });
+  for (const file of bundle.generated) await generated(file);
+  for (const copy of bundle.copies) {
+    const bytes = await retainedBytes(content, copy, signal);
+    const scrub =
+      copy.seed === undefined
+        ? undefined
+        : scrubSeed(bytes, copy.seed.format, bundle.identity);
+    const holdsIdentity = scrub?.holdsIdentity === true;
     if (scrub?.bytes === undefined)
-      await write(copy.path, bytes.value, copy.digest);
-    else await write(copy.path, scrub.bytes);
+      await write(copy.path, bytes, { sha256: copy.digest, holdsIdentity });
+    else {
+      scrubbed.push(copy.path);
+      await write(copy.path, scrub.bytes, { holdsIdentity });
+    }
   }
-  const report = { scrubbed, unscrubbed };
-  const readme = bundle.readme(report);
-  await write(readme.path, readme.bytes);
-  return report;
+  await generated(bundle.readme({ scrubbed, unscrubbed: [...unscrubbed] }));
+  return { scrubbed, unscrubbed };
 };

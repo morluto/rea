@@ -280,6 +280,15 @@ const MAX_PARSED_VIEW_BYTES = 4 * MIB;
 /** Formats read from a file's bytes alone, without a tool or worker. */
 export type TextualStateFormat = "text" | "json" | "keyfile" | "xml";
 
+/** Whether a format is one of the text formats, read as UTF-8. */
+export const isTextualFormat = (
+  format: string | null,
+): format is TextualStateFormat =>
+  format === "text" ||
+  format === "json" ||
+  format === "keyfile" ||
+  format === "xml";
+
 /** A text, JSON, key file or XML file's view, or why it has none. */
 export const textualView = (
   format: TextualStateFormat,

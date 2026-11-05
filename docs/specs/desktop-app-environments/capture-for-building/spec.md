@@ -36,18 +36,25 @@ and the bundle holds neither the capture host's name nor its user's.
 - Scrub: the export replaces `user@host` with `user@localhost`, the host name
   as a whole name with `localhost`, and the captured home where a whole path
   segment ends after it with `/home/user`, in seeded text files read as
-  UTF-8, in UTF-16 seeds with a byte-order mark, and in the dconf keys. The
-  user name alone is never replaced. A rewritten seed is a generated file with
+  UTF-8, in UTF-16 seeds with a byte-order mark, and in the dconf keys. A
+  host named `localhost` keeps that name, but its captured `user@localhost`
+  is still replaced. The user name alone is never replaced. JSON is scrubbed
+  by its strings' decoded values and XML by its decoded character data and
+  attribute values, plus comments and CDATA, so neither's syntax or names
+  change and escapes hide nothing. A rewritten seed is a generated file with
   its own SHA-256. The class's `SEED_HOME` is `/home/user`, which it respells
-  to the computer's home at boot as before. `scrubbed_files` and the README
-  list the rewritten seeds; `unscrubbed_files` and the README list seeds whose
-  shipped content still holds the host name or the captured home anywhere,
-  or whose name holds the host name. A capture whose home is already
+  to the computer's home at boot as before. A capture whose home is already
   `/home/user`, as inside a computer, has no home to replace. A capture
   without the host's name and user has only its home replaced, with a
   limitation.
-- Task checks whose values name `user@host` or the host name are refused,
-  like those that name the captured home.
+- Leftovers: every shipped file, generated ones included, is searched in its
+  path and content, escapes decoded, for the host name and `user@host`
+  anywhere and the captured home as a whole path, with the replacements set
+  aside. `scrubbed_files` lists the rewritten seeds and `unscrubbed_files`
+  every file found, by bundle path; the README lists both.
+- Tasks: checks whose values name `user@host` or the host name by that rule
+  are refused, like those that name the captured home, and the checks that
+  must fail on the seed are evaluated on the seed as the bundle ships it.
 
 ## Non-goals
 

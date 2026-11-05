@@ -41,6 +41,7 @@ import {
   scrubHostIdentity,
   type HostIdentity,
 } from "../../domain/desktop/hostIdentity.js";
+import { isTextualFormat } from "../../domain/desktop/stateFormats.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
@@ -57,7 +58,12 @@ import {
   admitApplication,
   exportEnvironmentName,
 } from "./DesktopExportInstall.js";
-import { retainedCopies, writeFiles } from "./DesktopExportFiles.js";
+import {
+  retainedCopies,
+  shippedSeedViews,
+  writeFiles,
+  type SeedVersion,
+} from "./DesktopExportFiles.js";
 import { withRetainedContent } from "./DesktopRetainedContent.js";
 import { selectStateEnds } from "./DesktopStateVersions.js";
 import { admitDesktopTask, type AdmittedTask } from "./DesktopTaskExport.js";
@@ -65,7 +71,6 @@ import { admitDesktopTask, type AdmittedTask } from "./DesktopTaskExport.js";
 const OPERATION = "export_desktop_application";
 /** Largest seed file the export copies; the state view reads only 64 MiB. */
 const SEED_MAX_BYTES = 1024 * 1024 * 1024;
-const TEXT_FORMATS = new Set(["text", "json", "keyfile", "xml"]);
 
 /** What the caller asked to export, after CLI parsing. */
 export interface DesktopExportRequest {
@@ -174,7 +179,7 @@ const planExport = (
   },
 ): {
   readonly plan: DesktopAppExportPlan;
-  readonly seeds: ReadonlyMap<string, string>;
+  readonly seeds: ReadonlyMap<string, SeedVersion>;
   readonly limitations: readonly string[];
   readonly collisions: readonly HomePathCollision[];
   readonly files: ReadonlyMap<string, StatePath>;
@@ -191,14 +196,14 @@ const planExport = (
     capture,
     state,
   );
-  const seeds = new Map<string, string>();
+  const seeds = new Map<string, SeedVersion>();
   const textSeeds: string[] = [];
   for (const [home, path] of files) {
     const version = versionAt(path, context.seed);
     if (!isWithinAny(home, paths) || version?.present !== true) continue;
     if (version.sha256 === null) continue;
-    seeds.set(home, version.sha256);
-    if (TEXT_FORMATS.has(version.format ?? "")) textSeeds.push(home);
+    seeds.set(home, { sha256: version.sha256, format: version.format });
+    if (isTextualFormat(version.format)) textSeeds.push(home);
   }
   const plan: DesktopAppExportPlan = {
     name: source,
@@ -399,12 +404,21 @@ const runExport = async (
     state,
     { evidenceId: evidence.evidence_id, seed: ends.seed, identity },
   );
+  const copies = retainedCopies(plan, seeds);
+  // A task's seed checks read the seeds as the bundle ships them, scrubbed.
+  const seedViews =
+    request.tasks.length === 0
+      ? new Map()
+      : await withRetainedContent(
+          request.capture,
+          (content) => shippedSeedViews(content, copies, identity, signal),
+          SEED_MAX_BYTES,
+        );
   const admitted = await admitDesktopTask(
     request.tasks,
-    { ...plan, files, identity, ends },
+    { ...plan, files, identity, ends, seedViews },
     signal,
   );
-  const copies = retainedCopies(plan, seeds);
   const { generated, readme } = bundleText(plan, admitted);
   let scrub: SeedScrubReport = { scrubbed: [], unscrubbed: [] };
   const unclosed = await withRetainedContent(
