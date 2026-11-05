@@ -63,8 +63,8 @@ folder to build the environment; this step builds nothing.
   existing directory completely; the rest are counted as unconfirmed. Walks
   do not follow symbolic links, do not enter a directory on another device
   than their root (the limitations name each such mount point), leave out the
-  output folder and `--exclude` paths, and stop at `--max-entries`, roots
-  included.
+  output folder and `--exclude` paths, which the capture records as
+  `excluded`, and stop at `--max-entries`, roots included.
 - Retention opens files without following links or blocking, keeps a file
   only if it is still the version the walk recorded and does not change while
   read, respects `--max-file-bytes`, and charges `--max-content-bytes` only
