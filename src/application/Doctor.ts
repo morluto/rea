@@ -827,20 +827,28 @@ export const systemDoctorHost = (
             const inspections: DoctorProviderInspection[] = [];
             let completedGroups = 0;
             for (const inspect of providerInspectionGroups) {
+              let admitted = false;
               try {
                 // Finish each active group before admitting the next one, so
                 // retained cleanup can drain without waiting on this caller.
                 inspections.push(
-                  ...(await resources.run(() =>
-                    inspect(resourceScope, inspectionSignal),
-                  )),
+                  ...(await resources.run(() => {
+                    admitted = true;
+                    return inspect(resourceScope, inspectionSignal);
+                  })),
                 );
                 completedGroups++;
               } catch (cause: unknown) {
                 const failure =
                   cause instanceof ArtifactResourceRetryFailure
                     ? doctorResourceCleanupFailure(cause)
-                    : cause;
+                    : !admitted &&
+                        controller.signal.aborted &&
+                        cause instanceof ArtifactReaderFailure
+                      ? new AnalysisCancelledError("doctor", {
+                          cause: inspectionSignal.reason,
+                        })
+                      : cause;
                 if (failure instanceof AnalysisError)
                   failure.retainDiagnostics({
                     provider_inspections: jsonValueSchema.parse(inspections),

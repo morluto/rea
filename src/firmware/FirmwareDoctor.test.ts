@@ -130,6 +130,14 @@ linuxIt(
       { id: "binwalk", available: true, providerVersion: "3.1.0" },
       { id: "unblob", available: true, providerVersion: "26.6.4" },
     ]);
+    expect(inspections[1]?.checks.map(({ name }) => name)).toEqual([
+      "platform",
+      "ps",
+      "prlimit",
+      "configuration",
+      "version",
+      "external-dependencies",
+    ]);
     expect(
       inspections.every(
         ({ registrationEnvironment }) =>
@@ -623,6 +631,197 @@ linuxIt(
       expect(run).toHaveBeenCalledTimes(2);
     } finally {
       selection.mockRestore();
+      await doctor.close();
+    }
+  },
+);
+
+linuxIt.each([
+  { phase: "version", reason: "cancelled" },
+  { phase: "dependencies", reason: "cancelled" },
+  { phase: "version", reason: "output-limit" },
+  { phase: "dependencies", reason: "output-limit" },
+] as const)(
+  "retains partial Unblob facts when $phase ends with $reason and cancellation",
+  async ({ phase, reason }) => {
+    const { environment, host } = await fixture();
+    const controller = new AbortController();
+    const cancellation = { request: `cancel Unblob ${phase}` };
+    const physical = new OwnedCommandFailure(
+      reason,
+      `Unblob ${phase} ${reason}`,
+      {
+        ...snapshot("unfinished probe stdout", 7, "unfinished probe stderr"),
+        diagnosticTruncated: reason === "output-limit",
+      },
+      null,
+      { cancellation: { reason: cancellation } },
+    );
+    const owner = new ProviderProcessSupervisor({
+      process: Object.assign(new EventEmitter(), {
+        stdout: null,
+        stderr: null,
+        exitCode: 0,
+        signalCode: null,
+        kill: () => false,
+      }),
+      ownsProcessLifetime: false,
+    });
+    const stop = vi
+      .spyOn(owner, "stop")
+      .mockResolvedValueOnce({ status: "incomplete", reason: "retry cleanup" })
+      .mockResolvedValue({ status: "verified-cleanup" });
+    const argument =
+      phase === "version" ? "--version" : "--show-external-dependencies";
+    const run = vi.fn<NonNullable<FirmwareDoctorHost["runCommand"]>>(
+      async (spawn, limits, options) => {
+        if (
+          spawn.arguments.includes(environment.REA_UNBLOB_COMMAND) &&
+          spawn.arguments.includes(argument)
+        ) {
+          options?.retainCleanup?.(owner, {
+            status: "incomplete",
+            reason: "retry cleanup",
+          });
+          controller.abort(cancellation);
+          throw physical;
+        }
+        if (host.runCommand === undefined)
+          throw new Error("Expected recording host");
+        return host.runCommand(spawn, limits, options);
+      },
+    );
+    const doctor = new FirmwareDoctor(
+      environment,
+      "linux",
+      { ...host, runCommand: run },
+      controller.signal,
+    );
+    try {
+      const failure: unknown = await doctor
+        .inspect()
+        .catch((cause: unknown) => cause);
+      expect(failure).toBeInstanceOf(AnalysisError);
+      if (!(failure instanceof AnalysisError)) throw failure;
+      expect(failure._tag).toBe(
+        reason === "cancelled"
+          ? "AnalysisCancelledError"
+          : "AnalysisResourceConstraintError",
+      );
+      expect(failure.cause).toBe(
+        reason === "cancelled" ? cancellation : physical,
+      );
+      expect(failure.secondaryFailures).toHaveLength(
+        reason === "cancelled" ? 0 : 1,
+      );
+      if (reason !== "cancelled")
+        expect(failure.secondaryFailures[0]?.cause).toBe(cancellation);
+      const unfinished =
+        phase === "version" ? "version" : "external-dependencies";
+      const checks = ["platform", "ps", "prlimit", "configuration", "version"];
+      if (phase === "dependencies") checks.push("external-dependencies");
+      expect(projectAnalysisError(failure)).toMatchObject({
+        details: {
+          captured_output: {
+            stdout: "unfinished probe stdout",
+            stderr: "unfinished probe stderr",
+            exit_code: 7,
+            truncated: reason === "output-limit",
+          },
+          diagnostics: {
+            firmware_probe: { reason, message: `Unblob ${phase} ${reason}` },
+            firmware_inspections: [
+              { id: "binwalk", available: true, providerVersion: "3.1.0" },
+              {
+                id: "unblob",
+                configured: true,
+                available: false,
+                providerVersion: phase === "dependencies" ? "26.6.4" : null,
+                checks: checks.map((name) =>
+                  expect.objectContaining({
+                    name,
+                    ok: name !== unfinished,
+                    ...(name === unfinished
+                      ? {
+                          classification: "unknown",
+                          detail: expect.stringContaining("did not complete"),
+                        }
+                      : {}),
+                  }),
+                ),
+              },
+            ],
+            firmware_inspection_count: { completed: 1, total: 2 },
+          },
+        },
+      });
+      expect(run).toHaveBeenCalledTimes(phase === "version" ? 3 : 4);
+      expect(doctor.hasPendingCleanup).toBe(true);
+      expect(await doctor.close()).toContain("retry cleanup");
+      expect(doctor.hasPendingCleanup).toBe(true);
+      expect(await doctor.close()).toBeUndefined();
+      expect(doctor.hasPendingCleanup).toBe(false);
+      expect(stop).toHaveBeenCalledTimes(2);
+    } finally {
+      await doctor.close();
+      owner.dispose();
+    }
+  },
+);
+
+linuxIt(
+  "counts Unblob once as complete when cancellation follows its dependency result",
+  async () => {
+    const { environment, host } = await fixture();
+    const controller = new AbortController();
+    const cancellation = { request: "cancel after dependencies completed" };
+    const doctor = new FirmwareDoctor(
+      environment,
+      "linux",
+      {
+        ...host,
+        runCommand: async (spawn, limits, options) => {
+          if (host.runCommand === undefined)
+            throw new Error("Expected recording host");
+          const result = await host.runCommand(spawn, limits, options);
+          if (spawn.arguments.includes("--show-external-dependencies"))
+            controller.abort(cancellation);
+          return result;
+        },
+      },
+      controller.signal,
+    );
+    try {
+      const failure: unknown = await doctor
+        .inspect()
+        .catch((cause: unknown) => cause);
+      expect(failure).toBeInstanceOf(AnalysisCancelledError);
+      if (!(failure instanceof AnalysisCancelledError)) throw failure;
+      expect(failure.cause).toBe(cancellation);
+      expect(projectAnalysisError(failure)).toMatchObject({
+        details: {
+          diagnostics: {
+            firmware_inspections: [
+              { id: "binwalk", available: true, providerVersion: "3.1.0" },
+              {
+                id: "unblob",
+                available: true,
+                providerVersion: "26.6.4",
+                checks: [
+                  "platform",
+                  "ps",
+                  "prlimit",
+                  "configuration",
+                  "version",
+                  "external-dependencies",
+                ].map((name) => expect.objectContaining({ name, ok: true })),
+              },
+            ],
+            firmware_inspection_count: { completed: 2, total: 2 },
+          },
+        },
+      });
+    } finally {
       await doctor.close();
     }
   },

@@ -56,6 +56,7 @@ interface ProbeOutput {
 interface InspectionProgress {
   primaryFailure?: AnalysisError;
   readonly inspections: DoctorProviderInspection[];
+  partialInspection?: DoctorProviderInspection;
 }
 
 /** Host process seams; production uses the shared owned-command supervisor. */
@@ -97,7 +98,12 @@ export class FirmwareDoctor {
           (failure) => !(failure instanceof AnalysisCancelledError),
         );
         retained.retainDiagnostics({
-          firmware_inspections: jsonValueSchema.parse(progress.inspections),
+          firmware_inspections: jsonValueSchema.parse([
+            ...progress.inspections,
+            ...(progress.partialInspection === undefined
+              ? []
+              : [progress.partialInspection]),
+          ]),
           firmware_inspection_count: {
             completed: progress.inspections.length,
             total: 2,
@@ -303,24 +309,35 @@ export class FirmwareDoctor {
         `Set ${variable} to an absolute readable executable path to the caller-supplied ${engine} tool.`,
       ),
     );
-    let version: string | null = null;
+    const inspection = {
+      id: engine,
+      configured,
+      available: false,
+      providerVersion: null as string | null,
+      // Readiness does not opt firmware tools into setup's registration writes.
+      registrationEnvironment: {},
+      checks,
+    };
+    // Retain admitted facts before a later probe can interrupt this engine.
+    // Only the caller adds a returned inspection to the completed count.
+    progress.partialInspection = inspection;
     if (command.ok && limiter !== undefined) {
+      const versionIndex = checks.length;
+      checks.push(unfinishedProbe("version"));
       const probe = await this.#probe(
         limiter,
         limitedArguments(command.value.invocationPath, ["--version"]),
         progress,
       );
       if (!probe.ok || probe.value.exitCode !== 0) {
-        checks.push(
-          diagnostic(
-            "version",
-            false,
-            probe.ok
-              ? `Version probe exited ${String(probe.value.exitCode)}: ${probe.value.stderr || probe.value.stdout}`
-              : probe.error,
-            "runtime_failure",
-            `Check ${variable} and its runtime dependencies, then rerun doctor.`,
-          ),
+        checks[versionIndex] = diagnostic(
+          "version",
+          false,
+          probe.ok
+            ? `Version probe exited ${String(probe.value.exitCode)}: ${probe.value.stderr || probe.value.stdout}`
+            : probe.error,
+          "runtime_failure",
+          `Check ${variable} and its runtime dependencies, then rerun doctor.`,
         );
       } else {
         const admitted = admitFirmwareVersion(
@@ -329,39 +346,32 @@ export class FirmwareDoctor {
         );
         const accepted =
           admitted.status === "verified" || admitted.status === "compatible";
-        if (accepted) version = admitted.version;
-        checks.push(
-          diagnostic(
-            "version",
-            accepted,
-            admitted.status === "verified"
-              ? `Verified release ${admitted.version}.`
-              : admitted.status === "compatible"
-                ? admitted.limitation
-                : admitted.message,
-            admitted.status === "unresolved" ? "unknown" : "config_drift",
-            `Select a supported ${engine} release; see docs/firmware-analysis.md.`,
-          ),
+        if (accepted) inspection.providerVersion = admitted.version;
+        checks[versionIndex] = diagnostic(
+          "version",
+          accepted,
+          admitted.status === "verified"
+            ? `Verified release ${admitted.version}.`
+            : admitted.status === "compatible"
+              ? admitted.limitation
+              : admitted.message,
+          admitted.status === "unresolved" ? "unknown" : "config_drift",
+          `Select a supported ${engine} release; see docs/firmware-analysis.md.`,
         );
-        if (engine === "unblob" && accepted)
-          checks.push(
-            await this.#inspectDependencies(
-              limiter,
-              command.value.invocationPath,
-              progress,
-            ),
+        if (engine === "unblob" && accepted) {
+          const dependenciesIndex = checks.length;
+          checks.push(unfinishedProbe("external-dependencies"));
+          checks[dependenciesIndex] = await this.#inspectDependencies(
+            limiter,
+            command.value.invocationPath,
+            progress,
           );
+        }
       }
     }
-    return {
-      id: engine,
-      configured,
-      available: checks.every(({ ok }) => ok),
-      providerVersion: version,
-      // Readiness does not opt firmware tools into setup's registration writes.
-      registrationEnvironment: {},
-      checks,
-    };
+    inspection.available = checks.every(({ ok }) => ok);
+    delete progress.partialInspection;
+    return inspection;
   }
 
   async #inspectDependencies(
@@ -492,6 +502,15 @@ const diagnostic = (
   code: ok ? null : "provider_unavailable",
   remediation: ok ? null : remediation,
 });
+
+const unfinishedProbe = (name: string): DoctorProviderCheck =>
+  diagnostic(
+    name,
+    false,
+    `The ${name} probe did not complete; readiness remains unknown.`,
+    "unknown",
+    "Resolve the interrupted firmware diagnostic and rerun doctor.",
+  );
 
 const limitedArguments = (
   command: string,
