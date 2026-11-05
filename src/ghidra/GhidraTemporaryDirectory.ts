@@ -1,7 +1,9 @@
 import { randomUUID } from "node:crypto";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { open, unlink } from "node:fs/promises";
+
+import type { RetainedResourceScope } from "../application/AnalysisProvider.js";
+import { ghidraSessionRoot } from "./GhidraSessionRoot.js";
 
 /**
  * Remediation for a host that denies writes under the session temporary root.
@@ -9,7 +11,7 @@ import { open, unlink } from "node:fs/promises";
  * REA's own private-directory ACL as the cause.
  */
 export const GHIDRA_RESTRICTED_TEMP_REMEDIATION =
-  "REA places each Ghidra session's private runtime under os.tmpdir(), which follows TMP/TEMP on Windows. On a restricted or sandboxed host that denies child-process writes outside an allowed tree, set TMP and TEMP to a directory inside that allowed tree in the environment that starts REA (your shell or the MCP client's registration), restart REA, and retry. Ghidra's LaunchSupport rewrites java_home.save, so creating that file in advance does not help.";
+  "REA places each Ghidra session's private runtime under the Ghidra session root: os.tmpdir(), which follows TMP/TEMP on Windows, or, when that path has a dot-prefixed element that Ghidra rejects, its nearest ancestor without one. On a restricted or sandboxed host that denies child-process writes outside an allowed tree, set TMP and TEMP to a directory inside that allowed tree whose path has no dot-prefixed element, in the environment that starts REA (your shell or the MCP client's registration), restart REA, and retry. Ghidra's LaunchSupport rewrites java_home.save, so creating that file in advance does not help.";
 
 /** Outcome of one write-and-delete probe of the session temporary root. */
 export type GhidraTemporaryDirectoryProbe =
@@ -22,19 +24,19 @@ export type GhidraTemporaryDirectoryProbe =
       /** Node system code such as EACCES or EPERM, when reported. */
       readonly code: string | undefined;
       readonly message: string;
-      /** Probe file whose removal failed, so a retained entry is not hidden. */
+      /** Probe file whose removal failed; its cleanup owner is retained. */
       readonly retainedPath?: string;
     };
 
 /** Filesystem seam so classification is testable without a restricted host. */
 export interface GhidraTemporaryDirectoryHost {
-  readonly tmpdir: () => string;
+  readonly sessionRoot: () => string;
   readonly writeProbe: (path: string) => Promise<void>;
   readonly removeProbe: (path: string) => Promise<void>;
 }
 
 const systemHost: GhidraTemporaryDirectoryHost = {
-  tmpdir,
+  sessionRoot: () => ghidraSessionRoot(),
   writeProbe: async (path) => {
     const handle = await open(path, "wx", 0o600);
     try {
@@ -55,24 +57,34 @@ const errorMessage = (cause: unknown): string =>
   cause instanceof Error ? cause.message : String(cause);
 
 /**
- * Create and delete one file under `os.tmpdir()` from the REA process. This
- * proves only that REA itself can use the root; a host that restricts child
- * processes separately is not detected here and is classified from the child's
- * own failure output instead.
+ * Create and delete one file under the Ghidra session root from the REA
+ * process. This proves only that REA itself can use the root; a host that
+ * restricts child processes separately is not detected here and is classified
+ * from the child's own failure output instead. A probe file that cannot be
+ * removed stays owned by `resourceOwner`, whose close retries the removal.
  */
 export const probeGhidraTemporaryDirectory = async (
-  host: GhidraTemporaryDirectoryHost = systemHost,
+  resourceOwner: RetainedResourceScope,
+  overrides: Partial<GhidraTemporaryDirectoryHost> = {},
 ): Promise<GhidraTemporaryDirectoryProbe> => {
-  const directory = host.tmpdir();
+  const host = { ...systemHost, ...overrides };
+  const directory = host.sessionRoot();
   const path = join(directory, `rea-doctor-probe-${randomUUID()}`);
+  const remove = () =>
+    host.removeProbe(path).catch((cause: unknown) => {
+      if (errorCode(cause) !== "ENOENT") throw cause;
+    });
+  const retain = () =>
+    resourceOwner.retain({ close: remove, cleanupResources: [path] }, path);
   try {
     await host.writeProbe(path);
   } catch (cause: unknown) {
     // A failed write may still have created the entry; try to remove it.
-    const removed = await host.removeProbe(path).then(
+    const removed = await remove().then(
       () => true,
-      (removal: unknown) => errorCode(removal) === "ENOENT",
+      () => false,
     );
+    if (!removed) retain();
     return {
       ok: false,
       directory,
@@ -85,6 +97,7 @@ export const probeGhidraTemporaryDirectory = async (
   try {
     await host.removeProbe(path);
   } catch (cause: unknown) {
+    retain();
     return {
       ok: false,
       directory,

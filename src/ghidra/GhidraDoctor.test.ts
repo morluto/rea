@@ -430,6 +430,31 @@ describe("Windows Ghidra temporary directory check", () => {
     expect(check?.detail).not.toMatch(/antivirus|DACL/iu);
   });
 
+  it("reports a retained probe file whose cleanup doctor retries", async () => {
+    const projected = projectGhidraDoctorInspection(
+      await inspection({ installDir: WINDOWS_INSTALL, platform: "win32" }),
+      {
+        ok: false,
+        directory: "C:\\work",
+        stage: "cleanup",
+        code: "EPERM",
+        message: "EPERM: operation not permitted",
+        retainedPath: "C:\\work\\rea-doctor-probe-1",
+      },
+    );
+    const check = projected.checks.find(
+      ({ name }) => name === "temp_directory",
+    );
+    expect(check).toMatchObject({
+      details: {
+        directory: "C:\\work",
+        stage: "cleanup",
+        retained_path: "C:\\work\\rea-doctor-probe-1",
+      },
+    });
+    expect(check?.detail).toContain("retries removal when doctor finishes");
+  });
+
   it("reports a passing probe without claiming child-process access", async () => {
     const projected = projectGhidraDoctorInspection(
       await inspection({ installDir: WINDOWS_INSTALL, platform: "win32" }),
