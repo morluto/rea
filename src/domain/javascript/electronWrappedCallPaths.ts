@@ -1561,9 +1561,11 @@ export function* collectElectronWrappedCallPathsSteps(
       const batch = traversal.next();
       for (const node of seeds) {
         for (;;) {
+          const priorUnknownFindings = unknownFindings;
           resolver.memberMutationFactsRequired = false;
           yield* seed(node);
           if (!resolver.memberMutationFactsRequired) break;
+          unknownFindings = priorUnknownFindings;
           yield* indexMemberMutationFactsSteps();
           resolver.memberMutationFactsIndexed();
         }
