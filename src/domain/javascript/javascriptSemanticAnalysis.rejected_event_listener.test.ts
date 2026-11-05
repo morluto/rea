@@ -464,6 +464,317 @@ e.on("ready");`),
   ).toContainEqual({ kind: "register", method: "on", eventName: "ready" });
 });
 
+/** The imported helper hides its writes, so only the shared escape proves uncertainty. */
+it.each([
+  [
+    "the class",
+    'import { EventEmitter } from "node:events";',
+    "EventEmitter",
+    "EventEmitter",
+  ],
+  [
+    "the namespace",
+    'import * as events from "node:events";',
+    "events.EventEmitter",
+    "events",
+  ],
+  [
+    "a class alias",
+    'import { EventEmitter } from "node:events"; const EE = EventEmitter;',
+    "EE",
+    "EE",
+  ],
+  [
+    "another import",
+    'import first from "events"; import second from "node:events";',
+    "second.EventEmitter",
+    "first",
+  ],
+  [
+    "a required module",
+    'const events = require("node:events");',
+    "events.EventEmitter",
+    "events",
+  ],
+  [
+    "an inline require",
+    "",
+    'require("node:events").EventEmitter',
+    'require("events")',
+  ],
+] as const)(
+  "keeps the registration when %s escapes after construction",
+  (_name, header, constructor, escaped) => {
+    expect(
+      eventsForSource(`import { configure } from "./configure.js";
+${header}
+const e = new (${constructor})();
+configure(${escaped});
+e.on("ready");`),
+    ).toContainEqual({
+      kind: "register",
+      method: "on",
+      eventName: "ready",
+    });
+  },
+);
+
+it.each([
+  [
+    "the class",
+    'import { EventEmitter } from "node:events";',
+    "EventEmitter",
+    "EventEmitter",
+  ],
+  [
+    "the namespace",
+    'import * as events from "node:events";',
+    "events.EventEmitter",
+    "events",
+  ],
+  [
+    "another import",
+    'import first from "events"; import second from "node:events";',
+    "second.EventEmitter",
+    "first",
+  ],
+] as const)(
+  "still rejects a missing listener before %s escapes",
+  (_name, header, constructor, escaped) => {
+    expect(
+      eventsForSource(`import { configure } from "./configure.js";
+${header}
+const e = new (${constructor})();
+e.on("ready");
+configure(${escaped});`),
+    ).not.toContainEqual({
+      kind: "register",
+      method: "on",
+      eventName: "ready",
+    });
+  },
+);
+
+it("still rejects a missing listener when only the prototype method value escapes", () => {
+  expect(
+    eventsForSource(`import { EventEmitter } from "node:events";
+import { configure } from "./configure.js";
+configure(EventEmitter.prototype.on);
+const e = new EventEmitter();
+e.on("ready");`),
+  ).not.toContainEqual({
+    kind: "register",
+    method: "on",
+    eventName: "ready",
+  });
+});
+
+it("still rejects a missing listener when only a saved method value escapes", () => {
+  expect(
+    eventsForSource(`import { EventEmitter } from "node:events";
+import { configure } from "./configure.js";
+const saved = EventEmitter.prototype.on;
+configure(saved);
+const e = new EventEmitter();
+e.on("ready");`),
+  ).toEqual([]);
+});
+
+it.each([
+  "configure(EventEmitter)",
+  'eval("EventEmitter.prototype.on = replacement")',
+])(
+  "still rejects when %s runs after method selection in an argument",
+  (effect) => {
+    expect(
+      eventsForSource(`import { EventEmitter } from "node:events";
+import { configure } from "./configure.js";
+const e = new EventEmitter();
+e.on((${effect}, "ready"));`),
+    ).toEqual([]);
+  },
+);
+
+it.each(["before", "after"] as const)(
+  "keeps the registration when the prototype constructor escapes %s construction",
+  (timing) => {
+    expect(
+      eventsForSource(`import { EventEmitter } from "node:events";
+import { configure } from "./configure.js";
+${timing === "before" ? "configure(EventEmitter.prototype.constructor);" : ""}
+const e = new EventEmitter();
+${timing === "after" ? "configure(EventEmitter.prototype.constructor);" : ""}
+e.on("ready");`),
+    ).toContainEqual({
+      kind: "register",
+      method: "on",
+      eventName: "ready",
+    });
+  },
+);
+
+it("keeps the registration after an alias of the prototype constructor escapes", () => {
+  expect(
+    eventsForSource(`import { EventEmitter } from "node:events";
+import { configure } from "./configure.js";
+const Ctor = EventEmitter.prototype.constructor;
+const e = new EventEmitter();
+configure(Ctor);
+e.on("ready");`),
+  ).toContainEqual({
+    kind: "register",
+    method: "on",
+    eventName: "ready",
+  });
+});
+
+it("keeps the registration after a computed prototype constructor escapes", () => {
+  expect(
+    eventsForSource(`import { EventEmitter } from "node:events";
+import { configure } from "./configure.js";
+const key = "prototype";
+const e = new EventEmitter();
+configure(EventEmitter[key].constructor);
+e.on("ready");`),
+  ).toContainEqual({
+    kind: "register",
+    method: "on",
+    eventName: "ready",
+  });
+});
+
+/** Shared prototype changes may outlive the activation that made them. */
+it("keeps a registration when a class escape may run in an earlier invocation", () => {
+  expect(
+    eventsForSource(`import { EventEmitter } from "node:events";
+import { configure } from "./configure.js";
+function run(change) {
+  const e = new EventEmitter();
+  if (!change) e.on("ready");
+  configure(EventEmitter);
+}
+run(true);
+run(false);`),
+  ).toContainEqual({
+    kind: "register",
+    method: "on",
+    eventName: "ready",
+  });
+});
+
+it.each([
+  [
+    "a named import",
+    'import { EventEmitter } from "node:events";',
+    "EventEmitter",
+  ],
+  ["a local class alias", 'import { EventEmitter } from "node:events";', "EE"],
+  [
+    "a required module",
+    'const events = require("node:events");',
+    "events.EventEmitter",
+  ],
+  ["an inline require", "", 'require("node:events").EventEmitter'],
+] as const)(
+  "keeps a nested receiver when module eval may change %s",
+  (_name, header, constructor) => {
+    expect(
+      eventsForSource(`${header}
+const original = (${constructor === "EE" ? "EventEmitter" : constructor}).prototype.on;
+eval(${JSON.stringify(`(${constructor === "EE" ? "EventEmitter" : constructor}).prototype.on = function(name, fn = () => {}) { return original.call(this, name, fn); }`)});
+function run() {
+  ${constructor === "EE" ? "const EE = EventEmitter;" : ""}
+  const e = new (${constructor})();
+  e.on("ready");
+}
+run();`),
+    ).toContainEqual({
+      kind: "register",
+      method: "on",
+      eventName: "ready",
+    });
+  },
+);
+
+it("keeps a registration when outer eval may run in an earlier invocation", () => {
+  expect(
+    eventsForSource(`import { EventEmitter } from "node:events";
+const original = EventEmitter.prototype.on;
+function run(change) {
+  if (change) eval("EventEmitter.prototype.on = function(name, fn = () => {}) { return original.call(this, name, fn); }");
+  function listen() {
+    const e = new EventEmitter();
+    e.on("ready");
+  }
+  if (!change) listen();
+}
+run(true);
+run(false);`),
+  ).toContainEqual({
+    kind: "register",
+    method: "on",
+    eventName: "ready",
+  });
+});
+
+it("still rejects a missing listener before a top-level eval runs", () => {
+  expect(
+    eventsForSource(`import { EventEmitter } from "node:events";
+const e = new EventEmitter();
+e.on("ready");
+eval("EventEmitter.prototype.on = replacement");`),
+  ).not.toContainEqual({
+    kind: "register",
+    method: "on",
+    eventName: "ready",
+  });
+});
+
+it("still rejects a missing listener beside a shadowed eval call", () => {
+  expect(
+    eventsForSource(`const { EventEmitter } = require("node:events");
+function run(eval) {
+  const e = new EventEmitter();
+  eval("ordinary callback");
+  e.on("ready");
+}`),
+  ).not.toContainEqual({
+    kind: "register",
+    method: "on",
+    eventName: "ready",
+  });
+});
+
+it("keeps a registration when indirect eval may reacquire the shared module", () => {
+  expect(
+    eventsForSource(`import { EventEmitter } from "node:events";
+const indirect = eval;
+indirect("process.getBuiltinModule('events').EventEmitter.prototype.on = replacement");
+function run() {
+  const e = new EventEmitter();
+  e.on("ready");
+}`),
+  ).toContainEqual({
+    kind: "register",
+    method: "on",
+    eventName: "ready",
+  });
+});
+
+it("still rejects a missing listener before a top-level indirect eval", () => {
+  expect(
+    eventsForSource(`import { EventEmitter } from "node:events";
+const indirect = eval;
+const e = new EventEmitter();
+e.on("ready");
+indirect("process.getBuiltinModule('events').EventEmitter.prototype.on = replacement");`),
+  ).not.toContainEqual({
+    kind: "register",
+    method: "on",
+    eventName: "ready",
+  });
+});
+
 /**
  * `emit` passes its remaining arguments to listeners that already exist, so it
  * does not validate them the way a registration does.

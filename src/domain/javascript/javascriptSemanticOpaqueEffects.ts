@@ -99,6 +99,27 @@ export const semanticOpaqueGlobalMayHaveChanged = (
     (effect) => semanticEffectTiming(read, effect, state) !== "after",
   );
 
+/**
+ * A shared module object may be reached again in another activation, including
+ * through an inline require with no binding. Opaque code can mutate that object
+ * without an explicit write record. Only provably later effects are excluded;
+ * fresh-local capture rules do not apply to the shared identity.
+ */
+export const semanticSharedModuleMayHaveOpaqueEffect = (
+  read: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  if (semanticOpaqueGlobalMayHaveChanged(read, state)) return true;
+  for (const sites of state.opaqueEffects.byScope.values())
+    if (
+      sites.some(
+        (effect) => semanticEffectTiming(read, effect, state) !== "after",
+      )
+    )
+      return true;
+  return false;
+};
+
 /** Rebinding requires lexical visibility. Object references can remain reachable
  * through aliases even where the original name is shadowed or out of block scope.
  * Without a disjointness proof, consider their enclosing activation and closures.
