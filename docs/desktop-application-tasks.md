@@ -50,8 +50,9 @@ operation `describe_desktop_application_task` and predicate type
   gains checks inside the JSON, key file and XML views of its entries, by
   [selectors](#pointers-and-selectors) and never through an element by
   position: an element added whole that it exists, one removed whole that it
-  is absent, then values changed, added and removed. Values that look like a
-  time the app stamps are left out.
+  is absent, then values changed, added and removed, an entry or a JSON value
+  added whole through its members. Values that look like a time the app stamps
+  are left out.
 
 The suggestions are a starting point. Keep the ones that say what the user
 did; drop the ones that only follow from how the app saves its file. A LibreCAD
@@ -185,7 +186,11 @@ Before the edit the archive has no `Part::Cut` and no `Hole`, so both checks
 fail on the seed; after it, `Radius` is `"5.0000000000000000"` and both pass.
 A check decided by what a view leaves out depends, in an archive, on the entry
 its pointer goes into: it fails when that entry's view is missing or
-truncated, or when the entry is not listed and the listing is truncated.
+truncated, or when the entry is not listed and the listing is truncated. A
+selector must see every member to know it names one, so a check whose pointer
+searches an array the view may hold only part of fails as undecided: any array
+of a truncated XML view, of a truncated entry's view, or the listing when it
+is cut. A position is decided on what the view holds.
 
 XML that uses namespaces is named as the document spells it, in both
 evaluators: an element or attribute by its prefixed name, such as `text:p`

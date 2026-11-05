@@ -14,8 +14,8 @@ v22.23.1 and Python 3.11.14.
 - `npx vitest run src/domain/desktop src/application/desktop src/desktop` with
   `tests/boundary/providers/desktopExportPython.test.ts`,
   `desktopTaskPython.test.ts` and `tests/boundary/cli/cliStartupImports.test.ts`:
-  356 passed and 18 skipped (Linux-only cases). The new
-  `tests/boundary/providers/desktopZipPython.test.ts`: 7 passed. The desktop
+  365 passed and 18 skipped (Linux-only cases). The new
+  `tests/boundary/providers/desktopZipPython.test.ts`: 8 passed. The desktop
   CLI boundary tests `desktopApplicationCli`, `cliInputSchemaRequired` and
   `cliToolCoverage`: 28 passed.
 - Namespaced XML, on the same day and toolchain: the same gates passed, with
@@ -75,6 +75,28 @@ touched files still pass there.
   `[name=text:p][@text:style-name=Subtitle]`; and through the application, a
   capture with a FreeCAD document and an `.odt` whose draft, with a check of
   the list's paragraph, the export then accepts.
+
+## Review fixes
+
+Each fix has a regression test that fails on the reviewed commit and passes
+after it:
+
+- A selector over an array a view may hold only part of is undecided in both
+  evaluators: a truncated XML view, a cut listing searched by entry name, and
+  a truncated entry's XML, beside positions into the same views that stay
+  decided.
+- The zip diff pairs members one to one: an element whose attributes split
+  across two new siblings leaves one paired and the other added.
+- The draft checks an entry or a JSON value added whole through its members,
+  and suggests nothing that reaches an element by position, the last step
+  included.
+- The export accepts a check on the whole listing whose value holds
+  namespaced XML, since both readers name it alike.
+- The exported reader keeps a JSON entry nested 1,100 deep on that entry,
+  with its siblings read, and refuses JSON nested more than 500 levels as REA
+  does, 501 levels read and 502 refused, in a file or an entry.
+- The exported reader reports an entry damaged when its declared size is
+  short and its checksum is the prefix's, deflated or stored, as REA does.
 
 ## FreeCAD captures
 

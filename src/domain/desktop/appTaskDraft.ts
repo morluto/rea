@@ -2,8 +2,8 @@ import type { JsonValue } from "../jsonValue.js";
 import { isTimestamp, type DesktopTaskCheckInput } from "./appTask.js";
 import type { DesktopStatePath } from "./desktopState.js";
 import { diffStateViews, diffZipMembers } from "./stateChanges.js";
-import { resolvePointer } from "./viewPointer.js";
-import { zipEntryAt } from "./zipView.js";
+import { locatePointer, pairMembers, resolvePointer } from "./viewPointer.js";
+import { zipArrayLeavesOut, zipEntryAt } from "./zipView.js";
 
 type Version = DesktopStatePath["versions"][number];
 type Suggestion = DesktopTaskCheckInput;
@@ -125,20 +125,45 @@ const innermost = (pointers: readonly string[]): readonly string[] =>
     (pointer) => !pointers.some((other) => other.startsWith(`${pointer}/`)),
   );
 
-/**
- * Whether a pointer goes into the view of an entry both evaluators read alike
- * (JSON, a key file or XML), through no member by position.
- */
-const intoReadableEntry = (pointer: string, view: JsonValue | null) => {
+/** The entry a pointer into a zip view goes into, when both evaluators read it alike: JSON, a key file or XML. */
+const readableEntry = (view: JsonValue | null, pointer: string) => {
   const entry = zipEntryAt(view, pointer);
-  const segments = pointer.split("/");
-  return (
-    typeof entry === "object" &&
-    segments[3] === "view" &&
-    segments.slice(2, -1).every((segment) => !/^[0-9]+$/u.test(segment)) &&
+  return typeof entry === "object" &&
     (entry.format === "json" ||
       entry.format === "keyfile" ||
       entry.format === "xml")
+    ? entry
+    : undefined;
+};
+
+/**
+ * Where checks for a pointer the diff lists start: the view of an entry it
+ * names whole, or its root element for XML; the pointer itself inside that;
+ * undefined for an entry neither evaluator reads alike, or the entry's fields.
+ */
+const checkRoot = (
+  view: JsonValue | null,
+  pointer: string,
+): string | undefined => {
+  const entry = readableEntry(view, pointer);
+  const [entryPointer] = /^\/entries\/[^/]+/u.exec(pointer) ?? [];
+  if (entry === undefined || entryPointer === undefined) return undefined;
+  const inner = pointer.slice(entryPointer.length).split("/").slice(1);
+  const root = entry.format === "xml" ? ["view", "root"] : ["view"];
+  const prefix = (short: readonly string[], long: readonly string[]) =>
+    short.length <= long.length &&
+    short.every((part, index) => long[index] === part);
+  if (prefix(inner, root)) return `${entryPointer}/${root.join("/")}`;
+  return prefix(root, inner) ? pointer : undefined;
+};
+
+/** Whether a check at a pointer is decided by name: no object or array reached by position, no array searched that the view may cut. */
+const byName = (view: JsonValue | null, pointer: string) => {
+  const located = locatePointer(view, pointer);
+  return (
+    located.kind !== "unresolved" &&
+    located.byPosition.length === 0 &&
+    !located.searched.some((array) => zipArrayLeavesOut(view, array))
   );
 };
 
@@ -154,7 +179,8 @@ const elementName = (value: JsonValue | undefined): string | undefined =>
 /**
  * Checks on the entries of an archive, by the selectors its diff names
  * members with: elements added or removed whole first, as the likeliest
- * record of what the user did, then values changed, added and removed.
+ * record of what the user did, then values changed, added and removed. A
+ * JSON value or an entry added whole is checked through its members.
  */
 const zipSuggestions = (
   file: string,
@@ -162,33 +188,60 @@ const zipSuggestions = (
   final: Version,
 ): Suggestion[] => {
   const change = diffZipMembers(baseline.view, final.view);
-  const into = (pointers: readonly string[], view: JsonValue | null) =>
-    pointers.filter((pointer) => intoReadableEntry(pointer, view));
   const elements: Suggestion[] = [];
   const values: Suggestion[] = [];
   const equals = (pointer: string, value: JsonValue | undefined) => {
-    if (value !== undefined && !isRecord(value) && !isTimestamp(value))
+    if (
+      values.length < MAX_SUGGESTIONS &&
+      value !== undefined &&
+      !isRecord(value) &&
+      !isTimestamp(value) &&
+      byName(final.view, pointer)
+    )
       values.push({ kind: "value_equals", file, pointer, value });
   };
-  for (const pointer of into(change.added, final.view)) {
-    const value = resolvePointer(final.view, pointer);
+  const added = (pointer: string, value: JsonValue | undefined): void => {
+    if (elements.length >= MAX_SUGGESTIONS && values.length >= MAX_SUGGESTIONS)
+      return;
     const name = elementName(value);
-    if (name === undefined) equals(pointer, value);
-    else
-      elements.push({
-        kind: "value_equals",
-        file,
-        pointer: `${pointer}/name`,
-        value: name,
-      });
+    if (name !== undefined) {
+      if (
+        elements.length < MAX_SUGGESTIONS &&
+        byName(final.view, `${pointer}/name`)
+      )
+        elements.push({
+          kind: "value_equals",
+          file,
+          pointer: `${pointer}/name`,
+          value: name,
+        });
+    } else if (Array.isArray(value)) {
+      const { keys } = pairMembers(value, []).newer;
+      value.forEach((item, index) =>
+        added(`${pointer}/${escapeToken(keys[index] ?? String(index))}`, item),
+      );
+    } else if (isRecord(value))
+      for (const [key, item] of Object.entries(value))
+        added(`${pointer}/${escapeToken(key)}`, item);
+    else equals(pointer, value);
+  };
+  for (const pointer of change.added) {
+    const root = checkRoot(final.view, pointer);
+    if (root !== undefined) added(root, resolvePointer(final.view, root));
   }
-  for (const pointer of innermost(into(change.changed, final.view)))
-    equals(pointer, resolvePointer(final.view, pointer));
-  for (const pointer of into(change.removed, baseline.view))
-    (elementName(resolvePointer(baseline.view, pointer)) === undefined
-      ? values
-      : elements
-    ).push({ kind: "value_absent", file, pointer });
+  for (const pointer of innermost(change.changed))
+    if (checkRoot(final.view, pointer) === pointer)
+      equals(pointer, resolvePointer(final.view, pointer));
+  for (const pointer of change.removed)
+    if (
+      checkRoot(baseline.view, pointer) === pointer &&
+      byName(baseline.view, pointer) &&
+      byName(final.view, pointer)
+    )
+      (elementName(resolvePointer(baseline.view, pointer)) === undefined
+        ? values
+        : elements
+      ).push({ kind: "value_absent", file, pointer });
   return [...elements, ...values];
 };
 

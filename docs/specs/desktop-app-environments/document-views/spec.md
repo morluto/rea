@@ -50,14 +50,20 @@ evaluators, REA's and the exported verifier's, agree.
   numeral string, at most `tolerance` from it.
 - Truncation: a check decided by what a zip view leaves out depends on the
   entry its pointer goes into: that entry's view missing or truncated, or the
-  listing truncated when the entry is not listed.
-- Changes: `values` between zip versions name array members by the first
-  selector naming one member in each version, entries by name and XML
-  elements by tag and attribute, and fall back to positions; a comparison is
-  incomplete when either view leaves something out.
+  listing truncated when the entry is not listed. A pointer whose selector
+  searches an array the view may hold only part of (any array of a truncated
+  XML view or entry view, or a cut listing) fails as undecided in both
+  evaluators.
+- Changes: `values` between zip versions pair array members one to one, by
+  the first selector naming a member alone in its version and one unpaired
+  member of the other (entries by name, XML elements by tag and attribute),
+  then by position; a comparison is incomplete when either view leaves
+  something out.
 - Draft: for a zip document, checks inside its entries' JSON, key file and
-  XML views, through no element by position: an element added whole exists,
-  one removed whole is absent, then values changed, added and removed.
+  XML views, through no object or array by position and no array a view may
+  cut: an element added whole exists, one removed whole is absent, then values
+  changed, added and removed, with an entry or a JSON value added whole checked
+  through its members.
 - Export refusals: a `tolerance` whose value is not a number. A pointer into
   XML that uses namespaces is accepted, in a file or an archive entry.
 

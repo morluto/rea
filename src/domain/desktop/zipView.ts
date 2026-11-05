@@ -157,3 +157,12 @@ export const zipLeavesOutAt = (
     ? isRecord(view) && view.truncated === true
     : entryLeavesOut(entry);
 };
+
+/** Whether an array in a zip view may lack members: the listing when it is cut, or an array in an entry whose view is. */
+export const zipArrayLeavesOut = (
+  view: JsonValue | null,
+  array: string,
+): boolean =>
+  array === "/entries"
+    ? isRecord(view) && view.truncated === true
+    : zipLeavesOutAt(view, array);

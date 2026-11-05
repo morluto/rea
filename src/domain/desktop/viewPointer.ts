@@ -8,12 +8,27 @@ interface Condition {
   readonly value: string;
 }
 
-/** Where a pointer leads in a view. */
-export type Located =
-  | { readonly kind: "value"; readonly value: JsonValue }
-  /** It names no value; `reason` says which last selector matched nothing, when one did. */
+/** The arrays a pointer stepped into, each as the pointer to it. */
+interface ArraySteps {
+  /** Arrays a selector searched, whose every member it had to see. */
+  readonly searched: readonly string[];
+  /** Arrays it entered by position at a member that is an object or array. */
+  readonly byPosition: readonly string[];
+}
+
+/** Where a pointer leads in a view, and the arrays it stepped into on the way. */
+export type Located = ArraySteps &
+  (
+    | { readonly kind: "value"; readonly value: JsonValue }
+    /** It names no value; `reason` says which last selector matched nothing, when one did. */
+    | { readonly kind: "none"; readonly reason?: string }
+    /** A selector before the last segment matched no member, or any matched several, or one is malformed. */
+    | { readonly kind: "unresolved"; readonly problem: string }
+  );
+
+/** Where a step into an array leads, before the steps are attached. */
+type Stepped =
   | { readonly kind: "none"; readonly reason?: string }
-  /** A selector before the last segment matched no member, or any matched several, or one is malformed. */
   | { readonly kind: "unresolved"; readonly problem: string };
 
 const INDEX = /^(?:0|[1-9][0-9]*)$/u;
@@ -57,7 +72,7 @@ const arrayStep = (
   items: readonly JsonValue[],
   token: string,
   last: boolean,
-): { readonly member: JsonValue } | Located => {
+): { readonly member: JsonValue } | Stepped => {
   if (INDEX.test(token)) {
     const index = Number(token);
     return index < items.length
@@ -97,20 +112,28 @@ export const locatePointer = (
   pointer: string,
 ): Located => {
   let current: JsonValue = view;
-  const tokens = pointer
-    .slice(1)
-    .split("/")
-    .map((raw) => raw.replaceAll("~1", "/").replaceAll("~0", "~"));
-  for (const [position, token] of tokens.entries()) {
+  const segments = pointer.slice(1).split("/");
+  const steps = { searched: [] as string[], byPosition: [] as string[] };
+  for (const [position, segment] of segments.entries()) {
+    const token = segment.replaceAll("~1", "/").replaceAll("~0", "~");
     if (Array.isArray(current)) {
-      const step = arrayStep(current, token, position === tokens.length - 1);
-      if ("kind" in step) return step;
+      const array = segments
+        .slice(0, position)
+        .map((part) => `/${part}`)
+        .join("");
+      const indexed = INDEX.test(token);
+      if (!indexed && selectorOf(token) !== undefined)
+        steps.searched.push(array);
+      const step = arrayStep(current, token, position === segments.length - 1);
+      if ("kind" in step) return { ...step, ...steps };
+      if (indexed && typeof step.member === "object" && step.member !== null)
+        steps.byPosition.push(array);
       current = step.member;
     } else if (isRecord(current) && Object.hasOwn(current, token))
       current = current[token] ?? null;
-    else return { kind: "none" };
+    else return { kind: "none", ...steps };
   }
-  return { kind: "value", value: current };
+  return { kind: "value", value: current, ...steps };
 };
 
 /** The value a pointer names, or undefined when it names none or a selector on its way is unresolved. */
@@ -154,31 +177,78 @@ const candidateKeys = (member: JsonValue): readonly string[] => {
   ];
 };
 
-/**
- * A key per array member: the first selector naming it alone among its
- * siblings and naming at most one member of the other version, or its index.
- */
-export const memberKeys = (
-  items: readonly JsonValue[],
-  other?: ReadonlyMap<string, JsonValue | undefined>,
-): readonly string[] => {
-  const candidates = items.map(candidateKeys);
+const countKeys = (candidates: readonly (readonly string[])[]) => {
   const counts = new Map<string, number>();
   for (const keys of candidates)
     for (const key of keys) counts.set(key, (counts.get(key) ?? 0) + 1);
-  const single = (key: string) =>
-    counts.get(key) === 1 &&
-    (other?.has(key) !== true || other.get(key) !== undefined);
-  return candidates.map((keys, index) => keys.find(single) ?? String(index));
+  return counts;
 };
 
-/** The members of another version of an array by each selector that could name them; undefined where several share one. */
-export const selectorIndex = (
-  items: readonly JsonValue[],
-): ReadonlyMap<string, JsonValue | undefined> => {
-  const index = new Map<string, JsonValue | undefined>();
-  for (const item of items)
-    for (const key of candidateKeys(item))
-      index.set(key, index.has(key) ? undefined : item);
-  return index;
+/** One version's side of a pairing: each member's key, and the other version's member it pairs with. */
+interface PairedSide {
+  readonly keys: readonly string[];
+  readonly partners: readonly (number | undefined)[];
+}
+
+/**
+ * Pair the members of two versions of an array one to one. A member pairs by
+ * the first selector naming it alone in its version and one unpaired member of
+ * the other; one with no partner keeps a selector naming nothing in the other
+ * version. Members left without a selector are keyed and paired by position.
+ */
+export const pairMembers = (
+  newer: readonly JsonValue[],
+  older: readonly JsonValue[],
+): { readonly newer: PairedSide; readonly older: PairedSide } => {
+  const newCandidates = newer.map(candidateKeys);
+  const oldCandidates = older.map(candidateKeys);
+  const newCounts = countKeys(newCandidates);
+  const oldCounts = countKeys(oldCandidates);
+  const count = (counts: ReadonlyMap<string, number>, key: string) =>
+    counts.get(key) ?? 0;
+  const oldByKey = new Map<string, number>();
+  oldCandidates.forEach((keys, index) => {
+    for (const key of keys)
+      if (count(oldCounts, key) === 1) oldByKey.set(key, index);
+  });
+  const newKeys: (string | undefined)[] = newer.map(() => undefined);
+  const oldKeys: (string | undefined)[] = older.map(() => undefined);
+  const newPartners: (number | undefined)[] = newer.map(() => undefined);
+  const oldPartners: (number | undefined)[] = older.map(() => undefined);
+  newCandidates.forEach((keys, index) => {
+    for (const key of keys.filter((key) => count(newCounts, key) === 1)) {
+      if (count(oldCounts, key) === 0) {
+        newKeys[index] = key;
+        return;
+      }
+      const match = oldByKey.get(key);
+      if (match !== undefined && oldPartners[match] === undefined) {
+        newKeys[index] = oldKeys[match] = key;
+        newPartners[index] = match;
+        oldPartners[match] = index;
+        return;
+      }
+    }
+  });
+  oldCandidates.forEach((keys, index) => {
+    oldKeys[index] ??= keys.find(
+      (key) => count(oldCounts, key) === 1 && count(newCounts, key) === 0,
+    );
+  });
+  for (let index = 0; index < Math.min(newer.length, older.length); index += 1)
+    if (newKeys[index] === undefined && oldKeys[index] === undefined) {
+      newPartners[index] = index;
+      oldPartners[index] = index;
+    }
+  const side = (
+    keys: readonly (string | undefined)[],
+    partners: readonly (number | undefined)[],
+  ): PairedSide => ({
+    keys: keys.map((key, index) => key ?? String(index)),
+    partners,
+  });
+  return {
+    newer: side(newKeys, newPartners),
+    older: side(oldKeys, oldPartners),
+  };
 };

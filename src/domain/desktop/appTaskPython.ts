@@ -74,20 +74,24 @@ def _step(items: list, token: str, last: bool):
 
 
 def _locate(view, pointer: str):
-    """Where a pointer leads: ("value", value), ("none", why or None) or ("unresolved", problem)."""
-    current = view
-    tokens = [raw.replace("~1", "/").replace("~0", "~") for raw in pointer[1:].split("/")]
-    for position, token in enumerate(tokens):
+    """Where a pointer leads: ("value", value), ("none", why or None) or ("unresolved", problem), with the pointers
+    to the arrays a selector searched on the way."""
+    current, searched = view, []
+    segments = pointer[1:].split("/")
+    for position, segment in enumerate(segments):
+        token = segment.replace("~1", "/").replace("~0", "~")
         if isinstance(current, list):
-            kind, found = _step(current, token, position == len(tokens) - 1)
+            if not INDEX.fullmatch(token) and _selector(token) is not None:
+                searched.append("".join("/" + part for part in segments[:position]))
+            kind, found = _step(current, token, position == len(segments) - 1)
             if kind != "member":
-                return kind, found
+                return kind, found, searched
             current = found
         elif isinstance(current, dict) and token in current:
             current = current[token]
         else:
-            return "none", None
-    return "value", current
+            return "none", None, searched
+    return "value", current, searched
 
 
 def _number(value):
@@ -108,13 +112,23 @@ def _entry_leaves_out(entry) -> bool:
         and entry["view"].get("truncated") is True))
 
 
+def _array_leaves_out(form, view, array: str) -> bool:
+    """Whether an array a selector searched may lack members: in a zip the listing or its entry's view, else the
+    view's own truncation."""
+    if form != "zip":
+        return _truncated(form, view)
+    if array == "/entries":
+        return isinstance(view, dict) and view.get("truncated") is True
+    return _zip_leaves_out(view, array)
+
+
 def _zip_leaves_out(view, pointer: str) -> bool:
     """Whether a zip view leaves out what a pointer reaches: for a pointer into one listed entry, only that entry."""
     if not isinstance(view, dict):
         return False
     parts = pointer[1:].split("/")
     if parts[0] == "entries" and len(parts) > 1:
-        kind, entry = _locate(view, "/entries/" + parts[1])
+        kind, entry, _ = _locate(view, "/entries/" + parts[1])
         return _entry_leaves_out(entry) if kind == "value" else view.get("truncated") is True
     entries = view.get("entries") if isinstance(view.get("entries"), list) else []
     return view.get("truncated") is True or any(_entry_leaves_out(entry) for entry in entries)
@@ -196,8 +210,11 @@ def _value(check, entry):
     view, truncated, problem = _view_of(check, entry, None)
     if problem is not None:
         return False, problem
-    kind, found = ("none", None) if entry is None else _locate(view, check["pointer"])
+    kind, found, searched = ("none", None, []) if entry is None else _locate(view, check["pointer"])
     at = f"{check['file']} at {check['pointer']}"
+    # A selector tells one member from several only in an array the view holds whole.
+    if any(_array_leaves_out(entry.get("format"), view, array) for array in searched):
+        return _undecided(check)
     if kind == "unresolved":
         return False, f"{at}: {found}"
     if entry is not None and entry.get("format") == "zip":

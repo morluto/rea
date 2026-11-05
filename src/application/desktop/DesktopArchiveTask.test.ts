@@ -171,6 +171,26 @@ describe("documents saved as zip archives", () => {
     expect(verifier).toContain(JSON.stringify(milk.pointer));
   });
 
+  it("accepts a check on the whole listing, whose value holds namespaced XML", async () => {
+    const folder = await archiveCapture();
+    const evidence = await inspectDesktopApplicationState(folder, readers);
+    if (!("normalized_result" in evidence)) throw evidence;
+    const state = desktopApplicationStateSchema.parse(
+      evidence.normalized_result,
+    );
+    const end = state.paths
+      .find((entry) => entry.home_path === LIST)
+      ?.versions.at(-1)?.view;
+    const entries = (end as { entries: unknown[] } | undefined)?.entries;
+    expect(entries).toHaveLength(3);
+
+    const { result } = await exportTask(folder, [
+      { kind: "value_equals", file: LIST, pointer: "/entries", value: entries },
+    ]);
+
+    if (result instanceof Error) throw result;
+  });
+
   it("drafts name-addressed checks of the archive that the export then accepts", async () => {
     const folder = await archiveCapture();
 

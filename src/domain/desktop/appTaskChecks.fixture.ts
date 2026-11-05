@@ -123,6 +123,41 @@ export const CHECK_VIEWS: Readonly<Record<string, TaskFileView>> = {
     format: "zip",
     view: { entries: [], entry_count: 1200, truncated: true },
   },
+  "Documents/cut.xml": {
+    format: "xml",
+    view: {
+      root: element("doc", {}, [element("p", { id: "1" }), "kept"]),
+      truncated: true,
+    },
+  },
+  "Documents/listing.zip": {
+    format: "zip",
+    view: {
+      entries: [
+        {
+          name: "a.json",
+          size: 7,
+          sha256: "d".repeat(64),
+          format: "json",
+          view: { x: 1 },
+          view_error: null,
+        },
+        {
+          name: "page.xml",
+          size: 9000,
+          sha256: "e".repeat(64),
+          format: "xml",
+          view: {
+            root: element("page", {}, [element("p", { id: "1" })]),
+            truncated: true,
+          },
+          view_error: null,
+        },
+      ],
+      entry_count: 1500,
+      truncated: true,
+    },
+  },
   "Documents/photo.png": { format: "binary", view: null },
   "Documents/huge.txt": {
     format: null,
@@ -147,6 +182,58 @@ const absent = "Documents/absent.txt";
 const plate = "Documents/plate.FCStd";
 const objects = "/entries/[name=Document.xml]/view/root/children";
 const radius = `${objects}/[name=Object][@name=Hole]/children/[name=Property][@name=Radius]/children/[name=Float]/attributes/value`;
+
+/** Selectors over arrays a view may hold only part of stay undecided; positions stay decided on what it holds. */
+const PARTIAL_SELECTOR_CASES: readonly (readonly [
+  DesktopTaskCheckInput,
+  boolean,
+])[] = [
+  [
+    {
+      kind: "value_equals",
+      file: "Documents/cut.xml",
+      pointer: "/root/children/[name=p]/attributes/id",
+      value: "1",
+    },
+    false,
+  ],
+  [
+    {
+      kind: "value_equals",
+      file: "Documents/cut.xml",
+      pointer: "/root/children/0/attributes/id",
+      value: "1",
+    },
+    true,
+  ],
+  [
+    {
+      kind: "value_equals",
+      file: "Documents/listing.zip",
+      pointer: "/entries/[name=a.json]/view/x",
+      value: 1,
+    },
+    false,
+  ],
+  [
+    {
+      kind: "value_equals",
+      file: "Documents/listing.zip",
+      pointer: "/entries/0/view/x",
+      value: 1,
+    },
+    true,
+  ],
+  [
+    {
+      kind: "value_equals",
+      file: "Documents/listing.zip",
+      pointer: "/entries/1/view/root/children/[name=p]/attributes/id",
+      value: "1",
+    },
+    false,
+  ],
+];
 
 /** Selectors: one member matched, none, several, or a malformed one, through a zip view. */
 const SELECTOR_CASES: readonly (readonly [DesktopTaskCheckInput, boolean])[] = [
@@ -270,6 +357,7 @@ const SELECTOR_CASES: readonly (readonly [DesktopTaskCheckInput, boolean])[] = [
     false,
   ],
   [{ kind: "lines_present", file: plate, lines: ["a"] }, false],
+  ...PARTIAL_SELECTOR_CASES,
 ];
 
 /** Numbers within a tolerance, numeral strings read as numbers, anything else refused. */

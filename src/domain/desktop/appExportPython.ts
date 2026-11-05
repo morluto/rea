@@ -1,3 +1,5 @@
+import { PYTHON_XML_READER } from "./appExportPythonXml.js";
+
 /** The generated module's imports. */
 /** The class method that holds readiness until the app's own window shows, not a splash screen with its class. */
 export const PYTHON_READY_CHECK = `
@@ -10,6 +12,7 @@ export const PYTHON_READY_CHECK = `
 export const PYTHON_IMPORTS = `from __future__ import annotations
 
 import contextlib
+import copy
 import hashlib
 import json
 import math
@@ -48,6 +51,8 @@ MAX_XML_NODES = 5000
 MAX_XML_DEPTH = 64
 SQLITE_BUSY_S = 0.25
 MAX_PARSED_BYTES = 4 * 1024 * 1024
+MAX_JSON_VIEW_DEPTH = 500
+JSON_TOO_DEEP = f"nested deeper than the {MAX_JSON_VIEW_DEPTH} levels a JSON view keeps"
 MAX_ZIP_ENTRIES = 1000
 MAX_ZIP_ENTRY_BYTES = 16 * 1024 * 1024
 MAX_ZIP_BYTES = 64 * 1024 * 1024
@@ -219,106 +224,7 @@ def _keyfile(text: str) -> dict:
     return groups
 
 
-def _expat(namespaces: bool):
-    """An expat parser that refuses DOCTYPEs as REA does; with namespaces it also enforces their rules, as REA's
-    parser does, and without them it reports names as the document spells them."""
-    parser = expat.ParserCreate(namespace_separator=" " if namespaces else None)
-
-    def doctype(*_) -> None:
-        raise ValueError("the document declares a DOCTYPE")
-
-    parser.StartDoctypeDeclHandler = doctype
-    return parser
-
-
-class _XmlReader:
-    """REA's XML view built as expat reads: names as spelled, declarations as attributes, text split where REA's DOM
-    splits it (an empty CDATA section joins the text around it), and each node counted against REA's limits."""
-
-    def __init__(self) -> None:
-        self.remaining, self.truncated, self.root = MAX_XML_NODES, False, None
-        #: Per open element: its view or None when left out, whether xml:space="preserve" applies inside it, and
-        #: whether it holds an element, which makes whitespace-only text in it formatting.
-        self.open = []
-        self.text, self.cdata = [], None
-
-    def read(self, text: str) -> None:
-        parser = _expat(False)
-        parser.buffer_text = True
-        parser.StartElementHandler, parser.EndElementHandler = self._start, self._end
-        parser.CharacterDataHandler = self._data
-        parser.StartCdataSectionHandler, parser.EndCdataSectionHandler = self._cdata_start, self._cdata_end
-        parser.CommentHandler = parser.ProcessingInstructionHandler = self._other
-        parser.Parse(text, True)
-
-    def _admit(self) -> bool:
-        """Whether the next node inside a kept element is kept, within the node and depth limits; one past them
-        marks the view truncated."""
-        if self.open and self.open[-1][0] is None:
-            return False
-        if self.remaining <= 0 or len(self.open) > MAX_XML_DEPTH:
-            self.truncated = True
-            return False
-        self.remaining -= 1
-        return True
-
-    def _text_node(self, text: str) -> None:
-        if self._admit():
-            self.open[-1][0]["children"].append(text)
-
-    def _flush(self) -> None:
-        if self.text:
-            text, self.text = "".join(self.text), []
-            self._text_node(text)
-
-    def _data(self, text: str) -> None:
-        (self.text if self.cdata is None else self.cdata).append(text)
-
-    def _cdata_start(self) -> None:
-        self.cdata = []
-
-    def _cdata_end(self) -> None:
-        text, self.cdata = "".join(self.cdata), None
-        if text:
-            self._flush()
-            self._text_node(text)
-
-    def _other(self, *_) -> None:
-        """A comment or processing instruction, counted like any node and never kept."""
-        self._flush()
-        if self.open:
-            self._admit()
-
-    def _start(self, name: str, attributes: dict) -> None:
-        self._flush()
-        parent = self.open[-1] if self.open else [None, False, False]
-        parent[2] = True
-        view = {"name": name, "attributes": attributes, "children": []} if self._admit() else None
-        if view is not None and parent[0] is not None:
-            parent[0]["children"].append(view)
-        space = attributes.get(XML_SPACE)
-        self.open.append([view, space == "preserve" if space else parent[1], False])
-
-    def _end(self, _name: str) -> None:
-        self._flush()
-        view, preserve, holds_element = self.open.pop()
-        if view is not None and holds_element and not preserve:
-            view["children"] = [child for child in view["children"] if not isinstance(child, str) or child.strip()]
-        if not self.open:
-            self.root = view
-
-
-def _xml_view(text: str):
-    """REA's XML view, or None for a document REA's parser refuses: a pass with namespaces checks the document as REA's
-    parser does, then a pass without them reads names as spelled, as REA's view keeps them."""
-    reader = _XmlReader()
-    try:
-        _expat(True).Parse(text, True)
-        reader.read(text)
-    except (expat.ExpatError, ValueError):
-        return None
-    return {"root": reader.root, "truncated": reader.truncated}
-
+${PYTHON_XML_READER}
 
 def _not_json(constant: str):
     raise ValueError(f"{constant} is not JSON")
@@ -387,6 +293,20 @@ def _holds_inexact(value) -> bool:
     return False
 
 
+def _deeper_than(root, limit: int) -> bool:
+    """Whether a parsed JSON value nests deeper than a limit, checked without recursion as REA checks it."""
+    pending = [(root, 0)]
+    while pending:
+        value, depth = pending.pop()
+        if depth > limit:
+            return True
+        if isinstance(value, dict):
+            pending.extend((item, depth + 1) for item in value.values())
+        elif isinstance(value, list):
+            pending.extend((item, depth + 1) for item in value)
+    return False
+
+
 def _text_view(name: str, text: str) -> dict:
     """The format REA's state view detects for decoded text, and its view."""
     trimmed = re.sub(r"^[\s﻿]+", "", text)
@@ -394,12 +314,17 @@ def _text_view(name: str, text: str) -> dict:
         # The whole text must parse, and duplicate keys settle, before an inexact number makes it JSON with an error.
         try:
             view = json.loads(text, parse_constant=_not_json, parse_float=_number_or_mark, parse_int=_number_or_mark)
+        except RecursionError:
+            # Nesting too deep for Python to parse is far deeper than REA's view keeps.
+            return {"format": "json", "view": None, "error": JSON_TOO_DEEP}
         except ValueError:
             pass
         else:
             if _holds_inexact(view):
                 return {"format": "json", "view": None,
                         "error": "a number in it cannot be read exactly, such as an integer above 2^53"}
+            if _deeper_than(view, MAX_JSON_VIEW_DEPTH):
+                return {"format": "json", "view": None, "error": JSON_TOO_DEEP}
             return {"format": "json", "view": view, "truncated": False}
     lowered = name.lower()
     if lowered.endswith(XML_SUFFIXES) or trimmed.startswith("<?xml"):
@@ -444,18 +369,27 @@ def _zip_refusal(info, spent: int):
     return None
 
 
+def _entry_bytes(archive, info):
+    """An entry's uncompressed bytes, or None when they fail its CRC-32 or are not exactly its declared size: reading
+    allows one byte more, which data past a short declared size fills."""
+    probe = copy.copy(info)
+    probe.file_size = info.file_size + 1
+    try:
+        with archive.open(probe) as member:
+            data = member.read()
+    except (zipfile.BadZipFile, zlib.error, EOFError, OSError, ValueError):
+        return None
+    return data if len(data) == info.file_size else None
+
+
 def _zip_entry(archive, info, refusal):
     """One entry of a zip view: its name, size and digest, and its own format and view, or why it was not read."""
     entry = {"name": info.filename, "size": info.file_size, "sha256": None, "format": None, "view": None,
              "view_error": refusal}
     if refusal is not None:
         return entry
-    try:
-        with archive.open(info) as member:
-            data = member.read()
-    except (zipfile.BadZipFile, zlib.error, EOFError, OSError, ValueError):
-        data = None
-    if data is None or len(data) != info.file_size:
+    data = _entry_bytes(archive, info)
+    if data is None:
         return {**entry, "view_error": "its compressed data is damaged"}
     view = _entry_view(info.filename, data)
     return {**entry, "sha256": hashlib.sha256(data).hexdigest(), "format": view["format"],

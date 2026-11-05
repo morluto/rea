@@ -189,6 +189,36 @@ describe("evaluateTaskChecks selectors and tolerance", () => {
       new Map(Object.entries(CHECK_VIEWS)),
     )[0];
 
+  it("leaves a selector undecided where the array it searches may be cut short, and a position decided", () => {
+    const cut =
+      "the view of Documents/listing.zip is truncated, so what it leaves out is unknown";
+
+    expect(
+      outcome({
+        kind: "value_equals",
+        file: "Documents/listing.zip",
+        pointer: "/entries/[name=a.json]/view/x",
+        value: 1,
+      }),
+    ).toEqual({ id: "c", passed: false, description: cut });
+    expect(
+      outcome({
+        kind: "value_equals",
+        file: "Documents/listing.zip",
+        pointer: "/entries/1/view/root/children/[name=p]/attributes/id",
+        value: "1",
+      }),
+    ).toEqual({ id: "c", passed: false, description: cut });
+    expect(
+      outcome({
+        kind: "value_equals",
+        file: "Documents/listing.zip",
+        pointer: "/entries/0/view/x",
+        value: 1,
+      })?.passed,
+    ).toBe(true);
+  });
+
   it("fails a selector that matches several members or, on the way, none, and says which", () => {
     expect(
       outcome({

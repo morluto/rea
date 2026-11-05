@@ -390,6 +390,100 @@ describe("draftTaskFiles with partial evidence", () => {
   });
 });
 
+/** An element of REA's XML view. */
+const xmlElement = (
+  name: string,
+  attributes: Record<string, string> = {},
+  children: JsonValue[] = [],
+): JsonValue => ({ name, attributes, children });
+
+/** A zip view's entry, read, under a name. */
+const zipEntry = (
+  name: string,
+  format: string,
+  view: JsonValue,
+): JsonValue => ({
+  name,
+  size: 1,
+  sha256: name,
+  format,
+  view,
+  view_error: null,
+});
+
+const listing = (entries: JsonValue[]): JsonValue => ({
+  entries,
+  entry_count: entries.length,
+  truncated: false,
+});
+
+describe("draftTaskFiles archives added to whole", () => {
+  it("suggests checks inside a JSON value or a readable entry added whole", () => {
+    const [file] = draft({
+      "Documents/a.zip": path(
+        "document",
+        "zip",
+        listing([zipEntry("a.json", "json", { a: 1 })]),
+        listing([
+          zipEntry("a.json", "json", { a: 1, added: { x: 1 } }),
+          zipEntry("new.json", "json", { y: [2] }),
+          zipEntry("new.xml", "xml", {
+            root: xmlElement("doc"),
+            truncated: false,
+          }),
+          zipEntry("new.png", "binary", null),
+        ]),
+      ),
+    });
+
+    expect(file?.suggested).toEqual([
+      {
+        kind: "value_equals",
+        file: "Documents/a.zip",
+        pointer: "/entries/[name=new.xml]/view/root/name",
+        value: "doc",
+      },
+      {
+        kind: "value_equals",
+        file: "Documents/a.zip",
+        pointer: "/entries/[name=a.json]/view/added/x",
+        value: 1,
+      },
+      {
+        kind: "value_equals",
+        file: "Documents/a.zip",
+        pointer: "/entries/[name=new.json]/view/y/0",
+        value: 2,
+      },
+    ]);
+  });
+
+  it("suggests no element by its position, even at the last step", () => {
+    const page = (paragraphs: string[]) =>
+      listing([
+        zipEntry("page.xml", "xml", {
+          root: xmlElement(
+            "page",
+            {},
+            paragraphs.map((text) => xmlElement("p", {}, [text])),
+          ),
+          truncated: false,
+        }),
+      ]);
+
+    const [file] = draft({
+      "Documents/page.zip": path(
+        "document",
+        "zip",
+        page(["a"]),
+        page(["a", "b"]),
+      ),
+    });
+
+    expect(file).toMatchObject({ change: { kind: "values" }, suggested: [] });
+  });
+});
+
 describe("draftTaskFiles archives", () => {
   it("suggests checks inside an archive's XML by name: elements added or removed whole, then values", () => {
     const element = (
