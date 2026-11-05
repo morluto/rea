@@ -88,8 +88,9 @@ The class declares:
 - A launch at boot with the captured command, ready when a window of the
   captured class appears. Arguments that are the captured home or under it, and
   `<option>=<path>` values under it, are respelled under the computer user's
-  `$HOME`. agentenv starts the app in its own folder, so when an argument is
-  relative the command first changes to the captured working directory
+  `$HOME`. agentenv starts the app in its own folder, so when an argument, or
+  the program's own path such as `./app`, is relative the command first
+  changes to the captured working directory
   (`"$HOME"` when that was the home), and still starts if that folder is
   missing. The export refuses a capture that saw no application window.
 - For an Electron application (the capture found its fuse sentinel or a
