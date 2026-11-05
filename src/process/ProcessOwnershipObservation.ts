@@ -1,3 +1,4 @@
+import { ProcessAdmissionError } from "./ProcessAdmissionError.js";
 import { readFile, stat as statPath } from "node:fs/promises";
 import { performance } from "node:perf_hooks";
 import { setTimeout as delay } from "node:timers/promises";
@@ -24,6 +25,7 @@ import {
   createDarwinProcessRunTokenReader,
   type DarwinProcessReaderCompiler,
 } from "./DarwinProcessRunTokenReader.js";
+import { darwinHelperCacheDirectory } from "./DarwinHelperCache.js";
 import {
   ProcessRunTokenReadError,
   readProcessRunTokens,
@@ -833,6 +835,77 @@ export const settleExitingProcessIdentities = async (
   return identities;
 };
 
+/** Corroborate Linux token-open exit races without granting signal authority. */
+export const settleVanishedTokenFacts = async (
+  facts: readonly ProcessOwnershipFact[],
+  host: ProcessOwnershipHost,
+  budget: ProcessExitSettlementBudget,
+  signal?: AbortSignal,
+): Promise<readonly ProcessOwnershipFact[]> => {
+  if ((host.platform ?? process.platform) !== "linux") return facts;
+  let pending = facts
+    .filter(
+      ({ token, identityAfter }) =>
+        token.state === "unavailable" &&
+        (token.code === "ENOENT" || token.code === "ESRCH") &&
+        !processIdentityHasExited(identityAfter),
+    )
+    .map(({ process }) => process);
+  if (pending.length === 0) return facts;
+  let current = facts;
+  const deadline = (budget.deadline ??=
+    performance.now() + PROCESS_CLEANUP_VERIFICATION_GRACE_MS);
+  for (let attempt = 0; attempt < 4 && pending.length > 0; attempt += 1) {
+    signal?.throwIfAborted();
+    if (attempt > 0) {
+      const remaining = deadline - performance.now();
+      if (remaining <= 0) break;
+      await delay(
+        Math.min(40, remaining),
+        undefined,
+        signal === undefined ? undefined : { signal },
+      );
+    }
+    const confirmed = await readNativeProcessIdentityMap(pending, host, signal);
+    const pendingPids = new Set(pending.map(({ pid }) => pid));
+    const nextPending = new Set<number>();
+    current = current.map((fact) => {
+      if (!pendingPids.has(fact.process.pid)) return fact;
+      const after = confirmed.get(fact.process.pid);
+      if (after?.state === "absent")
+        return {
+          ...fact,
+          state: "absent" as const,
+          identityAfter: after,
+          beforeExitSettlement: fact.beforeExitSettlement ?? fact,
+        };
+      const previous = fact.identityAfter;
+      if (previous.state !== "readable" || after?.state !== "readable")
+        return fact;
+      if (previous.identity !== after.identity)
+        return {
+          ...fact,
+          state: "unavailable" as const,
+          identityAfter: {
+            state: "unavailable" as const,
+            reason: "process_identity_changed_during_final_token_exit_check",
+          },
+        };
+      if (processIdentityHasExited(after))
+        return {
+          ...fact,
+          identityAfter: after,
+          beforeExitSettlement: fact.beforeExitSettlement ?? fact,
+        };
+      nextPending.add(fact.process.pid);
+      return fact;
+    });
+    pending = pending.filter(({ pid }) => nextPending.has(pid));
+  }
+  signal?.throwIfAborted();
+  return current;
+};
+
 /**
  * Read identity, token, then identity for caller-provided rows. This owner
  * never enumerates the process table; a token is tied to a generation only
@@ -890,10 +963,56 @@ export const readProcessOwnershipFacts = async (
     signal,
     credentialPids,
   );
+  // An ENOENT/ESRCH environment failure can race with process exit while
+  // /proc/PID/stat is still readable. Do not treat the token error itself as
+  // proof of exit: ask the native identity owner again, which corroborates a
+  // missing procfs entry with signal-zero ESRCH. Keep the previous live
+  // observation if the refresh is unreadable; PID reuse remains a mismatch.
+  let finalObservedAfter = observedAfter;
+  if ((host.platform ?? process.platform) === "linux") {
+    const disappearing = processes.filter(({ pid }) => {
+      const token = tokens.get(pid);
+      return (
+        token?.state === "unavailable" &&
+        (token.code === "ENOENT" || token.code === "ESRCH") &&
+        observedAfter.get(pid)?.state === "readable"
+      );
+    });
+    if (disappearing.length > 0) {
+      const refreshed = await readIdentityFacts(
+        disappearing,
+        host,
+        "after",
+        signal,
+        credentialPids,
+      );
+      const confirmed = new Map(observedAfter);
+      for (const { pid } of disappearing) {
+        const before = observedAfter.get(pid);
+        const after = refreshed.get(pid);
+        if (after?.state === "absent") {
+          confirmed.set(pid, after);
+        } else if (
+          before?.state === "readable" &&
+          after?.state === "readable"
+        ) {
+          // A recycled PID (including a zombie replacement) is not proof of
+          // the original process exit. Keep its ownership unresolved.
+          if (before.identity !== after.identity)
+            confirmed.set(pid, {
+              state: "unavailable",
+              reason: "process_identity_changed_during_environment_exit_check",
+            });
+          else if (processIdentityHasExited(after)) confirmed.set(pid, after);
+        }
+      }
+      finalObservedAfter = confirmed;
+    }
+  }
   const identityAfter = await settleExitingProcessIdentities(
     processes,
     host,
-    observedAfter,
+    finalObservedAfter,
     signal,
     options.exitSettlement,
     credentialPids,
@@ -945,6 +1064,104 @@ export const readProcessOwnershipFacts = async (
   return facts;
 };
 
+/** Re-reads after a live fact's run token was unavailable. */
+export const TOKEN_READ_RETRY_ATTEMPTS = 3;
+/** Delay before each re-read. */
+export const TOKEN_READ_RETRY_DELAY_MS = 40;
+
+/** Which process a token re-read describes; the caller owns the run token. */
+export type TokenReobservationScope =
+  /** A sweep classifies whichever process now holds each PID. */
+  | { readonly generation: "current" }
+  /** A pre-signal check stays on the generation it first read. */
+  | { readonly generation: "first-observed"; readonly runId: string };
+
+/**
+ * Re-read facts whose token was unavailable while their process was neither
+ * exited nor exiting. Darwin KERN_PROCARGS2 samples the argument length and
+ * stack top separately from its address-space read, and exec publishes the
+ * new length before it copies the new strings out (xnu sysctl_procargsx,
+ * exec_copyout_strings). A read during exec can therefore see a zero-filled or
+ * stale strings area, and exec keeps the PID and start time that bracket the
+ * read. Each attempt is a complete identity/token/identity read, and a fact
+ * that stays unreadable keeps its observation so its caller fails closed.
+ *
+ * A pre-signal check re-reads only same-generation facts. Every attempt also
+ * re-reads its owned members, so a member that moves groups or turns
+ * unreadable while another waits is seen within the same bound. A re-read that
+ * sees another generation marks that fact changed, because a reused PID is
+ * not proof that the first generation exited. Changed, exited, exiting and
+ * foreign-token facts are final and never re-read.
+ */
+export const reobserveUnavailableTokenFacts = async (
+  facts: readonly ProcessOwnershipFact[],
+  host: ProcessOwnershipHost,
+  exitSettlement: ProcessExitSettlementBudget,
+  scope: TokenReobservationScope,
+): Promise<readonly ProcessOwnershipFact[]> => {
+  const settled = ({ identityAfter }: ProcessOwnershipFact) =>
+    processIdentityHasExited(identityAfter) ||
+    processIdentityIsExiting(identityAfter);
+  const transient = (fact: ProcessOwnershipFact) =>
+    fact.token.state === "unavailable" &&
+    !settled(fact) &&
+    (scope.generation === "current" || fact.state === "same-generation");
+  const reread = (fact: ProcessOwnershipFact) =>
+    transient(fact) ||
+    (scope.generation === "first-observed" &&
+      fact.state === "same-generation" &&
+      !settled(fact) &&
+      fact.token.state === "readable" &&
+      fact.token.runId === scope.runId);
+  const bind = (
+    fact: ProcessOwnershipFact,
+    next: ProcessOwnershipFact | undefined,
+  ): ProcessOwnershipFact => {
+    if (next === undefined || scope.generation === "current")
+      return next ?? fact;
+    if (fact.identityAfter.state !== "readable") return fact;
+    const first = fact.identityAfter.identity;
+    if (next.identityAfter.state === "absent") return next;
+    if (
+      [next.identityBefore, next.identityAfter].some(
+        (identity) =>
+          identity.state === "readable" && identity.identity !== first,
+      )
+    )
+      return {
+        ...fact,
+        state: "unavailable",
+        identityAfter: {
+          state: "unavailable",
+          reason: "process_identity_changed_during_token_reread",
+        },
+      };
+    // An inconclusive read keeps an unreadable fact for the next attempt but
+    // replaces an owned one, so stale membership cannot authorize a signal.
+    return next.state === "same-generation" || fact.token.state === "readable"
+      ? next
+      : fact;
+  };
+
+  let current = facts;
+  for (let attempt = 0; attempt < TOKEN_READ_RETRY_ATTEMPTS; attempt += 1) {
+    if (!current.some(transient)) break;
+    await delay(TOKEN_READ_RETRY_DELAY_MS);
+    const next = new Map(
+      (
+        await readProcessOwnershipFacts(
+          current.filter(reread).map(({ process }) => process),
+          host,
+          undefined,
+          { exitSettlement },
+        )
+      ).map((fact) => [fact.process.pid, fact]),
+    );
+    current = current.map((fact) => bind(fact, next.get(fact.process.pid)));
+  }
+  return current;
+};
+
 const isExpectedAbort = (
   cause: unknown,
   signal: AbortSignal | undefined,
@@ -979,15 +1196,24 @@ export const createSystemProcessOwnershipHost = (
           executable: swiftcPath,
           sdkRoot: hostEnvironment.SDKROOT ?? "",
         });
+  const helperCacheDirectory = darwinHelperCacheDirectory({
+    home: hostEnvironment.HOME,
+    compilerSelected: darwinCompiler !== undefined,
+    moduleCachePath: darwinModuleCachePath,
+  });
   const darwinTokens =
     platform === "darwin"
       ? createDarwinProcessRunTokenReader({
+          environment: hostEnvironment,
           ...(darwinCompiler === undefined ? {} : { compiler: darwinCompiler }),
           ...(darwinModuleCachePath === undefined
             ? {}
             : { moduleCachePath: darwinModuleCachePath }),
+          ...(helperCacheDirectory === undefined
+            ? {}
+            : { helperCacheDirectory }),
           ...(options.compileTimeoutMs === undefined
-            ? { environment: hostEnvironment }
+            ? {}
             : { compileTimeoutMs: options.compileTimeoutMs }),
         })
       : undefined;
@@ -1066,6 +1292,7 @@ export const createSystemProcessOwnershipHost = (
               ) => ({
                 state: "readable" as const,
                 identity: `linux-starttime:${facts.startTime}`,
+                ...(facts.name === "" ? {} : { name: facts.name }),
                 ...(effectiveUid === undefined ? {} : { effectiveUid }),
                 ...(environmentRestriction === undefined
                   ? {}
@@ -1264,9 +1491,9 @@ export const createSystemProcessOwnershipHost = (
         liveAfterRetry.some((entry) => entry.pid === pid),
       );
       if (stillUnresolved.length > 0)
-        throw new Error(
-          `process identity snapshot is unavailable for ${String(stillUnresolved.length)} live processes`,
-        );
+        throw new ProcessAdmissionError("identity_snapshot_unavailable", {
+          live_processes: stillUnresolved.length,
+        });
     }
     return processes.map(({ pid }) => {
       const observation = identities.get(pid);
@@ -1285,16 +1512,10 @@ export const createSystemProcessOwnershipHost = (
         try {
           const processes = await listProcesses(signal);
           if (!processes.some(({ pid }) => pid === process.pid))
-            throw new Error("ps did not report REA's current process");
+            throw new ProcessAdmissionError("current_process_unreported");
         } catch (cause: unknown) {
           if (isExpectedAbort(cause, signal)) throw cause;
-          const reason = `Linux process ownership inspection requires a procps-compatible ps on REA's PATH before launching a child: ${errorMessage(cause)}`;
-          throw new AnalysisCapabilityUnavailableError(
-            "process-ownership",
-            "prepare_owned_process",
-            reason,
-            { cause, userMessage: reason },
-          );
+          throw new LinuxOwnedProcessPrerequisiteError(cause);
         }
       }
     },
@@ -1473,6 +1694,17 @@ export const signalProcessWithStartIdentity = async (
     return "unverified";
   }
 };
+
+/** Refusal before an owned launch when Linux `ps` is missing or incompatible. */
+export class LinuxOwnedProcessPrerequisiteError extends AnalysisCapabilityUnavailableError {
+  constructor(cause: unknown) {
+    const reason = `Linux process ownership inspection requires a procps-compatible ps on REA's PATH before launching a child: ${errorMessage(cause)}`;
+    super("process-ownership", "prepare_owned_process", reason, {
+      cause,
+      userMessage: reason,
+    });
+  }
+}
 
 /** Prepare native token inspection before REA launches a captured child. */
 export const prepareProcessOwnershipInspection = async (
