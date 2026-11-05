@@ -228,9 +228,9 @@ describe("Inspector script exclusions", () => {
       completeness: parsed?.inspection.completeness,
     };
   };
-  const failedToParse = {
+  const invalidFailedToParse = {
     method: "Debugger.scriptFailedToParse",
-    params: { scriptId: "failed-script", url: "", executionContextId: 1 },
+    params: { scriptId: 42, url: "", executionContextId: 1 },
   };
   const missingUrl = {
     method: "Debugger.scriptParsed",
@@ -239,7 +239,7 @@ describe("Inspector script exclusions", () => {
 
   it("keeps invalid protocol scripts out of policy filtering", async () => {
     const { producer, completeness } = await reconcileV8Scripts([
-      failedToParse,
+      invalidFailedToParse,
       missingUrl,
     ]);
     expect(producer).toEqual({
@@ -259,7 +259,7 @@ describe("Inspector script exclusions", () => {
 
   it("reports unsupported and invalid script exclusions separately", async () => {
     const { producer, completeness } = await reconcileV8Scripts([
-      failedToParse,
+      invalidFailedToParse,
       {
         method: "Debugger.scriptParsed",
         params: {

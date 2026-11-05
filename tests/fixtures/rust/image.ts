@@ -1,4 +1,4 @@
-import { deflateSync } from "node:zlib";
+import { deflateSync, zstdCompressSync } from "node:zlib";
 
 /** zlib payload matching the embedded dependency JSON shape. */
 export const rustDependencyPayload = (
@@ -16,6 +16,39 @@ export const rustDependencyPayload = (
     format: 1,
   },
 ): Buffer => deflateSync(Buffer.from(JSON.stringify(document)));
+
+/** Compress the ELF section-name table without changing other sections. */
+export const compressRustElfSectionNames = (
+  bytes: Buffer,
+  compressionType = 1,
+): Buffer => {
+  const sectionOffset = Number(bytes.readBigUInt64LE(40));
+  const sectionWidth = bytes.readUInt16LE(58);
+  const namesIndex = bytes.readUInt16LE(62);
+  const nameHeader = sectionOffset + namesIndex * sectionWidth;
+  const namesOffset = Number(bytes.readBigUInt64LE(nameHeader + 24));
+  const namesSize = Number(bytes.readBigUInt64LE(nameHeader + 32));
+  const names = Buffer.from(
+    bytes.subarray(namesOffset, namesOffset + namesSize),
+  );
+  const compressed =
+    compressionType === 2 ? zstdCompressSync(names) : deflateSync(names);
+  const compressionHeader = Buffer.alloc(24);
+  compressionHeader.writeUInt32LE(compressionType, 0);
+  compressionHeader.writeBigUInt64LE(BigInt(names.length), 8);
+  compressionHeader.writeBigUInt64LE(1n, 16);
+  compressionHeader.copy(bytes, namesOffset);
+  compressed.copy(bytes, namesOffset + compressionHeader.length);
+  bytes.writeBigUInt64LE(
+    bytes.readBigUInt64LE(nameHeader + 8) | 0x800n,
+    nameHeader + 8,
+  );
+  bytes.writeBigUInt64LE(
+    BigInt(compressionHeader.length + compressed.length),
+    nameHeader + 32,
+  );
+  return bytes;
+};
 
 export const RUSTC_HASH = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const RUSTC_PATH = `/rustc/${RUSTC_HASH}/library/core`;
@@ -46,6 +79,18 @@ export const createRustImage = (options: {
   if (options.format === "elf") writeElf(image);
   else if (options.format === "pe") writePe(image);
   else writeMacho(image);
+  return bytes;
+};
+
+/** Read-only ELF data stays independent of its section-name spelling or availability. */
+export const rustElfSectionNameFixture = (
+  name: "named" | "empty" | "unavailable",
+): Buffer => {
+  const bytes = createRustImage({ format: "elf", omitSection: true });
+  // This fixture's read-only PROGBITS header is at 384. Its PT_LOAD is writable,
+  // so compiler-path recovery must use the section rather than segment fallback.
+  if (name === "empty") bytes.writeUInt32LE(0, 384);
+  if (name === "unavailable") bytes.writeUInt16LE(0, 62);
   return bytes;
 };
 

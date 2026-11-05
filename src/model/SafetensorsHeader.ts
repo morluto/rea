@@ -7,15 +7,24 @@ import type {
 } from "../domain/model/modelArtifact.js";
 import { ModelHeaderReader } from "./ModelHeaderReader.js";
 import {
+  MODEL_HEADER_BYTES,
+  MODEL_JSON_NESTING,
   ModelFormatFailure,
   ModelReportBudget,
   rejectModel,
+  rejectPickle,
 } from "./ModelFormat.js";
 import { safetensorsBits } from "./ModelTensorTypes.js";
 
+class JsonNumber {
+  constructor(readonly raw: string) {}
+}
 type HeaderValue =
   | string
-  | number
+  | bigint
+  | boolean
+  | null
+  | JsonNumber
   | HeaderValue[]
   | { [key: string]: HeaderValue };
 
@@ -62,10 +71,26 @@ class HeaderJson {
     if (++this.#nodes % 4096 === 0) yield;
     this.#space();
     this.budget.charge(64);
-    if (depth > 4)
-      rejectModel("Safetensors header has an invalid nested structure");
+    if (depth > MODEL_JSON_NESTING)
+      throw new ModelFormatFailure(
+        "capacity",
+        `Safetensors JSON nesting exceeds ${String(MODEL_JSON_NESTING)} levels`,
+        "json-nesting",
+      );
     const c = this.text[this.#position];
     if (c === '"') return this.#string();
+    if (this.text.startsWith("null", this.#position)) {
+      this.#position += 4;
+      return null;
+    }
+    if (this.text.startsWith("true", this.#position)) {
+      this.#position += 4;
+      return true;
+    }
+    if (this.text.startsWith("false", this.#position)) {
+      this.#position += 5;
+      return false;
+    }
     if (c === "{" || c === "[") {
       this.#position++;
       const object: { [key: string]: HeaderValue } = Object.create(null) as {
@@ -98,19 +123,37 @@ class HeaderJson {
       }
     }
     const start = this.#position;
-    while (/^[0-9]$/u.test(this.text[this.#position] ?? "")) this.#position++;
-    const raw = this.text.slice(start, this.#position);
-    if (!/^(?:0|[1-9][0-9]*)$/u.test(raw))
-      return rejectModel(
-        "Safetensors header requires unsigned integer declarations",
-      );
-    const number = Number(raw);
-    if (!Number.isSafeInteger(number))
-      throw new ModelFormatFailure(
-        "capacity",
-        "Safetensors integer exceeds exact host offset precision",
-      );
-    return number;
+    if (this.text[this.#position] === "-") this.#position++;
+    const integerStart = this.#position;
+    if (this.text[this.#position] === "0") this.#position++;
+    else if (/^[1-9]$/u.test(this.text[this.#position] ?? "")) {
+      this.#position++;
+      while (/^[0-9]$/u.test(this.text[this.#position] ?? "")) this.#position++;
+    }
+    if (this.#position === integerStart)
+      return rejectModel("Invalid safetensors JSON value");
+    if (this.text[this.#position] === ".") {
+      this.#position++;
+      const fractionStart = this.#position;
+      while (/^[0-9]$/u.test(this.text[this.#position] ?? "")) this.#position++;
+      if (this.#position === fractionStart)
+        return rejectModel("Invalid safetensors JSON value");
+    }
+    if (/[eE]/u.test(this.text[this.#position] ?? "")) {
+      this.#position++;
+      if (/[+-]/u.test(this.text[this.#position] ?? "")) this.#position++;
+      const exponentStart = this.#position;
+      while (/^[0-9]$/u.test(this.text[this.#position] ?? "")) this.#position++;
+      if (this.#position === exponentStart)
+        return rejectModel("Invalid safetensors JSON value");
+    }
+    const numeric = this.text.slice(start, this.#position);
+    if (/^(?:0|[1-9][0-9]*)$/u.test(numeric)) {
+      if (numeric.length > 20) return new JsonNumber(numeric);
+      const integer = BigInt(numeric);
+      if (integer <= 0xffffffffffffffffn) return integer;
+    }
+    return new JsonNumber(numeric);
   }
   *read(): Generator<void, HeaderValue> {
     if (this.text[0] !== "{")
@@ -126,17 +169,32 @@ class HeaderJson {
 const objectOf = (
   value: HeaderValue | undefined,
 ): { [key: string]: HeaderValue } => {
-  if (value === undefined || typeof value !== "object" || Array.isArray(value))
+  if (
+    value === undefined ||
+    value === null ||
+    typeof value !== "object" ||
+    Array.isArray(value) ||
+    value instanceof JsonNumber
+  )
     return rejectModel("Expected safetensors header object");
   return value;
 };
-const integersOf = (value: HeaderValue | undefined): number[] => {
+const integersOf = (value: HeaderValue | undefined): bigint[] => {
   if (
     !Array.isArray(value) ||
-    !value.every((item): item is number => typeof item === "number")
+    !value.every((item): item is bigint => typeof item === "bigint")
   )
     return rejectModel("Expected safetensors integer array");
   return value;
+};
+const exactOffset = (value: bigint): number => {
+  if (value > BigInt(Number.MAX_SAFE_INTEGER))
+    throw new ModelFormatFailure(
+      "capacity",
+      "Safetensors data offset exceeds exact host offset precision",
+      "exact-offset",
+    );
+  return Number(value);
 };
 const pointer = (value: string): string =>
   value.replaceAll("~", "~0").replaceAll("/", "~1");
@@ -151,18 +209,33 @@ export const readSafetensorsHeader = async (
   tensor_data_offset: number;
   metadata: ModelMetadata[];
   tensors: ModelTensor[];
+  limitations: string[];
 }> => {
   const budget = new ModelReportBudget();
+  // Lengths such as 640 (80 02 ...) also begin like a pickle PROTO opcode.
+  const protocol = first[1] ?? 0;
+  const pickle = first[0] === 0x80 && protocol >= 2 && protocol <= 5;
+  // ZIP's four-byte signature is also a valid little-endian header length.
+  const zip = first.equals(Buffer.from([0x50, 0x4b, 3, 4]));
+  if ((pickle || zip) && reader.size < 9) rejectPickle();
   const second = await reader.take(4);
   reader.excludeSafetensorsLengthPrefix();
   const length =
     BigInt(first.readUInt32LE()) + (BigInt(second.readUInt32LE()) << 32n);
-  if (length === 0n || (await reader.take(1))[0] !== 0x7b)
+  const brace = length === 0n ? undefined : (await reader.take(1))[0];
+  // A brace after an admissible length is safetensors, even if truncated.
+  if (
+    (pickle || zip) &&
+    (brace !== 0x7b || length > BigInt(MODEL_HEADER_BYTES))
+  )
+    rejectPickle();
+  if (brace !== 0x7b)
     rejectModel("File does not contain a GGUF or safetensors header");
   if (length > BigInt(Number.MAX_SAFE_INTEGER))
     throw new ModelFormatFailure(
       "capacity",
       "Safetensors header length exceeds exact host offset precision",
+      "exact-offset",
     );
   const size = Number(length);
   reader.guarantee(size - 1);
@@ -190,7 +263,7 @@ export const readSafetensorsHeader = async (
   const root = objectOf(step.value);
   const source = { source_offset: 8, source_length: size };
   const metadata: ModelMetadata[] = [];
-  if (Object.hasOwn(root, "__metadata__")) {
+  if (Object.hasOwn(root, "__metadata__") && root.__metadata__ !== null) {
     for (const [key, value] of Object.entries(objectOf(root.__metadata__))) {
       if (typeof value !== "string")
         rejectModel("Safetensors __metadata__ values must be strings");
@@ -208,6 +281,7 @@ export const readSafetensorsHeader = async (
     }
   }
   const tensors: ModelTensor[] = [];
+  const unknownTypes = new Set<string>();
   const tensor_data_offset = 8 + size;
   const names = Object.keys(root)
     .filter((name) => name !== "__metadata__")
@@ -216,7 +290,6 @@ export const readSafetensorsHeader = async (
   for (const name of names) {
     const entry = objectOf(root[name]);
     if (
-      Object.keys(entry).length !== 3 ||
       !Object.hasOwn(entry, "dtype") ||
       !Object.hasOwn(entry, "shape") ||
       !Object.hasOwn(entry, "data_offsets")
@@ -231,22 +304,22 @@ export const readSafetensorsHeader = async (
     const offsets = integersOf(entry.data_offsets);
     if (offsets.length !== 2)
       rejectModel(`Safetensors tensor ${name} requires two data offsets`);
-    const start = offsets[0] ?? 0;
-    const end = offsets[1] ?? 0;
+    const start = exactOffset(offsets[0] ?? 0n);
+    const end = exactOffset(offsets[1] ?? 0n);
     if (end < start || end > reader.size - tensor_data_offset)
       rejectModel(
         `Safetensors tensor ${name} range [${String(start)},${String(end)}) is outside the data buffer`,
       );
-    let parameters = shape.includes(0) ? 0n : 1n;
-    if (parameters !== 0n)
-      for (const dimension of shape) {
-        parameters *= BigInt(dimension);
-        if (parameters > 0xffffffffffffffffn)
-          rejectModel(
-            `Safetensors tensor ${name} parameter count overflows uint64`,
-          );
-      }
+    let parameters = 1n;
+    for (const dimension of shape) {
+      parameters *= dimension;
+      if (parameters > 0xffffffffffffffffn)
+        rejectModel(
+          `Safetensors tensor ${name} parameter count overflows uint64`,
+        );
+    }
     const bits = safetensorsBits(type);
+    if (bits === undefined) unknownTypes.add(type);
     if (bits !== undefined) {
       const expected = parameters * BigInt(bits);
       if (expected % 8n !== 0n || expected / 8n !== BigInt(end - start))
@@ -294,5 +367,11 @@ export const readSafetensorsHeader = async (
     tensor_data_offset,
     metadata,
     tensors,
+    limitations:
+      unknownTypes.size === 0
+        ? []
+        : [
+            `Unknown tensor types prevent storage-size validation: ${[...unknownTypes].join(", ")}`,
+          ],
   };
 };

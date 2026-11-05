@@ -1,3 +1,4 @@
+import { javascriptSourceRangeContains } from "./javascriptSourceCoordinates.js";
 import * as t from "@babel/types";
 
 import type {
@@ -270,7 +271,7 @@ const parameterAcceptsArgument = (
   if (!t.isFunction(node)) return false;
   const parameters = runtimeFunctionParameters(node);
   const parameterIndex = parameters.findIndex((parameter) =>
-    rangeContains(range(parameter), location),
+    javascriptSourceRangeContains(range(parameter), location),
   );
   if (parameterIndex === argumentIndex) return true;
   return (
@@ -279,17 +280,6 @@ const parameterAcceptsArgument = (
     t.isRestElement(parameters[parameterIndex])
   );
 };
-
-const rangeContains = (
-  outer: JavaScriptSemanticArgumentFlow["parameterLocation"],
-  inner: JavaScriptSemanticArgumentFlow["parameterLocation"],
-): boolean =>
-  (outer.start.line < inner.start.line ||
-    (outer.start.line === inner.start.line &&
-      outer.start.column <= inner.start.column)) &&
-  (outer.end.line > inner.end.line ||
-    (outer.end.line === inner.end.line &&
-      outer.end.column >= inner.end.column));
 
 const uniqueCallableIds = (values: readonly string[]): string[] =>
   [...new Set(values)].sort(compareUnicodeCodePoints);

@@ -61,12 +61,13 @@ export const snapshotAdbInput = async (
   let primaryCause: unknown;
 
   try {
-    source = new OwnedFileHandle(
-      await (dependencies.openSource ?? openRegularFile)(sourcePath, {
-        symlinks: "follow",
-        signal,
-      }),
-    );
+    const { handle, initial } = await (
+      dependencies.openSource ?? openRegularFile
+    )(sourcePath, {
+      symlinks: "follow",
+      signal,
+    });
+    source = new OwnedFileHandle(handle);
     const destinationPath = join(root.path, basename(sourcePath));
     destination = new OwnedFileHandle(
       await (dependencies.openDestination ?? open)(
@@ -75,7 +76,6 @@ export const snapshotAdbInput = async (
         0o600,
       ),
     );
-    const initial = await source.handle.stat();
     if (!Number.isSafeInteger(initial.size) || initial.size < 0)
       throw new RangeError(
         `Regular file size cannot be represented safely: ${sourcePath}`,
@@ -131,7 +131,9 @@ export const snapshotAdbInput = async (
         "the file changed while its private snapshot was copied",
       );
     await destination.handle.sync();
-    await destination.handle.chmod(0o400);
+    // Keep the private snapshot non-writable while preserving executable intent
+    // for adb push (which transmits the staged file's mode).
+    await destination.handle.chmod(0o400 | (initial.mode & 0o111));
     snapshot = {
       path: destinationPath,
       bytes: position,

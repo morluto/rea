@@ -11,6 +11,10 @@ it("requires resource-root provenance when asset results have no executable iden
   const base = {
     target_sha256: null,
     catalogs: [],
+    inventory_coverage: {
+      scope: "container-entries" as const,
+      status: "unknown" as const,
+    },
     total_records: 0,
     offset: 0,
     limit: 1,

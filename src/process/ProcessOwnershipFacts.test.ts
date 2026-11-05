@@ -21,7 +21,7 @@ const row: ProcessTableEntry = {
 
 const identity = (
   value: string,
-  lifecycle: "non-zombie" | "zombie" = "non-zombie",
+  lifecycle: "non-zombie" | "zombie" | "dead" = "non-zombie",
   relation: ProcessNativeRelationObservation = {
     state: "observed",
     parentPid: row.parentPid,
@@ -80,17 +80,183 @@ it("binds owned, missing, and foreign tokens only to the same identity generatio
   }
 });
 
-it("retains a matching token as partial evidence when identity changes", async () => {
+it("retains a token-matching replacement without authority until same-generation validation", async () => {
   const host = hostFor([
     new Map([[row.pid, identity("start:old")]]),
     new Map([[row.pid, identity("start:new")]]),
   ]);
-  const [fact] = await readProcessOwnershipFacts([row], host);
-  expect(fact).toMatchObject({
+  const facts = await readProcessOwnershipFacts([row], host);
+  expect(facts[0]).toMatchObject({
     state: "replaced",
     token: { state: "readable", runId: "run" },
   });
+  const owner = new ProcessOwnershipEvidenceOwner();
+  const options = {
+    runId: "run",
+    listedRows: 1,
+    listedPids: new Set([row.pid]),
+    leaderPid: row.pid,
+    processGroupIds: new Set([row.processGroupId]),
+  };
+  expect(owner.reconcile(facts, options)).toMatchObject([
+    {
+      pid: row.pid,
+      identity: undefined,
+      applicability: "identity-unresolved",
+      scopeEvidence: "native-identity-unresolved",
+      relation: undefined,
+    },
+  ]);
+  expect(owner.coverage).toMatchObject({
+    retainedOwned: 0,
+    retainedUnresolved: 1,
+    uncertainPids: [row.pid],
+  });
+  expect(owner.rowsForObservation([])).toEqual([row]);
+  const stable = await readProcessOwnershipFacts(
+    [row],
+    hostFor([
+      new Map([[row.pid, identity("start:new")]]),
+      new Map([[row.pid, identity("start:new")]]),
+    ]),
+  );
+  expect(owner.reconcile(stable, options)).toMatchObject([
+    { pid: row.pid, identity: "start:new", applicability: "token-verified" },
+  ]);
 });
+
+it.each(["token-verified", "identity-unresolved"] as const)(
+  "retains a token-matching replacement after retiring a %s candidate",
+  async (applicability) => {
+    const owner = new ProcessOwnershipEvidenceOwner();
+    const options = {
+      runId: "run",
+      listedRows: 1,
+      listedPids: new Set([row.pid]),
+      leaderPid: row.pid,
+      processGroupIds: new Set([row.processGroupId]),
+    };
+    const previousIdentity: ProcessIdentityObservation =
+      applicability === "token-verified"
+        ? identity("start:old")
+        : { state: "unavailable", reason: "native identity denied" };
+    const previous = await readProcessOwnershipFacts(
+      [row],
+      hostFor([
+        new Map([[row.pid, previousIdentity]]),
+        new Map([[row.pid, previousIdentity]]),
+      ]),
+    );
+    expect(owner.reconcile(previous, options)).toMatchObject([
+      { pid: row.pid, applicability },
+    ]);
+
+    const replacement = await readProcessOwnershipFacts(
+      [row],
+      hostFor([
+        new Map([[row.pid, identity("start:old")]]),
+        new Map([[row.pid, identity("start:new")]]),
+      ]),
+    );
+    expect(owner.reconcile(replacement, options)).toMatchObject([
+      {
+        pid: row.pid,
+        identity: undefined,
+        applicability: "identity-unresolved",
+        relation: undefined,
+      },
+    ]);
+    expect(owner.rowsForObservation([])).toEqual([row]);
+    expect(owner.coverage).toMatchObject({
+      retainedOwned: 0,
+      retainedUnresolved: 1,
+      uncertainPids: [row.pid],
+    });
+  },
+);
+
+it.each(["token-verified", "identity-unresolved"] as const)(
+  "retires a %s candidate when its replacement has a foreign token",
+  async (applicability) => {
+    const owner = new ProcessOwnershipEvidenceOwner();
+    const options = {
+      runId: "run",
+      listedRows: 1,
+      listedPids: new Set([row.pid]),
+      leaderPid: row.pid,
+      processGroupIds: new Set([row.processGroupId]),
+    };
+    const previousIdentity: ProcessIdentityObservation =
+      applicability === "token-verified"
+        ? identity("start:old")
+        : { state: "unavailable", reason: "native identity denied" };
+    const previous = await readProcessOwnershipFacts(
+      [row],
+      hostFor([
+        new Map([[row.pid, previousIdentity]]),
+        new Map([[row.pid, previousIdentity]]),
+      ]),
+    );
+    expect(owner.reconcile(previous, options)).toMatchObject([
+      { pid: row.pid, applicability },
+    ]);
+    const replacement = await readProcessOwnershipFacts(
+      [row],
+      hostFor(
+        [
+          new Map([[row.pid, identity("start:old")]]),
+          new Map([[row.pid, identity("start:foreign")]]),
+        ],
+        { state: "readable", runId: "foreign" },
+      ),
+    );
+
+    expect(owner.reconcile(replacement, options)).toEqual([]);
+    expect(owner.rowsForObservation([])).toEqual([]);
+    expect(
+      new ProcessOwnershipEvidenceOwner().reconcile(replacement, options),
+    ).toEqual([]);
+  },
+);
+
+it.each(["absent", "zombie", "dead"] as const)(
+  "settles a token-matching replacement when its final native state is %s",
+  async (state) => {
+    const owner = new ProcessOwnershipEvidenceOwner();
+    const options = {
+      runId: "run",
+      listedRows: 1,
+      listedPids: new Set([row.pid]),
+      leaderPid: row.pid,
+      processGroupIds: new Set([row.processGroupId]),
+    };
+    const previous = await readProcessOwnershipFacts(
+      [row],
+      hostFor([
+        new Map([[row.pid, identity("start:old")]]),
+        new Map([[row.pid, identity("start:old")]]),
+      ]),
+    );
+    owner.reconcile(previous, options);
+    const terminalIdentity: ProcessIdentityObservation =
+      state === "absent"
+        ? { state: "absent", reason: "not-in-snapshot" }
+        : identity("start:new", state);
+    const replacement = await readProcessOwnershipFacts(
+      [row],
+      hostFor([
+        new Map([[row.pid, identity("start:old")]]),
+        new Map([[row.pid, terminalIdentity]]),
+      ]),
+    );
+
+    expect(owner.reconcile(replacement, options)).toEqual([]);
+    expect(owner.rowsForObservation([])).toEqual([]);
+    expect(
+      new ProcessOwnershipEvidenceOwner().reconcile(replacement, options),
+    ).toEqual([]);
+  },
+);
 
 it("keeps omitted identities uncertain and native absence distinct", async () => {
   const omitted = hostFor([new Map(), new Map()]);

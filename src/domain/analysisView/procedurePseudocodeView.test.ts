@@ -1,5 +1,7 @@
 import { expect, it } from "vitest";
 
+import { ANALYSIS_EVIDENCE_PREDICATE } from "../evidence.js";
+
 import {
   projectAnalysisView,
   type AnalysisViewParent,
@@ -8,6 +10,7 @@ import {
 const parent = (normalizedResult: unknown): AnalysisViewParent => ({
   evidenceId: `ev_${"a".repeat(64)}`,
   operation: "procedure_pseudo_code",
+  predicateType: ANALYSIS_EVIDENCE_PREDICATE,
   normalizedResult,
   parameters: { procedure: "file-offset:0x1000", document: "" },
   artifact: { path: "", sha256: "b".repeat(64) },

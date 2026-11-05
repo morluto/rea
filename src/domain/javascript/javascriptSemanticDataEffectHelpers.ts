@@ -8,7 +8,10 @@ import {
   semanticGlobalProcessOrigin,
   semanticMutableBuiltinOrigin,
 } from "./javascriptSemanticRequireOrigin.js";
-import type { JavaScriptModuleOrigin } from "./javascriptSemanticIr.js";
+import type {
+  JavaScriptModuleOrigin,
+  JavaScriptSemanticProjectedResultBinding,
+} from "./javascriptSemanticIr.js";
 import {
   evaluateSemanticProvenance,
   evaluateSemanticProvenanceAtRead,
@@ -28,18 +31,16 @@ import {
   type JavaScriptSemanticMemberEffect,
   type JavaScriptSemanticRequiredModuleEffect,
 } from "./javascriptSemanticState.js";
-import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
+import { traverseJavaScriptValueAst } from "./javascriptSemanticTraversal.js";
 import {
   readExactJavaScriptLiteral,
+  semanticMemberChain,
   semanticStaticPropertyKey,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 
-export interface SemanticProjectedBinding {
-  readonly bindingId: string;
+export interface SemanticProjectedBinding extends JavaScriptSemanticProjectedResultBinding {
   readonly identifier: t.Identifier;
-  readonly projectionPath: readonly (string | number | null)[];
-  readonly resolution: "complete" | "partial";
 }
 
 /** Resolve bindings written by the nearest variable or assignment owner. */
@@ -56,7 +57,7 @@ export const assignedSemanticResultBindings = (
     if (t.isVariableDeclarator(owner)) {
       pattern = owner.id;
       source = owner.init ?? null;
-    } else if (t.isAssignmentExpression(owner)) {
+    } else if (t.isAssignmentExpression(owner, { operator: "=" })) {
       pattern = owner.left;
       source = owner.right;
     }
@@ -136,7 +137,7 @@ const projectedPatternBindings = (
 
 export const semanticProjectedBindingFacts = (
   bindings: readonly SemanticProjectedBinding[],
-): Omit<SemanticProjectedBinding, "identifier">[] =>
+): JavaScriptSemanticProjectedResultBinding[] =>
   bindings.map(({ identifier: _identifier, ...fact }) => fact);
 
 /** Return a scalar owner only for an unprojected identifier result. */
@@ -319,20 +320,14 @@ const semanticBoundMemberPath = (
       readonly path: string[];
     }
   | undefined => {
-  const path: string[] = [];
-  let current = unwrapJavaScriptExpression(node).node;
-  while (
-    t.isMemberExpression(current) ||
-    t.isOptionalMemberExpression(current)
-  ) {
-    const key = semanticStaticPropertyKey(current.property, current.computed);
-    if (key === null || !t.isNode(current.object)) return undefined;
-    path.unshift(key);
-    current = unwrapJavaScriptExpression(current.object).node;
-  }
-  if (!t.isIdentifier(current)) return undefined;
-  const binding = resolveSemanticBindingState(state, current, current.name);
-  return binding === undefined ? undefined : { binding, path };
+  const chain = semanticMemberChain(node);
+  if (chain === undefined || !t.isIdentifier(chain.root)) return undefined;
+  const binding = resolveSemanticBindingState(
+    state,
+    chain.root,
+    chain.root.name,
+  );
+  return binding === undefined ? undefined : { binding, path: chain.members };
 };
 
 type BuiltinBindingMemo = Map<t.Node, Map<string, readonly string[] | null>>;
@@ -906,7 +901,7 @@ export const traverseDataEffects = (
     context.callableStack,
   );
   context.ancestors.length = 0;
-  traverseJavaScriptAst(program, {
+  traverseJavaScriptValueAst(program, context.state.erasedSyntaxNodes, {
     enter: (node, parent) => {
       callableStack.enter(node, parent);
       visit(node, parent);

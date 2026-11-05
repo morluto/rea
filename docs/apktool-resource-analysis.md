@@ -65,6 +65,7 @@ rea decode-android-resources /targets/Example.apk --locale de
 rea decode-android-resources /targets/Example.apk --locales de --locales pt-BR
 rea decode-android-resources /targets/Example.apk --locales de --locales pt-BR --string-tables-only
 rea decode-android-resources /targets/Example.apk --no-strings
+rea decode-android-resources /targets/Example.apk --decode-timeout-ms 900000
 ```
 
 Equivalent MCP methods are `inspect_apktool_client` and
@@ -92,9 +93,22 @@ still suppresses all string projection, including in this mode.
   `target.bytes` bind the observation to the exact APK that was decoded.
   The Evidence subject carries the same snapshot digest and caller-selected
   path, including when the original file changes during decoding.
+  A change during snapshot acquisition reports retryable `artifact_changed`;
+  wait for a stable input before retrying. Host read permission failures report
+  `access_denied`, while a missing or non-regular selected path reports
+  `invalid_request` with the rejected `path` field.
 - **Metadata comes from apktool.yml as apktool printed it.** Version codes
   keep their own spelling (`'7'` versus `7`); `package_name` is read from
   the decoded manifest, not inferred.
+  The `version: 2.9.0`-or-later header that Apktool 2.9+ and 3 emit selects
+  their single-line string dialect: literal hashes, single quotes, empty
+  strings, and the text `null` stay part of the value; producer backslashes
+  and Unicode escapes decode once. Older/tagged documents retain YAML scalar
+  semantics; double-quoted values also retain YAML string semantics.
+  This distinction follows the released
+  [2.9.0 metadata writer](https://github.com/iBotPeaches/Apktool/blob/b64e257c9b689eb9630ad0241f2fe4f4a749955b/brut.apktool/apktool-lib/src/main/java/brut/androlib/apk/VersionInfo.java#L38-L42),
+  [3.0.3 metadata writer](https://github.com/iBotPeaches/Apktool/blob/18b5e99cb56ff9451e8aa55b065dcf5bbd616975/brut.apktool/apktool-lib/src/main/java/brut/androlib/meta/VersionInfo.java#L49-L55)
+  and [string escape owner](https://github.com/iBotPeaches/Apktool/blob/18b5e99cb56ff9451e8aa55b065dcf5bbd616975/brut.j.yaml/src/main/java/brut/yaml/YamlStringEscapeUtils.java#L55-L116).
 - **The manifest is the decoded text**, bounded at 512 KiB and reported as
   truncated when larger.
 - **Strings are projected verbatim.** Escaped entities stay escaped, and
@@ -133,9 +147,14 @@ still suppresses all string projection, including in this mode.
 
 ## Resource and lifecycle limits
 
-- The decode runs with a 600 s deadline and a 4 MiB output capture budget;
-  a stopped decode reports `provider_timeout` and exceeded budgets report
-  `resource_constraint`.
+- The decode wall clock is `decode_timeout_ms` (CLI `--decode-timeout-ms`).
+  Omitted means 600000 ms. The integer range is 1 to 2147483647. A change
+  applies on the next decode. It does not raise the 4194304-byte (4 MiB)
+  output capture budget. That capture budget has no runtime override. A
+  stopped decode reports `provider_timeout` and names the effective
+  milliseconds; an exceeded capture budget reports `resource_constraint`.
+- The version probe waits 20000 ms and retains 65536 bytes. This release has
+  no runtime override for that probe. `decode_timeout_ms` does not raise it.
 - Manifest reads are bounded to 512 KiB before decoding UTF-8. Strings XML
   reads are bounded to 8 MiB; larger documents are skipped with partial
   coverage and an explicit limit, rather than reported as missing.
@@ -161,6 +180,11 @@ Multi-locale and table-only projection were also verified through real CLI and
 stdio MCP workflows on Linux with Apktool 3.0.3/JDK 21 against NewPipe 0.29.1,
 ApiDemos 6.0.18 and Appium Settings 8.2.1. Independent XML projection checks,
 exact facts/Evidence parity and bounded task costs are recorded in the
-[shared-decode and table-only checkpoint](../experiments/analysis-efficiency/apktool-string-tables.md).
+[shared-decode and table-only checkpoint](https://github.com/morluto/rea/blob/42e1a17d6e6c0487f17be0bae248553c4caba7f7/experiments/analysis-efficiency/apktool-string-tables.md).
 This qualifies selected resource facts, not application execution or independent
 binary resource-decoder completeness.
+
+If the selected APK changes while its private snapshot is copied, acquisition
+returns `artifact_changed`; request-schema correction cannot recover a stable
+snapshot. Launcher spawn permission denial is distinct from a missing launcher,
+and configuration diagnostics retain the selected command and system error.

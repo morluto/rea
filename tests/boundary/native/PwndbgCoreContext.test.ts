@@ -4,7 +4,11 @@ import { promisify } from "node:util";
 import { join } from "node:path";
 import { expect, it, onTestFinished } from "vitest";
 import { OwnedCommandFailure } from "../../../src/process/OwnedCommand.js";
-import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
+import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
+import {
+  AnalysisCancelledError,
+  AnalysisTimeoutError,
+} from "../../../src/domain/analysisErrorCore.js";
 import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
 import {
   createTestWorkspace,
@@ -49,6 +53,7 @@ it.each(["pre-aborted", "aborted-during-probe"] as const)(
       diagnostics,
       options: { signal: controller.signal },
       probePath,
+      timeoutMs: 30_000,
       runCommand: () => {
         throw new Error("No process should exist before cancellation");
       },
@@ -100,6 +105,7 @@ it.each(["x86_64-little-endian", "aarch64-little-endian"] as const)(
         diagnostics,
         options: undefined,
         probePath: async () => {},
+        timeoutMs: 30_000,
         runCommand: async () => {
           const request: unknown = JSON.parse(
             await readFile(
@@ -147,6 +153,7 @@ it.each(["cancelled", "physical-name", "physical-identity"])(
       diagnostics: { stdout: "basic evidence", stderr: "", truncated: false },
       options: { signal: controller.signal },
       probePath: async () => {},
+      timeoutMs: 30_000,
       runCommand: async () => {
         controller.abort(outcome === "physical-identity" ? failure : reason);
         throw failure;
@@ -165,6 +172,35 @@ it.each(["cancelled", "physical-name", "physical-identity"])(
   },
 );
 
+it("reports a non-default debugger deadline instead of 30000 ms", async () => {
+  const workspace = await createTestWorkspace("rea-pwndbg-deadline-");
+  onTestFinished(() => removeTestWorkspace(workspace.root));
+  const failure = await inspectPwndbgCore({
+    environment: {
+      REA_PWNDBG_GDB: workspace.path("gdb"),
+      REA_PWNDBG_GDBINIT: workspace.path("gdbinit.py"),
+      REA_PWNDBG_VENV_PATH: workspace.path("venv"),
+    },
+    architecture: "x86_64-little-endian",
+    rootPath: workspace.root,
+    resources: new ArtifactResourceScope(),
+    diagnostics,
+    options: undefined,
+    probePath: async () => {},
+    timeoutMs: 60_000,
+    runCommand: () => {
+      throw new OwnedCommandFailure("timeout", "deadline expired");
+    },
+  }).catch((cause: unknown) => cause);
+  if (!(failure instanceof AnalysisTimeoutError))
+    throw new Error("Expected a typed debugger timeout");
+  const projected = projectAnalysisError(failure);
+  expect(projected.code).toBe("provider_timeout");
+  expect(projected.message).toContain("of 60000 ms");
+  expect(projected.remediation.action).toContain("above 60000");
+  expect(projected.remediation.action).not.toContain("above 30000");
+});
+
 it("retains a physical debugger path failure when cancellation arrives in the probe", async () => {
   const workspace = await createTestWorkspace("rea-pwndbg-probe-failure-");
   onTestFinished(() => removeTestWorkspace(workspace.root));
@@ -181,6 +217,7 @@ it("retains a physical debugger path failure when cancellation arrives in the pr
     resources: new ArtifactResourceScope(),
     diagnostics,
     options: { signal: controller.signal },
+    timeoutMs: 30_000,
     probePath: async () => {
       controller.abort({ late: true });
       throw physical;

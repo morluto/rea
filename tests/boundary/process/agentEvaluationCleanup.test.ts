@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
 import { z } from "zod";
 
-import { closeVerifierResources } from "../../../scripts/lib/verifier-cleanup.mjs";
+import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
 import { resolveSwiftcCompileTimeoutMs } from "../../../src/process/DarwinProcessRunTokenReader.js";
 import {
   execFileOutput,
@@ -60,8 +60,7 @@ process.exitCode = 1;
         { mode: 0o700 },
       );
       let run: { root: string; codex: string } | undefined;
-      let primaryError: unknown;
-      try {
+      await withVerifierCleanup(async () => {
         let stderr: string;
         try {
           await execFileOutput(
@@ -125,35 +124,27 @@ process.exitCode = 1;
           await expect(stat(run.root)).rejects.toMatchObject({
             code: "ENOENT",
           });
-      } catch (cause) {
-        primaryError = cause;
-        throw cause;
-      } finally {
-        // Restore this test's deliberately denied subtree before fixture teardown.
-        if (denied)
-          await closeVerifierResources(
-            [
-              async () => {
-                try {
-                  run ??= receiptSchema.parse(
-                    JSON.parse(await readFile(receipt, "utf8")),
-                  );
-                } catch (cause) {
-                  // Startup can fail before the executable creates its receipt.
-                  if (
-                    cause instanceof Error &&
-                    "code" in cause &&
-                    cause.code === "ENOENT"
-                  )
-                    return;
-                  throw cause;
-                }
-                await chmod(run.codex, 0o700);
-              },
-            ],
-            primaryError,
-          );
-      }
+      }, [
+        async () => {
+          // Restore this test's deliberately denied subtree before fixture teardown.
+          if (!denied) return;
+          try {
+            run ??= receiptSchema.parse(
+              JSON.parse(await readFile(receipt, "utf8")),
+            );
+          } catch (cause) {
+            // Startup can fail before the executable creates its receipt.
+            if (
+              cause instanceof Error &&
+              "code" in cause &&
+              cause.code === "ENOENT"
+            )
+              return;
+            throw cause;
+          }
+          await chmod(run.codex, 0o700);
+        },
+      ]);
     },
   );
 }

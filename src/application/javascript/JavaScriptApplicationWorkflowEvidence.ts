@@ -8,7 +8,7 @@ import type { JavaScriptExportShapeComparisonResult } from "../../domain/javascr
 import type { ApplicationFeatureTraceResult } from "../../domain/javascript/javascriptFeatureTraceSchemas.js";
 import type { JavaScriptSemanticTraceResult } from "../../domain/javascript/javascriptSemanticTraceSchemas.js";
 import type { SourceToBundleComparisonResult } from "../../domain/javascript/sourceToBundleComparisonSchemas.js";
-import { JAVASCRIPT_APPLICATION_WORKFLOW_PROVIDER } from "../InvestigationProviders.js";
+import { JAVASCRIPT_APPLICATION_WORKFLOW_PROVIDER } from "../../domain/investigationProviders.js";
 
 /** Create derived Evidence for one bounded application-graph feature trace. */
 export const createApplicationFeatureTraceEvidence = (

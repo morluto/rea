@@ -10,7 +10,7 @@ import { safeParseJson } from "../domain/safeJson.js";
 
 const remoteErrorSchema = z
   .object({
-    code: z.number().int(),
+    code: z.int(),
     message: z.string(),
     type: z
       .enum([
@@ -27,13 +27,13 @@ const remoteErrorSchema = z
 const responseSchema = z.union([
   z
     .object({
-      id: z.number().int().nonnegative(),
+      id: z.int().nonnegative(),
       result: jsonValueSchema,
     })
     .strict(),
   z
     .object({
-      id: z.number().int().nonnegative(),
+      id: z.int().nonnegative(),
       error: remoteErrorSchema,
     })
     .strict(),
@@ -41,7 +41,7 @@ const responseSchema = z.union([
 
 const eventSchema = z
   .object({
-    id: z.number().int().nonnegative(),
+    id: z.int().nonnegative(),
     event: z.discriminatedUnion("type", [
       z
         .object({

@@ -1,5 +1,6 @@
 import { resolve } from "node:path";
 import { tmpdir } from "node:os";
+import { INLINE_EVIDENCE_MCP_ENVIRONMENT } from "../../../scripts/lib/mcp-verification-environment.mjs";
 
 import {
   createTestWorkspace,
@@ -196,7 +197,10 @@ const createFileMcpSession = (
       await import("../../fixtures/localToolsMcp.js");
     if (isClosed()) throw sharedMcpSessionClosed();
     const mcp = await connectLocalToolsMcp(
-      { NODE_COMPILE_CACHE: compileCache },
+      {
+        ...INLINE_EVIDENCE_MCP_ENVIRONMENT,
+        NODE_COMPILE_CACHE: compileCache,
+      },
       registerCleanup,
     );
     return mcp.call;
@@ -250,6 +254,20 @@ export const cliCompileCacheEnvironment = (
     : { NODE_COMPILE_CACHE: compileCache }),
   ...environment,
 });
+
+/**
+ * Run one command on the file-scoped compiled CLI. Stdin and explicit
+ * deadlines stay on `TestCli.run`, which starts a fresh process.
+ */
+export const runFileCli = (
+  cli: TestCli,
+  invocation: CliInvocation,
+): Promise<CliResult> => {
+  const run = cli.sharedCliRun;
+  if (run === undefined)
+    throw new Error("cliTest did not provide a shared CLI session");
+  return run(invocation);
+};
 
 /** Create a compiled CLI driver backed by the supplied process registry. */
 export const createTestCli = (

@@ -55,6 +55,13 @@ export async function startBrowserVerifierSite() {
       response.once("close", () => clearTimeout(timer));
       return;
     }
+    if (request.url === "/screenshot-viewport") {
+      response.setHeader("content-type", "text/html");
+      response.end(
+        `<!doctype html><html style="overflow:hidden"><body style="margin:0;background:#eee"><div style="position:absolute;top:650px;left:0;width:200px;height:50px;background:#c00"></div></body></html>`,
+      );
+      return;
+    }
     if (request.url === "/screenshot-noise") {
       response.setHeader("content-type", "text/html");
       response.end(`<!doctype html><html><body style="margin:0"><canvas width="2048" height="1536"></canvas><script>

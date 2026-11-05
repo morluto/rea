@@ -1,4 +1,4 @@
-import { copyFile, mkdir, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
@@ -17,6 +17,9 @@ app.isReady = () => true;
 app.relaunch = () => undefined;
 app.setAsDefaultProtocolClient = () => true;
 app.setLoginItemSettings = () => undefined;
+app.moveToApplicationsFolder = () => {
+  throw new Error("moveToApplicationsFolder must not run");
+};
 const ipcMain = new EventEmitter();
 ipcMain.handlers = new Map();
 ipcMain.handle = (channel, listener) => ipcMain.handlers.set(channel, listener);
@@ -60,6 +63,7 @@ globalThis.__nativeShellCalls = [];
 const shell = {
   openExternal: () => Promise.resolve(),
   openPath: () => Promise.resolve(),
+  trashItem: (path) => require("node:fs/promises").unlink(path),
   showItemInFolder: (path) => { globalThis.__nativeShellCalls.push(["showItemInFolder", path]); },
   writeShortcutLink: (path) => { globalThis.__nativeShellCalls.push(["writeShortcutLink", path]); return true; },
 };
@@ -111,6 +115,11 @@ window.webContents.setWindowOpenHandler(() => ({ action: "allow" }));
 const popupDecision = window.webContents.windowOpenHandler({ url: "https://popup.invalid" });
 electron.shell.openExternal("https://example.invalid").catch(() => undefined);
 electron.app.relaunch();
+const moveResult = electron.app.moveToApplicationsFolder({
+  conflictHandler: () => {
+    throw new Error("conflictHandler must not run");
+  },
+});
 electron.contextBridge.exposeInMainWorld("api", { value: true });
 window.webContents.loadURL("https://example.invalid").catch(() => undefined);
 for (let index = 0; index < 6000; index++) electron.app.relaunch();
@@ -124,7 +133,7 @@ const firstIpc = firstSnapshot.events.find((event) => event.kind === "main-handl
 if (firstIpc) { firstIpc.channel = "mutated"; firstIpc.argument_shapes.push("mutated"); }
 firstSnapshot.events.length = 0;
 const snapshot = globalThis.__reaElectronActiveSnapshot();
-process.stdout.write(JSON.stringify({ snapshot, default_popup_decision: defaultPopupDecision, popup_decision: popupDecision }) + "\\n");
+process.stdout.write(JSON.stringify({ snapshot, default_popup_decision: defaultPopupDecision, popup_decision: popupDecision, move_result: moveResult }) + "\\n");
 })();
 `;
 
@@ -149,6 +158,7 @@ it("retains active hook evidence within its event-retention budget", async () =>
   ) as {
     readonly default_popup_decision: { readonly action: string };
     readonly popup_decision: { readonly action: string };
+    readonly move_result: boolean;
     readonly snapshot: {
       readonly hook_error: boolean;
       readonly events: readonly Record<string, unknown>[];
@@ -192,13 +202,25 @@ it("retains active hook evidence within its event-retention budget", async () =>
       expect.objectContaining({ kind: "window-lifecycle", event: "created" }),
       expect.objectContaining({ kind: "preload", event: "configured" }),
       expect.objectContaining({ kind: "shell-attempt", phase: "blocked" }),
-      expect.objectContaining({ kind: "updater", phase: "blocked" }),
+      expect.objectContaining({
+        kind: "app-lifecycle",
+        event: "moveToApplicationsFolder",
+        phase: "blocked",
+        argument_shapes: ["object"],
+        error: true,
+      }),
+      expect.objectContaining({
+        kind: "updater",
+        event: "relaunch",
+        phase: "blocked",
+      }),
       expect.objectContaining({ kind: "native-addon" }),
       expect.objectContaining({ kind: "popup-attempt", phase: "blocked" }),
     ]),
   );
   expect(result.default_popup_decision).toEqual({ action: "deny" });
   expect(result.popup_decision).toEqual({ action: "deny" });
+  expect(result.move_result).toBe(false);
   expect(
     snapshot.events.filter(
       (event) => event.kind === "download" && event.phase === "blocked",
@@ -277,6 +299,42 @@ process.stdout.write(JSON.stringify({
   expect(JSON.stringify(result.snapshot)).not.toContain("secret-folder");
   expect(JSON.stringify(result.snapshot)).not.toContain("payload.exe");
   electronActiveTimelineEventSchema.array().parse(result.snapshot.events);
+});
+
+it("blocks trashItem asynchronously, records the attempt, and preserves the selected file", async () => {
+  const root = await createTestTempDirectory("rea-electron-hook-trash-");
+  temporary.push(root);
+  await writeElectronFixture(root);
+  const selected = join(root, "retained.txt");
+  await writeFile(selected, "must remain");
+  const script = join(root, "trash.cjs");
+  await writeFile(
+    script,
+    `const { shell } = require("electron");
+const result = shell.trashItem(${JSON.stringify(selected)});
+const promise = result instanceof Promise;
+result.then(
+  () => { throw new Error("trashItem unexpectedly succeeded"); },
+  error => process.stdout.write(JSON.stringify({ promise, message: error.message, snapshot: globalThis.__reaElectronActiveSnapshot() }) + "\\n"),
+);
+`,
+  );
+  const execution = await runNode(script, root);
+  expect(execution.code, execution.stderr).toBe(0);
+  const result = JSON.parse(execution.stdout.trim());
+  expect(result.promise).toBe(true);
+  expect(result.message).toBe("External shell effects are blocked");
+  expect(await readFile(selected, "utf8")).toBe("must remain");
+  expect(result.snapshot.events).toContainEqual(
+    expect.objectContaining({
+      kind: "shell-attempt",
+      event: "trashItem",
+      phase: "blocked",
+      argument_shapes: ["string"],
+      error: true,
+    }),
+  );
+  expect(JSON.stringify(result.snapshot)).not.toContain(selected);
 });
 
 it("classifies a dropped browser preload as preload configuration at capture", async () => {
@@ -948,7 +1006,7 @@ it("matches native once dispatch and retains only established invocations", asyn
   await copyFile(
     fileURLToPath(
       new URL(
-        "../../../experiments/analysis-efficiency/electron-once-runtime.mjs",
+        "../../../tests/support/analysis-efficiency/electron-once-runtime.mjs",
         import.meta.url,
       ),
     ),
@@ -2616,7 +2674,7 @@ const originalRemoveListener = EventEmitter.prototype.removeListener;
 ipcMain.removeListener = function(channel, callback) {
   globalThis.__preHookRemovalCalls.push({
     receiverIsEmitter: this === ipcMain,
-    callbackName: callback.name,
+    callback,
   });
   return Reflect.apply(originalRemoveListener, this, arguments);
 };`,
@@ -2631,21 +2689,28 @@ const observations = globalThis.__preHookRemovalCalls;
 const decorate = (emitter) => {
   const native = EventEmitter.prototype.removeListener;
   emitter.removeListener = function(channel, callback) {
-    observations.push({ receiverIsEmitter: this === emitter, callbackName: callback.name });
+    observations.push({ receiverIsEmitter: this === emitter, callback });
     return Reflect.apply(native, this, arguments);
   };
   return emitter;
 };
 const scenario = (emitter) => {
+  const start = observations.length;
   const original = function original() {};
   emitter.on("ch", original);
   emitter.rawListeners("ch")[0].listener = () => {};
   emitter.removeListener("ch", original);
-  return emitter.listenerCount("ch");
+  return {
+    remaining: emitter.listenerCount("ch"),
+    forwarded: observations.slice(start).map(({ receiverIsEmitter, callback }) => ({
+      receiverIsEmitter, callbackIsOriginal: callback === original,
+    })),
+  };
 };
 const plain = scenario(decorate(new EventEmitter()));
 const hooked = scenario(ipcMain);
-console.log(JSON.stringify({ plain, hooked, observations,
+console.log(JSON.stringify({ plain: plain.remaining, hooked: hooked.remaining,
+  observations: [...plain.forwarded, ...hooked.forwarded],
   hook_error: globalThis.__reaElectronActiveSnapshot().hook_error }));
 `,
   );
@@ -2656,18 +2721,17 @@ console.log(JSON.stringify({ plain, hooked, observations,
     readonly hooked: number;
     readonly observations: readonly {
       readonly receiverIsEmitter: boolean;
-      readonly callbackName: string;
+      readonly callbackIsOriginal: boolean;
     }[];
     readonly hook_error: boolean;
   };
   expect(result.hook_error).toBe(false);
   expect(result.plain).toBe(0);
   expect(result.hooked).toBe(0);
-  expect(result.observations[0]).toEqual({
-    receiverIsEmitter: true,
-    callbackName: "original",
-  });
-  expect(result.observations[1]).toEqual(result.observations[0]);
+  expect(result.observations).toEqual([
+    { receiverIsEmitter: true, callbackIsOriginal: true },
+    { receiverIsEmitter: true, callbackIsOriginal: true },
+  ]);
 });
 
 it("forwards pre-hook on and once decorators exact registrations with an explicit gap", async () => {
@@ -2684,13 +2748,13 @@ const install = (emitter) => {
   const nativeOnce = EventEmitter.prototype.once;
   emitter.on = function(channel, callback) {
     globalThis.__preHookRegistrationCalls.push({
-      method: "on", receiverIsEmitter: this === emitter, callbackName: callback.name,
+      method: "on", receiverIsEmitter: this === emitter, callback,
     });
     return Reflect.apply(nativeOn, this, arguments);
   };
   emitter.once = function(channel, callback) {
     globalThis.__preHookRegistrationCalls.push({
-      method: "once", receiverIsEmitter: this === emitter, callbackName: callback.name,
+      method: "once", receiverIsEmitter: this === emitter, callback,
     });
     return Reflect.apply(nativeOnce, this, arguments);
   };
@@ -2708,16 +2772,17 @@ const decorate = (emitter) => {
   const nativeOn = EventEmitter.prototype.on;
   const nativeOnce = EventEmitter.prototype.once;
   emitter.on = function(channel, callback) {
-    observations.push({ method: "on", receiverIsEmitter: this === emitter, callbackName: callback.name });
+    observations.push({ method: "on", receiverIsEmitter: this === emitter, callback });
     return Reflect.apply(nativeOn, this, arguments);
   };
   emitter.once = function(channel, callback) {
-    observations.push({ method: "once", receiverIsEmitter: this === emitter, callbackName: callback.name });
+    observations.push({ method: "once", receiverIsEmitter: this === emitter, callback });
     return Reflect.apply(nativeOnce, this, arguments);
   };
   return emitter;
 };
 const scenario = (emitter) => {
+  const start = observations.length;
   const calls = [];
   const ordinary = function ordinary() { calls.push("ordinary"); };
   const oneShot = function oneShot() { calls.push("oneShot"); };
@@ -2725,12 +2790,20 @@ const scenario = (emitter) => {
   emitter.once("ch", oneShot);
   emitter.emit("ch");
   emitter.removeAllListeners("ch");
-  return calls;
+  return {
+    calls,
+    forwarded: observations.slice(start).map(({ method, receiverIsEmitter, callback }) => ({
+      method, receiverIsEmitter,
+      callbackIdentity: callback === ordinary ? "ordinary" : callback === oneShot ? "oneShot" :
+        Object.getOwnPropertyDescriptor(callback, "listener")?.value === oneShot ? "onceWrapper" : "unexpected",
+    })),
+  };
 };
 const plain = scenario(decorate(new EventEmitter()));
 const hooked = scenario(ipcMain);
 const snapshot = globalThis.__reaElectronActiveSnapshot();
-console.log(JSON.stringify({ plain, hooked, observations,
+console.log(JSON.stringify({ plain: plain.calls, hooked: hooked.calls,
+  observations: [...plain.forwarded, ...hooked.forwarded],
   calls: snapshot.events.filter((event) => event.kind === "main-event-invocation"),
   gaps: snapshot.events.filter((event) => event.kind === "ipc-observation-gap"),
   hook_error: snapshot.hook_error }));
@@ -2744,7 +2817,7 @@ console.log(JSON.stringify({ plain, hooked, observations,
     readonly observations: readonly {
       readonly method: string;
       readonly receiverIsEmitter: boolean;
-      readonly callbackName: string;
+      readonly callbackIdentity: string;
     }[];
     readonly calls: readonly unknown[];
     readonly gaps: readonly {
@@ -2757,19 +2830,19 @@ console.log(JSON.stringify({ plain, hooked, observations,
   expect(result.plain).toEqual(["ordinary", "oneShot"]);
   expect(result.hooked).toEqual(result.plain);
   expect(result.observations).toEqual([
-    { method: "on", receiverIsEmitter: true, callbackName: "ordinary" },
-    { method: "once", receiverIsEmitter: true, callbackName: "oneShot" },
+    { method: "on", receiverIsEmitter: true, callbackIdentity: "ordinary" },
+    { method: "once", receiverIsEmitter: true, callbackIdentity: "oneShot" },
     {
       method: "on",
       receiverIsEmitter: true,
-      callbackName: "bound onceWrapper",
+      callbackIdentity: "onceWrapper",
     },
-    { method: "on", receiverIsEmitter: true, callbackName: "ordinary" },
-    { method: "once", receiverIsEmitter: true, callbackName: "oneShot" },
+    { method: "on", receiverIsEmitter: true, callbackIdentity: "ordinary" },
+    { method: "once", receiverIsEmitter: true, callbackIdentity: "oneShot" },
     {
       method: "on",
       receiverIsEmitter: true,
-      callbackName: "bound onceWrapper",
+      callbackIdentity: "onceWrapper",
     },
   ]);
   expect(result.calls).toEqual([]);
@@ -3232,6 +3305,188 @@ process.stdout.write(JSON.stringify({
   },
 );
 
+it("preserves warning-only rejections and records later blocked shell rejections", async () => {
+  const root = await createTestTempDirectory(
+    "rea-electron-hook-rejection-warn-",
+  );
+  temporary.push(root);
+  await writeElectronFixture(root);
+  const script = join(root, "warnings.cjs");
+  await writeFile(
+    script,
+    `const { shell } = require("electron");
+Promise.reject(new Error("controlled rejection"));
+setImmediate(() => {
+  shell.openExternal("https://example.invalid");
+  setImmediate(() => {
+    console.log(JSON.stringify({
+      listeners: process.listenerCount("unhandledRejection"),
+      events: globalThis.__reaElectronActiveSnapshot().events.filter(event =>
+        event.kind === "process-lifecycle" && event.event === "unhandled-rejection").map(event => ({
+          phase: event.phase, argument_shapes: event.argument_shapes, error: event.error,
+        })),
+    }));
+  });
+});
+`,
+  );
+  const result = await runNode(script, root, undefined, [
+    "--unhandled-rejections=warn",
+  ]);
+  expect(result.code, result.stderr).toBe(0);
+  expect(result.stderr).toContain("UnhandledPromiseRejectionWarning");
+  expect(JSON.parse(result.stdout)).toEqual({
+    listeners: 0,
+    events: Array.from({ length: 2 }, () => ({
+      phase: "observed",
+      argument_shapes: ["object", "object"],
+      error: true,
+    })),
+  });
+});
+
+it("preserves application rejection listeners and borrowed process emit behavior", async () => {
+  const root = await createTestTempDirectory(
+    "rea-electron-hook-rejection-listener-",
+  );
+  temporary.push(root);
+  await writeElectronFixture(root);
+  const script = join(root, "listeners.cjs");
+  await writeFile(
+    script,
+    `const { EventEmitter } = require("node:events");
+const reason = new Error("controlled listener reason");
+const promise = Promise.resolve();
+const sentinel = new Error("controlled listener throw");
+let calls = 0;
+process.on("unhandledRejection", (actualReason, actualPromise) => {
+  if (actualReason !== reason || actualPromise !== promise) throw new Error("identity changed");
+  calls++;
+  if (calls === 2) throw sentinel;
+});
+const returned = process.emit("unhandledRejection", reason, promise);
+let sameThrow = false;
+try { process.emit("unhandledRejection", reason, promise); } catch (cause) { sameThrow = cause === sentinel; }
+const borrowed = process.emit.call(new EventEmitter(), "unhandledRejection", reason, promise);
+console.log(JSON.stringify({ calls, returned, sameThrow, borrowed,
+  listeners: process.listenerCount("unhandledRejection"),
+  observed: globalThis.__reaElectronActiveSnapshot().events.filter(event => event.kind === "process-lifecycle" && event.event === "unhandled-rejection").length,
+}));
+`,
+  );
+  const result = await runNode(script, root);
+  expect(result.code, result.stderr).toBe(0);
+  expect(JSON.parse(result.stdout)).toEqual({
+    calls: 2,
+    returned: true,
+    sameThrow: true,
+    borrowed: false,
+    listeners: 1,
+    observed: 2,
+  });
+});
+
+it("delivers revoked proxy rejections to the application's original handler", async () => {
+  const root = await createTestTempDirectory(
+    "rea-electron-hook-revoked-rejection-",
+  );
+  temporary.push(root);
+  await writeElectronFixture(root);
+  const script = join(root, "revoked-rejections.cjs");
+  await writeFile(
+    script,
+    `const entries = [{}, [], () => undefined, []].map((target, index) => {
+  const { proxy, revoke } = Proxy.revocable(target, {});
+  if (index < 3) revoke();
+  return { reason: proxy, promise: undefined };
+});
+const received = [];
+process.on("unhandledRejection", (reason, promise) => {
+  received.push(entries.some(entry => entry.reason === reason && entry.promise === promise));
+});
+for (const entry of entries) entry.promise = Promise.reject(entry.reason);
+setImmediate(() => console.log(JSON.stringify({
+  received,
+  listeners: process.listenerCount("unhandledRejection"),
+  shapes: globalThis.__reaElectronActiveSnapshot().events.filter(event =>
+    event.kind === "process-lifecycle" && event.event === "unhandled-rejection").map(event => event.argument_shapes),
+})));
+`,
+  );
+  const result = await runNode(script, root);
+  expect(result.code, result.stderr).toBe(0);
+  expect(JSON.parse(result.stdout)).toEqual({
+    received: [true, true, true, true],
+    listeners: 1,
+    shapes: [
+      ["object", "object"],
+      ["object", "object"],
+      ["function", "object"],
+      ["array", "object"],
+    ],
+  });
+});
+
+it("preserves an Electron-style uncaught exception listener policy", async () => {
+  const root = await createTestTempDirectory(
+    "rea-electron-hook-uncaught-policy-",
+  );
+  temporary.push(root);
+  await writeElectronFixture(
+    root,
+    electronModuleSource +
+      `
+process.on("uncaughtException", () => {
+  if (process.listenerCount("uncaughtException") > 1) return;
+  console.log(JSON.stringify({ listeners: process.listenerCount("uncaughtException"),
+    kinds: globalThis.__reaElectronActiveSnapshot().events.filter(event => event.kind === "process-lifecycle").map(event => event.event),
+  }));
+});
+`,
+  );
+  const script = join(root, "uncaught.cjs");
+  await writeFile(script, 'throw new Error("controlled uncaught");\n');
+  const result = await runNode(script, root);
+  expect(result.code, result.stderr).toBe(0);
+  expect(JSON.parse(result.stdout)).toEqual({
+    listeners: 1,
+    kinds: ["uncaught-exception"],
+  });
+});
+
+it.each(["throw", "strict"])(
+  "preserves fatal rejection policy in %s mode",
+  async (mode) => {
+    const root = await createTestTempDirectory(
+      "rea-electron-hook-rejection-fatal-",
+    );
+    temporary.push(root);
+    await writeElectronFixture(root);
+    const script = join(root, "fatal-rejection.cjs");
+    await writeFile(
+      script,
+      `process.on("exit", () => console.log(JSON.stringify({
+  listeners: process.listenerCount("uncaughtException"),
+  kinds: globalThis.__reaElectronActiveSnapshot().events.filter(event => event.kind === "process-lifecycle").map(event => event.event),
+})));
+Promise.reject(new Error("controlled fatal rejection"));
+`,
+    );
+    const result = await runNode(script, root, undefined, [
+      "--unhandled-rejections=" + mode,
+    ]);
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain("controlled fatal rejection");
+    expect(JSON.parse(result.stdout)).toEqual({
+      listeners: 0,
+      kinds:
+        mode === "throw"
+          ? ["unhandled-rejection", "uncaught-exception"]
+          : ["uncaught-exception"],
+    });
+  },
+);
+
 it("preserves fatal process termination after recording uncaught exceptions", async () => {
   const root = await createTestTempDirectory("rea-electron-hook-fatal-");
   temporary.push(root);
@@ -3249,6 +3504,101 @@ it("preserves fatal process termination after recording uncaught exceptions", as
   expect(result.code).not.toBe(0);
   expect(result.stdout.trim()).toBe("true");
   expect(result.stderr).toContain("fatal-hook-secret");
+});
+
+it.each([{ sandboxPrefix: [] }, { sandboxPrefix: ["--no-sandbox"] }])(
+  "restores the exact application argv with Playwright prefix %j",
+  async ({ sandboxPrefix }) => {
+    const root = await createTestTempDirectory("rea-electron-argv-");
+    temporary.push(root);
+    await writeElectronFixture(root);
+    const hook = join(root, "electron-active-hook.cjs");
+    const callerArguments = [
+      "--",
+      "/caller/plugin.asar",
+      "--config=/caller/app.asar/settings",
+      "-r",
+      hook,
+      `--require=${hook}`,
+      "--inspect=0",
+      "--remote-debugging-port=0",
+      "/caller/electron-active-hook.cjs",
+      "",
+      "中文",
+    ];
+    const plan = ["-r", hook, "/selected/app.asar", ...callerArguments];
+    const script = join(root, "argv.cjs");
+    await writeFile(
+      script,
+      `
+      const argv = ["/runner/electron", ...${JSON.stringify(sandboxPrefix)},
+        "--inspect=0", "--remote-debugging-port=0", ...${JSON.stringify(plan)}];
+      process.argv = argv;
+      const plan = ${JSON.stringify(plan)};
+      process.env.REA_ELECTRON_CAPTURE_ARGV = JSON.stringify({ length: plan.length,
+        sha256: require("node:crypto").createHash("sha256").update(JSON.stringify(plan)).digest("hex") });
+      require("./electron-active-hook.cjs");
+      console.log(JSON.stringify({ argv: process.argv, same: process.argv === argv,
+        handoff_present: "REA_ELECTRON_CAPTURE_ARGV" in process.env,
+        hook_error: globalThis.__reaElectronActiveSnapshot().hook_error }));
+    `,
+    );
+    // The bootstrap script establishes Electron's observed argv before loading the hook.
+    const result = await runNode(script, root, undefined, [], false);
+    expect(result.code, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout.trim())).toEqual({
+      argv: ["/runner/electron", "/selected/app.asar", ...callerArguments],
+      same: true,
+      handoff_present: false,
+      hook_error: false,
+    });
+  },
+);
+
+it.each([
+  "absent",
+  "invalid-json",
+  "mismatch",
+  "foreign-hook",
+  "unknown-prefix",
+  "no-entry",
+])("preserves observed argv for an %s capture handoff", async (mode) => {
+  const root = await createTestTempDirectory("rea-electron-argv-guard-");
+  temporary.push(root);
+  await writeElectronFixture(root);
+  const hook = join(root, "electron-active-hook.cjs");
+  const plan = ["-r", hook, "/selected/app", "caller-document"];
+  const script = join(root, "guard.cjs");
+  await writeFile(
+    script,
+    `
+      const mode = ${JSON.stringify(mode)};
+      const plan = ${JSON.stringify(plan)};
+      const argv = ["/runner/electron", "--inspect=0", "--remote-debugging-port=0", ...plan];
+      process.argv = argv;
+      if (mode === "unknown-prefix") argv[1] = "--inspect=1234";
+      if (mode === "mismatch") argv[argv.length - 1] = "another-document";
+      if (mode === "foreign-hook") plan[1] = "/other/electron-active-hook.cjs";
+      if (mode === "no-entry") plan.length = 2;
+      if (mode === "absent") delete process.env.REA_ELECTRON_CAPTURE_ARGV;
+      else process.env.REA_ELECTRON_CAPTURE_ARGV = mode === "invalid-json" ? "{" : JSON.stringify({
+        length: plan.length,
+        sha256: require("node:crypto").createHash("sha256").update(JSON.stringify(plan)).digest("hex") });
+      const before = JSON.stringify(argv);
+      require("./electron-active-hook.cjs");
+      console.log(JSON.stringify({ unchanged: JSON.stringify(process.argv) === before,
+        same: process.argv === argv, handoff_present: "REA_ELECTRON_CAPTURE_ARGV" in process.env,
+        hook_error: globalThis.__reaElectronActiveSnapshot().hook_error }));
+    `,
+  );
+  const result = await runNode(script, root, undefined, [], false);
+  expect(result.code, result.stderr).toBe(0);
+  expect(JSON.parse(result.stdout.trim())).toEqual({
+    unchanged: true,
+    same: true,
+    handoff_present: false,
+    hook_error: mode !== "absent",
+  });
 });
 
 const writeElectronFixture = async (
@@ -3286,6 +3636,8 @@ const runNode = async (
   script: string,
   root: string,
   sourceHook?: string,
+  nodeArguments: readonly string[] = [],
+  preloadHook = true,
 ): Promise<{
   readonly code: number | null;
   readonly stdout: string;
@@ -3293,11 +3645,15 @@ const runNode = async (
 }> => {
   const hook = await stageHook(root, sourceHook);
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, ["-r", hook, script], {
-      cwd: root,
-      env: process.env,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
+    const child = spawn(
+      process.execPath,
+      [...nodeArguments, ...(preloadHook ? ["-r", hook] : []), script],
+      {
+        cwd: root,
+        env: process.env,
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    );
     const stdout: Buffer[] = [];
     const stderr: Buffer[] = [];
     child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));

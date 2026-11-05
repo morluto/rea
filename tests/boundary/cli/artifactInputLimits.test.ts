@@ -5,9 +5,27 @@ import { z } from "zod";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
-for (const { command, limit } of [
-  { command: "inspect-go-binary", limit: 256 * 1024 * 1024 },
-  { command: "inspect-wasm-artifact", limit: 8 * 1024 * 1024 },
+for (const { command, limit, recovery } of [
+  {
+    command: "inspect-go-binary",
+    limit: 256 * 1024 * 1024,
+    recovery: "input byte allowance",
+  },
+  {
+    command: "inspect-rust-binary",
+    limit: 256 * 1024 * 1024,
+    recovery: "within the fixed Rust input allowance",
+  },
+  {
+    command: "inspect-il2cpp-metadata",
+    limit: 256 * 1024 * 1024,
+    recovery: "within the fixed IL2CPP input allowance",
+  },
+  {
+    command: "inspect-wasm-artifact",
+    limit: 8 * 1024 * 1024,
+    recovery: "input byte allowance",
+  },
 ]) {
   cliTest.skipIf(process.platform === "win32")(
     `${command} identifies fixed input-size refusal and recovery`,
@@ -51,8 +69,11 @@ exit 1
           remediation: z.object({ action: z.string() }),
         })
         .parse(output.json);
-      expect(refusal.remediation.action).toContain("input byte allowance");
-      expect(refusal.remediation.action).not.toContain("evidence reply");
+      // Raising the evidence-reply allowance cannot admit an oversized input.
+      expect(refusal.remediation.action).toContain(recovery);
+      expect(refusal.remediation.action).not.toMatch(
+        /allowance for the evidence reply/u,
+      );
     },
   );
 }

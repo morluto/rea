@@ -82,7 +82,7 @@ describe.skipIf(process.platform !== "darwin")(
   "native plist CLI source formats",
   () => {
     cliTest(
-      "retains non-finite values through real plutil XML conversion",
+      "retains non-finite values from original XML bytes",
       async ({ cli }) => {
         const directory = await createTestTempDirectory("rea-plist-reals-");
         const path = join(directory, "selected.plist");
@@ -113,7 +113,7 @@ describe.skipIf(process.platform !== "darwin")(
             ]),
           },
         });
-        expect(await readFile(path)).toEqual(source);
+        expect(Buffer.compare(await readFile(path), source)).toBe(0);
       },
     );
 
@@ -281,15 +281,19 @@ describe.skipIf(process.platform !== "darwin")(
               ],
             },
             bundle: { identifier: "com.example.types", executable: "App" },
-            provenance: [
-              { tool: "file" },
-              { command: expect.arrayContaining(["json"]), exit: { code: 1 } },
-              { command: expect.arrayContaining(["xml1"]), exit: { code: 0 } },
-            ],
-            limitations: [
-              expect.stringContaining("XML conversion"),
-              expect.stringContaining("2 non-finite real"),
-            ],
+            // An XML source also records its successful native format validation.
+            provenance:
+              format === "xml"
+                ? [
+                    { tool: "file" },
+                    {
+                      tool: "plutil",
+                      command: ["/usr/bin/plutil", "-lint", "--", "$PLIST"],
+                      exit: { code: 0, signal: null },
+                    },
+                  ]
+                : [{ tool: "file" }],
+            limitations: [expect.stringContaining("2 non-finite real")],
           },
         });
       },
@@ -342,10 +346,7 @@ describe.skipIf(process.platform !== "darwin")(
               Real: 9007199254740992,
               Large: 1e20,
             },
-            limitations: [
-              ...(withData ? [expect.stringContaining("XML conversion")] : []),
-              expect.stringContaining("2 integer value(s)"),
-            ],
+            limitations: [expect.stringContaining("2 integer value(s)")],
           },
         });
       },

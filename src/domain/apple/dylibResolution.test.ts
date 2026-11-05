@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  machoImageSlices,
   traceDylibLoading,
   type DylibTreeEntry,
   type DylibTreeView,
@@ -60,6 +61,74 @@ const parsed = (...slices: MachoSlice[]): MachoImageFacts => ({
 const executable = (overrides: Partial<MachoSlice> = {}): MachoImageFacts =>
   parsed(slice({ file_type: "execute", ...overrides }));
 
+it("uses hidden ARM64 slices as selectable images while preserving their marker", async () => {
+  const declared = slice({
+    architecture: "arm",
+    cpu_type: 12,
+    cpu_subtype: 9,
+    file_type: "execute",
+  });
+  const hidden = slice({
+    architecture: "arm64",
+    hidden: true,
+    file_type: "execute",
+    slice_offset: 8192,
+  });
+  const facts: MachoImageFacts = {
+    status: "parsed",
+    slices: [declared],
+    hiddenSlices: [hidden],
+  };
+  const trace = await traceDylibLoading(memoryView({ [MAIN]: facts }), {
+    roots: [MAIN],
+    architecture: "arm64",
+  });
+  expect(machoImageSlices(facts)).toEqual([declared, hidden]);
+  expect(trace.roots).toEqual([{ image: MAIN, architecture: "arm64" }]);
+  expect(trace.coverage.roots_without_architecture).toEqual([]);
+  expect(trace.images[0]?.slices).toContainEqual(
+    expect.objectContaining({ architecture: "arm64", hidden: true }),
+  );
+});
+
+it.each([
+  { architecture: "arm64e", expected: ["arm64e", "arm64e.x1"] },
+  { architecture: "arm64", expected: ["arm64", "arm64v8"] },
+  { architecture: "x86_64", expected: [] },
+  {
+    architecture: undefined,
+    expected: ["arm64", "arm64v8", "arm64e", "arm64e.x1"],
+  },
+] as const)(
+  "preserves exact root labels with family filter $architecture",
+  async ({ architecture, expected }) => {
+    const facts = parsed(
+      ...(
+        [
+          [0, "arm64"],
+          [1, "arm64v8"],
+          [2, "arm64e"],
+          [12, "arm64e.x1"],
+        ] as const
+      ).map(([subtype, name]) =>
+        slice({
+          architecture: name,
+          cpu_subtype: subtype,
+          file_type: "execute",
+        }),
+      ),
+    );
+    const trace = await traceDylibLoading(memoryView({ [MAIN]: facts }), {
+      roots: [MAIN],
+      ...(architecture === undefined ? {} : { architecture }),
+    });
+    expect(trace.roots.map((root) => root.architecture)).toEqual(expected);
+    expect(trace.coverage.roots_without_architecture).toEqual(
+      expected.length === 0 ? [MAIN] : [],
+    );
+  },
+);
+
 /** In-memory tree: files are images (or "data"), symlinks map to targets. */
 const memoryView = (
   files: Readonly<Record<string, MachoImageFacts | "data">>,
@@ -108,6 +177,57 @@ const edgeFor = (
     throw new Error(`missing ${loader} -> ${installName}`);
   return edge;
 };
+
+it.each(["\n", "\r", "\r\n", "\u2028", "\u2029"])(
+  "preserves line terminator %j in dependency names and rpaths",
+  async (separator) => {
+    const direct = `lib${separator}direct.dylib`;
+    const fromExecutable = `libexecutable.dylib${separator}`;
+    const directory = `Libraries${separator}Nested`;
+    const trace = await traceDylibLoading(
+      memoryView({
+        [MAIN]: executable({
+          dependencies: [
+            dependency(`@loader_path/${direct}`),
+            dependency(`@executable_path/${fromExecutable}`),
+            dependency("@rpath/libsearch.dylib"),
+          ],
+          rpaths: [`@loader_path/${directory}`],
+        }),
+        [`Contents/MacOS/${direct}`]: parsed(slice()),
+        [`Contents/MacOS/${fromExecutable}`]: parsed(slice()),
+        [`Contents/MacOS/${directory}/libsearch.dylib`]: parsed(slice()),
+      }),
+      { roots: [MAIN] },
+    );
+    expect(trace.edges.map(({ resolution }) => resolution)).toEqual([
+      { status: "resolved", image: `Contents/MacOS/${direct}` },
+      { status: "resolved", image: `Contents/MacOS/${fromExecutable}` },
+      {
+        status: "resolved",
+        image: `Contents/MacOS/${directory}/libsearch.dylib`,
+      },
+    ]);
+  },
+);
+
+it.each(["@loader_path_suffix", "@executable_path_suffix", "@loader_path\n"])(
+  "does not expand a lookalike path token %j",
+  async (token) => {
+    const name = `${token}/lib.dylib`;
+    const trace = await traceDylibLoading(
+      memoryView({
+        [MAIN]: executable({ dependencies: [dependency(name)] }),
+        "Contents/MacOS/lib.dylib": parsed(slice()),
+      }),
+      { roots: [MAIN] },
+    );
+    expect(edgeFor(trace, MAIN, name).resolution).toEqual({
+      status: "undetermined",
+      image: null,
+    });
+  },
+);
 
 describe("dyld path expansion", () => {
   it("searches the loading image's rpaths before its loaders'", async () => {
@@ -815,7 +935,100 @@ describe("loader-relative dylib resolution", () => {
   });
 });
 
+it.each([
+  {
+    rootName: "arm64v8",
+    rootSubtype: 1,
+    dylibName: "arm64",
+    dylibSubtype: 0,
+    outcome: "resolved",
+  },
+  {
+    rootName: "arm64",
+    rootSubtype: 0,
+    dylibName: "arm64v8",
+    dylibSubtype: 1,
+    outcome: "resolved",
+  },
+  {
+    rootName: "arm64e.x1",
+    rootSubtype: 12,
+    dylibName: "arm64e",
+    dylibSubtype: 2,
+    outcome: "architecture-missing",
+  },
+  {
+    rootName: "arm64e",
+    rootSubtype: 2,
+    dylibName: "arm64e.x1",
+    dylibSubtype: 12,
+    outcome: "architecture-missing",
+  },
+  {
+    rootName: "arm64e.x1",
+    rootSubtype: 12,
+    dylibName: "arm64e.x1",
+    dylibSubtype: 12,
+    outcome: "resolved",
+  },
+] as const)(
+  "preserves compatibility from $rootName to $dylibName",
+  async ({ rootName, rootSubtype, dylibName, dylibSubtype, outcome }) => {
+    const library = "Contents/MacOS/libfamily.dylib";
+    const trace = await traceDylibLoading(
+      memoryView({
+        [MAIN]: executable({
+          architecture: rootName,
+          cpu_subtype: rootSubtype,
+          dependencies: [dependency("@executable_path/libfamily.dylib")],
+        }),
+        [library]: parsed(
+          slice({ architecture: dylibName, cpu_subtype: dylibSubtype }),
+        ),
+      }),
+      { roots: [MAIN] },
+    );
+    expect(trace.edges).toHaveLength(1);
+    expect(trace.edges[0]).toMatchObject({
+      architecture: rootName,
+      candidates: [expect.objectContaining({ outcome })],
+      resolution:
+        outcome === "resolved"
+          ? { status: "resolved", image: library }
+          : { status: "unresolved", image: null },
+    });
+  },
+);
+
 describe("dyld slice compatibility and coverage", () => {
+  it("keeps an unmodeled ARM32 subtype uncertain when matching slices exist", async () => {
+    const trace = await traceDylibLoading(
+      memoryView({
+        [MAIN]: executable({
+          architecture: "arm",
+          cpu_type: 12,
+          cpu_subtype: 42,
+          dependencies: [dependency("@executable_path/libarm.dylib")],
+        }),
+        "Contents/MacOS/libarm.dylib": parsed(
+          slice({ architecture: "arm", cpu_type: 12, cpu_subtype: 42 }),
+          slice({ architecture: "arm", cpu_type: 12, cpu_subtype: 9 }),
+        ),
+      }),
+      { roots: [MAIN] },
+    );
+
+    expect(trace.edges[0]).toMatchObject({
+      candidates: [
+        {
+          outcome: "undetermined",
+          resolved_path: "Contents/MacOS/libarm.dylib",
+        },
+      ],
+      resolution: { status: "undetermined", image: null },
+    });
+  });
+
   it("lets an x86_64h process load generic x86_64 but not arm64e load arm64", async () => {
     const files = {
       [MAIN]: parsed(

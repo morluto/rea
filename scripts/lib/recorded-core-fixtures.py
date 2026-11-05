@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import sys
 from elftools.elf.elffile import ELFFile
+from elftools.elf.structs import ELFStructs
 from elftools.construct import Container
 from pwnlib.elf.datatypes import elf_prstatus_amd64
 
@@ -29,6 +30,26 @@ def note_header(content, note, **changes):
     header.update(changes)
     encoded = image.structs.Elf_Nhdr.build(Container(**header))
     content[note.n_offset:note.n_offset + len(encoded)] = encoded
+
+
+# Authored metadata carriers exercise actual parser projection through public
+# inspection, independently of the host that produced the captured amd64 core.
+for name, machine, kind in [
+    ("aarch64-archext", "EM_AARCH64", "PT_AARCH64_ARCHEXT"),
+    ("aarch64-unwind", "EM_AARCH64", "PT_AARCH64_UNWIND"),
+    ("aarch64-mte-opaque", "EM_AARCH64", 0x70000002),
+    ("amd64-processor-opaque", "EM_X86_64", 0x70000001),
+]:
+    structs = ELFStructs(little_endian=True, elfclass=64)
+    structs.create_basic_structs()
+    structs.create_advanced_structs("ET_CORE", machine, image.header.e_ident.EI_OSABI)
+    header_bytes, entry_bytes = structs.Elf_Ehdr.sizeof(), structs.Elf_Phdr.sizeof()
+    header = Container(**dict(image.header, e_machine=machine, e_entry=0, e_ehsize=header_bytes,
+                              e_phoff=header_bytes, e_phentsize=entry_bytes, e_phnum=1,
+                              e_shoff=0, e_shentsize=64, e_shnum=0, e_shstrndx=0, e_flags=0))
+    segment = Container(p_type=kind, p_flags=4, p_offset=header_bytes + entry_bytes,
+                        p_vaddr=0, p_paddr=0, p_filesz=4, p_memsz=4, p_align=4)
+    save(name, structs.Elf_Ehdr.build(header) + structs.Elf_Phdr.build(segment) + bytes(4))
 
 
 save("truncated-header", original[:32])
@@ -64,6 +85,19 @@ save("truncated-owner", content)
 content = bytearray(original)
 content[status.n_offset + image.structs.Elf_Nhdr.sizeof()] = 255
 save("opaque-owner", content)
+for name, kind in [("gnu-type3", 3), ("gnu-file-collision", 0x46494c45)]:
+    content = bytearray(original)
+    note_header(content, status, n_type=kind)
+    owner_start = status.n_offset + image.structs.Elf_Nhdr.sizeof()
+    # Preserve the original five-byte name extent and all note alignment.
+    content[owner_start:owner_start + 5] = b"GNU\0\0"
+    save(name, content)
+for name, kind in [("aarch64-archext", 0x70000000), ("aarch64-unwind", 0x70000001)]:
+    header = Container(**dict(image.header, e_machine="EM_AARCH64", e_phoff=64, e_phentsize=56,
+                              e_phnum=1, e_shoff=0, e_shnum=0, e_shstrndx=0))
+    segment = Container(p_type=kind, p_flags=4, p_offset=120, p_vaddr=0, p_paddr=0,
+                        p_filesz=4, p_memsz=4, p_align=4)
+    save(name, image.structs.Elf_Ehdr.build(header) + image.structs.Elf_Phdr.build(segment) + bytes(4))
 content = bytearray(original)
 for note in notes:
     if note.n_type == "NT_SIGINFO":

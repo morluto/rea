@@ -1,3 +1,13 @@
+import { z } from "zod";
+import {
+  javaScriptRoutesCompleteDeliveryShape,
+  webRoutesSummaryDeliveryShape,
+} from "../domain/analysisView/javascriptRoutesView.js";
+import {
+  javaScriptRoutesViewResultSchema,
+  webBundleSummaryViewResultSchema,
+  webBundlePageViewResultSchema,
+} from "../domain/analysisView/analysisView.js";
 import type { ToolContract } from "./toolContractTypes.js";
 import {
   inspectWebPageInputSchema,
@@ -35,7 +45,20 @@ import { evidenceResultOf } from "./toolOutputSchemaPrimitives.js";
 
 const listOutputSchema = evidenceResultOf(browserTargetListSchema);
 const inspectionOutputSchema = evidenceResultOf(webPageInspectionSchema);
-const bundleOutputSchema = evidenceResultOf(webBundleAnalysisSchema);
+export const analyzeWebBundleRequestSchema = z
+  .discriminatedUnion("detail", [
+    analyzeWebBundleInputSchema.extend(javaScriptRoutesCompleteDeliveryShape),
+    analyzeWebBundleInputSchema.extend(webRoutesSummaryDeliveryShape),
+  ])
+  .meta({ "x-rea-root-discriminator": "detail" });
+const bundleOutputSchema = evidenceResultOf(
+  z.union([
+    webBundleAnalysisSchema,
+    javaScriptRoutesViewResultSchema,
+    webBundleSummaryViewResultSchema,
+    webBundlePageViewResultSchema,
+  ]),
+);
 const observationSessionOutputSchema = evidenceResultOf(
   webObservationSessionSchema,
 );
@@ -129,8 +152,17 @@ const exampleScenarioCapture = () => ({
       network_transaction_range: null,
     },
   },
-  completeness: scenarioCompleteness,
-  limitations: [],
+  completeness: {
+    status: "incomplete",
+    equality_eligible: false,
+    missing_sections: ["events"],
+    truncated_sections: [],
+  },
+  limitations: [
+    "CDP attachment cannot recover pre-attach events or guarantee launch-time context options.",
+    "Attached locale en-US applies to Intl formatting only; navigator.language(s) and Accept-Language remain caller-controlled. Use launch mode for matching page and request languages.",
+    "Detaching a CDP page session may clear caller-owned navigator.platform emulation. REA cannot snapshot the caller's complete user-agent/client-hint state before attachment; use launch mode to avoid mutating that external browser.",
+  ],
 });
 
 /** Passive browser reverse-engineering contracts. */
@@ -139,7 +171,7 @@ export const BROWSER_TOOL_CONTRACTS = [
     name: "list_browser_targets",
     ...toolContractMetadata("list_browser_targets"),
     description:
-      "List page targets exposed by the selected loopback Chrome DevTools Protocol endpoint. Optionally filter by exact origin. URLs preserve query values and fragments; only URL userinfo credentials are removed.",
+      "List page targets exposed by the selected loopback Chrome DevTools Protocol endpoint. Optionally filter by exact origin. URLs preserve query values and fragments; only URL userinfo credentials are removed. HTTP discovery and browser-socket discovery use the fixed 10-second discovery deadline, then the socket closes without a later command. This operation accepts no command_timeout_ms; that listing deadline has no runtime override.",
     kind: "browser-provider",
     inputSchema: listBrowserTargetsInputSchema,
     outputSchema: listOutputSchema,
@@ -174,9 +206,9 @@ export const BROWSER_TOOL_CONTRACTS = [
     name: "analyze_web_bundle",
     ...toolContractMetadata("analyze_web_bundle"),
     description:
-      "Capture JavaScript source from one selected CDP page and statically derive a chunk graph, route and endpoint candidates, vendor fingerprints, page-declared WebMCP metadata, and optionally fetch source maps from the selected target origin or explicitly requested origins. JavaScript is parsed but never executed.",
+      "Capture JavaScript source from one selected CDP page and statically derive a chunk graph, route and endpoint candidates, vendor fingerprints, page-declared WebMCP metadata, and optionally fetch source maps from the selected target origin or explicitly requested origins. JavaScript is parsed but never executed. Select detail summary with a web-bundle view for filtered endpoint observations, inferences or counts, or a javascript-routes view for route patterns, occurrences, sources, unknowns or counts. Complete Evidence remains retained for later views. Static candidates do not establish reachability or a complete application route denominator.",
     kind: "browser-provider",
-    inputSchema: analyzeWebBundleInputSchema,
+    inputSchema: analyzeWebBundleRequestSchema,
     outputSchema: bundleOutputSchema,
     examples: [
       {
@@ -300,10 +332,10 @@ export const BROWSER_TOOL_CONTRACTS = [
 
 function exampleScreenshot() {
   return {
-    sha256: "153cf6c9a526a63053a37b10234c2fd85df38887c2dc0a800d90abfa6631d01c",
+    sha256: "cdb30873bdf16770bfea1fe86e44db7476e504c2dca1542b0660b20f47f523a7",
     bytes: 70,
     media_type: "image/png",
     data_base64:
-      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PzWvWQAAAABJRU5ErkJggg==",
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==",
   };
 }

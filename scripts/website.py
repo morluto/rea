@@ -23,8 +23,6 @@ NAVIGATION = (
     ("Showcases", "showcase/"),
     ("Blog", "blog/"),
     ("Guides", "guides/"),
-    ("FAQ", "faq/"),
-    ("Contributors", "contributors/"),
 )
 
 
@@ -329,8 +327,9 @@ def main():
             refresh_contributors(root)
         elif args.command == "check":
             sync_pages(root, check=True)
-            for name in ("prepare-website.py", "verify-website.py", "test-website.py"):
+            for name in ("prepare-website.py", "verify-website.py", "test-website.py", "test-website-agents.py"):
                 run_script(root, name)
+            subprocess.run(["node", "--test", "website/worker.test.mjs"], cwd=root, check=True)
         elif args.command == "links":
             run_script(root, "audit-website-links.py", ["--report", args.report] if args.report else [])
         else:

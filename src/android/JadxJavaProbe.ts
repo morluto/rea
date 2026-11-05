@@ -22,6 +22,7 @@ import type { ProviderProcessSnapshot } from "../process/ProviderProcess.js";
 import { DarwinProcessOwnershipInspectionError } from "../process/DarwinProcessRunTokenReader.js";
 import { retainOwnedCommandCleanup } from "../providers/OwnedCommandCleanup.js";
 import { analysisClientFailureForOperation } from "../providers/AnalysisClientFailure.js";
+import { jadxOperationTimeoutGuidance } from "./JadxOperationTimeout.js";
 
 const JAVA_MODULE_LISTING_TIMEOUT_MS = 10_000;
 const JAVA_MODULE_LISTING_MAX_OUTPUT_BYTES = 1024 * 1024;
@@ -184,7 +185,12 @@ export const inspectJadxJava = async (
               ? new AnalysisTimeoutError(
                   operation,
                   options.operationDeadline.timeoutMs,
-                  errorOptions,
+                  {
+                    ...errorOptions,
+                    ...jadxOperationTimeoutGuidance(
+                      options.operationDeadline.timeoutMs,
+                    ),
+                  },
                 )
               : new AnalysisCancelledError(operation, errorOptions);
         } else if (
@@ -269,9 +275,9 @@ const commandProbeRefusal = (
           : "runtime_unavailable",
     kind: systemCode === "ENOENT" ? "java_runtime" : "java_probe",
     message: limited
-      ? `The selected Java launcher ${java} exceeded the ${JAVA_MODULE_LISTING_MAX_OUTPUT_BYTES / (1024 * 1024)} MiB output budget while listing modules. REA retained partial output but could not establish compiler or version availability. Inspect the selected launcher for verbose or unbounded output; java --list-modules should return a concise module listing.`
+      ? `The selected Java launcher ${java} exceeded the ${String(JAVA_MODULE_LISTING_MAX_OUTPUT_BYTES)}-byte module-listing output budget. This release has no runtime override. REA retained partial output but could not establish compiler or version availability. Inspect the selected launcher for verbose or unbounded output; java --list-modules should return a concise module listing. REA_JADX_OPERATION_TIMEOUT_MS does not raise this probe.`
       : timedOut
-        ? `The selected Java launcher ${java} did not finish the module-listing probe within ${timeoutMs / 1000} seconds. Inspect its startup responsiveness and verify it with java --list-modules.`
+        ? `The selected Java launcher ${java} did not finish the module-listing probe within ${String(timeoutMs)} ms. This release has no runtime override. Inspect its startup responsiveness and verify it with java --list-modules. REA_JADX_OPERATION_TIMEOUT_MS does not raise this probe.`
         : `Cannot inspect selected Java runtime ${java}: ${systemCode === "ENOENT" ? "spawn java ENOENT" : cause instanceof Error ? cause.message : cause === undefined ? `exit ${String(output?.exit_code ?? "unknown")}${output?.signal == null ? "" : ` (${output.signal})`}` : String(cause)}. Review the selected launcher and retained diagnostics.`,
     diagnostics: {
       java_executable: java,

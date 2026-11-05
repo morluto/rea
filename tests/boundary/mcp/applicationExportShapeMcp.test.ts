@@ -1,6 +1,6 @@
 import { describe, expect, it, onTestFinished } from "vitest";
 import { copyFile, mkdir, rm, writeFile } from "node:fs/promises";
-import { join, relative, resolve } from "node:path";
+import { join, resolve, sep } from "node:path";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { z } from "zod";
 
@@ -9,7 +9,6 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { analyzeJavaScriptApplication } from "../../support/javascriptApplicationScope.js";
 import { compareJavaScriptExportShapesEvidence } from "../../../src/application/javascript/JavaScriptApplicationWorkflowService.js";
 import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/javascript/javascriptApplicationAnalysis.js";
-import { javaScriptExportShapeComparisonResultSchema } from "../../../src/domain/javascript/javascriptExportShapeComparisonSchemas.js";
 import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
 import { APPLICATION_TOOL_CONTRACTS } from "../../../src/contracts/applicationToolContracts.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
@@ -26,7 +25,11 @@ it("executes the advertised export presence example with matching analyzed Evide
   );
   if (example === undefined)
     throw new Error("Missing advertised presence example");
-  const { client, close } = await createApplicationMcpHarness();
+  const { client, close } = await createApplicationMcpHarness({
+    serverOptions: {
+      environment: { ...process.env, REA_MCP_INPUT_SCHEMA_PROFILE: "full" },
+    },
+  });
   onTestFinished(close);
   const listing = await client.listTools();
   const advertised = listing.tools.find(
@@ -163,22 +166,22 @@ describe("application workflow MCP parity", () => {
       right_export_name: "default",
     };
     try {
-      const relativePath = relative(process.cwd(), leftRoot);
-      const relativeApplication = await client.callTool({
+      const selectedPath = `${leftRoot}${sep}.`;
+      const selectedApplication = await client.callTool({
         name: "analyze_javascript_application",
-        arguments: { input_path: relativePath },
+        arguments: { input_path: selectedPath },
       });
-      expect(relativeApplication.isError).not.toBe(true);
-      const relativeEvidence = parseEvidence(
-        relativeApplication.structuredContent,
+      expect(selectedApplication.isError).not.toBe(true);
+      const selectedEvidence = parseEvidence(
+        selectedApplication.structuredContent,
       );
-      expect(relativeEvidence.parameters.input_path).toBe(relativePath);
+      expect(selectedEvidence.parameters.input_path).toBe(selectedPath);
       expect(left.value.parameters.input_path).toBe(leftRoot);
-      expect(relativeEvidence.normalized_result).toEqual(
+      expect(selectedEvidence.normalized_result).toEqual(
         left.value.normalized_result,
       );
-      expect(relativeEvidence.subject).toEqual(left.value.subject);
-      expect(relativeEvidence.evidence_id).not.toBe(left.value.evidence_id);
+      expect(selectedEvidence.subject).toEqual(left.value.subject);
+      expect(selectedEvidence.evidence_id).not.toBe(left.value.evidence_id);
       const full = await client.callTool({
         name: "compare_javascript_export_shapes",
         arguments: { left: left.value, right: right.value, ...selectors },
@@ -512,7 +515,5 @@ const compareEvidence = (
     right_export_name: "default",
   });
   if (!compared.ok) throw compared.error;
-  return javaScriptExportShapeComparisonResultSchema.parse(
-    compared.value.normalized_result,
-  );
+  return compared.value.result;
 };

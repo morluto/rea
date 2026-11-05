@@ -1,7 +1,8 @@
 import { createConnection, type Socket } from "node:net";
 
 import {
-  HopperCancelledError,
+  hopperCancelledBySignal,
+  type HopperCancelledError,
   HopperStartError,
 } from "../domain/hopperErrors.js";
 import { err, ok, type Result } from "../domain/result.js";
@@ -30,7 +31,7 @@ export const connectHopperSocketOnce = (
     const onAbort = (): void => {
       detach();
       socket.destroy();
-      resolve(err(new HopperCancelledError()));
+      resolve(err(hopperCancelledBySignal(signal)));
     };
     socket.once("connect", onConnect);
     socket.once("error", onError);

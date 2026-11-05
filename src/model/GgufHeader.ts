@@ -1,3 +1,4 @@
+import { isUtf8 } from "node:buffer";
 import { TextDecoder } from "node:util";
 import { setImmediate } from "node:timers/promises";
 import type { JsonValue } from "../domain/jsonValue.js";
@@ -9,6 +10,7 @@ import type {
 import { ModelHeaderReader } from "./ModelHeaderReader.js";
 import {
   MODEL_ARRAY_PREVIEW,
+  MODEL_METADATA_NESTING,
   ModelFormatFailure,
   ModelReportBudget,
   rejectModel,
@@ -40,9 +42,11 @@ export interface GgufProgress {
     declared_tensor_count: number;
   }): void;
   onMetadata(row: ModelMetadata): void;
+  onAlignment(alignment: number): void;
   onMetadataComplete(): void;
   onTensorsStarted(): void;
   onTensorDeclaration(row: ModelArtifactPartialTensor): void;
+  onLimitation(message: string): void;
 }
 
 /** Explicit-endian GGUF v2/v3 metadata and tensor-directory parser. */
@@ -63,6 +67,7 @@ export class GgufHeader {
       throw new ModelFormatFailure(
         "capacity",
         "Header length/count exceeds exact host offset precision",
+        "exact-offset",
       );
     return Number(value);
   }
@@ -73,6 +78,13 @@ export class GgufHeader {
       rejectModel("GGUF name exceeds its format byte limit");
     if (retain) this.#budget.charge(6 * length + 2);
     this.reader.guarantee(length);
+    // Omitted preview entries still need validation, but not decoded strings.
+    // Keep the streaming decoder for values spanning multiple read chunks.
+    if (!retain && length <= 65536) {
+      if (!isUtf8(await this.reader.take(length)))
+        rejectModel("GGUF string is not valid UTF-8");
+      return "";
+    }
     const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
     let result = "";
     try {
@@ -106,10 +118,11 @@ export class GgufHeader {
   }> {
     if (NAMES[type] === undefined)
       rejectModel(`Unknown GGUF metadata type ${String(type)}`);
-    if (depth > 32)
+    if (depth > MODEL_METADATA_NESTING)
       throw new ModelFormatFailure(
         "capacity",
-        "GGUF metadata nesting exceeds 32 array frames",
+        `GGUF metadata nesting exceeds ${String(MODEL_METADATA_NESTING)} array frames`,
+        "metadata-nesting",
       );
     if (type === 8)
       return {
@@ -237,18 +250,24 @@ export class GgufHeader {
     tensor_data_offset: number;
     metadata: ModelMetadata[];
     tensors: ModelTensor[];
+    limitations: string[];
   }> {
     const versionBytes = await this.reader.take(4);
-    this.#little =
-      versionBytes.readUInt32LE() === 2 || versionBytes.readUInt32LE() === 3;
-    const version = this.#little
-      ? versionBytes.readUInt32LE()
-      : versionBytes.readUInt32BE();
-    if (version !== 2 && version !== 3)
+    const littleVersion = versionBytes.readUInt32LE();
+    const bigVersion = versionBytes.readUInt32BE();
+    let version: number;
+    if (littleVersion === 2 || littleVersion === 3) {
+      this.#little = true;
+      version = littleVersion;
+    } else if (bigVersion === 2 || bigVersion === 3) {
+      this.#little = false;
+      version = bigVersion;
+    } else {
       throw new ModelFormatFailure(
         "unsupported",
-        `GGUF version ${String(version)} is unsupported; supported versions are 2 and 3`,
+        `GGUF version bytes ${versionBytes.toString("hex")} are unsupported (little-endian ${String(littleVersion)}, big-endian ${String(bigVersion)}; byte order unknown); supported versions are 2 and 3`,
       );
+    }
     if (!this.#little && version !== 3)
       rejectModel("Big-endian GGUF requires version 3");
     const tensorCount = await this.#unsigned(8);
@@ -270,10 +289,12 @@ export class GgufHeader {
       const key = await this.#text(true, 65535);
       // Numeric hierarchy components occur in standardized base_model.{id} keys.
       if (
-        !/^[a-z0-9]+(?:_[a-z0-9]+)*(?:\.[a-z0-9]+(?:_[a-z0-9]+)*)*$/u.test(key)
+        !/^[a-z0-9]+(?:[_-][a-z0-9]+)*(?:\.[a-z0-9]+(?:[_-][a-z0-9]+)*)*$/u.test(
+          key,
+        )
       )
         rejectModel(
-          "GGUF metadata keys require ASCII lower-snake-case hierarchy components",
+          "GGUF metadata keys require lowercase ASCII hierarchy components",
         );
       if (keys.has(key)) rejectModel(`Duplicate GGUF metadata key ${key}`);
       keys.add(key);
@@ -302,14 +323,22 @@ export class GgufHeader {
             "GGUF general.alignment must be a positive UINT32 multiple of eight",
           );
         alignment = parsed.value;
+        progress?.onAlignment(alignment);
       }
       metadata.push(row);
       progress?.onMetadata(row);
     }
+    if (!keys.has("general.alignment")) progress?.onAlignment(alignment);
     progress?.onMetadataComplete();
     progress?.onTensorsStarted();
     const tensors: ModelArtifactPartialTensor[] = [];
     const names = new Set<string>();
+    const limitations = new Set<string>();
+    const note = (message: string): void => {
+      if (limitations.has(message)) return;
+      limitations.add(message);
+      progress?.onLimitation(message);
+    };
     for (let index = 0; index < tensorCount; index++) {
       this.reader.guarantee((tensorCount - index) * 20);
       const start = this.reader.position;
@@ -334,17 +363,30 @@ export class GgufHeader {
       const type = ggmlType(id);
       let length: number | null = null;
       if (type !== undefined) {
-        if (BigInt(shape[0] ?? "1") % BigInt(type[1]) !== 0n)
+        const [, rowElementMultiple, blockBytes, limitation] = type;
+        if (BigInt(shape[0] ?? "1") % BigInt(rowElementMultiple) !== 0n)
           rejectModel(
-            `GGUF tensor ${name} first dimension is not divisible by the quantization block size`,
+            `GGUF tensor ${name} first dimension must be a multiple of ${String(rowElementMultiple)} elements`,
           );
-        const bytes = (parameters / BigInt(type[1])) * BigInt(type[2]);
-        if (bytes > BigInt(this.reader.size))
-          rejectModel(
-            `GGUF tensor ${name} declared byte length exceeds the file`,
-          );
-        length = Number(bytes);
-      }
+        if (
+          limitation !== undefined &&
+          (parameters !== 0n || limitation.kind === "type-identity")
+        )
+          note(limitation.reason);
+        if (parameters === 0n) length = 0;
+        else if (blockBytes !== null) {
+          const bytes =
+            (parameters / BigInt(rowElementMultiple)) * BigInt(blockBytes);
+          if (bytes > BigInt(this.reader.size))
+            rejectModel(
+              `GGUF tensor ${name} declared byte length exceeds the file`,
+            );
+          length = Number(bytes);
+        }
+      } else
+        note(
+          `Unknown tensor type UNKNOWN_${String(id)} prevents storage-size validation.`,
+        );
       const tensor = {
         index,
         name,
@@ -364,10 +406,14 @@ export class GgufHeader {
       tensors.push(tensor);
       progress?.onTensorDeclaration(tensor);
     }
+    const directoryEnd = this.reader.position;
+    const alignedDataOffset = Math.ceil(directoryEnd / alignment) * alignment;
     const tensor_data_offset =
-      tensorCount === 0
-        ? this.reader.position
-        : Math.ceil(this.reader.position / alignment) * alignment;
+      tensorCount === 0 && this.reader.size === directoryEnd
+        ? directoryEnd
+        : alignedDataOffset;
+    if (tensor_data_offset > this.reader.size)
+      rejectModel("GGUF tensor data section begins outside the file");
     for (const tensor of tensors) {
       const offset = BigInt(tensor_data_offset) + BigInt(tensor.data_offset);
       if (
@@ -383,6 +429,15 @@ export class GgufHeader {
       storage_validation:
         tensor.byte_length === null ? "unknown" : "consistent",
     }));
+    const intervals = completeTensors
+      .filter((row) => row.byte_length !== null)
+      .sort((a, b) => a.file_offset - b.file_offset);
+    let end = tensor_data_offset;
+    for (const row of intervals) {
+      if (row.file_offset < end && row.byte_length !== 0)
+        rejectModel(`Overlapping tensor byte ranges at ${row.name}`);
+      end = Math.max(end, row.file_offset + (row.byte_length ?? 0));
+    }
     return {
       version,
       byte_order: this.#little ? "little" : "big",
@@ -390,6 +445,7 @@ export class GgufHeader {
       tensor_data_offset,
       metadata,
       tensors: completeTensors,
+      limitations: [...limitations],
     };
   }
 }

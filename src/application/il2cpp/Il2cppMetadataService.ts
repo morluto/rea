@@ -1,3 +1,4 @@
+import { parseAnalysisInput } from "../AnalysisInput.js";
 import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
 import type {
@@ -5,7 +6,6 @@ import type {
   Il2cppSeedWriterPort,
   Il2cppSeedReceipt,
 } from "./Il2cppSeedWriterPort.js";
-import { isAbsolute } from "node:path";
 import type { ExecutionOptions } from "../AnalysisProvider.js";
 import {
   requireAnalysisViewRetention,
@@ -26,7 +26,6 @@ import {
   type Il2cppMetadata,
   type Il2cppMetadataProviderInput,
 } from "../../domain/il2cpp/il2cppMetadata.js";
-import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
 import { err, ok, type Result } from "../../domain/result.js";
 
 const OPERATION = "inspect_il2cpp_metadata";
@@ -45,7 +44,7 @@ export class Il2cppMetadataService {
   async close(): Promise<void> {
     let failure: AnalysisError | undefined;
     for (const close of [
-      () => this.provider.close?.(),
+      () => this.provider.close(),
       () => this.seeds?.close(),
     ]) {
       try {
@@ -100,33 +99,16 @@ export class Il2cppMetadataService {
     retention: AnalysisViewRetention,
     output?: Il2cppSeedOutput,
   ): Promise<Result<Evidence, AnalysisError>> {
-    if (options?.signal?.aborted)
-      return err(
-        new AnalysisCancelledError(OPERATION, { cause: options.signal.reason }),
-      );
-    const input = inspectIl2cppMetadataInputSchema.safeParse(rawInput);
-    if (!input.success)
-      return err(
-        analysisInputErrorFromIssues(OPERATION, input.error.issues, rawInput, {
-          cause: input.error,
-        }),
-      );
-    for (const field of ["path", "binary_path"] as const) {
-      const value = input.data[field];
-      if (value !== undefined && !isAbsolute(value))
-        return err(
-          new AnalysisInputError(OPERATION, undefined, [
-            {
-              path: [field],
-              reason: "invalid_format",
-              message: "Expected an absolute filesystem path on this host.",
-            },
-          ]),
-        );
-    }
+    const input = parseAnalysisInput(
+      OPERATION,
+      rawInput,
+      inspectIl2cppMetadataInputSchema,
+      options?.signal,
+    );
+    if (!input.ok) return input;
     if (
-      input.data.binary_architecture !== undefined &&
-      input.data.binary_path === undefined
+      input.value.binary_architecture !== undefined &&
+      input.value.binary_path === undefined
     )
       return err(
         new AnalysisInputError(OPERATION, undefined, [
@@ -137,8 +119,21 @@ export class Il2cppMetadataService {
           },
         ]),
       );
+    if (
+      input.value.generic_instances === true &&
+      input.value.binary_path === undefined
+    )
+      return err(
+        new AnalysisInputError(OPERATION, undefined, [
+          {
+            path: ["generic_instances"],
+            reason: "invalid_value",
+            message: "generic_instances links generic methods in binary_path.",
+          },
+        ]),
+      );
     if (output !== undefined) {
-      if (input.data.binary_path === undefined)
+      if (input.value.binary_path === undefined)
         return err(
           new AnalysisInputError(OPERATION, undefined, [
             {
@@ -159,7 +154,7 @@ export class Il2cppMetadataService {
       const ready = await this.seeds.check(output, options);
       if (!ready.ok) return ready;
     }
-    const { detail, ...providerInput } = input.data;
+    const { detail, ...providerInput } = input.value;
     if (detail === "summary") {
       const ready = requireAnalysisViewRetention(OPERATION, retention);
       if (!ready.ok) return ready;
@@ -227,7 +222,7 @@ export class Il2cppMetadataService {
             Object.entries(providerInput).filter(
               ([, value]) => value !== undefined,
             ),
-          ) as Record<string, string>),
+          ) as Record<string, string | boolean>),
           ...(output === undefined
             ? {}
             : {
@@ -241,7 +236,8 @@ export class Il2cppMetadataService {
         confidence:
           value.binary === null
             ? "observed"
-            : value.binary.code_gen_modules_field === null
+            : value.binary.code_gen_modules_field === null ||
+                value.binary.types_field === null
               ? "inferred"
               : "derived",
         limitations: value.limitations,

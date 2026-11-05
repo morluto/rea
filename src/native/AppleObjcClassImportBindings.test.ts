@@ -19,6 +19,7 @@ const createInput = (
     legacyRebaseStreams: 0,
     legacyBindStreams: 0,
     unreadRebaseBytes: 0,
+    hasUnresolvedLegacyBytes: () => false,
     decode: (address) =>
       address === 0x1000n
         ? {
@@ -200,5 +201,26 @@ describe("Objective-C import binding address inspection", () => {
         reason: expect.stringContaining("max_records limit"),
       },
     });
+  });
+
+  it("keeps an explicitly truncated empty candidate scan partial", () => {
+    expect(
+      inspectObjcClassImportBindings(
+        createInput({ addresses: [], addressesComplete: false }),
+      ),
+    ).toMatchObject({
+      bindings: [],
+      coverage: {
+        status: "partial",
+        examined: 0,
+        decoded: 0,
+        reason: expect.stringContaining("max_records limit"),
+      },
+    });
+    expect(
+      inspectObjcClassImportBindings(
+        createInput({ addresses: [], addressesComplete: true }),
+      ).coverage,
+    ).toMatchObject({ status: "not_requested", reason: null, examined: 0 });
   });
 });

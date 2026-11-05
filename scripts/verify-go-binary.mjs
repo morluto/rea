@@ -12,7 +12,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { parseEvidence } from "../dist/domain/evidence.js";
 import { goBinarySchema } from "../dist/domain/go/goBinary.js";
 import { PrivateRuntimeRoot } from "../dist/process/PrivateRuntimeRoot.js";
-import { mcpTextValue } from "./lib/mcp-verifier-results.mjs";
+import { requireMcpOutput } from "./lib/mcp-verifier-results.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
 
 const execute = promisify(execFile);
@@ -359,8 +359,7 @@ async function inspect(mode, path) {
       { name: "inspect_go_binary", arguments: { path } },
       { timeout: 30_000 },
     );
-    assert.notEqual(response.isError, true, mcpTextValue(response));
-    envelope = JSON.parse(mcpTextValue(response));
+    envelope = requireMcpOutput(response, "inspect_go_binary");
   }
   const evidence = parseEvidence(envelope);
   assert.equal(evidence.subject.local_path, path);

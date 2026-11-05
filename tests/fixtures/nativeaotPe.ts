@@ -128,3 +128,119 @@ export const nativeAotPeVirtualSectionFixture = (
   if (position === "before-data") data.copy(bytes, table + 80);
   return bytes;
 };
+
+/** One authored RTR9.1 hydration command; fixup targets are absolute addresses. */
+export type NativeAotHydrationCommand =
+  | { readonly copy: Buffer }
+  | { readonly zero: number }
+  | { readonly fixupRel: bigint }
+  | { readonly fixupPtr: bigint }
+  | { readonly inlineRel: readonly bigint[] }
+  | { readonly inlinePtr: readonly bigint[] }
+  /** Stream bytes emitted verbatim for malformed-input cases; no output. */
+  | { readonly raw: Buffer };
+
+/** Overlay address and capacity of {@link nativeAotPeHydrationFixture}. */
+export const NATIVE_AOT_HYDRATION_BASE = address(0x40000);
+export const NATIVE_AOT_HYDRATION_CAPACITY = 0x22000;
+
+const hydrationHeader = (command: number, payload: number): Buffer => {
+  if (payload <= 28) return Buffer.from([(payload << 3) | command]);
+  const extra = payload - 28;
+  const width = extra < 0x100 ? 1 : extra < 0x10000 ? 2 : 3;
+  const bytes = Buffer.alloc(1 + width, ((28 + width) << 3) | command);
+  bytes.writeUIntLE(extra, 1, width);
+  return bytes;
+};
+
+/**
+ * Expand .rdata so DEHYDRATED_DATA at RVA 0x3000 can carry an authored command
+ * stream whose overlay at RVA 0x40000 may grow to the end of the section.
+ * Returns the bytes the RTR9.1 writer semantics say hydration must produce.
+ */
+export const nativeAotPeHydrationFixture = (
+  commands: readonly NativeAotHydrationCommand[],
+): { readonly bytes: Buffer; readonly expected: Buffer } => {
+  const bytes = Buffer.alloc(0x60600);
+  nativeAotPeFixture().copy(bytes);
+  const data = 0x98 + 0xf0 + 40;
+  bytes.writeUInt32LE(0x60000, data + 8);
+  bytes.writeUInt32LE(0x60000, data + 16);
+  bytes.writeUInt32LE(0x62000, 0x98 + 56);
+  const start = 0x3000;
+  const fileOffset = (rva: number): number => 0x600 + rva - 0x2000;
+  const stream: Buffer[] = [Buffer.alloc(4)];
+  let streamLength = 4;
+  const emit = (...chunks: Buffer[]): void => {
+    for (const chunk of chunks) {
+      stream.push(chunk);
+      streamLength += chunk.length;
+    }
+  };
+  const fixups: bigint[] = [];
+  const expected: Buffer[] = [];
+  let produced = 0;
+  const relative = (target: bigint): Buffer => {
+    const value = Buffer.alloc(4);
+    value.writeInt32LE(
+      Number(target - (NATIVE_AOT_HYDRATION_BASE + BigInt(produced))),
+    );
+    produced += 4;
+    return value;
+  };
+  const pointer = (target: bigint): Buffer => {
+    const value = Buffer.alloc(8);
+    value.writeBigUInt64LE(target);
+    produced += 8;
+    return value;
+  };
+  const inline = (targets: readonly bigint[]): void => {
+    for (const target of targets) {
+      const value = Buffer.alloc(4);
+      value.writeInt32LE(Number(target - address(start + streamLength)));
+      emit(value);
+    }
+  };
+  for (const command of commands) {
+    if ("copy" in command) {
+      emit(hydrationHeader(0, command.copy.length), command.copy);
+      expected.push(command.copy);
+      produced += command.copy.length;
+    } else if ("zero" in command) {
+      emit(hydrationHeader(1, command.zero));
+      expected.push(Buffer.alloc(command.zero));
+      produced += command.zero;
+    } else if ("fixupRel" in command) {
+      emit(hydrationHeader(2, fixups.push(command.fixupRel) - 1));
+      expected.push(relative(command.fixupRel));
+    } else if ("fixupPtr" in command) {
+      emit(hydrationHeader(3, fixups.push(command.fixupPtr) - 1));
+      expected.push(pointer(command.fixupPtr));
+    } else if ("inlineRel" in command) {
+      emit(hydrationHeader(4, command.inlineRel.length));
+      inline(command.inlineRel);
+      expected.push(...command.inlineRel.map(relative));
+    } else if ("raw" in command) {
+      emit(command.raw);
+    } else {
+      emit(hydrationHeader(5, command.inlinePtr.length));
+      inline(command.inlinePtr);
+      expected.push(...command.inlinePtr.map(pointer));
+    }
+  }
+  const end = start + streamLength;
+  if (end + fixups.length * 4 > 0x40000)
+    throw new Error("Hydration fixture stream overlaps its overlay");
+  Buffer.concat(stream).copy(bytes, fileOffset(start));
+  bytes.writeInt32LE(0x40000 - start, fileOffset(start));
+  fixups.forEach((target, index) => {
+    const location = end + index * 4;
+    bytes.writeInt32LE(
+      Number(target - address(location)),
+      fileOffset(location),
+    );
+  });
+  bytes.writeBigUInt64LE(address(start), 0x618);
+  bytes.writeBigUInt64LE(address(end), 0x620);
+  return { bytes, expected: Buffer.concat(expected) };
+};

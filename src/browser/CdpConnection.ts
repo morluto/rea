@@ -5,6 +5,14 @@ import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { BrowserObservationError } from "../domain/browserObservationError.js";
 import { CdpCommandRejection } from "./CdpCommandRejection.js";
 import type { BrowserObservationOperation } from "../domain/browserObservationErrors.js";
+import {
+  cdpCleanupGraceExpired,
+  cdpCommandDeadlineRecovery,
+  cdpCommandTimeoutIsSelectable,
+  cdpCommandTimeoutUnrelatedControl,
+  DEFAULT_CDP_COMMAND_TIMEOUT_MS,
+  noRuntimeOverrideSentence,
+} from "../domain/browserDeadline.js";
 import { safeParseJson } from "../domain/safeJson.js";
 import { WEB_RUNTIME_LIMITS } from "../domain/webRuntime.js";
 
@@ -29,6 +37,7 @@ interface PendingCommand {
   readonly resolve: (value: unknown) => void;
   readonly reject: (error: AnalysisError) => void;
   readonly dispose: () => void;
+  readonly reschedule: (timeoutMs: number) => void;
 }
 
 /** Correlated JSON-RPC transport for one CDP target operation. */
@@ -46,12 +55,16 @@ export class CdpConnection {
   #closePromise: Promise<void> | undefined;
   #protocolFailed = false;
   #transportFailure: "disconnected" | "payload_limit" = "disconnected";
+  #commandTimeoutMs: number;
+  #deadlineKind: "command" | "cleanup" = "command";
 
   private constructor(
     private readonly socket: WebSocket,
     private readonly operation: BrowserObservationOperation,
     private readonly maxPayloadBytes: number,
+    commandTimeoutMs: number,
   ) {
+    this.#commandTimeoutMs = commandTimeoutMs;
     socket.on("message", (data) => this.#receive(data));
     socket.on("close", () => this.#disconnect());
     socket.on("error", (cause) =>
@@ -68,15 +81,21 @@ export class CdpConnection {
     url: string,
     operation: BrowserObservationOperation,
     signal?: AbortSignal,
-    limits?: { readonly maxPayloadBytes: number },
+    limits?: {
+      readonly maxPayloadBytes?: number;
+      readonly commandTimeoutMs?: number;
+      /** Handshake budget. Discovery passes its own deadline so a short command budget cannot start first. */
+      readonly handshakeTimeoutMs?: number;
+    },
     onConnected?: (connection: CdpConnection) => void,
   ): Promise<CdpConnection> {
     if (signal?.aborted === true)
       throw new AnalysisCancelledError(operation, { cause: signal.reason });
     const maxPayloadBytes =
-      limits === undefined
-        ? WEB_RUNTIME_LIMITS.protocolBytes
-        : limits.maxPayloadBytes;
+      limits?.maxPayloadBytes ?? WEB_RUNTIME_LIMITS.protocolBytes;
+    const commandTimeoutMs =
+      limits?.commandTimeoutMs ?? DEFAULT_CDP_COMMAND_TIMEOUT_MS;
+    const handshakeTimeoutMs = limits?.handshakeTimeoutMs ?? commandTimeoutMs;
     if (
       !Number.isSafeInteger(maxPayloadBytes) ||
       maxPayloadBytes <= 0 ||
@@ -92,7 +111,12 @@ export class CdpConnection {
       maxPayload: maxPayloadBytes,
       perMessageDeflate: false,
     });
-    const connection = new CdpConnection(socket, operation, maxPayloadBytes);
+    const connection = new CdpConnection(
+      socket,
+      operation,
+      maxPayloadBytes,
+      commandTimeoutMs,
+    );
     try {
       onConnected?.(connection);
     } catch (cause: unknown) {
@@ -100,7 +124,7 @@ export class CdpConnection {
       throw cause;
     }
     try {
-      await waitForOpen(socket, operation, signal);
+      await waitForOpen(socket, operation, signal, handshakeTimeoutMs);
     } catch (cause: unknown) {
       if (onConnected === undefined) {
         try {
@@ -146,6 +170,22 @@ export class CdpConnection {
     return () => this.#protocolFailureListeners.delete(listener);
   }
 
+  /** Apply the post-discovery command deadline to commands that have not started. */
+  selectCommandTimeout(timeoutMs: number): void {
+    if (this.#deadlineKind === "cleanup") return;
+    this.#commandTimeoutMs = timeoutMs;
+  }
+
+  /**
+   * Restoration uses the fixed cleanup grace. Commands already waiting are
+   * rescheduled from now so a raised command deadline cannot extend them.
+   */
+  beginCleanupGrace(timeoutMs: number): void {
+    this.#deadlineKind = "cleanup";
+    this.#commandTimeoutMs = timeoutMs;
+    for (const pending of this.#pending.values()) pending.reschedule(timeoutMs);
+  }
+
   /** Bound each response separately from the caller-selected observation window. */
   async send(
     method: string,
@@ -180,22 +220,44 @@ export class CdpConnection {
           }),
         );
       };
-      const timer = setTimeout(() => {
+      const failTimeout = (): void => {
         const pending = this.#pending.get(id);
         if (pending === undefined) return;
         this.#complete(id, pending);
+        if (this.#deadlineKind === "cleanup") {
+          const detail = cdpCleanupGraceExpired();
+          reject(
+            new BrowserObservationError(this.operation, "timeout", {
+              detail,
+              remediationAction: detail,
+            }),
+          );
+          return;
+        }
+        const recovery = cdpCommandDeadlineRecovery(
+          this.#commandTimeoutMs,
+          "command",
+          method,
+          cdpCommandTimeoutIsSelectable(this.operation),
+        );
         reject(
           new BrowserObservationError(this.operation, "timeout", {
-            detail: `CDP command ${method} exceeded its ${String(WEB_RUNTIME_LIMITS.commandTimeoutMs)} ms response deadline.`,
+            detail: recovery.userMessage,
+            remediationAction: recovery.remediationAction,
           }),
         );
-      }, WEB_RUNTIME_LIMITS.commandTimeoutMs);
+      };
+      let timer = setTimeout(failTimeout, this.#commandTimeoutMs);
       signal?.addEventListener("abort", onAbort, { once: true });
       this.#pending.set(id, {
         method,
         ...(sessionId === undefined ? {} : { sessionId }),
         resolve,
         reject,
+        reschedule: (timeoutMs: number): void => {
+          clearTimeout(timer);
+          timer = setTimeout(failTimeout, timeoutMs);
+        },
         dispose: () => {
           clearTimeout(timer);
           signal?.removeEventListener("abort", onAbort);
@@ -427,7 +489,10 @@ export class CdpConnection {
       reason,
       reason === "payload_limit"
         ? {
-            detail: `CDP message exceeded the selected ${String(this.maxPayloadBytes)} byte protocol budget.`,
+            detail: noRuntimeOverrideSentence(
+              `CDP message exceeded the ${String(this.maxPayloadBytes)} byte protocol budget.`,
+              cdpCommandTimeoutUnrelatedControl(this.operation),
+            ),
           }
         : undefined,
     );
@@ -456,6 +521,7 @@ const waitForOpen = async (
   socket: WebSocket,
   operation: BrowserObservationOperation,
   signal?: AbortSignal,
+  commandTimeoutMs: number = DEFAULT_CDP_COMMAND_TIMEOUT_MS,
 ): Promise<void> =>
   await new Promise((resolve, reject) => {
     const onOpen = (): void => {
@@ -492,12 +558,19 @@ const waitForOpen = async (
     const timer = setTimeout(() => {
       terminateSocket(socket);
       cleanup();
+      const recovery = cdpCommandDeadlineRecovery(
+        commandTimeoutMs,
+        "handshake",
+        undefined,
+        cdpCommandTimeoutIsSelectable(operation),
+      );
       reject(
         new BrowserObservationError(operation, "timeout", {
-          detail: `CDP WebSocket handshake exceeded its ${String(WEB_RUNTIME_LIMITS.commandTimeoutMs)} ms deadline.`,
+          detail: recovery.userMessage,
+          remediationAction: recovery.remediationAction,
         }),
       );
-    }, WEB_RUNTIME_LIMITS.commandTimeoutMs);
+    }, commandTimeoutMs);
     socket.once("open", onOpen);
     socket.once("error", onFailure);
     socket.once("close", onClose);

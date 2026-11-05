@@ -45,7 +45,8 @@ export class ModelHeaderReader {
     if (end - this.#headerPrefixBytes > MODEL_HEADER_BYTES)
       throw new ModelFormatFailure(
         "capacity",
-        "Model header exceeds 100,000,000 bytes",
+        "Model header exceeds 100,000,000 bytes. This release has no runtime override.",
+        "header-bytes",
       );
   }
 

@@ -298,7 +298,7 @@ describe("passive network coverage uncertainty", () => {
     (section) => {
       const before = passiveNetworkCapture();
       const after = passiveNetworkCapture(["/a", "/b"]);
-      after.completeness[section].push("network_requests");
+      before.completeness[section].push("network_requests");
       for (const [left, right] of [
         [before, after],
         [after, before],
@@ -625,6 +625,15 @@ describe("passive dropped-event inventory coverage", () => {
       });
     const changed = structuredClone(before);
     changed.network.requests[0]!.status = 503;
+    expect(compare(before, changed)).toMatchObject({
+      status: "unknown",
+      total_changes: 0,
+      changes: [],
+    });
+    // Once one complete inventory excludes the peer's observed response,
+    // omissions cannot explain that response difference.
+    changed.completeness.dropped_events.network_requests = 0;
+    changed.completeness.dropped_events.total = 0;
     expect(compare(before, changed)).toMatchObject({
       status: "changed",
       total_changes: 1,

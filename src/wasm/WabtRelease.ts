@@ -9,5 +9,4 @@ export const WABT_LIMITS = {
   inputBytes: 8 * 1024 * 1024,
   toolBytes: 64 * 1024 * 1024,
   outputBytes: 32 * 1024 * 1024,
-  timeoutMs: 30_000,
 } as const;

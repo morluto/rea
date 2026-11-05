@@ -40,8 +40,111 @@ const cases = [
   },
   {
     name: "require.resolve does not execute its resolved module",
+    resolverSpecifier: "../shared/window.cjs",
+    resolverTarget: "shared/window.cjs",
     load: 'require.resolve("../shared/window.cjs");',
     possible: false,
+  },
+  {
+    name: "resolution discovery does not suppress a subsequent executable load",
+    resolverSpecifier: "../shared/window.cjs",
+    resolverTarget: "shared/window.cjs",
+    load: 'require.resolve("../shared/window.cjs");require("../shared/window.cjs");',
+    possible: true,
+  },
+  {
+    name: "sibling wrapper property writes preserve resolver identity",
+    resolverSpecifier: "../shared/window.cjs",
+    resolverTarget: "shared/window.cjs",
+    load: 'require.unrelated=custom;require.resolve("../shared/window.cjs");',
+    possible: false,
+  },
+  {
+    name: "later resolver writes do not change an earlier lookup",
+    resolverSpecifier: "../shared/window.cjs",
+    resolverTarget: "shared/window.cjs",
+    load: 'require.resolve("../shared/window.cjs");require.resolve=custom;',
+    possible: false,
+  },
+  {
+    name: "conditional wrapper resolver writes retain possible execution",
+    uncertainResolver: true,
+    load: 'if(flag)require.resolve=custom;require.resolve("../shared/window.cjs");',
+    possible: true,
+  },
+  {
+    name: "escaped wrapper resolver retains possible execution",
+    uncertainResolver: true,
+    load: 'consume(require);require.resolve("../shared/window.cjs");',
+    possible: true,
+  },
+  {
+    name: "invoked getter retains ambient resolver mutation",
+    uncertainResolver: true,
+    load: 'const box={loader:require,get trigger(){this.loader.resolve=this.loader;return 0}};box.trigger;require.resolve("../shared/window.cjs");',
+    possible: true,
+  },
+  {
+    name: "invoked getter retains qualified ambient resolver mutation",
+    uncertainResolver: true,
+    load: 'const box={loader:globalThis.require,get trigger(){this.loader.resolve=this.loader;return 0}};box.trigger;require.resolve("../shared/window.cjs");',
+    possible: true,
+  },
+  {
+    name: "unused getter preserves ambient resolver identity",
+    resolverSpecifier: "../shared/window.cjs",
+    resolverTarget: "shared/window.cjs",
+    load: 'const box={loader:require,get trigger(){this.loader.resolve=this.loader;return 0}};require.resolve("../shared/window.cjs");',
+    possible: false,
+  },
+  {
+    name: "later getter read preserves earlier ambient resolution",
+    resolverSpecifier: "../shared/window.cjs",
+    resolverTarget: "shared/window.cjs",
+    load: 'const box={loader:require,get trigger(){this.loader.resolve=this.loader;return 0}};require.resolve("../shared/window.cjs");box.trigger;',
+    possible: false,
+  },
+  {
+    name: "invoked getter retains lexical created resolver mutation",
+    uncertainResolver: true,
+    mainFile: "main.mjs",
+    load: 'import {createRequire} from "node:module";const loader=createRequire(import.meta.url);const box={loader,get trigger(){this.loader.resolve=this.loader;return 0}};box.trigger;loader.resolve("../shared/window.cjs");',
+    possible: true,
+  },
+  {
+    name: "replaced resolver retains possible executable ownership",
+    uncertainResolver: true,
+    load: 'require.resolve=require;require.resolve("../shared/window.cjs");',
+    possible: true,
+  },
+  {
+    name: "created resolver retains discovery without module execution",
+    resolverSpecifier: "../shared/window.cjs",
+    resolverTarget: "shared/window.cjs",
+    mainFile: "main.mjs",
+    load: 'import {createRequire} from "node:module";const load=createRequire(import.meta.url);load.resolve("../shared/window.cjs");',
+    possible: false,
+  },
+  {
+    name: "missing resolver target does not create executable ownership gaps",
+    missingTargetOperation: "resolve",
+    resolverSpecifier: "../missing/window.cjs",
+    resolverTarget: null,
+    load: 'require.resolve("../missing/window.cjs");',
+    possible: false,
+  },
+  {
+    name: "dynamic executable target retains application ownership uncertainty",
+    unresolvedExecutable: true,
+    load: "require(runtimeTarget);",
+    possible: true,
+  },
+  {
+    name: "modified created resolver retains possible executable ownership",
+    uncertainResolver: true,
+    mainFile: "main.mjs",
+    load: 'import {createRequire} from "node:module";const load=createRequire(import.meta.url);load.resolve=load;load.resolve("../shared/window.cjs");',
+    possible: true,
   },
   {
     name: "require.main is not an implicit module loader",
@@ -256,10 +359,87 @@ cliTest.for(
       root,
     );
     expect(statistics.parse_failures).toBe(0);
+    if ("resolverSpecifier" in testCase) {
+      expect(graph.edges).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            relation: "imports",
+            properties: expect.objectContaining({
+              kind: "require",
+              operation: "resolve",
+              specifier: testCase.resolverSpecifier,
+              resolution_mode: "require",
+              resolved_path: testCase.resolverTarget,
+            }),
+          }),
+        ]),
+      );
+    }
+
+    if ("uncertainResolver" in testCase)
+      expect(graph.edges).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            relation: "imports",
+            properties: expect.objectContaining({
+              kind: "require",
+              operation: "load",
+              specifier: null,
+            }),
+            evidence: expect.objectContaining({
+              coverage: expect.objectContaining({ status: "partial" }),
+            }),
+          }),
+        ]),
+      );
     const roles = graph.nodes.filter(
       ({ kind }) => kind === "electron-renderer",
     );
     expect(roles).toHaveLength(1);
+    if (
+      "missingTargetOperation" in testCase ||
+      "unresolvedExecutable" in testCase
+    ) {
+      const baseLimitation =
+        "Inventoried package metadata does not establish one application root for this source; the loadFile base is unknown.";
+      const executable = "unresolvedExecutable" in testCase;
+      expect(graph.edges).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            relation: "imports",
+            properties: expect.objectContaining({
+              operation: executable ? "load" : "resolve",
+              specifier: executable ? null : "../missing/window.cjs",
+              expression: executable ? "require(runtimeTarget)" : null,
+              resolved_path: null,
+              resolution_status: executable ? null : "not-found",
+            }),
+            evidence: expect.objectContaining({
+              coverage: expect.objectContaining({ status: "complete" }),
+              limitations: expect.arrayContaining([
+                "Static syntax does not prove that this relationship executes at runtime.",
+              ]),
+            }),
+          }),
+        ]),
+      );
+      expect(roles[0]?.observations).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            properties: expect.objectContaining({
+              limitations: executable ? [baseLimitation] : [],
+            }),
+            evidence: expect.objectContaining({
+              coverage: expect.objectContaining({ status: "complete" }),
+              limitations: executable
+                ? expect.arrayContaining([baseLimitation])
+                : expect.not.arrayContaining([baseLimitation]),
+            }),
+          }),
+        ]),
+      );
+    }
+
     expect(roles[0]?.observations).toEqual(
       expect.arrayContaining([
         expect.objectContaining({

@@ -59,10 +59,15 @@ its own descriptor. It does not duplicate script bytes.
 - Ordinary query-free `.js`, `.mjs`, and `.cjs` URL paths are arranged under a
   directory for each origin, preserving their relative module layout when it
   is unambiguous.
-- Competing versions, query/fragment variants, case and file/directory prefix
+- Competing versions, query/fragment variants, and file/directory prefix
   collisions, inline sources, and unrepresentable paths use unique isolated
   names with a stated reason. Missing competing sources also prevent selection
   of an apparently canonical version.
+- Case-distinct URL spellings keep their relative paths when the destination
+  filesystem can store both. If a later spelling collides at publication, that
+  record is isolated while an earlier canonical spelling can remain. Read each
+  record's `layout`, `relative_path`, and `layout_reason`; case isolation depends
+  on the destination, unlike preplanned exact-path/version isolation.
 
 ## Interpretation and limits
 

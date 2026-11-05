@@ -1,33 +1,47 @@
 import type { WebPageInspection } from "../domain/browserObservationSchemas.js";
 import { sanitizeBrowserUrl } from "../domain/browserObservation.js";
-import { cdpStringValue, type UnknownRecord } from "./CdpCaptureValues.js";
+import type { CdpResponseFacts } from "./CdpNetworkEventFacts.js";
 import { structuredFieldToken } from "./StructuredFieldToken.js";
 
 type ResponseMetadata = WebPageInspection["metadata"]["responses"][number];
 type LinkMetadata = ResponseMetadata["links"][number];
 type AgentHint = WebPageInspection["metadata"]["agent_hints"][number];
+type LinkParameter = { readonly name: string; readonly value: string };
+type ParsedLink = {
+  readonly metadata: LinkMetadata;
+  readonly contextMatchesResponse: boolean;
+};
 
 /** Normalize an allowlisted subset of response metadata and discard raw headers. */
 export const safeResponseMetadata = (
   requestId: string,
   url: string,
-  response: UnknownRecord,
+  response: CdpResponseFacts,
   allowedOrigins: ReadonlySet<string>,
 ): {
   readonly response: ResponseMetadata;
   readonly agentHints: AgentHint[];
 } => {
   const headers = normalizedHeaders(response.headers);
-  const links = parseLinks(headers.get("link"), url, allowedOrigins);
+  // RFC 9110 section 5.3: repeated field lines combine as one comma-separated value.
+  const field = (name: string): string | undefined =>
+    headers.get(name)?.join(", ");
+  const responseUrl = response.url?.source ?? url;
+  const parsedLinks = parseLinks(
+    headers.get("link"),
+    responseUrl,
+    allowedOrigins,
+  );
+  const links = parsedLinks.map(({ metadata }) => metadata);
   const csp = parseCsp(
     headers.get("content-security-policy"),
     url,
     allowedOrigins,
   );
   const agentHints = [
-    ...links.flatMap((link) =>
-      link.rel.some(isAgentRel)
-        ? [agentHint("link_rel", link.rel.join(" "), link.href)]
+    ...parsedLinks.flatMap(({ metadata, contextMatchesResponse }) =>
+      contextMatchesResponse && metadata.rel.some(isAgentRel)
+        ? [agentHint("link_rel", metadata.rel.join(" "), metadata.href)]
         : [],
     ),
     ...agentHeaderNames.flatMap((name) =>
@@ -39,21 +53,19 @@ export const safeResponseMetadata = (
     response: {
       request_id: requestId,
       url,
-      mime_type: boundedHeader(cdpStringValue(response.mimeType)),
-      content_length: contentLength(headers.get("content-length")),
-      content_encoding: boundedHeader(headers.get("content-encoding")),
+      mime_type: mediaTypeDeclaration(response.mimeType),
+      content_length: contentLength(field("content-length")),
+      content_encoding: boundedHeader(field("content-encoding")),
       csp,
       links,
       policies: {
-        coop: structuredFieldToken(headers.get("cross-origin-opener-policy")),
-        coep: structuredFieldToken(headers.get("cross-origin-embedder-policy")),
-        corp: policyToken(headers.get("cross-origin-resource-policy")),
-        referrer_policy: referrerPolicy(headers.get("referrer-policy")),
-        x_content_type_options: policyToken(
-          headers.get("x-content-type-options"),
-        ),
+        coop: structuredFieldToken(field("cross-origin-opener-policy")),
+        coep: structuredFieldToken(field("cross-origin-embedder-policy")),
+        corp: policyToken(field("cross-origin-resource-policy")),
+        referrer_policy: referrerPolicy(field("referrer-policy")),
+        x_content_type_options: policyToken(field("x-content-type-options")),
         permissions_policy_features: permissionFeatures(
-          headers.get("permissions-policy"),
+          field("permissions-policy"),
         ),
       },
     },
@@ -61,10 +73,16 @@ export const safeResponseMetadata = (
   };
 };
 
-const normalizedHeaders = (value: unknown): ReadonlyMap<string, string> => {
+/**
+ * Lowercase header names and keep each field line. CDP joins repeated field
+ * lines with LF, so each line is parsed on its own.
+ */
+const normalizedHeaders = (
+  value: unknown,
+): ReadonlyMap<string, readonly string[]> => {
   if (typeof value !== "object" || value === null || Array.isArray(value))
     return new Map();
-  const headers = new Map<string, string>();
+  const headers = new Map<string, string[]>();
   for (const [name, raw] of Object.entries(value)) {
     const normalized = name.toLowerCase();
     const header =
@@ -73,42 +91,61 @@ const normalizedHeaders = (value: unknown): ReadonlyMap<string, string> => {
         : typeof raw === "number" && Number.isFinite(raw)
           ? String(raw)
           : undefined;
-    if (header !== undefined) headers.set(normalized, header);
+    if (header !== undefined)
+      headers.set(normalized, [
+        ...(headers.get(normalized) ?? []),
+        ...header.split(/\r?\n/u),
+      ]);
   }
   return headers;
 };
 
+/**
+ * Each field line is a CSP3 serialized policy list, with policies separated by
+ * commas. Directives of every policy are returned in order; the schema does not
+ * record which policy a directive came from. Within one policy, CSP3 keeps the
+ * first directive of each name and ignores its repeats.
+ */
 const parseCsp = (
-  value: string | undefined,
+  lines: readonly string[] | undefined,
   baseUrl: string,
   allowedOrigins: ReadonlySet<string>,
 ): ResponseMetadata["csp"] => {
   const directives: ResponseMetadata["csp"]["directives"] = [];
   let nonceCount = 0;
   let hashCount = 0;
-  for (const rawDirective of (value ?? "").split(";")) {
-    const [rawName, ...tokens] = rawDirective.trim().split(/\s+/u);
-    const name = (rawName ?? "").toLowerCase();
-    if (!/^[a-z][a-z0-9\x2d]*$/u.test(name)) continue;
-    const sources: ResponseMetadata["csp"]["directives"][number]["sources"] =
-      [];
-    for (const token of tokens) {
-      const lower = token.toLowerCase();
-      if (lower.startsWith("'nonce-")) {
-        nonceCount += 1;
-        continue;
+  const policies = (lines ?? []).flatMap((line) => line.split(","));
+  for (const policy of policies) {
+    const names = new Set<string>();
+    for (const rawDirective of policy.split(";")) {
+      // CSP3 rejects non-ASCII directives and uses Infra ASCII whitespace.
+      if (/[^\x00-\x7f]/u.test(rawDirective)) continue;
+      const [rawName, ...tokens] = rawDirective
+        .replace(/^[\t\n\f\r ]+|[\t\n\f\r ]+$/gu, "")
+        .split(/[\t\n\f\r ]+/u);
+      const name = (rawName ?? "").toLowerCase();
+      if (!/^[a-z][a-z0-9\x2d]*$/u.test(name) || names.has(name)) continue;
+      names.add(name);
+      const sources: ResponseMetadata["csp"]["directives"][number]["sources"] =
+        [];
+      for (const token of tokens) {
+        const lower = token.toLowerCase();
+        if (lower.startsWith("'nonce-")) {
+          nonceCount += 1;
+          continue;
+        }
+        if (
+          lower.startsWith("'sha256-") ||
+          lower.startsWith("'sha384-") ||
+          lower.startsWith("'sha512-")
+        ) {
+          hashCount += 1;
+          continue;
+        }
+        sources.push(cspSource(token, baseUrl, allowedOrigins));
       }
-      if (
-        lower.startsWith("'sha256-") ||
-        lower.startsWith("'sha384-") ||
-        lower.startsWith("'sha512-")
-      ) {
-        hashCount += 1;
-        continue;
-      }
-      sources.push(cspSource(token, baseUrl, allowedOrigins));
+      directives.push({ name, sources });
     }
-    directives.push({ name, sources });
   }
   return { directives, nonce_count: nonceCount, hash_count: hashCount };
 };
@@ -181,32 +218,53 @@ const schemeOf = (baseUrl: string): string | undefined => {
 };
 
 const parseLinks = (
-  value: string | undefined,
-  baseUrl: string,
+  lines: readonly string[] | undefined,
+  responseUrl: string,
   allowedOrigins: ReadonlySet<string>,
-): LinkMetadata[] => {
-  const links: LinkMetadata[] = [];
-  // CDP joins repeated field lines with LF; quoted delimiters belong to one line.
-  for (const line of (value ?? "").split(/\r?\n/u)) {
+): ParsedLink[] => {
+  const links: ParsedLink[] = [];
+  // Keep resolved identity separate from the credential-redacted display URL.
+  const response = safeDestination(responseUrl, responseUrl, allowedOrigins);
+  // Quoted delimiters belong to one field line.
+  for (const line of lines ?? []) {
     for (const entry of splitLinkHeader(line)) {
-      const match = /^\s*<([^>]*)>(.*)$/u.exec(entry);
+      const match = /^[\t ]*<([^>]*)>(.*)$/u.exec(entry);
       if (match === null) continue;
       const parameters = linkParameters(match[2] ?? "");
+      const anchor = firstLinkParameter(parameters, "anchor");
       const destination = safeDestination(
         match[1] ?? "",
-        baseUrl,
+        responseUrl,
         allowedOrigins,
       );
+      const context =
+        anchor === undefined
+          ? response
+          : safeDestination(anchor.value, responseUrl, allowedOrigins);
+      // RFC 8288 assigns first-occurrence semantics to rel, anchor, and type.
+      const rel = firstLinkParameter(parameters, "rel")?.value ?? "";
       links.push({
-        href: destination.url,
-        destination_scope: destination.scope,
-        rel: (parameters.get("rel") ?? "")
-          .toLowerCase()
-          .split(/\s+/u)
-          .filter(Boolean),
-        as: boundedHeader(parameters.get("as")),
-        type: boundedHeader(parameters.get("type")),
-        crossorigin: boundedHeader(parameters.get("crossorigin")),
+        metadata: {
+          href: destination.url,
+          destination_scope: destination.scope,
+          context_url: context.url,
+          context_scope: context.scope,
+          // RFC 8288 Appendix B.2 uses HTTP RWS (SP / HTAB), not HTML whitespace.
+          rel: rel
+            .toLowerCase()
+            .split(/[\t ]+/u)
+            .filter(Boolean),
+          as: boundedHeader(lastLinkParameter(parameters, "as")?.value),
+          type: mediaTypeDeclaration(
+            firstLinkParameter(parameters, "type")?.value,
+          ),
+          crossorigin: boundedHeader(
+            lastLinkParameter(parameters, "crossorigin")?.value,
+          ),
+        },
+        contextMatchesResponse:
+          response.identity !== undefined &&
+          context.identity === response.identity,
       });
     }
   }
@@ -242,18 +300,40 @@ const splitLinkHeader = (
   return entries;
 };
 
-const linkParameters = (value: string): ReadonlyMap<string, string> => {
-  const parameters = new Map<string, string>();
+// HTTP OWS/BWS never includes Unicode or HTML-only whitespace.
+const trimHttpWhitespace = (value: string): string =>
+  value.replace(/^[\t ]+|[\t ]+$/gu, "");
+
+const linkParameters = (value: string): readonly LinkParameter[] => {
+  const parameters: LinkParameter[] = [];
   for (const raw of splitLinkHeader(value, ";").slice(1)) {
     const separator = raw.indexOf("=");
-    const name = (separator < 0 ? raw : raw.slice(0, separator))
-      .trim()
-      .toLowerCase();
+    const name = trimHttpWhitespace(
+      separator < 0 ? raw : raw.slice(0, separator),
+    ).toLowerCase();
     if (!/^[a-z][a-z0-9\x2d]*$/u.test(name)) continue;
-    const parameter = separator < 0 ? "" : raw.slice(separator + 1).trim();
-    parameters.set(name, unquote(parameter));
+    const parameter =
+      separator < 0 ? "" : trimHttpWhitespace(raw.slice(separator + 1));
+    parameters.push({ name, value: decodeLinkParameter(parameter) });
   }
   return parameters;
+};
+
+const firstLinkParameter = (
+  parameters: readonly LinkParameter[],
+  name: string,
+): LinkParameter | undefined =>
+  parameters.find((parameter) => parameter.name === name);
+
+const lastLinkParameter = (
+  parameters: readonly LinkParameter[],
+  name: string,
+): LinkParameter | undefined => {
+  for (let index = parameters.length - 1; index >= 0; index -= 1) {
+    const parameter = parameters[index];
+    if (parameter?.name === name) return parameter;
+  }
+  return undefined;
 };
 
 const safeDestination = (
@@ -261,21 +341,23 @@ const safeDestination = (
   baseUrl: string,
   allowedOrigins: ReadonlySet<string>,
 ): {
+  readonly identity: string | undefined;
   readonly url: string | null;
   readonly scope: LinkMetadata["destination_scope"];
 } => {
   try {
     const parsed = new URL(value, baseUrl);
-    const sanitized = sanitizeBrowserUrl(parsed.href).url;
+    const identity = parsed.href;
+    const sanitized = sanitizeBrowserUrl(identity).url;
     if (parsed.protocol !== "http:" && parsed.protocol !== "https:")
-      return { url: sanitized, scope: "unsupported" };
+      return { identity, url: sanitized, scope: "unsupported" };
     if (!allowedOrigins.has(parsed.origin))
-      return { url: sanitized, scope: "outside_policy" };
-    return { url: sanitized, scope: "approved" };
+      return { identity, url: sanitized, scope: "outside_policy" };
+    return { identity, url: sanitized, scope: "approved" };
   } catch (cause: unknown) {
     // Unparseable link values keep their raw text for the analyst.
     void cause;
-    return { url: value, scope: "unsupported" };
+    return { identity: undefined, url: value, scope: "unsupported" };
   }
 };
 
@@ -284,14 +366,16 @@ const permissionFeatures = (value: string | undefined): string[] =>
     ...new Set(
       (value ?? "")
         .split(",")
-        .map((entry) => entry.split("=", 1)[0]?.trim().toLowerCase() ?? "")
+        .map((entry) =>
+          trimHttpWhitespace(entry.split("=", 1)[0] ?? "").toLowerCase(),
+        )
         .filter((feature) => /^[a-z][a-z0-9\x2d]*$/u.test(feature)),
     ),
   ].sort();
 
 const wellKnownHint = (url: string): AgentHint[] => {
   try {
-    const path = new URL(url).pathname.toLowerCase();
+    const path = new URL(url).pathname;
     return wellKnownAgentPaths.has(path)
       ? [agentHint("well_known_resource", path, sanitizeBrowserUrl(url).url)]
       : [];
@@ -330,32 +414,60 @@ const referrerPolicies = new Set([
 const referrerPolicy = (value: string | undefined): string | null => {
   let policy: string | null = null;
   for (const raw of (value ?? "").split(",")) {
-    const token = raw.trim().toLowerCase();
+    const token = trimHttpWhitespace(raw);
     if (token === "") continue;
-    if (!/^[a-z\x2d]+$/u.test(token)) return null;
+    // Fetch header extraction first validates Referrer-Policy's ABNF;
+    // only syntactically valid extension tokens can be ignored as unknown.
+    if (!/^[A-Za-z\x2d]+$/u.test(token)) return null;
     if (referrerPolicies.has(token)) policy = token;
   }
   return policy;
 };
 
 const policyToken = (value: string | undefined): string | null => {
-  const token = (value ?? "").trim().toLowerCase();
+  const token = trimHttpWhitespace(value ?? "").toLowerCase();
   return /^[a-z][a-z0-9_.\x2d]*$/u.test(token) ? token : null;
 };
 
 // RFC 9110 section 8.6: Content-Length = 1*DIGIT. Other spellings declare no length.
 const contentLength = (value: string | undefined): number | null => {
-  const token = (value ?? "").trim();
+  const token = trimHttpWhitespace(value ?? "");
   if (!/^[0-9]+$/u.test(token)) return null;
   const length = Number(token);
   return Number.isSafeInteger(length) ? length : null;
 };
 
 const boundedHeader = (value: string | undefined): string | null =>
-  value === undefined ? null : value.trim().toLowerCase();
+  value === undefined ? null : trimHttpWhitespace(value).toLowerCase();
 
-const unquote = (value: string): string =>
-  value.startsWith('"') && value.endsWith('"') ? value.slice(1, -1) : value;
+// RFC 9110 section 8.3.1: type/subtype are case-insensitive; parameters may not be.
+const mediaTypeDeclaration = (value: string | undefined): string | null => {
+  if (value === undefined) return null;
+  const declaration = trimHttpWhitespace(value);
+  const separator = declaration.indexOf(";");
+  return separator < 0
+    ? declaration.toLowerCase()
+    : declaration.slice(0, separator).toLowerCase() +
+        declaration.slice(separator);
+};
+
+const decodeLinkParameter = (value: string): string => {
+  if (!value.startsWith('"')) return value;
+  let decoded = "";
+  for (let index = 1; index < value.length; index += 1) {
+    const character = value[index];
+    if (character === "\\") {
+      index += 1;
+      if (index >= value.length) return decoded;
+      decoded += value[index];
+    } else if (character === '"') {
+      return decoded;
+    } else {
+      decoded += character;
+    }
+  }
+  return decoded;
+};
 
 const agentHeaderNames = ["x-model-context", "x-webmcp", "mcp-server"] as const;
 const wellKnownAgentPaths: ReadonlySet<string> = new Set([

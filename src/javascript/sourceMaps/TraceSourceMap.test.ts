@@ -63,7 +63,8 @@ it("uses the same conservative section classification for URL-plus-map and malfo
   expect(malformed).toThrow(
     expect.objectContaining({
       reason: "format",
-      message: "External source-map section URL must be a string.",
+      message:
+        "External source-map section URL must be a string. Section path: [0].",
     }),
   );
 });
@@ -142,6 +143,23 @@ it("keeps ignore-list precedence and section-local indexes for duplicate sources
 });
 
 describe("upstream source-map point evidence", () => {
+  it("keeps repeated separators in distinct resolved source identities", () => {
+    const report = trace({
+      ...leaf,
+      sources: ["dir/original.ts", "dir//original.ts"],
+      sourcesContent: ["single", "repeated"],
+      mappings: "AAAA,ACAA",
+    });
+    expect(
+      report.matches.map((match) =>
+        match.state === "mapped" ? match.resolved_url : null,
+      ),
+    ).toEqual([
+      "https://app.test/maps/dir/original.ts",
+      "https://app.test/maps/dir//original.ts",
+    ]);
+  });
+
   it("preserves every duplicate-column/source-URL candidate and its own embedded bytes", () => {
     const report = trace({
       ...leaf,
@@ -310,7 +328,7 @@ describe("source-map layout admission", () => {
           { offset: { line: 0, column: 5 }, map: leaf },
         ],
       }),
-    ).toThrow(/overlap/u);
+    ).toThrow(expect.objectContaining({ reason: "section-overlap" }));
   });
   it("accepts absent optional names and null contents without changing reported identity", () => {
     expect(

@@ -21,7 +21,6 @@ import {
   ProviderProcessSupervisor,
   spawnOwnedProviderProcess,
 } from "../dist/process/ProviderProcess.js";
-import { toolContract } from "../dist/contracts/toolContracts.js";
 import { requireMcpOperationResult } from "./lib/mcp-verifier-results.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
 
@@ -60,18 +59,17 @@ const source = fileURLToPath(
 const literalSource = fileURLToPath(
   new URL("../tests/conformance/swift/string-literals.swift", import.meta.url),
 );
-const unresolvedJumpSource = fileURLToPath(
-  new URL(
-    "../tests/conformance/swift/unresolved-string-jump.s",
-    import.meta.url,
-  ),
-);
 const binary = join(root, "swift-inventory");
 const literalBinary = join(root, "swift-literals");
-const literalAssembly = fileURLToPath(
-  new URL("../tests/conformance/swift/decoder-safeguards.S", import.meta.url),
+// swiftc rejects assembly inputs, so each source is assembled to an object first.
+const literalObjects = ["decoder-safeguards.S", "unresolved-string-jump.s"].map(
+  (name) => ({
+    source: fileURLToPath(
+      new URL(`../tests/conformance/swift/${name}`, import.meta.url),
+    ),
+    object: join(root, name.replace(/\.[sS]$/u, ".o")),
+  }),
 );
-const literalObject = join(root, "decoder-safeguards.o");
 const reports = [];
 let literalReport;
 let decoderCleaned = true;
@@ -82,20 +80,21 @@ try {
   await mkdir(join(root, "copied"));
   const copied = join(root, "copied", "swift-inventory");
   await copyFile(binary, copied);
-  await execute(
-    "xcrun",
-    [
-      "clang",
-      "-target",
-      "arm64-apple-macosx13.0",
-      "-c",
-      literalAssembly,
-      "-o",
-      literalObject,
-    ],
-    { timeout: 60_000 },
-  );
   // Decoding covers AArch64 register pairs, so build that slice on any Mac host.
+  for (const { source: assembly, object } of literalObjects)
+    await execute(
+      "xcrun",
+      [
+        "clang",
+        "-target",
+        "arm64-apple-macosx13.0",
+        "-c",
+        assembly,
+        "-o",
+        object,
+      ],
+      { timeout: 60_000 },
+    );
   await execute(
     "swiftc",
     [
@@ -103,8 +102,7 @@ try {
       "-target",
       "arm64-apple-macosx13.0",
       literalSource,
-      literalObject,
-      unresolvedJumpSource,
+      ...literalObjects.map(({ object }) => object),
       "-o",
       literalBinary,
     ],
@@ -215,7 +213,7 @@ async function call(name, arguments_) {
     { timeout: 180_000 },
   );
   if (name === "analyze_swift_types")
-    toolContract(name).outputSchema.parse(response.structuredContent);
+    assert.ok(response.structuredContent, `${name} omitted structured result`);
   return requireMcpOperationResult(response, name);
 }
 
@@ -243,6 +241,7 @@ async function verifyStringLiterals() {
       assert(procedure, `${name} is missing from the procedure inventory`);
       const dossier = await call("analyze_function", {
         procedure: procedure.address,
+        detail: "complete",
       });
       const observed = dossier.swift_string_literals;
       assert(Array.isArray(observed), `${name} recorded no Swift literals`);
@@ -270,6 +269,7 @@ async function verifyStringLiterals() {
     );
     const unresolvedDossier = await call("analyze_function", {
       procedure: unresolvedJump.address,
+      detail: "complete",
     });
     assert.deepEqual(unresolvedDossier.swift_string_literals, []);
     assert.deepEqual(

@@ -31,6 +31,7 @@ it("parses command names containing parentheses and retains native relation fact
     parseLinuxProcessStat(statRecord({ command: "worker ) old ) name" })),
   ).toEqual({
     pid: 42,
+    name: "worker ) old ) name",
     startTime: "987654",
     lifecycle: "non-zombie",
     parentPid: 17,
@@ -45,6 +46,36 @@ it("accepts zero parent, process-group, and session IDs as native facts", () => 
       statRecord({ parentPid: "0", processGroupId: "0", sessionId: "0" }),
     ),
   ).toMatchObject({ parentPid: 0, processGroupId: 0, sessionId: 0 });
+});
+
+it("retains identity when Linux teardown reports unavailable group and session IDs", () => {
+  // Linux v6.8 fs/proc/array.c: do_task_stat initializes pgid/sid to -1
+  // and only replaces them while lock_task_sighand succeeds.
+  expect(
+    parseLinuxProcessStat(
+      statRecord({
+        parentPid: "0",
+        processGroupId: "-1",
+        sessionId: "-1",
+        state: "X",
+        flags: "4",
+      }),
+    ),
+  ).toEqual({
+    pid: 42,
+    name: "worker",
+    startTime: "987654",
+    lifecycle: "dead",
+    parentPid: 0,
+    processGroupId: -1,
+    sessionId: -1,
+  });
+  expect(
+    parseLinuxProcessStat(statRecord({ processGroupId: "-2" })),
+  ).toBeUndefined();
+  expect(
+    parseLinuxProcessStat(statRecord({ sessionId: "-2" })),
+  ).toBeUndefined();
 });
 
 it("distinguishes zombie lifecycle and rejects malformed or missing identity fields", () => {
@@ -85,6 +116,7 @@ it.each(["invalid", "-1", "4.1", "9007199254740992"])(
   (flags) => {
     expect(parseLinuxProcessStat(statRecord({ flags }))).toEqual({
       pid: 42,
+      name: "worker",
       startTime: "987654",
       lifecycle: undefined,
       parentPid: 17,

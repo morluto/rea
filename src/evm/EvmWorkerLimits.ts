@@ -1,5 +1,5 @@
 import { err, ok, type Result } from "../domain/result.js";
-import { EVM_INTERFACE_LIMITS } from "./EvmoleRelease.js";
+import { EVM_CPU_SECONDS, EVM_INTERFACE_LIMITS } from "./EvmoleRelease.js";
 
 /** Selected worker soft limits to configure; inherited hard limits are left unchanged. */
 export interface EvmWorkerLimits {
@@ -19,7 +19,7 @@ export const selectEvmWorkerLimits = (
   const selected: number[] = [];
   for (const [name, units, maximum] of [
     ["Max address space", "bytes", EVM_INTERFACE_LIMITS.addressSpaceBytes],
-    ["Max cpu time", "seconds", 30],
+    ["Max cpu time", "seconds", EVM_CPU_SECONDS],
     ["Max file size", "bytes", EVM_INTERFACE_LIMITS.outputBytes],
   ] as const) {
     const entries = raw

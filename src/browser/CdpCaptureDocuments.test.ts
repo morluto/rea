@@ -5,11 +5,95 @@ import {
   captureDom,
   captureFrames,
   captureResources,
+  cdpFrameUrl,
+  classifyCdpFrameUrl,
+  observeCdpFrameUrl,
 } from "./CdpCaptureDocuments.js";
 import { CdpCaptureCompleteness } from "./CdpCaptureCompleteness.js";
 import { inspectWebPageInputSchema } from "../domain/browserObservation.js";
 
 const origin = "https://app.example.test";
+
+it.each([
+  [{ url: `${origin}/page?x=1#old` }, `${origin}/page?x=1#old`],
+  [
+    { url: `${origin}/page?x=1#old`, urlFragment: "#new" },
+    `${origin}/page?x=1#new`,
+  ],
+  [{ url: `${origin}/page?x=1#old`, urlFragment: "" }, `${origin}/page?x=1`],
+  [{ url: `${origin}/page`, urlFragment: null }, undefined],
+  [{ url: `${origin}/page`, urlFragment: "missing-hash" }, undefined],
+])("preserves frame URL fragment semantics: %j", (frame, expected) => {
+  expect(cdpFrameUrl(frame)).toBe(expected);
+});
+
+it("keeps source identity and scope independent while redacting transport credentials", () => {
+  const frame = {
+    url: "https://user:password@app.example.test/page?token=local#old",
+    urlFragment: "#new",
+  };
+  const allowed = new Set([origin]);
+  expect(classifyCdpFrameUrl(observeCdpFrameUrl(frame), allowed)).toEqual({
+    scope: "approved",
+    origin,
+    url: `${origin}/page?token=local#new`,
+  });
+  expect(
+    classifyCdpFrameUrl(
+      observeCdpFrameUrl({ ...frame, urlFragment: 7 }),
+      allowed,
+    ),
+  ).toEqual({
+    scope: "approved",
+    origin,
+    url: undefined,
+  });
+  expect(
+    classifyCdpFrameUrl(
+      observeCdpFrameUrl({ urlFragment: "#https://app.example.test" }),
+      allowed,
+    ),
+  ).toEqual({
+    scope: "unknown",
+    origin: null,
+    url: undefined,
+  });
+});
+
+it("does not authorize a foreign origin through its fragment", () => {
+  const completeness = new CdpCaptureCompleteness();
+  const captured = captureFrames(
+    {
+      frameTree: {
+        frame: {
+          id: "foreign",
+          url: "https://foreign.test/page",
+          urlFragment: `#${origin}`,
+        },
+      },
+    },
+    new Set([origin]),
+    undefined,
+    completeness,
+  );
+  expect(captured.items).toEqual([]);
+  expect(completeness.snapshot().policy_filtered_sections).toContain("frames");
+});
+
+it("classifies a malformed frame fragment as unknown protocol coverage", () => {
+  const completeness = new CdpCaptureCompleteness();
+  const captured = captureFrames(
+    { frameTree: { frame: { id: "frame-main", url: origin, urlFragment: 7 } } },
+    new Set([origin]),
+    undefined,
+    completeness,
+  );
+  expect(captured.items).toEqual([]);
+  expect(completeness.snapshot()).toMatchObject({
+    unavailable_sections: ["frames"],
+    policy_filtered_sections: [],
+  });
+});
 
 describe("CDP DOM capture", () => {
   it("preserves node names and parents when aligned arrays are valid", () => {
@@ -298,7 +382,7 @@ describe("CDP frame capture", () => {
   });
 });
 
-describe("CDP accessibility capture", () => {
+describe("CDP accessibility inventory and identity", () => {
   it("keeps an explicit empty accessibility inventory complete", () => {
     const completeness = new CdpCaptureCompleteness();
     const capture = captureAccessibility([{ nodes: [] }], {
@@ -383,6 +467,51 @@ describe("CDP accessibility capture", () => {
     });
   });
 
+  it("shares admitted identities between projection and child coverage", () => {
+    const completeness = new CdpCaptureCompleteness();
+    const capture = captureAccessibility(
+      [
+        {
+          nodes: [
+            {
+              nodeId: "parent",
+              ignored: false,
+              parentId: "",
+              childIds: ["", 3, "child", "missing"],
+            },
+            { nodeId: "child", ignored: false, parentId: "parent" },
+          ],
+        },
+      ],
+      { includeText: true, completeness },
+    );
+
+    expect(
+      capture.nodes.map(({ node_id, parent_id }) => ({ node_id, parent_id })),
+    ).toEqual([
+      { node_id: "parent", parent_id: null },
+      { node_id: "child", parent_id: "parent" },
+    ]);
+    expect(capture.hasUnobservedChildren).toBe(true);
+    expect(completeness.snapshot().excluded).toEqual([
+      { section: "accessibility", reason: "invalid_protocol_value", count: 2 },
+    ]);
+    const observed = captureAccessibility(
+      [
+        {
+          nodes: [
+            { nodeId: "parent", ignored: false, childIds: ["", null, "child"] },
+            { nodeId: "child", ignored: false },
+          ],
+        },
+      ],
+      { includeText: true },
+    );
+    expect(observed.hasUnobservedChildren).toBe(false);
+  });
+});
+
+describe("CDP accessibility text capture", () => {
   it("retains full approved accessibility text", () => {
     const capture = captureAccessibility(
       [
@@ -507,3 +636,49 @@ describe("CDP DOM snapshot empty strings", () => {
     expect(completeness.snapshot().excluded).toEqual([]);
   });
 });
+
+it.each([7, null, "without-hash"])(
+  "retains base URL evidence with malformed fragment %s",
+  (urlFragment) => {
+    expect(
+      observeCdpFrameUrl({ url: `${origin}/page?x=1#old`, urlFragment }),
+    ).toEqual({ kind: "invalid_fragment", scopeUrl: `${origin}/page?x=1#old` });
+  },
+);
+
+it.each([7, "missing-hash"])(
+  "retains foreign frame scope independently of malformed fragment %s",
+  (urlFragment) => {
+    const completeness = new CdpCaptureCompleteness();
+    const captured = captureFrames(
+      {
+        frameTree: {
+          frame: { id: "root", url: origin },
+          childFrames: [
+            {
+              frame: {
+                id: "foreign",
+                parentId: "root",
+                url: "https://foreign.test/page",
+                urlFragment,
+              },
+            },
+          ],
+        },
+      },
+      new Set([origin]),
+      undefined,
+      completeness,
+    );
+    expect(captured.items.map((frame) => frame.frame_id)).toEqual(["root"]);
+    expect(completeness.snapshot().excluded).toEqual(
+      expect.arrayContaining([
+        { section: "frames", reason: "invalid_protocol_value", count: 1 },
+        { section: "frames", reason: "disallowed_origin", count: 1 },
+      ]),
+    );
+    expect(completeness.snapshot().policy_filtered_sections).toContain(
+      "frames",
+    );
+  },
+);

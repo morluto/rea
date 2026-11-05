@@ -1,3 +1,7 @@
+import { addAbortListener } from "node:events";
+import type { Readable } from "node:stream";
+import { getHeapStatistics } from "node:v8";
+
 import { absoluteCallerPath } from "./filesystem/callerPath.js";
 
 import { sealOwnedJsonInput } from "./application/OwnedJsonInput.js";
@@ -5,23 +9,34 @@ import {
   JsonInputCancellationFailure,
   JsonInputPhysicalReadFailure,
   readJsonInputFile,
+  nativeJsonParseRequiredBytes,
 } from "./application/JsonInputFile.js";
 import { NonRegularFileReadError } from "./filesystem/RegularFile.js";
 import {
   AnalysisAccessDeniedError,
   AnalysisCancelledError,
   AnalysisInputError,
+  AnalysisResourceConstraintError,
 } from "./domain/analysisErrorCore.js";
 import { projectAnalysisError } from "./domain/analysisErrorProjection.js";
+import { err, ok, type Result } from "./domain/result.js";
 import type { JsonValue } from "./domain/jsonValue.js";
 import { safeParseJson } from "./domain/safeJson.js";
+import {
+  JSON_INPUT_RESOURCE_REMEDIATION,
+  parseUtf8Json,
+} from "./application/Utf8JsonInput.js";
 
-/** Parse inline JSON or one local JSON file, honoring optional caller cancellation. */
+/** Parse inline JSON, standard input ('-'), or one local JSON file, honoring optional caller cancellation. */
 export const parseCliJsonInput = async (
   value: string,
   operation: string,
   signal?: AbortSignal,
-  options?: { readonly snapshot?: boolean },
+  options?: {
+    readonly snapshot?: boolean;
+    readonly stdin?: Readable;
+    readonly maxStdinBytes?: number;
+  },
 ): Promise<
   | { readonly ok: true; readonly value: unknown }
   | { readonly ok: false; readonly error: JsonValue }
@@ -53,13 +68,16 @@ export const parseCliJsonInput = async (
             },
           };
     }
-    const parsed = await readJsonInputFile(
-      value,
-      operation,
-      signal,
-      undefined,
-      options?.snapshot ?? false,
-    );
+    const parsed =
+      value === "-"
+        ? await readCliJsonStdin(operation, signal, options)
+        : await readJsonInputFile(
+            value,
+            operation,
+            signal,
+            undefined,
+            options?.snapshot ?? false,
+          );
     if (parsed.ok && signal?.aborted) return cancelled(signal.reason);
     return parsed.ok
       ? { ok: true, value: parsed.value }
@@ -82,7 +100,7 @@ export const parseCliJsonInput = async (
       const physicalCause = cause.physicalCause;
       const systemCode = accessDeniedSystemCode(physicalCause);
       return systemCode === undefined
-        ? jsonFileError(value, operation, "read-failed", physicalCause)
+        ? jsonFileReadError(value, operation, physicalCause)
         : jsonAccessDeniedError(value, operation, systemCode, physicalCause);
     }
     if (signal?.aborted && isJsonInputCancellation(cause, signal))
@@ -102,7 +120,127 @@ export const parseCliJsonInput = async (
       typeof cause.code !== "string"
     )
       throw cause;
-    return jsonFileError(value, operation, "read-failed", cause);
+    return jsonFileReadError(value, operation, cause);
+  }
+};
+
+const DEFAULT_MAX_STDIN_BYTES = 8 * 1024 * 1024;
+
+const readCliJsonStdin = async (
+  operation: string,
+  signal?: AbortSignal,
+  options?: {
+    readonly snapshot?: boolean;
+    readonly stdin?: Readable;
+    readonly maxStdinBytes?: number;
+  },
+): Promise<
+  Result<unknown, AnalysisInputError | AnalysisResourceConstraintError>
+> => {
+  const stream = options?.stdin ?? process.stdin;
+  const maxBytes = options?.maxStdinBytes ?? DEFAULT_MAX_STDIN_BYTES;
+  const chunks: Buffer[] = [];
+  let totalBytes = 0;
+  const requireHeadroom = (): void => {
+    const heap = getHeapStatistics();
+    const requiredBytes = nativeJsonParseRequiredBytes(
+      totalBytes,
+      options?.snapshot,
+    );
+    if (requiredBytes > heap.total_available_size)
+      throw new AnalysisResourceConstraintError(
+        operation,
+        "memory",
+        "Insufficient heap headroom to read and parse the complete JSON stdin document",
+        {
+          input_path: "-",
+          input_bytes: totalBytes,
+          required_heap_bytes: requiredBytes,
+          available_heap_bytes: heap.total_available_size,
+          heap_size_limit_bytes: heap.heap_size_limit,
+        },
+        { remediationAction: JSON_INPUT_RESOURCE_REMEDIATION },
+      );
+  };
+  // Destroying the reader wakes an idle next(); polling inside the loop cannot.
+  const abort =
+    signal === undefined
+      ? undefined
+      : addAbortListener(signal, () => {
+          stream.destroy(new JsonInputCancellationFailure(signal.reason));
+        });
+  try {
+    try {
+      for await (const chunk of stream) {
+        signal?.throwIfAborted();
+        totalBytes +=
+          typeof chunk === "string"
+            ? Buffer.byteLength(chunk)
+            : chunk.byteLength;
+        if (totalBytes > maxBytes)
+          return err(
+            new AnalysisResourceConstraintError(
+              operation,
+              "memory",
+              "JSON input exceeds the maximum allowed stdin size",
+              {
+                input_path: "-",
+                input_bytes: totalBytes,
+                max_stdin_bytes: maxBytes,
+              },
+              { remediationAction: JSON_INPUT_RESOURCE_REMEDIATION },
+            ),
+          );
+        requireHeadroom();
+        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+      }
+    } catch (cause: unknown) {
+      if (
+        cause instanceof JsonInputCancellationFailure ||
+        (signal?.aborted && isJsonInputCancellation(cause, signal))
+      )
+        throw cause;
+      if (cause instanceof AnalysisResourceConstraintError) return err(cause);
+      throw new JsonInputPhysicalReadFailure(cause);
+    } finally {
+      abort?.[Symbol.dispose]();
+    }
+    signal?.throwIfAborted();
+    // Recheck live headroom before concatenation, UTF-8 decoding and JSON.parse.
+    requireHeadroom();
+    const parsed = parseUtf8Json(
+      Buffer.concat(chunks, totalBytes),
+      operation,
+      "-",
+    );
+    if (!parsed.ok)
+      return err(
+        new AnalysisInputError(
+          operation,
+          {
+            cause: parsed.cause,
+            ...(parsed.userMessage === undefined
+              ? {}
+              : { userMessage: parsed.userMessage }),
+          },
+          [
+            {
+              path: [],
+              reason: "invalid_format",
+              expected: "JSON",
+              ...(parsed.userMessage === undefined
+                ? {}
+                : { message: parsed.userMessage }),
+            },
+          ],
+        ),
+      );
+    return options?.snapshot
+      ? await sealOwnedJsonInput(parsed.value, operation, signal)
+      : ok(parsed.value);
+  } catch (cause: unknown) {
+    if (cause instanceof AnalysisResourceConstraintError) return err(cause);
+    throw cause;
   }
 };
 
@@ -194,26 +332,21 @@ const inputError = (operation: string): JsonValue => ({
   ),
 });
 
-const jsonFileError = (
-  path: string | undefined,
+const jsonFileReadError = (
+  path: string,
   operation: string,
-  reason: "invalid-json" | "read-failed",
-  cause?: unknown,
+  cause: unknown,
 ) => ({
   ok: false as const,
   error: {
     error: "Application workflow failed",
     ...projectAnalysisError(
-      new AnalysisInputError(
-        operation,
-        cause === undefined ? undefined : { cause },
-        reason === "invalid-json"
-          ? [{ path: [], reason: "invalid_format", expected: "JSON" }]
-          : [readFailureIssue(path, cause)],
-      ),
+      new AnalysisInputError(operation, { cause }, [
+        readFailureIssue(path, cause),
+      ]),
     ),
-    ...(path === undefined ? {} : { input_path: path }),
-    input_reason: reason,
+    input_path: path,
+    input_reason: "read-failed" as const,
   },
 });
 
@@ -235,7 +368,7 @@ const jsonAccessDeniedError = (
 });
 
 /** Preserve file-selection and system failures alongside the requested path. */
-const readFailureIssue = (path: string | undefined, cause: unknown) => {
+const readFailureIssue = (path: string, cause: unknown) => {
   const code =
     typeof cause === "object" &&
     cause !== null &&
@@ -248,7 +381,7 @@ const readFailureIssue = (path: string | undefined, cause: unknown) => {
     reason: "invalid_value" as const,
     message:
       cause instanceof NonRegularFileReadError && cause.code === "ENOTFILE"
-        ? `The JSON input must be a regular file${code}: ${path ?? ""}`
-        : `The JSON input file could not be read${code}: ${path ?? ""}`,
+        ? `The JSON input must be a regular file${code}: ${path}`
+        : `The JSON input file could not be read${code}: ${path}`,
   };
 };

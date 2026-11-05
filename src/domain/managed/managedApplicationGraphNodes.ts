@@ -502,7 +502,7 @@ const artifactLocalIdentity = (
 });
 
 /** Build managed static-analysis evidence for a graph observation. */
-const sourceManagedEvidence = (
+export const sourceManagedEvidence = (
   state: GraphBuildState,
   source: Evidence,
   coverageState: ManagedArtifactInspection["coverage"]["state"],

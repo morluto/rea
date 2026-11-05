@@ -1,3 +1,4 @@
+import { ProcessRunTokenReadError } from "../ProcessRunTokenObservations.js";
 import { err, ok, type Result } from "../../domain/result.js";
 
 /** Retain a count, first failure and interruption fact with their observations. */
@@ -13,6 +14,7 @@ export interface SamplingObservation<T> {
 }
 
 export type SamplingReadFailure =
+  | { readonly kind: "process-exited" }
   | { readonly kind: "cancelled"; readonly reason: unknown }
   | {
       readonly kind: "unavailable";
@@ -69,6 +71,11 @@ export const readSamplingSource = async <T>(
   } catch (cause: unknown) {
     if (isSamplingAbort(cause, signal))
       return err({ kind: "cancelled", reason: signal.reason });
+    if (
+      cause instanceof ProcessRunTokenReadError &&
+      cause.availability === "absent"
+    )
+      return err({ kind: "process-exited" });
     const systemCode =
       cause instanceof Error &&
       "code" in cause &&
@@ -96,7 +103,9 @@ export const samplingReadObservation = <T>(
         undefined,
         result.error.kind === "cancelled"
           ? samplingInterrupted()
-          : samplingFailure(result.error.diagnostic),
+          : result.error.kind === "process-exited"
+            ? mergeSamplingDiagnostics()
+            : samplingFailure(result.error.diagnostic),
       );
 
 /** Missing procfs entries are expected exit races; denied reads stay unknown. */

@@ -100,7 +100,7 @@ diagnostic helper hashes were not captured at execution; the record marks that
 gap instead of assigning the later frozen hash to earlier runs.
 
 Build each pinned checkout, then run under the existing
-[resource observer](../../experiments/analysis-efficiency/resource-counters.md)
+[resource observer](https://github.com/morluto/rea/blob/42e1a17d6e6c0487f17be0bae248553c4caba7f7/experiments/analysis-efficiency/resource-counters.md)
 and a private Xvfb instance. The shared verifier supports all four named cases:
 
 ```sh

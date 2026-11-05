@@ -1,6 +1,9 @@
+import { readPeCoffHeader } from "../../domain/peCoffHeader.js";
+import { readPeOptionalHeader } from "../../domain/peMachine.js";
+import { readPeSectionHeader } from "../../domain/peSectionHeader.js";
 import {
-  observeMzWindowsHeader,
-  parseDosMzHeader,
+  mzWindowsHeaderLayoutLimitation,
+  parseMzHeaderEvidence,
 } from "../../domain/dosMz.js";
 import {
   declaredFileRange,
@@ -13,9 +16,17 @@ import {
 } from "./BinaryContainer.js";
 
 const peHeaderOffset = (reader: BinaryReader): number => {
-  const windowsHeader = observeMzWindowsHeader(reader.bytes);
+  const evidence = parseMzHeaderEvidence(reader.bytes);
+  if (!evidence.declarations.ok)
+    throw new BinaryFormatFailure("malformed", evidence.declarations.error);
+  const { windowsHeader } = evidence;
+  if (windowsHeader.state === "candidate")
+    throw new BinaryFormatFailure(
+      "unsupported",
+      "MZ Windows new-header candidate is unresolved",
+    );
   if (windowsHeader.state !== "declared") {
-    const dos = parseDosMzHeader(reader.bytes);
+    const dos = evidence.dos;
     if (!dos.ok) throw new BinaryFormatFailure("malformed", dos.error);
     throw new BinaryFormatFailure(
       "unsupported",
@@ -23,12 +34,9 @@ const peHeaderOffset = (reader: BinaryReader): number => {
     );
   }
   const { offset: pe } = windowsHeader;
-  if (pe < 64)
-    throw new BinaryFormatFailure(
-      "malformed",
-      "PE signature overlaps the DOS header",
-    );
-  reader.range(pe, 24, "PE signature and COFF header");
+  const limitation = mzWindowsHeaderLayoutLimitation(windowsHeader);
+  if (limitation !== undefined)
+    throw new BinaryFormatFailure("unsupported", limitation);
   if (["NE", "LE", "LX"].includes(windowsHeader.signature))
     throw new BinaryFormatFailure(
       "unsupported",
@@ -39,50 +47,63 @@ const peHeaderOffset = (reader: BinaryReader): number => {
       "malformed",
       "PE signature is invalid or overlaps the DOS header",
     );
+  reader.range(pe, 24, "PE signature and COFF header");
   return pe;
 };
 
-const optionalHeaderMagic = (
-  reader: BinaryReader,
-  offset: number,
-  size: number,
-): number => {
-  reader.range(offset, size, "PE optional header");
-  if (size < 2)
-    throw new BinaryFormatFailure(
-      "malformed",
-      "PE optional header is missing its complete magic field",
-    );
-  return reader.u16(offset);
+/** Declared PE fields retained by their parsing owner for format consumers. */
+export type PeImageSection = Extract<
+  ImageSection,
+  { readonly format: "pe" }
+> & {
+  readonly raw_offset: number;
+};
+
+export type PeImage = BinaryContainer & {
+  readonly format: "pe";
+  readonly image_base: bigint;
+  readonly pe_machine: number;
+  readonly pe_section_alignment: number;
+  readonly pe_file_alignment: number;
+  readonly pe_header_mapping: FileMapping;
+  readonly pe_data_directories: NonNullable<
+    BinaryContainer["pe_data_directories"]
+  >;
+  readonly sections: readonly PeImageSection[];
 };
 
 /** Read PE32/PE32+ native image mappings and section facts. */
-export const readPeImage = (bytes: Buffer): BinaryContainer => {
+export const readPeImage = (bytes: Buffer): PeImage => {
   const reader = new BinaryReader(bytes, true);
   const pe = peHeaderOffset(reader);
   const optional = pe + 24;
-  const optionalSize = reader.u16(pe + 20);
-  const magic = optionalHeaderMagic(reader, optional, optionalSize);
-  const bits = magic === 0x10b ? 32 : magic === 0x20b ? 64 : null;
-  if (bits === null)
-    throw new BinaryFormatFailure(
-      "unsupported",
-      "Only PE32 and PE32+ image optional headers are supported",
-    );
-  if (optionalSize < (bits === 64 ? 112 : 96))
-    throw new BinaryFormatFailure(
-      "malformed",
-      "PE optional header is truncated",
-    );
-  const directoriesOffset = bits === 64 ? 112 : 96;
-  const directories = reader.u32(optional + directoriesOffset - 4);
-  if (directories * 8 > optionalSize - directoriesOffset)
-    throw new BinaryFormatFailure(
-      "malformed",
-      "PE data directories extend beyond the optional header",
-    );
-  const imageBase = reader.word(optional + (bits === 64 ? 24 : 28), bits);
-  const count = reader.u16(pe + 6);
+  const coff = readPeCoffHeader(bytes.subarray(pe + 4, pe + 24));
+  if (!coff.ok)
+    throw new BinaryFormatFailure(coff.error.kind, coff.error.message);
+  const {
+    machine,
+    sectionCount: count,
+    optionalHeaderSize: optionalSize,
+  } = coff.value;
+  const facts = readPeOptionalHeader(
+    reader.range(optional, optionalSize, "PE optional header"),
+    machine,
+  );
+  if (!facts.ok)
+    throw new BinaryFormatFailure(facts.error.kind, facts.error.message);
+  const {
+    bits,
+    dataDirectories,
+    sizeOfHeaders,
+    imageBase,
+    sectionAlignment,
+    fileAlignment,
+  } = facts.value;
+  const headerMapping: FileMapping = {
+    address: imageBase,
+    offset: 0,
+    size: Math.min(sizeOfHeaders, bytes.length),
+  };
   const start = reader.table(
     BigInt(optional + optionalSize),
     count,
@@ -92,19 +113,23 @@ export const readPeImage = (bytes: Buffer): BinaryContainer => {
   const mappings: FileMapping[] = [];
   const executableMappings: FileMapping[] = [];
   const zeroFills: ZeroFillMapping[] = [];
-  const sections: ImageSection[] = [];
+  const sections: PeImageSection[] = [];
   for (let index = 0; index < count; index++) {
     const entry = start + index * 40;
-    const sectionName = peSectionName(
-      reader.range(entry, 8, "PE section name"),
+    const section = readPeSectionHeader(
+      reader.range(entry, 40, "PE section header"),
     );
-    const virtualSize = reader.u32(entry + 8);
-    const virtualAddress = reader.u32(entry + 12);
-    const size = reader.u32(entry + 16);
-    const offset = reader.u32(entry + 20);
-    const characteristics = reader.u32(entry + 36);
-    // SizeOfRawData includes file-alignment padding. VirtualSize is the content.
-    const contentSize = virtualSize === 0 ? size : Math.min(virtualSize, size);
+    if (!section.ok)
+      throw new BinaryFormatFailure(section.error.kind, section.error.message);
+    const {
+      name: sectionName,
+      virtual_size: virtualSize,
+      virtual_address: virtualAddress,
+      raw_size: size,
+      offset,
+      characteristics,
+      size: contentSize,
+    } = section.value;
     sections.push(
       peImageSection({
         reader,
@@ -115,6 +140,7 @@ export const readPeImage = (bytes: Buffer): BinaryContainer => {
         virtualAddress,
         virtualSize,
         rawSize: size,
+        fileAlignment,
       }),
     );
     const address = imageBase + BigInt(virtualAddress);
@@ -140,19 +166,21 @@ export const readPeImage = (bytes: Buffer): BinaryContainer => {
         size: BigInt(virtualSize - size),
       });
   }
-  const machine = reader.u16(pe + 4);
-  const names = new Map([
-    [0x014c, "386"],
-    [0x8664, "amd64"],
-    [0x01c0, "arm"],
-    [0x01c2, "arm"],
-    [0x01c4, "arm"],
-    [0xaa64, "arm64"],
-  ]);
+  const architecture = facts.value.machine?.architecture;
   return {
     format: "pe",
     image_base: imageBase,
-    architecture: names.get(machine) ?? `pe-machine-${machine}`,
+    pe_machine: machine,
+    pe_section_alignment: sectionAlignment,
+    pe_file_alignment: fileAlignment,
+    pe_data_directories: dataDirectories,
+    pe_header_mapping: headerMapping,
+    architecture:
+      architecture === "x86"
+        ? "386"
+        : architecture === "x86_64"
+          ? "amd64"
+          : (architecture ?? `pe-machine-${machine}`),
     bits,
     byte_order: "little",
     mappings,
@@ -160,11 +188,6 @@ export const readPeImage = (bytes: Buffer): BinaryContainer => {
     zero_fills: zeroFills,
     sections,
   };
-};
-
-const peSectionName = (bytes: Buffer): string => {
-  const nul = bytes.indexOf(0);
-  return bytes.toString("latin1", 0, nul < 0 ? bytes.length : nul);
 };
 
 const peImageSection = ({
@@ -176,6 +199,7 @@ const peImageSection = ({
   virtualAddress,
   virtualSize,
   rawSize,
+  fileAlignment,
 }: {
   readonly reader: BinaryReader;
   readonly name: string;
@@ -185,7 +209,8 @@ const peImageSection = ({
   readonly virtualAddress: number;
   readonly virtualSize: number;
   readonly rawSize: number;
-}): ImageSection => {
+  readonly fileAlignment: number;
+}): PeImageSection => {
   const range = declaredFileRange(
     reader.bytes.length,
     BigInt(offset),
@@ -203,6 +228,8 @@ const peImageSection = ({
     virtual_address: virtualAddress,
     virtual_size: virtualSize,
     raw_size: rawSize,
+    raw_offset: offset,
+    file_alignment: fileAlignment,
     characteristics,
     ...range,
     read_only: readOnly,

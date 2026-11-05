@@ -1,4 +1,4 @@
-import type { parseOtoolLoadCommands } from "./otool.js";
+import type { BinaryMachoProjection } from "../MachoBinaryProjection.js";
 
 const MACHO_UUID = /^[\da-f]{8}(?:-[\da-f]{4}){3}-[\da-f]{12}$/iu;
 
@@ -12,9 +12,9 @@ interface UuidArchitectureSelection {
   readonly dwarfdumpName: string;
 }
 
-/** Reconcile the selected slice's UUID observations from otool and dwarfdump. */
+/** Reconcile the selected slice's UUID observations from binary load commands and dwarfdump. */
 export const reconcileMachoUuid = (
-  commands: ReturnType<typeof parseOtoolLoadCommands>["commands"],
+  commands: BinaryMachoProjection["commands"],
   dwarfdumpOutput: string,
   artifactPath: string,
   selectedArchitecture: UuidArchitectureSelection | null,
@@ -137,7 +137,7 @@ const selectDwarfdumpRow = (
 };
 
 const loadCommandUuid = (
-  commands: ReturnType<typeof parseOtoolLoadCommands>["commands"],
+  commands: BinaryMachoProjection["commands"],
 ): UuidObservation => {
   const loadCommands = commands.filter(({ kind }) => kind === "LC_UUID");
   if (loadCommands.length === 0) return { kind: "absent" };
@@ -153,8 +153,8 @@ const loadCommandUuid = (
       kind: distinct.size > 1 ? "conflict" : "invalid",
       reason:
         distinct.size > 1
-          ? `otool returned conflicting LC_UUID values ${observed.map((value) => JSON.stringify(value)).join(" and ")}`
-          : `otool returned ${String(loadCommands.length)} LC_UUID commands`,
+          ? `binary load commands returned conflicting LC_UUID values ${observed.map((value) => JSON.stringify(value)).join(" and ")}`
+          : `binary load commands returned ${String(loadCommands.length)} LC_UUID commands`,
     };
   }
   const value = loadCommands[0]?.fields.uuid;
@@ -162,7 +162,7 @@ const loadCommandUuid = (
     ? { kind: "valid", value }
     : {
         kind: "invalid",
-        reason: `otool LC_UUID contains malformed UUID ${JSON.stringify(value ?? null)}`,
+        reason: `binary load commands LC_UUID contains malformed UUID ${JSON.stringify(value ?? null)}`,
       };
 };
 
@@ -179,7 +179,7 @@ const reconcileObservations = (
     return {
       value: null,
       limitations: [
-        `dwarfdump --uuid (${dwarfdump.value}) conflicts with otool LC_UUID (${loadUuid.value}); the image UUID is unknown.`,
+        `dwarfdump --uuid (${dwarfdump.value}) conflicts with binary load commands LC_UUID (${loadUuid.value}); the image UUID is unknown.`,
       ],
     };
   }
@@ -200,7 +200,9 @@ const reconcileObservations = (
       value: loadUuid.value,
       limitations:
         dwarfdump.kind === "invalid"
-          ? [`${dwarfdump.reason}; using the unambiguous otool LC_UUID.`]
+          ? [
+              `${dwarfdump.reason}; using the unambiguous binary load commands LC_UUID.`,
+            ]
           : [],
     };
 

@@ -7,7 +7,7 @@ import { inspectManagedMembersBytes } from "../../../dist/dotnet/ManagedMemberIn
 import { projectManagedApplicationGraphEvidence } from "../../../dist/application/managed/ManagedApplicationGraphService.js";
 import { traceApplicationFeatureEvidence } from "../../../dist/application/javascript/JavaScriptApplicationWorkflowService.js";
 import { createEvidence } from "../../../dist/domain/evidence.js";
-import { MANAGED_STATIC_PROVIDER } from "../../../dist/application/InvestigationProviders.js";
+import { MANAGED_STATIC_PROVIDER } from "../../../dist/domain/investigationProviders.js";
 import {
   ensure,
   methodTokenRow,
@@ -207,7 +207,7 @@ function verifyManagedAppManifestApplicationGraph({
       traced.ok,
       `application graph trace failed for method ${expectedTrace.method_token}`,
     );
-    const matched = traced.value.normalized_result.summary.matched_seeds;
+    const matched = traced.value.result.summary.matched_seeds;
     ensure(
       matched >= expectedTrace.min_matched_seeds,
       `application graph trace ${expectedTrace.seed} matched ${String(matched)} seeds, expected at least ${String(expectedTrace.min_matched_seeds)}`,
@@ -218,7 +218,7 @@ function verifyManagedAppManifestApplicationGraph({
       method_token: expectedTrace.method_token,
       seed: expectedTrace.seed,
       matched_seeds: matched,
-      trace_evidence_id: traced.value.evidence_id,
+      trace_evidence_id: traced.value.evidence.evidence_id,
     });
   }
 

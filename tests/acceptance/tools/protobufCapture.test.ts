@@ -2,7 +2,7 @@ import { z } from "zod";
 import { readFile, unlink, writeFile, mkdir, truncate } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
-import { cliTest } from "../../support/cli/cliFixture.js";
+import { cliTest, runFileCli } from "../../support/cli/cliFixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import {
   protobufCaptureDescriptor,
@@ -156,6 +156,15 @@ captureTest(
     });
     const missingError = parseMcpToolError(missing).error;
     expect(missingError.code).toBe("invalid_request");
+    expect(missingError.details).toMatchObject({
+      issues: [
+        {
+          path: ["protobuf", "schema", "message_type"],
+          reason: "invalid_value",
+          message: expect.stringContaining("capture.Missing"),
+        },
+      ],
+    });
     const retainedSource = retainedCaptureDetailsSchema.parse(
       missingError.details,
     ).partial_observation;
@@ -559,6 +568,12 @@ captureTest(
 
 const trailerCases = [
   ["valid", "grpc-status", "0", "complete"],
+  [
+    "opaque",
+    "grpc-status",
+    "0\r\nx-note: caf\u00e9\r\nx-after: kept",
+    "partial",
+  ],
   ["uppercase", "Grpc-Status", "0", "partial"],
   ["nul", "grpc-status", "0\u0000bad", "partial"],
   ["lf", "grpc-status", "0\nbad", "partial"],
@@ -582,7 +597,10 @@ captureTest.for(
   async ({ framing, name, headerName, value, status }, { cli, mcp }) => {
     const root = await createTestTempDirectory("rea-grpc-web-trailers-");
     const path = join(root, `${framing}-${name}.har`);
-    const trailer = Buffer.from(`${headerName}: ${value}\r\n`);
+    const trailer = Buffer.from(
+      `${headerName}: ${value}\r\n`,
+      name === "opaque" ? "latin1" : "utf8",
+    );
     const body = Buffer.concat([
       protobufFrame(Buffer.from([8, 1])),
       protobufFrame(trailer, 128),
@@ -592,7 +610,7 @@ captureTest.for(
       `application/${framing}`,
     );
     await writeFile(path, original);
-    const response = await cli.run({
+    const options = {
       arguments: [
         "inspect-web-network-capture",
         path,
@@ -603,7 +621,10 @@ captureTest.for(
         "auto",
         "--json",
       ],
-    });
+    };
+    const response = await (name === "valid"
+      ? cli.run(options)
+      : runFileCli(cli, options));
     expect(response.exitCode, response.stdout + response.stderr).toBe(0);
     const evidence = parseEvidence(response.json);
     const report = webNetworkCaptureSchema.parse(evidence.normalized_result);
@@ -618,6 +639,12 @@ captureTest.for(
       ],
       fields: [{ number: 1, wire_type: "varint", value: "1" }],
     });
+    if (name === "opaque") {
+      expect(report.records[0]?.protobuf?.[0]?.frames[1]?.trailers).toEqual([
+        { name: "grpc-status", value: "0" },
+        { name: "x-after", value: "kept" },
+      ]);
+    }
     const reply = await mcp.call("inspect_web_network_capture", {
       capture_path: path,
       format: "har",
@@ -627,5 +654,41 @@ captureTest.for(
     expect(reply.isError, JSON.stringify(reply)).not.toBe(true);
     expect(reply.structuredContent).toEqual(response.json);
     expect(await readFile(path, "utf8")).toBe(original);
+  },
+);
+
+captureTest(
+  "keeps automatic framing partial when a HAR mimeType is excluded through MCP",
+  async ({ mcp }) => {
+    const root = await createTestTempDirectory("rea-protobuf-mime-");
+    const path = join(root, "capture.har");
+    await writeFile(path, protobufHar());
+    const reply = await mcp.call("inspect_web_network_capture", {
+      capture_path: path,
+      format: "har",
+      record_ordinals: [0],
+      sensitive_values: ["grpc-web+proto"],
+    });
+    expect(reply.isError, JSON.stringify(reply)).not.toBe(true);
+    const report = webNetworkCaptureSchema.parse(
+      parseEvidence(reply.structuredContent).normalized_result,
+    );
+    expect(report.records[0]?.redactions).toContainEqual({
+      pointer: "/response/content/mimeType",
+      reason: "explicit-sensitive-value",
+    });
+    expect(report.records[0]?.binary_fields[0]).toMatchObject({
+      pointer: "/response/content/text",
+      state: "retained",
+    });
+    expect(report.records[0]?.protobuf).toBeUndefined();
+    expect(report.records[0]?.limitations).toContainEqual(
+      expect.stringMatching(/^Selected body's MIME metadata is excluded/),
+    );
+    expect(report.protobuf_coverage).toEqual({
+      status: "partial",
+      selected_records: 1,
+      inspected_records: 1,
+    });
   },
 );

@@ -43,6 +43,30 @@ it.each(["REDACTED", "[", "]", "/capture.har"])(
   },
 );
 
+it("records an explicit capture deadline and omits the default", async () => {
+  const seen: Array<number | undefined> = [];
+  const service = new WebNetworkCaptureService({
+    inspect: (input) => {
+      seen.push(input.capture_timeout_ms);
+      return Promise.resolve(ok(fixture()));
+    },
+  });
+  const explicit = await service.inspect({
+    capture_path: "/capture.har",
+    format: "har",
+    capture_timeout_ms: 250,
+  });
+  if (!explicit.ok) throw explicit.error;
+  expect(explicit.value.parameters.capture_timeout_ms).toBe(250);
+  const omitted = await service.inspect({
+    capture_path: "/capture.har",
+    format: "har",
+  });
+  if (!omitted.ok) throw omitted.error;
+  expect(omitted.value.parameters).not.toHaveProperty("capture_timeout_ms");
+  expect(seen).toEqual([250, undefined]);
+});
+
 it("keeps observed artifact identity when the entire sensitive path is excluded", async () => {
   const result = await new WebNetworkCaptureService({
     inspect: () => Promise.resolve(ok(fixture())),
@@ -352,6 +376,31 @@ it.each([
   }).inspect({ capture_path: "/capture.har", format: "har", ...extra });
   expect(result.ok).toBe(false);
   if (!result.ok) expect(result.error._tag).toBe("AnalysisInputError");
+});
+
+it("reports an ordinal past the capture's records as an out-of-range selection", async () => {
+  const report = fixture();
+  const result = await new WebNetworkCaptureService({
+    inspect: () => Promise.resolve(ok(report)),
+  }).inspect({
+    capture_path: "/capture.har",
+    format: "har",
+    record_ordinals: [0, 5],
+  });
+  if (result.ok) throw new Error("expected an out-of-range ordinal");
+  expect(projectAnalysisError(result.error)).toMatchObject({
+    code: "invalid_request",
+    details: {
+      issues: [
+        {
+          path: ["record_ordinals", 1],
+          reason: "out_of_range",
+          minimum: 0,
+          maximum: report.total_records - 1,
+        },
+      ],
+    },
+  });
 });
 
 it("rejects a port changing the artifact identity or producer ordinal sequence", async () => {

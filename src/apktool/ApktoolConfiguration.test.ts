@@ -271,9 +271,9 @@ describe("apktoolInvocation", () => {
     expect(apktoolConfigurationAvailability(failure)).toMatchObject({
       status: "unavailable",
       code: "not_configured",
+      remediation: expect.stringContaining(APKTOOL_COMMAND_ENV),
       diagnostics: {
         selected_command: "C:\\tools & more\\apktool.cmd",
-        remediation: expect.stringContaining(APKTOOL_COMMAND_ENV),
       },
     });
   });
@@ -530,4 +530,17 @@ let commands = new ApktoolCommandCleanup();
 afterEach(async () => {
   await commands.close();
   commands = new ApktoolCommandCleanup();
+});
+
+it("does not implicitly search CWD when no opt-out flag is present", async () => {
+  await expect(
+    resolveApktoolCommand(
+      { Path: "C:\\Selected Tools;D:\\Other Tools", PathExt: ".EXE" },
+      "win32",
+    ),
+  ).rejects.toMatchObject({ code: "command_missing" });
+  expect(lookup.stat.mock.calls.map(([path]) => path)).toEqual([
+    "C:\\Selected Tools\\apktool.EXE",
+    "D:\\Other Tools\\apktool.EXE",
+  ]);
 });

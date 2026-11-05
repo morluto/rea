@@ -55,8 +55,7 @@ cliTest.for(
     const { graph } = result;
     const windows = graph.nodes.filter(({ kind }) => kind === "browser-window");
     expect(windows).toHaveLength(expectedRoles);
-    // Generic `property:preload` discovery is separate from a proven
-    // BrowserWindow identity; only the latter may create this association.
+    // Preload roles share the BrowserWindow identity owner.
     expect(
       graph.nodes.filter(
         ({ kind, observations }) =>
@@ -66,6 +65,9 @@ cliTest.for(
               properties.mechanism === "BrowserWindow:webPreferences.preload",
           ),
       ),
+    ).toHaveLength(expectedRoles);
+    expect(
+      graph.nodes.filter(({ kind }) => kind === "electron-preload"),
     ).toHaveLength(expectedRoles);
     const main = findSourceModule(graph, "main.cjs");
     expect(main).toBeDefined();

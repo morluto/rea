@@ -248,7 +248,7 @@ describe("identityless lineage refresh follows tree membership", () => {
     expect(environment).toHaveBeenCalledWith(102);
   });
 
-  it("rejects a cached foreign row after an ancestor joins the launcher", async () => {
+  it("keeps a tokenless cached row unverified after its ancestor joins the launcher", async () => {
     let outsiderReads = 0;
     const environment = vi.fn((pid: number) => {
       if (pid === 101 || pid === 103)
@@ -283,7 +283,8 @@ describe("identityless lineage refresh follows tree membership", () => {
       }),
     ).resolves.toMatchObject({
       status: "unavailable",
-      reason: "process lineage contains an unowned or PID-reused process",
+      reason:
+        "REA_PROCESS_RUN_ID was absent from the readable environment for PID 102; process lineage ownership remains unverified",
     });
     expect(outsiderReads).toBe(2);
     expect(environment.mock.calls.filter(([pid]) => pid === 50)).toHaveLength(
@@ -291,7 +292,7 @@ describe("identityless lineage refresh follows tree membership", () => {
     );
   });
 
-  it("re-reads a cached descendant when its relation is unchanged", async () => {
+  it("re-reads a cached descendant and keeps its missing token unverified", async () => {
     const { environment, reads } = environmentForReplacementReads((read) =>
       read === 1 ? "run-token" : undefined,
     );
@@ -309,7 +310,8 @@ describe("identityless lineage refresh follows tree membership", () => {
       }),
     ).resolves.toMatchObject({
       status: "unavailable",
-      reason: "process lineage contains an unowned or PID-reused process",
+      reason:
+        "REA_PROCESS_RUN_ID was absent from the readable environment for PID 102; process lineage ownership remains unverified",
     });
     expect(reads()).toBe(2);
   });
@@ -399,7 +401,7 @@ describe("identityless lineage refresh rechecks the launcher", () => {
     });
   });
 
-  it("rejects a refresh whose launcher PID is no longer owned", async () => {
+  it("keeps a refreshed launcher with a missing ownership token unverified", async () => {
     let launcherReads = 0;
     const environment = vi.fn((pid: number) => {
       if (pid === 101)
@@ -425,14 +427,15 @@ describe("identityless lineage refresh rechecks the launcher", () => {
       }),
     ).resolves.toMatchObject({
       status: "unavailable",
-      reason: "process lineage contains an unowned or PID-reused process",
+      reason:
+        "REA_PROCESS_RUN_ID was absent from the readable environment for PID 100; process lineage ownership remains unverified",
     });
     expect(launcherReads).toBe(2);
   });
 });
 
 describe("identityless lineage refresh rechecks an initial descendant", () => {
-  it("rejects a reused PID after an earlier descendant token matched", async () => {
+  it("keeps a descendant with a missing token unverified after an earlier match", async () => {
     let reads = 0;
     const environment = vi.fn((pid: number) => {
       if (pid === 101)
@@ -459,7 +462,8 @@ describe("identityless lineage refresh rechecks an initial descendant", () => {
       }),
     ).resolves.toMatchObject({
       status: "unavailable",
-      reason: "process lineage contains an unowned or PID-reused process",
+      reason:
+        "REA_PROCESS_RUN_ID was absent from the readable environment for PID 102; process lineage ownership remains unverified",
     });
     expect(reads).toBe(2);
   });

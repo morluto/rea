@@ -26,6 +26,8 @@ import {
   type ApplicationMcpHarness,
 } from "../../fixtures/applicationMcpHarness.js";
 import { createHistoricalSourceGraph } from "../../../src/domain/referenceSourceGraph.js";
+import { advertisedInputJsonSchema } from "../../../src/contracts/toolSchemaMetadata.js";
+import { toolContract } from "../../../src/contracts/toolContracts.js";
 
 async function runUnicodeSourceMapComparison(
   harness: ApplicationMcpHarness,
@@ -257,7 +259,12 @@ async function runInlineWorkflowScenarios(
       exclusions: [{ path: "vendor/removed.ts", reason: "project-ignored" }],
     },
   };
-  expect(validate(missingPattern)).toBe(false);
+  expect(
+    ajv.validate(
+      advertisedInputJsonSchema(toolContract("compare_source_to_bundle")),
+      missingPattern,
+    ),
+  ).toBe(false);
   const rejectedExclusion = await harness.client.callTool({
     name: "compare_source_to_bundle",
     arguments: missingPattern,

@@ -4,6 +4,8 @@ import {
   semanticOpaqueBindingReadMayHaveChanged,
 } from "./javascriptSemanticOpaqueEffects.js";
 import * as t from "@babel/types";
+import { semanticKnownSymbolKey } from "./javascriptSemanticPropertyKeys.js";
+import { logicalRightOperand } from "./javascriptSymbolicControlFlow.js";
 
 import {
   SemanticDependencyProofs,
@@ -13,11 +15,15 @@ import {
 import {
   semanticCapturePosition,
   semanticEscapeFollowsCapture,
+  semanticBindingEffectFollowsCapture,
   semanticBindingPrecedesCapture,
   semanticBindingAtRead,
 } from "./javascriptSemanticMutationInitializers.js";
 
-import { semanticSlotAtPath } from "./javascriptSemanticSlots.js";
+import {
+  semanticSlotAtPath,
+  semanticContainer,
+} from "./javascriptSemanticSlots.js";
 
 import {
   invalidateSemanticEscapedPath,
@@ -36,7 +42,7 @@ import {
   type JavaScriptSemanticAnalysisState,
   type JavaScriptSemanticBindingState,
 } from "./javascriptSemanticState.js";
-import { semanticRequireOrigin } from "./javascriptSemanticRequireOrigin.js";
+import { readSemanticRequireOrigin } from "./javascriptSemanticRequireOriginSlot.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import {
   readExactJavaScriptLiteral,
@@ -122,10 +128,16 @@ const createEvaluationMemo = (
 ): EvaluationMemo => {
   let dependencies = dependencyProofsByState.get(state);
   if (dependencies === undefined) {
-    dependencies = new SemanticDependencyProofs(state.bindingsById.keys());
+    dependencies = SemanticDependencyProofs.forBindings(
+      state.bindingsById.keys(),
+    );
     dependencyProofsByState.set(state, dependencies);
   }
-  return { provenance: new Map(), dependencyFrames: [], dependencies };
+  return {
+    provenance: new Map(),
+    dependencyFrames: [],
+    dependencies: dependencies.forQuery(),
+  };
 };
 
 interface EvaluationContext {
@@ -251,12 +263,12 @@ export const evaluateSemanticExpression = (
     dependence: { lowest: CALLER_INDEPENDENT },
     memo: createEvaluationMemo(state),
   };
-  return evaluateExpression(
-    node,
-    capturePoint === undefined
-      ? context
-      : (captureContextAt(capturePoint, context) ?? context),
-  );
+  return capturePoint === undefined
+    ? evaluateCapturedExpression(node, context)
+    : evaluateExpression(
+        node,
+        captureContextAt(capturePoint, context) ?? context,
+      );
 };
 
 /** Resolve an expression using the same alias and module provenance owner. */
@@ -542,7 +554,19 @@ const evaluateBinding = (
   }
   let projected = invalidateSemanticMutationPaths(
     value,
-    binding.memberWrites.map(({ path }) => path),
+    binding.memberWrites
+      .filter(
+        ({ node }) =>
+          context.capturePoint === undefined ||
+          node === undefined ||
+          !semanticBindingEffectFollowsCapture(
+            binding,
+            context.capturePoint,
+            node,
+            context.state.parentsByNode,
+          ),
+      )
+      .map(({ path }) => path),
   );
   for (const escape of binding.escapedPaths) {
     // Escapes only invalidate object references; other lattice values survive.
@@ -658,12 +682,16 @@ const evaluateExpressionValue = (
     const binding = resolveSemanticBindingState(context.state, node, node.name);
     if (binding === undefined)
       return { status: "unknown", reason: `Unbound identifier ${node.name}.` };
-    const read =
+    const read = semanticBindingAtRead(
+      binding,
+      node,
+      context.state.parentsByNode,
+    );
+    if (
+      read.status === "unresolved" &&
       binding.mutable &&
       binding.definitions.some(({ kind }) => kind === "assignment")
-        ? semanticBindingAtRead(binding, node, context.state.parentsByNode)
-        : undefined;
-    if (read?.status === "unresolved") {
+    ) {
       const value = evaluateBinding(binding, nestedContext(context));
       if (
         value.status === "unknown" ||
@@ -676,7 +704,7 @@ const evaluateExpressionValue = (
         reason: `Binding ${binding.name} has unresolved ordering at this read.`,
       };
     }
-    const atRead = read?.binding ?? binding;
+    const atRead = read.binding;
     if (
       semanticOpaqueBindingReadMayHaveChanged(
         binding,
@@ -691,16 +719,14 @@ const evaluateExpressionValue = (
     return evaluateBinding(atRead, nestedContext(context), atRead === binding);
   }
   if (t.isTemplateLiteral(node)) return evaluateTemplate(node, context);
-  if (t.isConditionalExpression(node))
-    return mergeValues([
-      evaluateExpression(node.consequent, nestedContext(context)),
-      evaluateExpression(node.alternate, nestedContext(context)),
-    ]);
-  if (t.isLogicalExpression(node))
-    return mergeValues([
-      evaluateExpression(node.left, nestedContext(context)),
-      evaluateExpression(node.right, nestedContext(context)),
-    ]);
+  if (t.isConditionalExpression(node) || t.isLogicalExpression(node))
+    return mergeValues(
+      semanticSelectedBranches(node, context).map(
+        (branch) =>
+          branch.value ??
+          evaluateExpression(branch.node, nestedContext(context)),
+      ),
+    );
   if (t.isObjectExpression(node)) return evaluateObject(node, context);
   if (t.isArrayExpression(node)) return evaluateArray(node, context);
   if (t.isMemberExpression(node) || t.isOptionalMemberExpression(node))
@@ -750,6 +776,57 @@ const evaluateTemplate = (
   return primitiveSet(candidates);
 };
 
+/**
+ * A branch that may produce the expression's value. A logical left operand
+ * carries the value its selection already evaluated, so value consumers reuse
+ * it instead of re-evaluating that operand; re-evaluating it at every level of
+ * a left-nested `a || b || c` chain doubles the work per operand.
+ */
+interface SemanticSelectedBranch {
+  readonly node: t.Node;
+  readonly value?: JavaScriptSemanticValue;
+}
+
+/** Value and provenance selection consume the same established branch facts. */
+const semanticSelectedBranches = (
+  node: t.ConditionalExpression | t.LogicalExpression,
+  context: EvaluationContext,
+): readonly SemanticSelectedBranch[] => {
+  if (t.isConditionalExpression(node)) {
+    const test = evaluateExpression(node.test, nestedContext(context));
+    const choice = semanticCondition(test, Boolean);
+    return choice === undefined
+      ? [{ node: node.consequent }, { node: node.alternate }]
+      : [{ node: choice ? node.consequent : node.alternate }];
+  }
+  const value = evaluateExpression(node.left, nestedContext(context));
+  const left = { node: node.left, value };
+  const choice = logicalRightOperand(
+    node.operator,
+    semanticCondition(value, Boolean),
+    semanticCondition(value, (candidate) => candidate === null, false),
+  );
+  return choice === undefined
+    ? [left, { node: node.right }]
+    : [choice ? { node: node.right } : left];
+};
+
+/** All retained alternatives must agree before discarding a branch. */
+const semanticCondition = (
+  value: JavaScriptSemanticValue,
+  select: (value: string | number | boolean | null) => boolean,
+  objectResult = true,
+): boolean | undefined => {
+  if (value.status === "object" || value.status === "array")
+    return objectResult;
+  const choices = primitiveCandidates(value)?.map(select);
+  return choices !== undefined &&
+    choices.length > 0 &&
+    choices.every((choice) => choice === choices[0])
+    ? choices[0]
+    : undefined;
+};
+
 const evaluateObject = (
   node: t.ObjectExpression,
   context: EvaluationContext,
@@ -770,9 +847,52 @@ const evaluateObject = (
   };
   for (const property of node.properties) {
     if (t.isSpreadElement(property)) {
+      const copied = evaluateExpression(
+        property.argument,
+        captureContextAt(property.argument, nestedContext(context)) ??
+          nestedContext(context),
+      );
+      if (copied.status === "object" || copied.status === "array") {
+        const unknown =
+          copied.status === "object"
+            ? copied.unknownProperties
+            : copied.unknownItems;
+        if (unknown) {
+          unknownProperties = true;
+          omittedProperties = null;
+          invalidateEarlierProperties();
+        }
+        for (const field of semanticContainer(copied).slots) {
+          if (field.presence === "absent") continue;
+          propertiesByName.set(field.name, {
+            ...field,
+            value: isPrimitive(field.value)
+              ? field.value
+              : {
+                  status: "unknown",
+                  reason:
+                    "Copied reference fields retain live identity rather than a scalar snapshot.",
+                },
+          });
+        }
+      } else if (
+        copied.status !== "literal" ||
+        typeof copied.value === "string"
+      ) {
+        unknownProperties = true;
+        omittedProperties = null;
+        invalidateEarlierProperties();
+      }
+      continue;
+    }
+    if (
+      property.computed &&
+      semanticKnownSymbolKey(property.key, context.state)
+    ) {
+      // The string-slot lattice omits symbol names, but they cannot overwrite
+      // established string fields. Keep the omitted inventory explicit.
       unknownProperties = true;
-      omittedProperties = null;
-      invalidateEarlierProperties();
+      if (omittedProperties !== null) omittedProperties += 1;
       continue;
     }
     const name = semanticStaticPropertyKey(property.key, property.computed);
@@ -1086,16 +1206,7 @@ const provenanceForBindingInitializers = (
         : "Catch binding provenance depends on the thrown value.",
     );
   if (binding.directOrigins.length > 0)
-    return binding.kind === "import" &&
-      !binding.runtimeImport &&
-      binding.directOrigins.every(
-        ({ resolutionMode }) => resolutionMode !== "require",
-      )
-      ? semanticAmbiguousProvenance(
-          binding.directOrigins,
-          "A type-only import does not establish a runtime module value.",
-        )
-      : semanticOriginsProvenance(binding.directOrigins);
+    return semanticOriginsProvenance(binding.directOrigins);
   if (binding.initializers.length === 0) return semanticLocalProvenance();
   if (binding.initializers.length > 1)
     return semanticAmbiguousProvenance(
@@ -1142,6 +1253,7 @@ const provenanceForExpression = (
 ): JavaScriptBindingProvenance => {
   if (context.expressionDepth > SEMANTIC_EXPRESSION_DEPTH_LIMIT) {
     context.dependence.lowest = EVERY_CALLER;
+    context.state.valueResourceLimits.add("expression-depth");
     return semanticUnresolvedProvenance(
       "unknown",
       semanticResourceLimitReason("expression-depth"),
@@ -1154,6 +1266,7 @@ const provenanceForExpression = (
       SEMANTIC_EXPRESSION_DEPTH_LIMIT
     ) {
       context.dependence.lowest = EVERY_CALLER;
+      context.state.valueResourceLimits.add("expression-depth");
       return semanticUnresolvedProvenance(
         "unknown",
         semanticResourceLimitReason("expression-depth"),
@@ -1164,7 +1277,7 @@ const provenanceForExpression = (
       expressionDepth: context.expressionDepth + unwrapped.depth,
     });
   }
-  const required = semanticRequireOrigin(node, context.state);
+  const required = readSemanticRequireOrigin(node, context.state);
   if (required !== undefined)
     return semanticOriginsProvenance([required.origin]);
   if (t.isSequenceExpression(node)) {
@@ -1220,12 +1333,9 @@ const provenanceForExpression = (
         );
   }
   if (t.isConditionalExpression(node) || t.isLogicalExpression(node)) {
-    const left = t.isConditionalExpression(node) ? node.consequent : node.left;
-    const right = t.isConditionalExpression(node) ? node.alternate : node.right;
-    const candidates = [
-      provenanceForExpression(left, nestedContext(context)),
-      provenanceForExpression(right, nestedContext(context)),
-    ];
+    const candidates = semanticSelectedBranches(node, context).map((branch) =>
+      provenanceForExpression(branch.node, nestedContext(context)),
+    );
     const origins = uniqueSemanticOrigins(
       candidates.flatMap((candidate) => candidate.origins),
     );

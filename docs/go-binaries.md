@@ -5,6 +5,12 @@ modules, replacements and build settings are embedded in one selected local
 executable or library. It reads the file without running it and requires no
 Go installation, active binary target, Hopper, Ghidra or IDA.
 
+If a stable read completes but descriptor finalization fails or receives
+cancellation, the error retains the selected path, SHA-256 and byte length as
+a `file-snapshot-hash` partial observation. It does not claim that Go metadata
+was decoded. Failed cleanup stays incomplete until its exact owner confirms
+release; cancellation keeps the caller's reason.
+
 ```bash
 rea inspect-go-binary /absolute/path/to/application --json
 ```
@@ -61,7 +67,7 @@ rea inspect-go-binary ./application --detail summary --evidence_output ./go-evid
 `--evidence_output` is required for CLI summary delivery and never overwrites an
 existing file. The default CLI/MCP reply remains complete.
 
-[Measured workflows](../experiments/analysis-efficiency/go-build-views.md) include
+[Measured workflows](https://github.com/morluto/rea/blob/42e1a17d6e6c0487f17be0bae248553c4caba7f7/experiments/analysis-efficiency/go-build-views.md) include
 catalog repetition and extra calls. Identity/count questions benefit from a
 single summary. In the tested Codex full-catalog configuration, a compound
 question about identity and one dependency uses fewer tokens in captured request JSON with
@@ -109,17 +115,53 @@ module record and no dependency records has an observed empty dependency list.
 
 ## Supported boundary
 
-The built-in TypeScript reader supports ELF, PE and thin Mach-O images with Go's
-inline or historical pointer build-info encoding. Source ranges refer to the
-original stable file snapshot, including pointer-backed strings. It does not
-scan arbitrary byte strings as compiler metadata or interpret a fat Mach-O
-container as one selected architecture.
+The built-in TypeScript reader supports ELF, PE and thin Mach-O images, and one
+selected slice of a universal Mach-O, with Go's inline or historical pointer
+build-info encoding. Source ranges refer to the original stable file snapshot,
+including pointer-backed strings. The shared native container owns address
+mapping, including file-backed PE headers. A descriptor or string can cross
+adjacent mappings when their virtual addresses map to physically contiguous
+file bytes with the same translation. Gaps, conflicting aliases, zero-fill
+aliases and noncontiguous string source bytes cannot establish a single source
+range and are refused. Native export C strings use the same mapping checks but
+can join multiple source chunks because their result has no single-span source
+contract. Legacy pointer-backed fields are decoded at
+the width declared by Go's build-info record, independently of the image's ELF
+class. It does not scan arbitrary byte strings as compiler metadata.
+
+Legacy string descriptors and contents may use the declared file-backed PE
+headers. A descriptor or string may also cross adjacent loader mappings when
+their virtual ranges cover every requested byte and identify one contiguous
+file range. Gaps, conflicting file aliases and nonempty zero-fill overlap remain
+invalid. Discovery policy and the aggregate 1 MiB string-content limit are
+unchanged. These are static reads over REA's native mapping facts; they do not
+establish Windows/Linux loading or parity with Go's standard reader, whose
+[Go 1.24.0 ELF/PE readers](https://github.com/golang/go/blob/go1.24.0/src/debug/buildinfo/buildinfo.go#L445)
+read within individual segments or sections. The historical two-word string
+descriptor follows the
+[Go 1.17.13 reader](https://github.com/golang/go/blob/go1.17.13/src/cmd/go/internal/version/version.go#L212).
+
+A universal (FAT) Mach-O needs `architecture` (`x86`, `x86_64`, `arm`
+or `arm64`; CLI `--architecture`). REA reads its own FAT table, without `lipo`,
+and validates the selected slice's range, alignment and Mach-O header CPU
+against the table. The result keeps the universal file as `artifact` (its
+SHA-256 and size), adds `selected_slice` with the slice offset, length, raw CPU
+type/subtype and the FAT table digest, and reports every source range as a
+file offset inside that slice. Without `architecture`, or when the file has no
+such slice or several, the request fails on `architecture` and lists the slices
+present. `architecture` on any other image is rejected rather than ignored.
 
 For ELF images without a named build-info section, discovery checks each
 nonempty writable, non-executable load segment in program-header order. This
 includes sectionless PIE images with metadata in a later data segment. Named
 sections retain priority, and alignment, file mapping and record validation
-remain required.
+remain required. When ELF section names are unreadable, limitations report that
+coverage gap; the fallback search policy is unchanged.
+
+A named ELF or Mach-O build-info section selects the record's discovery range.
+For inline encoding, the following version and module strings may continue past
+that section into its file-backed load mapping; their bytes are still checked
+against the mapping and the existing aggregate string limit.
 
 Historical moduleless Go binaries can store their empty module-string header in
 declared zero-initialized virtual memory rather than file-backed bytes. The reader
@@ -146,10 +188,12 @@ and `reported_limits.maximum_input_bytes`. Select a suitable input within that
 fixed allowance; changing an output-write or transport budget does not admit it.
 
 Resource guards bound the selected file and cumulative header searches to 256 MiB
-each, aggregate embedded strings
-to 1 MiB, structural table decoding to 16 MiB and the complete normalized metadata
-report to 8 MiB. Identical search spans with the same virtual alignment are
-searched once; partially overlapping spans consume the cumulative search budget
+each, aggregate embedded string contents to 1 MiB (varint length prefixes are
+framing and do not count toward this allowance), structural table decoding to
+16 MiB and the complete normalized metadata report to 8 MiB. Inline strings must
+also fit within their actual mapped source range. Identical search spans with
+the same virtual alignment are searched once; partially overlapping spans
+consume the cumulative search budget
 and fail with a CPU resource constraint when it is exhausted. Oversized results
 fail without partial success. MCP also applies
 its [response transport budget](mcp-contracts.md), which counts both text and
@@ -168,3 +212,8 @@ those questions require a disassembler.
 `npm run verify:go:binary` exercises compiler-built fixtures through the public
 CLI and MCP, comparing their metadata with Go's standard `debug/buildinfo`
 reader. The verification lane requires Go; normal inspection does not.
+
+Reader architecture names remain verbatim in the report. Evidence subjects use
+the recognized canonical family: `386` maps to `x86`, `amd64` to `x86_64`, and
+`ppc` to `powerpc`. Unknown families such as `ppc64` remain unknown rather than
+being inferred from a related spelling.

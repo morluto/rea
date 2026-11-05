@@ -3,26 +3,21 @@ import type { WebSourceMapPort } from "../../application/WebSourceLocationPorts.
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisCancelledError,
-  AnalysisCapabilityUnavailableError,
   AnalysisInputError,
-  AnalysisOutputError,
 } from "../../domain/analysisErrorCore.js";
 import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
-import { err, ok, type Result } from "../../domain/result.js";
-import { javaScriptRuntime } from "../../domain/runtimeVersion.js";
+import { err, type Result } from "../../domain/result.js";
+import { noRuntimeOverrideSentence } from "../../domain/browserDeadline.js";
 import {
+  DEFAULT_WEB_SOURCE_MAP_DECODE_TIMEOUT_MS,
   WEB_SOURCE_MAP_LIMITS,
   type WebSourceMapReport,
 } from "../../domain/webSourceLocation.js";
+import { sourceMapCodecInputSchema } from "./SourceMapCodecProtocol.js";
 import {
-  sourceMapCodecInputSchema,
-  sourceMapCodecReplySchema,
-} from "./SourceMapCodecProtocol.js";
-import {
-  SOURCE_MAP_CODEC_MEMORY_LIMIT_BYTES,
-  SourceMapCleanupFailure,
   runSourceMapCommand,
   type SourceMapCleanupOwner,
+  type SourceMapCleanupRetention,
   type SourceMapDecoderDependencies,
 } from "./SourceMapCommand.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
@@ -94,7 +89,7 @@ export class SourceMapDecoder implements WebSourceMapPort {
         OPERATION,
         "limit",
         undefined,
-        `${input.path}: Source-map input exceeds the 4 MiB map or 32 MiB encoded request budget.`,
+        `${input.path}: Source-map input exceeds the ${String(WEB_SOURCE_MAP_LIMITS.mapBytes)}-byte map or ${String(WEB_SOURCE_MAP_LIMITS.outputBytes)}-byte encoded request budget. ${noRuntimeOverrideSentence("Those budgets stay fixed.", "decode_timeout_ms")}`,
       );
     if (Buffer.byteLength(input.text) > WEB_SOURCE_MAP_LIMITS.mapBytes)
       return err(capacityFailure());
@@ -112,46 +107,18 @@ export class SourceMapDecoder implements WebSourceMapPort {
         new AnalysisCancelledError(OPERATION, { cause: options.signal.reason }),
       );
     const serialized = encoded.join("");
+    const retainedCleanup: SourceMapCleanupRetention = {};
     const response = await runSourceMapCommand(
       serialized,
       input.path,
       options,
       this.dependencies,
+      retainedCleanup,
+      input.decodeTimeoutMs ?? DEFAULT_WEB_SOURCE_MAP_DECODE_TIMEOUT_MS,
     );
-    if (!response.ok) {
-      if (response.error instanceof SourceMapCleanupFailure)
-        this.#pendingCleanup = response.error.cleanupOwner;
-      return response;
-    }
-    let value: unknown;
-    try {
-      value = JSON.parse(response.value);
-    } catch (cause: unknown) {
-      return err(
-        new AnalysisOutputError(
-          OPERATION,
-          `Malformed codec JSON reply: ${cause instanceof Error ? cause.message : String(cause)}`,
-        ),
-      );
-    }
-    const reply = sourceMapCodecReplySchema.safeParse(value);
-    if (!reply.success)
-      return err(
-        new AnalysisOutputError(
-          OPERATION,
-          `Malformed codec reply: ${reply.error.message}`,
-        ),
-      );
-    if (options?.signal?.aborted)
-      return err(
-        new AnalysisCancelledError(OPERATION, { cause: options.signal.reason }),
-      );
-    if (reply.data.state === "failure")
-      return codecFailure(input.path, reply.data.reason, reply.data.message);
-    const runtimeFailure = codecRuntimeFailure(reply.data.report.runtime);
-    return runtimeFailure === undefined
-      ? ok(reply.data.report)
-      : err(new AnalysisOutputError(OPERATION, runtimeFailure));
+    if (retainedCleanup.owner !== undefined)
+      this.#pendingCleanup = retainedCleanup.owner;
+    return response;
   }
 
   async close(): Promise<void> {
@@ -171,61 +138,9 @@ export class SourceMapDecoder implements WebSourceMapPort {
   async #retryCleanup(): Promise<AnalysisError | undefined> {
     const pending = this.#pendingCleanup;
     if (pending === undefined) return undefined;
-    const failure = await pending.close(null);
+    const failure = await pending.close();
     if (failure !== undefined) return failure;
     this.#pendingCleanup = undefined;
     return undefined;
   }
 }
-/**
- * The codec runs on this process's executable. Only a V8 report carries a heap
- * limit; a Bun report must name the process limit its launcher enforced.
- */
-const codecRuntimeFailure = (
-  runtime: WebSourceMapReport["runtime"],
-): string | undefined => {
-  if (
-    runtime.id !==
-    (javaScriptRuntime(process.versions).id === "bun" ? "bun" : "node-v8")
-  )
-    return `Codec reported runtime ${runtime.id}, not the runtime that launched it.`;
-  if (
-    runtime.id === "node-v8" &&
-    runtime.v8_heap_limit_bytes > 256 * 1024 * 1024
-  )
-    return "Codec reported a V8 heap limit exceeding its independent process budget.";
-  if (
-    runtime.id === "bun" &&
-    runtime.process_memory_limit_bytes !== SOURCE_MAP_CODEC_MEMORY_LIMIT_BYTES
-  )
-    return "Codec reported a process memory limit other than the one its launcher enforced.";
-  return undefined;
-};
-const codecFailure = (
-  path: string,
-  reason: "format" | "unsupported" | "limit",
-  detail: string,
-): Result<never, AnalysisError> =>
-  err(
-    reason === "limit"
-      ? new ArtifactOperationError(
-          OPERATION,
-          "limit",
-          undefined,
-          `${path}: ${detail}`,
-        )
-      : reason === "unsupported"
-        ? new AnalysisCapabilityUnavailableError(
-            "source-map-decoder",
-            OPERATION,
-            "unsupported_source_map_profile",
-            { userMessage: `${path}: ${detail}` },
-          )
-        : new AnalysisInputError(OPERATION, undefined, [
-            {
-              path: ["source_map", "path"],
-              reason: "invalid_format",
-              message: `${path}: ${detail}`,
-            },
-          ]),
-  );

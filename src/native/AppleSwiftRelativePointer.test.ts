@@ -18,6 +18,10 @@ const readers = (bytes: Buffer) => ({
     address: `0x${address.toString(16)}`,
     file_offset: Number(address),
   }),
+  targetLocation: (address: bigint) => ({
+    address: `0x${address.toString(16)}`,
+    file_offset: Number(address),
+  }),
   evidence: (address: bigint, description: string) => [
     {
       kind: "binary_metadata" as const,
@@ -94,7 +98,7 @@ it("resolves zero offsets for nonnullable fields to their own field address", ()
     "protocolName",
     "typeName",
     "typeMetadataRecord",
-    "classDescriptorName",
+    "moduleName",
   ] as const) {
     expect(relative(0x20n, kind)).toEqual({ kind: "target", target: 0x20n });
   }

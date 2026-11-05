@@ -140,11 +140,18 @@ vi.mock("../../src/application/RegularFileRead.js", async (importOriginal) => {
 });
 
 import { ClientConfigurationPublication } from "../../src/application/ClientConfigurationPublication.js";
-import { configureClientConfiguration } from "../../src/application/SetupClientConfiguration.js";
-import { RegularFileCleanupFailure } from "../../src/application/RegularFileRead.js";
+import {
+  configureClientConfiguration,
+  ClientConfigurationCleanupRollbackFailure,
+} from "../../src/application/SetupClientConfiguration.js";
+import { RegularFileReadFailure } from "../../src/application/RegularFileRead.js";
+import { retryClientConfigurationCleanup } from "../../src/application/ClientConfigurationCleanup.js";
+import { ArtifactResourceScope } from "../../src/artifacts/ArtifactResourceScope.js";
+import { RegularFileCleanupFailure } from "../../src/filesystem/OwnedRegularFile.js";
 import { OwnedFileHandle } from "../../src/filesystem/OwnedFileHandle.js";
 import type { DoctorHost } from "../../src/application/Doctor.js";
 import { systemSetupHost } from "../../src/application/SetupHost.js";
+import { AnalysisError } from "../../src/domain/analysisErrorBase.js";
 import { systemUninstallHost } from "../../src/application/Uninstall.js";
 import { ConfigurationError } from "../../src/domain/configurationErrors.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
@@ -268,12 +275,12 @@ it("does not roll back or remove config when its initial read cleanup fails", as
   await import("node:fs/promises").then(({ writeFile }) =>
     writeFile(path, original),
   );
-  const failure = new RegularFileCleanupFailure(
+  const failure = new RegularFileCleanupFailure({
     path,
-    await ownReadHandle(path),
-    { kind: "completed", value: original },
-    new Error("injected initial close failure"),
-  );
+    owner: await ownReadHandle(path),
+    outcome: { kind: "completed", value: original },
+    cleanupCause: new Error("injected initial close failure"),
+  });
   state.initialCleanupFailure = failure;
 
   await expect(
@@ -327,12 +334,12 @@ it("retains readback cleanup ownership when rollback also fails", async () => {
     writeFile(path, original),
   );
   const owner = await ownReadHandle(path);
-  const cleanupFailure = new RegularFileCleanupFailure(
+  const cleanupFailure = new RegularFileCleanupFailure({
     path,
     owner,
-    { kind: "completed", value: "" },
-    new Error("injected readback close failure"),
-  );
+    outcome: { kind: "completed", value: "" },
+    cleanupCause: new Error("injected readback close failure"),
+  });
   state.readbackCleanupFailure = cleanupFailure;
   state.rejectRestore = true;
 
@@ -395,7 +402,7 @@ it.each(["existing", "first-run"] as const)(
 
     expect(await fs.readFile(replacement, "utf8")).toBe(foreign);
     expect((await fs.lstat(path)).isSymbolicLink()).toBe(true);
-    expect(result).toMatchObject({ status: "failed", reason: "rollback" });
+    expect(result).toMatchObject({ status: "failed", reason: "conflict" });
     if (kind === "existing")
       expect(await fs.readFile(`${path}.rea.backup`, "utf8")).toBe(original);
   },
@@ -423,7 +430,7 @@ it("retains a replacement regular file when readback fails", async () => {
   );
 
   expect(await fs.readFile(path, "utf8")).toBe(foreign);
-  expect(result).toMatchObject({ status: "failed", reason: "rollback" });
+  expect(result).toMatchObject({ status: "failed", reason: "conflict" });
   expect(await fs.readFile(`${path}.rea.backup`, "utf8")).toBe(original);
 });
 
@@ -442,12 +449,12 @@ it("retains and retries both readback and publication descriptors after mixed cl
     if (rejectReadClose) throw new Error("injected readback close failure");
     await closeRead();
   };
-  state.readbackCleanupFailure = new RegularFileCleanupFailure(
+  state.readbackCleanupFailure = new RegularFileCleanupFailure({
     path,
-    readOwner,
-    { kind: "completed", value: "" },
-    new Error("injected readback close failure"),
-  );
+    owner: readOwner,
+    outcome: { kind: "completed", value: "" },
+    cleanupCause: new Error("injected readback close failure"),
+  });
   state.rejectPublicationClose = true;
   const host = systemSetupHost(
     { platform: "linux", homeDirectory: root } as DoctorHost,
@@ -502,7 +509,7 @@ it("rejects a replaced publication even when the replacement passes registration
       {},
       ["rea", "mcp"],
     ),
-  ).toMatchObject({ status: "failed", reason: "rollback" });
+  ).toMatchObject({ status: "failed", reason: "conflict" });
   expect(await fs.readFile(path, "utf8")).toBe(foreign);
   expect(await fs.readFile(`${path}.rea.backup`, "utf8")).toBe(original);
 });
@@ -525,7 +532,7 @@ it("retains concurrent edits to the published inode rather than overwriting them
       {},
       ["rea", "mcp"],
     ),
-  ).toMatchObject({ status: "failed", reason: "rollback" });
+  ).toMatchObject({ status: "failed", reason: "conflict" });
   expect(await fs.readFile(path, "utf8")).toBe(edited);
   expect(await fs.readFile(`${path}.rea.backup`, "utf8")).toBe(original);
 });
@@ -545,12 +552,12 @@ it("does not adopt a descriptor named by an opaque publication close rejection",
   const foreignOwner = await ownReadHandle(unrelated);
   state.failReadback = false;
   state.rejectPublicationClose = true;
-  state.publicationCloseFailure = new RegularFileCleanupFailure(
-    unrelated,
-    foreignOwner,
-    { kind: "completed", value: "unrelated" },
-    new Error("opaque close rejection"),
-  );
+  state.publicationCloseFailure = new RegularFileCleanupFailure({
+    path: unrelated,
+    owner: foreignOwner,
+    outcome: { kind: "completed", value: "unrelated" },
+    cleanupCause: new Error("opaque close rejection"),
+  });
   const host = systemSetupHost(
     { platform: "linux", homeDirectory: root } as DoctorHost,
     { HOME: root },
@@ -622,6 +629,40 @@ it.each(["symlink", "regular", "valid-readback"] as const)(
   },
 );
 
+it("uninstall retains concurrent edits to the published inode and reports failure", async () => {
+  const root = await createTestTempDirectory("rea-uninstall-inode-edit-");
+  const path = join(root, "client.json");
+  const fs =
+    await vi.importActual<typeof import("node:fs/promises")>(
+      "node:fs/promises",
+    );
+  const original =
+    '{"mcpServers":{"rea":{"command":"rea","args":["mcp"]}},"keep":"original"}\n';
+  const edited = '{"keep":"concurrent edit"}\n';
+  await fs.writeFile(path, original);
+  state.failReadback = false;
+  state.afterPublication = async (publishedPath) => {
+    state.afterPublication = undefined;
+    const before = await fs.stat(publishedPath);
+    await fs.writeFile(publishedPath, edited);
+    expect((await fs.stat(publishedPath)).ino).toBe(before.ino);
+  };
+  const host = systemUninstallHost(root);
+  try {
+    const result = await host.removeClient({
+      name: "cursor",
+      configPath: path,
+      format: "json",
+    });
+    expect(result.status).toBe("failed");
+    expect(result.detail).not.toContain("The original was restored");
+    expect(await fs.readFile(path, "utf8")).toBe(edited);
+    expect(await fs.readFile(`${path}.rea.backup`, "utf8")).toBe(original);
+  } finally {
+    await host.close?.();
+  }
+});
+
 it("uninstall retains both readback and publication owners until cleanup retry", async () => {
   const root = await createTestTempDirectory("rea-uninstall-two-close-owners-");
   const path = join(root, "client.json");
@@ -640,12 +681,12 @@ it("uninstall retains both readback and publication owners until cleanup retry",
     if (rejectReadClose) throw new Error("injected readback close failure");
     await closeRead();
   };
-  state.readbackCleanupFailure = new RegularFileCleanupFailure(
+  state.readbackCleanupFailure = new RegularFileCleanupFailure({
     path,
-    readOwner,
-    { kind: "completed", value: "" },
-    new Error("readback close failed"),
-  );
+    owner: readOwner,
+    outcome: { kind: "completed", value: "" },
+    cleanupCause: new Error("readback close failed"),
+  });
   state.rejectPublicationClose = true;
   const host = systemUninstallHost(root);
   try {
@@ -691,12 +732,12 @@ it("uninstall retains the exact owner of a failed initial config read", async ()
     if (rejectClose) throw new Error("initial close denied");
     await close();
   };
-  state.initialCleanupFailure = new RegularFileCleanupFailure(
+  state.initialCleanupFailure = new RegularFileCleanupFailure({
     path,
     owner,
-    { kind: "completed", value: original },
-    new Error("initial close denied"),
-  );
+    outcome: { kind: "completed", value: original },
+    cleanupCause: new Error("initial close denied"),
+  });
   const host = systemUninstallHost(root);
   try {
     expect(
@@ -768,6 +809,74 @@ it("uninstall close joins a publication already admitted by its host", async () 
   ).rejects.toThrow("closed");
 });
 
+it("preserves physical read origin through failed readback cleanup and rollback", async () => {
+  const root = await createTestTempDirectory("rea-config-physical-rollback-");
+  const path = join(root, "client.json");
+  const other = join(root, "foreign.json");
+  const fs =
+    await vi.importActual<typeof import("node:fs/promises")>(
+      "node:fs/promises",
+    );
+  await fs.writeFile(path, '{"keep":true}\n');
+  await fs.writeFile(other, "foreign bytes");
+  const owned = await ownReadHandle(path);
+  const foreign = await ownReadHandle(other);
+  const opaque = new RegularFileCleanupFailure({
+    path: other,
+    owner: foreign,
+    outcome: { kind: "completed", value: "foreign bytes" },
+    cleanupCause: new Error("foreign cleanup-shaped physical rejection"),
+  });
+  const physical = new RegularFileReadFailure(opaque);
+  const close = owned.handle.close.bind(owned.handle);
+  let denyClose = true;
+  owned.handle.close = async () => {
+    if (denyClose) throw new Error("readback close denied");
+    await close();
+  };
+  state.readbackCleanupFailure = new RegularFileCleanupFailure({
+    path,
+    owner: owned,
+    outcome: { kind: "failed", cause: opaque },
+    operationFailure: physical,
+    cleanupCause: new Error("readback close denied"),
+  });
+  state.rejectRestore = true;
+  const resources = new ArtifactResourceScope();
+  try {
+    const failure: unknown = await configureClientConfiguration(
+      { name: "cursor", configPath: path, format: "json" },
+      {},
+      ["rea", "mcp"],
+    ).catch((cause: unknown) => cause);
+    expect(failure).toBeInstanceOf(ClientConfigurationCleanupRollbackFailure);
+    if (!(failure instanceof ClientConfigurationCleanupRollbackFailure))
+      throw new Error("Expected failed readback cleanup and rollback");
+    expect(failure.operationFailure).toBe(physical);
+    expect(failure.outcome).toEqual({ kind: "failed", cause: opaque });
+    expect(failure.configurationFailure).toMatchObject({
+      status: "failed",
+      reason: "rollback",
+      failure: { kind: "restore", detail: "injected restore write failure" },
+    });
+    const retried = await retryClientConfigurationCleanup(failure, resources);
+    expect(retried.primary).toBe(opaque);
+    expect(retried.failures).toHaveLength(1);
+    expect(retried.cleanup?.resources).toEqual([path]);
+    expect(owned.handle.fd).toBeGreaterThanOrEqual(0);
+    expect(foreign.handle.fd).toBeGreaterThanOrEqual(0);
+    denyClose = false;
+    await resources.close();
+    expect(owned.handle.fd).toBe(-1);
+    expect(foreign.handle.fd).toBeGreaterThanOrEqual(0);
+    expect(await fs.readFile(other, "utf8")).toBe("foreign bytes");
+  } finally {
+    denyClose = false;
+    await resources.close();
+    await owned.close();
+  }
+});
+
 it("cleanup retry never adopts an opaque cancellation reason as another owner", async () => {
   const root = await createTestTempDirectory(
     "rea-cleanup-cancellation-authority-",
@@ -782,12 +891,12 @@ it("cleanup retry never adopts an opaque cancellation reason as another owner", 
   await fs.writeFile(other, "other");
   const owned = await ownReadHandle(path);
   const foreign = await ownReadHandle(other);
-  const opaque = new RegularFileCleanupFailure(
-    other,
-    foreign,
-    { kind: "completed", value: "other" },
-    new Error("opaque reason"),
-  );
+  const opaque = new RegularFileCleanupFailure({
+    path: other,
+    owner: foreign,
+    outcome: { kind: "completed", value: "other" },
+    cleanupCause: new Error("opaque reason"),
+  });
   const { RegularFileOperationCancelled } =
     await import("../../src/filesystem/RegularFile.js");
   const { ArtifactResourceScope } =
@@ -796,12 +905,15 @@ it("cleanup retry never adopts an opaque cancellation reason as another owner", 
     await import("../../src/application/RegularFileRead.js");
   const resources = new ArtifactResourceScope();
   const outcome = await retryRegularFileCleanupFailures(
-    new RegularFileCleanupFailure(
+    new RegularFileCleanupFailure({
       path,
-      owned,
-      { kind: "failed", cause: new RegularFileOperationCancelled(opaque) },
-      new Error("owned close failed"),
-    ),
+      owner: owned,
+      outcome: {
+        kind: "failed",
+        cause: new RegularFileOperationCancelled(opaque),
+      },
+      cleanupCause: new Error("owned close failed"),
+    }),
     resources,
   );
   expect(outcome.primary).toBe(opaque);
@@ -847,12 +959,12 @@ it("uninstall progresses when a peer leaves a denied-close descriptor pending", 
   let timeout: ReturnType<typeof setTimeout> | undefined;
   try {
     await arrived.promise;
-    state.initialCleanupFailure = new RegularFileCleanupFailure(
-      other,
+    state.initialCleanupFailure = new RegularFileCleanupFailure({
+      path: other,
       owner,
-      { kind: "completed", value: "{}" },
-      new Error("peer close denied"),
-    );
+      outcome: { kind: "completed", value: "{}" },
+      cleanupCause: new Error("peer close denied"),
+    });
     expect(
       await host.inspectClient({
         name: "other",
@@ -1238,7 +1350,16 @@ it.each(["setup", "uninstall"] as const)(
           ).status,
         ).toBe("failed");
       }
-      expect(await host.close?.()).toContain("cleanup");
+      const cleanupFailure = await host.close?.();
+      if (operation === "setup") {
+        expect(cleanupFailure).toBeInstanceOf(AnalysisError);
+        const retainedRoots = (await fs.readdir(root))
+          .filter((name) => name.startsWith(".rea-config-"))
+          .map((name) => join(root, name));
+        expect((cleanupFailure as AnalysisError).cleanupResources).toEqual(
+          retainedRoots,
+        );
+      } else expect(cleanupFailure).toContain("cleanup");
       expect(
         (await fs.readdir(root)).filter((name) =>
           name.startsWith(".rea-config-"),
@@ -1246,6 +1367,8 @@ it.each(["setup", "uninstall"] as const)(
       ).toHaveLength(1);
       state.rejectStageRemoval = false;
       expect(await host.close?.()).toBeUndefined();
+      if (cleanupFailure instanceof AnalysisError)
+        expect(cleanupFailure.cleanupIncomplete).toBe(false);
       expect(
         (await fs.readdir(root)).filter((name) =>
           name.startsWith(".rea-config-"),
@@ -1305,7 +1428,9 @@ it("publication keeps its selected canonical parent when a directory symlink is 
     "{}",
     original,
   );
-  await publication.verify(() => publication.assertCurrent());
+  await publication.verify(async () =>
+    publication.assertCurrent(await fs.readFile(publication.path, "utf8")),
+  );
   expect(await fs.readFile(join(selected, "client.json"), "utf8")).toBe("{}");
   expect(await fs.readFile(join(foreign, "client.json"), "utf8")).toBe(
     unrelated,
