@@ -1,6 +1,6 @@
 import type { JsonValue } from "../jsonValue.js";
 import type { DesktopStateFormat } from "./stateFormats.js";
-import { pairMembers } from "./viewPointer.js";
+import { memberAt, pairMembers } from "./viewPointer.js";
 import { zipLeavesOut } from "./zipView.js";
 
 const MAX_LISTED = 100;
@@ -59,13 +59,6 @@ const ownEntry = (value: JsonValue): string => {
   return isRecord(value) ? "{}" : JSON.stringify(value);
 };
 
-/** The member a pointer segment names, the way JSON pointers resolve it. */
-const memberOf = (value: JsonValue, key: string): JsonValue | undefined => {
-  if (Array.isArray(value))
-    return String(Number(key)) === key ? value[Number(key)] : undefined;
-  return isRecord(value) && Object.hasOwn(value, key) ? value[key] : undefined;
-};
-
 /** How a walk matches array members: by selector rather than position, and whether it notes a missing value's members too. */
 interface WalkOptions {
   readonly keyed?: boolean;
@@ -94,7 +87,7 @@ const keyedMembers = (
     if (!Array.isArray(other))
       return {
         key,
-        counterpart: other === undefined ? undefined : memberOf(other, key),
+        counterpart: memberAt(other, key),
       };
     return {
       key,
@@ -136,15 +129,11 @@ const walk = (
     });
   } else if (Array.isArray(from))
     from.forEach((item, index) =>
-      visit(
-        String(index),
-        item,
-        other === undefined ? undefined : memberOf(other, String(index)),
-      ),
+      visit(String(index), item, memberAt(other, String(index))),
     );
   else if (isRecord(from))
     for (const [key, item] of Object.entries(from))
-      visit(key, item, other === undefined ? undefined : memberOf(other, key));
+      visit(key, item, memberAt(other, key));
 };
 
 /**

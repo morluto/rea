@@ -44,13 +44,18 @@ const plate = async (end: "before" | "after") =>
   ]);
 
 /** The notes capture with a FreeCAD document and an OpenDocument list the user also edited, both named in window titles. */
-const archiveCapture = async () => {
+const archiveCapture = async (
+  list: readonly [Buffer, Buffer] = [
+    odtArchive("Buy bread"),
+    odtArchive("Buy milk"),
+  ],
+) => {
   const base = capture();
   const [first, second] = base.state.checkpoints;
   if (first === undefined || second === undefined) throw new Error("fixture");
   const files = {
     [`${HOME}/${PLATE}`]: [await plate("before"), await plate("after")],
-    [`${HOME}/${LIST}`]: [odtArchive("Buy bread"), odtArchive("Buy milk")],
+    [`${HOME}/${LIST}`]: list,
   } as const;
   const captured: DesktopApplicationCapture = {
     ...base,
@@ -105,6 +110,19 @@ const HOLE = {
     "/entries/[name=Document.xml]/view/root/children/[name=ObjectData]/children/[name=Object][@name=Hole]/children/[name=Properties]/children/[name=Property][@name=Radius]/children/[name=Float]/attributes/value",
   value: 5,
   tolerance: 0.01,
+};
+
+/** The entries of the list document's last version in the capture's state view. */
+const endEntries = async (folder: string) => {
+  const evidence = await inspectDesktopApplicationState(folder, readers);
+  if (!("normalized_result" in evidence)) throw evidence;
+  const state = desktopApplicationStateSchema.parse(evidence.normalized_result);
+  const end = state.paths
+    .find((entry) => entry.home_path === LIST)
+    ?.versions.at(-1)?.view;
+  return (
+    (end as { entries: Record<string, unknown>[] } | undefined)?.entries ?? []
+  );
 };
 
 const exportTask = async (folder: string, checks: unknown[]) => {
@@ -173,15 +191,7 @@ describe("documents saved as zip archives", () => {
 
   it("accepts a check on the whole listing, whose value holds namespaced XML", async () => {
     const folder = await archiveCapture();
-    const evidence = await inspectDesktopApplicationState(folder, readers);
-    if (!("normalized_result" in evidence)) throw evidence;
-    const state = desktopApplicationStateSchema.parse(
-      evidence.normalized_result,
-    );
-    const end = state.paths
-      .find((entry) => entry.home_path === LIST)
-      ?.versions.at(-1)?.view;
-    const entries = (end as { entries: unknown[] } | undefined)?.entries;
+    const entries = await endEntries(folder);
     expect(entries).toHaveLength(3);
 
     const { result } = await exportTask(folder, [
@@ -189,6 +199,49 @@ describe("documents saved as zip archives", () => {
     ]);
 
     if (result instanceof Error) throw result;
+  });
+
+  it("exports checks of a namespaced entry's metadata, its absence, and the entry compared whole", async () => {
+    const comments = {
+      name: "comments.xml",
+      data: '<office:annotations xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0"/>',
+    };
+    const folder = await archiveCapture([
+      odtArchive("Buy bread", [comments]),
+      odtArchive("Buy milk"),
+    ]);
+    const content = (await endEntries(folder)).find(
+      (entry) => entry.name === "content.xml",
+    );
+
+    const { result } = await exportTask(folder, [
+      {
+        kind: "value_equals",
+        file: LIST,
+        pointer: "/entries/[name=content.xml]/size",
+        value: content?.size,
+      },
+      {
+        kind: "value_absent",
+        file: LIST,
+        pointer: "/entries/[name=comments.xml]",
+      },
+    ]);
+    expect(
+      result instanceof Error
+        ? (result as Error & { userMessage: string }).userMessage
+        : undefined,
+    ).toBeUndefined();
+
+    const whole = await exportTask(folder, [
+      {
+        kind: "value_equals",
+        file: LIST,
+        pointer: "/entries/[name=content.xml]",
+        value: content,
+      },
+    ]);
+    if (whole.result instanceof Error) throw whole.result;
   });
 
   it("drafts name-addressed checks of the archive that the export then accepts", async () => {

@@ -57,6 +57,7 @@ MAX_ZIP_ENTRIES = 1000
 MAX_ZIP_ENTRY_BYTES = 16 * 1024 * 1024
 MAX_ZIP_BYTES = 64 * 1024 * 1024
 MAX_ZIP_RATIO = 100
+ZIP_READ_CHUNK = 64 * 1024
 #: Formats an archive entry may have whose reader needs a tool, a worker or another archive opened.
 NOT_READ_INSIDE = ((SQLITE_HEADER, "sqlite", "a SQLite database"), (GVDB_HEADER, "dconf", "a dconf database"),
                    (ZIP_HEADER, "zip", "an archive"))
@@ -373,13 +374,19 @@ def _zip_refusal(info, spent: int):
 
 
 def _entry_bytes(archive, info):
-    """An entry's uncompressed bytes, or None when they fail its CRC-32 or are not exactly its declared size: reading
-    allows one byte more, which data past a short declared size fills."""
+    """An entry's uncompressed bytes, or None when they fail its CRC-32 or are not exactly its declared size. Reading
+    stops one byte past that size, which data past a short declared size fills, and asks for a bounded chunk at a
+    time, which bounds what the decompressor expands per call, so a forged small size holds no more than that."""
     probe = copy.copy(info)
     probe.file_size = info.file_size + 1
+    data = bytearray()
     try:
         with archive.open(probe) as member:
-            data = member.read()
+            while len(data) <= info.file_size:
+                chunk = member.read(min(probe.file_size - len(data), ZIP_READ_CHUNK))
+                if not chunk:
+                    break
+                data += chunk
     except (zipfile.BadZipFile, zlib.error, EOFError, OSError, ValueError):
         return None
     return data if len(data) == info.file_size else None

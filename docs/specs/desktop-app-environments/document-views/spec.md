@@ -69,6 +69,9 @@ evaluators, REA's and the exported verifier's, agree.
   through its members.
 - Export refusals: a `tolerance` whose value is not a number. A pointer into
   XML that uses namespaces is accepted, in a file or an archive entry.
+- Reading: the exported reader reads an entry in bounded chunks, at most one
+  byte past its declared size, so a forged small size cannot make it expand
+  the rest of the stream.
 
 ## Non-goals
 
