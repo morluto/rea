@@ -22,7 +22,7 @@ import {
 import {
   assertStableRegularFileIdentity,
   RegularFileChangedError,
-  sameRegularFileState,
+  sameRegularFileStateAllowingChangeTimeDrift,
 } from "../../filesystem/RegularFile.js";
 import type { FileHandle } from "node:fs/promises";
 import type { Stats } from "node:fs";
@@ -131,7 +131,7 @@ export const classifyAndHashRootForInventory = async (
       }
     | { readonly kind: "failed"; readonly cause: unknown };
   try {
-    if (!sameRegularFileState(expectedMetadata, initial))
+    if (!sameRegularFileStateAllowingChangeTimeDrift(expectedMetadata, initial))
       throw new ArtifactReaderFailure(
         "integrity",
         `Root artifact changed before inventory: ${path}`,

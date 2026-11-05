@@ -5,6 +5,14 @@ import { lstat, open, stat, type FileHandle } from "node:fs/promises";
 
 import { OwnedFileHandle } from "./OwnedFileHandle.js";
 
+const WINDOWS = process.platform === "win32";
+
+/**
+ * How far ChangeTime may sit from the modification time while still being the
+ * post-write drift Windows produces for a freshly written file.
+ */
+const CHANGE_TIME_DRIFT_TOLERANCE_MS = 2_000;
+
 /** Cancellation observed at a file operation's explicit checkpoint. */
 export class RegularFileOperationCancelled extends Error {
   readonly _tag = "RegularFileOperationCancelled";
@@ -127,7 +135,7 @@ export const openRegularFile = async (
       const named = await lstat(path);
       if (named.isSymbolicLink())
         throw new NonRegularFileReadError(path, false);
-      if (!sameRegularFileState(metadata, named))
+      if (!sameRegularFileStateAllowingChangeTimeDrift(metadata, named))
         throw new RegularFileChangedError(path);
       assertRegularFileActive(options.signal);
     }
@@ -208,6 +216,59 @@ export const sameRegularFileState = (
     : expected.mtimeMs === observed.mtimeMs &&
       expected.ctimeMs === observed.ctimeMs);
 
+/**
+ * Whether two observations of one file differ only by the post-write
+ * ChangeTime drift Windows produces for a freshly written file.
+ *
+ * Windows security components update ChangeTime shortly after a write, without
+ * touching the contents or the modification time. REA observes that drift as a
+ * changed input. The drift leaves ChangeTime at the file's own creation, so a
+ * ChangeTime that still agrees with the modification time cannot record a
+ * later modification. A ChangeTime that moved away from the modification time
+ * stays authoritative and still reports a rewrite whose modification time was
+ * restored.
+ */
+export const changedOnlyInChangeTimeDrift = (
+  expected: RegularFileState | BigIntStats,
+  observed: Stats | BigIntStats,
+): boolean => {
+  if (!WINDOWS) return false;
+  if (!observed.isFile()) return false;
+  if (
+    expected.dev !== observed.dev ||
+    expected.ino !== observed.ino ||
+    expected.size !== observed.size ||
+    expected.mode !== observed.mode
+  )
+    return false;
+  const modificationEqual =
+    "mtimeNs" in expected && "mtimeNs" in observed
+      ? expected.mtimeNs === observed.mtimeNs
+      : expected.mtimeMs === observed.mtimeMs;
+  if (!modificationEqual) return false;
+  const changeEqual =
+    "ctimeNs" in expected && "ctimeNs" in observed
+      ? expected.ctimeNs === observed.ctimeNs
+      : expected.ctimeMs === observed.ctimeMs;
+  if (changeEqual) return false;
+  const changeTime = Number(observed.ctimeMs);
+  const modificationTime = Number(observed.mtimeMs);
+  return (
+    Math.abs(changeTime - modificationTime) <= CHANGE_TIME_DRIFT_TOLERANCE_MS
+  );
+};
+
+/**
+ * Compare one regular file's identity and mutable metadata across a read,
+ * tolerating a Windows post-write ChangeTime drift.
+ */
+export const sameRegularFileStateAllowingChangeTimeDrift = (
+  expected: RegularFileState | BigIntStats,
+  observed: Stats | BigIntStats,
+): boolean =>
+  sameRegularFileState(expected, observed) ||
+  changedOnlyInChangeTimeDrift(expected, observed);
+
 /** Validate an admitted descriptor and selected name at the same precision as admission. */
 export const assertStableRegularFileIdentity = async (
   file: FileHandle,
@@ -235,8 +296,8 @@ export const assertStableRegularFileIdentity = async (
   const opened = await file.stat({ bigint });
   assertRegularFileActive(options.signal);
   if (
-    !sameRegularFileState(before, opened) ||
-    !sameRegularFileState(before, selected)
+    !sameRegularFileStateAllowingChangeTimeDrift(before, opened) ||
+    !sameRegularFileStateAllowingChangeTimeDrift(before, selected)
   )
     throw new RegularFileChangedError(path);
 };
