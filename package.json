@@ -154,6 +154,7 @@
     "test:with-build": "npm run test:prepare && vitest run",
     "test:run": "vitest run",
     "test:python": "python3 scripts/run-python-tests.py",
+    "eval:mcp-catalog": "node scripts/run-exclusive.mjs artifacts python3 tests/support/analysis-efficiency/catalog-eval.py",
     "test:local": "node scripts/run-development-tests.mjs local",
     "test:fast": "node scripts/ci/test-group.mjs source",
     "test:built": "node scripts/ci/test-group.mjs built",
