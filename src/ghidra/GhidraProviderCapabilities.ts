@@ -123,7 +123,7 @@ export const limitationsFor = (
     case "search_bytes":
       return [
         ...common,
-        "Searches initialized loader-adjusted memory independently per block, in provider address order. Bounds and page coverage ends are inclusive. Uninitialized blocks are listed separately. Overlapping matches are included; patterns never cross block boundaries. A cursor resumes the same target, profile and query. Cancellation discards the active search and returns no successful partial page.",
+        "Searches contiguous eligible initialized loader-adjusted memory in provider address order, including across adjacent blocks. Bounds and page coverage ends are inclusive. Uninitialized blocks are listed separately and break search runs. Overlapping matches are included. A cursor resumes the same target, profile and query. Cancellation discards the active search and returns no successful partial page.",
       ];
     case "address_to_file_offset":
       return [
@@ -276,6 +276,10 @@ export const existingProjectCapabilities = (
         available: false,
         reason: "Existing Ghidra project sessions are read-only.",
         availabilityCode: "open_options_invalid",
+        userMessage:
+          "This Ghidra project session is read-only; the requested edit was not applied.",
+        remediation:
+          "Continue inspecting the selected project. To make session-only edits, start a separate REA session with REA_GHIDRA_PROJECT_PATH and REA_GHIDRA_PROGRAM_NAME unset, then open a fresh Ghidra import. It is a separate ephemeral analysis and does not preserve the selected project's state.",
       };
     return { ...capability, limitations };
   });
