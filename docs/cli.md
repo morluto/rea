@@ -39,6 +39,17 @@ pass an absolute path. REA reads and authenticates the file, then projects it
 like retained Evidence, so a large file is bounded by the file reader rather
 than charged as inline input.
 
+An argument that accepts inline JSON or a JSON file path also accepts `-`, which
+reads the request from standard input, so a generated request needs no
+temporary file:
+
+```bash
+jq -nc '{source: {kind: "evidence-file", path: "app-evidence.json"}, view: {kind: "summary"}}' | rea inspect-analysis-view -
+```
+
+Standard input is read once as a single UTF-8 JSON document without a
+byte-order mark, and it is limited to 8 MiB. Put a larger request in a file.
+
 Local file inspection commands reject empty paths and NUL bytes before resolving
 relative inputs, auxiliary files or output destinations. An empty string never
 selects the working directory; use an explicit `.` when selecting that directory
@@ -270,6 +281,17 @@ Format versions 6 through 8 retain header, block and directory facts with
 none/LZ4/LZ4HC block decompression. See [UnityFS](unityfs.md) for encryption
 and LZMA coverage boundaries.
 
+Inspect a WeChat mini-program package without WeChat or an unpacker:
+
+```sh
+rea inspect-artifact app.wxapkg --detail summary --evidence_output evidence.json --json
+rea extract-artifact app.wxapkg --json
+```
+
+Plaintext packages retain header, table and member facts with verbatim member
+bytes. `V1MMWX` packages are detected as encrypted coverage and refused on
+extraction. See [wxapkg](wxapkg.md) for layout and coverage boundaries.
+
 Inspect an ESP32-family app or bootloader image without esptool:
 
 ```sh
@@ -280,6 +302,18 @@ rea extract-artifact firmware.bin --json
 The inventory lists each segment with its ESP-IDF load classification, the
 checksum and SHA-256 results, the descriptor and any Secure Boot v2 signature
 blocks. See [ESP images](esp-image.md) for recognition, coverage and refusals.
+
+Inspect an ESP flash dump, or one read from a flash address other than 0:
+
+```sh
+rea inspect-artifact flash.bin --json
+rea inspect-artifact dump.bin --target-format esp-flash-image --flash-offset 0x1000 --json
+rea extract-artifact flash.bin --json
+```
+
+The inventory lists the bootloader, the partition table and each partition,
+with ESP image facts for app partitions and the OTA records. See
+[ESP flash images](esp-flash-image.md) for table location, inputs and limits.
 
 Inspect a Node.js SEA carrier without running it:
 
@@ -316,6 +350,16 @@ Zstandard (standard method 93). They retain the shared ZIP CRC, declared-size,
 overlap and archive expansion checks. The native streaming decoder keeps the
 existing 128 MiB Zstandard window cap; frames requiring a larger window are
 refused. Deprecated method 20 and other unregistered ZIP codecs remain unsupported.
+
+Inventory and extract UF2 or DfuSe regions:
+
+```sh
+rea inspect-artifact ./firmware.uf2 --json
+rea extract-artifact ./firmware.dfu --json
+```
+
+See [UF2 and DfuSe images](uf2-dfuse.md) for recognition, families, numbering,
+the DfuSe suffix CRC and limits.
 
 Inventory and extract U-Boot FIT images:
 
@@ -539,6 +583,25 @@ be verified. See [MCP contracts](mcp-contracts.md) for session lifecycle and
 [Ghidra first-query deadlines](mcp-contracts.md#ghidra-first-query-deadlines-and-recovery)
 for import, client timeouts and recovery.
 
+A one-shot command releases its provider session and REA runtime before it
+prints a failure, so it omits the same-session reuse and
+`update_analysis_settings` guidance an MCP connection receives. Its
+`details.limit` reports `scope: "rea-invocation"` and
+`applies_at: "next_invocation"`; set the named `environment` (or the per-call
+`parameter`) for a new invocation and rerun. For example, a Ghidra decompile
+deadline names `REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS`.
+
+`rea debug-with-gdb` and `rea debug-with-rizin` hold their debugger only for the
+command's own process. If cleanup cannot confirm the debugger stopped, they print
+`cleanup_incomplete` and exit nonzero without stopping it. `remediation.action`
+names the process, as does `retained_debugger_pids` in `details.diagnostics`, or
+in `details.diagnostics.cleanup_error.details.diagnostics` when the command also
+failed or was interrupted. Exiting closes the debugger's command and output pipes.
+REA does not establish what the debugger or its target does next, so check that
+process. An MCP server that shuts down likewise exits with status 1 instead of
+waiting on a debugger it could not stop. It names the process on stderr and as
+`retained_debugger_pids` in its error log.
+
 If one-shot analysis fails and closing its session also fails, the original
 error details remain inline and `details.cleanup_error` describes the later
 close failure. Each diagnostic retains its own reported resources; the later
@@ -571,6 +634,9 @@ Saved snapshots include only cache entries whose subject identifies the selected
 target. Unbound observations and observations of child artifacts remain available
 in the open session and its Evidence bundle; they are excluded from the target's
 saved replay entries without changing their subjects.
+The snapshot also retains available Evidence linked by selected records, including
+transitive sources with an unbound or different subject. Those sources are not
+replay entries for the selected target. Unrelated records remain excluded.
 
 Snapshots retain eligible target-scoped question histories in full, including
 mutation Evidence recorded while another target was active. Observations and
@@ -585,6 +651,11 @@ rea analyze /absolute/path/to/program --provider ghidra --snapshot /absolute/pat
 ```
 
 An exact CLI cache hit is normally read before starting a provider process.
+`decompile --provider ghidra --snapshot ...` also retains its single selected
+Program's pseudocode result, even without an explicit document selector. Old
+snapshots that contain only the Evidence need one new query to add that replay
+entry. This does not retain every body from `decompile-all` or make a persistent
+session's implicit document replayable.
 On Windows, Ghidra first admits the selected source through its native snapshot
 owner, so replay can start that provider.
 In MCP, `open_binary` accepts `snapshot_path` to import a snapshot atomically
@@ -592,6 +663,30 @@ for its matching target; an MCP provider may still start before returning a
 cached result. `close_binary` accepts `snapshot_path` and optional
 `overwrite: true` to save before releasing provider resources. A failed save
 leaves the session open so the caller can resolve the output failure.
+
+When a validated snapshot does not match the selected binding, the error's
+`details.binding_mismatch` reports confirmed target identities, provider
+identities, or profile digests that differ. `snapshot` is the saved value and
+`selected` is the requested value. Multiple differences can be reported. A
+`profile_comparison: "not_compared"` means the profile was not available at
+that boundary; it does not establish a match. A profileless snapshot can report
+`workflow_scope: "incompatible"` even when its target and profile match.
+Choose a matching target, provider, and profile, or analyze without the snapshot
+and save a new one for the intended binding.
+
+For a profile mismatch, the saved snapshot contains
+`binding.analysis_profile.parameters`. If `binary_session` reports an active
+profile whose digest matches `binding_mismatch.profile_digest.selected`, its
+`analysis_provider_binding.analysis_profile.parameters` can be compared with
+those saved parameters. A rejected switch leaves the previous session active,
+so its profile may be different from the attempted selection; check the digest
+before using it for this comparison. A configuration difference does not by
+itself establish why analysis results differ.
+
+If no target is open and you intend to inspect the selected binding, open that
+target without the snapshot, then check its profile digest in `binary_session`
+before comparing parameters. This may start the selected provider; the saved
+snapshot remains a separate file.
 
 If a selected snapshot's file descriptor cannot close, `open_binary` reports
 `cleanup_incomplete`. `binary_session` reports `cleanup_pending` even when no
@@ -613,6 +708,10 @@ results and Evidence. These are cached observations, not a saved provider
 database: only eligible exact queries can reuse a result, and new or live
 queries can still require provider startup. The CLI uses the same snapshot
 format and preserves these records when loading and updating it.
+When an MCP session replays a provider observation, its delivered Evidence identifies
+the original observation through `evidence_links` and reports that the
+provider was not rerun. The original and its available source records remain
+in the investigation bundle.
 
 ## Import, export and compare Evidence
 
@@ -651,12 +750,45 @@ with `details.reason: path-limit` and `boundary: filesystem-path`.
 For application traces and version comparisons, see
 [JavaScript application workflows](javascript-application-workflows.md).
 MCP [retained Evidence references](mcp-contracts.md#retained-application-evidence-inputs)
-belong to one connection. Separate CLI calls can consume full saved records.
-`inspect-analysis-view REQUEST.json --evidence-bundle BUNDLE.json` resolves
-the request's `retained-evidence` source ID from that authenticated bundle,
-including bundles exported from an MCP session. The same view JSON works for
-every supported parent kind; no target is reopened and no record is selected
-by file order. Omit `--evidence-bundle` when the request supplies inline Evidence.
+belong to one connection. Separate CLI calls can consume full saved records or
+resolve exact retained IDs from an explicitly selected local bundle:
+
+```bash
+rea trace-application-feature request.json --evidence-bundle /absolute/path/evidence.json --json
+```
+
+Here `request.json` uses the same logical Evidence input as MCP, for example
+`"application": {"kind":"retained-evidence","evidence_id":"ev_<64 lowercase hex characters>"}`.
+Inline records and references may be mixed in the request's declared source
+fields, including arrays and nested inputs. The bundle is read and authenticated
+once for that command; no target is reopened, no producer is rerun, and no
+record is selected by file order. Source identity, provenance, coverage and
+partial or unknown facts agree with the complete inline form. When starting
+from summary or inspection Evidence, select its
+`normalized_result.parent_evidence_id` for a workflow requiring complete source
+facts. Omit `--evidence-bundle` when all sources are inline.
+
+The JSON workflow commands supporting this option are:
+
+- `trace-application-feature`, `trace-javascript-semantics`,
+  `compare-application-versions`, `compare-javascript-export-shapes`,
+  `compare-source-to-bundle`, and `reconcile-javascript-runtime`.
+- `import-managed-reconstruction`, `verify-managed-native-boundaries`, and
+  `project-managed-application-graph`.
+- `project-android-application-graph`, `project-apple-application-graph`, and
+  `project-harmony-application-graph`.
+- `compare-wasm-interfaces` and `inspect-analysis-view`.
+
+For `inspect-analysis-view`, the request's source reference selects a parent
+from the bundle for every supported view kind. Bundles exported from MCP work
+for these commands. Its inline source form cannot also select a bundle.
+A missing ID is refused with `details.reason: "missing"`;
+supplying a bundle does not make incompatible Evidence valid for a workflow.
+`compare-managed-members` keeps its two assembly paths, and
+`compare-process-captures` keeps its two capture Evidence JSON paths. The bundle
+option above selects an input; producer options that write a new bundle, such
+as `inspect-managed-members --evidence-bundle`, retain their existing meaning.
+File selectors remain available only on contracts that explicitly support them.
 
 Compare two artifact inventories with `compare-artifacts`. It takes the same
 `left` and `right` input as MCP `compare_artifacts`: complete Evidence, or an
@@ -669,7 +801,7 @@ rea inspect-artifact new.zip --json > new.json
 rea compare-artifacts '{"left":{"kind":"evidence-file","path":"old.json"},"right":{"kind":"evidence-file","path":"new.json"}}' --json
 ```
 
-A one-shot command keeps no session Evidence, so it refuses a
+A one-shot `compare-artifacts` command keeps no session Evidence, so it refuses a
 `retained-evidence` source with `details.reason: "missing"`. Select the record
 from a saved bundle instead.
 For an artifact summary selected from a bundle, include its complete parent
@@ -1087,9 +1219,12 @@ treated as malformed.
 exact array path with `--filter-output` and provide comma-separated direct
 scalar columns with `--columns`; column order is the output column order:
 
+For an artifact inventory request that selects the `occurrences` collection
+and includes `logical_path` and `artifact_id` in its view fields:
+
 ```bash
 rea inspect-analysis-view request.json --format csv \
-  --filter-output normalized_result.rows --columns name,address
+  --filter-output normalized_result.items --columns logical_path,artifact_id
 ```
 
 The first line is a REA metadata record,
@@ -1206,6 +1341,18 @@ new file. A publication that has committed can win a later cancellation; the
 `details.diagnostics.evidence_bundle`. If staging cleanup stays incomplete
 after commit, the `cleanup_incomplete` error reports the same file as
 `details.published_path` and `details.bytes`.
+
+When a failure retains a completed observation and no bundle committed,
+`details.source_closure` states what that observation cites. `publication` is
+`not_published`. `records` holds authentic source Evidence this invocation
+captured, within 64 KiB. `omitted` lists up to 64 other identities and
+`omitted_count` the total: `not_captured` means the invocation holds no such
+record, so nothing is shown for it or its ancestors; `not_inlined` means it was
+captured but is not in this response. `complete` is true only when every cited
+record is in `records` or embedded in the observation. If examining the closure
+itself fails, `collection_failure` names the error type and the closure state is
+unknown; the original failure is still returned. Nothing is retained after exit,
+and running the command again is a new observation.
 
 When the reader of piped output closes early, as `rea ... | head` does, the
 CLI stops writing, prints no error and exits `141` (`128 + 13`, the status of a

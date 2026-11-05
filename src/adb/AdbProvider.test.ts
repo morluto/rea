@@ -591,7 +591,8 @@ it("reports a missing selected binary as a capability gap with recovery", async 
   const availability = await provider.inspectAvailability();
   expect(availability).toMatchObject({ status: "unavailable" });
   if (availability.status !== "unavailable") return;
-  expect(availability.diagnostics.remediation).toContain("REA_ADB_PATH");
+  expect(availability.remediation).toContain("REA_ADB_PATH");
+  expect(availability.diagnostics).not.toHaveProperty("remediation");
   const result = await provider.execute({
     operation: "list_adb_devices",
     input: {},

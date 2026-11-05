@@ -4,7 +4,18 @@ import type {
   AnalysisOperationPort,
 } from "./AnalysisProvider.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
-import { AnalysisOutputError } from "../domain/analysisErrorCore.js";
+import {
+  AnalysisCancelledError,
+  AnalysisCapabilityUnavailableError,
+  AnalysisInputError,
+  AnalysisOutputError,
+} from "../domain/analysisErrorCore.js";
+import {
+  projectAnalysisError,
+  type AnalysisErrorProjection,
+} from "../domain/analysisErrorProjection.js";
+import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { analysisBookmarkSchema } from "../domain/native/nativeInventory.js";
 import { parseContainingProcedureResolution } from "../domain/native/nativeObservation.js";
@@ -18,6 +29,7 @@ type Facet =
       readonly state: "unavailable";
       readonly reason: string;
       readonly remediation: string;
+      readonly error?: AnalysisErrorProjection;
     };
 
 const parameters = (
@@ -98,18 +110,39 @@ export const inspectAddressContext = async (
     "inline_comment",
     "list_bookmarks",
   ] as const satisfies readonly AnalysisOperation[];
-  const results = await Promise.all(
-    operations.map((operation) =>
-      analysis.execute(
-        operation,
-        operation === "list_bookmarks" ? parameters(document.value) : args,
-        executionOptions(signal),
-      ),
-    ),
-  );
-  for (const result of results) {
-    if (!result.ok && isRequestLevelFailure(result.error)) return result;
+  const completed: Result<AnalysisExecution, AnalysisError>[] = [];
+  if (signal?.aborted === true)
+    return err(
+      new AnalysisCancelledError("inspect_address_context", {
+        cause: signal.reason,
+      }),
+    );
+  let signalCancellation: AnalysisCancelledError | undefined;
+  const cancelled = () => {
+    signalCancellation = new AnalysisCancelledError("inspect_address_context", {
+      cause: signal?.reason,
+    });
+    completed.push(err(signalCancellation));
+  };
+  signal?.addEventListener("abort", cancelled, { once: true });
+  let results: Result<AnalysisExecution, AnalysisError>[];
+  try {
+    results = await Promise.all(
+      operations.map(async (operation) => {
+        const result = await analysis.execute(
+          operation,
+          operation === "list_bookmarks" ? parameters(document.value) : args,
+          executionOptions(signal),
+        );
+        completed.push(result);
+        return result;
+      }),
+    );
+  } finally {
+    signal?.removeEventListener("abort", cancelled);
   }
+  const fatal = contextFailure(completed, signalCancellation);
+  if (fatal !== undefined) return err(fatal);
   const name = facet(results[0], operations[0]);
   const procedureResult = results[1];
   const resolution = procedureResult?.ok
@@ -118,8 +151,12 @@ export const inspectAddressContext = async (
   const procedure: Facet = resolution?.ok
     ? { state: "available", value: resolution.value }
     : unavailableFacet(resolution?.error, operations[1]);
-  const comment = facet(results[2], operations[2]);
-  const inlineComment = facet(results[3], operations[3]);
+  const entry =
+    resolution?.ok && resolution.value.found
+      ? resolution.value.procedure.address
+      : undefined;
+  const comment = commentFacet(results[2], operations[2], entry);
+  const inlineComment = commentFacet(results[3], operations[3], entry);
   const bookmarks = facet(results[4], operations[4]);
   return ok({
     address: input.address,
@@ -138,6 +175,28 @@ export const inspectAddressContext = async (
   });
 };
 
+const commentFacet = (
+  result: Result<AnalysisExecution, AnalysisError> | undefined,
+  operation: "comment" | "inline_comment",
+  entry: string | undefined,
+): Facet => {
+  if (
+    result?.ok === false &&
+    result.error instanceof AnalysisCapabilityUnavailableError &&
+    !result.error.retryable &&
+    result.error.remediationAction === undefined &&
+    result.error.continuingCallerGuidance?.remediationAction === undefined &&
+    entry !== undefined
+  ) {
+    return {
+      state: "unavailable",
+      reason: result.error.message,
+      remediation: `If analyze_function is available for this same document, call it with ${JSON.stringify({ procedure: entry })}; use its summary's parent_evidence_id with inspect_analysis_view's native comments facet. Check facet availability, pagination, and the exact requested address; an omitted comment does not establish absence.`,
+    };
+  }
+  return facet(result, operation);
+};
+
 const facet = (
   result: Result<AnalysisExecution, AnalysisError> | undefined,
   operation: AnalysisOperation,
@@ -149,16 +208,94 @@ const facet = (
 const unavailableFacet = (
   error: AnalysisError | undefined,
   operation: AnalysisOperation,
-): Facet => ({
-  state: "unavailable",
-  reason: error?.message ?? `${operation} returned no result`,
-  remediation: `Call ${operation} directly to inspect provider availability and diagnostics.`,
-});
+): Facet => {
+  if (error instanceof AnalysisCapabilityUnavailableError) {
+    const projected = projectAnalysisError(error);
+    return {
+      state: "unavailable",
+      reason: error.userMessage ?? error.message,
+      remediation:
+        error.retryable ||
+        error.remediationAction !== undefined ||
+        error.continuingCallerGuidance?.remediationAction !== undefined
+          ? projected.remediation.action
+          : "Review provider availability in binary_session with detail complete and select another supported provider if appropriate. After switching, if a name is known and search_procedures is available, use it to find candidates and verify their identity and coordinates.",
+    };
+  }
+  if (error instanceof AnalysisInputError) {
+    const projected = projectAnalysisError(error);
+    if (projected.code === "invalid_request")
+      return {
+        state: "unavailable",
+        reason: projected.message,
+        remediation: projected.remediation.action,
+        error: projected,
+      };
+  }
+  return {
+    state: "unavailable",
+    reason: error?.message ?? `${operation} returned no result`,
+    remediation: `Call ${operation} directly to inspect provider availability and diagnostics.`,
+  };
+};
 
 const isRequestLevelFailure = (error: AnalysisError): boolean =>
   error._tag === "AnalysisCancelledError" ||
   error._tag === "AnalysisTimeoutError" ||
   error._tag === "NoBinaryOpenError";
+
+/** Wait for all facets and retain every unresolved cleanup owner. */
+const contextFailure = (
+  results: readonly Result<AnalysisExecution, AnalysisError>[],
+  signalCancellation?: AnalysisCancelledError,
+): AnalysisError | undefined => {
+  const failures = [
+    ...new Set(results.flatMap((result) => (result.ok ? [] : [result.error]))),
+  ];
+  // A provider's cancellation for this exact signal carries its own diagnostic
+  // and cleanup facts. Attribute that returned error to the abort event rather
+  // than replacing it with our generic observation of the same signal.
+  const marker =
+    signalCancellation === undefined
+      ? -1
+      : failures.indexOf(signalCancellation);
+  if (marker >= 0) {
+    const reported = failures.findIndex(
+      (failure, index) =>
+        index > marker &&
+        failure instanceof AnalysisCancelledError &&
+        failure.cause === signalCancellation?.cause,
+    );
+    if (reported >= 0) {
+      failures[marker] = failures[reported]!;
+      failures.splice(reported, 1);
+    }
+  }
+  const first = failures.find(
+    (failure) => isRequestLevelFailure(failure) || failure.cleanupIncomplete,
+  );
+  if (first === undefined) return undefined;
+  let combined = first;
+  for (const failure of failures) {
+    if (failure === first) continue;
+    if (failure instanceof AnalysisCancelledError)
+      combined = analysisErrorWithCancellation(combined, failure);
+    if (failure.cleanupIncomplete) {
+      const previous = combined;
+      combined = analysisErrorWithCleanupFailure(
+        previous,
+        failure,
+        "inspect_address_context",
+      ).bindCleanupDependencies([previous, failure]);
+    } else if (
+      !(failure instanceof AnalysisCancelledError) &&
+      isRequestLevelFailure(failure)
+    ) {
+      combined.retainSecondaryFailure(failure);
+    }
+  }
+  return combined;
+};
 
 const matchingBookmarks = (value: JsonValue, address: string): Facet => {
   if (!Array.isArray(value))

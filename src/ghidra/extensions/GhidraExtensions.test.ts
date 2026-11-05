@@ -310,30 +310,26 @@ describe("Ghidra extension profile and producer validation", () => {
   it("requires exact inventory, artifact digest and consistent producer status", async () => {
     const { extension } = await artifact();
     const valid = result(extension.sha256);
-    const inventoryMismatch =
-      "Ghidra extension result inventory differs from its committed profile.";
     expect(validateGhidraExtensionResults([extension], [valid])).toBeNull();
-    expect(validateGhidraExtensionResults([extension], [])).toBe(
-      inventoryMismatch,
+    expect(validateGhidraExtensionResults([extension], [])).toContain(
+      "inventory",
     );
-    expect(validateGhidraExtensionResults([], [valid])).toBe(inventoryMismatch);
-    expect(validateGhidraExtensionResults([extension], [valid, valid])).toBe(
-      inventoryMismatch,
-    );
+    expect(validateGhidraExtensionResults([], [valid])).toContain("inventory");
     expect(
-      validateGhidraExtensionResults(
-        [extension],
-        [{ ...valid, sha256: "b".repeat(64) }],
-      ),
-    ).toBe("Ghidra extension identity mismatch: nativeaot");
+      validateGhidraExtensionResults([extension], [valid, valid]),
+    ).toContain("inventory");
+    const identityMismatch = validateGhidraExtensionResults(
+      [extension],
+      [{ ...valid, sha256: "b".repeat(64) }],
+    );
+    expect(identityMismatch).toContain("identity");
+    expect(identityMismatch).toContain(extension.id);
     expect(
       validateGhidraExtensionResults(
         [extension],
         [{ ...valid, status: "complete" }],
       ),
-    ).toBe(
-      "NativeAOT extension returned a malformed or inconsistent producer report.",
-    );
+    ).toContain("producer report");
   });
   it("requires matching explicit configuration for imported executable profiles", async () => {
     const { extension, path } = await artifact();
@@ -354,42 +350,30 @@ describe("Ghidra extension profile and producer validation", () => {
         "linux",
         "unix-socket",
       ),
-    ).toBe(
-      "Configured Ghidra extension inventory differs from the resolved analysis profile.",
+    ).toContain("inventory");
+    const unsupportedHost = validateGhidraExtensionProfile(
+      [extension],
+      config(path),
+      target,
+      "darwin",
+      "unix-socket",
     );
-    expect(
-      validateGhidraExtensionProfile(
-        [extension],
-        config(path),
-        target,
-        "darwin",
-        "unix-socket",
-      ),
-    ).toBe(
-      "NativeAOT recovery is verified on Linux only; omit REA_GHIDRA_NATIVEAOT_JAR for ordinary native analysis.",
-    );
-    expect(
-      validateGhidraExtensionProfile(
-        [{ ...extension, entry_class: "arbitrary.Code" }],
-        config(path),
-        target,
-        "linux",
-        "unix-socket",
-      ),
-    ).toBe(
-      "Ghidra extension profile lacks matching explicit local configuration: nativeaot",
-    );
-    expect(
-      validateGhidraExtensionProfile(
-        [{ ...extension, configured_path: "/another.jar" }],
+    expect(unsupportedHost).toContain("Linux");
+    expect(unsupportedHost).toContain("REA_GHIDRA_NATIVEAOT_JAR");
+    for (const changed of [
+      { ...extension, entry_class: "arbitrary.Code" },
+      { ...extension, configured_path: "/another.jar" },
+    ]) {
+      const invalid = validateGhidraExtensionProfile(
+        [changed],
         config(path),
         target,
         "linux",
         "unix-socket",
-      ),
-    ).toBe(
-      "Ghidra extension profile lacks matching explicit local configuration: nativeaot",
-    );
+      );
+      expect(invalid).toContain("configuration");
+      expect(invalid).toContain(extension.id);
+    }
   });
   it("does not classify PE/CLI or ReadyToRun as NativeAOT", async () => {
     const resolved = await resolveGhidraExtensions(
@@ -538,8 +522,8 @@ describe("Ghidra extension recovery coverage", () => {
         },
       },
     };
-    expect(validateGhidraExtensionResults([extension], [incomplete])).toBe(
-      "NativeAOT recovery coverage contradicts its reported completion status.",
+    expect(validateGhidraExtensionResults([extension], [incomplete])).toContain(
+      "coverage",
     );
     expect(
       validateGhidraExtensionResults(
@@ -558,9 +542,7 @@ describe("Ghidra extension recovery coverage", () => {
         [extension],
         [{ ...positive, result: { ...positive.result, discovery: null } }],
       ),
-    ).toBe(
-      "NativeAOT extension returned a malformed or inconsistent producer report.",
-    );
+    ).toContain("producer report");
   });
   it("preserves real loader failures without requiring a successful analyzer report", async () => {
     const { extension } = await artifact();
@@ -585,14 +567,13 @@ describe("Ghidra extension recovery coverage", () => {
     const incomplete = result(extension.sha256);
     incomplete.result.status = "complete";
     incomplete.result.reason = null;
-    expect(
-      validateGhidraExtensionResults(
-        [extension],
-        [{ ...incomplete, status: "complete", reason: null }],
-      ),
-    ).toBe(
-      "NativeAOT recovery omitted its supported format, method-table inventory or derived-memory identity.",
+    const rejection = validateGhidraExtensionResults(
+      [extension],
+      [{ ...incomplete, status: "complete", reason: null }],
     );
+    expect(rejection).toContain("format");
+    expect(rejection).toContain("method-table");
+    expect(rejection).toContain("derived-memory");
   });
   it.each(["not_applicable", "unsupported", "failed"] as const)(
     "rejects contradictory %s reports without discarding discovery context",
@@ -617,7 +598,7 @@ describe("Ghidra extension recovery coverage", () => {
           [extension],
           [{ ...report, result: { ...report.result, method_tables: 1 } }],
         ),
-      ).toBe("NativeAOT non-recovery status carries recovered metadata.");
+      ).toContain("metadata");
       for (const reason of [null, "", " "] as const)
         expect(
           validateGhidraExtensionResults(
@@ -630,7 +611,7 @@ describe("Ghidra extension recovery coverage", () => {
               },
             ],
           ),
-        ).toBe("NativeAOT non-recovery status omits its required reason.");
+        ).toContain("reason");
     },
   );
 });

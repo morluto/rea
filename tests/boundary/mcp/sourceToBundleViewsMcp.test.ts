@@ -1,9 +1,8 @@
-import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { afterAll, expect, it, onTestFinished } from "vitest";
+import { afterAll, expect, it } from "vitest";
 import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
-import { createServer } from "../../../src/server/createServer.js";
+import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { sourceToBundleComparisonResultSchema } from "../../../src/domain/javascript/sourceToBundleComparisonSchemas.js";
 import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisView.js";
@@ -215,24 +214,14 @@ const comparisonFixture = async (profile: "full" | "compact") => {
   const session = createTestBinarySession(() => {
     throw new Error("Views must not open a native provider");
   });
-  const server = createServer(
-    { kind: "session", session },
-    {
+  const { client } = await createApplicationMcpHarness({
+    session,
+    clientIdentity: { name: "source-view", version: "1" },
+    schemaValidator: schemaValidation,
+    serverOptions: {
       environment: { ...process.env, REA_MCP_INPUT_SCHEMA_PROFILE: profile },
     },
-  );
-  const client = new Client(
-    { name: "source-view", version: "1" },
-    { jsonSchemaValidator: schemaValidation },
-  );
-  onTestFinished(async () => {
-    await client.close();
-    await server.close();
-    await session.close();
   });
-  const [a, b] = InMemoryTransport.createLinkedPair();
-  await server.connect(b);
-  await client.connect(a);
   expect(session.recordEvidence(application.value).ok).toBe(true);
   const inputs = {
     reference: reference.value,
