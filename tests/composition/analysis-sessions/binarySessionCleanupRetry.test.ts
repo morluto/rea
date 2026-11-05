@@ -130,7 +130,13 @@ it.each(["close", "switch", "open after close"] as const)(
       transition === "switch" ? await attempt() : await session.close();
     expect(initial).toEqual(
       transition === "switch"
-        ? { ...err(cleanupError), selection: { kind: "none" } }
+        ? {
+            ok: false,
+            error: cleanupError,
+            targetAtCompletion: null,
+            providerIdAtCompletion: null,
+            selection: { kind: "none" },
+          }
         : err(cleanupError),
     );
     expect(session.activeTarget()).toBeUndefined();
@@ -156,7 +162,13 @@ it.each(["close", "switch", "open after close"] as const)(
     expect(await attempt()).toEqual(
       transition === "close"
         ? err(cleanupError)
-        : { ...err(cleanupError), selection: { kind: "none" } },
+        : {
+            ok: false,
+            error: cleanupError,
+            targetAtCompletion: null,
+            providerIdAtCompletion: null,
+            selection: { kind: "none" },
+          },
     );
     expect(await session.status()).toMatchObject({
       analysis_run: { run_id: fixture.runIds[0] },

@@ -240,12 +240,9 @@ const registerOpenLifecycleTool = ({
             },
             openContract,
           )
-        : server.delivery.toErrorToolResult(
-            opened.error,
+        : server.delivery.toOpenFailureToolResult(
+            opened,
             openContract.returnsTargetContent,
-            {
-              selection_at_failure: opened.selection,
-            },
           );
     },
   );

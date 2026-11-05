@@ -488,7 +488,7 @@ const resolvePromiseExpression = (
   const binding = resolveSemanticBindingState(state, node, node.name);
   if (binding === undefined || seenBindings.has(binding.bindingId))
     return unresolvedPromise();
-  const read = semanticBindingAtRead(binding, node, state.parentsByNode);
+  const read = semanticBindingAtRead(binding, node, state);
   if (
     read.status !== "ordered" ||
     !read.hasDefiniteInitializer ||

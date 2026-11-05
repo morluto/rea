@@ -235,7 +235,7 @@ const emitterIdentity = (
   if (t.isIdentifier(node)) {
     const binding = resolveSemanticBindingState(state, node, node.name);
     if (binding !== undefined) {
-      const read = semanticBindingAtRead(binding, node, state.parentsByNode);
+      const read = semanticBindingAtRead(binding, node, state);
       const origins = [
         ...read.binding.initializers,
         ...read.binding.referenceInitializers,
@@ -383,7 +383,7 @@ const collectTimer = (input: TimerCollectionInput): void => {
           const snapshot = semanticBindingAtRead(
             handle,
             node.arguments[0],
-            state.parentsByNode,
+            state,
           );
           // A const handle has the same value inside a later closure even
           // when the source positions belong to different function bodies.

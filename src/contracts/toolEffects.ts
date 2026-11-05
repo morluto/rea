@@ -614,7 +614,7 @@ export const TOOL_EFFECTS: Readonly<Record<string, ToolEffects>> = {
     executesForeignCode: true,
     idempotent: false,
   }),
-  inspect_macho: nativeEvidence,
+  inspect_macho: { ...nativeEvidence, writesFilesystem: true },
   inspect_signature: { ...nativeEvidence, writesFilesystem: true },
   inspect_plist: nativeEvidence,
   list_architectures: nativeEvidence,
