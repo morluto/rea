@@ -78,6 +78,40 @@ it("lets a caller select an inventoried empty type without decoding the oversize
   expect(result.methods).toEqual([]);
 });
 
+it("decodes a single selected type to completion on a game-scale assembly", () => {
+  // Slay the Spire 2 sts2.dll scale from #8980: 9,409 TypeDefs, 49,738
+  // MethodDefs, 40,037 Fields, 11,442 MemberRefs, 58,698 CustomAttributes.
+  // A single-type selection must not spend the representation budget on the
+  // whole assembly before the selection is applied.
+  const bytes = buildManagedPeFixture({
+    additionalEmptyTypes: 9400,
+    fieldRowCount: 40037,
+    methodRowCount: 49738,
+    memberRefRowCount: 11442,
+    customAttributeRowCount: 58698,
+    distinctMemberNames: true,
+  });
+  const target = managedPeFixtureTarget(bytes);
+  const inventory = inspectManagedMembersBytes(bytes, target);
+  const empty = inventory.types.find((type) => type.method_list.count === 0);
+  expect(empty).toBeDefined();
+  const result = inspectManagedMembersBytes(bytes, target, {
+    typeNames: [empty!.full_name],
+  });
+  expect(result.coverage).toEqual({ state: "complete", issues: [] });
+  expect(result.selection).toEqual({
+    type_names: [empty!.full_name],
+    unmatched_type_names: [],
+  });
+  expect(result.types).toHaveLength(1);
+  expect(result.types[0]?.token).toBe(empty?.token);
+  expect(result.fields).toEqual([]);
+  expect(result.methods).toEqual([]);
+  // Member references stay assembly-wide: the selection narrows declaring
+  // types, not the reference inventory behind call edges.
+  expect(result.member_refs).toHaveLength(11442);
+});
+
 it("preserves explicit type selection when its selected body exhausts capacity", () => {
   const bytes = buildManagedMemberCapacityFixture();
   const result = inspectManagedMembersBytes(

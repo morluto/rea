@@ -3042,6 +3042,40 @@ it("retains names of unselected fields without admitting their malformed signatu
   ).toEqual([]);
 });
 
+it("keeps names on call edges into unselected types", () => {
+  const bytes = buildManagedNestedTypeFixture({ topLevelTypes: true });
+  const pe = readManagedPeLayout(bytes);
+  if (pe.cli === null) throw new Error("Expected CLI fixture");
+  const { rva, size } = pe.cli.metadata;
+  const layout = readManagedMetadataLayout(
+    bytes,
+    pe.rvaToOffset(rva, size, "cli.metadata"),
+    size,
+  );
+  // The selected method calls the MethodDef row owned by the unselected
+  // Inner type: skipping that row must not lose the edge target's name.
+  const method = metadataRowOffset(layout, 6, 2);
+  const methodRva = bytes.readUInt32LE(method);
+  const body = tokenBody([[call, 0x06000001]]);
+  bytes.set(body, pe.rvaToOffset(methodRva, body.length, "fixture CIL"));
+  const result = inspectManagedMembersBytes(
+    bytes,
+    managedPeFixtureTarget(bytes),
+    {
+      typeNames: ["OtherInner"],
+    },
+  );
+  expect(result.methods).toMatchObject([{ token: "0x06000002", name: "M" }]);
+  expect(result.call_edges).toMatchObject([
+    {
+      target_token: "0x06000001",
+      target_name: "M",
+      target_declaring_type: "Inner",
+    },
+  ]);
+  expect(result.coverage).toEqual({ state: "complete", issues: [] });
+});
+
 it.each([false, true])(
   "keeps ordinary TypeSpec operands distinct from GENERICINST heads (generic=%s)",
   (generic) => {
