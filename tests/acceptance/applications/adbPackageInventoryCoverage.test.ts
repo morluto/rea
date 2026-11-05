@@ -1,6 +1,7 @@
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
+import { Ajv2020 } from "ajv/dist/2020.js";
 import { expect } from "vitest";
 
 import { toolContract } from "../../../src/contracts/toolContracts.js";
@@ -10,6 +11,42 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest, runFileCli } from "../../support/cli/cliFixture.js";
 
 const PACKAGE_LINE = "package:/data/app/example/base.apk=com.example.app";
+
+cliTest.for([
+  {
+    command: "list-adb-directory",
+    field: "device-path",
+    valid: "/sdcard",
+    invalid: "sdcard",
+  },
+  {
+    command: "resolve-adb-packages",
+    field: "query",
+    valid: "a".repeat(256),
+    invalid: "a".repeat(257),
+  },
+])(
+  "publishes the enforced ADB selector constraint for $command",
+  async ({ command, field, valid, invalid }, { cli }) => {
+    const schema = await cli.run({
+      arguments: [command, "--schema", "--json"],
+    });
+    expect(schema.exitCode, schema.stderr).toBe(0);
+    const output = schema.json as { args: Parameters<Ajv2020["compile"]>[0] };
+    const validate = new Ajv2020({ strict: false }).compile(output.args);
+    const serial = "emulator-5554";
+    expect(validate({ serial, [field]: valid })).toBe(true);
+    expect(validate({ serial, [field]: invalid })).toBe(false);
+    const result = await cli.run({
+      arguments: [command, serial, invalid, "--json"],
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.json).toMatchObject({
+      code: "VALIDATION_ERROR",
+      fieldErrors: [expect.objectContaining({ path: field })],
+    });
+  },
+);
 const unrecognized = (count: number) =>
   Array.from(
     { length: count },
