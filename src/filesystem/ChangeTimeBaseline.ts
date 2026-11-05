@@ -51,27 +51,28 @@ export const changeTimeMayStillDrift = (
 };
 
 /**
- * Observe until one ChangeTime is stable across two reads, then return it as the
- * baseline. Only a file whose ChangeTime is still inside the drift window is
- * re-observed, so an established file costs exactly one read.
+ * Observe until the ChangeTime itself has aged out of the drift window, then
+ * return it as the baseline. Waiting for two consecutive reads to agree is not
+ * enough: two observations taken before Windows performs a delayed update agree
+ * with each other and disagree with every later one.
  *
- * Returns the last observation when the window never yields a stable pair: the
- * caller's comparisons still see that value, and refusing to admit a readable
- * file would trade a false "changed" report for a failure to inspect it.
+ * Only a ChangeTime still inside the window is re-observed, so an established
+ * file costs exactly one read.
+ *
+ * Returns the last observation if the wait budget runs out: the caller's
+ * comparisons still see that value, and refusing to admit a readable file would
+ * trade a false "changed" report for a failure to inspect it.
  */
 export const settleChangeTimeBaseline = async (
   read: () => Promise<Stats>,
   seams: ChangeTimeSettleSeams = {},
 ): Promise<Stats> => {
   const sleep = seams.sleep ?? defaultSleep;
-  let previous = await read();
-  if (!changeTimeMayStillDrift(previous, seams)) return previous;
+  let observed = await read();
   for (let poll = 0; poll < SETTLE_MAX_POLLS; poll += 1) {
+    if (!changeTimeMayStillDrift(observed, seams)) return observed;
     await sleep(SETTLE_POLL_MS);
-    const current = await read();
-    if (changeTimeMs(current) === changeTimeMs(previous)) return current;
-    previous = current;
-    if (!changeTimeMayStillDrift(current, seams)) return current;
+    observed = await read();
   }
-  return previous;
+  return observed;
 };
