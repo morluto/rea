@@ -644,6 +644,45 @@ it("compares an icon with a full target path, ignoring case and separators", asy
   expect(iconDifference(different)).toBe(true);
 });
 
+it("compares an icon with a target after collapsing dot segments as text", async () => {
+  const iconFor = async (localBasePath: string, iconLocation: string) =>
+    iconDifference(
+      await parse(
+        windowsShortcutBytes({ linkInfo: { localBasePath }, iconLocation }),
+      ),
+    );
+  expect(await iconFor("C:\\Tools\\.\\app.exe", "C:\\Tools\\app.exe")).toBe(
+    false,
+  );
+  expect(
+    await iconFor("C:\\Tools\\bin\\..\\\\app.exe", "c:/tools//app.exe"),
+  ).toBe(false);
+  // `..` stops at the drive root and the UNC share root.
+  expect(await iconFor("C:\\..\\..\\app.exe", "C:\\app.exe")).toBe(false);
+  expect(
+    await iconFor(
+      "\\\\server\\share\\..\\app.exe",
+      "\\\\server\\share\\app.exe",
+    ),
+  ).toBe(false);
+  expect(
+    await iconFor("\\\\server\\share\\..\\app.exe", "\\\\server\\app.exe"),
+  ).toBe(true);
+  expect(await iconFor("C:\\Tools\\..\\app.exe", "C:\\Tools\\app.exe")).toBe(
+    true,
+  );
+});
+
+it("compares an icon with the joined base path and suffix, not the bare base", async () => {
+  const report = await parse(
+    windowsShortcutBytes({
+      linkInfo: { localBasePath: "C:\\Tools", commonPathSuffix: "app.exe" },
+      iconLocation: "C:\\Tools",
+    }),
+  );
+  expect(iconDifference(report)).toBe(true);
+});
+
 it("leaves the icon comparison unknown when a stored target keeps an unexpanded variable", async () => {
   const environmentTarget = {
     kind: "environment",

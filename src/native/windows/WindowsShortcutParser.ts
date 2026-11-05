@@ -254,12 +254,38 @@ const extensionOf = (path: string | null | undefined): string | null => {
   return name.slice(dot).toLowerCase();
 };
 
-const normalizePath = (path: string): string =>
+const foldPath = (path: string): string =>
   path.replaceAll("/", "\\").toLowerCase();
+
+/** `\\?\` and `\\.\` paths reach Windows verbatim, so their segments are kept as written. */
+const DEVICE_PATH = /^\\\\[?.]\\/u;
+
+/**
+ * Compare form of a full path, from the text alone: no path is ever opened.
+ * Folds case and separators, drops repeated separators and `.` segments, and
+ * lets `..` remove one segment but never the drive or UNC `\\server\share` root.
+ */
+const normalizePath = (path: string): string => {
+  const folded = foldPath(path);
+  if (DEVICE_PATH.test(folded)) return folded;
+  const unc = folded.startsWith("\\\\");
+  if (!unc && !/^[a-z]:\\/u.test(folded)) return folded;
+  const parts = folded.slice(unc ? 2 : 0).split("\\");
+  const root = parts.slice(0, unc ? 2 : 1);
+  const segments: string[] = [];
+  for (const part of parts.slice(root.length)) {
+    if (part === "" || part === ".") continue;
+    if (part === "..") segments.pop();
+    else segments.push(part);
+  }
+  return unc
+    ? `\\\\${[...root, ...segments].join("\\")}`
+    : `${root[0] ?? ""}\\${segments.join("\\")}`;
+};
 
 /** A drive or UNC path. Filenames, relative paths, and `%VAR%` forms name no fixed location. */
 const isFullPath = (path: string): boolean =>
-  /^(?:[a-z]:\\|\\\\)/u.test(normalizePath(path));
+  /^(?:[a-z]:\\|\\\\)/u.test(foldPath(path));
 
 /** An unexpanded `%VAR%` reference: the host is never consulted, so the path stays unresolved. */
 const hasUnexpandedVariable = (path: string): boolean =>
@@ -298,7 +324,7 @@ const targetPaths = (report: {
       values.push(
         `${local.replace(/\\$/u, "")}\\${suffix.replace(/^\\/u, "")}`,
       );
-    if (local !== null && local.length > 0) values.push(local);
+    else if (local !== null && local.length > 0) values.push(local);
     const net = info.common_network_relative_link;
     if (net !== null) {
       const share = net.net_name_unicode ?? net.net_name;

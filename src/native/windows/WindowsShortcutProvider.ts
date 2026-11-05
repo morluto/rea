@@ -1,3 +1,4 @@
+import { lstat, open } from "node:fs/promises";
 import {
   projectStableArtifactFailure,
   projectArtifactCloseFailure,
@@ -6,6 +7,7 @@ import { isSelectedRegularFileError } from "../../filesystem/RegularFile.js";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import {
   readStableArtifact,
+  type StableArtifactFileSystem,
   type StableArtifactSnapshot,
 } from "../../artifacts/readStableArtifact.js";
 import { fileSnapshotPartialObservationSchema } from "../../domain/fileSnapshotObservation.js";
@@ -62,6 +64,15 @@ const namesNetworkShare = (path: string, platform: NodeJS.Platform): boolean =>
   HOST_PREFIXED_PATH.test(path) &&
   !LOCAL_DRIVE_DEVICE_PATH.test(path);
 
+/**
+ * `lstat` and `open` only. Without `realpath`, a rejected symlink's destination
+ * is never resolved, so a link pointing at a UNC path cannot reach an SMB host.
+ */
+const LINK_BLIND_FILE_SYSTEM: StableArtifactFileSystem = {
+  lstat: (path) => lstat(path, { bigint: true }),
+  open,
+};
+
 /** Portable Shell Link reader over one bounded, identity-checked regular file. */
 export class WindowsShortcutProvider implements WindowsShortcutPort {
   readonly identity = WINDOWS_SHORTCUT_PROVIDER;
@@ -102,7 +113,7 @@ export class WindowsShortcutProvider implements WindowsShortcutPort {
           input.path,
           input.max_file_bytes,
           options?.signal,
-          undefined,
+          LINK_BLIND_FILE_SYSTEM,
           this.#resources,
         );
         completed = snapshot;

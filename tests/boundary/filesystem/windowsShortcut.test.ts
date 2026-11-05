@@ -1,6 +1,6 @@
 import { symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createWindowsShortcutService } from "../../../src/composition/binaryDiagnostics.js";
 import { WindowsShortcutProvider } from "../../../src/native/windows/WindowsShortcutProvider.js";
 import {
@@ -8,6 +8,19 @@ import {
   windowsShortcutBytes,
 } from "../../fixtures/binaryDiagnostics/windowsShortcut.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+
+const { realpathCalls } = vi.hoisted(() => ({ realpathCalls: vi.fn() }));
+
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs/promises")>();
+  return {
+    ...actual,
+    realpath: (async (...args: Parameters<typeof actual.realpath>) => {
+      realpathCalls(...args);
+      return actual.realpath(...args);
+    }) as typeof actual.realpath,
+  };
+});
 
 // The input schema admits Windows path forms only on a Windows host, so these
 // reach the provider directly to run on every host.
@@ -51,6 +64,28 @@ describe("Windows shortcut stable filesystem boundary", () => {
       });
     }
   });
+
+  it.skipIf(process.platform === "win32")(
+    "rejects a symlinked shortcut without resolving its destination",
+    async () => {
+      const root = await createTestTempDirectory("rea-windows-shortcut-link-");
+      const path = join(root, "shortcut.lnk");
+      const alias = join(root, "alias.lnk");
+      await writeFile(path, powershellHiddenIconSpoofShortcut());
+      await symlink(path, alias);
+      realpathCalls.mockClear();
+
+      const result = await new WindowsShortcutProvider().inspect(
+        providerInput(alias),
+      );
+      if (result.ok) throw new Error("Expected symlink rejection");
+      expect(result.error).toMatchObject({
+        _tag: "AnalysisInputError",
+        issues: [{ path: ["path"], reason: "invalid_format" }],
+      });
+      expect(realpathCalls).not.toHaveBeenCalled();
+    },
+  );
 
   it("rejects network share paths without opening them", async () => {
     const provider = new WindowsShortcutProvider("win32");
