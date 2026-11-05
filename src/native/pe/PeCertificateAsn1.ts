@@ -573,6 +573,24 @@ const signerIdentifier = (
   );
 };
 
+// RFC 5652 5.3: present signedAttrs MUST hold content-type (1.2.840.113549.1.9.3)
+// and message-digest (1.2.840.113549.1.9.4). Without the digest, the
+// signature does not cover the signed content.
+const requireSignedAttributes = (node: Asn1BerNode): void => {
+  const types = new Set<string>();
+  for (const attribute of node.children) {
+    const fields = sequence(attribute, "SignerInfo signed attribute");
+    const oid = fields[0];
+    if (fields.length !== 2 || oid?.tag !== 0x06 || fields[1]?.tag !== 0x31)
+      return fail("SignerInfo signed attribute is missing its type or values.");
+    types.add(decodeOid(oid.content));
+  }
+  if (!types.has("1.2.840.113549.1.9.3"))
+    return fail("SignerInfo signedAttrs lacks a content-type attribute.");
+  if (!types.has("1.2.840.113549.1.9.4"))
+    return fail("SignerInfo signedAttrs lacks a message-digest attribute.");
+};
+
 const parseSigner = (
   node: Asn1BerNode,
   names: DecodedNameBudget,
@@ -593,6 +611,7 @@ const parseSigner = (
   const authenticated = children[cursor]?.tag === 0xa0;
   if (authenticated) {
     requireDefiniteEncoding(children[cursor]!, "SignerInfo signedAttrs");
+    requireSignedAttributes(children[cursor]!);
     cursor += 1;
   }
   const signatureAlg = children[cursor];

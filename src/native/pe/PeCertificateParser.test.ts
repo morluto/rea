@@ -448,6 +448,54 @@ it("fails signedData whose signerInfos set is empty", () => {
   );
 });
 
+it("requires content-type and message-digest signed attributes", () => {
+  const attributeType = (last: number) =>
+    der(
+      0x06,
+      Buffer.from([0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x09, last]),
+    );
+  const contentType = derSeq(attributeType(3), derSet(DATA_OID));
+  const messageDigest = derSeq(
+    attributeType(4),
+    derSet(der(0x04, Buffer.alloc(32))),
+  );
+  const report = (...attributes: Buffer[]) =>
+    parse(
+      peCertificateFixture(
+        false,
+        contentInfo(
+          derSeq(
+            derInt(1),
+            derSet(SHA256_ALG),
+            derSeq(DATA_OID),
+            derSet(
+              derSeq(
+                derInt(1),
+                derSeq(derSeq(), derInt(1)),
+                SHA256_ALG,
+                der(0xa0, Buffer.concat(attributes)),
+                SHA256_ALG,
+                der(0x04, Buffer.from([1])),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  const cases: [Buffer[], RegExp][] = [
+    [[], /lacks a content-type/u],
+    [[messageDigest], /lacks a content-type/u],
+    [[contentType], /lacks a message-digest/u],
+    [[contentType, derSeq(attributeType(4))], /type or values/u],
+  ];
+  for (const [attributes, message] of cases)
+    expect(() => report(...attributes)).toThrow(message);
+  expect(
+    report(messageDigest, contentType).entries[0]?.pkcs7?.signers[0]
+      ?.authenticated_attributes,
+  ).toBe(true);
+});
+
 it("keeps subjectKeyIdentifier bytes on the signer", () => {
   const ski = Buffer.from([0x00, 0xab, 0xcd]);
   const signer = derSeq(
