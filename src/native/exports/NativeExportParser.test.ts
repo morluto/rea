@@ -9,6 +9,7 @@ import * as nativeExportContracts from "../../domain/native/nativeExports.js";
 import {
   BinaryFormatFailure,
   BinaryResourceFailure,
+  BinaryStringReadLimitFailure,
 } from "../metadata/BinaryContainer.js";
 import {
   parseNativeExports,
@@ -564,6 +565,17 @@ describe("ELF export version and name coverage", () => {
     expect(result.coverage.status).toBe("partial");
   });
 
+  it("keeps unrelated exports when a symbol name exceeds the string scan allowance", () => {
+    const result = parse(
+      elfExportImage({
+        symbols: [{ name: "kept" }, { name: "k".repeat(65_536) }],
+      }),
+    );
+    expect(result.exports.map(({ name }) => name)).toEqual(["kept"]);
+    expect(result.issues).toMatchObject([{ code: "name_unreadable" }]);
+    expect(result.coverage.status).toBe("partial");
+  });
+
   it("separates an examined empty symbol table from unavailable symbol declarations", () => {
     expect(parse(elfExportImage({ symbols: [] }))).toMatchObject({
       exports: [],
@@ -809,6 +821,37 @@ describe("export inventory review regressions", () => {
     });
   });
 
+  it.each([32, 64] as const)(
+    "rejects nonzero reserved fields in the ELF%s null symbol",
+    (bits) => {
+      for (const little of [true, false]) {
+        // ELF32/64 symbol records have no padding: every field in entry zero
+        // is reserved as zero by the ABI, independently of host endianness.
+        const width = bits === 64 ? 24 : 16;
+        for (let byte = 0; byte < width; byte++) {
+          const bytes = elfExportImage({
+            bits,
+            little,
+            symbols: [{ name: "kept_export" }],
+          });
+          bytes[0x100 + byte] = 1;
+          expect(() => parseNativeExports(bytes, artifact)).toThrow(
+            BinaryFormatFailure,
+          );
+        }
+        expect(
+          parse(
+            elfExportImage({
+              bits,
+              little,
+              symbols: [{ name: "kept_export" }],
+            }),
+          ).exports.map(({ name }) => name),
+        ).toEqual(["kept_export"]);
+      }
+    },
+  );
+
   it("rejects a dynamic symbol table without its null entry", () => {
     expect(() =>
       parseNativeExports(
@@ -833,7 +876,7 @@ describe("ELF symbol-name text", () => {
         expect(result.issues).toContainEqual(
           expect.objectContaining({
             message: expect.stringContaining(
-              "unterminated or exceeds the string budget",
+              new BinaryStringReadLimitFailure(65_536).message,
             ),
           }),
         );

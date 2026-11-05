@@ -3,6 +3,11 @@ import {
   nullableCollectionViewCoverageSchema,
 } from "./analysisViewCoverage.js";
 import {
+  nativeInstructionReferencesRequestSchema,
+  nativeInstructionReferenceItemsSchema,
+  nativeInstructionReferenceContextSchema,
+} from "./nativeInstructionReferencesView.js";
+import {
   javaScriptRouteInventorySourceSchema,
   javaScriptRouteInventorySchema,
 } from "../javascript/javascriptRouteInventory.js";
@@ -49,6 +54,7 @@ import {
   nativeExportsViewItemsSchema,
   nativeExportsSummarySchema,
 } from "./nativeExportsView.js";
+import { procedurePseudocodeSummarySchema } from "./procedurePseudocodeSchemas.js";
 import { byteEntropySummarySchema } from "./byteEntropyView.js";
 import {
   javaScriptRoutesViewRequestSchema,
@@ -72,6 +78,11 @@ import {
   featureTraceViewCollections,
   featureTraceViewContextSchema,
 } from "./featureTraceView.js";
+import {
+  nativeFeatureTraceSummarySchema,
+  nativeFeatureTraceViewItems,
+  nativeFeatureTraceRequests,
+} from "./nativeFeatureTraceView.js";
 import {
   batchDecompileSummarySchema,
   batchDecompileViewCollections,
@@ -332,6 +343,7 @@ const viewResultBase = {
     "analyze_javascript_application",
     "analyze_web_bundle",
     "analyze_function",
+    "procedure_pseudo_code",
     "inspect_artifact",
     "inventory_artifact",
     "inspect_wasm_artifact",
@@ -368,6 +380,13 @@ const summaryViewResultBase = {
   view: summaryViewSchema,
   ...viewResultBase,
 } as const;
+
+/** Original selector and text availability without the complete decompiled text. */
+export const procedurePseudocodeSummaryViewResultSchema = z.strictObject({
+  ...summaryViewResultBase,
+  parent_operation: z.literal("procedure_pseudo_code"),
+  summary: procedurePseudocodeSummarySchema,
+});
 
 const nativeObservationSummaryFor = <
   Operation extends NativeObservationOperation,
@@ -848,6 +867,40 @@ export const nativeInventorySummaryViewResultSchema = z.strictObject({
   summary: nativeInventorySummarySchema,
 });
 
+export const nativeFeatureTraceSummaryViewResultSchema = z.strictObject({
+  ...summaryViewResultBase,
+  ...nativeViewSourceContext,
+  artifact: artifactSchema.nullable(),
+  parent_operation: z.literal("trace_feature"),
+  summary: nativeFeatureTraceSummarySchema,
+});
+
+const nativeFeatureTracePage = <
+  Collection extends keyof typeof nativeFeatureTraceViewItems,
+>(
+  collection: Collection,
+) =>
+  z.strictObject({
+    ...viewResultBase,
+    ...nativeViewSourceContext,
+    artifact: artifactSchema.nullable(),
+    kind: z.literal("native-feature-trace"),
+    parent_operation: z.literal("trace_feature"),
+    view: nativeFeatureTraceRequests[collection],
+    summary: nativeFeatureTraceSummarySchema,
+    items: nativeFeatureTraceViewItems[collection],
+  });
+const nativeFeatureTracePageViewResultSchema = z
+  .object({ kind: z.literal("native-feature-trace") })
+  .passthrough()
+  .pipe(
+    z.union([
+      nativeFeatureTracePage("matches"),
+      nativeFeatureTracePage("references"),
+      nativeFeatureTracePage("unknowns"),
+    ]),
+  );
+
 /** Compact provider load observations retain the independent verification state. */
 export const nativeLoadImageSummaryViewResultSchema = z.strictObject({
   ...summaryViewResultBase,
@@ -1076,6 +1129,18 @@ const machoPageViewResultSchema = z
 
 /** Projected facts for one selected view of retained analysis Evidence. */
 export const analysisViewResultSchema = z.discriminatedUnion("kind", [
+  z.strictObject({
+    ...viewResultBase,
+    ...nativeViewSourceContext,
+    kind: z.literal("native-instruction-references"),
+    parent_operation: z.literal("inspect_native_instruction"),
+    artifact: artifactSchema.nullable(),
+    view: nativeInstructionReferencesRequestSchema,
+    instruction: nativeInstructionReferenceContextSchema,
+    items: nativeInstructionReferenceItemsSchema,
+    coverage: analysisViewCoverageSchema.nullable(),
+    byte_limited: z.boolean(),
+  }),
   nativeObservationPageViewResultSchema,
   nativeContextViewResultSchema,
   javaScriptRoutesViewResultSchema,
@@ -1090,6 +1155,7 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     artifact: z.null(),
     view: nativeFunctionMatchingViewRequestSchema,
     items: nativeFunctionMatchingViewItemsSchema,
+    byte_limited: z.boolean().optional(),
     parent_operation: z.literal("match_native_functions"),
   }),
   z.strictObject({
@@ -1134,6 +1200,7 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     view: environmentCoverageViewRequestSchema,
   }),
   z.discriminatedUnion("parent_operation", [
+    procedurePseudocodeSummaryViewResultSchema,
     nativeObservationSummaryViewResultSchema,
     nativeValueTraceSummaryViewResultSchema,
     erlangBeamSummaryViewResultSchema,
@@ -1169,6 +1236,7 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     modelArtifactSummaryViewResultSchema,
     gpuCodeObjectsSummaryViewResultSchema,
     nativeInventorySummaryViewResultSchema,
+    nativeFeatureTraceSummaryViewResultSchema,
     nativeLoadImageSummaryViewResultSchema,
     nativeFunctionMatchingSummaryViewResultSchema,
     nativeFunctionSummaryViewResultSchema,
@@ -1204,6 +1272,7 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     view: nativeInventoryViewRequestSchema,
     rows: z.array(nativeInventoryViewRowSchema),
   }),
+  nativeFeatureTracePageViewResultSchema,
   z.strictObject({
     ...viewResultBase,
     kind: z.literal("native-load-image"),

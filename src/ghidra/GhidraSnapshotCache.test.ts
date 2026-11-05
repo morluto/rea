@@ -308,6 +308,16 @@ describe("Ghidra relationship coverage replay", () => {
 describe("Ghidra snapshot profile admission", () => {
   it.each([
     {
+      parameter: "data_type_observations",
+      current: "bit-field-base-and-lookup-v1",
+      legacy: undefined,
+    },
+    {
+      parameter: "byte_search_boundary",
+      current: "contiguous-eligible-initialized-blocks-v1",
+      legacy: undefined,
+    },
+    {
       parameter: "instruction_status",
       current: "unlisted-address-without-decode-v1",
       legacy: undefined,

@@ -494,6 +494,15 @@ The workflow reports IFF chunk names, atom tables, exports, imports, lambdas,
 and the Code chunk header. Missing optional tables stay null. See
 [Erlang BEAM files](erlang-beam.md).
 
+Complete `rea decompile --json` Evidence can be saved and inspected through
+`inspect-analysis-view` with an inline source and
+`view: {kind: "native", facet: "pseudocode", offset: 0, limit: 20000}`.
+The projection reads that saved observation without starting a provider;
+offsets/limits count UTF-16 code units. A summary view preserves the original
+selector and distinguishes null from empty text. The MCP tool additionally
+supports `detail: "summary"` on its first call to retain the complete source
+without returning the body inline; see [native investigation](native-investigation.md).
+
 Configure [Hopper or Ghidra](installation.md#hopper), the
 [IDA adapter](ida-provider.md), or [Kuna](kuna-provider.md) before analyzing a
 native target. Substitute
@@ -634,6 +643,9 @@ Saved snapshots include only cache entries whose subject identifies the selected
 target. Unbound observations and observations of child artifacts remain available
 in the open session and its Evidence bundle; they are excluded from the target's
 saved replay entries without changing their subjects.
+The snapshot also retains available Evidence linked by selected records, including
+transitive sources with an unbound or different subject. Those sources are not
+replay entries for the selected target. Unrelated records remain excluded.
 
 Snapshots retain eligible target-scoped question histories in full, including
 mutation Evidence recorded while another target was active. Observations and
@@ -705,6 +717,10 @@ results and Evidence. These are cached observations, not a saved provider
 database: only eligible exact queries can reuse a result, and new or live
 queries can still require provider startup. The CLI uses the same snapshot
 format and preserves these records when loading and updating it.
+When an MCP session replays a provider observation, its delivered Evidence identifies
+the original observation through `evidence_links` and reports that the
+provider was not rerun. The original and its available source records remain
+in the investigation bundle.
 
 ## Import, export and compare Evidence
 
@@ -961,6 +977,10 @@ Choose the guide for the target and intended interaction:
 - [Electron fuses](electron-fuses.md): read packaged fuse bytes before expecting `--inspect` to reach an Electron main process.
 - [Node/Electron Inspector](javascript-runtime-observation.md): record script locations and execution contexts.
 - [Process capture](process-capture.md): run an executable and compare terminal, exit and filesystem observations.
+- [Desktop application capture](desktop-application-capture.md): launch a Linux desktop application and record its windows and home-directory state at checkpoints while it is used.
+- [Desktop application state](desktop-application-state.md): read a capture folder into the application's state files, typed views of each version and kinds of change.
+- [Desktop application export](desktop-application-export.md): write a capture folder as an agentenv computer app bundle with its class, skill and seed.
+- [Desktop application tasks](desktop-application-tasks.md): describe how a capture's files changed, then validate an agent-written task against the capture and export it with its verifier.
 
 Runtime requests name the target and actions. Launched targets run with your
 user permissions; consult the chosen guide for host requirements and effects.
@@ -1312,7 +1332,9 @@ the command's signal handling. Commands routed through the shared
 `withCommandCancellation` handler in the CLI set status `130` for SIGINT or
 `143` for SIGTERM after their operation settles. Current source registrations
 use that handler for process capture and comparison (`capture-process`,
-`compare-process-captures`), JavaScript application analysis (`analyze` when it
+`compare-process-captures`), desktop application capture and state
+(`capture-desktop-application`, `inspect-desktop-application-state`,
+`export-desktop-application`, `describe-desktop-application-task`), JavaScript application analysis (`analyze` when it
 selects the JavaScript lane, and `analyze-javascript-application`), selected
 browser, web and Electron commands (including `analyze-web-bundle`,
 `observe-web-execution`, `capture-browser-scenario` and
@@ -1412,6 +1434,16 @@ rea inspect-pe-rich-header /absolute/path/to/application.exe --json
 Reports the Rich header's product IDs, builds and use counts, and whether its
 checksum reproduces the stored key, without execution. Use `--max-entries` and
 `--max-file-bytes` to set read budgets. See [PE Rich header](pe-rich-header.md).
+
+### Binary hardening
+
+```sh
+rea inspect-binary-hardening /absolute/path/to/program --json
+```
+
+Reports ELF, PE, and Mach-O hardening rows without execution. A missing import
+is `unknown`, not `disabled`. Use `--max-file-bytes` to set the read budget. See
+[binary hardening](binary-hardening.md).
 
 Bun standalone executables use the existing `inspect-artifact` and
 `extract-artifact` commands to inventory and materialize embedded source,

@@ -484,6 +484,15 @@ export const parseCertificate = (
       "TBSCertificate is missing serial, signature, issuer, validity, subject, or subjectPublicKeyInfo.",
     );
   algorithmOid(tbsSignature);
+  // RFC 5280 4.1.1.2: signatureAlgorithm MUST equal the TBSCertificate
+  // signature field. Compare encodings, parameters included.
+  if (
+    signatureAlgorithm.tag !== tbsSignature.tag ||
+    !signatureAlgorithm.content.equals(tbsSignature.content)
+  )
+    return fail(
+      "Certificate signatureAlgorithm differs from the TBSCertificate signature.",
+    );
   requireSubjectPublicKeyInfo(subjectPublicKeyInfo);
   finishTbsCertificate(tbsChildren, index + 6);
   const validityChildren = sequence(validity, "Validity");
