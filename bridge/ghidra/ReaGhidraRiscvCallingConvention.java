@@ -417,7 +417,7 @@ public final class ReaGhidraRiscvCallingConvention extends GhidraScript {
 
   /** The psABI's storage class for a first argument or return of this type, after flattening. */
   private static Kind psabiKind(DataType type) {
-    if (type.getLength() <= 8 && untyped(type)) return Kind.UNKNOWN;
+    if (held(type) <= 8 && untyped(type)) return Kind.UNKNOWN;
     List<Boolean> fields = new ArrayList<>();
     // C passes no array by value, so an array here is a GNU vector, which Ghidra imports as one.
     DataType value = strip(type);
@@ -430,10 +430,24 @@ public final class ReaGhidraRiscvCallingConvention extends GhidraScript {
     return type.getLength() > 8 ? Kind.REFERENCE : Kind.INTEGER;
   }
 
+  /** The bytes a value's fields hold. Alignment can pad a structure past them. */
+  private static long held(DataType type) {
+    type = strip(type);
+    if (type instanceof Structure structure) {
+      long bytes = 0;
+      for (DataTypeComponent component : structure.getDefinedComponents())
+        bytes += held(component.getDataType());
+      return bytes;
+    }
+    if (type instanceof Array array) return array.getNumElements() * held(array.getDataType());
+    return type.getLength();
+  }
+
   /**
    * Whether a value holds a field Ghidra left untyped. Ghidra's DWARF import uses these types for
    * an encoding it does not map, so `float _Complex`, which takes two float registers, shows as a
-   * `qword`. Values over 8 bytes pass by reference whatever they hold, and so do not reach this.
+   * `qword`. Fields of over 8 bytes in all pass by reference whatever they are, and so do not
+   * reach this.
    */
   private static boolean untyped(DataType type) {
     type = strip(type);

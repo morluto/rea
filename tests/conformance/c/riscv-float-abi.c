@@ -206,14 +206,20 @@ __attribute__((noinline)) float rea_riscv_abi_vector(rea_riscv_abi_lanes value)
 }
 
 /* Ghidra imports float _Complex as an untyped qword, but compilers use fa0 and
- * fa1, alone and as the only member of a structure. */
+ * fa1, alone and as the only member of a structure, even one that alignment
+ * pads past 8 bytes. */
 struct rea_riscv_abi_wrapped {
     float _Complex value;
 };
 
-__attribute__((noinline)) float rea_riscv_abi_complex(float _Complex value, struct rea_riscv_abi_wrapped wrapped)
+struct __attribute__((aligned(16))) rea_riscv_abi_aligned {
+    float _Complex value;
+};
+
+__attribute__((noinline)) float rea_riscv_abi_complex(float _Complex value, struct rea_riscv_abi_wrapped wrapped, struct rea_riscv_abi_aligned aligned)
 {
     rea_riscv_abi_sink = *(volatile unsigned int *)&wrapped;
+    rea_riscv_abi_sink = *(volatile unsigned int *)&aligned;
     return __imag__ value;
 }
 
@@ -239,6 +245,17 @@ __attribute__((noinline)) struct rea_riscv_abi_bits rea_riscv_abi_bits(struct re
 {
     value.bit = (unsigned long long)tag & 1u;
     return value;
+}
+
+/* Two float _Complex fields hold 16 bytes, so they pass by reference. */
+struct rea_riscv_abi_complexes {
+    float _Complex first;
+    float _Complex second;
+};
+
+__attribute__((noinline)) float rea_riscv_abi_complexes(struct rea_riscv_abi_complexes value)
+{
+    return __imag__ value.second;
 }
 #endif
 #define REA_RISCV_ABI_CALLERS(sel) (rea_riscv_abi_caller(sel) ^ rea_riscv_abi_single_caller(sel))

@@ -144,7 +144,7 @@ const verifyUnmodelledRefusal = async () => {
     "rea_riscv_abi_flexible (rea_riscv_abi_flexible)",
     "rea_riscv_abi_padded (rea_riscv_abi_padded)",
     "rea_riscv_abi_vector (rea_riscv_abi_lanes)",
-    "rea_riscv_abi_complex (complex, rea_riscv_abi_wrapped)",
+    "rea_riscv_abi_complex (complex, rea_riscv_abi_wrapped, rea_riscv_abi_aligned)",
     "function-pointer type _func_void_rea_riscv_abi_spread_int (rea_riscv_abi_spread)",
   ];
   const lifecycle = async (name, args = {}) =>
@@ -166,10 +166,11 @@ const verifyUnmodelledRefusal = async () => {
     ),
   );
   for (const reason of reasons) assert.ok(error.includes(reason), error);
-  // An array in a structure flattens, and a bit-field counts by its width, so
-  // these shapes fit.
+  // An array in a structure flattens, a bit-field counts by its width, and two
+  // complex fields pass by reference, so these shapes fit.
   assert.ok(!error.includes("rea_riscv_abi_elements"), error);
   assert.ok(!error.includes("rea_riscv_abi_bits"), error);
+  assert.ok(!error.includes("rea_riscv_abi_complexes"), error);
   await lifecycle("close_binary");
   await assert.rejects(
     execute(

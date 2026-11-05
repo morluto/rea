@@ -284,11 +284,11 @@ passes a type the prototype misplaces:
 - a type the psABI places in float registers where the prototype cannot:
   `_Float16`, a packed structure whose `float` is not 4-byte aligned, or an
   over-aligned structure of more than 8 bytes;
-- a value of up to 8 bytes that holds an untyped `byte`, `word`, `dword` or
-  `qword`. Ghidra's DWARF import uses these for an encoding it does not map, so
-  the policy cannot know the value's class. `float _Complex`, which takes two
-  float registers, arrives as a `qword`. The stock double-float lanes show it as
-  an integer.
+- a value whose fields hold up to 8 bytes, whatever padding alignment adds, and
+  include an untyped `byte`, `word`, `dword` or `qword`. Ghidra's DWARF import
+  uses these for an encoding it does not map, so the policy cannot know the
+  value's class. `float _Complex`, which takes two float registers, arrives as a
+  `qword`. The stock double-float lanes show it as an integer.
 
 A bit-field counts by its width, not its declared type, so a `float` beside
 `unsigned long long b : 1` takes a float and an integer register. The check
@@ -400,10 +400,10 @@ assembly sources:
   function, a function-pointer type that passes the three-field structure,
   functions that pass a structure with a flexible array member, at the end of
   the structure and inside its padding, a function that passes a GNU vector, a
-  function that passes `float _Complex` alone and in a structure, and, from `riscv-float-abi-empty.cpp`, a function that passes a structure with an
+  function that passes `float _Complex` alone, in a structure and in an over-aligned structure, and, from `riscv-float-abi-empty.cpp`, a function that passes a structure with an
   array of one empty class. It also adds functions that pass a structure of one
-  `float[2]` and a `float` beside a one-bit field of a 64-bit type, which the
-  policy admits.
+  `float[2]`, a `float` beside a one-bit field of a 64-bit type, and two
+  `float _Complex` fields, which the policy admits.
 
 Independent LLVM readelf observations establish ELF declarations,
 `Tag_RISCV_arch` and symbol addresses. Public CLI and stdio MCP workflows verify
