@@ -12,7 +12,11 @@ import { mkdir, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { webSourceLocationFixture } from "../fixtures/webSourceLocation.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
-import { cliTest } from "../support/cli/cliFixture.js";
+import {
+  cliTest,
+  type CliResult,
+  type TestCli,
+} from "../support/cli/cliFixture.js";
 
 cliTest(
   "accepts numeric UTF-16 coordinates and runs the actual owned source-map codec without a browser",
@@ -115,18 +119,12 @@ const assertSourceMapFollowUp = async ({
   root,
   response,
 }: {
-  readonly cli: {
-    run: (options: {
-      readonly arguments: readonly string[];
-      readonly environment: Readonly<Record<string, string>>;
-      readonly timeoutMs: number;
-    }) => Promise<{ readonly exitCode: number; readonly json: unknown }>;
-  };
+  readonly cli: TestCli;
   readonly manifest: string;
   readonly map: string;
   readonly fixture: ReturnType<typeof webSourceLocationFixture>;
   readonly root: string;
-  readonly response: { readonly json: unknown };
+  readonly response: CliResult;
 }): Promise<void> => {
   const transport = new StdioClientTransport({
     command: process.execPath,
