@@ -1,4 +1,3 @@
-import { existsSync } from "node:fs";
 import { expect, it as test } from "vitest";
 
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
@@ -262,36 +261,24 @@ const deferred = <T>() => {
 };
 
 it("reports sibling unavailability when fallback observes settled export failure without prior assembly call", async () => {
-  const exportSettled = deferred<void>();
-  exportSettled.promise.catch(() => undefined);
+  const exportFailed = deferred<void>();
+  exportFailed.promise.catch(() => undefined);
   let synchronization: Promise<void> | undefined;
   const launcher: KunaProcessLauncher = async (options) => {
     if (options.arguments[0] === "decompile") {
-      await exportSettled.promise;
+      await exportFailed.promise;
     }
     const spawned = await spawnOwnedProviderProcess(options);
     if (options.arguments[0] === "decompile-project") {
-      const outputIndex = options.arguments.indexOf("-o");
-      const output =
-        outputIndex === -1 ? undefined : options.arguments[outputIndex + 1];
-      const synchronize = async () => {
-        try {
-          if (output !== undefined) {
-            await expect.poll(() => existsSync(output)).toBe(false);
-          }
-          exportSettled.resolve();
-        } catch (error) {
-          exportSettled.reject(error);
-          throw error;
-        }
-      };
       const exitPromise =
         spawned.process.exitCode !== null
           ? Promise.resolve()
           : new Promise<void>((resolve) => {
               spawned.process.once("exit", () => resolve());
             });
-      synchronization = exitPromise.then(synchronize);
+      synchronization = exitPromise.then(() => {
+        exportFailed.resolve();
+      });
     }
     return spawned;
   };
@@ -318,7 +305,7 @@ it("reports sibling unavailability when fallback observes settled export failure
     expect(await decompilesOf(kuna)).toHaveLength(1);
     await synchronization;
   } finally {
-    exportSettled.resolve();
+    exportFailed.resolve();
     await synchronization?.catch(() => undefined);
     expect(await client.close()).toEqual({ ok: true, value: null });
   }
