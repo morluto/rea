@@ -269,6 +269,67 @@ describe("draftTaskFiles for structured views", () => {
   });
 });
 
+describe("draftTaskFiles with nullable SQLite keys", () => {
+  it("suggests checks for distinct NULL-key rows and ignores a reorder", () => {
+    const file = ".local/share/app/items.db";
+    const table = (rows: (string | null)[][]) => ({
+      tables: {
+        items: {
+          columns: ["id", "body"],
+          primary_key: ["id"],
+          rows,
+          truncated: false,
+        },
+      },
+      tables_truncated: false,
+    });
+    expect(
+      draft({
+        [file]: path(
+          "application_state",
+          "sqlite",
+          table([
+            [null, "alpha"],
+            [null, "beta"],
+          ]),
+          table([
+            [null, "beta"],
+            [null, "alpha"],
+          ]),
+        ),
+      }),
+    ).toEqual([]);
+    const [database] = draft({
+      [file]: path(
+        "application_state",
+        "sqlite",
+        table([
+          [null, "alpha"],
+          [null, "beta"],
+        ]),
+        table([
+          [null, "gamma"],
+          [null, "beta"],
+        ]),
+      ),
+    });
+    expect(database?.suggested).toEqual([
+      {
+        kind: "row_present",
+        file,
+        table: "items",
+        where: { id: null, body: "gamma" },
+      },
+      {
+        kind: "row_absent",
+        file,
+        table: "items",
+        where: { id: null, body: "alpha" },
+      },
+    ]);
+  });
+});
+
 describe("draftTaskFiles with partial evidence", () => {
   const notes = (...rows: JsonValue[][]) => ({
     tables: {

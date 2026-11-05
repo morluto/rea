@@ -2,7 +2,7 @@ import type { JsonValue } from "../jsonValue.js";
 import { isTimestamp, type DesktopTaskCheckInput } from "./appTask.js";
 import { namesXmlNamespace, resolvePointer } from "./appTaskChecks.js";
 import type { DesktopStatePath } from "./desktopState.js";
-import { diffStateViews } from "./stateChanges.js";
+import { diffStateViews, sqliteRowIdentity } from "./stateChanges.js";
 
 type Version = DesktopStatePath["versions"][number];
 type Suggestion = DesktopTaskCheckInput;
@@ -216,18 +216,14 @@ const rowSuggestions = (
   for (const [name, table] of tableViews(final)) {
     const old = before.get(name) ?? { ...table, rows: [] };
     const identity = (view: TableView, row: readonly JsonValue[]) =>
-      JSON.stringify(
-        view.key.length === 0
-          ? row
-          : view.key.map((column) => row[view.columns.indexOf(column)] ?? null),
-      );
+      sqliteRowIdentity(view.columns, view.key, row).value;
     const oldRows = new Map(old.rows.map((row) => [identity(old, row), row]));
     const newRows = new Map(
       table.rows.map((row) => [identity(table, row), row]),
     );
-    const keyed = (column: string) => table.key.includes(column);
     for (const [id, row] of newRows) {
       const previous = oldRows.get(id);
+      const keyed = sqliteRowIdentity(table.columns, table.key, row).keyed;
       if (previous === undefined)
         push(
           "row_present",
@@ -235,7 +231,7 @@ const rowSuggestions = (
           rowWhere(
             table,
             row,
-            (column) => table.key.length === 0 || !keyed(column),
+            (column) => !keyed || !table.key.includes(column),
           ),
         );
       else if (JSON.stringify(previous) !== JSON.stringify(row))
@@ -246,7 +242,7 @@ const rowSuggestions = (
             table,
             row,
             (column) =>
-              keyed(column) ||
+              (keyed && table.key.includes(column)) ||
               JSON.stringify(row[table.columns.indexOf(column)]) !==
                 JSON.stringify(previous[old.columns.indexOf(column)]),
           ),
@@ -260,7 +256,9 @@ const rowSuggestions = (
           rowWhere(
             old,
             row,
-            (column) => old.key.length === 0 || old.key.includes(column),
+            (column) =>
+              !sqliteRowIdentity(old.columns, old.key, row).keyed ||
+              old.key.includes(column),
           ),
         );
     if (old.rows.length !== table.rows.length)
