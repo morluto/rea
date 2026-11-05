@@ -515,6 +515,92 @@ it("keeps subjectKeyIdentifier bytes on the signer", () => {
   ).toThrow(/decoded budget/u);
 });
 
+// X.690 8.3.1 and 8.3.2 apply under BER as well as DER.
+const malformedSerials = [
+  [],
+  [0x00, 0x00],
+  [0x00, 0x7f],
+  [0x00, 0x00, 0x80],
+  [0xff, 0x80],
+  [0xff, 0xff],
+] as const;
+const minimalSerials = [
+  [[0x00], "00"],
+  [[0x7f], "7f"],
+  [[0x00, 0x80], "80"],
+  [[0xff], "ff"],
+  [[0xff, 0x7f], "ff7f"],
+  [[0x11, 0x22, 0x33, 0x44], "11223344"],
+] as const;
+const serialName = derSeq(
+  derSet(
+    derSeq(
+      der(0x06, Buffer.from([0x55, 0x04, 0x03])),
+      der(0x0c, Buffer.from("Fixture")),
+    ),
+  ),
+);
+
+it("rejects empty and non-minimal certificate serialNumber INTEGERs", () => {
+  const certificate = (serial: readonly number[]) =>
+    readAsn1(
+      derSeq(
+        derSeq(
+          der(0x02, Buffer.from(serial)),
+          SHA256_ALG,
+          serialName,
+          derSeq(
+            der(0x17, Buffer.from("250101000000Z")),
+            der(0x17, Buffer.from("260101000000Z")),
+          ),
+          serialName,
+          derSeq(SHA256_ALG, der(0x03, Buffer.from([0]))),
+        ),
+        SHA256_ALG,
+        der(0x03, Buffer.from([0])),
+      ),
+    );
+  for (const serial of malformedSerials)
+    expect(
+      () => parseCertificate(certificate(serial)),
+      JSON.stringify(serial),
+    ).toThrow(/TBSCertificate serialNumber INTEGER is (empty|not minimally)/u);
+  for (const [serial, hex] of minimalSerials)
+    expect(parseCertificate(certificate(serial)).serial_hex).toBe(hex);
+});
+
+it("rejects empty and non-minimal SignerInfo serialNumber INTEGERs", () => {
+  const payload = (serial: readonly number[]) =>
+    contentInfo(
+      derSeq(
+        derInt(1),
+        derSet(SHA256_ALG),
+        derSeq(DATA_OID),
+        derSet(
+          derSeq(
+            derInt(1),
+            derSeq(serialName, der(0x02, Buffer.from(serial))),
+            SHA256_ALG,
+            SHA256_ALG,
+            der(0x04, Buffer.from([1])),
+          ),
+        ),
+      ),
+    );
+  for (const serial of malformedSerials)
+    expect(
+      () => parse(peCertificateFixture(false, payload(serial))),
+      JSON.stringify(serial),
+    ).toThrow(
+      /SignerInfo issuerAndSerialNumber serialNumber INTEGER is (empty|not minimally)/u,
+    );
+  for (const [serial, hex] of minimalSerials)
+    expect(
+      parse(peCertificateFixture(false, payload(serial))).entries[0]?.pkcs7
+        ?.signers[0]?.serial_hex,
+    ).toBe(hex);
+});
+
 it("fails a truncated issuerAndSerialNumber instead of dropping the signer", () => {
   const signer = derSeq(
     derInt(1),
@@ -698,6 +784,44 @@ it("rejects a UTF8String name that is not valid UTF-8", () => {
       ),
     ).issuer.text,
   ).toBe("commonName=é");
+});
+
+it("accepts only RFC 5280 UTC validity instants", () => {
+  const name = directoryName(der(0x0c, Buffer.from("Fixture")));
+  const certificate = (notBefore: Buffer) =>
+    readAsn1(
+      derSeq(
+        derSeq(
+          derInt(1),
+          SHA256_ALG,
+          name,
+          derSeq(notBefore, der(0x17, Buffer.from("260101000000Z"))),
+          name,
+          spki,
+        ),
+        SHA256_ALG,
+        der(0x03, Buffer.from([0])),
+      ),
+    );
+  for (const [tag, content] of [
+    [0x17, Buffer.from([0xff, 0xfe])],
+    [0x17, Buffer.from("2501010000Z")],
+    [0x17, Buffer.from("250101000000+0800")],
+    [0x17, Buffer.from("250229000000Z")],
+    [0x18, Buffer.from("20250101000000.5Z")],
+    [0x18, Buffer.from("20250101240000Z")],
+  ] as const)
+    expect(() => parseCertificate(certificate(der(tag, content)))).toThrow(
+      PeCertificateAsn1Failure,
+    );
+  // UTCTime 00 is 2000, a leap year; GeneralizedTime carries 2050 onward.
+  for (const [tag, time] of [
+    [0x17, "000229235959Z"],
+    [0x18, "20500101000000Z"],
+  ] as const)
+    expect(
+      parseCertificate(certificate(der(tag, Buffer.from(time)))).not_before,
+    ).toBe(time);
 });
 
 it.each([
@@ -911,3 +1035,28 @@ it.each([
     expect(certificate.subject.attributes[0]?.value).toBe(value);
   },
 );
+
+it("rejects a certificate whose signatureAlgorithm differs from its TBS signature", () => {
+  const name = directoryName(der(0x0c, Buffer.from("Fixture")));
+  const certificate = (outer: Buffer) =>
+    readAsn1(
+      derSeq(
+        derSeq(derInt(1), SHA256_ALG, name, validity, name, spki),
+        outer,
+        der(0x03, Buffer.from([0])),
+      ),
+    );
+  const sha1 = derSeq(der(0x06, Buffer.from([0x2b, 0x0e, 0x03, 0x02, 0x1a])));
+  // The same OID with explicit NULL parameters is still a different identifier.
+  const sha256WithNull = der(
+    0x30,
+    Buffer.concat([SHA256_ALG.subarray(2), der(0x05, Buffer.alloc(0))]),
+  );
+  for (const outer of [sha1, sha256WithNull])
+    expect(() => parseCertificate(certificate(outer))).toThrow(
+      /signatureAlgorithm differs from the TBSCertificate signature/u,
+    );
+  expect(
+    parseCertificate(certificate(SHA256_ALG)).signature_algorithm_oid,
+  ).toBe("2.16.840.1.101.3.4.2.1");
+});

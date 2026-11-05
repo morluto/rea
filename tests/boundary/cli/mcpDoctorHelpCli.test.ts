@@ -153,3 +153,31 @@ describe("MCP doctor help boundary", () => {
     CLI_INTEGRATION_TIMEOUT_MS,
   );
 });
+
+workspaceCliTest(
+  "accepts the same timing spellings as the ordinary CLI",
+  async ({ cli }) => {
+    for (const [flag, enabled] of [
+      ["--no-timings", false],
+      ["--timings=false", false],
+      ["--timings=true", true],
+      ["--timings=other", false],
+      ["--timings=", false],
+    ] as const) {
+      const result = await cli.run({
+        arguments: ["mcp", "doctor", "--json", flag],
+      });
+      expect(result.exitCode, result.stdout).toBe(0);
+      expect(JSON.parse(result.stdout)).toMatchObject({
+        healthy: true,
+        adapter: "production-stdio",
+      });
+      if (enabled)
+        expect(JSON.parse(result.stderr)).toMatchObject({
+          rea_timings: { version: 1, command_ms: expect.any(Number) },
+        });
+      else expect(result.stderr).toBe("");
+    }
+  },
+  CLI_INTEGRATION_TIMEOUT_MS,
+);

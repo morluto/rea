@@ -9,6 +9,7 @@ import * as nativeExportContracts from "../../domain/native/nativeExports.js";
 import {
   BinaryFormatFailure,
   BinaryResourceFailure,
+  BinaryStringReadLimitFailure,
 } from "../metadata/BinaryContainer.js";
 import {
   parseNativeExports,
@@ -564,6 +565,17 @@ describe("ELF export version and name coverage", () => {
     expect(result.coverage.status).toBe("partial");
   });
 
+  it("keeps unrelated exports when a symbol name exceeds the string scan allowance", () => {
+    const result = parse(
+      elfExportImage({
+        symbols: [{ name: "kept" }, { name: "k".repeat(65_536) }],
+      }),
+    );
+    expect(result.exports.map(({ name }) => name)).toEqual(["kept"]);
+    expect(result.issues).toMatchObject([{ code: "name_unreadable" }]);
+    expect(result.coverage.status).toBe("partial");
+  });
+
   it("separates an examined empty symbol table from unavailable symbol declarations", () => {
     expect(parse(elfExportImage({ symbols: [] }))).toMatchObject({
       exports: [],
@@ -833,7 +845,7 @@ describe("ELF symbol-name text", () => {
         expect(result.issues).toContainEqual(
           expect.objectContaining({
             message: expect.stringContaining(
-              "unterminated or exceeds the string budget",
+              new BinaryStringReadLimitFailure(65_536).message,
             ),
           }),
         );
