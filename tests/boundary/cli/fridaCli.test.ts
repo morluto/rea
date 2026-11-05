@@ -407,7 +407,6 @@ it("keeps Frida script-file identity in original bytes when UTF-8 decoding repla
         .update(decodedSource, "utf8")
         .digest("hex");
       const outputText = JSON.stringify(output);
-      expect(outputText).toContain(rawDigest);
       if (name === "ff.js" || name === "fe.js") {
         expect(rawDigest).not.toBe(loadedSourceDigest);
         expect(output).toMatchObject({
@@ -419,10 +418,10 @@ it("keeps Frida script-file identity in original bytes when UTF-8 decoding repla
               loaded_source_sha256: loadedSourceDigest,
             },
           },
+          limitations: expect.arrayContaining([
+            expect.stringMatching(/replacement|original bytes/iu),
+          ]),
         });
-        expect(outputText).toMatch(
-          /limitations.*(?:replacement|original bytes)/iu,
-        );
       } else {
         expect(output).toMatchObject({
           normalized_result: { source_sha256: rawDigest },
