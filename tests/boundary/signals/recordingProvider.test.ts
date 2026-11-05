@@ -1450,6 +1450,8 @@ it("does not blame sigrok-cli alone when the limiter fails the version probe", a
       details: {
         provider_id: "sigrok-recording",
         operation,
+        // Absent when the probe is reported as a sigrok-cli failure alone.
+        diagnostics: { version_probe_status_owner: "limiter-or-tool" },
         captured_output: {
           exit_code: 1,
           stdout: "",

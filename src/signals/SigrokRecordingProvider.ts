@@ -74,6 +74,21 @@ type Launcher = NonNullable<Parameters<typeof runOwnedCommand>[2]>["launcher"];
 export const sigrokHostSupported = (platform: NodeJS.Platform): boolean =>
   platform === "linux";
 
+/**
+ * A nonzero version probe ran under the resource limiter, so the status is not
+ * attributed to sigrok-cli alone.
+ */
+class ResourceLimitedVersionProbeFailure extends Error {
+  readonly statusOwner = "limiter-or-tool" as const;
+
+  constructor() {
+    super(
+      "The resource-limited sigrok-cli --version probe failed; the status may come from the limiter or from sigrok-cli, so inspect both selected installations and the captured output.",
+    );
+    this.name = "ResourceLimitedVersionProbeFailure";
+  }
+}
+
 /** Decode selected recordings only, retaining cleanup ownership across failures. */
 export class SigrokRecordingProvider implements SignalRecordingPort {
   readonly #resources: ArtifactAnalysisResources;
@@ -246,9 +261,7 @@ export class SigrokRecordingProvider implements SignalRecordingPort {
           );
         // The probe runs under the limiter, so either program may own the status.
         if (output.exitCode !== 0 && phase === "configuration")
-          throw new Error(
-            "The resource-limited sigrok-cli --version probe failed; the status may come from the limiter or from sigrok-cli, so inspect both selected installations and the captured output.",
-          );
+          throw new ResourceLimitedVersionProbeFailure();
         if (output.exitCode !== 0)
           throw new ProviderAdapterError(
             SIGROK_PROVIDER_IDENTITY.id,
@@ -503,6 +516,13 @@ export class SigrokRecordingProvider implements SignalRecordingPort {
           ...(observedOutput === undefined
             ? {}
             : { capturedOutput: observedOutput }),
+          ...(cause instanceof ResourceLimitedVersionProbeFailure
+            ? {
+                diagnostics: {
+                  version_probe_status_owner: cause.statusOwner,
+                },
+              }
+            : {}),
           userMessage: `${reason} On Linux, configure sigrok-cli 0.7.2 through REA_SIGROK_COMMAND and util-linux prlimit through REA_SIGROK_PRLIMIT_COMMAND (default /usr/bin/prlimit).`,
         },
       );
