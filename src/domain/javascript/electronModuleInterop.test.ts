@@ -350,7 +350,9 @@ describe("Electron module interop helper results", () => {
       { channel: "ping", side: "main" },
     ]);
   });
+});
 
+describe("Electron module interop alias resolution", () => {
   it("does not infer Electron identity through an alias when the target binding was modified", () => {
     const analysis = analyzeJavaScriptStaticSource(`
       ${ROLLDOWN_MODULE_INTEROP}
@@ -359,6 +361,20 @@ describe("Electron module interop helper results", () => {
       eval("electron = { BrowserWindow: class {} }");
       const api = electron;
       new api.BrowserWindow({webPreferences:{preload:"./p.js"}});
+    `);
+    expect(analysis.electron.browser_windows).toEqual([]);
+  });
+
+  it("retains possible member writes through uncertain aliases of interop results", () => {
+    const analysis = analyzeJavaScriptStaticSource(`
+      ${ROLLDOWN_MODULE_INTEROP}
+      function identity(mod) { return mod; }
+      const original = identity(require("electron"));
+      let electron = original;
+      eval("noop()");
+      const api = electron;
+      api.BrowserWindow = Fake;
+      new original.BrowserWindow({webPreferences:{preload:"./p.js"}});
     `);
     expect(analysis.electron.browser_windows).toEqual([]);
   });

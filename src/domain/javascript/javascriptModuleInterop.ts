@@ -88,6 +88,10 @@ export const createSemanticModuleInterop = (
     semanticKnownArrayIterationAt(array, state);
   const helpers = new Map<string, InteropHelper | null>();
   const origins = new Map<string, InteropOrigin>();
+  const aliasTargets = new Map<
+    string,
+    { targetBinding: JavaScriptSemanticBindingState; node: t.Node }
+  >();
   const calls = new WeakMap<t.Node, InteropOrigin>();
   const intrinsicBindings = new Map<string, readonly string[] | null>();
   const writes: {
@@ -641,11 +645,10 @@ export const createSemanticModuleInterop = (
         );
         if (targetBinding === undefined || targetBinding === currentBinding)
           return undefined;
-        if (
-          state.opaqueEffects.byScope.size > 0 &&
-          semanticOpaqueBindingReadMayHaveChanged(targetBinding, root, state)
-        )
-          return undefined;
+        aliasTargets.set(currentBinding.bindingId, {
+          targetBinding,
+          node: root,
+        });
         steps.push({
           binding: currentBinding,
           segments: [
@@ -746,6 +749,29 @@ export const createSemanticModuleInterop = (
       const result = invalidatedOrigin(calls.get(node));
       invalidatedCalls.set(node, result);
       return result;
+    },
+    aliasMayHaveChanged: (binding: JavaScriptSemanticBindingState): boolean => {
+      if (state.opaqueEffects.byScope.size === 0) return false;
+      origin(binding);
+      let current: JavaScriptSemanticBindingState | undefined = binding;
+      const seen = new Set<string>();
+      while (current !== undefined) {
+        if (seen.has(current.bindingId)) break;
+        seen.add(current.bindingId);
+        const next = aliasTargets.get(current.bindingId);
+        if (next === undefined) break;
+        if (
+          semanticOpaqueBindingReadMayHaveChanged(
+            next.targetBinding,
+            next.node,
+            state,
+          )
+        ) {
+          return true;
+        }
+        current = next.targetBinding;
+      }
+      return false;
     },
   };
 };
