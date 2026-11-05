@@ -582,7 +582,7 @@ Evidence or an Evidence file) is inspected, the resulting view is retained in th
 active MCP session, but the parent record remains caller-owned and is not added to
 session retention. Following `parent_evidence_id` in subsequent retained queries
 requires retaining or importing the parent record directly into the session via
-`import_evidence_bundle` (or re-specifying the file source). Native
+an exported bundle, or re-specifying the inline or file source. Native
 function, inventory, and observation
 views require the `rea.analysis` predicate; function-matching views require
 `rea.native-function-matching`. A mismatched predicate returns an
