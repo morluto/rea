@@ -792,7 +792,41 @@
                 "logical_path": { "type": "string" },
                 "declared_sha256": { "type": ["string", "null"] },
                 "calculated_sha256": { "type": ["string", "null"] },
-                "unpacked": { "type": "boolean" }
+                "unpacked": { "type": "boolean" },
+                "signing_explanation": {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "const": "signed-after-packing"
+                    },
+                    "platform": {
+                      "type": "string",
+                      "const": "pe-authenticode"
+                    },
+                    "unsigned_sha256": {
+                      "type": "string",
+                      "pattern": "^[a-f0-9]{64}$"
+                    },
+                    "certificate_table_bytes": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "signer_subjects": {
+                      "type": "array",
+                      "items": { "type": "string" }
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "platform",
+                    "unsigned_sha256",
+                    "certificate_table_bytes",
+                    "signer_subjects"
+                  ],
+                  "additionalProperties": false
+                }
               },
               "required": [
                 "logical_path",
