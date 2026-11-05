@@ -217,6 +217,8 @@ const uuidV1 = (
 ): WindowsShortcutUuidV1 | null => {
   const timeHiVersion = bytes.readUInt16LE(offset + 6);
   if (timeHiVersion >> 12 !== 1) return null;
+  // RFC 4122 variant: clock_seq_hi_and_reserved must have top bits 10.
+  if (((bytes[offset + 8] ?? 0) & 0xc0) !== 0x80) return null;
   const timeLow = BigInt(bytes.readUInt32LE(offset));
   const timeMid = BigInt(bytes.readUInt16LE(offset + 4));
   const timeHi = BigInt(timeHiVersion & 0x0fff);

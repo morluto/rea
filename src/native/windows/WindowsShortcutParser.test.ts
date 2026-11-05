@@ -10,8 +10,10 @@ import {
   networkShareShortcut,
   powershellHiddenIconSpoofShortcut,
   TRACKER_MAC,
+  TRACKER_UUID_TIMESTAMP,
   truncatedStringDataShortcut,
   unknownExtraDataShortcut,
+  uuidV1Bytes,
   windowsShortcutBytes,
   wrongClsidShortcut,
 } from "../../../tests/fixtures/binaryDiagnostics/windowsShortcut.js";
@@ -134,6 +136,25 @@ it("derives Tracker version-1 MAC and timestamp facts", async () => {
   });
   expect(derived?.timestamp_iso8601).toEqual(expect.stringMatching(/Z$/u));
   expect(report.coverage.status).toBe("complete");
+});
+
+it("does not derive Tracker facts from non-RFC 4122 variant GUIDs", async () => {
+  const ncsVariant = uuidV1Bytes(TRACKER_UUID_TIMESTAMP, 2, TRACKER_MAC);
+  ncsVariant[8] = 0x00;
+  const valid = uuidV1Bytes(TRACKER_UUID_TIMESTAMP, 1, TRACKER_MAC);
+  const report = await parse(
+    windowsShortcutBytes({
+      extraData: [{ kind: "tracker", droid: [valid, ncsVariant] }],
+    }),
+  );
+  const tracker = report.extra_data.blocks.find(
+    (block) => block.decoded.kind === "tracker",
+  );
+  if (tracker?.decoded.kind !== "tracker")
+    throw new Error("Expected a TrackerDataBlock");
+  expect(tracker.decoded.droid_uuid_v1[0]).not.toBeNull();
+  expect(tracker.decoded.droid_uuid_v1[1]).toBeNull();
+  expect(tracker.decoded.droid[1]).toEqual(expect.any(String));
 });
 
 it("reads ANSI StringData when IsUnicode is unset", async () => {
