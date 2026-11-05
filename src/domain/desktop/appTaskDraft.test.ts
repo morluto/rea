@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { JsonValue } from "../jsonValue.js";
 import { draftTaskFiles } from "./appTaskDraft.js";
+import { evaluateTaskChecks } from "./appTaskChecks.js";
 import type { DesktopStatePath } from "./desktopState.js";
 
 type Format = DesktopStatePath["format"];
@@ -327,6 +328,81 @@ describe("draftTaskFiles with nullable SQLite keys", () => {
         where: { id: null, body: "alpha" },
       },
     ]);
+  });
+});
+
+describe("draftTaskFiles with unkeyed row conditions", () => {
+  const file = "Documents/items.db";
+  const table = (rows: JsonValue[][]) => ({
+    tables: {
+      items: {
+        columns: ["id", "body", "at"],
+        primary_key: ["id"],
+        rows,
+        truncated: false,
+      },
+    },
+    tables_truncated: false,
+  });
+
+  it("does not contradict itself when only a NULL-key row timestamp changes", () => {
+    const [database] = draft({
+      [file]: path(
+        "document",
+        "sqlite",
+        table([[null, "alpha", "2026-11-04 09:00:00"]]),
+        table([[null, "alpha", "2026-11-04 10:00:00"]]),
+      ),
+    });
+    expect(database?.suggested).toEqual([]);
+  });
+
+  it("counts repeated row conditions even when the total row count stays equal", () => {
+    const before = table([
+      [null, "alpha", null],
+      [null, "alpha", null],
+      [null, "beta", null],
+    ]);
+    const after = table([
+      [null, "alpha", null],
+      [null, "beta", null],
+      [null, "beta", null],
+    ]);
+    const [database] = draft({
+      [file]: path("document", "sqlite", before, after),
+    });
+    expect(database?.suggested).toEqual([
+      {
+        kind: "row_count",
+        file,
+        table: "items",
+        where: { id: null, body: "alpha", at: null },
+        equals: 1,
+      },
+      {
+        kind: "row_count",
+        file,
+        table: "items",
+        where: { id: null, body: "beta", at: null },
+        equals: 2,
+      },
+    ]);
+    const checks = (database?.suggested ?? []).map((check, index) => ({
+      ...check,
+      id: String(index),
+    }));
+    expect(
+      evaluateTaskChecks(
+        checks,
+        new Map([[file, { format: "sqlite", view: after }]]),
+      ).map((outcome) => outcome.passed),
+    ).toEqual([true, true]);
+    expect(
+      evaluateTaskChecks(
+        checks,
+        new Map([[file, { format: "sqlite", view: before }]]),
+      ).map((outcome) => outcome.passed),
+    ).toEqual([false, false]);
   });
 });
 

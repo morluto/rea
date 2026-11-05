@@ -198,6 +198,61 @@ const rowWhere = (
     }),
   );
 
+/** Match uniquely keyed rows separately from multiset row conditions. */
+const keyedRows = (table: TableView) =>
+  new Map(
+    table.rows.flatMap((row) => {
+      const identity = sqliteRowIdentity(table.columns, table.key, row);
+      return identity.keyed ? [[identity.value, row] as const] : [];
+    }),
+  );
+
+/** Count the predicates a task can express after volatile values are omitted. */
+const rowConditionCounts = (table: TableView) => {
+  const counts = new Map<
+    string,
+    { where: Record<string, JsonValue>; count: number }
+  >();
+  for (const row of table.rows) {
+    if (sqliteRowIdentity(table.columns, table.key, row).keyed) continue;
+    const where = rowWhere(table, row, () => true);
+    if (Object.keys(where).length === 0) continue;
+    const identity = JSON.stringify(where);
+    const previous = counts.get(identity);
+    if (previous === undefined) counts.set(identity, { where, count: 1 });
+    else previous.count += 1;
+  }
+  return counts;
+};
+
+const unkeyedRowSuggestions = (
+  file: string,
+  table: string,
+  baseline: TableView,
+  final: TableView,
+): Suggestion[] => {
+  const before = rowConditionCounts(baseline);
+  const after = rowConditionCounts(final);
+  const suggestions: Suggestion[] = [];
+  for (const [identity, { where, count }] of after) {
+    const previous = before.get(identity)?.count ?? 0;
+    if (previous === 0)
+      suggestions.push({ kind: "row_present", file, table, where });
+    else if (previous !== count)
+      suggestions.push({
+        kind: "row_count",
+        file,
+        table,
+        where,
+        equals: count,
+      });
+  }
+  for (const [identity, { where }] of before)
+    if (!after.has(identity))
+      suggestions.push({ kind: "row_absent", file, table, where });
+  return suggestions;
+};
+
 const rowSuggestions = (
   file: string,
   baseline: Version,
@@ -215,24 +270,15 @@ const rowSuggestions = (
   };
   for (const [name, table] of tableViews(final)) {
     const old = before.get(name) ?? { ...table, rows: [] };
-    const identity = (view: TableView, row: readonly JsonValue[]) =>
-      sqliteRowIdentity(view.columns, view.key, row).value;
-    const oldRows = new Map(old.rows.map((row) => [identity(old, row), row]));
-    const newRows = new Map(
-      table.rows.map((row) => [identity(table, row), row]),
-    );
+    const oldRows = keyedRows(old);
+    const newRows = keyedRows(table);
     for (const [id, row] of newRows) {
       const previous = oldRows.get(id);
-      const keyed = sqliteRowIdentity(table.columns, table.key, row).keyed;
       if (previous === undefined)
         push(
           "row_present",
           name,
-          rowWhere(
-            table,
-            row,
-            (column) => !keyed || !table.key.includes(column),
-          ),
+          rowWhere(table, row, (column) => !table.key.includes(column)),
         );
       else if (JSON.stringify(previous) !== JSON.stringify(row))
         push(
@@ -242,7 +288,7 @@ const rowSuggestions = (
             table,
             row,
             (column) =>
-              (keyed && table.key.includes(column)) ||
+              table.key.includes(column) ||
               JSON.stringify(row[table.columns.indexOf(column)]) !==
                 JSON.stringify(previous[old.columns.indexOf(column)]),
           ),
@@ -253,14 +299,9 @@ const rowSuggestions = (
         push(
           "row_absent",
           name,
-          rowWhere(
-            old,
-            row,
-            (column) =>
-              !sqliteRowIdentity(old.columns, old.key, row).keyed ||
-              old.key.includes(column),
-          ),
+          rowWhere(old, row, (column) => old.key.includes(column)),
         );
+    suggestions.push(...unkeyedRowSuggestions(file, name, old, table));
     if (old.rows.length !== table.rows.length)
       suggestions.push({
         kind: "row_count",
