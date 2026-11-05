@@ -16,6 +16,13 @@ export const javaScriptComputedDefinitionKey = (
   parent.computed &&
   parent.key === child;
 
+/** Class decorators and computed definition keys use the enclosing environment. */
+export const javaScriptDefinitionExpression = (
+  parent: t.Node | undefined,
+  child: t.Node,
+): boolean =>
+  t.isDecorator(child) || javaScriptComputedDefinitionKey(parent, child);
+
 /** Type-only class fields neither initialize own slots nor shadow inherited members. */
 export const isRuntimeJavaScriptClassProperty = (
   node: t.Node,

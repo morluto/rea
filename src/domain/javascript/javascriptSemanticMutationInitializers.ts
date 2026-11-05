@@ -12,7 +12,7 @@ import { semanticPropertyReadSources } from "./javascriptSemanticIterationSource
 
 import {
   delayedInstanceFieldValue,
-  semanticComputedMethodKey,
+  semanticMethodDefinitionExpression,
   semanticBranchMayBeSkipped,
   semanticIterationCardinality,
 } from "./javascriptSemanticEvaluationOrder.js";
@@ -174,7 +174,8 @@ const computeTopLevelStatementPosition = (
   while (node !== undefined) {
     if (
       (t.isFunction(node) &&
-        (child === undefined || !semanticComputedMethodKey(node, child))) ||
+        (child === undefined ||
+          !semanticMethodDefinitionExpression(node, child))) ||
       t.isLoop(node)
     )
       return null;
@@ -789,7 +790,10 @@ const bindingEnclosingFunction = (
     const parent = parents.get(current);
     if (parent === undefined || delayedInstanceFieldValue(parent, current))
       break;
-    if (t.isFunction(parent) && !semanticComputedMethodKey(parent, current)) {
+    if (
+      t.isFunction(parent) &&
+      !semanticMethodDefinitionExpression(parent, current)
+    ) {
       if (current === parent.body) result = parent;
       break;
     }
@@ -822,7 +826,8 @@ const bindingReadPosition = (
     }
     if (
       parent === undefined ||
-      (t.isFunction(parent) && !semanticComputedMethodKey(parent, current)) ||
+      (t.isFunction(parent) &&
+        !semanticMethodDefinitionExpression(parent, current)) ||
       delayedInstanceFieldValue(parent, current)
     ) {
       result = { position: null, repeatingLoop: undefined };
@@ -1278,7 +1283,7 @@ const moduleFunctionFirstRead = (
           isErasedJavaScriptValueChild(node, parents.get(node) ?? null),
         enter(node, parent) {
           if (
-            semanticComputedMethodKey(parent ?? undefined, node) &&
+            semanticMethodDefinitionExpression(parent ?? undefined, node) &&
             parent !== null &&
             t.isFunction(parent)
           ) {

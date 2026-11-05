@@ -10,7 +10,7 @@ import type { JavaScriptOpenReceiverFact } from "./javascriptSemanticReceiverFac
 import * as t from "@babel/types";
 
 import {
-  semanticComputedMethodKey,
+  semanticMethodDefinitionExpression,
   semanticBranchMayBeSkipped,
   semanticPriorStatementMayExit,
   semanticIterationCardinality,
@@ -1154,10 +1154,10 @@ function* collectDefinitionsSteps(
         needsPrototypeFacts = true;
       let parentScope = currentSemanticScope(stack);
       if (
-        semanticComputedMethodKey(parent ?? undefined, node) &&
+        semanticMethodDefinitionExpression(parent ?? undefined, node) &&
         parentScope.parentScopeId !== null
       ) {
-        // A computed method key is evaluated before entering the method's
+        // A method definition expression is evaluated before entering the method's
         // parameter and body environments.
         const keyScope = state.scopesById.get(parentScope.parentScopeId);
         if (keyScope !== undefined) {

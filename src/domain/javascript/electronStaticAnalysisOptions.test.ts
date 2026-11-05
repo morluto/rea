@@ -664,6 +664,34 @@ describe("Classic-script global function activation", () => {
     },
   );
 
+  it.each([
+    "@dec(this.createWindow()) class Decorated {}",
+    "class Decorated { @dec(this.createWindow()) method() {} }",
+  ])(
+    "tracks decorator expressions in the surrounding script: %s",
+    (decorated) => {
+      const source = (early: boolean) => `
+      const { BrowserWindow } = require("electron");
+      function dec() {}
+      ${early ? decorated : ""}
+      const webPreferences = { nodeIntegration: true };
+      function createWindow() { return new BrowserWindow({ webPreferences }); }
+      ${early ? "" : decorated}
+      createWindow();
+    `;
+      expect(
+        analyzeJavaScriptStaticSource(source(true)).electron.browser_windows[0],
+      ).toMatchObject({
+        web_preferences_status: "dynamic",
+        web_preferences: [],
+      });
+      expect(
+        analyzeJavaScriptStaticSource(source(false)).electron
+          .browser_windows[0],
+      ).toMatchObject({ web_preferences_status: "object-literal" });
+    },
+  );
+
   it("keeps callbacks in hoisted default parameters uncertain", () => {
     const source = `
       const { BrowserWindow } = require("electron");

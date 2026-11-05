@@ -1,6 +1,6 @@
 import { parse, type ParserOptions, type ParserPlugin } from "@babel/parser";
 import * as t from "@babel/types";
-import { javaScriptComputedDefinitionKey } from "./javascriptAstValues.js";
+import { javaScriptDefinitionExpression } from "./javascriptAstValues.js";
 import {
   hasOnlyInlineTypeExportSpecifiers,
   hasOnlyInlineTypeImportSpecifiers,
@@ -291,11 +291,12 @@ export const javaScriptThisOwner = (
   parents: WeakMap<t.Node, t.Node>,
 ): "global" | "caller" | "isolated" => {
   let child: t.Node = node;
-  let classDefinitionKey = false;
+  let classDefinitionExpression = false;
   let current: t.Node | undefined = parents.get(node);
   while (current !== undefined && current !== program) {
-    const computedKey = javaScriptComputedDefinitionKey(current, child);
-    if (computedKey && !t.isObjectMethod(current)) classDefinitionKey = true;
+    const definitionExpression = javaScriptDefinitionExpression(current, child);
+    if (definitionExpression && !t.isObjectMethod(current))
+      classDefinitionExpression = true;
     if (
       (t.isClassProperty(current) ||
         t.isClassPrivateProperty(current) ||
@@ -307,16 +308,16 @@ export const javaScriptThisOwner = (
     if (
       t.isFunction(current) &&
       !t.isArrowFunctionExpression(current) &&
-      !computedKey
+      !definitionExpression
     )
       return "caller";
     if (
       t.isClass(current) &&
       current.superClass !== child &&
-      !classDefinitionKey
+      !classDefinitionExpression
     )
       return "isolated";
-    if (t.isClass(current)) classDefinitionKey = false;
+    if (t.isClass(current)) classDefinitionExpression = false;
     child = current;
     current = parents.get(current);
   }
