@@ -8,7 +8,7 @@ import { toolContractMetadata } from "./toolEffects.js";
 import {
   FRIDA_REMOTE_ADDRESS_CHARSET,
   isValidFridaRemoteAddress,
-} from "./fridaRemoteAddress.js";
+} from "../domain/fridaRemoteAddress.js";
 import {
   fridaSessionObservationSchema,
   fridaSessionStatusInputSchema,

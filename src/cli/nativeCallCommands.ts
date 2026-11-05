@@ -1,3 +1,4 @@
+import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import { z } from "incur";
 
 import type { DirectAnalysis } from "../composition/directAnalysis.js";
@@ -51,7 +52,7 @@ export const registerNativeCallCommands = (
           OPERATION,
           z.record(z.string(), jsonValueSchema).parse(parsed.data),
           logger,
-        );
+        ).then(projectCliAnalysisResult);
       }),
   });
 };

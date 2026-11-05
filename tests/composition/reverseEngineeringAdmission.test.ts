@@ -292,7 +292,7 @@ it.each([
       expect(result.error.cause).toBe(code === "ABORT_ERR" ? reason : failure);
       if (code === "EACCES") {
         expect(result.error).toMatchObject({
-          providerId: "objdump",
+          providerId: "objdump.command",
           diagnostics: {
             boundary: "provider-launch",
             command: "objdump",

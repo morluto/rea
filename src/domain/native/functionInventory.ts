@@ -4,11 +4,13 @@ import type { Evidence } from "../evidence.js";
 import { EvidenceIntegrityError } from "../evidenceErrors.js";
 import { readEvidencePayload } from "../evidenceValidation.js";
 import { digestCanonicalValue } from "../canonicalDigest.js";
+import { functionDossierSchema } from "../native/functionDossier.js";
 import {
+  availableFunctionBodySchema,
   functionBodySchema,
   functionBodyEntryAgrees,
-  functionDossierSchema,
-} from "../hopperValues.js";
+} from "../native/functionBody.js";
+import { unavailableNativeFactSchema } from "./nativeFactAvailability.js";
 import { nativeSymbolOrigin } from "./nativeSymbol.js";
 import {
   addressedValueSchema,
@@ -26,11 +28,10 @@ import {
 const matchingRowsSchema = nativeInventoryRowsSchemas.names.element
   .extend({ address: nativeAddressInputSchema })
   .array();
-const availableBodySchema = functionBodySchema.options[1];
 const matchingBodySchema = z.discriminatedUnion("available", [
-  functionBodySchema.options[0],
-  availableBodySchema.safeExtend({
-    ranges: availableBodySchema.shape.ranges.element
+  unavailableNativeFactSchema,
+  availableFunctionBodySchema.safeExtend({
+    ranges: availableFunctionBodySchema.shape.ranges.element
       .extend({
         start: nativeAddressInputSchema,
         end: nativeAddressInputSchema,
@@ -239,7 +240,6 @@ const functionFact = async (
     await checkpoint(256 + 8 * link.length);
   for (const link of symbols?.links ?? [])
     await checkpoint(256 + 8 * link.length);
-  await checkpoint(256 + 8 * inventory.evidence_id.length);
   const links = new Set([inventory.evidence_id]);
   for (const link of detail?.links ?? []) links.add(link);
   for (const link of symbols?.links ?? []) links.add(link);
@@ -290,13 +290,36 @@ const functionFact = async (
   };
 };
 
+const textLength = (value: unknown): number =>
+  typeof value === "string" ? value.length : 0;
+/**
+ * Every row becomes exactly one emitted member: its parsed row and member
+ * (768 bytes), then the report validation and Evidence normalization copies
+ * that serialization digests (1280 bytes). Names and addresses are shared
+ * strings, charged for UTF-16 storage and serialized copies.
+ */
+const rowBytes = (row: unknown): number =>
+  typeof row === "object" && row !== null
+    ? 2048 +
+      4 *
+        (textLength((row as { address?: unknown }).address) +
+          textLength((row as { value?: unknown }).value))
+    : 2048;
+
 /** Consume application-admitted normalized facts; never infer body extents from neighbor entries. */
 export const readFunctionInventory = async (
   inventory: Evidence,
   observations: readonly Evidence[],
   checkpoint: NativeMatchingCheckpoint,
 ): Promise<MatchingFunction[]> => {
-  const rows = sourcePayload(matchingRowsSchema, inventory.normalized_result);
+  // Charge each row's member before parsing clones it, so a borrowed retained
+  // inventory is bounded without walking the resident record and an oversized
+  // side is refused before allocation. Members share one inventory ID string.
+  const source = inventory.normalized_result;
+  if (Array.isArray(source))
+    for (const row of source as unknown[]) await checkpoint(rowBytes(row));
+  await checkpoint(256 + 8 * inventory.evidence_id.length);
+  const rows = sourcePayload(matchingRowsSchema, source);
   const facts: Facts = {
     details: new Map(),
     symbols: new Map(),
@@ -320,7 +343,7 @@ export const readFunctionInventory = async (
   const functions: MatchingFunction[] = [];
   for (let sourceIndex = 0; sourceIndex < rows.length; sourceIndex++) {
     const row = rows[sourceIndex]!;
-    await checkpoint(1024 + 4 * (row.address.length + row.value.length));
+    await checkpoint();
     functions.push(
       await functionFact({ inventory, row, sourceIndex }, facts, checkpoint),
     );

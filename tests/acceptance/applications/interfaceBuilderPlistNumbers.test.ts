@@ -9,7 +9,11 @@ import { interfaceBuilderAnalysisSchema } from "../../../src/domain/apple/interf
 import { thinMach } from "../../../src/domain/binaryTarget.fixture.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { cliTest } from "../../support/cli/cliFixture.js";
+import {
+  cliTest,
+  runFileCli,
+  type TestCli,
+} from "../../support/cli/cliFixture.js";
 
 const unknownMixedInteger = {
   $plist_type: "unknown",
@@ -29,6 +33,14 @@ const scenarios = [
   "mixed XML",
   "segmented keys",
 ] as const;
+
+const inspectArchive = (cli: TestCli, app: string, fresh: boolean) => {
+  const invocation = {
+    arguments: ["decode-interface-builder", app, "--json"],
+    environment: { REA_LOG_LEVEL: "silent", REA_ANALYSIS_PROVIDER: "auto" },
+  };
+  return fresh ? cli.run(invocation) : runFileCli(cli, invocation);
+};
 
 cliTest.for(scenarios)(
   "preserves numeric meaning and graph identity for %s Interface Builder attributes",
@@ -113,10 +125,11 @@ cliTest.for(scenarios)(
           .replaceAll("<key>safe</key>", "<key>sa<![CDATA[fe]]></key>"),
       );
     await writeFile(join(resources, "Main.nib"), bytes);
-    const output = await cli.run({
-      arguments: ["decode-interface-builder", app, "--json"],
-      environment: { REA_LOG_LEVEL: "silent", REA_ANALYSIS_PROVIDER: "auto" },
-    });
+    const output = await inspectArchive(
+      cli,
+      app,
+      scenario === "XML" || scenario === "binary",
+    );
     expect(output.exitCode, output.stderr).toBe(0);
     const result = interfaceBuilderAnalysisSchema.parse(
       parseEvidence(output.json).normalized_result,

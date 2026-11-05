@@ -13,7 +13,7 @@ import { createAnalysisExecution } from "../../../src/application/AnalysisProvid
 import { AnalysisOutputError } from "../../../src/domain/analysisErrorCore.js";
 import { inspectNativeDispatchMetadata } from "../../../src/domain/native/objcSwiftMetadata.js";
 import { err, ok } from "../../../src/domain/result.js";
-import type { ProviderRejectionCode } from "../../../src/contracts/providerSelection.js";
+import type { ProviderRejectionCode } from "../../../src/domain/providerSelection.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { expandToolAvailability } from "../../../src/contracts/toolOutputSchemaPrimitives.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";

@@ -1,5 +1,6 @@
 import type { JsonValue } from "../jsonValue.js";
 import {
+  ownMember,
   isObject,
   same,
   type JsonObject,
@@ -9,7 +10,9 @@ import type { FieldRule, WriteCall } from "./environmentStateWriteRules.js";
 import {
   integerOf,
   readClock,
+  slugSpellings,
   sortedStrings,
+  type Ampersand,
 } from "./environmentStateWriteValues.js";
 import { freshUuid, renewedRule } from "./environmentStateWriteGenerated.js";
 import { composedChange } from "./environmentStateWriteComposed.js";
@@ -21,6 +24,20 @@ import {
   nestedClockRule,
   stampRule,
 } from "./environmentStateWriteStamps.js";
+
+/** The member a slug spells, and how it spells `&`. */
+export interface SlugSource {
+  readonly from: string;
+  readonly ampersand?: Ampersand;
+}
+
+/** The slug rule a field follows from its source. */
+export const slugRule = (field: string, source: SlugSource): FieldRule => ({
+  field,
+  rule: "slug",
+  from: source.from,
+  ...(source.ampersand === undefined ? {} : { ampersand: source.ampersand }),
+});
 
 /** What explaining an update reads: the entity before and after, the call and its method. */
 export interface UpdateEvidence {
@@ -49,16 +66,16 @@ export interface UpdateEvidence {
 export const changeRule = (
   evidence: UpdateEvidence,
   field: string,
-  slugs: ReadonlyMap<string, string>,
+  slugs: ReadonlyMap<string, SlugSource>,
 ): FieldRule | undefined => {
-  const before = evidence.before[field];
-  const after = evidence.after[field]!;
+  const before = ownMember(evidence.before, field);
+  const after = ownMember(evidence.after, field)!;
   if (readClock(after) !== undefined && isClockNear(after, evidence.startMs))
     return { field, rule: "clock", format: readClock(after)!.format };
   if (freshUuid(evidence, field)) return { field, rule: "unique" };
   // A renamed slug is spelled like a token, so the slug comes first.
-  const member = typeof after === "string" ? slugs.get(after) : undefined;
-  if (member !== undefined) return { field, rule: "slug", from: member };
+  const source = typeof after === "string" ? slugs.get(after) : undefined;
+  if (source !== undefined) return slugRule(field, source);
   if (freshToken(evidence, field)) return { field, rule: "unique" };
   const nested = nestedClockRule(field, { before, after }, evidence);
   if (nested !== undefined) return nested;
@@ -92,7 +109,7 @@ const actionRule = (
   evidence: UpdateEvidence,
   field: string,
 ): FieldRule | undefined => {
-  const after = evidence.after[field]!;
+  const after = ownMember(evidence.after, field)!;
   return evidence.action === true &&
     (after === null || typeof after !== "object") &&
     readClock(after) === undefined
@@ -122,8 +139,8 @@ export const heldClock = (
   sent: JsonValue,
 ): boolean =>
   inCallSecond(sent, evidence.startMs) &&
-  same(evidence.before[member], sent) &&
-  same(evidence.after[member], sent);
+  same(ownMember(evidence.before, member), sent) &&
+  same(ownMember(evidence.after, member), sent);
 
 /** A field naming when its entity was made (`createdAt`, `row_created_timestamp`), which no update stamps. */
 const CREATION_CLOCK = /creat(?:ed|ion)/iu;
@@ -139,24 +156,70 @@ export const sameSecondClocks = (evidence: UpdateEvidence): string[] =>
       inCallSecond(evidence.after[field], evidence.startMs),
   );
 
-/** How an update stored a sent member: stamped anew as the one held clock it sent back other than a creation clock, echoed, renewed as a fresh UUID, or as a constant. */
+/** Another sent member stored as sent whose slug the application stored in place of what this member sent. */
+const sentSlugSource = (
+  evidence: UpdateEvidence,
+  member: string,
+): SlugSource | undefined => {
+  const stored = ownMember(evidence.after, member);
+  if (typeof stored !== "string") return undefined;
+  for (const [other, value] of Object.entries(evidence.call.body))
+    if (
+      other !== member &&
+      typeof value === "string" &&
+      same(ownMember(evidence.after, other), value)
+    )
+      for (const { slug, ampersand } of slugSpellings(value))
+        if (slug === stored)
+          return {
+            from: other,
+            ...(ampersand === undefined ? {} : { ampersand }),
+          };
+  return undefined;
+};
+
+/** Whether a call sent back the clock the entity held, as a whole-object write does, and the application stamped it anew near the call. */
+const restampedClock = (
+  evidence: UpdateEvidence,
+  member: string,
+  sent: JsonValue,
+): boolean =>
+  !CREATION_CLOCK.test(member) &&
+  readClock(sent) !== undefined &&
+  same(ownMember(evidence.before, member), sent) &&
+  readClock(ownMember(evidence.after, member)) !== undefined &&
+  isClockNear(ownMember(evidence.after, member)!, evidence.startMs);
+
+/** How an update stored a sent member: stamped anew as the one held clock it sent back other than a creation clock, echoed, stamped anew or slugged from another member in place of what it sent, renewed as a fresh UUID, or as a constant. */
 export const sentRule = (
   evidence: UpdateEvidence,
   member: string,
   held: readonly string[],
 ): FieldRule => {
-  const sent = evidence.call.body[member]!;
+  const sent = ownMember(evidence.call.body, member)!;
   if (held.length === 1 && held[0] === member && !CREATION_CLOCK.test(member))
     return {
       field: member,
       rule: "held-clock",
       format: readClock(sent)!.format,
     };
-  if (same(evidence.after[member], sent))
+  if (same(ownMember(evidence.after, member), sent))
     return { field: member, rule: "echo" };
-  if (same(evidence.after[member], sortedStrings(sent)))
+  if (same(ownMember(evidence.after, member), sortedStrings(sent)))
     return { field: member, rule: "echo", sorted: true };
+  if (restampedClock(evidence, member, sent))
+    return {
+      field: member,
+      rule: "clock",
+      format: readClock(ownMember(evidence.after, member))!.format,
+    };
+  const source = sentSlugSource(evidence, member);
+  if (source !== undefined) return slugRule(member, source);
   return freshUuid(evidence, member)
     ? { field: member, rule: "unique" }
-    : { field: member, rule: "constant", value: evidence.after[member]! };
+    : {
+        field: member,
+        rule: "constant",
+        value: ownMember(evidence.after, member)!,
+      };
 };

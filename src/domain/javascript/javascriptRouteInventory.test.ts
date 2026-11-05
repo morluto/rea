@@ -39,15 +39,81 @@ const build = (inputs: JavaScriptRouteInventoryInput[], bytes?: number) =>
     completeSemanticSteps(buildJavaScriptRouteInventorySteps(inputs, bytes)),
   );
 
-it("does not promote page-shaped paths without source-router applicability", () => {
-  const unknown = source("app/page.js", "");
-  delete (unknown as { next_app_context?: unknown }).next_app_context;
-  const result = build([unknown]);
-  expect(result.routes).toEqual([]);
-  expect(result.unknowns).toMatchObject([
-    { kind: "interpretation", reason: expect.stringContaining("not measured") },
-  ]);
-});
+it.each([
+  ["hello world", "hello%20world"],
+  ["team?admin", "team%3Fadmin"],
+  ["team#admin", "team%23admin"],
+] as const)(
+  "preserves Next filename pattern %s and its source identity",
+  (segment, encoded) => {
+    const url = `https://example.test/_next/static/chunks/app/${encoded}/page-abc.js`;
+    const result = build([
+      source(`app/${segment}/page.js`, ""),
+      source("captured.js", "", url),
+      source(
+        "runtime.js",
+        `globalThis.TURBOPACK=[];const page=${JSON.stringify(url)};`,
+      ),
+    ]);
+    expect(result.routes).toMatchObject([
+      { path: `/${segment}`, source_count: 3, occurrence_count: 3 },
+    ]);
+    expect(result.routes).toHaveLength(1);
+    expect(result.occurrences.map(({ source_id }) => source_id).sort()).toEqual(
+      result.sources.map(({ id }) => id).sort(),
+    );
+    expect(result.sources).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ path: `app/${segment}/page.js`, url: null }),
+        expect.objectContaining({ path: null, url }),
+      ]),
+    );
+    expect(result.unknowns).toEqual([]);
+    expect(result.coverage).toEqual({
+      scope: "provided-code-sources",
+      source_parsing: "complete",
+      candidate_enumeration: "complete",
+      application_routes: "unknown",
+    });
+  },
+);
+
+it.each(["%00", "%09", "%0A", "%7F"])(
+  "retains an interpretation gap for a Next filename containing %s",
+  (encoded) => {
+    const url = `https://example.test/_next/static/chunks/app/hello${encoded}world/page-abc.js`;
+    const result = build([source("captured.js", "", url)]);
+    expect(result.routes).toEqual([]);
+    expect(result.unknowns).toMatchObject([
+      {
+        source_id: result.sources[0]!.id,
+        kind: "interpretation",
+        reason: expect.stringContaining("control character"),
+      },
+    ]);
+    expect(result.sources[0]!.url).toBe(url);
+    expect(result.coverage.candidate_enumeration).toBe("partial");
+  },
+);
+
+it.each(["app/page.js", "app/hello\nworld/page.js"])(
+  "does not promote page-shaped path %j without source-router applicability",
+  (path) => {
+    const unknown = source(path, "");
+    delete (unknown as { next_app_context?: unknown }).next_app_context;
+    const result = build([unknown]);
+    expect(result.routes).toEqual([]);
+    expect(result.unknowns).toMatchObject([
+      {
+        source_id: result.sources[0]!.id,
+        kind: "interpretation",
+        reason: expect.stringContaining("not measured"),
+      },
+    ]);
+    expect(result.sources[0]!.path).toBe(path);
+    expect(result.coverage.candidate_enumeration).toBe("partial");
+  },
+);
 
 it("binds source identity to the package evidence establishing router applicability", () => {
   const first = source("app/page.js", "");
@@ -138,6 +204,33 @@ it("binds ordinary constants to application segments across sources and excludes
   ]);
   expect(result.statistics.unanchored_literals_excluded).toBe(2);
 });
+it.each(["api", "assets", "static", "_next"])(
+  "retains constants under an anchored %s segment without promoting unanchored paths",
+  (prefix) => {
+    const result = build([
+      source("route.js", `router.push('/${prefix}/status');`),
+      source(
+        "runtime.js",
+        `globalThis.TURBOPACK=[];const same='/${prefix}/status';const help='/${prefix}/help';const other='/unanchored/noise';`,
+      ),
+    ]);
+    const anchored = result.routes.find(
+      ({ path }) => path === `/${prefix}/status`,
+    );
+    const descendant = result.routes.find(
+      ({ path }) => path === `/${prefix}/help`,
+    );
+    expect(anchored).toMatchObject({ occurrence_count: 2, source_count: 2 });
+    expect(descendant).toMatchObject({
+      confidence: "low",
+      classification: "unknown",
+    });
+    expect(result.routes.some(({ path }) => path === "/unanchored/noise")).toBe(
+      false,
+    );
+    expect(result.coverage.application_routes).toBe("unknown");
+  },
+);
 it("retains inferred Next script bases and the unprefixed path", () => {
   const result = build([
     source(
@@ -419,5 +512,88 @@ it.each([
         }),
       ]),
     );
+  },
+);
+
+it("decodes captured Next script URL segments once while retaining source URL identity", () => {
+  const url =
+    "https://example.test/base/_next/static/chunks/app/%28shop%29/blog/%5Bid%5D/page-abc.js";
+  const result = build([
+    source("captured-page", "", url),
+    source("app/blog/%5Bid%5D/page.js", ""),
+  ]);
+  expect(result.routes.map(({ path }) => path)).toEqual([
+    "/base/blog/:id",
+    "/blog/%5Bid%5D",
+  ]);
+  expect(result.sources.find((entry) => entry.url === url)?.url).toBe(url);
+  expect(result.occurrences).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        origin: "source-url",
+        unprefixed_path: "/blog/:id",
+        inferred_base_path: "/base",
+      }),
+    ]),
+  );
+});
+
+it.each(["team%2Fadmin", "team%5Cadmin", "%E0%A4%A"])(
+  "keeps malformed Next URL segment %s unknown alongside usable script facts",
+  (segment) => {
+    const url = `https://example.test/_next/static/chunks/app/${segment}/page-abc.js`;
+    const result = build([source("page", "router.push('/usable');", url)]);
+    expect(result.routes.map(({ path }) => path)).toEqual(["/usable"]);
+    expect(result.sources[0]?.url).toBe(url);
+    expect(result.coverage.candidate_enumeration).toBe("partial");
+    expect(result.unknowns).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "interpretation",
+          reason: expect.stringContaining("Next script URL"),
+        }),
+      ]),
+    );
+  },
+);
+
+it("preserves literal percent encoding after one script URL decode", () => {
+  const result = build([
+    source(
+      "page",
+      "",
+      "https://example.test/_next/static/chunks/app/%255Bid%255D/page-abc.js",
+    ),
+  ]);
+  expect(result.routes.map(({ path }) => path)).toEqual(["/%5Bid%5D"]);
+});
+
+it.each([
+  "page%3Fnotes.js",
+  "page%23notes.js",
+  "page.js%3Fnotes",
+  "page.js%23notes",
+])("keeps encoded Next script filename delimiters literal: %s", (leaf) => {
+  const url = `https://example.test/_next/static/chunks/app/dashboard/${leaf}`;
+  const result = build([source("captured-page", "", url)]);
+  expect(result.routes).toEqual([]);
+  expect(result.sources[0]?.url).toBe(url);
+});
+
+it.each(["?cache=1", "#section", "?cache=1#section"])(
+  "parses actual Next script URL suffix %s before classifying the filename",
+  (suffix) => {
+    const url = `https://example.test/_next/static/chunks/app/dashboard/page-abc.js${suffix}`;
+    const result = build([source("captured-page", "", url)]);
+    expect(result.routes.map(({ path }) => path)).toEqual(["/dashboard"]);
+    expect(result.sources[0]?.url).toBe(url);
+  },
+);
+
+it.each(["page?notes.js", "page#notes.js", "page.js?notes", "page.js#notes"])(
+  "keeps filesystem Next page filename delimiters literal: %s",
+  (leaf) => {
+    const result = build([source(`app/dashboard/${leaf}`, "")]);
+    expect(result.routes).toEqual([]);
   },
 );

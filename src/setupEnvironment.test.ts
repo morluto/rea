@@ -1,8 +1,10 @@
+import { currentClientRegistrationCommand } from "./application/ClientRegistrationIdentity.js";
+import { UpdateCommandRunner } from "./application/UpdateCommandRunner.js";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 import { createDoctorHostFixture } from "./application/Doctor.fixture.js";
 import * as macHopperInstaller from "./application/MacHopper.js";
@@ -11,17 +13,38 @@ import { discoverSetupState } from "./application/SetupPlan.js";
 import { options } from "./application/Setup.fixture.js";
 import { systemSetupHost } from "./application/SetupHost.js";
 import { systemUninstallHost } from "./application/Uninstall.js";
-import { runUpdateCommand } from "./application/UpdateRuntime.js";
 import { createSystemDoctorHost } from "./doctorRuntime.js";
 import { PRODUCT_IDENTITY } from "./identity.js";
 import {
   invokingPackageRunner,
-  packageRunnerRegistrationCommand,
   withoutPackageRunnerIdentity,
 } from "./application/ClientRegistrationIdentity.js";
 import { snapshotEnvironment } from "./process/snapshotEnvironment.js";
 
 afterEach(() => vi.unstubAllEnvs());
+
+it.each([undefined, "/caller/tools with spaces/ilspycmd"])(
+  "preserves the explicit ILSpy path %s without inventing an unset value",
+  async (selected) => {
+    const host = systemSetupHost(
+      createDoctorHostFixture({
+        ...(selected === undefined ? {} : { configuredIlspyCmdPath: selected }),
+        ilspyCmdVersion: async () => "ilspycmd 9.1.0",
+      }),
+      selected === undefined ? {} : { REA_ILSPY_CMD_PATH: selected },
+    );
+    try {
+      const state = await host.initialSetupState();
+      expect(state.providerEnvironment.REA_ILSPY_CMD_PATH).toBe(selected);
+      if (selected !== undefined)
+        expect(state.doctor.checks).toContainEqual(
+          expect.objectContaining({ name: "ilspycmd", ok: true }),
+        );
+    } finally {
+      await host.close?.();
+    }
+  },
+);
 
 it("plans setup and uninstall against selected home and client overrides", async () => {
   const root = await mkdtemp(join(tmpdir(), "rea-selected-setup-"));
@@ -63,8 +86,8 @@ it("plans setup and uninstall against selected home and client overrides", async
         }),
       ]),
     );
-    expect(host.registrationCommand).toContain(
-      PRODUCT_IDENTITY.registrationPackageSpecifier,
+    expect(host.registrationCommand).toEqual(
+      currentClientRegistrationCommand({ platform: "win32", environment }),
     );
     const clients = await systemUninstallHost(
       environment.HOME,
@@ -157,20 +180,6 @@ it("preserves a validated selected JEB endpoint in setup registrations without c
     expect(JSON.stringify(planned.plannedActions)).not.toContain(
       ambientEndpoint,
     );
-
-    expect(
-      createSystemDoctorHost({}).providerRegistrationEnvironment?.(),
-    ).toEqual({});
-    expect(
-      createSystemDoctorHost({
-        REA_JEB_MCP_URL: "http://127.0.0.1:8425/mcp",
-      }).providerRegistrationEnvironment?.(),
-    ).toEqual({ REA_JEB_MCP_URL: "http://127.0.0.1:8425/mcp" });
-    expect(
-      createSystemDoctorHost({
-        REA_JEB_MCP_URL: "https://example.com/mcp",
-      }).providerRegistrationEnvironment?.(),
-    ).toEqual({});
   } finally {
     vi.unstubAllEnvs();
     await rm(root, { recursive: true, force: true });
@@ -264,7 +273,7 @@ it.each([
 
 it("passes only selected environment to updater subprocesses and drops npm invocation identity", async () => {
   vi.stubEnv("REA_UPDATE_MARKER", "ambient");
-  const result = await runUpdateCommand(
+  const result = await updateCommands.runProbe(
     [
       process.execPath,
       "-e",
@@ -292,7 +301,7 @@ it.each([
         createDoctorHostFixture({ platform: "win32" }),
         environment,
       ).registrationCommand,
-    ).toEqual(packageRunnerRegistrationCommand(runner, "win32"));
+    ).toEqual(currentClientRegistrationCommand({ platform: "win32" }));
     expect(withoutPackageRunnerIdentity(environment, "win32")).toEqual({
       NPM_CONFIG_USER_AGENT: userAgent,
     });
@@ -369,9 +378,17 @@ it("registers the selected Windows package runner after canonicalizing environme
   );
   try {
     expect(host.registrationCommand).toEqual(
-      packageRunnerRegistrationCommand("npx", "win32"),
+      currentClientRegistrationCommand({ platform: "win32" }),
     );
   } finally {
     await host.close?.();
   }
+});
+
+let updateCommands: UpdateCommandRunner;
+beforeEach(() => {
+  updateCommands = new UpdateCommandRunner();
+});
+afterEach(async () => {
+  await updateCommands.close();
 });

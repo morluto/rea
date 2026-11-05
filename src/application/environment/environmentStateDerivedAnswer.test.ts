@@ -10,6 +10,12 @@ import {
   referencedCreateRows,
   shelvedRows,
 } from "../../../tests/fixtures/environmentStateDerivedValues.js";
+import {
+  LISTED_LABEL_ROWS,
+  READ_BACK_TAG_ROWS,
+  RESTAMPED_ROWS,
+  STALE_SLUG_ROWS,
+} from "../../../tests/fixtures/environmentStateWriteViews.js";
 import { servedFrom } from "../../../tests/fixtures/environmentStateServing.js";
 import {
   bookClock,
@@ -178,5 +184,74 @@ describe("served objects that repeat a named entity, and sorted arrays", () => {
         }).body,
       )["tags"],
     ).toEqual(["fog", "ice", "wind"]);
+  });
+});
+
+describe("served writes whose answers show the entity otherwise than reads do", () => {
+  it("answers a create as the application answered it and holds the fields its read-back showed", () => {
+    const tags = servedFrom(READ_BACK_TAG_ROWS);
+    const created = objectOf(
+      tags.answer("post_tags", { body: { name: "Saltmarsh Gate" } }).body,
+    );
+    expect(Object.keys(created).sort()).toEqual(
+      ["created", "id", "name", "slug"].sort(),
+    );
+    expect(created).toMatchObject({
+      name: "Saltmarsh Gate",
+      slug: "saltmarsh-gate",
+      created: firstServedClock(READ_BACK_TAG_ROWS).replace("Z", ".000000000Z"),
+    });
+    expect(
+      tags.answer("get_tags_by_id", { id: String(created["id"]) }).body,
+    ).toMatchObject({
+      name: "Saltmarsh Gate",
+      document_count: 0,
+      created: firstServedClock(READ_BACK_TAG_ROWS),
+    });
+  });
+
+  it("lists a created label with the count its list read showed", () => {
+    const labels = servedFrom(LISTED_LABEL_ROWS);
+    labels.answer("post_labels", { body: { title: "Slipway" } });
+    expect((labels.answer("get_labels").body as JsonValue[]).at(-1)).toEqual({
+      id: 3,
+      title: "Slipway",
+      count: { posts: 0 },
+    });
+  });
+
+  it("slugs a renamed tag anew whatever slug the call sends back", () => {
+    const tags = servedFrom(STALE_SLUG_ROWS);
+    const renamed = objectOf(
+      tags.answer("put_tags_by_id", {
+        id: "2",
+        body: {
+          id: 2,
+          slug: "tide-tables",
+          name: "Neap Tide Tables",
+          document_count: 0,
+          created: "2026-10-01T10:00:00Z",
+        },
+      }).body,
+    );
+    expect(renamed).toMatchObject({
+      name: "Neap Tide Tables",
+      slug: "neap-tide-tables",
+    });
+  });
+
+  it("stamps a post's modification time anew rather than storing the one the call sends back", () => {
+    const posts = servedFrom(RESTAMPED_ROWS);
+    const edited = objectOf(
+      posts.answer("put_posts_by_id", {
+        id: "1",
+        body: { id: 1, title: "Winter rota v4", updated_at: bookClock(4) },
+      }).body,
+    );
+    expect(edited["title"]).toBe("Winter rota v4");
+    expect(edited["updated_at"]).not.toBe(bookClock(4));
+    expect(Date.parse(String(edited["updated_at"]))).toBeGreaterThan(
+      Date.parse(bookClock(4)),
+    );
   });
 });

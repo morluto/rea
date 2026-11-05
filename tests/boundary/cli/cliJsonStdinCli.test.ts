@@ -49,7 +49,7 @@ cliTest.for([false, true])(
       {
         env: {
           ...process.env,
-          NODE_OPTIONS: "--max-old-space-size=256",
+          NODE_OPTIONS: `--max-old-space-size=256 --import=${probe}`,
           REA_LOG_LEVEL: "silent",
         },
       },
@@ -71,7 +71,32 @@ cliTest.for([false, true])(
       child.once("error", reject);
       child.once("close", () => resolve());
     });
-    child.stdin.end(`[${"[],".repeat(1_400_000)}[]]`);
+    await expect
+      .poll(() => /REA_TEST_STDIN_READ (\d+)/u.test(stderr), {
+        timeout: 10_000,
+      })
+      .toBe(true);
+    const heapSizeLimit = Number(
+      /REA_TEST_STDIN_READ (\d+)/u.exec(stderr)?.[1],
+    );
+    // Exceed the child's whole heap, independently of startup allocations or
+    // when V8 last collected. Reuse the production owner's expansion estimate.
+    let lower = 0,
+      upper = heapSizeLimit;
+    while (lower < upper) {
+      const middle = Math.floor((lower + upper) / 2);
+      if (
+        nativeJsonParseRequiredBytes(middle * 3 + 4, snapshot) > heapSizeLimit
+      )
+        upper = middle;
+      else lower = middle + 1;
+    }
+    const input = `[${"[],".repeat(lower)}[]]`;
+    expect(Buffer.byteLength(input)).toBeLessThanOrEqual(8 * 1024 * 1024);
+    expect(
+      nativeJsonParseRequiredBytes(Buffer.byteLength(input), snapshot),
+    ).toBeGreaterThan(heapSizeLimit);
+    child.stdin.end(input);
     expect(await waitForExit(child, 10_000), stderr).toBe(true);
     await closed;
     if (writeFailure !== undefined)

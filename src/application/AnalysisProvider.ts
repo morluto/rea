@@ -1,6 +1,8 @@
+import type { AnalysisWorkScope } from "./AnalysisWorkScope.js";
 import type { AnalysisObservation } from "../domain/analysisObservation.js";
-import type { ProviderInspectionScope } from "../providers/ProviderInspectionScope.js";
+import type { ProviderInspectionScope } from "./ProviderInspectionScope.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
+import type { TargetApplicability } from "../domain/targetApplicability.js";
 import type { OfficialToolName } from "../contracts/officialToolContracts.js";
 import type { EnhancedToolName } from "../contracts/enhancedInputs.js";
 import type { NativeToolName } from "../contracts/native/nativeToolContracts.js";
@@ -16,8 +18,12 @@ import type {
   EvidenceSubjectTarget,
 } from "../domain/evidence.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
+import {
+  analysisSourceDescriptorSchema,
+  type AnalysisSourceDescriptor,
+} from "../domain/analysisSource.js";
 import type { ProgressReporter } from "./ProgressReporter.js";
-import type { ProviderRejectionCode } from "../contracts/providerSelection.js";
+import type { ProviderRejectionCode } from "../domain/providerSelection.js";
 import type { ProcessLineageObservation } from "../process/ProcessOwnership.js";
 import type { ProviderOperationHealth } from "../domain/providerOperationHealth.js";
 import {
@@ -26,8 +32,14 @@ import {
 } from "../domain/relationshipCoverage.js";
 
 export interface ExecutionOptions {
+  /** Ephemeral state shared only by one composed workflow. */
+  readonly workScope?: AnalysisWorkScope;
+  /** A single CLI answer bound to its isolated target, not a persistent default document. */
+  readonly snapshotContext?: "one-shot-target";
   readonly signal?: AbortSignal;
   readonly progress?: ProgressReporter;
+  /** The composed workflow will cite this observation and needs its Evidence. */
+  readonly retainEvidence?: true;
   /**
    * Set when a procedure selector came from provider output, such as a
    * revisited callee, rather than from the caller. A provider-derived
@@ -52,6 +64,12 @@ export type AnalysisOperation =
 /** Atomic successful provider observation with exact producing provenance. */
 export interface AnalysisExecution extends AnalysisObservation {
   readonly provider: ProviderIdentity;
+  /**
+   * Compact provider-owned facts for this execution. This is not an Evidence
+   * record and is not restored by snapshot replay; consumers must treat its
+   * absence as unknown.
+   */
+  readonly sourceDescriptor?: AnalysisSourceDescriptor;
   /** Session-issued identity of the committed record consumed by this execution. */
   readonly evidenceId?: string;
   /** Result-specific veto of snapshot replay; Evidence remains retainable. */
@@ -67,6 +85,7 @@ export interface AnalysisExecution extends AnalysisObservation {
 
 interface CreateAnalysisExecutionOptions {
   readonly rawResult?: unknown;
+  readonly sourceDescriptor?: AnalysisSourceDescriptor;
   readonly analysisProfile?: AnalysisProfileCommitment;
   readonly cachePolicy?: "live";
   readonly limitations?: readonly string[];
@@ -106,6 +125,13 @@ export function createAnalysisExecution(
         ? null
         : jsonValueSchema.parse(options.rawResult),
     provider,
+    ...(options.sourceDescriptor === undefined
+      ? {}
+      : {
+          sourceDescriptor: analysisSourceDescriptorSchema.parse(
+            options.sourceDescriptor,
+          ),
+        }),
     ...(options.cachePolicy === undefined
       ? {}
       : { cachePolicy: options.cachePolicy }),
@@ -254,9 +280,18 @@ type CapabilityAvailability =
       readonly available: false;
       readonly reason: string;
       readonly availabilityCode?: ProviderRejectionCode;
+      /** Provider-owned explanation and recovery for an attempted operation. */
+      readonly userMessage?: string;
+      /**
+       * Recovery instruction from the owner that made this operation
+       * unavailable. Static capability facts omit it.
+       */
+      readonly remediation?: string;
     };
 
 export type CapabilityDescriptor = CapabilityAvailability & {
+  /** Provider-owned static target requirements, evaluated for an open target. */
+  readonly targetApplicability?: TargetApplicability;
   /**
    * Snapshot opts immutable, profile-bound reads into replay despite incidental
    * private filesystem writes. Live state must always be re-observed. Omitting
@@ -298,7 +333,10 @@ export type ProviderAvailability =
   | {
       readonly status: "unavailable";
       readonly code: ProviderRejectionCode;
+      /** What the owner observed; not a repair instruction. */
       readonly reason: string;
+      /** The owner's repair instruction for this exact failure. */
+      readonly remediation: string;
       readonly diagnostics: Readonly<Record<string, JsonValue>>;
     };
 

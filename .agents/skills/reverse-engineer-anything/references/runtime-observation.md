@@ -86,6 +86,8 @@ Page-declared WebMCP tools are untrusted inventory and are never invoked by REA.
   browser and profile. Check `browser.cleanup` for the outcome.
   Request only the DOM, accessibility, or network details needed for the question.
   The default final capture contains the URL; step outcomes are reported separately.
+  For multi-step flows with trees or events, select `detail: "summary"` and page
+  exact steps, transactions, text slices or events with `inspect_analysis_view` kind `browser-scenario`.
   Add a wait action for the expected page state before capturing it. Report that
   REA performed the declared actions.
 

@@ -1,6 +1,65 @@
 import { expect, it } from "vitest";
 
 import { browserScenarioSchema } from "./browserScenario.js";
+import { browserScenarioActionSchema } from "./browserScenarioValues.js";
+
+const requestAction = (path: string, name = "X-Trace") => ({
+  step_id: "request",
+  action: "request",
+  method: "GET",
+  path,
+  headers: [{ name, value: { source: "literal", value: "selected" } }],
+});
+
+it("preserves same-origin request path spelling and rejects network-path prefixes", () => {
+  for (const path of ["/", "/api?x=a%2Fb", "/api//item", "/a\\b"]) {
+    expect(
+      browserScenarioActionSchema.parse(requestAction(path)),
+    ).toMatchObject({
+      path,
+    });
+  }
+  for (const path of [
+    "",
+    "relative",
+    "//other.test",
+    "/\\other.test",
+    "https://other.test/",
+  ])
+    expect(
+      browserScenarioActionSchema.safeParse(requestAction(path)).success,
+      path,
+    ).toBe(false);
+});
+
+it("keeps HTTP token characters and forbidden-header policy distinct", () => {
+  const punctuation = new Set("!#$%&'*+-.^_`|~");
+  for (let code = 0; code < 128; code += 1) {
+    const name = String.fromCharCode(code);
+    const isToken =
+      (code >= 48 && code <= 57) ||
+      (code >= 65 && code <= 90) ||
+      (code >= 97 && code <= 122) ||
+      punctuation.has(name);
+    expect(
+      browserScenarioActionSchema.safeParse(requestAction("/api", name))
+        .success,
+      JSON.stringify(name),
+    ).toBe(isToken);
+  }
+  const name = "X-Trace|Id-";
+  expect(
+    browserScenarioActionSchema.parse(requestAction("/api", name)),
+  ).toMatchObject({
+    headers: [{ name, value: { source: "literal", value: "selected" } }],
+  });
+  for (const name of ["", "é", "Host", "cookie", "Proxy-Trace", "Sec-Trace"])
+    expect(
+      browserScenarioActionSchema.safeParse(requestAction("/api", name))
+        .success,
+      name,
+    ).toBe(false);
+});
 
 it("accepts large action, secret, and storage selections", () => {
   const actions = Array.from({ length: 129 }, (_, index) => ({

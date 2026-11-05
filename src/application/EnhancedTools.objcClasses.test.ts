@@ -10,8 +10,8 @@ import { EnhancedTools } from "./EnhancedTools.js";
 import type { BinaryArchitecture } from "../domain/binaryTargetTypes.js";
 import { objcSwiftMetadataSchema } from "../domain/native/objcSwiftMetadata.js";
 import { err, ok } from "../domain/result.js";
-import { AnalysisCapabilityUnavailableError } from "../domain/analysisErrorCore.js";
 import {
+  AnalysisCapabilityUnavailableError,
   AnalysisOutputError,
   AnalysisCancelledError,
 } from "../domain/analysisErrorCore.js";

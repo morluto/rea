@@ -1,5 +1,6 @@
 import { digestCanonicalValue } from "../canonicalDigest.js";
 import type { Evidence } from "../evidence.js";
+import { machoRuntimeSymbolName } from "../native/machoSymbolName.js";
 import type { ManagedNativeObservationFacts } from "./managedNativeVerificationSource.js";
 import type { ManagedNativeBoundaryInspection } from "./managedArtifact.js";
 import type {
@@ -40,20 +41,16 @@ export const collectNativeSymbols = (
   return { symbols, accepted, unsupported, moduleFormatsByEvidenceId };
 };
 
-const normalizedSymbolName = (native: NativeSymbol): string =>
-  native.source === "macho-export" && native.name.startsWith("_")
-    ? native.name.slice(1)
+/** P/Invoke resolves a Mach-O export through dlsym, which names it without the symbol-table prefix. */
+const lookupSymbolName = (native: NativeSymbol): string | null =>
+  native.source === "macho-export"
+    ? machoRuntimeSymbolName(native.name)
     : native.name;
 
 const sameSymbolName = (expected: string, native: NativeSymbol): boolean =>
-  expected === normalizedSymbolName(native);
+  expected === lookupSymbolName(native);
 
 type ModuleCompatibility = "match" | "mismatch" | "unknown";
-
-const declaredModuleIdentity = (scope: string | null): boolean =>
-  scope !== null &&
-  scope.trim().length > 0 &&
-  moduleFilename(scope, false).length > 0;
 
 const moduleFilename = (
   value: string,
@@ -224,14 +221,15 @@ const moduleCompatibility = (
   if (
     scope === null ||
     scope.trim().length === 0 ||
-    moduleFilename(scope, false).length === 0
+    moduleFilename(scope, false, format).length === 0
   )
     return "unknown";
   const observedValues = isAbsoluteModulePath(scope, format)
     ? [symbol.module_path]
     : [symbol.module_name, symbol.module_path];
   const values = observedValues.filter(
-    (value): value is string => value !== null && value.length > 0,
+    (value): value is string =>
+      value !== null && moduleFilename(value, false, format).length > 0,
   );
   if (values.length === 0) return "unknown";
   const results = values.map((value) =>
@@ -241,11 +239,6 @@ const moduleCompatibility = (
   if (results.includes("unknown")) return "unknown";
   return "mismatch";
 };
-
-const hasModuleIdentity = (symbol: NativeSymbol): boolean =>
-  [symbol.module_name, symbol.module_path].some(
-    (value) => value !== null && moduleFilename(value, false).length > 0,
-  );
 
 const candidateNames = (
   managed: Pick<
@@ -342,7 +335,6 @@ const matchPinvoke = (
     };
 
   const candidates: [NativeSymbol, ...NativeSymbol[]] = [first, ...remaining];
-  const scopeKnown = declaredModuleIdentity(managed.import_scope_name);
   const moduleRelation = (symbol: NativeSymbol) =>
     moduleCompatibility(
       managed.import_scope_name,
@@ -351,22 +343,21 @@ const matchPinvoke = (
     );
   const exact = candidates.find(
     (symbol) =>
-      managed.import_name === normalizedSymbolName(symbol) &&
+      managed.import_name === lookupSymbolName(symbol) &&
       moduleRelation(symbol) === "match",
   );
-  const unknownModule = candidates.find(
-    (symbol) => moduleRelation(symbol) === "unknown",
+  const exactUnknownModule = candidates.find(
+    (symbol) =>
+      managed.import_name === lookupSymbolName(symbol) &&
+      moduleRelation(symbol) === "unknown",
   );
+  const unknownModule =
+    exactUnknownModule ??
+    candidates.find((symbol) => moduleRelation(symbol) === "unknown");
   const decorated = candidates.find(
     (symbol) => moduleRelation(symbol) === "match",
   );
-  const selected =
-    exact ??
-    decorated ??
-    (scopeKnown
-      ? candidates.find((symbol) => !hasModuleIdentity(symbol))
-      : undefined) ??
-    first;
+  const selected = exact ?? decorated ?? first;
   if (exact !== undefined)
     return {
       match: {
@@ -380,7 +371,12 @@ const matchPinvoke = (
         candidates,
       },
     };
-  if (unknownModule !== undefined)
+  // Preserve an exact-name candidate's uncertainty, but an unrelated unknown
+  // module must not displace an observed module match for a decorated name.
+  if (
+    unknownModule !== undefined &&
+    (exactUnknownModule !== undefined || decorated === undefined)
+  )
     return {
       match: {
         status: "unresolved",
@@ -396,16 +392,6 @@ const matchPinvoke = (
         basis: "decorated-name-candidate",
         status: "inferred",
         confidence: "inferred",
-        matched_native: selected,
-        candidates,
-      },
-    };
-  if (!scopeKnown || !hasModuleIdentity(selected))
-    return {
-      match: {
-        status: "unresolved",
-        basis: "module-identity-unknown",
-        confidence: "unknown",
         matched_native: selected,
         candidates,
       },

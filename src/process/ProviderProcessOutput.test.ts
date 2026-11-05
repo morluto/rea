@@ -1,6 +1,8 @@
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import { expect, it, vi } from "vitest";
+import { withVerifierCleanup } from "../../scripts/lib/verifier-cleanup.mjs";
+import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
 import {
   ProviderProcessSupervisor,
   type ProcessDiagnosticBudget,
@@ -29,19 +31,33 @@ it("retains final stderr between verified exit and output close during stop", as
     },
   });
   const stopped = owner.stop();
-  expect(owner.stop()).toBe(stopped);
-  await started;
-  // Let cleanup observe exit before delivering the separately acknowledged output.
-  await new Promise<void>((resolve) => setImmediate(resolve));
-  producer.stderr.end("final launcher diagnostic");
-  producer.stdout.end();
-  producer.emit("close", 2, null);
-  await expect(stopped).resolves.toEqual({ status: "verified-cleanup" });
-  expect(owner.snapshot()).toMatchObject({
-    stderr: { text: "final launcher diagnostic" },
-    exitCode: 2,
-  });
-  expect(await owner.waitForOutputClose(0)).toBe(true);
+  await withVerifierCleanup(async () => {
+    expect(owner.stop()).toBe(stopped);
+    await awaitAcknowledgement(started, stopped, "process cleanup");
+    // Let cleanup observe exit before delivering the separately acknowledged output.
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    producer.stderr.end("final launcher diagnostic");
+    producer.stdout.end();
+    producer.emit("close", 2, null);
+    await expect(stopped).resolves.toEqual({ status: "verified-cleanup" });
+    expect(owner.snapshot()).toMatchObject({
+      stderr: { text: "final launcher diagnostic" },
+      exitCode: 2,
+    });
+    expect(await owner.waitForOutputClose(0)).toBe(true);
+  }, [
+    () => {
+      producer.stderr.end();
+      producer.stdout.end();
+      if (!owner.observedOutputClose()) producer.emit("close", 2, null);
+    },
+    async () => {
+      await stopped;
+    },
+    () => owner.dispose(),
+    () => producer.stderr.destroy(),
+    () => producer.stdout.destroy(),
+  ]);
 });
 
 it("bounds late output retention and drain without changing verified cleanup", async () => {
@@ -752,9 +768,15 @@ it("unreferences process and stream handles when stop reports incomplete cleanup
   }
 });
 
-it.each(["close", "abort"] as const)(
-  "awaits output without a deadline until %s",
-  async (outcome) => {
+it.each([
+  { outcome: "close", timeoutMs: undefined },
+  { outcome: "abort", timeoutMs: undefined },
+  { outcome: "close", timeoutMs: 5000 },
+  { outcome: "abort", timeoutMs: 5000 },
+] as const)(
+  "releases output wait resources after $outcome with timeout $timeoutMs",
+  async ({ outcome, timeoutMs }) => {
+    vi.useFakeTimers();
     const producer = Object.assign(new EventEmitter(), {
       stdout: new PassThrough(),
       stderr: new PassThrough(),
@@ -770,7 +792,7 @@ it.each(["close", "abort"] as const)(
     const removeListener = vi.spyOn(controller.signal, "removeEventListener");
     let settled = false;
     const pending = owner
-      .waitForOutputClose(undefined, controller.signal)
+      .waitForOutputClose(timeoutMs, controller.signal)
       .then((result) => {
         settled = true;
         return result;
@@ -781,11 +803,13 @@ it.each(["close", "abort"] as const)(
       if (outcome === "close") producer.emit("close", 0, null);
       else controller.abort();
       expect(await pending).toBe(outcome === "close");
+      expect(vi.getTimerCount()).toBe(0);
       expect(removeListener).toHaveBeenCalledWith(
         "abort",
         expect.any(Function),
       );
     } finally {
+      vi.useRealTimers();
       removeListener.mockRestore();
       owner.dispose();
       producer.stdout.destroy();

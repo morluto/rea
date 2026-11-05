@@ -2,6 +2,8 @@ import { z } from "zod";
 
 /** Complete static checkpoint / per-script result transport ceiling. */
 export const JAVASCRIPT_STATIC_FACT_BYTES = 8 * 1024 * 1024;
+/** Maximum encoded worker transfer record, including the JSON envelope and newline. */
+export const JAVASCRIPT_ANALYSIS_TRANSFER_RECORD_BYTES = 8 * 1024 * 1024;
 import type { JsonValue } from "../jsonValue.js";
 import type { ApplicationCoverage } from "./javascriptApplicationEvidenceSchemas.js";
 

@@ -84,9 +84,13 @@ export const parseGrpcWebTrailers = (
             "gRPC-web trailer field value contains a forbidden control character",
         });
     }
+    // RFC 9110 section 5.5: a field value excludes surrounding whitespace.
+    let valueEnd = lineEnd;
+    while (valueEnd > valueStart && [9, 32].includes(bytes[valueEnd - 1]!))
+      valueEnd -= 1;
     let value: string;
     try {
-      value = decoder.decode(bytes.subarray(valueStart, lineEnd));
+      value = decoder.decode(bytes.subarray(valueStart, valueEnd));
     } catch (cause) {
       if (!(cause instanceof TypeError)) throw cause;
       decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });

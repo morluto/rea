@@ -1,7 +1,10 @@
 import { fitJavaScriptRouteSourceFacts } from "../../domain/javascript/javascriptRouteResultBudget.js";
 import { jsonValueByteLength } from "../../domain/jsonValueByteLength.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
-import type { JavaScriptSemanticProjectionCapacity } from "../../domain/javascript/javascriptSemanticFileProjection.js";
+import type {
+  JavaScriptSemanticProjectionCapacity,
+  JavaScriptSemanticFileProjection,
+} from "../../domain/javascript/javascriptSemanticFileProjection.js";
 import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -15,7 +18,6 @@ import { javaScriptRuntime } from "../../domain/runtimeVersion.js";
 import type { JavaScriptArtifactFile } from "../../domain/javascript/javascriptArtifactFiles.js";
 import type { JavaScriptStaticAnalysis } from "../../domain/javascript/javascriptStaticAnalysisTypes.js";
 import type { JavaScriptModuleSemanticIr } from "../../domain/javascript/javascriptModuleSemanticIr.js";
-import type { JavaScriptSemanticFileProjection } from "../../domain/javascript/javascriptSemanticFileProjection.js";
 import {
   javaScriptTransferByteBudget,
   writeJavaScriptAnalysisTransfer,

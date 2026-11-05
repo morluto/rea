@@ -15,8 +15,62 @@ import {
 } from "../../../src/cliLogging.js";
 import { ArtifactOperationError } from "../../../src/domain/artifactOperationError.js";
 import { silentLogger } from "../../../src/logger.js";
+import {
+  cliEvidencePublicationReceipt,
+  recordCliEvidencePublication,
+  withCliEvidencePublication,
+} from "../../../src/cli/cliEvidencePublication.js";
 
 const metadata = { command: "fixture", duration: "1ms", format: "toon" };
+
+it("keeps receipts isolated across concurrent invocations", async () => {
+  const results = await Promise.all(
+    ["first", "second"].map((path) =>
+      withCliEvidencePublication(async () => {
+        recordCliEvidencePublication({ path, bytes: 1 });
+        await Promise.resolve();
+        return cliEvidencePublicationReceipt();
+      }),
+    ),
+  );
+  expect(results).toEqual([
+    { path: "first", bytes: 1 },
+    { path: "second", bytes: 1 },
+  ]);
+  expect(cliEvidencePublicationReceipt()).toBeUndefined();
+});
+
+it("retains a publication receipt when formatting fails after the invocation context ends", async () => {
+  const chunks: Buffer[] = [];
+  const output = createCliResultOutput(
+    parseCliOutputArguments([]),
+    new Writable({
+      write(chunk: Buffer, _encoding, callback) {
+        chunks.push(chunk);
+        callback();
+      },
+    }),
+  );
+  if (output === undefined) throw new Error("Missing output owner");
+  await withCliEvidencePublication(async () => {
+    recordCliEvidencePublication({ path: "/tmp/result.json", bytes: 123 });
+    expect(await output.write({ result: "completed" }, metadata)).toBe(false);
+  });
+  expect(
+    await output.recoverFormattingFailure(
+      new RangeError("Invalid string length"),
+    ),
+  ).toBe(true);
+  expect(output.error).toMatchObject({
+    code: "resource_constraint",
+    details: {
+      diagnostics: {
+        evidence_bundle: { path: "/tmp/result.json", bytes: 123 },
+      },
+    },
+  });
+  expect(Buffer.concat(chunks).toString("utf8")).toContain("/tmp/result.json");
+});
 
 describe("CLI formatting stage admission", () => {
   it("preserves native CTA sentinel output", async () => {

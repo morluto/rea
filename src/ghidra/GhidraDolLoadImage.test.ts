@@ -8,9 +8,11 @@ import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import { buildGamecubeDol } from "../domain/gamecubeDol.fixture.js";
 import type { DolHeader } from "../domain/gamecubeDol.js";
-import type { NativeLoadImageObservation } from "../domain/native/nativeLoadImage.js";
+import type {
+  NativeLoadImageObservation,
+  NativeLoadImage,
+} from "../domain/native/nativeLoadImage.js";
 import { attestGhidraDolLoadImage } from "./GhidraDolLoadImage.js";
-import type { NativeLoadImage } from "../domain/native/nativeLoadImage.js";
 import type { Result } from "../domain/result.js";
 
 type DolTarget = Extract<BinaryTarget, { format: "gamecube-dol" }>;

@@ -2,9 +2,17 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  mkdtemp,
+  mkdir,
+  readFile,
+  readdir,
+  realpath,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
@@ -18,10 +26,12 @@ import {
   assertMipsProbe,
   assertMipsGlobal,
   assertMipsSoftFloatStorage,
+  assertMipsCarvedTargetRefusal,
+  carveMipsElfBeforeSectionTable,
 } from "../tests/conformance/ghidra/mips-checks.mjs";
 import { parseEvidence } from "../dist/domain/evidence.js";
 import { parseAnalysisSnapshot } from "../dist/domain/analysisSnapshot.js";
-import { functionDossierSchema } from "../dist/domain/hopperValues.js";
+import { functionDossierSchema } from "../dist/domain/native/functionDossier.js";
 import { inspectVerifierGhidraInstallation } from "./lib/ghidra-installation-inspection.mjs";
 import { buildMipsFixture } from "../tests/conformance/ghidra/mips-fixture.mjs";
 import {
@@ -32,8 +42,10 @@ import {
 import {
   requireMcpToolError,
   requireMcpOperationResult,
+  requireMcpOutput,
 } from "./lib/mcp-verifier-results.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
+import { runOwnedCommand } from "../dist/process/OwnedCommand.js";
 
 // Optional cross-target lane. No tool acquisition and no target execution.
 const mode = process.argv[2];
@@ -81,6 +93,114 @@ for (const setting of ["GHIDRA_HEADLESS_MAXMEM", "GHIDRA_MAXMEM"]) {
   if (process.env[setting] !== undefined) env[setting] = process.env[setting];
 }
 
+/** Observe an existing project, and verify REA never alters the caller's copy. */
+async function verifyExistingMipsProject(fixture, byteOrder) {
+  const projectDir = join(workspace, `${byteOrder}-existing-project`);
+  await mkdir(projectDir);
+  assert.ok(installation.analyzeHeadlessPath);
+  await runOwnedCommand(
+    {
+      command: installation.analyzeHeadlessPath,
+      arguments: [
+        projectDir,
+        "ExistingMips",
+        "-import",
+        fixture.path,
+        "-noanalysis",
+      ],
+      env,
+      runId: run.run_id,
+      expectedCommand: null,
+    },
+    { timeoutMs: 180000, diagnosticBytes: 1024 * 1024 },
+  );
+  const projectPath = join(projectDir, "ExistingMips.gpr");
+  const digestTree = async () => {
+    const paths = [projectPath];
+    const walk = async (dir) => {
+      for (const entry of await readdir(dir, { withFileTypes: true })) {
+        const path = join(dir, entry.name);
+        if (entry.isDirectory()) await walk(path);
+        else if (entry.isFile()) paths.push(path);
+      }
+    };
+    await walk(join(projectDir, "ExistingMips.rep"));
+    return Promise.all(
+      paths.sort().map(async (path) => [
+        relative(projectDir, path),
+        createHash("sha256")
+          .update(await readFile(path))
+          .digest("hex"),
+      ]),
+    );
+  };
+  const before = await digestTree();
+  const transport = new StdioClientTransport({
+    command: process.execPath,
+    args: [entrypoint, "mcp"],
+    env: {
+      ...env,
+      REA_GHIDRA_PROJECT_PATH: projectPath,
+      REA_GHIDRA_PROGRAM_NAME: basename(fixture.path),
+    },
+    stderr: "pipe",
+  });
+  const client = new Client({ name: "rea-existing-mips-proof", version: "1" });
+  try {
+    await client.connect(transport);
+    const opened = await client.callTool(
+      {
+        name: "open_binary",
+        arguments: { path: fixture.path, provider_id: "ghidra" },
+      },
+      { timeout: 180000 },
+    );
+    requireMcpOperationResult(opened, "open_binary");
+    const result = await client.callTool(
+      { name: "list_procedures", arguments: {} },
+      { timeout: 180000 },
+    );
+    const observation = parseEvidence(
+      requireMcpOutput(result, "list_procedures"),
+    );
+    assert.ok(Array.isArray(observation.normalized_result));
+    const parameters = observation.analysis_profile?.parameters;
+    assert.equal(parameters?.import_mode, "existing-project-private-copy-v1");
+    assert.equal(parameters?.mips_elf?.byte_order, byteOrder);
+    assert.equal(parameters?.mips_support_lane, undefined);
+    assert.deepEqual(parameters?.original_analysis, {
+      completeness: "unknown",
+      settings: "unknown",
+    });
+    requireMcpOperationResult(
+      await client.callTool({ name: "close_binary", arguments: {} }),
+      "close_binary",
+    );
+  } finally {
+    try {
+      await client.close();
+    } finally {
+      await transport.close();
+    }
+  }
+  assert.deepEqual(
+    await digestTree(),
+    before,
+    "REA changed the source project",
+  );
+  assert.equal(
+    createHash("sha256")
+      .update(await readFile(fixture.path))
+      .digest("hex"),
+    fixture.sha256,
+  );
+  return {
+    byte_order: byteOrder,
+    project_unchanged: true,
+    target_unchanged: true,
+  };
+}
+
 /**
  * Typed float signatures must use soft-float o32 storage, and callers must see
  * the source constants through it rather than FPU inputs.
@@ -121,16 +241,6 @@ async function verifySoftFloat(call, symbols, byteOrder) {
       `Soft-float caller lost argument ${literal}`,
     );
   return { storage: boundaries };
-}
-function assertIncompleteMipsInspection(error) {
-  assert.equal(error.code, "capability_unavailable");
-  assert.equal(error.details.selection_reason, "target_unsupported");
-  const rejection = error.details.rejections.find(
-    (candidate) => candidate.provider_id === "ghidra",
-  );
-  assert.equal(rejection?.code, "architecture_unsupported");
-  assert.match(rejection.reason, /ABI declaration inspection is incomplete/u);
-  assert.match(rejection.reason, /section header table/u);
 }
 
 const reports = [];
@@ -321,6 +431,10 @@ try {
       );
     }
     assert.equal(resolved.value.sha256, fixture.sha256);
+    const existingProject =
+      !psp && floatAbi === "hard"
+        ? await verifyExistingMipsProject(fixture, byteOrder)
+        : undefined;
     const snapshotPath = join(
       workspace,
       `${byteOrder}-${floatAbi}.snapshot.json`,
@@ -617,45 +731,20 @@ try {
       // PSP keeps its independent Allegrex/A-B-A checks; carved PSP is not verified.
       let carved;
       if (!psp) {
-        // A program-header ABI record survives carving, but GNU declarations in
-        // uncaptured section headers remain unknown: both adapters must refuse.
-        const read16 = (offset) =>
-          byteOrder === "little"
-            ? sourceBytes.readUInt16LE(offset)
-            : sourceBytes.readUInt16BE(offset);
-        const read32 = (offset) =>
-          byteOrder === "little"
-            ? sourceBytes.readUInt32LE(offset)
-            : sourceBytes.readUInt32BE(offset);
-        const sectionOffset = read32(32);
-        const cut = sectionOffset - 1;
-        const programOffset = read32(28);
-        const programCount = read16(44);
-        assert.equal(read16(42), 32);
-        assert.ok(cut >= programOffset + programCount * 32);
-        for (let i = 0; i < programCount; i += 1) {
-          const offset = programOffset + i * 32;
-          assert.ok(read32(offset + 4) + read32(offset + 16) <= cut);
-        }
-        const carvedBytes = sourceBytes.subarray(0, cut);
+        // The carved copy keeps every program header and payload but declares
+        // a section table it did not capture. Both adapters refuse it when
+        // opening the target; it is not analyzed as a smaller program.
+        const carve = carveMipsElfBeforeSectionTable(sourceBytes, byteOrder);
         const carvedPath = join(
           workspace,
           `${byteOrder}-${floatAbi}-carved.elf`,
         );
         const carvedSha256 = createHash("sha256")
-          .update(carvedBytes)
+          .update(carve.bytes)
           .digest("hex");
-        await writeFile(carvedPath, carvedBytes);
-        const carvedResolved = await parseBinaryTarget(carvedPath);
-        if (!carvedResolved.ok) throw carvedResolved.error;
-        assert.deepEqual(
-          carvedResolved.value.mips.abiFlags,
-          independent.mips.abiFlags,
-        );
-        assert.match(
-          carvedResolved.value.mips.limitations.join(" "),
-          /section header table/u,
-        );
+        await writeFile(carvedPath, carve.bytes);
+        // Target errors name the canonical path that was opened.
+        const openedPath = await realpath(carvedPath);
         const carvedError = requireMcpToolError(
           await client.callTool(
             {
@@ -665,7 +754,7 @@ try {
             { timeout: 60000 },
           ),
         );
-        assertIncompleteMipsInspection(carvedError);
+        assertMipsCarvedTargetRefusal(carvedError, openedPath, carve.reason);
         let carvedCliError;
         try {
           await execute(
@@ -688,22 +777,29 @@ try {
           carvedCliError &&
             Number.isInteger(carvedCliError.code) &&
             carvedCliError.code !== 0,
-          "Expected an incomplete-ABI refusal, not a timeout or success",
+          "Expected a target-opening refusal, not a timeout or success",
         );
-        assertIncompleteMipsInspection(JSON.parse(carvedCliError.stdout));
-        assert.deepEqual(await readFile(carvedPath), carvedBytes);
+        assertMipsCarvedTargetRefusal(
+          JSON.parse(carvedCliError.stdout),
+          openedPath,
+          carve.reason,
+        );
+        assert.deepEqual(await readFile(carvedPath), carve.bytes);
         carved = {
           sha256: carvedSha256,
-          source_bytes: carvedBytes.length,
-          section_header_offset: sectionOffset,
-          status: "expected-incomplete-abi-refusal",
-          limitations: carvedResolved.value.mips.limitations,
+          source_bytes: carve.bytes.length,
+          section_header_offset: carve.sectionOffset,
+          status: "expected-target-refusal",
+          reason: carve.reason,
           cli_exit: carvedCliError.code,
           mcp_error: carvedError,
         };
       }
       reports.push({
         ...fixture,
+        ...(existingProject === undefined
+          ? {}
+          : { existing_project: existingProject }),
         independent_reader: independent,
         effective_language: image.observations.language_id,
         effective_compiler_spec: image.observations.compiler_spec_id,

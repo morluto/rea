@@ -53,6 +53,14 @@ An unset fuse with a present blob is reported as a limitation. These are static
 sentinel observations, not proof of runtime activation: sentinel-like text in
 script or asset bytes also participates in the scan.
 
+Artifact comparison uses each member's runtime role and exact source key as
+semantic metadata. Unicode-normalized graph paths do not erase differences in
+runtime asset keys. For members paired at the same logical path, a directory
+index change alone does not change the member. Ordinal-based fallback paths can
+change when entries are reordered. When only one observation records member
+metadata, the complete runtime member declaration remains unavailable. Original
+source fields remain available in the retained Evidence.
+
 ## Supported layout and limits
 
 The decoder follows the 64-bit little-endian layout in Node
@@ -74,8 +82,12 @@ override. Asset and argument decoding, padding scans, and inventory construction
 yield in bounded batches and honor caller cancellation. Asset count and name
 budgets bound retained metadata independently of stored member body sizes. The PE
 name probe reads headers from the first 64 KiB of the carrier; a PE whose
-headers extend beyond that is left to native classification. Snapshot and
-code-cache bytes remain opaque.
+headers extend beyond that is left to native classification. ELF note tables
+are read for at most one note per 12 carrier bytes in total, the most that
+disjoint tables can hold, so program headers that repeat the same notes do not
+rescan them once per header. Past that count the remaining tables are
+unreadable: an ELF without a confirmed blob keeps its native classification,
+and one with a blob fails closed. Snapshot and code-cache bytes remain opaque.
 
 ## Verification
 

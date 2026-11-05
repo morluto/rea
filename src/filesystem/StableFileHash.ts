@@ -1,5 +1,4 @@
 import { createHash } from "node:crypto";
-import { stat } from "node:fs/promises";
 
 import {
   withOwnedRegularFile,
@@ -10,7 +9,9 @@ import {
   RegularFileChangedError,
   RegularFileOperationCancelled,
   assertRegularFileActive,
-  sameRegularFileState,
+  assertStableRegularFileIdentity,
+  regularFileState,
+  type RegularFileState,
 } from "./RegularFile.js";
 import type { OwnedFileHandle } from "./OwnedFileHandle.js";
 
@@ -20,6 +21,7 @@ export interface StableFileHashOptions {
 }
 
 export interface StableFileObservation {
+  readonly state: RegularFileState;
   readonly sha256: string;
   readonly bytes: number;
   /** The first two bytes, read from the same descriptor and stream as the hash. */
@@ -119,19 +121,15 @@ async function readStableFile(
           position += read.bytesRead;
         }
         assertRegularFileActive(options.signal);
-        const [opened, currentPath] = await Promise.all([
-          handle.stat(),
-          stat(path),
-        ]);
-        if (
-          position !== initial.size ||
-          !sameRegularFileState(initial, opened) ||
-          !sameRegularFileState(initial, currentPath)
-        )
-          throw new RegularFileChangedError(path);
-        assertRegularFileActive(options.signal);
+        if (position !== initial.size) throw new RegularFileChangedError(path);
+        await assertStableRegularFileIdentity(handle, path, initial, {
+          symlinks: "follow",
+          ...(options.signal === undefined ? {} : { signal: options.signal }),
+        });
         const fingerprint = { sha256: hash.digest("hex"), bytes: position };
-        return includePrefix ? { ...fingerprint, prefix } : fingerprint;
+        return includePrefix
+          ? { ...fingerprint, prefix, state: regularFileState(initial) }
+          : fingerprint;
       },
     );
   } catch (cause: unknown) {

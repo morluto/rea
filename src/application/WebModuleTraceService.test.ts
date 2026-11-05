@@ -323,7 +323,10 @@ it.each(["incomplete", "provider-failure"])(
     if (result.ok) throw new Error("expected original failure");
     expect(result.error).toBeInstanceOf(AnalysisOutputError);
     if (kind === "provider-failure") expect(result.error).toBe(primary);
-    expect(result.error.partialObservation).toBeUndefined();
+    expect(result.error.partialObservation).toMatchObject({
+      kind: "web-trace-observation",
+      analysis: "incomplete",
+    });
   },
 );
 
@@ -410,7 +413,7 @@ it.each([
       });
     } else
       expect(result.error.partialObservation).toHaveProperty(
-        "kind",
+        "resolver_observation.kind",
         "web-module-resolution",
       );
   },

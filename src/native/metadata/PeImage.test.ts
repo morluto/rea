@@ -2,11 +2,41 @@ import { expect, it } from "vitest";
 import { readGoBinaryImage } from "../../go/GoBinaryImage.js";
 import { readPeImage } from "./PeImage.js";
 import { pe } from "../../domain/binaryTarget.fixture.js";
+import { parseMzHeaderEvidence } from "../../domain/dosMz.js";
 import { BinaryFormatFailure } from "./BinaryContainer.js";
+import { readBinaryContainer } from "./readBinaryContainer.js";
 import {
   createGoBinaryFixture,
   setGoPeVirtualSize,
 } from "../../../tests/fixtures/go/image.js";
+
+for (const bits of [32, 64] as const) {
+  it.each([
+    ["ZZ", Buffer.from("ZZ")],
+    ["high-bit MZ", Buffer.from([0xcd, 0xda])],
+  ] as const)(
+    `rejects %s before reading PE${String(bits)} facts`,
+    (_, prefix) => {
+      const { bytes } = createGoBinaryFixture({ format: "pe", bits });
+      prefix.copy(bytes);
+      const declarations = parseMzHeaderEvidence(bytes).declarations;
+      if (declarations.ok) throw new Error("Expected invalid MZ declarations");
+      expect(() => readPeImage(bytes)).toThrow(
+        expect.objectContaining({
+          kind: "malformed",
+          message: declarations.error,
+        }),
+      );
+    },
+  );
+
+  it(`reads PE${String(bits)} without requiring a valid DOS load module`, () => {
+    const { bytes } = createGoBinaryFixture({ format: "pe", bits });
+    bytes.writeUInt16LE(0, 4);
+    expect(parseMzHeaderEvidence(bytes).dos.ok).toBe(false);
+    expect(readPeImage(bytes)).toMatchObject({ format: "pe", bits });
+  });
+}
 
 it("classifies a confirmed overlapping PE as an unsupported layout", () => {
   try {
@@ -32,6 +62,20 @@ it("reports complete DOS MZ images as outside the PE reader", () => {
     "DOS MZ images are outside the supported ELF, PE and thin Mach-O formats",
   );
 });
+
+it.each(["NE", "LE", "LX"])(
+  "recognizes %s without requiring a PE COFF header",
+  (signature) => {
+    const bytes = pe(0x014c).subarray(0, 66);
+    bytes.write(signature, 64, "ascii");
+    expect(() => readBinaryContainer(bytes)).toThrow(
+      expect.objectContaining({
+        kind: "unsupported",
+        message: `${signature} images are outside the supported ELF, PE and thin Mach-O formats`,
+      }),
+    );
+  },
+);
 
 it.each([32, 64] as const)(
   "uses raw-size fallback for PE%d Go build-info and keeps RVA mappings intact",
@@ -65,6 +109,27 @@ it.each([32, 64] as const)(
       expect(container.executable_mappings).toEqual([]);
       expect(readGoBinaryImage(fixture.bytes).build_info).toEqual(expected);
     }
+  },
+);
+
+it.each([32, 64] as const)(
+  "retains PE%d declared image base and alignments in native image facts",
+  (bits) => {
+    const { bytes } = createGoBinaryFixture({ format: "pe", bits });
+    const optional = bytes.readUInt32LE(0x3c) + 24;
+    const imageBase = bits === 64 ? 0xfedcba9876540000n : 0x87650000n;
+    if (bits === 64) bytes.writeBigUInt64LE(imageBase, optional + 24);
+    else bytes.writeUInt32LE(Number(imageBase), optional + 28);
+    // These remain declarations; alignment policy belongs to image consumers.
+    bytes.writeUInt32LE(0, optional + 32);
+    bytes.writeUInt32LE(0xffffffff, optional + 36);
+    const container = readPeImage(bytes);
+    expect(container.image_base).toBe(imageBase);
+    expect(container.pe_header_mapping.address).toBe(imageBase);
+    expect(container.mappings[0]?.address).toBe(imageBase + 0x400n);
+    expect(container.pe_section_alignment).toBe(0);
+    expect(container.pe_file_alignment).toBe(0xffffffff);
+    expect(container.sections[0]?.file_alignment).toBe(0xffffffff);
   },
 );
 

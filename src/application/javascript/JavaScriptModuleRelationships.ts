@@ -18,7 +18,10 @@ import type {
   JavaScriptModuleOrigin,
   JavaScriptSemanticModuleLink,
 } from "../../domain/javascript/javascriptSemanticIr.js";
-import { moduleResolutionModeForJavaScriptReference } from "../../domain/javascript/javascriptModuleResolutionMode.js";
+import {
+  isJsonModuleTarget,
+  moduleResolutionModeForJavaScriptReference,
+} from "../../domain/javascript/javascriptModuleResolutionMode.js";
 import type { JavaScriptArtifactFile } from "../../domain/javascript/javascriptArtifactFiles.js";
 import {
   addAstContainsEdge,
@@ -327,10 +330,9 @@ const resolveModuleTarget = (
     node,
     path,
     file,
-    jsonStatus:
-      file.kind === "json" || file.kind === "package-json"
-        ? input.context.analysis.jsonDocuments.read(file).status
-        : null,
+    jsonStatus: isJsonModuleTarget(path, file.kind)
+      ? input.context.analysis.jsonDocuments.read(file).status
+      : null,
     status: "resolved",
     limitations: resolution.limitations,
     resolution,

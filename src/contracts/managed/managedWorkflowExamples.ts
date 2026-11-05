@@ -111,6 +111,7 @@ const runtimeMembers = (): ManagedMemberInspection => {
           max_stack: 8,
           init_locals: false,
           local_var_sig_token: null,
+          local_var_signature: null,
           il_size: 1,
           il_sha256: "4".repeat(64),
           normalized_il_sha256: "5".repeat(64),
@@ -246,6 +247,7 @@ const nativeExportEvidence = () => {
     exports: coverage([
       {
         name: "open_native",
+        runtime_name: "open_native",
         address: "0x1000",
         weak: false,
         reexport: false,
@@ -253,6 +255,7 @@ const nativeExportEvidence = () => {
       },
     ]),
     segments: coverage([]),
+    encryption: coverage([]),
     provenance: [],
     limitations: [
       "Selected Mach-O slice container offset is unknown in this synthetic example.",

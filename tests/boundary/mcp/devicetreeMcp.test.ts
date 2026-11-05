@@ -1,7 +1,7 @@
 import { advertisedMcpToolSchemas } from "../../fixtures/advertisedMcpTool.js";
 import { unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { expect } from "vitest";
+import { expect, onTestFinished } from "vitest";
 import { z } from "zod";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { EvidenceMcpServer } from "../../../src/server/EvidenceMcpServer.js";
@@ -12,7 +12,6 @@ import { DevicetreeProvider } from "../../../src/firmware/devicetree/DevicetreeP
 import { DevicetreeService } from "../../../src/application/binaryDiagnostics/DevicetreeService.js";
 import { silentLogger } from "../../../src/logger.js";
 import type { Evidence } from "../../../src/domain/evidence.js";
-import { onTestFinished } from "vitest";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import {

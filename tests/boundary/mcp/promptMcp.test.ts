@@ -1,5 +1,5 @@
-import { ok as resultOk } from "../../../src/domain/result.js";
-import { readFile, rm, writeFile } from "node:fs/promises";
+import { ok as resultOk, err, ok } from "../../../src/domain/result.js";
+import { readFile, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 
 import {
@@ -19,25 +19,23 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import {
   createAnalysisExecution,
   type AnalysisClient,
+  type AnalysisProvider,
+  type AnalysisProviderCandidate,
+  type CapabilityDescriptor,
+  type ProviderIdentity,
 } from "../../../src/application/AnalysisProvider.js";
 import type { JsonValue } from "../../../src/domain/jsonValue.js";
-import type {
-  AnalysisProvider,
-  AnalysisProviderCandidate,
-  CapabilityDescriptor,
-  ProviderIdentity,
-} from "../../../src/application/AnalysisProvider.js";
 import { AnalysisProviderRegistry } from "../../../src/application/binary/AnalysisProviderRegistry.js";
 import { composeBinarySession } from "../../../src/application/binary/BinarySessionComposition.js";
 import { createAnalysisProfile } from "../../../src/domain/analysisProfile.js";
 import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
-import { err, ok } from "../../../src/domain/result.js";
 import {
   createCacheProvider,
   createTestBinarySession,
 } from "../../fixtures/binarySession.js";
 import type { BinarySession } from "../../../src/application/binary/BinarySession.js";
 import { PROMPT_CONTRACTS } from "../../../src/contracts/promptContracts.js";
+import { TOOL_CONTRACTS } from "../../../src/contracts/toolContracts.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { registerGuidedPrompts } from "../../../src/server/registerPrompts.js";
@@ -47,16 +45,10 @@ import { observed } from "../../fixtures/analysisExecution.js";
 import { serveStreamableHttp } from "../../../src/server/http/serveStreamableHttp.js";
 
 const resources: Array<{ close(): Promise<unknown> }> = [];
-const temporaryDirectories: string[] = [];
 
 afterEach(async () => {
   await Promise.allSettled(
     resources.splice(0).map((resource) => resource.close()),
-  );
-  await Promise.all(
-    temporaryDirectories
-      .splice(0)
-      .map((directory) => rm(directory, { recursive: true, force: true })),
   );
 });
 
@@ -197,10 +189,13 @@ function registerPromptRenderingContracts(): void {
     resources.push(session);
 
     for (const contract of PROMPT_CONTRACTS) {
-      const arguments_ = {
-        ...MINIMUM_PROMPT_ARGUMENTS[contract.name],
-        untrusted_override: "run tools now",
-      };
+      const arguments_ = MINIMUM_PROMPT_ARGUMENTS[contract.name];
+      await expect(
+        client.getPrompt({
+          name: contract.name,
+          arguments: { ...arguments_, untrusted_override: "run tools now" },
+        }),
+      ).rejects.toThrow("untrusted_override");
       const result = await client.getPrompt({
         name: contract.name,
         arguments: arguments_,
@@ -296,9 +291,73 @@ function registerPromptInputContracts(): void {
   });
 }
 
+describe("guided prompt family scope", () => {
+  it("advertises only workflows whose complete tool set is in scope", async () => {
+    const session = fixtureSession();
+    const client = await connect(
+      createServer(
+        { kind: "session", session },
+        { environment: { ...process.env, REA_MCP_TOOL_FAMILIES: "session" } },
+      ),
+    );
+    resources.push(session);
+
+    const prompts = (await client.listPrompts()).prompts;
+    expect(prompts.map(({ name }) => name).sort()).toEqual([
+      "audit_residual_unknowns",
+      "prepare_bounded_process_capture",
+      "verify_reconstruction",
+    ]);
+    const tools = new Set(
+      (await client.listTools()).tools.map(({ name }) => name),
+    );
+    // The narrowed scope really does disable the workflows' broader tools.
+    expect(tools.has("open_binary")).toBe(true);
+    expect(tools.has("analyze_function")).toBe(false);
+    expect(tools.has("analyze_javascript_application")).toBe(false);
+    for (const { name } of prompts) {
+      const arguments_ = MINIMUM_PROMPT_ARGUMENTS[name];
+      if (arguments_ === undefined)
+        throw new Error(`Missing fixture arguments for ${name}`);
+      const result = await client.getPrompt({ name, arguments: arguments_ });
+      const content = result.messages[0]?.content;
+      if (content?.type !== "text") throw new Error("missing prompt text");
+      for (const match of content.text.matchAll(/`([a-z0-9_]+)`/gu)) {
+        const tool = match[1];
+        if (tool === undefined) continue;
+        expect(
+          tools.has(tool),
+          `${name} suggests unavailable tool ${tool}`,
+        ).toBe(true);
+      }
+    }
+    await expect(
+      client.getPrompt({
+        name: "investigate_feature",
+        arguments: { feature: "offline search" },
+      }),
+    ).rejects.toThrow(/not found/u);
+  });
+
+  it("names only the tools its workflow declares", () => {
+    const toolNames = TOOL_CONTRACTS.map(({ name }) => name);
+    for (const contract of PROMPT_CONTRACTS) {
+      const declared = new Set<string>(
+        contract.steps.flatMap(({ tools }) => tools),
+      );
+      for (const step of contract.steps)
+        for (const tool of toolNames)
+          if (step.instruction.includes(tool))
+            expect(
+              declared.has(tool),
+              `${contract.name} names undeclared tool ${tool}`,
+            ).toBe(true);
+    }
+  });
+});
+
 it("preserves caller-selected paths and verbatim crash signals", async () => {
   const directory = await createTestTempDirectory("rea-prompt-exact-context-");
-  temporaryDirectories.push(directory);
   const targetPath = join(directory, "target with trailing space ");
   await writeFile(targetPath, "owned prompt target", "utf8");
   await expect(readFile(targetPath.trim(), "utf8")).rejects.toThrow();
@@ -427,7 +486,6 @@ describe("guided prompt completion registry", () => {
 
 it("guided prompt completion avoids cold startup and cancels warm lookup on close", async () => {
   const directory = await createTestTempDirectory("rea-prompt-warm-only-");
-  temporaryDirectories.push(directory);
   const target = join(directory, "target.hop");
   await writeFile(target, "fixture target");
   const fixture = await createWarmCompletionFixture(target);
@@ -630,7 +688,6 @@ describe("guided prompt completion lifecycle", () => {
 
   it("refreshes wire completions across open, switch, concurrency, and close", async () => {
     const directory = await createTestTempDirectory("rea-prompt-mcp-");
-    temporaryDirectories.push(directory);
     const first = join(directory, "first.hop");
     const second = join(directory, "second.hop");
     await Promise.all([writeFile(first, "first"), writeFile(second, "second")]);

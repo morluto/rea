@@ -310,15 +310,20 @@ const validateCoverage = (
       ),
     ],
   ] as const) {
-    // Whole frames are retained or omitted, so retained bytes are exactly the
-    // retained frames' bytes, and nothing is unretained when no frame was omitted.
+    const accountedBytes =
+      retention.retained_bytes +
+      (name === "raw_terminal"
+        ? (details.raw_terminal.redacted_bytes ?? 0)
+        : 0);
+    // Retained bytes describe the safe frames exactly. Removed private bytes
+    // remain charged to admitted input even when no whole frame was omitted.
     require(retention.retained_frames === count &&
       retention.observed_frames >= count &&
       retention.retained_bytes === bytes &&
-      retention.observed_bytes >= retention.retained_bytes &&
+      retention.observed_bytes >= accountedBytes &&
       (retention.observed_frames > count ||
-        retention.observed_bytes === retention.retained_bytes) &&
-      retention.retained_bytes <= retention.budget_bytes &&
+        retention.observed_bytes === accountedBytes) &&
+      accountedBytes <= retention.budget_bytes &&
       (retention.unknown_size_frames ?? 0) <=
         retention.observed_frames -
           retention.retained_frames, `truncation_details.${name}`, "retained observations and budget accounting do not agree");
@@ -375,8 +380,17 @@ const validateCoverage = (
             ? omission.system_code !== null
             : omission.system_code === null),
       ), `truncation_details.${name}.hash_omissions`, "every retained regular file without a digest must have one matching omission reason");
-    require(new Set(coverage.enumeration_omissions.map(({ path }) => path))
-      .size === coverage.enumeration_omissions.length &&
+    require(new Set(
+      coverage.enumeration_omissions.map((omission) =>
+        omission.reason === "unrepresentable_name"
+          ? JSON.stringify([
+              omission.path,
+              omission.reason,
+              omission.raw_name_hex,
+            ])
+          : JSON.stringify([omission.path]),
+      ),
+    ).size === coverage.enumeration_omissions.length &&
       (!coverage.enumeration_reasons.includes("entry_unavailable") ||
         coverage.enumeration_omissions.some(
           ({ reason }) => reason === "entry_unavailable",
@@ -384,6 +398,10 @@ const validateCoverage = (
       (!coverage.enumeration_reasons.includes("symlink_not_followed") ||
         coverage.enumeration_omissions.some(
           ({ reason }) => reason === "symlink_not_followed",
+        )) &&
+      (!coverage.enumeration_reasons.includes("unrepresentable_name") ||
+        coverage.enumeration_omissions.some(
+          ({ reason }) => reason === "unrepresentable_name",
         )) &&
       coverage.enumeration_omissions.every((omission) => {
         if (!coverage.enumeration_reasons.includes(omission.reason))

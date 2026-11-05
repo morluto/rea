@@ -130,6 +130,7 @@ it("shares complete/summary source identity and advertised contracts across all 
     );
     if (!Array.isArray(complete.normalized_result))
       throw new Error("Expected complete row array");
+    expect(complete.normalized_result.length).toBeGreaterThan(0);
     if (operation === "search_procedures")
       expect(complete.normalized_result).toEqual(searchProcedureRows);
     expect(complete.parameters).not.toHaveProperty("detail");
@@ -288,12 +289,22 @@ it("refuses summary before provider work when no retaining session is configured
     InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
   await client.connect(clientTransport);
-  const reply = await client.callTool({
-    name: "list_procedures",
-    arguments: { detail: "summary" },
-  });
-  expect(reply.isError).toBe(true);
-  expect(parseMcpToolError(reply).error.code).toBe("capability_unavailable");
+  for (const [name, parameters] of [
+    ["list_procedures", {}],
+    ["inspect_native_load_image", {}],
+    ["procedure_address", { procedure: "fixture_main" }],
+    ["procedure_callees", { procedure: "fixture_main" }],
+    ["procedure_callers", { procedure: "fixture_main" }],
+    ["resolve_containing_procedure", { address: "0x401001" }],
+    ["get_call_graph", { address: "fixture_main" }],
+  ] as const) {
+    const reply = await client.callTool({
+      name,
+      arguments: { ...parameters, detail: "summary" },
+    });
+    expect(reply.isError).toBe(true);
+    expect(parseMcpToolError(reply).error.code).toBe("capability_unavailable");
+  }
   expect(calls).toBe(0);
 });
 
