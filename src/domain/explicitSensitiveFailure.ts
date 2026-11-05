@@ -145,9 +145,22 @@ const redactFailure = (
       ? {}
       : { observed: visit(issue.observed) }),
   });
+  const guidance = error.continuingCallerGuidance;
   const context = {
     cause: error,
     ...(error.limit === undefined ? {} : { limit: error.limit }),
+    ...(guidance === undefined
+      ? {}
+      : {
+          continuingCallerGuidance: {
+            ...(guidance.userMessage === undefined
+              ? {}
+              : { userMessage: text(guidance.userMessage) }),
+            ...(guidance.remediationAction === undefined
+              ? {}
+              : { remediationAction: text(guidance.remediationAction) }),
+          },
+        }),
     ...(error.cleanupPrimary === undefined
       ? {}
       : {
@@ -156,6 +169,9 @@ const redactFailure = (
     ...(error.diagnostics === undefined
       ? {}
       : { diagnostics: diagnostics(error.diagnostics) }),
+    ...(error.invocationDiagnostics === undefined
+      ? {}
+      : { invocationDiagnostics: diagnostics(error.invocationDiagnostics) }),
     ...(error.capturedOutput === undefined
       ? {}
       : {
@@ -242,7 +258,16 @@ const redactFailure = (
   if (error instanceof AnalysisInputError)
     return new AnalysisInputError(
       error.operation,
-      context,
+      {
+        ...context,
+        ...(error.userMessage === undefined
+          ? {}
+          : { userMessage: text(error.userMessage) }),
+        ...(error.remediationAction === undefined
+          ? {}
+          : { remediationAction: text(error.remediationAction) }),
+        conformsToInputContract: error.conformsToInputContract,
+      },
       error.issues.map(issueProjection),
     );
   if (error instanceof AnalysisOutputError)

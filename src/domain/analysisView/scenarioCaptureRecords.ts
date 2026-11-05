@@ -51,10 +51,16 @@ const headerValue = (
   name: string,
 ): string | undefined => {
   if (headers?.state !== "captured") return undefined;
-  const item = headers.items.find(
-    (candidate) => candidate.name.toLowerCase() === name,
-  );
-  return item?.value ?? undefined;
+  let value: string | undefined;
+  for (const item of headers.items) {
+    if (item.name.toLowerCase() !== name) continue;
+    // A singleton field has no certain value if declarations disagree or one
+    // was excluded. Never let ordering choose an interpretation of Evidence.
+    if (item.value === null || (value !== undefined && value !== item.value))
+      return undefined;
+    value = item.value;
+  }
+  return value;
 };
 
 const captured = (

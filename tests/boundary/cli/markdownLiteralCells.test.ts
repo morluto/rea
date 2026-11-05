@@ -12,7 +12,7 @@ import { modelArtifactSchema } from "../../../src/domain/model/modelArtifact.js"
 import { renderCliDocument } from "../../../src/cliOutput.js";
 import { safetensorsFixture } from "../../fixtures/model/model.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { cliTest } from "../../support/cli/cliFixture.js";
+import { cliTest, runFileCli } from "../../support/cli/cliFixture.js";
 
 afterAll(() => disposeMdItInstance());
 
@@ -176,7 +176,7 @@ cliTest(
   "preserves capability provider identities in rendered Markdown",
   async ({ cli }) => {
     const json = await cli.run({ arguments: ["capabilities", "--json"] });
-    const markdown = await cli.run({
+    const markdown = await runFileCli(cli, {
       arguments: ["capabilities", "--format", "md"],
     });
     expect(json.exitCode, json.stderr).toBe(0);
@@ -222,7 +222,9 @@ cliTest(
       "--filter-output",
       "records.0.normalized_result",
     ];
-    const markdown = await cli.run({ arguments: [...base, "--format", "md"] });
+    const markdown = await runFileCli(cli, {
+      arguments: [...base, "--format", "md"],
+    });
     const json = await cli.run({ arguments: [...base, "--json"] });
     expect(markdown.exitCode, markdown.stderr).toBe(0);
     expect(json.exitCode, json.stderr).toBe(0);
@@ -286,7 +288,7 @@ cliTest(
     );
     const base = ["inspect-model-artifact", path, "--detail", "complete"];
     const json = await cli.run({ arguments: [...base, "--json"] });
-    const markdown = await cli.run({
+    const markdown = await runFileCli(cli, {
       arguments: [...base, "--format", "md"],
     });
     expect(json.exitCode, json.stderr).toBe(0);
@@ -323,6 +325,8 @@ cliTest(
       list: [literal],
       bullet: "- literal",
       numbered: "1. literal",
+      numberedBare: "1.",
+      parenBare: "1)",
       rule: "---",
       indented: "    literal\n- next\n# heading",
       nested: { value: 1 },
@@ -339,7 +343,9 @@ cliTest(
       "--filter-output",
       "records.0.normalized_result",
     ];
-    const markdown = await cli.run({ arguments: [...base, "--format", "md"] });
+    const markdown = await runFileCli(cli, {
+      arguments: [...base, "--format", "md"],
+    });
     const json = await cli.run({ arguments: [...base, "--json"] });
     expect(markdown.exitCode, markdown.stderr).toBe(0);
     expect(json.exitCode, json.stderr).toBe(0);
@@ -361,6 +367,8 @@ cliTest(
       expect(text(parseFragment(html))).toContain(literal);
       expect(html).toContain("**key**<br># injected");
       expect(html).toContain("literal<br>- next<br># heading");
+      expect(html).toContain("<p>1.</p>");
+      expect(html).toContain("<p>1)</p>");
       expect(html).not.toMatch(/<(?:strong|em|ul|ol|li|T|pre|hr)(?:\s|>)/u);
       expect(html).not.toContain('href="wrong"');
       expect(html).not.toContain("<h1");

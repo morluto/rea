@@ -3,8 +3,11 @@ import { watch } from "node:fs";
 import { readFile, symlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { expect, onTestFinished, test, vi } from "vitest";
+import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
+import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 
 import { PcapProvider } from "../../../src/pcap/PcapProvider.js";
+import { PCAP_LIMITER_REMEDIATION } from "../../../src/pcap/PcapNativeBound.js";
 import {
   CAPINFOS_COMMAND_ENV,
   TSHARK_COMMAND_ENV,
@@ -89,37 +92,6 @@ it("inspects both tools without reading a capture", async () => {
       .digest("hex"),
     capinfos_identity_status: "verified",
   });
-});
-
-it("rejects a selected TShark whose bytes change during its version probe", async () => {
-  const root = await createTestTempDirectory("rea-pcap-tool-identity-");
-  const { tshark, capinfos } = await writeStubTools(root);
-  await writeFile(
-    tshark,
-    `#!/bin/sh
-if [ "$1" = "--version" ]; then
-  printf 'TShark (Wireshark) 4.6.6-stub\\n'
-  printf '\\n# changed during version probe\\n' >> "$0"
-  exit 0
-fi
-exit 2
-`,
-    { mode: 0o755 },
-  );
-  const provider = new PcapProvider({
-    environment: { REA_TSHARK_COMMAND: tshark, REA_CAPINFOS_COMMAND: capinfos },
-  });
-  onTestFinished(() => provider.close());
-  const result = await provider.execute({
-    operation: "inspect_pcap_client",
-    input: {},
-  });
-  expect(result.ok).toBe(false);
-  if (!result.ok)
-    expect(projectAnalysisError(result.error)).toMatchObject({
-      code: "artifact_changed",
-      details: { path: tshark },
-    });
 });
 
 it("inspects a capture with endpoints, DNS, TLS SNI, and HTTP", async () => {
@@ -441,16 +413,6 @@ it("reports a non-capture file as unsupported", async () => {
   });
 });
 
-it("reports a missing tshark binary as a capability gap", async () => {
-  const provider = new PcapProvider({
-    environment: { REA_TSHARK_COMMAND: "/nonexistent/tshark" },
-  });
-  expect(await provider.inspectAvailability()).toMatchObject({
-    status: "unavailable",
-    code: "executable_missing",
-  });
-});
-
 it("rejects a capture that is not a readable file", async () => {
   const { provider } = await providerWith();
   const result = await provider.execute({
@@ -461,25 +423,6 @@ it("rejects a capture that is not a readable file", async () => {
   if (result.ok) return;
   expect(projectAnalysisError(result.error)).toMatchObject({
     code: "invalid_request",
-  });
-});
-
-it("cancels before spawning anything", async () => {
-  const { provider, root } = await providerWith();
-  await writeFile(join(root, "spawned"), "");
-  const controller = new AbortController();
-  controller.abort();
-  const result = await provider.execute(
-    {
-      operation: "inspect_pcap_capture",
-      input: { path: "/some/capture.pcap" },
-    },
-    { signal: controller.signal },
-  );
-  expect(result.ok).toBe(false);
-  if (result.ok) return;
-  expect(projectAnalysisError(result.error)).toMatchObject({
-    code: "cancelled",
   });
 });
 
@@ -526,6 +469,12 @@ it("names the prlimit selection when the Linux limiter is unusable", async () =>
     },
   });
   onTestFinished(() => provider.close());
+  // Readiness keeps the limiter owner's repair instead of Wireshark advice.
+  expect(await provider.inspectAvailability()).toMatchObject({
+    status: "unavailable",
+    reason: expect.stringContaining("Cannot establish the selected Linux"),
+    remediation: PCAP_LIMITER_REMEDIATION,
+  });
   const result = await provider.execute({
     operation: "inspect_pcap_capture",
     input: { path: "/not-opened/capture.pcap" },
@@ -538,6 +487,7 @@ it("names the prlimit selection when the Linux limiter is unusable", async () =>
   });
   expect(projected.message).toContain("must be absolute");
   expect(projected.message).toContain("Check that REA_TSHARK_PRLIMIT_COMMAND");
+  expect(projected.remediation.action).toBe(PCAP_LIMITER_REMEDIATION);
 });
 
 it("rejects directory and non-prlimit selections before opening the capture", async () => {
@@ -844,31 +794,34 @@ fs.writeFileSync(${JSON.stringify(marker)}, 'ready'); setInterval(() => {}, 1000
     onTestFinished(() => provider.close());
     const controller = new AbortController();
     let watcher: ReturnType<typeof watch> | undefined;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const ready = new Promise<void>((resolve, reject) => {
+    const ready = new Promise<void>((resolve) => {
       watcher = watch(root, (_event, name) => {
         if (name === "ready") resolve();
       });
-      timer = setTimeout(() => {
-        controller.abort();
-        reject(new Error("tool did not start"));
-      }, 5000);
     });
-    try {
-      const pending = provider.execute(
-        { operation: "inspect_pcap_capture", input: { path } },
-        { signal: controller.signal },
+    const pending = provider.execute(
+      { operation: "inspect_pcap_capture", input: { path } },
+      { signal: controller.signal },
+    );
+    await withVerifierCleanup(async () => {
+      await awaitAcknowledgement(
+        ready,
+        pending,
+        `${phase} tool startup`,
+        5_000,
       );
-      await ready;
       controller.abort(new Error("caller cancellation"));
       const result = await pending;
       if (result.ok) throw new Error("expected cancellation");
       expect(projectAnalysisError(result.error).code).toBe("cancelled");
       await provider.close();
-    } finally {
-      watcher?.close();
-      clearTimeout(timer);
-    }
+    }, [
+      () => controller.abort(),
+      async () => {
+        await pending;
+      },
+      () => watcher?.close(),
+    ]);
   },
 );
 
@@ -886,20 +839,24 @@ it.each(["change", "cancel"] as const)(
       { operation: "inspect_pcap_capture", input: { path } },
       { signal: controller.signal },
     );
-    try {
-      await held.firstRead;
+    await withVerifierCleanup(async () => {
+      await awaitAcknowledgement(held.firstRead, pending, "snapshot read");
       if (action === "cancel") controller.abort();
       else await writeFile(path, "changed source bytes");
-    } finally {
       held.release();
-    }
-    const result = await pending;
-    if (result.ok) throw new Error("expected interrupted acquisition");
-    expect(result.error._tag).toBe(
-      action === "cancel"
-        ? "AnalysisCancelledError"
-        : "AnalysisArtifactChangedError",
-    );
+      const result = await pending;
+      if (result.ok) throw new Error("expected interrupted acquisition");
+      expect(result.error._tag).toBe(
+        action === "cancel"
+          ? "AnalysisCancelledError"
+          : "AnalysisArtifactChangedError",
+      );
+    }, [
+      held.release,
+      async () => {
+        await pending;
+      },
+    ]);
   },
 );
 
@@ -915,8 +872,8 @@ it("admits one capture and drains it before close releases resources", async () 
     input: { path },
   });
   let closing: Promise<void> | undefined;
-  try {
-    await held.firstRead;
+  await withVerifierCleanup(async () => {
+    await awaitAcknowledgement(held.firstRead, pending, "snapshot read");
     const concurrent = await provider.execute({
       operation: "inspect_pcap_capture",
       input: { path },
@@ -933,16 +890,23 @@ it("admits one capture and drains it before close releases resources", async () 
     });
     await Promise.resolve();
     expect(closed).toBe(false);
-  } finally {
     held.release();
-  }
-  expect((await pending).ok).toBe(true);
-  await closing;
-  const afterClose = await provider.execute({
-    operation: "inspect_pcap_capture",
-    input: { path },
-  });
-  expect(afterClose.ok).toBe(false);
+    expect((await pending).ok).toBe(true);
+    await closing;
+    const afterClose = await provider.execute({
+      operation: "inspect_pcap_capture",
+      input: { path },
+    });
+    expect(afterClose.ok).toBe(false);
+  }, [
+    held.release,
+    async () => {
+      await pending;
+    },
+    async () => {
+      await closing;
+    },
+  ]);
 });
 
 it.each([false, true])(

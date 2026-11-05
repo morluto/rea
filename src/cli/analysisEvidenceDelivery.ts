@@ -1,8 +1,12 @@
 import { recordCliEvidencePublication } from "./cliEvidencePublication.js";
-import { analysisEvidenceSources } from "../application/AnalysisEvidenceSources.js";
+import {
+  analysisEvidenceSources,
+  undeliveredSourceClosure,
+} from "../application/AnalysisEvidenceSources.js";
 import type { AnalysisViewRequest } from "../domain/analysisView/analysisView.js";
 import { z } from "incur";
 import {
+  isImmutableEvidence,
   parseEvidence,
   tryParseEvidence,
   withEvidenceCallerInputPath,
@@ -11,19 +15,31 @@ import {
 import type { JsonValue } from "../domain/jsonValue.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
+import { EvidenceReferenceError } from "../domain/evidenceErrors.js";
 import { redactExplicitFailure } from "../domain/explicitSensitiveFailure.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { AnalysisInputError } from "../domain/analysisErrorCore.js";
-import { createEvidenceBundle } from "../domain/evidenceBundle.js";
-import { publishEvidenceDelivery } from "../application/EvidenceBundleCommands.js";
+import {
+  createEvidenceBundle,
+  createImmutableEvidenceBundle,
+} from "../domain/evidenceBundle.js";
+import {
+  evidenceDeliveryCommitted,
+  publishEvidenceDelivery,
+} from "../application/EvidenceBundleCommands.js";
 import { inspectAnalysisViewValidated } from "../application/analysisView/AnalysisViewService.js";
 import { localPathStringSchema } from "../domain/localPath.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
-import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
+import {
+  isObject,
+  projectCliAnalysisResult,
+} from "./projectCliAnalysisResult.js";
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
 import type { ZodSafeParseResult } from "zod";
 import { bindCliEvidenceCallerPath } from "./cliEvidenceCallerPath.js";
+import type { AnalysisResultWithSources } from "../application/investigation/recordEvidenceSources.js";
+import { resolveInvestigationEvidenceClosure } from "../application/investigation/InvestigationEvidence.js";
 
 export const analysisEvidenceDeliveryOptions = {
   detail: z
@@ -65,6 +81,42 @@ export const cliEvidenceDeliveryInputError = (
         },
       ])
     : undefined;
+
+/** Resolve only the authenticated Evidence records linked by one CLI result. */
+export const cliEvidenceSourceClosure = (
+  root: Evidence,
+  available: readonly Evidence[],
+): Result<Evidence[], AnalysisError> => {
+  const recordsById = new Map(
+    available.map((record) => [record.evidence_id, record]),
+  );
+  const closure = resolveInvestigationEvidenceClosure(
+    { evidenceForAnalysis: (evidenceId) => recordsById.get(evidenceId) },
+    root.evidence_links,
+  );
+  if (!closure.ok) {
+    if (closure.error instanceof EvidenceReferenceError)
+      return err(
+        new EvidenceReferenceError(
+          closure.error.evidenceId,
+          closure.error.reason,
+          {
+            cause: closure.error,
+            expected: closure.error.expected,
+            actual: closure.error.actual,
+            referenceScope: closure.error.referenceScope,
+            diagnostics: { operation: root.operation },
+          },
+        ),
+      );
+    return err(closure.error);
+  }
+  return ok(
+    closure.value
+      .filter((evidenceId) => evidenceId !== root.evidence_id)
+      .map((evidenceId) => recordsById.get(evidenceId)!),
+  );
+};
 
 /** Parse delivery JSON once and enforce its owning schema before opening a target. */
 export const parseCliAnalysisEvidenceDelivery = <
@@ -263,6 +315,29 @@ const sanitizeSaveError = (
   return rawSaveError;
 };
 
+/**
+ * A requested bundle that never committed cannot silently drop what a completed
+ * observation cites. Absent delivery or observation leaves the failure untouched.
+ */
+const withUndeliveredSourceClosure = (
+  failure: JsonValue,
+  input: CliEvidenceDelivery,
+): JsonValue => {
+  if (input.evidenceOutput === undefined || !isObject(failure)) return failure;
+  const { details } = failure;
+  if (!isObject(details)) return failure;
+  const closure = undeliveredSourceClosure(
+    details.partial_observation,
+    input.sourceEvidence ?? [],
+    // Error output is not the caller's selected Evidence sink. Keep records
+    // out of it when this invocation carries explicit exclusions.
+    { inlineRecords: (input.sensitiveValues?.length ?? 0) === 0 },
+  );
+  return closure === undefined
+    ? failure
+    : { ...failure, details: { ...details, source_closure: closure } };
+};
+
 const publishPartialCliAnalysisEvidence = async (
   failure: JsonValue,
   input: CliEvidenceDelivery,
@@ -270,7 +345,8 @@ const publishPartialCliAnalysisEvidence = async (
   const { operation, signal, detail, evidenceOutput } = input;
   if (evidenceOutput === undefined) return failure;
   const extracted = extractPartialEvidence(failure);
-  if (extracted === undefined) return failure;
+  if (extracted === undefined)
+    return withUndeliveredSourceClosure(failure, input);
   const { errorRecord, partialEvidence } = extracted;
 
   const delivered =
@@ -292,15 +368,20 @@ const publishPartialCliAnalysisEvidence = async (
         ? delivered.value
         : partialEvidence;
   const inspectionSources = analysisEvidenceSources(partialEvidence);
-  if (!inspectionSources.ok) return failure;
+  if (!inspectionSources.ok)
+    return withUndeliveredSourceClosure(failure, input);
+  const records = [
+    ...new Map(
+      [...(input.sourceEvidence ?? []), ...inspectionSources.value].map(
+        (record) => [record.evidence_id, record],
+      ),
+    ).values(),
+  ];
+  const bundle = records.every(isImmutableEvidence)
+    ? createImmutableEvidenceBundle(records)
+    : createEvidenceBundle(records);
   const published = await publishEvidenceDelivery({
-    bundle: createEvidenceBundle([
-      ...new Map(
-        [...(input.sourceEvidence ?? []), ...inspectionSources.value].map(
-          (record) => [record.evidence_id, record],
-        ),
-      ).values(),
-    ]),
+    bundle,
     complete: partialEvidence,
     delivered: selected,
     outputPath: absoluteCallerPath(evidenceOutput),
@@ -314,15 +395,22 @@ const publishPartialCliAnalysisEvidence = async (
       committedRaw !== undefined
         ? formatEvidenceBundleReceipt(committedRaw, input.sensitiveValues)
         : undefined;
+    const baseFailure = evidenceDeliveryCommitted(published.error)
+      ? failure
+      : withUndeliveredSourceClosure(failure, input);
+    const baseDetails =
+      isObject(baseFailure) && isObject(baseFailure.details)
+        ? (baseFailure.details as { [key: string]: JsonValue })
+        : (errorRecord.details as { [key: string]: JsonValue });
     const updatedDetails: { [key: string]: JsonValue } = {
-      ...(errorRecord.details as { [key: string]: JsonValue }),
+      ...baseDetails,
       publication_error: saveError,
       ...(committedReceipt !== undefined
         ? { evidence_bundle: committedReceipt }
         : {}),
     };
     return {
-      ...errorRecord,
+      ...(isObject(baseFailure) ? baseFailure : errorRecord),
       details: updatedDetails,
     };
   }
@@ -346,15 +434,28 @@ const publishPartialCliAnalysisEvidence = async (
 
 /** Publish already finalized CLI analysis without opening a second provider/session. */
 export const publishCliAnalysisEvidence = async (
-  result: Result<Evidence, JsonValue>,
+  result: AnalysisResultWithSources<Evidence, JsonValue>,
   input: CliEvidenceDelivery,
 ): Promise<JsonValue> => {
   const { operation, signal, detail, evidenceOutput } = input;
+  // Failure reporting uses the same captured sources as publication. A trace
+  // carries them on the result, while other commands pass them on the input.
+  const capturedSources = [
+    ...(input.sourceEvidence ?? []),
+    ...(result.sourceEvidence ?? []),
+  ];
+  const closureInput =
+    capturedSources.length === 0
+      ? input
+      : { ...input, sourceEvidence: capturedSources };
   const projectFailure = (error: AnalysisError) =>
     projectAnalysisError(
       redactExplicitFailure(error, input.sensitiveValues ?? []),
     );
-  if (!result.ok) return publishPartialCliAnalysisEvidence(result.error, input);
+  const undelivered = (error: AnalysisError) =>
+    withUndeliveredSourceClosure(projectFailure(error), closureInput);
+  if (!result.ok)
+    return publishPartialCliAnalysisEvidence(result.error, closureInput);
   const complete = parseEvidence(result.value);
   const inputError = cliEvidenceDeliveryInputError(input);
   if (inputError !== undefined) {
@@ -372,7 +473,7 @@ export const publishCliAnalysisEvidence = async (
         })
       : ok(complete);
   if (!delivered.ok)
-    return projectFailure(delivered.error.retainPartialObservation(complete));
+    return undelivered(delivered.error.retainPartialObservation(complete));
   // This projection answers the same direct invocation as its parent. Later
   // inspect_analysis_view calls own their own input and do not inherit it.
   const selected =
@@ -380,22 +481,32 @@ export const publishCliAnalysisEvidence = async (
       ? withEvidenceCallerInputPath(delivered.value, complete.caller_input_path)
       : delivered.value;
   const inspectionSources = analysisEvidenceSources(complete);
-  if (!inspectionSources.ok) return projectFailure(inspectionSources.error);
+  if (!inspectionSources.ok) return undelivered(inspectionSources.error);
+  const records = [
+    ...new Map(
+      [...capturedSources, ...inspectionSources.value].map((record) => [
+        record.evidence_id,
+        record,
+      ]),
+    ).values(),
+  ];
+  // Only skip the writer's heap check when every record is already sealed.
+  // A mutable producer record must retain the existing allocation check.
+  const bundle = records.every(isImmutableEvidence)
+    ? createImmutableEvidenceBundle(records)
+    : createEvidenceBundle(records);
   const published = await publishEvidenceDelivery({
-    bundle: createEvidenceBundle([
-      ...new Map(
-        [...(input.sourceEvidence ?? []), ...inspectionSources.value].map(
-          (record) => [record.evidence_id, record],
-        ),
-      ).values(),
-    ]),
+    bundle,
     complete,
     delivered: selected,
     outputPath: absoluteCallerPath(evidenceOutput),
     operation,
     signal,
   });
-  if (!published.ok) return projectFailure(published.error);
+  if (!published.ok)
+    return evidenceDeliveryCommitted(published.error)
+      ? projectFailure(published.error)
+      : undelivered(published.error);
   const receipt = formatEvidenceBundleReceipt(
     published.value.evidenceBundle,
     input.sensitiveValues,

@@ -98,6 +98,7 @@ it.each([
       );
       expect(result.ok).toBe(false);
       if (result.ok) return;
+      expect(result.selection).toEqual({ kind: "none" });
       expect(session.activeTarget()).toBeUndefined();
       expect(await session.status()).toMatchObject({
         open: false,
@@ -119,6 +120,7 @@ it.each([
       expect(projectAnalysisError(result.error).code).toBe(
         cancelled ? "cancelled" : "unreadable_output",
       );
+      expect(result.selection).toEqual({ kind: "none" });
       expect(projectAnalysisError(result.error)).toMatchObject({
         details: {
           diagnostics: {

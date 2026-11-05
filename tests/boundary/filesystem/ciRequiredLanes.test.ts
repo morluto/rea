@@ -93,6 +93,51 @@ it("binds SQLite compatibility jobs to the build's prepared runtime artifact and
   expect(downloads[0]?.with).toEqual({ name, path: "." });
 });
 
+it("requires each named SQLite compatibility test while retaining both directory suites", async () => {
+  const { scripts } = z
+    .object({ scripts: z.record(z.string(), z.string()) })
+    .parse(
+      JSON.parse(
+        await readFile(
+          new URL("../../../package.json", import.meta.url),
+          "utf8",
+        ),
+      ),
+    );
+  const commands = z
+    .string()
+    .parse(scripts["test:sqlite:run"])
+    .split("&&")
+    .map((command) => command.trim().split(/\s+/u));
+  const exact = commands.find(
+    (command) =>
+      command[0] === "node" &&
+      command[1] === "scripts/run-exact-tests.mjs" &&
+      command[2] === "run",
+  );
+  expect(exact).toEqual(
+    expect.arrayContaining([
+      "tests/acceptance/sqliteDatabaseCli.test.ts",
+      "tests/boundary/mcp/serverLifecycleMcp.test.ts",
+    ]),
+  );
+  const directories = commands.find(
+    (command) => command[0] === "vitest" && command[1] === "run",
+  );
+  expect(directories).toEqual(
+    expect.arrayContaining([
+      "src/application/sqlite/",
+      "tests/boundary/sqlite/",
+    ]),
+  );
+  const steps = z
+    .array(z.object({ run: z.string().optional() }))
+    .parse((await workflow("sqlite-runtime.yml")).jobs.sqlite?.steps);
+  expect(steps.some((step) => step.run === "npm run test:sqlite:run")).toBe(
+    true,
+  );
+});
+
 it("exports every canonical scope with read authority for admission and keeps telemetry outside the gate", async () => {
   const { jobs } = await workflow();
   const CI_FLAGS = await scopeFlags();
@@ -213,6 +258,7 @@ it("holds native and provider fan-out behind static validation while portable fe
     "changes",
     "static",
     "static-deep",
+    "python",
     "build",
     "test-shard",
     "test-source",
@@ -382,6 +428,8 @@ it("binds provider build reuse to the current run while keeping standalone dispa
     "web_runtime",
     "web_source_map",
     "agentenv",
+    "packet_capture",
+    "signal_recording",
   ];
   const buildTerms = z
     .string()
@@ -574,6 +622,9 @@ it.each([
       ["workflows", "static"],
       ["ghidra_bridge", "ghidra_bridge"],
       ["agentenv", "agentenv"],
+      ["python", "python"],
+      ["packet_capture", "packet_capture"],
+      ["signal_recording", "signal_recording"],
     ] as const) {
       // GitHub exposes only direct dependencies in the required job's needs context.
       const needs: Record<
@@ -721,5 +772,140 @@ it("fails fast only for ordinary PR matrices and rejects partial portable feedba
       code: 1,
       stderr: expect.stringContaining("test-shard"),
     });
+  }
+});
+
+it("binds each canonical lane to its explicit fast and full workflow jobs", async () => {
+  const { jobs, needs } = await requiredNeeds();
+  const { CI_LANES } = await import(
+    new URL("../../../scripts/ci/scopes.mjs", import.meta.url).href
+  );
+  // Independent contract: adding or changing a lane requires a workflow and
+  // gate decision, rather than silently assuming that its job has the same name.
+  const expected: Record<string, { fast: string[]; full: string[] }> = {
+    code: {
+      fast: ["build", "test-shard", "test-source"],
+      full: ["build", "test-shard"],
+    },
+    runtime: {
+      fast: ["windows-native-build", "package-e2e"],
+      full: ["windows-native-build", "package-e2e"],
+    },
+    package: { fast: ["windows-curated"], full: ["windows-curated"] },
+    apple: { fast: ["apple-artifacts"], full: ["apple-artifacts"] },
+    fixtures: {
+      fast: ["conformance-fixtures"],
+      full: ["conformance-fixtures"],
+    },
+    readiness: {
+      fast: ["reconstruction-readiness"],
+      full: ["reconstruction-readiness"],
+    },
+    docs: { fast: ["docs"], full: ["docs"] },
+    workflows: { fast: ["static"], full: ["static"] },
+    python: { fast: ["python"], full: ["static-deep"] },
+    reverse_tools: {
+      fast: ["reverse-tools-quality"],
+      full: ["reverse-tools-quality"],
+    },
+    sqlite: { fast: ["sqlite-runtime"], full: ["sqlite-runtime"] },
+    ...Object.fromEntries(
+      [
+        "packet_capture",
+        "signal_recording",
+        "browser",
+        "binary_layout",
+        "evm",
+        "apk_signature",
+        "javascript_recovery",
+        "recorded_crash",
+        "web_network",
+        "web_runtime",
+        "web_source_map",
+        "agentenv",
+        "nativeaot",
+        "ghidra_bridge",
+        "website",
+      ].map((name) => [name, { fast: [name], full: [name] }]),
+    ),
+  };
+  expect(Object.keys(CI_LANES).sort()).toEqual(Object.keys(expected).sort());
+  for (const [scope, required] of Object.entries(expected)) {
+    expect(CI_LANES[scope].required, scope).toEqual(required);
+    for (const name of new Set([...required.fast, ...required.full])) {
+      expect(needs, `${scope}: ${name}`).toContain(name);
+      expect(jobs[name], `${scope}: ${name}`).toBeDefined();
+      // Static and deep-static are shared gates; other mapped jobs are admitted
+      // by their scope output in the workflow itself.
+      if (name !== "static" && name !== "static-deep")
+        expect(String(jobs[name]?.if), `${scope}: ${name}`).toContain(
+          `needs.changes.outputs.${scope}`,
+        );
+    }
+  }
+
+  const executeGate = (context: Record<string, unknown>) =>
+    executeWorkflowFixture(
+      process.execPath,
+      [
+        fileURLToPath(
+          new URL("../../../scripts/ci/required.mjs", import.meta.url),
+        ),
+      ],
+      {
+        env: {
+          ...process.env,
+          CI_JOBS: JSON.stringify(context),
+          CI_QUALIFICATION_DIRECTORY: "",
+        },
+      },
+    );
+  const flags = Object.keys(expected);
+  for (const [scope, required] of Object.entries(expected)) {
+    const context: Record<string, unknown> = Object.fromEntries(
+      needs.map((name) => [name, { result: "skipped" }]),
+    );
+    context.changes = {
+      result: "success",
+      outputs: {
+        ...Object.fromEntries(flags.map((name) => [name, "false"])),
+        tier: "fast",
+        [scope]: "true",
+      },
+    };
+    context.static = { result: "success" };
+    context.test = { result: "success" };
+    for (const name of required.fast) context[name] = { result: "success" };
+    await expect(executeGate(context), scope).resolves.toMatchObject({
+      stderr: "",
+    });
+    for (const name of required.fast) {
+      await expect(
+        executeGate({ ...context, [name]: { result: "skipped" } }),
+        `${scope}: ${name}`,
+      ).rejects.toMatchObject({
+        code: 1,
+        stderr: expect.stringContaining(name),
+      });
+    }
+  }
+  const fullContext: Record<string, unknown> = Object.fromEntries(
+    needs.map((name) => [name, { result: "success" }]),
+  );
+  fullContext.changes = {
+    result: "success",
+    outputs: {
+      ...Object.fromEntries(flags.map((name) => [name, "true"])),
+      tier: "full",
+    },
+  };
+  await expect(executeGate(fullContext)).resolves.toMatchObject({ stderr: "" });
+  for (const name of new Set(
+    Object.values(expected).flatMap(({ full }) => full),
+  )) {
+    await expect(
+      executeGate({ ...fullContext, [name]: { result: "skipped" } }),
+      name,
+    ).rejects.toMatchObject({ code: 1, stderr: expect.stringContaining(name) });
   }
 });

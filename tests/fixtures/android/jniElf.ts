@@ -328,5 +328,5 @@ export const jniElfFixture = (
     },
     writer,
   );
-  return { bytes, base, word, functions, slots, relocationSize };
+  return { bytes, base, word };
 };
