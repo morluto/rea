@@ -110,14 +110,28 @@ describe("expandDesktopExec", () => {
 });
 
 describe("unwrapDesktopCommand", () => {
-  it("skips env assignments to the program", () => {
+  it("keeps env assignments as the program's environment", () => {
     expect(
       unwrapDesktopCommand([
         "env",
         "BAMF_DESKTOP_FILE_HINT=/x.desktop",
-        "/snap/bin/firefox",
+        "PATH=/opt/notes/bin:/usr/bin",
+        "PATH=/opt/notes/bin",
+        "notes",
       ]),
-    ).toEqual({ kind: "direct", program: "/snap/bin/firefox" });
+    ).toEqual({
+      kind: "direct",
+      program: "notes",
+      environment: {
+        BAMF_DESKTOP_FILE_HINT: "/x.desktop",
+        PATH: "/opt/notes/bin",
+      },
+    });
+    expect(
+      Object.entries(
+        unwrapDesktopCommand(["env", "__proto__=x", "notes"]).environment,
+      ),
+    ).toEqual([["__proto__", "x"]]);
   });
 
   it("recognises flatpak launchers and their application id", () => {
@@ -131,6 +145,34 @@ describe("unwrapDesktopCommand", () => {
         "@@u",
         "@@",
       ]),
-    ).toEqual({ kind: "flatpak", application_id: "net.cozic.joplin_desktop" });
+    ).toEqual({
+      kind: "flatpak",
+      program: "/usr/bin/flatpak",
+      environment: {},
+      application_id: "net.cozic.joplin_desktop",
+    });
+  });
+
+  it.each([
+    [["--branch", "stable", "org.example.Notes"]],
+    [["--filesystem", "home", "-d", "--command", "notes", "org.example.Notes"]],
+    [["--user", "org.example.Notes//beta", "--new"]],
+    [["--", "org.example.Notes/x86_64/stable"]],
+  ])(
+    "reads the flatpak application id after option values: %j",
+    (arguments_) => {
+      expect(unwrapDesktopCommand(["flatpak", "run", ...arguments_])).toEqual(
+        expect.objectContaining({
+          kind: "flatpak",
+          application_id: "org.example.Notes",
+        }),
+      );
+    },
+  );
+
+  it("leaves the flatpak application id unknown when no operand names one", () => {
+    expect(
+      unwrapDesktopCommand(["flatpak", "run", "--branch", "stable"]),
+    ).toMatchObject({ kind: "flatpak", application_id: null });
   });
 });

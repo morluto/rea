@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { readFileSync, rmSync } from "node:fs";
 import {
   chmod,
   mkdir,
@@ -527,6 +527,42 @@ describe.skipIf(process.platform !== "linux")(
       });
       await expect(readdir(output)).rejects.toThrow();
     });
+  },
+);
+
+describe.skipIf(process.platform !== "linux")(
+  "captureDesktopApplication window reads on Linux",
+  () => {
+    it("keeps watching through window samples it could not read and names them", async () => {
+      const { root, environment } = await fixture();
+      const broken = join(root, "display-broken");
+      await executable(
+        join(environment.PATH.split(":")[0] ?? "", "fakeapp"),
+        ["#!/bin/sh", `touch "${broken}"`, "exit 0"].join("\n"),
+      );
+      // The display recovers after the fourth sample that finds it broken.
+      let unread = 0;
+      const nextRequest = (): SessionRequest | undefined => {
+        if (readFileSyncSafe(broken) !== undefined && (unread += 1) >= 4)
+          rmSync(broken);
+        return undefined;
+      };
+
+      const evidence = await captureDesktopApplication(
+        request(join(root, "out")),
+        host(environment, nextRequest),
+      );
+
+      if ("error" in evidence) throw new Error(JSON.stringify(evidence));
+      const capture = desktopApplicationCaptureSchema.parse(
+        evidence.normalized_result,
+      );
+      expect(capture.session.end_reason).toBe("application_exited");
+      expect(unread).toBe(4);
+      expect(capture.limitations).toContainEqual(
+        expect.stringMatching(/^The window list could not be read in [34] /u),
+      );
+    }, 30_000);
   },
 );
 
