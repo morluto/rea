@@ -97,6 +97,25 @@ it("preserves explicit type selection when its selected body exhausts capacity",
   });
 });
 
+it("explains capacity exhaustion after a single-type selection", () => {
+  const bytes = buildManagedMemberCapacityFixture();
+  const result = inspectManagedMembersBytes(
+    bytes,
+    managedPeFixtureTarget(bytes),
+    {
+      typeNames: ["Fixture.Program"],
+    },
+  );
+  expect(result.coverage.state).toBe("partial");
+  expect(result.coverage.issues).toContainEqual(
+    expect.objectContaining({ code: "resource-limit" }),
+  );
+  const guidance = result.limitations.join(" ");
+  expect(guidance).toMatch(/single.type selection/i);
+  expect(guidance).toMatch(/assembly.wide/i);
+  expect(guidance).not.toContain("inspect a smaller selection");
+});
+
 it("retains types when a field signature exceeds the decoding bound", () => {
   const bytes = buildManagedPeFixture({
     fieldSignature: Buffer.alloc(270_001, 0x06),
