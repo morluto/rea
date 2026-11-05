@@ -14,6 +14,8 @@ const LSTAT_CONCURRENCY = 64;
 export interface HomeStateWalk extends DesktopWalk {
   readonly truncated: boolean;
   readonly unreadableDirectories: number;
+  /** Paths whose state could not be read, and directories on another device left unentered. */
+  readonly uncheckedPaths: number;
   /** Directories on another device than their walk root, recorded but not entered. */
   readonly mountPoints: readonly string[];
 }
@@ -57,6 +59,7 @@ interface WalkProgress {
   readonly mountPoints: string[];
   readonly maxEntries: number;
   truncated: boolean;
+  unreadablePaths: number;
 }
 
 /** Record one directory's entries; true when every one of them was recorded. */
@@ -77,6 +80,7 @@ const listDirectory = async (
       const path = batch[index];
       if (path === undefined || stat === null) continue;
       if (stat === undefined) {
+        progress.unreadablePaths += 1;
         complete = false;
         continue;
       }
@@ -113,6 +117,7 @@ export const walkHomeState = async (
     mountPoints: [],
     maxEntries,
     truncated: false,
+    unreadablePaths: 0,
   };
   const listed = new Set<string>();
   const checkedRoots = new Set<string>();
@@ -120,7 +125,10 @@ export const walkHomeState = async (
   for (const root of roots) {
     if (isWithinAny(root, excluded)) continue;
     const stats = await statPath(root);
-    if (stats === undefined) continue;
+    if (stats === undefined) {
+      progress.unreadablePaths += 1;
+      continue;
+    }
     if (stats !== null) {
       // A root counts toward the limit like any entry; one left out is unchecked.
       if (progress.entries.size >= maxEntries) {
@@ -153,6 +161,7 @@ export const walkHomeState = async (
     roots: checkedRoots,
     truncated: progress.truncated,
     unreadableDirectories,
+    uncheckedPaths: progress.unreadablePaths + progress.mountPoints.length,
     mountPoints: progress.mountPoints,
   };
 };

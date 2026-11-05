@@ -40,7 +40,10 @@ and Nix do, is followed to its file. The entry's `Exec` line is expanded with no
 entry's `Path` or the home directory. When the line starts with
 `env NAME=value`, the program is found on the `PATH` those assignments set,
 with an empty or relative entry read from the folder the application runs
-in, and their XDG folders name the state directories. An `--executable` runs from
+in, and their XDG folders name the state directories. Otherwise the program is
+looked up on the host's `PATH` in the order the launch searches it, and one
+found only through a relative or empty entry is refused, since the exported
+computer would not have that entry. An `--executable` runs from
 the current directory, as it would from a shell, and a relative path to it is
 resolved there.
 
@@ -241,7 +244,8 @@ is a symlink), the paths every walk left out (the output folder and
 `--exclude` values), and the checkpoints in order: `baseline` before
 launch, each requested checkpoint, `stop` or `time-limit`, and `exit` after the
 application has gone. Each checkpoint records how many paths its walk saw,
-whether it was truncated, which paths were created, modified, deleted or
+whether it was truncated, how many paths it could not read or directories on
+another device it did not enter (`unchecked_paths`), which paths were created, modified, deleted or
 changed type since the previous checkpoint, and which files it retained. A
 path counts as created or deleted only where the walk listed its nearest
 existing directory completely; differences under a directory that could not be

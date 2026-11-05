@@ -23,8 +23,8 @@ generation reads the kinds of change.
   `-wal` or `-journal` beside it (a hot journal is refused by the worker),
   refused when either existed but was not retained or the capture did not
   record whether it existed (unknown is never read as absent; absence holds
-  only under content roots the baseline walked completely, outside recorded
-  exclusions); dconf through
+  only under content roots the baseline walked completely, with no truncation,
+  unreadable directory or unchecked path, outside recorded exclusions); dconf through
   `dconf dump /` on a private file profile, keeping only
   groups whose path names the application; JSON up to 4 MiB and 500 levels
   with exact numbers; XML through the shared strict parser with DOCTYPEs

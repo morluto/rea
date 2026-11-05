@@ -135,6 +135,7 @@ export class CheckpointRecorder {
       entries: walk.entries.size,
       truncated: walk.truncated,
       unreadable_directories: walk.unreadableDirectories,
+      unchecked_paths: walk.uncheckedPaths,
       unconfirmed_changes: unconfirmed,
       changes,
       retained,

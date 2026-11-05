@@ -249,6 +249,10 @@ describe.skipIf(process.platform === "win32")(
         join(home, ".local/share/applications/org.example.dot.desktop"),
         `[Desktop Entry]\nType=Application\nName=Dot\nPath=${opt}\nExec=env PATH=. notes\n`,
       );
+      await writeFile(
+        join(home, ".local/share/applications/org.example.empty.desktop"),
+        `[Desktop Entry]\nType=Application\nName=Empty\nPath=${opt}\nExec=env PATH= notes\n`,
+      );
 
       // `..` after a link climbs from the link's target, so the lookup keeps it.
       const releases = join(home, "releases");
@@ -264,8 +268,9 @@ describe.skipIf(process.platform === "win32")(
       );
 
       const inventory = await inventoryOf("org.example.dot", installed);
+      const viaEmpty = await inventoryOf("org.example.empty", installed);
       const viaLink = await inventoryOf("org.example.link", installed);
-      // The host's own PATH does not travel with the exported launch.
+      // The launch searches the host's relative entries too, but the export cannot.
       const hostRelative = await inspectLinuxApplication({
         desktopEntry: undefined,
         executable: "notes",
@@ -276,10 +281,11 @@ describe.skipIf(process.platform === "win32")(
       });
 
       expect(inventory.executable.path).toBe(join(opt, "notes"));
+      expect(viaEmpty.executable.path).toBe(join(opt, "notes"));
       expect(viaLink.executable.path).toBe(linked);
       expect(hostRelative).toMatchObject({
         ok: false,
-        error: { reason: "executable_not_found" },
+        error: { reason: "executable_on_relative_path" },
       });
     });
 
