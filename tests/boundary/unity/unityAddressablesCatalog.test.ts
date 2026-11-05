@@ -13,6 +13,25 @@ import {
   type FixtureCatalog,
 } from "../../fixtures/unity/addressables.js";
 
+// Pass-through spy: records which strings the decoder measures for its text budget.
+const measured = vi.hoisted(() => [] as string[]);
+vi.mock(
+  "../../../src/domain/jsonStringByteLength.js",
+  async (importOriginal) => {
+    const original =
+      await importOriginal<
+        typeof import("../../../src/domain/jsonStringByteLength.js")
+      >();
+    return {
+      ...original,
+      jsonStringByteLength: (value: string) => {
+        measured.push(value);
+        return original.jsonStringByteLength(value);
+      },
+    };
+  },
+);
+
 const decode = (bytes: Buffer, options?: UnityAddressablesReadOptions) => {
   const steps = readUnityAddressablesCatalogSteps(bytes, options);
   let step = steps.next();
@@ -762,4 +781,25 @@ it("charges each expanded internal id once at its joined size", () => {
       },
     }),
   ).toThrow("text budget");
+});
+
+it("refuses an expanded internal id before joining or measuring the expanded path", () => {
+  const compressed = jsonCatalog(sampleCatalog(), {
+    prefixes: ["Assets/Samples/"],
+  });
+  const path = "Assets/Samples/Crate.prefab";
+  const size = Buffer.byteLength(JSON.stringify(path));
+  const refusal = new RangeError("text budget");
+  measured.length = 0;
+  expect(() =>
+    decode(compressed, {
+      beforeText: (bytes) => {
+        if (bytes === size) throw refusal;
+      },
+    }),
+  ).toThrow(refusal);
+  // Measuring the expanded path means it was already joined; the refused
+  // charge must come from the prefix and suffix sizes alone.
+  expect(measured).not.toContain(path);
+  expect(measured).toContain("Assets/Samples/");
 });
