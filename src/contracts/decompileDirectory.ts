@@ -296,9 +296,17 @@ export const decompileJournalFunctionSchema =
     kind: z.literal("function"),
   });
 
+/** A typed export-wide capability fact, independent of function observations. */
+export const decompileJournalCapabilitySchema = z.strictObject({
+  kind: z.literal("capability"),
+  capability: z.literal("procedure_info"),
+  status: z.literal("unavailable"),
+});
+
 export const decompileJournalLineSchema = z.discriminatedUnion("kind", [
   decompileJournalHeaderSchema,
   decompileJournalFunctionSchema,
+  decompileJournalCapabilitySchema,
 ]);
 
 /** Index rewritten from the journal at the end of a call. */

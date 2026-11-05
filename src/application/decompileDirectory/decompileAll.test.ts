@@ -572,7 +572,42 @@ describe("decompile_all resume", () => {
     ).toContain("procedure_info");
     expect(of(resumed.calls, "procedure_info")).toHaveLength(0);
   });
+  it("retains the procedure_info limitation when a resumed filter selects no functions", async () => {
+    const first = harness({ info: "unavailable" });
+    const created = await run(first.tools, directory());
 
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+
+    const resumed = harness();
+    const result = await run(resumed.tools, directory(), {
+      resume: true,
+      name: "__no_matching_function__",
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    expect(result.value).toMatchObject({
+      counts: { selected: 0, excluded: 3 },
+      resume: true,
+    });
+
+    expect(
+      (result.value as { limitations: string[] }).limitations.join("\n"),
+    ).toContain("procedure_info");
+    const index = decompileDirectoryIndexSchema.parse(
+      JSON.parse(
+        await readFile(
+          join(directory(), DECOMPILE_DIRECTORY_INDEX_NAME),
+          "utf8",
+        ),
+      ),
+    );
+
+    expect(index.limitations.join("\n")).toContain("procedure_info");
+    expect(of(resumed.calls, "procedure_info")).toHaveLength(0);
+  });
   it("does not rewrite a conflicting file and retries a missing one", async () => {
     const { tools } = harness();
     expect((await run(tools, directory())).ok).toBe(true);
@@ -1010,7 +1045,23 @@ describe("decompile_all portable function paths", () => {
       .trimEnd()
       .split("\n")
       .map((line) => JSON.parse(line));
-    lines[2].relative_path = lines[1].relative_path.toLowerCase();
+
+    const functionIndexes = lines.flatMap((line, index) =>
+      line.kind === "function" ? [index] : [],
+    );
+
+    expect(functionIndexes).toHaveLength(2);
+
+    const firstFunctionIndex = functionIndexes[0];
+    const secondFunctionIndex = functionIndexes[1];
+
+    if (firstFunctionIndex === undefined || secondFunctionIndex === undefined) {
+      throw new Error("Expected two function records in the journal");
+    }
+
+    lines[secondFunctionIndex].relative_path =
+      lines[firstFunctionIndex].relative_path.toLowerCase();
+
     await writeFile(
       journalPath,
       lines.map((line) => JSON.stringify(line)).join("\n") + "\n",

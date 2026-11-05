@@ -48,6 +48,9 @@ import { ExportResources } from "./exportResources.js";
 import { decompileInputError } from "./inputError.js";
 import { compareProcedureAddresses } from "./selection.js";
 
+const PROCEDURE_INFO_UNAVAILABLE_LIMITATION =
+  "procedure_info is unavailable, so function body ranges are unknown.";
+
 export interface ExportIdentity {
   readonly targetSha256: string | null;
   readonly provider: DecompileJournalHeader["provider"];
@@ -115,7 +118,46 @@ export class DecompileExport {
     private readonly paths: PathReservations,
     private readonly identity: ExportIdentity,
     private readonly resources: ExportResources,
+    private procedureInfoUnavailable: boolean,
   ) {}
+
+  /** Whether this export has committed a procedure_info capability limitation. */
+  get hasProcedureInfoUnavailable(): boolean {
+    return this.procedureInfoUnavailable;
+  }
+
+  /** Persist export-wide capability state independently of function records. */
+  async markProcedureInfoUnavailable(): Promise<Result<void, AnalysisError>> {
+    if (this.procedureInfoUnavailable) return ok(undefined);
+    const line = decompileJournalLineSchema.safeParse({
+      kind: "capability",
+      capability: "procedure_info",
+      status: "unavailable",
+    });
+    if (!line.success || line.data.kind !== "capability")
+      return err(
+        new AnalysisOutputError(
+          "decompile_all",
+          "decompile journal capability record is invalid",
+        ),
+      );
+    const written = await this.journal
+      .writeFile(`${JSON.stringify(line.data)}\n`)
+      .then(() => this.journal.sync())
+      .then(
+        () => true,
+        () => false,
+      );
+    if (!written)
+      return err(
+        new AnalysisOutputError(
+          "decompile_all",
+          "decompile journal could not be updated",
+        ),
+      );
+    this.procedureInfoUnavailable = true;
+    return ok(undefined);
+  }
 
   static open(input: {
     readonly placement: OutputPlacement;
@@ -215,7 +257,14 @@ export class DecompileExport {
       analysis_profile_digest: this.identity.analysisProfileDigest,
       layout: this.identity.layout,
       layout_status: input.layoutStatus,
-      limitations: [...input.limitations],
+      limitations: [
+        ...new Set([
+          ...input.limitations,
+          ...(this.procedureInfoUnavailable
+            ? [PROCEDURE_INFO_UNAVAILABLE_LIMITATION]
+            : []),
+        ]),
+      ],
       functions: [...this.records.values()].sort((left, right) =>
         compareProcedureAddresses(left.address, right.address),
       ),
@@ -282,6 +331,7 @@ export class DecompileExport {
         { byPortablePath: new Map(), byAddress: new Map() },
         identity,
         resources,
+        false,
       ),
     );
   }
@@ -323,6 +373,7 @@ export class DecompileExport {
         opened.value.journal.paths,
         identity,
         resources,
+        opened.value.journal.procedureInfoUnavailable,
       ),
     );
   }
@@ -340,30 +391,59 @@ const openResumedJournal = async (
 > => {
   const opened = await readJournal(root, identity, resources);
   if (!opened.ok) return opened;
+
   const functions = await prepareFunctionsDirectory(root, resources);
   if (!functions.ok) return functions;
+
+  // Repair a torn final line using a normal writable handle.
+  // Windows does not support ftruncate on an O_APPEND handle.
+  if (opened.value.committedBytes !== opened.value.journalBytes) {
+    const repairHandle = await open(
+      join(root, DECOMPILE_DIRECTORY_JOURNAL_NAME),
+      constants.O_WRONLY | NO_FOLLOW,
+    ).catch((cause: unknown) => cause);
+
+    if (!isFileHandle(repairHandle)) {
+      return err(
+        decompileInputError(
+          "output_directory",
+          "The decompile journal could not be repaired after an interrupted write.",
+        ),
+      );
+    }
+
+    const truncated = await repairHandle
+      .truncate(opened.value.committedBytes)
+      .then(
+        () => true,
+        () => false,
+      );
+
+    const closed = await repairHandle.close().then(
+      () => true,
+      () => false,
+    );
+
+    if (!truncated || !closed) {
+      return err(
+        decompileInputError(
+          "output_directory",
+          "The decompile journal could not be repaired after an interrupted write.",
+        ),
+      );
+    }
+  }
+
+  // Open in append mode only after repair is complete.
   const handle = await openJournal(root, "a");
   if (!handle.ok) return handle;
+
   resources.ownFile(
     handle.value,
     join(root, DECOMPILE_DIRECTORY_JOURNAL_NAME),
     true,
   );
-  // Drop a torn final line left by a crash so the next append starts a line.
-  const repaired =
-    opened.value.committedBytes === opened.value.journalBytes ||
-    (await handle.value.truncate(opened.value.committedBytes).then(
-      () => true,
-      () => false,
-    ));
-  if (!repaired) {
-    return err(
-      decompileInputError(
-        "output_directory",
-        "The decompile journal could not be repaired after an interrupted write.",
-      ),
-    );
-  }
+
   return ok({ handle: handle.value, journal: opened.value });
 };
 
@@ -615,6 +695,7 @@ interface OpenedJournal {
   readonly records: Map<string, DecompileDirectoryFunctionRecord>;
   readonly written: Map<string, DecompileDirectoryFunctionRecord>;
   readonly paths: PathReservations;
+  readonly procedureInfoUnavailable: boolean;
   /** Byte length of the newline-terminated lines. */
   readonly committedBytes: number;
   /** Byte length of the journal file as read. */
@@ -668,6 +749,7 @@ const readJournal = async (
         records: parsed.value.records,
         written: parsed.value.written,
         paths: parsed.value.paths,
+        procedureInfoUnavailable: parsed.value.procedureInfoUnavailable,
         committedBytes: parsed.value.committedBytes,
         journalBytes: parsed.value.journalBytes,
       })
@@ -691,36 +773,67 @@ const parseJournal = (
   const committedBytes = bytes.lastIndexOf(0x0a) + 1;
   const lines = bytes.subarray(0, committedBytes).toString("utf8").split("\n");
   lines.pop();
+
   const header = decompileJournalHeaderSchema.safeParse(parseJson(lines[0]));
   if (!header.success) return err(incompatibleJournal());
+
   const records = new Map<string, DecompileDirectoryFunctionRecord>();
   const written = new Map<string, DecompileDirectoryFunctionRecord>();
+  let procedureInfoUnavailable = false;
+
   // A path stays reserved by the first address that used it, even when that
   // address's latest record no longer names it.
   const paths: PathReservations = {
     byPortablePath: new Map(),
     byAddress: new Map(),
   };
+
   for (const line of lines.slice(1)) {
     const parsed = decompileJournalLineSchema.safeParse(parseJson(line));
-    if (!parsed.success || parsed.data.kind !== "function")
-      return err(incompatibleJournal());
+    if (!parsed.success) return err(incompatibleJournal());
+
+    if (parsed.data.kind === "capability") {
+      if (
+        parsed.data.capability === "procedure_info" &&
+        parsed.data.status === "unavailable"
+      ) {
+        procedureInfoUnavailable = true;
+      }
+      continue;
+    }
+
+    if (parsed.data.kind !== "function") return err(incompatibleJournal());
+
     const { kind: _kind, ...record } = parsed.data;
     const path = record.relative_path;
+
     if (path !== undefined) {
       const owner = paths.byPortablePath.get(portablePathKey(path));
       if (owner !== undefined && owner !== record.address)
         return err(incompatibleJournal());
+
       reservePath(paths, path, record.address);
     }
+
+    // Backward compatibility: older journals stored this limitation only
+    // inside function records instead of a separate capability event.
+    if (
+      !record.body.available &&
+      record.body.reason === PROCEDURE_INFO_UNAVAILABLE_LIMITATION
+    ) {
+      procedureInfoUnavailable = true;
+    }
+
     records.set(record.address, record);
     if (record.status === "written") written.set(record.address, record);
   }
+
   return ok({
     header: header.data,
     records,
     written,
     paths,
+    procedureInfoUnavailable,
     committedBytes,
     journalBytes: bytes.length,
   });

@@ -154,6 +154,7 @@ export const decompileAll = async (
       limit: input.limit,
       state,
     });
+    state.bodyUnavailable = session.hasProcedureInfoUnavailable;
     limitations = exportLimitations(
       input.layout,
       loaded.value.identity,
@@ -350,7 +351,10 @@ interface PublishInput {
 const publishSelected = async (
   input: PublishInput,
 ): Promise<Result<void, AnalysisError>> => {
-  let bodySupport: "unknown" | "unavailable" = "unknown";
+  let bodySupport: "unknown" | "unavailable" = input.session
+    .hasProcedureInfoUnavailable
+    ? "unavailable"
+    : "unknown";
   for (const procedure of input.procedures) {
     if (isAborted(input.signal)) return err(cancelled(input.signal));
     const existing = await existingFile(
@@ -367,13 +371,6 @@ const publishSelected = async (
       // The file verified again after a later failure, so the journal and
       // index report it as written instead of keeping the stale failure.
       const written = input.session.lastWritten(procedure.address);
-      if (
-        written !== undefined &&
-        !written.body.available &&
-        written.body.reason === BODY_UNAVAILABLE
-      ) {
-        input.state.bodyUnavailable = true;
-      }
       if (
         written !== undefined &&
         input.session.record(procedure.address) !== written
@@ -485,7 +482,11 @@ const publishOne = async (input: {
   );
   if (body.kind === "error")
     return { result: err(body.error), bodySupport: input.bodySupport };
-  if (body.kind === "unavailable") input.state.bodyUnavailable = true;
+  if (body.kind === "unavailable") {
+    const recorded = await input.session.markProcedureInfoUnavailable();
+    if (!recorded.ok) return { result: recorded, bodySupport: body.support };
+    input.state.bodyUnavailable = true;
+  }
   // Caveats of the observations this attempt used. The journal record keeps
   // the complete list, written or failed, so the bounded Evidence summary and
   // the length-capped file header never hold the only copy.
