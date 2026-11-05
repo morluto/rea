@@ -113,6 +113,12 @@ const scanCanonical = async (
     // come from it rather than the daemon's ambient one.
     environment: options.environment,
     signal: options.signal,
+    // Callers match ArtifactReaderFailure reason "cancelled". The raw
+    // signal.reason is an AbortError and is reported as an execution failure.
+    cancellationError: (reason) =>
+      new ArtifactReaderFailure("cancelled", "Artifact inventory cancelled", {
+        cause: reason,
+      }),
   });
   const {
     format: rootFormat,
