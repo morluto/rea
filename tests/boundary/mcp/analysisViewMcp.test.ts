@@ -64,6 +64,7 @@ import {
   BINARY_LAYOUT_TEST_PROVIDER,
   binaryLayoutFixture,
 } from "../../fixtures/binaryDiagnostics/layout.js";
+import { kernelModuleFixture } from "../../../src/native/elf/KernelModule.fixture.js";
 import { wasmArtifactFixture } from "../../fixtures/wasm/artifact.js";
 import { evmInterfaceFixture } from "../../fixtures/evm/interface.js";
 import type { RelationshipCoverage } from "../../../src/domain/relationshipCoverage.js";
@@ -273,6 +274,68 @@ it("preserves native relationship coverage through inline and retained MCP views
     expect(outputs[0]).toEqual(outputs[1]);
     expect(JSON.stringify(parent)).toBe(parentBefore);
   }
+});
+
+it("directs unsupported parent views to the original Evidence", async () => {
+  const { client } = await connect();
+  const root = await createTestTempDirectory("rea-unsupported-view-mcp-");
+  const file = join(root, "evidence.json");
+  const bundle = join(root, "bundle.json");
+  const modulePath = join(root, "fixture.ko");
+  await writeFile(modulePath, kernelModuleFixture());
+  const inspected = await client.callTool({
+    name: "inspect_kernel_module",
+    arguments: { path: modulePath },
+  });
+  expect(inspected.isError).not.toBe(true);
+  const parent = toolContract("inspect_kernel_module").outputSchema.parse(
+    inspected.structuredContent,
+  );
+  await writeFile(file, JSON.stringify(parent));
+  const errorSchema = JSON.parse(
+    await readFile("docs/error-contract.schema.json", "utf8"),
+  );
+  for (const source of [
+    { kind: "inline", evidence: parent },
+    { kind: "retained-evidence", evidence_id: parent.evidence_id },
+    { kind: "evidence-file", path: file },
+  ]) {
+    const response = await client.callTool({
+      name: "inspect_analysis_view",
+      arguments: { source, view: { kind: "summary" } },
+    });
+    const { error } = parseMcpToolError(response);
+    expect(schemaValidation.assertions.validate(errorSchema, error)).toBe(true);
+    expect(error).toMatchObject({
+      code: "unsupported_target",
+      retryable: false,
+      details: {
+        operation: "inspect_analysis_view",
+        reason: expect.stringContaining(
+          'Parent Evidence operation "inspect_kernel_module"',
+        ),
+      },
+    });
+    expect(error.remediation.action).toContain("original complete Evidence");
+    expect(error.remediation.action).toContain("get_evidence_bundle");
+    expect(error.remediation.action).toContain("export_evidence_bundle");
+    expect(error.remediation.action).not.toContain("target format");
+  }
+  const complete = await client.callTool({
+    name: "get_evidence_bundle",
+    arguments: { detail: "complete" },
+  });
+  expect(complete.isError).not.toBe(true);
+  expect(complete.structuredContent).toMatchObject({
+    result: { records: expect.arrayContaining([parent]) },
+  });
+  const exported = await client.callTool({
+    name: "export_evidence_bundle",
+    arguments: { path: bundle },
+  });
+  expect(exported.isError).not.toBe(true);
+  const saved = JSON.parse(await readFile(bundle, "utf8"));
+  expect(saved.records).toContainEqual(parent);
 });
 
 it("advertises typed module references and preserves portable/retained Evidence parity", async () => {
@@ -1733,7 +1796,11 @@ it("extracts an environment state identically from retained, portable and file M
     name: "inspect_analysis_view",
     arguments: { source: { kind: "inline", evidence: hidden }, view },
   });
-  expect(parseMcpToolError(refused).error.code).toBe("unsupported_target");
+  const hiddenError = parseMcpToolError(refused).error;
+  expect(hiddenError.code).toBe("unsupported_target");
+  expect(hiddenError.remediation.action).toContain("sensitivity declarations");
+  expect(hiddenError.remediation.action).toContain("capture or summary view");
+  expect(hiddenError.remediation.action).not.toContain("target format");
   expect(JSON.stringify(refused)).not.toContain("probe folder");
   await client.ping();
 });
@@ -1983,7 +2050,11 @@ it("projects an environment manifest identically from retained, portable and fil
     name: "inspect_analysis_view",
     arguments: { source: { kind: "inline", evidence: hidden }, view },
   });
-  expect(parseMcpToolError(refused).error.code).toBe("unsupported_target");
+  const hiddenError = parseMcpToolError(refused).error;
+  expect(hiddenError.code).toBe("unsupported_target");
+  expect(hiddenError.remediation.action).toContain("sensitivity declarations");
+  expect(hiddenError.remediation.action).toContain("capture or summary view");
+  expect(hiddenError.remediation.action).not.toContain("target format");
   expect(JSON.stringify(refused)).toContain("sensitive_values_unretained");
   expect(JSON.stringify(refused)).not.toContain("/api/folders");
   await client.ping();
