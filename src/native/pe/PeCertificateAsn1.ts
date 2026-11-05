@@ -217,11 +217,11 @@ const decodeDirectoryString = (
 // X.690 8.3.1 and 8.3.2 hold for BER as well as DER: an INTEGER has at least
 // one content octet, and its first nine bits are never all zeros or all ones.
 // Padded encodings would otherwise collapse onto the minimal serial's hex.
-const integerHex = (
+const decodeSerialNumber = (
   content: Buffer,
   budget: DecodedNameBudget,
   label: string,
-): string => {
+): { readonly serial_hex: string; readonly serial_negative: boolean } => {
   if (content.length === 0) return fail(`${label} INTEGER is empty.`);
   const second = content[1];
   if (
@@ -233,7 +233,10 @@ const integerHex = (
   let start = 0;
   while (start < content.length - 1 && content[start] === 0) start += 1;
   chargeDecodedName(budget, (content.length - start) * 2);
-  return content.subarray(start).toString("hex");
+  return {
+    serial_hex: content.subarray(start).toString("hex"),
+    serial_negative: (content[0]! & 0x80) !== 0,
+  };
 };
 
 // Key identifiers are octet strings, not integers: leading zero bytes stay.
@@ -370,6 +373,7 @@ export interface ParsedCertificate {
   readonly start: number;
   readonly end: number;
   readonly serial_hex: string;
+  readonly serial_negative: boolean;
   readonly issuer: ReturnType<typeof decodeName>;
   readonly subject: ReturnType<typeof decodeName>;
   readonly not_before: string;
@@ -507,11 +511,7 @@ export const parseCertificate = (
   return {
     start: node.start,
     end: node.end,
-    serial_hex: integerHex(
-      serial.content,
-      names,
-      "TBSCertificate serialNumber",
-    ),
+    ...decodeSerialNumber(serial.content, names, "TBSCertificate serialNumber"),
     issuer: decodeName(issuer, names),
     subject: decodeName(subject, names),
     not_before: validityTime(notBefore, names),
@@ -525,6 +525,7 @@ export interface ParsedSigner {
   readonly signature_algorithm_oid: string;
   readonly issuer: ReturnType<typeof decodeName> | null;
   readonly serial_hex: string | null;
+  readonly serial_negative: boolean | null;
   readonly subject_key_identifier_hex: string | null;
   readonly authenticated_attributes: boolean;
   readonly unsigned_attribute_oids: readonly string[] | null;
@@ -533,11 +534,10 @@ export interface ParsedSigner {
 const signerIdentifier = (
   sid: Asn1BerNode,
   names: DecodedNameBudget,
-): {
-  readonly issuer: ReturnType<typeof decodeName> | null;
-  readonly serial_hex: string | null;
-  readonly subject_key_identifier_hex: string | null;
-} => {
+): Pick<
+  ParsedSigner,
+  "issuer" | "serial_hex" | "serial_negative" | "subject_key_identifier_hex"
+> => {
   if (sid.tag === 0x30) {
     const name = sid.children[0];
     const serial = sid.children[1];
@@ -551,7 +551,7 @@ const signerIdentifier = (
       return fail("SignerInfo issuerAndSerialNumber is truncated.");
     return {
       issuer: decodeName(name, names),
-      serial_hex: integerHex(
+      ...decodeSerialNumber(
         serial.content,
         names,
         "SignerInfo issuerAndSerialNumber serialNumber",
@@ -565,6 +565,7 @@ const signerIdentifier = (
     return {
       issuer: null,
       serial_hex: null,
+      serial_negative: null,
       subject_key_identifier_hex: octetHex(sid.content, names),
     };
   }
@@ -585,10 +586,7 @@ const parseSigner = (
     return fail("SignerInfo is missing version.");
   if (sid === undefined || digestAlg === undefined)
     return fail("SignerInfo is missing sid or digestAlgorithm.");
-  const { issuer, serial_hex, subject_key_identifier_hex } = signerIdentifier(
-    sid,
-    names,
-  );
+  const identifier = signerIdentifier(sid, names);
   let cursor = 3;
   const authenticated = children[cursor]?.tag === 0xa0;
   if (authenticated) {
@@ -625,9 +623,7 @@ const parseSigner = (
   return {
     digest_algorithm_oid: algorithmOid(digestAlg),
     signature_algorithm_oid: algorithmOid(signatureAlg),
-    issuer,
-    serial_hex,
-    subject_key_identifier_hex,
+    ...identifier,
     authenticated_attributes: authenticated,
     unsigned_attribute_oids: unsignedAttributeOids,
   };

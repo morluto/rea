@@ -74,6 +74,11 @@ const x509CertificateSchema = z.strictObject({
   location: range,
   der_sha256: digestSchema,
   serial_hex: z.string().regex(/^[0-9a-f]*$/),
+  // Optional for Evidence recorded before the serial's sign was retained.
+  serial_negative: z
+    .boolean()
+    .optional()
+    .describe("Whether the original ASN.1 serial INTEGER was negative"),
   issuer: distinguishedNameSchema,
   subject: distinguishedNameSchema,
   not_before: z.string(),
@@ -92,6 +97,13 @@ const signerInfoSchema = z.strictObject({
     .string()
     .regex(/^[0-9a-f]*$/)
     .nullable(),
+  serial_negative: z
+    .boolean()
+    .nullable()
+    .optional()
+    .describe(
+      "Whether the ASN.1 serial INTEGER was negative, or null for a key identifier",
+    ),
   subject_key_identifier_hex: z
     .string()
     .regex(/^[0-9a-f]*$/)
