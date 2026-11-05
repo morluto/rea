@@ -509,6 +509,78 @@ describe("binary plist shared object-table entries", () => {
   });
 });
 
+const postTableScalarArchive = (postObject: Buffer): Buffer => {
+  const integer = int64(9007199254740993n);
+  const intOffset = 11;
+  const tableOffset = intOffset + integer.length;
+  const postOffset = tableOffset + 3;
+  const trailerOffset = postOffset + postObject.length;
+  const bytes = Buffer.alloc(trailerOffset + 32);
+  bytes.set([0xa2, 1, 2], 8);
+  integer.copy(bytes, intOffset);
+  postObject.copy(bytes, postOffset);
+  return binaryPlistObjectTable(bytes, [8, intOffset, postOffset], tableOffset);
+};
+
+describe("binary plist post-table objects", () => {
+  const plan = (bytes: Buffer) =>
+    estimateBinaryPlistExpansion(bytes, 1024 * 1024, {
+      numberProjection: true,
+      bounds: "decoder",
+    });
+
+  it("preserves exact integer precision when a string follows the offset table", () => {
+    const stringObject = Buffer.from([0x55, ...Buffer.from("hello", "ascii")]);
+    const bytes = postTableScalarArchive(stringObject);
+    const scalarPlan = plan(bytes);
+    const metadata = scanBinaryPlistScalars(bytes, scalarPlan);
+
+    expect(metadata.literals.incomplete).toBe(false);
+    expect(metadata.literals.integers.get(9007199254740992)).toEqual(
+      new Set(["9007199254740993"]),
+    );
+    const decoded = decodeBinaryPlistScalars(bytes, metadata, scalarPlan);
+    const parsed = projectPlistValue(parseBinary(decoded));
+    const numbers = createPlistNumberProjection(metadata.literals);
+    expect(numbers.project(parsed.value)).toEqual([
+      { $plist_type: "integer", decimal: "9007199254740993" },
+      "hello",
+    ]);
+    expect(numbers.limitations().join("\n")).not.toContain(
+      "could not be completely observed",
+    );
+  });
+
+  it("reports metadata incomplete when a numeric scalar follows the offset table", () => {
+    const postInteger = int64(9007199254740993n);
+    const bytes = postTableScalarArchive(postInteger);
+    const metadata = scanBinaryPlistScalars(bytes);
+
+    expect(metadata.literals.incomplete).toBe(true);
+  });
+
+  it("reports metadata incomplete when a date follows the offset table", () => {
+    const postDate = Buffer.alloc(9);
+    postDate[0] = 0x33;
+    postDate.writeDoubleBE(0.1005, 1);
+    const bytes = postTableScalarArchive(postDate);
+    const metadata = scanBinaryPlistScalars(bytes);
+
+    expect(metadata.literals.incomplete).toBe(true);
+  });
+
+  it("reports metadata incomplete when an entry points inside the offset table", () => {
+    const stringObject = Buffer.from([0x55, ...Buffer.from("hello", "ascii")]);
+    const bytes = postTableScalarArchive(stringObject);
+    // Repoint object 2 into the offset table (offsets 20..22).
+    const tableOffset = 20;
+    bytes[tableOffset + 2] = 21;
+    const metadata = scanBinaryPlistScalars(bytes);
+
+    expect(metadata.literals.incomplete).toBe(true);
+  });
+});
+
 describe("binary plist numeric association", () => {
   it("keeps an overlapping int64 exact without rewriting either object", () => {
     const bytes = integerPayloadContainingReal();

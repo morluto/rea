@@ -59,3 +59,36 @@ cliTest(
     }
   },
 );
+
+cliTest(
+  "preserves pre-table integer precision when a string follows the offset table",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-keyed-post-table-int-");
+    const path = join(root, "archive.bplist");
+    const original = Buffer.from(
+      "62706c6973743030d4010203040506070b59246172636869766572582476657273696f6e58246f626a656374735424746f705f100f4e534b65796564417263686976657212000186a0a308090a55246e756c6c5568656c6c6f130020000000000001d10c0d54726f6f74800208111b242d3244494d7a5962656a5568656c6c6f0000000000000101000000000000000e0000000000000000000000000000006c",
+      "hex",
+    );
+    await writeFile(path, original);
+    const result = await cli.run({
+      arguments: ["inspect-keyed-archive", path, "--format", "json"],
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    const json = JSON.parse(result.stdout);
+    expect(json.normalized_result.objects[1]).toMatchObject({
+      status: "observed",
+      value: "hello",
+    });
+    expect(json.normalized_result.objects[2]).toMatchObject({
+      status: "observed",
+      value: {
+        $plist_type: "integer",
+        decimal: "9007199254740993",
+      },
+    });
+    expect(json.normalized_result.limitations).not.toContainEqual(
+      expect.stringMatching(/metadata could not be completely observed/u),
+    );
+    expect((await readFile(path)).equals(original)).toBe(true);
+  },
+);
