@@ -74,6 +74,9 @@ export const scopeDoctorChecks = (
       input.registrations.find((candidate) => candidate.client === client),
     ),
   );
+  const environmentChecks = input.checks.filter((check) =>
+    registrationEnvironmentInScope(check, input.scope),
+  );
   const skillChecks = input.scope.skill
     ? [selectedSkillCheck(input.skillState, input.checks)]
     : [];
@@ -113,6 +116,7 @@ export const scopeDoctorChecks = (
     ...hopperHostChecks,
     ...selectedProviderChecks,
     ...clientChecks,
+    ...environmentChecks,
     ...skillChecks,
   ];
   const selectedNames = new Set(scopeChecks.map(({ name }) => name));
@@ -129,6 +133,22 @@ export const scopeDoctorChecks = (
       ({ name }) => !selectedNames.has(name),
     ),
   };
+};
+
+/** Follow the caller's question: a named client, or a provider it relies on. */
+const registrationEnvironmentInScope = (
+  { name, details }: DoctorCheck,
+  scope: DoctorScopeReport,
+): boolean => {
+  const [family, client] = name.split(":");
+  if (family !== "registration_environment" || client === undefined)
+    return false;
+  const providers = details?.providers;
+  return (
+    scope.clients.includes(client) ||
+    (Array.isArray(providers) &&
+      scope.providers.some((provider) => providers.includes(provider)))
+  );
 };
 
 const isProviderCheck = (

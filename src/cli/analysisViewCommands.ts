@@ -26,12 +26,12 @@ export const registerAnalysisViewCommands = (
 ): void => {
   cli.command(CLI_COMMANDS.inspectEvidenceBundle, {
     description:
-      "Inspect a local Evidence bundle completely, as discovery metadata, or as a page of selected complete records",
+      "Inspect a local Evidence bundle completely, as discovery metadata, as a page of selected complete records, or as direct-link and retained-closure membership.",
     args: z.object({
       inputJson: z
         .string()
         .describe(
-          "JSON or JSON file with absolute path, detail, optional record filters, and records offset/limit",
+          "JSON or JSON file with absolute path, detail, optional record filters, records or links offset/limit, and links traversal/link_status",
         ),
     }),
     run: ({ args }) =>
@@ -73,7 +73,7 @@ export const registerAnalysisViewCommands = (
   });
   cli.command(CLI_COMMANDS.inspectAnalysisView, {
     description:
-      "Project a selected view of completed Evidence JSON for a supported analysis operation",
+      "Project a selected view of completed Evidence JSON for a supported analysis operation. For inventory rows, use --format csv or --format tsv with --filter-output normalized_result.items and --columns logical_path,artifact_id (if those fields are included in the view).",
     args: z.object({
       inputJson: z.string().describe("Inline workflow JSON or JSON file path"),
     }),

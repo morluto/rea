@@ -2,6 +2,7 @@ import { GO_BINARY_PROVIDER_IDENTITY } from "./GoBinaryProviderIdentity.js";
 import {
   projectStableArtifactFailure,
   projectArtifactCloseFailure,
+  stableArtifactInputRecovery,
 } from "../artifacts/StableArtifactFailure.js";
 import { isSelectedRegularFileError } from "../filesystem/RegularFile.js";
 import { readStableArtifact } from "../artifacts/readStableArtifact.js";
@@ -113,9 +114,11 @@ const failureForPrimary = (
         },
       );
     if (cause.reason === "path")
-      return new AnalysisInputError(OPERATION, { cause }, [
-        { path: ["path"], reason: "invalid_format", message: cause.message },
-      ]);
+      return new AnalysisInputError(
+        OPERATION,
+        { cause, ...stableArtifactInputRecovery(cause) },
+        [{ path: ["path"], reason: "invalid_format", message: cause.message }],
+      );
   }
   if (cause instanceof Error && "code" in cause) {
     if (cause.code === "EACCES" || cause.code === "EPERM")
