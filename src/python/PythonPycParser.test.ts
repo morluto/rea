@@ -158,14 +158,22 @@ it.each([
 );
 
 it.each([
-  { magic: 3627, version: "3.14" },
-  { magic: 3666, version: "3.15" },
+  { magic: 3627, version: "3.14", flags: 0x0, mode: "timestamp-based" },
+  { magic: 3666, version: "3.15", flags: 0x0, mode: "timestamp-based" },
+  // A non-zero flag word and a PEP 552 hash-based header, so a refusal that hardcoded
+  // `flags 0x0, timestamp-based` could not pass.
+  { magic: 3666, version: "3.15", flags: 0x3, mode: "hash-based" },
+  { magic: 3627, version: "3.14", flags: 0x1, mode: "hash-based" },
 ] as const)(
   "qualifies the recognized CPython $version header without a pinned code layout",
-  ({ magic, version }) => {
+  ({ magic, version, flags, mode }) => {
     // The header is still a packed 16-byte 3.7+ header, so its identity and flags are
     // reported even though no marshal layout is pinned for this version.
-    expect(() => parse(pythonPycHeader(magic))).toThrow(
+    const header = pythonPycHeader(magic, {
+      flags,
+      ...(flags === 0 ? {} : { sourceHash: Buffer.alloc(8, 0xab) }),
+    });
+    expect(() => parse(header)).toThrow(
       expect.objectContaining({
         kind: "unsupported",
         message: expect.stringContaining(
@@ -173,19 +181,30 @@ it.each([
         ),
       }),
     );
-    expect(() => parse(pythonPycHeader(magic))).toThrow(
+    expect(() => parse(header)).toThrow(
       expect.objectContaining({
         message: expect.stringContaining(`magic ${magic}, 16-byte header`),
       }),
     );
-    expect(() => parse(pythonPycHeader(magic))).toThrow(
+    // The reported facts are the ones packed into this header.
+    expect(() => parse(header)).toThrow(
+      expect.objectContaining({
+        message: expect.stringContaining(`flags 0x${flags.toString(16)}`),
+      }),
+    );
+    expect(() => parse(header)).toThrow(
+      expect.objectContaining({
+        message: expect.stringContaining(mode),
+      }),
+    );
+    expect(() => parse(header)).toThrow(
       expect.objectContaining({
         message: expect.stringContaining(
           "no marshal code layout is pinned for that version",
         ),
       }),
     );
-    expect(() => parse(pythonPycHeader(magic))).toThrow(
+    expect(() => parse(header)).toThrow(
       expect.objectContaining({
         message: expect.stringContaining(
           "marshal decoding is pinned for CPython 3.7",
@@ -194,6 +213,34 @@ it.each([
     );
   },
 );
+
+it("reports timestamp-based for a pyc without the hash flag and hash-based with it", () => {
+  // Same magic, opposite header mode: the two refusals must differ only in that fact.
+  const timestamp = () =>
+    parse(pythonPycHeader(3666, { mtime: 7, sourceSize: 9 }));
+  const hash = () =>
+    parse(
+      pythonPycHeader(3666, { flags: 0x1, sourceHash: Buffer.alloc(8, 1) }),
+    );
+  expect(timestamp).toThrow(
+    expect.objectContaining({
+      message: expect.stringContaining("timestamp-based"),
+    }),
+  );
+  expect(timestamp).toThrow(
+    expect.not.objectContaining({
+      message: expect.stringContaining("hash-based"),
+    }),
+  );
+  expect(hash).toThrow(
+    expect.objectContaining({ message: expect.stringContaining("hash-based") }),
+  );
+  expect(hash).toThrow(
+    expect.not.objectContaining({
+      message: expect.stringContaining("timestamp-based"),
+    }),
+  );
+});
 
 it("does not qualify a magic outside the pinned identity table", () => {
   expect(() => parse(pythonPycHeader(1))).toThrow(
