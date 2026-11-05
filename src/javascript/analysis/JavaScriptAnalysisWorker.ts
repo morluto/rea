@@ -7,8 +7,9 @@ import type {
   JavaScriptSemanticFileProjection,
 } from "../../domain/javascript/javascriptSemanticFileProjection.js";
 import { createHash, randomUUID } from "node:crypto";
-import { readFile, rm, stat, writeFile } from "node:fs/promises";
+import { readFile, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
+import { writeJavaScriptAnalysisSourceTransfer } from "./JavaScriptAnalysisSourceTransfer.js";
 import { StringDecoder } from "node:string_decoder";
 import { fileURLToPath } from "node:url";
 import { getHeapStatistics } from "node:v8";
@@ -333,11 +334,11 @@ export class JavaScriptAnalysisWorker {
         );
       supervisor.resetOutput();
       this.#phase = "source-transfer";
-      await writeFile(join(rootPath, `${id}.source`), file.text.value, {
-        flag: "wx",
-        mode: 0o600,
-        signal: deadline.signal,
-      });
+      await writeJavaScriptAnalysisSourceTransfer(
+        join(rootPath, `${id}.source`),
+        file.text.value,
+        { signal: deadline.signal },
+      );
       const { text: _text, ...metadata } = file;
       let offeredResultBudget = 0;
       const request = javaScriptWorkerRequestSchema.parse({

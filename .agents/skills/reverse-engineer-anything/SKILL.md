@@ -137,6 +137,9 @@ explicit path or endpoint and do not need it.
 - Agent environment (AgentEnv bundle) of a web application: read
   [environments](references/environments.md) before recording; it records with
   `capture_browser_scenario` and writes the bundle with `export_environment_bundle`.
+- Task for a desktop application's exported environment, from a
+  `capture-desktop-application` folder: read
+  [desktop application tasks](references/environments.md#tasks-for-a-desktop-application-environment).
 - Fiddler Everywhere traffic or a native `.saz` capture: read the
   [Fiddler workflow](references/runtime-observation.md#fiddler-everywhere-traffic-debugging).
   Inspect saved SAZ with `inspect_web_network_capture` and `format: "saz"`;
@@ -521,6 +524,8 @@ as complete while required questions remain open.
 - Agent environments (AgentEnv bundles) of a web application, recorded from
   a live instance or a HAR:
   [references/environments.md](references/environments.md)
+- Tasks for a desktop application's exported environment:
+  [references/environments.md](references/environments.md#tasks-for-a-desktop-application-environment)
 
 ## Finish the task
 
