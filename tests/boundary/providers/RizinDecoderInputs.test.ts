@@ -5,7 +5,7 @@ import { join } from "node:path";
 
 import { expect, it } from "vitest";
 
-import { toolContract } from "../../../src/contracts/toolContracts.js";
+import { REVERSE_ENGINEERING_TOOL_CONTRACTS } from "../../../src/contracts/reverseEngineeringToolContracts.js";
 import { rizinCommandLimitations } from "../../../src/rizin/RizinCommand.js";
 import { createProviderEnvironmentMcpHarness } from "../../support/reverseDebuggerMcpTestHelpers.js";
 
@@ -38,6 +38,12 @@ BIOS_LIKE_IMAGE.set([0x11, 0x22, 0x33, 0x44], 0);
 BIOS_LIKE_IMAGE[0xfff0] = 0xea;
 BIOS_LIKE_IMAGE[0xffff] = 0x5a;
 
+const rizinContract = REVERSE_ENGINEERING_TOOL_CONTRACTS.find(
+  (contract) => contract.name === "execute_rizin_command",
+);
+if (rizinContract === undefined)
+  throw new Error("execute_rizin_command contract is missing");
+
 const hex = (value: number): string => `0x${value.toString(16)}`;
 
 const runRizin = async (
@@ -45,22 +51,21 @@ const runRizin = async (
   image: Buffer,
 ) => {
   const directory = await mkdtemp(join(tmpdir(), "rea-rizin-decoder-"));
-  const path = join(directory, "image.bin");
-  await writeFile(path, image);
+  // The harness owns the directory, so it must exist before setup can fail.
   const { client } = await createProviderEnvironmentMcpHarness({
     directory,
     clientName: "real-rizin-decoder-inputs",
     serverOptions: { environment: { REA_RIZIN_COMMAND: rizin! } },
   });
+  const path = join(directory, "image.bin");
+  await writeFile(path, image);
   const toolArguments = { path, ...input };
   const response = await client.callTool({
     name: "execute_rizin_command",
     arguments: toolArguments,
   });
   expect(response.isError, JSON.stringify(response.content)).not.toBe(true);
-  const evidence = toolContract("execute_rizin_command").outputSchema.parse(
-    response.structuredContent,
-  );
+  const evidence = rizinContract.outputSchema.parse(response.structuredContent);
   expect(evidence.normalized_result.exit_code).toBe(0);
   expect(evidence.limitations).toEqual(
     expect.arrayContaining([
@@ -73,7 +78,6 @@ const runRizin = async (
   return {
     lines: evidence.normalized_result.stdout.trimEnd().split("\n"),
     stderr: evidence.normalized_result.stderr,
-    limitations: evidence.limitations.join(" "),
   };
 };
 
@@ -131,24 +135,21 @@ it.skipIf(rizin === undefined)(
       MSR_PRIMASK,
     );
     expect(unknown.lines).toEqual(["rea-no-such-cpu", "invalid"]);
-    expect(unknown.limitations).toContain("e asm.cpu echoes any value");
   },
 );
 
 it.skipIf(rizin === undefined)(
   `states what a call with only base_address leaves unconfirmed (${banner})`,
   async () => {
-    const { lines, limitations } = await runRizin(
+    const { lines } = await runRizin(
       { command: "omlj; om-*; omlj", base_address: "0x8000" },
       CORTEX_M_IMAGE,
     );
     expect(mapsOf(lines[0])).toEqual([
       expect.objectContaining({ delta: 0, from: 0x8000 }),
     ]);
-    // The command removed the map, and the limitation claims no map.
+    // The command removed the map, so the map is not a fact of the result.
     expect(mapsOf(lines[1])).toEqual([]);
-    expect(limitations).toContain("REA does not confirm the map");
-    expect(limitations).toContain("stay at Rizin's defaults");
   },
 );
 

@@ -6,7 +6,7 @@ import type { Client } from "@modelcontextprotocol/client";
 import type { CallToolResult } from "@modelcontextprotocol/server";
 import { expect, it } from "vitest";
 
-import { toolContract } from "../../../src/contracts/toolContracts.js";
+import { REVERSE_ENGINEERING_TOOL_CONTRACTS } from "../../../src/contracts/reverseEngineeringToolContracts.js";
 import { rizinCommandLimitations } from "../../../src/rizin/RizinCommand.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createProviderEnvironmentMcpHarness } from "../../support/reverseDebuggerMcpTestHelpers.js";
@@ -153,9 +153,12 @@ it("passes Rizin decoder and map inputs as flags before the artifact", async () 
     arguments: input,
   });
   expect(response.isError, JSON.stringify(response.content)).not.toBe(true);
-  const evidence = toolContract("execute_rizin_command").outputSchema.parse(
-    response.structuredContent,
+  const rizinContract = REVERSE_ENGINEERING_TOOL_CONTRACTS.find(
+    (contract) => contract.name === "execute_rizin_command",
   );
+  if (rizinContract === undefined)
+    throw new Error("execute_rizin_command contract is missing");
+  const evidence = rizinContract.outputSchema.parse(response.structuredContent);
   const argv = [
     "-N",
     "-q",
@@ -183,11 +186,12 @@ it("passes Rizin decoder and map inputs as flags before the artifact", async () 
     expect.arrayContaining([...rizinCommandLimitations(input)]),
   );
 
-  // Compact schemas drop property descriptions, so the tool description warns.
+  // Compact schemas drop property descriptions, so the tool description names
+  // the input that changes how Rizin loads the file.
   const { tools } = await client.listTools();
-  expect(
-    tools.find((tool) => tool.name === "execute_rizin_command")?.description,
-  ).toContain("base_address also passes -n");
+  const listed = tools.find((tool) => tool.name === rizinContract.name);
+  expect(listed?.description).toBe(rizinContract.description);
+  expect(listed?.description).toContain("base_address");
 
   const refused = await client.callTool({
     name: "execute_rizin_command",

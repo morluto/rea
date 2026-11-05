@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { expect } from "vitest";
 
 import { analysisErrorProjectionSchema } from "../../../src/contracts/errorSchemas.js";
-import { toolContract } from "../../../src/contracts/toolContracts.js";
+import { REVERSE_ENGINEERING_TOOL_CONTRACTS } from "../../../src/contracts/reverseEngineeringToolContracts.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
@@ -85,9 +85,12 @@ cliTest(
       environment: { REA_RIZIN_COMMAND: provider },
     });
     expect(result.exitCode, result.stderr).toBe(0);
-    const evidence = toolContract("execute_rizin_command").outputSchema.parse(
-      result.json,
+    const rizinContract = REVERSE_ENGINEERING_TOOL_CONTRACTS.find(
+      (contract) => contract.name === "execute_rizin_command",
     );
+    if (rizinContract === undefined)
+      throw new Error("execute_rizin_command contract is missing");
+    const evidence = rizinContract.outputSchema.parse(result.json);
     const argv = [
       "-N",
       "-q",
