@@ -291,7 +291,6 @@ const rejectsOpenModeLiteral = (
     const digits = octal.replace(/^0+/u, "");
     return digits.length > 11 || Number.parseInt(digits, 8) > 4_294_967_295;
   }
-  if (t.isStringLiteral(value)) return !/^[0-7]+$/u.test(value.value);
   // A numeric mode is validated as an unsigned 32-bit integer.
   const bits = staticFlagBits(value, context);
   if (bits !== undefined) {
