@@ -130,8 +130,8 @@ const walk = (
       visit(String(index), item, lookup(String(index))),
     );
   } else if (isRecord(from)) {
-    // One lookup serves every key, so an array compared with an object is indexed once.
-    const lookup = memberLookup(other);
+    // The keys go to the lookup together, so an array compared with an object is searched once per field set.
+    const lookup = memberLookup(other, Object.keys(from));
     for (const [key, item] of Object.entries(from))
       visit(key, item, lookup(key));
   }

@@ -47,24 +47,27 @@ const directoryEnd = (view: DataView) => {
   if (found.done === true) return undefined;
   const end = window + found.value.offset;
   const { totalEntries, directorySize, directoryOffset } = found.value;
-  const zip64 =
-    totalEntries === 0xffff ||
-    directorySize === 0xffffffff ||
-    directoryOffset === 0xffffffff;
+  const classic = { end, size: directorySize, declaredOffset: directoryOffset };
   const record = end - ZIP64_LOCATOR_BYTES - ZIP64_END_BYTES;
+  // Like Python's zipfile, a Zip64 locator is followed whether or not the classic record defers to it.
   if (
-    !zip64 ||
     record < 0 ||
     view.getUint32(end - ZIP64_LOCATOR_BYTES, true) !== ZIP64_LOCATOR
   )
-    return { end, size: directorySize, declaredOffset: directoryOffset };
-  // Like Python's zipfile, the Zip64 end record is the one just before its locator.
-  if (view.getUint32(record, true) !== ZIP64_END) return undefined;
-  return {
-    end: record,
-    size: Number(view.getBigUint64(record + 40, true)),
-    declaredOffset: Number(view.getBigUint64(record + 48, true)),
-  };
+    return classic;
+  // Read just before its locator, where zipfile and zip.js look when the locator's own offset holds no Zip64 record.
+  if (view.getUint32(record, true) === ZIP64_END)
+    return {
+      end: record,
+      size: Number(view.getBigUint64(record + 40, true)),
+      declaredOffset: Number(view.getBigUint64(record + 48, true)),
+    };
+  // Without one the classic values stand, as zip.js reads them, unless they are sentinels deferring to it.
+  const deferred =
+    totalEntries === 0xffff ||
+    directorySize === 0xffffffff ||
+    directoryOffset === 0xffffffff;
+  return deferred ? undefined : classic;
 };
 
 /** Where one record's name and extra field lie in the archive, and its flags. */
