@@ -175,7 +175,8 @@ is a symlink), the paths every walk left out (the output folder and
 `--exclude` values), and the checkpoints in order: `baseline` before
 launch, each requested checkpoint, `stop` or `time-limit`, and `exit` after the
 application has gone. Each checkpoint records how many paths its walk saw,
-whether it was truncated, which paths were created, modified, deleted or
+whether it was truncated, how many paths it could not read or directories on
+another device it did not enter (`unchecked_paths`), which paths were created, modified, deleted or
 changed type since the previous checkpoint, and which files it retained. A
 path counts as created or deleted only where the walk listed its nearest
 existing directory completely; differences under a directory that could not be
