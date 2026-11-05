@@ -1,4 +1,4 @@
-import { javaScriptTopLevelThisMayBeGlobal } from "./javascriptSourceParser.js";
+import { javaScriptThisOwner } from "./javascriptSourceParser.js";
 import * as t from "@babel/types";
 
 import {
@@ -145,6 +145,7 @@ type AmbientIdentityUnknownReason =
 
 interface AmbientResolution {
   readonly paths: readonly AmbientPath[];
+  readonly callerPaths: readonly AmbientPath[];
   readonly ownership: "local" | "ambient" | "unknown";
   readonly unknownReasons: readonly AmbientIdentityUnknownReason[];
 }
@@ -180,6 +181,7 @@ export const createAmbientPathResolver = (
     const prior = possibleWrites ? undefined : cached.get(node);
     if (prior !== undefined) return prior;
     const result = new Map<string, AmbientPath>();
+    const callerPaths = new Map<string, AmbientPath>();
     let hasLocalIdentity = false;
     const unknownReasons = new Set<AmbientIdentityUnknownReason>();
     // The caller's write site selects initializers for the written target.
@@ -255,6 +257,7 @@ export const createAmbientPathResolver = (
           if (!possibleWrites) {
             const unresolved: AmbientResolution = {
               paths: [],
+              callerPaths: [...callerPaths.values()],
               ownership: "unknown",
               unknownReasons: ["widened-projection"],
             };
@@ -320,17 +323,21 @@ export const createAmbientPathResolver = (
           resolvedIdentity = true;
           continue;
         }
-        if (
-          t.isThisExpression(root) &&
-          javaScriptTopLevelThisMayBeGlobal(
+        if (t.isThisExpression(root)) {
+          const owner = javaScriptThisOwner(
             root,
             state.program,
             state.parentsByNode,
-          )
-        ) {
-          retain(["global", ...(suffix ?? [])]);
-          resolvedIdentity = true;
-          continue;
+          );
+          if (owner === "global") {
+            retain(["global", ...(suffix ?? [])]);
+            resolvedIdentity = true;
+            continue;
+          }
+          if (owner === "caller" && suffix !== undefined) {
+            const path = canonicalAmbientPath(["global", ...suffix]);
+            callerPaths.set(JSON.stringify(path), path);
+          }
         }
         if (t.isIdentifier(root)) {
           // The wrapper module object is distinct from globalThis.module. Keep
@@ -565,6 +572,7 @@ export const createAmbientPathResolver = (
       unknownReasons.add("mixed-identities");
     const resolution: AmbientResolution = {
       paths,
+      callerPaths: [...callerPaths.values()],
       ownership:
         unknownReasons.size > 0
           ? "unknown"

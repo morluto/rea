@@ -112,7 +112,6 @@ import {
 import { semanticResourceLimitReason } from "./javascriptSemanticResourceLimits.js";
 import {
   javaScriptRuntimeContext,
-  javaScriptTopLevelThisMayBeGlobal,
   javaScriptProgramStrictness,
   parseJavaScriptSource,
   type ParsedJavaScriptSource,
@@ -1488,43 +1487,29 @@ function* indexPrototypeUncertaintySteps(
   };
   const globalOwner = (node: t.Node): SemanticPrototypeOwner | undefined => {
     const value = unwrapJavaScriptExpression(node).node;
-    // Reject non-owner terminal keys before resolving a namespace spine.
-    if (!t.isIdentifier(value)) {
-      if (!t.isMemberExpression(value) && !t.isOptionalMemberExpression(value))
-        return undefined;
-      const key = semanticStaticPropertyKey(value.property, value.computed);
-      if (!semanticPrototypeOwners.some((owner) => owner === key))
-        return undefined;
+    const member =
+      t.isMemberExpression(value) || t.isOptionalMemberExpression(value);
+    const key = t.isIdentifier(value)
+      ? value.name
+      : member
+        ? semanticStaticPropertyKey(value.property, value.computed)
+        : null;
+    const owner = semanticPrototypeOwners.find(
+      (candidate) => candidate === key,
+    );
+    if (owner === undefined) return undefined;
+    if (isUnmodifiedGlobalReference(value, state, owner)) return owner;
+    if (member) {
+      const { paths, callerPaths } = possiblePrototypeReferences(value);
+      const selectsOwner = (path: readonly (string | null)[]) =>
+        path.length === 2 && path[0] === "global" && path[1] === owner;
+      return paths.some(selectsOwner) || callerPaths.some(selectsOwner)
+        ? owner
+        : undefined;
     }
-    for (const owner of semanticPrototypeOwners) {
-      if (
-        (t.isMemberExpression(value) || t.isOptionalMemberExpression(value)) &&
-        t.isThisExpression(unwrapJavaScriptExpression(value.object).node) &&
-        semanticStaticPropertyKey(value.property, value.computed) === owner &&
-        javaScriptTopLevelThisMayBeGlobal(
-          unwrapJavaScriptExpression(value.object).node as t.ThisExpression,
-          state.program,
-          state.parentsByNode,
-        ) &&
-        !state.ambientWrites.covers(["global", owner])
-      )
-        return owner;
-      if (isUnmodifiedGlobalReference(value, state, owner)) return owner;
-      if (
-        (t.isMemberExpression(value) || t.isOptionalMemberExpression(value)) &&
-        possiblePrototypeReferences(value).paths.some(
-          (path) =>
-            path.length === 2 && path[0] === "global" && path[1] === owner,
-        )
-      )
-        return owner;
-      if (
-        t.isIdentifier(value, { name: owner }) &&
-        resolveSemanticBindingState(state, value, owner) === undefined
-      )
-        return owner;
-    }
-    return undefined;
+    return resolveSemanticBindingState(state, value, owner) === undefined
+      ? owner
+      : undefined;
   };
   const prototypeOwner = (node: t.Node): SemanticPrototypeOwner | undefined => {
     const value = unwrapJavaScriptExpression(node).node;

@@ -53,7 +53,10 @@ export const createSemanticOpaqueGlobalObserver = (
     ) => (
       node: t.Node,
       site: t.Node | undefined,
-    ) => { paths: readonly (readonly (string | null)[])[] };
+    ) => {
+      paths: readonly (readonly (string | null)[])[];
+      callerPaths: readonly (readonly (string | null)[])[];
+    };
     createSemanticModuleInterop: (
       state: JavaScriptSemanticAnalysisState,
       options?: {
@@ -76,9 +79,12 @@ export const createSemanticOpaqueGlobalObserver = (
   let invocationSite: t.Node | undefined;
   const interop = dependencies.createSemanticModuleInterop(state, {
     intrinsicPath: (node) => {
-      const paths = ambientPaths(node, invocationSite).paths;
+      const { paths, callerPaths } = ambientPaths(node, invocationSite);
       const path =
         paths.find((path) => path[1] === "eval" || path[1] === "Function") ??
+        callerPaths.find(
+          (path) => path[1] === "eval" || path[1] === "Function",
+        ) ??
         paths[0];
       if (path?.[0] !== "global" || path.some((key) => key === null))
         return undefined;

@@ -428,6 +428,7 @@ it.each([
 });
 
 const CLASSIC_GLOBAL_ACTIVATIONS = [
+  "function boot() { Object.setPrototypeOf(this.Array.prototype, globalThis); } boot(); [].createWindow();",
   "const box = { get value() { throw globalThis; } }; try { const { value } = box; } catch ({ createWindow: start }) { start(); }",
   "function fail() { throw globalThis; } try { const box = { [fail()]() {} }; } catch ({ createWindow: start }) { start(); }",
   "Object.setPrototypeOf(Number.prototype, globalThis); (0).createWindow();",
@@ -600,6 +601,23 @@ it.each([64, 128])(
     expect(keyVisits).toBeLessThanOrEqual(32 * size);
   },
 );
+
+it("retains possible global code from a caller-owned receiver", () => {
+  const source = `
+    const { BrowserWindow } = require("electron");
+    function boot() { this.Function("createWindow()")(); }
+    boot();
+    const webPreferences = { nodeIntegration: true };
+    function createWindow() { return new BrowserWindow({ webPreferences }); }
+    createWindow();
+  `;
+  expect(() =>
+    runInNewContext(source, { require: () => ({ BrowserWindow: class {} }) }),
+  ).toThrow(/before initialization/);
+  expect(
+    analyzeJavaScriptStaticSource(source).electron.browser_windows[0],
+  ).toMatchObject({ web_preferences_status: "dynamic", web_preferences: [] });
+});
 
 describe("Classic-script global function activation", () => {
   it.each([
