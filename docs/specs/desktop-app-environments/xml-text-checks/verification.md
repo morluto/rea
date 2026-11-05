@@ -107,3 +107,40 @@ of Python 3.9 to 3.14.
   element by position, and without whitespace text between elements. For the
   AbiWord note it suggests the paragraph's text first and no save time;
   `history`'s `version`, `edit-time` and `last-saved` remain, named.
+
+## Second review fixes
+
+Run on 2026-11-05 with the same toolchain. The new draft tests fail on the
+reviewed commit, run with only the changed test file (6 failed, 23 passed),
+and pass after it. `npm run typecheck`, `docs:check`, and lint and format on
+the touched files pass; the desktop set (`src/domain/desktop`,
+`src/domain/xmlDocument.test.ts` and the `tests/boundary/providers/desktop*`
+files) gives 329 passed, and `src/application/desktop` with `src/desktop`
+141 passed and 18 skipped. The drafts for the Inkscape, AbiWord, Writer and
+FreeCAD fixtures are the same as on the reviewed commit.
+
+- A run added or removed whole marks its paragraph, the nearest ancestor both
+  ends hold, by the text anywhere in it. `Meeting at ` gaining
+  `<c>3:30</c>` drafts `text_equals` `Meeting at 3:30` on `[name=p][@xid=6]`
+  and no check that the run is there: a save splitting the text into other
+  runs passes it and `13:30` in the run fails it. So does a bold run added to
+  a paragraph made only of runs, though its `props` name it. Removing a run
+  drafts the paragraph's remaining text instead of the run's absence.
+  `<p>Hello</p>` gaining `<span> world</span>`, or ` world` in a `b` inside
+  the span, drafts `Hello world` on the paragraph, in a body and as the
+  document's root, which `WRONG` in the span fails.
+- A new paragraph `p[@xid=7]` drafts its section's text where the section is
+  short enough to check, and its own text where it is not, instead of a check
+  that it is there; other words in it and the seed fail both.
+- An element the diff names by its tag alone, and an identifier of its own
+  names, takes the check ahead of the ancestor named by another attribute: an
+  SVG headline, the only `text` in a layer, drafts `text_equals` on
+  `[name=text][@id=headline]` rather than the layer, the `text`'s `id` chosen
+  over its `tspan`'s, and Inkscape's own save keeps its check on the
+  `text`, which the diff already names by its `id`. Another attribute names
+  it only where the layer cannot take the check: with only `xml:space`, the
+  check stays on a short layer, and on the `text` by `xml:space` past 2,000
+  characters, where it had fallen back to `value_equals` on the `tspan`'s
+  first text node. A save splitting the headline across two `tspan`s passes
+  it and the old headline fails it. When the edit also changed the `id`, no
+  text check is drafted.

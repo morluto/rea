@@ -66,17 +66,32 @@ verifier's, agree.
   an element added or removed whole checked once, and no check of
   whitespace-only text between elements. In XML, each element holding a text
   node that the diff lists with more than whitespace in it, at either end of a
-  changed value, gets `text_equals` with its final text, ahead of the other
-  checks. The check goes up from an element in mixed content (its parent
-  holds text beside it) to the nearest that is not, then from one named by its
-  tag or position alone to the nearest ancestor below the root named by an
+  changed value, and the nearest ancestor both ends hold of each element the
+  diff lists added or removed whole with such text anywhere in it, gets
+  `text_equals` with its final text, ahead of the other checks, so a run
+  added or removed with its words marks its paragraph. That ancestor is not
+  the document's root unless the root holds text of its own. The check goes
+  up from an element in mixed content (its parent holds text beside it, the
+  root included) to the nearest that is not, then from one named by its tag
+  or position alone to the nearest ancestor below the root named by an
   attribute, as AbiWord's `p` by `xid`, so it names a paragraph rather than a
-  run a later save may split or merge; it is kept when that element is the
+  run a later save may split or merge. An element passed on the way that an
+  identifier of its own (`id`, `xml:id`, `xid` or one ending in `:id`) names
+  goes ahead of that ancestor, the outermost first, as an SVG `text` by its
+  `id` in a layer named by its label, unless an identifier names the ancestor
+  too, as the `text` above a `tspan` with an `id` of its own; one that only
+  another attribute names, such as `xml:space`, goes after it, for when the
+  ancestor cannot take the check, as when its text is too long. Either
+  attribute holds the same value at both ends and names the element alone
+  among its siblings at each. The check is kept when that element is the
   outermost such, at both ends, named without positions, held whole by the
   final view, its text changed, at most 2,000 characters and no timestamp.
-  The text nodes and runs inside it get no other check, but a changed name or
-  attribute of an element inside it that both ends hold, such as a link's
-  `href`, keeps its own.
+  Where none can take it, an element added whole, named without positions,
+  gets `text_equals` with its own text instead of a check that it is there,
+  as a new paragraph in a section too long to check. The text nodes and runs
+  inside a checked element, added and removed ones included, get no other
+  check, but a changed name or attribute of an element inside it that both
+  ends hold, such as a link's `href`, keeps its own.
 
 ## Non-goals
 
@@ -93,5 +108,7 @@ verifier's, agree.
   on save, such as AbiWord's `history` `version`, `edit-time` and
   `last-saved`, is still suggested, by name, for the author to drop, since a
   number that went up is as often the user's edit.
-- No paragraph for a run named by an attribute of its own, such as a run
-  among others of different formatting: its check names that run.
+- No paragraph for the changed text of a run named by an attribute of its
+  own, such as a run among others of different formatting, in a paragraph
+  holding no text of its own: its check names that run. A run added or
+  removed whole is checked at its paragraph.

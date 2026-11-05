@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 import type { JsonValue } from "../jsonValue.js";
 import type { DesktopTaskCheck } from "./appTask.js";
 import { evaluateTaskChecks } from "./appTaskChecks.js";
-import { draftTaskFiles } from "./appTaskDraft.js";
+import { draftTaskFiles, type TaskDraftFile } from "./appTaskDraft.js";
 import type { DesktopStatePath } from "./desktopState.js";
 import { xmlView } from "./stateFormats.js";
 import { locatePointer } from "./viewPointer.js";
@@ -539,6 +539,349 @@ describe("draftTaskFiles for runs with attributes", () => {
           value: "new-target",
         }),
       ]);
+    }
+  });
+});
+
+/** Whether each check a draft suggests passes on an XML view of its file. */
+const passing = (
+  file: string,
+  suggested: TaskDraftFile["suggested"] | undefined,
+  view: JsonValue,
+) =>
+  evaluateTaskChecks(
+    (suggested ?? []).map((check, index) => ({
+      ...check,
+      id: `c${String(index)}`,
+    })) as DesktopTaskCheck[],
+    new Map([[file, { format: "xml", view }]]),
+  ).map(({ passed }) => passed);
+
+describe("draftTaskFiles for runs added or removed whole", () => {
+  it("suggests the paragraph's text where an edit adds or removes a run holding text, which other text in the run fails", () => {
+    const run = (text: string) =>
+      xmlElement("c", { props: "lang:en-US" }, [text]);
+    const note = (sixth: JsonValue[]): JsonValue => ({
+      root: xmlElement("abiword", {}, [
+        xmlElement("section", { xid: "1" }, [
+          xmlElement("p", { style: "Normal", xid: "5" }, ["Agenda"]),
+          xmlElement("p", { style: "Normal", xid: "6" }, sixth),
+        ]),
+      ]),
+      truncated: false,
+    });
+    const edits = [
+      {
+        old: ["Meeting at "],
+        edited: ["Meeting at ", run("3:30")],
+        text: "Meeting at 3:30",
+        split: [run("Meeting at 3"), ":30"],
+        wrong: ["Meeting at ", run("13:30")],
+      },
+      {
+        old: ["Meeting at ", run("3:30")],
+        edited: ["Meeting at "],
+        text: "Meeting at ",
+        split: [run("Meeting "), "at "],
+        wrong: ["Meeting at ", run("3:30")],
+      },
+    ];
+
+    for (const { old, edited, text, split, wrong } of edits) {
+      const [file] = draft({
+        "Documents/note.abw": path("document", "xml", note(old), note(edited)),
+      });
+
+      expect(file?.suggested).toEqual([
+        {
+          kind: "text_equals",
+          file: "Documents/note.abw",
+          pointer: "/root/children/[name=section]/children/[name=p][@xid=6]",
+          value: text,
+        },
+      ]);
+      expect(
+        [edited, split, wrong].map((saved) =>
+          passing("Documents/note.abw", file?.suggested, note(saved)),
+        ),
+      ).toEqual([[true], [true], [false]]);
+    }
+  });
+
+  it("suggests the paragraph's text where an edit adds a run, however deep in it the text sits, in the document's root too", () => {
+    const inBody = (paragraph: JsonValue[]): JsonValue => ({
+      root: xmlElement("body", {}, [xmlElement("p", {}, paragraph)]),
+      truncated: false,
+    });
+    const asRoot = (paragraph: JsonValue[]): JsonValue => ({
+      root: xmlElement("p", {}, paragraph),
+      truncated: false,
+    });
+    const shapes = [
+      [inBody, "/root/children/[name=p]"],
+      [asRoot, "/root"],
+    ] as const;
+    const runs = [
+      xmlElement("span", {}, [" world"]),
+      xmlElement("span", {}, [xmlElement("b", {}, [" world"])]),
+    ];
+
+    for (const [document, pointer] of shapes)
+      for (const added of runs) {
+        const [file] = draft({
+          "Documents/hello.xml": path(
+            "document",
+            "xml",
+            document(["Hello"]),
+            document(["Hello", added]),
+          ),
+        });
+
+        expect(file?.suggested).toEqual([
+          {
+            kind: "text_equals",
+            file: "Documents/hello.xml",
+            pointer,
+            value: "Hello world",
+          },
+        ]);
+        expect(
+          [
+            ["Hello", added],
+            ["Hello", xmlElement("span", {}, ["WRONG"])],
+            ["Hello"],
+          ].map((paragraph) =>
+            passing(
+              "Documents/hello.xml",
+              file?.suggested,
+              document(paragraph),
+            ),
+          ),
+        ).toEqual([[true], [false], [false]]);
+      }
+  });
+});
+
+describe("draftTaskFiles for text in an element its tag names alone", () => {
+  const LAYER = "/root/children/[name=g][@inkscape:label=Layer 1]";
+  // Body text that makes the layer's whole text longer than a draft compares.
+  const BODY = "The bake sale opens at nine in the school hall. ".repeat(50);
+  const poster = (
+    attributes: Record<string, string>,
+    headline: JsonValue[],
+    body = BODY,
+  ): JsonValue => ({
+    root: xmlElement("svg", {}, [
+      xmlElement("g", { "inkscape:label": "Layer 1" }, [
+        xmlElement("text", attributes, headline),
+        xmlElement("g", { id: "details" }, [
+          xmlElement("text", { id: "body" }, [xmlElement("tspan", {}, [body])]),
+        ]),
+      ]),
+      xmlElement("g", { "inkscape:label": "Layer 2" }),
+    ]),
+    truncated: false,
+  });
+  const tspan = (text: string, attributes: Record<string, string> = {}) =>
+    xmlElement("tspan", attributes, [text]);
+
+  it("names the text by its own unchanged attribute, an identifier first, where the layer is too long to check, so a save splitting it into runs passes", () => {
+    const headline = { "xml:space": "preserve", id: "headline" };
+    const [file] = draft({
+      "Pictures/poster.svg": path(
+        "document",
+        "xml",
+        poster(headline, [tspan("Spring Bake Sale")]),
+        poster(headline, [tspan("Summer Bake Sale")]),
+      ),
+    });
+
+    expect(file?.suggested).toEqual([
+      {
+        kind: "text_equals",
+        file: "Pictures/poster.svg",
+        pointer: `${LAYER}/children/[name=text][@id=headline]`,
+        value: "Summer Bake Sale",
+      },
+    ]);
+    expect(
+      [
+        [tspan("Summer Bake Sale")],
+        [tspan("Summer "), tspan("Bake Sale")],
+        [tspan("Spring Bake Sale")],
+      ].map((saved) =>
+        passing(
+          "Pictures/poster.svg",
+          file?.suggested,
+          poster(headline, saved),
+        ),
+      ),
+    ).toEqual([[true], [true], [false]]);
+
+    // An attribute the edit changed names nothing, so no text check is drafted.
+    const [renamed] = draft({
+      "Pictures/poster.svg": path(
+        "document",
+        "xml",
+        poster({ id: "headline" }, [tspan("Spring Bake Sale")]),
+        poster({ id: "title" }, [tspan("Summer Bake Sale")]),
+      ),
+    });
+    expect(
+      renamed?.suggested.filter(({ kind }) => kind === "text_equals"),
+    ).toEqual([]);
+  });
+
+  it("names the text by its own identifier ahead of a short layer, the outermost such first, and only by another attribute where the layer cannot take the check", async () => {
+    const check = (pointer: string, value: string) => [
+      { kind: "text_equals", file: "Pictures/poster.svg", pointer, value },
+    ];
+    const headline = { "xml:space": "preserve", id: "headline" };
+    const short = (text: string) =>
+      poster(headline, [tspan(text, { id: "tspan1" })], "Saturday");
+    const [identified] = draft({
+      "Pictures/poster.svg": path(
+        "document",
+        "xml",
+        short("Spring Bake Sale"),
+        short("Summer Bake Sale"),
+      ),
+    });
+    expect(identified?.suggested).toEqual(
+      check(`${LAYER}/children/[name=text][@id=headline]`, "Summer Bake Sale"),
+    );
+
+    const spaced = (body: string) => (text: string) =>
+      poster({ "xml:space": "preserve" }, [tspan(text)], body);
+    const [shortLayer, longLayer] = ["Saturday", BODY].map((body) =>
+      draft({
+        "Pictures/poster.svg": path(
+          "document",
+          "xml",
+          spaced(body)("Spring Bake Sale"),
+          spaced(body)("Summer Bake Sale"),
+        ),
+      }),
+    );
+    expect(shortLayer?.[0]?.suggested).toEqual(
+      check(LAYER, "Summer Bake SaleSaturday"),
+    );
+    expect(longLayer?.[0]?.suggested).toEqual(
+      check(
+        `${LAYER}/children/[name=text][@xml:space=preserve]`,
+        "Summer Bake Sale",
+      ),
+    );
+
+    // Inkscape's own save names its headline by the id among two texts, ahead of its tspan's id.
+    const [before, after] = await Promise.all(
+      ["before", "after"].map(async (end) =>
+        xmlView(
+          await readFile(
+            join(
+              import.meta.dirname,
+              "../../../tests/fixtures/inkscape",
+              end,
+              "poster.svg",
+            ),
+            "utf8",
+          ),
+        ),
+      ),
+    );
+    if (before === undefined || after === undefined) throw new Error("fixture");
+    const [saved] = draft({
+      "Pictures/poster.svg": path("document", "xml", before, after),
+    });
+    expect(saved?.suggested).toEqual(
+      check(
+        "/root/children/[name=g]/children/[name=text][@id=headline]",
+        "Summer Bake Sale",
+      ),
+    );
+  });
+});
+
+describe("draftTaskFiles for elements added whole holding text", () => {
+  const section = (paragraphs: JsonValue[]): JsonValue => ({
+    root: xmlElement("abiword", {}, [
+      xmlElement("section", { xid: "1" }, paragraphs),
+    ]),
+    truncated: false,
+  });
+
+  it("checks a run added to a paragraph made only of runs at the paragraph, though an attribute of its own names the run", () => {
+    const run = (props: string, text: string) =>
+      xmlElement("c", { props }, [text]);
+    const note = (runs: JsonValue[]) =>
+      section([
+        xmlElement("p", { xid: "5" }, ["Agenda"]),
+        xmlElement("p", { xid: "6" }, runs),
+      ]);
+    const meeting = run("lang:en-US", "Meeting at ");
+
+    const [file] = draft({
+      "Documents/note.abw": path(
+        "document",
+        "xml",
+        note([meeting]),
+        note([meeting, run("font-weight:bold", "3:30")]),
+      ),
+    });
+
+    expect(file?.suggested).toEqual([
+      {
+        kind: "text_equals",
+        file: "Documents/note.abw",
+        pointer: "/root/children/[name=section]/children/[name=p][@xid=6]",
+        value: "Meeting at 3:30",
+      },
+    ]);
+    expect(
+      [
+        [meeting, run("font-weight:bold", "3:30")],
+        [run("lang:en-US", "Meeting at 3:30")],
+        [meeting, run("font-weight:bold", "13:30")],
+      ].map((runs) =>
+        passing("Documents/note.abw", file?.suggested, note(runs)),
+      ),
+    ).toEqual([[true], [true], [false]]);
+  });
+
+  it("checks a new paragraph's text at a section short enough to check, and otherwise its own, rather than that it is there", () => {
+    const sections = [
+      ["Agenda", "/root/children/[name=section]", "AgendaBring the minutes"],
+      [
+        "Agenda. ".repeat(300),
+        "/root/children/[name=section]/children/[name=p][@xid=7]",
+        "Bring the minutes",
+      ],
+    ] as const;
+
+    for (const [agenda, pointer, value] of sections) {
+      const note = (added: JsonValue[]) =>
+        section([xmlElement("p", { xid: "5" }, [agenda]), ...added]);
+      const minutes = (text: string) =>
+        xmlElement("p", { xid: "7" }, [xmlElement("c", {}, [text])]);
+
+      const [file] = draft({
+        "Documents/note.abw": path(
+          "document",
+          "xml",
+          note([]),
+          note([minutes("Bring the minutes")]),
+        ),
+      });
+
+      expect(file?.suggested).toEqual([
+        { kind: "text_equals", file: "Documents/note.abw", pointer, value },
+      ]);
+      expect(
+        [[minutes("Bring the minutes")], [minutes("Bring the agenda")], []].map(
+          (added) =>
+            passing("Documents/note.abw", file?.suggested, note(added)),
+        ),
+      ).toEqual([[true], [false], [false]]);
     }
   });
 });
