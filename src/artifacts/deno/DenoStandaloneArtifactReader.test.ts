@@ -764,6 +764,17 @@ it("accepts an Intel trailer that opens with d3n0l4nd before trailing bytes", as
   });
 });
 
+it("fails closed on an Intel trailer truncated by its last byte", async () => {
+  const whole = denoIntelTrailer(buildDenoSection());
+  const bytes = whole.subarray(0, whole.length - 1);
+  await expect(
+    locateDenoStandalone(bytesHandle(bytes), bytes.length),
+  ).resolves.toMatchObject({
+    status: "present",
+    failure: { reason: "format" },
+  });
+});
+
 const ELF64_PHOFF = 32;
 const ELF64_SHOFF = 40;
 const ELF64_PHENTSIZE = 54;
@@ -886,15 +897,32 @@ it("reaches a SUI section note past an unreadable program table", async () => {
   });
 });
 
-it("names a truncated descriptor on a SUI note as Deno's failure", async () => {
+it("leaves a SUI note with an incomplete carrier name unconfirmed", async () => {
   const stub = Buffer.alloc(4);
   stub.writeUInt16LE("d3n0l4nd".length);
+  stub.write("d3", 2, "latin1");
   const bytes = gnuElf("program", elfNote("SUI", 0x53554901, stub));
+  await expect(
+    locateDenoStandalone(bytesHandle(bytes), bytes.length),
+  ).resolves.toEqual({ status: "absent" });
+});
+
+it("claims a SUI note once its complete carrier name matches", async () => {
+  const stub = Buffer.alloc(2);
+  stub.writeUInt16LE("d3n0l4nd".length);
+  const bytes = gnuElf(
+    "program",
+    elfNote(
+      "SUI",
+      0x53554901,
+      Buffer.concat([stub, Buffer.from("d3n0l4nd", "latin1")]),
+    ),
+  );
   await expect(
     locateDenoStandalone(bytesHandle(bytes), bytes.length),
   ).resolves.toMatchObject({
     status: "present",
-    failure: { reason: "format" },
+    location: { carrier: "elf", embedding: "elf-note", length: 0 },
   });
 });
 

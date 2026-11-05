@@ -318,12 +318,12 @@ const locateMachOSlice = async (
  * an Intel Deno executable, and the backward search meets that asset's
  * sentinel before the sentinel of the app that stores it. Sentinels inside a
  * confirmed payload are that payload's data, so only the remaining trailers
- * are returned, and `collapseRanges` rejects any that differ. A truncated
- * trailer that would enclose a confirmed one fails only if no enclosing
- * trailer found later in the search holds it as data. Each byte is
- * read at most once. When the slice cannot be searched to its start, a
- * confirmed trailer is refused because an enclosing one may remain unread,
- * and with none confirmed the image stays with native inventory.
+ * are returned, and `collapseRanges` rejects any that differ. A
+ * marker-confirmed truncated trailer fails unless an enclosing trailer found
+ * later in the search holds it as data. Each byte is read at most once. When
+ * the slice cannot be searched to its start, a confirmed or truncated trailer
+ * is refused because an enclosing one may remain unread, and with none
+ * found the image stays with native inventory.
  *
  * A sentinel inside a range the native image's own segments map (other than
  * __LINKEDIT, which libsui extends over the trailer) is that image's data,
@@ -341,14 +341,14 @@ const locateIntelTrailers = async (
   let tail = Buffer.alloc(0);
   let examined = 0;
   let trailers: IntelTrailer[] = [];
-  /** Sentinels of truncated trailers that would enclose a confirmed one. */
+  /** Sentinels of marker-confirmed trailers whose payload runs past the slice. */
   let truncated: number[] = [];
   while (position > base) {
     abortIfNeeded(carrier.signal);
     const chunkStart = Math.max(base, position - INTEL_CHUNK_BYTES);
     const chunk = await readExact(carrier, chunkStart, position - chunkStart);
     if (chunk === undefined) {
-      if (trailers.length > 0)
+      if (trailers.length > 0 || truncated.length > 0)
         throw denoCarrierFailure("Intel Mach-O slice is truncated");
       return { found: [], unread: "is truncated before its trailer search" };
     }
@@ -359,7 +359,8 @@ const locateIntelTrailers = async (
       if (index < 0 || index > searchFrom) break;
       examined += 1;
       if (examined > MAX_DENO_INTEL_TRAILER_SENTINELS) {
-        if (trailers.length > 0) throw denoIntelSentinelLimit();
+        if (trailers.length > 0 || truncated.length > 0)
+          throw denoIntelSentinelLimit();
         return {
           found: [],
           unread: `has more than ${String(MAX_DENO_INTEL_TRAILER_SENTINELS)} trailer sentinels`,
@@ -390,13 +391,11 @@ const locateIntelTrailers = async (
       if (marker === undefined || !marker.equals(DENO_SECTION_MAGIC)) continue;
       if (length > sliceEnd - offset) {
         // A marker-confirmed trailer whose payload runs past the slice is a
-        // truncated Deno app. When a confirmed trailer lies after its payload
-        // start, the truncated app would enclose it, and the inner one must
-        // not be reported in its place. The sentinel may still be stored data
-        // of an enclosing trailer the backward search has not reached, so
-        // the failure waits until the search ends.
-        if (trailers.some((t) => t.sentinelOffset >= offset))
-          truncated.push(sentinelStart);
+        // truncated Deno app, whether or not it would enclose a confirmed
+        // trailer. The sentinel may still be stored data of an enclosing
+        // trailer the backward search has not reached, so the failure waits
+        // until the search ends.
+        truncated.push(sentinelStart);
         continue;
       }
       const end = offset + length;
@@ -414,9 +413,7 @@ const locateIntelTrailers = async (
     position = chunkStart;
   }
   if (truncated.length > 0)
-    throw denoCarrierFailure(
-      "Intel Mach-O Deno trailer is truncated and encloses another Deno trailer",
-    );
+    throw denoCarrierFailure("Intel Mach-O Deno trailer is truncated");
   return { found: trailers, unread: null };
 };
 
@@ -659,8 +656,10 @@ const readSuiRange = async (
     throw denoCarrierFailure("ELF SUI descriptor is truncated");
   const nameLength = prefix.readUInt16LE(0);
   if (nameLength !== SECTION_NAME_BYTES.length) return undefined;
+  // A descriptor too short for the whole name has not shown `d3n0l4nd`, so
+  // the note stays unconfirmed and the image stays with native inventory.
   if (2 + nameLength > descriptorLength || prefix.length < 2 + nameLength)
-    throw denoCarrierFailure("ELF SUI descriptor name is truncated");
+    return undefined;
   if (!prefix.subarray(2, 2 + nameLength).equals(SECTION_NAME_BYTES))
     return undefined;
   const length = descriptorLength - 2 - nameLength;

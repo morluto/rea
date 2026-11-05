@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { expect, it } from "vitest";
 
+import { artifactMcpCall } from "../../../scripts/lib/artifact-e2e.mjs";
 import { ArtifactProvider } from "../../../src/artifacts/ArtifactProvider.js";
 import { denoElf } from "../../../src/artifacts/deno/DenoStandalone.fixture.js";
 import { artifactInventorySummaryViewResultSchema } from "../../../src/domain/analysisView/analysisView.js";
@@ -25,10 +26,14 @@ it("exposes Deno compile metadata through the existing MCP artifact tool", async
     await server.connect(serverTransport);
     await client.connect(clientTransport);
     expect(
-      (await client.callTool({ name: "open_binary", arguments: { path } }))
-        .isError,
+      (
+        await artifactMcpCall(client, {
+          name: "open_binary",
+          arguments: { path },
+        })
+      ).isError,
     ).not.toBe(true);
-    const reply = await client.callTool({
+    const reply = await artifactMcpCall(client, {
       name: "inspect_artifact",
       arguments: { detail: "summary" },
     });
