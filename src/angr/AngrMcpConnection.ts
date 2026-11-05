@@ -20,7 +20,7 @@ import { err, ok, type Result } from "../domain/result.js";
 import type { ChildProcess } from "node:child_process";
 import { detachOwnedProcessHandles } from "../process/OwnedProcessDetach.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
-import { ANGR_PROVIDER_IDENTITY } from "./AngrProviderCapabilities.js";
+import { ANGR_PROVIDER_IDENTITY } from "./AngrProviderMetadata.js";
 
 /** Injectable MCP boundary used by the provider and its conformance tests. */
 export interface AngrMcpConnection {

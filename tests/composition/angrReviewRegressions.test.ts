@@ -5,7 +5,7 @@ import { createTestBinarySession } from "../fixtures/binarySession.js";
 import { afterEach, describe, expect, it } from "vitest";
 import { AngrSessionClient } from "../../src/angr/AngrSessionClient.js";
 import { readAngrConfiguration } from "../../src/angr/AngrConfiguration.js";
-import { ANGR_PROVIDER_IDENTITY } from "../../src/angr/AngrProviderCapabilities.js";
+import { ANGR_PROVIDER_IDENTITY } from "../../src/angr/AngrProviderMetadata.js";
 import { createAnalysisProfile } from "../../src/domain/analysisProfile.js";
 import {
   AnalysisProtocolError,

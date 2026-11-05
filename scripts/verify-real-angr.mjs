@@ -44,7 +44,7 @@ const [
 ] = await Promise.all([
   importBuilt("contracts/toolContracts.js"),
   importBuilt("domain/evidence.js"),
-  importBuilt("domain/hopperValues.js"),
+  importBuilt("domain/native/functionDossier.js"),
   importBuilt("angr/AngrConfiguration.js"),
   importBuilt("angr/AngrMcpConnection.js"),
 ]);
@@ -173,6 +173,8 @@ const mcp = async (cliDossier) => {
     opened = true;
     const analyzed = await call("analyze_function", {
       procedure: values.procedure,
+      // analyze_function defaults to a summary view; the lane checks full Evidence.
+      detail: "complete",
     });
     const dossier = functionDossierSchema.parse(observe(analyzed));
     assert.deepEqual(dossier.procedure, cliDossier.procedure);

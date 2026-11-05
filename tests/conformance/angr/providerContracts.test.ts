@@ -6,15 +6,15 @@ import { AngrSessionClient } from "../../../src/angr/AngrSessionClient.js";
 import { readAngrConfiguration } from "../../../src/angr/AngrConfiguration.js";
 import {
   ANGR_MUTATING_OPERATIONS,
-  ANGR_OPERATIONS,
   angrCapabilities,
 } from "../../../src/angr/AngrProviderCapabilities.js";
+import { ANGR_OPERATIONS } from "../../../src/angr/AngrProviderMetadata.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
 import type { JsonValue } from "../../../src/domain/jsonValue.js";
-import { ToolResultDelivery } from "../../../src/server/toolResult.js";
+import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 
-const delivery = new ToolResultDelivery(STDIO_DEFAULT_MAX_BUFFER_SIZE);
+const delivery = createToolResultDelivery(STDIO_DEFAULT_MAX_BUFFER_SIZE);
 
 const roots: string[] = [];
 afterEach(async () => {

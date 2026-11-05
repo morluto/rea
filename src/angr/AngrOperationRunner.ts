@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { analysisSearchInput } from "../contracts/analysisSearchContract.js";
+import { nativeSearchInput } from "../domain/native/nativeSearch.js";
 import {
   AnalysisInputError,
   AnalysisCancelledError,
@@ -8,9 +8,9 @@ import {
 import {
   functionDossierSchema,
   functionInstructionWindowSchema,
-  type functionBodySchema,
-  type procedureIdentitySchema,
-} from "../domain/hopperValues.js";
+} from "../domain/native/functionDossier.js";
+import type { functionBodySchema } from "../domain/native/functionBody.js";
+import type { procedureIdentitySchema } from "../domain/native/procedureInfo.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { RelationshipCoverage } from "../domain/relationshipCoverage.js";
 import { combineFunctionRelationshipCoverage } from "../domain/functionCallCoverage.js";
@@ -23,6 +23,8 @@ import {
 } from "./AngrProviderCapabilities.js";
 import { AngrEditRunner } from "./AngrEditRunner.js";
 import { matchRegexValues } from "../process/RegexMatcher.js";
+import type { RegexMatchingDeadline } from "../config/regexMatchingDeadline.js";
+import type { RegexWorkerHeapRequest } from "../config/regexWorkerHeapRequest.js";
 import {
   angrAddressSchema,
   basicBlocksSchema,
@@ -51,7 +53,7 @@ type FunctionBody = z.infer<typeof functionBodySchema>;
 
 const FUNCTION_PAGE_SIZE = 1000;
 const STRING_LIMIT = 1_000_000;
-const searchQuerySchema = z.object(analysisSearchInput);
+const searchQuerySchema = z.object(nativeSearchInput);
 /** Only these upstream answers prove the selector names no analyzed function. */
 const MISSING_FUNCTION_ANSWER = /No function (?:found at address|named)/u;
 const CALL_GRAPH_LIMITATION =
@@ -199,6 +201,9 @@ export class AngrOperationRunner {
       /** Called after an upstream edit applied; session caches derived from names are stale. */
       readonly onMutation: () => void;
       readonly onFlavor: (flavor: string) => void;
+      /** Configured regex limits, shared with the other providers' searches. */
+      readonly regexDeadline?: RegexMatchingDeadline | undefined;
+      readonly regexHeapRequest?: RegexWorkerHeapRequest | undefined;
     },
   ) {}
 
@@ -539,14 +544,8 @@ export class AngrOperationRunner {
         pattern: query.pattern,
         caseSensitive: query.case_sensitive,
         signal: this.options.signal,
-        invalidPattern: (reason) =>
-          new AnalysisInputError(operation, undefined, [
-            {
-              path: ["pattern"],
-              reason: "invalid_format",
-              message: `Supply a valid ECMAScript Unicode regex: ${reason}`,
-            },
-          ]),
+        deadline: this.options.regexDeadline,
+        heapRequest: this.options.regexHeapRequest,
       });
       if (!matched.ok) throw matched.error;
       const selected = new Set(matched.value);

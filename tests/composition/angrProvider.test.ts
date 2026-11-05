@@ -7,7 +7,7 @@ import { readAngrConfiguration } from "../../src/angr/AngrConfiguration.js";
 import { createAngrTarget, RecordingAngrMcp } from "../fixtures/angrMcp.js";
 import { createTestBinarySession } from "../fixtures/binarySession.js";
 import { parseConfig } from "../../src/config/parseConfig.js";
-import { functionDossierSchema } from "../../src/domain/hopperValues.js";
+import { functionDossierSchema } from "../../src/domain/native/functionDossier.js";
 import { angrLoadOptions } from "../../src/angr/AngrProtocolValues.js";
 import type { BinaryTarget } from "../../src/domain/binaryTargetTypes.js";
 

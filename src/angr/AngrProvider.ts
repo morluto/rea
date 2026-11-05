@@ -17,6 +17,7 @@ import type { ConfigurationError } from "../domain/configurationErrors.js";
 import { createHash } from "node:crypto";
 import canonicalize from "canonicalize";
 import type { Result } from "../domain/result.js";
+import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import {
   readAngrConfiguration,
   type AngrConfiguration,
@@ -25,10 +26,8 @@ import {
   createAngrMcpConnection,
   type AngrMcpConnection,
 } from "./AngrMcpConnection.js";
-import {
-  angrCapabilities,
-  ANGR_PROVIDER_IDENTITY,
-} from "./AngrProviderCapabilities.js";
+import { angrCapabilities } from "./AngrProviderCapabilities.js";
+import { ANGR_PROVIDER_IDENTITY } from "./AngrProviderMetadata.js";
 import { AngrSessionClient } from "./AngrSessionClient.js";
 
 /** Bring-your-own angr MCP candidate; discovery performs no provider startup. */
@@ -81,6 +80,7 @@ export class AngrProvider implements AnalysisProviderCandidate {
           ? "executable_missing"
           : "open_options_invalid",
       reason: config.error.message,
+      remediation: projectAnalysisError(config.error).remediation.action,
       diagnostics: { configured, live_connection_probed: false },
     };
   }
@@ -156,6 +156,10 @@ export class AngrProvider implements AnalysisProviderCandidate {
       target,
       this.connectionFactory(config.value, this.environment),
       profile,
+      {
+        deadline: this.config.regexMatchingDeadline,
+        heapRequest: this.config.regexWorkerHeapRequest,
+      },
     );
   }
   #configuration() {

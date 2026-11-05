@@ -33,6 +33,8 @@ import {
   type AngrMcpConnection,
 } from "./AngrMcpConnection.js";
 import { parseAngrInput } from "./AngrInput.js";
+import type { RegexMatchingDeadline } from "../config/regexMatchingDeadline.js";
+import type { RegexWorkerHeapRequest } from "../config/regexWorkerHeapRequest.js";
 import {
   AngrOperationRunner,
   type AngrRawObservation,
@@ -40,11 +42,13 @@ import {
 import {
   ANGR_FLAVOR_TOOLS,
   ANGR_LIMITATIONS,
-  ANGR_OPERATIONS,
-  ANGR_PROVIDER_IDENTITY,
   ANGR_REQUIRED_TOOLS,
   type AngrOperation,
 } from "./AngrProviderCapabilities.js";
+import {
+  ANGR_OPERATIONS,
+  ANGR_PROVIDER_IDENTITY,
+} from "./AngrProviderMetadata.js";
 import {
   angrLoadOptions,
   cfgStatsSchema,
@@ -122,6 +126,10 @@ export class AngrSessionClient implements AnalysisClient {
     private readonly target: BinaryTarget,
     private readonly connection: AngrMcpConnection,
     private readonly profile?: AnalysisProfileCommitment,
+    private readonly regex: {
+      readonly deadline?: RegexMatchingDeadline | undefined;
+      readonly heapRequest?: RegexWorkerHeapRequest | undefined;
+    } = {},
   ) {}
 
   execute(
@@ -270,6 +278,8 @@ export class AngrSessionClient implements AnalysisClient {
       | undefined;
     return new AngrOperationRunner(this.connection, this.#loaded.project_id, {
       signal: options?.signal,
+      regexDeadline: this.regex.deadline,
+      regexHeapRequest: this.regex.heapRequest,
       selectorOrigin: options?.selectorOrigin,
       callGraph: async (runner) => {
         if (this.config.mode === "attached") {

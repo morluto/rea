@@ -241,6 +241,7 @@ instalează și nu actualizează niciunul dintre aceste două instrumente.
 Formatele native și platformele acceptate diferă în funcție de motorul de analiză.
 Consultă [configurarea Hopper și Ghidra](../installation.md#hopper),
 [ghidul IDA](../ida-provider.md) (inclusiv o componentă opțională de legătură MCP nativă),
+[ghidul angr](../angr-provider.md),
 [ghidul decompilatorului Kuna](../kuna-provider.md) și
 [suportul experimental Ghidra pe Windows](../windows-ghidra-p0.md).
 Ghidra acceptă și [analiza DOS pe 16 biți](../ghidra-dos.md).
