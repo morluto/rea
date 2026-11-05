@@ -18,16 +18,18 @@ cliTest.for([
     field: "device-path",
     valid: "/sdcard",
     invalid: "sdcard",
+    constraint: { expected: "regex" },
   },
   {
     command: "resolve-adb-packages",
     field: "query",
     valid: "a".repeat(256),
     invalid: "a".repeat(257),
+    constraint: { maximum: 256 },
   },
 ])(
   "publishes the enforced ADB selector constraint for $command",
-  async ({ command, field, valid, invalid }, { cli }) => {
+  async ({ command, field, valid, invalid, constraint }, { cli }) => {
     const schema = await cli.run({
       arguments: [command, "--schema", "--json"],
     });
@@ -43,7 +45,7 @@ cliTest.for([
     expect(result.exitCode).toBe(1);
     expect(result.json).toMatchObject({
       code: "VALIDATION_ERROR",
-      fieldErrors: [expect.objectContaining({ path: field })],
+      fieldErrors: [expect.objectContaining({ path: field, ...constraint })],
     });
   },
 );
