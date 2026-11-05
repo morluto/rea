@@ -269,8 +269,7 @@ it("reports sibling unavailability when fallback observes settled export failure
     .spyOn(KunaProjectCache.prototype, "build")
     .mockImplementation(function (this: KunaProjectCache, ...args) {
       const promise = originalBuild.apply(this, args);
-      promise.finally(() => exportSettled.resolve());
-      return promise;
+      return promise.finally(() => exportSettled.resolve());
     });
   const launcher: KunaProcessLauncher = async (options) => {
     if (options.arguments[0] === "decompile") {
@@ -302,8 +301,11 @@ it("reports sibling unavailability when fallback observes settled export failure
     await exportSettled.promise;
   } finally {
     exportSettled.resolve();
-    exportBuild.mockRestore();
-    expect(await client.close()).toEqual({ ok: true, value: null });
+    try {
+      expect(await client.close()).toEqual({ ok: true, value: null });
+    } finally {
+      exportBuild.mockRestore();
+    }
   }
 });
 
