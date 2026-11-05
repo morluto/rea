@@ -87,6 +87,7 @@ export default defineConfig({
           { text: "Desktop installations", link: "/desktop-applications" },
           { text: "Firmware", link: "/firmware-analysis" },
           { text: "iNES containers", link: "/ines-containers" },
+          { text: "IMG v2 and ANP3", link: "/img-anp3-artifacts" },
           { text: "SQLite databases", link: "/sqlite-databases" },
           { text: "Packet captures", link: "/packet-captures" },
           { text: "Signal recordings", link: "/signal-recordings" },

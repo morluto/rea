@@ -292,6 +292,18 @@ Plaintext packages retain header, table and member facts with verbatim member
 bytes. `V1MMWX` packages are detected as encrypted coverage and refused on
 extraction. See [wxapkg](wxapkg.md) for layout and coverage boundaries.
 
+Inspect an IMG version 2 archive or an ANP3 animation package without the
+engine that ships them:
+
+```sh
+rea inspect-artifact assets.img --json
+rea inspect-artifact actor.anim --json
+```
+
+IMG version 2 members keep their directory sectors; ANP3 animations report
+their objects, bones, keyframe counts and duration. See
+[IMG v2 and ANP3](img-anp3-artifacts.md) for sector padding and nested packages.
+
 Inspect an ESP32-family app or bootloader image without esptool:
 
 ```sh

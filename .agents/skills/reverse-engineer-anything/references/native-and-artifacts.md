@@ -715,6 +715,14 @@ status with unknown coverage and are refused on extraction; no decryption is
 attempted. See
 [wxapkg](https://github.com/morluto/rea/blob/main/docs/wxapkg.md).
 
+IMG version 2 archives (`VER2`) list members with their directory sectors;
+sizes are whole 2048-byte sectors, so member bytes include padding. ANP3
+animation packages (`ANP3`) list each animation with its object count, bones,
+keyframe counts and duration. An ANP3 member is classified as `anp3` but not
+expanded: extract it, then open and inspect it. Keyframe values and the model,
+texture and collision streams of other members are not decoded. See
+[IMG v2 and ANP3](https://github.com/morluto/rea/blob/main/docs/img-anp3-artifacts.md).
+
 U-Boot legacy uImages use the same inspection/extraction workflows. Prefer a
 retained summary and selected inventory views for header facts or component
 IDs. Header addresses/CPU/OS are declarations; payloads remain as stored.

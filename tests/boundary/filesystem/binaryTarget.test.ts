@@ -41,6 +41,7 @@ import {
 } from "../../fixtures/espImage.js";
 import { espFlashDump } from "../../../src/domain/firmware/espFlash.fixture.js";
 import { javaClassFile } from "../../fixtures/javaClassFile.js";
+import { buildAnp3, buildImgV2 } from "../../fixtures/imgAnp3.js";
 import { dfuseFile } from "../../../src/domain/firmware/dfuse.fixture.js";
 import {
   patternBytes,
@@ -675,6 +676,36 @@ describe("binary target I/O: firmware containers", () => {
         ok: false,
         error: { _tag: "BinaryTargetError" },
       });
+  });
+});
+
+describe("binary target I/O: game asset containers", () => {
+  it("opens IMG version 2 archives and ANP3 packages by signature", async () => {
+    const directory = await createTestTempDirectory("rea-img-anp3-target-");
+    const anp3 = buildAnp3("actor", [{ name: "walk", objects: [] }]);
+    const paths = {
+      img: join(directory, "anim.dat"),
+      anp3: join(directory, "actor.bin"),
+      legacy: join(directory, "legacy.img"),
+    };
+    await Promise.all([
+      writeFile(paths.img, buildImgV2([{ name: "actor.bin", data: anp3 }])),
+      writeFile(paths.anp3, anp3),
+      // IMG version 1 has no header; its directory is a separate .dir file.
+      writeFile(paths.legacy, Buffer.alloc(2048)),
+    ]);
+    for (const [path, format] of [
+      [paths.img, "img-v2"],
+      [paths.anp3, "anp3"],
+    ] as const)
+      expect(await parseBinaryTarget(path)).toMatchObject({
+        ok: true,
+        value: { kind: "archive", format },
+      });
+    expect(await parseBinaryTarget(paths.legacy)).toMatchObject({
+      ok: false,
+      error: { _tag: "BinaryTargetError" },
+    });
   });
 });
 

@@ -41,6 +41,8 @@ type FormatsWithReaders =
   | "esp-image"
   | "uf2"
   | "dfuse"
+  | "img-v2"
+  | "anp3"
   | "esp-flash-image"
   | "fit";
 

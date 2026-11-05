@@ -10,6 +10,8 @@ import { detectHexRecordEncoding } from "../../domain/firmware/hexRecords.js";
 import { recognizeEspImage } from "../../domain/firmware/espImage.js";
 import { hasUf2Block } from "../../domain/firmware/uf2.js";
 import { isDfuSeFile } from "../../domain/firmware/dfuse.js";
+import { hasImgV2Header } from "../../domain/imgArchiveFormat.js";
+import { hasAnp3Header } from "../../domain/anp3AnimationFormat.js";
 import { hasFitImagesNode } from "../../domain/firmware/fitImage.js";
 import type { ArtifactClassificationEvidence } from "../ArtifactClassificationProbe.js";
 import { asarHeaderAdmissionFailure } from "../AsarHeader.js";
@@ -620,6 +622,8 @@ export const classifyArtifactBytes = (
   if (hasUf2Block(prefix)) return "uf2";
   if (suffix !== undefined && isDfuSeFile(prefix, suffix, fileSize))
     return "dfuse";
+  if (hasImgV2Header(prefix)) return "img-v2";
+  if (hasAnp3Header(prefix)) return "anp3";
   if (recognizeEspImage(prefix, fileSize) === "esp-image") return "esp-image";
   if (hasFitImagesNode(prefix)) return "fit";
   if (hasBinaryPlistSignature(prefix)) return "plist";
