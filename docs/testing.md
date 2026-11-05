@@ -16,6 +16,20 @@ and its original receipt JSON remain documentation, checked by the report produc
 Use source feedback while editing, explicit boundary checks for the changed
 behavior, and complete CI evidence before merging.
 
+On Windows, PowerShell may resolve `npm` to `npm.ps1` and refuse to load it
+when script execution is restricted. If the error names `npm.ps1`, use the
+installed `npm.cmd` launcher for the same commands, for example:
+
+```powershell
+npm.cmd run test:local -- src/config.test.ts
+npm.cmd run check:fast
+```
+
+This selects npm's Windows command launcher without changing PowerShell's
+execution policy. Keep the repository's pinned Node.js and npm versions on
+`PATH`; this does not install a toolchain or fix missing dependencies. Scripts
+that invoke PowerShell themselves remain subject to their own policy checks.
+
 | Command                           | Scope                                                                                                                   |
 | --------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
 | `npm run test:local`              | Dirty source tests via the import graph, without build; explicit source paths run regardless of Git status              |
