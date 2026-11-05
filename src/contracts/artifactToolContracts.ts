@@ -44,6 +44,7 @@ export const artifactExtractionInputSchema = z.strictObject({
       (ids) => new Set(ids).size === ids.length,
       "Occurrence IDs must be unique",
     )
+    .meta({ uniqueItems: true })
     .exactOptional()
     .describe(
       "Exact regular-file or slice occurrence IDs from the current inventory. Omit to extract all regular entries exposed by the active reader. Directories, links, the root and members inside nested archives cannot be selected.",

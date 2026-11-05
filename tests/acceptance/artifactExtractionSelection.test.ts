@@ -17,6 +17,7 @@ import {
 } from "../../src/domain/artifactGraph.js";
 import { artifactInspectionResultSchema } from "../../src/domain/artifactInspection.js";
 import { parseEvidence } from "../../src/domain/evidence.js";
+import { advertisedMcpToolSchemas } from "../fixtures/advertisedMcpTool.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 
 const execute = promisify(execFile);
@@ -120,7 +121,11 @@ it("keeps CLI/MCP selection identity, invalid-input refusals and committed outpu
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [cli, "mcp"],
-    env: data.environment,
+    env: {
+      ...data.environment,
+      REA_MCP_INPUT_SCHEMA_PROFILE: "full",
+      REA_MCP_TOOL_FAMILIES: "artifact,session",
+    },
     stderr: "pipe",
   });
   const client = new Client({
@@ -135,6 +140,26 @@ it("keeps CLI/MCP selection identity, invalid-input refusals and committed outpu
       arguments: { path: data.path },
     });
     expect(opened.isError).not.toBe(true);
+    const schemas = await advertisedMcpToolSchemas(client, "extract_artifact");
+    for (const occurrence_ids of [[id], [id, data.occurrence("lib/other.so")]])
+      expect(
+        schemas.ajv.validate(schemas.inputSchema, {
+          output_root: output,
+          occurrence_ids,
+        }),
+        JSON.stringify(schemas.ajv.errors),
+      ).toBe(true);
+    expect(
+      schemas.ajv.validate(schemas.inputSchema, {
+        output_root: output,
+        occurrence_ids: [id, id],
+      }),
+    ).toBe(false);
+    expect(schemas.ajv.errors).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ keyword: "uniqueItems" }),
+      ]),
+    );
     const reply = await artifactMcpCall(client, {
       name: "extract_artifact",
       arguments: { output_root: output, occurrence_ids: [id] },
@@ -147,18 +172,20 @@ it("keeps CLI/MCP selection identity, invalid-input refusals and committed outpu
     expect(result.output_root).toBe(output);
     expect(result.extraction_manifest).toEqual(cliResult.extraction_manifest);
     expect(result.artifacts).toEqual(cliResult.artifacts);
-    const invalidOutput = join(data.root, "invalid-output");
-    const invalid = await artifactMcpCall(client, {
-      name: "extract_artifact",
-      arguments: {
-        output_root: invalidOutput,
-        occurrence_ids: [`occ_${"0".repeat(64)}`],
-      },
-    });
-    expect(invalid.isError).toBe(true);
-    await expect(lstat(invalidOutput)).rejects.toMatchObject({
-      code: "ENOENT",
-    });
+    for (const [index, occurrence_ids] of [
+      [`occ_${"0".repeat(64)}`],
+      [id, id],
+    ].entries()) {
+      const invalidOutput = join(data.root, `invalid-output-${index}`);
+      const invalid = await artifactMcpCall(client, {
+        name: "extract_artifact",
+        arguments: { output_root: invalidOutput, occurrence_ids },
+      });
+      expect(invalid.isError).toBe(true);
+      await expect(lstat(invalidOutput)).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+    }
     const closed = await artifactMcpCall(client, {
       name: "close_binary",
       arguments: {},
