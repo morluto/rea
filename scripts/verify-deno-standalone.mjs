@@ -1,26 +1,40 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
 import { access, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { promisify } from "node:util";
 import { importVerifierSource } from "./lib/verifier-source-loader.mjs";
 import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
 import { createVerifierCommands } from "./lib/verify-commands.mjs";
 
 /** Layout reference in docs/deno-standalone.md. Not "whatever deno is on PATH". */
 const REQUIRED_DENO_VERSION = "2.9.8";
-const execFileAsync = promisify(execFile);
 
-// Reject a different Deno release before the verifier source graph loads.
-const version = (
-  await execFileAsync("deno", ["--version"], { encoding: "utf8" })
-).stdout.trim();
-const reported = /^deno (\d+\.\d+\.\d+)/m.exec(version);
-if (reported?.[1] !== REQUIRED_DENO_VERSION)
-  throw new Error(
-    `verify-deno-standalone requires Deno ${REQUIRED_DENO_VERSION}; deno --version reported:\n${version}`,
+// The command owner supervises the version check, so a stalled `deno` is
+// bounded and cleaned up. Reject a different release before any runtime root.
+const commands = await createVerifierCommands();
+const run = (command, args, options = {}) =>
+  commands.exec(command, args, {
+    timeout: 300_000,
+    maxBuffer: 32 * 1024 * 1024,
+    ...options,
+  });
+let version;
+try {
+  version = (
+    await run("deno", ["--version"], { timeout: 30_000 })
+  ).stdout.trim();
+  const reported = /^deno (\d+\.\d+\.\d+)/m.exec(version);
+  if (reported?.[1] !== REQUIRED_DENO_VERSION)
+    throw new Error(
+      `verify-deno-standalone requires Deno ${REQUIRED_DENO_VERSION}; deno --version reported:\n${version}`,
+    );
+} catch (refusal) {
+  // Close the owner on refusal while keeping both failures when cleanup fails.
+  await withVerifierCleanup(
+    () => Promise.reject(refusal),
+    [() => commands.close()],
   );
+}
 
 const { PrivateRuntimeRoot } = await importVerifierSource(
   new URL("../src/process/PrivateRuntimeRoot.ts", import.meta.url).href,
@@ -39,13 +53,6 @@ const sourceText = `import text from "./asset.txt" with { type: "text" };\nimpor
 const assetText = "hello-asset\n";
 const HOST_CARRIERS = { darwin: "mach-o", linux: "elf", win32: "pe" };
 const root = await PrivateRuntimeRoot.create({ prefix: "rea-deno-verifier-" });
-const commands = await createVerifierCommands();
-const run = (command, args, options = {}) =>
-  commands.exec(command, args, {
-    timeout: 300_000,
-    maxBuffer: 32 * 1024 * 1024,
-    ...options,
-  });
 let commandsClosed = false;
 
 const cli = async (binary) =>
