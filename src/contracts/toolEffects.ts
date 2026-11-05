@@ -654,7 +654,7 @@ const TOOL_EFFECT_AUDIT: Readonly<Record<string, EffectAudit>> = {
     executesForeignCode: true,
     idempotent: false,
   }),
-  inspect_macho: nativeEvidence,
+  inspect_macho: { ...nativeEvidence, writesFilesystem: true },
   inspect_signature: { ...nativeEvidence, writesFilesystem: true },
   inspect_plist: nativeEvidence,
   list_architectures: nativeEvidence,
