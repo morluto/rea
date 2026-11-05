@@ -24,27 +24,97 @@ const isRecord = (
 const escapePointer = (segment: string) =>
   segment.replaceAll("~", "~0").replaceAll("/", "~1");
 
+/** Longest JSON pointer listed; a longer one is only counted, so deep paths never fill the lists. */
+const MAX_LISTED_POINTER = 4096;
+
+/** Values found so far of one kind: the first pointers, and how many. */
+interface Found {
+  readonly listed: string[];
+  count: number;
+}
+
+/** The pointer being walked, as escaped segments and its length in characters. */
+interface PointerPath {
+  readonly segments: string[];
+  length: number;
+}
+
+const found = (): Found => ({ listed: [], count: 0 });
+
+/** Count a value, building its pointer only when it is listed. */
+const note = (into: Found, path: PointerPath): void => {
+  into.count += 1;
+  if (into.listed.length < MAX_LISTED && path.length <= MAX_LISTED_POINTER)
+    into.listed.push(path.segments.map((segment) => `/${segment}`).join(""));
+};
+
 /**
- * Every value in a JSON document keyed by JSON pointer: a scalar as JSON, a
- * container as `[]` or `{}`, so an array that becomes an object with the same
- * members is still a change.
+ * A value's own entry: a scalar as JSON, a container as `[]` or `{}`, so an
+ * array that becomes an object with the same members is still a change.
  */
-const flatten = (
-  value: JsonValue,
-  pointer = "",
-  values = new Map<string, string>(),
-): Map<string, string> => {
-  if (Array.isArray(value)) {
-    values.set(pointer, "[]");
-    value.forEach((item, index) =>
-      flatten(item, `${pointer}/${String(index)}`, values),
+const ownEntry = (value: JsonValue): string => {
+  if (Array.isArray(value)) return "[]";
+  return isRecord(value) ? "{}" : JSON.stringify(value);
+};
+
+/** The member a pointer segment names, the way JSON pointers resolve it. */
+const memberOf = (value: JsonValue, key: string): JsonValue | undefined => {
+  if (Array.isArray(value))
+    return String(Number(key)) === key ? value[Number(key)] : undefined;
+  return isRecord(value) && Object.hasOwn(value, key) ? value[key] : undefined;
+};
+
+/**
+ * Walk `from` in document order against `other`, noting each value `other`
+ * lacks in `missing` and, when given, each whose own entry differs in
+ * `changed`. One path is shared, so memory follows depth, not the document.
+ */
+const walk = (
+  from: JsonValue,
+  other: JsonValue | undefined,
+  path: PointerPath,
+  into: { readonly missing: Found; readonly changed?: Found },
+): void => {
+  if (other === undefined) note(into.missing, path);
+  else if (into.changed !== undefined && ownEntry(from) !== ownEntry(other))
+    note(into.changed, path);
+  const visit = (key: string, item: JsonValue) => {
+    const segment = escapePointer(key);
+    path.segments.push(segment);
+    path.length += segment.length + 1;
+    walk(
+      item,
+      other === undefined ? undefined : memberOf(other, key),
+      path,
+      into,
     );
-  } else if (isRecord(value)) {
-    values.set(pointer, "{}");
-    for (const [key, item] of Object.entries(value))
-      flatten(item, `${pointer}/${escapePointer(key)}`, values);
-  } else values.set(pointer, JSON.stringify(value));
-  return values;
+    path.segments.pop();
+    path.length -= segment.length + 1;
+  };
+  if (Array.isArray(from))
+    from.forEach((item, index) => visit(String(index), item));
+  else if (isRecord(from))
+    for (const [key, item] of Object.entries(from)) visit(key, item);
+};
+
+/** Values added, removed and changed between two JSON documents, by JSON pointer. */
+const compareTrees = (
+  before: JsonValue,
+  after: JsonValue,
+): DesktopStateDifference => {
+  const [added, removed, changed] = [found(), found(), found()];
+  walk(after, before, { segments: [], length: 0 }, { missing: added, changed });
+  walk(before, after, { segments: [], length: 0 }, { missing: removed });
+  return {
+    kind: "values",
+    added: added.listed,
+    removed: removed.listed,
+    changed: changed.listed,
+    added_count: added.count,
+    removed_count: removed.count,
+    changed_count: changed.count,
+    complete: true,
+  };
 };
 
 const compareMaps = (
@@ -202,7 +272,7 @@ const compareViews = (
       return lineDifference(before, after);
     case "json":
     case "xml":
-      return compareMaps("values", flatten(before), flatten(after));
+      return compareTrees(before, after);
     case "keyfile":
     case "dconf":
       return compareMaps("keys", keyEntries(before), keyEntries(after));

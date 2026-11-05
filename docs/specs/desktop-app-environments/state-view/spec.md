@@ -30,8 +30,10 @@ generation reads the kinds of change.
 - Changes between versions are created, deleted, or lines, values, keys or
   rows with added, removed and changed lists (100 each, with counts); content
   for binary files and unreadable when a view is missing. Values are JSON
-  pointers to every value, containers included; keys are `group/key` with the
-  key escaped as a JSON pointer segment, so distinct entries never share a name.
+  pointers to every value, containers included, compared on one shared path
+  so memory follows depth, and a pointer over 4096 characters is counted but
+  not listed; keys are `group/key` with the key escaped as a JSON pointer
+  segment, so distinct entries never share a name.
 - The Evidence has operation `inspect_desktop_application_state`, predicate
   type `rea.desktop-application-state` and confidence `inferred`.
 

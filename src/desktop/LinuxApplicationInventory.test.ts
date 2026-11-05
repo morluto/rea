@@ -237,6 +237,24 @@ describe.skipIf(process.platform === "win32")(
       );
     });
 
+    it("reads a relative PATH entry from the folder the entry starts in", async () => {
+      const installed = await fixture();
+      const { home } = installed;
+      const opt = join(home, "opt/bin");
+      await mkdir(opt, { recursive: true });
+      await writeFile(join(opt, "notes"), "#!/bin/sh\nexit 0\n");
+      await chmod(join(opt, "notes"), 0o755);
+      await mkdir(join(home, ".local/share/applications"), { recursive: true });
+      await writeFile(
+        join(home, ".local/share/applications/org.example.dot.desktop"),
+        `[Desktop Entry]\nType=Application\nName=Dot\nPath=${opt}\nExec=env PATH=. notes\n`,
+      );
+
+      const inventory = await inventoryOf("org.example.dot", installed);
+
+      expect(inventory.executable.path).toBe(join(opt, "notes"));
+    });
+
     it("names state directories after the entry's full id", async () => {
       const installed = await fixture();
       const { home } = installed;
