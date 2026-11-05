@@ -137,6 +137,18 @@ it("opens a resource-only bundle without executable identity and keeps snapshot 
   expect(session.allowsSnapshotReplay("inspect_plist")).toBe(false);
   expect(opened.value.executableSha256).toBeNull();
   expect(openedRoot).toBe(opened.value.canonicalPath);
+  const rejectedBinary = await session.open(join(rootPath, "missing-binary"));
+  if (rejectedBinary.ok) throw new Error("Expected a failed binary open");
+  expect(rejectedBinary.targetAtCompletion).toBeNull();
+  expect(rejectedBinary.providerIdAtCompletion).toBeNull();
+  expect(rejectedBinary.selection).toEqual({
+    kind: "resources",
+    path: opened.value.canonicalPath,
+    caller_path: opened.value.callerPath,
+  });
+  expect(session.activeBundleResourceRoot()?.canonicalPath).toBe(
+    opened.value.canonicalPath,
+  );
   expect(
     bundleResourceRootSchema.parse({
       caller_path: opened.value.callerPath,
@@ -652,10 +664,15 @@ it("keeps an earlier resource close failure primary when binary candidate cleanu
   const result = await opening;
   expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected failed binary open");
+  expect(result.selection).toEqual({ kind: "none" });
   expect(result.error).toBe(originalFailure);
   expect(result.error.cleanupPrimary).toBeUndefined();
   expect(binaryCloseAttempts).toBe(1);
   expect(resourceCloseAttempts).toBe(1);
+  expect(await session.status()).toMatchObject({
+    open: false,
+    cleanup_pending: true,
+  });
   expect(await session.close()).toMatchObject({ ok: true });
   expect(resourceCloseAttempts).toBe(2);
 });

@@ -278,11 +278,7 @@ const soleWriteReachesRead = (
   request: t.Node | undefined,
 ): boolean => {
   if (binding === undefined || request === undefined) return false;
-  const snapshot = semanticBindingAtRead(
-    binding,
-    read,
-    context.state.parentsByNode,
-  );
+  const snapshot = semanticBindingAtRead(binding, read, context.state);
   const initializers = snapshot.binding.initializers.filter(
     ({ node }) => semanticEffectTiming(read, node, context.state) !== "after",
   );
