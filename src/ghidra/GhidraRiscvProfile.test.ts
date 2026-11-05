@@ -424,9 +424,7 @@ const registerRiscvAdmissionAndCapabilityCases = () => {
     const pieNotes = ghidraRiscvLimitations(
       target({ type: 3, hasInterpreter: true }),
     );
-    expect(pieNotes).toContainEqual(
-      expect.stringContaining("0x100000"),
-    );
+    expect(pieNotes).toContainEqual(expect.stringContaining("0x100000"));
     expect(pieNotes).toContainEqual(
       expect.stringContaining("Position-independent executable"),
     );
