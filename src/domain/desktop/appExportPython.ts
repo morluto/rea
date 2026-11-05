@@ -34,6 +34,8 @@ GROUP_HEADER = re.compile(r"^\[([^\]]+)\]$")
 LINE_BREAK = re.compile(r"\r?\n")
 SQLITE_HEADER = b"SQLite format 3\x00"
 XML_SPACE = "{http://www.w3.org/XML/1998/namespace}space"
+#: String.trim()'s whitespace, used by REA's XML view; Python's default also strips U+0085 and keeps U+FEFF.
+XML_FORMATTING_SPACE = "\t\n\v\f\r \u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff"
 MAX_VIEW_BYTES = 64 * 1024 * 1024
 MAX_SAFE_INTEGER = 2**53 - 1
 MAX_TABLES = 64
@@ -234,7 +236,7 @@ def _xml(node, depth: int, budget: dict, scope: tuple):
     budget["remaining"] -= 1
     preserve, element_content = scope
     if isinstance(node, str):
-        return None if not node.strip() and element_content and not preserve else node
+        return None if not node.strip(XML_FORMATTING_SPACE) and element_content and not preserve else node
     if not isinstance(node.tag, str):
         return None
     space = node.get(XML_SPACE)

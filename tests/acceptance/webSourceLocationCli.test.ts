@@ -14,6 +14,49 @@ import { webSourceLocationFixture } from "../fixtures/webSourceLocation.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
 
+const MAP_NOTICE =
+  "Source names and sourceRoot are reported declarations. REA derives resolved URLs using WHATWG URL resolution; the pinned upstream codec decodes mappings. No original source is fetched or executed.";
+
+/** Connect the source-location parity client with its original identity and awaited cleanup. */
+const connectSourceLocationParityClient = async (map: string) => {
+  const transport = new StdioClientTransport({
+    command: process.execPath,
+    args: [
+      fileURLToPath(new URL("../../scripts/rea.mjs", import.meta.url)),
+      "mcp",
+    ],
+    env: {
+      ...getDefaultEnvironment(),
+      REA_LOG_LEVEL: "silent",
+      CLANG_MODULE_CACHE_PATH: map,
+    },
+    stderr: "pipe",
+  });
+  const client = new Client({
+    name: "source-location-cli-parity",
+    version: "1",
+  });
+  onTestFinished(async () => {
+    try {
+      await client.close();
+    } finally {
+      await transport.close();
+    }
+  });
+  await client.connect(transport);
+  return client;
+};
+
+/** The same source limitation must be present on the Evidence and its report. */
+const expectSourceLocationLimitations = (result: unknown) => {
+  expect(result).toMatchObject({
+    limitations: expect.arrayContaining([MAP_NOTICE]),
+    normalized_result: {
+      limitations: expect.arrayContaining([MAP_NOTICE]),
+    },
+  });
+};
+
 cliTest(
   "accepts numeric UTF-16 coordinates and runs the actual owned source-map codec without a browser",
   async ({ cli }) => {
@@ -88,37 +131,8 @@ cliTest(
         },
       },
     });
-    const limitation =
-      "Source names and sourceRoot are reported declarations. REA derives resolved URLs using WHATWG URL resolution; the pinned upstream codec decodes mappings. No original source is fetched or executed.";
-    expect(response.json).toMatchObject({
-      limitations: expect.arrayContaining([limitation]),
-      normalized_result: { limitations: expect.arrayContaining([limitation]) },
-    });
-    const transport = new StdioClientTransport({
-      command: process.execPath,
-      args: [
-        fileURLToPath(new URL("../../scripts/rea.mjs", import.meta.url)),
-        "mcp",
-      ],
-      env: {
-        ...getDefaultEnvironment(),
-        REA_LOG_LEVEL: "silent",
-        CLANG_MODULE_CACHE_PATH: map,
-      },
-      stderr: "pipe",
-    });
-    const client = new Client({
-      name: "source-location-cli-parity",
-      version: "1",
-    });
-    onTestFinished(async () => {
-      try {
-        await client.close();
-      } finally {
-        await transport.close();
-      }
-    });
-    await client.connect(transport);
+    expectSourceLocationLimitations(response.json);
+    const client = await connectSourceLocationParityClient(map);
     const mcpResponse = await client.callTool({
       name: "trace_web_source_location",
       arguments: {

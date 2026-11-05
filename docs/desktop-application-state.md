@@ -64,6 +64,9 @@ whether the file was present, the SHA-256 of its retained bytes, and a view:
 A JSON value holding a number JavaScript would round, such as an integer above
 2^53, is not read rather than shown rounded.
 
+Exported XML views use REA's same formatting-whitespace classification, so
+retained XML text and the task checks that address it stay aligned.
+
 SQLite databases are read through REA's SQLite worker from a private copy,
 with any retained `-wal` or `-journal` file staged beside it; the worker
 accepts an inactive rollback journal and refuses a hot one. A version is not
