@@ -284,9 +284,9 @@ it("directs unsupported parent views to the original Evidence", async () => {
     { path: "/fixtures/native.exe", format: "pe", sha256: "a".repeat(64) },
     { id: "fixture", name: "Fixture", version: "1" },
     {
-      operation: "trace_feature",
-      parameters: { query: "marker" },
-      result: { matches: [], references: [] },
+      operation: "inspect_recorded_crash",
+      parameters: {},
+      result: { path: "/artifacts/crash.core" },
     },
   );
   expect(session.recordEvidence(parent).ok).toBe(true);
@@ -311,7 +311,7 @@ it("directs unsupported parent views to the original Evidence", async () => {
       details: {
         operation: "inspect_analysis_view",
         reason: expect.stringContaining(
-          'Parent Evidence operation "trace_feature"',
+          'Parent Evidence operation "inspect_recorded_crash"',
         ),
       },
     });
