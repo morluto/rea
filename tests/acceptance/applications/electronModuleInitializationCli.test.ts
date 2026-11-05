@@ -239,6 +239,9 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
       "rea-electron-prototype-parameters-",
     );
     const activations = {
+      callerThis: "function boot() { this.createWindow(); } boot();",
+      boundThis:
+        "function boot() { this.createWindow(); } boot.call(globalThis);",
       numericPrototype:
         "Object.assign(Object.prototype, globalThis); (0).createWindow();",
       booleanPrototype:
@@ -308,7 +311,7 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
     const windows = result.graph.nodes.filter(
       ({ kind }) => kind === "browser-window",
     );
-    expect(windows).toHaveLength(46);
+    expect(windows).toHaveLength(50);
     for (const source of Object.keys(files).filter((name) =>
       name.endsWith(".js"),
     )) {
@@ -322,7 +325,10 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
         );
       expect(observations).toHaveLength(1);
       const definite =
-        source.endsWith("-late.js") && !source.startsWith("parameter-");
+        source.endsWith("-late.js") &&
+        !["parameter-", "callerThis-", "boundThis-"].some((prefix) =>
+          source.startsWith(prefix),
+        );
       expect(observations[0]?.properties).toMatchObject(
         definite
           ? {

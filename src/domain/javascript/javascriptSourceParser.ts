@@ -285,12 +285,11 @@ export const parseJavaScriptSource = (
 };
 
 /** A script's top-level lexical this may be its ambient global; wrappers and modules isolate it. */
-export const javaScriptTopLevelThisMayBeGlobal = (
+export const javaScriptThisOwner = (
   node: t.ThisExpression,
   program: t.Program,
   parents: WeakMap<t.Node, t.Node>,
-): boolean => {
-  if (javaScriptRuntimeContext(program) !== "unknown") return false;
+): "global" | "caller" | "isolated" => {
   let child: t.Node = node;
   let classDefinitionKey = false;
   let current: t.Node | undefined = parents.get(node);
@@ -303,20 +302,31 @@ export const javaScriptTopLevelThisMayBeGlobal = (
         t.isClassAccessorProperty(current)) &&
       current.value === child
     )
-      return false;
-    if (t.isStaticBlock(current)) return false;
+      return "isolated";
+    if (t.isStaticBlock(current)) return "isolated";
     if (
-      (t.isFunction(current) &&
-        !t.isArrowFunctionExpression(current) &&
-        !computedKey) ||
-      (t.isClass(current) &&
-        current.superClass !== child &&
-        !classDefinitionKey)
+      t.isFunction(current) &&
+      !t.isArrowFunctionExpression(current) &&
+      !computedKey
     )
-      return false;
+      return "caller";
+    if (
+      t.isClass(current) &&
+      current.superClass !== child &&
+      !classDefinitionKey
+    )
+      return "isolated";
     if (t.isClass(current)) classDefinitionKey = false;
     child = current;
     current = parents.get(current);
   }
-  return current === program;
+  return current === program && javaScriptRuntimeContext(program) === "unknown"
+    ? "global"
+    : "isolated";
 };
+
+export const javaScriptTopLevelThisMayBeGlobal = (
+  node: t.ThisExpression,
+  program: t.Program,
+  parents: WeakMap<t.Node, t.Node>,
+): boolean => javaScriptThisOwner(node, program, parents) === "global";

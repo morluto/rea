@@ -6,7 +6,7 @@ import {
 import { isTypeOnlyExportDeclaration } from "./javascriptModuleDeclaration.js";
 import {
   javaScriptRuntimeContext,
-  javaScriptTopLevelThisMayBeGlobal,
+  javaScriptThisOwner,
 } from "./javascriptSourceParser.js";
 import { semanticPropertyReadSources } from "./javascriptSemanticIterationSources.js";
 
@@ -1020,11 +1020,13 @@ const moduleFunctionFirstRead = (
         )
           fact.owners.add("Object");
         if (node !== current) fact.dependencies.push(node);
-        else if (t.isThisExpression(node))
-          fact.global =
-            t.isProgram(program) &&
-            javaScriptTopLevelThisMayBeGlobal(node, program, parents);
-        else if (t.isIdentifier(node)) {
+        else if (t.isThisExpression(node)) {
+          const owner = t.isProgram(program)
+            ? javaScriptThisOwner(node, program, parents)
+            : "caller";
+          fact.global = owner === "global";
+          fact.unknown = owner === "caller";
+        } else if (t.isIdentifier(node)) {
           const binding =
             state === undefined
               ? undefined

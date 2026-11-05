@@ -402,6 +402,31 @@ it.each([32, 64])(
   },
 );
 
+it.each([
+  "function boot() { this.createWindow(); } boot();",
+  "function boot() { this.createWindow(); } boot.call(globalThis);",
+  "function boot() { const run = () => this.createWindow(); run(); } boot();",
+])("retains caller-owned this uncertainty: %s", (activation) => {
+  for (const early of [true, false]) {
+    const source = `const { BrowserWindow } = require("electron");
+      ${early ? activation : ""}
+      const webPreferences = { nodeIntegration: true };
+      function createWindow() { return new BrowserWindow({webPreferences}); }
+      ${early ? "" : activation}
+      createWindow();`;
+    const run = () =>
+      runInNewContext(source, { require: () => ({ BrowserWindow: class {} }) });
+    if (early) expect(run).toThrow(/before initialization/);
+    else expect(run).not.toThrow();
+    expect(
+      analyzeJavaScriptStaticSource(source).electron.browser_windows[0],
+    ).toMatchObject({
+      web_preferences_status: "dynamic",
+      web_preferences: [],
+    });
+  }
+});
+
 const CLASSIC_GLOBAL_ACTIVATIONS = [
   "Object.assign(Object.prototype, globalThis); (0).createWindow();",
   "Object.assign(Object.prototype, globalThis); true.createWindow();",
