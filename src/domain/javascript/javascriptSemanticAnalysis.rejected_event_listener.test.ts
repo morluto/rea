@@ -775,6 +775,133 @@ indirect("process.getBuiltinModule('events').EventEmitter.prototype.on = replace
   });
 });
 
+it.each([
+  "configure(e.constructor);",
+  "const Ctor = e.constructor; configure(Ctor);",
+  'const key = "constructor"; configure(e[key]);',
+  "configure(e.__proto__.constructor);",
+])("keeps a registration when the receiver exposes its class: %s", (effect) => {
+  expect(
+    eventsForSource(`import { EventEmitter } from "node:events";
+import { configure } from "./configure.js";
+const e = new EventEmitter();
+${effect}
+e.on("ready");`),
+  ).toContainEqual({
+    kind: "register",
+    method: "on",
+    eventName: "ready",
+  });
+});
+
+it.each([
+  "configure(e.constructor);",
+  "const Ctor = e.constructor; configure(Ctor);",
+])("still rejects before the receiver exposes its class: %s", (effect) => {
+  expect(
+    eventsForSource(`import { EventEmitter } from "node:events";
+import { configure } from "./configure.js";
+const e = new EventEmitter();
+e.on("ready");
+${effect}`),
+  ).not.toContainEqual({
+    kind: "register",
+    method: "on",
+    eventName: "ready",
+  });
+});
+
+it("still rejects when only a method reached through the receiver class escapes", () => {
+  expect(
+    eventsForSource(`import { EventEmitter } from "node:events";
+import { configure } from "./configure.js";
+const e = new EventEmitter();
+configure(e.constructor.prototype.on);
+e.on("ready");`),
+  ).not.toContainEqual({
+    kind: "register",
+    method: "on",
+    eventName: "ready",
+  });
+});
+
+it("keeps another receiver's registration when a whole instance exposes the shared class", () => {
+  expect(
+    eventsForSource(`import { EventEmitter } from "node:events";
+import { configure } from "./configure.js";
+const first = new EventEmitter();
+const second = new EventEmitter();
+configure(first);
+second.on("ready");`),
+  ).toContainEqual({
+    kind: "register",
+    method: "on",
+    eventName: "ready",
+  });
+});
+
+it("still rejects before another instance exposes the shared class", () => {
+  expect(
+    eventsForSource(`import { EventEmitter } from "node:events";
+import { configure } from "./configure.js";
+const first = new EventEmitter();
+const second = new EventEmitter();
+second.on("ready");
+configure(first);`),
+  ).not.toContainEqual({
+    kind: "register",
+    method: "on",
+    eventName: "ready",
+  });
+});
+
+it("still rejects when only another receiver's method value escapes", () => {
+  expect(
+    eventsForSource(`import { EventEmitter } from "node:events";
+import { configure } from "./configure.js";
+const first = new EventEmitter();
+const second = new EventEmitter();
+configure(first.on);
+second.on("ready");`),
+  ).not.toContainEqual({
+    kind: "register",
+    method: "on",
+    eventName: "ready",
+  });
+});
+
+it("still rejects after an instance constructor slot is replaced", () => {
+  expect(
+    eventsForSource(`import { EventEmitter } from "node:events";
+const e = new EventEmitter();
+e.constructor = Other;
+e.on("ready");`),
+  ).not.toContainEqual({
+    kind: "register",
+    method: "on",
+    eventName: "ready",
+  });
+});
+
+it.each(["const copy = { ...first };", "const { tag, ...copy } = first;"])(
+  "still rejects when a shallow copy excludes inherited class references: %s",
+  (copy) => {
+    expect(
+      eventsForSource(`import { EventEmitter } from "node:events";
+import { configure } from "./configure.js";
+const first = new EventEmitter();
+const second = new EventEmitter();
+${copy}
+configure(copy);
+second.on("ready");`),
+    ).not.toContainEqual({
+      kind: "register",
+      method: "on",
+      eventName: "ready",
+    });
+  },
+);
+
 /**
  * `emit` passes its remaining arguments to listeners that already exist, so it
  * does not validate them the way a registration does.

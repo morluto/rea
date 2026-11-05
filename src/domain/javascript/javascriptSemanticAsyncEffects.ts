@@ -277,8 +277,12 @@ const eventsClassSurfaceTouched = (
   construction: t.NewExpression,
   read: t.Node,
   state: JavaScriptSemanticAnalysisState,
+  invocation: t.Node,
 ): boolean => {
+  // This invocation runs after selecting its method. Its own receiver escape
+  // cannot replace that selected native method retroactively.
   const precedes = (read: t.Node, effect: t.Node | undefined): boolean =>
+    effect !== invocation &&
     !semanticTopLevelEffectFollowsCapture(read, effect, state.parentsByNode);
   const root = constructionRootBinding(construction.callee, state);
   // An unknown property key can name any slot, so it covers this surface too.
@@ -443,7 +447,7 @@ const nodeEventEmitterReceiver = (
   // Reaching the class is not the same as reaching the method: the class object
   // and the `init` hook Node runs while constructing can both be reshaped, so a
   // construction whose surface was touched keeps its operation.
-  if (eventsClassSurfaceTouched(construction, node, state)) return false;
+  if (eventsClassSurfaceTouched(construction, node, state, call)) return false;
   // The receiver is activation-local, but the events module and its prototype
   // are shared: opaque code in an outer activation can replace their methods
   // even when this receiver does not exist yet. Use the opaque-effect owner's
