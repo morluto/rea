@@ -455,9 +455,11 @@ it("requires content-type and message-digest signed attributes", () => {
       Buffer.from([0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x09, last]),
     );
   const contentType = derSeq(attributeType(3), derSet(DATA_OID));
-  const messageDigest = derSeq(
-    attributeType(4),
-    derSet(der(0x04, Buffer.alloc(32))),
+  const digest = der(0x04, Buffer.alloc(32));
+  const messageDigest = derSeq(attributeType(4), derSet(digest));
+  const signingTime = derSeq(
+    attributeType(5),
+    derSet(der(0x17, Buffer.from("250101000000Z"))),
   );
   const report = (...attributes: Buffer[]) =>
     parse(
@@ -487,12 +489,26 @@ it("requires content-type and message-digest signed attributes", () => {
     [[messageDigest], /lacks a content-type/u],
     [[contentType], /lacks a message-digest/u],
     [[contentType, derSeq(attributeType(4))], /type or values/u],
+    [[contentType, messageDigest, contentType], /repeats the content-type/u],
+    [
+      [contentType, derSeq(attributeType(4), derSet())],
+      /message-digest attribute does not hold one OCTET STRING/u,
+    ],
+    [
+      [contentType, derSeq(attributeType(4), derSet(digest, digest))],
+      /message-digest attribute does not hold one OCTET STRING/u,
+    ],
+    [
+      [derSeq(attributeType(3), derSet(digest)), messageDigest],
+      /content-type attribute does not hold one OBJECT IDENTIFIER/u,
+    ],
   ];
   for (const [attributes, message] of cases)
     expect(() => report(...attributes)).toThrow(message);
+  // Other signed attributes, such as signingTime, are not constrained here.
   expect(
-    report(messageDigest, contentType).entries[0]?.pkcs7?.signers[0]
-      ?.authenticated_attributes,
+    report(messageDigest, signingTime, contentType).entries[0]?.pkcs7
+      ?.signers[0]?.authenticated_attributes,
   ).toBe(true);
 });
 
