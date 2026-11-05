@@ -13,6 +13,7 @@ import {
   assertArtifactReadActive,
 } from "../../artifacts/ArtifactFileOperation.js";
 import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+import { BinaryFormatFailure } from "../metadata/BinaryContainer.js";
 import type { PeRichHeaderPort } from "../../application/binaryDiagnostics/PeRichHeaderPort.js";
 import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
 import {
@@ -21,6 +22,7 @@ import {
   AnalysisCancelledError,
   AnalysisInputError,
   AnalysisResourceConstraintError,
+  AnalysisUnsupportedTargetError,
 } from "../../domain/analysisErrorCore.js";
 import {
   MAX_INSPECT_PE_RICH_HEADER_ENTRIES,
@@ -106,6 +108,15 @@ const peRichHeaderFailurePrimary = (
   input: InspectPeRichHeaderInput,
 ) => {
   const { cause, origin } = facts;
+  // readPeHeaders confirms a DOS MZ image with no PE header. That is a target
+  // outside PE32/PE32+, not a provider failure.
+  if (cause instanceof BinaryFormatFailure && cause.kind === "unsupported")
+    return new AnalysisUnsupportedTargetError(
+      OPERATION,
+      input.path,
+      "DOS MZ images are not PE32 or PE32+ images and have no PE Rich header",
+      { cause },
+    );
   if (
     origin === "owned-or-classified" &&
     cause instanceof ArtifactReaderFailure &&

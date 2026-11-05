@@ -68,6 +68,9 @@ image.
 Product IDs and builds are reported as stored. REA does not name the tool or
 Visual Studio release behind them.
 
+Only PE32 and PE32+ images are read. A DOS MZ executable with no PE header is
+an unsupported target, not `absent`.
+
 The default read budget is 64 MiB (`max_file_bytes`, ceiling 512 MiB). The
 default entry budget is 1024 (`max_entries`, ceiling 65536). Exceeding either
 fails without partial success, as does a malformed PE header.

@@ -8,7 +8,7 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
 cliTest.for(["CLI", "stdio MCP"] as const)(
-  "reports DOS as unsupported for PE resources and certificates through %s",
+  "reports DOS as unsupported for PE resources, certificates and Rich headers through %s",
   async (surface, { cli }) => {
     const root = await createTestTempDirectory("rea-pe-dos-public-");
     const path = join(root, "dos.exe");
@@ -16,7 +16,11 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
     await writeFile(path, bytes);
     const mcp =
       surface === "stdio MCP" ? await connectLocalToolsMcp() : undefined;
-    for (const operation of ["resources", "certificates"] as const) {
+    for (const operation of [
+      "resources",
+      "certificates",
+      "rich-header",
+    ] as const) {
       let error: unknown;
       if (surface === "CLI") {
         const response = await cli.run({
@@ -25,7 +29,10 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
         expect(response.exitCode).toBe(1);
         error = response.json;
       } else {
-        const response = await mcp!.call(`inspect_pe_${operation}`, { path });
+        const response = await mcp!.call(
+          `inspect_pe_${operation.replace("-", "_")}`,
+          { path },
+        );
         expect(response.isError).toBe(true);
         error = parseMcpToolError(response).error;
       }
