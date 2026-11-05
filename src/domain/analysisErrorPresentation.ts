@@ -661,11 +661,14 @@ const artifactMessage = ({
     INTEGRITY_POLICY_OPERATIONS.has(operation)
   )
     return `${
-      details?.unpacked === true &&
-      "calculatedSha256" in details &&
-      details.calculatedSha256 !== null
-        ? `Declared ASAR integrity for unpacked entry ${details.logicalPath} contradicts its companion file; packaging tools commonly sign or strip unpacked native binaries after writing the archive.`
-        : "Artifact bytes contradict declared integrity."
+      "signingExplanation" in details &&
+      details.signingExplanation?.kind === "signed-after-packing"
+        ? `Declared ASAR integrity for unpacked entry ${details.logicalPath} contradicts its companion file because Authenticode appears to have been applied after packing (stripping IMAGE_DIRECTORY_ENTRY_SECURITY restores the declared SHA-256).`
+        : details.unpacked === true &&
+            "calculatedSha256" in details &&
+            details.calculatedSha256 !== null
+          ? `Declared ASAR integrity for unpacked entry ${details.logicalPath} contradicts its companion file; packaging tools commonly sign or strip unpacked native binaries after writing the archive.`
+          : "Artifact bytes contradict declared integrity."
     } If expected, rerun ${operation === "inventory_artifact" ? "inspect_artifact" : operation} with integrity_policy=record-and-continue (CLI: --integrity-policy record-and-continue) to retain observed bytes as untrusted; otherwise get a fresh copy.`;
   if (reason === "format" || reason === "integrity")
     return "Artifact is invalid or has changed. Get a fresh copy and try again.";
