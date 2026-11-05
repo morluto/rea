@@ -31,7 +31,14 @@ export class EvidenceIntegrityError extends AnalysisError {
 }
 
 /** A valid snapshot belongs to a different target, provider, or analysis profile. */
-export class AnalysisSnapshotMismatchError extends EvidenceIntegrityError {}
+export class AnalysisSnapshotMismatchError extends EvidenceIntegrityError {
+  constructor(
+    message: string,
+    readonly bindingMismatch?: import("./analysisSnapshot.js").SnapshotBindingMismatch,
+  ) {
+    super(message);
+  }
+}
 
 /** A resource session cannot import or export a binary analysis snapshot. */
 export class ResourceSnapshotMismatchError extends AnalysisSnapshotMismatchError {

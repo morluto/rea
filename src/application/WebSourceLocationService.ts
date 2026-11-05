@@ -1,3 +1,4 @@
+import { WEB_SOURCE_LOCATION_PROVIDER } from "../domain/webTraceProviders.js";
 import { closeOwnedWebResources } from "./closeOwnedWebResources.js";
 import { createHash } from "node:crypto";
 import { z } from "zod";
@@ -209,11 +210,7 @@ export class WebSourceLocationService {
           sha256: data.sourceFile.sha256,
           format: "file",
         },
-        {
-          id: "rea-web-source-location",
-          name: "REA captured source-map point trace",
-          version: "1",
-        },
+        WEB_SOURCE_LOCATION_PROVIDER,
         {
           operation: OPERATION,
           parameters: input,

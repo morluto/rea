@@ -87,7 +87,8 @@ example under Smart App Control or an App Control policy, reports failure stage
 invocation or invalid inspection uses `runtime_unavailable` and doctor
 classification `runtime_failure`; it does not
 mean Windows x64 itself is unsupported. Provider diagnostics retain the failure
-stage under `windows_native_failure`, together with the corresponding remediation.
+stage under `windows_native_failure`; the availability's `remediation` carries
+the corresponding repair.
 Self-test failures preserve the native operation and OS error text. Check the
 process's writable local NTFS temporary directory and the reported filesystem,
 DACL, Job Object or cleanup constraint, then rerun doctor after resolving it.

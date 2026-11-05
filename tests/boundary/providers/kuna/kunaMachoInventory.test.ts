@@ -178,6 +178,8 @@ it("distinguishes an inventory miss from a missing procedure for xrefs", async (
         userMessage:
           "Kuna's inventory contains no entry named not_in_kuna; inspect the target's supported symbol/export inventory and pass a verified address.",
         conformsToInputContract: true,
+        remediationAction:
+          "Inspect the target's supported symbol/export inventory and pass a verified address that Kuna's inventory contains. Do not repeat the unchanged call.",
       },
     });
     expect(
@@ -188,6 +190,8 @@ it("distinguishes an inventory miss from a missing procedure for xrefs", async (
         userMessage:
           "Kuna found no procedure named not_in_kuna; search_procedures finds similar names.",
         conformsToInputContract: true,
+        remediationAction:
+          "Use search_procedures or list_procedures to inspect Kuna's discovered entries, then select a matching entry. Do not repeat the unchanged call.",
       },
     });
     expect(await client.execute("xrefs", { address: "puts" })).toMatchObject({
@@ -196,6 +200,8 @@ it("distinguishes an inventory miss from a missing procedure for xrefs", async (
         userMessage:
           "puts names 2 Kuna entries (0x100000480, 0x100004000); select one by address.",
         conformsToInputContract: true,
+        remediationAction:
+          "Select the intended entry by its exact address. Do not repeat the unchanged call.",
       },
     });
   } finally {
