@@ -8,8 +8,11 @@ Extend a tool when intent and result contract match; add one for a distinct
 outcome or materially different authority. Public names and semantics remain
 provider-neutral, with exact coverage reported per provider.
 
-Keep the catalog complete; report capability/session availability instead of
-truncating schemas. Serialized bytes alone do not establish agent usability.
+Keep the discoverable inventory complete within the caller's selected scope;
+report capability/session availability independently of catalog visibility.
+An opt-in dynamic catalog must retain canonical named contracts and provide
+discovery and recovery for clients without refresh. Serialized bytes alone do
+not establish agent usability.
 
 ## Choose the tool shape
 
