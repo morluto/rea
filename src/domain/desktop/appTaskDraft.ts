@@ -111,11 +111,17 @@ const keyPointers = (
         isRecord(view) && isRecord(view.groups) ? view.groups : {},
       ).flatMap(([group, keys]) =>
         Object.keys(isRecord(keys) ? keys : {}).map((key): [string, string] => [
-          `${group}/${key}`,
+          `${group}/${escapeToken(key)}`,
           `/groups/${escapeToken(group)}/${escapeToken(key)}`,
         ]),
       ),
     ),
+  );
+
+/** Pointers without a listed descendant: a container listed with its members is suggested through them. */
+const innermost = (pointers: readonly string[]): readonly string[] =>
+  pointers.filter(
+    (pointer) => !pointers.some((other) => other.startsWith(`${pointer}/`)),
   );
 
 const valueSuggestions = (
@@ -131,8 +137,11 @@ const valueSuggestions = (
   const pointers = keyPointers([baseline.view, final.view]);
   const pointer = (entry: string) =>
     format === "keyfile" ? pointers.get(entry) : entry;
+  // Key file entries are flat; a group may hold `/`, so prefixes mean nothing there.
+  const leaves = (entries: readonly string[]) =>
+    format === "keyfile" ? entries : innermost(entries);
   const suggestions: Suggestion[] = [];
-  for (const entry of [...change.added, ...change.changed]) {
+  for (const entry of leaves([...change.added, ...change.changed])) {
     const at = pointer(entry);
     const value = at === undefined ? undefined : resolvePointer(final.view, at);
     if (
@@ -143,7 +152,7 @@ const valueSuggestions = (
     )
       suggestions.push({ kind: "value_equals", file, pointer: at, value });
   }
-  for (const entry of change.removed) {
+  for (const entry of leaves(change.removed)) {
     const at = pointer(entry);
     if (at !== undefined && at !== "")
       suggestions.push({ kind: "value_absent", file, pointer: at });

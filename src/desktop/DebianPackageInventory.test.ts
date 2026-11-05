@@ -1,16 +1,25 @@
 import { createHash } from "node:crypto";
-import { access, chmod, mkdir, readFile, writeFile } from "node:fs/promises";
+import {
+  access,
+  chmod,
+  mkdir,
+  readFile,
+  realpath,
+  writeFile,
+} from "node:fs/promises";
 import { join } from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
+import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {
   GPGV_A_ONLY,
   VENDOR_A,
   VENDOR_B,
 } from "../domain/desktop/aptKeys.fixture.js";
 import { elfImage } from "../domain/desktop/elfImage.fixture.js";
+import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import type { QueryOutcome, QueryRunner } from "./HostQuery.js";
 import { inspectLinuxApplication } from "./LinuxApplicationInventory.js";
 
@@ -26,6 +35,11 @@ interface Repository {
   readonly release: string;
   readonly indexTarget: string;
   readonly releaseFile: string;
+  /** Other indexes of the same entry, such as its other components. */
+  readonly others?: readonly {
+    readonly source: string;
+    readonly indexTarget: string;
+  }[];
 }
 
 const TYPORA: Repository = {
@@ -81,6 +95,31 @@ const ESM: Repository = {
   releaseFile: "esm.ubuntu.com_apps_ubuntu_dists_noble-apps-security_",
 };
 
+/** A vendor index target of the suite `stable` for one component. */
+const vendorTarget = (component: string) =>
+  [
+    "Codename: stable",
+    "Origin: Vendor",
+    "Suite: stable",
+    "Base-URI: https://apt.vendor.example/repo/dists/stable/",
+    `Component: ${component}`,
+    "Release: stable",
+    "Repo-URI: https://apt.vendor.example/repo/",
+  ].join("\n");
+
+const EXTRAS = "https://apt.vendor.example/repo stable/extras arm64 Packages";
+
+/** A repository whose entry lists two components: Typora is in `main`, and only `extras` offers libnspr4. */
+const COMPONENTS: Repository = {
+  list: "vendor.list",
+  line: () => "deb https://apt.vendor.example/repo stable main extras\n",
+  source: "https://apt.vendor.example/repo stable/main arm64 Packages",
+  release: "o=Vendor,a=stable,n=stable,l=Vendor,c=main,b=arm64",
+  indexTarget: vendorTarget("main"),
+  releaseFile: "apt.vendor.example_repo_dists_stable_",
+  others: [{ source: EXTRAS, indexTarget: vendorTarget("extras") }],
+};
+
 interface FixtureOptions {
   readonly repository?: Repository;
   /** The bytes of trusted.gpg.d/typora.gpg (or .asc when armored). */
@@ -89,8 +128,8 @@ interface FixtureOptions {
   readonly trusted?: Buffer;
   /** Where the installed version comes from, when not the repository; null for a local install no source lists. */
   readonly installedFrom?: string | null;
-  /** A library package only a PPA offers. */
-  readonly ppaLibrary?: boolean;
+  /** Where libnspr4 comes from, when not the Ubuntu archive. */
+  readonly libraryFrom?: string;
 }
 
 /** `apt-cache policy` text: the installed version's sources, or every package file with its release. */
@@ -112,8 +151,13 @@ const policy = (
       "     release v=24.04,o=Ubuntu,a=noble,n=noble,l=Ubuntu,c=main,b=arm64",
       ` 500 ${PPA}`,
       "     release v=24.04,o=LP-PPA-a-b,a=noble,n=noble,l=b,c=main,b=arm64",
-      ` 500 ${repository.source}`,
-      `     release ${repository.release}`,
+      ...[
+        repository.source,
+        ...(repository.others ?? []).map(({ source }) => source),
+      ].flatMap((source) => [
+        ` 500 ${source}`,
+        `     release ${repository.release}`,
+      ]),
       "Pinned packages:",
     ].join("\n");
   return argv
@@ -121,8 +165,8 @@ const policy = (
     .flatMap((name) => {
       const source = name.startsWith("typora")
         ? installed
-        : name === "libnspr4" && options.ppaLibrary === true
-          ? PPA
+        : name === "libnspr4"
+          ? (options.libraryFrom ?? NOBLE)
           : NOBLE;
       return [
         `${name}:`,
@@ -178,13 +222,15 @@ const vendorFixture = async (options: FixtureOptions = {}) => {
     "-----BEGIN PGP SIGNED MESSAGE-----\n",
   );
   await write(`lists/${repository.releaseFile}Packages.lz4`, "");
-  const indexTargets = [
-    `Description: ${repository.source}`,
-    `Filename: ${join(root, "lists", `${repository.releaseFile}Packages.lz4`)}`,
-    repository.indexTarget,
-    `Sourcesentry: ${join(root, "apt/sources.list.d", repository.list)}:1`,
-    "",
-  ].join("\n");
+  const indexTargets = [repository, ...(repository.others ?? [])]
+    .flatMap(({ source, indexTarget }) => [
+      `Description: ${source}`,
+      `Filename: ${join(root, "lists", `${repository.releaseFile}Packages.lz4`)}`,
+      indexTarget,
+      `Sourcesentry: ${join(root, "apt/sources.list.d", repository.list)}:1`,
+      "",
+    ])
+    .join("\n");
   const keyrings: string[] = [];
   const queries: string[] = [];
   const runQuery: QueryRunner = async (command, argv) => {
@@ -404,7 +450,7 @@ describe.skipIf(process.platform === "win32")("vendor repositories", () => {
 describe.skipIf(process.platform === "win32")("library packages", () => {
   it("keeps the library packages the Ubuntu archive offers and sets aside the rest", async () => {
     const vendor = await inspected();
-    const ppa = await inspected({ ppaLibrary: true });
+    const ppa = await inspected({ libraryFrom: PPA });
 
     expect(vendor.package).toMatchObject({
       library_packages: ["libnspr4", "libnss3"],
@@ -453,4 +499,75 @@ describe.skipIf(process.platform === "win32")("library packages", () => {
     expect(installed).not.toHaveProperty("library_packages");
     expect(queries.some((query) => query.endsWith("ldconfig"))).toBe(false);
   });
+
+  it("keeps a library from another component of the vendor entry the export declares", async () => {
+    const { package: installed } = await inspected({
+      repository: COMPONENTS,
+      libraryFrom: EXTRAS,
+    });
+
+    expect(installed).toMatchObject({
+      apt_repositories: [
+        {
+          source: COMPONENTS.source,
+          components: ["main", "extras"],
+          signing_key: expect.objectContaining({
+            fingerprint: VENDOR_A.fingerprint,
+          }),
+        },
+      ],
+      library_packages: ["libnspr4", "libnss3"],
+      uninstallable_library_packages: [],
+    });
+  });
 });
+
+describe.skipIf(process.platform === "win32")(
+  "failures of the repository check and the library walk",
+  () => {
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    it("reports both, with the handle of each read whose close failed", async () => {
+      const { root, runQuery, inspect } = await vendorFixture();
+      const close = Object.getOwnPropertyDescriptor(
+        OwnedFileHandle.prototype,
+        "close",
+      )?.value as OwnedFileHandle["close"];
+      let failing = false;
+      vi.spyOn(OwnedFileHandle.prototype, "close").mockImplementation(function (
+        this: OwnedFileHandle,
+      ) {
+        return failing
+          ? Promise.reject(new Error("close failed"))
+          : close.call(this);
+      });
+
+      // From the repository check on, the sources file's close and the
+      // executable's, the first read of each side, fail.
+      const failure = await inspect(async (command, argv, signal) => {
+        if (command === "apt-get") failing = true;
+        return runQuery(command, argv, signal);
+      }).then(
+        () => undefined,
+        (cause: unknown) => cause,
+      );
+
+      if (!(failure instanceof ArtifactReaderFailure))
+        throw new Error("expected a cleanup failure", { cause: failure });
+      expect(failure.cleanup?.resources).toEqual([
+        join(root, "apt/sources.list.d/typora.list"),
+        await realpath(join(root, "bin/typora")),
+      ]);
+      expect(failure.cleanupLeases).toHaveLength(2);
+      failing = false;
+      await Promise.all(
+        failure.cleanupLeases?.map((lease) => lease.release()) ?? [],
+      );
+      expect(failure.cleanupLeases?.every((lease) => lease.released)).toBe(
+        true,
+      );
+    });
+  },
+);

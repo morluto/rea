@@ -100,8 +100,8 @@ describe("parseOneLineSources", () => {
       {
         file: TYPORA_LIST,
         position: 1,
-        uri: "https://downloads.typora.io/linux",
-        suite: "./",
+        uris: ["https://downloads.typora.io/linux"],
+        suites: ["./"],
         components: [],
         architectures: [],
         signedBy: [],
@@ -123,8 +123,8 @@ describe("parseOneLineSources", () => {
     ).toEqual([
       expect.objectContaining({
         position: 3,
-        uri: "https://apt.example.com/repo",
-        suite: "noble",
+        uris: ["https://apt.example.com/repo"],
+        suites: ["noble"],
         components: ["main", "contrib"],
         architectures: ["amd64", "arm64"],
         signedBy: ["/usr/share/keyrings/vendor.gpg"],
@@ -134,24 +134,22 @@ describe("parseOneLineSources", () => {
 });
 
 describe("parseDeb822Sources", () => {
-  it("expands each URI and suite of Ubuntu's own sources file and numbers its stanzas", () => {
-    const entries = parseDeb822Sources(UBUNTU_SOURCES, "ubuntu.sources");
+  it("reads each URI and suite of Ubuntu's own sources file and numbers its stanzas", () => {
+    const stanzas = parseDeb822Sources(UBUNTU_SOURCES, "ubuntu.sources");
 
-    expect(entries.map(({ suite, position }) => [suite, position])).toEqual([
-      ["noble", 1],
-      ["noble-updates", 1],
-      ["noble-backports", 1],
-      ["noble-security", 2],
+    expect(stanzas.map(({ suites, position }) => [suites, position])).toEqual([
+      [["noble", "noble-updates", "noble-backports"], 1],
+      [["noble-security"], 2],
     ]);
-    expect(entries[0]).toMatchObject({
-      uri: "http://ports.ubuntu.com/ubuntu-ports",
+    expect(stanzas[0]).toMatchObject({
+      uris: ["http://ports.ubuntu.com/ubuntu-ports"],
       components: ["main", "universe", "restricted", "multiverse"],
       signedBy: ["/usr/share/keyrings/ubuntu-archive-keyring.gpg"],
     });
   });
 
   it("skips disabled stanzas yet counts them, as apt does, and marks a Signed-By that holds the key itself", () => {
-    const entries = parseDeb822Sources(
+    const stanzas = parseDeb822Sources(
       [
         "# a comment-only paragraph apt does not count",
         "",
@@ -174,15 +172,50 @@ describe("parseDeb822Sources", () => {
       "a-ubuntu-b-noble.sources",
     );
 
-    expect(entries).toEqual([
+    expect(stanzas).toEqual([
       expect.objectContaining({
         position: 2,
-        uri: "https://ppa.launchpadcontent.net/a/b/ubuntu",
+        uris: ["https://ppa.launchpadcontent.net/a/b/ubuntu"],
         architectures: ["arm64"],
         signedBy: [],
         inlineKey: true,
       }),
     ]);
+  });
+
+  it("keeps a stanza's URIs and suites as lists and resolves a target's pair from them, without expanding every pair", () => {
+    const uris = Array.from(
+      { length: 500 },
+      (_, index) => `https://mirror${String(index)}.example.com/apt/`,
+    );
+    const suites = Array.from(
+      { length: 500 },
+      (_, index) => `suite${String(index)}`,
+    );
+    const file = "/etc/apt/sources.list.d/mirrors.sources";
+    const stanzas = parseDeb822Sources(
+      `Types: deb\nURIs: ${uris.join(" ")}\nSuites: ${suites.join(" ")}\nComponents: main\n`,
+      file,
+    );
+    const [target] = parseAptIndexTargets(INDEX_TARGETS);
+    if (target === undefined) throw new Error("missing target");
+
+    expect(stanzas).toHaveLength(1);
+    expect(
+      entryForTarget(
+        {
+          ...target,
+          sourcesFile: file,
+          repoUri: "https://mirror499.example.com/apt/",
+          release: "suite499",
+        },
+        stanzas,
+      ),
+    ).toMatchObject({
+      uri: "https://mirror499.example.com/apt",
+      suite: "suite499",
+      components: ["main"],
+    });
   });
 });
 
@@ -197,6 +230,7 @@ describe("apt index targets", () => {
         position: 1,
         repoUri: "https://downloads.typora.io/linux/",
         release: "./",
+        component: null,
         baseUri: "https://downloads.typora.io/linux/./",
         filename: "/var/lib/apt/lists/downloads.typora.io_linux_._Packages.lz4",
         origin: "typora.io",
@@ -213,6 +247,7 @@ describe("apt index targets", () => {
       expect.objectContaining({
         sourcesFile: "/etc/apt/sources.list.d/ubuntu.sources",
         release: "noble-updates",
+        component: "main",
         origin: "Ubuntu",
       }),
     ]);
@@ -236,7 +271,7 @@ describe("apt index targets", () => {
     const [typora, k8s, noble] = targets;
     if (typora === undefined || k8s === undefined || noble === undefined)
       throw new Error("missing target");
-    const entries = [
+    const stanzas = [
       ...parseOneLineSources(
         "deb https://downloads.typora.io/linux ./",
         TYPORA_LIST,
@@ -251,17 +286,17 @@ describe("apt index targets", () => {
       ),
     ];
 
-    expect(entryForTarget(typora, entries)).toMatchObject({ suite: "./" });
-    expect(entryForTarget(k8s, entries)).toMatchObject({
+    expect(entryForTarget(typora, stanzas)).toMatchObject({ suite: "./" });
+    expect(entryForTarget(k8s, stanzas)).toMatchObject({
       uri: "https://pkgs.k8s.io/core:/stable:/v1.30/deb",
       suite: "/",
       signedBy: ["/etc/apt/keyrings/kubernetes-apt-keyring.gpg"],
     });
-    expect(entryForTarget(noble, entries)).toMatchObject({
+    expect(entryForTarget(noble, stanzas)).toMatchObject({
       suite: "noble-updates",
       position: 1,
     });
-    expect(entryForTarget({ ...typora, position: 2 }, entries)).toBeUndefined();
+    expect(entryForTarget({ ...typora, position: 2 }, stanzas)).toBeUndefined();
   });
 });
 

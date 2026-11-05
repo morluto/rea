@@ -58,8 +58,9 @@ The class declares:
   reports as `a=`, or else its Codename), so apt takes it from that repository
   even when the Ubuntu archive offers a higher version or epoch, as noble's
   transitional `firefox` does over packages.mozilla.org's; it is named alone
-  when the release names neither. Its library packages follow, so a package
-  that leaves out dependencies on the libraries it loads, as Typora's Electron
+  when the release names neither, or when the capture was written before
+  releases were recorded. Its library packages follow, so a package that
+  leaves out dependencies on the libraries it loads, as Typora's Electron
   package does, still starts; library packages the capture found neither the
   Ubuntu 24.04 archive nor a declared repository offers are left out, with a
   limitation. An archive package's declared dependencies are trusted as they
@@ -76,9 +77,10 @@ The class declares:
   their components merged; one with a different key is left out. A repository
   whose key the capture did not verify, an Ubuntu Pro (ESM) repository, one
   not reached over http or https, or one whose `arch=` restriction leaves out
-  the capture host's architecture is refused with its reason; when another
-  usable repository lists the same version it is left out instead, with a
-  limitation. The export also refuses snaps, flatpaks, AppImages, and a
+  the capture host's architecture is refused with its reason (a capture
+  written before restrictions were recorded counts as unrestricted); when
+  another usable repository lists the same version it is left out instead,
+  with a limitation. The export also refuses snaps, flatpaks, AppImages, and a
   package no recorded repository lists unless it was installed from a `.deb`
   file the capture recorded and `--package-url` is given, since the computer
   could not install them by name.

@@ -24,22 +24,27 @@ const isRecord = (
 const escapePointer = (segment: string) =>
   segment.replaceAll("~", "~0").replaceAll("/", "~1");
 
-/** Leaves of a JSON value keyed by JSON pointer. */
+/**
+ * Every value in a JSON document keyed by JSON pointer: a scalar as JSON, a
+ * container as `[]` or `{}`, so an array that becomes an object with the same
+ * members is still a change.
+ */
 const flatten = (
   value: JsonValue,
   pointer = "",
-  leaves = new Map<string, string>(),
+  values = new Map<string, string>(),
 ): Map<string, string> => {
-  // Empty containers are leaves, so `{}`, `[]` and their changes stay visible.
-  if (Array.isArray(value) && value.length > 0)
+  if (Array.isArray(value)) {
+    values.set(pointer, "[]");
     value.forEach((item, index) =>
-      flatten(item, `${pointer}/${String(index)}`, leaves),
+      flatten(item, `${pointer}/${String(index)}`, values),
     );
-  else if (isRecord(value) && Object.keys(value).length > 0)
+  } else if (isRecord(value)) {
+    values.set(pointer, "{}");
     for (const [key, item] of Object.entries(value))
-      flatten(item, `${pointer}/${escapePointer(key)}`, leaves);
-  else leaves.set(pointer, JSON.stringify(value));
-  return leaves;
+      flatten(item, `${pointer}/${escapePointer(key)}`, values);
+  } else values.set(pointer, JSON.stringify(value));
+  return values;
 };
 
 const compareMaps = (
@@ -100,14 +105,18 @@ const lineDifference = (
   };
 };
 
-/** `group/key` → value for key files and dconf views. */
+/**
+ * `group/key` → value for key files and dconf views. The key is escaped as a
+ * JSON pointer segment, so the last `/` always ends the group: `[a/b]` `c` and
+ * `[a]` `b/c` stay apart.
+ */
 const keyEntries = (view: JsonValue): Map<string, string> => {
   const entries = new Map<string, string>();
   const groups = isRecord(view) && isRecord(view.groups) ? view.groups : {};
   for (const [group, keys] of Object.entries(groups))
     if (isRecord(keys))
       for (const [key, value] of Object.entries(keys))
-        entries.set(`${group}/${key}`, JSON.stringify(value));
+        entries.set(`${group}/${escapePointer(key)}`, JSON.stringify(value));
   return entries;
 };
 

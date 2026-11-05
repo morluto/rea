@@ -151,6 +151,46 @@ describe("draftTaskFiles for structured views", () => {
     ]);
   });
 
+  it("finds a key holding / and suggests an added JSON container through its members", () => {
+    const [settings, document] = draft({
+      ".config/app/app.ini": path(
+        "application_state",
+        "keyfile",
+        { groups: { ui: { "size/w": "1" } } },
+        { groups: { ui: { "size/w": "2" } } },
+      ),
+      ".config/app/state.json": path(
+        "application_state",
+        "json",
+        {},
+        { recent: [{ name: "a.txt" }], items: [] },
+      ),
+    });
+
+    expect(settings?.suggested).toEqual([
+      {
+        kind: "value_equals",
+        file: ".config/app/app.ini",
+        pointer: "/groups/ui/size~1w",
+        value: "2",
+      },
+    ]);
+    expect(document?.suggested).toEqual([
+      {
+        kind: "value_equals",
+        file: ".config/app/state.json",
+        pointer: "/recent/0/name",
+        value: "a.txt",
+      },
+      {
+        kind: "value_equals",
+        file: ".config/app/state.json",
+        pointer: "/items",
+        value: [],
+      },
+    ]);
+  });
+
   it("suggests rows added, changed and removed, and the new row count", () => {
     const table = (rows: JsonValue[][]) => ({
       tables: {

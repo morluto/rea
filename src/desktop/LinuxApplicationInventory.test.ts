@@ -194,28 +194,72 @@ describe.skipIf(process.platform === "win32")("inspectLinuxApplication", () => {
   });
 });
 
+/** The inventory of an installed desktop entry, launched with no arguments. */
+const inventoryOf = async (
+  desktopEntry: string,
+  { home, environment }: Awaited<ReturnType<typeof fixture>>,
+) => {
+  const inspected = await inspectLinuxApplication({
+    desktopEntry,
+    executable: undefined,
+    arguments: [],
+    environment,
+    home,
+    callerDirectory: home,
+  });
+  if (!inspected.ok) throw new Error(inspected.error.reason);
+  return inspected.value.inventory;
+};
+
 describe.skipIf(process.platform === "win32")(
-  "inspectLinuxApplication state roots",
+  "inspectLinuxApplication state and environment",
   () => {
+    it("finds the program on the PATH an env prefix sets, not the host's", async () => {
+      const installed = await fixture();
+      const { home, bin } = installed;
+      const opt = join(home, "opt/bin");
+      await mkdir(opt, { recursive: true });
+      for (const directory of [bin, opt]) {
+        await writeFile(join(directory, "notes"), "#!/bin/sh\nexit 0\n");
+        await chmod(join(directory, "notes"), 0o755);
+      }
+      await mkdir(join(home, ".local/share/applications"), { recursive: true });
+      await writeFile(
+        join(home, ".local/share/applications/org.example.env.desktop"),
+        `[Desktop Entry]\nType=Application\nName=Env\nExec=env PATH=${opt}:/usr/bin XDG_CONFIG_HOME=${home}/settings notes\n`,
+      );
+
+      const inventory = await inventoryOf("org.example.env", installed);
+
+      expect(inventory.executable.path).toBe(join(opt, "notes"));
+      expect(inventory.state_directories.map((entry) => entry.path)).toContain(
+        join(home, "settings/notes"),
+      );
+    });
+
+    it("names state directories after the entry's full id", async () => {
+      const installed = await fixture();
+      const { home } = installed;
+      await mkdir(join(home, ".config/org.example.notes"), { recursive: true });
+
+      const inventory = await inventoryOf("org.example.notes", installed);
+
+      expect(inventory.state_directories).toContainEqual({
+        path: join(home, ".config/org.example.notes"),
+        exists_at_start: true,
+      });
+    });
+
     it("adds the dotfiles in the home named after the application, which it may only read", async () => {
-      const { home, environment } = await fixture();
+      const installed = await fixture();
+      const { home } = installed;
       const named = [".notes-app-cfg.ini", ".notesrc", ".notes.conf"];
       for (const name of [...named, ".notesy", ".other.ini"])
         await writeFile(join(home, name), "x\n");
 
-      const inspected = await inspectLinuxApplication({
-        desktopEntry: "org.example.notes",
-        executable: undefined,
-        arguments: [],
-        environment,
-        home,
-        callerDirectory: home,
-      });
+      const inventory = await inventoryOf("org.example.notes", installed);
 
-      if (!inspected.ok) throw new Error(inspected.error.reason);
-      const paths = inspected.value.inventory.state_directories.map(
-        (entry) => entry.path,
-      );
+      const paths = inventory.state_directories.map((entry) => entry.path);
       expect(paths).toEqual(
         expect.arrayContaining(named.map((name) => join(home, name))),
       );

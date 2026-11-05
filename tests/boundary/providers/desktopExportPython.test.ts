@@ -8,7 +8,10 @@ import {
   PYTHON_HELPERS,
   PYTHON_IMPORTS,
 } from "../../../src/domain/desktop/appExportPython.js";
-import { detectStateFormat } from "../../../src/domain/desktop/stateFormats.js";
+import {
+  detectStateFormat,
+  jsonView,
+} from "../../../src/domain/desktop/stateFormats.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 /** The exported module's view format for each file, run with only its standard library imports. */
@@ -158,4 +161,62 @@ it("holds readiness until a window of the app's class that the taskbar lists is 
   expect(
     taskbarWindow(await fakeXprop({ "0x4": typedSplash }), "varicad"),
   ).toBe("False");
+});
+
+/** The exported module's JSON verdict for each text, with only its standard library imports: its view or its error. */
+const pythonJson = (texts: readonly string[]) => {
+  const imports = PYTHON_IMPORTS.split("\n")
+    .filter((line) => !line.includes("agentenv_protocol"))
+    .join("\n");
+  const program = `${imports}${PYTHON_HELPERS}
+for text in json.load(sys.stdin):
+    print(json.dumps(_text_view("a.json", text)))
+`;
+  return execFileSync("python3", ["-I", "-B", "-c", program], {
+    input: JSON.stringify(texts),
+    encoding: "utf8",
+  })
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line) as { view: unknown; error?: string });
+};
+
+it("refuses the JSON numbers REA's state view refuses, as JSON with an error rather than an infinity", () => {
+  const texts = [
+    '{"a": 1e999}',
+    '{"a": -1e999}',
+    '{"a": 12345678901234567890}',
+    '{"a": -0}',
+    '{"a": -0.0}',
+    '{"a": 0.12345678901234567890}',
+    '{"a": 1e20}',
+    '{"a": 0.1, "b": 1e21, "c": 42, "d": 9007199254740991}',
+  ];
+
+  const python = pythonJson(texts);
+
+  texts.forEach((text, index) => {
+    const typescript = jsonView(text);
+    const verdict = python[index];
+    expect(verdict?.error === undefined).toBe(typescript.ok);
+    if (typescript.ok) expect(verdict?.view).toEqual(typescript.value);
+  });
+});
+
+it("spells infinite and negative-zero SQLite reals as REA's SQLite reader does", () => {
+  const imports = PYTHON_IMPORTS.split("\n")
+    .filter((line) => !line.includes("agentenv_protocol"))
+    .join("\n");
+  const cells = execFileSync(
+    "python3",
+    [
+      "-I",
+      "-B",
+      "-c",
+      `${imports}${PYTHON_HELPERS}\nprint(json.dumps([_cell(v) for v in (math.inf, -math.inf, -0.0, 0.0, 1.5)]))`,
+    ],
+    { encoding: "utf8" },
+  );
+
+  expect(JSON.parse(cells)).toEqual(["Infinity", "-Infinity", "-0", 0, 1.5]);
 });

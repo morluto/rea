@@ -1,10 +1,19 @@
-import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  open,
+  readFile,
+  readdir,
+  rm,
+  writeFile,
+  type FileHandle,
+} from "node:fs/promises";
 import { join } from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import type { Evidence } from "../../domain/evidence.js";
+import { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
 import { CaptureFile } from "./DesktopCaptureOutput.js";
 
 const evidence = { id: "evidence" } as unknown as Evidence;
@@ -50,4 +59,47 @@ describe("CaptureFile", () => {
 
     expect(await readdir(output)).toEqual(["capture.json"]);
   });
+});
+
+/** The prototype every `open` handle shares, so a test can fail its writes. */
+const fileHandlePrototype = async (directory: string): Promise<FileHandle> => {
+  const probe = await open(join(directory, "probe"), "w");
+  await probe.close();
+  await rm(join(directory, "probe"));
+  return Object.getPrototypeOf(probe) as FileHandle;
+};
+
+describe("CaptureFile handle cleanup", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it.each([
+    { writeFails: true, reported: "disk full" },
+    { writeFails: false, reported: "close failed" },
+  ])(
+    "keeps the partial file's handle owned when its close fails (write fails: $writeFails)",
+    async ({ writeFails, reported }) => {
+      const output = await createTestTempDirectory("desktop-output-close-");
+      const captureFile = new CaptureFile(output);
+      if (writeFails)
+        vi.spyOn(
+          await fileHandlePrototype(output),
+          "writeFile",
+        ).mockRejectedValueOnce(new Error("disk full"));
+      const close = vi
+        .spyOn(OwnedFileHandle.prototype, "close")
+        .mockRejectedValueOnce(new Error("close failed"));
+
+      await expect(captureFile.publish(evidence)).rejects.toThrow(reported);
+      const [owned] = close.mock.contexts as OwnedFileHandle[];
+      expect(owned?.handle.fd).toBeGreaterThanOrEqual(0);
+      await captureFile.close();
+
+      expect(owned?.handle.fd).toBe(-1);
+      expect(await readdir(output)).toEqual(["capture.json.partial"]);
+      await captureFile.discard();
+      expect(await readdir(output)).toEqual([]);
+    },
+  );
 });

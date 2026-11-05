@@ -21,6 +21,7 @@ import {
   recordWindows,
   sampleOpenFiles,
   sampleProcesses,
+  sampleTokenCarriers,
   trackProcess,
   type WindowMatching,
 } from "./DesktopSessionObservations.js";
@@ -39,6 +40,8 @@ export interface UnresolvedCleanup {
 export interface DesktopSessionOutcome {
   readonly session: DesktopSession;
   readonly unreleased: UnresolvedCleanup | undefined;
+  /** Samples whose window list could not be read; their windows are unknown. */
+  readonly unreadableWindowSamples: number;
 }
 
 /** A session failed, and the processes it launched could not all be removed. */
@@ -104,21 +107,28 @@ export const runningApplicationWindows = async (
     : sample;
 };
 
-/** Sample processes, windows and open files; returns the application's window count. */
+/**
+ * Sample processes, windows and open files. Returns the application's window
+ * count, or undefined when the window list could not be read.
+ */
 const sampleSession = async (
   plan: DesktopSessionPlan,
   observations: SessionObservations,
   signal: AbortSignal,
-): Promise<number> => {
+): Promise<number | undefined> => {
   await sampleProcesses(observations, signal);
   const sample = await plan.windows.sample(
     (window) => observations.belongs(window),
     signal,
   );
-  const applicationWindows =
-    sample.state === "listed"
-      ? await recordWindows(observations, sample.windows, signal)
-      : 0;
+  let applicationWindows: number | undefined;
+  if (sample.state === "listed")
+    applicationWindows = await recordWindows(
+      observations,
+      sample.windows,
+      signal,
+    );
+  else observations.unreadableWindowSamples += 1;
   await sampleOpenFiles(observations, plan.roots);
   if (!observations.announced && observations.firstWindowMs !== null) {
     observations.announced = true;
@@ -159,7 +169,25 @@ const requestCheckpoint = async (
   await checkpointNow(plan, observations, chosen, "request");
 };
 
-/** Watch until the application exits, a stop is requested or time runs out. */
+/**
+ * Whether no process the capture started is left. Run-token carriers no
+ * parent link reached are looked for first, since a launcher can exit before
+ * its worker is sampled; an unreadable process table leaves this unknown.
+ */
+const noStartedProcessLeft = async (
+  observations: SessionObservations,
+  signal: AbortSignal,
+): Promise<boolean> =>
+  observations.liveProcessIds(true).length === 0 &&
+  (await sampleTokenCarriers(observations, signal)) &&
+  observations.liveProcessIds(true).length === 0;
+
+/**
+ * Watch until the application exits, a stop is requested or time runs out.
+ * The application has exited after two consecutive samples in which the
+ * launched process is gone, no started process is left and the window list
+ * was read and holds none of its windows; an unread list counts as unknown.
+ */
 const watch = async (
   plan: DesktopSessionPlan,
   observations: SessionObservations,
@@ -179,8 +207,8 @@ const watch = async (
     const applicationWindows = await sampleSession(plan, observations, signal);
     const quiet =
       supervisor.observedExit() !== undefined &&
-      observations.liveProcessIds(true).length === 0 &&
-      applicationWindows === 0;
+      applicationWindows === 0 &&
+      (await noStartedProcessLeft(observations, signal));
     quietSamples = quiet ? quietSamples + 1 : 0;
     if (quietSamples >= 2) return "application_exited";
     await delay(plan.pollIntervalMs, undefined, { signal });
@@ -323,5 +351,9 @@ export const runDesktopSession = async (
     stderr_truncated: snapshot.stderr.bytes < snapshot.stderr.observedBytes,
     cleanup,
   };
-  return { session, unreleased: unreleased(spawned, supervisor, cleanup) };
+  return {
+    session,
+    unreleased: unreleased(spawned, supervisor, cleanup),
+    unreadableWindowSamples: observations.unreadableWindowSamples,
+  };
 };

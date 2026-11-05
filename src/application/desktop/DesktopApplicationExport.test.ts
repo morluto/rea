@@ -240,6 +240,12 @@ describe("exportDesktopApplication", () => {
 
 const TYPORA_SOURCE = "https://downloads.typora.io/linux ./ Packages";
 const TYPORA_KEY = "typora public keyring\n";
+const VERIFIED_KEY: AptRepository["signing_key"] = {
+  path: "/etc/apt/trusted.gpg.d/typora.gpg",
+  sha256: createHash("sha256").update(TYPORA_KEY).digest("hex"),
+  format: "binary",
+  fingerprint: "4AC441BE68B4ADAB7439FBF9BA300B7755AFCFAE",
+};
 
 /** The fixture app installed as Typora is: Electron, from its flat vendor repository. */
 const vendorCapture = (
@@ -303,12 +309,7 @@ const exportVendorCapture = async (local: DesktopApplicationCapture) => {
 describe("exportDesktopApplication from a vendor repository", () => {
   it("copies the verified key, declares the repository and library packages, and turns the sandbox off", async () => {
     const { result, directory } = await exportVendorCapture(
-      vendorCapture({
-        path: "/etc/apt/trusted.gpg.d/typora.gpg",
-        sha256: createHash("sha256").update(TYPORA_KEY).digest("hex"),
-        format: "binary",
-        fingerprint: "4AC441BE68B4ADAB7439FBF9BA300B7755AFCFAE",
-      }),
+      vendorCapture(VERIFIED_KEY),
     );
 
     if (result instanceof Error) throw result;
@@ -338,6 +339,28 @@ describe("exportDesktopApplication from a vendor repository", () => {
     );
     expect(await readFile(join(directory, "README.md"), "utf8")).toContain(
       "trusting `apt-keys/typora.gpg`",
+    );
+  });
+
+  it("exports a vendor capture written before entry architectures and releases were recorded", async () => {
+    const recorded = vendorCapture(VERIFIED_KEY);
+    const installed = recorded.application.package;
+    const older = (installed.apt_repositories ?? []).map(
+      ({ architectures: _architectures, release: _release, ...rest }) => rest,
+    );
+    const { result, directory } = await exportVendorCapture({
+      ...recorded,
+      application: {
+        ...recorded.application,
+        package: { ...installed, apt_repositories: older },
+      },
+    });
+
+    if (result instanceof Error) throw result;
+    expect(
+      await readFile(join(directory, "envs/typora/typora_app.py"), "utf8"),
+    ).toContain(
+      'packages=Packages(apt=["typora", "libgbm1", "libnss3"]),\n    sources=[AptSource(apt="https://downloads.typora.io/linux", suite="./", components=[], key="apt-keys/typora.gpg")],',
     );
   });
 

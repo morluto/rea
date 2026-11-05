@@ -67,9 +67,13 @@ A JSON value holding a number JavaScript would round, such as an integer above
 SQLite databases are read through REA's SQLite worker from a private copy,
 with any retained `-wal` or `-journal` file staged beside it; the worker
 accepts an inactive rollback journal and refuses a hot one. A version is not
-read when its `-wal` or `-journal` file existed but was not retained, since the
-database alone could misstate its committed rows. A table that cannot be read keeps its `error` in
-place of its rows, and changes to that database are marked incomplete. dconf
+read when its `-wal` or `-journal` file existed but was not retained, or when
+the capture did not record whether either existed, since the database alone
+could misstate its committed rows. The capture records them under its content
+roots, which include both beside a database selected on its own, and wherever
+they change; elsewhere an unchanged file and a missing one look alike. A table
+that cannot be read keeps its `error` in place of its rows, and changes to that
+database are marked incomplete. dconf
 databases are read with `dconf dump /` against a private file profile, so the
 live database and the dconf service are not touched; this needs `dconf-cli`, or
 `REA_DCONF_COMMAND`.
@@ -85,8 +89,11 @@ format-specific kind with what was added, removed and changed (up to 100 of
 each, with counts):
 
 - `lines` for text: lines added and removed, as a multiset.
-- `values` for JSON and XML: JSON pointers to leaves.
-- `keys` for key files and dconf: `group/key`.
+- `values` for JSON and XML: JSON pointers to values, containers included, so
+  an array that becomes an object with the same members is changed.
+- `keys` for key files and dconf: `group/key`, with `~` and `/` in the key
+  written `~0` and `~1` as in a JSON pointer, so `[a/b]` `c` and `[a]` `b/c`
+  stay apart.
 - `rows` for SQLite: `table:` and the row's primary key, or the whole row when
   the table has none.
 - `content` for binary files, and `unreadable` when either version has no

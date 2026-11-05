@@ -43,6 +43,15 @@ plus the Electron runtime libraries and gnupg.
   about 0.3 s; the export service writing a vendor bundle and refusing an
   unverified key. On Linux, the library inventory maps the node binary's
   libraries with the host's `ldconfig` and `dpkg-query`.
+- Second review round: a deb822 stanza with 500 URIs and 500 suites parses
+  as one stanza and still resolves a target's pair (it made 250,000 entries
+  before); a library package only another component of the vendor entry
+  offers is kept; a vendor capture written without `architectures` and
+  `release` exports, its package named alone; the repository check and the
+  library walk each failing on a close are reported together with both
+  handles, which their leases then close. Each failed before its fix. The
+  desktop suites passed on macOS (222 tests, 14 skipped) and in the container
+  (235, 1 skipped).
 
 ## Typora
 

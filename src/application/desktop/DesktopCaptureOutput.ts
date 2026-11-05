@@ -10,7 +10,9 @@ import {
 } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 
+import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import type { Evidence } from "../../domain/evidence.js";
+import { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
 
 /**
  * The physical spelling of a path that may not exist yet: the real path of
@@ -58,24 +60,45 @@ export class CaptureFile {
   readonly #target: string;
   /** Whether this run created the partial file and has not published or removed it. */
   #created = false;
+  /** The partial file's handle when its close failed; kept owned so `close` can retry it. */
+  readonly #unclosed = new ArtifactResourceScope();
 
   constructor(output: string) {
     this.partial = join(output, "capture.json.partial");
     this.#target = join(output, "capture.json");
   }
 
-  /** Write the evidence and rename it into place; returns the published path. */
+  /**
+   * Write the evidence and rename it into place; returns the published path.
+   * A failed write is reported ahead of a failed close, and a handle whose
+   * close failed stays owned until `close` releases it.
+   */
   async publish(evidence: Evidence): Promise<string> {
-    const handle = await open(this.partial, "wx", 0o600);
+    const text = `${JSON.stringify(evidence, null, 2)}\n`;
+    const handle = new OwnedFileHandle(await open(this.partial, "wx", 0o600));
     this.#created = true;
-    try {
-      await handle.writeFile(`${JSON.stringify(evidence, null, 2)}\n`);
-    } finally {
-      await handle.close();
-    }
+    const written = await handle.handle.writeFile(text).then(
+      () => undefined,
+      (cause: unknown) => ({ cause }),
+    );
+    const closed = await this.#unclosed.release({
+      kind: "file-handle",
+      resource: this.partial,
+      handle,
+    });
+    if (written !== undefined) throw written.cause;
+    if (closed.kind === "failed") throw closed.cause;
     await rename(this.partial, this.#target);
     this.#created = false;
     return this.#target;
+  }
+
+  /**
+   * Retry the partial file's failed close. A handle that fails again stays
+   * owned, and the rejection carries its exact cleanup lease.
+   */
+  close(): Promise<void> {
+    return this.#unclosed.retryCleanup();
   }
 
   /** Remove the partial file, only when this run created it. */

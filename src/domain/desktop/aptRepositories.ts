@@ -1,18 +1,34 @@
-/** One `deb` entry of an apt sources file for one URI and suite. */
-export interface AptSourceEntry {
+import type { AptRepository } from "./desktopCapture.js";
+
+/**
+ * One `deb` line, or one deb822 stanza, of an apt sources file. A stanza's
+ * URIs and suites stay lists: apt reads every pair of them, and expanding
+ * the pairs would let a 1 MiB file make millions of entries.
+ */
+export interface AptSourceStanza {
   readonly file: string;
   /** apt's number for the entry: a one-line entry's line, a deb822 entry's stanza, counted from 1. */
   readonly position: number;
-  /** Without trailing slashes, as `apt-cache policy` prints it. */
-  readonly uri: string;
-  readonly suite: string;
-  /** Empty for a flat repository, whose suite is a path ending in `/`. */
+  /** Without trailing slashes, as `apt-cache policy` prints them. */
+  readonly uris: readonly string[];
+  readonly suites: readonly string[];
   readonly components: readonly string[];
   readonly architectures: readonly string[];
   /** Keyring paths and key fingerprints the entry is signed by. */
   readonly signedBy: readonly string[];
   /** Whether Signed-By holds a key block rather than paths or fingerprints. */
   readonly inlineKey: boolean;
+}
+
+/** One `deb` entry of an apt sources file for one URI and suite. */
+export interface AptSourceEntry extends Omit<
+  AptSourceStanza,
+  "uris" | "suites"
+> {
+  readonly uri: string;
+  readonly suite: string;
+  /** Empty for a flat repository, whose suite is a path ending in `/`. */
+  readonly components: readonly string[];
 }
 
 const ARMOR_BEGIN = "-----BEGIN PGP PUBLIC KEY BLOCK-----";
@@ -24,7 +40,11 @@ const listValues = (value: string | undefined): readonly string[] =>
 const withoutTrailingSlashes = (uri: string): string =>
   uri.replace(/\/+$/u, "");
 
-const entries = (
+/** Whether a suite as an entry writes it is a target's release, which apt leaves empty for the flat suite `/`. */
+const isRelease = (suite: string, release: string): boolean =>
+  suite === release || (suite === "/" && release === "");
+
+const stanza = (
   at: { readonly file: string; readonly position: number },
   fields: {
     readonly uris: readonly string[];
@@ -32,30 +52,28 @@ const entries = (
     readonly components: readonly string[];
     readonly options: ReadonlyMap<string, string>;
   },
-): AptSourceEntry[] => {
+): AptSourceStanza => {
   const signedBy = fields.options.get("signed-by") ?? "";
   const inlineKey = signedBy.includes(ARMOR_BEGIN);
-  return fields.uris.flatMap((uri) =>
-    fields.suites.map((suite) => ({
-      ...at,
-      uri: withoutTrailingSlashes(uri),
-      suite,
-      components: suite.endsWith("/") ? [] : [...fields.components],
-      architectures: listValues(fields.options.get("arch")),
-      signedBy: inlineKey ? [] : listValues(signedBy),
-      inlineKey,
-    })),
-  );
+  return {
+    ...at,
+    uris: fields.uris.map(withoutTrailingSlashes),
+    suites: fields.suites,
+    components: fields.components,
+    architectures: listValues(fields.options.get("arch")),
+    signedBy: inlineKey ? [] : listValues(signedBy),
+    inlineKey,
+  };
 };
 
 const ONE_LINE =
   /^deb(?:\s+\[(?<options>[^\]]*)\])?\s+(?<uri>\S+)\s+(?<suite>\S+)(?<components>(?:\s+\S+)*)\s*$/u;
 
-/** The `deb` entries of a one-line `sources.list` file; `deb-src` lines and comments are skipped. */
+/** The `deb` lines of a one-line `sources.list` file; `deb-src` lines and comments are skipped. */
 export const parseOneLineSources = (
   text: string,
   file: string,
-): readonly AptSourceEntry[] =>
+): readonly AptSourceStanza[] =>
   text.split("\n").flatMap((line, index) => {
     const groups = ONE_LINE.exec(line.replace(/#.*$/u, "").trim())?.groups;
     if (groups?.uri === undefined || groups.suite === undefined) return [];
@@ -67,15 +85,17 @@ export const parseOneLineSources = (
           : [];
       }),
     );
-    return entries(
-      { file, position: index + 1 },
-      {
-        uris: [groups.uri],
-        suites: [groups.suite],
-        components: listValues(groups.components),
-        options,
-      },
-    );
+    return [
+      stanza(
+        { file, position: index + 1 },
+        {
+          uris: [groups.uri],
+          suites: [groups.suite],
+          components: listValues(groups.components),
+          options,
+        },
+      ),
+    ];
   });
 
 /** Fields of each deb822 paragraph by lowercase name; continuation lines keep their line breaks. */
@@ -103,29 +123,31 @@ export const deb822Paragraphs = (
   return found;
 };
 
-/** The `deb` entries of a deb822 `.sources` file; disabled paragraphs are skipped but still counted. */
+/** The `deb` stanzas of a deb822 `.sources` file; disabled paragraphs are skipped but still counted. */
 export const parseDeb822Sources = (
   text: string,
   file: string,
-): readonly AptSourceEntry[] =>
+): readonly AptSourceStanza[] =>
   deb822Paragraphs(text).flatMap((fields, index) => {
     if (
       !listValues(fields.get("types")).includes("deb") ||
       fields.get("enabled")?.toLowerCase() === "no"
     )
       return [];
-    return entries(
-      { file, position: index + 1 },
-      {
-        uris: listValues(fields.get("uris")),
-        suites: listValues(fields.get("suites")),
-        components: listValues(fields.get("components")),
-        options: new Map([
-          ["signed-by", fields.get("signed-by") ?? ""],
-          ["arch", fields.get("architectures") ?? ""],
-        ]),
-      },
-    );
+    return [
+      stanza(
+        { file, position: index + 1 },
+        {
+          uris: listValues(fields.get("uris")),
+          suites: listValues(fields.get("suites")),
+          components: listValues(fields.get("components")),
+          options: new Map([
+            ["signed-by", fields.get("signed-by") ?? ""],
+            ["arch", fields.get("architectures") ?? ""],
+          ]),
+        },
+      ),
+    ];
   });
 
 /** One index `apt-get indextargets` lists, with the release facts apt read for it. */
@@ -138,6 +160,8 @@ export interface AptIndexTarget {
   readonly repoUri: string;
   /** The suite as the entry writes it; empty for the flat suite `/`. */
   readonly release: string;
+  /** The entry's component the index belongs to; null for a flat repository. */
+  readonly component: string | null;
   /** The URI of the folder holding the release's InRelease, Release and Release.gpg. */
   readonly baseUri: string;
   /** The index file in apt's lists folder, where the release files are too. */
@@ -177,6 +201,7 @@ export const parseAptIndexTargets = (
         position: Number(at.position),
         repoUri,
         release: fields.get("release") ?? "",
+        component: optional("component"),
         baseUri,
         filename,
         origin: optional("origin"),
@@ -187,25 +212,61 @@ export const parseAptIndexTargets = (
   });
 
 /**
- * The sources entry an index target comes from: the one at its file and
- * position, or for a deb822 stanza with several URIs or suites, the one with
- * its URI and suite.
+ * The sources entry an index target comes from: the stanza at its file and
+ * position, with its URI and suite when the stanza lists several.
  */
 export const entryForTarget = (
   target: AptIndexTarget,
-  candidates: readonly AptSourceEntry[],
+  stanzas: readonly AptSourceStanza[],
 ): AptSourceEntry | undefined => {
-  const at = candidates.filter(
-    (entry) =>
-      entry.file === target.sourcesFile && entry.position === target.position,
+  const at = stanzas.find(
+    (candidate) =>
+      candidate.file === target.sourcesFile &&
+      candidate.position === target.position,
   );
-  if (at.length <= 1) return at[0];
-  const uri = withoutTrailingSlashes(target.repoUri);
-  return at.find(
-    (entry) =>
-      entry.uri === uri &&
-      (entry.suite === target.release ||
-        (entry.suite === "/" && target.release === "")),
+  if (at === undefined) return undefined;
+  const { uris, suites, ...entry } = at;
+  const single = uris.length === 1 && suites.length === 1;
+  const repoUri = withoutTrailingSlashes(target.repoUri);
+  const uri = single ? uris[0] : uris.find((listed) => listed === repoUri);
+  const suite = single
+    ? suites[0]
+    : suites.find((listed) => isRelease(listed, target.release));
+  if (uri === undefined || suite === undefined) return undefined;
+  return {
+    ...entry,
+    uri,
+    suite,
+    components: suite.endsWith("/") ? [] : entry.components,
+  };
+};
+
+/**
+ * The package files, as `apt-cache policy` prints them, that apt reads once
+ * these repositories are declared: every index of the same URI and suite in
+ * one of their components. A declared repository brings each component of
+ * its entry, not only the one listing the installed version.
+ */
+export const declaredPackageFiles = (
+  repositories: readonly Pick<AptRepository, "uri" | "suite" | "components">[],
+  targets: readonly AptIndexTarget[],
+): ReadonlySet<string> => {
+  const declares = (
+    repository: Pick<AptRepository, "uri" | "suite" | "components">,
+    target: AptIndexTarget,
+  ) =>
+    repository.uri === withoutTrailingSlashes(target.repoUri) &&
+    repository.suite !== null &&
+    isRelease(repository.suite, target.release) &&
+    (target.component === null
+      ? repository.components.length === 0
+      : repository.components.includes(target.component));
+  return new Set(
+    targets
+      .filter((target) =>
+        repositories.some((repository) => declares(repository, target)),
+      )
+      .map((target) => target.description),
   );
 };
 

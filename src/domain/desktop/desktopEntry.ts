@@ -147,30 +147,104 @@ export const expandDesktopExec = (
 };
 
 /** How an expanded command reaches the application binary. */
-export type DesktopCommandWrapper =
+export type DesktopCommandWrapper = {
+  /** The program `env` runs, or the first argument when there is no `env`. */
+  readonly program: string;
+  /** Variables an `env` prefix sets; its `PATH` is the one that finds the program. */
+  readonly environment: Readonly<Record<string, string>>;
+} & (
   | {
       readonly kind: "direct";
-      readonly program: string;
       /** The program's position in the command. */
       readonly index: number;
     }
-  | { readonly kind: "flatpak"; readonly application_id: string | null };
+  | { readonly kind: "flatpak"; readonly application_id: string | null }
+);
 
-/** Skip `env NAME=value` prefixes and recognise `flatpak run` launchers. */
+/**
+ * `flatpak run` options that take a value. GOption also accepts the value as
+ * the next argument (`--branch stable`), so it must be skipped with its option.
+ */
+const FLATPAK_RUN_VALUE_OPTIONS: ReadonlySet<string> = new Set([
+  "--arch",
+  "--command",
+  "--cwd",
+  "--branch",
+  "--runtime",
+  "--runtime-version",
+  "--commit",
+  "--runtime-commit",
+  "--parent-pid",
+  "--instance-id-fd",
+  "--app-path",
+  "--usr-path",
+  "--installation",
+  // Sandbox permissions, shared with `flatpak override`.
+  "--share",
+  "--unshare",
+  "--socket",
+  "--nosocket",
+  "--device",
+  "--nodevice",
+  "--allow",
+  "--disallow",
+  "--filesystem",
+  "--nofilesystem",
+  "--env",
+  "--env-fd",
+  "--unset-env",
+  "--own-name",
+  "--talk-name",
+  "--no-talk-name",
+  "--system-own-name",
+  "--system-talk-name",
+  "--system-no-talk-name",
+  "--add-policy",
+  "--remove-policy",
+  "--persist",
+  "--usb",
+  "--nousb",
+  "--usb-list",
+  "--usb-list-file",
+]);
+
+/**
+ * The application id a `flatpak run` argument list names: its first operand,
+ * after options and their values, without a `/arch/branch` ref suffix.
+ */
+const flatpakApplicationId = (arguments_: readonly string[]): string | null => {
+  for (let index = 0; index < arguments_.length; index += 1) {
+    const token = arguments_[index] ?? "";
+    if (token === "--") return arguments_[index + 1]?.split("/")[0] || null;
+    if (!token.startsWith("-")) return token.split("/")[0] || null;
+    if (FLATPAK_RUN_VALUE_OPTIONS.has(token)) index += 1;
+  }
+  return null;
+};
+
+/** Apply `env NAME=value` prefixes and recognise `flatpak run` launchers. */
 export const unwrapDesktopCommand = (
   argv: readonly string[],
 ): DesktopCommandWrapper => {
   let index = 0;
-  if (argv[index]?.split("/").at(-1) === "env") {
-    index += 1;
-    while (/^[A-Za-z_][A-Za-z0-9_]*=/u.test(argv[index] ?? "")) index += 1;
+  // No prototype, so an assignment such as `__proto__=x` stays a variable.
+  const environment: Record<string, string> = Object.create(null);
+  if (argv[0]?.split("/").at(-1) === "env") {
+    index = 1;
+    while (/^[A-Za-z_][A-Za-z0-9_]*=/u.test(argv[index] ?? "")) {
+      const assignment = argv[index] ?? "";
+      const split = assignment.indexOf("=");
+      environment[assignment.slice(0, split)] = assignment.slice(split + 1);
+      index += 1;
+    }
   }
   const program = argv[index] ?? "";
-  if (program.split("/").at(-1) === "flatpak" && argv[index + 1] === "run") {
-    const application = argv
-      .slice(index + 2)
-      .find((token) => !token.startsWith("-") && !token.startsWith("@@"));
-    return { kind: "flatpak", application_id: application ?? null };
-  }
-  return { kind: "direct", program, index };
+  if (program.split("/").at(-1) === "flatpak" && argv[index + 1] === "run")
+    return {
+      kind: "flatpak",
+      program,
+      environment,
+      application_id: flatpakApplicationId(argv.slice(index + 2)),
+    };
+  return { kind: "direct", program, environment, index };
 };

@@ -77,10 +77,10 @@ const aptRepositorySchema = z.strictObject({
   suite: z.string().nullable(),
   /** Empty for a flat repository. */
   components: z.array(z.string()),
-  /** The entry's architecture restriction; empty when it names none. */
-  architectures: z.array(z.string()),
-  /** The release's Suite (apt's `a=`), or else its Codename, which `<package>/<release>` selects; null when unknown. */
-  release: z.string().nullable(),
+  /** The entry's architecture restriction; empty when it names none, absent from captures written before it was recorded. */
+  architectures: z.array(z.string()).optional(),
+  /** The release's Suite (apt's `a=`), or else its Codename, which `<package>/<release>` selects; null when unknown, absent from captures written before it was recorded. */
+  release: z.string().nullable().optional(),
   /** The verified key; the key file itself, or the one key of it that verified. */
   signing_key: aptSigningKeySchema.nullable(),
   /** Why no signing key was verified, or why the repository was not checked. */

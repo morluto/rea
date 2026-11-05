@@ -17,8 +17,11 @@ that key, with those libraries, and starts it.
   deb822 stanza; `sources.list`, one-line `*.list` or deb822 `*.sources`) with
   its URI, suite, components and architecture restriction. Flat repositories
   (suite `./` or `/`, no components), `[signed-by=…]` and `Signed-By:` options
-  and architecture options are read. `release` is the release's Suite (`a=`),
-  or else its Codename, from the same index target.
+  and architecture options are read; a deb822 stanza's URIs and suites are
+  kept as lists, never expanded into every pair. `release` is the release's
+  Suite (`a=`), or else its Codename, from the same index target. Captures
+  written before `architectures` and `release` were recorded omit them, and
+  still open.
 - The repository's key is the candidate that verifies the release beside the
   index in apt's lists folder (`InRelease`, or `Release` with `Release.gpg`,
   named from the target's `Base-URI`) with
@@ -30,14 +33,17 @@ that key, with those libraries, and starts it.
   `/etc/apt/trusted.gpg.d` and `/etc/apt/trusted.gpg`. Each is written into a
   private temporary folder, an armored key decoded to binary in REA, and the
   folder is removed; a failed removal fails the capture with the folder's
-  owner and cleanup facts. The verified key's path, SHA-256, format and
-  primary fingerprint are recorded and its bytes retained in the capture's
-  content store, within `--max-file-bytes` and the content budget. A key file
-  holding one key is retained as it is; from a file holding several, only the
-  transferable key whose primary fingerprint matches is retained, in binary.
-  Without a verified key, `signing_key` is null and `signing_key_reason` says
-  why. Ubuntu Pro ESM repositories are not checked, with a reason naming the
-  Ubuntu Pro credentials a computer lacks.
+  owner and cleanup facts, as does a sources file, key or library whose
+  handle cannot be closed. When the repository check and the library walk
+  both fail, the failure keeps both causes and every owner. The verified
+  key's path, SHA-256, format and primary fingerprint are recorded and its
+  bytes retained in the capture's content store, within `--max-file-bytes`
+  and the content budget. A key file holding one key is retained as it is;
+  from a file holding several, only the transferable key whose primary
+  fingerprint matches is retained, in binary. Without a verified key,
+  `signing_key` is null and `signing_key_reason` says why. Ubuntu Pro ESM
+  repositories are not checked, with a reason naming the Ubuntu Pro
+  credentials a computer lacks.
 - Library packages, only when the installed version has apt sources and none
   is the Ubuntu 24.04 archive, walked beside the repository check: from the
   resolved executable, DT_NEEDED is read with REA's ELF readers, at most 512
@@ -47,8 +53,9 @@ that key, with those libraries, and starts it.
   (`$ORIGIN` expanded, paths normalized), then the `ldconfig -p` cache;
   libraries in the executable's own folder are the application's. Resolved
   libraries are mapped to packages with batched `dpkg-query -S`, and a batched
-  `apt-cache policy` keeps those the Ubuntu 24.04 archive or a vendor
-  repository with a verified key offers. The capture records
+  `apt-cache policy` keeps those the Ubuntu 24.04 archive offers, or any
+  component of a vendor repository's entry with a verified key, since the
+  export declares every component. The capture records
   `library_packages` (sorted, without architecture qualifiers or the
   application's own package), `uninstallable_library_packages`,
   `missing_libraries`, `unpackaged_libraries`, and `library_packages_reason`
@@ -63,7 +70,9 @@ that key, with those libraries, and starts it.
   only the capture host's architecture. A repository is usable when its key
   was verified, it is reached over http or https, and its architecture
   restriction includes the host's; with none usable, the export is refused
-  naming each repository and its reason. For a vendor package, library
+  naming each repository and its reason. A capture written before
+  restrictions and releases were recorded counts its repositories as
+  unrestricted and names the package alone. For a vendor package, library
   packages follow the application's package in `Packages(apt=[…])`, and
   uninstallable ones are reported as a limitation; an archive package's
   declared dependencies are trusted as they are.

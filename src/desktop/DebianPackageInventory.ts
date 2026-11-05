@@ -1,9 +1,14 @@
 import { readdir } from "node:fs/promises";
 
 import {
+  ArtifactReaderFailure,
+  artifactPrimaryCleanupLeases,
+} from "../artifacts/ArtifactReader.js";
+import {
   fromUbuntuNobleArchive,
   repositoryRefusal,
 } from "../domain/desktop/appExportInstall.js";
+import { declaredPackageFiles } from "../domain/desktop/aptRepositories.js";
 import type { DesktopApplicationInventory } from "../domain/desktop/desktopCapture.js";
 import {
   DPKG_STATUS_FORMAT,
@@ -46,12 +51,50 @@ const policyOrigins = async (
   return policy === undefined ? undefined : parseAptPolicyOrigins(policy);
 };
 
-/** Settle both, then report the first failure, so neither is left running. */
+/**
+ * One failure for two that failed side by side: it keeps both causes, and the
+ * cleanup facts and leases of each, so a handle or folder either side could
+ * not release keeps its owner.
+ */
+const bothFailed = (first: unknown, second: unknown): unknown => {
+  // A shared cause, such as the caller's abort reason, stays itself.
+  if (Object.is(first, second)) return first;
+  const causes = [first, second];
+  const both = new AggregateError(
+    causes,
+    causes
+      .map((cause) => (cause instanceof Error ? cause.message : String(cause)))
+      .join("; "),
+  );
+  const cleanups = causes.flatMap((cause) =>
+    cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined
+      ? [cause.cleanup]
+      : [],
+  );
+  if (cleanups.length === 0) return both;
+  const leases = causes.map(artifactPrimaryCleanupLeases);
+  return ArtifactReaderFailure.withCleanup(
+    both,
+    {
+      reason: cleanups.map(({ reason }) => reason).join("; "),
+      resources: [...new Set(cleanups.flatMap(({ resources }) => resources))],
+    },
+    undefined,
+    // Unknown when either side holds cleanup without an exact owner.
+    leases.includes(undefined)
+      ? undefined
+      : [...new Set(leases.flatMap((owned) => owned ?? []))],
+  );
+};
+
+/** Settle both, so neither is left running, then report what failed. */
 const settled = async <First, Second>(
   first: Promise<First>,
   second: Promise<Second>,
 ): Promise<[First, Second]> => {
   const [one, two] = await Promise.allSettled([first, second]);
+  if (one.status === "rejected" && two.status === "rejected")
+    throw bothFailed(one.reason, two.reason);
   if (one.status === "rejected") throw one.reason;
   if (two.status === "rejected") throw two.reason;
   return [one.value, two.value];
@@ -89,10 +132,11 @@ const installFacts = async (
   context.limitations.push(...vendor.limitations);
   for (const [sha256, bytes] of vendor.keys)
     context.signingKeys.set(sha256, bytes);
-  const declared = new Set(
-    vendor.repositories
-      .filter((repository) => repositoryRefusal(repository) === undefined)
-      .map((repository) => repository.source),
+  const declared = declaredPackageFiles(
+    vendor.repositories.filter(
+      (repository) => repositoryRefusal(repository) === undefined,
+    ),
+    vendor.indexTargets,
   );
   return {
     apt_repositories: [...vendor.repositories],
