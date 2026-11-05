@@ -1,3 +1,4 @@
+import { requireMcpOutput } from "../../lib/mcp-verifier-results.mjs";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -172,8 +173,10 @@ try {
       { name: "inspect_artifact", arguments: {} },
       { timeout: 150_000 },
     );
-    assert.notEqual(inspected.isError, true, JSON.stringify(inspected));
-    const mcpInspection = parseEvidence(inspected.structuredContent);
+    assert.notEqual(inspected.structuredContent, undefined);
+    const mcpInspection = parseEvidence(
+      requireMcpOutput(inspected, "inspect_artifact"),
+    );
     assert.deepEqual(
       mcpInspection.normalized_result,
       inspection.normalized_result,
@@ -186,9 +189,10 @@ try {
       },
       { timeout: 150_000 },
     );
-    assert.notEqual(response.isError, true, JSON.stringify(response));
-    assert.ok(response.structuredContent !== undefined);
-    const mcpEvidence = parseEvidence(response.structuredContent);
+    assert.notEqual(response.structuredContent, undefined);
+    const mcpEvidence = parseEvidence(
+      requireMcpOutput(response, "project_harmony_application_graph"),
+    );
     assert.deepEqual(
       mcpEvidence.normalized_result,
       projectionEvidence.normalized_result,

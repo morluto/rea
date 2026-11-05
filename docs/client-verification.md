@@ -1,10 +1,25 @@
 # Client and agent verification
 
+FreeBuff MCP loading and personal skill discovery are currently unverified with
+an installed native client/version. Its temporary-filesystem coverage verifies
+REA's configuration and applicability boundaries only; it does not establish
+that FreeBuff consumes the written registration or skill.
+
 Use these optional lanes to verify an installed client or evaluate an agent's
 REA workflow. [Testing REA](testing.md) provides the normal development commands
 and provider lanes. Each record below states its host, client version, model
 fixture, and remaining coverage; a native-client run with a loopback model does
 not establish live model-service acceptance.
+
+## Launch environment verification
+
+`rea mcp doctor --json` starts the production MCP adapter with the current runtime
+executable and environment. A healthy result establishes that adapter's
+initialization, discovery and target-free request flow; it does not verify a
+client's configured launcher or its inherited environment. Test the generated
+registration through the actual client, including a reduced `PATH` when checking
+desktop or service startup. Record the client version and launch environment
+separately from terminal doctor results. See [launcher troubleshooting](client-configuration.md#launchers-and-path).
 
 ## Published Pi code-mode renderer limit
 
@@ -47,6 +62,14 @@ the shared personal skill through their default search paths without an explicit
 skill setting; Hermes discovers it through the selected `HERMES_HOME`.
 Set `REA_VERIFY_HERMES_STICKY_PROFILE=1` to exercise native Hermes selection of
 a named sticky profile with `HERMES_HOME` still pointing to its root.
+
+For Qwen on POSIX, set `REA_VERIFY_QWEN_REDUCED_PATH=1` and select its JavaScript
+entry point with `REA_VERIFY_QWEN_COMMAND` to test a restricted client environment.
+Setup retains the caller's `PATH`; the native Qwen `chat` or `call` run then uses
+an isolated `PATH` containing only Bash for the shell-tool fixture. The lane
+checks that `node`, `npm` and `npx` cannot be found and uses the generated REA
+registration unchanged. Its receipt records `reducedPath`, `clientPath` and
+`registrationCommand`; the option alone does not establish a passing native run.
 
 The Qwen lane also supports native Windows (verified with Qwen Code 0.25.1 and
 Node 24.19.0 for both `chat` and `call`). With Node 24.18.0, the same `call`
@@ -148,6 +171,12 @@ the complete catalog and full schemas. To verify the existing compact profile:
 REA_VERIFY_COPILOT_MODEL=gpt-4.1 REA_VERIFY_COPILOT_SCHEMA_PROFILE=compact npm run verify:copilot-client -- chat
 REA_VERIFY_COPILOT_MODEL=gpt-4.1 REA_VERIFY_COPILOT_SCHEMA_PROFILE=compact npm run verify:copilot-client -- call
 ```
+
+The verifier explicitly writes either selected profile into its disposable
+registration and compares the input schemas forwarded by Copilot with that
+profile's advertised schemas. A run must not infer `full` from an unset setting:
+REA's runtime default is now `compact`. The recorded client results above remain
+scoped to their executed revisions; this verifier correction is not a new client run.
 
 Both native workflows passed with the complete tool inventory. The verifier selects the
 profile only in its disposable Copilot registration and records it in the
@@ -452,6 +481,11 @@ real local Codex CLI with:
 npm run verify:agent
 ```
 
+The verifier's scenarios, transcript scoring, fixture rubrics, and report gates
+are development verification code under `tests/evaluation/model-evals/`. The
+source-owned evaluator runs alongside the compiled REA tools; it is excluded
+from the shipped runtime package.
+
 The lane runs scenarios sequentially in standalone Codex (`--no-daemon`) with a
 disposable HOME and CODEX_HOME under `~/.cache/rea-agent-evaluations/`. Set
 `REA_AGENT_EVAL_ROOT` to choose another parent directory outside the OS temporary
@@ -475,10 +509,16 @@ is removed after confirmed process cleanup even with
 `REA_AGENT_EVAL_KEEP_FIXTURES=true`. No user configuration,
 rules, plugins or history is copied; shell snapshots and additional agents are
 disabled. Existing API-key environment authentication remains available.
-The native missing-provider scenario preapproves only `open_binary` and
+The native provider scenario preapproves only `open_binary` and
 `close_binary` in the disposable client so it reaches REA's actual provider
-boundary instead of stopping at Codex approval. This does not validate a real
-native engine or authorize arbitrary runtime execution.
+boundary instead of stopping at Codex approval. Its scenario contract accepts
+one `provider_unavailable` open refusal without a close, or one successful open
+followed by a successful close. Other errors, an unclosed session, and a close
+without acquisition fail. These outcomes and the prompt are owned together in
+`tests/evaluation/model-evals/AgentEvaluationScenarios.ts`; generic successful-tool sequences
+still apply to scenarios that require them. The provider scenario checks routing,
+reported limitations, and cleanup; free-form answer correctness remains
+unassessed. It does not validate a real native engine or authorize runtime execution.
 
 Select a smaller run with `REA_AGENT_EVAL_SCENARIOS`, a comma-separated list of
 scenario IDs. `asar-zh` exercises the packaged desktop rubric from a Chinese
@@ -491,8 +531,10 @@ limit for the whole process tree when testing on a constrained host; a Node
 heap limit alone does not bound client and child-process memory.
 
 `missing-target` leaves desktop fixtures visible without selecting one in the
-request. It requires zero REA calls and a structured request for an app name or
-artifact path. Its `expectedFirstTool` is `null`, and
+request. It requires zero REA calls and a JSON-only request for an app name or
+artifact path, with no preceding prose or Markdown fences. Its prompt and
+whole-answer validator are defined together in `AgentEvaluationScenarios.ts`.
+Its `expectedFirstTool` is `null`, and
 `targetClarificationPassed` grades that limited routing outcome independently
 of analysis prose heuristics. Analyzing a nearby example cannot pass this case.
 
@@ -554,7 +596,10 @@ tool results and final answers for review.
 Report schema version 4 adds negative routing scenarios with nullable
 `expectedFirstTool` and a `targetClarificationPassed` outcome. Consumers must
 allow an expected absence of REA calls; this does not make an analysis scenario
-pass without its required tools. Version 3 changed the top-level
+pass without its required tools. Native provider records additionally report
+`scenarioOutcome` (`provider-unavailable`, `opened-and-closed`, or `failed`) and
+`scenarioOutcomePassed`; a failed outcome fails the gate independently of prose
+heuristics. Version 3 changed the top-level
 `factualCorrectness` from a constant
 string to an assessment summary with status, scope, and assessed/passed/failed/
 not-assessed scenario counts. Scenario records include the factual assessment and

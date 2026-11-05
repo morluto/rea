@@ -1,4 +1,5 @@
 import type { ExecutionOptions } from "../AnalysisProvider.js";
+import { createAnalysisExecutionEvidence } from "../../domain/analysisObservation.js";
 import type { FirmwareAnalysisPort } from "./FirmwareAnalysisPort.js";
 import {
   firmwareRequestSchema,
@@ -8,13 +9,11 @@ import {
 } from "../../domain/firmware/firmwareAnalysis.js";
 import {
   AnalysisCancelledError,
-  AnalysisInputError,
   AnalysisOutputError,
 } from "../../domain/analysisErrorCore.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { createEvidence, type Evidence } from "../../domain/evidence.js";
-import { jsonObjectSchema } from "../../domain/jsonValue.js";
-import { projectInputIssues } from "../../domain/inputIssueProjection.js";
+import type { Evidence } from "../../domain/evidence.js";
+import { analysisOperationInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
 import { err, type Result } from "../../domain/result.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
 
@@ -39,10 +38,11 @@ export class FirmwareAnalysisService {
     const parsed = firmwareRequestSchema.safeParse({ operation, input });
     if (!parsed.success)
       return err(
-        new AnalysisInputError(
+        analysisOperationInputErrorFromIssues(
           operation,
-          { cause: parsed.error },
-          projectInputIssues(parsed.error.issues, { operation, input }),
+          parsed.error.issues,
+          input,
+          parsed.error,
         ),
       );
     const executed = await this.provider.execute(parsed.data, options);
@@ -71,15 +71,12 @@ export class FirmwareAnalysisService {
         ),
       );
     return completeProviderEvidence(
-      createEvidence(execution.subject, execution.provider, {
+      createAnalysisExecutionEvidence(
         operation,
-        parameters: jsonObjectSchema.parse(parsed.data.input),
-        result: execution.result,
-        rawResult: execution.rawResult,
-        locations: execution.locations,
-        limitations: execution.limitations,
-        confidence: "observed",
-      }),
+        parsed.data.input,
+        execution,
+        "observed",
+      ),
       options?.signal,
     );
   }

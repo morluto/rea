@@ -29,16 +29,20 @@ it.each(["configuration", "producer"] as const)(
         diagnostics: {
           previous_error: {
             code: "provider_timeout",
-            details: { timeout_ms: 1234 },
-            recovery: { kind: "inspect_timeout_state", timeout_ms: 1234 },
-            remediation: {
-              action: expect.stringContaining("command_timeout_ms above 1234"),
+            details: {
+              timeout_ms: 1234,
+              limit: {
+                setting: "wasm.command_timeout_ms",
+                effective_value: 1234,
+                rea_restart_required: false,
+              },
             },
+            recovery: { kind: "inspect_timeout_state", timeout_ms: 1234 },
           },
         },
       },
     });
-    expect(projected.remediation.action).not.toContain("Increase");
+    expect(projected.recovery).toBeUndefined();
   },
 );
 
@@ -82,18 +86,22 @@ it.each([1234, 2_147_483_647])(
     );
     expect(projected).toMatchObject({
       code: "provider_timeout",
-      details: { timeout_ms: commandTimeoutMs },
+      details: {
+        timeout_ms: commandTimeoutMs,
+        limit: {
+          setting: "wasm.command_timeout_ms",
+          effective_value: commandTimeoutMs,
+          minimum: 1,
+          maximum: 2_147_483_647,
+          unit: "ms",
+          parameter: "command_timeout_ms",
+          applies_at: "next_operation",
+          agent_editable: true,
+          rea_restart_required: false,
+        },
+      },
       recovery: { kind: "inspect_timeout_state", timeout_ms: commandTimeoutMs },
     });
-    expect(projected.remediation.action).toContain("no server restart");
-    expect(projected.remediation.action).toContain("cleanup");
-    if (commandTimeoutMs === 2_147_483_647) {
-      expect(projected.remediation.action).toContain(
-        "no higher command deadline",
-      );
-      expect(projected.remediation.action).not.toContain("Increase");
-    } else
-      expect(projected.remediation.action).toContain("--command-timeout-ms");
   },
 );
 
@@ -209,4 +217,36 @@ it("keeps oversized tool admission distinct from selected artifact size", () => 
     projectAnalysisError(wabtFailure(cause, "configuration", "selected.wasm"))
       .code,
   ).toBe("capability_unavailable");
+});
+
+it.each([null, { stopped: "caller" }])(
+  "keeps the command-owned cancellation reason as the direct typed cause: %j",
+  (reason) => {
+    const cause = new OwnedCommandFailure(
+      "cancelled",
+      "cancelled",
+      null,
+      null,
+      { cancellation: { reason } },
+    );
+    const error = wabtFailure(cause, "producer", "/module.wasm");
+    expect(error._tag).toBe("AnalysisCancelledError");
+    expect(error.cause).toBe(reason);
+  },
+);
+it("attributes optional artifact admission to its selected caller field", () => {
+  const cause = Object.assign(new Error("missing candidate"), {
+    code: "ENOENT",
+  });
+  expect(
+    projectAnalysisError(
+      wabtFailure(cause, "artifact", "/missing.wasm", {
+        commandTimeoutMs: 30000,
+        inputField: ["candidate_paths", 2],
+      }),
+    ),
+  ).toMatchObject({
+    code: "invalid_request",
+    details: { issues: [{ path: ["candidate_paths", 2] }] },
+  });
 });

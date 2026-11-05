@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { crc32 } from "node:zlib";
 
 import { describe, expect, it } from "vitest";
 import { observeNativeUi } from "./NativeUiObservation.js";
@@ -73,11 +74,24 @@ it.each([
   async ({ offset, value }) => {
     const bytes = Buffer.from(validPng);
     bytes.writeUInt32BE(value, offset);
+    bytes.writeUInt32BE(crc32(bytes.subarray(12, 29)), 29);
     const result = await observeWithScreenshot(screenshotOf(bytes));
     expect(result.ok).toBe(false);
   },
 );
 describe("native UI screenshot validation", () => {
+  it.each([24, 32, "crc"])(
+    "rejects incomplete or corrupt IHDR despite matching native digest: %s",
+    async (kind) => {
+      const bytes = Buffer.from(validPng);
+      if (kind === "crc") bytes[29] = (bytes[29] ?? 0) ^ 1;
+      const payload =
+        typeof kind === "number" ? bytes.subarray(0, kind) : bytes;
+      expect((await observeWithScreenshot(screenshotOf(payload))).ok).toBe(
+        false,
+      );
+    },
+  );
   it("rejects malformed or mismatched screenshot bytes from the helper", async () => {
     const result = await observeWithScreenshot({
       ...screenshotOf(validPng),
@@ -547,7 +561,22 @@ describe("native UI target and cancellation failures", () => {
       }),
     });
     expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.error.message).toContain(code);
+    if (!result.ok) {
+      const projected = projectAnalysisError(result.error);
+      expect(projected.message).toBe(
+        "Grant permission or select an unambiguous window",
+      );
+      if (code === "ambiguous-window")
+        expect(projected).toMatchObject({
+          code: "invalid_request",
+          details: {
+            issues: [
+              { path: ["window_id"], message: expect.stringContaining(code) },
+            ],
+          },
+        });
+      else expect(projected.details?.reason).toContain(code);
+    }
   });
   it("preserves the underlying helper failure reason in diagnostics", async () => {
     const result = await observeNativeUi(target, "observe_native_ui", scope, {

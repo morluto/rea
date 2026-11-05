@@ -18,7 +18,7 @@ vi.mock("node:v8", async (importOriginal) => {
 
 import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
 import { createWebTextArtifact } from "../domain/webContentArtifact.js";
-import type { IncludedScript } from "../domain/webBundleAnalyzerInspection.js";
+import type { IncludedScript } from "../domain/webBundleAnalyzerState.js";
 import { WebBundleAnalysisWorker } from "./WebBundleAnalysisWorker.js";
 
 it("refuses before spawning or reading source when no host result capacity remains", async () => {

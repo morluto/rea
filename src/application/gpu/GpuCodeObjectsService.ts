@@ -1,7 +1,9 @@
-import { inspectGpuCodeObjectsInputSchema } from "../../domain/gpu/gpuCodeObjects.js";
+import {
+  inspectGpuCodeObjectsInputSchema,
+  gpuCodeObjectsSchema,
+} from "../../domain/gpu/gpuCodeObjects.js";
 import type { GpuCodeObjectsPort } from "./GpuCodeObjectsPort.js";
 import type { ExecutionOptions } from "../AnalysisProvider.js";
-import { gpuCodeObjectsSchema } from "../../domain/gpu/gpuCodeObjects.js";
 import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
@@ -9,7 +11,7 @@ import {
   AnalysisOutputError,
 } from "../../domain/analysisErrorCore.js";
 import type { Evidence } from "../../domain/evidence.js";
-import { createGpuCodeObjectsEvidence } from "./GpuCodeObjectsEvidence.js";
+import { createGpuCodeObjectsEvidence } from "../../domain/gpu/gpuCodeObjectsEvidence.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import {
   requireAnalysisViewRetention,

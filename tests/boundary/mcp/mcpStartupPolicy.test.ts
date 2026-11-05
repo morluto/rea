@@ -1,61 +1,82 @@
 import { describe, expect, it } from "vitest";
 
-import { resolve } from "node:path";
+import { readFile } from "node:fs/promises";
+import { join, resolve } from "node:path";
+
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 import {
   createEsmModuleProfileCollector,
-  fixedMcpStartupPhaseBudgetRecovery,
+  mcpStartupPhaseBudgetRecovery,
   measureMcpStartup,
   parseLinuxVmRssBytes,
   profileMcpModuleLoading,
 } from "../../../scripts/lib/mcp-startup-probe.mjs";
 import {
-  fixedMcpPhaseBudgetRecovery,
+  MCP_PHASE_BUDGET_FLOOR_MS,
+  MCP_PHASE_BUDGET_MAXIMUM_MS,
+  mcpPhaseBudgetRecovery,
+  resolveMcpStartupBudgets,
+  type McpPhaseBudget,
+} from "../../../src/config/mcpStartupBudgets.js";
+import {
   mcpDoctorDeadlineRecovery,
   MCP_STARTUP_POLICY,
 } from "../../../src/mcpStartupPolicy.js";
 
+const errorMessage = (cause: unknown): string =>
+  cause instanceof Error ? cause.message : String(cause);
+
+const expectPhaseText = (text: string, budget: McpPhaseBudget) => {
+  expect(budget.floorMilliseconds).toBe(MCP_PHASE_BUDGET_FLOOR_MS);
+  expect(budget.maximumMilliseconds).toBe(MCP_PHASE_BUDGET_MAXIMUM_MS);
+  expect(text).toContain(mcpPhaseBudgetRecovery(budget));
+};
+
+const expectThrownBudget = async (
+  pending: Promise<unknown>,
+  budget: McpPhaseBudget,
+): Promise<string> => {
+  let caught: unknown;
+  try {
+    await pending;
+  } catch (cause) {
+    caught = cause;
+  }
+  expect(caught).toBeInstanceOf(Error);
+  const message = errorMessage(caught);
+  expectPhaseText(message, budget);
+  return message;
+};
+
 describe("MCP startup policy", () => {
-  it("names fixed phase budgets without turning Codex's 30s into a REA knob", () => {
-    const initialize = fixedMcpPhaseBudgetRecovery(
-      "MCP initialize phase budget",
-      MCP_STARTUP_POLICY.initializeBudgetMs,
-      "ms",
+  it("names phase budget settings without turning Codex's 30s into a REA knob", () => {
+    const budgets = resolveMcpStartupBudgets({});
+    expect(MCP_STARTUP_POLICY.codexStartupTimeoutSeconds).toBe(30);
+    expect(budgets.initialize.milliseconds).toBe(15_000);
+    expect(budgets.toolsList.milliseconds).toBe(5_000);
+    expect(budgets.firstCatalog.milliseconds).toBe(20_000);
+    expect(budgets.doctor.milliseconds).toBe(30_000);
+    const initialize = mcpPhaseBudgetRecovery(budgets.initialize);
+    expect(initialize).toBe(mcpStartupPhaseBudgetRecovery(budgets.initialize));
+    expectPhaseText(initialize, budgets.initialize);
+    expectPhaseText(
+      mcpStartupPhaseBudgetRecovery(budgets.toolsList),
+      budgets.toolsList,
     );
-    expect(initialize).toBe(
-      "REA's fixed MCP initialize phase budget is 15000 ms and this release has no runtime override.",
+    expectPhaseText(
+      mcpStartupPhaseBudgetRecovery(budgets.firstCatalog),
+      budgets.firstCatalog,
     );
-    expect(initialize).toBe(
-      fixedMcpStartupPhaseBudgetRecovery(
-        "MCP initialize phase budget",
-        MCP_STARTUP_POLICY.initializeBudgetMs,
-        "ms",
-      ),
-    );
-    expect(
-      fixedMcpStartupPhaseBudgetRecovery(
-        "MCP tools/list phase budget",
-        MCP_STARTUP_POLICY.toolsListBudgetMs,
-        "ms",
-      ),
-    ).toContain("5000 ms");
-    expect(
-      fixedMcpStartupPhaseBudgetRecovery(
-        "MCP first-catalog phase budget",
-        MCP_STARTUP_POLICY.firstCatalogBudgetMs,
-        "ms",
-      ),
-    ).toContain("20000 ms");
-    const doctor = mcpDoctorDeadlineRecovery(
-      MCP_STARTUP_POLICY.doctorDeadlineMs,
-    );
-    expect(doctor).toContain("30000 ms");
-    expect(doctor).toContain("no runtime override");
-    expect(doctor).toContain(
-      "Codex startup_timeout_sec of 30 seconds is client guidance",
-    );
-    expect(doctor).toContain("does not enforce");
-    expect(doctor).not.toContain("REA_MCP_STARTUP");
+    const doctor = mcpDoctorDeadlineRecovery(budgets.doctor);
+    expectPhaseText(doctor, budgets.doctor);
+    const selected = resolveMcpStartupBudgets({
+      REA_MCP_INITIALIZE_BUDGET_MS: "16000",
+    });
+    expect(selected.initialize.milliseconds).toBe(16_000);
+    expect(selected.initialize.source).toBe("setting");
+    expect(selected.toolsList).toEqual(budgets.toolsList);
+    expect(MCP_STARTUP_POLICY.codexStartupTimeoutSeconds).toBe(30);
   });
 
   it("parses Linux resident memory without accepting other fields", () => {
@@ -94,35 +115,41 @@ const probePolicy = (
     firstCatalogBudgetMs: number;
     doctorDeadlineMs: number;
   }> = {},
-) => ({
-  initializeBudgetMs: 30_000,
-  toolsListBudgetMs: 30_000,
-  firstCatalogBudgetMs: 30_000,
-  doctorDeadlineMs: 30_000,
-  ...overrides,
-});
-
-const errorMessage = (cause: unknown): string =>
-  cause instanceof Error ? cause.message : String(cause);
+) => {
+  const generous = 30_000;
+  return resolveMcpStartupBudgets({
+    REA_MCP_INITIALIZE_BUDGET_MS: String(
+      overrides.initializeBudgetMs ?? generous,
+    ),
+    REA_MCP_TOOLS_LIST_BUDGET_MS: String(
+      overrides.toolsListBudgetMs ?? generous,
+    ),
+    REA_MCP_FIRST_CATALOG_BUDGET_MS: String(
+      overrides.firstCatalogBudgetMs ?? generous,
+    ),
+    REA_MCP_DOCTOR_DEADLINE_MS: String(overrides.doctorDeadlineMs ?? generous),
+  });
+};
 
 describe("packaged MCP startup probe failures", () => {
   it("names the initialize budget when that phase times out", async () => {
     const budgetMs = 200;
-    await expect(
+    const policy = probePolicy({ initializeBudgetMs: budgetMs });
+    await expectThrownBudget(
       measureMcpStartup({
         command: process.execPath,
         args: [probeChild],
         environment: { ...process.env, REA_MCP_PROBE_MODE: "hang" },
-        policy: probePolicy({ initializeBudgetMs: budgetMs }),
+        policy,
       }),
-    ).rejects.toThrow(
-      `MCP initialize phase budget is ${String(budgetMs)} ms and this release has no runtime override.`,
+      policy.initialize,
     );
   });
 
   it("names the tools/list budget when that phase times out", async () => {
     const budgetMs = 200;
-    await expect(
+    const policy = probePolicy({ toolsListBudgetMs: budgetMs });
+    await expectThrownBudget(
       measureMcpStartup({
         command: process.execPath,
         args: [probeChild],
@@ -130,24 +157,23 @@ describe("packaged MCP startup probe failures", () => {
           ...process.env,
           REA_MCP_PROBE_MODE: "initialize-then-hang",
         },
-        policy: probePolicy({ toolsListBudgetMs: budgetMs }),
+        policy,
       }),
-    ).rejects.toThrow(
-      `MCP tools/list phase budget is ${String(budgetMs)} ms and this release has no runtime override.`,
+      policy.toolsList,
     );
   });
 
   it("names the first-catalog budget when startup exceeds it", async () => {
     const budgetMs = 1;
-    await expect(
+    const policy = probePolicy({ firstCatalogBudgetMs: budgetMs });
+    await expectThrownBudget(
       measureMcpStartup({
         command: process.execPath,
         args: [probeChild],
         environment: { ...process.env, REA_MCP_PROBE_MODE: "serve" },
-        policy: probePolicy({ firstCatalogBudgetMs: budgetMs }),
+        policy,
       }),
-    ).rejects.toThrow(
-      `MCP first-catalog phase budget is ${String(budgetMs)} ms and this release has no runtime override.`,
+      policy.firstCatalog,
     );
   });
 
@@ -164,29 +190,30 @@ describe("packaged MCP startup probe failures", () => {
       const message = errorMessage(cause);
       expect(message).toContain("unrelated probe failure");
       expect(message).not.toContain("expected the unrelated probe failure");
-      expect(message).not.toContain("no runtime override");
-      expect(message).not.toContain("phase budget");
+      for (const budget of Object.values(probePolicy()))
+        expect(message).not.toContain(budget.setting);
     }
   });
 
   it("names the doctor deadline when module profiling cannot initialize", async () => {
     const budgetMs = 200;
-    await expect(
+    const policy = probePolicy({ doctorDeadlineMs: budgetMs });
+    await expectThrownBudget(
       profileMcpModuleLoading({
         command: process.execPath,
         args: [probeChild],
         environment: { ...process.env, REA_MCP_PROBE_MODE: "hang" },
-        policy: probePolicy({ doctorDeadlineMs: budgetMs }),
+        policy,
         packageName: "rea-agents",
       }),
-    ).rejects.toThrow(
-      `MCP doctor startup deadline is ${String(budgetMs)} ms and this release has no runtime override.`,
+      policy.doctor,
     );
   });
 
   it("names the tools/list budget when module profiling passes initialize", async () => {
     const budgetMs = 200;
-    await expect(
+    const policy = probePolicy({ toolsListBudgetMs: budgetMs });
+    await expectThrownBudget(
       profileMcpModuleLoading({
         command: process.execPath,
         args: [probeChild],
@@ -194,11 +221,10 @@ describe("packaged MCP startup probe failures", () => {
           ...process.env,
           REA_MCP_PROBE_MODE: "initialize-then-hang",
         },
-        policy: probePolicy({ toolsListBudgetMs: budgetMs }),
+        policy,
         packageName: "rea-agents",
       }),
-    ).rejects.toThrow(
-      `MCP tools/list phase budget is ${String(budgetMs)} ms and this release has no runtime override.`,
+      policy.toolsList,
     );
   });
 
@@ -215,9 +241,86 @@ describe("packaged MCP startup probe failures", () => {
     } catch (cause) {
       const message = errorMessage(cause);
       expect(message).not.toContain("expected the unrelated probe failure");
-      expect(message).not.toContain("no runtime override");
-      expect(message).not.toContain("phase budget");
-      expect(message).not.toContain("MCP doctor startup deadline");
+      for (const budget of Object.values(probePolicy()))
+        expect(message).not.toContain(budget.setting);
     }
+  });
+});
+
+describe("packaged MCP first-catalog budget while a phase is pending", () => {
+  it("stops a pending initialize at the shorter first-catalog budget", async () => {
+    const firstCatalogMs = 250;
+    const initializeMs = 8_000;
+    const policy = probePolicy({
+      initializeBudgetMs: initializeMs,
+      firstCatalogBudgetMs: firstCatalogMs,
+    });
+    const started = performance.now();
+    let caught: unknown;
+    try {
+      await measureMcpStartup({
+        command: process.execPath,
+        args: [probeChild],
+        environment: { ...process.env, REA_MCP_PROBE_MODE: "hang" },
+        policy,
+      });
+    } catch (cause) {
+      caught = cause;
+    }
+    expect(caught).toBeInstanceOf(Error);
+    const message = errorMessage(caught);
+    expectPhaseText(message, policy.firstCatalog);
+    expect(message).not.toContain("REA_MCP_INITIALIZE_BUDGET_MS");
+    const elapsedMs = performance.now() - started;
+    expect(elapsedMs).toBeLessThan(initializeMs);
+    expect(elapsedMs).toBeLessThan(firstCatalogMs + 2_000);
+  });
+
+  it("stops a pending tools/list at the remaining first-catalog budget", async () => {
+    const firstCatalogMs = 800;
+    const toolsListMs = 8_000;
+    const root = await createTestTempDirectory("rea-mcp-startup-");
+    const initializedPath = join(root, "initialized");
+    const policy = probePolicy({
+      toolsListBudgetMs: toolsListMs,
+      firstCatalogBudgetMs: firstCatalogMs,
+    });
+    const started = performance.now();
+    let caught: unknown;
+    try {
+      await measureMcpStartup({
+        command: process.execPath,
+        args: [probeChild],
+        environment: {
+          ...process.env,
+          REA_MCP_PROBE_MODE: "initialize-then-hang",
+          REA_MCP_PROBE_INITIALIZED_PATH: initializedPath,
+        },
+        policy,
+      });
+    } catch (cause) {
+      caught = cause;
+    }
+    expect(caught).toBeInstanceOf(Error);
+    const message = errorMessage(caught);
+    expectPhaseText(message, policy.firstCatalog);
+    expect(message).not.toContain("REA_MCP_TOOLS_LIST_BUDGET_MS");
+    const elapsedMs = performance.now() - started;
+    expect(elapsedMs).toBeLessThan(toolsListMs);
+    expect(elapsedMs).toBeLessThan(firstCatalogMs + 2_000);
+    expect(await readFile(initializedPath, "utf8")).toBe("ready");
+  });
+
+  it("returns the catalog when every phase finishes inside its budget", async () => {
+    const measurement = await measureMcpStartup({
+      command: process.execPath,
+      args: [probeChild],
+      environment: { ...process.env, REA_MCP_PROBE_MODE: "serve" },
+      policy: probePolicy(),
+    });
+    expect(measurement.listed_tool_count).toBe(0);
+    expect(measurement.process_started_to_initialized_ms).toBeGreaterThan(0);
+    expect(measurement.process_started_to_tools_list_ms).toBeGreaterThan(0);
+    expect(measurement.process_started_to_tools_list_ms).toBeLessThan(30_000);
   });
 });

@@ -3,7 +3,7 @@ import { z } from "zod";
 import { absoluteLocalPathStringSchema } from "../localPath.js";
 import { solidityMetadataSchema } from "./solidityMetadata.js";
 
-const byteOffset = z.number().int().nonnegative();
+const byteOffset = z.int().nonnegative();
 const sha256 = z.string().regex(/^[a-f0-9]{64}$/);
 /** Owned EVMole worker deadline. Omission keeps this value. */
 export const DEFAULT_EVM_TIMEOUT_MS = 30_000;

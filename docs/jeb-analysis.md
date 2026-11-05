@@ -42,7 +42,7 @@ reaches its budget returns a typed timeout naming the phase and the effective
 milliseconds, while caller cancellation remains a cancellation. Allow execution,
 cleanup, and delivery headroom in the outer MCP client deadline.
 
-Earlier verification used JEB 5.48.0 (Linux x64, licensed build) serving `jeb-mcp-server` 1.3.0 over streamable HTTP. The official Linux x64 CE build `5.48.0.202610071539` was also verified through real CLI and production stdio MCP native-code workflows; see the [Linux CE audit](../experiments/analysis-efficiency/jeb-linux-native.md) for measurements and limits. CE verification does not establish licensed/Demo Android decompilation or GUI behavior.
+Earlier verification used JEB 5.48.0 (Linux x64, licensed build) serving `jeb-mcp-server` 1.3.0 over streamable HTTP. The official Linux x64 CE build `5.48.0.202610071539` was also verified through real CLI and production stdio MCP native-code workflows; see the [Linux CE audit](https://github.com/morluto/rea/blob/42e1a17d6e6c0487f17be0bae248553c4caba7f7/experiments/analysis-efficiency/jeb-linux-native.md) for measurements and limits. CE verification does not establish licensed/Demo Android decompilation or GUI behavior.
 
 ## Operations
 
@@ -63,8 +63,15 @@ All four preserve target-file bytes. `open_jeb_project` selects or creates an en
 - The engine caps `list_units` pages at 100; a full page is reported as `coverage: "partial"` because more units may exist. An empty remainder is `complete` only when fewer units than requested were returned.
 - When `decompile_jeb_item` omits `unit_path`, the engine implicitly selects the project's first code unit; REA reports `unit_path: null` and a limitation instead of guessing the effective unit.
 - `item_address` is a JEB code-item reference, such as a value returned by the engine's `list_code_items`. Preserve that representation and select its code unit explicitly. For the audited CE SQLite unit, the exported method reference was `sqlite3_libversion_number`; using its raw ELF symbol address did not produce a successful decompilation. File offsets, ELF virtual addresses and engine item references have different semantics. REA currently exposes unit listing, while code-item discovery remains an upstream JEB operation.
-- Engine refusals (`success: false` envelopes) are preserved as unsupported-target errors carrying the engine's own message, for example a nonexistent item address.
+- Valid engine refusals (`success: false` envelopes) return `execution_failure` with the engine's message when available. Diagnostics preserve the original envelope, including any recovery advice, and the inputs of a refused primary request. If client metadata fails after a primary reply, that reply and the caller's inputs remain in partial Evidence. REA does not infer an unsupported target from a refusal, invoke a recovery tool, or retry the request.
 - Successfully parsed client information is reused for the lifetime of the MCP connection, including when the engine omits its version. Explicit client inspection and availability probes refresh it.
 - An unreachable endpoint is a provider-availability failure with recovery guidance; REA does not retry or spawn the engine.
 
 Real-engine verification lives in the JEB lane described in [testing.md](testing.md); mock transport tests do not establish real-engine compatibility.
+
+A project-open refusal retains the selected engine-host artifact path separately
+from the service endpoint. Discovery of an unreachable service includes the same
+start/configuration recovery as a direct request. If a primary reply completes
+before a later client-information lookup fails or is cancelled, the typed failure
+retains that reply as partial Evidence. Engine metadata stays unknown; this is not
+a claim that the full operation completed.

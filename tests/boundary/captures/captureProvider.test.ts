@@ -16,6 +16,7 @@ import { Cli } from "incur";
 import { registerCaptureCommands } from "../../../src/cli/captureCommands.js";
 import { silentLogger } from "../../../src/logger.js";
 import { analysisErrorRemediationAction } from "../../../src/domain/analysisErrorPresentation.js";
+import { parseEvidence } from "../../../src/domain/evidence.js";
 
 // A command-boundary simulator: real process ownership/filesystem, not real TShark coverage.
 const fixture = async (mode = "ok", failCleanup = false) => {
@@ -26,7 +27,7 @@ const fixture = async (mode = "ok", failCleanup = false) => {
   await writeFile(
     script,
     `import {readFileSync, writeFileSync, chmodSync, truncateSync} from 'node:fs';
-if (process.argv.includes('--version')) { console.log(${JSON.stringify(mode)} === 'bad-version' ? 'TShark (Wireshark) 3.0.0' : 'TShark (Wireshark) 4.6.9 (fixture)'); console.error('version warning'); }
+if (process.argv.includes('--version')) { console.log(${JSON.stringify(mode)} === 'bad-version' ? 'TShark (Wireshark) 3.0.0' : ${JSON.stringify(mode)} === 'foreign-version' ? 'tcpdump version 4.99.4' : 'TShark (Wireshark) 4.6.9 (fixture)'); console.error('version warning'); }
 else if (${JSON.stringify(mode)} === 'nonzero') { console.error('invalid decoder'); process.exitCode = 1; }
 else if (${JSON.stringify(mode)} === 'malformed-copy') { chmodSync('capture', 0o600); writeFileSync('capture', 'changed'); }
 else if (${JSON.stringify(mode)} === 'oversized-copy') { chmodSync('capture', 0o600); truncateSync('capture', 32 * 1024 * 1024 + 1); console.log('[]'); }
@@ -34,7 +35,8 @@ else if (${JSON.stringify(mode)} === 'overflow') process.stdout.write('x'.repeat
 else if (${JSON.stringify(mode)} === 'wait') { console.log('ready'); setInterval(() => {}, 1000); }
 else if (${JSON.stringify(mode)} === 'invalid-json') console.log('not json');
 else if (${JSON.stringify(mode)} === 'many') console.log(JSON.stringify(Array.from({length:90},(_,i)=>({_source:{layers:{"frame.number":[String(i+1)],"ip.addr":["192.0.2.1"]}}}))));
-else if (process.argv.includes('-G')) { console.log('P\\tUniversal Serial Bus\\tusb\\nF\\tVendor ID\\tusb.idVendor\\tFT_UINT16\\tusb\\tBASE_HEX\\t0x0\\t\\nF\\tOther Vendor\\tusb.idVendor\\tFT_UINT32\\tusb\\tBASE_HEX\\t0x0\\tSecond registration\\nP\\tInternet Protocol\\tip\\nF\\tAddress\\tip.addr\\tFT_IPv4\\tip\\t\\t0x0\\tSource or destination'); console.error('glossary warning'); }
+else if (${JSON.stringify(mode)} === 'alias-canonical') { if (!process.argv.includes('bootp.type')) throw Error('alias selector missing'); console.log(JSON.stringify([{_source:{layers:{"frame.number":["1"],"dhcp.type":["1"]}}}])); }
+else if (process.argv.includes('-G')) { console.log(${JSON.stringify(mode)} === 'unicode-search' ? 'P\\tΟΣ\\tgreek.proto\\nF\\tΟΣ field\\tgreek.field\\tFT_STRING\\tgreek.proto\\tBASE_NONE\\t0x0\\tGreek description' : 'P\\tUniversal Serial Bus\\tusb\\nF\\tVendor ID\\tusb.idVendor\\tFT_UINT16\\tusb\\tBASE_HEX\\t0x0\\t\\nF\\tOther Vendor\\tusb.idVendor\\tFT_UINT32\\tusb\\tBASE_HEX\\t0x0\\tSecond registration\\nP\\tInternet Protocol\\tip\\nF\\tAddress\\tip.addr\\tFT_IPv4\\tip\\t\\t0x0\\tSource or destination'); console.error('glossary warning'); }
 else { if(readFileSync('capture', 'utf8') !== 'recording bytes') throw Error('wrong copy'); console.log(JSON.stringify([{_source:{layers:{"frame.number":["1"],"ip.addr":["192.0.2.1","192.0.2.2"]}}}])); console.error('producer warning'); }
 `,
   );
@@ -42,6 +44,7 @@ else { if(readFileSync('capture', 'utf8') !== 'recording bytes') throw Error('wr
   const configuredCommand =
     mode === "symlink" ? join(directory, "configured-tool") : script;
   if (mode === "symlink") await symlink(script, configuredCommand);
+  if (mode === "path") await symlink(script, join(directory, "tshark"));
   const controller = new AbortController();
   let calls = 0;
   let mayClean = !failCleanup;
@@ -50,7 +53,9 @@ else { if(readFileSync('capture', 'utf8') !== 'recording bytes') throw Error('wr
   const provider = new TsharkCaptureProvider(
     {
       ...process.env,
-      REA_TSHARK_COMMAND: configuredCommand,
+      ...(mode === "path"
+        ? { PATH: directory, REA_TSHARK_COMMAND: undefined }
+        : { REA_TSHARK_COMMAND: configuredCommand }),
       REA_TSHARK_PRLIMIT_COMMAND: configuredCommand,
     },
     async (input) => {
@@ -170,6 +175,43 @@ it("pages matching observations without changing dissection scope or frame ident
     expect(report.read_scope).toBe("to-eof");
     expect(report.tool.arguments).not.toContain("-c");
   }
+});
+
+it("preserves TShark canonical output for a caller-selected field alias", async () => {
+  const f = await fixture("alias-canonical");
+  const input = { path: f.path, fields: ["bootp.type"] };
+  const result = await f.service.inspect(input);
+  if (!result.ok) throw result.error;
+  const report = packetCaptureSchema.parse(result.value.normalized_result);
+  expect(report.selection.fields).toEqual(["bootp.type"]);
+  expect(report.packets).toEqual([
+    { "frame.number": ["1"], "dhcp.type": ["1"] },
+  ]);
+  expect(report.tool.arguments).toContain("bootp.type");
+});
+
+it("returns canonical alias output through the public packet-capture CLI", async () => {
+  const f = await fixture("alias-canonical");
+  const cli = Cli.create("capture-alias-test", { sync: false });
+  registerCaptureCommands(cli, silentLogger, {}, f.service);
+  let stdout = "";
+  await cli.serve(
+    [
+      "inspect-packet-capture",
+      f.path,
+      "--fields",
+      "bootp.type",
+      "--format",
+      "json",
+    ],
+    { stdout: (text) => (stdout += text), exit: () => {} },
+  );
+  const evidence = parseEvidence(JSON.parse(stdout));
+  const report = packetCaptureSchema.parse(evidence.normalized_result);
+  expect(report.selection.fields).toEqual(["bootp.type"]);
+  expect(report.packets).toEqual([
+    { "frame.number": ["1"], "dhcp.type": ["1"] },
+  ]);
 });
 
 it("bounds admission without queuing additional snapshots or delaying cancellation", async () => {
@@ -409,6 +451,67 @@ it("refuses unsupported hosts before launching or allocating a workspace", async
   });
 });
 
+it("selects TShark from PATH with the shared rule and records the selection", async () => {
+  const f = await fixture("path");
+  const result = await f.service.inspect({ path: f.path, fields: ["ip.addr"] });
+  if (!result.ok) throw result.error;
+  expect(result.value.normalized_result).toMatchObject({
+    tool: {
+      configured_path: join(f.directory, "tshark"),
+      selection_source: "path",
+      path: join(f.directory, "producer.mjs"),
+    },
+  });
+});
+
+it.each([
+  [
+    "bad-version",
+    "Packet capture inspection currently requires Wireshark 4.x tools",
+  ],
+  [
+    "foreign-version",
+    "Expected TShark 4.x; inspect the selected installation.",
+  ],
+] as const)(
+  "refuses an unadmitted version banner before dissection: %s",
+  async (mode, reason) => {
+    const f = await fixture(mode);
+    const result = await f.service.inspect({
+      path: f.path,
+      fields: ["ip.addr"],
+    });
+    if (result.ok) throw new Error("Expected version refusal");
+    expect(result.error).toMatchObject({
+      _tag: "AnalysisCapabilityUnavailableError",
+      reason: expect.stringContaining(reason),
+    });
+    expect(f.calls()).toBe(1);
+  },
+);
+
+it("refuses a relative REA_TSHARK_COMMAND instead of searching PATH", async () => {
+  const provider = new TsharkCaptureProvider(
+    { REA_TSHARK_COMMAND: "tshark", PATH: "/usr/bin" },
+    async () => {
+      throw new Error("Must not launch");
+    },
+    async () => {
+      throw new Error("Must not allocate");
+    },
+    "linux",
+  );
+  const result = await new PacketCaptureService(provider).inspect({
+    path: "/recording.pcap",
+    fields: ["ip.addr"],
+  });
+  if (result.ok) throw new Error("Expected configuration refusal");
+  expect(result.error).toMatchObject({
+    _tag: "AnalysisCapabilityUnavailableError",
+    reason: "REA_TSHARK_COMMAND must be an absolute path to the tshark binary",
+  });
+});
+
 it("preserves complete Evidence when aborted during post-run integrity checks", async () => {
   const f = await fixture("post-run-abort");
   const result = await f.service.inspect(
@@ -436,6 +539,7 @@ it("preserves configured symlink paths separately from resolved tool identities"
   expect(result.value.normalized_result).toMatchObject({
     tool: {
       configured_path: join(f.directory, "configured-tool"),
+      selection_source: "environment",
       path: join(f.directory, "producer.mjs"),
     },
     resource_limiter: {
@@ -534,8 +638,14 @@ it("discovers installed protocols and field definitions without a capture", asyn
       {
         records: [
           {
+            kind: "field",
+            name: "Other Vendor",
             abbreviation: "usb.idVendor",
             field_type: "FT_UINT32",
+            parent_protocol: "usb",
+            display_base: "BASE_HEX",
+            bitmask: "0x0",
+            description: "Second registration",
             source_line: 3,
           },
         ],
@@ -573,6 +683,22 @@ it("discovers installed protocols and field definitions without a capture", asyn
   expect(
     (await readdir(f.directory)).filter((name) => name.startsWith("decoder-")),
   ).toEqual([]);
+});
+
+it("matches Unicode simple case-folded protocol and field glossary queries", async () => {
+  const f = await fixture("unicode-search");
+  for (const [input, expected] of [
+    [{ kind: "protocols", query: "Σ" }, "greek.proto"],
+    [{ kind: "fields", query: "Σ" }, "greek.field"],
+  ] as const) {
+    const result = await f.service.inspectFields(input);
+    if (!result.ok) throw result.error;
+    const report = packetFieldsCatalogSchema.parse(
+      result.value.normalized_result,
+    );
+    expect(report.records).toMatchObject([{ abbreviation: expected }]);
+    expect(report.output_window.matching).toBe(1);
+  }
 });
 
 it("shares discovery admission with inspection and refuses work after shutdown", async () => {

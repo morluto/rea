@@ -12,11 +12,16 @@ export const COMPACT_INPUT_SCHEMA_BUDGET_BYTES = 13 * 1024;
 
 export const mcpInputSchemaProfileSchema = z.enum(["full", "compact"]);
 
+/** Resolve the selected advertisement at the configuration boundary. */
+export const resolveMcpInputSchemaProfile = (
+  profile: McpInputSchemaProfile | undefined,
+): McpInputSchemaProfile => profile ?? "compact";
+
 /** Select the default compact advertisement, preserving an explicit full choice. */
 export const compactPresentationForMcpInputSchemaProfile = (
   profile: "full" | "compact" | undefined,
 ): { readonly budgetBytes: number } | undefined =>
-  profile === "full"
+  resolveMcpInputSchemaProfile(profile) === "full"
     ? undefined
     : { budgetBytes: COMPACT_INPUT_SCHEMA_BUDGET_BYTES };
 

@@ -47,6 +47,9 @@ it("retains complete coverage for an inline Electron factory export", () => {
     load(9);
   })();`);
   expect(result.parse_status).toBe("complete");
+  expect(result.references).toContainEqual(
+    expect.objectContaining({ kind: "require", specifier: "electron" }),
+  );
   expect(result.references.every(({ specifier }) => specifier !== null)).toBe(
     true,
   );

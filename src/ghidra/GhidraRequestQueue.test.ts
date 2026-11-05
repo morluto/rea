@@ -254,6 +254,54 @@ it("joins a completed response with cancellation cleanup before reporting cancel
   expect(stop).toHaveBeenCalledTimes(1);
 });
 
+it.each([false, true])(
+  "records the session close on a late remote failure (cleanup failed: %s)",
+  async (cleanupFailed) => {
+    const execution = deferred<ExecutionResult>();
+    const original = new GhidraSessionError(
+      "remote",
+      "decompile limit reached",
+      { remote_code: "decompile_timed_out" },
+      { remoteCode: "decompile_timed_out" },
+    );
+    const controller = new AbortController();
+    const reason = new Error("client deadline");
+    const cleanupFailure = new ProviderCleanupError(
+      "ghidra",
+      ["owned session"],
+      {
+        reason: "Fixture cleanup needs retry",
+      },
+    );
+    const queue = new GhidraRequestQueue(
+      () => execution.promise,
+      failure,
+      () => Promise.resolve(cleanupFailed ? err(cleanupFailure) : ok(null)),
+    );
+    const pending = queue.run("active", {}, { signal: controller.signal });
+    controller.abort(reason);
+    execution.resolve(err(original));
+    const result = await pending;
+    if (result.ok) throw new Error("Expected the remote failure");
+    // The observed failure stays primary; only the session close is added.
+    expect(result.error).toMatchObject({
+      kind: "remote",
+      remoteCode: "decompile_timed_out",
+      message: "decompile limit reached",
+      concurrentCancellation: { reason },
+      diagnostics: {
+        remote_code: "decompile_timed_out",
+        session_closed_by_cancellation: true,
+      },
+    });
+    expect(result.error.cleanupFailure).toBe(
+      cleanupFailed ? cleanupFailure : undefined,
+    );
+    expect(result.error.cancellation).toBeUndefined();
+    expect(original.concurrentCancellation).toBeUndefined();
+  },
+);
+
 it("awaits active cancellation cleanup when execution rejects", async () => {
   const execution = deferred<ExecutionResult>();
   const cleanup = deferred<CleanupResult>();

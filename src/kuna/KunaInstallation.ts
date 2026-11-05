@@ -5,7 +5,7 @@ import {
 import { constants } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { access, realpath, stat } from "node:fs/promises";
-import { join } from "node:path";
+import { appendCallerPath } from "../filesystem/callerPath.js";
 
 import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
@@ -32,6 +32,7 @@ import {
   runOwnedCommand,
 } from "../process/OwnedCommand.js";
 import { retainOwnedCommandCleanup } from "../providers/OwnedCommandCleanup.js";
+import { assertArtifactCommandPath } from "../process/ArtifactCommandPath.js";
 import type {
   OwnedProviderProcessSpawnOptions,
   ProviderProcessSnapshot,
@@ -120,6 +121,7 @@ export interface KunaReadinessFailure {
     | "version_unresolved";
   readonly reason: string;
   readonly diagnostics: Readonly<Record<string, JsonValue>>;
+  readonly remediation?: string;
 }
 
 export interface KunaInstallationOptions {
@@ -262,10 +264,10 @@ export const createKunaResourceScope = (
 export const kunaChildEnvironment = (
   configuration: KunaConfiguration,
 ): NodeJS.ProcessEnv => {
-  const home = join(configuration.cacheRoot, "home");
+  const home = appendCallerPath(configuration.cacheRoot, "home");
   return {
     HOME: home,
-    XDG_CACHE_HOME: join(home, ".cache"),
+    XDG_CACHE_HOME: appendCallerPath(home, ".cache"),
     NO_COLOR: "1",
   };
 };
@@ -383,11 +385,16 @@ export const inspectKunaInstallation = async (
 ): Promise<Result<KunaInstallation, KunaReadinessFailure>> => {
   const configuration = readKunaConfiguration(environment, options.platform);
   if (!configuration.ok)
-    return failure(configuration.error.code, configuration.error.reason, {
-      configured: configuration.error.code !== "not_configured",
-      ...(configuration.error.setting === null
-        ? {}
-        : { setting: configuration.error.setting }),
+    return err({
+      code: configuration.error.code,
+      reason: configuration.error.reason,
+      remediation: configuration.error.remediation,
+      diagnostics: {
+        configured: configuration.error.code !== "not_configured",
+        ...(configuration.error.setting === null
+          ? {}
+          : { setting: configuration.error.setting }),
+      },
     });
   const { command } = configuration.value;
   assertRegularFileActive(options.signal);
@@ -420,11 +427,15 @@ export const inspectKunaInstallation = async (
     phase: "fingerprint",
   };
   try {
+    await assertArtifactCommandPath(
+      { invocationPath: command, resolvedPath: executable },
+      "kuna:installation",
+    );
     beforeProbeFingerprint = await options.resourceScope.run(() =>
-      hashStableFile(executable, {
+      hashStableFile(command, {
         ...(options.signal === undefined ? {} : { signal: options.signal }),
         retainFailedClose: (owner) =>
-          options.resourceScope.retain(owner, executable),
+          options.resourceScope.retain(owner, command),
       }),
     );
   } catch (cause: unknown) {
@@ -450,7 +461,7 @@ export const inspectKunaInstallation = async (
     snapshot = await options.resourceScope.run(() =>
       runOwnedCommand(
         {
-          command: executable,
+          command,
           arguments: ["--version"],
           runId: `rea-kuna-version-${randomUUID()}`,
           // The configured command may be an interpreter-driven shim.
@@ -566,10 +577,14 @@ export const inspectKunaInstallation = async (
   try {
     ({ fingerprint, script } = await options.resourceScope.run(async () => {
       observed.phase = "identity";
-      const observation = await observeStableFile(executable, {
+      await assertArtifactCommandPath(
+        { invocationPath: command, resolvedPath: executable },
+        "kuna:installation",
+      );
+      const observation = await observeStableFile(command, {
         ...(options.signal === undefined ? {} : { signal: options.signal }),
         retainFailedClose: (owner) =>
-          options.resourceScope.retain(owner, executable),
+          options.resourceScope.retain(owner, command),
       });
       const fingerprint = {
         sha256: observation.sha256,

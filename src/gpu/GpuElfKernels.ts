@@ -1,6 +1,12 @@
 import { readCudaTarget } from "./CudaTarget.js";
+import {
+  type AmdGpuTargetIdentity,
+  readAmdGpuElfProcessor,
+  readAmdGpuNoteTarget,
+} from "./AmdGpuTarget.js";
 import type { GpuPayloadTarget } from "./GpuObject.js";
 import { err, ok, type Result } from "../domain/result.js";
+import { elfNoteLayout } from "../domain/native/elfNoteLayout.js";
 import {
   CudaMetadataBudget,
   readCudaInfo,
@@ -17,7 +23,8 @@ import {
   type NativeSection,
   type NativeSectionDirectory,
 } from "../native/metadata/NativeSectionDirectory.js";
-import { readElfString, readElfSymbol } from "../native/metadata/ElfSymbol.js";
+import { readElfString } from "../native/metadata/ElfStringTable.js";
+import { readElfSymbol } from "../domain/elfSymbol.js";
 import {
   gpuCount,
   readGpuNativeDirectory,
@@ -197,7 +204,7 @@ const attachCudaResources = (
   text: NativeSection,
   index: CudaMetadataIndex,
   symbolKey: string,
-): void => {
+): "complete" | "partial" => {
   const { source, directory } = index;
   const registerRows = index.registerFacts.get(symbolKey);
   const registerValues = new Set(registerRows?.keys());
@@ -218,12 +225,12 @@ const attachCudaResources = (
       section_index: text.index,
       section_name: text.name,
     };
-  if (
+  const registerConflict =
     registerValues.size > 1 ||
     (kernel.registers.physical !== null &&
       sectionRegisters !== 0 &&
-      kernel.registers.physical !== sectionRegisters)
-  ) {
+      kernel.registers.physical !== sectionRegisters);
+  if (registerConflict) {
     kernel.registers.physical = null;
     kernel.limitations.push(
       "Conflicting CUDA register declarations; physical count remains unknown",
@@ -244,6 +251,7 @@ const attachCudaResources = (
       section_index: shared[0]!.index,
       section_name: shared[0]!.name,
     };
+  return registerConflict ? "partial" : "complete";
 };
 
 const cudaKernels = async (
@@ -266,16 +274,48 @@ const cudaKernels = async (
       rejectGpu("CUBIN symbol string table is invalid");
     const names = await sectionBytes(source, namesSection!, index.budget);
     const bytes = await sectionBytes(source, section, index.budget);
+    const symbolCount = bytes.length / width;
+    let extendedIndices: Buffer | null = null;
     for (let offset = 0; offset < bytes.length; offset += width) {
       index.budget.visit();
-      const symbol = readElfSymbol(
+      const parsedSymbol = readElfSymbol(
         bytes.subarray(offset, offset + width),
         directory.bits,
         directory.little,
       );
+      if (!parsedSymbol.ok)
+        throw new BinaryFormatFailure(
+          parsedSymbol.error.kind,
+          parsedSymbol.error.message,
+        );
+      const symbol = parsedSymbol.value;
       // STO_CUDA_ENTRY distinguishes launchable kernels from ordinary device functions.
       if (symbol.type !== 2 || (symbol.other & 0x10) === 0) continue;
-      const text = directory.sections[symbol.section_index];
+      let sectionIndex = symbol.section_index;
+      if (sectionIndex === 0xffff) {
+        if (extendedIndices === null) {
+          const matches = directory.sections.filter(
+            (row) => row.type === 18 && row.link === section.index,
+          );
+          if (matches.length !== 1)
+            rejectGpu(
+              "CUBIN extended symbol section-index table is unavailable",
+            );
+          const extended = matches[0]!;
+          if (
+            extended.entry_size !== 4n ||
+            extended.size !== BigInt(symbolCount) * 4n
+          )
+            rejectGpu(
+              "CUBIN extended symbol section-index table has an invalid extent",
+            );
+          extendedIndices = await sectionBytes(source, extended, index.budget);
+        }
+        sectionIndex = new BinaryReader(extendedIndices, directory.little).u32(
+          (offset / width) * 4,
+        );
+      }
+      const text = directory.sections[sectionIndex];
       if (text === undefined || text.type !== 1 || (text.flags & 4n) === 0n)
         rejectGpu("CUBIN kernel symbol has no executable section");
       const kernel = blankKernel(
@@ -284,12 +324,15 @@ const cudaKernels = async (
         readElfString(names, symbol.name_offset),
         site(source, section, offset, width),
       );
-      attachCudaResources(
-        kernel,
-        text!,
-        index,
-        `${section.index}:${offset / width}`,
-      );
+      if (
+        attachCudaResources(
+          kernel,
+          text!,
+          index,
+          `${section.index}:${offset / width}`,
+        ) === "partial"
+      )
+        complete = false;
       const infos = index.infosByText.get(text!.index) ?? [];
       if (infos.length === 1) {
         const info = infos[0]!;
@@ -325,7 +368,8 @@ const cudaKernels = async (
 };
 export interface AmdElfMetadata {
   readonly target: string | null;
-  readonly target_key: string | null;
+  readonly targetIdentity: AmdGpuTargetIdentity | null;
+  readonly targetMetadata: import("../domain/gpu/gpuCodeObjects.js").GpuObject["amd_target_metadata"];
   readonly limitations: string[];
   readonly notes: {
     section: NativeSection;
@@ -345,23 +389,66 @@ export const readAmdElfMetadata = async (
     { kind: "incomplete-amd-metadata"; cause: unknown; partial: AmdElfMetadata }
   >
 > => {
-  const targets = new Set<string>(),
-    limitations: string[] = [];
+  const limitations: string[] = [];
   const notes: AmdElfMetadata["notes"] = [];
   let retainedBytes = 0;
+  let unsupportedNotes = false;
+  let targetMetadata: AmdElfMetadata["targetMetadata"] = null;
   const observed = (): AmdElfMetadata => {
-    const target = targets.size === 1 ? [...targets][0]! : null;
-    const target_key =
-      target === null
-        ? null
-        : (/^amdgcn-amd-amdhsa--(gfx[a-zA-Z0-9]+(?::[^\s]+)?)$/u.exec(
-            target,
-          )?.[1] ?? null);
-    return { target, target_key, limitations, notes };
+    const targets = new Set(
+      (targetMetadata?.notes ?? []).flatMap(({ target }) =>
+        target === null ? [] : [target],
+      ),
+    );
+    const processor = targetMetadata?.processor ?? null;
+    const noteTarget = targets.size === 1 ? [...targets][0]! : null;
+    const noteIdentity =
+      noteTarget === null ? null : readAmdGpuNoteTarget(noteTarget);
+    const noteConflict = targets.size > 1;
+    const processorConflict =
+      processor !== null &&
+      noteIdentity !== null &&
+      processor !== noteIdentity.processor;
+    const invalidTarget = (targetMetadata?.notes ?? []).some(
+      ({ target_state }) => target_state === "invalid",
+    );
+    const conflict = noteConflict || processorConflict || invalidTarget;
+    const limitation = invalidTarget
+      ? "AMDGPU note target is not a string; processor identity is unknown"
+      : noteConflict
+        ? "AMDGPU notes declare conflicting processor targets; processor identity is unknown"
+        : processorConflict
+          ? "AMDGPU ELF processor flags conflict with target note metadata; processor identity is unknown"
+          : null;
+    if (limitation !== null && !limitations.includes(limitation))
+      limitations.push(limitation);
+    const target = conflict ? null : (noteTarget ?? processor);
+    // LLVM notes use both the empty and explicit `unknown` environment forms.
+    const targetIdentity = conflict
+      ? null
+      : (noteIdentity ??
+        (noteTarget === null && processor !== null
+          ? { key: processor, processor }
+          : null));
+    return { target, targetIdentity, targetMetadata, limitations, notes };
   };
   try {
     if (directory.machine !== 224)
       rejectGpu("AMDGPU metadata requires an AMDGPU ELF machine");
+    targetMetadata = {
+      flags: `0x${directory.flags.toString(16).padStart(8, "0")}`,
+      processor: readAmdGpuElfProcessor(directory.flags),
+      header_location: {
+        container_id: source.containerId,
+        offset: 0,
+        size: directory.bits === 64 ? 64 : 52,
+        section_index: null,
+        section_name: null,
+      },
+      note_coverage: "partial",
+      notes: [],
+    };
+
     for (const section of directory.sections) {
       if (section.type !== 7) continue;
       const sectionSize = gpuCount(section.size);
@@ -379,9 +466,11 @@ export const readAmdElfMetadata = async (
         const namesize = r.u32(p),
           size = r.u32(p + 4),
           type = r.u32(p + 8);
+        // AMDGPU metadata uses four-byte note padding regardless of section alignment.
+        const layout = elfNoteLayout(namesize, size, 4);
         const nameOffset = p + 12,
-          desc = nameOffset + Math.ceil(namesize / 4) * 4,
-          end = desc + Math.ceil(size / 4) * 4;
+          desc = p + layout.descriptor,
+          end = p + layout.next;
         r.range(nameOffset, namesize, "ELF note vendor");
         r.range(desc, size, "ELF note descriptor");
         if (end > bytes.length)
@@ -394,19 +483,36 @@ export const readAmdElfMetadata = async (
           const metadata = amdRecord(
             readAmdMetadata(bytes.subarray(desc, desc + size)),
           );
+          if (metadata === null) rejectGpu("AMDGPU metadata is not a map");
+          const target = amdString(metadata?.["amdhsa.target"]);
+          const target_state = !Object.hasOwn(metadata!, "amdhsa.target")
+            ? "absent"
+            : target === null
+              ? "invalid"
+              : "declared";
+          if (target_state === "invalid") unsupportedNotes = true;
+          targetMetadata.notes.push({
+            target,
+            target_state,
+            location: site(source, section, desc, size),
+          });
           const kernels = metadata?.["amdhsa.kernels"];
           if (!Array.isArray(kernels))
             return rejectGpu("AMDGPU metadata has no valid kernel array");
-          const target = amdString(metadata!["amdhsa.target"]);
-          if (target !== null) targets.add(target);
           notes.push({ section, noteOffset: p, desc, size, kernels });
-        } else if (vendor === "AMD" && (type === 10 || type === 11))
+        } else if (vendor === "AMD" && (type === 10 || type === 11)) {
+          unsupportedNotes = true;
           limitations.push(
             "Legacy AMDGPU YAML metadata is outside MessagePack coverage",
           );
+        }
         p = end;
       }
     }
+    targetMetadata.note_coverage =
+      unsupportedNotes || directory.sections.length === 0
+        ? "partial"
+        : "complete";
     if (notes.length === 0)
       throw new BinaryFormatFailure(
         "unsupported",
@@ -423,11 +529,12 @@ const amdKernels = (
   prepared: AmdElfMetadata,
   onKernel: (kernel: GpuKernel) => void,
   onTarget?: (target: GpuPayloadTarget) => void,
-): { limitations: string[]; coverage: "complete" } => {
+): { limitations: string[]; coverage: "complete" | "partial" } => {
   onTarget?.({
     value: prepared.target,
-    key: prepared.target_key,
-    scope: "exact",
+    identity: prepared.targetIdentity,
+    amdMetadata: prepared.targetMetadata,
+    scope: "amdgpu",
   });
   for (const {
     section,
@@ -486,6 +593,6 @@ const amdKernels = (
   }
   return {
     limitations: prepared.limitations,
-    coverage: "complete",
+    coverage: prepared.limitations.length === 0 ? "complete" : "partial",
   };
 };

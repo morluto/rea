@@ -48,17 +48,26 @@ export const analysisClientFailureContext = (
             : {}),
         }
       : undefined;
-  const diagnostics =
+  const attribute = (
+    recorded: Readonly<Record<string, JsonValue>> | undefined,
+  ): Readonly<Record<string, JsonValue>> | undefined =>
     providerRequest === undefined
-      ? cause.diagnostics
+      ? recorded
       : {
           provider_request: providerRequest,
-          ...(cause.diagnostics === undefined
-            ? {}
-            : { provider_diagnostics: cause.diagnostics }),
+          ...(recorded === undefined ? {} : { provider_diagnostics: recorded }),
         };
+  const diagnostics = attribute(cause.diagnostics);
+  const invocationDiagnostics =
+    cause.invocationDiagnostics === undefined
+      ? undefined
+      : attribute(cause.invocationDiagnostics);
   return {
     cause,
+    ...(cause.limit === undefined ? {} : { limit: cause.limit }),
+    ...(cause.continuingCallerGuidance === undefined
+      ? {}
+      : { continuingCallerGuidance: cause.continuingCallerGuidance }),
     ...(cause.cleanupPrimary === undefined
       ? {}
       : {
@@ -75,6 +84,7 @@ export const analysisClientFailureContext = (
       ? {}
       : { capturedOutput: cause.capturedOutput }),
     ...(diagnostics === undefined ? {} : { diagnostics }),
+    ...(invocationDiagnostics === undefined ? {} : { invocationDiagnostics }),
     ...(cause.cleanupIncomplete
       ? {
           cleanup: {
@@ -174,6 +184,9 @@ export const analysisClientFailureForOperation = (
       {
         ...outcomeContext,
         operation,
+        ...(cause.completedObservation === undefined
+          ? {}
+          : { completedObservation: cause.completedObservation }),
         ...(cause.remediationAction === undefined
           ? {}
           : { remediationAction: cause.remediationAction }),

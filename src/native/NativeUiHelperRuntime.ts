@@ -8,9 +8,9 @@ import { fileURLToPath } from "node:url";
 import { SWIFTC_INTERRUPT } from "../process/DarwinProcessRunTokenReader.js";
 import { execFileOutput } from "../process/ExecFileOutput.js";
 import { safeParseJson } from "../domain/safeJson.js";
+import { DEFAULT_NATIVE_UI_DEADLINE_MS } from "../domain/native/nativeDeadlines.js";
 import type { NativeUiHelper } from "./NativeUiObservation.js";
 import { NATIVE_UI_HELPER_MAX_BUFFER } from "./NativeUiOutputBudget.js";
-import { NATIVE_UI_DEADLINE_MS } from "./NativeUiInterruptionControl.js";
 
 export interface NativeUiHelperRuntime {
   readonly invoke: NativeUiHelper;
@@ -25,7 +25,7 @@ export interface NativeUiHelperRuntime {
 /** Lazily compile one owned helper per observation/scenario and remove its compiler cache. */
 export const createNativeUiHelperRuntime = (
   environment: Readonly<NodeJS.ProcessEnv>,
-  deadlineMs = NATIVE_UI_DEADLINE_MS,
+  deadlineMs = DEFAULT_NATIVE_UI_DEADLINE_MS,
 ): NativeUiHelperRuntime => {
   const selectedEnvironment = snapshotEnvironment(environment);
   const deadlineSignal = AbortSignal.timeout(deadlineMs);
@@ -66,6 +66,9 @@ export const createNativeUiHelperRuntime = (
             "../../bridge/native/NativeUIChildren.swift",
             import.meta.url,
           ),
+        ),
+        fileURLToPath(
+          new URL("../../bridge/native/NativeUIValues.swift", import.meta.url),
         ),
         main,
         "-o",

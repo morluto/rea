@@ -74,7 +74,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 });
 
 import { AnalysisCleanupLease } from "../../../src/artifacts/AnalysisCleanupLease.js";
-import { parseProcessScenario } from "../../../src/domain/process/processScenario.js";
+import { processScenarioSchema } from "../../../src/domain/process/processScenario.js";
 import {
   hashFile,
   snapshotRoots,
@@ -97,7 +97,7 @@ type DirectoryReadCallback = (
 type DirectoryCloseCallback = (error?: NodeJS.ErrnoException | null) => void;
 
 const scenarioFor = (root: string) =>
-  parseProcessScenario({
+  processScenarioSchema.parse({
     executable: process.execPath,
     working_directory: root,
     filesystem_observation_paths: [root],
@@ -355,7 +355,9 @@ it("keeps a completed file hash in the partial snapshot when cancellation arrive
   let cause: unknown;
   try {
     await scope.run(() =>
-      snapshotRoots(scenarioFor(root), controller.signal, undefined, scope),
+      snapshotRoots(scenarioFor(root), controller.signal, undefined, {
+        cleanup: scope,
+      }),
     );
   } catch (error: unknown) {
     cause = error;
@@ -404,7 +406,9 @@ it("keeps a completed file hash when cancellation arrives during confirmed close
   let cause: unknown;
   try {
     await scope.run(() =>
-      snapshotRoots(scenarioFor(root), controller.signal, undefined, scope),
+      snapshotRoots(scenarioFor(root), controller.signal, undefined, {
+        cleanup: scope,
+      }),
     );
   } catch (error: unknown) {
     cause = error;
@@ -445,7 +449,9 @@ it.each([
     const scope = new ProcessCaptureResourceScope();
     let cause: unknown;
     try {
-      await snapshotRoots(scenarioFor(path), undefined, undefined, scope);
+      await snapshotRoots(scenarioFor(path), undefined, undefined, {
+        cleanup: scope,
+      });
     } catch (error: unknown) {
       cause = error;
     }
@@ -509,7 +515,9 @@ it("retains the full directory snapshot and exact directory owner when close fai
   let cause: unknown;
   try {
     await scope.run(() =>
-      snapshotRoots(scenarioFor(root), undefined, undefined, scope),
+      snapshotRoots(scenarioFor(root), undefined, undefined, {
+        cleanup: scope,
+      }),
     );
   } catch (error: unknown) {
     cause = error;
@@ -639,7 +647,9 @@ it("keeps a later file hash, blocks scope admission on the first file owner, the
   let cause: unknown;
   try {
     await scope.run(() =>
-      snapshotRoots(scenarioFor(root), undefined, undefined, scope),
+      snapshotRoots(scenarioFor(root), undefined, undefined, {
+        cleanup: scope,
+      }),
     );
   } catch (error: unknown) {
     cause = error;
@@ -664,7 +674,9 @@ it("keeps a later file hash, blocks scope admission on the first file owner, the
 
   await expect(
     scope.run(() =>
-      snapshotRoots(scenarioFor(root), undefined, undefined, scope),
+      snapshotRoots(scenarioFor(root), undefined, undefined, {
+        cleanup: scope,
+      }),
     ),
   ).rejects.toMatchObject({ cleanupIncomplete: true });
   expect(injected.openedPaths).toEqual([first, second]);
@@ -674,7 +686,9 @@ it("keeps a later file hash, blocks scope admission on the first file owner, the
   expect(failure.cleanupIncomplete).toBe(false);
   await expect(
     scope.run(() =>
-      snapshotRoots(scenarioFor(root), undefined, undefined, scope),
+      snapshotRoots(scenarioFor(root), undefined, undefined, {
+        cleanup: scope,
+      }),
     ),
   ).resolves.toMatchObject({ files: expect.any(Array) });
   expect(injected.openedPaths).toEqual([first, second, first, second]);
@@ -728,7 +742,9 @@ it.each([false, true])(
     let failure: unknown;
     try {
       await scope.run(() =>
-        snapshotRoots(scenarioFor(path), controller.signal, undefined, scope),
+        snapshotRoots(scenarioFor(path), controller.signal, undefined, {
+          cleanup: scope,
+        }),
       );
     } catch (cause: unknown) {
       failure = cause;

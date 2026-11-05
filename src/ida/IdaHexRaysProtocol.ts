@@ -89,6 +89,7 @@ export const runHexRaysQuery = async (
   query: string,
   args: Readonly<Record<string, JsonValue>>,
   timeoutMs: number,
+  signal?: AbortSignal,
 ): Promise<IdaRawObservation> => {
   if (!hexRaysQueries.has(query))
     throw new AnalysisProtocolError(
@@ -107,7 +108,7 @@ export const runHexRaysQuery = async (
       // can stop the script and answer before REA abandons the request.
       timeout: Math.max(1, Math.floor(timeoutMs / 1000) - 5),
     },
-    { timeoutMs },
+    { timeoutMs, ...(signal === undefined ? {} : { signal }) },
   );
   const execution = executionSchema.parse(raw);
   return {

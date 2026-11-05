@@ -1,33 +1,47 @@
-import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 import {
   access,
   mkdir,
   mkdtemp,
   readdir,
+  readFile,
   rename,
   rm,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { join, posix } from "node:path";
 import { promisify } from "node:util";
 
 import { z } from "zod";
-import { homeDirectoryFromEnvironment } from "../config/homeDirectory.js";
+
+import { appendCallerPath } from "../filesystem/callerPath.js";
+import type { AnalysisCleanupObservation } from "../domain/analysisErrorBase.js";
 import { HOPPER_PUBLISHER } from "../domain/hopperPublisher.js";
 import { macDeveloperIdRequirement } from "../process/MacCodeSignature.js";
 import { macHopperUserApplicationPath } from "./MacHopperPaths.js";
 import {
   downloadHopperPackage,
-  HOPPER_DOWNLOAD_BYTES,
+  HOPPER_METADATA_TIMEOUT_MS,
+  type HopperDownload,
+  type HopperRequestFailure,
 } from "./HopperDownload.js";
+import {
+  HOPPER_RELEASES_URL,
+  HOPPER_DOWNLOAD_PREFIX,
+  parseHopperReleaseJson,
+  parseMacHopperReleases,
+  hopperArchiveIntegrityMatches,
+  macHopperReleaseMinimumSystemVersion,
+} from "./HopperReleaseFeed.js";
 import type { HopperInstallFailureReason } from "./SetupInstallFailure.js";
+import { decodeInfoPlistValue } from "./AppBundleExecutable.js";
+import {
+  macosMajorVersion,
+  macosVersionMeetsMinimum,
+} from "../domain/macosVersion.js";
 
 const execFileAsync = promisify(execFile);
-const RELEASES_URL =
-  "https://www.hopperapp.com/include/files-api.php?request=releases&public=true";
-const DOWNLOAD_PREFIX = "https://www.hopperapp.com:443/downloader/public/";
 const HOPPER_PUBLISHER_REQUIREMENT = macDeveloperIdRequirement(
   HOPPER_PUBLISHER.bundleIdentifier,
   HOPPER_PUBLISHER.teamIdentifier,
@@ -41,11 +55,14 @@ export type MacHopperBundleVerification =
 
 type MacHopperInstallFailureReason = Extract<
   HopperInstallFailureReason,
+  | "unsupported_host"
+  | "incompatible_host_version"
   | "release_metadata"
   | "download"
   | "integrity"
   | "launcher_missing"
   | "destination_exists"
+  | "destination_inspection"
   | "mount"
   | "bundle"
   | "publisher_verification_failed"
@@ -71,9 +88,11 @@ export interface MacHopperBundleInstallOperations {
   removeStagingRoot(path: string): Promise<void>;
 }
 
-/** Stable network and command effects disclosed before macOS Hopper setup. */
+/** Stable effects and checks disclosed before macOS Hopper setup. */
 export const macHopperInstallDisclosure = {
-  networkOrigins: [RELEASES_URL, DOWNLOAD_PREFIX] as const,
+  detail:
+    "Download the official Hopper package, verify it, and install it. Before the download, and again from the signed app before copying, setup compares the release's minimum macOS version with this Mac's and stops if this Mac is older. Hopper may show its demo or license prompt when first opened.",
+  networkOrigins: [HOPPER_RELEASES_URL, HOPPER_DOWNLOAD_PREFIX] as const,
   commands: [
     "hdiutil attach -readonly -nobrowse -mountpoint <private-mount> <verified-hopper.dmg>",
     "codesign --verify --deep --strict <mounted-hopper.app>",
@@ -95,6 +114,8 @@ export type MacHopperInstallResult =
       readonly status: "failed";
       readonly reason: MacHopperInstallFailureReason;
       readonly diagnostic?: string;
+      /** The vendor request (feed or package) whose transport failure stopped setup. */
+      readonly download?: HopperRequestFailure;
       readonly cleanupFailure?: string;
     };
 
@@ -102,7 +123,8 @@ export type MacHopperInstallResult =
 export interface MacHopperInstallHost {
   download(
     url: string,
-  ): Promise<{ readonly ok: boolean; readonly bytes: Uint8Array }>;
+    options?: { readonly timeoutMs?: number },
+  ): Promise<HopperDownload>;
   createTemporaryDirectory(): Promise<string>;
   createMountDirectory(path: string): Promise<void>;
   writePackage(path: string, bytes: Uint8Array): Promise<void>;
@@ -110,6 +132,10 @@ export interface MacHopperInstallHost {
   unmount(mountPath: string): Promise<void>;
   appBundle(mountPath: string): Promise<string | undefined>;
   validBundle(appPath: string): Promise<MacHopperBundleVerification>;
+  /** This Mac's version, read through the probe setup planning used. */
+  macosVersion(): Promise<string | undefined>;
+  /** The mounted app's declared LSMinimumSystemVersion; undefined when it declares none. */
+  minimumSystemVersion(appPath: string): Promise<string | undefined>;
   destinationExists(path: string): Promise<boolean>;
   installBundle(
     source: string,
@@ -119,18 +145,27 @@ export interface MacHopperInstallHost {
   openApplication(path: string): Promise<void>;
   cleanup(path: string): Promise<void>;
   /** Retain the cleanup capability until the owning setup host retries it. */
-  retainCleanup?(cleanup: () => Promise<void>): void;
+  retainCleanup?(
+    cleanup: () => Promise<void>,
+    resources: readonly string[],
+  ): void;
   destination(): string;
 }
 
-/** Download, verify, and install Hopper into the current user's Applications directory. */
+/**
+ * Download, verify, and install Hopper into the current user's Applications
+ * directory. The selected release's own macOS minimum gates installation: the
+ * feed's `deployment_target` before the package is downloaded, and the signed
+ * app's `LSMinimumSystemVersion` before it is copied.
+ */
 export const installMacHopper = async (
-  options: { readonly replaceExisting?: boolean } = {},
-  host: MacHopperInstallHost = systemMacHopperInstallHost(
-    homeDirectoryFromEnvironment(process.env, process.platform),
-    process.env,
-  ),
+  options: { readonly replaceExisting?: boolean },
+  host: MacHopperInstallHost,
 ): Promise<MacHopperInstallResult> => {
+  const hostVersion = await host.macosVersion();
+  // Without a comparable host version no declared minimum can be checked.
+  if (hostVersion === undefined || macosMajorVersion(hostVersion) === undefined)
+    return { status: "failed", reason: "unsupported_host" };
   let temporary: string | undefined;
   let mounted = false;
   let bundleCleanupFailure: string | undefined;
@@ -138,32 +173,59 @@ export const installMacHopper = async (
   let result: MacHopperInstallResult;
   try {
     result = await (async (): Promise<MacHopperInstallResult> => {
-      const metadata = await host.download(RELEASES_URL);
-      if (!metadata.ok) return { status: "failed", reason: "release_metadata" };
-      const parsed = releasesSchema.safeParse(parseJson(metadata.bytes));
-      if (!parsed.success)
-        return { status: "failed", reason: "release_metadata" };
-      const release = parsed.data["OS X"];
-      if (!release.filename.startsWith(DOWNLOAD_PREFIX))
-        return { status: "failed", reason: "release_metadata" };
+      const metadata = await host.download(HOPPER_RELEASES_URL, {
+        timeoutMs: HOPPER_METADATA_TIMEOUT_MS,
+      });
+      if (!metadata.ok)
+        return {
+          status: "failed",
+          reason: "release_metadata",
+          download: { request: "release_feed", ...metadata.error },
+        };
+      const decoded = parseHopperReleaseJson(metadata.value);
+      if (!decoded.ok) throw decoded.cause;
+      const parsed = parseMacHopperReleases(decoded.value);
+      if (!parsed.ok) return { status: "failed", reason: "release_metadata" };
+      const release = parsed.value;
+      const releaseMinimum = macHopperReleaseMinimumSystemVersion(release);
+      // An unrecognized feed value defers to the signed app checked below.
+      if (
+        releaseMinimum !== undefined &&
+        macosVersionMeetsMinimum(hostVersion, releaseMinimum) === false
+      )
+        return {
+          status: "failed",
+          reason: "incompatible_host_version",
+          diagnostic: macHopperHostVersionDetail({
+            source: "release_feed",
+            packageUrl: release.filename,
+            minimumVersion: releaseMinimum,
+            hostVersion,
+          }),
+        };
       installStage = "download";
       const archive = await host.download(release.filename);
-      if (!archive.ok) return { status: "failed", reason: "download" };
+      if (!archive.ok)
+        return {
+          status: "failed",
+          reason: "download",
+          download: { request: "package", ...archive.error },
+        };
       installStage = "integrity";
-      if (!integrityMatches(archive.bytes, release))
+      if (!hopperArchiveIntegrityMatches(archive.value, release))
         return { status: "failed", reason: "integrity" };
 
-      installStage = "destination_exists";
+      installStage = "destination_inspection";
       const destination = host.destination();
       const destinationExists = await host.destinationExists(destination);
       if (destinationExists && options.replaceExisting !== true)
         return { status: "failed", reason: "destination_exists" };
       installStage = "mount";
       temporary = await host.createTemporaryDirectory();
-      const packagePath = join(temporary, "hopper.dmg");
-      const mountPath = join(temporary, "mounted");
+      const packagePath = posix.join(temporary, "hopper.dmg");
+      const mountPath = posix.join(temporary, "mounted");
       await host.createMountDirectory(mountPath);
-      await host.writePackage(packagePath, archive.bytes);
+      await host.writePackage(packagePath, archive.value);
       if (!(await host.mount(packagePath, mountPath)))
         return { status: "failed", reason: "mount" };
       mounted = true;
@@ -175,6 +237,30 @@ export const installMacHopper = async (
         return { status: "failed", reason: "bundle" };
       if (verification === "unverified_publisher")
         return { status: "failed", reason: "publisher_verification_failed" };
+      // An app that declares no minimum is accepted, as macOS does.
+      const appMinimum = await host.minimumSystemVersion(source);
+      if (appMinimum !== undefined) {
+        const compatible = macosVersionMeetsMinimum(hostVersion, appMinimum);
+        if (compatible === false)
+          return {
+            status: "failed",
+            reason: "incompatible_host_version",
+            diagnostic: macHopperHostVersionDetail({
+              source: "signed_app",
+              minimumVersion: appMinimum,
+              hostVersion,
+            }),
+          };
+        if (compatible === undefined)
+          return {
+            status: "failed",
+            reason: "bundle",
+            diagnostic: macHopperIncomparableMinimumDetail(
+              appMinimum,
+              hostVersion,
+            ),
+          };
+      }
       installStage = "copy";
       const installation = await host.installBundle(
         source,
@@ -191,7 +277,11 @@ export const installMacHopper = async (
             : { cleanupFailure: installation.cleanupFailure }),
         };
       bundleCleanupFailure = installation.cleanupFailure;
-      const launcherPath = join(destination, "Contents/MacOS/hopper");
+      const launcherPath = appendCallerPath(
+        destination,
+        "Contents/MacOS/hopper",
+        "darwin",
+      );
       let openFailure: string | undefined;
       try {
         await host.openApplication(destination);
@@ -215,7 +305,7 @@ export const installMacHopper = async (
   let cleanupFailure: string | undefined;
   if (temporary !== undefined) {
     const temporaryPath = temporary;
-    const mountPath = join(temporary, "mounted");
+    const mountPath = posix.join(temporary, "mounted");
     const cleanup = async (): Promise<void> => {
       if (mounted) {
         await host.unmount(mountPath);
@@ -227,7 +317,7 @@ export const installMacHopper = async (
       await cleanup();
     } catch (cause: unknown) {
       cleanupFailure = `Hopper DMG cleanup failed: ${failureMessage(cause)}`;
-      host.retainCleanup?.(cleanup);
+      host.retainCleanup?.(cleanup, [temporaryPath]);
     }
   }
 
@@ -249,11 +339,20 @@ export const installMacHopperBundle = async (
   destination: string,
   replaceExisting: boolean,
   operations: MacHopperBundleInstallOperations,
-  retainCleanup: (cleanup: () => Promise<void>) => void,
+  retainCleanup: (
+    cleanup: () => Promise<void>,
+    resources: readonly string[],
+  ) => void,
 ): Promise<MacHopperBundleInstallResult> => {
-  const stagingRoot = await operations.createStagingRoot(dirname(destination));
-  const stagedBundle = join(stagingRoot, "new.app");
-  const previousBundle = join(stagingRoot, "previous.app");
+  const stagingRoot = await operations.createStagingRoot(
+    posix.dirname(destination),
+  );
+  const stagedBundle = appendCallerPath(stagingRoot, "new.app", "darwin");
+  const previousBundle = appendCallerPath(
+    stagingRoot,
+    "previous.app",
+    "darwin",
+  );
   let originalBackedUp = false;
   let newCommitted = false;
   let failureReason: "copy" | "launcher_missing" = "copy";
@@ -262,7 +361,7 @@ export const installMacHopperBundle = async (
     await operations.copyBundle(source, stagedBundle);
     failureReason = "launcher_missing";
     await operations.requireLauncher(
-      join(stagedBundle, "Contents/MacOS/hopper"),
+      appendCallerPath(stagedBundle, "Contents/MacOS/hopper", "darwin"),
     );
     failureReason = "copy";
     if (replaceExisting) {
@@ -294,7 +393,7 @@ export const installMacHopperBundle = async (
             originalBackedUp = false;
           }
           await operations.removeStagingRoot(stagingRoot);
-        });
+        }, [stagingRoot]);
         return {
           status: "failed",
           reason: failureReason,
@@ -307,7 +406,10 @@ export const installMacHopperBundle = async (
       await operations.removeStagingRoot(stagingRoot);
     } catch (cleanupCause: unknown) {
       const cleanupFailure = `Hopper staging root cleanup failed: ${failureMessage(cleanupCause)}`;
-      retainCleanup(() => operations.removeStagingRoot(stagingRoot));
+      retainCleanup(
+        () => operations.removeStagingRoot(stagingRoot),
+        [stagingRoot],
+      );
       diagnostics.push(cleanupFailure);
       return {
         status: "failed",
@@ -328,7 +430,10 @@ export const installMacHopperBundle = async (
     return { status: "installed" };
   } catch (cause: unknown) {
     const cleanupFailure = `Hopper staging root cleanup failed after installation committed: ${failureMessage(cause)}`;
-    retainCleanup(() => operations.removeStagingRoot(stagingRoot));
+    retainCleanup(
+      () => operations.removeStagingRoot(stagingRoot),
+      [stagingRoot],
+    );
     return { status: "installed", cleanupFailure };
   }
 };
@@ -337,8 +442,11 @@ export const installMacHopperBundle = async (
 export const systemMacHopperInstallHost = (
   homeDirectory: string,
   environment: Readonly<NodeJS.ProcessEnv>,
-): MacHopperInstallHost & { close(): Promise<string | undefined> } => {
-  const pendingCleanup = new Set<() => Promise<void>>();
+  macosVersion: () => Promise<string | undefined>,
+): MacHopperInstallHost & {
+  close(): Promise<AnalysisCleanupObservation | undefined>;
+} => {
+  const pendingCleanup = new Map<() => Promise<void>, readonly string[]>();
   return {
     download: downloadHopperPackage,
     createTemporaryDirectory: () => mkdtemp(join(tmpdir(), "rea-hopper-mac-")),
@@ -369,7 +477,7 @@ export const systemMacHopperInstallHost = (
       const app = entries.find(
         (entry) => entry.isDirectory() && /^Hopper.*\.app$/iu.test(entry.name),
       );
-      return app === undefined ? undefined : join(mountPath, app.name);
+      return app === undefined ? undefined : posix.join(mountPath, app.name);
     },
     async validBundle(appPath) {
       if (
@@ -395,6 +503,18 @@ export const systemMacHopperInstallHost = (
         return "unverified_publisher";
       return "verified";
     },
+    macosVersion,
+    async minimumSystemVersion(appPath) {
+      const plist = posix.join(appPath, "Contents", "Info.plist");
+      const declared = minimumSystemVersionSchema.safeParse(
+        decodeInfoPlistValue(await readFile(plist)),
+      );
+      if (!declared.success)
+        throw new TypeError(
+          `${plist} does not declare LSMinimumSystemVersion as text`,
+        );
+      return declared.data.LSMinimumSystemVersion;
+    },
     async destinationExists(path) {
       try {
         await access(path);
@@ -412,7 +532,9 @@ export const systemMacHopperInstallHost = (
         {
           async createStagingRoot(parent) {
             await mkdir(parent, { recursive: true });
-            return mkdtemp(join(parent, ".rea-hopper-stage-"));
+            return mkdtemp(
+              appendCallerPath(parent, ".rea-hopper-stage-", "darwin"),
+            );
           },
           copyBundle: async (bundle, staged) => {
             await execFileAsync("ditto", [bundle, staged], {
@@ -424,38 +546,57 @@ export const systemMacHopperInstallHost = (
           rename,
           removeStagingRoot: (path) => rm(path, { recursive: true }),
         },
-        (cleanup) => pendingCleanup.add(cleanup),
+        (cleanup, resources) => pendingCleanup.set(cleanup, resources),
       ),
     async openApplication(path) {
       await execFileAsync("open", [path], { env: environment });
     },
     cleanup: (path) => rm(path, { recursive: true, force: true }),
-    retainCleanup: (cleanup) => pendingCleanup.add(cleanup),
+    retainCleanup: (cleanup, resources) =>
+      pendingCleanup.set(cleanup, resources),
     async close() {
-      let failure: string | undefined;
-      for (const cleanup of pendingCleanup) {
+      const failures: string[] = [];
+      for (const cleanup of pendingCleanup.keys()) {
         try {
           await cleanup();
           pendingCleanup.delete(cleanup);
         } catch (cause: unknown) {
-          failure ??= `Hopper installer cleanup remains incomplete: ${failureMessage(cause)}`;
+          failures.push(failureMessage(cause));
         }
       }
-      return failure;
+      return failures.length === 0
+        ? undefined
+        : {
+            reason: `Hopper installer cleanup remains incomplete: ${failures.join("; ")}`,
+            resources: [...new Set([...pendingCleanup.values()].flat())],
+          };
     },
     destination: () => macHopperUserApplicationPath(homeDirectory),
   };
 };
 
-const parseJson = (bytes: Uint8Array): unknown =>
-  JSON.parse(new TextDecoder().decode(bytes));
-const integrityMatches = (
-  bytes: Uint8Array,
-  release: z.infer<typeof releaseSchema>,
-): boolean =>
-  bytes.byteLength === Number(release.file_length) &&
-  bytes.byteLength <= HOPPER_DOWNLOAD_BYTES &&
-  createHash("sha1").update(bytes).digest("hex") === release.file_hash;
+/** Installer detail naming the declared minimum this Mac's version does not meet. */
+export const macHopperHostVersionDetail = (
+  refusal: (
+    | { readonly source: "release_feed"; readonly packageUrl: string }
+    | { readonly source: "signed_app" }
+  ) & { readonly minimumVersion: string; readonly hostVersion: string },
+): string =>
+  refusal.source === "release_feed"
+    ? `The current Hopper release (${refusal.packageUrl}) declares deployment_target ${refusal.minimumVersion}; this Mac runs macOS ${refusal.hostVersion}. The package was not downloaded.`
+    : `The signed Hopper application declares LSMinimumSystemVersion ${refusal.minimumVersion}; this Mac runs macOS ${refusal.hostVersion}. Nothing was copied.`;
+
+/** Installer detail for a signed-app minimum REA cannot compare with this Mac's version. */
+export const macHopperIncomparableMinimumDetail = (
+  declared: string,
+  hostVersion: string,
+): string =>
+  `The signed Hopper application declares LSMinimumSystemVersion ${JSON.stringify(declared)}, which REA cannot compare with macOS ${hostVersion}. Nothing was copied.`;
+
+const minimumSystemVersionSchema = z.looseObject({
+  LSMinimumSystemVersion: z.string().optional(),
+});
+
 const commandSucceeds = async (
   command: string,
   args: readonly string[],
@@ -500,9 +641,3 @@ const pathExists = async (path: string): Promise<boolean> => {
     throw cause;
   }
 };
-const releaseSchema = z.object({
-  filename: z.string().url(),
-  file_length: z.string().regex(/^\d+$/u),
-  file_hash: z.string().regex(/^[a-f0-9]{40}$/u),
-});
-const releasesSchema = z.object({ "OS X": releaseSchema });

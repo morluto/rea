@@ -7,7 +7,6 @@ import {
   AnalysisAccessDeniedError,
   AnalysisArtifactChangedError,
   AnalysisCancelledError,
-  AnalysisCapabilityUnavailableError,
   AnalysisInputError,
   AnalysisResourceConstraintError,
 } from "../domain/analysisErrorCore.js";
@@ -21,7 +20,11 @@ import {
   sameRegularFileState,
 } from "../filesystem/RegularFile.js";
 import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
-import { PrivateRuntimeRootUnavailableError } from "../process/PrivateRuntimeRootUnavailableError.js";
+import {
+  RuntimeControlUnavailableError,
+  runtimeControlCapabilityError,
+} from "../process/RuntimeControlUnavailableError.js";
+import { privateWorkspaceFailure } from "../process/privateWorkspaceFailure.js";
 
 const OPERATION = "inspect_pcap_capture";
 const MAX_CAPTURE_BYTES = 2 * 1024 ** 3;
@@ -46,20 +49,9 @@ export class PcapSnapshot {
         await PrivateRuntimeRoot.create({ prefix: "rea-pcap-" }),
       );
     } catch (cause) {
-      if (cause instanceof PrivateRuntimeRootUnavailableError)
-        throw new AnalysisCapabilityUnavailableError(
-          "pcap",
-          OPERATION,
-          cause.message,
-          { cause, retryable: cause.retryable },
-        );
-      throw new AnalysisResourceConstraintError(
-        OPERATION,
-        "file-size",
-        "Cannot allocate the owned capture workspace",
-        null,
-        { cause },
-      );
+      if (cause instanceof RuntimeControlUnavailableError)
+        throw runtimeControlCapabilityError("pcap", OPERATION, cause);
+      throw privateWorkspaceFailure("pcap", OPERATION, cause, null);
     }
   }
 
@@ -135,11 +127,11 @@ export class PcapSnapshot {
       await mkdir(this.configurationPath, { mode: 0o700 });
       const source = await sourceRead(async () => {
         try {
-          return this.own(
-            new OwnedFileHandle(
-              await openRegularFile(path, { symlinks: "follow", signal }),
-            ),
-          );
+          const { handle } = await openRegularFile(path, {
+            symlinks: "follow",
+            signal,
+          });
+          return this.own(new OwnedFileHandle(handle));
         } catch (cause) {
           if (cause instanceof RegularFileAdmissionFailure) {
             this.own(cause.owner);
@@ -237,13 +229,7 @@ export class PcapSnapshot {
           cause: cancellation.reason,
         });
       if (cause instanceof AnalysisError) throw cause;
-      throw new AnalysisResourceConstraintError(
-        OPERATION,
-        "file-size",
-        "Owned capture snapshot I/O failed",
-        null,
-        { cause },
-      );
+      throw privateWorkspaceFailure("pcap", OPERATION, primary, this.root.path);
     }
   }
 
@@ -254,11 +240,11 @@ export class PcapSnapshot {
     signal?: AbortSignal,
   ): Promise<void> {
     try {
-      const file = this.own(
-        new OwnedFileHandle(
-          await openRegularFile(this.path, { symlinks: "reject", signal }),
-        ),
-      );
+      const { handle } = await openRegularFile(this.path, {
+        symlinks: "reject",
+        signal,
+      });
+      const file = this.own(new OwnedFileHandle(handle));
       const before = await file.handle.stat({ bigint: true });
       const buffer = Buffer.alloc(64 * 1024);
       const hash = createHash("sha256");

@@ -10,6 +10,68 @@ const endpoints = (source: string) =>
     resolution: endpoint.resolution,
   }));
 
+it.each(["window.Request", "globalThis.Request", "self.Request"])(
+  "resolves an inline literal URL from the built-in %s constructor",
+  (constructor) => {
+    expect(
+      endpoints(`fetch(new ${constructor}("/api/chat", { method: "POST" }));`),
+    ).toEqual([
+      {
+        kind: "network",
+        value: "/api/chat",
+        mechanism: "call:fetch",
+        resolution: undefined,
+      },
+    ]);
+  },
+);
+
+it.each(["globalThis.fetch", "self.fetch", "fetch?."])(
+  "resolves an inline Request URL passed to %s",
+  (callee) => {
+    expect(endpoints(`${callee}(new Request(\`/api/chat\`));`)).toEqual([
+      {
+        kind: "network",
+        value: "/api/chat",
+        mechanism: `call:${callee.replace("?.", "")}`,
+        resolution: undefined,
+      },
+    ]);
+  },
+);
+
+it.each([
+  [
+    "const Request = custom;",
+    'fetch(new Request("/api/chat"));',
+    'new Request("/api/chat")',
+  ],
+  [
+    "Request = custom;",
+    'fetch(new Request("/api/chat"));',
+    'new Request("/api/chat")',
+  ],
+  [
+    "globalThis.Request = custom;",
+    'fetch(new Request("/api/chat"));',
+    'new Request("/api/chat")',
+  ],
+  [
+    "const window = custom;",
+    'fetch(new window.Request("/api/chat"));',
+    'new window.Request("/api/chat")',
+  ],
+  ["", "fetch(new Request(target));", "new Request(target)"],
+  ["", "fetch(new Request(...urls));", "new Request(...urls)"],
+])(
+  "retains an unproven Request target: %s %s",
+  (prefix, source, expression) => {
+    expect(endpoints(prefix + source)).toEqual([
+      expect.objectContaining({ value: expression, resolution: "partial" }),
+    ]);
+  },
+);
+
 it("resolves unchanged lexical strings and object properties", () => {
   expect(
     endpoints(`
@@ -262,4 +324,115 @@ it("keeps exact literal targets exact", () => {
       resolution: undefined,
     },
   ]);
+});
+
+it("resolves inline Request constructor targets with literal URLs", () => {
+  expect(
+    endpoints(`
+        fetch(new Request("/api/chat", { method: "POST" }));
+        window.fetch(new Request("/api/window"));
+      `),
+  ).toEqual([
+    {
+      kind: "network",
+      value: "/api/chat",
+      mechanism: "call:fetch",
+      resolution: undefined,
+    },
+    {
+      kind: "network",
+      value: "/api/window",
+      mechanism: "call:window.fetch",
+      resolution: undefined,
+    },
+  ]);
+});
+
+it("keeps Request calls without new partial", () => {
+  expect(endpoints('fetch(Request("/api/stream"));')).toEqual([
+    {
+      kind: "network",
+      value: 'Request("/api/stream")',
+      mechanism: "call:fetch",
+      resolution: "partial",
+    },
+  ]);
+});
+
+it("resolves unchanged Request objects and aliases", () => {
+  expect(
+    endpoints(`
+        const req = new Request("/api/chat", { method: "POST" });
+        const alias = req;
+        fetch(alias);
+      `),
+  ).toEqual([
+    {
+      kind: "network",
+      value: "/api/chat",
+      mechanism: "call:fetch",
+      resolution: undefined,
+    },
+  ]);
+});
+
+it("keeps Request objects partial when called with toString", () => {
+  expect(
+    endpoints(`
+        const req = new Request("/api/chat");
+        fetch(req.toString());
+      `),
+  ).toEqual([
+    {
+      kind: "network",
+      value: "req.toString()",
+      mechanism: "call:fetch",
+      resolution: "partial",
+    },
+  ]);
+});
+
+it("keeps Request targets partial on non-fetch network APIs", () => {
+  expect(
+    endpoints(`
+        const socketReq = new Request("wss://host/socket");
+        new WebSocket(new Request("wss://host/direct"));
+        new WebSocket(socketReq);
+        navigator.sendBeacon(new Request("https://api.example.test/beacon"));
+      `),
+  ).toEqual([
+    {
+      kind: "network",
+      value: 'new Request("wss://host/direct")',
+      mechanism: "call:WebSocket",
+      resolution: "partial",
+    },
+    {
+      kind: "network",
+      value: "socketReq",
+      mechanism: "call:WebSocket",
+      resolution: "partial",
+    },
+    {
+      kind: "network",
+      value: 'new Request("https://api.example.test/beacon")',
+      mechanism: "call:navigator.sendBeacon",
+      resolution: "partial",
+    },
+  ]);
+});
+
+it("keeps Request objects partial when Request is locally shadowed", () => {
+  expect(
+    endpoints(`
+        function test(Request) {
+          fetch(new Request("/api/shadowed"));
+        }
+      `),
+  ).toContainEqual({
+    kind: "network",
+    value: 'new Request("/api/shadowed")',
+    mechanism: "call:fetch",
+    resolution: "partial",
+  });
 });

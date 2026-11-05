@@ -130,6 +130,11 @@ export const packetCaptureSchema = z
     diagnostics: z.string(),
     tool: z.strictObject({
       configured_path: z.string(),
+      selection_source: z
+        .enum(["environment", "path"])
+        .describe(
+          "Whether REA_TSHARK_COMMAND selected the tool or PATH located it",
+        ),
       path: z.string(),
       sha256: z.string().regex(/^[a-f0-9]{64}$/),
       version_banner: z.string(),

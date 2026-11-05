@@ -343,6 +343,7 @@ describe("parsePmPathOutput", () => {
     const devicePath = "/data/app/My App/résumé:final\\draft*.apk";
     const { paths, rejectedPaths, unparsedLines } = parsePmPathOutput(
       `package:${devicePath}\r\n`,
+      "linux",
     );
     expect(paths).toEqual([
       {

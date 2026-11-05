@@ -37,7 +37,7 @@ export const mcpResponseBudgetSchema = z
   .string()
   .regex(/^[1-9]\d*$/u)
   .transform(Number)
-  .pipe(z.number().int().safe().min(MINIMUM_RESPONSE_BYTES));
+  .pipe(z.int().safe().min(MINIMUM_RESPONSE_BYTES));
 
 const budgetConstraint = `REA_MCP_MAX_RESPONSE_BYTES must be a decimal safe integer at least ${String(MINIMUM_RESPONSE_BYTES)} bytes, the default stdio receive-buffer size.`;
 

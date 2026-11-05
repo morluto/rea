@@ -8,9 +8,6 @@ import {
   nativeDeadlineRecovery,
 } from "../domain/native/nativeDeadlines.js";
 
-/** Omitted `native_ui_deadline_ms`. */
-export const NATIVE_UI_DEADLINE_MS = DEFAULT_NATIVE_UI_DEADLINE_MS;
-
 type Interruption =
   | { readonly kind: "caller"; readonly reason: unknown }
   | { readonly kind: "deadline"; readonly reason: unknown };
@@ -38,7 +35,7 @@ export class NativeUiInterruptionControl {
   constructor(
     caller: AbortSignal | undefined,
     deadline: AbortSignal,
-    deadlineMs = NATIVE_UI_DEADLINE_MS,
+    deadlineMs = DEFAULT_NATIVE_UI_DEADLINE_MS,
   ) {
     this.#caller = caller;
     this.#deadline = deadline;
@@ -86,7 +83,7 @@ export class NativeUiInterruptionControl {
             timeoutMs: this.#deadlineMs,
             setting: "native_ui_deadline_ms",
             cliFlag: "--native-ui-deadline-ms",
-            defaultMs: NATIVE_UI_DEADLINE_MS,
+            defaultMs: DEFAULT_NATIVE_UI_DEADLINE_MS,
             phase: "native UI observation deadline",
             detail: " A partial observation may already be retained.",
             unchanged:

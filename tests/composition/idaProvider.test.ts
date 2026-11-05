@@ -16,12 +16,10 @@ import { createEvidence } from "../../src/domain/evidence.js";
 import { createEvidenceBundle } from "../../src/domain/evidenceBundle.js";
 import { createAnalysisExecution } from "../../src/application/AnalysisProvider.js";
 import { EnhancedTools } from "../../src/application/EnhancedTools.js";
-import {
-  IDA_DATABASE_TARGET_LIMITATION,
-  IDA_PROVIDER_IDENTITY,
-} from "../../src/ida/IdaProviderCapabilities.js";
+import { IDA_DATABASE_TARGET_LIMITATION } from "../../src/ida/IdaProviderCapabilities.js";
 import type { BinaryTarget } from "../../src/domain/binaryTargetTypes.js";
 import { RecordingHexRaysIdaMcp } from "../fixtures/idaHexRaysMcp.js";
+import { IDA_PROVIDER_IDENTITY } from "../../src/ida/IdaProviderMetadata.js";
 import { parseBinaryTarget } from "../../src/application/BinaryTargetResolver.js";
 import { fat } from "../../src/domain/binaryTarget.fixture.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
@@ -246,6 +244,8 @@ describe("IDA provider selection cancellation", () => {
       ok: false,
       error: { _tag: "AnalysisCancelledError", cause: cancellationReason },
     });
+    if (replacement.ok) throw new Error("Expected cancellation");
+    expect(replacement.error.cause).toBe(cancellationReason);
     expect(session.activeTarget()?.sha256).toBe(first.target.sha256);
     expect(
       (await session.execute("procedure_pseudo_code", { procedure: "main" }))
@@ -282,6 +282,8 @@ describe("IDA provider selection cancellation", () => {
       ok: false,
       error: { _tag: "AnalysisCancelledError", cause: reason },
     });
+    if (profile.ok) throw new Error("Expected cancellation");
+    expect(profile.error.cause).toBe(reason);
     expect(runCalls).toBe(0);
   });
 });
@@ -289,7 +291,6 @@ describe("IDA provider selection cancellation", () => {
 describe("IDA universal Mach-O target identity", () => {
   const openUniversal = async (registration: Record<string, unknown>) => {
     const root = await createTestTempDirectory("rea-ida-universal-");
-    roots.push(root);
     const input = join(root, "universal");
     // x86_64 and arm64 slices share one whole-file digest.
     await writeFile(input, fat([0x01000007, 0x0100000c]));
@@ -483,7 +484,7 @@ describe("IDA database targets", () => {
     expect((await session.close()).ok).toBe(true);
     // The worker repacked only its private copy, which REA then removed.
     expect(producer.leases.size).toBe(0);
-    expect(await readFile(path)).toEqual(bytes);
+    expect((await readFile(path)).equals(bytes)).toBe(true);
     expect(
       (await readdir(root)).filter((name) => name.startsWith("rea-ida-")),
     ).toEqual([]);

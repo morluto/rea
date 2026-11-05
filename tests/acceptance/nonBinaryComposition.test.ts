@@ -4,7 +4,6 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, onTestFinished } from "vitest";
 
-import { createAndroidAnalysisProvider } from "../../src/composition/android.js";
 import { createFirmwareAnalysisProvider } from "../../src/composition/firmware.js";
 import { createJavaScriptRecoveryProvider } from "../../src/composition/javascriptRecovery.js";
 import { createServer } from "../../src/server/createServer.js";
@@ -20,7 +19,7 @@ const connect = async (environment: NodeJS.ProcessEnv) => {
   const server = createServer(
     { kind: "session", session },
     {
-      androidAnalysis: createAndroidAnalysisProvider(environment),
+      environment,
       firmwareAnalysis: createFirmwareAnalysisProvider(environment),
       javascriptRecovery: createJavaScriptRecoveryProvider(environment),
     },
@@ -251,5 +250,74 @@ cliTest(
         },
       });
     }
+  },
+);
+
+cliTest.skipIf(process.platform === "win32")(
+  "shares runtime JADX settings with the default embedded MCP provider",
+  async () => {
+    const root = await createTestTempDirectory("rea-embedded-jadx-settings-");
+    const apk = join(root, "fixture.apk");
+    await writeOrderedZip(apk, ["AndroidManifest.xml", "classes.dex"]);
+    const client = await connect({
+      REA_LOG_LEVEL: "silent",
+      REA_JADX_OPERATION_TIMEOUT_MS: "0",
+    });
+    const request = {
+      name: "inspect_android_package",
+      arguments: { path: apk },
+    };
+    const inspect = async () =>
+      parseMcpToolError(await client.callTool(request)).error;
+    const invalid = {
+      code: "capability_unavailable",
+      details: {
+        diagnostics: {
+          failure_kind: "operation_timeout",
+          failure_code: "open_options_invalid",
+          setting: "REA_JADX_OPERATION_TIMEOUT_MS",
+          value: "0",
+        },
+      },
+    };
+    expect(await inspect()).toMatchObject(invalid);
+    const updated = await client.callTool({
+      name: "update_analysis_settings",
+      arguments: {
+        changes: [
+          { setting: "jadx.operation_timeout_ms", action: "set", value: 42000 },
+        ],
+      },
+    });
+    expect(updated.isError).not.toBe(true);
+    expect(updated.structuredContent).toMatchObject({
+      settings: [
+        {
+          setting: "jadx.operation_timeout_ms",
+          value: 42000,
+          source: "runtime",
+        },
+      ],
+    });
+    // The same provider/request now passes timeout validation and reaches the
+    // deliberately absent JAR prerequisite. No engine launch is simulated.
+    expect(await inspect()).toMatchObject({
+      code: "capability_unavailable",
+      details: {
+        diagnostics: {
+          failure_kind: "jar",
+          failure_code: "not_configured",
+          jar_configured: false,
+        },
+      },
+    });
+    const reset = await client.callTool({
+      name: "update_analysis_settings",
+      arguments: {
+        changes: [{ setting: "jadx.operation_timeout_ms", action: "reset" }],
+      },
+    });
+    expect(reset.isError).not.toBe(true);
+    expect(await inspect()).toMatchObject(invalid);
   },
 );

@@ -1,6 +1,8 @@
+import { ELECTRON_FUSE_PROVIDER_IDENTITY } from "./ElectronFuseProviderIdentity.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {
   ArtifactFileCleanupFailure,
+  artifactFileCompletion,
   artifactFileCancellationCause,
   bindArtifactFileCleanup,
 } from "../artifacts/ArtifactFileOperation.js";
@@ -30,13 +32,6 @@ import {
   ElectronFuseResourceFailure,
 } from "./ElectronFuseReader.js";
 
-/** Bundled fuse-wire reader. It does not flip fuses or launch the application. */
-export const ELECTRON_FUSE_PROVIDER_IDENTITY = {
-  id: "electron-fuses",
-  name: "REA Electron fuse reader",
-  version: "1",
-} as const;
-
 const OPERATION = "inspect_electron_fuses";
 
 /** Translate the shared fuse reader without replacing its producing outcome or cleanup owner. */
@@ -56,13 +51,14 @@ export const electronFuseFailure = (
     bindArtifactFileCleanup(cause, cleanup);
     if (cause instanceof ArtifactFileCleanupFailure) {
       const outcome = cause.fileCleanupFailure.outcome;
+      const cancellation = artifactFileCompletion(cause)?.cancellation;
       const primary =
         outcome.kind === "failed"
           ? electronFuseFailure(outcome.cause, path, operation)
-          : cause.fileCleanupFailure.completionCancellation === undefined
+          : cancellation === undefined
             ? undefined
             : new AnalysisCancelledError(operation, {
-                cause: cause.fileCleanupFailure.completionCancellation.reason,
+                cause: cancellation.reason,
               });
       if (primary !== undefined)
         return analysisErrorWithCleanupFailure(

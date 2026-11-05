@@ -1,7 +1,6 @@
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { createHash, randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { realpath } from "node:fs/promises";
 
 import { err, ok, type Result } from "../domain/result.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
@@ -18,12 +17,12 @@ import type {
 } from "../process/ProviderProcess.js";
 import { boundedUtf8Text } from "../process/boundedUtf8Text.js";
 import { DEFAULT_NATIVE_COMMAND_TIMEOUT_MS } from "../domain/native/nativeDeadlines.js";
+import {
+  selectArtifactCommandPath,
+  type ArtifactCommandPath,
+} from "../process/ArtifactCommandPath.js";
+import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 
-/**
- * Omitted `native_command_timeout_ms`. Distinct from objdump/rizin
- * `command_timeout_ms`, which is a separate 120000 ms one-shot budget.
- */
-export const NATIVE_COMMAND_TIMEOUT_MS = DEFAULT_NATIVE_COMMAND_TIMEOUT_MS;
 /** Retain complete command output up to a bounded aggregate size. */
 export const NATIVE_COMMAND_OUTPUT_BUDGET_BYTES = 64 * 1024 * 1024;
 /**
@@ -131,7 +130,7 @@ export interface NativeCommandFailureCapture {
 export interface NativeCommandOptions {
   readonly signal?: AbortSignal;
   readonly acceptNonZero?: boolean;
-  /** Selected wall clock; omitted uses `NATIVE_COMMAND_TIMEOUT_MS`. */
+  /** Selected wall clock; omitted uses `DEFAULT_NATIVE_COMMAND_TIMEOUT_MS`. */
   readonly timeoutMs?: number;
 }
 
@@ -150,12 +149,12 @@ export type NativeCommandLauncher = (
   options: OwnedProviderProcessSpawnOptions,
 ) => Promise<SpawnedOwnedProviderProcess>;
 
-/** Resolve one allowlisted native tool to an immutable executable identity. */
+/** Resolve one native tool's selected invocation and prelaunch file identity. */
 export type NativeToolResolver = (
   tool: string,
   signal?: AbortSignal,
   launcher?: NativeCommandLauncher,
-  /** Selected command deadline. Omitted uses `NATIVE_COMMAND_TIMEOUT_MS`. */
+  /** Selected command deadline. Omitted uses `DEFAULT_NATIVE_COMMAND_TIMEOUT_MS`. */
   timeoutMs?: number,
 ) => Promise<Result<ResolvedTool, NativeCommandFailure>>;
 
@@ -220,7 +219,7 @@ export class XcrunCommandRunner implements NativeCommandRunner {
       return err(this.#retainCleanupOwner(resolved.error));
     }
     const captured = await captureProcess(
-      resolved.value.path,
+      resolved.value.invocationPath,
       arguments_,
       tool,
       options,
@@ -228,18 +227,16 @@ export class XcrunCommandRunner implements NativeCommandRunner {
       this.launcher,
     );
     if (!captured.ok) return err(this.#retainCleanupOwner(captured.error));
-    return captured.ok
-      ? ok({
-          ...captured.value,
-          tool,
-          executable: resolved.value.path,
-          executableSha256: resolved.value.sha256,
-          toolVersion: null,
-          versionReason:
-            "Tool exposes no uniform stable version flag; executable SHA-256 is a prelaunch file sample and does not prove atomic OS image binding.",
-          arguments: [...arguments_],
-        })
-      : captured;
+    return ok({
+      ...captured.value,
+      tool,
+      executable: resolved.value.invocationPath,
+      executableSha256: resolved.value.sha256,
+      toolVersion: null,
+      versionReason:
+        "Tool exposes no uniform stable version flag; executable SHA-256 is a prelaunch file sample and does not prove atomic OS image binding.",
+      arguments: [...arguments_],
+    });
   }
 
   async #retryCleanup(): Promise<readonly NativeCommandCleanupFailure[]> {
@@ -350,9 +347,8 @@ const commandCleanupFailure = (
     [...new Set(failures.flatMap(({ resources }) => resources))],
   );
 
-/** Executable path and SHA-256 sampled during one tool resolution. */
-export interface ResolvedTool {
-  readonly path: string;
+/** Selected invocation and physical executable identity sampled during resolution. */
+export interface ResolvedTool extends ArtifactCommandPath {
   readonly sha256: string;
 }
 
@@ -363,7 +359,6 @@ const ALLOWED_TOOLS = new Set([
   "file",
   "lipo",
   "nm",
-  "otool",
   "plutil",
   "strings",
   "swift-demangle",
@@ -444,22 +439,26 @@ export const resolveXcrunTool = async (
       ),
     );
   try {
-    const path = await realpath(candidate);
-    return ok({ path, sha256: await hashFile(path, signal) });
+    const selected = await selectArtifactCommandPath(candidate, signal);
+    return ok({
+      ...selected,
+      sha256: await hashFile(selected.resolvedPath, signal),
+    });
   } catch (cause: unknown) {
     const capture = failureCapture(found.value, false);
     const cancellation =
       signal?.aborted === true ? { reason: signal.reason } : undefined;
-    const abortedHashRead =
-      cause instanceof Error &&
-      "code" in cause &&
-      cause.code === "ABORT_ERR" &&
+    const observedCancellation =
       signal?.aborted === true &&
-      cause.cause === signal.reason;
+      cause instanceof Error &&
+      cause.cause === signal.reason &&
+      ((cause instanceof ArtifactReaderFailure &&
+        cause.reason === "cancelled") ||
+        ("code" in cause && cause.code === "ABORT_ERR"));
     return err(
       new NativeCommandFailure(
         tool,
-        abortedHashRead ? "cancelled" : "io",
+        observedCancellation ? "cancelled" : "io",
         capture.exitCode,
         {
           cause,
@@ -533,7 +532,7 @@ const captureProcess = async (
         ...(options.signal === undefined ? {} : { signal: options.signal }),
       },
       {
-        timeoutMs: options.timeoutMs ?? NATIVE_COMMAND_TIMEOUT_MS,
+        timeoutMs: options.timeoutMs ?? DEFAULT_NATIVE_COMMAND_TIMEOUT_MS,
         diagnosticBytes: NATIVE_COMMAND_OUTPUT_BUDGET_BYTES,
         acceptNonZeroExit: options.acceptNonZero === true,
       },

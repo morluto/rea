@@ -18,6 +18,27 @@ it("retains observed argument ranges while reporting inconsistent area declarati
   });
   expect(read.limitations.join(" ")).toContain("disagree");
 });
+it("decodes V2 kernel parameter sizes without the legacy packed-size shift", () => {
+  const read = readCudaParameters(
+    Buffer.from("0319204e04450c000000000000000000204e0000", "hex"),
+    true,
+  );
+  expect(read).toMatchObject({
+    parameter_count: 1,
+    parameter_bytes: 20000,
+    parameters: [{ ordinal: 0, offset: 0, size: 20000 }],
+    limitations: [],
+  });
+});
+it("marks malformed V2 parameter payloads incomplete", () => {
+  const read = readCudaParameters(
+    Buffer.from("0319204e044508000000000000000000", "hex"),
+    true,
+  );
+  expect(read.parameter_count).toBeNull();
+  expect(read.parameter_bytes).toBe(20000);
+  expect(read.limitations.join(" ")).toContain("unsupported indices/sizes");
+});
 it("bounds dense numeric record streams without retaining a record array", () => {
   const bytes = Buffer.alloc(4 * 262145);
   for (let offset = 0; offset < bytes.length; offset += 4) bytes[offset] = 1;

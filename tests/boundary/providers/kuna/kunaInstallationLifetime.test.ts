@@ -32,31 +32,28 @@ vi.mock("../../../../src/filesystem/RegularFile.js", async (importOriginal) => {
     ...original,
     openRegularFile: vi.fn(
       async (...args: Parameters<typeof original.openRegularFile>) => {
-        const handle = await original.openRegularFile(...args);
+        const descriptor = await original.openRegularFile(...args);
+        const { handle } = descriptor;
         const index = gates.opens++;
-        return {
-          get fd() {
-            return handle.fd;
-          },
-          stat: (...statArgs: Parameters<typeof handle.stat>) =>
-            handle.stat(...statArgs),
-          read: async (...readArgs: Parameters<typeof handle.read>) => {
-            if (index === 1 && gates.holdIdentityRead) {
-              gates.identityRead.enter();
-              await gates.identityRead.hold;
-            }
-            return handle.read(...readArgs);
-          },
-          close: async () => {
-            if (index === 1 && gates.holdHashClose) {
-              gates.hashClose.enter();
-              await gates.hashClose.hold;
-            }
-            if (gates.failClose)
-              throw new Error("controlled final close refusal");
-            await handle.close();
-          },
-        } as unknown as typeof handle;
+        const read = handle.read.bind(handle);
+        const close = handle.close.bind(handle);
+        vi.spyOn(handle, "read").mockImplementation(async (...readArgs) => {
+          if (index === 1 && gates.holdIdentityRead) {
+            gates.identityRead.enter();
+            await gates.identityRead.hold;
+          }
+          return read(...readArgs);
+        });
+        vi.spyOn(handle, "close").mockImplementation(async () => {
+          if (index === 1 && gates.holdHashClose) {
+            gates.hashClose.enter();
+            await gates.hashClose.hold;
+          }
+          if (gates.failClose)
+            throw new Error("controlled final close refusal");
+          await close();
+        });
+        return descriptor;
       },
     ),
   };

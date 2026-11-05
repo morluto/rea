@@ -34,10 +34,7 @@ import {
   NATIVE_UI_OUTPUT_BUDGET_BYTES,
   NATIVE_UI_OUTPUT_WEIGHT,
 } from "./NativeUiOutputBudget.js";
-import {
-  NATIVE_UI_DEADLINE_MS,
-  NativeUiInterruptionControl,
-} from "./NativeUiInterruptionControl.js";
+import { NativeUiInterruptionControl } from "./NativeUiInterruptionControl.js";
 
 const helper = fileURLToPath(
   new URL("../../bridge/native/ReaNativeUI.swift", import.meta.url),
@@ -52,6 +49,12 @@ const responseSchema = z.discriminatedUnion("ok", [
     code: z.string(),
     message: z.string(),
   }),
+]);
+const initialSelectionFields = new Map<string, "pid" | "window_id">([
+  ["pid-not-application", "pid"],
+  ["target-mismatch", "pid"],
+  ["window-mismatch", "window_id"],
+  ["ambiguous-window", "window_id"],
 ]);
 /** Narrow process seam preserves the native helper's OS and target failures. */
 export type NativeUiHelper = (
@@ -79,7 +82,7 @@ export const observeNativeUi = async (
     new NativeUiInterruptionControl(
       options.signal,
       runtime.signal,
-      runtime.deadlineMs ?? NATIVE_UI_DEADLINE_MS,
+      runtime.deadlineMs ?? DEFAULT_NATIVE_UI_DEADLINE_MS,
     );
   const ownsInterruption = options.interruption === undefined;
   let result: Result<z.infer<typeof nativeUiResultSchema>, AnalysisError>;
@@ -182,14 +185,31 @@ const observeWithHelper = async (
           signal,
         ),
       );
-      if (!response.ok)
+      if (!response.ok) {
+        const field = initialSelectionFields.get(response.code);
+        if (launchTime === undefined && field !== undefined)
+          return err(
+            new AnalysisInputError(
+              operation,
+              { userMessage: response.message },
+              [
+                {
+                  path: [field],
+                  reason: "invalid_value",
+                  message: `${response.code}: ${response.message}`,
+                },
+              ],
+            ),
+          );
         return err(
           new AnalysisCapabilityUnavailableError(
             "native-macos",
             operation,
             `${response.code}: ${response.message}`,
+            { userMessage: response.message },
           ),
         );
+      }
       if (
         response.result.window.pid !== input.pid ||
         response.result.window.window_id !== input.window_id ||

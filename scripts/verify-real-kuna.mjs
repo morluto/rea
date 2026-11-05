@@ -28,13 +28,17 @@ import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { inspectKunaInstallation } from "../dist/kuna/KunaInstallation.js";
 import { ArtifactResourceScope } from "../dist/artifacts/ArtifactResourceScope.js";
 import { AnalysisCleanupLease } from "../dist/artifacts/AnalysisCleanupLease.js";
-import { requireMcpOperationResult } from "./lib/mcp-verifier-results.mjs";
+import {
+  requireMcpOperationResult,
+  requireMcpToolError,
+} from "./lib/mcp-verifier-results.mjs";
 import { verifyKunaReferences } from "./lib/kuna-reference-verifier.mjs";
 import {
   nativeKunaStrings,
   verifyKunaStrings,
 } from "./lib/kuna-string-verifier.mjs";
 import { nativeKunaIncomingSites } from "./lib/kuna-native-reference-verifier.mjs";
+import { MULTI_MODE_REMEDIATION } from "../dist/application/CapabilityInventory.js";
 import {
   assertVerifierCleanupComplete,
   completeVerifierRun,
@@ -115,7 +119,9 @@ __attribute__((noinline)) int rea_classify(int c) {
 }
 int main(int argc, char **argv) {
   if (argc < 2) return 2;
-  printf("%u %d\n", rea_checksum((const unsigned char *)argv[1], strlen(argv[1])),
+  size_t length = strlen(argv[1]);
+  printf("%u %u %d\n", rea_checksum((const unsigned char *)argv[1], length),
+         rea_checksum((const unsigned char *)argv[1], length ? length - 1 : 0),
          rea_classify(argv[1][0]));
   return 0;
 }
@@ -169,7 +175,7 @@ const sampleTree = async (root) => {
 };
 
 /** One MCP server with a selected provider, sampled while it runs. */
-const openServer = async (provider) => {
+const openServer = async (provider, kunaSettings = {}) => {
   const owner = Symbol(provider.id);
   pendingServers.add(owner);
   const transport = new StdioClientTransport({
@@ -182,6 +188,7 @@ const openServer = async (provider) => {
       REA_PROCESS_RUN_ID: run.run_id,
       REA_KUNA_COMMAND: kuna,
       REA_KUNA_CACHE_DIR: cacheRoot,
+      ...kunaSettings,
       ...(process.env.GHIDRA_INSTALL_DIR === undefined
         ? {}
         : { GHIDRA_INSTALL_DIR: process.env.GHIDRA_INSTALL_DIR }),
@@ -226,6 +233,13 @@ const openServer = async (provider) => {
       structured: result.structuredContent,
     };
   };
+  const callError = async (name, arguments_ = {}) => {
+    const result = await client.callTool(
+      { name, arguments: arguments_ },
+      { timeout: 3_600_000 },
+    );
+    return requireMcpToolError(result);
+  };
   const close = async (priorFailure) => {
     clearInterval(timer);
     await sample();
@@ -267,7 +281,59 @@ const openServer = async (provider) => {
     // A rejected connection/target still owns its transport and workspace.
     await close(cause);
   }
-  return { call, close };
+  return { call, callError, close };
+};
+
+/** Verify a forced inventory timeout can be retried without changing jobs. */
+const verifyProjectTimeoutRecovery = async (path, address) => {
+  const before = createHash("sha256")
+    .update(await readFile(path))
+    .digest("hex");
+  const settings = {
+    REA_KUNA_JOBS: "2",
+    REA_KUNA_TIMEOUT_MS: "60000",
+    REA_KUNA_PROJECT_TIMEOUT_MS: "1",
+  };
+  const timed = await openServer({ path, id: "kuna" }, settings);
+  let timedFailure;
+  try {
+    const failure = await timed.callError("procedure_assembly", {
+      procedure: address,
+    });
+    assert.equal(failure.code, "capability_unavailable");
+    assert.match(failure.message, /kuna functions/u);
+    assert.match(failure.remediation.action, /REA_KUNA_PROJECT_TIMEOUT_MS/u);
+    assert.doesNotMatch(failure.remediation.action, /REA_KUNA_JOBS/u);
+  } catch (cause) {
+    timedFailure = cause;
+  } finally {
+    await timed.close(timedFailure);
+  }
+  const retry = await openServer(
+    { path, id: "kuna" },
+    { ...settings, REA_KUNA_PROJECT_TIMEOUT_MS: "60000" },
+  );
+  let retryFailure;
+  try {
+    const assembly = await retry.call("procedure_assembly", {
+      procedure: address,
+    });
+    assert.equal(typeof assembly.value, "string");
+    assert.ok(assembly.value.length > 0);
+    assert.equal(assembly.structured.analysis_profile.parameters.jobs, 2);
+  } catch (cause) {
+    retryFailure = cause;
+  } finally {
+    await retry.close(retryFailure);
+  }
+  assert.equal(
+    createHash("sha256")
+      .update(await readFile(path))
+      .digest("hex"),
+    before,
+    "Kuna timeout recovery changed the target",
+  );
+  return { forced_deadline_ms: 1, retry_deadline_ms: 60000, jobs: 2 };
 };
 
 /** Count structuring and diagnostic markers in provider pseudocode. */
@@ -282,8 +348,12 @@ const quality = (text) => ({
 const verifyKuna = async (
   path,
   functions,
-  expectedCaller,
-  expectedStrings = [],
+  {
+    expectedCaller,
+    expectedStrings = [],
+    verifyNamedTrace = false,
+    minimumTraceReferences = {},
+  } = {},
 ) => {
   const sha256 = createHash("sha256")
     .update(await readFile(path))
@@ -292,6 +362,36 @@ const verifyKuna = async (
   const answers = [];
   let coldFailure;
   try {
+    const status = await cold.call("binary_session", { detail: "complete" });
+    if (status.value.format === "elf") {
+      const availability = status.value.tool_availability;
+      const dispatch = availability.find(
+        ({ name }) => name === "inspect_native_dispatch_metadata",
+      );
+      const trace = availability.find(
+        ({ name }) => name === "trace_native_ui_action",
+      );
+      assert.equal(dispatch?.available, false);
+      assert.equal(
+        trace?.modes?.find(({ name }) => name === "native_seed_call_trace")
+          ?.available,
+        false,
+      );
+      if (process.platform === "darwin") {
+        const authored = trace?.modes?.find(
+          ({ name }) => name === "authored_ui_dispatch",
+        );
+        const nativeSeed = trace?.modes?.find(
+          ({ name }) => name === "native_seed_call_trace",
+        );
+        assert.equal(trace?.remediation, MULTI_MODE_REMEDIATION);
+        assert.notEqual(authored?.remediation, nativeSeed?.remediation);
+        assert.ok(
+          authored?.missing_operations.includes("decode_interface_builder"),
+        );
+        assert.ok(nativeSeed?.missing_operations.includes("list_names"));
+      }
+    }
     answers.push({
       strings: await verifyKunaStrings({
         call: cold.call,
@@ -320,6 +420,8 @@ const verifyKuna = async (
         name,
         address,
         expectedCaller,
+        verifyNamedTrace,
+        minimumTraceReferences: minimumTraceReferences[name],
         nativeIncoming: (targetAddress) =>
           nativeKunaIncomingSites({
             executable: kuna,
@@ -369,6 +471,7 @@ const verifyKuna = async (
       );
       const dossier = await cold.call("analyze_function", {
         procedure: address,
+        detail: "complete",
       });
       assert.deepEqual(
         dossier.structured.relationship_coverage,
@@ -407,6 +510,30 @@ const verifyKuna = async (
         ...quality(exported.value),
         references,
       });
+    }
+    if (functions.length > 0) {
+      const trace = await cold.call("trace_native_values", {
+        procedure: functions[0][1],
+        max_depth: 0,
+        max_functions: 1,
+      });
+      const bundle = await cold.call("get_evidence_bundle", {
+        detail: "complete",
+      });
+      for (const source of [
+        ...trace.value.procedures,
+        ...trace.value.nodes,
+        ...trace.value.edges,
+      ]) {
+        assert.ok(trace.structured.evidence_links.includes(source.evidence_id));
+        assert.equal(
+          bundle.value.records.find(
+            (record) => record.evidence_id === source.evidence_id,
+          )?.operation,
+          "analyze_function",
+          `Missing source Evidence ${source.evidence_id}`,
+        );
+      }
     }
   } catch (cause) {
     coldFailure = cause;
@@ -495,6 +622,7 @@ const verifyVariant = async ({ flavor, directory, symbols }, variant) => {
 };
 
 const results = [];
+let timeoutRecovery;
 const failures = [];
 let inspectionResourcesClean = true;
 try {
@@ -548,11 +676,18 @@ try {
   for (const binary of [built, stripped])
     results.push({
       binary: binary.slice(workspace.length + 1),
-      kuna: await verifyKuna(binary, [...fixtureFunctions], fixtureMain, [
-        "＿φ( °-°)/ REA unicode marker",
-        "REA wide marker",
-      ]),
+      kuna: await verifyKuna(binary, [...fixtureFunctions], {
+        expectedCaller: fixtureMain,
+        expectedStrings: ["＿φ( °-°)/ REA unicode marker", "REA wide marker"],
+        verifyNamedTrace: binary === built,
+        minimumTraceReferences: { rea_checksum: 2 },
+      }),
     });
+
+  timeoutRecovery = await verifyProjectTimeoutRecovery(
+    built,
+    fixtureFunctions.get("rea_checksum"),
+  );
 
   // Caller-built matrix.
   for (const pair of callerPairs)
@@ -608,6 +743,9 @@ const report = {
   platform: `${process.platform}/${process.arch}`,
   verifier_run: lifecycle,
   results,
+  ...(timeoutRecovery === undefined
+    ? {}
+    : { timeout_recovery: timeoutRecovery }),
   limitations: [
     "Targets are analyzed statically; they are never executed.",
     "Memory is the sampled peak resident set of the MCP server process tree; CPU is its sampled cumulative time. A short-lived peak between 200 ms samples is not observed.",

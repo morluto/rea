@@ -4,8 +4,9 @@ import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
 import { packetFieldsSchema } from "../domain/captures/packetCapture.js";
-import { swiftStringLiteralSchema } from "../domain/hopperValues.js";
+import { swiftStringLiteralSchema } from "../domain/native/swiftStringLiteral.js";
 import { applicationVersionComparisonResultSchema } from "../domain/javascript/javascriptApplicationVersionComparisonSchemas.js";
+import { kernelModuleSchema } from "../domain/native/kernelModule.js";
 import { pinvokeVerificationSchema } from "../domain/managed/managedNativeVerificationSchemas.js";
 import { relationshipCoverageSchema } from "../domain/relationshipCoverage.js";
 import { compactAdvertisedInputSchema } from "./compactInputSchema.js";
@@ -63,6 +64,17 @@ const nativeSymbol = {
   source: "function-dossier",
 };
 
+const signatureInfo = {
+  location: { offset: 16, bytes: 12 },
+  algo: 0,
+  hash: 0,
+  id_type: 2,
+  signer_len: 0,
+  key_id_len: 0,
+  pad: [0, 0, 0],
+  sig_len: 16,
+};
+
 const cases: readonly {
   readonly name: string;
   readonly schema: z.ZodType;
@@ -109,6 +121,16 @@ const cases: readonly {
           value: { ...literal, [field]: value },
           valid: false,
         })),
+      ),
+    ],
+  },
+  {
+    name: "kernel module signature pad bytes",
+    schema: kernelModuleSchema.shape.signature.unwrap().shape.info.unwrap(),
+    samples: [
+      { value: signatureInfo, valid: true },
+      ...[[], [0], [0, 0, 0, 0], [0, null, 0], [0, 256, 0], null].map(
+        (pad) => ({ value: { ...signatureInfo, pad }, valid: false }),
       ),
     ],
   },

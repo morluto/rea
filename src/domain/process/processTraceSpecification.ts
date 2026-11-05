@@ -25,13 +25,13 @@ const cardinalitySchema = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("optional") }),
   z.strictObject({
     kind: z.literal("exact"),
-    count: z.number().int().min(0),
+    count: z.int().min(0),
   }),
   z
     .strictObject({
       kind: z.literal("range"),
-      min: z.number().int().min(0),
-      max: z.number().int().min(0),
+      min: z.int().min(0),
+      max: z.int().min(0),
     })
     .refine(({ min, max }) => min <= max, {
       message: "cardinality min must not exceed max",

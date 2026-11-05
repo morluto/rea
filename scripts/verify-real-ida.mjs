@@ -62,14 +62,14 @@ const [
   { toolContract },
   { evidenceSchema },
   { functionDossierSchema },
-  { readIdaConfiguration },
+  { readIdaConfiguration, idaCompatibilityProfile },
   { createIdaMcpConnection },
   { idaAddressSchema },
   { hasIdaDatabaseSignature },
 ] = await Promise.all([
   importBuilt("contracts/toolContracts.js"),
   importBuilt("domain/evidence.js"),
-  importBuilt("domain/hopperValues.js"),
+  importBuilt("domain/native/functionDossier.js"),
   importBuilt("ida/IdaConfiguration.js"),
   importBuilt("ida/IdaMcpConnection.js"),
   importBuilt("ida/IdaProtocolValues.js"),
@@ -101,8 +101,7 @@ const environment = Object.fromEntries(
 const report = {
   passed: false,
   mode: config.mode,
-  protocol:
-    config.protocol ?? (config.mode === "attached" ? "legacy" : "modern"),
+  protocol: idaCompatibilityProfile(config).protocol,
   checks: [],
   observations: [],
   unverified: [],
@@ -212,6 +211,7 @@ const mcp = async (cliDossier) => {
     opened = true;
     const analyzed = await call("analyze_function", {
       procedure: values.procedure,
+      detail: "complete",
     });
     const dossier = functionDossierSchema.parse(observe(analyzed));
     assert.deepEqual(dossier.procedure, cliDossier.procedure);

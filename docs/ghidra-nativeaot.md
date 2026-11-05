@@ -109,7 +109,7 @@ bytes live only in a parser-owned overlay, identified by virtual address, size,
 and SHA-256; the caller's source Buffer remains unchanged. Limits derive from
 captured section extents and format field bounds. Separate resource policies
 admit up to 128 MiB of captured PE bytes, 64 MiB-equivalent parser work, 64 MiB
-of exact parser-owned overlay/index Buffers, and 4 MiB of serialized NativeAOT
+of exact parser-owned overlay/index storage, and 4 MiB of serialized NativeAOT
 report JSON. These are local parser limits, independent of MCP delivery; the
 buffer counter does not claim to cap V8 heap or total process memory. Rows that
 do not fit the report budget are omitted with explicit partial status and
@@ -119,6 +119,26 @@ object. Cancellation is honored during snapshot I/O and checked immediately
 before and after parsing; the synchronous parser call itself is bounded but
 cannot be interrupted mid-call. Parser output never claims that a Ghidra
 database type was defined.
+
+RTR signature omission counts include every eligible section before the work
+budget is spent, including later sections that were never visited. MethodTable
+closure indexes each validated table's related pointer once and visits a work
+queue for inheritance and interface reachability. Its temporary index and queue
+consume the existing working-memory budget; the parser does not increase its
+work limit. Candidate headers/counts are parsed once; unmapped table bodies are
+rejected before charging table entries, and validation charges only each slot or
+interface pointer actually examined. Declared counts and unvisited tails do not
+become examined coverage. Discovery still must finish before claiming a unique System.Object
+root, so a discovery budget stop can return zero recovered tables without
+establishing their absence. Performance on the large bflat report has not been
+measured. Indexed closure and candidate validation avoid separate repeated or
+unperformed work, but do not establish that the fixed discovery budget admits
+that artifact. Budget stops remain partial results with unknown type absence.
+
+If captured snapshot bytes no longer match their admitted digest, the parser
+retains both digests and the Ghidra owner reports `artifact_changed`, with the
+captured byte count and admitted identity still available. Reopen acquisition
+against a stable artifact; this is distinct from corrupted retained Evidence.
 
 The optional adapter performs its annotations in an ephemeral Program
 transaction. That workflow may change analysis-memory bytes, never the original

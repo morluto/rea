@@ -1,8 +1,6 @@
-import { createHash } from "node:crypto";
-
-import canonicalize from "canonicalize";
 import { z } from "zod";
 
+import { digestCanonicalValue } from "./canonicalDigest.js";
 import { IDENTIFIER_PATTERN } from "./stringPatterns.js";
 import { prefixedDigestSchema } from "./../domain/digests.js";
 import {
@@ -30,12 +28,12 @@ export const evidenceCompletionRecordSchema = z.strictObject({
 });
 
 const completionSummarySchema = z.strictObject({
-  total: z.number().int().min(1),
-  pass: z.number().int().nonnegative(),
-  fail: z.number().int().nonnegative(),
-  unsupported: z.number().int().nonnegative(),
-  truncated: z.number().int().nonnegative(),
-  unknown: z.number().int().nonnegative(),
+  total: z.int().min(1),
+  pass: z.int().nonnegative(),
+  fail: z.int().nonnegative(),
+  unsupported: z.int().nonnegative(),
+  truncated: z.int().nonnegative(),
+  unknown: z.int().nonnegative(),
   complete: z.boolean(),
 });
 
@@ -79,21 +77,9 @@ const summarize = (
   };
 };
 
-const canonicalJson = (value: unknown): string => {
-  const serialized = canonicalize(value);
-  if (serialized === undefined)
-    throw new TypeError(
-      "RFC 8785 canonicalization rejected the completion ledger",
-    );
-  return serialized;
-};
-
 const computeLedgerId = (
   records: readonly EvidenceCompletionRecord[],
-): string =>
-  `ecl_${createHash("sha256")
-    .update(canonicalJson({ records }))
-    .digest("hex")}`;
+): string => `ecl_${digestCanonicalValue({ records }, "Completion ledger")}`;
 
 const ledgerIssues = (
   ledger: EvidenceCompletionLedgerValue,
@@ -158,8 +144,3 @@ export const createEvidenceCompletionLedger = (
     summary: summarize(records),
   });
 };
-
-/** Parse a completion ledger and reject non-canonical or tampered content. */
-export const parseEvidenceCompletionLedger = (
-  input: unknown,
-): EvidenceCompletionLedger => evidenceCompletionLedgerSchema.parse(input);

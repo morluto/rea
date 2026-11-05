@@ -1,4 +1,7 @@
+import { collectNumericIssues } from "./AdbNumericIssues.js";
 import type {
+  AdbDisplayNumericIssues,
+  AdbPackageNumericIssues,
   AdbWindowFocusContext,
   AdbWindowFocusObservation,
 } from "../domain/adb/adbDeviceAnalysis.js";
@@ -24,8 +27,15 @@ export interface AdbProcessEntry {
   readonly name: string;
 }
 
+// Toybox emits one separator before the unpadded final NAME column.
+// Remaining whitespace belongs to argv[0], not the table layout.
 const PROCESS_LINE =
-  /^(\S+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(.+)$/u;
+  /^(\S+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\S+)\s+(\S+)\s+(\S+) (.+)$/u;
+
+const safeInteger = (text: string): number | null => {
+  const value = Number(text);
+  return Number.isSafeInteger(value) ? value : null;
+};
 
 /** Parse `ps -A` output; the header line is preserved verbatim as `columns`. */
 export const parseProcessListOutput = (
@@ -38,9 +48,8 @@ export const parseProcessListOutput = (
   const processes: AdbProcessEntry[] = [];
   const unparsed = collectUnparsedLines();
   let columns: string | null = null;
-  for (const rawLine of stdout.split(/\r?\n/u)) {
-    const line = rawLine.trimEnd();
-    if (line === "") continue;
+  for (const line of stdout.split(/\r?\n/u)) {
+    if (line.trim() === "") continue;
     if (/^USER\s+PID\s+PPID\b/u.test(line)) {
       columns = line.trim();
       continue;
@@ -50,13 +59,18 @@ export const parseProcessListOutput = (
       unparsed.add(line);
       continue;
     }
+    const pid = safeInteger(match[2]!);
+    const ppid = safeInteger(match[3]!);
+    const rss = safeInteger(match[5]!);
+    if (pid === null || ppid === null || rss === null) unparsed.add(line);
+    if (pid === null) continue;
     processes.push({
       user: match[1]!,
-      pid: Number(match[2]!),
-      ppid: Number.isSafeInteger(Number(match[3]!)) ? Number(match[3]!) : null,
-      rss: Number.isSafeInteger(Number(match[5]!)) ? Number(match[5]!) : null,
+      pid,
+      ppid,
+      rss,
       state: match[8]!,
-      name: match[9]!.trim(),
+      name: match[9]!,
     });
   }
   return { columns, processes, unparsedLines: unparsed.facts() };
@@ -68,9 +82,6 @@ export interface AdbFeatureEntry {
 }
 
 const FEATURE_LINE = /^feature:([^=\s]+)(?:=(0x[0-9a-fA-F]+|\d+))?$/u;
-
-const parseFeatureVersion = (text: string): number =>
-  text.startsWith("0x") ? Number.parseInt(text.slice(2), 16) : Number(text);
 
 /** Parse `pm list features` output, including hex GL versions. */
 export const parseFeatureListOutput = (
@@ -86,12 +97,14 @@ export const parseFeatureListOutput = (
     if (line === "") continue;
     const match = FEATURE_LINE.exec(line);
     if (match === null) {
-      unparsed.add(line);
+      unparsed.add(rawLine);
       continue;
     }
+    const version = match[2] === undefined ? null : safeInteger(match[2]);
+    if (match[2] !== undefined && version === null) unparsed.add(rawLine);
     features.push({
       name: match[1]!,
-      version: match[2] === undefined ? null : parseFeatureVersion(match[2]!),
+      version,
     });
   }
   return { features, unparsedLines: unparsed.facts() };
@@ -130,64 +143,109 @@ export const parseServiceListOutput = (
   return { services, unparsedLines: unparsed.facts() };
 };
 
-const SIZE_PAIR = /^Physical size:\s+(\d+)x(\d+)$/u;
-const SIZE_OVERRIDE = /^Override size:\s+(\d+)x(\d+)$/u;
-const DENSITY_PHYSICAL = /^Physical density:\s+(\d+)$/u;
-const DENSITY_OVERRIDE = /^Override density:\s+(\d+)$/u;
+const SIZE_DECLARATION = /^(Physical|Override) size:(.*)$/u;
+const SIZE_VALUE = /^\s+(\d+)x(\d+)$/u;
+const DENSITY_DECLARATION = /^(Physical|Override) density:(.*)$/u;
+const DENSITY_VALUE = /^\s+(\d+)$/u;
 const DENSITY_BARE = /^(\d+)$/u;
 
-/** Parse `wm size` output into physical and optional override sizes. */
+type DisplayNumericIssue = AdbDisplayNumericIssues["sample"][number];
+
+/** Parse declarations before admission so a malformed last declaration stays owned. */
 export const parseWmSizeOutput = (
   stdout: string,
 ): {
   physical: { readonly width: number; readonly height: number } | null;
   override: { readonly width: number; readonly height: number } | null;
+  physicalDeclared: boolean;
+  numericIssues: AdbDisplayNumericIssues;
 } => {
   let physical = null;
   let override = null;
-  for (const line of stdout.split(/\r?\n/u)) {
-    const trimmed = line.trim();
-    const physicalMatch = SIZE_PAIR.exec(trimmed);
-    if (physicalMatch !== null)
-      physical = {
-        width: Number(physicalMatch[1]!),
-        height: Number(physicalMatch[2]!),
-      };
-    const overrideMatch = SIZE_OVERRIDE.exec(trimmed);
-    if (overrideMatch !== null)
-      override = {
-        width: Number(overrideMatch[1]!),
-        height: Number(overrideMatch[2]!),
-      };
+  let physicalDeclared = false;
+  const issues = collectNumericIssues<DisplayNumericIssue>();
+  for (const rawLine of stdout.split(/\r?\n/u)) {
+    const declaration = SIZE_DECLARATION.exec(rawLine.trim());
+    if (declaration === null) continue;
+    const field =
+      declaration[1] === "Physical" ? "physical_size" : "override_size";
+    if (field === "physical_size") physicalDeclared = true;
+    const match = SIZE_VALUE.exec(declaration[2]!);
+    const width = match === null ? null : safeInteger(match[1]!);
+    const height = match === null ? null : safeInteger(match[2]!);
+    const reason =
+      match === null
+        ? "invalid_format"
+        : width === null || height === null
+          ? "unsafe_integer"
+          : width <= 0 || height <= 0
+            ? "nonpositive"
+            : null;
+    const value =
+      reason === null && width !== null && height !== null
+        ? { width, height }
+        : null;
+    if (reason !== null)
+      issues.add({ command: "wm size", field, reason, raw_line: rawLine });
+    if (field === "physical_size") physical = value;
+    else override = value;
   }
-  return { physical, override };
+  return {
+    physical,
+    override,
+    physicalDeclared,
+    numericIssues: issues.facts(),
+  };
 };
 
-/**
- * Parse `wm density` output. Current builds print labeled physical and
- * optional override lines; older builds print the physical density as a
- * bare number on its own line (morluto/rea#3942). A labeled declaration
- * wins over a bare one so a mixed dump cannot downgrade the physical value.
- */
+/** Labeled physical density dominates the first bare declaration, even when malformed. */
 export const parseWmDensityOutput = (
   stdout: string,
 ): {
   physical: number | null;
   override: number | null;
+  numericIssues: AdbDisplayNumericIssues;
 } => {
   let physical = null;
   let override = null;
   let bare = null;
-  for (const line of stdout.split(/\r?\n/u)) {
-    const trimmed = line.trim();
-    const physicalMatch = DENSITY_PHYSICAL.exec(trimmed);
-    if (physicalMatch !== null) physical = Number(physicalMatch[1]!);
-    const overrideMatch = DENSITY_OVERRIDE.exec(trimmed);
-    if (overrideMatch !== null) override = Number(overrideMatch[1]!);
-    const bareMatch = DENSITY_BARE.exec(trimmed);
-    if (bareMatch !== null && bare === null) bare = Number(bareMatch[1]!);
+  let physicalDeclared = false;
+  let bareDeclared = false;
+  const issues = collectNumericIssues<DisplayNumericIssue>();
+  for (const rawLine of stdout.split(/\r?\n/u)) {
+    const trimmed = rawLine.trim();
+    const declaration = DENSITY_DECLARATION.exec(trimmed);
+    const bareMatch = declaration === null ? DENSITY_BARE.exec(trimmed) : null;
+    if (declaration === null && (bareMatch === null || bareDeclared)) continue;
+    const field =
+      declaration?.[1] === "Override" ? "override_density" : "physical_density";
+    const match =
+      declaration === null ? bareMatch : DENSITY_VALUE.exec(declaration[2]!);
+    const value = match === null ? null : safeInteger(match[1]!);
+    const reason =
+      match === null
+        ? "invalid_format"
+        : value === null
+          ? "unsafe_integer"
+          : value <= 0
+            ? "nonpositive"
+            : null;
+    const admitted = reason === null ? value : null;
+    if (reason !== null)
+      issues.add({ command: "wm density", field, reason, raw_line: rawLine });
+    if (declaration === null) {
+      bareDeclared = true;
+      bare = admitted;
+    } else if (field === "physical_density") {
+      physicalDeclared = true;
+      physical = admitted;
+    } else override = admitted;
   }
-  return { physical: physical ?? bare, override };
+  return {
+    physical: physicalDeclared ? physical : bare,
+    override,
+    numericIssues: issues.facts(),
+  };
 };
 
 /** Own declaration identity and omission before deriving a singular summary. */
@@ -271,6 +329,7 @@ export interface AdbPackageDetails {
   readonly userId: number | null;
   readonly pkgFlags: string | null;
   readonly requestedPermissions: number | null;
+  readonly numericIssues: AdbPackageNumericIssues;
 }
 
 const DETAIL_LINE = /^\s+([A-Za-z][A-Za-z0-9_]*)=(.*)$/u;
@@ -311,35 +370,45 @@ export const parseDumpsysPackageOutput = (
     userId: null,
     pkgFlags: null,
   };
-  let inPermissions = false;
+  const issues =
+    collectNumericIssues<AdbPackageNumericIssues["sample"][number]>();
+  let permissionsIndent: number | null = null;
   let hasPermissionsSection = false;
   let permissions = 0;
   let parsedPackageAvailable: boolean | null = null;
   for (const line of stdout.split(/\r?\n/u)) {
-    if (line.trim().startsWith("requested permissions:")) {
+    // Hidden system packages describe a separate section, not the requested package.
+    if (/^\s*Hidden system packages:\s*$/u.test(line)) break;
+    const permissionsHeader = /^(\s*)requested permissions:\s*$/u.exec(line);
+    if (permissionsHeader !== null) {
       hasPermissionsSection = true;
-      inPermissions = true;
+      permissionsIndent = permissionsHeader[1]!.length;
       continue;
     }
-    // Android 10 and 11 mark restricted entries as "NAME: restricted=true".
-    if (
-      inPermissions &&
-      /^\s{2,}[A-Za-z0-9._]+(?:: restricted=true)?$/u.test(line)
-    ) {
-      permissions += 1;
-      continue;
+    if (permissionsIndent !== null) {
+      const indentation = /^\s*/u.exec(line)![0].length;
+      if (line.trim() !== "" && indentation > permissionsIndent) {
+        // Android 10 and 11 may append ": restricted=true" to a row. The
+        // section is indentation-delimited; permission strings are arbitrary.
+        permissions += 1;
+        continue;
+      }
+      if (line.trim() === "" && indentation > permissionsIndent) continue;
+      permissionsIndent = null;
     }
-    inPermissions = false;
     const match = DETAIL_LINE.exec(line);
     if (match === null) continue;
     const key = match[1]!;
-    const value = match[2]!.trim();
+    // versionName is an arbitrary manifest string, printed verbatim by AOSP.
+    // Only the fields with their own structured grammar are normalized below.
+    const rawValue = match[2]!;
+    const value = rawValue.trim();
     if (key === "pkg" && parsedPackageAvailable === null) {
       if (value === "null") parsedPackageAvailable = false;
       else if (value.startsWith("Package{") && value.endsWith("}"))
         parsedPackageAvailable = true;
     } else if (key === "versionName" && details.versionName === null)
-      details.versionName = value === "" ? null : value;
+      details.versionName = rawValue;
     else if (key === "versionCode" && details.versionCode === null) {
       const parsed = /^(-?\d+)/u.exec(value);
       if (parsed !== null) details.versionCode = parsed[1]!;
@@ -352,9 +421,17 @@ export const parseDumpsysPackageOutput = (
       details.installerPackageName === null
     )
       details.installerPackageName = absentInstallerOrName(value);
-    else if (key === "userId" && details.userId === null) {
+    else if (key === "userId" || key === "appId") {
       const parsed = /^(\d+)/u.exec(value);
-      if (parsed !== null) details.userId = Number(parsed[1]!);
+      const admitted = parsed === null ? null : safeInteger(parsed[1]!);
+      if (admitted === null)
+        issues.add({
+          command: "dumpsys package",
+          field: "user_id",
+          reason: parsed === null ? "invalid_format" : "unsafe_integer",
+          raw_line: line,
+        });
+      else if (details.userId === null) details.userId = admitted;
     } else if (key === "pkgFlags" && details.pkgFlags === null)
       details.pkgFlags = value === "" ? null : value;
   }
@@ -368,7 +445,7 @@ export const parseDumpsysPackageOutput = (
         : parsedPackageAvailable === true
           ? 0
           : null;
-  return { ...details, requestedPermissions };
+  return { ...details, requestedPermissions, numericIssues: issues.facts() };
 };
 
 /**
@@ -410,18 +487,14 @@ export const packageChangeFailureReason = (output: string): string | null =>
  */
 export const parsePackageChangeOutput = (
   stdout: string,
-): {
-  readonly status: "success" | "failure";
-  readonly reason: string | null;
-} => {
+):
+  | { readonly status: "success" | "unknown"; readonly reason: null }
+  | { readonly status: "failure"; readonly reason: string } => {
   const text = stdout.trim();
+  const failure = packageChangeFailureReason(text);
+  if (failure !== null) return { status: "failure", reason: failure };
   if (/^Success$/mu.test(text)) return { status: "success", reason: null };
-  return {
-    status: "failure",
-    reason:
-      packageChangeFailureReason(text) ??
-      (text === "" ? null : text.slice(0, 512)),
-  };
+  return { status: "unknown", reason: null };
 };
 
 /**
@@ -465,15 +538,38 @@ export const parseAmStartOutput = (
   );
   const nonOkStatus = statuses.find((status) => status.toLowerCase() !== "ok");
   const reportedStatus = nonOkStatus ?? statuses[0] ?? null;
-  const error = [normalizedStdout, stderr.replaceAll("\r\n", "\n")]
+  const errorLines = [normalizedStdout, stderr.replaceAll("\r\n", "\n")]
     .flatMap((stream) => stream.split("\n"))
     .map((line) => line.trim())
     .map((line) => ({
       line,
-      match: /^(?:Error|Exception)(?::|\b)(.*)$/iu.exec(line),
-    }))
-    .find(({ match }) => match !== null);
-  const errorReason = error?.match?.[1]?.trim() || error?.line || null;
+      prefixedMatch: /^(?:Error|Exception)(?::|\b)(.*)$/iu.exec(line),
+      throwable:
+        /^(?:(?:[A-Za-z_$][A-Za-z0-9_$]*\.)+(?:[A-Za-z_$][A-Za-z0-9_$]*(?:Exception|Error)|Exception|Error)|[A-Za-z_$][A-Za-z0-9_$]*(?:Exception|Error))(?::\s*.*)?$/u.test(
+          line,
+        ),
+      genericHeader:
+        /^(?:Error\s+type\s+\d+|Exception\s+occurred\s+while\s+executing\b.*)$/iu.test(
+          line,
+        ),
+    }));
+
+  // Prefer the underlying Java throwable over the generic Activity Manager
+  // wrapper, regardless of which line or stream printed it first.
+  const error =
+    errorLines.find(({ throwable }) => throwable) ??
+    errorLines.find(
+      ({ prefixedMatch, genericHeader }) =>
+        prefixedMatch !== null && !genericHeader,
+    ) ??
+    errorLines.find(({ prefixedMatch }) => prefixedMatch !== null);
+
+  const errorReason =
+    error === undefined
+      ? null
+      : error.throwable
+        ? error.line
+        : error.prefixedMatch?.[1]?.trim() || error.line;
   const statusReason =
     nonOkStatus === ""
       ? "am start reported an empty status"
@@ -511,28 +607,5 @@ export const parseAmStartOutput = (
     reason:
       reason ??
       (text === "" ? "am start returned no activity" : text.slice(0, 512)),
-  };
-};
-
-const PNG_SIGNATURE = Buffer.from([
-  0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
-]);
-
-/** Read image dimensions from a PNG header, or null for other payloads. */
-export const parsePngDimensions = (
-  bytes: Uint8Array,
-): {
-  width: number | null;
-  height: number | null;
-} => {
-  if (
-    bytes.length < 24 ||
-    !Buffer.from(bytes.subarray(0, 8)).equals(PNG_SIGNATURE)
-  )
-    return { width: null, height: null };
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  return {
-    width: view.getUint32(16),
-    height: view.getUint32(20),
   };
 };

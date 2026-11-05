@@ -1,13 +1,22 @@
+import type { AnalysisSettingsReader } from "../../domain/analysisSettings.js";
+import {
+  ASAR_HEADER_ADMISSION_SETTING,
+  parseAsarHeaderAdmission,
+} from "../../config/asarHeaderAdmission.js";
 import { z } from "zod";
 
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import { translateArtifactFailure } from "../../artifacts/ArtifactOperationFailure.js";
 import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import {
   analyzeJavaScriptApplicationInputSchema,
   type JavaScriptApplicationAnalysisResult,
   parseOwnedJavaScriptApplicationAnalysisSteps,
 } from "../../domain/javascript/javascriptApplicationAnalysis.js";
-import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
+import {
+  AnalysisAccessDeniedError,
+  AnalysisOutputError,
+} from "../../domain/analysisErrorCore.js";
 import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import type { Evidence } from "../../domain/evidence.js";
@@ -25,15 +34,21 @@ import {
   reconstructJavaScriptArtifact,
   type JavaScriptArtifactReconstructionResult,
 } from "./JavaScriptArtifactReconstruction.js";
-import { JAVASCRIPT_APPLICATION_PROVIDER } from "../InvestigationProviders.js";
+import { JAVASCRIPT_APPLICATION_PROVIDER } from "../../domain/investigationProviders.js";
 
 const OPERATION = "analyze_javascript_application" as const;
+
+/** Execution options plus the composition root's environment for admission settings. */
+export interface JavaScriptApplicationOptions extends ExecutionOptions {
+  readonly settings?: AnalysisSettingsReader;
+  readonly environment?: Readonly<Record<string, string | undefined>>;
+}
 
 /** Statically analyze one local JavaScript/Electron application. */
 export const analyzeJavaScriptApplication = async (
   rawInput: unknown,
   scope: ArtifactResourceScope,
-  options: ExecutionOptions = {},
+  options: JavaScriptApplicationOptions = {},
 ): Promise<Result<Evidence, AnalysisError>> => {
   const parsed = analyzeJavaScriptApplicationInputSchema.safeParse(rawInput);
   if (!parsed.success)
@@ -47,8 +62,19 @@ export const analyzeJavaScriptApplication = async (
 export const analyzeJavaScriptApplicationValidated = async (
   input: z.output<typeof analyzeJavaScriptApplicationInputSchema>,
   scope: ArtifactResourceScope,
-  options: ExecutionOptions = {},
+  options: JavaScriptApplicationOptions = {},
 ): Promise<Result<Evidence, AnalysisError>> => {
+  // An invalid setting is refused before analysis, never replaced by the default.
+  const asarHeaderAdmission = parseAsarHeaderAdmission(
+    options.environment?.[ASAR_HEADER_ADMISSION_SETTING],
+  );
+  if (!asarHeaderAdmission.ok) return asarHeaderAdmission;
+  const overrides = options.settings?.().overrides;
+  const header = overrides?.["asar.max_header_bytes"];
+  const acceptedAdmission =
+    header === undefined
+      ? asarHeaderAdmission.value
+      : { maximumBytes: header, source: "runtime" as const };
   let reconstructed: JavaScriptArtifactReconstructionResult | undefined;
   let result: JavaScriptApplicationAnalysisResult | undefined;
   let evidence: Evidence | undefined;
@@ -66,6 +92,8 @@ export const analyzeJavaScriptApplicationValidated = async (
       scope,
       options.signal,
       options.progress,
+      acceptedAdmission,
+      overrides,
     );
     const { electron_summary: summary, ...application } = reconstructed;
     await options.progress?.report({
@@ -129,7 +157,7 @@ export const analyzeJavaScriptApplicationValidated = async (
             result,
           );
         return err(
-          artifactFailureToOperationError(cause).retainPartialObservation(
+          translateArtifactFailure(OPERATION, cause).retainPartialObservation(
             evidence,
           ),
         );
@@ -142,7 +170,7 @@ export const analyzeJavaScriptApplicationValidated = async (
     // Preserve execution constraints and their completed partial Evidence.
     if (cause instanceof AnalysisError) return err(cause);
     if (cause instanceof ArtifactReaderFailure)
-      return err(artifactFailureToOperationError(cause));
+      return err(translateArtifactFailure(OPERATION, cause));
     if (cause instanceof z.ZodError)
       return err(
         new AnalysisOutputError(OPERATION, describeResultSchemaFailure(cause), {
@@ -154,8 +182,32 @@ export const analyzeJavaScriptApplicationValidated = async (
       "code" in cause &&
       typeof cause.code === "string" &&
       FILESYSTEM_ERROR_CODES.has(cause.code)
-    )
-      return err(new ArtifactOperationError(OPERATION, "io"));
+    ) {
+      const path: unknown = Reflect.get(cause, "path");
+      const syscall: unknown = Reflect.get(cause, "syscall");
+      const diagnostics = {
+        input_path: input.input_path,
+        system_code: cause.code,
+        ...(typeof path === "string" ? { path } : {}),
+        ...(typeof syscall === "string" ? { syscall } : {}),
+      };
+      return err(
+        cause.code === "EACCES" || cause.code === "EPERM"
+          ? new AnalysisAccessDeniedError(
+              OPERATION,
+              input.input_path,
+              cause.code,
+              { cause, diagnostics },
+            )
+          : new ArtifactOperationError(
+              OPERATION,
+              "io",
+              undefined,
+              cause.message,
+              { cause, diagnostics },
+            ),
+      );
+    }
     return err(
       new ProviderAdapterError(JAVASCRIPT_APPLICATION_PROVIDER.id, OPERATION, {
         cause,
@@ -173,24 +225,6 @@ export const analyzeJavaScriptApplicationValidated = async (
     );
   }
 };
-
-const artifactFailureToOperationError = (
-  cause: ArtifactReaderFailure,
-): ArtifactOperationError =>
-  new ArtifactOperationError(
-    OPERATION,
-    cause.reason,
-    cause.details,
-    cause.message,
-    {
-      cause,
-      ...(cause.cleanup === undefined ? {} : { cleanup: cause.cleanup }),
-      ...(cause.partialObservation === undefined
-        ? {}
-        : { partialObservation: cause.partialObservation }),
-      ...(cause.admission === undefined ? {} : { admission: cause.admission }),
-    },
-  );
 
 const describeResultSchemaFailure = (cause: z.ZodError): string => {
   const issue = cause.issues[0];

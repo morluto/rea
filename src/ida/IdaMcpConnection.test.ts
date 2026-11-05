@@ -1,12 +1,20 @@
 import { inspect } from "node:util";
-import { SdkErrorCode, SdkHttpError } from "@modelcontextprotocol/client";
+import {
+  Client,
+  SdkErrorCode,
+  SdkHttpError,
+} from "@modelcontextprotocol/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   createIdaMcpConnection,
   decodeIdaToolResult,
+  decodeIdaJsonResource,
 } from "./IdaMcpConnection.js";
 import { createIdaDiagnosticRedactor } from "./IdaDiagnosticRedactor.js";
-import { AnalysisTimeoutError } from "../domain/analysisErrorCore.js";
+import {
+  AnalysisCancelledError,
+  AnalysisTimeoutError,
+} from "../domain/analysisErrorCore.js";
 import { readSettledHealth } from "./IdaBusyHealth.js";
 
 describe("upstream IDA tool result decoding", () => {
@@ -314,18 +322,20 @@ it("bounds a stalled health poll by the remaining readiness deadline", async () 
     expect(pendingCalls).toBe(2);
     expect(failure).toBeInstanceOf(AnalysisTimeoutError);
     expect(failure).toMatchObject({
-      operation: "server_health: headless worker still busy in config_json_get",
+      operation: "server_health",
       timeoutMs,
       userMessage: expect.stringContaining("800 ms"),
       remediationAction: expect.stringContaining("timeoutMs"),
       cause: busy,
       diagnostics: {
+        busy_tool: "config_json_get",
         health_request_operation: "server_health",
         health_request_timeout_ms: 250,
       },
     });
     if (!(failure instanceof AnalysisTimeoutError))
       throw new Error("Expected the readiness deadline to expire");
+    expect(failure.userMessage).toContain("config_json_get");
     expect(failure.capturedOutput).toBeDefined();
   } finally {
     await connection.close();
@@ -509,4 +519,244 @@ it("owns unclassified truncated-output hints separately from their context", () 
     '{"error":"[redacted transport credential]","path":"/caller/output"}',
   );
   expect(inspectRetainedError(failure)).not.toContain(String.raw`q\"uote`);
+});
+
+it.each([
+  undefined,
+  "application/json",
+  "Application/JSON",
+  "application/json; charset=utf-8",
+])("accepts SDK JSON metadata resources with media type %s", (mimeType) => {
+  expect(
+    decodeIdaJsonResource("ida://idb/metadata", {
+      contents: [
+        {
+          uri: "ida://idb/metadata",
+          ...(mimeType === undefined ? {} : { mimeType }),
+          text: '{"sha256":"recorded"}',
+        },
+      ],
+    }),
+  ).toEqual({ sha256: "recorded" });
+});
+it("keeps JSON resource identity, media type and JSON parsing strict", () => {
+  const resource = (uri: string, mimeType: string, text: string) => ({
+    contents: [{ uri, mimeType, text }],
+  });
+  for (const reply of [
+    resource("wrong://resource", "application/json", "{}"),
+    resource("ida://idb/metadata", "text/plain", "{}"),
+    resource("ida://idb/metadata", "application/json", "not JSON"),
+  ])
+    expect(() => decodeIdaJsonResource("ida://idb/metadata", reply)).toThrow();
+});
+
+it("uses the actual SDK abort outcome to preserve the caller reason", async () => {
+  let started!: () => void;
+  const requestStarted = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  mockedHttpBoundary({
+    serverName: "ida-abort-fixture",
+    tools: [],
+    call: (_request, signal) => {
+      started();
+      return stalledResponse(signal);
+    },
+  });
+  const connection = createIdaMcpConnection(
+    {
+      url: "http://127.0.0.1:12345/mcp",
+      headers: {},
+      mode: "attached",
+      timeoutMs: 1000,
+    },
+    {},
+  );
+  const controller = new AbortController();
+  const reason = { caller: "exact opaque reason" };
+  try {
+    await connection.connect();
+    const pending = connection
+      .call("decompile", {}, { signal: controller.signal })
+      .catch((cause: unknown) => cause);
+    await requestStarted;
+    controller.abort(reason);
+    const failure = await pending;
+    expect(failure).toBeInstanceOf(AnalysisCancelledError);
+    if (!(failure instanceof AnalysisCancelledError))
+      throw new Error("Expected SDK-owned cancellation");
+    expect(failure.operation).toBe("decompile");
+    expect(failure.cause).toBe(reason);
+    expect(failure.capturedOutput).toMatchObject({
+      stderr: "",
+      truncated: false,
+    });
+  } finally {
+    await connection.close();
+  }
+});
+
+it("keeps a real SDK physical failure when abort arrives during its outer unwind", async () => {
+  const controller = new AbortController();
+  const reason = { caller: "late abort" };
+  mockedHttpBoundary({
+    serverName: "ida-failure-first-fixture",
+    tools: [],
+    call: (request) =>
+      jsonRpcResponse({
+        jsonrpc: "2.0",
+        id: request.id,
+        error: { code: -32000, message: "established producer failure" },
+      }),
+  });
+  const callTool = Client.prototype.callTool;
+  const spy = vi
+    .spyOn(Client.prototype, "callTool")
+    .mockImplementation(function (this: Client, params, options) {
+      return callTool.call(this, params, options).catch((cause: unknown) => {
+        // The SDK has already rejected this request. Delay only its outer unwind.
+        queueMicrotask(() => controller.abort(reason));
+        throw cause;
+      });
+    });
+  const connection = createIdaMcpConnection(
+    {
+      url: "http://127.0.0.1:12345/mcp",
+      headers: {},
+      mode: "attached",
+      timeoutMs: 1000,
+    },
+    {},
+  );
+  try {
+    await connection.connect();
+    const failure = await connection
+      .call("decompile", {}, { signal: controller.signal })
+      .catch((cause: unknown) => cause);
+    expect(controller.signal.aborted).toBe(true);
+    expect(failure).toBeInstanceOf(Error);
+    expect(failure).not.toBeInstanceOf(AnalysisCancelledError);
+    expect(failure).toMatchObject({
+      message: expect.stringContaining("established producer failure"),
+    });
+  } finally {
+    spy.mockRestore();
+    await connection.close();
+  }
+});
+
+it.each(["1e400", '{"observed":1e400}'])(
+  "rejects IDA JSON text outside the JSON value contract: %s",
+  (text) => {
+    expect(() =>
+      decodeIdaToolResult({ content: [{ type: "text", text }] }),
+    ).toThrow("JSON numbers must be finite");
+  },
+);
+
+it("preserves observed own structured members before deciding whether to unwrap a result", () => {
+  const structured: unknown = JSON.parse(
+    '{"__proto__":{"observed":true},"result":"field","nested":[{"__proto__":"nested fact"}]}',
+  );
+  const decoded = decodeIdaToolResult({
+    content: [],
+    structuredContent: structured,
+  });
+  expect(Object.hasOwn(decoded as object, "__proto__")).toBe(true);
+  expect(JSON.stringify(decoded)).toBe(JSON.stringify(structured));
+  const wrapped: unknown = JSON.parse(
+    '{"result":{"__proto__":{"observed":true},"nested":{"__proto__":"nested fact"}}}',
+  );
+  const value = decodeIdaToolResult({
+    content: [],
+    structuredContent: wrapped,
+  });
+  expect(Object.hasOwn(value as object, "__proto__")).toBe(true);
+  expect(JSON.stringify(value)).toBe(
+    '{"__proto__":{"observed":true},"nested":{"__proto__":"nested fact"}}',
+  );
+});
+
+it("keeps error, truncation and native-text precedence ahead of structured JSON admission", () => {
+  const structuredContent = { result: Infinity };
+  expect(() =>
+    decodeIdaToolResult({
+      isError: true,
+      structuredContent,
+      content: [{ type: "text", text: "engine refused" }],
+    }),
+  ).toThrow(/IDA MCP tool failed: \s*engine refused/u);
+  expect(() =>
+    decodeIdaToolResult({
+      structuredContent,
+      content: [],
+      _meta: { ida_mcp: { output_truncated: true } },
+    }),
+  ).toThrow("IDA MCP truncated its output");
+  expect(
+    decodeIdaToolResult(
+      {
+        structuredContent,
+        content: [{ type: "text", text: '{"complete":true}' }],
+      },
+      "native",
+    ),
+  ).toEqual({ complete: true });
+});
+
+it("requires a valid content array even when IDA supplies structured evidence", () => {
+  for (const content of [
+    undefined,
+    null,
+    {},
+    [null],
+    [{ type: "text", text: 42 }],
+  ])
+    expect(() =>
+      decodeIdaToolResult({ content, structuredContent: { observed: true } }),
+    ).toThrow();
+});
+
+it("selects structured IDA evidence ahead of text while admitting mixed content", () => {
+  const image = { type: "image", data: "AA==", mimeType: "image/png" };
+  expect(
+    decodeIdaToolResult({
+      content: [image, { type: "text", text: "fallback" }],
+      structuredContent: { observed: true },
+    }),
+  ).toEqual({ observed: true });
+  expect(
+    decodeIdaToolResult({
+      content: [image, { type: "text", text: "fallback" }],
+    }),
+  ).toBe("fallback");
+  for (const structuredContent of [null, [], "invalid", { observed: Infinity }])
+    expect(() =>
+      decodeIdaToolResult({
+        content: [{ type: "text", text: "fallback" }],
+        structuredContent,
+      }),
+    ).toThrow();
+  expect(() => decodeIdaToolResult({ content: [image] })).toThrow(
+    "empty observation",
+  );
+  expect(() =>
+    decodeIdaToolResult({
+      content: [
+        { type: "text", text: "first" },
+        { type: "text", text: "second" },
+      ],
+    }),
+  ).toThrow("empty observation");
+});
+
+it("requires complete native IDA JSON text despite usable structured content", () => {
+  for (const content of [[], [{ type: "text", text: "plain text" }]])
+    expect(() =>
+      decodeIdaToolResult(
+        { content, structuredContent: { observed: true } },
+        "native",
+      ),
+    ).toThrow();
 });

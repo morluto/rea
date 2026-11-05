@@ -81,7 +81,7 @@ it.each([false, true])(
             ...(fails
               ? {
                   cleanup: "incomplete",
-                  execution_failure: "execution_failure",
+                  execution_failure: "provider_timeout",
                   diagnostics: {
                     primary_error: { code: "provider_timeout" },
                   },

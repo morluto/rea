@@ -1,4 +1,5 @@
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
+import { ZodError } from "zod";
 
 import { FirmwareAnalysisService } from "./FirmwareAnalysisService.js";
 import { createAnalysisExecution } from "../AnalysisProvider.js";
@@ -8,6 +9,7 @@ import {
 } from "../../domain/firmware/firmwareAnalysis.js";
 import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
 import { err, ok } from "../../domain/result.js";
+import { createAnalysisProfile } from "../../domain/analysisProfile.js";
 
 const fixture = (
   operation: FirmwareOperation,
@@ -64,19 +66,77 @@ const fixture = (
   return { input, execution };
 };
 
+it.each([
+  {
+    input: {},
+    issue: { path: ["path"], reason: "missing_argument" },
+  },
+  {
+    input: { path: 17 },
+    issue: { path: ["path"], reason: "invalid_type" },
+  },
+  {
+    input: { path: "/firmware.bin", range: { offset: -1, length: 1 } },
+    issue: { path: ["range", "offset"], reason: "out_of_range" },
+  },
+  {
+    input: { path: "/firmware.bin", unexpected: "caller value" },
+    issue: { path: ["unexpected"], reason: "unknown_argument" },
+  },
+])(
+  "rejects malformed firmware inputs with caller-relative issues: $issue",
+  async ({ input, issue }) => {
+    const execute = vi.fn<FirmwareAnalysisService["provider"]["execute"]>();
+    const result = await new FirmwareAnalysisService({ execute }).execute(
+      "extract_firmware",
+      { output_directory: "/output", ...input },
+    );
+    expect(execute).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "AnalysisInputError",
+        operation: "extract_firmware",
+        cause: expect.any(ZodError),
+        issues: expect.arrayContaining([expect.objectContaining(issue)]),
+      },
+    });
+  },
+);
+
 it.each(["inspect_firmware_regions", "extract_firmware"] as const)(
   "retains %s Evidence after late cancellation and preserves provider failure precedence",
   async (operation) => {
     const { input, execution } = fixture(operation);
+    const profile = createAnalysisProfile(
+      { ...execution.provider, version: "1" },
+      {
+        signature_database: "caller-selected snapshot",
+      },
+    );
+    const coverage = {
+      status: "unknown",
+      reason: "No call graph examined",
+    } as const;
+    const observation = {
+      ...execution,
+      analysisProfile: profile,
+      relationshipCoverage: coverage,
+    };
     const control = await new FirmwareAnalysisService({
-      execute: async () => ok(execution),
+      execute: async () => ok(observation),
     }).execute(operation, input);
     if (!control.ok) throw control.error;
+    expect(control.value).toMatchObject({
+      raw_result: { source: "controlled producer" },
+      analysis_profile: profile,
+      relationship_coverage: coverage,
+    });
     const controller = new AbortController();
     const result = await new FirmwareAnalysisService({
       execute: async () => {
         controller.abort();
-        return ok(execution);
+        return ok(observation);
       },
     }).execute(operation, input, { signal: controller.signal });
     expect(result).toMatchObject({

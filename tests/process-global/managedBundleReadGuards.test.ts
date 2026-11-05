@@ -1,3 +1,4 @@
+import { projectCliAnalysisResult } from "../../src/cli/projectCliAnalysisResult.js";
 import { getHeapStatistics } from "node:v8";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { createServer } from "../../src/server/createServer.js";
@@ -5,15 +6,15 @@ import { parseMcpToolError } from "../fixtures/mcpToolError.js";
 import { loadNativeMatchingBundleSources } from "../../src/application/native/NativeMatchingBundleSources.js";
 import { NativeMatchingAdmission } from "../../src/application/native/NativeMatchingAdmission.js";
 import { matchNativeFunctionsInputSchema } from "../../src/contracts/native/functionMatchingContracts.js";
-import { createEvidence } from "../../src/domain/evidence.js";
-import { runProviderAnalysis } from "../../src/application/DirectAnalysis.js";
-import type { DirectAnalysisDependencies } from "../../src/application/DirectAnalysisDependencies.js";
-import { parseConfig } from "../../src/config/parseConfig.js";
 import {
+  createEvidence,
   isImmutableEvidence,
   parseEvidence,
   type Evidence,
 } from "../../src/domain/evidence.js";
+import { runProviderAnalysis } from "../../src/application/DirectAnalysis.js";
+import type { DirectAnalysisDependencies } from "../../src/application/DirectAnalysisDependencies.js";
+import { parseConfig } from "../../src/config/parseConfig.js";
 import { ok } from "../../src/domain/result.js";
 import { observed } from "../fixtures/analysisExecution.js";
 import {
@@ -25,13 +26,11 @@ import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import {
   createImmutableEvidenceBundle,
-  parseImmutableEvidenceBundle,
+  safeParseImmutableEvidenceBundle,
 } from "../../src/domain/evidenceBundle.js";
 import { ArtifactResourceScope } from "../../src/artifacts/ArtifactResourceScope.js";
-import {
-  deliverAnalysisEvidence,
-  inspectAnalysisViewFromBundle,
-} from "../../src/application/EvidenceBundleCommands.js";
+import { deliverAnalysisEvidence } from "../../src/application/EvidenceBundleCommands.js";
+import { inspectAnalysisView } from "../../src/application/analysisView/AnalysisViewService.js";
 import { readImmutableEvidenceBundle } from "../../src/application/EvidenceBundleFiles.js";
 import { requireAuthenticationHeadroom } from "../../src/application/JsonAuthenticationHeadroom.js";
 import { SOURCE_TO_BUNDLE_COMPARISON_EXAMPLE } from "../../src/contracts/javascript/javascriptApplicationWorkflowExamples.js";
@@ -192,7 +191,7 @@ it("admits bundle authentication before cloning and hashing retained records", a
         availableBytes: 0,
       }),
   );
-  vi.mocked(parseImmutableEvidenceBundle).mockClear();
+  vi.mocked(safeParseImmutableEvidenceBundle).mockClear();
   const resources = new ArtifactResourceScope();
   try {
     expect(
@@ -201,7 +200,7 @@ it("admits bundle authentication before cloning and hashing retained records", a
       ok: false,
       error: { _tag: "AnalysisResourceConstraintError", resource: "memory" },
     });
-    expect(parseImmutableEvidenceBundle).not.toHaveBeenCalled();
+    expect(safeParseImmutableEvidenceBundle).not.toHaveBeenCalled();
   } finally {
     await resources.close();
   }
@@ -215,14 +214,13 @@ it("preserves the view operation and caller reason when bundle I/O is cancelled"
   const reason = new Error("cancel managed bundle page");
   const resources = new ArtifactResourceScope();
   try {
-    const pending = inspectAnalysisViewFromBundle(
+    const pending = inspectAnalysisView(
       {
         source: { kind: "retained-evidence", evidence_id: parent.evidence_id },
         view: { kind: "summary" },
       },
-      path,
-      resources,
-      controller.signal,
+      undefined,
+      { evidenceBundlePath: path, resources, signal: controller.signal },
     );
     await held.firstRead;
     controller.abort(reason);
@@ -327,12 +325,17 @@ it("projects a rejected managed parent by reference without cloning under low he
       detail: "summary",
       evidenceBundlePath: join(root, "parent.json"),
     },
-  );
+  ).then(projectCliAnalysisResult);
   expect(result).toMatchObject({
     code: "resource_constraint",
     details: { operation: "inspect_managed_members" },
   });
-  if (typeof result !== "object" || result === null || Array.isArray(result))
+  if (
+    typeof result !== "object" ||
+    result === null ||
+    Array.isArray(result) ||
+    !("details" in result)
+  )
     throw new Error("Expected CLI error");
   const details = result.details;
   if (typeof details !== "object" || details === null || Array.isArray(details))
@@ -369,7 +372,7 @@ it.each(["JSON assembly", "bundle authentication"])(
     const resources = new ArtifactResourceScope();
     try {
       expect(
-        await inspectAnalysisViewFromBundle(
+        await inspectAnalysisView(
           {
             source: {
               kind: "retained-evidence",
@@ -377,8 +380,8 @@ it.each(["JSON assembly", "bundle authentication"])(
             },
             view: { kind: "summary" },
           },
-          path,
-          resources,
+          undefined,
+          { evidenceBundlePath: path, resources },
         ),
       ).toMatchObject({
         ok: false,

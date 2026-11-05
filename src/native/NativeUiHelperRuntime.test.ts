@@ -1,7 +1,7 @@
 import { expect, it, vi } from "vitest";
 import { execFileOutput } from "../process/ExecFileOutput.js";
 import { createNativeUiHelperRuntime } from "./NativeUiHelperRuntime.js";
-import { NATIVE_UI_DEADLINE_MS } from "./NativeUiInterruptionControl.js";
+import { DEFAULT_NATIVE_UI_DEADLINE_MS } from "../domain/native/nativeDeadlines.js";
 
 vi.mock("../process/ExecFileOutput.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../process/ExecFileOutput.js")>()),
@@ -37,7 +37,7 @@ it.each([250_000, undefined])(
     } finally {
       await runtime.close();
     }
-    const expected = deadlineMs ?? NATIVE_UI_DEADLINE_MS;
+    const expected = deadlineMs ?? DEFAULT_NATIVE_UI_DEADLINE_MS;
     const calls = vi.mocked(execFileOutput).mock.calls;
     expect(calls).toHaveLength(2);
     expect(calls[0]?.[0]).toBe("/usr/bin/xcrun");

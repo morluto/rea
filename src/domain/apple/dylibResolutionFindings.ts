@@ -43,7 +43,7 @@ export const deriveFindings = (
         explanation: `The modeled dyld search checks ${earlier.join(", ")} before ${edge.resolution.image ?? edge.install_name}. A compatible Mach-O placed at an earlier modeled path could take precedence over that fallback, subject to unmodeled search inputs and code-signing library validation; library validation is not evaluated here (see inspect_signature).${edge.loader_conditional ? " This loader loads only conditionally; if it never loads, this search never occurs." : ""}${edge.resolution.status === "conditional" ? " Unmodeled environment overrides or earlier unknown candidates may take precedence; placing an image at this rpath does not establish which image dyld will load." : ""}`,
       });
   });
-  // Slices can share an architecture name (arm64e and arm64e.x1), so each
+  // Capability-bit variants can share an architecture name, so each
   // finding uses the slice its root was traced from, not a name lookup.
   for (const { image, slice } of roots) {
     const { architecture } = slice;

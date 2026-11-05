@@ -2,12 +2,10 @@ import { z } from "zod";
 import { absoluteLocalPathStringSchema } from "../localPath.js";
 import type { JsonValue } from "../jsonValue.js";
 
-/** Format identity is shared by discovery, catalog, and observed SQLite results. */
-export const SQLITE_PROVIDER_IDENTITY = {
-  id: "sqlite",
-  name: "REA SQLite database inspector",
-  version: null,
-} as const;
+/** SQLite exposes this table as a row source but omits its own catalog entry. */
+export const SQLITE_SCHEMA_TABLE_NAME = "sqlite_schema";
+export const sqliteSchemaHasObjectDeclaration = (name: string): boolean =>
+  name !== SQLITE_SCHEMA_TABLE_NAME;
 
 /** Default ordinary-table sample size when the caller selects a table. */
 export const SQLITE_ROW_LIMIT_DEFAULT = 20;
@@ -16,7 +14,7 @@ export const DEFAULT_SQLITE_WORKER_TIMEOUT_MS = 30_000;
 export const MAX_SQLITE_WORKER_TIMEOUT_MS = 2_147_483_647;
 const workerTimeout = z.number().int().min(1).max(MAX_SQLITE_WORKER_TIMEOUT_MS);
 
-const nonnegative = z.number().int().nonnegative();
+const nonnegative = z.int().nonnegative();
 const hex = z.string().regex(/^(?:[0-9a-f]{2})*$/);
 const encoding = z.enum(["UTF-8", "UTF-16le", "UTF-16be"]);
 const artifactSchema = z.strictObject({
@@ -56,7 +54,6 @@ export const inspectSqliteDatabaseInputSchema = z
         "Default: compact inventory without a table, or detailed selected-table schema with a table. selected_table requires table. Database explicitly expands all stored declarations and supported columns.",
       ),
     row_limit: z
-      .number()
       .int()
       .min(1)
       .optional()
@@ -199,7 +196,7 @@ export const sqliteDatabaseSchema = z
         table: z.string(),
         columns: z.array(z.string()),
         values: z.array(z.array(sqliteValueSchema)),
-        row_limit: z.number().int().min(1),
+        row_limit: z.int().min(1),
         returned_rows: nonnegative,
         truncated: z.boolean(),
         order: z.literal("unspecified"),

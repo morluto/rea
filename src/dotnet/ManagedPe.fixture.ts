@@ -8,6 +8,7 @@ interface ManagedPeFixtureOptions {
   readonly cliFlags?: number;
   readonly corruptMetadataSignature?: boolean;
   readonly customAttributeTypeRaw?: number;
+  readonly customAttributeValue?: Buffer;
   readonly extendsRaw?: number;
   readonly exportedTypes?: readonly {
     readonly namespace: string;
@@ -28,6 +29,8 @@ interface ManagedPeFixtureOptions {
   readonly methodSignature?: Buffer;
   readonly moduleRowCount?: number;
   readonly assemblyRowCount?: number;
+  readonly assemblyName?: string;
+  readonly assemblyFlags?: number;
   readonly memberRefParentRaw?: number;
   readonly memberRefRowCount?: number;
   readonly memberRefName?: string;
@@ -36,6 +39,8 @@ interface ManagedPeFixtureOptions {
   readonly methodSpecMethods?: readonly number[];
   /** Instantiation blob shared by every MethodSpec row. */
   readonly methodSpecInstantiation?: Buffer;
+  /** StandAloneSig LocalVarSig blobs, one row each. */
+  readonly standaloneSignatures?: readonly Buffer[];
   /** TypeSpec signature blobs, one TypeSpec row each. */
   readonly typeSpecSignatures?: readonly Buffer[];
   /** Raw ResolutionScope coded value of the TypeRef row; null by default. */
@@ -96,6 +101,18 @@ class StringHeap {
   }
 }
 
+const compressedUnsigned = (value: number): Buffer =>
+  value <= 0x7f
+    ? Buffer.from([value])
+    : value <= 0x3fff
+      ? Buffer.from([0x80 | (value >> 8), value & 0xff])
+      : Buffer.from([
+          0xc0 | (value >> 24),
+          (value >> 16) & 0xff,
+          (value >> 8) & 0xff,
+          value & 0xff,
+        ]);
+
 class BlobHeap {
   readonly #chunks: Buffer[] = [Buffer.from([0])];
   #size = 1;
@@ -107,17 +124,7 @@ class BlobHeap {
   add(value: Buffer): number {
     if (value.length === 0) return 0;
     const index = this.#size;
-    const prefix =
-      value.length <= 0x7f
-        ? Buffer.from([value.length])
-        : value.length <= 0x3fff
-          ? Buffer.from([0x80 | (value.length >> 8), value.length & 0xff])
-          : Buffer.from([
-              0xc0 | (value.length >> 24),
-              (value.length >> 16) & 0xff,
-              (value.length >> 8) & 0xff,
-              value.length & 0xff,
-            ]);
+    const prefix = compressedUnsigned(value.length);
     this.#chunks.push(prefix, value);
     this.#size += value.length + prefix.length;
     return index;
@@ -324,6 +331,7 @@ const assemblyRow = (
   name: number,
   stringSize: MetadataIndexSize,
   blobSize: MetadataIndexSize,
+  flags = 0,
 ): Buffer =>
   Buffer.concat([
     u32(0x0000_8004),
@@ -331,7 +339,7 @@ const assemblyRow = (
     u16(2),
     u16(3),
     u16(4),
-    u32(0),
+    u32(flags),
     metadataIndex(0, blobSize),
     metadataIndex(name, stringSize),
     metadataIndex(0, stringSize),
@@ -423,9 +431,12 @@ const exportedTypeRow = (
 
 const fixedStringAttributeBlob = (value: string): Buffer => {
   const bytes = Buffer.from(textEncoder.encode(value));
-  if (bytes.length > 0x7f)
-    throw new RangeError("Managed PE fixture target framework is too long");
-  return Buffer.concat([Buffer.from([1, 0, bytes.length]), bytes, u16(0)]);
+  return Buffer.concat([
+    Buffer.from([1, 0]),
+    compressedUnsigned(bytes.length),
+    bytes,
+    u16(0),
+  ]);
 };
 
 /**
@@ -612,6 +623,7 @@ interface FixtureMetadataRowContext {
     readonly attributeBlob: number;
     readonly typeSpecSignatures: readonly number[];
     readonly methodSpecInstantiation: number;
+    readonly standaloneSignatures: readonly number[];
   };
   readonly heapSizes: {
     readonly strings: MetadataIndexSize;
@@ -735,6 +747,16 @@ const specTables = (
   heapSizes: FixtureMetadataRowContext["heapSizes"],
   widths: FixtureIndexWidths,
 ): readonly (readonly [number, readonly Buffer[]])[] => [
+  ...(indexes.standaloneSignatures.length === 0
+    ? []
+    : ([
+        [
+          17,
+          indexes.standaloneSignatures.map((signature) =>
+            metadataIndex(signature, heapSizes.blobs),
+          ),
+        ],
+      ] as const)),
   ...(indexes.typeSpecSignatures.length === 0
     ? []
     : ([
@@ -782,6 +804,7 @@ const fixtureIndexWidths = ({
     ...(indexes.pinvokeModuleName === null ? [] : ([[26, 1]] as const)),
     ...(indexes.pinvokeImportName === null ? [] : ([[28, 1]] as const)),
     [27, indexes.typeSpecSignatures.length],
+    [17, indexes.standaloneSignatures.length],
     [32, options.assemblyRowCount ?? 1],
     [35, referenceStringIndexes.length],
     [39, indexes.exportedTypes.length],
@@ -926,7 +949,12 @@ const fixtureMetadataRows = ({
     [
       32,
       repeatedRows(options.assemblyRowCount ?? 1, () =>
-        assemblyRow(indexes.assemblyName, heapSizes.strings, heapSizes.blobs),
+        assemblyRow(
+          indexes.assemblyName,
+          heapSizes.strings,
+          heapSizes.blobs,
+          options.assemblyFlags,
+        ),
       ),
     ],
     [
@@ -989,7 +1017,7 @@ const buildManagedFixtureMetadata = (
   const strings = new StringHeap();
   const blobs = new BlobHeap();
   const moduleName = strings.add("Fixture.dll");
-  const assemblyName = strings.add("Fixture.Managed");
+  const assemblyName = strings.add(options.assemblyName ?? "Fixture.Managed");
   const attributeName = strings.add("TargetFrameworkAttribute");
   const attributeNamespace = strings.add("System.Runtime.Versioning");
   const constructorName = strings.add(options.memberRefName ?? ".ctor");
@@ -1034,13 +1062,17 @@ const buildManagedFixtureMetadata = (
   const methodSignature = blobs.add(
     options.methodSignature ?? Buffer.from([0x00, 0x00, 0x01]),
   );
+  const standaloneSignatures = (options.standaloneSignatures ?? []).map(
+    (signature) => blobs.add(signature),
+  );
   const referenceBlobs = referenceBlobIndexes(blobs, options);
   const attributeBlob = blobs.add(
-    fixedStringAttributeBlob(
-      options.targetFramework === null
-        ? ".NETCoreApp,Version=v8.0"
-        : (options.targetFramework ?? ".NETCoreApp,Version=v8.0"),
-    ),
+    options.customAttributeValue ??
+      fixedStringAttributeBlob(
+        options.targetFramework === null
+          ? ".NETCoreApp,Version=v8.0"
+          : (options.targetFramework ?? ".NETCoreApp,Version=v8.0"),
+      ),
   );
   const stringSize = indexSize(strings.size);
   const blobSize = indexSize(blobs.size);
@@ -1068,6 +1100,7 @@ const buildManagedFixtureMetadata = (
       tokenBlob,
       fieldSignature,
       methodSignature,
+      standaloneSignatures,
       attributeBlob,
       ...referenceBlobs,
     },

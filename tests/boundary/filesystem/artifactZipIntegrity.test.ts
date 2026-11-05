@@ -1,10 +1,12 @@
-import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { TextReader, Uint8ArrayWriter, ZipWriter } from "@zip.js/zip.js";
-import { expect, it } from "vitest";
+import { expect, it, onTestFinished } from "vitest";
 
 import { writeOrderedZip } from "../../fixtures/artifactEntryOrder.js";
+import { zstandardZipFixture } from "../../fixtures/zipZstandard.js";
 import { inventoryArtifact } from "../../fixtures/artifactInventory.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import {
@@ -23,27 +25,128 @@ import {
 import { artifactInspectionResultSchema } from "../../../src/domain/artifactInspection.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 
-it("completes an empty ZIP extraction with an empty identity", async () => {
-  const root = await createTestTempDirectory("rea-empty-artifact-extraction-");
-  const archive = join(root, "empty.zip");
-  await writeOrderedZip(archive, []);
-  const archiveTarget = await parseBinaryTarget(archive);
-  if (!archiveTarget.ok) throw archiveTarget.error;
+cliTest(
+  "inventories and extracts method-93 Zstandard ZIP bytes through the public CLI",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-zip-zstd-cli-");
+    const path = join(root, "method93.zip");
+    const content = Buffer.from("Zstandard source evidence: café\n".repeat(7));
+    const archive = zstandardZipFixture(content);
+    await writeFile(path, archive);
+    const inspected = await cli.run({
+      arguments: ["inspect-artifact", path, "--json"],
+    });
+    expect(inspected.exitCode, inspected.stdout + inspected.stderr).toBe(0);
+    const inspection = artifactInspectionResultSchema.parse(
+      parseEvidence(inspected.json).normalized_result,
+    );
+    const inventory = artifactInventoryResultSchema.parse(
+      inspection.substeps[0]?.evidence?.normalized_result,
+    );
+    expect(inventory.manifest.root_sha256).toBe(
+      createHash("sha256").update(archive).digest("hex"),
+    );
+    expect(inventory.occurrences).toContainEqual(
+      expect.objectContaining({
+        logical_path: "member.txt",
+        hash_status: "verified",
+      }),
+    );
+    expect(inventory.nodes).toContainEqual(
+      expect.objectContaining({
+        sha256: createHash("sha256").update(content).digest("hex"),
+      }),
+    );
+    const extracted = await cli.run({
+      arguments: ["extract-artifact", path, "--json"],
+    });
+    expect(extracted.exitCode, extracted.stdout + extracted.stderr).toBe(0);
+    const extraction = artifactExtractionResultSchema.parse(
+      parseEvidence(extracted.json).normalized_result,
+    );
+    try {
+      expect(extraction.artifacts).toContainEqual(
+        expect.objectContaining({
+          relative_path: "member.txt",
+          sha256: createHash("sha256").update(content).digest("hex"),
+        }),
+      );
+      expect(
+        (await readFile(join(extraction.output_root, "member.txt"))).equals(
+          content,
+        ),
+      ).toBe(true);
+      expect((await readFile(path)).equals(archive)).toBe(true);
+      expect(extraction.containment_verified).toBe(true);
+    } finally {
+      await rm(extraction.output_root, { recursive: true, force: true });
+    }
+  },
+);
 
-  const output = join(root, "output");
-  const result = await withArtifactClient(archiveTarget.value, (client) =>
-    client.execute("extract_artifact", { output_root: output }),
+for (const zip64 of [false, true]) {
+  cliTest(
+    `inspects and extracts an empty ${zip64 ? "Zip64" : "classic ZIP"} without changing its identity`,
+    async ({ cli }) => {
+      const root = await createTestTempDirectory(
+        "rea-empty-artifact-extraction-",
+      );
+      const archive = join(root, "empty.zip");
+      const writer = new ZipWriter(new Uint8ArrayWriter(), {
+        zip64,
+        supportZip64SplitFile: false,
+      });
+      const bytes = Buffer.from(await writer.close());
+      await writeFile(archive, bytes);
+      const digest = createHash("sha256").update(bytes).digest("hex");
+      const inventory = await inventoryArtifact(archive);
+      expect(inventory.manifest).toMatchObject({
+        root_sha256: digest,
+        root_format: "zip",
+      });
+      expect(inventory.coverage).toEqual({
+        scope: "container-entries",
+        status: "complete",
+      });
+      const inspected = await cli.run({
+        arguments: ["inspect-artifact", archive, "--json"],
+      });
+      expect(inspected.exitCode, inspected.stdout + inspected.stderr).toBe(0);
+      const inspection = artifactInspectionResultSchema.parse(
+        parseEvidence(inspected.json).normalized_result,
+      );
+      const retained = artifactInventoryResultSchema.parse(
+        inspection.substeps[0]?.evidence?.normalized_result,
+      );
+      expect(retained.manifest).toMatchObject({
+        root_sha256: digest,
+        root_format: "zip",
+      });
+      const extracted = await cli.run({
+        arguments: ["extract-artifact", archive, "--json"],
+      });
+      expect(extracted.exitCode, extracted.stdout + extracted.stderr).toBe(0);
+      const extraction = artifactExtractionResultSchema.parse(
+        parseEvidence(extracted.json).normalized_result,
+      );
+      onTestFinished(() =>
+        rm(extraction.output_root, { recursive: true, force: true }),
+      );
+      expect(extraction.manifest).toMatchObject({
+        root_sha256: digest,
+        root_format: "zip",
+      });
+      expect(extraction.extraction_manifest).toMatchObject({
+        source_manifest_id: extraction.manifest.manifest_id,
+        selected_occurrence_ids: [],
+      });
+      expect(extraction.artifacts).toEqual([]);
+      expect(extraction.containment_verified).toBe(true);
+      expect(await readdir(extraction.output_root)).toEqual([]);
+      expect(Buffer.compare(await readFile(archive), bytes)).toBe(0);
+    },
   );
-  if (!result.ok) throw result.error;
-  const extraction = artifactExtractionResultSchema.parse(result.value.result);
-  expect(extraction.extraction_manifest).toMatchObject({
-    source_manifest_id: extraction.manifest.manifest_id,
-    selected_occurrence_ids: [],
-  });
-  expect(extraction.artifacts).toEqual([]);
-  expect(extraction.containment_verified).toBe(true);
-  expect(await readdir(output)).toEqual([]);
-});
+}
 
 const legacyControlNames = [
   ["unflagged UTF-8-looking legacy bytes", Buffer.from("café"), false, "caf├⌐"],
@@ -141,6 +244,29 @@ it
     );
   },
 );
+
+it("retains original ZIP names when logical paths use NFC or omit current-directory prefixes", async () => {
+  const root = await createTestTempDirectory("rea-zip-source-spelling-");
+  const path = join(root, "spelling.zip");
+  const decomposed = "cafe\u0301.txt";
+  await writeOrderedZip(path, [decomposed, "./prefixed.txt", "unchanged.txt"]);
+  const inventory = await inventoryArtifact(path);
+  const byPath = new Map(
+    inventory.occurrences.map((occurrence) => [
+      occurrence.logical_path,
+      occurrence,
+    ]),
+  );
+  expect(byPath.get("café.txt")).toMatchObject({
+    source_path: decomposed,
+    hash_status: "verified",
+  });
+  expect(byPath.get("prefixed.txt")).toMatchObject({
+    source_path: "./prefixed.txt",
+    hash_status: "verified",
+  });
+  expect(byPath.get("unchanged.txt")).not.toHaveProperty("source_path");
+});
 
 it("preserves valid Info-ZIP Unicode Path overrides", async () => {
   const root = await createTestTempDirectory("rea-zip-unicode-path-");
@@ -573,17 +699,22 @@ it("preserves encrypted-member and corrupt-CRC observations", async () => {
   );
 });
 
-it("rejects a truncated ZIP through artifact inventory", async () => {
-  const root = await createTestTempDirectory("rea-zip-malformed-");
-  const path = join(root, "truncated.zip");
-  await writeFile(path, Buffer.from([0x50, 0x4b, 0x03, 0x04]));
+it.each([0x04034b50, 0x06064b50])(
+  "rejects a truncated ZIP signature %i through artifact inventory",
+  async (signature) => {
+    const root = await createTestTempDirectory("rea-zip-malformed-");
+    const path = join(root, "truncated.zip");
+    const bytes = Buffer.alloc(4);
+    bytes.writeUInt32LE(signature);
+    await writeFile(path, bytes);
 
-  await expectInventoryFailure(
-    path,
-    "format",
-    "ZIP archive is malformed: File format is not recognized",
-  );
-});
+    await expectInventoryFailure(
+      path,
+      "format",
+      "ZIP archive is malformed: File format is not recognized",
+    );
+  },
+);
 
 it("reports an unsupported ZIP compression method as unavailable", async () => {
   const root = await createTestTempDirectory("rea-zip-method-");

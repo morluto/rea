@@ -15,7 +15,7 @@ afterEach(async () => {
 
 /** Create the process-owned scope without starting a worker. */
 const openCliScope = (): Promise<unknown> =>
-  runCliJavaScriptApplicationAnalysis({});
+  runCliJavaScriptApplicationAnalysis({}, {});
 
 it("retries JavaScript worker shutdown when the first close fails", async () => {
   let calls = 0;

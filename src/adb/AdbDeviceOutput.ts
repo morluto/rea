@@ -40,6 +40,28 @@ export const isSuccessfulDaemonStartNotice = (line: string): boolean =>
   line === "* daemon started successfully" ||
   line === "* daemon started successfully *";
 
+/** Host-side startup line, shared by failure and successful probe parsing. */
+export const isDaemonStartingNotice = (line: string): boolean =>
+  /^\* daemon not running(?:; starting now at [^\r\n]*|\. starting it now on port \d+ \*)$/u.test(
+    line,
+  );
+
+/** No diagnostics beyond a completed, recognized startup sequence. */
+export const hasOnlySuccessfulAdbStartupNotices = (output: string): boolean => {
+  let started = false;
+  for (let offset = 0; offset < output.length;) {
+    const newline = output.indexOf("\n", offset);
+    const line = normalizeAdbOutputLine(
+      output.slice(offset, newline === -1 ? output.length : newline),
+    );
+    if (isSuccessfulDaemonStartNotice(line)) started = true;
+    else if (isDaemonStartingNotice(line)) started = false;
+    else return false;
+    offset = newline === -1 ? output.length : newline + 1;
+  }
+  return started;
+};
+
 const metadataValue = (remainder: string, key: string): string | null => {
   const match = new RegExp(`(?:^|\\s)${key}:(\\S+)`, "u").exec(remainder);
   return match === null ? null : match[1]!;
@@ -169,7 +191,7 @@ export const parseGetpropOutput = (
   }
   const properties = DEVICE_PROPERTY_WHITELIST.flatMap((name) => {
     const value = values.get(name);
-    return value === undefined || value === ""
+    return value === undefined
       ? []
       : [{ name, value } satisfies AdbDeviceProperty];
   });
@@ -246,6 +268,7 @@ export interface AdbPackagePathEntry {
  */
 export const parsePmPathOutput = (
   stdout: string,
+  platform: NodeJS.Platform = process.platform,
 ): {
   paths: readonly AdbPackagePathEntry[];
   rejectedPaths: readonly {
@@ -268,7 +291,7 @@ export const parsePmPathOutput = (
       continue;
     }
     const devicePath = match[1]!;
-    const validated = adbHostFileName(devicePath);
+    const validated = adbHostFileName(devicePath, platform);
     if (!validated.ok) {
       rejectedPaths.push({
         device_path: devicePath,

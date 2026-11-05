@@ -1,3 +1,4 @@
+import type { HttpHostname } from "../../domain/httpHostname.js";
 import { STATE_INTAKE_LIMIT_BYTES } from "../../application/environment/environmentStateDocument.js";
 import {
   DEFAULT_MAX_REQUEST_BODY_SIZE,
@@ -17,7 +18,7 @@ import {
 import {
   environmentToolAnswer,
   type EnvironmentToolAnswer,
-} from "../../application/environment/environmentStateAnswer.js";
+} from "../../application/environment/environmentToolAnswer.js";
 import { EnvironmentStateStore } from "../../application/environment/environmentStateStore.js";
 import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import {
@@ -28,7 +29,11 @@ import {
 } from "../../application/environment/environmentTools.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { safeParseJson } from "../../domain/safeJson.js";
-import type { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
+import {
+  AnalysisOutputError,
+  type AnalysisResourceConstraintError,
+} from "../../domain/analysisErrorCore.js";
+import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import type { StreamableHttpListenError } from "../http/streamableHttpListenError.js";
 import { ok, type Result } from "../../domain/result.js";
 import { PRODUCT_IDENTITY } from "../../identity.js";
@@ -422,6 +427,8 @@ export interface ServeEnvironmentOptions {
   readonly source: EnvironmentSource;
   readonly host: string;
   readonly port: number;
+  /** Operator-declared Host/Origin names; a non-loopback bind refuses to serve without them. */
+  readonly allowedHosts?: readonly HttpHostname[];
   readonly signal?: AbortSignal;
   /** Served name; defaults to the manifest's environment name. */
   readonly environmentName?: string;
@@ -439,6 +446,14 @@ export interface ServedEnvironment extends StreamableHttpServer {
   readonly card: EnvironmentCard;
 }
 
+interface EnvironmentShutdownOwner {
+  readonly cleanupResources: readonly string[];
+  close(): Promise<void>;
+}
+
+// A failed shutdown must retain the same staged HTTP and state-file owners.
+const retainedEnvironmentShutdowns = new Set<EnvironmentShutdownOwner>();
+
 /** Serve one manifest as an agent environment until closed. */
 export const serveEnvironment = async (
   options: ServeEnvironmentOptions,
@@ -450,7 +465,7 @@ export const serveEnvironment = async (
     options.state === undefined
       ? undefined
       : new EnvironmentStateStore(options.state);
-  const catalog = servedCatalog(source, store !== undefined, name);
+  const catalog = servedCatalog(source, options.state, name);
   if (!catalog.ok) return catalog;
   const { tools, dataPlane } = catalog.value;
   const card = environmentCard(name, tools, dataPlane);
@@ -465,6 +480,9 @@ export const serveEnvironment = async (
   const served = await serveStreamableHttp({
     host,
     port,
+    ...(options.allowedHosts === undefined
+      ? {}
+      : { allowedHosts: options.allowedHosts }),
     ...(options.signal === undefined ? {} : { signal: options.signal }),
     createMcpServer: () => createEnvironmentMcpServer(name, tools, answer),
     routes: environmentRoutes(
@@ -492,6 +510,87 @@ export const serveEnvironment = async (
       options.onerror?.(error);
     },
   });
+  let httpClosePending = false;
+  let stateClosePending = false;
+  let closing: Promise<void> | undefined;
+  const shutdownFailures = new Set<AnalysisError>();
+  const owner: EnvironmentShutdownOwner = {
+    get cleanupResources() {
+      const stateResources = stateFiles.cleanupResources;
+      return [
+        ...(httpClosePending ? [served.url] : []),
+        ...(stateClosePending
+          ? stateResources.length > 0
+            ? stateResources
+            : ["environment state-file scope"]
+          : []),
+      ];
+    },
+    close: () => {
+      if (closing !== undefined) return closing;
+      const attempt = (async () => {
+        stop();
+        const failures: {
+          readonly stage: "http-server" | "state-files";
+          readonly cause: unknown;
+        }[] = [];
+        try {
+          await served.close();
+          httpClosePending = false;
+        } catch (cause: unknown) {
+          httpClosePending = true;
+          failures.push({ stage: "http-server", cause });
+        }
+        try {
+          await stateFiles.close();
+          stateClosePending = false;
+        } catch (cause: unknown) {
+          stateClosePending = true;
+          failures.push({ stage: "state-files", cause });
+        }
+        if (failures.length > 0) {
+          retainedEnvironmentShutdowns.add(owner);
+          const failure = new AnalysisOutputError(
+            "environment-serve",
+            failures
+              .map(
+                ({ stage, cause }) =>
+                  `${stage}: ${cause instanceof Error ? cause.message : "Non-Error cleanup failure (original cause retained)."}`,
+              )
+              .join("; "),
+            {
+              cause:
+                failures.length === 1
+                  ? failures[0]?.cause
+                  : new AggregateError(
+                      failures.map(({ cause }) => cause),
+                      "Environment server and state-file cleanup both failed",
+                    ),
+              diagnostics: {
+                cleanup_stages: failures.map(({ stage }) => stage),
+              },
+              cleanup: {
+                reason: "Environment shutdown remains incomplete.",
+                resources: owner.cleanupResources,
+              },
+              remediationAction:
+                "Keep this REA process available for cleanup. Confirm the reported resources are released before starting a replacement environment server.",
+            },
+          ).bindCleanupResourceOwner(owner);
+          shutdownFailures.add(failure);
+          throw failure;
+        }
+        retainedEnvironmentShutdowns.delete(owner);
+        for (const failure of shutdownFailures) failure.resolveCleanup();
+        shutdownFailures.clear();
+      })();
+      closing = attempt;
+      void attempt.catch(() => {
+        if (closing === attempt) closing = undefined;
+      });
+      return attempt;
+    },
+  };
   return ok({
     ...served,
     card,
@@ -499,25 +598,6 @@ export const serveEnvironment = async (
       stop();
       return served.prepareShutdown();
     },
-    close: async () => {
-      stop();
-      const failures: unknown[] = [];
-      try {
-        await served.close();
-      } catch (cause: unknown) {
-        failures.push(cause);
-      }
-      try {
-        await stateFiles.close();
-      } catch (cause: unknown) {
-        failures.push(cause);
-      }
-      if (failures.length === 1) throw failures[0];
-      if (failures.length > 1)
-        throw new AggregateError(
-          failures,
-          "Environment server and state-file cleanup both failed",
-        );
-    },
+    close: owner.close,
   });
 };

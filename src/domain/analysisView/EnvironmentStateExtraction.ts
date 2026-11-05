@@ -1,36 +1,41 @@
+import { StateRecordChronology } from "./StateRecordChronology.js";
+import { jsonByteLength } from "../jsonSerialization.js";
 import type { JsonValue } from "../jsonValue.js";
 import {
   compareUnicodeCodePoints as compare,
   compositeKey,
 } from "../unicodeCodePointOrder.js";
 import {
+  ownMember,
   apiBaseLengths,
   at,
   collectionPathOf,
-  hasPrototypeKey,
+  deletedFlag,
   identifies,
   IDENTITY_NAMES,
   identityCandidates,
   isObject,
-  isParam,
   isQueryPost,
-  isStateWrite,
-  jsonBytes,
+  isSafeHttpMethod,
+  stateValueRetentionBytes,
   lastSegmentValue,
   STATE_BODY_LIMIT_BYTES,
   listItems,
+  markedDeleted,
   locateItem,
   locateList,
-  normalizedPath,
+  projectsFields,
   rootOf,
+  selectsSomeFields,
   same,
   scalarText,
-  segmentsOf,
   writeSpanCheck,
   type ExtractedState,
   type JsonObject,
   type RecordedViewReason,
   type StateBudget,
+  type ParsedRequestBody,
+  requestJson,
   type StateDocument,
   type StateEntity,
   type StateRecordFacts,
@@ -47,13 +52,38 @@ import {
   type ObservedEntity,
   type StateObservation,
 } from "./environmentStateMerge.js";
+import { orderByWholeLines } from "./environmentStateInitialOrder.js";
+import { rewriteCuts, type RewriteSpan } from "./environmentStateRewrites.js";
 import {
   checkItemPlan,
   checkListPlan,
+  type LateLine,
   type StateGateContext,
   type StatePlan,
 } from "./environmentStateGate.js";
 import { StateWriteCutoffs } from "./environmentStateWriteCutoffs.js";
+import {
+  createdIdsOf,
+  creationLimit,
+  readType,
+  respondedIds,
+  type CreatedIds,
+} from "./environmentStateWriteLinks.js";
+import { extractWrites } from "./environmentStateWrites.js";
+import {
+  dropObservations,
+  lineShapes,
+  shapesOtherwise,
+  withoutVariants,
+} from "./environmentStateVariants.js";
+import { stateWritesOf } from "./environmentStateQueryCalls.js";
+import {
+  declaredMembers,
+  envelopeMembers,
+  mintedFor,
+  perResponseMembers,
+  type MintedMembers,
+} from "./environmentStateResponseMembers.js";
 
 class StateBudgetExhausted extends Error {}
 
@@ -71,18 +101,28 @@ const entityKey = (type: string, collection: string, id: string): string =>
 const requestLine = (record: StateRecordFacts): string =>
   record.path + (record.query ?? "");
 
+/** The member names of the object at a pointer, none when it holds no object. */
+const memberNames = (body: JsonValue, pointer: string): string[] => {
+  const object = at(body, pointer);
+  return isObject(object) ? Object.keys(object) : [];
+};
+
 /** Derive the init state and render plans from manifest tools and timeline-ordered records. */
 export class EnvironmentStateExtraction {
   readonly #tools: readonly StateToolFacts[];
-  readonly #timeline: StateTimeline;
+  readonly #records: readonly StateRecordFacts[];
+  readonly #chronology: StateRecordChronology;
   readonly #budget: StateBudget;
-  readonly #position: ReadonlyMap<number, number>;
   readonly #byOrdinal: ReadonlyMap<number, StateRecordFacts>;
-  readonly #writes: readonly StateRecordFacts[];
-  readonly #writeWithin: ReturnType<typeof writeSpanCheck>;
+  /** POST tools whose calls the capture shows read state rather than change it. */
+  #readOnly: ReadonlySet<string> = new Set();
+  #writes: readonly StateRecordFacts[] = [];
+  #writeWithin: ReturnType<typeof writeSpanCheck> = () => false;
   readonly #bases: ReadonlyMap<string, number>;
   #writeCutoffs: StateWriteCutoffs | undefined;
   readonly #initLimits = new Map<string, StateRecordFacts | undefined>();
+  /** Successful POSTs with the ids their responses named, read once before planning. */
+  #created: CreatedIds[] | undefined;
   readonly #identity = new Map<
     string,
     { readonly field: string; readonly basis: StateType["id_basis"] }
@@ -93,6 +133,10 @@ export class EnvironmentStateExtraction {
   readonly #volatile = new Map<string, Set<string>>();
   /** Types with a value that changed across a recorded write, which may be that write's effect. */
   readonly #rewritten = new Set<string>();
+  /** The recordings either side of each such change, and per type the write its initial reads end at. */
+  #spans: RewriteSpan[] = [];
+  #cuts: ReadonlyMap<string, StateRecordFacts> = new Map();
+  #minted: MintedMembers | undefined;
   readonly #merged = new Map<string, StateEntity>();
   /** Merged entities by type and collection, built once on first use after merging. */
   #collections: Map<string, StateEntity[]> | undefined;
@@ -104,39 +148,55 @@ export class EnvironmentStateExtraction {
     readonly budget: StateBudget;
   }) {
     this.#tools = input.tools;
-    this.#timeline = input.timeline;
+    this.#records = input.records;
+    this.#chronology = new StateRecordChronology(input.records, input.timeline);
     this.#budget = input.budget;
-    this.#position = new Map(
-      input.records.map((record, index) => [record.ordinal, index]),
-    );
     this.#byOrdinal = new Map(
       input.records.map((record) => [record.ordinal, record]),
     );
-    this.#writes = input.records.filter(isStateWrite);
-    this.#writeWithin = writeSpanCheck(this.#writes);
     this.#bases = apiBaseLengths(input.tools.map((tool) => tool.path_template));
+  }
+
+  /** The timeline's state writes, less the calls of tools that only read. */
+  #findWrites(): void {
+    // The body digests the decision keeps are dropped with it, so what they were charged is released.
+    const release = this.#budget.checkpoint();
+    ({ readOnly: this.#readOnly, writes: this.#writes } = stateWritesOf(
+      this.#tools,
+      this.#records,
+      {
+        withBody: (ordinal, use) => this.#withBody(ordinal, use),
+        request: (ordinal) => this.#requestBody(ordinal),
+        retain: (bytes) => this.#retain(bytes),
+      },
+      this.#chronology,
+    ));
+    release();
+    this.#writeWithin = writeSpanCheck(this.#writes, this.#chronology);
   }
 
   /** The extracted state, or null when the representation budget is exhausted. */
   run(): ExtractedState | null {
     try {
-      if (this.#writes.length > 0)
+      this.#findWrites();
+      if (this.#writes.length > 0) {
         this.#writeCutoffs = new StateWriteCutoffs(
           this.#writes,
           this.#bases,
           (left, right) =>
-            this.#position.get(left.ordinal)! <
-            this.#position.get(right.ordinal)!,
+            this.#chronology.positions.get(left.ordinal)! <
+            this.#chronology.positions.get(right.ordinal)!,
           (bytes) => this.#retain(bytes),
         );
-      const candidates = this.#candidates();
-      for (const candidate of candidates.filter((entry) => entry.item))
-        this.#planItem(candidate);
-      for (const candidate of candidates.filter((entry) => !entry.item))
-        this.#planList(candidate);
-      for (const plan of this.#plans) this.#observePlan(plan);
-      this.#classifyChanges();
-      this.#merge();
+        this.#creations();
+      }
+      // A rewrite cut discards the first planning pass, so what it retained is released before the second.
+      const release = this.#budget.checkpoint();
+      let candidates = this.#plan();
+      if (this.#cutRewrites()) {
+        release();
+        candidates = this.#plan();
+      }
       const gate = this.#gateContext();
       for (const plan of this.#plans)
         if (this.#rewritten.has(plan.type))
@@ -146,11 +206,111 @@ export class EnvironmentStateExtraction {
             plan.tool.name,
             plan.item ? checkItemPlan(gate, plan) : checkListPlan(gate, plan),
           );
-      return this.#result(this.#documents(candidates));
+      return this.#withWrites(this.#result(this.#documents(candidates)));
     } catch (cause: unknown) {
       if (cause instanceof StateBudgetExhausted) return null;
       throw cause;
     }
+  }
+
+  /** Plan and observe every candidate, then merge the observed entities. */
+  #plan(): Candidate[] {
+    const candidates = this.#candidates();
+    for (const candidate of candidates.filter((entry) => entry.item))
+      this.#planItem(candidate);
+    for (const candidate of candidates.filter((entry) => !entry.item))
+      this.#planList(candidate);
+    for (const plan of this.#plans) this.#observePlan(plan);
+    this.#dropVariants();
+    orderByWholeLines(
+      this.#entities.values(),
+      (ordinal) => this.#byOrdinal.get(ordinal)?.query,
+    );
+    this.#classifyChanges();
+    this.#merge();
+    return candidates;
+  }
+
+  /** Leave each plan's representation variants to replay: out of its lines, the observed entities and the membership changes. */
+  #dropVariants(): void {
+    const shapes = lineShapes(this.#entities.values(), (bytes) =>
+      this.#retain(bytes),
+    );
+    const dropped = new Set<number>();
+    for (const [index, plan] of this.#plans.entries()) {
+      const split = withoutVariants(plan, {
+        shapeOf: (record) => shapes.get(record.ordinal),
+        queryOf: (ordinal) => this.#byOrdinal.get(ordinal)?.query,
+        position: (ordinal) => this.#chronology.positions.get(ordinal)!,
+        retain: (bytes) => this.#retain(bytes),
+        checkpoint: () => this.#budget.checkpoint(),
+      });
+      if (split === undefined) continue;
+      this.#retain(ENTRY_BYTES * (split.dropped.size + 2));
+      this.#plans[index] = split.plan;
+      dropObservations(this.#entities, split.dropped);
+      for (const ordinal of split.dropped) dropped.add(ordinal);
+    }
+    this.#spans = this.#spans.filter((span) => !dropped.has(span.later));
+  }
+
+  /** End each rewritten type's initial reads at the earliest write its reads disagree across, and clear the plans to make them again. */
+  #cutRewrites(): boolean {
+    this.#cuts = rewriteCuts(
+      this.#spans.filter((span) => this.#rewritten.has(span.type)),
+      this.#writes,
+      this.#byOrdinal,
+      this.#chronology,
+    );
+    if (this.#cuts.size === 0) return false;
+    for (const map of [this.#initLimits, this.#identity, this.#views])
+      map.clear();
+    for (const map of [this.#entities, this.#volatile, this.#merged])
+      map.clear();
+    this.#rewritten.clear();
+    this.#plans.length = 0;
+    this.#spans = [];
+    this.#collections = undefined;
+    return true;
+  }
+
+  /** The write plans the capture's own timeline confirms against the extracted state. */
+  #withWrites(
+    state: Omit<ExtractedState, "writes" | "write_clock">,
+  ): ExtractedState {
+    return {
+      ...state,
+      ...extractWrites(state, {
+        tools: this.#tools,
+        records: this.#records,
+        readOnly: this.#readOnly,
+        chronology: this.#chronology,
+        volatileOf: (type) => this.#volatileOf(type),
+        io: {
+          withBody: (ordinal, use) => this.#withBody(ordinal, use),
+          requestBody: (ordinal) => this.#parsedRequestBody(ordinal),
+          withRequestBody: (ordinal, use) =>
+            this.#withRequestBody(ordinal, use),
+          emptyResponse: (ordinal) => this.#budget.emptyResponse(ordinal),
+          retain: (bytes) => this.#retain(bytes),
+          queryOf: (ordinal) => this.#byOrdinal.get(ordinal)?.query,
+        },
+      }),
+    };
+  }
+
+  #withRequestBody<T>(ordinal: number, use: (body: ParsedRequestBody) => T): T {
+    const value = this.#budget.withRequestBody(ordinal, use);
+    if (value === null) throw new StateBudgetExhausted();
+    return value;
+  }
+
+  #parsedRequestBody(ordinal: number): ParsedRequestBody {
+    return this.#withRequestBody(ordinal, (body) => body);
+  }
+
+  #requestBody(ordinal: number): JsonValue | undefined {
+    return requestJson(this.#parsedRequestBody(ordinal));
   }
 
   #retain(bytes: number): void {
@@ -159,9 +319,9 @@ export class EnvironmentStateExtraction {
 
   /** Parse one body and hand it to `use` before its temporary work is dropped; unusable bodies arrive undefined. */
   #withBody<T>(ordinal: number, use: (body: JsonValue | undefined) => T): T {
-    const parsed = this.#budget.body(ordinal);
-    if (parsed === null) throw new StateBudgetExhausted();
     try {
+      const parsed = this.#budget.body(ordinal);
+      if (parsed === null) throw new StateBudgetExhausted();
       return use(parsed.kind === "json" ? parsed.value : undefined);
     } finally {
       this.#budget.release();
@@ -172,44 +332,80 @@ export class EnvironmentStateExtraction {
     this.#views.set(tool.name, { tool: tool.name, shape: "recorded", reason });
   }
 
-  /** GET tools may render from state; query POSTs stay recorded. */
+  /** GET tools may render from state; other safe methods and query POSTs replay. */
   #candidates(): Candidate[] {
     const candidates: Candidate[] = [];
     for (const tool of this.#tools) {
-      if (isQueryPost(tool.method, tool.path_template))
+      if (
+        isQueryPost(tool.method, tool.path_template) ||
+        this.#readOnly.has(tool.name)
+      )
         this.#recorded(tool, "query-body");
+      else if (tool.method !== "GET" && isSafeHttpMethod(tool.method))
+        this.#recorded(tool, "method-replay");
       if (tool.method !== "GET") continue;
-      const segments = segmentsOf(tool.path_template);
-      const item = segments.length > 0 && isParam(segments.at(-1)!);
-      candidates.push({
-        tool,
-        item,
-        type: item
-          ? `/${segments.slice(0, -1).join("/")}`
-          : normalizedPath(tool.path_template),
-      });
+      candidates.push({ tool, ...readType(tool.path_template) });
     }
     return candidates;
   }
 
-  /** The first write whose root relates to the template's bounds its init recordings. */
+  /** The first write whose root relates to the template's, or that made one of its entities, bounds its init recordings. */
   #initLimit(template: string): StateRecordFacts | undefined {
     if (this.#writeCutoffs === undefined) return undefined;
     if (this.#initLimits.has(template)) return this.#initLimits.get(template);
     const first = this.#writeCutoffs.first(rootOf(template, this.#bases));
+    const bound =
+      creationLimit(
+        this.#creations(),
+        {
+          type: template,
+          chronology: this.#chronology,
+          tools: this.#tools,
+          records: this.#byOrdinal,
+          position: (record) => this.#chronology.positions.get(record.ordinal)!,
+          withBody: (ordinal, use) => this.#withBody(ordinal, use),
+          retain: (bytes) => this.#retain(bytes),
+        },
+        first,
+      ) ?? first;
+    const cut = this.#cuts.get(template);
+    const limit =
+      cut !== undefined &&
+      (bound === undefined ||
+        this.#chronology.positions.get(cut.ordinal)! <
+          this.#chronology.positions.get(bound.ordinal)!)
+        ? cut
+        : bound;
     this.#retain(ENTRY_BYTES + textBytes(template.length));
-    this.#initLimits.set(template, first);
-    return first;
+    this.#initLimits.set(template, limit);
+    return limit;
+  }
+
+  #creations(): CreatedIds[] {
+    this.#created ??= createdIdsOf(this.#writes, (ordinal) => {
+      const ids = this.#withBody(ordinal, respondedIds);
+      this.#retain(ENTRY_BYTES + textBytes(ids.join("").length));
+      return ids;
+    });
+    return this.#created;
+  }
+
+  /** Initial-state admission is shared with later projection-evidence selection. */
+  #beforeInitLimit(
+    record: StateRecordFacts,
+    limit: StateRecordFacts | undefined,
+  ): boolean {
+    return (
+      limit === undefined ||
+      (this.#chronology.positions.get(record.ordinal)! <
+        this.#chronology.positions.get(limit.ordinal)! &&
+        this.#chronology.completedBefore(record, limit))
+    );
   }
 
   /** Successful recordings that finished before the first related write began. */
   #initRecordings(tool: StateToolFacts, template: string): StateRecordFacts[] {
     const limit = this.#initLimit(template);
-    const before = (record: StateRecordFacts): boolean =>
-      limit === undefined ||
-      (this.#position.get(record.ordinal)! <
-        this.#position.get(limit.ordinal)! &&
-        (this.#timeline === "record-order" || record.end <= limit.start));
     return tool.record_ordinals
       .map((ordinal) => this.#byOrdinal.get(ordinal))
       .filter(
@@ -218,12 +414,12 @@ export class EnvironmentStateExtraction {
           record.status !== null &&
           record.status >= 200 &&
           record.status < 300 &&
-          before(record),
+          this.#beforeInitLimit(record, limit),
       )
       .sort(
         (left, right) =>
-          this.#position.get(left.ordinal)! -
-          this.#position.get(right.ordinal)!,
+          this.#chronology.positions.get(left.ordinal)! -
+          this.#chronology.positions.get(right.ordinal)!,
       );
   }
 
@@ -248,13 +444,120 @@ export class EnvironmentStateExtraction {
     candidate: Candidate,
     pointer: string,
     recordings: readonly StateRecordFacts[],
+    replayed: Pick<
+      StatePlan,
+      "projected" | "late" | "laterFields" | "deletedFlag"
+    > = {},
   ): void {
     this.#plans.push({
       ...candidate,
       pointer,
       recordings,
       latest: this.#latestPerLine(recordings),
+      projected: replayed.projected ?? [],
+      late: replayed.late ?? [],
+      ...(replayed.laterFields === undefined ||
+      replayed.laterFields.length === 0
+        ? {}
+        : { laterFields: replayed.laterFields }),
+      ...(replayed.deletedFlag === undefined
+        ? {}
+        : { deletedFlag: replayed.deletedFlag }),
     });
+  }
+
+  /** The members later plain item reads show of the entity they name, in first-seen order, and the flag any of its reads sets on one the application soft-deleted. */
+  #laterFields(
+    tool: StateToolFacts,
+    type: string,
+    entity: { readonly field: string; readonly pointer: string },
+  ): Pick<StatePlan, "laterFields" | "deletedFlag"> {
+    const limit = this.#initLimit(type);
+    const names: string[] = [];
+    const seen = new Set<string>();
+    let flag: StatePlan["deletedFlag"];
+    if (limit === undefined) return { laterFields: names };
+    for (const ordinal of tool.record_ordinals) {
+      const record = this.#byOrdinal.get(ordinal);
+      if (
+        record === undefined ||
+        record.status === null ||
+        record.status < 200 ||
+        record.status >= 300
+      )
+        continue;
+      // Any read may show the soft-delete flag; only plain later reads add fields.
+      const later =
+        (record.query ?? "") === "" && !this.#beforeInitLimit(record, limit);
+      if (!later && flag !== undefined) continue;
+      this.#withBody(ordinal, (body) => {
+        const object =
+          body === undefined ? undefined : at(body, entity.pointer);
+        if (!isObject(object) || ownMember(object, entity.field) === undefined)
+          return;
+        flag ??= deletedFlag(object);
+        if (!later) return;
+        for (const name of Object.keys(object))
+          if (!seen.has(name)) {
+            seen.add(name);
+            names.push(name);
+            this.#retain(ENTRY_BYTES + textBytes(name.length));
+          }
+      });
+    }
+    if (flag === undefined) return { laterFields: names };
+    // The flag is a field the item view shows, even when only a query read showed it.
+    if (!seen.has(flag)) names.push(flag);
+    return { laterFields: names, deletedFlag: flag };
+  }
+
+  /**
+   * Later identity-free projections are evidence of replay, never initial entities; later lines that
+   * show the identity and name a shaping or projection parameter are kept, with their members, for
+   * the variant pass to decide against the lines left. Read only those query bodies.
+   */
+  #addLateProjections(
+    tool: StateToolFacts,
+    type: string,
+    projected: number[],
+  ): LateLine[] {
+    const limit = this.#initLimit(type);
+    const late: LateLine[] = [];
+    if (limit === undefined) return late;
+    for (const ordinal of tool.record_ordinals) {
+      const record = this.#byOrdinal.get(ordinal);
+      if (
+        record === undefined ||
+        record.status === null ||
+        record.status < 200 ||
+        record.status >= 300 ||
+        this.#beforeInitLimit(record, limit)
+      )
+        continue;
+      const projecting = projectsFields(record.query);
+      // A selection of every field (`fields=*`) shows the entity whole, so only a partial one may replay.
+      const selecting = selectsSomeFields(record.query);
+      const shaping = shapesOtherwise(record.query);
+      if (!projecting && !shaping) continue;
+      const line = this.#withBody(ordinal, (body) => {
+        if (body === undefined) return undefined;
+        const located = locateItem(body, lastSegmentValue(record.path));
+        if (located === undefined) return projecting ? null : undefined;
+        if (!selecting && !shaping) return undefined;
+        const names = memberNames(body, located.pointer);
+        // The kept set holds the names, which the body's own reservation no longer covers.
+        this.#retain(
+          ENTRY_BYTES * (2 + names.length) +
+            names.reduce((bytes, name) => bytes + textBytes(name.length), 0),
+        );
+        return { record, members: new Set(names), projecting: selecting };
+      });
+      if (line === null) {
+        this.#retain(ENTRY_BYTES);
+        projected.push(ordinal);
+      } else if (line !== undefined) late.push(line);
+    }
+    return late;
   }
 
   /** Item tools prove a type's identity field by the path value their bodies repeat. */
@@ -264,6 +567,8 @@ export class EnvironmentStateExtraction {
     if (recordings === undefined) return;
     let pointer: string | undefined;
     let keys: string[] | undefined;
+    const kept: StateRecordFacts[] = [];
+    const projected: number[] = [];
     for (const record of recordings) {
       const located = this.#withBody(record.ordinal, (body) =>
         body === undefined
@@ -274,6 +579,13 @@ export class EnvironmentStateExtraction {
         this.#recorded(tool, "body-unusable");
         return;
       }
+      // A read that asked for some fields only may leave the identity out; replay answers it.
+      if (located === undefined && projectsFields(record.query)) {
+        this.#retain(ENTRY_BYTES);
+        projected.push(record.ordinal);
+        continue;
+      }
+      kept.push(record);
       if (
         located === undefined ||
         (pointer ?? located.pointer) !== located.pointer
@@ -300,7 +612,14 @@ export class EnvironmentStateExtraction {
       return;
     }
     this.#identity.set(type, { field, basis: "path-parameter" });
-    this.#addPlan(candidate, pointer, recordings);
+    const late = this.#addLateProjections(tool, type, projected);
+    projected.sort(
+      (left, right) =>
+        this.#chronology.positions.get(left)! -
+        this.#chronology.positions.get(right)!,
+    );
+    const later = this.#laterFields(tool, type, { field, pointer });
+    this.#addPlan(candidate, pointer, kept, { projected, late, ...later });
   }
 
   /**
@@ -310,8 +629,11 @@ export class EnvironmentStateExtraction {
    */
   #planList(candidate: Candidate): void {
     const { tool, type } = candidate;
-    const recordings = this.#initRecordingsOf(candidate);
-    if (recordings === undefined) return;
+    const initial = this.#initRecordingsOf(candidate);
+    if (initial === undefined) return;
+    // Beside a line showing whole entities, one asking for some fields only is replayed and proves nothing; one asking for all is whole.
+    const whole = initial.filter((record) => !selectsSomeFields(record.query));
+    const recordings = whole.length > 0 ? whole : initial;
     const proved = this.#identity.get(type)?.field;
     const fieldsOf = (items: readonly JsonObject[]): string[] =>
       proved === undefined
@@ -361,7 +683,12 @@ export class EnvironmentStateExtraction {
     if (field === undefined || pointer === undefined) return;
     if (!this.#identity.has(type))
       this.#identity.set(type, { field, basis: "field-name" });
-    this.#addPlan(candidate, pointer, recordings);
+    this.#retain(ENTRY_BYTES * (initial.length - recordings.length));
+    this.#addPlan(candidate, pointer, recordings, {
+      projected: initial
+        .filter((record) => !recordings.includes(record))
+        .map((record) => record.ordinal),
+    });
   }
 
   #observePlan(plan: StatePlan): void {
@@ -412,12 +739,25 @@ export class EnvironmentStateExtraction {
     const field = this.#identity.get(plan.type)!.field;
     let changed = previous.ids.size !== objects.length;
     for (const object of objects)
-      if (!previous.ids.delete(scalarText(object[field])!)) changed = true;
+      if (!previous.ids.delete(scalarText(ownMember(object, field))!))
+        changed = true;
     if (previous.ids.size > 0) changed = true;
-    if (earlier !== undefined && changed && this.#writeWithin(earlier, record))
-      this.#rewritten.add(plan.type);
+    if (
+      earlier !== undefined &&
+      changed &&
+      this.#writeWithin(earlier, record)
+    ) {
+      // Each kept span is charged as an entity change's is.
+      this.#retain(ENTRY_BYTES * 4);
+      this.#spans.push({
+        type: plan.type,
+        earlier: earlier.ordinal,
+        later: record.ordinal,
+      });
+    }
     previous.ids.clear();
-    for (const object of objects) previous.ids.add(scalarText(object[field])!);
+    for (const object of objects)
+      previous.ids.add(scalarText(ownMember(object, field))!);
     previous.record = record;
   }
 
@@ -429,11 +769,11 @@ export class EnvironmentStateExtraction {
     index: number,
   ): void {
     const field = this.#identity.get(plan.type)!.field;
-    const id = scalarText(object[field]);
+    const id = scalarText(ownMember(object, field));
     if (id === undefined) return;
     const collection = collectionPathOf(record, plan.item);
     const key = entityKey(plan.type, collection, id);
-    const position = this.#position.get(record.ordinal)!;
+    const position = this.#chronology.positions.get(record.ordinal)!;
     let entity = this.#entities.get(key);
     if (entity === undefined) {
       this.#retain(ENTRY_BYTES * 4 + textBytes(key.length));
@@ -451,9 +791,10 @@ export class EnvironmentStateExtraction {
       if (position < first || (position === first && index < at))
         entity.order = [position, index];
     }
-    this.#retain(ENTRY_BYTES + jsonBytes(object));
+    this.#retain(ENTRY_BYTES + stateValueRetentionBytes(object));
     entity.observations.push({
       position,
+      index,
       ordinal: record.ordinal,
       tool: plan.tool.name,
       item: plan.item,
@@ -461,7 +802,7 @@ export class EnvironmentStateExtraction {
     });
   }
 
-  /** A change across any recorded write rewrites the type; one between repeats of a line with no write is volatile. */
+  /** A change across any recorded write, in values or in a kept line's membership, rewrites the type; one between repeats of a line with no write is volatile. */
   #classifyChanges(): void {
     const recordOf = (observation: StateObservation): StateRecordFacts =>
       this.#byOrdinal.get(observation.ordinal)!;
@@ -470,7 +811,9 @@ export class EnvironmentStateExtraction {
       (observation) => [observation.tool, requestLine(recordOf(observation))],
       (earlier, later) => this.#writeWithin(recordOf(earlier), recordOf(later)),
     );
-    for (const type of changes.rewritten) this.#rewritten.add(type);
+    this.#retain(ENTRY_BYTES * 4 * changes.spans.length);
+    for (const span of changes.spans) this.#spans.push(span);
+    for (const { type } of this.#spans) this.#rewritten.add(type);
     for (const [type, names] of changes.volatile)
       this.#volatile.set(type, names);
   }
@@ -486,12 +829,30 @@ export class EnvironmentStateExtraction {
   }
 
   #gateContext(): StateGateContext {
+    this.#minted ??= perResponseMembers({
+      records: this.#records,
+      withBody: (ordinal, use) => this.#withBody(ordinal, use),
+      writeWithin: this.#writeWithin,
+      retain: (bytes) => this.#retain(bytes),
+      checkpoint: () => this.#budget.checkpoint(),
+    });
     return {
+      minted: this.#minted,
       withBody: (ordinal, use) => this.#withBody(ordinal, use),
       retain: (bytes) => this.#retain(bytes),
       entity: (type, collection, id) =>
         this.#merged.get(entityKey(type, collection, id)),
       inCollection: (type, collection) => this.#inCollection(type, collection),
+      heldFields: (type) => {
+        const fields = new Set<string>();
+        for (const entity of this.#merged.values())
+          if (entity.type === type) {
+            for (const name of Object.keys(entity.fields)) fields.add(name);
+            for (const view of entity.view_fields)
+              for (const name of Object.keys(view.fields)) fields.add(name);
+          }
+        return fields;
+      },
       volatileOf: (type) => this.#volatileOf(type),
       idField: (type) => this.#identity.get(type)!.field,
     };
@@ -505,7 +866,9 @@ export class EnvironmentStateExtraction {
     if (this.#collections === undefined) {
       this.#retain(ENTRY_BYTES * (this.#merged.size + 1));
       this.#collections = new Map();
+      // List serving selects live entities; item observations retain deleted entities separately.
       for (const entity of this.#merged.values()) {
+        if (markedDeleted(entity.fields)) continue;
         const key = JSON.stringify([entity.type, entity.collection]);
         const members = this.#collections.get(key);
         if (members === undefined) this.#collections.set(key, [entity]);
@@ -557,15 +920,14 @@ export class EnvironmentStateExtraction {
       // Parsing can lengthen a body that was admitted under the recorded-text limit:
       // `1e3` is four bytes once rendered as `1000`. Serving refuses that rendering,
       // so an oversized document stays the recorded replay instead of a failing read.
-      if (
-        Buffer.byteLength(JSON.stringify(value), "utf8") >
-        STATE_BODY_LIMIT_BYTES
-      ) {
+      if (jsonByteLength(value) > STATE_BODY_LIMIT_BYTES) {
         this.#recorded(tool, "rendered-oversize");
         continue;
       }
       this.#retain(
-        ENTRY_BYTES + jsonBytes(value) + textBytes(record.path.length),
+        ENTRY_BYTES +
+          stateValueRetentionBytes(value) +
+          textBytes(record.path.length),
       );
       documents.push({
         tool: tool.name,
@@ -573,17 +935,23 @@ export class EnvironmentStateExtraction {
         value,
         record_ordinal: record.ordinal,
       });
+      const minted = mintedFor(this.#minted ?? new Map(), [record]);
       this.#views.set(tool.name, {
         tool: tool.name,
         shape: "document",
         checked_record_ordinals: [record.ordinal],
+        ...declaredMembers(envelopeMembers(value, minted), (bytes) =>
+          this.#retain(bytes),
+        ),
       });
     }
     return documents.sort((left, right) => compare(left.tool, right.tool));
   }
 
   /** Types and entities that at least one state-backed view renders; view values only for those views. */
-  #result(documents: StateDocument[]): ExtractedState {
+  #result(
+    documents: StateDocument[],
+  ): Omit<ExtractedState, "writes" | "write_clock"> {
     const backed = new Set<string>();
     const backedTypes = new Set<string>();
     for (const view of this.#views.values())

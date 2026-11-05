@@ -158,10 +158,9 @@ export class NodeHttpRequestOwner {
   async drain(): Promise<void> {
     // An exchange can register cancellation after its route has returned,
     // including when a late Response finds that its client already left.
-    while (this.#exchanges.size > 0)
-      await Promise.allSettled([...this.#exchanges]);
+    while (this.#exchanges.size > 0) await Promise.allSettled(this.#exchanges);
     while (this.#bodyCleanups.size > 0)
-      await Promise.allSettled([...this.#bodyCleanups]);
+      await Promise.allSettled(this.#bodyCleanups);
     if (this.#cleanupFailures.length > 0)
       throw new AnalysisResourceConstraintError(
         "mcp_http_response_cleanup",

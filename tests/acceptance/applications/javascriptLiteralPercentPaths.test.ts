@@ -295,10 +295,9 @@ const cases = [
 const writeRuntimeFixture = async (root: string): Promise<void> => {
   const inert = 'throw new Error("fixture source must never execute");';
   const loadFileSource = `const { BrowserWindow } = require("electron");
-      const win = new BrowserWindow();
-      win.loadFile("dist%2Findex.html");
-      win.loadFile("plain.html");
-      win.loadFile("absent.html");`;
+      new BrowserWindow().loadFile("dist%2Findex.html");
+      new BrowserWindow().loadFile("plain.html");
+      new BrowserWindow().loadFile("absent.html");`;
   await writeFixtureFiles(root, {
     "package.json": JSON.stringify({ private: true, workspaces: ["app"] }),
     ...Object.fromEntries(
@@ -611,7 +610,7 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
     await writeFixtureFiles(root, {
       "app/package.json": JSON.stringify({ main: "main.cjs" }),
       "app/main.cjs":
-        'const { BrowserWindow } = require("electron"); const win = new BrowserWindow(); win.loadFile("index.html"); win.loadFile("../shared/index.html"); win.loadFile("../../escape.html");',
+        'const { BrowserWindow } = require("electron"); new BrowserWindow().loadFile("index.html"); new BrowserWindow().loadFile("../shared/index.html"); new BrowserWindow().loadFile("../../escape.html");',
       "app/helper.cjs": 'module.exports = "unrelated omitted module";',
       "index.html": "artifact-root decoy",
       "app/index.html": "proven application page",

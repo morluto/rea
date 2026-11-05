@@ -3,6 +3,9 @@ import { addressCoordinate } from "./addressCoordinate.js";
 import { AnalysisInputError } from "../analysisErrorCore.js";
 import { err, ok, type Result } from "../result.js";
 
+/** Maximum matches delivered by one byte-search page. */
+export const MAX_BYTE_SEARCH_MATCHES = 1000;
+
 /** Exact grammar belongs to the object refinement, not a repeating advertised regex. */
 export const bytePatternFields = {
   pattern: z
@@ -115,7 +118,7 @@ const coverageBlock = z
     segment: z.string(),
     start: z.string(),
     end: z.string(),
-    bytes: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+    bytes: z.int().nonnegative().max(Number.MAX_SAFE_INTEGER),
   })
   .superRefine((value, context) => {
     const start = addressCoordinate(value.start);
@@ -134,29 +137,33 @@ const coverageBlock = z
       });
   });
 
-/** Inclusive page coverage; matches never span memory blocks. */
+/** Inclusive page coverage; match segment and file offset identify its start. */
 export const byteSearchResultSchema = z
   .strictObject({
     matches: z
       .array(
         z.strictObject({
           address: z.string(),
-          segment: z.string(),
+          segment: z
+            .string()
+            .describe("Memory block containing the match start."),
           file_offset: z
-            .number()
             .int()
             .nonnegative()
             .max(Number.MAX_SAFE_INTEGER)
-            .nullable(),
+            .nullable()
+            .describe(
+              "Source file offset of the match start, not a guarantee of a contiguous file span.",
+            ),
           procedure: z
             .strictObject({ address: z.string(), name: z.string() })
             .nullable(),
         }),
       )
-      .max(1000),
+      .max(MAX_BYTE_SEARCH_MATCHES),
     searched: z.strictObject({
       blocks: z.array(coverageBlock),
-      bytes: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+      bytes: z.int().nonnegative().max(Number.MAX_SAFE_INTEGER),
       skipped_uninitialized: z.array(coverageBlock),
       skipped_not_loaded: z.array(coverageBlock),
     }),

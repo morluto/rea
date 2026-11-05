@@ -1,6 +1,8 @@
+import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import { Cli, z } from "incur";
 
-import { browserContext, browserCliError } from "../cliBrowserContext.js";
+import { browserCliError } from "./browserCliError.js";
+import { createBrowserObservationProvider } from "../composition/browserObservation.js";
 import {
   browserScopeOptions,
   selectedCommandTimeout,
@@ -20,7 +22,10 @@ import {
 import { compareBrowserScenariosInputSchema } from "../domain/browserScenarioDiffValues.js";
 import { browserScenarioCaptureSchema } from "../domain/browserScenarioCapture.js";
 import { compareWebCapturesInputSchema } from "../domain/webCaptureDiffSchemas.js";
-import { projectInputIssues } from "../domain/inputIssueProjection.js";
+import {
+  analysisInputErrorFromIssues,
+  projectInputIssues,
+} from "../domain/inputIssueProjection.js";
 import { discoverWebMcpToolsInputSchema } from "../domain/webMcpDiscovery.js";
 import {
   captureWebScreenshotInputSchema,
@@ -68,7 +73,7 @@ const registerWebMcp = (
     run: ({ args, options }) =>
       withCommandCancellation((signal) =>
         logCliCommand(logger, "discover-webmcp-tools", async () => {
-          const context = browserContext();
+          const provider = createBrowserObservationProvider();
           const input = {
             cdp_endpoint: args.endpoint,
             allowed_origins: options.allowedOrigins,
@@ -83,17 +88,16 @@ const registerWebMcp = (
               projectInputIssues(parsed.error.issues, input),
             );
           return await finishAnalysisCommand(
-            () =>
-              discoverWebMcpTools(context.provider, parsed.data, { signal }),
+            () => discoverWebMcpTools(provider, parsed.data, { signal }),
             {
               close: async () => {
-                await context.provider.close?.();
+                await provider.close?.();
               },
             },
-            context.provider.identity().id,
+            provider.identity().id,
             "discover_webmcp_tools",
             signal,
-          );
+          ).then(projectCliAnalysisResult);
         }),
       ),
   });
@@ -181,7 +185,7 @@ const registerScreenshot = (
     run: ({ args, options }) =>
       withCommandCancellation((signal) =>
         logCliCommand(logger, "capture-web-screenshot", async () => {
-          const context = browserContext();
+          const provider = createBrowserObservationProvider();
           const input = {
             cdp_endpoint: args.endpoint,
             allowed_origins: options.allowedOrigins,
@@ -195,17 +199,16 @@ const registerScreenshot = (
               projectInputIssues(parsed.error.issues, input),
             );
           return await finishAnalysisCommand(
-            () =>
-              captureWebScreenshot(context.provider, parsed.data, { signal }),
+            () => captureWebScreenshot(provider, parsed.data, { signal }),
             {
               close: async () => {
-                await context.provider.close?.();
+                await provider.close?.();
               },
             },
-            context.provider.identity().id,
+            provider.identity().id,
             "capture_web_screenshot",
             signal,
-          );
+          ).then(projectCliAnalysisResult);
         }),
       ),
   });
@@ -251,10 +254,11 @@ const registerScreenshotDiff = (
         const parsed = compareWebScreenshotsInputSchema.safeParse(input);
         if (!parsed.success)
           return browserCliError(
-            new AnalysisInputError(
+            analysisInputErrorFromIssues(
               operation,
+              parsed.error.issues,
+              input,
               { cause: parsed.error },
-              projectInputIssues(parsed.error.issues, input),
             ),
           );
         const result = await compareWebScreenshotEvidence(

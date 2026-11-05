@@ -180,6 +180,33 @@ try {
     );
     assert.equal(opaque.threads.length, 1);
     cases++;
+    for (const [name, kind] of [
+      ["gnu-type3", 3],
+      ["gnu-file-collision", 0x46494c45],
+    ]) {
+      const value = await basic.inspect(mode, fixtures[name]);
+      assert.ok(
+        value.notes.some(
+          (note) =>
+            note.owner_display === "GNU" &&
+            note.type === kind &&
+            note.type_id === kind,
+        ),
+      );
+      assert.equal(value.threads.length, 1);
+      cases++;
+    }
+    for (const [name, kind, label] of [
+      ["aarch64-archext", 0x70000000, "PT_AARCH64_ARCHEXT"],
+      ["aarch64-unwind", 0x70000001, "PT_AARCH64_UNWIND"],
+    ]) {
+      const value = await basic.inspect(mode, fixtures[name]);
+      assert.equal(value.architecture, "aarch64-little-endian");
+      assert.equal(value.segments[0]?.type_id, kind);
+      assert.equal(value.segments[0]?.type, label);
+      assert.equal(value.threads.length, 0);
+      cases++;
+    }
     const noSignals = await basic.inspect(mode, fixtures["unknown-signals"]);
     assert.equal(noSignals.signals.length, 0);
     assert.equal(noSignals.threads.length, 2);
@@ -189,6 +216,22 @@ try {
     assert.equal(noNotes.threads.length, 0);
     assert.equal(noNotes.note_interpretation_completeness, "unknown");
     cases++;
+    for (const [name, architecture, type] of [
+      ["aarch64-archext", "aarch64-little-endian", "PT_AARCH64_ARCHEXT"],
+      ["aarch64-unwind", "aarch64-little-endian", "PT_AARCH64_UNWIND"],
+      ["aarch64-mte-opaque", "aarch64-little-endian", 0x70000002],
+      ["amd64-processor-opaque", "x86_64-little-endian", 0x70000001],
+    ]) {
+      const auxiliary = await basic.inspect(mode, fixtures[name]);
+      assert.equal(auxiliary.architecture, architecture);
+      assert.equal(auxiliary.segments.length, 1);
+      assert.equal(auxiliary.segments[0].type, type);
+      assert.equal(auxiliary.notes.length, 0);
+      assert.equal(auxiliary.threads.length, 0);
+      assert.equal(auxiliary.note_interpretation_completeness, "unknown");
+      assert.equal(auxiliary.live_process_identity, "unknown");
+      cases++;
+    }
     const negative = await basic.inspect(mode, fixtures["negative-pid"]);
     assert.ok(negative.threads.some((thread) => thread.historical_pid === -2));
     cases++;

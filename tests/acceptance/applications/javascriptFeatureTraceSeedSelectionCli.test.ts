@@ -1,7 +1,5 @@
-import { Client } from "@modelcontextprotocol/client";
-import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { writeFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import { expect } from "vitest";
 import { z } from "zod";
 
@@ -11,8 +9,14 @@ import {
   applicationFeatureTraceResultSchema,
 } from "../../../src/domain/javascript/javascriptFeatureTraceSchemas.js";
 import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/javascript/javascriptApplicationAnalysis.js";
+import { findApplicationFeatureSeeds } from "../../../src/domain/javascript/javascriptFeatureSeed.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { cliTest, type TestCli } from "../../support/cli/cliFixture.js";
+import {
+  cliTest,
+  runFileCli,
+  type SharedMcpCall,
+  type TestCli,
+} from "../../support/cli/cliFixture.js";
 
 type FeatureSeed = z.input<typeof applicationFeatureSeedSchema>;
 type Trace = z.infer<typeof applicationFeatureTraceResultSchema>;
@@ -155,44 +159,50 @@ const analyzeFixture = async (cli: TestCli, root: string) => {
 const traceThroughCli = async (
   cli: TestCli,
   application: unknown,
-  scenario: SeedScenario,
-): Promise<Trace> => {
-  const response = await cli.run({
-    arguments: [
-      "trace-application-feature",
-      JSON.stringify({
-        application,
-        seed: scenario.seed,
-        direction: "both",
-      }),
-      "--json",
-    ],
-  });
+  scenario: Pick<SeedScenario, "name" | "seed">,
+) => {
+  const root = await createTestTempDirectory("rea-feature-seed-request-");
+  const input = join(root, "trace.json");
+  await writeFile(
+    input,
+    JSON.stringify({ application, seed: scenario.seed, direction: "both" }),
+  );
+  const invocation = {
+    arguments: ["trace-application-feature", input, "--json"],
+  };
+  const response = await runFileCli(cli, invocation);
   expect(response.exitCode, `${scenario.name} via CLI`).toBe(0);
   const evidence = toolContract("trace_application_feature").outputSchema.parse(
     response.json,
   );
-  return applicationFeatureTraceResultSchema.parse(evidence.normalized_result);
+  return {
+    evidence,
+    result: applicationFeatureTraceResultSchema.parse(
+      evidence.normalized_result,
+    ),
+  };
 };
 
 const traceThroughMcp = async (
-  client: Client,
+  call: SharedMcpCall,
   application: unknown,
-  scenario: SeedScenario,
-): Promise<Trace> => {
-  const response = await client.callTool({
-    name: "trace_application_feature",
-    arguments: {
-      application,
-      seed: scenario.seed,
-      direction: "both",
-    },
+  scenario: Pick<SeedScenario, "name" | "seed">,
+) => {
+  const response = await call("trace_application_feature", {
+    application,
+    seed: scenario.seed,
+    direction: "both",
   });
   expect(response.isError, `${scenario.name} via MCP`).not.toBe(true);
   const evidence = toolContract("trace_application_feature").outputSchema.parse(
     response.structuredContent,
   );
-  return applicationFeatureTraceResultSchema.parse(evidence.normalized_result);
+  return {
+    evidence,
+    result: applicationFeatureTraceResultSchema.parse(
+      evidence.normalized_result,
+    ),
+  };
 };
 
 const expectTrace = (trace: Trace, scenario: SeedScenario): void => {
@@ -221,6 +231,166 @@ const expectTrace = (trace: Trace, scenario: SeedScenario): void => {
 };
 
 cliTest(
+  "discovers and traces direct call argument literals",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-call-literal-");
+    await writeFile(
+      join(root, "module.js"),
+      'client.rpc("proc_named", 7, false, unknown);\n',
+    );
+    const { evidence, result } = await analyzeFixture(cli, root);
+    const callSite = result.semantic_graph.nodes.find(
+      (node) =>
+        node.kind === "call-site" &&
+        Array.isArray(node.properties.arguments) &&
+        node.properties.arguments.some(
+          (entry) =>
+            entry !== null &&
+            typeof entry === "object" &&
+            !Array.isArray(entry) &&
+            entry.value === "proc_named",
+        ),
+    );
+    if (callSite === undefined)
+      throw new Error("Expected retained call argument");
+    const call = await cli.sharedMcpCall?.();
+    if (call === undefined) throw new Error("Expected MCP session");
+    const feature = await call("trace_application_feature", {
+      application: evidence,
+      seed: { kind: "string", value: "proc_named", match: "exact" },
+      direction: "both",
+    });
+    expect(feature.isError).not.toBe(true);
+    const featureEvidence = toolContract(
+      "trace_application_feature",
+    ).outputSchema.parse(feature.structuredContent);
+    const trace = applicationFeatureTraceResultSchema.parse(
+      featureEvidence.normalized_result,
+    );
+    expect(trace.semantic_discovery?.matches).toContainEqual({
+      node_id: callSite.node_id,
+      kind: "call-site",
+      trace_seed: { kind: "semantic-node", node_id: callSite.node_id },
+    });
+    const semantic = await call("trace_javascript_semantics", {
+      application: evidence,
+      query: {
+        seed: { kind: "literal", value: "proc_named" },
+        direction: "forward-influence",
+      },
+    });
+    expect(semantic.isError).not.toBe(true);
+    const semanticEvidence = toolContract(
+      "trace_javascript_semantics",
+    ).outputSchema.parse(semantic.structuredContent);
+    const argument = result.semantic_graph.nodes.find(
+      (node) =>
+        node.kind === "expression" &&
+        node.properties.literal_argument_value === "proc_named" &&
+        node.properties.literal_argument_call_site_node_id === callSite.node_id,
+    );
+    if (argument === undefined)
+      throw new Error("Expected literal argument node");
+    expect(semanticEvidence.normalized_result).toMatchObject({
+      seed_node_ids: expect.arrayContaining([argument.node_id]),
+      nodes: expect.arrayContaining([
+        expect.objectContaining({ node_id: callSite.node_id }),
+      ]),
+    });
+  },
+);
+
+cliTest(
+  "discovers semantic-only labels with paged CLI and MCP follow-up",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-feature-semantic-label-");
+    await writeFile(
+      join(root, "module.js"),
+      "function uniqueSemanticCandidate(uniqueSemanticCandidate) { return uniqueSemanticCandidate; }\nuniqueSemanticCandidate(1);\n",
+    );
+    const { evidence, result } = await analyzeFixture(cli, root);
+    const seed = applicationFeatureSeedSchema.parse({
+      kind: "string",
+      value: "uniqueSemanticCandidate",
+      match: "exact",
+      case_sensitive: true,
+    });
+    expect(findApplicationFeatureSeeds(result.graph.nodes, seed)).toEqual([]);
+    const expected = result.semantic_graph.nodes.filter(
+      (node) => node.label === seed.value,
+    );
+    expect(expected.length).toBeGreaterThan(0);
+    const request = {
+      application: evidence,
+      seed,
+      direction: "both",
+      semantic_page: { offset: 0, limit: 1 },
+    };
+    const input = join(root, "request.json");
+    await writeFile(input, JSON.stringify(request));
+    const cliResult = await cli.run({
+      arguments: ["trace-application-feature", input, "--json"],
+    });
+    expect(cliResult.exitCode).toBe(0);
+    const cliEvidence = toolContract(
+      "trace_application_feature",
+    ).outputSchema.parse(cliResult.json);
+    const trace = applicationFeatureTraceResultSchema.parse(
+      cliEvidence.normalized_result,
+    );
+    expect(trace.coverage.status).toBe("no-match");
+    expect(trace.semantic_discovery).toMatchObject({
+      source_graph_id: result.semantic_graph.graph_id,
+      source_coverage: result.semantic_graph.coverage.status,
+      total: expected.length,
+      offset: 0,
+      limit: 1,
+      next_offset: expected.length > 1 ? 1 : null,
+      matches: [{ node_id: expected[0]?.node_id, kind: expected[0]?.kind }],
+    });
+    const call = await cli.sharedMcpCall?.();
+    if (call === undefined) throw new Error("Expected file MCP session");
+    const mcpResult = await call("trace_application_feature", request);
+    expect(mcpResult.isError).not.toBe(true);
+    const mcpEvidence = toolContract(
+      "trace_application_feature",
+    ).outputSchema.parse(mcpResult.structuredContent);
+    expect(mcpEvidence.normalized_result).toEqual(trace);
+    const afterFirst = await call("trace_application_feature", {
+      ...request,
+      semantic_page: { offset: 1, limit: 1 },
+    });
+    expect(afterFirst.isError).not.toBe(true);
+    const afterFirstEvidence = toolContract(
+      "trace_application_feature",
+    ).outputSchema.parse(afterFirst.structuredContent);
+    const afterFirstTrace = applicationFeatureTraceResultSchema.parse(
+      afterFirstEvidence.normalized_result,
+    );
+    expect(afterFirstTrace.semantic_discovery).toMatchObject({
+      total: expected.length,
+      offset: 1,
+      matches: expected
+        .slice(1, 2)
+        .map(({ node_id, kind }) => ({ node_id, kind })),
+    });
+    const match = trace.semantic_discovery?.matches[0];
+    if (match === undefined) throw new Error("Expected semantic match");
+    const semantic = await call("trace_javascript_semantics", {
+      application: evidence,
+      query: { seed: match.trace_seed, direction: "backward-provenance" },
+    });
+    expect(semantic.isError).not.toBe(true);
+    const semanticEvidence = toolContract(
+      "trace_javascript_semantics",
+    ).outputSchema.parse(semantic.structuredContent);
+    expect(semanticEvidence.normalized_result).toMatchObject({
+      seed_node_ids: [match.node_id],
+    });
+  },
+);
+
+cliTest(
   "matches feature seeds against node IDs and preserved route values through CLI and MCP",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-feature-seed-selection-");
@@ -229,28 +399,61 @@ cliTest(
       `const notificationRoute = { path: "/accounts/preferences/notifications" };\nconst tinyRoute = { path: "/tiny" };\nmodule.exports = { notificationRoute, tinyRoute };\n`,
     );
     const { evidence, result } = await analyzeFixture(cli, root);
-    const client = new Client({ name: "feature-seed-selection", version: "1" });
-    const transport = new StdioClientTransport({
-      command: process.execPath,
-      args: [resolve("scripts/rea.mjs"), "mcp"],
-      cwd: process.cwd(),
-      env: { PATH: process.env.PATH ?? "", REA_LOG_LEVEL: "silent" },
-      stderr: "pipe",
-    });
-    transport.stderr?.on("data", () => undefined);
-    try {
-      await client.connect(transport);
-      for (const scenario of createSeedScenarios(result.graph)) {
-        const cliTrace = await traceThroughCli(cli, evidence, scenario);
-        const mcpTrace = await traceThroughMcp(client, evidence, scenario);
-        expectTrace(cliTrace, scenario);
-        expectTrace(mcpTrace, scenario);
-        expect(mcpTrace.seed_matches).toEqual(cliTrace.seed_matches);
-        expect(mcpTrace.coverage).toEqual(cliTrace.coverage);
+    const call = await cli.sharedMcpCall?.();
+    if (call === undefined) throw new Error("Expected file MCP session");
+    for (const scenario of createSeedScenarios(result.graph)) {
+      const { result: cliTrace } = await traceThroughCli(
+        cli,
+        evidence,
+        scenario,
+      );
+      const { result: mcpTrace } = await traceThroughMcp(
+        call,
+        evidence,
+        scenario,
+      );
+      expectTrace(cliTrace, scenario);
+      expectTrace(mcpTrace, scenario);
+      expect(mcpTrace.seed_matches).toEqual(cliTrace.seed_matches);
+      expect(mcpTrace.coverage).toEqual(cliTrace.coverage);
+    }
+  },
+);
+
+cliTest(
+  "normalizes API seed defaults before deriving matching and missing trace identities through CLI and MCP",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-feature-seed-defaults-");
+    await writeFile(
+      join(root, "preload.js"),
+      `
+      const { contextBridge } = require("electron");
+      contextBridge.exposeInMainWorld("desktop", { openProject: () => true });
+    `,
+    );
+    const { evidence } = await analyzeFixture(cli, root);
+    const call = await cli.sharedMcpCall?.();
+    if (call === undefined) throw new Error("Expected file MCP session");
+    for (const value of ["openProject", "missingProject"]) {
+      const omitted = { name: value, seed: { kind: "api" as const, value } };
+      const explicit = {
+        ...omitted,
+        seed: { ...omitted.seed, match: null, case_sensitive: false },
+      };
+      const omittedCli = await traceThroughCli(cli, evidence, omitted);
+      const explicitCli = await traceThroughCli(cli, evidence, explicit);
+      const omittedMcp = await traceThroughMcp(call, evidence, omitted);
+      const explicitMcp = await traceThroughMcp(call, evidence, explicit);
+      expect(omittedCli, value).toEqual(explicitCli);
+      expect(omittedMcp, value).toEqual(explicitMcp);
+      expect(omittedMcp, value).toEqual(omittedCli);
+      expect(omittedCli.result.seed).toEqual(explicit.seed);
+      if (value === "openProject")
+        expect(omittedCli.result.summary.matched_seeds).toBeGreaterThan(0);
+      else {
+        expect(omittedCli.result.summary.matched_seeds).toBe(0);
+        expect(omittedCli.result.coverage.status).toBe("no-match");
       }
-    } finally {
-      await client.close();
-      await transport.close();
     }
   },
 );

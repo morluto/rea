@@ -244,44 +244,27 @@ export const competingLoaderNames = [
   "single percent main",
 ];
 
-const groupSize = Math.ceil(competingLoaderNames.length / 3);
-/** Three disjoint groups so Vitest can run the matrix on separate workers. */
-export const competingLoaderGroups = [
-  competingLoaderNames.slice(0, groupSize),
-  competingLoaderNames.slice(groupSize, groupSize * 2),
-  competingLoaderNames.slice(groupSize * 2),
+/**
+ * Compiled CLI parity for this stateless matrix. These three loaders are the
+ * distinct renderer outcomes: unresolved, the first application page, and the
+ * percent-encoded second page. Both surfaces call
+ * analyzeJavaScriptApplication; parity compares those normalized results.
+ * Every loader, including these, still runs through the shared stdio session.
+ */
+export const cliParityLoaders = [
+  "module.require",
+  "earlier reassigned module alias",
+  "single percent main",
 ] as const;
 
-/** One public CLI or MCP observation for a competing loader fixture. */
-export const assertCompetingLoaderOwnership = async (
-  surface: "CLI" | "stdio MCP",
-  loader: string,
-  cli: TestCli,
-): Promise<void> => {
+type CompetingLoaderGraph = Awaited<
+  ReturnType<typeof analyzeJavaScriptDirectory>
+>["graph"];
+
+/** Write one competing-loader application and return its directory. */
+const writeCompetingLoaderFixture = async (loader: string): Promise<string> => {
   const root = await createTestTempDirectory("rea-loader-owner-");
   const single = loader === "single percent main";
-  const inert = [
-    "native array assignment local loader",
-    "exports assignment local loader",
-    "rest assignment local loader",
-    "excluded assignment local loader",
-    "inactive default assignment local loader",
-    "overwritten assignment local loader",
-    "local assigned loader",
-    "overwritten local loader",
-    "invalid absolute ESM",
-    "invalid absolute dynamic import",
-    "builtin alias",
-    "electron alias",
-    "electron main alias",
-    "inactive fallback",
-    "blocked alias",
-    "local module",
-    "projected module",
-    "resolve-only",
-    "missing wildcard alias",
-    "earlier reassigned module alias",
-  ].includes(loader);
   const absolute = loader === "absolute main";
   const main = fixtureMainPath(loader);
   const imports = fixtureImports(loader);
@@ -307,7 +290,39 @@ export const assertCompetingLoaderOwnership = async (
     "shared/index.html": "source-relative decoy",
     "index.html": "artifact-root decoy",
   });
-  const { graph } = await analyzeJavaScriptDirectory(surface, cli, root);
+  return root;
+};
+
+/** Ownership facts for one competing loader, independent of transport. */
+const expectCompetingLoaderGraph = (
+  loader: string,
+  graph: CompetingLoaderGraph,
+): void => {
+  const single = loader === "single percent main";
+  const main = fixtureMainPath(loader);
+  const inert = [
+    "native array assignment local loader",
+    "exports assignment local loader",
+    "rest assignment local loader",
+    "excluded assignment local loader",
+    "inactive default assignment local loader",
+    "overwritten assignment local loader",
+    "local assigned loader",
+    "overwritten local loader",
+    "invalid absolute ESM",
+    "invalid absolute dynamic import",
+    "builtin alias",
+    "electron alias",
+    "electron main alias",
+    "inactive fallback",
+    "blocked alias",
+    "local module",
+    "projected module",
+    "resolve-only",
+    "createRequire base",
+    "missing wildcard alias",
+    "earlier reassigned module alias",
+  ].includes(loader);
   if (loader.startsWith("Windows "))
     expect(graph.edges).toEqual(
       expect.arrayContaining([
@@ -345,8 +360,20 @@ export const assertCompetingLoaderOwnership = async (
           relation: "imports",
           properties: expect.objectContaining({
             kind: "require",
-            specifier: null,
+            operation: "load",
+            specifier: "../shared/window.cjs",
+            resolution_base_path: "../other/nested/main.cjs",
+            resolution_status: "not-found",
             resolved_path: null,
+          }),
+          evidence: expect.objectContaining({
+            location: expect.objectContaining({
+              available: true,
+              value: expect.objectContaining({
+                kind: "source-range",
+                source: "b/main.mjs",
+              }),
+            }),
           }),
         }),
       ]),
@@ -398,4 +425,28 @@ export const assertCompetingLoaderOwnership = async (
       )
       .map(({ properties }) => properties.resolved_path),
   ).toEqual(target === null ? [] : [target]);
+};
+
+/** Observe one competing loader through the shared stdio MCP session. */
+export const assertCompetingLoaderOwnership = async (
+  loader: string,
+  cli: TestCli,
+): Promise<void> => {
+  const root = await writeCompetingLoaderFixture(loader);
+  const { graph } = await analyzeJavaScriptDirectory("stdio MCP", cli, root);
+  expectCompetingLoaderGraph(loader, graph);
+};
+
+/**
+ * Compare one compiled CLI analysis with the shared stdio MCP analysis of the
+ * same fixture. Ownership assertions stay on the MCP matrix.
+ */
+export const assertCompetingLoaderCliParity = async (
+  loader: string,
+  cli: TestCli,
+): Promise<void> => {
+  const root = await writeCompetingLoaderFixture(loader);
+  const mcp = await analyzeJavaScriptDirectory("stdio MCP", cli, root);
+  const compiled = await analyzeJavaScriptDirectory("CLI", cli, root);
+  expect(compiled).toEqual(mcp);
 };

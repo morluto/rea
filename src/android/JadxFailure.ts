@@ -1,4 +1,4 @@
-import { jadxOperationTimeoutGuidance } from "./JadxRelease.js";
+import { jadxOperationTimeoutGuidance } from "./JadxOperationTimeout.js";
 import { JadxInterruption } from "./JadxInterruption.js";
 import { z } from "zod";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
@@ -17,9 +17,11 @@ import {
   StableFileHashFailure,
 } from "../filesystem/StableFileHash.js";
 import {
+  RegularFileCancelled,
   RegularFileCleanupFailure,
   regularFileCancellation,
 } from "../filesystem/OwnedRegularFile.js";
+import { androidSnapshotCopy } from "./AndroidTargetSnapshot.js";
 import type { JadxSession } from "./JadxSession.js";
 import type { JadxMcpTransport } from "./JadxMcpTransport.js";
 
@@ -115,12 +117,61 @@ const observeJadxFailure = (
             cause: cancellation.reason,
           });
   if (cause instanceof RegularFileCleanupFailure) {
-    const primaryCause =
-      cause.outcome.kind === "failed"
-        ? stableFileHashCause(cause.outcome.cause)
-        : cause;
+    const reason =
+      cause.cleanupCause instanceof Error
+        ? cause.cleanupCause.message
+        : String(cause.cleanupCause);
+    // A finished copy or its cancellation can sit on this close or inside a
+    // nested one when another descriptor also rejected close. Name every
+    // descriptor that failed; the copied output path stays on the observation.
+    const closeFailures = snapshotCloseFailures(cause);
+    const descriptorPaths = [
+      ...new Set(closeFailures.map((failure) => failure.path)),
+    ];
+    const completed = completedSnapshotCopy(cause);
+    const nestedCancellation = nestedFileCancellation(cause);
+    const nestedCancellationError =
+      nestedCancellation === undefined
+        ? undefined
+        : timeout.aborted && nestedCancellation.reason === timeout.reason
+          ? new AnalysisTimeoutError(request.operation, timeoutMs, {
+              cause: nestedCancellation.reason,
+              ...jadxOperationTimeoutGuidance(timeoutMs),
+            })
+          : new AnalysisCancelledError(request.operation, {
+              cause: nestedCancellation.reason,
+            });
+    const snapshotObservation =
+      completed === undefined
+        ? undefined
+        : {
+            kind: "file-snapshot-hash" as const,
+            path: completed.snapshotPath,
+            sha256: completed.sha256,
+            bytes: completed.bytes,
+          };
+    if (completed !== undefined && nestedCancellationError === undefined)
+      return new ProviderCleanupError(
+        "jadx",
+        descriptorPaths,
+        {
+          reason,
+          snapshot_copy: "completed",
+          source_path: completed.sourcePath,
+          snapshot_sha256: completed.sha256,
+          snapshot_bytes: completed.bytes,
+        },
+        {
+          operation: request.operation,
+          cause,
+          ...(snapshotObservation === undefined
+            ? {}
+            : { partialObservation: snapshotObservation }),
+        },
+      );
+    const primaryCause = nestedOperationCause(cause);
     const primary =
-      cancellationError ??
+      nestedCancellationError ??
       (primaryCause instanceof AnalysisError
         ? primaryCause
         : new ProviderAdapterError("jadx", request.operation, {
@@ -132,18 +183,47 @@ const observeJadxFailure = (
           }));
     const cleanup = new ProviderCleanupError(
       "jadx",
-      [cause.path],
+      descriptorPaths,
       {
-        reason:
-          cause.cleanupCause instanceof Error
-            ? cause.cleanupCause.message
-            : String(cause.cleanupCause),
+        reason,
+        ...(completed === undefined
+          ? {}
+          : {
+              snapshot_copy: "completed" as const,
+              source_path: completed.sourcePath,
+              snapshot_sha256: completed.sha256,
+              snapshot_bytes: completed.bytes,
+            }),
       },
       { operation: request.operation, cause },
     );
-    return analysisErrorWithCleanupFailure(primary, cleanup, request.operation);
+    const composed = analysisErrorWithCleanupFailure(
+      primary,
+      cleanup,
+      request.operation,
+    );
+    if (snapshotObservation !== undefined)
+      composed.retainPartialObservation(snapshotObservation);
+    return composed;
   }
-  if (cancellationError !== undefined) return cancellationError;
+  if (cancellationError !== undefined) {
+    const completed = completedSnapshotCopy(cause);
+    if (completed !== undefined) {
+      cancellationError.retainPartialObservation({
+        kind: "file-snapshot-hash",
+        path: completed.snapshotPath,
+        sha256: completed.sha256,
+        bytes: completed.bytes,
+      });
+      cancellationError.retainDiagnostics({
+        snapshot_copy: "completed",
+        source_path: completed.sourcePath,
+        snapshot_sha256: completed.sha256,
+        snapshot_bytes: completed.bytes,
+      });
+    }
+    return cancellationError;
+  }
   if (cause instanceof StableFileHashFailure)
     return new ProviderAdapterError("jadx", request.operation, {
       cause: cause.cause,
@@ -174,6 +254,58 @@ const observeJadxFailure = (
   return physicalFailure(
     cause instanceof JadxInterruption ? cause.reason : cause,
   );
+};
+
+/**
+ * A finished copy can be the close outcome or the value inside a nested
+ * cancellation thrown after the destination close succeeded.
+ */
+const completedSnapshotCopy = (
+  cause: unknown,
+): ReturnType<typeof androidSnapshotCopy> => {
+  if (cause instanceof RegularFileCancelled)
+    return androidSnapshotCopy(cause.outcome.value);
+  if (!(cause instanceof RegularFileCleanupFailure)) return undefined;
+  if (cause.outcome.kind === "completed")
+    return androidSnapshotCopy(cause.outcome.value);
+  return completedSnapshotCopy(cause.outcome.cause);
+};
+
+/** This close and any nested close whose failure is its operation outcome. */
+const snapshotCloseFailures = (
+  cause: RegularFileCleanupFailure,
+): readonly RegularFileCleanupFailure[] => {
+  const failures = [cause];
+  if (
+    cause.outcome.kind === "failed" &&
+    cause.outcome.cause instanceof RegularFileCleanupFailure
+  )
+    failures.push(...snapshotCloseFailures(cause.outcome.cause));
+  return failures;
+};
+
+/** Cancellation recorded on this close or on a nested descriptor close. */
+const nestedFileCancellation = (
+  cause: unknown,
+): { readonly reason: unknown } | undefined => {
+  const direct = regularFileCancellation(cause);
+  if (direct !== undefined) return direct;
+  if (
+    cause instanceof RegularFileCleanupFailure &&
+    cause.outcome.kind === "failed"
+  )
+    return nestedFileCancellation(cause.outcome.cause);
+  return undefined;
+};
+
+/** The operation error under nested close failures, not the close wrapper. */
+const nestedOperationCause = (cause: unknown): unknown => {
+  if (
+    cause instanceof RegularFileCleanupFailure &&
+    cause.outcome.kind === "failed"
+  )
+    return nestedOperationCause(stableFileHashCause(cause.outcome.cause));
+  return stableFileHashCause(cause);
 };
 
 const presentDiagnosticFailure = (

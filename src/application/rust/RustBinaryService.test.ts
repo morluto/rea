@@ -34,6 +34,7 @@ const report: RustBinary = {
         source: "local",
         kind: null,
         dependencies: [],
+        features: null,
         root: true,
       },
     ],
@@ -50,6 +51,7 @@ const report: RustBinary = {
 it("rejects a relative path and extra arguments before reading", async () => {
   let calls = 0;
   const service = new RustBinaryService({
+    close: async () => {},
     identity,
     inspect: () => {
       calls += 1;
@@ -70,6 +72,7 @@ it("rejects a relative path and extra arguments before reading", async () => {
 
 it("records the selected artifact and the dependency section range", async () => {
   const result = await new RustBinaryService({
+    close: async () => {},
     identity,
     inspect: () => Promise.resolve(ok(report)),
   }).inspect({ path: report.artifact.path });
@@ -89,6 +92,7 @@ it("records the selected artifact and the dependency section range", async () =>
     artifact: { ...report.artifact, path: "/artifacts/other" },
   };
   const invalid = await new RustBinaryService({
+    close: async () => {},
     identity,
     inspect: () => Promise.resolve(ok(mismatched)),
   }).inspect({ path: report.artifact.path });
@@ -106,6 +110,7 @@ it("rejects a cycle claim the package dependencies do not contain", async () => 
     },
   };
   const result = await new RustBinaryService({
+    close: async () => {},
     identity,
     inspect: () => Promise.resolve(ok(invalidReport)),
   }).inspect({ path: report.artifact.path });
@@ -117,6 +122,7 @@ it("retains completed Rust Evidence on late cancellation and keeps output failur
   const controller = new AbortController();
   const reason = { request: "late Rust cancellation" };
   const service = new RustBinaryService({
+    close: async () => {},
     identity,
     inspect: () => {
       controller.abort(reason);
@@ -141,6 +147,7 @@ it("retains completed Rust Evidence on late cancellation and keeps output failur
     artifact: { ...report.artifact, path: "/artifacts/other" },
   };
   const invalid = await new RustBinaryService({
+    close: async () => {},
     identity,
     inspect: () => {
       invalidController.abort();
@@ -178,6 +185,7 @@ it.each([
     },
   };
   const result = await new RustBinaryService({
+    close: async () => {},
     identity,
     inspect: () => Promise.resolve(ok(invalidReport)),
   }).inspect({ path: report.artifact.path });
@@ -203,6 +211,7 @@ it.each([
     controller.abort(reason);
     let calls = 0;
     const service = new RustBinaryService({
+      close: async () => {},
       identity,
       inspect: async () => {
         calls += 1;
@@ -225,6 +234,7 @@ it.each([
 it("requires retention and rejects contradictory detail before invoking the reader", async () => {
   let calls = 0;
   const service = new RustBinaryService({
+    close: async () => {},
     identity,
     inspect: async () => {
       calls++;
@@ -249,6 +259,7 @@ it("requires retention and rejects contradictory detail before invoking the read
 it("retains the unchanged parent and keeps delivery selectors out of provider inputs", async () => {
   const inputs: unknown[] = [];
   const service = new RustBinaryService({
+    close: async () => {},
     identity,
     inspect: async (input) => {
       inputs.push(input);

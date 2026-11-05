@@ -85,6 +85,11 @@ publication. REA writes verified bytes to an exclusively owned output tree and
 rolls it back on failure. It also checks that the original source and engine
 bytes remain unchanged before committing. The existing output is never overwritten.
 
+A denied selected-input read reports `access_denied` with the observed OS code
+and path. A source or engine identity change reports `artifact_changed`;
+neither failure is a malformed recovery request. Cancellation retains the
+caller's reason through admission, command launch and completion.
+
 Multi-input relative filenames must be representable unchanged as artifact paths:
 NFC Unicode spelling and no literal backslashes. Unsupported layouts fail before
 invoking the engine rather than silently renaming inputs referenced by source maps.
