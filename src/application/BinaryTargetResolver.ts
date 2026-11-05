@@ -91,6 +91,7 @@ import {
 } from "../domain/wxapkgFormat.js";
 import { detectHexRecordEncoding } from "../domain/firmware/hexRecords.js";
 import { hasUf2Block } from "../domain/firmware/uf2.js";
+import { hasAndroidBackupMagic } from "../domain/androidBackup.js";
 import {
   DFUSE_SUFFIX_BYTES,
   hasDfuSePrefix,
@@ -786,6 +787,7 @@ const detectArtifactFormat = async (
   const hexRecords = detectHexRecordEncoding(magic);
   if (hexRecords !== undefined) return hexRecords;
   if (hasUf2Block(magic)) return "uf2";
+  if (hasAndroidBackupMagic(magic)) return "android-backup";
   if (
     hasDfuSePrefix(magic) &&
     initial.size >= DFUSE_SUFFIX_BYTES &&
@@ -889,6 +891,7 @@ const isArchiveFormat = (
     "godot-pck",
     "unityfs",
     "wxapkg",
+    "android-backup",
     "uimage",
     "dmg",
     "pkg",

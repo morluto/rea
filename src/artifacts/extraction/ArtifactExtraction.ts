@@ -218,13 +218,14 @@ export const materializeArtifactInventoryInScope = async (
       `UnityFS directory is ${containerMetadata.directory_status}; its complete contents cannot be extracted`,
     );
   if (
-    containerMetadata?.kind === "wxapkg" &&
+    (containerMetadata?.kind === "wxapkg" ||
+      containerMetadata?.kind === "android-backup") &&
     containerMetadata.directory_status !== "available"
   )
     throw new AnalysisUnsupportedTargetError(
       "extract_artifact",
       input.selectedPath ?? input.inputPath,
-      `wxapkg directory is ${containerMetadata.directory_status}; its complete contents cannot be extracted`,
+      `${containerMetadata.kind} directory is ${containerMetadata.directory_status}; its complete contents cannot be extracted`,
     );
   const { available, selected: activeOccurrences } =
     selectArtifactExtractionOccurrences(

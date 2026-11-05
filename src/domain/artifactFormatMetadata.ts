@@ -74,6 +74,23 @@ export const wxapkgMetadataSchema = z.strictObject({
 });
 export type WxapkgMetadata = z.infer<typeof wxapkgMetadataSchema>;
 
+/** Envelope facts; encryption leaves member coverage unknown. */
+const androidBackupMetadataSchema = z.strictObject({
+  kind: z.literal("android-backup"),
+  format_version: z.int().min(1).max(5),
+  compressed: z.boolean(),
+  encryption: z.string(),
+  payload_offset: offset,
+  directory_status: z.enum(["available", "encrypted"]),
+});
+const androidBackupEntryMetadataSchema = z.strictObject({
+  kind: z.literal("android-backup-entry"),
+  tar_header_offset: offset,
+  tar_data_offset: offset,
+  mode: offset,
+  pax: z.record(z.string(), z.string()),
+});
+
 export const wxapkgEntryMetadataSchema = z.strictObject({
   kind: z.literal("wxapkg-entry"),
   index: uint32,
@@ -785,6 +802,8 @@ export const artifactFormatMetadataSchema = z.discriminatedUnion("kind", [
   unityFsEntryMetadataSchema,
   wxapkgMetadataSchema,
   wxapkgEntryMetadataSchema,
+  androidBackupMetadataSchema,
+  androidBackupEntryMetadataSchema,
   pyInstallerMetadataSchema,
   pyInstallerEntryMetadataSchema,
   dotnetBundleEntryMetadataSchema,
@@ -860,6 +879,13 @@ const declarationsByKind: {
   wxapkg: {
     notCompared:
       "Its fields come from the package's own bytes, which content comparison covers.",
+  },
+  "android-backup": {
+    notCompared:
+      "Envelope facts come from the carrier bytes, which content comparison covers.",
+  },
+  "android-backup-entry": {
+    declaration: (metadata) => ({ mode: metadata.mode, pax: metadata.pax }),
   },
   "wxapkg-entry": {
     notCompared:
