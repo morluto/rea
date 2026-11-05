@@ -207,10 +207,7 @@ export const registerAdbCommands = (
     description: "List one device directory with kinds, permissions, and sizes",
     args: z.object({
       serial,
-      "device-path": z
-        .string()
-        .min(1)
-        .describe("Absolute device directory path to list"),
+      "device-path": adbInputSchemas.list_adb_directory.shape.device_path,
     }),
     run: ({ args }) =>
       execute(CLI_COMMANDS.listAdbDirectory, "list_adb_directory", {
@@ -275,15 +272,9 @@ export const registerAdbCommands = (
   });
   cli.command(CLI_COMMANDS.resolveAdbPackages, {
     description: "Find installed packages by case-insensitive name substring",
-    args: z.object({
-      serial,
-      query: z.string().min(2).describe("Package-name substring to find"),
-    }),
+    args: adbInputSchemas.resolve_adb_packages,
     run: ({ args }) =>
-      execute(CLI_COMMANDS.resolveAdbPackages, "resolve_adb_packages", {
-        serial: args.serial,
-        query: args.query,
-      }),
+      execute(CLI_COMMANDS.resolveAdbPackages, "resolve_adb_packages", args),
   });
   cli.command(CLI_COMMANDS.installAdbPackage, {
     description:
