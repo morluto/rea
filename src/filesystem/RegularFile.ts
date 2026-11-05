@@ -122,13 +122,16 @@ export const openRegularFile = async (
     // against, so a ChangeTime still settling on Windows must not be recorded
     // as an established one. The first observation still validates the file
     // type, so a directory is refused before any settling delay.
-    const metadata = await settleChangeTimeBaseline(async () => {
-      assertRegularFileActive(options.signal);
-      const observed = await handle.stat();
-      if (!observed.isFile())
-        throw new NonRegularFileReadError(path, observed.isDirectory());
-      return observed;
-    });
+    const metadata = await settleChangeTimeBaseline(
+      async () => {
+        assertRegularFileActive(options.signal);
+        const observed = await handle.stat();
+        if (!observed.isFile())
+          throw new NonRegularFileReadError(path, observed.isDirectory());
+        return observed;
+      },
+      { signal: options.signal },
+    );
     assertRegularFileActive(options.signal);
     // O_NOFOLLOW is unavailable on Windows. Recheck the name only on hosts
     // where open could have followed a symlink, while the descriptor is owned.

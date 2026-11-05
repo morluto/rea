@@ -31,6 +31,8 @@ export interface ChangeTimeSettleSeams {
     | undefined;
   /** Already resolved budget. Omission parses `environment`. */
   readonly limits?: WindowsChangeTimeSettleLimits | undefined;
+  /** Cancels the wait; the last observation is not returned once aborted. */
+  readonly signal?: AbortSignal | undefined;
 }
 
 const limitsFrom = (
@@ -42,6 +44,11 @@ const limitsFrom = (
   );
   if (!resolved.ok) throw resolved.error;
   return resolved.value;
+};
+
+/** Stop settling as soon as the owning operation is cancelled. */
+const throwIfAborted = (signal: AbortSignal | undefined): void => {
+  if (signal?.aborted === true) throw signal.reason;
 };
 
 const defaultSleep = (delayMs: number): Promise<void> =>
@@ -88,11 +95,17 @@ export const settleChangeTimeBaseline = async (
   const limits = limitsFrom(seams);
   const settled = { ...seams, limits };
   const sleep = seams.sleep ?? defaultSleep;
+  throwIfAborted(seams.signal);
   let observed = await read();
   for (let poll = 0; poll < limits.maxPolls; poll += 1) {
     if (!changeTimeMayStillDrift(observed, settled)) return observed;
+    // A settle window is bounded by driftMs, not by the poll budget, so a
+    // cancelled scope must not keep an inventory waiting it out.
+    throwIfAborted(seams.signal);
     await sleep(limits.pollMs);
+    throwIfAborted(seams.signal);
     observed = await read();
   }
+  throwIfAborted(seams.signal);
   return observed;
 };

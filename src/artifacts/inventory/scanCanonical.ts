@@ -108,7 +108,12 @@ const scanCanonical = async (
   readonly snapshot: ArtifactInventorySnapshot;
   readonly transferredSource: TransferredArtifactInventorySource | undefined;
 }> => {
-  const metadata = await settleChangeTimeBaseline(() => lstat(path));
+  const metadata = await settleChangeTimeBaseline(() => lstat(path), {
+    // The owner selected this runtime's environment; the settle limits must
+    // come from it rather than the daemon's ambient one.
+    environment: options.environment,
+    signal: options.signal,
+  });
   const {
     format: rootFormat,
     digest: rootDigest,

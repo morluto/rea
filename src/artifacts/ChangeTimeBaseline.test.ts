@@ -150,3 +150,57 @@ it("refuses an invalid drift setting instead of using the default", async () => 
   });
   expect(reads()).toBe(0);
 });
+
+it("reads the settle limits from the selected runtime environment", async () => {
+  // The owning runtime selects its own environment; ambient values can hold a
+  // different drift window, or an invalid one that fails a valid runtime
+  // (greptile review on rea#8979).
+  const observeWith = async (environment: Record<string, string>) => {
+    const { read, reads } = scriptedRead([1_000]);
+    await settleChangeTimeBaseline(read, {
+      platform: "win32",
+      now: () => 1_001,
+      environment,
+      sleep: async () => {},
+    });
+    return reads();
+  };
+
+  // A 50 s selected window keeps a 1 s-old ChangeTime drifting; the ambient
+  // 2 s default would call it settled after a single read.
+  expect(
+    await observeWith({ REA_WINDOWS_CHANGE_TIME_DRIFT_MS: "50000" }),
+  ).toBeGreaterThan(1);
+});
+
+it("refuses an invalid value from the selected environment", async () => {
+  // The ambient environment must not decide whether a valid runtime starts.
+  const { read } = scriptedRead([1_000]);
+  await expect(
+    settleChangeTimeBaseline(read, {
+      platform: "win32",
+      now: () => 1_001,
+      environment: { REA_WINDOWS_CHANGE_TIME_DRIFT_MS: "nonsense" },
+    }),
+  ).rejects.toThrow(/REA_WINDOWS_CHANGE_TIME_DRIFT_MS/);
+});
+
+it("stops settling as soon as the owning operation is cancelled", async () => {
+  // A cancelled scope must not sit out the whole drift window; the previous
+  // fixed budget bounded that at about one second (greptile review on rea#8979).
+  const controller = new AbortController();
+  const { read, reads } = scriptedRead([1_000, 1_000, 1_000]);
+  const seams = advancingSeams(1_001, 25);
+  await expect(
+    settleChangeTimeBaseline(read, {
+      ...seams,
+      sleep: async (delayMs: number) => {
+        await seams.sleep(delayMs);
+        controller.abort(new Error("scope closed"));
+      },
+      signal: controller.signal,
+    }),
+  ).rejects.toThrow("scope closed");
+  // One observation, one sleep: it never re-read after the abort.
+  expect(reads()).toBe(1);
+});
