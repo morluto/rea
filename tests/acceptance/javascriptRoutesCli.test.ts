@@ -14,71 +14,19 @@ const routeViewFromEvidence = (evidence: unknown) =>
     parseEvidence(evidence).normalized_result,
   );
 
+// The full flag matrix (literal, alias, wrapper, dynamic, script/module/commonjs
+// program vars, ...) is asserted in javascriptRouteScan.test.ts, where each case
+// costs an in-process parse. This file only proves that both branches of the
+// public CLI view survive the round trip - a resolved route set and an unresolved
+// flag reported through the unknowns collection - so every extra case here pays a
+// process spawn and pushes the test into its own timeout.
 const indexRouteCases = [
   ["literal", "", "true", "js", ["/"], "module", false],
-  ["alias", "const INDEX=true;", "INDEX", "js", ["/"], "module", false],
-  ["wrapper", "", "(true as const)", "ts", ["/"], "module", false],
-  [
-    "wrapped-alias",
-    "const INDEX=true;",
-    "(INDEX as boolean)",
-    "ts",
-    ["/"],
-    "module",
-    false,
-  ],
-  ["false", "const INDEX=false;", "INDEX", "js", [], "module", false],
-  ["dynamic", "const INDEX=choose();", "INDEX", "js", [], "module", true],
   [
     "script-global",
     "var INDEX=true;globalThis.INDEX=false;",
     "INDEX",
     "js",
-    [],
-    "script",
-    true,
-  ],
-  [
-    "script-alias",
-    "var INDEX=true;const host=globalThis;host.INDEX=false;",
-    "INDEX",
-    "js",
-    [],
-    "script",
-    true,
-  ],
-  [
-    "module-var",
-    "var INDEX=true;globalThis.INDEX=false;",
-    "INDEX",
-    "js",
-    ["/"],
-    "module",
-    false,
-  ],
-  [
-    "commonjs-var",
-    "var INDEX=true;globalThis.INDEX=false;",
-    "INDEX",
-    "cjs",
-    ["/"],
-    "script",
-    false,
-  ],
-  [
-    "commonjs-typescript-var",
-    "var INDEX=true;globalThis.INDEX=false;",
-    "INDEX",
-    "cts",
-    ["/"],
-    "script",
-    false,
-  ],
-  [
-    "script-type-export",
-    "export type Marker = string;var INDEX=true;globalThis.INDEX=false;",
-    "INDEX",
-    "ts",
     [],
     "script",
     true,
