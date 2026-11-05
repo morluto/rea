@@ -56,3 +56,83 @@ it.each([
 ] as const)("keeps the socket acquisition for %s", (_name, call, method) => {
   expect(socketAcquisitionsFor(call)).toEqual([{ kind: "acquire", method }]);
 });
+/**
+ * The port can also sit inside an options object, and Node validates it there too.
+ *
+ * Measured on Node 24.22.1:
+ *
+ *   net.connect({port:-1})                 -> THREW ERR_SOCKET_BAD_PORT
+ *   net.connect({port:"-1"})               -> THREW ERR_SOCKET_BAD_PORT
+ *   net.connect({port:""}) / " " / "abc"   -> THREW ERR_SOCKET_BAD_PORT
+ *   net.connect({port:null}) / true        -> THREW ERR_INVALID_ARG_TYPE
+ *   net.connect({port:NaN}) / Infinity     -> THREW ERR_SOCKET_BAD_PORT
+ *   net.connect({port:80}) / "80"          -> Socket created
+ *   net.connect({port:" 80 "}) / "0x50"    -> Socket created (coerced)
+ *   net.connect({port:"1e2"}) / "080"      -> Socket created
+ *   net.connect({port:-1, path:"/tmp/x"})  -> Socket created (path wins)
+ *   net.connect({port:-1, path:""})        -> THREW (empty path does not rescue)
+ *   net.connect({port:-1, host:"h"})       -> THREW
+ *   net.connect({port:-1, socket:{}})      -> THREW (net ignores socket)
+ *   tls.connect({port:-1, path:"/tmp/x"})  -> Socket created
+ *   net.connect(80, {port:-1})             -> Socket created (positional port wins)
+ *   net.connect(-1, {port:80})             -> THREW (positional port validated)
+ */
+it.each([
+  ["an options negative port", `net.connect({port: -1})`],
+  ["an options port above the range", `net.connect({port: 70000})`],
+  ["an options fractional port", `net.connect({port: 1.5})`],
+  ["an options null port", `net.connect({port: null})`],
+  ["an options boolean port", `net.connect({port: true})`],
+  ["an options NaN port", `net.connect({port: NaN})`],
+  ["an options Infinity port", `net.connect({port: Infinity})`],
+  ["an options negative string port", `net.connect({port: "-1"})`],
+  ["an options empty string port", `net.connect({port: ""})`],
+  ["an options whitespace string port", `net.connect({port: " "})`],
+  ["an options non-numeric string port", `net.connect({port: "abc"})`],
+  ["an options fractional string port", `net.connect({port: "1.5"})`],
+  ["an options out-of-range string port", `net.connect({port: "65536"})`],
+  [
+    "an options empty path that does not rescue",
+    `net.connect({port: -1, path: ""})`,
+  ],
+  ["an options bad port beside a host", `net.connect({port: -1, host: "h"})`],
+  [
+    "an options bad port beside a net socket",
+    `net.connect({port: -1, socket: {}})`,
+  ],
+  ["a tls options negative port", `tls.connect({port: -1})`],
+  ["a tls options empty path", `tls.connect({port: -1, path: ""})`],
+  [
+    "a createConnection options negative port",
+    `net.createConnection({port: -1})`,
+  ],
+  [
+    "a positional negative port beside valid options",
+    `net.connect(-1, {port: 80})`,
+  ],
+] as const)("emits no socket acquisition for %s", (_name, call) => {
+  expect(socketAcquisitionsFor(call)).toEqual([]);
+});
+
+it.each([
+  ["an options port", `net.connect({port: 80})`],
+  ["an options string port", `net.connect({port: "80"})`],
+  ["a padded options string port", `net.connect({port: " 80 "})`],
+  ["a hex options string port", `net.connect({port: "0x50"})`],
+  ["an exponential options string port", `net.connect({port: "1e2"})`],
+  ["a padded-zero options string port", `net.connect({port: "080"})`],
+  [
+    "an options port rescued by a path",
+    `net.connect({port: -1, path: "/tmp/x"})`,
+  ],
+  ["an options port beside a host", `net.connect({port: 80, host: "h"})`],
+  [
+    "a tls options port rescued by a path",
+    `tls.connect({port: -1, path: "/tmp/x"})`,
+  ],
+  ["a positional port beside bad options", `net.connect(80, {port: -1})`],
+] as const)("keeps the socket acquisition for %s", (_name, call) => {
+  expect(socketAcquisitionsFor(call)).toEqual([
+    { kind: "acquire", method: "connect" },
+  ]);
+});

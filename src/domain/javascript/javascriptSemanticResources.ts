@@ -11,6 +11,8 @@ import type {
 } from "./javascriptSemanticIr.js";
 import {
   semanticStaticPropertyName,
+  readExactJavaScriptLiteral,
+  staticObjectProperty,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import { isUnmodifiedGlobalReference } from "./javascriptSemanticAmbientWrites.js";
@@ -66,9 +68,16 @@ export const collectJavaScriptSemanticResources = (
     ancestors: [],
   };
   const acquisitions = collectAcquisitions(program, context).filter(
-    (candidate) =>
-      !socketPortInFirstArgument(candidate) ||
-      !rejectsSocketPortLiteral(candidate.node, context),
+    (candidate) => {
+      if (!socketPortInFirstArgument(candidate)) return true;
+      if (rejectsSocketPortLiteral(candidate.node, context)) return false;
+      // `net.connect({ port })` and `tls.connect({ port })` validate the same
+      // values inside an options object, so a provably bad one throws before a
+      // socket exists.
+      const options = socketOptionsObject(candidate.node);
+      if (options === undefined) return true;
+      return !rejectsOptionsPortLiteral(options, candidate.specifier, context);
+    },
   );
   return [
     ...acquisitions.map(immutableAcquisition),
@@ -544,3 +553,90 @@ const rejectsSocketPortLiteral = (
 const socketPortInFirstArgument = (
   candidate: Pick<AcquisitionReference, "specifier">,
 ): boolean => candidate.specifier === "net" || candidate.specifier === "tls";
+
+/**
+ * The options object whose own `port` Node validates, or undefined.
+ *
+ * Only a first argument that is an object literal reaches this path. A positional
+ * port or Unix socket path in slot 0 takes precedence, so
+ * `net.connect(80, { port: -1 })` still connects and its options `port` is never
+ * validated.
+ */
+const socketOptionsObject = (
+  node: t.CallExpression | t.OptionalCallExpression,
+): t.ObjectExpression | undefined => {
+  const first = node.arguments[0];
+  if (first === undefined || t.isSpreadElement(first)) return undefined;
+  const value = unwrapJavaScriptExpression(first).node;
+  return t.isObjectExpression(value) ? value : undefined;
+};
+
+/**
+ * Whether an options-object `port` provably throws before a socket exists.
+ *
+ * `net.connect`/`net.createConnection`/`tls.connect` accept the port inside an
+ * options object too, and validate it the same way. Two members change which value
+ * is validated:
+ *
+ * - a `path` becomes the Unix socket and the port is not read, so a non-empty path
+ *   rescues the call (`{port: -1, path: "/tmp/x"}` connects);
+ * - for `tls`, an existing `socket` is wrapped instead of connecting, so `socket`
+ *   rescues the port check.
+ *
+ * A `socket` member on `net` is not honoured, so it does not rescue there.
+ *
+ * `undefined` and `{}` throw `ERR_MISSING_ARGS`, which is a missing option rather
+ * than a bad port, so those stay undecided.
+ */
+const rejectsOptionsPortLiteral = (
+  options: t.ObjectExpression,
+  specifier: string,
+  context: DataEffectTraversalContext,
+): boolean => {
+  const read = staticObjectProperty(options, "port");
+  if (read.status !== "explicit") return false;
+  // A non-empty `path` selects a Unix socket; Node never validates the port.
+  const path = staticObjectProperty(options, "path");
+  if (path.status === "dynamic") return false;
+  if (path.status === "explicit") {
+    if (!t.isStringLiteral(path.value)) return false;
+    if (path.value.value.length > 0) return false;
+  }
+  // `tls.connect` wraps a supplied socket instead of connecting.
+  if (specifier === "tls") {
+    const socket = staticObjectProperty(options, "socket");
+    if (socket.status !== "missing") return false;
+  }
+  const value = unwrapJavaScriptExpression(read.value as t.Node).node;
+  // `null` and booleans are not ports: both throw `ERR_INVALID_ARG_TYPE`.
+  if (t.isNullLiteral(value) || t.isBooleanLiteral(value)) return true;
+  if (t.isBigIntLiteral(value)) return true;
+  // `NaN` and `Infinity` are unshadowed globals, and neither is a port.
+  if (
+    t.isIdentifier(value) &&
+    (value.name === "NaN" || value.name === "Infinity") &&
+    isUnmodifiedGlobalReference(value, context.state, value.name)
+  )
+    return true;
+  // A unary operator over one is the same non-finite number.
+  if (t.isUnaryExpression(value)) {
+    const operand = unwrapJavaScriptExpression(value.argument).node;
+    if (
+      t.isIdentifier(operand) &&
+      (operand.name === "NaN" || operand.name === "Infinity") &&
+      isUnmodifiedGlobalReference(operand, context.state, operand.name)
+    )
+      return true;
+  }
+  const literal = readExactJavaScriptLiteral(value);
+  if (!literal.found) return false;
+  const port = literal.value;
+  if (typeof port === "number")
+    return !Number.isInteger(port) || port < 0 || port > 65535;
+  if (typeof port !== "string") return false;
+  // A string port is coerced, so `""` and whitespace throw while `" 80 "`,
+  // `"0x50"`, `"1e2"` and `"080"` all read as 80.
+  if (port.trim().length === 0) return true;
+  const number = Number(port);
+  return !Number.isInteger(number) || number < 0 || number > 65535;
+};
