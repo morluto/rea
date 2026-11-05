@@ -19,6 +19,7 @@ import type {
   JavaScriptSemanticModuleLink,
 } from "../../domain/javascript/javascriptSemanticIr.js";
 import {
+  explicitJavaScriptLoaderMode,
   isJsonModuleTarget,
   moduleResolutionModeForJavaScriptReference,
 } from "../../domain/javascript/javascriptModuleResolutionMode.js";
@@ -43,7 +44,6 @@ import {
 import { projectJavaScriptExportReturnShapes } from "../../domain/javascript/javascriptExportReturnShapeProjection.js";
 
 import type { JavaScriptModuleSemanticIr } from "../../domain/javascript/javascriptModuleSemanticIr.js";
-import { explicitJavaScriptLoaderMode } from "../../domain/javascript/javascriptSourceParser.js";
 
 interface SemanticAnalysis {
   readonly ir: JavaScriptModuleSemanticIr;

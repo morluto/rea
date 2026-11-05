@@ -1,4 +1,5 @@
 import { expect, it } from "vitest";
+import { moduleResolutionModeForJavaScriptReference } from "./javascriptModuleResolutionMode.js";
 import * as t from "@babel/types";
 
 import {
@@ -22,6 +23,21 @@ import {
 } from "./javascriptSourceParser.js";
 
 it.each([
+  ["entry.cjs", "require"],
+  ["entry.cts", "require"],
+  ["entry.CJS", "import"],
+  ["entry.CTS", "import"],
+  ["entry.TS", "compiler-dependent"],
+] as const)(
+  "uses exact loader evidence for static imports from %s",
+  (path, expected) => {
+    expect(
+      moduleResolutionModeForJavaScriptReference(path, "static-import"),
+    ).toBe(expected);
+  },
+);
+
+it.each([
   ["entry.cjs", "module", "commonjs"],
   ["entry.cts", "module", "commonjs"],
   ["entry.mjs", "commonjs", "module"],
@@ -31,6 +47,7 @@ it.each([
   ["entry.MTS", "commonjs", "unknown"],
   ["entry.CTS", "module", "unknown"],
   ["entry.d.cts", "module", "unknown"],
+  ["entry.D.cts", "module", "unknown"],
   ["entry.d.ts", "commonjs", "unknown"],
   ["entry.d.mts", "commonjs", "module"],
   ["entry.jsx", "commonjs", "unknown"],

@@ -1,5 +1,6 @@
 import { parse, type ParserOptions, type ParserPlugin } from "@babel/parser";
 import * as t from "@babel/types";
+import { explicitJavaScriptLoaderMode } from "./javascriptModuleResolutionMode.js";
 import {
   hasOnlyInlineTypeExportSpecifiers,
   hasOnlyInlineTypeImportSpecifiers,
@@ -81,7 +82,7 @@ const parseWithRuntimeContext = (
   runtimeContextByProgram.set(
     file.program,
     filenameMode === "commonjs"
-      ? sourcePath?.endsWith(".d.cts")
+      ? sourcePath?.toLowerCase().endsWith(".d.cts")
         ? "unknown"
         : "commonjs"
       : filenameMode === "module"
@@ -139,22 +140,6 @@ export const parserPluginsForPath = (sourcePath?: string): ParserPlugin[] => {
   ];
   const jsxCapable = !dts && (isTsx || !isTsLike);
   return jsxCapable ? [...syntax, "jsx", typescript] : [...syntax, typescript];
-};
-
-/** Exact loader suffixes are separate from case-folded artifact grammar. */
-export const explicitJavaScriptLoaderMode = (
-  path?: string,
-): "module" | "commonjs" | undefined => {
-  switch (path?.slice(-4)) {
-    case ".mjs":
-    case ".mts":
-      return "module";
-    case ".cjs":
-    case ".cts":
-      return "commonjs";
-    default:
-      return undefined;
-  }
 };
 
 const runtimeSourceTypeForPath = (
