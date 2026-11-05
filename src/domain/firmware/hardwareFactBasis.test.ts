@@ -60,8 +60,25 @@ describe("hardware claim rules", () => {
         rule: "installed-part",
         tableNames: ["W25Q64CV", "W25Q128BV"],
         deviceName: "W25Q128",
+        answered: false,
       }),
     ).toMatchObject({ basis: "unsettled", settled: false });
+    expect(
+      decideHardwareClaim({
+        rule: "installed-part",
+        tableNames: ["W25Q64CV"],
+        deviceName: null,
+        answered: false,
+      }),
+    ).toMatchObject({ basis: "unsettled", settled: false });
+    expect(
+      decideHardwareClaim({
+        rule: "installed-part",
+        tableNames: ["W25Q64CV"],
+        deviceName: null,
+        answered: true,
+      }),
+    ).toMatchObject({ basis: "observed_address", settled: true });
     expect(
       decideHardwareClaim({
         rule: "driver-linkage",
@@ -70,7 +87,9 @@ describe("hardware claim rules", () => {
       }).settled,
     ).toBe(false);
   });
+});
 
+describe("hardware claim identity", () => {
   it("keeps each open fact on its own rule, with its subject and source", () => {
     const claims = hardwareClaimsForBlocks({
       blocks: [

@@ -86,6 +86,8 @@ export type HardwareClaimInput =
       readonly rule: "installed-part";
       readonly tableNames: readonly string[];
       readonly deviceName: string | null;
+      /** True only when something other than the support table identified the fitted chip. */
+      readonly answered: boolean;
     }
   | {
       readonly rule: "driver-linkage";
@@ -133,18 +135,19 @@ const installedPartClaim = (
 ): HardwareClaimDecision => {
   const single =
     input.tableNames.length === 1 ? input.tableNames[0] : undefined;
-  if (input.tableNames.length > 1) {
+  if (input.answered && single !== undefined) {
+    return claim(
+      input.rule,
+      "observed_address",
+      `Separate evidence identifies the installed part as ${single}.`,
+    );
+  }
+  if (input.tableNames.length > 0) {
     return claim(
       input.rule,
       "unsettled",
-      `The image table names ${input.tableNames.join(", ")}. The installed part is the chip that answers.`,
+      `The image table names ${input.tableNames.join(", ")}. A supported chip is not the installed part.`,
     );
-  }
-  if (
-    single !== undefined &&
-    (input.deviceName === null || input.deviceName === single)
-  ) {
-    return claim(input.rule, "observed_address", `The image names ${single}.`);
   }
   return claim(
     input.rule,
@@ -276,6 +279,7 @@ const deviceClaims = (device: ClaimDevice): HardwareClaim[] => {
           rule: "installed-part",
           tableNames: device.partNames,
           deviceName: null,
+          answered: false,
         }),
         device.id,
         device.evidence,

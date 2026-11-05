@@ -77,16 +77,16 @@ A hardware statement uses one rule and one basis. The same rules cover
 controller names, architectural registers, board windows, values computed by
 the image, installed parts, and driver strings.
 
-| Rule                    | Settled basis         | Stays unsettled when                                                            |
-| ----------------------- | --------------------- | ------------------------------------------------------------------------------- |
-| `observed-address`      | `observed_address`    | the address comes from rounding a page the instruction did not access           |
-| `chip-manual-name`      | `chip_manual`         | no observed address falls inside a controller window of the active chip map     |
-| `architecture-register` | `architecture_manual` | the register address is chosen by the board, such as a GIC, CLINT, or PLIC base |
-| `explicit-profile`      | `explicit_profile`    | the CPU family alone would assign a board memory window or register placement   |
-| `instruction-decode`    | `instruction`         | the image's own bit operations do not compute the split                         |
-| `installed-part`        | `observed_address`    | a probe table names more than one part, or the only text is a device name       |
-| `driver-linkage`        | `observed_address`    | a string's presence is treated as proof that the driver runs during boot        |
-| `board-record`          | none                  | the board record itself leaves the statement open, such as a color disagreement |
+| Rule                    | Settled basis         | Stays unsettled when                                                                                              |
+| ----------------------- | --------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `observed-address`      | `observed_address`    | the address comes from rounding a page the instruction did not access                                             |
+| `chip-manual-name`      | `chip_manual`         | no observed address falls inside a controller window of the active chip map                                       |
+| `architecture-register` | `architecture_manual` | the register address is chosen by the board, such as a GIC, CLINT, or PLIC base                                   |
+| `explicit-profile`      | `explicit_profile`    | the CPU family alone would assign a board memory window or register placement                                     |
+| `instruction-decode`    | `instruction`         | the image's own bit operations do not compute the split                                                           |
+| `installed-part`        | `observed_address`    | the table only lists supported chips, even a single name, until a separate observation identifies the fitted chip |
+| `driver-linkage`        | `observed_address`    | a string's presence is treated as proof that the driver runs during boot                                          |
+| `board-record`          | none                  | the board record itself leaves the statement open, such as a color disagreement                                   |
 
 Only a settled basis may be stated as fact. A claim keeps the subject, source,
 rule, and reason of the fact it came from. An open color note stays a board
