@@ -47,6 +47,53 @@ console.log(JSON.stringify({ wide: deeperThan(wide, 500), edge: deeperThan(neste
   expect(depths).toEqual({ wide: false, edge: false, over: true });
 }, 180_000);
 
+it("pairs elements with a long tag and many attributes in a small heap, spelling a selector only once chosen", async () => {
+  // Spelling the tag into a selector per attribute needed more than 140 MiB here.
+  const pairing = await inSmallHeap(
+    "viewPointer.ts",
+    "pairMembers",
+    `const tag = "t".repeat(40_000);
+const element = (id) => {
+  const attributes = { id };
+  for (let index = 0; index < 2000; index += 1) attributes["a" + index] = String(index);
+  return { name: tag, attributes, children: [] };
+};
+const members = [element("1"), element("2")];
+const { newer, older } = pairMembers(members, members);
+console.log(JSON.stringify({ keys: newer.keys.map((key) => key.replace(tag, "T")), partners: newer.partners, same: older.keys.every((key, index) => key === newer.keys[index]) }));
+`,
+  );
+
+  expect(pairing).toEqual({
+    keys: ["[name=T][@id=1]", "[name=T][@id=2]"],
+    partners: [0, 1],
+    same: true,
+  });
+}, 180_000);
+
+it("refuses JSON over the parsed-view limit in a small heap, telling it apart from text without building it", async () => {
+  // Parsing the entry to detect its format needed more than 80 MiB here.
+  const entries = await inSmallHeap(
+    "zipView.ts",
+    "zipEntry",
+    `const read = (name, text) => {
+  const bytes = new TextEncoder().encode(text);
+  const entry = zipEntry({ name, size: bytes.length, compressedSize: bytes.length, method: 0, encrypted: false }, bytes);
+  return [entry.format, entry.view_error ?? entry.view.line_count];
+};
+console.log(JSON.stringify([
+  read("objects.json", "[{}" + ",{}".repeat(1_400_000) + "]"),
+  read("objects.txt", "[{}" + ",{}".repeat(1_400_000) + "}"),
+]));
+`,
+  );
+
+  expect(entries).toEqual([
+    ["json", "larger than the 4 MiB limit for JSON and key file views"],
+    ["text", 1],
+  ]);
+}, 180_000);
+
 it("compares objects of selector keys with arrays in a small heap, however many field sets or spellings they use", async () => {
   // An index per field set or spelling needed more than 48 MiB for either comparison here.
   const removed = await inSmallHeap(

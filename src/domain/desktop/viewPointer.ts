@@ -248,35 +248,65 @@ const selectable = (value: string) =>
 /** An attribute name a selector can carry. */
 const attributeName = (key: string) => key !== "" && !/[=[\]]/u.test(key);
 
+/** A member's candidate selectors as its name and the conditions after it, and the ids they are counted by. */
+interface Candidates {
+  readonly name: string;
+  readonly suffixes: readonly string[];
+  readonly ids: readonly string[];
+}
+
+/** An attribute that identifies its element: `name`, `id`, `xid`, or a prefixed `id` such as `xml:id`. */
+const identifying = (key: string) => /^(?:name|id|xid|.+:id)$/iu.test(key);
+
 /**
- * Selectors that could name a member, most general first: `[name=N]`, then
+ * The selectors that could name a member, most general first: `[name=N]`, then
  * `[name=N][@A=V]` for each attribute, a `name` attribute before the others.
+ * An element with identifying attributes is named by those alone, so one whose
+ * identifiers are new is another element, whatever else it shares. Their ids
+ * number the name among those seen, so a name is spelled into a selector only
+ * once one is chosen, not once per attribute.
  */
-const candidateKeys = (member: JsonValue): readonly string[] => {
-  if (!isRecord(member)) return [];
+const candidatesOf = (
+  member: JsonValue,
+  names: Map<string, number>,
+): Candidates | undefined => {
+  if (!isRecord(member)) return undefined;
   const name = own(member, "name");
-  if (typeof name !== "string" || !selectable(name)) return [];
-  const base = `[name=${name}]`;
+  if (typeof name !== "string" || !selectable(name)) return undefined;
   const attributes = own(member, "attributes");
-  const entries = isRecord(attributes) ? Object.entries(attributes) : [];
+  const usable = (
+    isRecord(attributes) ? Object.entries(attributes) : []
+  ).flatMap(([key, value]) =>
+    typeof value === "string" && attributeName(key) && selectable(value)
+      ? [{ key, value }]
+      : [],
+  );
+  const identities = usable.filter(({ key }) => identifying(key));
+  const conditions = identities.length > 0 ? identities : usable;
   const named = (key: string) => key.toLowerCase() === "name";
-  return [
-    base,
+  const suffixes = [
+    "",
     ...[
-      ...entries.filter(([key]) => named(key)),
-      ...entries.filter(([key]) => !named(key)),
-    ].flatMap(([key, value]) =>
-      typeof value === "string" && attributeName(key) && selectable(value)
-        ? [`${base}[@${key}=${value}]`]
-        : [],
-    ),
+      ...conditions.filter(({ key }) => named(key)),
+      ...conditions.filter(({ key }) => !named(key)),
+    ].map(({ key, value }) => `[@${key}=${value}]`),
   ];
+  const number = names.get(name) ?? names.size;
+  names.set(name, number);
+  // A suffix is empty or opens with `[`, so the number before it cannot run into it.
+  const ids = suffixes.map((suffix) => `${String(number)}${suffix}`);
+  return { name, suffixes, ids };
 };
 
-const countKeys = (candidates: readonly (readonly string[])[]) => {
+/** The selector a member's candidate at `index` spells. */
+const selectorAt = ({ name, suffixes }: Candidates, index: number) =>
+  `[name=${name}]${suffixes[index] ?? ""}`;
+
+const countIds = (members: readonly (Candidates | undefined)[]) => {
   const counts = new Map<string, number>();
-  for (const keys of candidates)
-    for (const key of keys) counts.set(key, (counts.get(key) ?? 0) + 1);
+  for (const candidates of members)
+    for (const id of candidates?.ids ?? [])
+      counts.set(id, (counts.get(id) ?? 0) + 1);
   return counts;
 };
 
@@ -288,48 +318,60 @@ interface PairedSide {
 
 /**
  * Pair the members of two versions of an array one to one. A member pairs by
- * the first selector naming it alone in its version and one unpaired member of
- * the other; one with no partner keeps a selector naming nothing in the other
+ * its first candidate selector naming it alone in its version and one unpaired
+ * member of the other, whichever before it name nothing there; one with no
+ * partner keeps its first selector naming it alone and nothing in the other
  * version. Members left without a selector are keyed and paired by position.
  */
 export const pairMembers = (
   newer: readonly JsonValue[],
   older: readonly JsonValue[],
 ): { readonly newer: PairedSide; readonly older: PairedSide } => {
-  const newCandidates = newer.map(candidateKeys);
-  const oldCandidates = older.map(candidateKeys);
-  const newCounts = countKeys(newCandidates);
-  const oldCounts = countKeys(oldCandidates);
-  const count = (counts: ReadonlyMap<string, number>, key: string) =>
-    counts.get(key) ?? 0;
-  const oldByKey = new Map<string, number>();
-  oldCandidates.forEach((keys, index) => {
-    for (const key of keys)
-      if (count(oldCounts, key) === 1) oldByKey.set(key, index);
+  const names = new Map<string, number>();
+  const newCandidates = newer.map((member) => candidatesOf(member, names));
+  const oldCandidates = older.map((member) => candidatesOf(member, names));
+  const newCounts = countIds(newCandidates);
+  const oldCounts = countIds(oldCandidates);
+  const count = (counts: ReadonlyMap<string, number>, id: string) =>
+    counts.get(id) ?? 0;
+  const oldById = new Map<string, number>();
+  oldCandidates.forEach((candidates, index) => {
+    for (const id of candidates?.ids ?? [])
+      if (count(oldCounts, id) === 1) oldById.set(id, index);
   });
   const newKeys: (string | undefined)[] = newer.map(() => undefined);
   const oldKeys: (string | undefined)[] = older.map(() => undefined);
   const newPartners: (number | undefined)[] = newer.map(() => undefined);
   const oldPartners: (number | undefined)[] = older.map(() => undefined);
-  newCandidates.forEach((keys, index) => {
-    for (const key of keys.filter((key) => count(newCounts, key) === 1)) {
-      if (count(oldCounts, key) === 0) {
-        newKeys[index] = key;
-        return;
-      }
-      const match = oldByKey.get(key);
-      if (match !== undefined && oldPartners[match] === undefined) {
-        newKeys[index] = oldKeys[match] = key;
-        newPartners[index] = match;
-        oldPartners[match] = index;
-        return;
-      }
+  newCandidates.forEach((candidates, index) => {
+    if (candidates === undefined) return;
+    for (const [at, id] of candidates.ids.entries()) {
+      const match = count(newCounts, id) === 1 ? oldById.get(id) : undefined;
+      if (match === undefined || oldPartners[match] !== undefined) continue;
+      newKeys[index] = oldKeys[match] = selectorAt(candidates, at);
+      newPartners[index] = match;
+      oldPartners[match] = index;
+      return;
     }
   });
-  oldCandidates.forEach((keys, index) => {
-    oldKeys[index] ??= keys.find(
-      (key) => count(oldCounts, key) === 1 && count(newCounts, key) === 0,
+  /** The first selector naming a member alone in its version and nothing in the other. */
+  const unmatched = (
+    candidates: Candidates | undefined,
+    here: ReadonlyMap<string, number>,
+    there: ReadonlyMap<string, number>,
+  ) => {
+    const at = (candidates?.ids ?? []).findIndex(
+      (id) => count(here, id) === 1 && count(there, id) === 0,
     );
+    return candidates === undefined || at < 0
+      ? undefined
+      : selectorAt(candidates, at);
+  };
+  newCandidates.forEach((candidates, index) => {
+    newKeys[index] ??= unmatched(candidates, newCounts, oldCounts);
+  });
+  oldCandidates.forEach((candidates, index) => {
+    oldKeys[index] ??= unmatched(candidates, oldCounts, newCounts);
   });
   for (let index = 0; index < Math.min(newer.length, older.length); index += 1)
     if (newKeys[index] === undefined && oldKeys[index] === undefined) {
