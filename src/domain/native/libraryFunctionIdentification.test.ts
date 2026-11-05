@@ -109,6 +109,27 @@ describe("identifyLibraryFunctions matching", () => {
     ).toEqual(["exact-a", "exact-z", "short"]);
   });
 
+  it("reuses only the signature-inspectable function prefix", () => {
+    const prefix = Array(MAX_LIBRARY_SIGNATURE_PATTERN_TOKENS - 1).fill(0x90);
+    const result = identifyLibraryFunctions(
+      [
+        { function_id: "a", bytes: [...prefix, 0x91, 0x01] },
+        { function_id: "b", bytes: [...prefix, 0x91, 0x02] },
+        { function_id: "c", bytes: [...prefix, 0x92, 0x02] },
+      ],
+      [
+        signature("one", `${"90 ".repeat(prefix.length)}91`),
+        signature("two", `${"90 ".repeat(prefix.length)}92`),
+      ],
+    );
+    if (!result.ok) throw result.error;
+    expect(
+      result.value.identified.map(({ matches }) =>
+        matches.map(({ signature_id }) => signature_id),
+      ),
+    ).toEqual([["one"], ["one"], ["two"]]);
+  });
+
   it("preserves optional library versions", () => {
     const result = identifyLibraryFunctions(
       [{ function_id: "f1", bytes: [0x90] }],
@@ -212,6 +233,35 @@ describe("identifyLibraryFunctions budget skips", () => {
     ]);
     expect(result.value.unknowns).toEqual([]);
   });
+
+  it("rejects oversized function batches exceeding the allowed input functions", () => {
+    const result = identifyLibraryFunctions(
+      [
+        { function_id: "f1", bytes: [0x90] },
+        { function_id: "f2", bytes: [0x90] },
+        { function_id: "f3", bytes: [0x90] },
+      ],
+      [signature("nop", "90")],
+      { max_functions: 1 },
+    );
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "AnalysisInputError",
+        operation: "identify_library_functions",
+        issues: [
+          expect.objectContaining({
+            path: [],
+            reason: "out_of_range",
+            maximum: 2,
+          }),
+        ],
+      },
+    });
+    if (!result.ok) {
+      expect(result.error).toBeInstanceOf(AnalysisInputError);
+    }
+  });
 });
 
 describe("identifyLibraryFunctions signature constraints", () => {
@@ -309,6 +359,79 @@ describe("identifyLibraryFunctions signature constraints", () => {
     if (!result.ok) {
       expect(result.error).toBeInstanceOf(AnalysisInputError);
     }
+  });
+
+  it("enforces max_matches on a single function before materializing candidate matches", () => {
+    const result = identifyLibraryFunctions(
+      [{ function_id: "f1", bytes: [0x90] }],
+      [signature("first", "90"), signature("second", "90")],
+      { max_matches: 1 },
+    );
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "AnalysisInputError",
+        operation: "identify_library_functions",
+        issues: [
+          expect.objectContaining({
+            path: [],
+            reason: "out_of_range",
+            maximum: 1,
+          }),
+        ],
+      },
+    });
+    if (!result.ok) {
+      expect(result.error).toBeInstanceOf(AnalysisInputError);
+    }
+  });
+});
+
+describe("identifyLibraryFunctions comparison work budget", () => {
+  it("bounds aggregate signature comparison work across uncached functions", () => {
+    const result = identifyLibraryFunctions(
+      [
+        { function_id: "f1", bytes: [0x90, 0x90, 0x90, 0x90] },
+        { function_id: "f2", bytes: [0x90, 0x90, 0x90, 0x91] },
+      ],
+      [signature("mismatch", "90 90 90 92")],
+      { max_comparison_work: 6 },
+    );
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "AnalysisInputError",
+        operation: "identify_library_functions",
+        issues: [
+          expect.objectContaining({
+            path: [],
+            reason: "out_of_range",
+            maximum: 6,
+          }),
+        ],
+      },
+    });
+    if (!result.ok) {
+      expect(result.error).toBeInstanceOf(AnalysisInputError);
+    }
+  });
+
+  it("does not consume comparison work allowance for cached function prefixes", () => {
+    const result = identifyLibraryFunctions(
+      [
+        { function_id: "f1", bytes: [0x90, 0x90] },
+        { function_id: "f2", bytes: [0x90, 0x90] },
+        { function_id: "f3", bytes: [0x90, 0x90] },
+      ],
+      [signature("nop", "90 90")],
+      { max_comparison_work: 2 },
+    );
+    if (!result.ok) throw result.error;
+    expect(result.value.identified.map((item) => item.function_id)).toEqual([
+      "f1",
+      "f2",
+      "f3",
+    ]);
   });
 });
 
@@ -428,6 +551,17 @@ describe("identifyLibraryFunctions input errors", () => {
       max_signatures: 0,
     });
     expect(zeroSignatures).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "AnalysisInputError",
+        operation: "identify_library_functions",
+      },
+    });
+
+    const negativeWork = identifyLibraryFunctions([], [], {
+      max_comparison_work: -1,
+    });
+    expect(negativeWork).toMatchObject({
       ok: false,
       error: {
         _tag: "AnalysisInputError",

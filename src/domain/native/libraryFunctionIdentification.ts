@@ -12,8 +12,39 @@ export const DEFAULT_LIBRARY_FUNCTION_BUDGET = 10_000;
 export const DEFAULT_LIBRARY_FUNCTION_BYTES_BUDGET = 4_096;
 export const DEFAULT_LIBRARY_SIGNATURE_SET_BUDGET = 10_000;
 export const DEFAULT_LIBRARY_MATCHES_BUDGET = 10_000;
+export const DEFAULT_LIBRARY_COMPARISON_WORK_BUDGET = 100_000_000;
 
 const OPERATION = "identify_library_functions";
+
+const outOfRangeError = (
+  maximum: number,
+  message: string,
+): AnalysisInputError =>
+  new AnalysisInputError(OPERATION, undefined, [
+    { path: [], reason: "out_of_range", maximum, message },
+  ]);
+
+const invalidValueError = (
+  path: readonly (string | number)[],
+  message: string,
+): AnalysisInputError =>
+  new AnalysisInputError(OPERATION, undefined, [
+    { path: [...path], reason: "invalid_value", message },
+  ]);
+
+const toInputError = (
+  error: z.ZodError,
+  rawInput: unknown,
+  basePath: readonly (string | number)[],
+): AnalysisInputError =>
+  new AnalysisInputError(
+    OPERATION,
+    { cause: error },
+    projectInputIssues(error.issues, rawInput).map((issue) => ({
+      ...issue,
+      path: [...basePath, ...issue.path],
+    })),
+  );
 
 const signatureToken = /^(?:[0-9A-Fa-f]{2}|\?\?)$/u;
 
@@ -62,6 +93,11 @@ export const libraryFunctionBudgetsSchema = z.strictObject({
     .int()
     .positive()
     .default(DEFAULT_LIBRARY_MATCHES_BUDGET),
+  max_comparison_work: z
+    .number()
+    .int()
+    .positive()
+    .default(DEFAULT_LIBRARY_COMPARISON_WORK_BUDGET),
 });
 
 export const libraryFunctionMatchSchema = z.strictObject({
@@ -117,13 +153,10 @@ const parseSignature = (
 ): Result<CompiledSignature, AnalysisInputError> => {
   const invalidPattern = (): Result<never, AnalysisInputError> =>
     err(
-      new AnalysisInputError(OPERATION, undefined, [
-        {
-          path: [signatureIndex, "pattern"],
-          reason: "invalid_value",
-          message: `Pattern must contain at most ${MAX_LIBRARY_SIGNATURE_PATTERN_TOKENS} hexadecimal or ?? tokens`,
-        },
-      ]),
+      invalidValueError(
+        [signatureIndex, "pattern"],
+        `Pattern must contain at most ${MAX_LIBRARY_SIGNATURE_PATTERN_TOKENS} hexadecimal or ?? tokens`,
+      ),
     );
   // Reject excess or malformed tokens while scanning, before constructing an
   // array proportional to an untrusted pattern's full length.
@@ -148,13 +181,10 @@ const parseSignature = (
   const concrete_count = bytes.length - wildcard_count;
   if (concrete_count === 0)
     return err(
-      new AnalysisInputError(OPERATION, undefined, [
-        {
-          path: [signatureIndex, "pattern"],
-          reason: "invalid_value",
-          message: "Pattern must contain at least one concrete byte",
-        },
-      ]),
+      invalidValueError(
+        [signatureIndex, "pattern"],
+        "Pattern must contain at least one concrete byte",
+      ),
     );
   return ok({ ...raw, bytes, wildcard_count, concrete_count });
 };
@@ -165,14 +195,10 @@ const compileSignatures = (
 ): Result<readonly CompiledSignature[], AnalysisInputError> => {
   if (rawSignatures.length > maxSignatures)
     return err(
-      new AnalysisInputError(OPERATION, undefined, [
-        {
-          path: [],
-          reason: "out_of_range",
-          message: `Signature set exceeds the maximum of ${maxSignatures} signatures`,
-          maximum: maxSignatures,
-        },
-      ]),
+      outOfRangeError(
+        maxSignatures,
+        `Signature set exceeds the maximum of ${maxSignatures} signatures`,
+      ),
     );
   const seen = new Set<string>();
   const compiled: CompiledSignature[] = [];
@@ -181,28 +207,14 @@ const compileSignatures = (
     const parsedSignature =
       libraryFunctionSignatureSchema.safeParse(rawSignature);
     if (!parsedSignature.success)
-      return err(
-        new AnalysisInputError(
-          OPERATION,
-          { cause: parsedSignature.error },
-          projectInputIssues(parsedSignature.error.issues, rawSignature).map(
-            (issue) => ({
-              ...issue,
-              path: [index, ...issue.path],
-            }),
-          ),
-        ),
-      );
+      return err(toInputError(parsedSignature.error, rawSignature, [index]));
     const signature = parsedSignature.data;
     if (seen.has(signature.id))
       return err(
-        new AnalysisInputError(OPERATION, undefined, [
-          {
-            path: [index, "id"],
-            reason: "invalid_value",
-            message: `Duplicate signature id: ${signature.id}`,
-          },
-        ]),
+        invalidValueError(
+          [index, "id"],
+          `Duplicate signature id: ${signature.id}`,
+        ),
       );
     seen.add(signature.id);
     const parsed = parseSignature(signature, index);
@@ -211,15 +223,6 @@ const compileSignatures = (
   }
   return ok(compiled);
 };
-
-const matches = (
-  bytes: readonly number[],
-  signature: CompiledSignature,
-): boolean =>
-  bytes.length >= signature.bytes.length &&
-  signature.bytes.every(
-    (expected, index) => expected === null || expected === bytes[index],
-  );
 
 const rankMatches = (
   signatures: readonly CompiledSignature[],
@@ -249,44 +252,17 @@ const parseFunctionIdWithoutBytes = (
   rawInput: unknown,
   functionIndex: number,
 ): Result<string, AnalysisInputError> => {
-  if (
-    typeof rawInput !== "object" ||
-    rawInput === null ||
-    Array.isArray(rawInput)
-  ) {
+  const isPlainEnvelope =
+    typeof rawInput === "object" &&
+    rawInput !== null &&
+    !Array.isArray(rawInput) &&
+    Object.keys(rawInput).length === 2 &&
+    "function_id" in rawInput &&
+    "bytes" in rawInput;
+  if (!isPlainEnvelope) {
     const parsed = libraryFunctionInputEnvelopeSchema.safeParse(rawInput);
     if (!parsed.success)
-      return err(
-        new AnalysisInputError(
-          OPERATION,
-          { cause: parsed.error },
-          projectInputIssues(parsed.error.issues, rawInput).map((issue) => ({
-            ...issue,
-            path: [functionIndex, ...issue.path],
-          })),
-        ),
-      );
-    return ok(parsed.data.function_id);
-  }
-
-  const keys = Object.keys(rawInput);
-  if (
-    keys.length !== 2 ||
-    !keys.includes("function_id") ||
-    !keys.includes("bytes")
-  ) {
-    const parsed = libraryFunctionInputEnvelopeSchema.safeParse(rawInput);
-    if (!parsed.success)
-      return err(
-        new AnalysisInputError(
-          OPERATION,
-          { cause: parsed.error },
-          projectInputIssues(parsed.error.issues, rawInput).map((issue) => ({
-            ...issue,
-            path: [functionIndex, ...issue.path],
-          })),
-        ),
-      );
+      return err(toInputError(parsed.error, rawInput, [functionIndex]));
     return ok(parsed.data.function_id);
   }
 
@@ -295,14 +271,7 @@ const parseFunctionIdWithoutBytes = (
   );
   if (!parsedId.success)
     return err(
-      new AnalysisInputError(
-        OPERATION,
-        { cause: parsedId.error },
-        projectInputIssues(parsedId.error.issues, rawInput).map((issue) => ({
-          ...issue,
-          path: [functionIndex, "function_id", ...issue.path],
-        })),
-      ),
+      toInputError(parsedId.error, rawInput, [functionIndex, "function_id"]),
     );
   return ok(parsedId.data);
 };
@@ -342,7 +311,7 @@ type FunctionProcessingOutcome =
   | {
       readonly kind: "identified";
       readonly function_id: string;
-      readonly matches: LibraryFunctionMatch[];
+      readonly matches: readonly LibraryFunctionMatch[];
     }
   | {
       readonly kind: "unknown";
@@ -352,25 +321,85 @@ type FunctionProcessingOutcome =
         | "function_bytes_budget_exceeded";
     };
 
-const getCandidateMatches = (
-  bytes: readonly number[],
-  signatures: readonly CompiledSignature[],
-  matchCache: Map<string, LibraryFunctionMatch[]>,
-): LibraryFunctionMatch[] => {
-  const cacheKey = bytes.join(",");
-  const cached = matchCache.get(cacheKey);
-  if (cached) return cached;
-  const result = rankMatches(
-    signatures.filter((signature) => matches(bytes, signature)),
-  );
-  matchCache.set(cacheKey, result);
-  return result;
-};
-
 type FunctionProcessingContext = {
   readonly budgets: LibraryFunctionBudgets;
   readonly signatures: readonly CompiledSignature[];
-  readonly matchCache: Map<string, LibraryFunctionMatch[]>;
+  readonly matchCache: Map<string, readonly LibraryFunctionMatch[]>;
+  totalMatches: number;
+  comparisonWork: number;
+};
+
+const checkSignatureMatch = (
+  bytes: readonly number[],
+  signature: CompiledSignature,
+  context: FunctionProcessingContext,
+): Result<boolean, AnalysisInputError> => {
+  if (bytes.length < signature.bytes.length) {
+    return ok(false);
+  }
+  for (let i = 0; i < signature.bytes.length; i++) {
+    context.comparisonWork++;
+    if (context.comparisonWork > context.budgets.max_comparison_work) {
+      return err(
+        outOfRangeError(
+          context.budgets.max_comparison_work,
+          `Comparison work exceeds the maximum of ${context.budgets.max_comparison_work} comparisons`,
+        ),
+      );
+    }
+    const expected = signature.bytes[i];
+    if (expected !== null && expected !== bytes[i]) {
+      return ok(false);
+    }
+  }
+  return ok(true);
+};
+
+const getCandidateMatches = (
+  bytes: readonly number[],
+  context: FunctionProcessingContext,
+): Result<readonly LibraryFunctionMatch[], AnalysisInputError> => {
+  const prefix = bytes.slice(0, MAX_LIBRARY_SIGNATURE_PATTERN_TOKENS);
+  const cacheKey = prefix.join(",");
+  const cached = context.matchCache.get(cacheKey);
+  if (cached !== undefined) {
+    if (context.totalMatches + cached.length > context.budgets.max_matches) {
+      return err(
+        outOfRangeError(
+          context.budgets.max_matches,
+          `Total matches exceed the maximum of ${context.budgets.max_matches} matches`,
+        ),
+      );
+    }
+    context.totalMatches += cached.length;
+    return ok(cached);
+  }
+
+  const matchedSignatures: CompiledSignature[] = [];
+  for (let s = 0; s < context.signatures.length; s++) {
+    const signature = context.signatures[s]!;
+    const matchResult = checkSignatureMatch(bytes, signature, context);
+    if (!matchResult.ok) return matchResult;
+    if (matchResult.value) {
+      if (
+        context.totalMatches + matchedSignatures.length + 1 >
+        context.budgets.max_matches
+      ) {
+        return err(
+          outOfRangeError(
+            context.budgets.max_matches,
+            `Total matches exceed the maximum of ${context.budgets.max_matches} matches`,
+          ),
+        );
+      }
+      matchedSignatures.push(signature);
+    }
+  }
+
+  const result = rankMatches(matchedSignatures);
+  context.matchCache.set(cacheKey, result);
+  context.totalMatches += result.length;
+  return ok(result);
 };
 
 const processFunctionInput = (
@@ -378,7 +407,7 @@ const processFunctionInput = (
   index: number,
   context: FunctionProcessingContext,
 ): Result<FunctionProcessingOutcome, AnalysisInputError> => {
-  const { budgets, signatures, matchCache } = context;
+  const { budgets } = context;
   if (index >= budgets.max_functions) {
     const parsedId = parseFunctionIdWithoutBytes(rawInput, index);
     if (!parsedId.ok) return parsedId;
@@ -390,16 +419,7 @@ const processFunctionInput = (
   }
   const envelope = libraryFunctionInputEnvelopeSchema.safeParse(rawInput);
   if (!envelope.success)
-    return err(
-      new AnalysisInputError(
-        OPERATION,
-        { cause: envelope.error },
-        projectInputIssues(envelope.error.issues, rawInput).map((issue) => ({
-          ...issue,
-          path: [index, ...issue.path],
-        })),
-      ),
-    );
+    return err(toInputError(envelope.error, rawInput, [index]));
   const rawBytes = envelope.data.bytes;
   if (Array.isArray(rawBytes) && rawBytes.length > budgets.max_function_bytes)
     return ok({
@@ -408,27 +428,21 @@ const processFunctionInput = (
       reason: "function_bytes_budget_exceeded",
     });
   const input = libraryFunctionInputSchema.safeParse(rawInput);
-  if (!input.success)
-    return err(
-      new AnalysisInputError(
-        OPERATION,
-        { cause: input.error },
-        projectInputIssues(input.error.issues, rawInput).map((issue) => ({
-          ...issue,
-          path: [index, ...issue.path],
-        })),
-      ),
-    );
+  if (!input.success) return err(toInputError(input.error, rawInput, [index]));
   if (input.data.bytes.length > budgets.max_function_bytes)
     return ok({
       kind: "unknown",
       function_id: input.data.function_id,
       reason: "function_bytes_budget_exceeded",
     });
+
+  const matchesResult = getCandidateMatches(input.data.bytes, context);
+  if (!matchesResult.ok) return matchesResult;
+
   return ok({
     kind: "identified",
     function_id: input.data.function_id,
-    matches: getCandidateMatches(input.data.bytes, signatures, matchCache),
+    matches: matchesResult.value,
   });
 };
 
@@ -447,6 +461,16 @@ export const identifyLibraryFunctions = (
   const signaturesInputResult = validateArrayInput(rawSignatures);
   if (!signaturesInputResult.ok) return signaturesInputResult;
 
+  const maxInputFunctions = budgets.max_functions * 2;
+  if (rawFunctions.length > maxInputFunctions) {
+    return err(
+      outOfRangeError(
+        maxInputFunctions,
+        `Function batch exceeds the maximum of ${maxInputFunctions} functions`,
+      ),
+    );
+  }
+
   const signaturesResult = compileSignatures(
     signaturesInputResult.value,
     budgets.max_signatures,
@@ -456,12 +480,13 @@ export const identifyLibraryFunctions = (
 
   const identified: LibraryFunctionIdentification["identified"] = [];
   const unknowns: LibraryFunctionIdentification["unknowns"] = [];
-  const matchCache = new Map<string, LibraryFunctionMatch[]>();
-  let totalMatches = 0;
+  const matchCache = new Map<string, readonly LibraryFunctionMatch[]>();
   const context: FunctionProcessingContext = {
     budgets,
     signatures,
     matchCache,
+    totalMatches: 0,
+    comparisonWork: 0,
   };
 
   for (let index = 0; index < rawFunctions.length; index++) {
@@ -473,22 +498,9 @@ export const identifyLibraryFunctions = (
         reason: outcome.value.reason,
       });
     } else {
-      totalMatches += outcome.value.matches.length;
-      if (totalMatches > budgets.max_matches) {
-        return err(
-          new AnalysisInputError(OPERATION, undefined, [
-            {
-              path: [],
-              reason: "out_of_range",
-              maximum: budgets.max_matches,
-              message: `Total matches exceed the maximum of ${budgets.max_matches} matches`,
-            },
-          ]),
-        );
-      }
       identified.push({
         function_id: outcome.value.function_id,
-        matches: outcome.value.matches,
+        matches: [...outcome.value.matches],
       });
     }
   }
