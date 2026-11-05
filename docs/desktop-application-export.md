@@ -103,8 +103,11 @@ that, and per table `columns`, `primary_key`, at most 500 `rows` and
 `truncated`, with blobs, unsafe integers and text that is not UTF-8 tagged as
 REA tags them), JSON, XML as `{root, truncated}` with DOCTYPEs refused and REA's
 node, depth and whitespace rules, key file groups, and text as
-`{lines, line_count, truncated}` split on `\n` and `\r\n`. Format detection
-follows REA's rules. Files larger than 64 MiB get an `error` instead of a view
+`{lines, line_count, truncated}` split on `\n` and `\r\n`. A JSON file
+holding a number JavaScript cannot read exactly, such as an integer above 2^53,
+gets an `error` instead of a view, as in REA, while text that is not one JSON
+document, such as JSON Lines, stays text. Format detection follows REA's
+rules. Files larger than 64 MiB get an `error` instead of a view
 and are not read. Known differences remain:
 
 - XML names: element and attribute names are Python's `{namespace}local`
@@ -114,8 +117,7 @@ and are not read. Known differences remain:
 - dconf databases are reported as binary, since REA reads them with `dconf`.
 - SQLite databases are read in place, read-only, rather than from a staged copy;
   a table or column name that is not UTF-8 gives the file an `error`.
-- JSON integers beyond 2^53 keep their exact value, and nesting deeper than
-  Python's recursion limit gives the file an `error`.
+- JSON nested deeper than Python's recursion limit gives the file an `error`.
 
 The seed is the user's real data. Keep the bundle local and do not publish it.
 The class was checked against agentenv-framework 0.9.1431 with

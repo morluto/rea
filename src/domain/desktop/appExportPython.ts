@@ -234,7 +234,7 @@ def _js_string(value: float) -> str:
 def _safe_number(text: str) -> bool:
     """lossless-json's isSafeNumber: an integer spelling within 2^53, or a float spelling that keeps its digits."""
     if re.fullmatch(r"-?[0-9]+", text):
-        return abs(int(text)) <= MAX_SAFE_INTEGER
+        return len(text.lstrip("-")) <= 16 and abs(int(text)) <= MAX_SAFE_INTEGER
     value = float(text)
     if not math.isfinite(value):
         return False
@@ -256,14 +256,25 @@ def _text_view(name: str, text: str) -> dict:
     """The format REA's state view detects for decoded text, and its view."""
     trimmed = re.sub(r"^[\s﻿]+", "", text)
     if name.endswith(".json") or trimmed[:1] in ("[", "{"):
+        # The whole text must parse before an inexact number makes it JSON with an error.
+        inexact = []
+
+        def number(spelling: str):
+            try:
+                return _exact_number(spelling)
+            except _Inexact:
+                inexact.append(spelling)
+                return None
+
         try:
-            view = json.loads(text, parse_constant=_not_json, parse_float=_exact_number, parse_int=_exact_number)
-            return {"format": "json", "view": view, "truncated": False}
-        except _Inexact:
-            return {"format": "json", "view": None,
-                    "error": "a number in it cannot be read exactly, such as an integer above 2^53"}
+            view = json.loads(text, parse_constant=_not_json, parse_float=number, parse_int=number)
         except ValueError:
             pass
+        else:
+            if inexact:
+                return {"format": "json", "view": None,
+                        "error": "a number in it cannot be read exactly, such as an integer above 2^53"}
+            return {"format": "json", "view": view, "truncated": False}
     lowered = name.lower()
     if lowered.endswith(XML_SUFFIXES) or trimmed.startswith("<?xml"):
         view = _xml_view(text)
