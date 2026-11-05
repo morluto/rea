@@ -138,6 +138,9 @@ export interface UninstallClient extends SetupClient {
   /** Clients that load this same registration table as a fallback report the
    * owner's outcome without inspecting or editing the file again. */
   readonly sharedWith?: readonly string[];
+  /** Registration-group surfaces that share this single physical row and
+   * receive the owner's removal outcome as their own. */
+  readonly groupedSurfaces?: readonly string[];
 }
 
 /** Filesystem boundary used by the contained uninstall workflow. */
@@ -267,12 +270,17 @@ const projectSharedRegistrations = (
   clients: readonly UninstallClient[],
 ): UninstallItem[] => {
   const readersByRegistration = new Map<string, readonly string[]>();
-  for (const client of clients)
-    if (client.sharedWith !== undefined && client.sharedWith.length > 0)
+  for (const client of clients) {
+    const surfaces = [
+      ...(client.sharedWith ?? []),
+      ...(client.groupedSurfaces ?? []),
+    ];
+    if (surfaces.length > 0)
       readersByRegistration.set(
         JSON.stringify([client.name, client.configPath]),
-        client.sharedWith,
+        surfaces,
       );
+  }
   if (readersByRegistration.size === 0) return [...items];
   return items.flatMap((next) => {
     const readers =
@@ -377,6 +385,8 @@ interface ClientConfigClaim {
 interface SharedConfigPath {
   readonly owner: ClientConfigClaim;
   readonly readers: readonly ClientConfigClaim[];
+  /** Registration-group surfaces projected this owner's removal outcome. */
+  readonly groupedSurfaces?: readonly ClientConfigClaim[];
 }
 
 /**
@@ -417,8 +427,19 @@ const sharedConfigPaths = (
     // A fallback view can only report one client's row. OpenCode can be pointed
     // at FreeBuff's file through `OPENCODE_CONFIG`, and both then own the path
     // while writing different tables, so each keeps its own decision.
-    if (owners.length > 0)
-      return owners.map((owner) => {
+    if (owners.length > 0) {
+      // Owners that declare one registrationGroup are one registration stored
+      // in a single physical row: execute one removal and project the outcome
+      // to the other surfaces instead of rereading the file per surface.
+      const grouped = new Map<string, ClientConfigClaim[]>();
+      for (const owner of owners) {
+        const key = owner.client.registrationGroup ?? owner.client.name;
+        grouped.set(key, [...(grouped.get(key) ?? []), owner]);
+      }
+      return [...grouped.values()].flatMap((members) => {
+        const [owner, ...projected] = members;
+        if (owner === undefined)
+          throw new Error("A configuration path has no claiming client.");
         const format = owner.client.format;
         // ZCode's fallback reads mcpServers, never another table in the same
         // file (for example OpenCode's mcp table). Use the format owner's
@@ -431,8 +452,13 @@ const sharedConfigPaths = (
             clientConfigurationServersKey("zcode_fallback")
             ? fallbacks
             : [];
-        return { owner, readers };
+        return {
+          owner,
+          readers,
+          ...(projected.length > 0 ? { groupedSurfaces: projected } : {}),
+        };
       });
+    }
     const [only] = fallbacks;
     if (only === undefined)
       throw new Error("A configuration path has no claiming client.");
@@ -510,6 +536,12 @@ export const systemUninstallHost = (
             !clientSharedRegistrationPaths(client).has(path.owner.configPath)
               ? {}
               : { applicability: "unverified" };
+          // Grouped registration surfaces receive the owner's removal outcome
+          // unconditionally: the registration is REA's own even when neither
+          // product root exists (config-only profiles).
+          const groupedSurfaces = (path.groupedSurfaces ?? []).map(
+            ({ client: surface }) => surface.name,
+          );
           clients.push({
             ...client,
             configPath: path.owner.configPath,
@@ -522,6 +554,7 @@ export const systemUninstallHost = (
               : {
                   sharedWith: readers.map(({ client: reader }) => reader.name),
                 }),
+            ...(groupedSurfaces.length === 0 ? {} : { groupedSurfaces }),
           });
         }
       return clients;

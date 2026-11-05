@@ -10,7 +10,7 @@ import { configureClientConfiguration } from "../../../src/application/SetupClie
 import { skillDestinations } from "../../../src/application/SetupSkill.js";
 import { supportedClients } from "../../../src/application/SupportedClients.js";
 import { existingMaintenanceScope } from "../../../src/application/UpdateMaintenance.js";
-import { systemUninstallHost } from "../../../src/application/Uninstall.js";
+import { runUninstall, systemUninstallHost } from "../../../src/application/Uninstall.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { clearClientLocationEnvironment } from "../../fixtures/clientEnvironment.js";
 
@@ -96,7 +96,12 @@ describe("Antigravity CLI JSON registration", () => {
   };
 
   it("upserts rea into the shared mcpServers table while preserving unrelated settings", async () => {
-    const { home, client } = await antigravityCliClient();
+    const home = await createTestTempDirectory("rea-antigravity-projected-");
+    const client = antigravityCliPath(home, process.platform);
+    if (client?.markerPath === undefined)
+      throw new Error("missing Antigravity CLI client");
+    await mkdir(client.markerPath, { recursive: true });
+    await mkdir(dirname(client.configPath), { recursive: true });
     await writeFile(
       client.configPath,
       `{
@@ -297,3 +302,43 @@ it.each(["disabled", "foreign", "invalid"] as const)(
     expect(scope.skill).toBe(false);
   },
 );
+
+
+
+describe("Antigravity uninstall result projection", () => {
+  it("reports one grouped removal under both surfaces for a CLI-only home", async () => {
+    const home = await createTestTempDirectory("rea-antigravity-projected-");
+    const client = antigravityCliPath(home, process.platform);
+    if (client?.markerPath === undefined)
+      throw new Error("missing Antigravity CLI client");
+    await mkdir(client.markerPath, { recursive: true });
+    await mkdir(dirname(client.configPath), { recursive: true });
+    await writeFile(
+      client.configPath,
+      JSON.stringify(
+        { mcpServers: { other: { command: "other-server" } } },
+        null,
+        2,
+      ),
+    );
+    await configureClientConfiguration(client, {}, command);
+
+    const result = await runUninstall(
+      false,
+      systemUninstallHost(home, undefined, {}),
+    );
+    expect(result.status).toBe("complete");
+    const removals = result.items.filter(
+      (item) =>
+        item.status === "removed" &&
+        item.configuration_path === client.configPath,
+    );
+    expect(removals.map((item) => item.name).sort()).toEqual([
+      "antigravity",
+      "antigravity_cli",
+    ]);
+    const parsed = JSON.parse(await readFile(client.configPath, "utf8"));
+    expect(parsed.mcpServers.rea).toBeUndefined();
+    expect(parsed.mcpServers.other).toEqual({ command: "other-server" });
+  });
+});

@@ -880,10 +880,10 @@ export const clientEvidencePaths = (
 export const clientOwnershipEvidencePaths = (
   client: Pick<
     SetupClient,
-    "configPath" | "configPaths" | "sharedRegistration"
+    "configPath" | "configPaths" | "sharedRegistration" | "registrationGroup"
   >,
 ): readonly string[] =>
-  client.sharedRegistration === true
+  client.sharedRegistration === true || client.registrationGroup !== undefined
     ? [client.configPath, ...(client.configPaths ?? [])].filter(
         (path): path is string => path !== undefined && path.length > 0,
       )
