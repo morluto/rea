@@ -18,17 +18,37 @@ import { startListeningProcess } from "../support/mcp/streamableHttpProcess.js";
 import { processTest } from "../support/process/processFixture.js";
 
 const rowsWithClocks = (
-  mode: "sparse" | "complete" | "no-clock",
+  mode:
+    | "sparse"
+    | "complete"
+    | "no-clock"
+    | "gapped-inversion"
+    | "invalid-clock-gap"
+    | "mixed-unit-gap",
 ): TimedCaptureRow[] => {
-  const members = ["24", "25", "26"].map((suffix, index) => ({
-    id: `6ad47b491023b500010871${suffix}`,
-    name: ["Delta", "Alpha", "Charlie"][index]!,
-    ...(mode === "complete" || (mode === "sparse" && index === 0)
-      ? {
-          created_at: `2026-10-01T${String(9 + index).padStart(2, "0")}:00:00Z`,
-        }
-      : {}),
-  }));
+  const members: { id: string; name: string; created_at?: string | number }[] =
+    ["24", "25", "26"].map((suffix, index) => ({
+      id: `6ad47b491023b500010871${suffix}`,
+      name: ["Delta", "Alpha", "Charlie"][index]!,
+      ...(mode === "complete" || (mode === "sparse" && index === 0)
+        ? {
+            created_at: `2026-10-01T${String(9 + index).padStart(2, "0")}:00:00Z`,
+          }
+        : {}),
+    }));
+  if (mode === "gapped-inversion") {
+    members[0]!.created_at = "2026-10-01T11:00:00Z";
+    members[2]!.created_at = "2026-10-01T09:00:00Z";
+  }
+  if (mode === "invalid-clock-gap") {
+    members[0]!.created_at = 1772409602;
+    members[1]!.created_at = "not-a-clock";
+    members[2]!.created_at = 1772409601;
+  }
+  if (mode === "mixed-unit-gap") {
+    members[0]!.created_at = 1772409602;
+    members[2]!.created_at = 1772409601000;
+  }
   const created = {
     id: "6ad47b491023b50001087130",
     name: "Echo",
@@ -46,7 +66,10 @@ const rowsWithClocks = (
   ];
 };
 
-const sortedCreatedItems = async (client: Client): Promise<void> => {
+const checkCreatedItems = async (
+  client: Client,
+  appended: boolean,
+): Promise<void> => {
   for (const name of ["First new item", "Second new item", "Third new item"]) {
     const created = await client.callTool({
       name: "post_items",
@@ -57,16 +80,34 @@ const sortedCreatedItems = async (client: Client): Promise<void> => {
   const reply = await client.callTool({ name: "get_items", arguments: {} });
   expect(reply.isError).toBeFalsy();
   const items = z
-    .array(z.object({ id: z.string() }))
+    .array(z.object({ id: z.string(), name: z.string() }))
     .parse(jsonObjectSchema.parse(reply.structuredContent).body);
   expect(items).toHaveLength(6);
-  const ids = items.map(({ id }) => id);
-  expect(ids).toEqual([...ids].sort());
+  if (appended)
+    expect(items.map(({ name }) => name)).toEqual([
+      "Delta",
+      "Alpha",
+      "Charlie",
+      "First new item",
+      "Second new item",
+      "Third new item",
+    ]);
+  else {
+    const ids = items.map(({ id }) => id);
+    expect(ids).toEqual([...ids].sort());
+  }
 };
 
-for (const mode of ["sparse", "complete", "no-clock"] as const)
+for (const [mode, appended] of [
+  ["sparse", false],
+  ["complete", false],
+  ["no-clock", false],
+  ["gapped-inversion", true],
+  ["invalid-clock-gap", true],
+  ["mixed-unit-gap", true],
+] as const)
   processTest(
-    `keeps ID-sorted writes with ${mode} creation clocks over HTTP MCP`,
+    `${appended ? "appends writes" : "keeps ID-sorted writes"} with ${mode} creation clocks over HTTP MCP`,
     async ({ processes }) => {
       const fixture = environmentStateServeFixture(
         timedCaptureEvidence(rowsWithClocks(mode)),
@@ -76,7 +117,9 @@ for (const mode of ["sparse", "complete", "no-clock"] as const)
           expect.objectContaining({
             tool: "post_items",
             served: true,
-            insert: { rule: "sorted", field: "id", direction: "ascending" },
+            insert: appended
+              ? { rule: "last" }
+              : { rule: "sorted", field: "id", direction: "ascending" },
           }),
         ]),
       });
@@ -93,7 +136,7 @@ for (const mode of ["sparse", "complete", "no-clock"] as const)
       const client = new Client({ name: "sparse-clock-writes", version: "1" });
       try {
         await client.connect(new StreamableHTTPClientTransport(started.url));
-        await sortedCreatedItems(client);
+        await checkCreatedItems(client, appended);
       } finally {
         await client.close();
       }
