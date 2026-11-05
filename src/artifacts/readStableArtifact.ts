@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { constants, type BigIntStats } from "node:fs";
 import { lstat, open, realpath, type FileHandle } from "node:fs/promises";
 import { sameRegularFileState } from "../filesystem/RegularFile.js";
-import { ArtifactReaderFailure } from "./ArtifactReader.js";
+import { ArtifactReaderFailure, resolvedPathRetry } from "./ArtifactReader.js";
 import type { ArtifactResourceScope } from "./ArtifactResourceScope.js";
 import {
   artifactFileCompletion,
@@ -92,13 +92,20 @@ const selectedPathFailure = async (
       },
     );
   }
-  return new ArtifactReaderFailure(
-    "path",
-    `${message} (it resolves to ${target})`,
-    {
-      userMessage: `The selected path is a symlink to ${target}. Symlinks are not followed; if that target is the intended artifact, select ${target} for the same input instead, then retry.`,
-    },
-  );
+  // Offer the target as a retry only when it is a regular file now; a link to
+  // a directory or another special file gets no resolved-file hint.
+  try {
+    const resolved = await fileSystem.lstat(target);
+    if (resolved.isFile() && !resolved.isSymbolicLink())
+      return new ArtifactReaderFailure(
+        "path",
+        `${message} (it resolves to ${target})`,
+        { resolvedPath: target, userMessage: resolvedPathRetry(target) },
+      );
+  } catch {
+    // A missing or unreadable target changes only the recovery hint.
+  }
+  return new ArtifactReaderFailure("path", message);
 };
 
 const afterValidation = async <T>(

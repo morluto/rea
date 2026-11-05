@@ -212,7 +212,7 @@ const readObservedArtifact = (
         ...(resolveTarget === undefined ? {} : { realpath: resolveTarget }),
         lstat: async (selectedPath) => {
           const current = await selectedFileSystem.lstat(selectedPath);
-          if (!sameState(observed, current))
+          if (selectedPath === path && !sameState(observed, current))
             throw new ArtifactReaderFailure(
               "integrity",
               `SQLite snapshot file set changed during acquisition: ${selectedPath}`,
