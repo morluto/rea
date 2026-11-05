@@ -3,7 +3,6 @@
 // producer's frame/cleanup checks. The temporary project is isolated outside
 // the checkout so failed verification cannot affect an analyst's database.
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import {
   copyFile,
@@ -16,86 +15,17 @@ import {
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
+import { cleanupOwnedProcessGroup } from "../dist/process/ProcessOwnership.js";
+import {
+  ProviderProcessSupervisor,
+  spawnOwnedProviderProcess,
+} from "../dist/process/ProviderProcess.js";
+import { createVerifierRun } from "./lib/verifier-run.mjs";
+
 const install = process.env.GHIDRA_INSTALL_DIR;
 if (!install) throw new Error("Set GHIDRA_INSTALL_DIR to Ghidra 12.1.4");
 const root = resolve(import.meta.dirname, "..");
-
-/** The one child this verifier owns; cleanup runs before scratch removal. */
-let owned;
-
-/**
- * Run analyzeHeadless in its own process group so the JVM and any decompiler
- * children are addressed as one owned family instead of an untracked tree.
- */
-const runOwnedHeadless = (command, args, cwd) =>
-  new Promise((resolveRun, rejectRun) => {
-    const child = spawn(command, args, {
-      cwd,
-      detached: process.platform !== "win32",
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    owned = child;
-    let output = "";
-    const collect = (chunk) => {
-      output = `${output}${chunk}`.slice(-4 * 1024 * 1024);
-    };
-    child.stdout.on("data", collect);
-    child.stderr.on("data", collect);
-    const interrupt = () => child.kill("SIGTERM");
-    process.on("SIGINT", interrupt);
-    process.on("SIGTERM", interrupt);
-    child.on("error", rejectRun);
-    child.on("close", (code) => {
-      process.off("SIGINT", interrupt);
-      process.off("SIGTERM", interrupt);
-      if (code === 0) resolveRun(output);
-      else
-        rejectRun(
-          new Error(`analyzeHeadless exited ${code}\n${output.slice(-6000)}`),
-        );
-    });
-  });
-
-/** Stop the owned process family and confirm nothing from it survives. */
-const stopOwnedProcess = async () => {
-  const child = owned;
-  owned = undefined;
-  if (child === undefined) return;
-  const group = process.platform === "win32" ? undefined : -child.pid;
-  const groupExists = () => {
-    if (group === undefined) return child.exitCode === null;
-    try {
-      process.kill(group, 0);
-      return true;
-    } catch (error) {
-      if (error.code === "ESRCH") return false;
-      throw error;
-    }
-  };
-  const signal = (name) => {
-    try {
-      // Address the group so decompiler children cannot outlive the JVM.
-      if (group === undefined) child.kill(name);
-      else process.kill(group, name);
-    } catch (error) {
-      if (error.code !== "ESRCH") throw error;
-    }
-  };
-  const waitForGroup = async (milliseconds) => {
-    const deadline = Date.now() + milliseconds;
-    while (Date.now() < deadline) {
-      if (!groupExists()) return true;
-      await new Promise((done) => setTimeout(done, 50));
-    }
-    return !groupExists();
-  };
-  if (!groupExists()) return;
-  signal("SIGTERM");
-  if (await waitForGroup(5_000)) return;
-  signal("SIGKILL");
-  if (!(await waitForGroup(2_000)))
-    throw new Error("Owned Ghidra process group remained after SIGKILL");
-};
+const run = createVerifierRun();
 
 const scratch = await mkdtemp(
   join(
@@ -103,6 +33,7 @@ const scratch = await mkdtemp(
     "rea-prototype-conflicts-",
   ),
 );
+let supervisor;
 try {
   const project = join(scratch, "project");
   await mkdir(project);
@@ -134,9 +65,9 @@ try {
   }
   const imagePath = join(scratch, "instructions.bin");
   await writeFile(imagePath, image);
-  const output = await runOwnedHeadless(
-    join(install, "support/analyzeHeadless"),
-    [
+  const launch = await spawnOwnedProviderProcess({
+    command: join(install, "support/analyzeHeadless"),
+    arguments: [
       project,
       "PrototypeConflicts",
       "-import",
@@ -154,11 +85,45 @@ try {
       "-postScript",
       "ReaPrototypeConflictProbe.java",
     ],
-    scratch,
+    runId: run.run_id,
+    expectedCommand: null,
+    cwd: scratch,
+    env: { JAVA_HOME: process.env.JAVA_HOME },
+  });
+  supervisor = new ProviderProcessSupervisor(
+    {
+      ...launch,
+      ownsProcessLifetime: true,
+      cleanup: () => cleanupOwnedProcessGroup(launch.ownership),
+    },
+    { maxDiagnosticBytes: 8 * 1024 * 1024 },
   );
+  assert.ok(
+    await supervisor.waitForExit(180_000),
+    "Ghidra prototype conflict probe timed out",
+  );
+  assert.ok(
+    await supervisor.waitForOutputClose(1_000),
+    "Ghidra prototype conflict probe output did not close",
+  );
+  const snapshot = supervisor.snapshot();
+  const output = `${snapshot.stdout.text}\n${snapshot.stderr.text}`;
+  assert.equal(snapshot.exitCode, 0, output);
   assert.match(output, /REA_PROTOTYPE_CONFLICT_OK/u, output.slice(-6000));
 } finally {
-  await stopOwnedProcess();
-  await rm(scratch, { recursive: true, force: true });
+  try {
+    if (supervisor !== undefined) {
+      const stopped = await supervisor.stop();
+      assert.equal(
+        stopped.status,
+        "verified-cleanup",
+        `Ghidra process cleanup could not be verified: ${
+          "reason" in stopped ? stopped.reason : String(stopped.status)
+        }`,
+      );
+    }
+  } finally {
+    await rm(scratch, { recursive: true, force: true });
+  }
 }
 console.log("REA_PROTOTYPE_CONFLICT_OK");
