@@ -645,6 +645,36 @@ it.each([
   expect(randomIdentities(members, "id", ["at"])).toBe(random);
 });
 
+it.each([
+  [undefined, undefined, undefined],
+  ["2026-03-01T00:00:00Z", undefined, undefined],
+  [undefined, "2026-03-02T00:00:00Z", "2026-03-03T00:00:00Z"],
+])(
+  "does not treat missing creation clocks as identity inversions: %s",
+  (...clocks) => {
+    const members = clocks.map((at, index) => {
+      const member: JsonObject = { id: `id-${String(index)}` };
+      if (at !== undefined) member.at = at;
+      return member;
+    });
+    expect(randomIdentities(members, "id", ["at"])).toBe(false);
+  },
+);
+
+it("still recognizes a witnessed identity inversion when another clock value is missing", () => {
+  expect(
+    randomIdentities(
+      [
+        { id: "id-0", at: "2026-03-02T00:00:00Z" },
+        { id: "id-1", at: "2026-03-01T00:00:00Z" },
+        { id: "id-2" },
+      ],
+      "id",
+      ["at"],
+    ),
+  ).toBe(true);
+});
+
 it("uses retained submillisecond precision to recognize and place sorted timestamps", () => {
   const members = [
     { at: "2026-03-04T05:00:00.123000002Z" },

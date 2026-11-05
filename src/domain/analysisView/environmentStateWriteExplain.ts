@@ -719,14 +719,14 @@ export const randomIdentities = (
       compareValues(ownMember(left, idField), ownMember(right, idField)) ?? 0,
   );
   return clocks.every((clock) =>
-    byId.some(
-      (member, index) =>
-        index > 0 &&
-        (compareValues(
-          ownMember(byId[index - 1]!, clock),
-          ownMember(member, clock),
-        ) ?? 1) > 0,
-    ),
+    byId.some((member, index) => {
+      if (index === 0) return false;
+      const order = compareValues(
+        ownMember(byId[index - 1]!, clock),
+        ownMember(member, clock),
+      );
+      return order !== undefined && order > 0;
+    }),
   );
 };
 
