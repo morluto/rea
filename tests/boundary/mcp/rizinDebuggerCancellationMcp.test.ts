@@ -17,6 +17,7 @@ import {
   createRizinTestManager,
   rizinTestInferiorTty,
 } from "../providers/RizinTestInferiorTty.js";
+import { createInjectedProcess } from "../providers/RizinDebugSessionCoverage.fixtures.js";
 import { silentLogger } from "../../../src/logger.js";
 import { registerRizinDebugTools } from "../../../src/server/registerRizinDebugTools.js";
 import type { RizinDebugToolManager } from "../../../src/server/registerRizinDebugTools.js";
@@ -30,6 +31,7 @@ import {
   validateDebuggerStatusResponse,
   waitForStartedFile,
 } from "../../support/reverseDebuggerMcpTestHelpers.js";
+import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 
 it.skipIf(process.platform === "win32")(
   "reports Rizin launch provenance and lossy frame decoding through MCP",
@@ -118,6 +120,108 @@ process.stdin.on("data", (chunk) => {
           await manager.closeAll();
           await rm(directory, { recursive: true, force: true });
         },
+      ]);
+    }
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "retains the Rizin stop reason after MCP cleanup recovery",
+  async () => {
+    let stopAttempts = 0;
+    const injected = createInjectedProcess({
+      onWrite: (text, control) => {
+        const marker = /!echo (.+)\n/u.exec(text)?.[1];
+        if (text.startsWith("noisy\n") && marker !== undefined)
+          control.output(`too much output\0${marker}\0`);
+      },
+    });
+    const manager = createRizinTestManager(
+      { REA_RIZIN_COMMAND: "injected-rizin" },
+      {
+        maxCommandOutputBytes: 8,
+        spawnProcess: injected.spawnProcess,
+        stopProcess: async (session) => {
+          stopAttempts += 1;
+          if (stopAttempts === 1)
+            return { status: "incomplete", reason: "injected cleanup retry" };
+          if (session.exited) return { status: "already_exited" };
+          injected.control.exit();
+          return { status: "stopped" };
+        },
+      },
+    );
+    const server = new McpServer({
+      name: "rizin-cleanup-recovery",
+      version: "1",
+    });
+    registerRizinDebugTools(
+      server,
+      manager,
+      silentLogger,
+      createToolResultDelivery(undefined),
+    );
+    const client = new Client({ name: "rizin-cleanup-recovery", version: "1" });
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+    try {
+      await server.connect(serverTransport);
+      await client.connect(clientTransport);
+      const started = await client.callTool({
+        name: "start_rizin_debug_session",
+        arguments: {
+          path: "/tmp/fixture.bin",
+          inferior_tty: await rizinTestInferiorTty(),
+        },
+      });
+      const sessionId = z
+        .object({ session_id: z.string().uuid() })
+        .parse(started.structuredContent).session_id;
+
+      const first = await client.callTool({
+        name: "rizin_debug_command",
+        arguments: { session_id: sessionId, command: "noisy" },
+      });
+      expect(parseMcpToolError(first).error.code).toBe(
+        "capability_unavailable",
+      );
+      expect(stopAttempts).toBe(1);
+
+      const later = await client.callTool({
+        name: "rizin_debug_command",
+        arguments: { session_id: sessionId, command: "later" },
+      });
+      expect(parseMcpToolError(later).error).toMatchObject({
+        code: "capability_unavailable",
+        message: expect.stringContaining(
+          "Rizin debug session stopped before this operation could run",
+        ),
+      });
+      expect(JSON.stringify(parseMcpToolError(later))).toContain(
+        "Rizin command output exceeded",
+      );
+      expect(stopAttempts).toBe(2);
+
+      const status = await validateDebuggerStatusResponse(
+        client,
+        "rizin_debug_session_status",
+        sessionId,
+      );
+      expect(status).toMatchObject({
+        state: "closed",
+        closed_reason: expect.stringContaining("Rizin command output exceeded"),
+      });
+
+      const closed = await client.callTool({
+        name: "close_rizin_debug_session",
+        arguments: { session_id: sessionId },
+      });
+      expect(closed.isError).not.toBe(true);
+    } finally {
+      await closeVerifierResources([
+        () => client.close(),
+        () => server.close(),
+        () => manager.closeAll(),
       ]);
     }
   },

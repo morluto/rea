@@ -1080,7 +1080,7 @@ export class RizinDebugSessionManager {
               stopped.reason,
             ),
         );
-      this.#sessions.delete(session.id);
+      if (session.closedReason === undefined) this.#sessions.delete(session.id);
     }
     return ok(null);
   }
