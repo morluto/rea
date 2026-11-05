@@ -134,6 +134,31 @@ for the Ubuntu archive and its mirrors or `LP-PPA-<name>` for a PPA; an empty
 source list means the version came from a local `.deb` or the package lists
 are missing, which `package_lists_present` tells apart.
 
+The Debian package is the one `dpkg-query -S` names as the owner of the
+desktop entry the capture launched, or else of the executable, since the
+entry's package is what installs the application: LibreOffice Writer's entry
+belongs to `libreoffice-writer`, while the `/usr/bin/libreoffice` it runs
+belongs to `libreoffice-common`, which does not bring Writer with it. When the
+two differ, `executable_package` names the executable's package, which the
+export installs beside the entry's, since the entry's package need not depend
+on it (`vim-common` owns Vim's entry but does not depend on `vim`).
+`executable_package_reason` says why the computer could not install it by
+name, by the rule for library packages below: neither the Ubuntu 24.04 archive
+nor a vendor repository the export declares offers it, or `apt-cache policy`
+did not say. When a package owns the entry but none owns its program, such as
+a `~/.local/bin/<name>` found first on `PATH`, the entry's package is recorded
+without `executable_package`, and `executable_package_reason` says no package
+owns the program, so the export refuses rather than install a package that
+does not bring it. A program link that dpkg does not own counts as owned when
+dpkg owns the file it resolves to, as an alternatives link does. An
+`--executable` launch, or an entry no package owns, such as
+one in `~/.local/share/applications`, records the executable's package. When
+`dpkg-query` does not finish or exits with an error for the executable or the
+entry, the package is `unknown` and the limitations say which path, since a
+failed lookup is not proof that no package owns it. The sources, vendor
+repositories and `--package-file` match below are the recorded package's; the
+library walk still reads the executable.
+
 Each source whose origin is not `Ubuntu` is also recorded in
 `apt_repositories`. `apt-get indextargets` names the sources file entry apt
 read it from and its release, so flat repositories match too, whether their
@@ -187,7 +212,12 @@ listed, and neither is the application's own package. One batched
 recorded vendor repository with a verified key offers, in any component its
 sources entry lists, since the export declares them all; the rest, such as
 packages from a PPA or a local `.deb`, are listed in
-`uninstallable_library_packages`. Sonames found nowhere are listed in
+`uninstallable_library_packages`. The same query checks `executable_package`.
+Each recorded repository's `supplies` lists the kept packages, and the
+executable's package, that the archive does not offer and its package files
+list, so the export can leave out those only a repository it does not declare
+supplies, such as one whose key the content budget later dropped. Sonames
+found nowhere are listed in
 `missing_libraries`, and libraries no package owns in `unpackaged_libraries`.
 `library_packages_reason` says why the lists are incomplete: the executable is
 not an ELF image (a launcher script, for example), `ldconfig`, `dpkg-query` or
@@ -223,7 +253,10 @@ the fuse sentinel in their binary or a `resources/app.asar` beside it. State
 directories are the XDG config, data, state and cache folders and the
 dot-folder named after the package, the executable, the desktop entry's full
 id and its last part, and the entry's name, with whether each existed at the
-start. Dotfiles in the home named after the application (`.<name>rc`, or
+start. A folder in those places whose name is one of these in another letter
+case joins them, such as GIMP's `~/.config/GIMP` for the `gimp` package; only
+the whole name is compared, so `~/.config/GIMPshop` does not. Dotfiles in the
+home named after the application (`.<name>rc`, or
 `.<name>` followed by `-`, `.` or `_`, for a name of three or more characters)
 that exist at the start join them, since an application may only read such a
 file during the capture. A `flatpak run` launch is named after its application

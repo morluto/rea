@@ -29,8 +29,8 @@ import {
 import {
   INSTALL_SCRIPT,
   electronLaunchArguments,
-  installLimitations,
 } from "../../domain/desktop/appExportInstall.js";
+import { installLimitations } from "../../domain/desktop/appExportInstallLimitations.js";
 import type { DesktopApplicationCapture } from "../../domain/desktop/desktopCapture.js";
 import {
   desktopApplicationStateSchema,
@@ -195,6 +195,9 @@ const planExport = (
     aptSources: install.sources,
     architectures: install.architectures,
     packageFile: install.packageFile,
+    ...(install.executablePackage === undefined
+      ? {}
+      : { executablePackage: install.executablePackage }),
     electron,
     command: launchCommand(
       electronLaunchArguments(application.argv, electron),

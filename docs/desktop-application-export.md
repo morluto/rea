@@ -63,8 +63,18 @@ The class declares:
   leaves out dependencies on the libraries it loads, as Typora's Electron
   package does, still starts; library packages the capture found neither the
   Ubuntu 24.04 archive nor a declared repository offers are left out, with a
-  limitation. An archive package's declared dependencies are trusted as they
-  are. The package must come from the Ubuntu 24.04 archive or a mirror of it,
+  limitation, and so are those only repositories the export leaves out supply
+  (a repository's `supplies`), such as one whose key the capture could not
+  retain. An archive package's declared dependencies are trusted as they
+  are. When the desktop entry's package is not the one that owns the program
+  it runs, as `vim-common`'s entry runs `vim`'s program, the program's package
+  (`executable_package`) follows the app's by name, since the entry's package
+  need not depend on it; a capture that found no archive or declared
+  repository offering it records why, and the export refuses it with that
+  reason, as it does when only repositories it leaves out supply it, or when
+  no package owns the program at all (`executable_package_reason` without
+  `executable_package`). The package must come from the Ubuntu 24.04 archive
+  or a mirror of it,
   or from a vendor apt repository whose signing key the capture verified and
   retained. A source counts as the archive when apt reports its origin as
   `Ubuntu` for a noble suite; a capture made before origins were recorded
@@ -111,7 +121,11 @@ The class declares:
   computer's container does not grant, and Electron exits without them. The
   README and the result's limitations say the sandbox is off.
 - `paths`: the state directories holding the application's state files and the
-  folders holding its documents, nested folders collapsed. The home itself and
+  folders holding its documents, nested folders collapsed. A folder beside a
+  state directory whose name differs from it only in letter case is owned
+  whole in the files' spelling, so a `~/.config/GIMP` profile GIMP created
+  during the capture beside the candidate `~/.config/gimp` is owned as
+  `.config/GIMP`, not as the folder of its first file. The home itself and
   the shared `.config`, `.local`, `.local/share`, `.local/state` and `.cache`
   folders are never owned whole: a file directly in one is owned as itself.
   Files the capture recorded under a symlinked state directory's physical

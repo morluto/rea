@@ -76,6 +76,19 @@ describe("ownedPaths", () => {
     ).toEqual([".config/app", "Documents"]);
   });
 
+  it("owns a folder beside a state directory, differing only in letter case, in the file's spelling", () => {
+    expect(
+      ownedPaths(
+        [".config/GIMP/2.10/sessionrc", ".Gimp/x"],
+        [],
+        [".config/gimp", ".gimp"],
+      ),
+    ).toEqual([".Gimp", ".config/GIMP"]);
+    expect(
+      ownedPaths([".config/GIMPshop/2.10/sessionrc"], [], [".config/gimp"]),
+    ).toEqual([".config/GIMPshop/2.10"]);
+  });
+
   it("owns a file directly in the home or a shared folder as itself", () => {
     expect(ownedPaths(["books.gnucash"], [], [])).toEqual(["books.gnucash"]);
     expect(

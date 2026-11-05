@@ -30,6 +30,11 @@ changed later. Each path records the evidence the capture holds about it:
 | `dconf_application_keys` | It is a dconf database holding groups whose path names the application    |
 | `desktop_service`        | It lies where desktop services and toolkits keep shared files, or caches  |
 
+A folder beside a state directory whose name differs from it only in letter
+case counts as that state directory, so a profile the application first
+creates during the capture, such as GIMP's `~/.config/GIMP` beside the
+candidate `~/.config/gimp`, is its state too.
+
 The role follows from the reasons, in this order: `application_state` for
 application keys in dconf, or a state directory outside shared desktop
 locations; `document` for a file named in a window title or selected by the

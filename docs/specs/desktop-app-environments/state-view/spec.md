@@ -15,6 +15,9 @@ generation reads the kinds of change.
   valid result; anything else is refused as invalid input.
 - Retained bytes are read without following links and used only when their
   SHA-256 matches the name they are stored under.
+- A path in a folder beside a state directory whose name differs from it only
+  in letter case, such as GIMP's `~/.config/GIMP` beside `~/.config/gimp`,
+  lies in that state directory.
 - Each path gets the reasons the capture supports (state directory, open file,
   window title, selected path, dconf application keys, shared desktop
   location) and one role derived from them.
