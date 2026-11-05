@@ -7,8 +7,11 @@ import {
 } from "./javascriptAstValues.js";
 import { traverseJavaScriptValueAstSteps } from "./javascriptSemanticTraversal.js";
 import {
+  semanticEffectStatementPosition,
+  semanticReadStatementPosition,
   semanticReadPrecedesWrite,
   semanticWritePrecedesRead,
+  type StatementPosition,
 } from "./javascriptSemanticMutationInitializers.js";
 import {
   semanticObjectExpressionDefinesKeySteps,
@@ -48,6 +51,26 @@ export interface ViteCachePropertyGraph {
   ) => JavaScriptIntrinsicInvocation | undefined;
 }
 
+interface SnapshotWrite {
+  readonly write: ViteCacheWrite;
+  readonly position: StatementPosition;
+  readonly replaces: boolean;
+}
+
+interface SnapshotWriteGroup {
+  readonly vertex: Vertex;
+  readonly writes: readonly ViteCacheWrite[];
+  readonly unpositioned: readonly ViteCacheWrite[];
+  readonly count: number;
+  readonly bodies: ReadonlyMap<
+    readonly t.Statement[],
+    {
+      readonly entries: readonly SnapshotWrite[];
+      readonly latest: readonly (ViteCacheWrite | undefined)[];
+    }
+  >;
+}
+
 /** shallow property selection and ordered snapshots share one literal owner. */
 export class ViteCacheProperties {
   private readonly lateWrites = new Map<
@@ -68,6 +91,10 @@ export class ViteCacheProperties {
     Map<string, Map<t.Node, Vertex>>
   >();
   private readonly snapshotInitials = new Map<Vertex, Vertex>();
+  private readonly snapshotWriteIndexes = new Map<
+    ViteCacheAllocation,
+    Map<string, readonly SnapshotWriteGroup[]>
+  >();
   readonly writes = new Map<ViteCacheAllocation, ViteCacheWrite[]>();
   readonly escapes = new Map<
     ViteCacheAllocation,
@@ -238,6 +265,7 @@ export class ViteCacheProperties {
     const nodes = keys.get(key) ?? new Set<t.Node>();
     keys.set(key, nodes);
     nodes.add(node);
+    this.snapshotWriteIndexes.clear();
     const byKey = this.snapshotReads.get(allocation);
     if (byKey === undefined) return;
     let examined = 0;
@@ -465,14 +493,12 @@ export class ViteCacheProperties {
         kind: "alias",
         source: this.lateGroup(allocation, selection),
       });
-    const groups = yield* this.writeGroupsSteps(allocation);
-    const exact = groups.get(key);
-    const latest = yield* this.latestWriteSteps(
-      [exact?.writes ?? [], groups.get(null)?.writes ?? []],
-      allocation,
-      key,
+    const groups = yield* this.snapshotWriteIndexSteps(allocation, key);
+    const position = semanticReadStatementPosition(
       read,
+      this.state.parentsByNode,
     );
+    const latest = yield* this.latestWriteSteps(groups, read, position);
     this.graph.connect(base, {
       kind: "alias",
       source:
@@ -486,18 +512,9 @@ export class ViteCacheProperties {
             ? initial
             : this.graph.normalize(latest.value),
     });
-    for (const group of [exact, groups.get(null)]) {
-      if (group === undefined) continue;
-      for (let index = 0; index < group.writes.length; index++) {
-        if (index % 1024 === 0) yield;
-        const write = group.writes[index];
-        if (write !== undefined && !this.inertWrite(write, latest, read)) {
-          // one shared junction retains uncertain writes for every slot read.
-          this.graph.connect(base, { kind: "alias", source: group.vertex });
-          break;
-        }
-      }
-    }
+    for (const group of groups)
+      if (yield* this.uncertainWriteSteps(group, latest, read, position))
+        this.graph.connect(base, { kind: "alias", source: group.vertex });
     let examined = 0;
     const escaped = this.escapes.get(allocation);
     if (escaped !== undefined)
@@ -517,17 +534,38 @@ export class ViteCacheProperties {
     return base;
   }
 
-  private *latestWriteSteps(
-    groups: readonly (readonly ViteCacheWrite[])[],
+  /** Index statement order and replacement proofs once per allocation and key. */
+  private *snapshotWriteIndexSteps(
     allocation: ViteCacheAllocation,
     key: string,
-    read: t.Node,
-  ): Generator<void, ViteCacheWrite | undefined> {
-    let latest: ViteCacheWrite | undefined;
+  ): Generator<void, readonly SnapshotWriteGroup[]> {
+    const byKey =
+      this.snapshotWriteIndexes.get(allocation) ??
+      new Map<string, readonly SnapshotWriteGroup[]>();
+    this.snapshotWriteIndexes.set(allocation, byKey);
+    const cached = byKey.get(key);
+    if (cached !== undefined) return cached;
+    const groups = yield* this.writeGroupsSteps(allocation);
+    const indexes: SnapshotWriteGroup[] = [];
     let examined = 0;
-    for (const writes of groups)
-      for (const write of writes) {
+    for (const selection of [key, null]) {
+      const group = groups.get(selection);
+      if (group === undefined) continue;
+      const bodies = new Map<
+        readonly t.Statement[],
+        { entries: SnapshotWrite[]; latest: (ViteCacheWrite | undefined)[] }
+      >();
+      const unpositioned: ViteCacheWrite[] = [];
+      for (const write of group.writes) {
         if (examined++ % 1024 === 0) yield;
+        const position = semanticEffectStatementPosition(
+          write.node,
+          this.state.parentsByNode,
+        );
+        if (position === null) {
+          unpositioned.push(write);
+          continue;
+        }
         const defines =
           write.propertySource === undefined
             ? write.key === key
@@ -535,10 +573,89 @@ export class ViteCacheProperties {
                 write.propertySource,
                 key,
               );
-        if (
+        const replaces =
           defines &&
           write.value !== undefined &&
-          (yield* this.acceptsReplacementSteps(allocation, key, write)) &&
+          (yield* this.acceptsReplacementSteps(allocation, key, write));
+        const body = bodies.get(position.body) ?? { entries: [], latest: [] };
+        bodies.set(position.body, body);
+        body.entries.push({ write, position, replaces });
+      }
+      for (const body of bodies.values()) {
+        body.entries.sort(
+          (left, right) => left.position.index - right.position.index,
+        );
+        let latest: ViteCacheWrite | undefined;
+        for (const { write, replaces } of body.entries) {
+          if (examined++ % 1024 === 0) yield;
+          if (
+            replaces &&
+            (latest === undefined ||
+              semanticWritePrecedesRead(
+                latest.node,
+                write.node,
+                this.state.parentsByNode,
+              ))
+          )
+            latest = write;
+          body.latest.push(latest);
+        }
+      }
+      indexes.push({
+        vertex: group.vertex,
+        writes: group.writes,
+        unpositioned,
+        count: group.writes.length,
+        bodies,
+      });
+    }
+    byKey.set(key, indexes);
+    return indexes;
+  }
+
+  private writeBoundary(
+    entries: readonly SnapshotWrite[],
+    statementIndex: number,
+  ): number {
+    let left = 0;
+    let right = entries.length;
+    while (left < right) {
+      const middle = (left + right) >>> 1;
+      if (entries[middle]!.position.index < statementIndex) left = middle + 1;
+      else right = middle;
+    }
+    return left;
+  }
+
+  private *latestWriteSteps(
+    groups: readonly SnapshotWriteGroup[],
+    read: t.Node,
+    position: StatementPosition | null,
+  ): Generator<void, ViteCacheWrite | undefined> {
+    if (position === null) return undefined;
+    let latest: ViteCacheWrite | undefined;
+    let examined = 0;
+    for (const group of groups) {
+      const body = group.bodies.get(position.body);
+      if (body === undefined) continue;
+      const before = this.writeBoundary(body.entries, position.index);
+      const after = this.writeBoundary(body.entries, position.index + 1);
+      const candidate = body.latest[before - 1];
+      if (
+        candidate !== undefined &&
+        (latest === undefined ||
+          semanticWritePrecedesRead(
+            latest.node,
+            candidate.node,
+            this.state.parentsByNode,
+          ))
+      )
+        latest = candidate;
+      for (let index = before; index < after; index++) {
+        if (examined++ % 1024 === 0) yield;
+        const { write, replaces } = body.entries[index]!;
+        if (
+          replaces &&
           semanticWritePrecedesRead(
             write.node,
             read,
@@ -553,7 +670,50 @@ export class ViteCacheProperties {
         )
           latest = write;
       }
+    }
     return latest;
+  }
+
+  private *uncertainWriteSteps(
+    group: SnapshotWriteGroup,
+    latest: ViteCacheWrite | undefined,
+    read: t.Node,
+    position: StatementPosition | null,
+  ): Generator<void, boolean> {
+    let examined = 0;
+    if (position === null) {
+      for (const write of group.writes) {
+        if (examined++ % 1024 === 0) yield;
+        if (!this.inertWrite(write, latest, read)) return true;
+      }
+      return false;
+    }
+    const body = group.bodies.get(position.body);
+    if (group.count > (body?.entries.length ?? 0) + group.unpositioned.length)
+      return true;
+    for (const write of group.unpositioned) {
+      if (examined++ % 1024 === 0) yield;
+      if (!this.inertWrite(write, latest, read)) return true;
+    }
+    if (body === undefined) return false;
+    const lastPosition =
+      latest === undefined
+        ? null
+        : semanticEffectStatementPosition(
+            latest.node,
+            this.state.parentsByNode,
+          );
+    const start =
+      lastPosition?.body === position.body
+        ? this.writeBoundary(body.entries, lastPosition.index)
+        : 0;
+    const end = this.writeBoundary(body.entries, position.index + 1);
+    for (let index = start; index < end; index++) {
+      if (examined++ % 1024 === 0) yield;
+      if (!this.inertWrite(body.entries[index]!.write, latest, read))
+        return true;
+    }
+    return false;
   }
 
   private *acceptsReplacementSteps(
@@ -699,6 +859,21 @@ export class ViteCacheProperties {
     if (previous !== undefined) return previous;
     const slot = this.graph.vertex();
     slots.set(key, slot);
+    if (
+      key === "constructor" &&
+      (allocation.kind === "cache" ||
+        t.isArrayExpression(allocation.node) ||
+        allocation.helperResult !== undefined)
+    ) {
+      slot.seed = {
+        allocation: null,
+        owner: undefined,
+        intrinsicPrototype: true,
+        intrinsicObject: "Array",
+      };
+      this.graph.enqueue(slot);
+      return slot;
+    }
     if (allocation.helperResult !== undefined) {
       const mapped = allocation.helperResult;
       const index = semanticArrayIndex(key);

@@ -320,6 +320,8 @@ function* indexCallExposuresSteps(
       invocation?.kind === "known"
         ? (invocation.arguments ?? call.arguments)
         : call.arguments;
+    if (invocation?.receiver !== undefined && !arrayInvocation(invocation))
+      exposures.push({ node: call, value: invocation.receiver });
     // A known callable does not prove argument positions when a spread can
     // supply several slots, including both a destination and a cache source.
     let positionsKnown = invocation?.arguments !== undefined;

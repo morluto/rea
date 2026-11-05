@@ -47,6 +47,7 @@ import {
 } from "./javascriptViteCacheProperties.js";
 type Key = string | null;
 type CopyMode = "enumerable" | "iteration";
+type IntrinsicObject = NonNullable<ViteCacheIdentity["intrinsicObject"]>;
 interface CopyEffectIndex {
   readonly size: number;
   readonly count: number;
@@ -204,16 +205,16 @@ export class ViteCacheIdentities {
 
   private readonly properties: ViteCacheProperties;
   private unknownInheritedRead: boolean | undefined;
-  private readonly copyMutationHazards = {
-    enumerable: new Map<t.Node | undefined, Vertex>(),
-    iteration: new Map<t.Node | undefined, Vertex>(),
-  };
+  private readonly copyMutationHazards = new Map<
+    string,
+    Map<t.Node | undefined, Vertex>
+  >();
   private readonly copyEffects: {
     node: t.Node;
     source: Vertex;
     write?: ViteCacheWrite;
   }[] = [];
-  private readonly copyEffectIndexes = new Map<CopyMode, CopyEffectIndex>();
+  private readonly copyEffectIndexes = new Map<string, CopyEffectIndex>();
   constructor(
     private readonly state: JavaScriptSemanticAnalysisState,
     private readonly invocation: (
@@ -768,6 +769,14 @@ export class ViteCacheIdentities {
         ? UNKNOWN
         : undefined);
     if (input.kind === "copy-property") {
+      const receiver = input.receiver.fact;
+      // a proven local allocation cannot add own properties to an intrinsic.
+      if (receiver?.allocation != null) return FOREIGN;
+      if (
+        receiver?.exactPrototype === true &&
+        (receiver.intrinsicObject ?? "Array.prototype") !== input.target
+      )
+        return FOREIGN;
       // a known value carries its own identities; an unresolved value keeps
       // the existing conservative receiver hazard as well as known children.
       if (
@@ -775,7 +784,6 @@ export class ViteCacheIdentities {
         (source.allocation !== null || source.exactPrototype === true)
       )
         return source;
-      const receiver = input.receiver.fact;
       return receiver === undefined ? source : joinIdentity(source, receiver);
     }
     if (source === undefined) return undefined;
@@ -893,6 +901,7 @@ export class ViteCacheIdentities {
           input.kind === "copy-family" && input.enumerableOnly === true
             ? "enumerable"
             : "iteration",
+          source.intrinsicObject ?? "Array.prototype",
         );
         hazard.listeners.add(vertex);
         unsafe =
@@ -927,13 +936,18 @@ export class ViteCacheIdentities {
   private *copyMutationHazardSteps(
     read: t.Node | undefined,
     mode: CopyMode,
+    target: IntrinsicObject,
   ): Generator<void, Vertex> {
-    const hazards = this.copyMutationHazards[mode];
+    const key = `${mode}:${target}`;
+    const hazards =
+      this.copyMutationHazards.get(key) ??
+      new Map<t.Node | undefined, Vertex>();
+    this.copyMutationHazards.set(key, hazards);
     const previous = hazards.get(read);
     if (previous !== undefined) return previous;
     const hazard = this.vertex({});
     hazards.set(read, hazard);
-    const index = yield* this.copyEffectIndexSteps(mode);
+    const index = yield* this.copyEffectIndexSteps(mode, target);
     const addRange = (start: number, end: number): void => {
       for (
         let left = start + index.size, right = end + index.size;
@@ -981,8 +995,10 @@ export class ViteCacheIdentities {
   /** Share effect families across copy positions without quadratic edges. */
   private *copyEffectIndexSteps(
     mode: CopyMode,
+    target: IntrinsicObject,
   ): Generator<void, CopyEffectIndex> {
-    const cached = this.copyEffectIndexes.get(mode);
+    const key = `${mode}:${target}`;
+    const cached = this.copyEffectIndexes.get(key);
     if (cached !== undefined) return cached;
     type Entry = { source: Vertex; position: StatementPosition | null };
     const grouped = new Map<readonly t.Statement[] | null, Entry[]>();
@@ -1003,6 +1019,7 @@ export class ViteCacheIdentities {
             kind: "copy-property",
             source: this.normalize(write.value),
             receiver: effect.source,
+            target,
           });
         }
       }
@@ -1082,7 +1099,7 @@ export class ViteCacheIdentities {
       }
     }
     const result = { size, count: entries.length, tree, groups };
-    this.copyEffectIndexes.set(mode, result);
+    this.copyEffectIndexes.set(key, result);
     return result;
   }
 

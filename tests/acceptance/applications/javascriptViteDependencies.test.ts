@@ -3052,6 +3052,89 @@ const allScenarios: readonly ViteScenario[] = [
     resolved: kept ? ["first.js"] : [],
     unknown: !kept,
   })),
+  ...["call", "apply", "reflect"].map((mode) => ({
+    file: `borrowed-object-receiver-${mode}.js`,
+    source: mapDependenciesWithEffects(
+      initializeCache +
+        'const box = {cache: __vite__mapDeps.f, get [Symbol.toStringTag]() { this.cache[0] = "./last.js"; return "Object"; }}; ' +
+        (mode === "call"
+          ? "Object.prototype.toString.call(box); "
+          : mode === "apply"
+            ? "Object.prototype.toString.apply(box, []); "
+            : "Reflect.apply(Object.prototype.toString, box, []); ") +
+        "__vite__mapDeps([0]);",
+    ),
+    resolved: [],
+    unknown: true,
+  })),
+  ...[
+    ["cache", "__vite__mapDeps.f", false],
+    ["mapped", "__vite__mapDeps([])", false],
+    ["own-override", "__vite__mapDeps.f", true],
+  ].map(([name, receiver, kept]) => ({
+    file: `inherited-array-constructor-${String(name)}.js`,
+    ...(name === "mapped"
+      ? {
+          callSources: ["__vite__mapDeps([])", defaultCall],
+          callOccurrences: [0, 1],
+        }
+      : {}),
+    source: mapDependenciesWithEffects(
+      initializeCache +
+        (kept ? "__vite__mapDeps.f.constructor = {prototype: {}}; " : "") +
+        `const C = ${String(receiver)}.constructor; C.prototype.map = () => ["./last.js"]; __vite__mapDeps([0]);`,
+    ),
+    resolved: kept ? ["first.js"] : [],
+    unknown: !kept,
+  })),
+  ...[
+    ["own-write", "holder.tag = Array.prototype;", true],
+    [
+      "descriptor",
+      'Object.defineProperty(holder, "tag", {value: Array.prototype, enumerable: true});',
+      true,
+    ],
+    ["other-prototype", "Object.prototype.tag = Array.prototype;", false],
+    ["constructor", "Array.tag = Array.prototype;", false],
+  ].map(([name, write, kept]) => ({
+    file: `prototype-copy-receiver-${String(name)}.js`,
+    source: mapDependenciesWithEffects(
+      `const holder = {}; ${write} const copy = {...Array.prototype}; opaque(copy); __vite__mapDeps([0]);`,
+    ),
+    resolved: kept ? ["first.js"] : [],
+    unknown: !kept,
+  })),
+  ...[
+    ["replacement", "box.cache = []; opaque(box.cache);", true],
+    [
+      "declarators",
+      "const first = (box.cache = []), selected = box.cache; opaque(selected);",
+      true,
+    ],
+    ["branch", "if (flag) box.cache = []; opaque(box.cache);", false],
+    [
+      "function",
+      "function replace() { box.cache = []; } opaque(box.cache);",
+      false,
+    ],
+    ["compound", "box.cache ||= []; opaque(box.cache);", false],
+    [
+      "repeated",
+      Array.from(
+        { length: 48 },
+        () => 'box.cache = []; box.cache[0] = "x";',
+      ).join(" ") + " opaque(box.cache);",
+      true,
+    ],
+  ].map(([name, effects, kept]) => ({
+    file: `indexed-slot-snapshot-${String(name)}.js`,
+    source: mapDependenciesWithEffects(
+      initializeCache +
+        `const box = {cache: __vite__mapDeps.f}; ${String(effects)} __vite__mapDeps([0]);`,
+    ),
+    resolved: kept ? ["first.js"] : [],
+    unknown: !kept,
+  })),
 ];
 
 const batches = Array.from(

@@ -83,6 +83,7 @@ export type Input =
       readonly kind: "copy-property";
       readonly source: Vertex;
       readonly receiver: Vertex;
+      readonly target: NonNullable<ViteCacheIdentity["intrinsicObject"]>;
     }
   | {
       readonly kind: "prototype";
