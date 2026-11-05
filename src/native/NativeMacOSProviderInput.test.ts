@@ -162,3 +162,11 @@ it("declares the signature snapshot write in provider capabilities", () => {
     )?.effects,
   ).toMatchObject({ mayWriteFilesystem: true, mutatesArtifact: false });
 });
+
+it("declares the temporary private operand write in inspect_macho provider capabilities", () => {
+  expect(
+    nativeMacOSCapabilities("darwin").find(
+      ({ operation }) => operation === "inspect_macho",
+    )?.effects,
+  ).toMatchObject({ mayWriteFilesystem: true, mutatesArtifact: false });
+});
