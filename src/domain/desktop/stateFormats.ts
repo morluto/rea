@@ -32,6 +32,9 @@ const MAX_XML_NODES = 5000;
 const MAX_XML_DEPTH = 64;
 /** Half of Evidence's nesting limit, leaving room for the result around a view. */
 const MAX_JSON_VIEW_DEPTH = MAX_JSON_DEPTH / 2;
+const MIB = 1024 * 1024;
+/** Largest JSON or key file read into a view, whose whole value enters Evidence. */
+const MAX_PARSED_VIEW_BYTES = 4 * MIB;
 
 type KeyfileLine =
   | { readonly kind: "skip" }
@@ -83,6 +86,125 @@ export const decodeStateText = (bytes: Uint8Array): string | undefined => {
   }
 };
 
+const JSON_NUMBER = /-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?/uy;
+const JSON_HEX4 = /[0-9a-fA-F]{4}/uy;
+const JSON_ESCAPES = new Set(['"', "\\", "/", "b", "f", "n", "r", "t"]);
+
+/** Where the JSON string opening at `start` ends, past its closing quote, or -1 when it is malformed. */
+const jsonStringEnd = (text: string, start: number): number => {
+  for (let at = start + 1; at < text.length; at += 1) {
+    const code = text.charCodeAt(at);
+    if (code === 0x22) return at + 1;
+    if (code < 0x20) return -1;
+    if (code === 0x5c) {
+      const escape = text.charAt(at + 1);
+      JSON_HEX4.lastIndex = at + 2;
+      if (escape === "u" && JSON_HEX4.test(text)) at += 5;
+      else if (JSON_ESCAPES.has(escape)) at += 1;
+      else return -1;
+    }
+  }
+  return -1;
+};
+
+/** Where the JSON string, number or literal starting at `start` ends, or -1 when none does. */
+const jsonScalarEnd = (text: string, start: number): number => {
+  if (text.charCodeAt(start) === 0x22) return jsonStringEnd(text, start);
+  for (const literal of ["true", "false", "null"])
+    if (text.startsWith(literal, start)) return start + literal.length;
+  JSON_NUMBER.lastIndex = start;
+  return JSON_NUMBER.test(text) ? JSON_NUMBER.lastIndex : -1;
+};
+
+/** How far a JSON text has been read: what may come next, and the containers still open. */
+interface JsonScan {
+  expect: "value" | "key" | "colon" | "after";
+  /** The innermost container was just opened, so it may close at once. */
+  empty: boolean;
+  /** Each open container's opening bracket, innermost at `depth - 1`. */
+  open: Uint8Array;
+  depth: number;
+}
+
+/** Open a container, growing the brackets held as it nests deeper. */
+const openJson = (scan: JsonScan, bracket: number): void => {
+  if (scan.depth === scan.open.length) {
+    const grown = new Uint8Array(scan.open.length * 2);
+    grown.set(scan.open);
+    scan.open = grown;
+  }
+  scan.open[scan.depth] = bracket;
+  scan.depth += 1;
+  scan.expect = bracket === 0x5b ? "value" : "key";
+  scan.empty = true;
+};
+
+/** Read one bracket, comma or colon into the scan; false when the text cannot hold it there. */
+const jsonPunctuation = (scan: JsonScan, char: string): boolean => {
+  const code = char.charCodeAt(0);
+  const inner = scan.depth > 0 ? scan.open[scan.depth - 1] : undefined;
+  switch (char) {
+    case "[":
+    case "{":
+      if (scan.expect !== "value") return false;
+      openJson(scan, code);
+      return true;
+    case "]":
+    case "}":
+      // A closing bracket's code is its opening's plus two.
+      if ((scan.expect !== "after" && !scan.empty) || inner !== code - 2)
+        return false;
+      scan.depth -= 1;
+      break;
+    case ",":
+      if (scan.expect !== "after" || inner === undefined) return false;
+      scan.expect = inner === 0x5b ? "value" : "key";
+      return true;
+    default:
+      if (scan.expect !== "colon") return false;
+      scan.expect = "value";
+      return true;
+  }
+  scan.expect = "after";
+  scan.empty = false;
+  return true;
+};
+
+/** Read a string, number or literal into the scan; false when the text cannot hold it there. */
+const jsonScalar = (scan: JsonScan, string: boolean): boolean => {
+  if (scan.expect === "value") scan.expect = "after";
+  else if (string && scan.expect === "key") scan.expect = "colon";
+  else return false;
+  scan.empty = false;
+  return true;
+};
+
+/**
+ * Whether text is one JSON value as `JSON.parse` reads it, checked a token at
+ * a time without building the value: it holds a byte per open container, so
+ * text too large to parse into a view is still told apart from other text.
+ */
+export const isJsonText = (text: string): boolean => {
+  const scan: JsonScan = {
+    expect: "value",
+    empty: false,
+    open: new Uint8Array(64),
+    depth: 0,
+  };
+  for (let at = 0; at < text.length;) {
+    const char = text.charAt(at);
+    if (" \t\n\r".includes(char)) at += 1;
+    else if ("[]{},:".includes(char)) {
+      if (!jsonPunctuation(scan, char)) return false;
+      at += 1;
+    } else {
+      at = jsonScalarEnd(text, at);
+      if (at < 0 || !jsonScalar(scan, char === '"')) return false;
+    }
+  }
+  return scan.expect === "after" && scan.depth === 0;
+};
+
 /** Pick the reader for one retained file from its leading bytes and name. */
 export const detectStateFormat = (
   path: string,
@@ -97,7 +219,10 @@ export const detectStateFormat = (
   const trimmed = text.trimStart();
   if (
     (path.endsWith(".json") || /^[[{]/u.test(trimmed)) &&
-    safeParseJson(text).ok
+    // JSON too large for a view is told apart without building its value.
+    (bytes.length > MAX_PARSED_VIEW_BYTES
+      ? isJsonText(text)
+      : safeParseJson(text).ok)
   )
     return "json";
   if (XML_EXTENSIONS.test(path) || trimmed.startsWith("<?xml"))
@@ -272,10 +397,6 @@ export const xmlView = (text: string): JsonValue | undefined => {
     ? undefined
     : { root: tree, truncated: budget.truncated };
 };
-
-const MIB = 1024 * 1024;
-/** Largest JSON or key file read into a view, whose whole value enters Evidence. */
-const MAX_PARSED_VIEW_BYTES = 4 * MIB;
 
 /** Formats read from a file's bytes alone, without a tool or worker. */
 export type TextualStateFormat = "text" | "json" | "keyfile" | "xml";

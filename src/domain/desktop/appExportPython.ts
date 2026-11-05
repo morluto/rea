@@ -54,8 +54,14 @@ MAX_XML_NODES = 5000
 MAX_XML_DEPTH = 64
 SQLITE_BUSY_S = 0.25
 MAX_PARSED_BYTES = 4 * 1024 * 1024
+PARSED_TOO_LARGE = "larger than the 4 MiB limit for JSON and key file views"
 MAX_JSON_VIEW_DEPTH = 500
 JSON_TOO_DEEP = f"nested deeper than the {MAX_JSON_VIEW_DEPTH} levels a JSON view keeps"
+#: A JSON token after any whitespace, by group: an opening, a closing, a comma, a colon, a string's quote, or a number
+#: or literal. Strings are read by json's scanner, since a pattern repeating per escape holds memory for each.
+JSON_TOKEN = re.compile(r'[ \t\n\r]*(?:([\[{])|([\]}])|(,)|(:)|(")|(-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?'
+                        r"|true|false|null))")
+JSON_SPACE = re.compile(r"[ \t\n\r]*")
 
 
 def _respelled(text: str, home: Path) -> str:
@@ -203,10 +209,25 @@ def _keyfile_line(raw: str) -> tuple:
     return ("entry", key.strip(), value.strip()) if equals and key else ("other",)
 
 
+def _each_line(text: str):
+    """Each line of text as REA splits them, one at a time."""
+    start = 0
+    for line_break in LINE_BREAK.finditer(text):
+        yield text[start:line_break.start()]
+        start = line_break.end()
+    yield text[start:]
+
+
 def _is_keyfile(text: str) -> bool:
-    """REA's rule: at least one group, and nothing a key file view would drop."""
-    kinds = {_keyfile_line(line)[0] for line in LINE_BREAK.split(text)}
-    return "group" in kinds and "other" not in kinds
+    """REA's rule: at least one group, and nothing a key file view would drop. Lines are read one at a time, stopping
+    at the first it would drop."""
+    group = False
+    for line in _each_line(text):
+        kind = _keyfile_line(line)[0]
+        if kind == "other":
+            return False
+        group = group or kind == "group"
+    return group
 
 
 def _keyfile(text: str) -> dict:
@@ -306,30 +327,75 @@ def _deeper_than(root, limit: int) -> bool:
     return False
 
 
-def _text_view(name: str, text: str) -> dict:
-    """The format REA's state view detects for decoded text, and its view."""
+def _is_json(text: str) -> bool:
+    """Whether text is one JSON value as REA's state view reads it, checked a token at a time without building it or
+    recursing: it holds a byte per open container and one string at a time, so text too deep for Python's parser or
+    too large to parse into a view is still told apart from other text."""
+    containers, expect, empty, at = bytearray(), "value", False, 0
+    while True:
+        token = JSON_TOKEN.match(text, at)
+        if token is None:
+            break
+        kind, at = token.lastindex, token.end()
+        if kind == 5:
+            try:
+                at = json.decoder.scanstring(text, at)[1]
+            except ValueError:
+                return False
+        if kind == 1 and expect == "value":
+            containers.append(ord(text[at - 1]))
+            expect, empty = ("value" if text[at - 1] == "[" else "key"), True
+        # A closing bracket's code is its opening's plus two.
+        elif kind == 2 and (expect == "after" or empty) and containers and containers[-1] == ord(text[at - 1]) - 2:
+            containers.pop()
+            expect, empty = "after", False
+        elif kind == 3 and expect == "after" and containers:
+            expect = "value" if containers[-1] == ord("[") else "key"
+        elif kind == 4 and expect == "colon":
+            expect = "value"
+        elif kind >= 5 and (expect == "value" or (kind == 5 and expect == "key")):
+            expect, empty = ("colon" if expect == "key" else "after"), False
+        else:
+            return False
+    return expect == "after" and not containers and JSON_SPACE.fullmatch(text, at) is not None
+
+
+def _json_view(text: str, size: int):
+    """A JSON text's format and view, or why it has none, as REA reads it; None when it is not JSON. Text over the
+    parsed-view limit, or nested past Python's recursion limit, is told apart without building its value."""
+    if size > MAX_PARSED_BYTES:
+        return {"format": "json", "view": None, "error": PARSED_TOO_LARGE} if _is_json(text) else None
+    # The whole text must parse, and duplicate keys settle, before an inexact number makes it JSON with an error.
+    try:
+        view = json.loads(text, parse_constant=_not_json, parse_float=_number_or_mark, parse_int=_number_or_mark)
+    except RecursionError:
+        # Nesting too deep for Python to parse is far deeper than REA's view keeps, once the rest of it is JSON too.
+        return {"format": "json", "view": None, "error": JSON_TOO_DEEP} if _is_json(text) else None
+    except ValueError:
+        return None
+    if _holds_inexact(view):
+        return {"format": "json", "view": None,
+                "error": "a number in it cannot be read exactly, such as an integer above 2^53"}
+    if _deeper_than(view, MAX_JSON_VIEW_DEPTH):
+        return {"format": "json", "view": None, "error": JSON_TOO_DEEP}
+    return {"format": "json", "view": view, "truncated": False}
+
+
+def _text_view(name: str, text: str, size: int) -> dict:
+    """The format REA's state view detects for decoded text of size bytes, and its view; a JSON or key file over the
+    parsed-view limit is refused before its value is built."""
     trimmed = re.sub(r"^[\s﻿]+", "", text)
     if name.endswith(".json") or trimmed[:1] in ("[", "{"):
-        # The whole text must parse, and duplicate keys settle, before an inexact number makes it JSON with an error.
-        try:
-            view = json.loads(text, parse_constant=_not_json, parse_float=_number_or_mark, parse_int=_number_or_mark)
-        except RecursionError:
-            # Nesting too deep for Python to parse is far deeper than REA's view keeps.
-            return {"format": "json", "view": None, "error": JSON_TOO_DEEP}
-        except ValueError:
-            pass
-        else:
-            if _holds_inexact(view):
-                return {"format": "json", "view": None,
-                        "error": "a number in it cannot be read exactly, such as an integer above 2^53"}
-            if _deeper_than(view, MAX_JSON_VIEW_DEPTH):
-                return {"format": "json", "view": None, "error": JSON_TOO_DEEP}
-            return {"format": "json", "view": view, "truncated": False}
+        view = _json_view(text, size)
+        if view is not None:
+            return view
     lowered = name.lower()
     if lowered.endswith(XML_SUFFIXES) or trimmed.startswith("<?xml"):
         view = _xml_view(text)
         return _text(text) if view is None else {"format": "xml", "view": view, "truncated": view["truncated"]}
     if _is_keyfile(text):
+        if size > MAX_PARSED_BYTES:
+            return {"format": "keyfile", "view": None, "error": PARSED_TOO_LARGE}
         return {"format": "keyfile", "view": {"groups": _keyfile(text)}, "truncated": False}
     return _text(text)
 
@@ -353,7 +419,9 @@ def _view(path: Path) -> dict:
         text = data.decode("utf-8-sig") if whole else None
     except UnicodeDecodeError:
         text = None
-    return {"format": "binary", "view": None, "truncated": False} if text is None else _text_view(path.name, text)
+    if text is None:
+        return {"format": "binary", "view": None, "truncated": False}
+    return _text_view(path.name, text, len(data))
 
 
 def _views(home: Path, paths: list) -> dict:

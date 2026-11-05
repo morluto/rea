@@ -387,6 +387,47 @@ describe("diffStateViews zip member pairing", () => {
       complete: true,
     });
   });
+
+  it("pairs an element by an attribute both versions keep, so another attribute's new value is a change", () => {
+    const item = (attributes: Record<string, string>) => ({
+      name: "item",
+      attributes,
+      children: [],
+    });
+    const archive = (color: string): JsonValue => ({
+      entries: [
+        {
+          name: "list.xml",
+          size: 1,
+          sha256: color,
+          format: "xml",
+          view: {
+            root: {
+              name: "list",
+              attributes: {},
+              children: [item({ color, id: "1" }), item({ id: "2" })],
+            },
+            truncated: false,
+          },
+          view_error: null,
+        },
+      ],
+      entry_count: 1,
+      truncated: false,
+    });
+
+    expect(
+      diffStateViews("zip", archive("red"), archive("green")),
+    ).toMatchObject({
+      added: [],
+      removed: [],
+      changed: [
+        "/entries/[name=list.xml]/sha256",
+        "/entries/[name=list.xml]/view/root/children/[name=item][@id=1]/attributes/color",
+      ],
+      complete: true,
+    });
+  });
 });
 
 describe("diffStateViews zip archives", () => {

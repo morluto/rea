@@ -164,6 +164,47 @@ describe("pairMembers", () => {
     });
   });
 
+  it("pairs an element by its identifier, so another attribute that changed is an edit", () => {
+    const pairing = pairMembers(
+      [
+        element("item", { color: "green", id: "1" }),
+        element("item", { id: "2" }),
+      ],
+      [
+        element("item", { color: "red", id: "1" }),
+        element("item", { id: "2" }),
+      ],
+    );
+
+    const keys = ["[name=item][@id=1]", "[name=item][@id=2]"];
+    expect(pairing).toEqual({
+      newer: { keys, partners: [0, 1] },
+      older: { keys, partners: [0, 1] },
+    });
+  });
+
+  it("pairs an element with identifiers by those alone, so one replaced by another of its type is removed and added", () => {
+    const object = (name: string, id: string) =>
+      element("Object", { type: "Part::Cylinder", name, id });
+    const plate = element("Object", { type: "Part::Box", name: "Plate" });
+
+    expect(
+      pairMembers(
+        [plate, object("Hole001", "3")],
+        [plate, object("Hole", "2")],
+      ),
+    ).toEqual({
+      newer: {
+        keys: ["[name=Object][@name=Plate]", "[name=Object][@name=Hole001]"],
+        partners: [0, undefined],
+      },
+      older: {
+        keys: ["[name=Object][@name=Plate]", "[name=Object][@name=Hole]"],
+        partners: [0, undefined],
+      },
+    });
+  });
+
   it("pairs members no selector names by position", () => {
     expect(pairMembers(["a", "b", "c"], ["a", "x"])).toEqual({
       newer: { keys: ["0", "1", "2"], partners: [0, 1, undefined] },
