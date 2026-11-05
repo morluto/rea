@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { expect, it as test } from "vitest";
 
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
@@ -260,18 +261,24 @@ const deferred = <T>() => {
 };
 
 it("reports sibling unavailability when fallback observes settled export failure without prior assembly call", async () => {
-  const exportFailed = deferred<void>();
+  const exportSettled = deferred<void>();
   const launcher: KunaProcessLauncher = async (options) => {
     if (options.arguments[0] === "decompile") {
-      await exportFailed.promise;
-      await new Promise((r) => setTimeout(r, 100));
+      await exportSettled.promise;
     }
     const spawned = await spawnOwnedProviderProcess(options);
     if (options.arguments[0] === "decompile-project") {
+      const output = options.arguments[options.arguments.indexOf("-o") + 1];
+      const synchronize = async () => {
+        if (output !== undefined) {
+          await expect.poll(() => existsSync(output)).toBe(false);
+        }
+        exportSettled.resolve();
+      };
       if (spawned.process.exitCode !== null) {
-        exportFailed.resolve();
+        void synchronize();
       } else {
-        spawned.process.once("exit", () => exportFailed.resolve());
+        spawned.process.once("exit", () => void synchronize());
       }
     }
     return spawned;
