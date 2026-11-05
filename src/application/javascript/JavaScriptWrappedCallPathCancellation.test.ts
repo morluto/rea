@@ -29,7 +29,7 @@ it("cancels actual call-path work while its first seed indexes a long block", as
     source,
     accumulator,
     identity,
-    () => completeSemanticSteps(index.indexMemberMutationFactsSteps()),
+    () => index.indexMemberMutationFactsSteps(),
   );
   // The first candidate has not yet been expanded: this checkpoint is inside
   // its block indexing, before the walker's completed batch is yielded.
@@ -55,9 +55,59 @@ it("cancels actual call-path work while its first seed indexes a long block", as
         source,
         completed,
         identity,
-        () => completeSemanticSteps(index.indexMemberMutationFactsSteps()),
+        () => index.indexMemberMutationFactsSteps(),
       ),
     ),
   ).toContainEqual(expect.objectContaining({ entry: "first", conditions: [] }));
   expect(completed.electronCallPathLimitReached).toBeUndefined();
+});
+
+it("cancels while a late initializer requests member-mutation indexing", async () => {
+  const source = `
+    const name = "electron";
+    const holder = {};
+    function register() {
+      load().ipcMain.on("ping", () => {});
+    }
+    var load = () => holder.load(name);
+    register();
+  `;
+  const parsed = parseJavaScriptSource(source);
+  if (parsed === null) throw new Error("Expected parsed source");
+  const index = completeSemanticSteps(
+    indexJavaScriptBindingsWithReceiversSteps(parsed.program),
+  );
+  const identity = completeSemanticSteps(
+    indexJavaScriptElectronIdentitySteps(parsed.program, index.bindings),
+  );
+  const accumulator = createJavaScriptAnalysisAccumulator(source.length);
+  let indexingStarted = false;
+  function* indexMemberMutationFacts(): Generator<void, void> {
+    indexingStarted = true;
+    yield;
+    yield* index.indexMemberMutationFactsSteps();
+  }
+  const work = collectElectronWrappedCallPathsSteps(
+    parsed.program,
+    index.bindings,
+    source,
+    accumulator,
+    identity,
+    indexMemberMutationFacts,
+  );
+
+  while (!indexingStarted) {
+    const next = work.next();
+    expect(next.done).toBe(false);
+  }
+  expect(index.bindings.memberMutationFactsComplete).toBe(false);
+
+  const controller = new AbortController();
+  const reason = { request: "cancel mutation indexing" };
+  controller.abort(reason);
+  await expect(
+    completeJavaScriptAnalysisSteps(work, controller.signal),
+  ).rejects.toMatchObject({ reason: "cancelled", cause: reason });
+  expect(work.next()).toEqual({ done: true, value: undefined });
+  expect(index.bindings.memberMutationFactsComplete).toBe(false);
 });
