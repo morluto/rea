@@ -35,9 +35,15 @@ const parentOf = (pointer: string): string | undefined =>
 const isWhitespace = (text: string) => /^[ \t\r\n]*$/u.test(text);
 
 /** The element whose name or attribute a pointer reaches; none for text or a whole element. */
-const ownerOf = (pointer: string): string | undefined =>
-  /^(?<owner>.+)\/(?:name|attributes)(?:\/[^/]+)?$/u.exec(pointer)?.groups
-    ?.owner;
+const ownerOf = (pointer: string): string | undefined => {
+  const segments = pointer.split("/");
+  // An attribute's own key may be `name` or `attributes`, so `attributes` is read one up first.
+  if (segments.at(-2) === "attributes") return segments.slice(0, -2).join("/");
+  const last = segments.at(-1);
+  return last === "attributes" || last === "name"
+    ? segments.slice(0, -1).join("/")
+    : undefined;
+};
 
 /** Whether an element holds text of its own beside its children, as a paragraph holds the text between its runs. */
 const holdsText = (value: JsonValue | undefined): boolean =>

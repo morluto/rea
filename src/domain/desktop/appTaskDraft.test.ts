@@ -505,39 +505,41 @@ describe("draftTaskFiles for text split into runs", () => {
 });
 
 describe("draftTaskFiles for runs with attributes", () => {
-  it("keeps a check on a changed attribute of a run both versions have when the paragraph's text check replaces the run's", () => {
-    const note = (href: string, label: string): JsonValue => ({
-      root: xmlElement("abiword", {}, [
-        xmlElement("p", { xid: "6" }, [
-          "Visit ",
-          xmlElement("a", { "xlink:href": href }, [label]),
+  it("keeps a check on a changed attribute of a run both versions have when the paragraph's text check replaces the run's, whatever the attribute is called", () => {
+    for (const key of ["xlink:href", "name", "attributes"]) {
+      const note = (target: string, label: string): JsonValue => ({
+        root: xmlElement("abiword", {}, [
+          xmlElement("p", { xid: "6" }, [
+            "Visit ",
+            xmlElement("a", { [key]: target }, [label]),
+          ]),
         ]),
-      ]),
-      truncated: false,
-    });
+        truncated: false,
+      });
 
-    const [file] = draft({
-      "Documents/note.abw": path(
-        "document",
-        "xml",
-        note("https://old.example", "Old"),
-        note("https://new.example", "New"),
-      ),
-    });
+      const [file] = draft({
+        "Documents/note.abw": path(
+          "document",
+          "xml",
+          note("old-target", "Old"),
+          note("new-target", "New"),
+        ),
+      });
 
-    const paragraph = "/root/children/[name=p]";
-    expect(file?.suggested).toEqual([
-      expect.objectContaining({
-        kind: "text_equals",
-        pointer: paragraph,
-        value: "Visit New",
-      }),
-      expect.objectContaining({
-        kind: "value_equals",
-        pointer: `${paragraph}/children/[name=a]/attributes/xlink:href`,
-        value: "https://new.example",
-      }),
-    ]);
+      const paragraph = "/root/children/[name=p]";
+      expect(file?.suggested).toEqual([
+        expect.objectContaining({
+          kind: "text_equals",
+          pointer: paragraph,
+          value: "Visit New",
+        }),
+        expect.objectContaining({
+          kind: "value_equals",
+          pointer: `${paragraph}/children/[name=a]/attributes/${key}`,
+          value: "new-target",
+        }),
+      ]);
+    }
   });
 });
 
