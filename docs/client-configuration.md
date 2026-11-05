@@ -102,6 +102,33 @@ does not repair a client's naming behavior or infer permission drift from an
 unfamiliar prefix. The unavailable fork reported in
 [#5512](https://github.com/morluto/rea/issues/5512) has not been reverified.
 
+## Hot/cold catalogs
+
+For a client that supports MCP catalog refresh, set
+`REA_MCP_TOOL_CATALOG_PROFILE=hot-cold` in REA's server environment and restart
+the connection. REA then advertises a small initial catalog and loads other
+named tools through `discover_tools`. Setup preserves this explicit setting.
+See the [discovery contract](mcp-contracts.md#hotcold-catalog-discovery) for
+pagination, identity and family-scope semantics.
+
+Codex CLI 0.165.0 requires its experimental `mcp_tool_list_changed` feature for
+this workflow. Merge these entries into the existing `~/.codex/config.toml`
+without replacing other feature or REA settings:
+
+```toml
+[features]
+mcp_tool_list_changed = true
+
+[mcp_servers.rea.env]
+REA_MCP_TOOL_CATALOG_PROFILE = "hot-cold"
+```
+
+The server setting alone does not enable client refresh. If a successful
+discovery call is followed by a missing tool, check the client's refresh feature
+and tool allow/deny lists. Clients without refresh should use the default
+`REA_MCP_TOOL_CATALOG_PROFILE=full`; reconnect after changing it. Other clients'
+hot/cold behavior has not been verified.
+
 ## Fiddler Everywhere alongside REA
 
 Connect Fiddler Everywhere's MCP server separately for HTTP traffic debugging,

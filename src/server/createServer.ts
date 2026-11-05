@@ -43,6 +43,7 @@ import { registerFridaTools } from "./registerFridaTools.js";
 import { EvidenceMcpServer } from "./EvidenceMcpServer.js";
 import { catalogIdentityForToolFamilies } from "../catalogIdentity.js";
 import { parseMcpToolFamilies } from "../config/mcpToolFamilies.js";
+import { parseMcpToolCatalogProfile } from "../config/mcpToolCatalogProfile.js";
 import { createToolResultDelivery } from "./toolResult.js";
 import type { ToolResultDelivery } from "./ToolResultDelivery.js";
 import { parseMcpResponseBudget } from "../config/mcpResponseBudget.js";
@@ -171,6 +172,10 @@ export const createServer = (
   const compactInputPresentation =
     selectCompactInputSchemaPresentation(environment);
   const selectedOutputSchemaProfile = outputSchemaProfile(environment);
+  const catalogProfile = parseMcpToolCatalogProfile(
+    environment.REA_MCP_TOOL_CATALOG_PROFILE,
+  );
+  if (!catalogProfile.ok) throw catalogProfile.error;
   const advertisedToolFamilies = selectAdvertisedToolFamilies(environment);
   const providerEnvironment = captureProviderEnvironment(
     options.providerEnvironment,
@@ -810,6 +815,7 @@ export const createServer = (
     },
   });
   registerGuidedPrompts(server, analysis, session);
+  if (catalogProfile.value === "hot-cold") server.enableProgressiveCatalog();
   return server;
 };
 
