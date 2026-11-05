@@ -46,6 +46,7 @@ const sourceDigest = digest(await readFile(bridge));
 let supervisor;
 let cleaned = true;
 let report;
+let primaryFailure;
 try {
   for (const name of ["project", "home", "tmp"])
     await mkdir(join(workspace, name));
@@ -170,17 +171,37 @@ try {
     sourceDigest,
     "Bridge source changed during verification",
   );
+} catch (cause) {
+  primaryFailure = cause;
+  throw cause;
 } finally {
+  // Report cleanup failures alongside the probe's own failure instead of
+  // replacing it, so the original Ghidra assertion and output survive.
+  const cleanupFailures = [];
   if (supervisor !== undefined) {
     const stopped = await supervisor.stop();
     supervisor.dispose();
     cleaned = stopped.status === "verified-cleanup";
-    assert.ok(
-      cleaned,
-      `Owned cleanup incomplete; retained ${workspace}: ${JSON.stringify(stopped)}`,
-    );
+    if (!cleaned)
+      cleanupFailures.push(
+        new Error(
+          `Owned cleanup incomplete; retained ${workspace}: ${JSON.stringify(stopped)}`,
+        ),
+      );
   }
-  if (cleaned) await rm(workspace, { recursive: true, force: true });
+  if (cleaned)
+    await rm(workspace, { recursive: true, force: true }).catch((cause) =>
+      cleanupFailures.push(cause),
+    );
+  if (cleanupFailures.length > 0)
+    throw primaryFailure === undefined
+      ? cleanupFailures.length === 1
+        ? cleanupFailures[0]
+        : new AggregateError(cleanupFailures, "Probe cleanup failed")
+      : new AggregateError(
+          [primaryFailure, ...cleanupFailures],
+          "Warning-attribution verification and cleanup failed",
+        );
 }
 const completed = await completeVerifierRun(run);
 assertVerifierCleanupComplete(completed.process_lineage);
