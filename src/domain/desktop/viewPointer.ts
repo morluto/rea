@@ -147,53 +147,89 @@ const fieldOf = (member: JsonValue, { attribute, key }: Condition) => {
 /** Marks selector values several members share, which therefore name none. */
 const SHARED = Symbol("shared");
 
-/** The members of an array by their values for one set of selector fields, or SHARED where several have them. */
-const selectorIndex = (
-  items: readonly JsonValue[],
-  conditions: readonly Condition[],
-): ReadonlyMap<string, JsonValue | typeof SHARED> => {
-  const index = new Map<string, JsonValue | typeof SHARED>();
-  for (const item of items) {
-    const values = conditions.map((condition) => fieldOf(item, condition));
-    if (values.some((value) => value === undefined)) continue;
-    const key = JSON.stringify(values);
-    index.set(key, index.has(key) ? SHARED : item);
+/**
+ * A selector's conditions once per field, in field order, so every spelling of
+ * one selector reads alike; undefined when it is malformed or two conditions on
+ * one field differ, which no member meets.
+ */
+const normalSelector = (token: string): readonly Condition[] | undefined => {
+  const conditions = selectorOf(token);
+  if (conditions === undefined) return undefined;
+  const byField = new Map<string, Condition>();
+  for (const condition of conditions) {
+    const field = `${condition.attribute ? "@" : ""}${condition.key}`;
+    const seen = byField.get(field);
+    if (seen !== undefined && seen.value !== condition.value) return undefined;
+    byField.set(field, condition);
   }
-  return index;
+  return [...byField.keys()]
+    .sort()
+    .flatMap((field) => byField.get(field) ?? []);
+};
+
+/** Selectors grouped by the fields they read, each wanted value list with the tokens spelling it. */
+const selectorGroups = (tokens: Iterable<string>) => {
+  const groups = new Map<
+    string,
+    { conditions: readonly Condition[]; wanted: Map<string, string[]> }
+  >();
+  for (const token of tokens) {
+    if (INDEX.test(token)) continue;
+    const conditions = normalSelector(token);
+    if (conditions === undefined) continue;
+    const fields = JSON.stringify(
+      conditions.map(({ attribute, key }) => [attribute, key]),
+    );
+    const values = JSON.stringify(conditions.map(({ value }) => value));
+    const group = groups.get(fields) ?? { conditions, wanted: new Map() };
+    groups.set(fields, group);
+    const spellings = group.wanted.get(values);
+    if (spellings === undefined) group.wanted.set(values, [token]);
+    else spellings.push(token);
+  }
+  return groups.values();
+};
+
+/**
+ * The member each selector among `tokens` names alone, found in one pass over
+ * the array per set of fields they read, holding only the values they ask for.
+ */
+const selectedMembers = (
+  items: readonly JsonValue[],
+  tokens: Iterable<string>,
+): ReadonlyMap<string, JsonValue> => {
+  const selected = new Map<string, JsonValue>();
+  for (const { conditions, wanted } of selectorGroups(tokens)) {
+    const found = new Map<string, JsonValue | typeof SHARED>();
+    for (const item of items) {
+      const values = conditions.map((condition) => fieldOf(item, condition));
+      if (values.some((value) => value === undefined)) continue;
+      const key = JSON.stringify(values);
+      if (wanted.has(key)) found.set(key, found.has(key) ? SHARED : item);
+    }
+    for (const [key, member] of found)
+      if (member !== SHARED)
+        for (const token of wanted.get(key) ?? []) selected.set(token, member);
+  }
+  return selected;
 };
 
 /**
  * What pointer tokens name in one value by the evaluator's rules: an own key,
- * an index, or the one member a selector matches. An array is indexed once per
- * set of selector fields asked for, so many tokens cost one pass, not one each.
+ * an index, or the one member a selector among `tokens` matches. The selectors
+ * are resolved together up front, so many cost one pass per set of fields they
+ * read, and what is kept grows with the tokens, not with the array.
  */
 export const memberLookup = (
   value: JsonValue | undefined,
+  tokens: Iterable<string> = [],
 ): ((token: string) => JsonValue | undefined) => {
   if (!Array.isArray(value))
     return (token) =>
       isRecord(value) && Object.hasOwn(value, token) ? value[token] : undefined;
-  const indexes = new Map<
-    string,
-    ReadonlyMap<string, JsonValue | typeof SHARED>
-  >();
-  return (token) => {
-    if (INDEX.test(token)) return value[Number(token)];
-    const conditions = selectorOf(token);
-    if (conditions === undefined) return undefined;
-    const fields = JSON.stringify(
-      conditions.map(({ attribute, key }) => [attribute, key]),
-    );
-    let index = indexes.get(fields);
-    if (index === undefined) {
-      index = selectorIndex(value, conditions);
-      indexes.set(fields, index);
-    }
-    const member = index.get(
-      JSON.stringify(conditions.map(({ value }) => value)),
-    );
-    return member === SHARED ? undefined : member;
-  };
+  const selected = selectedMembers(value, tokens);
+  return (token) =>
+    INDEX.test(token) ? value[Number(token)] : selected.get(token);
 };
 
 /** The value a pointer names, or undefined when it names none or a selector on its way is unresolved. */

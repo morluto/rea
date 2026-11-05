@@ -15,9 +15,10 @@ v22.23.1 and Python 3.11.14.
 - `npx vitest run src/domain/desktop src/application/desktop src/desktop` with
   `tests/boundary/providers/desktopExportPython.test.ts`,
   `desktopTaskPython.test.ts` and `tests/boundary/cli/cliStartupImports.test.ts`:
-  375 passed and 18 skipped (Linux-only cases). The new
-  `tests/boundary/providers/desktopZipPython.test.ts`: 12 passed, and
-  `desktopJsonDepthHeap.test.ts` and `desktopZipHeap.test.ts`: 1 passed each. The desktop
+  377 passed and 18 skipped (Linux-only cases). The new
+  `tests/boundary/providers/desktopZipPython.test.ts`: 13 passed, under
+  Python 3.9.6, 3.10, 3.11, 3.12, 3.13 and 3.14 alike;
+  `desktopStateHeap.test.ts`: 2 passed, and `desktopZipHeap.test.ts`: 1. The desktop
   CLI boundary tests `desktopApplicationCli`, `cliInputSchemaRequired` and
   `cliToolCoverage`: 28 passed.
 - Namespaced XML, on the same day and toolchain: the same gates passed, with
@@ -136,12 +137,27 @@ after it:
   when zip.js parsed every record, and grows peak RSS by 37 MiB against
   184 MiB; the exported reader peaks at 1.3 MiB of traced allocations against
   293.6 MiB, and at 1.3 MiB against 25.1 MiB for 50,000 entries. Directories
-  are told apart as zip.js tells them in both, and Zip64 end records are
-  followed.
+  are told apart as zip.js tells them in both.
+- Both readers follow a Zip64 locator whether or not the classic end record
+  holds sentinels, as `zipfile` does: an archive whose classic record keeps its
+  own counts, size and offset, which `zipfile` and zip.js both read, was
+  unreadable to both readers and now lists its entries in both. A last name
+  ending in bytes that only look like a locator keeps the classic values in
+  both, and the exported module gives `zipfile` real Zip64 end records for the
+  directory it shows it, so `zipfile` no longer refuses such an archive; the
+  parity tests pass under Python 3.9 to 3.14.
 - A diff comparing an object of selector-shaped keys with an array indexes the
   array once per set of selector fields: 2,000 keys read its members 4,000
   times against 4,002,000, and 8,000 and 20,000 keys diff in 19 and 31 ms
   against 980 ms and 5.4 s.
+- The keys are resolved together, their conditions sorted and de-duplicated,
+  holding only the values they ask for rather than an index of the array per
+  set of fields. 127 field combinations over 5,000 members grow the heap by
+  5.5 MB against 68.0 MB, in 138 ms against 174 ms; 160 spellings of one
+  selector over 800 members by 4.9 MB against 75.9 MB, in 4 ms against
+  388 ms, reading the members 1,600 times against 128,800. Both diff in a
+  16 MiB V8 old space where they needed more than 48 MiB; a test runs them
+  under a 32 MiB limit.
 
 ## FreeCAD captures
 
