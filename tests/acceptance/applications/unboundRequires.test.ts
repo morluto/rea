@@ -12,9 +12,55 @@ import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/j
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
+import { analyzeJavaScriptDirectory } from "../../support/cli/javascriptApplication.js";
 import { writeFixtureFiles } from "../../support/javascriptApplicationFixture.js";
 
 const execute = promisify(execFile);
+
+cliTest.for(["CLI", "stdio MCP"] as const)(
+  "distinguishes exact loader suffixes from uppercase artifact names through %s",
+  async (surface, { cli }) => {
+    const root = await createTestTempDirectory("rea-loader-suffix-case-");
+    const source = "console.log(42);";
+    await writeFixtureFiles(root, {
+      "package.json": JSON.stringify({
+        type: "commonjs",
+        main: "upper-module.MJS",
+      }),
+      "upper-module.MJS": source,
+      "upper-wrapper.CJS": source,
+      "lower-module.mjs": source,
+      "lower-wrapper.cjs": source,
+    });
+    const result = await analyzeJavaScriptDirectory(surface, cli, root);
+    expect(result.statistics.parse_failures).toBe(0);
+    const modules = result.graph.nodes
+      .filter((node) => node.kind === "javascript-module")
+      .flatMap((node) =>
+        node.observations.map((observation) => observation.properties),
+      );
+    expect(modules).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          path: "upper-module.MJS",
+          module_format: "unknown",
+        }),
+        expect.objectContaining({
+          path: "upper-wrapper.CJS",
+          module_format: "unknown",
+        }),
+        expect.objectContaining({
+          path: "lower-module.mjs",
+          module_format: "esm",
+        }),
+        expect.objectContaining({
+          path: "lower-wrapper.cjs",
+          module_format: "commonjs",
+        }),
+      ]),
+    );
+  },
+);
 const compiler = join(
   dirname(createRequire(import.meta.url).resolve("typescript/package.json")),
   "bin",

@@ -77,13 +77,14 @@ const parseWithRuntimeContext = (
   packageContext?: JavaScriptPackageType,
 ): ParsedJavaScriptSource => {
   const file = parse(source, options);
+  const filenameMode = explicitJavaScriptLoaderMode(sourcePath);
   runtimeContextByProgram.set(
     file.program,
-    /\.c[jt]s$/iu.test(sourcePath ?? "")
-      ? /\.d\.cts$/iu.test(sourcePath ?? "")
+    filenameMode === "commonjs"
+      ? sourcePath?.endsWith(".d.cts")
         ? "unknown"
         : "commonjs"
-      : isExplicitModuleSourcePath(sourcePath)
+      : filenameMode === "module"
         ? "module"
         : packageContext === "module" || packageContext === "commonjs"
           ? packageContext
@@ -140,16 +141,28 @@ export const parserPluginsForPath = (sourcePath?: string): ParserPlugin[] => {
   return jsxCapable ? [...syntax, "jsx", typescript] : [...syntax, typescript];
 };
 
-/** `.mjs` and `.mts` explicitly select module mode. */
-export const isExplicitModuleSourcePath = (path?: string): boolean =>
-  /\.m[jt]s$/iu.test(path ?? "");
+/** Exact loader suffixes are separate from case-folded artifact grammar. */
+export const explicitJavaScriptLoaderMode = (
+  path?: string,
+): "module" | "commonjs" | undefined => {
+  switch (path?.slice(-4)) {
+    case ".mjs":
+    case ".mts":
+      return "module";
+    case ".cjs":
+    case ".cts":
+      return "commonjs";
+    default:
+      return undefined;
+  }
+};
 
 const runtimeSourceTypeForPath = (
   path?: string,
 ): "commonjs" | "module" | "unambiguous" =>
-  /\.cjs$/iu.test(path ?? "")
+  path?.endsWith(".cjs")
     ? "commonjs"
-    : isExplicitModuleSourcePath(path)
+    : explicitJavaScriptLoaderMode(path) === "module"
       ? "module"
       : "unambiguous";
 
