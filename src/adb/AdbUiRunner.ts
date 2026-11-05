@@ -820,6 +820,7 @@ export class AdbUiRunner {
           "UI request exceeds the 16 KiB protocol budget",
           { max_request_bytes: REQUEST_BYTES },
         );
+      const preparing = owned;
       let reply = await this.#send(
         launch,
         serial,
@@ -835,13 +836,26 @@ export class AdbUiRunner {
         10000,
         signal,
         owned,
+        undefined,
+        (reply) => {
+          if (reply.instance_id !== preparing.runner.instance_id || reply.ok)
+            return;
+          // A matching preparation refusal created no remote slot. Observe it
+          // before host finalization can fail, without releasing that host owner.
+          this.#pending.delete(preparing.requestId);
+          admissionFailure = this.#runnerFailure(
+            request,
+            preparing,
+            reply.error!,
+            signal,
+          );
+        },
       );
       if (reply.instance_id !== owned.runner.instance_id)
         throw new AnalysisProtocolError(
           "UI runner changed during request preparation",
         );
-      if (!reply.ok) this.#pending.delete(owned.requestId);
-      else {
+      if (reply.ok) {
         z.strictObject({ state: z.literal("prepared") }).parse(reply.result);
         const submitted = owned;
         reply = await this.#send(

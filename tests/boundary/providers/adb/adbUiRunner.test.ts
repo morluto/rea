@@ -128,6 +128,16 @@ if (request.operation === 'ping') {
     if(mode.kind === 'vanish-after-ping') fs.renameSync(__filename,path.join(root,'saved-adb'));
   }
 } else if (request.operation === 'prepare') {
+  if(mode.prepare_refusal) {
+    const kind=mode.prepare_refusal==='capacity'?'capacity':'busy';
+    const reason=kind==='capacity'?'Unacknowledged UI request capacity exhausted':'Another UI request is active';
+    const response=frame(request.request_id,null,{kind,reason});
+    if(mode.prepare_refusal_identity==='request') response.request_id='00000000-0000-4000-8000-000000000099';
+    if(mode.prepare_refusal_identity==='runner') response.instance_id='00000000-0000-4000-8000-000000000099';
+    const encoded=mode.prepare_refusal_identity==='malformed'?'not-json':Buffer.from(JSON.stringify(response)).toString('base64');
+    console.log('Broadcast completed: result=0, data="REA_UI_V2:'+encoded+'"');
+    process.exit(0);
+  }
   const file=mode.kind==='delayed' ? path.join(root,'delayed-'+request.request_id) : jobFile(request.request_id);
   fs.writeFileSync(file,JSON.stringify({state:'prepared'}));
   if(mode.kind==='wrong-id') request.request_id='00000000-0000-4000-8000-000000000099';
@@ -299,21 +309,29 @@ it.each(
   },
 );
 
-it.each([
-  ...["busy", "capacity"].flatMap((kind) =>
-    [false, true].map((cancel) => ({ kind, cancel, identity: "matching" })),
-  ),
-  ...["request", "runner", "malformed"].map((identity) => ({
-    kind: "busy",
-    cancel: false,
-    identity,
-  })),
-])(
-  "retains a $identity $kind admission reply across denied host cleanup (cancel: $cancel)",
-  async ({ kind, cancel, identity }) => {
+it.each(
+  ["body", "prepare"].flatMap((stage) => [
+    ...["busy", "capacity"].flatMap((kind) =>
+      [false, true].map((cancel) => ({
+        stage,
+        kind,
+        cancel,
+        identity: "matching",
+      })),
+    ),
+    ...["request", "runner", "malformed"].map((identity) => ({
+      stage,
+      kind: "busy",
+      cancel: false,
+      identity,
+    })),
+  ]),
+)(
+  "retains a $identity $kind $stage admission reply across denied host cleanup (cancel: $cancel)",
+  async ({ stage, kind, cancel, identity }) => {
     const { binary, environment, workspace, setMode } = await fixture({
-      body_refusal: kind,
-      body_refusal_identity: identity,
+      [`${stage}_refusal`]: kind,
+      [`${stage}_refusal_identity`]: identity,
     });
     const controller = new AbortController();
     const reason = new Error("cancel during admission command cleanup");
@@ -321,7 +339,16 @@ it.each([
     let cleanupAttempts = 0;
     const transport = new AdbUiRunner(environment, async (input) => {
       const acquired = await spawnOwnedProviderProcess(input);
-      if (input.arguments[3] !== "-T") return acquired;
+      const body = input.arguments[3] === "-T";
+      if (
+        stage === "body"
+          ? !body
+          : body ||
+            JSON.parse(
+              Buffer.from(input.arguments.at(-1)!, "base64").toString("utf8"),
+            ).operation !== "prepare"
+      )
+        return acquired;
       return {
         ...acquired,
         cleanup: async () => {
@@ -336,8 +363,31 @@ it.each([
         },
       };
     });
+    const restorePreparedSlot = async () => {
+      if (
+        stage !== "prepare" ||
+        !transport.pendingResources.some((resource) =>
+          resource.startsWith("adb-ui:"),
+        )
+      )
+        return;
+      // Unmatched/malformed replies cannot prove preparation refusal. Supply
+      // a controlled slot so cleanup can later obtain definitive settlement.
+      const calls = (await readFile(workspace.path("calls"), "utf8"))
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line));
+      const prepared = calls.find((call) => call.operation === "prepare");
+      if (prepared === undefined)
+        throw new Error("Missing preparation request");
+      await writeFile(
+        workspace.path(`job-${prepared.request_id}.json`),
+        JSON.stringify({ state: "prepared" }),
+      );
+    };
     onTestFinished(async () => {
       denied = false;
+      await restorePreparedSlot();
       await transport.close();
     });
     const request = {
@@ -369,6 +419,12 @@ it.each([
     const projected = projectAnalysisError(result.error);
     expect(projected.code).toBe("cleanup_incomplete");
     if (identity === "matching") {
+      if (stage === "prepare")
+        expect(
+          transport.pendingResources.some((resource) =>
+            resource.startsWith("adb-ui:"),
+          ),
+        ).toBe(false);
       expect(projected).toMatchObject({
         details: {
           diagnostics: { primary_error: { code: "resource_constraint" } },
@@ -390,7 +446,17 @@ it.each([
           )?.cause,
         ).toBe(reason);
       }
-    } else expect(projected.message).toContain("may have completed");
+    } else if (stage === "body")
+      expect(projected.message).toContain("may have completed");
+    else {
+      expect(
+        transport.pendingResources.some((resource) =>
+          resource.startsWith("adb-ui:"),
+        ),
+      ).toBe(true);
+      expect(projected.message).not.toContain("may have completed");
+      await restorePreparedSlot();
+    }
     denied = false;
     await setMode({});
     expect(await transport.reconcile(request.operation)).toBeUndefined();
@@ -402,6 +468,16 @@ it.each([
       expect(await readFile(workspace.path("calls"), "utf8")).not.toContain(
         '"inspect_adb_ui"',
       );
+      if (stage === "prepare") {
+        const calls = (await readFile(workspace.path("calls"), "utf8"))
+          .trim()
+          .split("\n")
+          .map((line) => JSON.parse(line).operation);
+        expect(calls).not.toContain("cancel");
+        expect(
+          calls.filter((operation) => operation === "perform_adb_ui_action"),
+        ).toHaveLength(1);
+      }
     }
   },
 );
