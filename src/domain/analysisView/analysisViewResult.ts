@@ -54,6 +54,7 @@ import {
   nativeExportsViewItemsSchema,
   nativeExportsSummarySchema,
 } from "./nativeExportsView.js";
+import { procedurePseudocodeSummarySchema } from "./procedurePseudocodeSchemas.js";
 import { byteEntropySummarySchema } from "./byteEntropyView.js";
 import {
   javaScriptRoutesViewRequestSchema,
@@ -347,6 +348,7 @@ const viewResultBase = {
     "analyze_javascript_application",
     "analyze_web_bundle",
     "analyze_function",
+    "procedure_pseudo_code",
     "inspect_artifact",
     "inventory_artifact",
     "inspect_wasm_artifact",
@@ -383,6 +385,13 @@ const summaryViewResultBase = {
   view: summaryViewSchema,
   ...viewResultBase,
 } as const;
+
+/** Original selector and text availability without the complete decompiled text. */
+export const procedurePseudocodeSummaryViewResultSchema = z.strictObject({
+  ...summaryViewResultBase,
+  parent_operation: z.literal("procedure_pseudo_code"),
+  summary: procedurePseudocodeSummarySchema,
+});
 
 const nativeObservationSummaryFor = <
   Operation extends NativeObservationOperation,
@@ -1206,6 +1215,7 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     view: environmentCoverageViewRequestSchema,
   }),
   z.discriminatedUnion("parent_operation", [
+    procedurePseudocodeSummaryViewResultSchema,
     nativeObservationSummaryViewResultSchema,
     nativeValueTraceSummaryViewResultSchema,
     erlangBeamSummaryViewResultSchema,
