@@ -325,3 +325,35 @@ it("delivers partial UUID-less inspection Evidence through production MCP", asyn
     },
   });
 });
+
+it.each(["unknown platform", "old arm64e bind opcodes not supported"])(
+  "keeps nm exports and the load table when dyld_info refuses the slice with %s",
+  async (diagnostic) => {
+    const target = await makeTarget("refused-slice", 2, true);
+    const runner = new UuidlessDyldRunner(diagnostic);
+    const result = await new NativeMacOSProvider({}, runner, "darwin")
+      .createClient(target)
+      .execute("inspect_macho", {});
+
+    expect(result.ok, JSON.stringify(result.ok ? null : result.error)).toBe(
+      true,
+    );
+    if (!result.ok) return;
+    expect(result.value.result).toMatchObject({
+      imports: { items: [], total: null, exhaustive: false },
+      exports: {
+        items: expect.arrayContaining([
+          expect.objectContaining({ name: "_main", source: "nm" }),
+        ]),
+        total: null,
+        exhaustive: false,
+      },
+    });
+    expect(result.value.limitations).toEqual(
+      expect.arrayContaining([
+        `dyld_info -imports reported '${diagnostic}'; import observations are unavailable.`,
+        `dyld_info -exports reported '${diagnostic}'; exports include nm symbol-table observations only.`,
+      ]),
+    );
+  },
+);
