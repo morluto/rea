@@ -1126,8 +1126,6 @@ export function* collectElectronWrappedCallPathsSteps(
           // Its call chain can never deduplicate a later path.
           perInvocationHandler ? undefined : { calls: context.calls, slot },
         );
-        if (descriptor.mode !== "send" && descriptor.mode !== "invoke" && !fn)
-          unknownFindings += 1;
       }
     } else if (guardedOnly) {
       unknownFindings += 1;
@@ -1610,6 +1608,13 @@ export function* collectElectronWrappedCallPathsSteps(
           },
         };
     }
+  unknownFindings += accumulator.ipc.filter(
+    ({ value }) =>
+      value.resolution_basis === "wrapper-substitution" &&
+      value.mode !== "send" &&
+      value.mode !== "invoke" &&
+      value.handler_kind !== "inline-function",
+  ).length;
   if (resolver.unresolved) unknownFindings += 1;
   // Every path starts at an Electron exposure or IPC registration, and the
   // resolver reaches an Electron value only through a require or import of

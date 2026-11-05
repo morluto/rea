@@ -1,6 +1,7 @@
 import { expect, it } from "vitest";
 import { completeJavaScriptAnalysisSteps } from "./JavaScriptAnalysisControl.js";
 import { collectElectronWrappedCallPathsSteps } from "../../domain/javascript/electronWrappedCallPaths.js";
+import { analyzeJavaScriptStaticSource } from "../../domain/javascript/javascriptStaticAnalysis.js";
 import {
   indexJavaScriptBindingsWithReceiversSteps,
   indexJavaScriptElectronIdentitySteps,
@@ -160,4 +161,42 @@ it("counts unknowns once when mutation indexing retries a seed", () => {
 
   expect(retried.indexRequests).toBe(1);
   expect(retried.unknownFindings).toBe(eager.unknownFindings);
+});
+
+it("preserves unknown handler counts when mutation indexing retries a seed", () => {
+  const source = `
+    const e = require("electron");
+    run("start", e.ipcMain.on);
+    function run(tag, on) {
+      on("other", unknownHandler);
+      format("value");
+    }
+    var format = value => value;
+  `;
+  const parsed = parseJavaScriptSource(source);
+  if (parsed === null) throw new Error("Expected parsed source");
+  const index = completeSemanticSteps(
+    indexJavaScriptBindingsWithReceiversSteps(parsed.program),
+  );
+  completeSemanticSteps(index.indexMemberMutationFactsSteps());
+  const identity = completeSemanticSteps(
+    indexJavaScriptElectronIdentitySteps(parsed.program, index.bindings),
+  );
+  const accumulator = createJavaScriptAnalysisAccumulator(source.length);
+  completeSemanticSteps(
+    collectElectronWrappedCallPathsSteps(
+      parsed.program,
+      index.bindings,
+      source,
+      accumulator,
+      identity,
+      () => index.indexMemberMutationFactsSteps(),
+    ),
+  );
+
+  const analysis = analyzeJavaScriptStaticSource(source);
+
+  expect(analysis.analysis_coverage?.semantics.unknown_findings).toBe(
+    accumulator.unknownFindings,
+  );
 });
