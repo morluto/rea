@@ -344,7 +344,14 @@ const readOpenedBinaryTarget = async (
       new BinaryTargetError(
         path,
         "dsym_path applies only to detected Mach-O executable targets, not to explicit headerless formats",
-        { constraint: "debug_companion_rejected" },
+        {
+          constraint: "debug_companion_rejected",
+          diagnostics: {
+            dsym_path: dsymPath,
+            format_hint: formatHint,
+            rejection: "headerless_format_hint",
+          },
+        },
       ),
     );
   if (formatHint === "raw-binary") {
@@ -511,7 +518,15 @@ const readOpenedBinaryTarget = async (
       new BinaryTargetError(
         path,
         "dsym_path applies only to Mach-O executable targets; this target is an analysis database",
-        { constraint: "debug_companion_rejected" },
+        {
+          constraint: "debug_companion_rejected",
+          diagnostics: {
+            dsym_path: dsymPath,
+            target_kind: "database",
+            target_format: "analysis-database",
+            rejection: "non_macho_target",
+          },
+        },
       ),
     );
   if (databaseTarget)
@@ -525,7 +540,14 @@ const readOpenedBinaryTarget = async (
       new BinaryTargetError(
         path,
         `dsym_path applies only to Mach-O executable targets; this target is ${artifactFormat}`,
-        { constraint: "debug_companion_rejected" },
+        {
+          constraint: "debug_companion_rejected",
+          diagnostics: {
+            dsym_path: dsymPath,
+            target_format: artifactFormat,
+            rejection: "non_macho_target",
+          },
+        },
       ),
     );
   if (artifactFormat !== undefined) {
@@ -564,7 +586,15 @@ const readOpenedBinaryTarget = async (
           new BinaryTargetError(
             path,
             "dsym_path applies only to Mach-O executable targets; this target is an archive with a trailing ZIP",
-            { constraint: "debug_companion_rejected" },
+            {
+              constraint: "debug_companion_rejected",
+              diagnostics: {
+                dsym_path: dsymPath,
+                target_kind: "archive",
+                target_format: zipRootPackageFormat(classificationPath),
+                rejection: "trailing_zip_archive",
+              },
+            },
           ),
         );
       return ok({
@@ -595,7 +625,14 @@ const readOpenedBinaryTarget = async (
         new BinaryTargetError(
           path,
           `dsym_path applies only to Mach-O executable targets; this target is ${detected.value.format}`,
-          { constraint: "debug_companion_rejected" },
+          {
+            constraint: "debug_companion_rejected",
+            diagnostics: {
+              dsym_path: dsymPath,
+              target_format: detected.value.format,
+              rejection: "non_macho_target",
+            },
+          },
         ),
       );
     const companion = await admitDebugCompanion({

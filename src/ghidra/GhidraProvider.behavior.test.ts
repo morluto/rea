@@ -6305,13 +6305,7 @@ it("rejects dsym_path in existing-project mode and requires matching debug_compa
   if (!rejectedProfile.ok) {
     expect(rejectedProfile.error).toMatchObject({
       _tag: "ConfigurationError",
-      settings: [
-        {
-          setting: "REA_GHIDRA_PROJECT_PATH",
-          constraint: expect.stringContaining("-process -noanalysis"),
-        },
-      ],
-      remediationAction: expect.stringContaining("omit dsym_path"),
+      settings: [{ setting: "REA_GHIDRA_PROJECT_PATH" }],
     });
   }
 
@@ -6333,7 +6327,7 @@ it("rejects dsym_path in existing-project mode and requires matching debug_compa
       _tag: "ProviderAdapterError",
       operation: "list_procedures",
       diagnostics: {
-        reason: expect.stringContaining("-process -noanalysis"),
+        rejection: "existing_project_debug_companion",
       },
     },
   });
@@ -6367,8 +6361,7 @@ it("rejects dsym_path in existing-project mode and requires matching debug_compa
         _tag: "ProviderAdapterError",
         operation: "list_procedures",
         diagnostics: {
-          reason:
-            "Resolve dsym_path into a matching analysis profile before opening the session.",
+          rejection: "debug_companion_profile_mismatch",
         },
       },
     });

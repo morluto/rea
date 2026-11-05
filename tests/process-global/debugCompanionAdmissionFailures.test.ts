@@ -203,7 +203,12 @@ it("still skips an unreadable DWARF candidate as caller data", async () => {
   expect(await fixture.admit()).toMatchObject({
     ok: false,
     error: {
-      reason: expect.stringContaining("no Mach-O DWARF member"),
+      diagnostics: {
+        dsym_path: fixture.dsymPath,
+        architecture: "x86_64",
+        target_uuid: UUID,
+        rejection: "uuid_mismatch",
+      },
     },
   });
 });

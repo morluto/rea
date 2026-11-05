@@ -308,7 +308,13 @@ it("rejects different matching members and admits byte-identical duplicates", as
   );
   expect(await fixture.admit()).toMatchObject({
     ok: false,
-    error: { reason: expect.stringContaining("conflicting DWARF") },
+    error: {
+      diagnostics: {
+        architecture: "x86_64",
+        target_uuid: "11111111-2222-3333-4444-555555555555",
+        rejection: "conflicting_matching_members",
+      },
+    },
   });
   await writeFile(duplicate, uuidImage("11111111-2222-3333-4444-555555555555"));
   expect(await fixture.admit()).toMatchObject({ ok: true });
@@ -333,7 +339,15 @@ it("skips an oversized nonmatching member but refuses an oversized matching memb
   }
   expect(await fixture.admit()).toMatchObject({
     ok: false,
-    error: { reason: expect.stringContaining("exceeds the supported size") },
+    error: {
+      diagnostics: {
+        limit: "dsym_member_size_bytes",
+        maximum_bytes: 1024 * 1024 * 1024,
+        observed_bytes: 1024 * 1024 * 1024 + 1,
+        member_path: oversized,
+        runtime_override: false,
+      },
+    },
   });
 });
 it("reports a placeholder target UUID before inspecting companion matches", async () => {
@@ -342,7 +356,37 @@ it("reports a placeholder target UUID before inspecting companion matches", asyn
   );
   expect(await fixture.admit()).toMatchObject({
     ok: false,
-    error: { reason: expect.stringContaining("no usable LC_UUID") },
+    error: {
+      diagnostics: {
+        architecture: "x86_64",
+        rejection: "target_uuid_absent",
+      },
+    },
+  });
+});
+
+it("classifies a truncated extra member at EOF as invalid-image and skips it instead of reporting traversalLimit", async () => {
+  const fixture = await admissionFixture();
+  const damaged = join(fixture.directory, "a-damaged-extra");
+  const bytes = uuidImage("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee");
+  bytes.writeUInt32LE(2, 16); // Declares 2 load commands in a 56-byte image with 24 command bytes.
+  await writeFile(damaged, bytes);
+  const handle = await open(damaged, "r");
+  try {
+    expect(await readMachoFileUuidEntries(handle, bytes.length)).toMatchObject({
+      ok: false,
+      error: {
+        kind: "invalid-image",
+      },
+    });
+  } finally {
+    await handle.close();
+  }
+  expect(await fixture.admit()).toMatchObject({
+    ok: true,
+    value: {
+      uuid: "11111111-2222-3333-4444-555555555555",
+    },
   });
 });
 

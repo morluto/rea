@@ -250,28 +250,34 @@ const readThinUuidEntry = async (
   while (!step.done) {
     throwIfCancelled(context.signal);
     const req = step.value;
+    const neededEnd = Math.min(range.length, req.offset + req.length);
     if (
-      req.offset < windowOffset ||
-      req.offset + req.length > windowOffset + window.length
+      req.offset < range.length &&
+      (req.offset < windowOffset || neededEnd > windowOffset + window.length)
     ) {
-      const windowLength = Math.min(
-        HEADER_READ_LIMIT,
-        range.length - req.offset,
-        TRAVERSAL_BUDGET_BYTES - context.ledger.spent,
-      );
-      if (windowLength < req.length) return err(traversalLimit());
+      const remainingRange = range.length - req.offset;
+      const desiredLength = Math.min(HEADER_READ_LIMIT, remainingRange);
+      const remainingBudget = TRAVERSAL_BUDGET_BYTES - context.ledger.spent;
+      if (remainingBudget < neededEnd - req.offset)
+        return err(traversalLimit());
       const read = await readUuidWindow(
         handle,
         range.offset + req.offset,
-        windowLength,
+        Math.min(desiredLength, remainingBudget),
         context,
       );
       if (!read.ok) return read;
       windowOffset = req.offset;
       window = read.value;
     }
-    const start = req.offset - windowOffset;
-    step = decoder.next(window.subarray(start, start + req.length));
+    const slice =
+      req.offset >= range.length
+        ? Buffer.alloc(0)
+        : window.subarray(
+            req.offset - windowOffset,
+            Math.min(window.length, neededEnd - windowOffset),
+          );
+    step = decoder.next(slice);
   }
   return step.value.ok ? step.value : err(invalidImage(step.value.error));
 };
@@ -565,6 +571,11 @@ const selectTargetSliceUuid = async (
   }
   return err({
     reason: `the target image declares no usable LC_UUID for the selected ${input.architecture} slice`,
+    diagnostics: {
+      dsym_path: state.dsymPath,
+      architecture: input.architecture,
+      rejection: "target_uuid_absent",
+    },
   });
 };
 
@@ -827,6 +838,12 @@ export const admitDebugCompanion = async (input: {
           return err({
             reason:
               "dsym_path contains conflicting DWARF members for the selected target UUID",
+            diagnostics: {
+              dsym_path: state.dsymPath,
+              architecture: input.architecture,
+              target_uuid: selected.value.uuid,
+              rejection: "conflicting_matching_members",
+            },
           });
         admitted ??= candidate.value;
       }
@@ -864,5 +881,11 @@ export const admitDebugCompanion = async (input: {
     : err({
         reason:
           "dsym_path contains no Mach-O DWARF member whose LC_UUID matches the selected target slice",
+        diagnostics: {
+          dsym_path: state.dsymPath,
+          architecture: input.architecture,
+          target_uuid: selected.value.uuid,
+          rejection: "uuid_mismatch",
+        },
       });
 };

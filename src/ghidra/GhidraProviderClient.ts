@@ -392,6 +392,10 @@ export const createGhidraProviderClient = (input: {
     return err(
       new ProviderAdapterError("ghidra", "open_binary", {
         diagnostics: {
+          rejection:
+            project !== undefined
+              ? "existing_project_debug_companion"
+              : "debug_companion_profile_mismatch",
           reason:
             project !== undefined
               ? "Existing-project Ghidra sessions open a saved program with -process -noanalysis and cannot stage or analyze a dsym_path companion."
