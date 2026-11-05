@@ -1,5 +1,5 @@
 import { err, ok, type Result } from "../result.js";
-import { withoutCredentials } from "./aptRepositories.js";
+import { withoutCredentials, withoutCredentialsIn } from "./aptRepositories.js";
 import { dependencyPackages } from "./debianPackageFile.js";
 import type { AptRepository, DesktopPackage } from "./desktopCapture.js";
 import { unwrapDesktopCommand } from "./desktopEntry.js";
@@ -95,15 +95,18 @@ const describe = (repository: AptRepository): string =>
     ? repository.source
     : `${withoutCredentials(repository.uri)} ${[repository.suite, ...repository.components].join(" ")}`;
 
+/** A repository from a capture written before credentials were removed whose URI still holds them. */
+const heldCredentials = (repository: AptRepository): boolean =>
+  repository.uri !== null &&
+  withoutCredentials(repository.uri) !== repository.uri;
+
 /** Why the computer cannot install from a vendor repository, or undefined when the export can declare it. */
 export const repositoryRefusal = (
   repository: AptRepository,
 ): string | undefined => {
-  // A capture written before credentials were removed still holds them in its URI.
   if (
     repository.uri_credentials_removed === true ||
-    (repository.uri !== null &&
-      withoutCredentials(repository.uri) !== repository.uri)
+    heldCredentials(repository)
   )
     return "its sources entry's URI held a user name or password, which REA neither records nor exports";
   if (repository.signing_key === null)
@@ -189,7 +192,7 @@ const declaredSources = (
 };
 
 const describePackage = (installed: DesktopPackage): string =>
-  `${installed.kind}${installed.name === null ? "" : ` ${installed.name}`}; sources: ${installed.sources.join(", ") || "none"}; apt origins: ${installed.source_origins === undefined ? "not recorded" : installed.source_origins.map((origin) => origin ?? "none").join(", ") || "none"}`;
+  `${installed.kind}${installed.name === null ? "" : ` ${installed.name}`}; sources: ${installed.sources.map(withoutCredentialsIn).join(", ") || "none"}; apt origins: ${installed.source_origins === undefined ? "not recorded" : installed.source_origins.map((origin) => origin ?? "none").join(", ") || "none"}`;
 
 /** A package no apt source the capture recorded lists: from its recorded package file, or else with how to record one. */
 const localInstallRefusal = (installed: DesktopPackage): InstallRefusal => {
@@ -221,6 +224,16 @@ const vendorInstall = (
   const repositories = installed.apt_repositories ?? [];
   if (repositories.length === 0)
     return err({ refusal: localInstallRefusal(installed), skipped: [] });
+  // Such a capture counted that repository's libraries as installable.
+  if (repositories.some(heldCredentials))
+    return err({
+      refusal: refusal(
+        "The capture recorded a user name or password in an apt repository's URI, from before REA removed them, so it cannot tell which library packages only that repository offers.",
+        "capture",
+        "Capture the application again.",
+      ),
+      skipped: [],
+    });
   const architecture = COMPUTER_ARCHITECTURES.get(hostArchitecture);
   if (architecture === undefined)
     return err({

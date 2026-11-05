@@ -300,13 +300,14 @@ def _text_view(name: str, text: str) -> dict:
     trimmed = re.sub(r"^[\s﻿]+", "", text)
     if name.endswith(".json") or trimmed[:1] in ("[", "{"):
         # The whole text must parse before an inexact number makes it JSON with an error.
-        inexact = []
+        inexact = False
 
         def number(spelling: str):
+            nonlocal inexact
             try:
                 return _exact_number(spelling)
             except _Inexact:
-                inexact.append(spelling)
+                inexact = True
                 return None
 
         try:

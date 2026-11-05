@@ -86,7 +86,9 @@ The class declares:
   with a limitation. The export also refuses snaps, flatpaks, AppImages, and a
   package no recorded repository lists unless it was installed from a `.deb`
   file the capture recorded and `--package-url` is given, since the computer
-  could not install them by name.
+  could not install them by name, and a capture written before credentials
+  were removed whose repository URI still holds them, since it counted that
+  repository's libraries as installable; capture it again.
 - `@computer_app(supports=...)` with both `amd64` and `arm64` for an archive
   package, which the archive serves for both, and only the capture host's
   architecture for a vendor package, since its repository may serve no other.

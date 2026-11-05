@@ -75,8 +75,9 @@ that key, with those libraries, and starts it.
   repository, so its release wins over the archive, and the bundle supports
   only the capture host's architecture. A repository is usable when its key
   was verified, its sources entry's URI held no user name or password
-  (`uri_credentials_removed`, or one still in `uri` in a capture written
-  before that field), it is reached over http or https, and its architecture
+  (`uri_credentials_removed`; a capture written before that field whose
+  `uri` still holds them is refused whole, since its library packages counted
+  that repository), it is reached over http or https, and its architecture
   restriction includes the host's. With none usable, the export is refused
   naming each repository, by its URI without credentials, and its reason; the
   credentials reason names no URI. A capture written before

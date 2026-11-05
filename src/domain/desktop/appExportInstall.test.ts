@@ -312,18 +312,16 @@ describe("exportInstall sources", () => {
 });
 
 describe("repositories whose URI held credentials", () => {
-  it("refuses a repository whose sources entry held a user name or password, naming neither them nor its URI in the reason", () => {
+  it("skips a repository whose URI held credentials and refuses an older capture that still holds them, naming neither", () => {
     const marked = repository({ uri_credentials_removed: true });
     // A capture written before credentials were removed holds them in its URI.
     const older = repository({
       uri: "https://rea-user:hunter2@apt.example.com/typora",
     });
+    const open = repository({ uri: "https://b.example.com/typora" });
     const refused = exportInstall(typora([marked]), "typora", "arm64");
-    const skipped = exportInstall(
-      typora([older, repository({ uri: "https://b.example.com/typora" })]),
-      "typora",
-      "arm64",
-    );
+    const skipped = exportInstall(typora([marked, open]), "typora", "arm64");
+    const recapture = exportInstall(typora([older, open]), "typora", "arm64");
 
     for (const reason of [
       repositoryRefusal(marked),
@@ -338,7 +336,6 @@ describe("repositories whose URI held credentials", () => {
         reason: expect.stringContaining("user name or password"),
       }),
     });
-    expect(JSON.stringify(refused)).not.toMatch(/rea-user|hunter2/u);
     expect(skipped.ok && skipped.value.sources).toEqual([
       expect.objectContaining({ uri: "https://b.example.com/typora" }),
     ]);
@@ -347,7 +344,15 @@ describe("repositories whose URI held credentials", () => {
         /^https:\/\/downloads\.typora\.io\/linux \.\/: .*user name or password/u,
       ),
     ]);
-    expect(JSON.stringify([refused, skipped])).not.toMatch(/rea-user|hunter2/u);
+    expect(recapture).toMatchObject({
+      ok: false,
+      error: expect.objectContaining({
+        remediation: "Capture the application again.",
+      }),
+    });
+    expect(JSON.stringify([refused, skipped, recapture])).not.toMatch(
+      /rea-user|hunter2/u,
+    );
   });
 });
 
