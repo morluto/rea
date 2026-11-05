@@ -203,7 +203,9 @@ node, depth and whitespace rules, key file groups, text as
 `{lines, line_count, truncated}` split on `\n` and `\r\n`, and zip archives
 as their entries, read with Python's `zipfile` from the file in place, with
 REA's entry, size, compression ratio and archive limits and its wording for an
-entry it does not read. A JSON file
+entry it does not read. The module reads the central directory itself, as REA
+does, and shows `zipfile` only the records it lists, reading each entry in
+bounded chunks no further than a byte past its declared size. A JSON file
 holding a number JavaScript cannot read exactly, such as an integer above 2^53,
 or nested more than 500 levels deep, gets an `error` instead of a view, as in
 REA, while text that is not one JSON

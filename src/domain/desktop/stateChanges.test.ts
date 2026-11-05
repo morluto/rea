@@ -210,6 +210,38 @@ const jsonArchive = (items: JsonValue): JsonValue => ({
   truncated: false,
 });
 
+describe("diffStateViews selector lookups", () => {
+  it("compares a wide object of selector keys with an array in one pass over the array, not one per key", () => {
+    const size = 2000;
+    const keyed = Object.fromEntries(
+      Array.from({ length: size }, (_, index) => [
+        `[name=n${String(index)}]`,
+        index,
+      ]),
+    );
+    const members = Array.from({ length: size }, (_, index) => ({
+      name: `n${String(index)}`,
+    }));
+    let reads = 0;
+    const listed = new Proxy(members, {
+      get: (target, key, receiver) => {
+        if (typeof key === "string" && /^[0-9]+$/u.test(key)) reads += 1;
+        return Reflect.get(target, key, receiver) as unknown;
+      },
+    });
+
+    const difference = diffStateViews(
+      "json",
+      { items: keyed },
+      { items: listed as JsonValue },
+    );
+
+    expect(difference).toMatchObject({ removed: [], removed_count: 0 });
+    // A scan of the array per key read its members about size * size times.
+    expect(reads).toBeLessThan(10 * size);
+  });
+});
+
 describe("diffStateViews zip member pairing", () => {
   it("compares counterparts by the evaluator's pointer rules, a bracketed key against an array as a selector", () => {
     const keyed = { "[name=x]": 1 };
