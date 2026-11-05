@@ -65,7 +65,8 @@ tolerance. Both evaluators, REA's and the exported verifier's, agree.
   byte past its declared size, so a forged small size cannot make it expand
   the rest of the stream.
 - Directory: both readers read the central directory themselves, a record at a
-  time through any Zip64 end record, count the file entries (directories told
+  time through the Zip64 end record whenever a Zip64 locator precedes the end
+  record, whatever the end record holds, count the file entries (directories told
   apart as zip.js does: a final slash, a Unix directory mode, or the MS-DOS
   attribute), and give zip.js or `zipfile` only the first 1,000 records, so
   memory does not grow with the number of entries.

@@ -87,7 +87,9 @@ def _zip_entry(archive, info, refusal):
 
 def _zip_end(file, size: int):
     """Where an archive's central directory ends, how long it is and the offset it declares, from the last end
-    record whose comment reaches the end of the file and any Zip64 one just before its locator; None without one."""
+    record whose comment reaches the end of the file and, when a Zip64 locator precedes it whatever that record
+    holds, the Zip64 one just before the locator; None without an end record, or when sentinels defer to a
+    Zip64 record that is missing."""
     window = min(size, 22 + 0xFFFF)
     file.seek(size - window)
     tail = file.read(window)
@@ -99,17 +101,19 @@ def _zip_end(file, size: int):
     total, length, offset = struct.unpack_from("<HII", tail, at + 10)
     end = size - window + at
     record = end - 20 - 56
-    if 0xFFFF not in (total,) and 0xFFFFFFFF not in (length, offset) or record < 0:
+    if record < 0:
         return end, length, offset
     file.seek(end - 20)
     if file.read(4) != ZIP64_LOCATOR:
         return end, length, offset
     file.seek(record)
     zip64 = file.read(56)
-    if len(zip64) < 56 or zip64[:4] != ZIP64_END:
+    if len(zip64) == 56 and zip64[:4] == ZIP64_END:
+        length, offset = struct.unpack_from("<QQ", zip64, 40)
+        return record, length, offset
+    if total == 0xFFFF or 0xFFFFFFFF in (length, offset):
         return None
-    length, offset = struct.unpack_from("<QQ", zip64, 40)
-    return record, length, offset
+    return end, length, offset
 
 
 def _zip_unicode_path(raw: bytes, flags: int, extra: bytes):
@@ -174,8 +178,8 @@ def _zip_directory(file, size: int, keep: int):
 
 
 class _BoundedArchive(io.RawIOBase):
-    """An archive as zipfile reads it: its entries in place, then a directory of the kept records alone and an end
-    record for them, so zipfile parses no more records than the view lists."""
+    """An archive as zipfile reads it: its entries in place, then a directory of the kept records alone and end
+    records for them, so zipfile parses no more records than the view lists."""
 
     def __init__(self, file, start: int, tail: bytes) -> None:
         super().__init__()
@@ -218,8 +222,13 @@ def _zip(path: Path) -> dict:
                 raise zipfile.BadZipFile("no readable central directory")
             start, declared, records, count = directory
             kept = b"".join(records)
-            tail = kept + struct.pack("<4s4H2IH", ZIP_END, 0, 0, len(records), len(records), len(kept),
-                                      declared if declared <= 0xFFFFFFFF else start, 0)
+            offset = declared if declared <= 0xFFFFFFFF else start
+            # zipfile follows a Zip64 locator signature wherever one sits before the end record, and the kept records
+            # may end in those bytes, so a real Zip64 end record and locator for them come first.
+            tail = (kept
+                    + struct.pack("<4sQ2H2I4Q", ZIP64_END, 44, 45, 45, 0, 0, len(records), len(records), len(kept), offset)
+                    + struct.pack("<4sIQI", ZIP64_LOCATOR, 0, offset + len(kept), 1)
+                    + struct.pack("<4s4H2IH", ZIP_END, 0, 0, len(records), len(records), len(kept), offset, 0))
             with zipfile.ZipFile(_BoundedArchive(file, start, tail)) as archive:
                 for info in archive.infolist():
                     refusal = _zip_refusal(info, spent)

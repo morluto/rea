@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { JsonValue } from "../jsonValue.js";
 import { diffStateViews } from "./stateChanges.js";
+import { resolvePointer } from "./viewPointer.js";
 
 describe("diffStateViews", () => {
   it("reports added and removed lines as a multiset", () => {
@@ -210,35 +211,90 @@ const jsonArchive = (items: JsonValue): JsonValue => ({
   truncated: false,
 });
 
-describe("diffStateViews selector lookups", () => {
-  it("compares a wide object of selector keys with an array in one pass over the array, not one per key", () => {
-    const size = 2000;
-    const keyed = Object.fromEntries(
-      Array.from({ length: size }, (_, index) => [
-        `[name=n${String(index)}]`,
-        index,
-      ]),
-    );
-    const members = Array.from({ length: size }, (_, index) => ({
+/**
+ * Diff an object of selector keys, each naming one of `size` members named
+ * n0, n1 and on, against them, and expect a few reads of each member, not a
+ * pass over the array per key.
+ */
+const expectFewReads = (keyed: Record<string, JsonValue>, size: number) => {
+  let reads = 0;
+  const listed = new Proxy(
+    Array.from({ length: size }, (_, index) => ({
       name: `n${String(index)}`,
-    }));
-    let reads = 0;
-    const listed = new Proxy(members, {
+    })),
+    {
       get: (target, key, receiver) => {
         if (typeof key === "string" && /^[0-9]+$/u.test(key)) reads += 1;
         return Reflect.get(target, key, receiver) as unknown;
       },
-    });
+    },
+  );
+
+  const difference = diffStateViews(
+    "json",
+    { items: keyed },
+    { items: listed as JsonValue },
+  );
+
+  expect(difference).toMatchObject({ removed: [], removed_count: 0 });
+  expect(reads).toBeLessThan(10 * size);
+};
+
+describe("diffStateViews selector lookups", () => {
+  it("reads every spelling of a selector as the evaluator does", () => {
+    const listed = [
+      { name: "n0", kind: "a" },
+      { name: "n1", kind: "a" },
+    ];
+    const keyed = {
+      "[kind=a][name=n0]": 1,
+      "[name=n1][kind=a][name=n1]": 2,
+      "[name=n0][name=n1]": 3,
+      "[kind=a]": 4,
+    };
 
     const difference = diffStateViews(
       "json",
       { items: keyed },
-      { items: listed as JsonValue },
+      { items: listed },
     );
 
-    expect(difference).toMatchObject({ removed: [], removed_count: 0 });
+    expect(difference.removed).toEqual([
+      "/items/[name=n0][name=n1]",
+      "/items/[kind=a]",
+    ]);
+    for (const key of Object.keys(keyed))
+      expect(
+        resolvePointer({ items: listed }, `/items/${key}`) === undefined,
+      ).toBe(difference.removed.includes(`/items/${key}`));
+  });
+
+  it("resolves selectors that repeat a condition as one, in one pass over the array", () => {
+    // An index per spelling of the same selector read the 800 members once for each of the 160.
+    expectFewReads(
+      Object.fromEntries(
+        Array.from({ length: 160 }, (_, index) => [
+          "[name=n0]".repeat(index + 1),
+          index,
+        ]),
+      ),
+      800,
+    );
+  });
+
+  it("compares a wide object of selector keys with an array in one pass over the array, not one per key", () => {
+    const size = 2000;
+
     // A scan of the array per key read its members about size * size times.
-    expect(reads).toBeLessThan(10 * size);
+    expectFewReads(
+      Object.fromEntries(
+        Array.from({ length: size }, (_, index) => [
+          `[name=n${String(index)}]`,
+          index,
+        ]),
+      ),
+      size,
+    );
   });
 });
 

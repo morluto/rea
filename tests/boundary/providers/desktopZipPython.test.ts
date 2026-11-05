@@ -297,17 +297,33 @@ describe("zip directories in the exported module", () => {
     });
   });
 
-  it("finds the directory through Zip64 end records, as zip.js and zipfile do", async () => {
-    const archive = withZip64End(
-      zipArchive([
-        { name: "a.txt", data: "a\n" },
-        { name: "d/" },
-        { name: "b.json", data: '{"b": 1}' },
-      ]),
-    );
+  it("finds the directory through a Zip64 locator whether or not the classic end record defers to it, as zipfile does", async () => {
+    const members = [
+      { name: "a.txt", data: "a\n" },
+      { name: "d/" },
+      { name: "b.json", data: '{"b": 1}' },
+    ];
+
+    // A classic record keeping its own values once left both readers short of the directory.
+    for (const sentinels of [true, false])
+      expect(
+        await sameView(withZip64End(zipArchive(members), sentinels)),
+      ).toMatchObject({
+        entries: [{ name: "a.txt" }, { name: "b.json", view: { b: 1 } }],
+        entry_count: 2,
+      });
+  });
+
+  it("keeps the classic values when bytes before the end record only look like a Zip64 locator", async () => {
+    // The last name ends in a locator signature and 16 more bytes, which sit just before the end record.
+    const name = `c-PK\u0006\u0007${"0".repeat(16)}`;
+    const archive = zipArchive([
+      { name: "a.txt", data: "a\n" },
+      { name, data: "c", flags: 0x800 },
+    ]);
 
     expect(await sameView(archive)).toMatchObject({
-      entries: [{ name: "a.txt" }, { name: "b.json", view: { b: 1 } }],
+      entries: [{ name: "a.txt" }, { name }],
       entry_count: 2,
     });
   });

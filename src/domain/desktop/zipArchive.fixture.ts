@@ -138,8 +138,12 @@ export const emptyEntriesArchive = (count: number): Buffer => {
   return archive;
 };
 
-/** The same archive ended by Zip64 records: a Zip64 end record and its locator, and a classic one that defers to them. */
-export const withZip64End = (archive: Buffer): Buffer => {
+/**
+ * The same archive ended by Zip64 records: a Zip64 end record and its locator,
+ * and a classic one that defers to them, or with `sentinels` false keeps its
+ * own counts, size and offset, as a writer may when they fit.
+ */
+export const withZip64End = (archive: Buffer, sentinels = true): Buffer => {
   const end = archive.length - 22;
   const entries = archive.readUInt16LE(end + 10);
   const size = archive.readUInt32LE(end + 12);
@@ -157,11 +161,12 @@ export const withZip64End = (archive: Buffer): Buffer => {
   locator.writeUInt32LE(0x07064b50, 0);
   locator.writeBigUInt64LE(BigInt(end), 8);
   locator.writeUInt32LE(1, 16);
-  const classic = Buffer.alloc(22);
-  classic.writeUInt32LE(0x06054b50, 0);
-  classic.writeUInt16LE(0xffff, 8);
-  classic.writeUInt16LE(0xffff, 10);
-  classic.writeUInt32LE(0xffffffff, 12);
-  classic.writeUInt32LE(0xffffffff, 16);
+  const classic = Buffer.from(archive.subarray(end));
+  if (sentinels) {
+    classic.writeUInt16LE(0xffff, 8);
+    classic.writeUInt16LE(0xffff, 10);
+    classic.writeUInt32LE(0xffffffff, 12);
+    classic.writeUInt32LE(0xffffffff, 16);
+  }
   return Buffer.concat([archive.subarray(0, end), record, locator, classic]);
 };
