@@ -70,7 +70,8 @@ the first source that has the app:
   (some PPAs are amd64 only) cannot be installed either.
 - `desktop_entry` is the package's `.desktop` file name under
   `/usr/share/applications` without `.desktop`, such as
-  `org.inkscape.Inkscape`. Add `window_class` when you know it.
+  `org.inkscape.Inkscape`. Add `window_class` when you know it; Inkscape's
+  is `Inkscape`.
 
 ## Drive the app
 
@@ -85,11 +86,23 @@ the first source that has the app:
   close it while capturing; the capture ends when the app exits. When the
   app is closed at any other time, open it from Applications → Other → the
   environment's name.
-- Prefer shortcuts and typing to long pointer paths: `key` takes chords such
-  as `ctrl+s`, and `type` turns `\n` into Enter.
-- Save As opens in the home: type `Documents/<file name>` in its name field.
-  Answer the app's save questions, such as keeping the format, and check the
-  title bar shows no unsaved mark before you mark a checkpoint or check.
+- Prefer shortcuts and typing to long pointer paths: `key` takes `keys`, an
+  array holding one chord's keys, such as
+  `{"action": "key", "keys": ["ctrl", "s"]}`, and `type` turns `\n` into
+  Enter.
+- Before `type`, check in a screenshot that a text cursor or a focused
+  field is there. In apps with single-key shortcuts, such as Inkscape, text
+  typed without one runs as commands.
+- Save As opens in the home: click Documents in its sidebar and type only
+  the file name. Answer the app's save questions, such as keeping the
+  format, then check the saved path in the title or status bar, and that
+  it shows no unsaved mark, before you mark a checkpoint or check.
+- Everything saved under the home before `seed` is part of the seed,
+  including a file you move to the Trash. If a stray file would mislead a
+  solver, start a new build computer before `seed`.
+- Dismiss first-run dialogs, such as a welcome screen, before `seed`. A
+  choice the app saves only later, such as Inkscape's "show this every
+  time", may not reach the seed, so expect the dialog in the witness too.
 - Give what the task changes a stable name where the app has one, such as an
   id in Inkscape's Object Properties, so a check can select it.
 - Watch for apps that split text into runs. LibreOffice Writer stores
@@ -175,8 +188,10 @@ check between stages to steer the edit: a solving agent never sees the
 checks. Give every `check_build_task` the task exactly as exported.
 
 1. `start_build_computer` with
-   `{"source": {"kind": "bundle", "path": "<bundle>"}}`. The app opens with
-   the seed.
+   `{"source": {"kind": "bundle", "path": "<bundle>"}}`. The app starts
+   with the seed's files in place but need not open the document: open it
+   from the prompt's path, as a solving agent would. Take a `wait`
+   screenshot first, since the desktop may not have drawn yet.
 2. `check_build_task` with `stage: "seed"` and `directory`, the absolute
    path of a new or empty folder for the record. A check must fail.
    Recording starts.
