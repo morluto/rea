@@ -3,6 +3,7 @@ import { STDIO_DEFAULT_MAX_BUFFER_SIZE } from "@modelcontextprotocol/server";
 
 import type { ToolContract } from "../contracts/toolContractTypes.js";
 import type { EvidenceWriter } from "../application/investigation/InvestigationRecordPort.js";
+import type { BinaryOpenResult } from "../application/binary/BinarySessionPort.js";
 import type { Evidence } from "../domain/evidence.js";
 import { safeParseEvidence } from "../domain/evidenceValidation.js";
 import {
@@ -194,8 +195,13 @@ export class ToolResultDelivery {
   toErrorToolResult(
     error: AnalysisError,
     targetContent: boolean,
+    details?: Readonly<Record<string, JsonValue>>,
   ): CallToolResult {
-    const projected = projectAnalysisError(error);
+    const base = projectAnalysisError(error);
+    const projected =
+      details === undefined
+        ? base
+        : { ...base, details: { ...base.details, ...details } };
     if (
       error instanceof NoBinaryOpenError &&
       this.noTargetRecovery !== undefined
@@ -209,6 +215,26 @@ export class ToolResultDelivery {
         targetContent,
       );
     return this.projectedErrorResult(projected, targetContent);
+  }
+
+  /** Include the session owner's selection at the end of this open attempt. */
+  toOpenFailureToolResult(
+    failure: Extract<BinaryOpenResult, { ok: false }>,
+    targetContent: boolean,
+  ): CallToolResult {
+    const projected = projectAnalysisError(failure.error);
+    return this.projectedErrorResult(
+      {
+        ...projected,
+        details: {
+          ...projected.details,
+          selection_at_failure: failure.selection,
+          target_at_open_completion: failure.targetAtCompletion,
+          provider_id_at_open_completion: failure.providerIdAtCompletion,
+        },
+      },
+      targetContent,
+    );
   }
 
   /** Retain valid partial Evidence and reference it only after recording succeeds. */

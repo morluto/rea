@@ -720,6 +720,11 @@ and status when publisher verification cannot download the current package.
 Hopper metadata and package downloads require HTTPS throughout the redirect
 chain; a redirect to HTTP or to a URL carrying credentials is refused before
 that destination is requested, and those credentials are not reported.
+A package download fails when no bytes arrive for 30 seconds or when it has not
+finished within 15 minutes, so a slow connection that keeps delivering bytes can
+complete. Release metadata and the publisher key keep a 10-second limit. A
+`timeout` failure reports the `limit` it reached (`stalled` or `deadline`), its
+`timeoutMs` and the `receivedBytes` before it stopped.
 
 On macOS, approved setup downloads the official DMG, checks its published size
 and digest, validates the application bundle, and atomically installs it to
@@ -1473,6 +1478,9 @@ reopen the target to resolve a new profile after intentionally changing it.
 The profile records the caller path, resolved project/name, program and content
 fingerprint. Original analysis settings and completeness remain **unknown**;
 prior annotations or edits are caller-project state, not fresh REA discoveries.
+For supported header-selected MIPS ELF targets, the profile also binds the
+selected target's ELF metadata; it does not claim a fresh-import MIPS lane was
+used for the saved project.
 A matching recorded import digest does not claim that the database is unedited.
 Saved REA seed/analyzer reports remain historical facts in retained source Evidence;
 they are not interpreted as overrides applied by this session.
