@@ -104,10 +104,11 @@ describe("raw-binary snapshots saved before base_address", () => {
     };
     const profile = await ghidraProfile(target);
     expect(snapshotMatchesTarget(snapshot.target, target)).toBe(true);
-    // Upstream's instruction-status (#7823), load-image observation (#8531) and
-    // procedure search (#8520) revisions keep every Ghidra snapshot saved
-    // before them from replaying. Apart from those parameters, the profile is
-    // the one this snapshot recorded.
+    // Upstream's instruction-status (#7823), load-image observation (#8531),
+    // procedure search (#8520), reference, byte-search (#8840) and data-type
+    // (#8602) revisions keep every Ghidra snapshot saved before them from
+    // replaying. Apart from those parameters, the profile is the one this
+    // snapshot recorded.
     const mismatch = snapshotBindingMismatch(snapshot, target, profile);
     expect(mismatch).not.toHaveProperty("target");
     expect(mismatch).toHaveProperty("profile_digest");
@@ -115,6 +116,10 @@ describe("raw-binary snapshots saved before base_address", () => {
       instruction_status: status,
       load_image_observations: observations,
       procedure_search: search,
+      function_references: functionReferences,
+      instruction_references: instructionReferences,
+      byte_search_boundary: byteSearch,
+      data_type_observations: dataTypes,
       ...parameters
     } = profile.parameters;
     expect(status).toBe("unlisted-address-without-decode-v1");
@@ -122,9 +127,23 @@ describe("raw-binary snapshots saved before base_address", () => {
       "source-mappings-entry-context-relocation-symbol-v3",
     );
     expect(search).toBe("primary-and-exact-entry-symbol-names-v1");
-    const { load_image_observations: savedObservations, ...savedParameters } =
-      snapshot.binding.analysis_profile.parameters;
+    expect(byteSearch).toBe("contiguous-eligible-initialized-blocks-v1");
+    expect(dataTypes).toBe("bit-field-base-and-lookup-v1");
+    const {
+      load_image_observations: savedObservations,
+      function_references: savedFunctionReferences,
+      instruction_references: savedInstructionReferences,
+      ...savedParameters
+    } = snapshot.binding.analysis_profile.parameters;
     expect(savedObservations).toBe("source-mappings-entry-context-v2");
+    expect([savedFunctionReferences, functionReferences]).toEqual([
+      "complete-body-and-entry-reference-manager-v2",
+      "complete-body-and-entry-reference-manager-v3",
+    ]);
+    expect([savedInstructionReferences, instructionReferences]).toEqual([
+      "exact-address-incoming-without-synthetic-entry-v2",
+      "exact-address-incoming-without-synthetic-entry-v3",
+    ]);
     expect(parameters).toEqual(savedParameters);
     // The saved image still parses, and its facts equal what this version
     // produces. Limitation prose is not frozen; later versions may reword it.
