@@ -566,6 +566,8 @@ const agreeingSectionCount = (
     : null;
 };
 
+const STB_LOCAL = 0;
+
 const readSymbolNames = (
   bytes: Buffer,
   offset: number,
@@ -588,6 +590,9 @@ const readSymbolNames = (
     // SHN_UNDEF is an import. A defined export of the same name is not a sign
     // that this image references the protector.
     if (symbol.value.section_index !== 0) continue;
+    // An STB_LOCAL symbol is never resolved against another object, so it
+    // does not establish an external import.
+    if (symbol.value.binding === STB_LOCAL) continue;
     const observed = observeElfStringTableEntry(
       strings,
       nameOffset,

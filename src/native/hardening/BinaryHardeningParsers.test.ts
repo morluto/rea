@@ -100,6 +100,13 @@ it("derives PIE, RELRO, NX, symbols, paths and GNU properties", () => {
     basis: expect.stringContaining("was found"),
   });
   expect(findRow(exported.rows, "nx").state).toBe("enabled");
+  const local = readElfHardening(
+    elfHardeningFixture({ stackChk: true, fortify: true, localSymbols: true }),
+  );
+  expect(findRow(local.rows, "stack_protector")).toMatchObject({
+    state: "unknown",
+  });
+  expect(findRow(local.rows, "fortify").state).toBe("unknown");
 
   const pieFlag = readElfHardening(elfHardeningFixture({ pieFlag: true }));
   expect(findRow(pieFlag.rows, "pie")).toMatchObject({

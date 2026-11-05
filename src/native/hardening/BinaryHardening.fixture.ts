@@ -49,6 +49,8 @@ export interface ElfHardeningFixtureOptions {
   readonly fortify?: boolean;
   /** Set st_shndx so the protector names are defined exports, not imports. */
   readonly exportSymbols?: boolean;
+  /** Leave st_info zero so the protector names have STB_LOCAL binding. */
+  readonly localSymbols?: boolean;
   readonly gnuStack?: { readonly flags: number } | null;
   readonly gnuRelro?: boolean;
   readonly symtab?: boolean;
@@ -154,6 +156,11 @@ const elfProgram = (
   align,
 });
 
+/** st_info for STB_GLOBAL, STT_FUNC. */
+const ELF_GLOBAL_FUNC = 0x12;
+const infoOffset = (symbolWidth: number): number =>
+  symbolWidth === 24 ? 4 : 12;
+
 const elfSymbolPayload = (
   options: ElfHardeningFixtureOptions,
   bits: 32 | 64,
@@ -185,11 +192,16 @@ const elfSymbolPayload = (
       const at = index * symbolWidth;
       if (little) dynsym.writeUInt32LE(1, at);
       else dynsym.writeUInt32BE(1, at);
+      dynsym.writeUInt8(ELF_GLOBAL_FUNC, at + infoOffset(symbolWidth));
     }
     if (signAfterLongName) {
       const signAt = dynstr.indexOf("__stack_chk_fail", 0, "latin1");
       if (little) dynsym.writeUInt32LE(signAt, 2 * symbolWidth);
       else dynsym.writeUInt32BE(signAt, 2 * symbolWidth);
+      dynsym.writeUInt8(
+        ELF_GLOBAL_FUNC,
+        2 * symbolWidth + infoOffset(symbolWidth),
+      );
     }
     const hash = Buffer.alloc(8 + 4 * (1 + symbolCount));
     if (little) {
@@ -240,6 +252,8 @@ const elfSymbolPayload = (
     const nameAt = stringOffset(name) ?? 0;
     if (little) dynsym.writeUInt32LE(nameAt, at);
     else dynsym.writeUInt32BE(nameAt, at);
+    if (options.localSymbols !== true)
+      dynsym.writeUInt8(ELF_GLOBAL_FUNC, at + infoOffset(symbolWidth));
     if (options.exportSymbols === true) {
       const shndxAt = at + (symbolWidth === 24 ? 6 : 14);
       if (little) dynsym.writeUInt16LE(1, shndxAt);
