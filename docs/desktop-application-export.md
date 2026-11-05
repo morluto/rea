@@ -208,12 +208,13 @@ holding a number JavaScript cannot read exactly, such as an integer above 2^53,
 gets an `error` instead of a view, as in REA, while text that is not one JSON
 document, such as JSON Lines, stays text. Format detection follows REA's
 rules. Files larger than 64 MiB get an `error` instead of a view
-and are not read. Known differences remain:
+and are not read. XML is read with Python's `expat` twice: with namespace
+processing, which refuses what REA's parser refuses, such as an undeclared
+prefix, then without it, so element and attribute names keep the prefixes the
+document spells and namespace declarations stay attributes, as in REA's view;
+text splits into nodes where REA's splits it, at CDATA sections, comments and
+processing instructions. Known differences remain:
 
-- XML names: element and attribute names are Python's `{namespace}local`
-  spelling rather than REA's prefixed names, namespace declarations are not
-  listed as attributes, and CDATA sections merge with the text around them, so
-  they count as one node.
 - dconf databases are reported as binary, since REA reads them with `dconf`;
   inside an archive, one is `dconf` with an error, as in REA.
 - Zip entry names: a name in an Info-ZIP Unicode Path extra field is used only

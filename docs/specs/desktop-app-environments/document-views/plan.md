@@ -18,3 +18,8 @@
    `.FCStd` archives and checked by both evaluators, an `.odt` built in the
    test, archives crafted for each limit, and the shared check cases run
    through both evaluators.
+6. Namespaced XML: the exported module reads XML with `expat` rather than
+   `ElementTree`, one pass with namespace processing to check the document and
+   one without to build the view as REA's DOM does, names and text nodes
+   alike; the export's namespace refusal and the draft's namespace gate go.
+   Parity tests read real Inkscape and LibreOffice Writer saves.

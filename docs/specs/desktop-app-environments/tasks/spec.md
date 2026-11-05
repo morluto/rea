@@ -38,11 +38,10 @@ never runs code the agent wrote.
   regular expressions: a pattern run on agent-written text can stall the
   verifier, and the two evaluators would read some differently.
 - Refusals, each naming the check: a file outside the owned paths or not
-  spelled as a home path; the empty pointer; a pointer not starting with `/`,
-  into text, or into XML using namespaces, an archive entry's included; a
-  repeated line; a `tolerance` whose value is not a number; a value that names
-  the captured home or looks like an ISO 8601 date and time; the draft's
-  placeholder prompt.
+  spelled as a home path; the empty pointer; a pointer not starting with `/`
+  or into text; a repeated line; a `tolerance` whose value is not a number; a
+  value that names the captured home or looks like an ISO 8601 date and time;
+  the draft's placeholder prompt.
 - `export-desktop-application --task FILE` evaluates the checks on the state
   view's first versions (the seed) and last versions (the end), refuses a
   task whose every check passes on the seed and a check that fails at the end,

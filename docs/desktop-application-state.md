@@ -65,6 +65,16 @@ whether the file was present, the SHA-256 of its retained bytes, and a view:
 A JSON value holding a number JavaScript would round, such as an integer above
 2^53, is not read rather than shown rounded.
 
+An XML view names elements and attributes as the document spells them, prefix
+included: a saved Inkscape drawing's root is `svg`, in its default namespace,
+with `sodipodi:docname` and the declarations `xmlns` and `xmlns:sodipodi`
+among its attributes, and a Writer paragraph is `text:p`. An element's
+`children` hold its elements and text in order, text split where a CDATA
+section, comment or processing instruction falls; whitespace-only text in an
+element that holds elements is dropped unless `xml:space="preserve"` applies.
+The view keeps up to 5,000 nodes, comments and processing instructions
+counted, nested up to 64 levels, and sets `truncated` when it leaves some out.
+
 SQLite databases are read through REA's SQLite worker from a private copy,
 with any retained `-wal` or `-journal` file staged beside it; the worker
 accepts an inactive rollback journal and refuses a hot one. A version is not

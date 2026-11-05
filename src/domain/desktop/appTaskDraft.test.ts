@@ -269,6 +269,46 @@ describe("draftTaskFiles for structured views", () => {
   });
 });
 
+describe("draftTaskFiles for XML that uses namespaces", () => {
+  it("suggests values inside an XML file by pointer, as for any XML", () => {
+    const poster = (headline: string): JsonValue => ({
+      root: {
+        name: "svg",
+        attributes: {
+          xmlns: "http://www.w3.org/2000/svg",
+          "sodipodi:docname": "poster.svg",
+        },
+        children: [
+          {
+            name: "text",
+            attributes: { id: "headline" },
+            children: [headline],
+          },
+        ],
+      },
+      truncated: false,
+    });
+
+    const [document] = draft({
+      "Pictures/poster.svg": path(
+        "document",
+        "xml",
+        poster("Spring Bake Sale"),
+        poster("Summer Bake Sale"),
+      ),
+    });
+
+    expect(document?.suggested).toEqual([
+      {
+        kind: "value_equals",
+        file: "Pictures/poster.svg",
+        pointer: "/root/children/0/children/0",
+        value: "Summer Bake Sale",
+      },
+    ]);
+  });
+});
+
 describe("draftTaskFiles with partial evidence", () => {
   const notes = (...rows: JsonValue[][]) => ({
     tables: {
@@ -428,19 +468,29 @@ describe("draftTaskFiles archives", () => {
     ]);
   });
 
-  it("suggests nothing inside XML that uses namespaces, which the verifier names differently", () => {
-    const odt = (text: string): JsonValue => ({
+  it("suggests checks inside XML that uses namespaces, by its prefixed names", () => {
+    const paragraph = (style: string, text: string): JsonValue => ({
+      name: "text:p",
+      attributes: { "text:style-name": style },
+      children: [text],
+    });
+    const odt = (date: string): JsonValue => ({
       entries: [
         {
           name: "content.xml",
           size: 1,
-          sha256: text,
+          sha256: date,
           format: "xml",
           view: {
             root: {
               name: "office:text",
-              attributes: {},
-              children: [{ name: "text:p", attributes: {}, children: [text] }],
+              attributes: {
+                "xmlns:text": "urn:oasis:names:tc:opendocument:xmlns:text:1.0",
+              },
+              children: [
+                paragraph("Title", "Summer Bake Sale"),
+                paragraph("Subtitle", date),
+              ],
             },
             truncated: false,
           },
@@ -451,10 +501,23 @@ describe("draftTaskFiles archives", () => {
       truncated: false,
     });
 
-    const [list] = draft({
-      "Documents/list.odt": path("document", "zip", odt("a"), odt("b")),
+    const [flyer] = draft({
+      "Documents/flyer.odt": path(
+        "document",
+        "zip",
+        odt("Monday 17 November"),
+        odt("Monday 24 November"),
+      ),
     });
 
-    expect(list).toMatchObject({ change: { kind: "values" }, suggested: [] });
+    expect(flyer?.suggested).toEqual([
+      {
+        kind: "value_equals",
+        file: "Documents/flyer.odt",
+        pointer:
+          "/entries/[name=content.xml]/view/root/children/[name=text:p][@text:style-name=Subtitle]/children/0",
+        value: "Monday 24 November",
+      },
+    ]);
   });
 });

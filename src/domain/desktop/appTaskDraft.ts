@@ -1,6 +1,5 @@
 import type { JsonValue } from "../jsonValue.js";
 import { isTimestamp, type DesktopTaskCheckInput } from "./appTask.js";
-import { namesXmlNamespace } from "./appTaskChecks.js";
 import type { DesktopStatePath } from "./desktopState.js";
 import { diffStateViews, diffZipMembers } from "./stateChanges.js";
 import { resolvePointer } from "./viewPointer.js";
@@ -128,7 +127,7 @@ const innermost = (pointers: readonly string[]): readonly string[] =>
 
 /**
  * Whether a pointer goes into the view of an entry both evaluators read alike
- * (JSON, a key file, or XML without namespaces), through no member by position.
+ * (JSON, a key file or XML), through no member by position.
  */
 const intoReadableEntry = (pointer: string, view: JsonValue | null) => {
   const entry = zipEntryAt(view, pointer);
@@ -139,7 +138,7 @@ const intoReadableEntry = (pointer: string, view: JsonValue | null) => {
     segments.slice(2, -1).every((segment) => !/^[0-9]+$/u.test(segment)) &&
     (entry.format === "json" ||
       entry.format === "keyfile" ||
-      (entry.format === "xml" && !namesXmlNamespace(entry.view ?? null)))
+      entry.format === "xml")
   );
 };
 
@@ -201,8 +200,6 @@ const valueSuggestions = (
   const format = final.format;
   if (format === "zip") return zipSuggestions(file, baseline, final);
   if (format !== "json" && format !== "xml" && format !== "keyfile") return [];
-  if (format === "xml" && [baseline.view, final.view].some(namesXmlNamespace))
-    return [];
   const change = diffStateViews(format, baseline.view, final.view);
   const pointers = keyPointers([baseline.view, final.view]);
   const pointer = (entry: string) =>

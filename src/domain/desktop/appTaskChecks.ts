@@ -85,19 +85,6 @@ export const versionView = (
       ? { format: version.format, view: version.view }
       : { format: version.format, view: null, error: version.view_error };
 
-/** Whether an XML view names a namespace, whose names the verifier's reader spells differently. */
-export const namesXmlNamespace = (node: JsonValue | null): boolean => {
-  if (Array.isArray(node)) return node.some(namesXmlNamespace);
-  if (!isRecord(node)) return false;
-  const named = (name: JsonValue | undefined) =>
-    typeof name === "string" && (name.includes(":") || name === "xmlns");
-  return (
-    named(node.name) ||
-    (isRecord(node.attributes) && Object.keys(node.attributes).some(named)) ||
-    Object.values(node).some(namesXmlNamespace)
-  );
-};
-
 /** Whether a view says it holds only part of its file, as REA's own readers flag it. */
 const truncatedView = (format: string | null, view: JsonValue | null) => {
   if (!isRecord(view)) return false;

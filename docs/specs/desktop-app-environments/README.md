@@ -32,8 +32,8 @@ The work lands as one PR per step:
    VariCAD.
 10. [Document views](document-views/spec.md): documents saved as zip
     archives (FreeCAD, OpenDocument, Office Open XML, EPUB) read as their
-    entries, checked by name rather than position, and numbers compared
-    within a tolerance, starting with FreeCAD.
+    entries, checked by name rather than position, namespaced XML included,
+    and numbers compared within a tolerance, starting with FreeCAD.
 
 Version 1 covers Linux with X11, applications whose state lives in files or
 SQLite under the home directory, and real applications from public packages.

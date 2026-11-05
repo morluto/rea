@@ -6,7 +6,6 @@ import {
 } from "../../domain/desktop/appTask.js";
 import {
   evaluateTaskChecks,
-  namesXmlNamespace,
   versionView,
   type TaskFileView,
 } from "../../domain/desktop/appTaskChecks.js";
@@ -25,7 +24,6 @@ import { EvidenceFileError } from "../../domain/evidenceErrors.js";
 import { err } from "../../domain/result.js";
 import { describeValidationFailure } from "../../domain/validationFailure.js";
 import { isWithinAny } from "../../domain/desktop/desktopStateDiff.js";
-import { zipEntryAt } from "../../domain/desktop/zipView.js";
 import { isPortableBundleName } from "../environment/environmentBundle.js";
 import { readJsonFile } from "../JsonFiles.js";
 import { desktopOperationFailure } from "./DesktopCaptureRefusals.js";
@@ -102,22 +100,6 @@ const readTaskFile = async (
   throw primary ?? typed(loaded.error);
 };
 
-/** The XML views a pointer goes into across a file's versions: the file's own, or in an archive the entry's. */
-const pointedXml = (
-  file: string,
-  pointer: string,
-  versions: readonly DesktopStatePath["versions"][number][],
-) =>
-  versions.flatMap((version) => {
-    const entry =
-      version.format === "zip" ? zipEntryAt(version.view, pointer) : undefined;
-    if (typeof entry === "object")
-      return entry.format === "xml" && typeof entry.name === "string"
-        ? [{ name: `${entry.name} in ${file}`, view: entry.view }]
-        : [];
-    return version.format === "xml" ? [{ name: file, view: version.view }] : [];
-  });
-
 /** Why a check cannot be validated against this app, or undefined. */
 const targetProblem = (
   check: DesktopTaskCheck,
@@ -130,14 +112,9 @@ const targetProblem = (
   if (check.kind !== "value_equals" && check.kind !== "value_absent")
     return undefined;
   const versions = target.files.get(check.file)?.versions ?? [];
-  if (versions.some((version) => version.format === "text"))
-    return `points into ${check.file}, which is text; use lines_present, lines_absent or line_count`;
-  const named = pointedXml(check.file, check.pointer, versions).find(
-    ({ view }) => namesXmlNamespace(view ?? null),
-  );
-  return named === undefined
-    ? undefined
-    : `points into ${named.name}, whose XML uses namespaces the verifier names differently`;
+  return versions.some((version) => version.format === "text")
+    ? `points into ${check.file}, which is text; use lines_present, lines_absent or line_count`
+    : undefined;
 };
 
 /** Views of every file at one end of the capture: its first or its last version. */

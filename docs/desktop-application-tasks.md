@@ -47,11 +47,11 @@ operation `describe_desktop_application_task` and predicate type
   holding a letter whose count changed; JSON, XML and key files gain
   `value_equals` and `value_absent` by pointer; SQLite tables gain rows added,
   changed and removed, by primary key, and their new row count. A zip archive
-  gains checks inside the JSON, key file and namespace-free XML views of its
-  entries, by [selectors](#pointers-and-selectors) and never through an
-  element by position: an element added whole that it exists, one removed
-  whole that it is absent, then values changed, added and removed. Values that
-  look like a time the app stamps are left out.
+  gains checks inside the JSON, key file and XML views of its entries, by
+  [selectors](#pointers-and-selectors) and never through an element by
+  position: an element added whole that it exists, one removed whole that it
+  is absent, then values changed, added and removed. Values that look like a
+  time the app stamps are left out.
 
 The suggestions are a starting point. Keep the ones that say what the user
 did; drop the ones that only follow from how the app saves its file. A LibreCAD
@@ -125,12 +125,11 @@ The rules both evaluators follow:
   is decided on it.
 
 The export refuses, naming the check, a file outside the owned paths, a file
-spelled with a leading slash, `.` or `..`, a pointer into a text file or into
-XML that uses namespaces, including an archive entry's (the verifier's reader
-names them differently), the empty pointer (the whole file), a value that
-names the captured home, a `tolerance` with a value that is not a number, and a
-value that looks like an ISO 8601 date and time. Other volatile content, such
-as a counter the app bumps on every save, is for the author to leave out.
+spelled with a leading slash, `.` or `..`, a pointer into a text file, the
+empty pointer (the whole file), a value that names the captured home, a
+`tolerance` with a value that is not a number, and a value that looks like an
+ISO 8601 date and time. Other volatile content, such as a counter the app
+bumps on every save, is for the author to leave out.
 
 ## Pointers and selectors
 
@@ -187,6 +186,37 @@ fail on the seed; after it, `Radius` is `"5.0000000000000000"` and both pass.
 A check decided by what a view leaves out depends, in an archive, on the entry
 its pointer goes into: it fails when that entry's view is missing or
 truncated, or when the entry is not listed and the listing is truncated.
+
+XML that uses namespaces is named as the document spells it, in both
+evaluators: an element or attribute by its prefixed name, such as `text:p`
+or `inkscape:label`, an element in a default namespace by its bare name, such
+as `svg`, and namespace declarations as the attributes `xmlns` and
+`xmlns:PREFIX`. Text is a string among an element's `children`. These checks
+hold a poster's headline in an Inkscape SVG and a date in a LibreOffice Writer
+document:
+
+```json
+[
+  {
+    "id": "headline",
+    "kind": "value_equals",
+    "file": "Pictures/poster.svg",
+    "pointer": "/root/children/[name=g][@inkscape:label=Layer 1]/children/[name=text][@id=headline]/children/[name=tspan]/children/0",
+    "value": "Summer Bake Sale"
+  },
+  {
+    "id": "date",
+    "kind": "value_equals",
+    "file": "Documents/flyer.odt",
+    "pointer": "/entries/[name=content.xml]/view/root/children/[name=office:body]/children/[name=office:text]/children/[name=text:p][@text:style-name=Subtitle]/children/0",
+    "value": "Monday 24 November"
+  }
+]
+```
+
+Inkscape writes a line of text as a `tspan` inside its `text` element, and
+Writer keeps a paragraph's style in `text:style-name`. A prefix is the one the
+document uses, so a check names the prefixes the app writes.
 
 ## Validation and export
 

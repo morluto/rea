@@ -29,6 +29,9 @@ const FREECAD = join(
 );
 const PLATE = "Documents/plate.FCStd";
 const LIST = "Documents/list.odt";
+/** The list's paragraphs, by their prefixed element names. */
+const LIST_TEXT =
+  "/entries/[name=content.xml]/view/root/children/[name=office:body]/children/[name=office:text]/children";
 
 /** FreeCAD's save of the plate, before and after the user cut the hole. */
 const plate = async (end: "before" | "after") =>
@@ -149,33 +152,23 @@ describe("documents saved as zip archives", () => {
     );
   });
 
-  it("exports a task that checks the hole by name, and refuses a check into namespaced XML", async () => {
+  it("exports a task that checks the hole and the list's namespaced XML by name", async () => {
     const folder = await archiveCapture();
+    const milk = {
+      kind: "value_equals",
+      file: LIST,
+      pointer: `${LIST_TEXT}/[name=text:p]/children/0`,
+      value: "Buy milk",
+    };
 
-    const { result, directory } = await exportTask(folder, [HOLE]);
+    const { result, directory } = await exportTask(folder, [HOLE, milk]);
     if (result instanceof Error) throw result;
-    expect(
-      await readFile(
-        join(directory, "artifacts/cut-hole-check/verify.py"),
-        "utf8",
-      ),
-    ).toContain(`"tolerance": 0.01`);
-
-    const refused = await exportTask(folder, [
-      HOLE,
-      {
-        kind: "value_equals",
-        file: LIST,
-        pointer:
-          "/entries/[name=content.xml]/view/root/children/0/children/0/children/0/children/0",
-        value: "Buy milk",
-      },
-    ]);
-    expect(
-      (refused.result as Error & { userMessage: string }).userMessage,
-    ).toContain(
-      "points into content.xml in Documents/list.odt, whose XML uses namespaces the verifier names differently",
+    const verifier = await readFile(
+      join(directory, "artifacts/cut-hole-check/verify.py"),
+      "utf8",
     );
+    expect(verifier).toContain(`"tolerance": 0.01`);
+    expect(verifier).toContain(JSON.stringify(milk.pointer));
   });
 
   it("drafts name-addressed checks of the archive that the export then accepts", async () => {
@@ -194,7 +187,13 @@ describe("documents saved as zip archives", () => {
     expect(
       archived.every(({ pointer }) => pointer?.includes("[name=") === true),
     ).toBe(true);
-    expect(task.checks.some(({ file }) => file === LIST)).toBe(false);
+    expect(task.checks.filter(({ file }) => file === LIST)).toEqual([
+      expect.objectContaining({
+        kind: "value_equals",
+        pointer: `${LIST_TEXT}/[name=text:p]/children/0`,
+        value: "Buy milk",
+      }),
+    ]);
     const { result } = await exportTask(folder, task.checks);
     expect(result).not.toBeInstanceOf(Error);
   });

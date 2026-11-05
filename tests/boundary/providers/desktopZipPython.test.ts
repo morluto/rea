@@ -1,17 +1,10 @@
-import { execFileSync } from "node:child_process";
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
 import { readZipView } from "../../../src/application/desktop/DesktopZipView.js";
 import type { DesktopTaskCheck } from "../../../src/domain/desktop/appTask.js";
-import { evaluateTaskChecks } from "../../../src/domain/desktop/appTaskChecks.js";
-import {
-  PYTHON_HELPERS,
-  PYTHON_IMPORTS,
-} from "../../../src/domain/desktop/appExportPython.js";
-import { PYTHON_TASK_EVALUATOR } from "../../../src/domain/desktop/appTaskPython.js";
 import { detectStateFormat } from "../../../src/domain/desktop/stateFormats.js";
 import {
   odtArchive,
@@ -19,69 +12,22 @@ import {
   type ZipMember,
 } from "../../../src/domain/desktop/zipArchive.fixture.js";
 import { zipEntryRefusal } from "../../../src/domain/desktop/zipView.js";
-import type { JsonValue } from "../../../src/domain/jsonValue.js";
-import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import {
+  expectSameCheckResults,
+  expectSameFileViews,
+  exportedPython,
+  pythonFileViews,
+} from "../../support/desktopExportPython.js";
 
 const MIB = 1024 * 1024;
 const FIXTURES = join(import.meta.dirname, "../../fixtures/freecad");
 
-/** The exported module's standard library imports, its helpers and the verifier's evaluator, as one program. */
-const PYTHON = `${PYTHON_IMPORTS.split("\n")
-  .filter((line) => !line.includes("agentenv_protocol"))
-  .join("\n")}${PYTHON_HELPERS}${PYTHON_TASK_EVALUATOR}`;
+/** Archives as FreeCAD documents under the home. */
+const saved = (archives: readonly Buffer[]) =>
+  archives.map((bytes) => ({ name: "plate.FCStd", bytes }));
 
-const python = (driver: string, input: unknown): string =>
-  execFileSync("python3", ["-I", "-B", "-c", `${PYTHON}\n${driver}`], {
-    input: JSON.stringify(input),
-    encoding: "utf8",
-    maxBuffer: 64 * MIB,
-  });
-
-/** Write each archive to a file, as data/get finds it under the home. */
-const archiveFiles = async (archives: readonly Buffer[]) => {
-  const folder = await createTestTempDirectory("desktop-zip-python-");
-  return Promise.all(
-    archives.map(async (bytes, index) => {
-      const path = join(folder, `${String(index)}.FCStd`);
-      await writeFile(path, bytes);
-      return path;
-    }),
-  );
-};
-
-/** The exported module's data/get entry for each archive file: its format and view, or its error. */
-const pythonViews = async (archives: readonly Buffer[]) =>
-  python(
-    `for path in json.load(sys.stdin):
-    print(json.dumps(_view(Path(path))))`,
-    await archiveFiles(archives),
-  )
-    .trim()
-    .split("\n")
-    .map((line) => JSON.parse(line) as Record<string, JsonValue>);
-
-/** REA's state view of an archive in the shape data/get serves it. */
-const typescriptView = async (bytes: Buffer) => {
-  const read = await readZipView(bytes);
-  return read.ok
-    ? { format: detectStateFormat("a.FCStd", bytes), view: read.value }
-    : {
-        format: detectStateFormat("a.FCStd", bytes),
-        view: null,
-        error: read.error,
-      };
-};
-
-const expectSameViews = async (archives: readonly Buffer[]) => {
-  const fromPython = await pythonViews(archives);
-  for (const [index, bytes] of archives.entries()) {
-    const ours = await typescriptView(bytes);
-    const theirs = fromPython[index] ?? {};
-    expect(theirs.format).toBe(ours.format);
-    expect(theirs.view).toEqual(ours.view);
-    expect(theirs.error).toBe(ours.error);
-  }
-};
+const expectSameViews = (archives: readonly Buffer[]) =>
+  expectSameFileViews(saved(archives));
 
 const sqliteHeader = Buffer.concat([
   Buffer.from("SQLite format 3\0"),
@@ -210,7 +156,7 @@ describe("zip views in the exported module", () => {
         ) ?? null,
     );
     const theirs = JSON.parse(
-      python(
+      exportedPython(
         `from types import SimpleNamespace
 print(json.dumps([_zip_refusal(SimpleNamespace(flag_bits=0, compress_type=8, file_size=size, compress_size=packed), spent)
                   for (size, packed, spent) in json.load(sys.stdin)]))`,
@@ -279,57 +225,28 @@ const HOLE_CHECKS: DesktopTaskCheck[] = [
   },
 ];
 
-/** Each archive's check results from the exported module: its own view of the file, then the verifier's evaluator. */
-const pythonResults = async (archives: readonly Buffer[]) =>
-  python(
-    `request = json.load(sys.stdin)
-for path in request["paths"]:
-    print(json.dumps(evaluate(request["checks"], {${JSON.stringify(FILE)}: _view(Path(path))})))`,
-    { paths: await archiveFiles(archives), checks: HOLE_CHECKS },
-  )
-    .trim()
-    .split("\n")
-    .map(
-      (line) =>
-        JSON.parse(line) as {
-          id: string;
-          result: boolean;
-          description: string;
-        }[],
-    );
-
 describe("FreeCAD documents", () => {
   it.each(["0.21", "1.0"])(
     "checks the hole in FreeCAD %s by name: failing before the edit and passing after, in both evaluators",
     async (version) => {
-      const archives = [
+      const archives = saved([
         await fcstd(version, "before"),
         await fcstd(version, "after"),
-      ];
-      await expectSameViews(archives);
+      ]);
+      await expectSameFileViews(archives);
 
-      const fromPython = await pythonResults(archives);
-      for (const [index, bytes] of archives.entries()) {
-        const ours = evaluateTaskChecks(
-          HOLE_CHECKS,
-          new Map([[FILE, await typescriptView(bytes)]]),
-        );
-        expect(ours.map(({ passed }) => passed)).toEqual(
-          index === 0 ? [false, false, false] : [true, true, true],
-        );
-        expect(fromPython[index]).toEqual(
-          ours.map(({ id, passed, description }) => ({
-            id,
-            result: passed,
-            description,
-          })),
-        );
-      }
-      const after = evaluateTaskChecks(
+      const [before, after] = await expectSameCheckResults(
+        FILE,
         HOLE_CHECKS,
-        new Map([[FILE, await typescriptView(archives[1] ?? Buffer.alloc(0))]]),
+        archives,
       );
-      expect(after[1]?.description).toContain(
+      expect(before?.map(({ passed }) => passed)).toEqual([
+        false,
+        false,
+        false,
+      ]);
+      expect(after?.map(({ passed }) => passed)).toEqual([true, true, true]);
+      expect(after?.[1]?.description).toContain(
         'is "5.0000000000000000", within 0.01 of 5',
       );
     },
@@ -337,10 +254,10 @@ describe("FreeCAD documents", () => {
 });
 
 describe("OpenDocument text", () => {
-  it("reads content.xml from an .odt, its namespaced names the only difference between the readers", async () => {
+  it("reads content.xml from an .odt as REA does, its namespaced names included", async () => {
     const odt = odtArchive("Buy milk");
     const read = await readZipView(odt);
-    const [python] = await pythonViews([odt]);
+    const [python] = await pythonFileViews([{ name: "list.odt", bytes: odt }]);
 
     expect(detectStateFormat("list.odt", odt)).toBe("zip");
     expect(read.ok && read.value).toMatchObject({
@@ -373,14 +290,6 @@ describe("OpenDocument text", () => {
         { name: "META-INF/manifest.xml", format: "xml" },
       ],
     });
-    const strip = (view: JsonValue | undefined) =>
-      (view as { entries: Record<string, JsonValue>[] }).entries.map(
-        ({ view: entryView, ...entry }) =>
-          entry.format === "xml" ? entry : { ...entry, view: entryView },
-      );
-    expect(strip(python?.view)).toEqual(strip(read.ok ? read.value : null));
-    expect(JSON.stringify(python?.view)).toContain(
-      "{urn:oasis:names:tc:opendocument:xmlns:text:1.0}p",
-    );
+    expect(python?.view).toEqual(read.ok ? read.value : null);
   });
 });

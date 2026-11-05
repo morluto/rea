@@ -58,7 +58,7 @@ describe("names", () => {
   it("keeps the class off the module's own names and the module off other modules", () => {
     expect(className("path")).toBe("PathApp");
     expect(className("data-part")).toBe("DataPartApp");
-    expect(className("element-tree")).toBe("ElementTreeApp");
+    expect(className("run-script")).toBe("RunScriptApp");
     expect(className("p-a-t-h-s")).toBe("PATHSApp");
     expect(appModuleFile("calendar")).toBe("calendar_app.py");
     expect(appModuleFile("gnu-cash")).toBe("gnu_cash_app.py");

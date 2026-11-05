@@ -19,10 +19,10 @@ import sqlite3
 import subprocess
 import sys
 import tempfile
-import xml.etree.ElementTree as ElementTree
 import zipfile
 import zlib
 from pathlib import Path
+from xml.parsers import expat
 
 from agentenv_protocol import add_data, get_data, reset_data
 from agentenv_protocol.computer import AptSource, ComputerAppEnvironment, Download, Launch, Packages, Ready, RunScript, computer_app, linux, ready_check
@@ -38,7 +38,7 @@ LINE_BREAK = re.compile(r"\r?\n")
 SQLITE_HEADER = b"SQLite format 3\x00"
 GVDB_HEADER = b"GVariant"
 ZIP_HEADER = b"PK\x03\x04"
-XML_SPACE = "{http://www.w3.org/XML/1998/namespace}space"
+XML_SPACE = "xml:space"
 MAX_VIEW_BYTES = 64 * 1024 * 1024
 MAX_SAFE_INTEGER = 2**53 - 1
 MAX_TABLES = 64
@@ -219,55 +219,105 @@ def _keyfile(text: str) -> dict:
     return groups
 
 
-class _XmlTree(ElementTree.TreeBuilder):
-    """Keeps comments and processing instructions, which REA's node limit counts, and refuses DOCTYPEs as REA does."""
+def _expat(namespaces: bool):
+    """An expat parser that refuses DOCTYPEs as REA does; with namespaces it also enforces their rules, as REA's
+    parser does, and without them it reports names as the document spells them."""
+    parser = expat.ParserCreate(namespace_separator=" " if namespaces else None)
 
-    def __init__(self) -> None:
-        super().__init__(insert_comments=True, insert_pis=True)
-
-    def doctype(self, name, pubid, system) -> None:
+    def doctype(*_) -> None:
         raise ValueError("the document declares a DOCTYPE")
 
-
-def _xml_children(element) -> list:
-    nodes = [element.text] if element.text else []
-    for child in element:
-        nodes.append(child)
-        if child.tail:
-            nodes.append(child.tail)
-    return nodes
+    parser.StartDoctypeDeclHandler = doctype
+    return parser
 
 
-def _xml(node, depth: int, budget: dict, scope: tuple):
-    """A node as REA's XML view keeps it: an element with its attributes and children, or its text; None when it is
-    formatting whitespace, a comment, or past REA's node and depth limits."""
-    if budget["remaining"] <= 0 or depth > MAX_XML_DEPTH:
-        budget["truncated"] = True
-        return None
-    budget["remaining"] -= 1
-    preserve, element_content = scope
-    if isinstance(node, str):
-        return None if not node.strip() and element_content and not preserve else node
-    if not isinstance(node.tag, str):
-        return None
-    space = node.get(XML_SPACE)
-    nodes = _xml_children(node)
-    inner = (space == "preserve" if space else preserve,
-             any(not isinstance(child, str) and isinstance(child.tag, str) for child in nodes))
-    children = [_xml(child, depth + 1, budget, inner) for child in nodes]
-    return {"name": node.tag, "attributes": dict(node.attrib), "children": [c for c in children if c is not None]}
+class _XmlReader:
+    """REA's XML view built as expat reads: names as spelled, declarations as attributes, text split where REA's DOM
+    splits it (an empty CDATA section joins the text around it), and each node counted against REA's limits."""
+
+    def __init__(self) -> None:
+        self.remaining, self.truncated, self.root = MAX_XML_NODES, False, None
+        #: Per open element: its view or None when left out, whether xml:space="preserve" applies inside it, and
+        #: whether it holds an element, which makes whitespace-only text in it formatting.
+        self.open = []
+        self.text, self.cdata = [], None
+
+    def read(self, text: str) -> None:
+        parser = _expat(False)
+        parser.buffer_text = True
+        parser.StartElementHandler, parser.EndElementHandler = self._start, self._end
+        parser.CharacterDataHandler = self._data
+        parser.StartCdataSectionHandler, parser.EndCdataSectionHandler = self._cdata_start, self._cdata_end
+        parser.CommentHandler = parser.ProcessingInstructionHandler = self._other
+        parser.Parse(text, True)
+
+    def _admit(self) -> bool:
+        """Whether the next node inside a kept element is kept, within the node and depth limits; one past them
+        marks the view truncated."""
+        if self.open and self.open[-1][0] is None:
+            return False
+        if self.remaining <= 0 or len(self.open) > MAX_XML_DEPTH:
+            self.truncated = True
+            return False
+        self.remaining -= 1
+        return True
+
+    def _text_node(self, text: str) -> None:
+        if self._admit():
+            self.open[-1][0]["children"].append(text)
+
+    def _flush(self) -> None:
+        if self.text:
+            text, self.text = "".join(self.text), []
+            self._text_node(text)
+
+    def _data(self, text: str) -> None:
+        (self.text if self.cdata is None else self.cdata).append(text)
+
+    def _cdata_start(self) -> None:
+        self.cdata = []
+
+    def _cdata_end(self) -> None:
+        text, self.cdata = "".join(self.cdata), None
+        if text:
+            self._flush()
+            self._text_node(text)
+
+    def _other(self, *_) -> None:
+        """A comment or processing instruction, counted like any node and never kept."""
+        self._flush()
+        if self.open:
+            self._admit()
+
+    def _start(self, name: str, attributes: dict) -> None:
+        self._flush()
+        parent = self.open[-1] if self.open else [None, False, False]
+        parent[2] = True
+        view = {"name": name, "attributes": attributes, "children": []} if self._admit() else None
+        if view is not None and parent[0] is not None:
+            parent[0]["children"].append(view)
+        space = attributes.get(XML_SPACE)
+        self.open.append([view, space == "preserve" if space else parent[1], False])
+
+    def _end(self, _name: str) -> None:
+        self._flush()
+        view, preserve, holds_element = self.open.pop()
+        if view is not None and holds_element and not preserve:
+            view["children"] = [child for child in view["children"] if not isinstance(child, str) or child.strip()]
+        if not self.open:
+            self.root = view
 
 
 def _xml_view(text: str):
-    parser = ElementTree.XMLParser(target=_XmlTree())
+    """REA's XML view, or None for a document REA's parser refuses: a pass with namespaces checks the document as REA's
+    parser does, then a pass without them reads names as spelled, as REA's view keeps them."""
+    reader = _XmlReader()
     try:
-        parser.feed(text)
-        root = parser.close()
-    except (ElementTree.ParseError, ValueError):
+        _expat(True).Parse(text, True)
+        reader.read(text)
+    except (expat.ExpatError, ValueError):
         return None
-    budget = {"remaining": MAX_XML_NODES, "truncated": False}
-    tree = _xml(root, 0, budget, (False, False))
-    return None if tree is None else {"root": tree, "truncated": budget["truncated"]}
+    return {"root": reader.root, "truncated": reader.truncated}
 
 
 def _not_json(constant: str):

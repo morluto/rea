@@ -18,6 +18,10 @@ v22.23.1 and Python 3.11.14.
   `tests/boundary/providers/desktopZipPython.test.ts`: 7 passed. The desktop
   CLI boundary tests `desktopApplicationCli`, `cliInputSchemaRequired` and
   `cliToolCoverage`: 28 passed.
+- Namespaced XML, on the same day and toolchain: the same gates passed, with
+  no lint, typed-lint or jscpd findings in the touched files, and the desktop
+  tests with the four provider parity files, `desktopXmlPython.test.ts` among
+  them: 370 passed and 18 skipped.
 
 ## Tests
 
@@ -40,8 +44,21 @@ touched files still pass there.
   pointers.
 - OpenDocument: an `.odt` built in the test reads as `mimetype` text and
   `content.xml` and `META-INF/manifest.xml` as XML, with the paragraph's text
-  in the view; the readers agree but for the namespaced XML names, and the
-  export refuses a check into `content.xml` for its namespaces.
+  in the view; the readers give the same view, namespaced names included, and
+  the export keeps a check of the paragraph by `[name=text:p]`.
+- Namespaced XML, in `desktopXmlPython.test.ts`: the real saves of an
+  Inkscape 1.2.2 poster and a LibreOffice 24.2 Writer flyer, before and after
+  one edit, read alike by both readers, the SVG as a file and `content.xml`
+  in an `.odt` built in the test. Both evaluators give the same results and
+  descriptions: the headline `[name=text][@id=headline]` under the layer
+  `[@inkscape:label=Layer 1]` and the `[@text:style-name=Subtitle]` date fail
+  before the edit and pass after it, and `inkscape:document-units` passes in
+  both. Built documents cover `xmlns` declarations in document order, an
+  undeclared default namespace, `xml:` attributes, CDATA, comments and
+  processing instructions, what both parsers refuse (an undeclared prefix,
+  one attribute twice under two prefixes, a prefix bound to `""`, two colons
+  in a name, a colon in a processing instruction's target, a DOCTYPE),
+  and the node and depth limits on prefixed names.
 - Selectors and tolerance in the shared check cases both evaluators run: one
   member matched, several, none before or at the last segment, a malformed
   selector, an escaped `/` in an entry name, an entry by index, a selector
@@ -54,9 +71,10 @@ touched files still pass there.
 - The keyed zip diff: an object inserted before another shifts nothing, and a
   comparison is incomplete when an entry is unread, truncated or not listed.
 - The draft: an archive's added and removed elements and changed values by
-  selector, nothing inside namespaced XML; and through the application, a
-  capture with a FreeCAD document and an `.odt` whose draft the export then
-  accepts.
+  selector, inside namespaced XML too, where a paragraph is named by
+  `[name=text:p][@text:style-name=Subtitle]`; and through the application, a
+  capture with a FreeCAD document and an `.odt` whose draft, with a check of
+  the list's paragraph, the export then accepts.
 
 ## FreeCAD captures
 

@@ -7,7 +7,9 @@ is read into a view of its entries, so a task can check what the user did in
 it. Checks name the XML elements they read by tag and attribute rather than by
 position, so the same check holds across application versions that write the
 document in another order, and compare numbers written as text within a
-tolerance. Both evaluators, REA's and the exported verifier's, agree.
+tolerance. XML that uses namespaces, as OpenDocument's `content.xml` and
+Inkscape's SVG do, is named by the prefixes the document spells. Both
+evaluators, REA's and the exported verifier's, agree.
 
 ## Requirements
 
@@ -29,6 +31,14 @@ tolerance. Both evaluators, REA's and the exported verifier's, agree.
 - Exported module: `data/get` gives the same view, read with Python's
   `zipfile` from the file in place with the same limits, order of checks and
   wording; parity tests compare the two readers on the same archives.
+- XML names: both readers name elements and attributes as the document spells
+  them, prefix included (`text:p`, `sodipodi:docname`), an element in a
+  default namespace by its bare name (`svg`), and keep namespace declarations
+  as the attributes `xmlns` and `xmlns:PREFIX`, in document order. The
+  exported module reads XML with `expat` twice: with namespace processing, to
+  refuse what REA's parser refuses, then without, for the names. Text splits
+  into nodes as REA's DOM splits it: at CDATA sections, comments and
+  processing instructions, an empty CDATA section joining the text around it.
 - Selectors: on an array, a pointer segment `[KEY=VALUE]` names the member
   whose string field `KEY` is `VALUE`, `[@KEY=VALUE]` the member whose
   `attributes` hold it, and conditions can follow one another. A selector must
@@ -46,18 +56,17 @@ tolerance. Both evaluators, REA's and the exported verifier's, agree.
   elements by tag and attribute, and fall back to positions; a comparison is
   incomplete when either view leaves something out.
 - Draft: for a zip document, checks inside its entries' JSON, key file and
-  namespace-free XML views, through no element by position: an element added
-  whole exists, one removed whole is absent, then values changed, added and
-  removed.
-- Export refusals: a pointer into an archive entry's XML that uses namespaces,
-  and a `tolerance` whose value is not a number.
+  XML views, through no element by position: an element added whole exists,
+  one removed whole is absent, then values changed, added and removed.
+- Export refusals: a `tolerance` whose value is not a number. A pointer into
+  XML that uses namespaces is accepted, in a file or an archive entry.
 
 ## Non-goals
 
 - No reading of an archive inside an archive, or of a database inside one.
-- No namespace parity: the exported module still spells namespaced XML names
-  as `{namespace}local`, so checks into OpenDocument or Office Open XML
-  content are refused.
+- No names by namespace URI: a check names the prefix the document uses, so
+  one written for a document that binds another prefix to the same namespace
+  does not match it.
 - No other compression methods (bzip2, LZMA, Zstandard) and no encrypted
   entries.
 - No selectors over non-string values, nested fields other than `attributes`,
