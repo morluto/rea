@@ -348,7 +348,7 @@ export const PROMPT_CONTRACTS = [
           "analyze_function",
         ],
         instruction:
-          "Resolve crash text or addresses to function dossiers, requesting detail complete when build_call_path will consume them; do not infer a source location from symbol similarity alone.",
+          'Resolve crash text or addresses to function dossiers. For same-session build_call_path, put {kind: "retained-evidence", evidence_id: <normalized_result.parent_evidence_id>} for each default summary into functions; request detail complete when the dossier must travel inline. Do not infer a source location from symbol similarity alone.',
       },
       {
         tools: ["xrefs", "procedure_callers", "build_call_path"],
