@@ -381,6 +381,7 @@ export const inspectLinuxApplication = async (
     wrapper.program,
     environment,
     workingDirectory,
+    wrapper.environment.PATH !== undefined,
   );
   if (path === undefined)
     return err({ reason: "executable_not_found", program: wrapper.program });

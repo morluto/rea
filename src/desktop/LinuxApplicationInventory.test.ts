@@ -226,7 +226,7 @@ describe.skipIf(process.platform === "win32")(
       await mkdir(join(home, ".local/share/applications"), { recursive: true });
       await writeFile(
         join(home, ".local/share/applications/org.example.env.desktop"),
-        `[Desktop Entry]\nType=Application\nName=Env\nExec=env PATH=${opt}:/usr/bin XDG_CONFIG_HOME=${home}/settings notes\n`,
+        `[Desktop Entry]\nType=Application\nName=Env\nExec=env PATH=${opt}/:/usr/bin XDG_CONFIG_HOME=${home}/settings notes\n`,
       );
 
       const inventory = await inventoryOf("org.example.env", installed);
@@ -265,9 +265,22 @@ describe.skipIf(process.platform === "win32")(
 
       const inventory = await inventoryOf("org.example.dot", installed);
       const viaLink = await inventoryOf("org.example.link", installed);
+      // The host's own PATH does not travel with the exported launch.
+      const hostRelative = await inspectLinuxApplication({
+        desktopEntry: undefined,
+        executable: "notes",
+        arguments: [],
+        environment: { PATH: "opt/bin" },
+        home,
+        callerDirectory: home,
+      });
 
       expect(inventory.executable.path).toBe(join(opt, "notes"));
       expect(viaLink.executable.path).toBe(linked);
+      expect(hostRelative).toMatchObject({
+        ok: false,
+        error: { reason: "executable_not_found" },
+      });
     });
 
     it("names state directories after the entry's full id", async () => {
