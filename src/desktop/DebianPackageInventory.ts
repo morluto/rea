@@ -151,14 +151,41 @@ const installFacts = async (
   };
 };
 
+/** The first package dpkg names as an owner of one of the paths; null when it owns none, undefined without dpkg-query. */
+const dpkgOwner = async (
+  paths: readonly string[],
+  { host, signal }: InventoryContext,
+): Promise<string | null | undefined> => {
+  for (const path of ownershipCandidates(paths)) {
+    const owners = await host.runQuery("dpkg-query", ["-S", path], signal);
+    if (owners === "missing") return undefined;
+    const [name] = parseDpkgOwners(succeeded(owners) ?? "", path);
+    if (name !== undefined) return name;
+  }
+  return null;
+};
+
+/** A package name without the `:<architecture>` dpkg may qualify it with. */
+const unqualified = (name: string): string => name.split(":")[0] ?? name;
+
+/** The files a Debian package is identified from. */
+export interface DebianPackagePaths {
+  /** The program as launched and as resolved; dpkg may own either. */
+  readonly program: readonly string[];
+  /** The resolved program, whose libraries are walked. */
+  readonly executable: string;
+  /** The launched desktop entry and its resolved file; empty for an executable launch. */
+  readonly entry: readonly string[];
+}
+
 /**
- * The Debian package that owns the executable, with the apt sources of its
- * installed version, the vendor repositories among them and the packages of
- * the libraries the executable loads; `unknown` when dpkg owns no candidate.
+ * The Debian package that owns the desktop entry, or else the executable,
+ * with the apt sources of its installed version, the vendor repositories
+ * among them and the packages of the libraries the executable loads;
+ * `unknown` when dpkg owns neither.
  */
 export const debianPackage = async (
-  paths: readonly string[],
-  executable: string,
+  { program, executable, entry }: DebianPackagePaths,
   context: InventoryContext,
 ): Promise<Package> => {
   const { host, signal, limitations } = context;
@@ -170,57 +197,58 @@ export const debianPackage = async (
     sources: [],
     package_lists_present: null,
   };
-  for (const path of ownershipCandidates(paths)) {
-    const owners = await host.runQuery("dpkg-query", ["-S", path], signal);
-    if (owners === "missing") {
-      limitations.push(
-        "dpkg-query is not installed, so the package that owns the executable is unknown.",
-      );
-      return unknown;
-    }
-    const [name] = parseDpkgOwners(succeeded(owners) ?? "", path);
-    if (name === undefined) continue;
-    const status = succeeded(
-      await host.runQuery(
-        "dpkg-query",
-        ["-W", `-f=${DPKG_STATUS_FORMAT}`, name],
-        signal,
-      ),
+  const owner = await dpkgOwner(program, context);
+  if (owner === undefined) {
+    limitations.push(
+      "dpkg-query is not installed, so the package that owns the executable is unknown.",
     );
-    const parsed = status === undefined ? undefined : parseDpkgStatus(status);
-    const policy = succeeded(
-      await host.runQuery("apt-cache", ["policy", name], signal),
-    );
-    const listsPresent = (
-      await readdir(host.apt.lists).catch(() => [] as string[])
-    ).some((list) => /_Packages(?:\.[a-z0-9]+)?$/u.test(list));
-    if (!listsPresent)
-      limitations.push(
-        "No apt package lists are present, so whether the installed version comes from a package archive is unknown.",
-      );
-    const sources =
-      policy === undefined ? [] : [...parseAptPolicySources(policy)];
-    // A local install's library packages are matched to the archive by origin too.
-    const origins = await policyOrigins(context);
-    const installed = {
-      kind: "deb" as const,
-      name: parsed?.name ?? name,
-      version: parsed?.version ?? null,
-      architecture: parsed?.architecture ?? null,
-      sources,
-      ...(origins === undefined
-        ? {}
-        : {
-            source_origins: sources.map(
-              (source) => origins.get(source) ?? null,
-            ),
-          }),
-      package_lists_present: listsPresent,
-    };
-    return {
-      ...installed,
-      ...(await installFacts(installed, executable, context, origins)),
-    };
+    return unknown;
   }
-  return unknown;
+  // The entry's package installs the application, whose program can come from a package it depends on.
+  const entryOwner =
+    entry.length === 0 ? null : await dpkgOwner(entry, context);
+  const name = entryOwner ?? owner;
+  if (name === null) return unknown;
+  const status = succeeded(
+    await host.runQuery(
+      "dpkg-query",
+      ["-W", `-f=${DPKG_STATUS_FORMAT}`, name],
+      signal,
+    ),
+  );
+  const parsed = status === undefined ? undefined : parseDpkgStatus(status);
+  const policy = succeeded(
+    await host.runQuery("apt-cache", ["policy", name], signal),
+  );
+  const listsPresent = (
+    await readdir(host.apt.lists).catch(() => [] as string[])
+  ).some((list) => /_Packages(?:\.[a-z0-9]+)?$/u.test(list));
+  if (!listsPresent)
+    limitations.push(
+      "No apt package lists are present, so whether the installed version comes from a package archive is unknown.",
+    );
+  const sources =
+    policy === undefined ? [] : [...parseAptPolicySources(policy)];
+  // A local install's library packages are matched to the archive by origin too.
+  const origins = await policyOrigins(context);
+  const installed = {
+    kind: "deb" as const,
+    name: parsed?.name ?? name,
+    ...(owner === null || unqualified(owner) === unqualified(name)
+      ? {}
+      : { executable_package: unqualified(owner) }),
+    version: parsed?.version ?? null,
+    architecture: parsed?.architecture ?? null,
+    sources,
+    ...(origins === undefined
+      ? {}
+      : {
+          source_origins: sources.map((source) => origins.get(source) ?? null),
+        }),
+    package_lists_present: listsPresent,
+  };
+  return {
+    ...installed,
+    ...(await installFacts(installed, executable, context, origins)),
+  };
 };

@@ -134,6 +134,17 @@ for the Ubuntu archive and its mirrors or `LP-PPA-<name>` for a PPA; an empty
 source list means the version came from a local `.deb` or the package lists
 are missing, which `package_lists_present` tells apart.
 
+The Debian package is the one `dpkg-query -S` names as the owner of the
+desktop entry the capture launched, or else of the executable, since the
+entry's package is what installs the application: LibreOffice Writer's entry
+belongs to `libreoffice-writer`, while the `/usr/bin/libreoffice` it runs
+belongs to `libreoffice-common`, which does not bring Writer with it. When the
+two differ, `executable_package` names the executable's package. An
+`--executable` launch, or an entry no package owns, such as one in
+`~/.local/share/applications`, records the executable's package. The sources,
+vendor repositories and `--package-file` match below are the recorded
+package's; the library walk still reads the executable.
+
 Each source whose origin is not `Ubuntu` is also recorded in
 `apt_repositories`. `apt-get indextargets` names the sources file entry apt
 read it from and its release, so flat repositories match too, whether their
@@ -223,7 +234,10 @@ the fuse sentinel in their binary or a `resources/app.asar` beside it. State
 directories are the XDG config, data, state and cache folders and the
 dot-folder named after the package, the executable, the desktop entry's full
 id and its last part, and the entry's name, with whether each existed at the
-start. Dotfiles in the home named after the application (`.<name>rc`, or
+start. A folder in those places whose name is one of these in another letter
+case joins them, such as GIMP's `~/.config/GIMP` for the `gimp` package; only
+the whole name is compared, so `~/.config/GIMPshop` does not. Dotfiles in the
+home named after the application (`.<name>rc`, or
 `.<name>` followed by `-`, `.` or `_`, for a name of three or more characters)
 that exist at the start join them, since an application may only read such a
 file during the capture. A `flatpak run` launch is named after its application

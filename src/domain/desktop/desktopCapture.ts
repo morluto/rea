@@ -110,7 +110,10 @@ export type DesktopPackageFile = z.infer<typeof packageFileSchema>;
 
 const packageSchema = z.strictObject({
   kind: z.enum(["deb", "snap", "flatpak", "appimage", "unknown"]),
+  /** A Debian package is the launched desktop entry's owner, or else the executable's. */
   name: z.string().nullable(),
+  /** The executable's Debian package when another package owns the desktop entry; absent otherwise. */
+  executable_package: z.string().optional(),
   version: z.string().nullable(),
   architecture: z.string().nullable(),
   /** Package sources listing the installed version; empty for local installs. */

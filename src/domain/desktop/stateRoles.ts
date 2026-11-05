@@ -85,6 +85,21 @@ const hiddenTail = (path: string): string | null => {
   return index < 0 ? null : path.slice(index + 1);
 };
 
+/** Whether a path lies in one of the directories, or in a folder beside one whose name differs from it only in letter case, as a folder the application creates during the capture may. */
+const withinStateDirectory = (
+  path: string,
+  directories: readonly string[],
+): boolean =>
+  directories.some((directory) => {
+    const parent = directory.slice(0, directory.lastIndexOf("/") + 1);
+    if (!path.startsWith(parent)) return false;
+    const folder = path.slice(parent.length).split("/")[0] ?? "";
+    return (
+      folder.length > 0 &&
+      folder.toLowerCase() === directory.slice(parent.length).toLowerCase()
+    );
+  });
+
 /** Facts about the whole capture that every path's reasons draw on. */
 export interface DesktopRoleFacts {
   readonly home: string;
@@ -170,8 +185,8 @@ export const stateReasons = (
   const reasons: DesktopStateReason[] = [];
   if (
     changes.some((change) => change.in_state_directory) ||
-    isWithinAny(path, facts.stateDirectories) ||
-    (relative !== null && isWithinAny(relative, facts.stateTails))
+    withinStateDirectory(path, facts.stateDirectories) ||
+    (relative !== null && withinStateDirectory(relative, facts.stateTails))
   )
     reasons.push("state_directory");
   if (

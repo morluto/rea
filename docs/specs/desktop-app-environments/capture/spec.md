@@ -44,12 +44,19 @@ folder to build the environment; this step builds nothing.
   folders also name the state directories), and identifies the package:
   snap, flatpak and AppImage from paths (and the AppImage magic, and a
   `flatpak run` launch), otherwise
-  the dpkg owner with its version, architecture, the apt sources listing the
-  installed version and the `o=` origin apt reports for each source. It marks
+  the dpkg owner of the launched desktop entry, or else of the executable,
+  with its version, architecture, the apt sources listing the
+  installed version and the `o=` origin apt reports for each source. The
+  entry's package is the one that installs the application: LibreOffice
+  Writer's entry belongs to `libreoffice-writer`, while the `libreoffice` it
+  runs belongs to `libreoffice-common`, which does not depend on Writer. When
+  the two differ, `executable_package` names the executable's. It marks
   Electron applications by the fuse sentinel or `resources/app.asar`, and
   lists candidate state directories under the XDG folders and dot-folders
   named after the package, executable, desktop entry's full id and last part,
-  and name; a `flatpak run` launch uses the application id (its first operand
+  and name, and every folder present there whose name is one of those in
+  another letter case, such as GIMP's `~/.config/GIMP`; a `flatpak run`
+  launch uses the application id (its first operand
   after options and their values) instead of the launcher's name and adds
   `~/.var/app/<id>`. An `--executable` runs from the caller's
   directory, which also resolves a relative path to it.
