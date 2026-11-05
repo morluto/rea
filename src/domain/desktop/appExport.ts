@@ -233,14 +233,14 @@ export const launchCommand = (
     );
   };
   // The framework launches from the app's folder; a missing working directory must not stop the boot.
-  const relative = argv
-    .slice(1)
-    .some(
-      (argument) =>
-        argument.length > 0 &&
-        !argument.startsWith("/") &&
-        !argument.startsWith("-"),
-    );
+  // A relative program path such as `./app` needs that directory too.
+  const relative = argv.some(
+    (argument, index) =>
+      argument.length > 0 &&
+      !argument.startsWith("/") &&
+      !argument.startsWith("-") &&
+      (index > 0 || argument.includes("/")),
+  );
   const respelled = argv.map(respell);
   if (!relative && respelled.every((argument) => argument === undefined))
     return argv;

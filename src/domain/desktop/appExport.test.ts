@@ -124,6 +124,11 @@ describe("launchCommand", () => {
     expect(
       launchCommand(["notes", "--wrap"], "/home/ada", "/home/ada/project"),
     ).toEqual(["notes", "--wrap"]);
+    expect(launchCommand(["./app"], "/home/ada", "/opt/app")).toEqual([
+      "sh",
+      "-c",
+      "cd '/opt/app' 2>/dev/null; exec './app'",
+    ]);
   });
 });
 
