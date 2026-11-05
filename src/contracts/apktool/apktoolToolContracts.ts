@@ -22,7 +22,7 @@ export const APKTOOL_TOOL_CONTRACTS = [
     name: "decode_android_resources",
     ...toolContractMetadata("decode_android_resources"),
     description:
-      "Decode one local APK's resources with `apktool d --no-src` in a provider-owned workspace that is removed after projection: the readable AndroidManifest.xml, apktool.yml version and SDK facts, the app's string resources (default or one locale, bounded to 2000 entries), selectable string locales, and the decoded file count. The target APK is digest with SHA-256 before decoding; smali is skipped because Java-source recovery belongs to the JADX family.",
+      "Decode one local APK's resources with `apktool d --no-src` in a provider-owned workspace that is removed after projection: the readable AndroidManifest.xml, apktool.yml version and SDK facts, the app's string resources (default or selected locales, bounded to 2000 entries per table), selectable string locales, and the decoded file count. The target APK is digest with SHA-256 before decoding; smali is skipped because Java-source recovery belongs to the JADX family. Optional decode_timeout_ms is the decode wall clock in milliseconds (default 600000, range 1..2147483647); omitted means 600000 and the value applies on the next decode. It does not raise the fixed output capture allowance or the version probe.",
     kind: "apktool-provider",
     inputSchema: apktoolInputSchemas.decode_android_resources,
     outputSchema: evidenceResultOf(
@@ -36,6 +36,14 @@ export const APKTOOL_TOOL_CONTRACTS = [
       {
         title: "Decode one locale's strings",
         input: { path: "/targets/Example.apk", locale: "de" },
+      },
+      {
+        title: "Decode multiple locale string tables in one pass",
+        input: {
+          path: "/targets/Example.apk",
+          locales: ["de", "fr"],
+          string_tables_only: true,
+        },
       },
     ],
   },

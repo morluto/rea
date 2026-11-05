@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { expect } from "vitest";
 
 import { CdpBrowserProvider } from "../../../src/browser/CdpBrowserProvider.js";
-import { waitForBrowserDevtoolsPort } from "../../../src/browser/BrowserProcessStartup.js";
+import { waitForBrowserDevtoolsPort } from "../../../scripts/lib/browser-process-startup.mjs";
 import {
   inspectWebPageInputSchema,
   listBrowserTargetsInputSchema,
@@ -14,6 +14,7 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import {
   processTest as it,
   waitForExit,
+  type TestProcesses,
 } from "../../support/process/processFixture.js";
 
 const chromeExecutable = [
@@ -33,6 +34,87 @@ const chromeExecutable = [
 // runner can exceed 20 seconds before publishing DevToolsActivePort.
 const CHROME_STARTUP_TIMEOUT_MS = 60_000;
 const CHROME_TEST_TIMEOUT_MS = CHROME_STARTUP_TIMEOUT_MS + 30_000;
+
+const inspectChromePage = async ({
+  processes,
+  executable,
+  profilePrefix,
+  page,
+  contentType,
+  pathname,
+}: {
+  processes: TestProcesses;
+  executable: string;
+  profilePrefix: string;
+  page: string;
+  contentType: string;
+  pathname: string;
+}) => {
+  const profile = await createTestTempDirectory(profilePrefix);
+  const server = createServer((_request, response) => {
+    response.writeHead(200, {
+      "content-type": `${contentType}; charset=utf-8`,
+    });
+    response.end(page);
+  });
+  await new Promise<void>((resolve) => {
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  const address = server.address();
+  if (address === null || typeof address === "string")
+    throw new Error("SVG fixture server did not bind a TCP port");
+  const origin = `http://127.0.0.1:${String(address.port)}`;
+  const pageUrl = `${origin}${pathname}`;
+  let stderr = "";
+  const child = processes.spawn(executable, [
+    "--headless=new",
+    ...(process.env.REA_BROWSER_NO_SANDBOX === "true" ? ["--no-sandbox"] : []),
+    "--remote-debugging-address=127.0.0.1",
+    "--remote-debugging-port=0",
+    `--user-data-dir=${profile}`,
+    "--no-first-run",
+    "--no-default-browser-check",
+    "--disable-background-networking",
+    "--disable-component-update",
+    "--disable-dev-shm-usage",
+    "--disable-sync",
+    "--metrics-recording-only",
+    pageUrl,
+  ]);
+  child.stdout.on("data", () => undefined);
+  child.stderr.on("data", (chunk: Buffer) => {
+    if (stderr.length < 8_192) stderr += chunk.toString("utf8");
+  });
+  try {
+    const port = await waitForBrowserDevtoolsPort({
+      child,
+      executable,
+      activePortPath: join(profile, "DevToolsActivePort"),
+      stderr: () => stderr,
+      timeoutMs: CHROME_STARTUP_TIMEOUT_MS,
+    });
+    const endpoint = `http://127.0.0.1:${String(port)}`;
+    const provider = new CdpBrowserProvider();
+    const targetId = await pageTarget(provider, endpoint, origin, pageUrl);
+    const result = await provider.inspectPage(
+      inspectWebPageInputSchema.parse({
+        cdp_endpoint: endpoint,
+        allowed_origins: [origin],
+        target_id: targetId,
+        observation_ms: 0,
+      }),
+    );
+    if (!result.ok) throw result.error;
+    return { origin, pageUrl, inspection: result.value };
+  } finally {
+    child.kill("SIGTERM");
+    if (!(await waitForExit(child, 2_000))) child.kill("SIGKILL");
+    await waitForExit(child, 2_000);
+    await new Promise<void>((resolve) => {
+      server.close(() => resolve());
+    });
+  }
+};
 
 // Issue 1586's page, plus the HTML, image, use, and foreign-origin cases the
 // real snapshot must distinguish. The XHTML page is the prefixed-svg gap
@@ -84,133 +166,78 @@ it.skipIf(chromeExecutable === undefined)(
   async ({ processes }) => {
     const executable = chromeExecutable;
     if (executable === undefined) return;
-    const profile = await createTestTempDirectory("rea-svg-xlink-");
-    const server = createServer((_request, response) => {
-      response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-      response.end(pageHtml);
+    const { origin, inspection } = await inspectChromePage({
+      processes,
+      executable,
+      profilePrefix: "rea-svg-xlink-",
+      page: pageHtml,
+      contentType: "text/html",
+      pathname: "/x.html",
     });
-    await new Promise<void>((resolve) => {
-      server.listen(0, "127.0.0.1", resolve);
-    });
-    const address = server.address();
-    if (address === null || typeof address === "string")
-      throw new Error("SVG fixture server did not bind a TCP port");
-    const origin = `http://127.0.0.1:${String(address.port)}`;
-    const pageUrl = `${origin}/x.html`;
-    let stderr = "";
-    const child = processes.spawn(executable, [
-      "--headless=new",
-      ...(process.env.REA_BROWSER_NO_SANDBOX === "true"
-        ? ["--no-sandbox"]
-        : []),
-      "--remote-debugging-address=127.0.0.1",
-      "--remote-debugging-port=0",
-      `--user-data-dir=${profile}`,
-      "--no-first-run",
-      "--no-default-browser-check",
-      "--disable-background-networking",
-      "--disable-component-update",
-      "--disable-dev-shm-usage",
-      "--disable-sync",
-      "--metrics-recording-only",
-      pageUrl,
-    ]);
-    child.stdout.on("data", () => undefined);
-    child.stderr.on("data", (chunk: Buffer) => {
-      if (stderr.length < 8_192) stderr += chunk.toString("utf8");
-    });
-    try {
-      const port = await waitForBrowserDevtoolsPort({
-        child,
-        executable,
-        activePortPath: join(profile, "DevToolsActivePort"),
-        stderr: () => stderr,
-        timeoutMs: CHROME_STARTUP_TIMEOUT_MS,
-      });
-      const endpoint = `http://127.0.0.1:${String(port)}`;
-      const provider = new CdpBrowserProvider();
-      const targetId = await pageTarget(provider, endpoint, origin, pageUrl);
-      const result = await provider.inspectPage(
-        inspectWebPageInputSchema.parse({
-          cdp_endpoint: endpoint,
-          allowed_origins: [origin],
-          target_id: targetId,
-          observation_ms: 0,
+    const urls = inspection.metadata.dom_urls;
+    const html = inspection.dom.nodes.find(
+      (node) =>
+        node.node_name === "A" && node.attribute_names.includes("xlink:href"),
+    );
+    expect(html).toBeDefined();
+    expect(urls.some((url) => url.node_index === html?.index)).toBe(false);
+    expect(urls).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          attribute: "href",
+          url: `${origin}/xl-s2h`,
+          destination_scope: "approved",
         }),
-      );
-      if (!result.ok) throw result.error;
-      const urls = result.value.metadata.dom_urls;
-      const html = result.value.dom.nodes.find(
-        (node) =>
-          node.node_name === "A" && node.attribute_names.includes("xlink:href"),
-      );
-      expect(html).toBeDefined();
-      expect(urls.some((url) => url.node_index === html?.index)).toBe(false);
-      expect(urls).toEqual(
-        expect.arrayContaining([
+        expect.objectContaining({
+          attribute: "href",
+          url: `${origin}/href-wins`,
+          destination_scope: "approved",
+        }),
+        expect.objectContaining({
+          attribute: "href",
+          url: `${origin}/xl-image`,
+          destination_scope: "approved",
+        }),
+        expect.objectContaining({
+          attribute: "href",
+          url: `${origin}/xl-use`,
+          destination_scope: "approved",
+        }),
+        expect.objectContaining({
+          attribute: "href",
+          url: null,
+          destination_scope: "outside_policy",
+        }),
+        ...[
+          "/html-desc",
+          "/html-title",
+          "/xl-nested-desc",
+          "/xl-nested-title",
+          "/xl-moved-desc",
+          "/xl-moved-title",
+          "/xl-created-desc",
+          "/xl-created-title",
+          "/xl-created-nested-desc",
+          "/xl-created-nested-title",
+        ].map((path) =>
           expect.objectContaining({
             attribute: "href",
-            url: `${origin}/xl-s2h`,
+            url: `${origin}${path}`,
             destination_scope: "approved",
           }),
-          expect.objectContaining({
-            attribute: "href",
-            url: `${origin}/href-wins`,
-            destination_scope: "approved",
-          }),
-          expect.objectContaining({
-            attribute: "href",
-            url: `${origin}/xl-image`,
-            destination_scope: "approved",
-          }),
-          expect.objectContaining({
-            attribute: "href",
-            url: `${origin}/xl-use`,
-            destination_scope: "approved",
-          }),
-          expect.objectContaining({
-            attribute: "href",
-            url: null,
-            destination_scope: "outside_policy",
-          }),
-          ...[
-            "/html-desc",
-            "/html-title",
-            "/xl-nested-desc",
-            "/xl-nested-title",
-            "/xl-moved-desc",
-            "/xl-moved-title",
-            "/xl-created-desc",
-            "/xl-created-title",
-            "/xl-created-nested-desc",
-            "/xl-created-nested-title",
-          ].map((path) =>
-            expect.objectContaining({
-              attribute: "href",
-              url: `${origin}${path}`,
-              destination_scope: "approved",
-            }),
-          ),
-        ]),
-      );
-      expect(
-        urls.some(
-          (url) =>
-            url.url?.includes("/xl-html") === true ||
-            url.url?.includes("/xl-math") === true ||
-            url.url?.endsWith("/xlink-loses") === true,
         ),
-      ).toBe(false);
-      expect(urls.every((url) => url.attribute === "href")).toBe(true);
-      expect(urls).toHaveLength(15);
-    } finally {
-      child.kill("SIGTERM");
-      if (!(await waitForExit(child, 2_000))) child.kill("SIGKILL");
-      await waitForExit(child, 2_000);
-      await new Promise<void>((resolve) => {
-        server.close(() => resolve());
-      });
-    }
+      ]),
+    );
+    expect(
+      urls.some(
+        (url) =>
+          url.url?.includes("/xl-html") === true ||
+          url.url?.includes("/xl-math") === true ||
+          url.url?.endsWith("/xlink-loses") === true,
+      ),
+    ).toBe(false);
+    expect(urls.every((url) => url.attribute === "href")).toBe(true);
+    expect(urls).toHaveLength(15);
   },
   CHROME_TEST_TIMEOUT_MS,
 );
@@ -277,99 +304,42 @@ for (const { format, page, contentType, nodeNames, link, destinations } of [
     async ({ processes }) => {
       const executable = chromeExecutable;
       if (executable === undefined) return;
-      const profile = await createTestTempDirectory("rea-svg-xhtml-");
-      const server = createServer((_request, response) => {
-        response.writeHead(200, {
-          "content-type": `${contentType}; charset=utf-8`,
-        });
-        response.end(page);
+      const { origin, pageUrl, inspection } = await inspectChromePage({
+        processes,
+        executable,
+        profilePrefix: "rea-svg-xhtml-",
+        page,
+        contentType,
+        pathname: "/page.xhtml",
       });
-      await new Promise<void>((resolve) => {
-        server.listen(0, "127.0.0.1", resolve);
-      });
-      const address = server.address();
-      if (address === null || typeof address === "string")
-        throw new Error("XHTML fixture server did not bind a TCP port");
-      const origin = `http://127.0.0.1:${String(address.port)}`;
-      const pageUrl = `${origin}/page.xhtml`;
-      let stderr = "";
-      const child = processes.spawn(executable, [
-        "--headless=new",
-        ...(process.env.REA_BROWSER_NO_SANDBOX === "true"
-          ? ["--no-sandbox"]
-          : []),
-        "--remote-debugging-address=127.0.0.1",
-        "--remote-debugging-port=0",
-        `--user-data-dir=${profile}`,
-        "--no-first-run",
-        "--no-default-browser-check",
-        "--disable-background-networking",
-        "--disable-component-update",
-        "--disable-dev-shm-usage",
-        "--disable-sync",
-        "--metrics-recording-only",
-        pageUrl,
-      ]);
-      child.stdout.on("data", () => undefined);
-      child.stderr.on("data", (chunk: Buffer) => {
-        if (stderr.length < 8_192) stderr += chunk.toString("utf8");
-      });
-      try {
-        const port = await waitForBrowserDevtoolsPort({
-          child,
-          executable,
-          activePortPath: join(profile, "DevToolsActivePort"),
-          stderr: () => stderr,
-          timeoutMs: CHROME_STARTUP_TIMEOUT_MS,
-        });
-        const endpoint = `http://127.0.0.1:${String(port)}`;
-        const provider = new CdpBrowserProvider();
-        const targetId = await pageTarget(provider, endpoint, origin, pageUrl);
-        const result = await provider.inspectPage(
-          inspectWebPageInputSchema.parse({
-            cdp_endpoint: endpoint,
-            allowed_origins: [origin],
-            target_id: targetId,
-            observation_ms: 0,
-          }),
-        );
-        if (!result.ok) throw result.error;
-        const urls = result.value.metadata.dom_urls;
-        for (const name of nodeNames) {
-          expect(
-            result.value.dom.nodes.some((node) => node.node_name === name),
-          ).toBe(true);
-        }
+      const urls = inspection.metadata.dom_urls;
+      for (const name of nodeNames) {
         expect(
-          result.value.dom.nodes.some(
-            (node) =>
-              node.node_name === link.name &&
-              node.attribute_names.includes(link.attribute),
-          ),
+          inspection.dom.nodes.some((node) => node.node_name === name),
         ).toBe(true);
-        expect(urls).toEqual(
-          destinations.map((destination) =>
-            expect.objectContaining({
-              attribute: "href",
-              url:
-                destination === null
-                  ? null
-                  : destination === ""
-                    ? pageUrl
-                    : `${origin}${destination}`,
-              destination_scope:
-                destination === null ? "outside_policy" : "approved",
-            }),
-          ),
-        );
-      } finally {
-        child.kill("SIGTERM");
-        if (!(await waitForExit(child, 2_000))) child.kill("SIGKILL");
-        await waitForExit(child, 2_000);
-        await new Promise<void>((resolve) => {
-          server.close(() => resolve());
-        });
       }
+      expect(
+        inspection.dom.nodes.some(
+          (node) =>
+            node.node_name === link.name &&
+            node.attribute_names.includes(link.attribute),
+        ),
+      ).toBe(true);
+      expect(urls).toEqual(
+        destinations.map((destination) =>
+          expect.objectContaining({
+            attribute: "href",
+            url:
+              destination === null
+                ? null
+                : destination === ""
+                  ? pageUrl
+                  : `${origin}${destination}`,
+            destination_scope:
+              destination === null ? "outside_policy" : "approved",
+          }),
+        ),
+      );
     },
     CHROME_TEST_TIMEOUT_MS,
   );

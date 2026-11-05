@@ -8,7 +8,10 @@ import {
   semanticGlobalProcessOrigin,
   semanticMutableBuiltinOrigin,
 } from "./javascriptSemanticRequireOrigin.js";
-import type { JavaScriptModuleOrigin } from "./javascriptSemanticIr.js";
+import type {
+  JavaScriptModuleOrigin,
+  JavaScriptSemanticProjectedResultBinding,
+} from "./javascriptSemanticIr.js";
 import {
   evaluateSemanticProvenance,
   evaluateSemanticProvenanceAtRead,
@@ -28,18 +31,16 @@ import {
   type JavaScriptSemanticMemberEffect,
   type JavaScriptSemanticRequiredModuleEffect,
 } from "./javascriptSemanticState.js";
-import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
+import { traverseJavaScriptValueAst } from "./javascriptSemanticTraversal.js";
 import {
   readExactJavaScriptLiteral,
+  semanticMemberChain,
   semanticStaticPropertyKey,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 
-export interface SemanticProjectedBinding {
-  readonly bindingId: string;
+export interface SemanticProjectedBinding extends JavaScriptSemanticProjectedResultBinding {
   readonly identifier: t.Identifier;
-  readonly projectionPath: readonly (string | number | null)[];
-  readonly resolution: "complete" | "partial";
 }
 
 /** Resolve bindings written by the nearest variable or assignment owner. */
@@ -56,7 +57,7 @@ export const assignedSemanticResultBindings = (
     if (t.isVariableDeclarator(owner)) {
       pattern = owner.id;
       source = owner.init ?? null;
-    } else if (t.isAssignmentExpression(owner)) {
+    } else if (t.isAssignmentExpression(owner, { operator: "=" })) {
       pattern = owner.left;
       source = owner.right;
     }
@@ -136,7 +137,7 @@ const projectedPatternBindings = (
 
 export const semanticProjectedBindingFacts = (
   bindings: readonly SemanticProjectedBinding[],
-): Omit<SemanticProjectedBinding, "identifier">[] =>
+): JavaScriptSemanticProjectedResultBinding[] =>
   bindings.map(({ identifier: _identifier, ...fact }) => fact);
 
 /** Return a scalar owner only for an unprojected identifier result. */
@@ -161,22 +162,31 @@ export const builtinDataEffectMethod = (
   state: JavaScriptSemanticAnalysisState,
   specifiers: readonly string[],
 ): string | null => {
+  const path = builtinDataEffectCallablePath(callee, state, specifiers);
+  return path?.length === 1 ? (path[0] ?? null) : null;
+};
+
+/** Recover the complete callable export path using the shared mutation proof. */
+export const builtinDataEffectCallablePath = (
+  callee: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+  specifiers: readonly string[],
+): readonly string[] | null => {
   const expression = unwrapJavaScriptExpression(callee).node;
   if (expression !== callee)
-    return builtinDataEffectMethod(expression, state, specifiers);
+    return builtinDataEffectCallablePath(expression, state, specifiers);
   if (t.isSequenceExpression(expression)) {
     const final = expression.expressions.at(-1);
     return final === undefined
       ? null
-      : builtinDataEffectMethod(final, state, specifiers);
+      : builtinDataEffectCallablePath(final, state, specifiers);
   }
   const required = semanticRequireOrigin(callee, state);
   if (required !== undefined) {
     const origin = builtinNamespaceOrigin(required.origin);
-    return origin.importedPath.length === 1 &&
-      specifiers.some(
-        (specifier) => specifier.replace(/^node:/u, "") === origin.specifier,
-      ) &&
+    return specifiers.some(
+      (specifier) => specifier.replace(/^node:/u, "") === origin.specifier,
+    ) &&
       !requiredModuleChanged(
         required.origin.specifier,
         required.origin.importedPath,
@@ -184,7 +194,7 @@ export const builtinDataEffectMethod = (
         state,
         true,
       )
-      ? (origin.importedPath[0] ?? null)
+      ? origin.importedPath
       : null;
   }
   if (t.isIdentifier(callee)) {
@@ -197,7 +207,7 @@ export const builtinDataEffectMethod = (
       [],
       true,
     );
-    return path?.length === 1 ? (path[0] ?? null) : null;
+    return path;
   }
   if (!t.isMemberExpression(callee) && !t.isOptionalMemberExpression(callee))
     return null;
@@ -227,27 +237,26 @@ export const builtinDataEffectMethod = (
             callee,
             [...receiver.path, method],
             true,
-          )?.length === 0
-            ? method
+          ) !== null
+            ? [...origin.importedPath, method]
             : null;
       }
     }
     const source = semanticExpressionModuleOrigin(callee.object, state);
     if (method === null || source === undefined) return null;
     const origin = builtinNamespaceOrigin(source);
-    return origin.importedPath.length === 0 &&
-      specifiers.some(
-        (specifier) => specifier.replace(/^node:/u, "") === origin.specifier,
-      ) &&
+    return specifiers.some(
+      (specifier) => specifier.replace(/^node:/u, "") === origin.specifier,
+    ) &&
       !requiredModuleChanged(
         origin.specifier,
-        [...origin.importedPath, method],
+        [...source.importedPath, method],
         callee,
         state,
         true,
         callee.object,
       )
-      ? method
+      ? [...origin.importedPath, method]
       : null;
   }
   const binding = resolveSemanticBindingState(
@@ -265,7 +274,7 @@ export const builtinDataEffectMethod = (
     [method],
     true,
   );
-  if (resolvedPath?.length === 0) return method;
+  if (resolvedPath !== null) return [...resolvedPath, method];
   const initializer = binding?.initializers[0];
   if (
     initializer === undefined ||
@@ -298,7 +307,7 @@ export const builtinDataEffectMethod = (
       true,
       initializer.node,
     )
-    ? method
+    ? [method]
     : null;
 };
 
@@ -311,20 +320,14 @@ const semanticBoundMemberPath = (
       readonly path: string[];
     }
   | undefined => {
-  const path: string[] = [];
-  let current = unwrapJavaScriptExpression(node).node;
-  while (
-    t.isMemberExpression(current) ||
-    t.isOptionalMemberExpression(current)
-  ) {
-    const key = semanticStaticPropertyKey(current.property, current.computed);
-    if (key === null || !t.isNode(current.object)) return undefined;
-    path.unshift(key);
-    current = unwrapJavaScriptExpression(current.object).node;
-  }
-  if (!t.isIdentifier(current)) return undefined;
-  const binding = resolveSemanticBindingState(state, current, current.name);
-  return binding === undefined ? undefined : { binding, path };
+  const chain = semanticMemberChain(node);
+  if (chain === undefined || !t.isIdentifier(chain.root)) return undefined;
+  const binding = resolveSemanticBindingState(
+    state,
+    chain.root,
+    chain.root.name,
+  );
+  return binding === undefined ? undefined : { binding, path: chain.members };
 };
 
 type BuiltinBindingMemo = Map<t.Node, Map<string, readonly string[] | null>>;
@@ -588,6 +591,9 @@ const affectsBuiltinPath = (
 
 const BUILTIN_RECEIVER_METHODS: Readonly<Record<string, ReadonlySet<string>>> =
   {
+    path: new Set(["resolve", "join", "dirname"]),
+    "path/posix": new Set(["resolve", "join", "dirname"]),
+    url: new Set(["fileURLToPath"]),
     fs: new Set([
       "readFile",
       "readFileSync",
@@ -762,7 +768,7 @@ const computeOriginalBuiltinReceiver = (
 ): boolean => {
   if (!t.isCallExpression(node) && !t.isOptionalCallExpression(node))
     return false;
-  const callee = node.callee;
+  const callee = unwrapJavaScriptExpression(node.callee).node;
   if (!t.isMemberExpression(callee) && !t.isOptionalMemberExpression(callee))
     return false;
   const receiver = t.isIdentifier(callee.object)
@@ -780,14 +786,21 @@ const computeOriginalBuiltinReceiver = (
         semanticGlobalProcessOrigin(callee.object, state));
   if (sourceOrigin === undefined) return false;
   const origin = builtinNamespaceOrigin(sourceOrigin);
-  if (origin.importedPath.length !== 0) return false;
+  const posixReceiver =
+    origin.specifier === "path" &&
+    origin.importedPath.length === 1 &&
+    origin.importedPath[0] === "posix";
+  if (origin.importedPath.length !== 0 && !posixReceiver) return false;
   const method = semanticStaticPropertyKey(callee.property, callee.computed);
   const identity = semanticRequireExportsIdentity(origin.specifier, [
+    ...origin.importedPath,
     method ?? "",
   ]);
   if (
     method === null ||
-    !BUILTIN_RECEIVER_METHODS[origin.specifier]?.has(method) ||
+    !BUILTIN_RECEIVER_METHODS[
+      posixReceiver ? "path/posix" : origin.specifier
+    ]?.has(method) ||
     receiver?.memberWrites.some(
       ({ path, node: write }) =>
         affectsBuiltinPath(path, [method]) &&
@@ -888,7 +901,7 @@ export const traverseDataEffects = (
     context.callableStack,
   );
   context.ancestors.length = 0;
-  traverseJavaScriptAst(program, {
+  traverseJavaScriptValueAst(program, context.state.erasedSyntaxNodes, {
     enter: (node, parent) => {
       callableStack.enter(node, parent);
       visit(node, parent);

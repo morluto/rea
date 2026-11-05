@@ -102,6 +102,33 @@ const cases = [
     0,
   ],
   ['spawn("missing-stdio", [])', "missing-stdio", "default", 0],
+  // Async exec/execFile ignore stdio even when the supplied value is dynamic.
+  ['exec("exec-inherit", {stdio:"inherit"})', "exec-inherit", "default", null],
+  [
+    'execFile("execfile-ignore", {stdio:"ignore"})',
+    "execfile-ignore",
+    "default",
+    null,
+  ],
+  [
+    'execFile("execfile-array", [], {stdio:["inherit","inherit","inherit"]})',
+    "execfile-array",
+    "default",
+    0,
+  ],
+  [
+    'execFile("execfile-dynamic", ["one"], {stdio:input,env:{A:"1"}})',
+    "execfile-dynamic",
+    "default",
+    1,
+  ],
+  ['fork("fork-silent", [], {silent:true})', "fork-silent", "pipe", 0],
+  [
+    'fork("fork-explicit", [], {silent:true,stdio:"inherit"})',
+    "fork-explicit",
+    "inherit",
+    0,
+  ],
   ['exec("null-stdio", {stdio:null})', "null-stdio", "default", null],
   [
     'execFile("undefined-options", [], undefined)',
@@ -162,11 +189,11 @@ const cases = [
   ['spawn(...input, [], {stdio:"inherit"})', null, "dynamic", null],
   ['exec("named-callback", done)', "named-callback", "default", null],
   ['execFile("callback-alias", [], callback)', "callback-alias", "default", 0],
-  ['exec("imported-callback", imported)', "imported-callback", "dynamic", null],
+  ['exec("imported-callback", imported)', "imported-callback", "default", null],
   [
     'exec("reassigned-callback", changed)',
     "reassigned-callback",
-    "dynamic",
+    "default",
     null,
   ],
   ['spawn("named-nullish", [], {stdio:absent})', "named-nullish", "dynamic", 0],
@@ -179,15 +206,15 @@ const cases = [
 ] as const;
 
 const annexBSource = `
-  const {execFile}=require("node:child_process");
+  const {spawn,execFile}=require("node:child_process");
   var argv=[]; {function argv(){}}
-  execFile("annex-b-argv",argv,{stdio:"inherit"});
+  spawn("annex-b-argv",argv,{stdio:"inherit"});
   function run(){
     var args=[]; switch(input){case 0:function args(){}}
-    execFile("annex-b-local",args,{stdio:"inherit"});
+    spawn("annex-b-local",args,{stdio:"inherit"});
   }
   var stable=[]; function done(){}
-  execFile("cjs-var-argv",stable,{stdio:"inherit"});
+  spawn("cjs-var-argv",stable,{stdio:"inherit"});
   execFile("cjs-hoisted-callback",done);
 `;
 
@@ -199,12 +226,20 @@ const importEqualsSource = `
 `;
 
 const exportAssignmentSource = `
-  const {spawn,execFile}=require("node:child_process");
+  const {spawn}=require("node:child_process");
   const argv=[]; spawn("export-assignment-argv",argv,{stdio:"inherit"});
   var args=[]; {function args(){}}
-  execFile("export-assignment-annex",args,{stdio:"inherit"});
+  spawn("export-assignment-annex",args,{stdio:"inherit"});
   export = argv;
 `;
+
+// Callback/options ambiguity cannot change exec's effective stdio.
+const opaqueExecCallbackCommands = [
+  "eval-callback",
+  "constructed-callback",
+  "mapped-callback",
+  "cjs-wrapper-callback",
+];
 
 cliTest.for(["CLI", "stdio MCP"] as const)(
   "preserves effective stdio, overloads and explicit unknowns through %s",
@@ -277,17 +312,15 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
     expected.set("import-equals-argv", ["inherit", null]);
     expected.set("import-equals-callback", ["default", null]);
     expected.set("export-assignment-argv", ["inherit", null]);
+    for (const command of opaqueExecCallbackCommands)
+      expected.set(command, ["default", null]);
     for (const [command, count] of [
       ["Function-global", 0],
       ["frames-global", 0],
       ["mapped-arguments", 0],
-      ["eval-callback", null],
       ["shadowed-undefined", 0],
       ["constructed-argv", null],
-      ["constructed-callback", null],
-      ["mapped-callback", null],
       ["cjs-wrapper-argv", null],
-      ["cjs-wrapper-callback", null],
       ["annex-b-argv", null],
       ["annex-b-local", null],
       ["export-assignment-annex", null],
@@ -309,7 +342,7 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
       expect(child.properties.stdio_mode, String(command)).toBe(mode);
       expect(child.properties.argv_count, String(command)).toBe(count);
       expect(child.properties.environment_supplied, String(command)).toBe(
-        command === "named-argv",
+        ["named-argv", "execfile-dynamic"].includes(String(command)),
       );
       expect(child.identity.source_range).not.toBeNull();
       const stdio = graph.relations.filter(
@@ -342,7 +375,9 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
             relation.relation === "supplies-env" &&
             relation.target_node_id === child.node_id,
         ),
-      ).toHaveLength(command === "named-argv" ? 1 : 0);
+      ).toHaveLength(
+        ["named-argv", "execfile-dynamic"].includes(String(command)) ? 1 : 0,
+      );
       expect(
         graph.relations.filter(
           (relation) =>

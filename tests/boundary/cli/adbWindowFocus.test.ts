@@ -76,10 +76,10 @@ exit 1
       );
       const args = { serial };
       expect(schemas.ajv.validate(schemas.inputSchema, args)).toBe(true);
-      const response = await harness.client.callTool({
-        name: schemas.name,
-        arguments: args,
-      });
+      const response = await harness.client.callTool(
+        { name: schemas.name, arguments: args },
+        { toolDefinition: schemas.toolDefinition },
+      );
       expect(response.isError).not.toBe(true);
       expect(
         schemas.ajv.validate(schemas.outputSchema, response.structuredContent),

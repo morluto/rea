@@ -8,11 +8,11 @@ import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.j
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { observeOwnedProcessLineage } from "../process/ProcessOwnershipObservation.js";
 import type {
-  OwnedProcessGroup,
+  PersistentOwnedProcessGroup,
   ProcessCleanupResult,
   ProcessLineageObservation,
 } from "../process/ProcessOwnership.js";
-import { runWithExecutionLimits } from "./PlaywrightElectronActiveActions.js";
+import { runWithExecutionLimits } from "./PlaywrightElectronExecution.js";
 import { cleanupElectronProcesses } from "./ElectronProcessCleanup.js";
 
 type ElectronApplication = Awaited<ReturnType<typeof electron.launch>>;
@@ -21,15 +21,17 @@ type ElectronApplication = Awaited<ReturnType<typeof electron.launch>>;
 export class ElectronCaptureCleanup {
   readonly #transport: AnalysisCleanupLease;
   readonly #processes: AnalysisCleanupLease;
+  readonly #ownership: PersistentOwnedProcessGroup | undefined;
   #closeOperation: Promise<void> | undefined;
   #lineage: ProcessLineageObservation | undefined;
   #processResult: ProcessCleanupResult | undefined;
 
   constructor(
     application: Pick<ElectronApplication, "close">,
-    ownership: OwnedProcessGroup | undefined,
+    ownership: PersistentOwnedProcessGroup | undefined,
     lineage: ProcessLineageObservation | undefined,
   ) {
+    this.#ownership = ownership;
     this.#lineage = lineage;
     this.#transport = new AnalysisCleanupLease(async () => {
       // A deadline stops this wait, not the underlying Playwright close. Reuse
@@ -49,21 +51,21 @@ export class ElectronCaptureCleanup {
       );
     }, ["browser_transport"]);
     const resources =
-      ownership === undefined
+      this.#ownership === undefined
         ? ["owned_process_group"]
         : [
             "owned_process_group",
-            `run:${ownership.runId}`,
-            `process-group:${String(ownership.processGroupId)}`,
+            `run:${this.#ownership.runId}`,
+            `process-group:${String(this.#ownership.processGroupId)}`,
           ];
     this.#processes = new AnalysisCleanupLease(async () => {
       const cleanup =
-        ownership === undefined
+        this.#ownership === undefined
           ? {
               cleaned: false as const,
               reason: "owned Electron process identity was unavailable",
             }
-          : await this.#cleanupProcesses(ownership);
+          : await this.#cleanupProcesses(this.#ownership);
       this.#processResult = cleanup;
       if (!cleanup.cleaned)
         throw new ArtifactReaderFailure("unavailable", cleanup.reason, {
@@ -103,7 +105,7 @@ export class ElectronCaptureCleanup {
   }
 
   async #cleanupProcesses(
-    ownership: OwnedProcessGroup,
+    ownership: PersistentOwnedProcessGroup,
   ): Promise<ProcessCleanupResult> {
     const current = await observeOwnedProcessLineage(ownership);
     if (current.status === "verified") this.#lineage = current;

@@ -1,4 +1,4 @@
-import { rm, writeFile } from "node:fs/promises";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -52,7 +52,6 @@ it.each([
         | undefined;
       if (closeProvider !== undefined) await closeProvider.call(provider);
       await browser.close();
-      await rm(root, { recursive: true, force: true });
     });
 
     const close = vi

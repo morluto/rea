@@ -3,10 +3,10 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { crc32, deflateSync } from "node:zlib";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect } from "vitest";
 
 import { createWebScreenshotArtifact } from "../../../src/domain/webScreenshot.js";
-import { runCliJson as runCli } from "../../fixtures/cliJsonProcess.js";
+import { cliTest, type TestCli } from "../../support/cli/cliFixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const INTEGRATION_TEST_TIMEOUT_MS = 60_000;
@@ -40,9 +40,9 @@ const noisePng = (width: number, height: number): Buffer => {
 };
 
 describe("browser comparison JSON file inputs", () => {
-  it(
+  cliTest(
     "compares screenshot artifacts too large for a command-line argument",
-    async () => {
+    async ({ cli }) => {
       const root = await createTestTempDirectory("rea-screenshot-files-");
       const artifact = JSON.stringify(
         createWebScreenshotArtifact(noisePng(640, 640)),
@@ -55,9 +55,13 @@ describe("browser comparison JSON file inputs", () => {
       await writeFile(before, artifact);
       await writeFile(after, artifact);
 
-      expect(
-        await runCli(["compare-web-screenshots", before, after, "--json"]),
-      ).toMatchObject({
+      const comparison = await cli.run({
+        arguments: ["compare-web-screenshots", before, after, "--json"],
+        environment: process.env,
+      });
+      expect(comparison.exitCode, comparison.stderr).toBe(0);
+      expect(comparison.signal).toBeNull();
+      expect(comparison.json).toMatchObject({
         operation: "compare_web_screenshots",
         normalized_result: { status: "identical", changed_pixels: 0 },
       });
@@ -65,22 +69,26 @@ describe("browser comparison JSON file inputs", () => {
     INTEGRATION_TEST_TIMEOUT_MS,
   );
 
-  it(
+  cliTest(
     "reports which screenshot artifact failed validation",
-    async () => {
+    async ({ cli }) => {
       const root = await createTestTempDirectory("rea-screenshot-invalid-");
       const valid = createWebScreenshotArtifact(noisePng(2, 2));
       const before = join(root, "before.json");
       await writeFile(before, JSON.stringify({ ...valid, bytes: 1 }));
 
-      expect(
-        await runCli([
+      const invalidArtifact = await cli.run({
+        arguments: [
           "compare-web-screenshots",
           before,
           JSON.stringify(valid),
           "--json",
-        ]),
-      ).toMatchObject({
+        ],
+        environment: process.env,
+      });
+      expect(invalidArtifact.exitCode, invalidArtifact.stderr).toBe(1);
+      expect(invalidArtifact.signal).toBeNull();
+      expect(invalidArtifact.json).toMatchObject({
         error: "Browser observation failed",
         code: "invalid_request",
         details: {
@@ -97,23 +105,27 @@ describe("browser comparison JSON file inputs", () => {
     INTEGRATION_TEST_TIMEOUT_MS,
   );
 
-  it(
+  cliTest(
     "reports malformed PNG chunks as invalid input and valid unsupported PNGs as unsupported targets",
-    async () => {
-      await assertPngInputErrorProjections();
+    async ({ cli }) => {
+      await assertPngInputErrorProjections(cli);
     },
     INTEGRATION_TEST_TIMEOUT_MS,
   );
 
-  it(
+  cliTest(
     "identifies a missing capture file instead of reporting malformed JSON",
-    async () => {
+    async ({ cli }) => {
       const root = await createTestTempDirectory("rea-capture-missing-");
       const missing = join(root, "before.json");
 
-      expect(
-        await runCli(["compare-web-captures", missing, "{}", "--json"]),
-      ).toMatchObject({
+      const missingCapture = await cli.run({
+        arguments: ["compare-web-captures", missing, "{}", "--json"],
+        environment: process.env,
+      });
+      expect(missingCapture.exitCode, missingCapture.stderr).toBe(1);
+      expect(missingCapture.signal).toBeNull();
+      expect(missingCapture.json).toMatchObject({
         code: "invalid_request",
         details: {
           operation: "compare_web_captures",
@@ -132,13 +144,17 @@ describe("browser comparison JSON file inputs", () => {
   );
 });
 
-const assertPngInputErrorProjections = async (): Promise<void> => {
+const assertPngInputErrorProjections = async (cli: TestCli): Promise<void> => {
   const damagedBytes = noisePng(1, 1);
   damagedBytes[29] = (damagedBytes[29] ?? 0) ^ 1;
   const damaged = JSON.stringify(createWebScreenshotArtifact(damagedBytes));
-  expect(
-    await runCli(["compare-web-screenshots", damaged, damaged, "--json"]),
-  ).toMatchObject({
+  const damagedPng = await cli.run({
+    arguments: ["compare-web-screenshots", damaged, damaged, "--json"],
+    environment: process.env,
+  });
+  expect(damagedPng.exitCode, damagedPng.stderr).toBe(1);
+  expect(damagedPng.signal).toBeNull();
+  expect(damagedPng.json).toMatchObject({
     code: "invalid_request",
     details: {
       operation: "compare_web_screenshots",
@@ -162,14 +178,18 @@ const assertPngInputErrorProjections = async (): Promise<void> => {
       ]),
     ),
   );
-  expect(
-    await runCli([
+  const malformedDeflatePng = await cli.run({
+    arguments: [
       "compare-web-screenshots",
       malformedDeflate,
       malformedDeflate,
       "--json",
-    ]),
-  ).toMatchObject({
+    ],
+    environment: process.env,
+  });
+  expect(malformedDeflatePng.exitCode, malformedDeflatePng.stderr).toBe(1);
+  expect(malformedDeflatePng.signal).toBeNull();
+  expect(malformedDeflatePng.json).toMatchObject({
     code: "invalid_request",
     details: {
       operation: "compare_web_screenshots",
@@ -191,9 +211,13 @@ const assertPngInputErrorProjections = async (): Promise<void> => {
       ]),
     ),
   );
-  expect(
-    await runCli(["compare-web-screenshots", grayscale, grayscale, "--json"]),
-  ).toMatchObject({
+  const unsupportedPng = await cli.run({
+    arguments: ["compare-web-screenshots", grayscale, grayscale, "--json"],
+    environment: process.env,
+  });
+  expect(unsupportedPng.exitCode, unsupportedPng.stderr).toBe(1);
+  expect(unsupportedPng.signal).toBeNull();
+  expect(unsupportedPng.json).toMatchObject({
     code: "unsupported_target",
     details: { operation: "compare_web_screenshots" },
   });
@@ -212,14 +236,18 @@ const assertPngInputErrorProjections = async (): Promise<void> => {
       ]),
     ),
   );
-  expect(
-    await runCli([
+  const oversizedPng = await cli.run({
+    arguments: [
       "compare-web-screenshots",
       hugeDimensions,
       hugeDimensions,
       "--json",
-    ]),
-  ).toMatchObject({
+    ],
+    environment: process.env,
+  });
+  expect(oversizedPng.exitCode, oversizedPng.stderr).toBe(1);
+  expect(oversizedPng.signal).toBeNull();
+  expect(oversizedPng.json).toMatchObject({
     code: "resource_constraint",
     details: {
       operation: "compare_web_screenshots",

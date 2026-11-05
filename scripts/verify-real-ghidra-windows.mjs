@@ -8,20 +8,20 @@ import { fileURLToPath } from "node:url";
 import { parseConfig } from "../dist/config/parseConfig.js";
 import { resolveGhidraAnalysisProfile } from "../dist/ghidra/GhidraAnalysisProfile.js";
 import { GhidraClient } from "../dist/ghidra/GhidraClient.js";
+import { GHIDRA_FUNCTION_OPERATIONS } from "../dist/ghidra/GhidraFunctionOperations.js";
 import {
-  GHIDRA_FUNCTION_OPERATIONS,
   parseGhidraFunctionInput,
   parseGhidraFunctionResult,
 } from "../dist/ghidra/GhidraFunctionValues.js";
+import { GHIDRA_INVENTORY_OPERATIONS } from "../dist/ghidra/GhidraInventoryOperations.js";
 import {
-  GHIDRA_INVENTORY_OPERATIONS,
   parseGhidraInventoryInput,
   parseGhidraInventoryResult,
 } from "../dist/ghidra/GhidraInventoryValues.js";
-import { inspectGhidraInstallation } from "../dist/ghidra/GhidraInstallation.js";
+import { inspectVerifierGhidraInstallation } from "./lib/ghidra-installation-inspection.mjs";
 import { SUPPORTED_GHIDRA_VERSION } from "../dist/ghidra/GhidraReleasePolicy.js";
 import { GhidraHeadlessLauncher } from "../dist/ghidra/GhidraLauncher.js";
-import { GHIDRA_PROVIDER_IDENTITY } from "../dist/ghidra/GhidraProviderCapabilities.js";
+import { GHIDRA_PROVIDER_IDENTITY } from "../dist/ghidra/GhidraProviderMetadata.js";
 import {
   WINDOWS_P0_NATIVE_PE_ARCHITECTURES,
   windowsP0Capabilities,
@@ -59,7 +59,7 @@ if (installDir === undefined || !isAbsolute(installDir))
   throw new Error(
     "Set GHIDRA_INSTALL_DIR to the absolute root of Ghidra 12.1.4.",
   );
-const installation = inspectGhidraInstallation({
+const installation = await inspectVerifierGhidraInstallation({
   environment: process.env,
   installDir,
   ...(process.env.JAVA_HOME === undefined
@@ -378,7 +378,7 @@ async function inventory(operation, parameters) {
   const result = parseGhidraInventoryResult(operation, called.value);
   if (!result.ok) throw result.error;
   observed.add(operation);
-  return result.value;
+  return result.value.value;
 }
 
 async function functionOperation(operation, parameters) {

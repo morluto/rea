@@ -382,3 +382,24 @@ test("preserves the primary protocol failure when staging cleanup also fails", a
   await f.provider.close();
   expect(await readdir(f.root)).toEqual([]);
 });
+
+test("reports caller cancellation when staging removal fails after the archive is published", async () => {
+  const controller = new AbortController();
+  const reason = { request: "stop bugreport" };
+  const f = await fixture();
+  vi.mocked(rm).mockImplementationOnce(async () => {
+    controller.abort(reason);
+    throw new Error("cleanup denied");
+  });
+  const result = await f.provider.execute(f.request, {
+    signal: controller.signal,
+  });
+  if (result.ok) throw new Error("expected cancellation");
+  expect(result.error.cleanupIncomplete).toBe(true);
+  expect(result.error.cleanupPrimary).toMatchObject({
+    _tag: "AnalysisCancelledError",
+  });
+  expect(result.error.cleanupPrimary?.cause).toBe(reason);
+  await f.provider.close();
+  expect(projectAnalysisError(result.error).code).toBe("cancelled");
+});

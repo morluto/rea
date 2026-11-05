@@ -5,9 +5,11 @@ import { cliTest } from "../../support/cli/cliFixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { analysisCliErrorEnvelopeSchema } from "../../../src/contracts/errorSchemas.js";
 
-cliTest.skipIf(process.platform !== "linux")(
-  "refuses an unauthenticated Hopper launcher through the public CLI before executing it",
-  async ({ cli }) => {
+cliTest
+  .skipIf(process.platform !== "linux")
+  .for(["default-python-home", "missing-python-home"] as const)(
+  "refuses an unauthenticated Hopper launcher through the public CLI before executing it (%s)",
+  async (pythonHome, { cli }) => {
     const home = await createTestTempDirectory("rea-hopper-publisher-cli-");
     const launcher = join(home, "foreign-hopper");
     const target = join(home, "sample");
@@ -38,6 +40,10 @@ cliTest.skipIf(process.platform !== "linux")(
         HOPPER_LAUNCHER_PATH: launcher,
         REA_HOPPER_TEST_MARKER: marker,
         REA_LOG_LEVEL: "silent",
+        // Publisher rejection must not depend on the display probe's Python.
+        ...(pythonHome === "missing-python-home"
+          ? { PYTHONHOME: join(home, "missing-python-home") }
+          : {}),
         // Reject deterministically without pretending to authenticate a build.
         NODE_OPTIONS: `--import=${new URL("../../fixtures/hopperRejectionFeed.mjs", import.meta.url).href}`,
       },
@@ -55,6 +61,6 @@ cliTest.skipIf(process.platform !== "linux")(
       },
     });
     await expect(access(marker)).rejects.toMatchObject({ code: "ENOENT" });
-    expect(await readFile(target)).toEqual(original);
+    expect(Buffer.compare(await readFile(target), original)).toBe(0);
   },
 );

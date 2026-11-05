@@ -8,8 +8,11 @@ const sourceWindowsProcess = new URL(
 
 /** Load the source owner without requiring a generated dist tree. */
 export async function loadWindowsOwnedProcessClass() {
-  const { tsImport } = await import("tsx/esm/api");
-  const source = await tsImport(sourceWindowsProcess, import.meta.url);
+  const { importVerifierSource } = await import("./verifier-source-loader.mjs");
+  const source = await importVerifierSource(
+    sourceWindowsProcess,
+    import.meta.url,
+  );
   return source.WindowsOwnedProcess;
 }
 

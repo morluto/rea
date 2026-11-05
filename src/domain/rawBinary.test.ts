@@ -33,7 +33,10 @@ describe("raw-binary entry addresses", () => {
   it.each(["8000000", "0x", "0xgg", "0X8000000", ""])(
     "rejects malformed entry %s",
     (value) => {
-      expect(parseRawBinaryEntryPoint(value).ok).toBe(false);
+      expect(parseRawBinaryEntryPoint(value)).toEqual({
+        ok: false,
+        error: "entry_point must be a hexadecimal address of the form 0x…",
+      });
     },
   );
 });

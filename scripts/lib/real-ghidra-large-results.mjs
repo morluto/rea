@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { STDIO_DEFAULT_MAX_BUFFER_SIZE } from "@modelcontextprotocol/server";
+import { parseEvidenceBundle } from "../../dist/domain/evidenceBundle.js";
 
 /** Exercise complete oversized results and recovery through real CLI/MCP adapters. */
 export async function verifyGhidraLargeResults({
@@ -110,8 +111,11 @@ export async function verifyGhidraLargeResults({
       entry.address,
       "A delivery constraint must preserve the successfully committed edit",
     );
+    // The default summary fits the receive budget; only the complete dossier
+    // exercises the oversized-delivery path with a retained reference.
     const dossierError = await reject("analyze_function", {
       procedure: "rea_frame_probe",
+      detail: "complete",
     });
     const dossierId = retainedReference(dossierError, "analyze_function");
     const after = await call("binary_session");
@@ -129,7 +133,9 @@ export async function verifyGhidraLargeResults({
     );
     const bundlePath = join(workspace, "bundle.json");
     await call("export_evidence_bundle", { path: bundlePath });
-    const bundle = JSON.parse(await readFile(bundlePath, "utf8"));
+    const bundle = parseEvidenceBundle(
+      JSON.parse(await readFile(bundlePath, "utf8")),
+    );
     const retained = (id) => {
       const record = bundle.records.find(
         ({ evidence_id }) => evidence_id === id,
@@ -167,26 +173,18 @@ export async function verifyGhidraLargeResults({
     assert.equal(read.returned_bytes, length);
     assert.equal(read.complete, true);
     assert.equal(read.bytes_hex, expected.toString("hex"));
-    assert.equal(readRecord.raw_result.bytes_hex, read.bytes_hex);
+    assert.equal(readRecord.raw_result, null);
     const annotationRecord = retained(annotationId);
     const annotation = annotationRecord.normalized_result;
     assert.equal(annotation.annotations.name, "rea_frame_probe");
     assert.equal(annotation.annotations.comment, comment);
     assert.equal(annotation.annotations.inline_comment, comment);
-    assert.equal(annotationRecord.raw_result.annotations.comment, comment);
-    assert.equal(
-      annotationRecord.raw_result.annotations.inline_comment,
-      comment,
-    );
+    assert.equal(annotationRecord.raw_result, null);
     const dossierRecord = retained(dossierId);
     const dossier = dossierRecord.normalized_result;
     assert.equal(dossier.procedure.name, "rea_frame_probe");
     assert.ok(dossier.comments.some(({ text }) => text === comment));
-    assert.ok(
-      dossierRecord.raw_result.value.comments.some(
-        ({ text }) => text === comment,
-      ),
-    );
+    assert.equal(dossierRecord.raw_result, null);
     const { stdout } = await exec(
       process.execPath,
       [
@@ -202,7 +200,9 @@ export async function verifyGhidraLargeResults({
       ],
       { env, timeout: 240000, maxBuffer: 72 * 1024 * 1024 },
     );
-    assert.deepEqual(JSON.parse(stdout).normalized_result, read);
+    const cliRead = JSON.parse(stdout);
+    assert.deepEqual(cliRead.normalized_result, read);
+    assert.equal(cliRead.raw_result, null);
     assert.deepEqual(await readFile(path), bytes);
     await call("close_binary");
     await call("open_binary", { path: target.path, provider_id: "ghidra" });

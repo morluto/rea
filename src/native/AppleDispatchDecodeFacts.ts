@@ -5,6 +5,7 @@ export type DispatchFacet =
   | "objc_properties_categories"
   | "pointer_fixups"
   | "swift_conformances_static_witness_slots"
+  | "swift_declarations"
   | "swift_class_vtable_descriptors";
 
 export interface DecodeIssue {

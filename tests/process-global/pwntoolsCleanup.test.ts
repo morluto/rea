@@ -15,6 +15,7 @@ import { spawnOwnedProviderProcess } from "../../src/process/ProviderProcess.js"
 import { cleanupOwnedProcessGroup } from "../../src/process/ProcessOwnership.js";
 import { prepareProcessOwnershipInspection } from "../../src/process/ProcessOwnershipObservation.js";
 import { stopProviderProcessFixture } from "../fixtures/providerProcess.js";
+import { projectAnalysisError } from "../../src/domain/analysisErrorProjection.js";
 import {
   createTestWorkspace,
   removeTestWorkspace,
@@ -59,6 +60,7 @@ it.runIf(supportedHost)(
     let pid: number | undefined;
     let launches = 0;
     let cleanupAllowed = false;
+    let rootRemovalAllowed = false;
     let releaseFixture: (() => Promise<void>) | undefined;
     const provider = new PwntoolsLayoutProvider(
       { REA_PWNTOOLS_PYTHON: process.execPath },
@@ -85,11 +87,24 @@ it.runIf(supportedHost)(
                 }),
         };
       },
-      () =>
-        PrivateRuntimeRoot.create({ parent: workspace.root, prefix: "owned-" }),
+      async () => {
+        const root = await PrivateRuntimeRoot.create({
+          parent: workspace.root,
+          prefix: "owned-",
+        });
+        return {
+          path: root.path,
+          close: async () => {
+            if (!rootRemovalAllowed)
+              throw new Error("root removal refused after process retirement");
+            await root.close();
+          },
+        };
+      },
     );
     onTestFinished(async () => {
       cleanupAllowed = true;
+      rootRemovalAllowed = true;
       await provider.close();
       await releaseFixture?.();
     });
@@ -99,14 +114,30 @@ it.runIf(supportedHost)(
       throw new Error("Expected output overflow and failed cleanup");
     expect(result.error).toMatchObject({
       cleanupIncomplete: true,
+      capturedOutput: { truncated: true },
       diagnostics: {
         primary_error: {
           code: "unreadable_output",
-          details: { captured_output: { truncated: true } },
         },
         cleanup_error: { code: "cleanup_incomplete" },
       },
     });
+    const projected = projectAnalysisError(result.error);
+    expect(projected.details?.captured_output).toEqual(
+      result.error.capturedOutput,
+    );
+    expect(projected).not.toHaveProperty(
+      "details.diagnostics.primary_error.details.captured_output",
+    );
+    const output = result.error.capturedOutput?.stdout;
+    if (!output) throw new Error("Expected retained truncated worker output");
+    // The cleanup owner also retains a bounded worker snapshot for its own
+    // failed-close receipt. Generic primary history must not add a third copy.
+    expect(projected).toHaveProperty(
+      "details.diagnostics.cleanup_error.details.diagnostics.captured_output.stdout",
+      output,
+    );
+    expect(JSON.stringify(projected).split(output)).toHaveLength(3);
     if (pid === undefined)
       throw new Error("The fixture did not acquire a process");
     const workerPid = pid;
@@ -125,8 +156,16 @@ it.runIf(supportedHost)(
     await expect(access(ownedPath)).resolves.toBeUndefined();
 
     cleanupAllowed = true;
-    await provider.close();
+    await expect(provider.close()).rejects.toMatchObject({
+      cleanupIncomplete: true,
+    });
     expect(() => process.kill(workerPid, 0)).toThrow();
+    expect(result.error.cleanupResources).toEqual([ownedPath]);
+    expect(result.error.cleanupIncomplete).toBe(true);
+    rootRemovalAllowed = true;
+    await provider.close();
+    expect(result.error.cleanupIncomplete).toBe(false);
+    expect(refused.error.cleanupIncomplete).toBe(false);
     await expect(access(ownedPath)).rejects.toMatchObject({ code: "ENOENT" });
   },
 );
@@ -189,6 +228,7 @@ it.runIf(supportedHost)(
     expect(releases).toBe(2);
     removalAllowed = true;
     await provider.close();
+    expect(result.error.cleanupIncomplete).toBe(false);
     await expect(access(root.path)).rejects.toMatchObject({ code: "ENOENT" });
   },
 );
@@ -228,11 +268,15 @@ it.runIf(supportedHost)(
     await started;
     const controller = new AbortController();
     const cancelled = provider.inspect({ path }, { signal: controller.signal });
-    controller.abort();
+    const reason = { stage: "queued" };
+    controller.abort(reason);
     await expect(cancelled).resolves.toMatchObject({
       ok: false,
       error: { _tag: "AnalysisCancelledError" },
     });
+    const cancelledResult = await cancelled;
+    if (cancelledResult.ok) throw new Error("Expected queued cancellation");
+    expect(cancelledResult.error.cause).toBe(reason);
     const queued = provider.inspect({ path });
     const closing = provider.close();
     const late = provider.inspect({ path });

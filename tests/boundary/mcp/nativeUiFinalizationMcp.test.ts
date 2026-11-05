@@ -76,13 +76,15 @@ it.each([false, true])(
       });
       expect(parseMcpToolError(result)).toMatchObject({
         error: {
-          code: fails ? "cleanup_incomplete" : "cancelled",
+          code: fails ? "cleanup_incomplete" : "provider_timeout",
           details: {
-            cleanup: fails ? "incomplete" : "complete",
             ...(fails
               ? {
-                  execution_failure: "execution_failure",
-                  diagnostics: { primary_error: { code: "cancelled" } },
+                  cleanup: "incomplete",
+                  execution_failure: "provider_timeout",
+                  diagnostics: {
+                    primary_error: { code: "provider_timeout" },
+                  },
                   resources: ["controlled-ui-runtime"],
                 }
               : {}),
@@ -94,6 +96,7 @@ it.each([false, true])(
           },
         },
       });
+      expect(cleanupLease.released).toBe(!fails);
       allowClose = true;
       const closed = await client.callTool({
         name: "close_binary",

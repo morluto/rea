@@ -1,8 +1,5 @@
 import type { AnalysisError } from "../../../src/domain/analysisErrorBase.js";
-import type {
-  RecordedCrash,
-  RecordedCrashArchitecture,
-} from "../../../src/domain/native/recordedCrash.js";
+import type { RecordedCrash } from "../../../src/domain/native/recordedCrash.js";
 import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
@@ -13,7 +10,7 @@ import {
   removeTestWorkspace,
 } from "../../support/workspace/workspaceFixture.js";
 import { PwntoolsRecordedCrashProvider } from "../../../src/native/pwntools/PwntoolsRecordedCrashProvider.js";
-import { PWNTOOLS_PROVIDER_IDENTITY } from "../../../src/native/pwntools/PwntoolsRelease.js";
+import { PWNTOOLS_PROVIDER_IDENTITY } from "../../../src/native/pwntools/PwntoolsProviderIdentity.js";
 import {
   spawnOwnedProviderProcess,
   type OwnedProviderProcessSpawnOptions,
@@ -26,6 +23,7 @@ import {
 } from "../../fixtures/providerProcess.js";
 import {
   recordedCrashFixture,
+  recordedCrashFileMappingFixture,
   recordedCrashDebuggerFixture,
   recordedCrashFixtureBytes,
   recordedCrashSignalFixture,
@@ -132,11 +130,22 @@ it
     const architecture = scenario.endsWith("aarch64")
       ? "aarch64-little-endian"
       : "x86_64-little-endian";
-    const { path, value, bytes } = await fixture(
-      true,
-      scenario === "wrong-owner-display",
-      architecture,
-    );
+    const { path, value, bytes } = await fixture((path) => {
+      const value = recordedCrashSignalFixture(path, architecture);
+      if (scenario === "wrong-owner-display") {
+        value.notes = value.notes.map((note) =>
+          note.index === 0
+            ? {
+                ...note,
+                owner_bytes_base64: Buffer.from("EVIL\0").toString("base64"),
+                owner_display: "EVIL",
+              }
+            : note,
+        );
+        value.threads = [];
+      }
+      return value;
+    });
     if (scenario.startsWith("wrong-ei-version-"))
       bytes[6] = Number(scenario.at(-1));
     if (scenario.startsWith("wrong-e-version-"))
@@ -150,7 +159,9 @@ it
         const request = requestSchema.parse(
           JSON.parse(await readFile(spawn.arguments.at(-1) ?? "", "utf8")),
         );
-        expect(await readFile(request.snapshot_path)).toEqual(bytes);
+        expect(
+          Buffer.compare(await readFile(request.snapshot_path), bytes),
+        ).toBe(0);
         const payload = structuredClone(value);
         alterRecordedCrashReply(payload, scenario);
         const {
@@ -192,7 +203,7 @@ it
           capturedOutput: { stdout: "recorded warning" },
         },
       });
-    expect(await readFile(path)).toEqual(bytes);
+    expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
     await expect(access(owned)).rejects.toMatchObject({ code: "ENOENT" });
   },
 );
@@ -201,6 +212,7 @@ it
   .runIf(host)
   .each([
     "unconfigured",
+    "unsafe-mapping",
     "success",
     "process-failure",
     "invalid-context",
@@ -212,7 +224,15 @@ it
   ] as const)(
   "owns optional context from the same snapshot: %s",
   async (scenario) => {
-    const { path, value, bytes, root } = await fixture();
+    const { path, value, bytes, root } = await fixture(
+      scenario === "unsafe-mapping"
+        ? (path) =>
+            recordedCrashFileMappingFixture(
+              [Buffer.from("../../outside-owned-root")],
+              path,
+            )
+        : recordedCrashFixture,
+    );
     const controller = new AbortController();
     let owned = "";
     let snapshotPath = "";
@@ -239,7 +259,9 @@ it
         const request = requestSchema.parse(
           JSON.parse(await readFile(spawn.arguments.at(-1) ?? "", "utf8")),
         );
-        expect(await readFile(request.snapshot_path)).toEqual(bytes);
+        expect(
+          Buffer.compare(await readFile(request.snapshot_path), bytes),
+        ).toBe(0);
         if (snapshotPath === "") {
           snapshotPath = request.snapshot_path;
           owned = spawn.cwd ?? "";
@@ -311,25 +333,26 @@ it
     } else {
       if (result.ok) throw new Error("Expected optional debugger failure");
       expectOptionalContextFailure(scenario, result.error, value);
+      if (scenario === "unsafe-mapping") {
+        expect(launches).toBe(1);
+        await expect(access(owned)).rejects.toMatchObject({ code: "ENOENT" });
+        snapshotPath = "";
+        await expectBasicCoreFallback(provider, path, value.notes);
+        expect(launches).toBe(2);
+      }
       if (scenario === "cancelled-exec-foreign")
         await expectForeignDebuggerPreserved(debuggerProcess);
     }
-    if (scenario === "cancelled" || scenario === "cancelled-exec") {
-      if (debuggerProcess === undefined)
-        throw new Error("Expected an owned debugger process");
-      expect(
-        debuggerProcess.exitCode !== null ||
-          debuggerProcess.signalCode !== null,
-      ).toBe(true);
-    }
-    expect(await readFile(path)).toEqual(bytes);
+    if (scenario === "cancelled" || scenario === "cancelled-exec")
+      expectDebuggerStopped(debuggerProcess);
+    expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
     if (
       scenario === "cleanup-failure" ||
       scenario === "decoder-cleanup-failure" ||
       scenario === "cancelled-exec-foreign"
     ) {
       await expect(access(owned)).resolves.toBeUndefined();
-      expect(await readFile(snapshotPath)).toEqual(bytes);
+      expect(Buffer.compare(await readFile(snapshotPath), bytes)).toBe(0);
       const refused = await provider.inspect({
         path,
         include_debugger_context: true,
@@ -354,15 +377,45 @@ it
   },
 );
 
+const expectDebuggerStopped = (
+  child: SpawnedOwnedProviderProcess["process"] | undefined,
+): void => {
+  if (child === undefined)
+    throw new Error("Expected an owned debugger process");
+  expect(child.exitCode !== null || child.signalCode !== null).toBe(true);
+};
+
+const expectBasicCoreFallback = async (
+  provider: PwntoolsRecordedCrashProvider,
+  path: string,
+  notes: RecordedCrash["notes"],
+) => {
+  const basic = await provider.inspect({
+    path,
+    include_debugger_context: false,
+  });
+  if (!basic.ok) throw basic.error;
+  expect(basic.value.notes).toEqual(notes);
+  expect(basic.value.debugger).toEqual({ status: "not-requested" });
+};
+
 const expectOptionalContextFailure = (
   scenario: string,
   error: AnalysisError,
   value: RecordedCrash,
 ) => {
   const projected = projectAnalysisError(error);
+  if (scenario === "unsafe-mapping")
+    expect(error).toMatchObject({
+      _tag: "AnalysisCapabilityUnavailableError",
+      partialObservation: {
+        notes: value.notes,
+        debugger: { status: "unavailable", requested: true },
+      },
+    });
   if (scenario === "cancelled-exec-foreign")
     expect(projected.code).toBe("cleanup_incomplete");
-  if (scenario === "unconfigured")
+  if (scenario === "unconfigured" || scenario === "unsafe-mapping")
     expect(projected).toMatchObject({
       details: { captured_output: { stdout: "basic stage diagnostic" } },
     });
@@ -424,29 +477,89 @@ const expectOptionalContextFailure = (
     });
 };
 
+it.runIf(host)(
+  "reports a non-default debugger deadline when pwndbg times out",
+  async () => {
+    const { path, value, bytes, root } = await fixture();
+    const venv = join(root, "venv");
+    const plugin = join(root, "gdbinit.py");
+    await mkdir(venv);
+    await writeFile(plugin, "");
+    let stage = 0;
+    const provider = new PwntoolsRecordedCrashProvider(
+      {
+        REA_PWNTOOLS_PYTHON: process.execPath,
+        REA_PWNDBG_GDB: process.execPath,
+        REA_PWNDBG_GDBINIT: plugin,
+        REA_PWNDBG_VENV_PATH: venv,
+      },
+      async (spawn) => {
+        stage += 1;
+        const request = requestSchema.parse(
+          JSON.parse(await readFile(spawn.arguments.at(-1) ?? "", "utf8")),
+        );
+        if (stage === 1) {
+          const {
+            artifact: _artifact,
+            diagnostics: _diagnostics,
+            debugger: _debugger,
+            decoder_diagnostics: _decoderDiagnostics,
+            ...raw
+          } = value;
+          await writeFile(
+            request.reply_path,
+            JSON.stringify({
+              ok: true,
+              profile: PWNTOOLS_PROVIDER_IDENTITY.version,
+              value: raw,
+            }),
+          );
+          return spawnOwnedProviderProcess({
+            ...spawn,
+            command: process.execPath,
+            arguments: ["-e", "process.stdout.write('basic stage diagnostic')"],
+          });
+        }
+        await new Promise<void>((resolve) => {
+          if (spawn.signal?.aborted === true) {
+            resolve();
+            return;
+          }
+          spawn.signal?.addEventListener("abort", () => resolve(), {
+            once: true,
+          });
+        });
+        return spawnOwnedProviderProcess({
+          ...spawn,
+          command: process.execPath,
+          arguments: ["-e", "process.exit(0)"],
+        });
+      },
+    );
+    onTestFinished(() => provider.close());
+    const result = await provider.inspect({
+      path,
+      include_debugger_context: true,
+      pwntools_timeout_ms: 1_500,
+    });
+    expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
+    if (result.ok) throw new Error("expected debugger timeout");
+    const projected = projectAnalysisError(result.error);
+    expect(projected.code).toBe("provider_timeout");
+    expect(projected.message).toContain("of 1500 ms");
+    expect(projected.remediation.action).toContain("above 1500");
+    expect(projected.remediation.action).not.toContain("above 30000");
+  },
+  10_000,
+);
+
 const fixture = async (
-  includeSignal = false,
-  opaqueOwner = false,
-  architecture: RecordedCrashArchitecture = "x86_64-little-endian",
+  createReport: (path: string) => RecordedCrash = recordedCrashFixture,
 ) => {
   const workspace = await createTestWorkspace("rea-recorded-core-seam-");
   onTestFinished(() => removeTestWorkspace(workspace.root));
   const path = join(workspace.root, "recorded.core");
-  const value = includeSignal
-    ? recordedCrashSignalFixture(path, architecture)
-    : recordedCrashFixture(path, architecture);
-  if (opaqueOwner) {
-    value.notes = value.notes.map((note) =>
-      note.index === 0
-        ? {
-            ...note,
-            owner_bytes_base64: Buffer.from("EVIL\0").toString("base64"),
-            owner_display: "EVIL",
-          }
-        : note,
-    );
-    value.threads = [];
-  }
+  const value = createReport(path);
   const bytes = recordedCrashFixtureBytes(value);
   await writeFile(path, bytes);
   return { path, value, bytes, root: workspace.root };
@@ -500,7 +613,7 @@ const alterRecordedCrashReply = (
     }));
   if (scenario === "wrong-note-kind") {
     payload.notes = payload.notes.map((note) =>
-      note.index === 0 ? { ...note, type: "NT_AUXV" } : note,
+      note.index === 0 ? { ...note, type: "NT_AUXV", type_id: 6 } : note,
     );
     payload.threads = [];
   }

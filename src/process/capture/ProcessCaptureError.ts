@@ -61,7 +61,8 @@ export class ProcessCaptureError extends AnalysisError {
     const partialObservation =
       this.partialObservation ?? options.partialObservation;
     const cleanupReport = this.cleanupReport ?? options.cleanupReport;
-    return new ProcessCaptureError(this.message, {
+    const finalized = new ProcessCaptureError(this.message, {
+      cleanupPrimary: this,
       ...(Object.hasOwn(this, "cause") ? { cause: this.cause } : {}),
       ...(this.userMessage === undefined
         ? {}
@@ -70,9 +71,6 @@ export class ProcessCaptureError extends AnalysisError {
         ? {}
         : { userCategory: this.userCategory }),
       reason: this.reason,
-      ...(this.diagnostics === undefined
-        ? {}
-        : { diagnostics: this.diagnostics }),
       ...(this.capturedOutput === undefined
         ? {}
         : { capturedOutput: this.capturedOutput }),
@@ -88,6 +86,8 @@ export class ProcessCaptureError extends AnalysisError {
       this,
       ...(secondary === undefined ? [] : [secondary]),
     ]);
+    if (secondary !== undefined) finalized.retainSecondaryFailure(secondary);
+    return finalized;
   }
 }
 
@@ -102,8 +102,11 @@ export const describeProcessCaptureExecutionFailure = (
 };
 
 /** Caller-visible cancellation without exposing capture implementation state. */
-export const processCaptureCancelled = (): ProcessCaptureError =>
+export const processCaptureCancelled = (
+  reason?: unknown,
+): ProcessCaptureError =>
   new ProcessCaptureError("process capture was cancelled", {
+    cause: reason,
     userCategory: "cancelled",
     reason: "cancelled",
     userMessage: "Process capture was cancelled. Start it again when ready.",
@@ -142,6 +145,6 @@ export const normalizeCaptureFailure = (
     (cause === signal.reason ||
       (cause instanceof Error && cause.name === "AbortError"))
   )
-    return processCaptureCancelled();
+    return processCaptureCancelled(signal.reason);
   return cause;
 };

@@ -1,3 +1,4 @@
+import { ok, err, type Result } from "../domain/result.js";
 import type {
   ArtifactEntry,
   ArtifactTraversalOmission,
@@ -13,19 +14,26 @@ interface StringsTableOmission {
   readonly kind: Exclude<TableEntryKind, "file">;
 }
 
+interface DecodedInventory {
+  count: number;
+  capped: boolean;
+  locales: readonly string[];
+  otherStringsTables: readonly string[];
+  unreadableStringsTables: readonly StringsTableOmission[];
+}
+
 /** Count files over bounded examined coverage, including omitted special entries. */
 export const countDecodedFiles = async (
   workspace: ApktoolWorkspace,
   root: string,
   signal: AbortSignal | undefined,
   maximumEntries: number,
-): Promise<{
-  count: number;
-  capped: boolean;
-  locales: readonly string[];
-  otherStringsTables: readonly string[];
-  unreadableStringsTables: readonly StringsTableOmission[];
-}> => {
+): Promise<
+  Result<
+    DecodedInventory,
+    { readonly cause: unknown; readonly partial: DecodedInventory }
+  >
+> => {
   let count = 0;
   let capped = false;
   const locales: string[] = [];
@@ -44,6 +52,17 @@ export const countDecodedFiles = async (
     if (table.kind === "locale") locales.push(table.locale);
     else otherStringsTables.push(match[1]!);
   };
+  const observation = (): DecodedInventory => {
+    return {
+      count,
+      capped,
+      locales: locales.sort(),
+      otherStringsTables: otherStringsTables.sort(),
+      unreadableStringsTables: unreadableStringsTables.sort((a, b) =>
+        a.path < b.path ? -1 : a.path > b.path ? 1 : 0,
+      ),
+    };
+  };
   try {
     for await (const entry of workspace.entries(
       root,
@@ -56,16 +75,9 @@ export const countDecodedFiles = async (
       if (entry.kind === "file") count += 1;
     }
   } catch (cause) {
-    if (!(cause instanceof DirectoryArtifactTraversalLimit)) throw cause;
+    if (!(cause instanceof DirectoryArtifactTraversalLimit))
+      return err({ cause, partial: observation() });
     capped = true;
   }
-  return {
-    count,
-    capped,
-    locales: locales.sort(),
-    otherStringsTables: otherStringsTables.sort(),
-    unreadableStringsTables: unreadableStringsTables.sort((a, b) =>
-      a.path < b.path ? -1 : a.path > b.path ? 1 : 0,
-    ),
-  };
+  return ok(observation());
 };

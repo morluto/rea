@@ -4,7 +4,7 @@ import {
   AnalysisInputError,
   AnalysisOutputError,
 } from "../../domain/analysisErrorCore.js";
-import { parseEvidence } from "../../domain/evidence.js";
+import { parseEvidence, type Evidence } from "../../domain/evidence.js";
 import type { RustBinary } from "../../domain/rust/rustBinary.js";
 import { ok } from "../../domain/result.js";
 import { RustBinaryService } from "./RustBinaryService.js";
@@ -34,6 +34,7 @@ const report: RustBinary = {
         source: "local",
         kind: null,
         dependencies: [],
+        features: null,
         root: true,
       },
     ],
@@ -50,6 +51,7 @@ const report: RustBinary = {
 it("rejects a relative path and extra arguments before reading", async () => {
   let calls = 0;
   const service = new RustBinaryService({
+    close: async () => {},
     identity,
     inspect: () => {
       calls += 1;
@@ -59,7 +61,7 @@ it("rejects a relative path and extra arguments before reading", async () => {
   const relative = await service.inspect({ path: "program" });
   const extra = await service.inspect({
     path: report.artifact.path,
-    detail: "complete",
+    unrecognized: true,
   });
   expect(relative.ok).toBe(false);
   expect(extra.ok).toBe(false);
@@ -70,6 +72,7 @@ it("rejects a relative path and extra arguments before reading", async () => {
 
 it("records the selected artifact and the dependency section range", async () => {
   const result = await new RustBinaryService({
+    close: async () => {},
     identity,
     inspect: () => Promise.resolve(ok(report)),
   }).inspect({ path: report.artifact.path });
@@ -89,6 +92,7 @@ it("records the selected artifact and the dependency section range", async () =>
     artifact: { ...report.artifact, path: "/artifacts/other" },
   };
   const invalid = await new RustBinaryService({
+    close: async () => {},
     identity,
     inspect: () => Promise.resolve(ok(mismatched)),
   }).inspect({ path: report.artifact.path });
@@ -106,6 +110,7 @@ it("rejects a cycle claim the package dependencies do not contain", async () => 
     },
   };
   const result = await new RustBinaryService({
+    close: async () => {},
     identity,
     inspect: () => Promise.resolve(ok(invalidReport)),
   }).inspect({ path: report.artifact.path });
@@ -115,10 +120,12 @@ it("rejects a cycle claim the package dependencies do not contain", async () => 
 
 it("retains completed Rust Evidence on late cancellation and keeps output failure precedence", async () => {
   const controller = new AbortController();
+  const reason = { request: "late Rust cancellation" };
   const service = new RustBinaryService({
+    close: async () => {},
     identity,
     inspect: () => {
-      controller.abort();
+      controller.abort(reason);
       return Promise.resolve(ok(report));
     },
   });
@@ -140,6 +147,7 @@ it("retains completed Rust Evidence on late cancellation and keeps output failur
     artifact: { ...report.artifact, path: "/artifacts/other" },
   };
   const invalid = await new RustBinaryService({
+    close: async () => {},
     identity,
     inspect: () => {
       invalidController.abort();
@@ -154,8 +162,14 @@ it("retains completed Rust Evidence on late cancellation and keeps output failur
     error: { _tag: "AnalysisOutputError" },
   });
   expect(cancelled.ok).toBe(false);
-  if (!cancelled.ok)
+  if (!cancelled.ok) {
     expect(cancelled.error).toBeInstanceOf(AnalysisCancelledError);
+    expect(cancelled.error.cause).toBe(reason);
+    expect(parseEvidence(cancelled.error.partialObservation)).toMatchObject({
+      operation: "inspect_rust_binary",
+      normalized_result: report,
+    });
+  }
 });
 
 it.each([
@@ -171,6 +185,7 @@ it.each([
     },
   };
   const result = await new RustBinaryService({
+    close: async () => {},
     identity,
     inspect: () => Promise.resolve(ok(invalidReport)),
   }).inspect({ path: report.artifact.path });
@@ -178,39 +193,109 @@ it.each([
   if (!result.ok) expect(result.error).toBeInstanceOf(AnalysisOutputError);
 });
 
-it("retains a completed report on late cancellation and keeps output errors primary", async () => {
-  const controller = new AbortController();
-  const completed = await new RustBinaryService({
-    identity,
-    inspect: () => {
-      controller.abort();
-      return Promise.resolve(ok(report));
+it.each([
+  null,
+  "caller cancellation",
+  { request: "opaque caller value" },
+  new Error("caller failure"),
+  new AnalysisOutputError("caller_operation", "caller-owned cleanup", {
+    cleanup: {
+      reason: "unresolved caller resource",
+      resources: ["caller resource"],
     },
-  }).inspect({ path: report.artifact.path }, { signal: controller.signal });
-  expect(completed.ok).toBe(false);
-  if (!completed.ok) {
-    expect(completed.error).toBeInstanceOf(AnalysisCancelledError);
-    expect(parseEvidence(completed.error.partialObservation)).toMatchObject({
-      operation: "inspect_rust_binary",
-      normalized_result: report,
+  }),
+])(
+  "preserves an opaque admission cancellation reason without invoking the reader: %j",
+  async (reason) => {
+    const controller = new AbortController();
+    controller.abort(reason);
+    let calls = 0;
+    const service = new RustBinaryService({
+      close: async () => {},
+      identity,
+      inspect: async () => {
+        calls += 1;
+        throw new Error("cancelled admission must not invoke the reader");
+      },
     });
-  }
+    const result = await service.inspect(null, { signal: controller.signal });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected cancelled admission");
+    expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+    expect(result.error.cause).toBe(reason);
+    expect(result.error.cleanupIncomplete).toBe(false);
+    expect(result.error.partialObservation).toBeUndefined();
+    expect(calls).toBe(0);
+    if (reason instanceof AnalysisOutputError)
+      expect(reason.cleanupIncomplete).toBe(true);
+  },
+);
 
-  const malformed = {
-    ...report,
-    artifact: { ...report.artifact, path: "/artifacts/other" },
-  };
-  const outputController = new AbortController();
-  const invalid = await new RustBinaryService({
+it("requires retention and rejects contradictory detail before invoking the reader", async () => {
+  let calls = 0;
+  const service = new RustBinaryService({
+    close: async () => {},
     identity,
-    inspect: () => {
-      outputController.abort();
-      return Promise.resolve(ok(malformed));
+    inspect: async () => {
+      calls++;
+      return ok(report);
     },
-  }).inspect(
-    { path: report.artifact.path },
-    { signal: outputController.signal },
+  });
+  const missing = await service.inspect({
+    path: report.artifact.path,
+    detail: "summary",
+  });
+  expect(missing.ok).toBe(false);
+  const conflict = await service.inspect({
+    path: report.artifact.path,
+    detail: "complete",
+    view: { collection: "packages" },
+  });
+  if (conflict.ok) throw new Error("Contradictory delivery was accepted");
+  expect(conflict.error).toBeInstanceOf(AnalysisInputError);
+  expect(calls).toBe(0);
+});
+
+it("retains the unchanged parent and keeps delivery selectors out of provider inputs", async () => {
+  const inputs: unknown[] = [];
+  const service = new RustBinaryService({
+    close: async () => {},
+    identity,
+    inspect: async (input) => {
+      inputs.push(input);
+      return ok(report);
+    },
+  });
+  const first = await service.inspect({ path: report.artifact.path });
+  const explicit = await service.inspect({
+    path: report.artifact.path,
+    detail: "complete",
+  });
+  if (!first.ok || !explicit.ok) throw new Error("Complete delivery failed");
+  expect(explicit.value).toEqual(first.value);
+  const records = new Map<string, Evidence>();
+  const selected = await service.inspect(
+    {
+      path: report.artifact.path,
+      view: { collection: "packages", names: ["sample"], fields: ["name"] },
+    },
+    undefined,
+    {
+      recordEvidence: (evidence) => {
+        records.set(evidence.evidence_id, evidence);
+        return ok("added" as const);
+      },
+      evidenceById: (id) => records.get(id),
+    },
   );
-  expect(invalid.ok).toBe(false);
-  if (!invalid.ok) expect(invalid.error).toBeInstanceOf(AnalysisOutputError);
+  if (!selected.ok) throw selected.error;
+  expect(selected.value.normalized_result).toMatchObject({
+    kind: "rust",
+    parent_evidence_id: first.value.evidence_id,
+    page: { collection: "packages", rows: [{ index: 0, name: "sample" }] },
+  });
+  expect(records.get(first.value.evidence_id)).toEqual(first.value);
+  expect(inputs).toEqual(
+    Array.from({ length: 3 }, () => ({ path: report.artifact.path })),
+  );
 });

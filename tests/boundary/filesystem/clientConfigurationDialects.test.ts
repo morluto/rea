@@ -1,3 +1,4 @@
+import { currentClientRegistrationCommand } from "../../../src/application/ClientRegistrationIdentity.js";
 import { mkdir, readFile, symlink, writeFile } from "node:fs/promises";
 import { join, relative, resolve } from "node:path";
 
@@ -14,21 +15,15 @@ import { configureClientConfiguration } from "../../../src/application/SetupClie
 import { systemUninstallHost } from "../../../src/application/Uninstall.js";
 import { supportedClients } from "../../../src/application/SupportedClients.js";
 import { PRODUCT_IDENTITY } from "../../../src/identity.js";
-import {
-  classifyClientRegistrationCommand,
-  isOwnedClientRegistrationCommand,
-} from "../../../src/application/ClientRegistrationIdentity.js";
+import { classifyClientRegistrationCommand } from "../../../src/application/ClientRegistrationIdentity.js";
 import {
   CURRENT_ENTRYPOINT_PATH,
   normalizeEntrypointPath,
 } from "../../../src/process/CurrentEntrypointPath.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import {
-  clearClientLocationEnvironment,
-  NPX_REGISTRATION_COMMAND,
-} from "../../fixtures/clientEnvironment.js";
+import { clearClientLocationEnvironment } from "../../fixtures/clientEnvironment.js";
 
-const command = NPX_REGISTRATION_COMMAND;
+const command = currentClientRegistrationCommand();
 
 beforeEach(clearClientLocationEnvironment);
 
@@ -144,7 +139,7 @@ describe("additional client configuration dialects", () => {
     if (name === "vscode" || name === "omp" || name === "pi")
       expect(registration).toMatchObject({
         type: "stdio",
-        command: "npx",
+        command: command[0],
         args: command.slice(1),
       });
     if (name === "copilot_cli")
@@ -153,7 +148,7 @@ describe("additional client configuration dialects", () => {
       expect(registration).toMatchObject({
         transport: "stdio",
         enabled: true,
-        command: "npx",
+        command: command[0],
         args: command.slice(1),
       });
 
@@ -461,7 +456,7 @@ describe("OpenCode V2 native server table", () => {
       timeout: { catalog: 30000 },
       servers: {
         other: { type: "local", command: ["node", "other.js"] },
-        rea: { type: "local", command: [...command] },
+        rea: { type: "local", command: [...command], disabled: false },
       },
     });
     expect(await readClientRegistrationStatuses(home)).toEqual(
@@ -504,7 +499,9 @@ describe("OpenCode V2 native server table", () => {
     expect(
       parseOpenCode(await readFile(client.configPath, "utf8")).mcp,
     ).toEqual({
-      servers: { rea: { type: "local", command: [...command] } },
+      servers: {
+        rea: { type: "local", command: [...command], disabled: false },
+      },
     });
     expect((await systemUninstallHost(home).removeClient(client)).status).toBe(
       "removed",
@@ -724,15 +721,12 @@ describe("client registration command ownership", () => {
         expect(
           classifyClientRegistrationCommand(command, join(root, current)),
         ).toBe("owned");
-        expect(
-          isOwnedClientRegistrationCommand(command, join(root, current)),
-        ).toBe(true);
       }
     },
   );
 
   it.skipIf(process.platform === "win32")(
-    "does not own a same-named launcher for another script or a dangling link",
+    "distinguishes a confirmed different script from an unresolved alias",
     async () => {
       const root = await createTestTempDirectory("rea-launcher-foreign-");
       const owned = join(root, "entry.mjs");
@@ -746,66 +740,144 @@ describe("client registration command ownership", () => {
         const command = [join(root, candidate), "mcp"];
         expect(
           classifyClientRegistrationCommand(command, join(root, "rea")),
-        ).toBe("foreign");
-        expect(
-          isOwnedClientRegistrationCommand(command, join(root, "rea")),
-        ).toBe(false);
+        ).toBe(candidate === "missing" ? "unknown" : "foreign");
       }
     },
   );
 
+  it
+    .skipIf(process.platform === "win32")
+    .each(["registered", "current"] as const)(
+    "preserves unknown identity when the %s alias cannot resolve",
+    async (unresolved) => {
+      const root = await createTestTempDirectory("rea-launcher-unresolved-");
+      const script = join(root, "entry.mjs");
+      await writeFile(script, "// current dispatcher\n");
+      await symlink(join(root, "removed-release.mjs"), join(root, "dangling"));
+      await symlink(join(root, "cycle-b"), join(root, "cycle-a"));
+      await symlink(join(root, "cycle-a"), join(root, "cycle-b"));
+      for (const alias of ["dangling", "cycle-a"]) {
+        const registered =
+          unresolved === "registered" ? join(root, alias) : script;
+        const current = unresolved === "current" ? join(root, alias) : script;
+        for (const command of [
+          [registered, "mcp"],
+          [process.execPath, registered, "mcp"],
+        ])
+          expect(classifyClientRegistrationCommand(command, current)).toBe(
+            "unknown",
+          );
+      }
+    },
+  );
+});
+
+describe("client launcher traversal semantics", () => {
+  it.skipIf(process.platform === "win32")(
+    "distinguishes native executable traversal from Node script argument selection",
+    async () => {
+      const root = await createTestTempDirectory(
+        "rea-launcher-parent-segment-",
+      );
+      const current = join(root, "entry.mjs");
+      const foreign = join(root, "other", "entry.mjs");
+      await mkdir(join(root, "other", "child"), { recursive: true });
+      await writeFile(current, "// current dispatcher\n");
+      await writeFile(foreign, "// foreign dispatcher\n");
+      await symlink(join(root, "other", "child"), join(root, "link"));
+      const candidate = `${root}/link/../entry.mjs`;
+      expect(await readFile(candidate, "utf8")).toBe("// foreign dispatcher\n");
+      expect(
+        await readFile(normalizeEntrypointPath(candidate, "node")!, "utf8"),
+      ).toBe("// current dispatcher\n");
+      expect(
+        await readFile(normalizeEntrypointPath(candidate, "bun")!, "utf8"),
+      ).toBe("// foreign dispatcher\n");
+      expect(
+        classifyClientRegistrationCommand([candidate, "mcp"], current),
+      ).toBe("unknown");
+      expect(
+        classifyClientRegistrationCommand([candidate, "mcp"], foreign),
+      ).toBe("unknown");
+      expect(
+        classifyClientRegistrationCommand(
+          [process.execPath, candidate, "mcp"],
+          current,
+        ),
+      ).toBe("owned");
+      const unresolvable = `${root}/missing/../entry.mjs`;
+      await expect(
+        readFile(normalizeEntrypointPath(unresolvable, "bun")!, "utf8"),
+      ).rejects.toMatchObject({ code: "ENOENT" });
+      expect(
+        classifyClientRegistrationCommand([unresolvable, "mcp"], current),
+      ).toBe("unknown");
+      expect(
+        classifyClientRegistrationCommand([current, "mcp"], unresolvable),
+      ).toBe("unknown");
+      expect(
+        classifyClientRegistrationCommand(
+          [process.execPath, unresolvable, "mcp"],
+          current,
+        ),
+      ).toBe("owned");
+      const nodeAlias = join(root, "node-alias");
+      await symlink(process.execPath, nodeAlias);
+      expect(
+        classifyClientRegistrationCommand([nodeAlias, current, "mcp"], current),
+      ).toBe("owned");
+    },
+  );
+
   it("recognizes prior exact REA releases while rejecting foreign package commands", () => {
-    expect(isOwnedClientRegistrationCommand(["rea", "mcp"], undefined)).toBe(
-      true,
+    expect(classifyClientRegistrationCommand(["rea", "mcp"], undefined)).toBe(
+      "owned",
     );
     const cwdMatchingEntry = resolve("./rea");
     expect(
       classifyClientRegistrationCommand(["./rea", "mcp"], cwdMatchingEntry),
     ).toBe("unknown");
     expect(
-      isOwnedClientRegistrationCommand(["./rea", "mcp"], cwdMatchingEntry),
-    ).toBe(false);
-    expect(
-      isOwnedClientRegistrationCommand(
+      classifyClientRegistrationCommand(
         ["npx", "-y", `${PRODUCT_IDENTITY.packageName}@3.2.0`, "mcp"],
         undefined,
       ),
-    ).toBe(true);
+    ).toBe("owned");
     expect(
-      isOwnedClientRegistrationCommand(
+      classifyClientRegistrationCommand(
         ["npx", "-y", "another-package", "mcp"],
         undefined,
       ),
-    ).toBe(false);
+    ).toBe("foreign");
     expect(
-      isOwnedClientRegistrationCommand(
+      classifyClientRegistrationCommand(
         ["bunx", `${PRODUCT_IDENTITY.packageName}@3.2.0`, "mcp"],
         undefined,
       ),
-    ).toBe(true);
+    ).toBe("owned");
     expect(
-      isOwnedClientRegistrationCommand(
+      classifyClientRegistrationCommand(
         ["bunx", "another-package", "mcp"],
         undefined,
       ),
-    ).toBe(false);
+    ).toBe("foreign");
     expect(
-      isOwnedClientRegistrationCommand(
+      classifyClientRegistrationCommand(
         [process.execPath, "/packaged/rea.mjs", "mcp"],
         "/packaged/rea.mjs",
       ),
-    ).toBe(true);
+    ).toBe("owned");
     expect(
-      isOwnedClientRegistrationCommand(
+      classifyClientRegistrationCommand(
         [process.execPath, resolve("unknown"), "mcp"],
         normalizeEntrypointPath(""),
       ),
-    ).toBe(false);
+    ).toBe("unknown");
     expect(
-      isOwnedClientRegistrationCommand(
+      classifyClientRegistrationCommand(
         ["node", "/packaged/other-agent.mjs", "mcp"],
         "/packaged/rea.mjs",
       ),
-    ).toBe(false);
+    ).toBe("unknown");
   });
 });

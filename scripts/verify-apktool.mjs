@@ -103,6 +103,29 @@ try {
             Array.isArray(locale.strings),
             `${locale.strings.length} string(s)`,
           );
+
+        const selectedLocales = decoded.locales.slice(0, 2);
+        const batched = await run("decode_android_resources", {
+          path: options.apk,
+          include_strings: true,
+          locales: selectedLocales,
+        });
+        if (batched !== null) {
+          const expectedLocales = [null, ...selectedLocales];
+          const hasExpectedTables =
+            Array.isArray(batched.string_tables) &&
+            expectedLocales.every((expected) =>
+              batched.string_tables.some(
+                (table) =>
+                  table.locale === expected && table.status === "present",
+              ),
+            );
+          check(
+            "batched string tables projected with expected locales and status",
+            hasExpectedTables,
+            `${String(batched.string_tables?.length)} table(s) present`,
+          );
+        }
       }
     }
   }

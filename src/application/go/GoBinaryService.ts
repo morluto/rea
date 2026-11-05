@@ -1,34 +1,27 @@
-import { isAbsolute } from "node:path";
+import { binaryMetadataArchitecture } from "../../domain/binaryMetadataArchitecture.js";
+import { metadataReportSubjectFormat } from "../../domain/apple/machoTargetSelection.js";
 import type { ExecutionOptions } from "../AnalysisProvider.js";
 import type { GoBinaryPort } from "./GoBinaryPort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
-import {
-  AnalysisCancelledError,
-  AnalysisInputError,
-  AnalysisOutputError,
-} from "../../domain/analysisErrorCore.js";
+import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
-import { BINARY_ARCHITECTURES } from "../../domain/binaryTargetTypes.js";
 import {
   goBinarySchema,
   inspectGoBinaryInputSchema,
 } from "../../domain/go/goBinary.js";
-import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
-import { err, ok, type Result } from "../../domain/result.js";
+import { err, type Result } from "../../domain/result.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
+import { parseAnalysisInput } from "../AnalysisInput.js";
+import {
+  requireAnalysisViewRetention,
+  summarizeRetainedAnalysis,
+  type AnalysisViewRetention,
+} from "../analysisView/AnalysisViewService.js";
 
 const OPERATION = "inspect_go_binary";
-const architectureForSubject = (architecture: string) => {
-  switch (architecture) {
-    case "386":
-      return "x86";
-    case "amd64":
-      return "x86_64";
-    default:
-      return BINARY_ARCHITECTURES.find(
-        (supported) => supported === architecture,
-      );
-  }
+const NO_RETENTION: AnalysisViewRetention = {
+  recordEvidence: undefined,
+  evidenceById: undefined,
 };
 
 /** Shared exact input validation and artifact-bound Evidence for CLI and MCP. */
@@ -36,37 +29,31 @@ export class GoBinaryService {
   constructor(readonly provider: GoBinaryPort) {}
 
   close(): Promise<void> {
-    return this.provider.close?.() ?? Promise.resolve();
+    return this.provider.close();
   }
 
   /** Inspect one explicitly selected file without acquiring a binary session. */
   async inspect(
     rawInput: unknown,
     options?: ExecutionOptions,
+    retention: AnalysisViewRetention = NO_RETENTION,
   ): Promise<Result<Evidence, AnalysisError>> {
-    if (options?.signal?.aborted)
-      return err(new AnalysisCancelledError(OPERATION));
-    const input = inspectGoBinaryInputSchema.safeParse(rawInput);
-    if (!input.success)
-      return err(
-        analysisInputErrorFromIssues(OPERATION, input.error.issues, rawInput, {
-          cause: input.error,
-        }),
-      );
-    if (!isAbsolute(input.data.path))
-      return err(
-        new AnalysisInputError(OPERATION, undefined, [
-          {
-            path: ["path"],
-            reason: "invalid_format",
-            message: "Expected an absolute filesystem path on this host.",
-          },
-        ]),
-      );
-    const inspected = await this.provider.inspect(input.data, options);
+    const input = parseAnalysisInput(
+      OPERATION,
+      rawInput,
+      inspectGoBinaryInputSchema,
+      options?.signal,
+    );
+    if (!input.ok) return input;
+    const { detail, ...providerInput } = input.value;
+    if (detail === "summary") {
+      const ready = requireAnalysisViewRetention(OPERATION, retention);
+      if (!ready.ok) return ready;
+    }
+    const inspected = await this.provider.inspect(providerInput, options);
     if (!inspected.ok) return inspected;
     const report = goBinarySchema.safeParse(inspected.value);
-    if (!report.success || report.data.artifact.path !== input.data.path)
+    if (!report.success || report.data.artifact.path !== input.value.path)
       return err(
         new AnalysisOutputError(
           OPERATION,
@@ -74,19 +61,19 @@ export class GoBinaryService {
         ),
       );
     const value = report.data;
-    const architecture = architectureForSubject(value.architecture);
-    return completeProviderEvidence(
+    const architecture = binaryMetadataArchitecture(value.architecture);
+    const completed = completeProviderEvidence(
       createEvidence(
         {
           path: value.artifact.path,
           sha256: value.artifact.sha256,
-          format: value.format === "macho" ? "mach-o" : value.format,
+          format: metadataReportSubjectFormat(value),
           ...(architecture === undefined ? {} : { architecture }),
         },
         this.provider.identity,
         {
           operation: OPERATION,
-          parameters: input.data,
+          parameters: providerInput,
           result: value,
           confidence: "observed",
           limitations: value.limitations,
@@ -106,5 +93,9 @@ export class GoBinaryService {
       ),
       options?.signal,
     );
+    if (!completed.ok) return completed;
+    return detail === "summary"
+      ? summarizeRetainedAnalysis(completed.value, retention)
+      : completed;
   }
 }

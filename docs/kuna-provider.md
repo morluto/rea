@@ -1,8 +1,26 @@
 # Kuna provider
 
-[Kuna](https://github.com/Noelo-Lab/kuna) is an Apache-2.0 decompiler distributed as one `kuna` executable. REA uses a `kuna` you supply. It does not download, install, update or bundle Kuna. REA verified this provider with Kuna 1.833; it accepts other releases and reports them as unverified in `rea doctor` and in each analysis profile.
+[Kuna](https://github.com/Noelo-Lab/kuna) is an Apache-2.0 decompiler distributed as one `kuna` executable. For a new installation, use Kuna 1.990, REA's recommended verified release. REA uses a `kuna` you supply; it does not download, install, update or bundle Kuna. REA accepts other releases; `rea doctor` and analysis Evidence report them as unverified. Verification compares the reported version; it does not authenticate the executable. Analysis profiles retain the observed version and executable digest, independently of REA's current verified-release policy. The 1.990 real-provider checks ran on macOS arm64; Linux and other hosts have not been verified with that release.
 
 Kuna is static: it reads the selected image and never executes it.
+
+This profile change makes earlier Kuna analysis snapshots and resumable directory
+exports incompatible, even with the same Kuna executable. Keep the old files:
+their recorded Evidence remains historical. To continue analysis, open the
+binary without the old snapshot and save a new one, or choose a new export
+directory. Existing snapshot Evidence can be extracted from its
+`evidence_bundle` JSON member and imported as a separate Evidence bundle; that
+does not restore cached workflow entries or resume the old directory export.
+For example, using `jq` and a new output path:
+
+```bash
+jq -e '.evidence_bundle | select(type == "object")' old-snapshot.json > history.json
+rea evidence-import history.json --json
+```
+
+The CLI command validates the bundle in a one-shot session. To use the records
+in an MCP session, call `import_evidence_bundle` with the extracted file path.
+This validates the embedded bundle, not the rest of the snapshot container.
 
 ## Configure
 
@@ -13,6 +31,14 @@ rea doctor --provider kuna
 
 Select it explicitly with `--provider kuna`, MCP's `open_binary.provider_id: "kuna"`, or `REA_ANALYSIS_PROVIDER=kuna`. With Kuna and another provider configured for the same target, `auto` reports `ambiguous` instead of choosing one.
 
+Ordinary readiness cancellation returns `cancelled` (CLI SIGINT/SIGTERM exits
+130/143); an earlier recorded timeout or physical failure keeps its diagnostic.
+Completed version, hash and script observations remain in `kuna_installation`
+with `status: "partial"` and `completed_hash` when available. Typed errors carry
+this in `details.diagnostics`; doctor cleanup checks carry it in their `details`.
+Omitted fields remain unobserved; availability remains unknown until readiness
+completes. Cleanup retries keep both the observations and the exact file owner.
+
 | Setting                       | Default                                                                                                                                 | Meaning                                                                                                                                                                                  |
 | ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `REA_KUNA_COMMAND`            | none (required)                                                                                                                         | Absolute path of the `kuna` executable.                                                                                                                                                  |
@@ -22,6 +48,10 @@ Select it explicitly with `--provider kuna`, MCP's `open_binary.provider_id: "ku
 | `REA_KUNA_TIMEOUT_MS`         | 120 s                                                                                                                                   | Deadline for one single-function decompile, and for the inventory run REA makes when the export ends without one.                                                                        |
 | `REA_KUNA_JOBS`               | 1                                                                                                                                       | `decompile-project --jobs`. 1 is Kuna's reference answer; more jobs finish sooner but lose callee-first prototypes, and change about 40–60% of function bodies on the measured binaries. |
 
+Pseudocode read from a parallel project export includes a prototype-context
+limitation in its Evidence, including in function dossiers and composed
+workflows. Early single-function results have their own source limitation.
+
 A single-function decompile, inventory, string, graph or xref run that exceeds its deadline fails as `provider_timeout`, naming the setting that owns the deadline and that raising it takes a restart. A project export that exceeds `REA_KUNA_PROJECT_TIMEOUT_MS` is an export failure instead: requests that need the export report `capability_unavailable` with the export's own retry guidance.
 
 Windows is not supported yet. Supported targets are ELF and thin Mach-O executables for x86-64, AArch64 and ARM; PE and universal Mach-O are rejected with a typed reason.
@@ -30,7 +60,7 @@ Windows is not supported yet. Supported targets are ELF and thin Mach-O executab
 
 | Tool                                                        | Source                                                                                                                           |
 | ----------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| `list_procedures`, `search_procedures`, `procedure_address` | Kuna's callable inventory (`kuna functions --json`), including import slots it does not decompile                                |
+| `list_procedures`, `search_procedures`, `procedure_address` | Kuna's callable inventory (`kuna functions --json`), including import slots but not [Mach-O data](#mach-o-data-entries)          |
 | `address_name`                                              | Function entries, then the data labels Kuna's export assigns                                                                     |
 | `procedure_pseudo_code`, `batch_decompile`                  | The project export, or a single-function run while the export builds                                                             |
 | `procedure_assembly`                                        | The project export's labeled listing                                                                                             |
@@ -38,6 +68,8 @@ Windows is not supported yet. Supported targets are ELF and thin Mach-O executab
 | `list_strings`, `search_strings`                            | Typed string candidates from one cached, reference-free scan; exact-address, literal and ECMAScript regex selection              |
 | `xrefs`                                                     | Exact-address incoming reference sites, with forwarding aliases filtered explicitly                                              |
 | `analyze_function`                                          | Pseudocode and assembly from the export, plus call relationships; typed references, comments, strings and CFG remain unavailable |
+
+Kuna's inventory gives some entries aliases, such as ELF versioned-symbol names and generated `sub_` names. Name selectors accept an alias that names one entry and list every entry a shared alias names. `search_procedures` matches aliases too: each entry appears once under its primary name, with the matching aliases in `matched_aliases`. `list_procedures` shows primary names only.
 
 Typed procedure references, basic blocks, raw-memory tools, annotations and type recovery are not available from this provider. Use another provider for those operations.
 
@@ -51,18 +83,29 @@ The first text or assembly request in a session looks for this target's export i
   - Meanwhile, pseudocode comes from one `kuna decompile --addr` run. Name and address lookups, and listings, use the inventory the export takes with `kuna functions --json` before it decompiles. The session runs `kuna functions` itself, under `REA_KUNA_TIMEOUT_MS`, only when no export is building (an inventory-only request does not start one) or the export ends without an inventory.
   - Requests for the same function share one run; it stops when its last waiting request is cancelled. Each run analyzes the whole image again in its own process, so one REA process runs at most as many at once as the host has cores beyond `REA_KUNA_JOBS` (at least one). Further requests wait in order, and a waiting request is answered from the export if it finishes first. A run whose stop REA cannot prove keeps its slot until `close_binary` proves it stopped.
   - The session keeps each completed single-function text, up to 16 MiB in all with the least recently used dropped first, and answers repeats from it until the export can. After a failed export that lasts for the session.
-  - Assembly and data names wait for the export; progress notifications report the wait every ten seconds. A session does not rebuild a failed export: requests that need it fail with `retryable: false`, the export's failure, its captured Kuna output and what to change before reopening the target. A setting such as `REA_KUNA_PROJECT_TIMEOUT_MS` or `REA_KUNA_JOBS` is read when REA starts, so changing it also needs a restart. Pseudocode keeps using single-function runs.
+  - Assembly and data names wait for the export; progress notifications report the wait every ten seconds. A session does not rebuild a failed export: requests that need it fail with `retryable: false`, the export's failure, its captured Kuna output and what to change before reopening the target. REA does not expose per-function records from a failed project export, even if the retained Kuna diagnostic refers to them. Single-function fallback Evidence reports the failed state and this limitation. If cleanup remains incomplete, its error takes precedence and `close_binary` retries the retained resources. A setting such as `REA_KUNA_PROJECT_TIMEOUT_MS` or `REA_KUNA_JOBS` is read when REA starts, so changing it also needs a restart. Pseudocode keeps using single-function runs.
   - A single-function answer says so in its limitations. It lacks the export's whole-program prototypes, so a later request can return different text for the same function.
 
-Pseudocode, assembly, `analyze_function` and data-name answers record where their text came from in `raw_result.source`: `single-function`, or `project-export` with the cache directory. `procedure_pseudo_code` and `procedure_assembly` answers from the export also name the file, byte span and the file's SHA-256. Combined `analyze_function` answers retain both facet records in `raw_result.source.files`, each with its file, digest and byte span. Both texts come from one export; losing that project retries the complete report. Listings and procedure lookups carry no `raw_result`. Agents can open or search the export's `.c` and `.asm` there directly when that is cheaper than calling a tool per function. Text read that way is target-derived, like any decompiler output, but it bypasses the untrusted-content marker that REA's tool results carry.
+Pseudocode, assembly, `analyze_function` and data-name answers record where their text came from in `raw_result.source`: `single-function`, or `project-export` with the cache directory. `procedure_pseudo_code` and `procedure_assembly` answers from the export also name the file, byte span and the file's SHA-256. Combined `analyze_function` answers retain both facet records in `raw_result.source.files`, each with its file, digest and byte span. Both texts come from one export; losing that project retries the complete report. Listings and procedure lookups carry no `raw_result`; omitted [Mach-O data entries](#mach-o-data-entries) are reported in their limitations. Agents can open or search the export's `.c` and `.asm` there directly when that is cheaper than calling a tool per function. Text read that way is target-derived, like any decompiler output, but it bypasses the untrusted-content marker that REA's tool results carry.
 
 The background export belongs to the session. `close_binary`, or the end of a CLI command, cancels it unless another session still waits for it. A one-shot CLI decompile therefore answers from a single-function run; any request that needs the export, such as `procedure_assembly` or `analyze_function`, keeps it.
 
 The assembly label index is scanned once per export reader. Cancelling a request stops its wait without interrupting other readers; closing the session aborts and drains the shared scan before releasing its files.
 
-Regex procedure and string search uses ECMAScript Unicode matching in a cancellable worker with a five-second matching deadline. Literal matching remains the default. Cancellation or a matching deadline leaves the session available.
+Regex procedure and string search uses ECMAScript Unicode matching in a cancellable worker with a matching deadline and a worker old-generation heap. Literal matching remains the default. Cancellation or a matching deadline leaves the session available. The deadline is `REA_REGEX_MATCHING_DEADLINE_MS`, a positive decimal integer from 1 to 2147483647 ms. Unset uses 5000 ms. A larger value is refused because Node schedules a delay past that signed 32-bit bound as 1 ms. Invalid values are configuration errors and do not fall back to the default. The setting is read from the environment that starts REA, so a change needs a restart. A deadline failure names the effective milliseconds, whether they came from the default or the setting, the default, and the maximum. The worker old-generation heap does not raise it. The worker heap request is `REA_REGEX_WORKER_HEAP_REQUEST_MIB`, a decimal integer from 7 to 16384 MiB. Unset uses 128 MiB. A request below 7 MiB aborts the worker during startup, and a larger value is refused. Invalid values are configuration errors and do not fall back to 128. The setting is read from the environment that starts REA, so a change needs a restart. A heap failure names the effective request, whether it came from the default or the setting, the default, the floor, and the maximum. A positive Node.js `--max-old-space-size` on the process that starts REA, including `NODE_OPTIONS`, overrides that request and sets the effective heap. `--max-old-space-size-percentage` takes precedence over that flag in either order. REA does not turn the percentage into a MiB, so the effective heap stays unestablished instead of the worker heap request or the absolute flag. The reported `NODE_OPTIONS` value is the process initial environment when that block can be read. A later edit to the environment is not the value Node applied, and an unreadable initial value leaves the effective heap unestablished. The launch Node options are the initial command line on Linux when that buffer still has a program entry, not a later edit to `process.execArgv`. A preload can clear that array after V8 has applied the flags. Setting `process.title` or `--title` overwrites the command line, so a buffer without a program entry leaves the effective heap unestablished. `--env-file` or `--env-file-if-exists` can supply `NODE_OPTIONS` when the initial environment has none. That file is not part of the initial environment block, so the effective heap stays unestablished instead of the worker heap request. An initial `NODE_OPTIONS` is still used, because Node does not let the file replace it. A positive `--max-heap-size`, including the underscore form and launch `NODE_OPTIONS` on Node versions that allow it, sets the total heap rather than the old generation and can be lower than the worker heap request. The effective old generation stays unestablished while that value is in effect. A zero or empty value clears it. `--experimental-config-file` or `--experimental-default-config-file` can set `nodeOptions`, including a heap percentage, from a file that is not read back. The effective heap stays unestablished when either flag is present, including when an absolute `--max-old-space-size` is also on the command line or in the recovered `NODE_OPTIONS`. Node accepts the config path as `=` or the next argument.
 
-Single-function subprocess output and each cached source facet share a 16 MiB buffered-text capacity. Cached spans are checked before allocation; larger text remains in the local export and the error identifies the file and range. `analyze_function` initially returns the complete dossier, which can still be large; later retained views do not remove that first transfer. Prefer the individual text tools for a focused question.
+Single-function subprocess output and each cached source facet share a 16 MiB buffered-text capacity. Cached spans are checked before allocation; larger project-export spans remain in the local export and the error identifies the file and range. A single-function run does not by itself retain a complete project export. `analyze_function` with `detail: "complete"` (the CLI default) returns the complete dossier inline, which can still be large; later retained views do not remove that first transfer. The MCP default retains the dossier and returns its summary, so page the facets you need through `inspect_analysis_view`, or prefer the individual text tools for a focused question.
+
+## Mach-O data entries
+
+Kuna's inventory also lists Mach-O exports that are data, such as globals in `__DATA,__data`, constants in `__TEXT,__const` and `__mh_execute_header`. REA classifies each entry with the target's own section table, the same load-command facts `inspect_macho` reports, read from the leading bytes kept while the session's private copy is hashed:
+
+- A section with `S_ATTR_PURE_INSTRUCTIONS` or `S_ATTR_SOME_INSTRUCTIONS`, or of type `S_SYMBOL_STUBS`, holds code; the entry stays.
+- A lazy or non-lazy symbol-pointer section (`__got`, `__la_symbol_ptr`) holds import slots; the entry stays.
+- Any other section, or the header and load commands before the first section, holds data. Listings and searches omit the entry and say how many they omitted in each region. Pseudocode, assembly, `analyze_function` and `procedure_address` refuse it by name or address, and call queries refuse its name, naming its region; call queries by exact address stay validated by Kuna's graph. `address_name` and `xrefs` still accept it.
+- An address outside every section and the header stays, with a limitation saying REA cannot classify it. If the section table cannot be read, every entry stays and listings say why. Answers about one such entry, including pseudocode, assembly, `analyze_function`, `procedure_address`, call queries by name and `address_name`, carry the same limitation; code and import slots carry none.
+
+A section's attributes are the format's declaration, not proof of what runs there, and a kept entry is not proven to be a function. ELF inventories are kept as Kuna reports them. On a Mach-O target, the first listing or lookup establishes the private copy that Kuna commands also use, once per session, even when a warm export answers it.
 
 ## Strings
 
@@ -117,7 +160,19 @@ REA writes Kuna's exports only inside `REA_KUNA_CACHE_DIR`:
 - `trash/` holds retired builds and evicted exports awaiting removal.
 - `home/` is Kuna's HOME.
 
-Builds publish by one rename, so a reader sees a complete export or none. A session keeps the export it uses from eviction only within its own REA process. If another REA process sharing the cache evicts it, the session rebuilds it; meanwhile pseudocode falls back to single-function runs. A damaged or edited export is removed and rebuilt. Staging moves to `trash/` for removal only after REA proves its Kuna process stopped. Staging of a process it cannot prove stopped is never swept; REA keeps it owned, retries the stop on `close_binary`, and reports it until the stop is proven. Failed file removal also stays bound to its export and is retried by `close_binary`; closing does not report success while that cleanup remains. `rea doctor --provider kuna` reports the cache directory without creating it.
+The cache key includes the selected launcher and resolved executable paths, plus
+the target's native basename: that name determines the export filenames and
+appears in generated source. REA accepts one current manifest layout. Older
+exports are rebuilt on demand and retired through normal owned-cache cleanup;
+no manual deletion or migration is needed. Manifests must name the producer's
+exact flat file layout, with matching basenames and producing inputs. Replaced
+entry, project or manifest symlinks are refused before their targets are read;
+an unverified `projects/` parent grants no removal authority. Warm reuse checks
+the manifest's file identity as well as the export files. These refusal and
+migration cases are verified with controlled Kuna-format exports; they do not
+establish behavior of an independently installed Kuna release.
+
+Builds publish by one rename, so a reader sees a complete export or none. If later staging retirement fails, the typed cleanup error retains the completed export's key, directory and manifest in `published_export`. The session adopts that verified project; later queries reuse its immutable files while `project_export.cleanup_incomplete` reports the retained owner's live state. `close_binary` retries only the remaining cleanup, and a successful retry resolves prior cleanup errors. A failed export followed by failed staging cleanup retains both failures; it does not invent a publication receipt. A session keeps the export it uses from eviction only within its own REA process. If another REA process sharing the cache evicts it, the session rebuilds it; meanwhile pseudocode falls back to single-function runs. A damaged or edited export is removed and rebuilt. REA retains the file state verified with each digest, checks it before warm-cache reuse, and checks open descriptors before and after reading text. Assembly indexes are checked against the same state; a changed file makes the whole report retry rather than mixing facets from different exports. Staging moves to `trash/` for removal only after REA proves its Kuna process stopped. Staging of a process it cannot prove stopped is never swept; REA keeps it owned, retries the stop on `close_binary`, and reports it until the stop is proven; that MCP error names the same-connection retry as `recovery.kind=retry_cleanup` ([retained cleanup retry](mcp-contracts.md#retained-cleanup-retry)). Failed file removal also stays bound to its export and is retried by `close_binary`; closing does not report success while that cleanup remains. `rea doctor --provider kuna` reports the cache directory without creating it.
 
 ## Verify with a real Kuna
 
@@ -131,3 +186,7 @@ REA_KUNA_COMMAND=/absolute/path/to/kuna GHIDRA_INSTALL_DIR=/absolute/path/to/ghi
 The lane compiles a small source-owned fixture with the host C compiler and verifies the MCP workflow end to end. `--targets DIR --functions a,b` adds caller-built binaries. `--compare-ghidra` (with `GHIDRA_INSTALL_DIR`) runs those same functions through Ghidra; it requires `--targets` and `--functions` and refuses empty matrices or requested function names missing from every target. See [testing](testing.md#kuna-lane) for coverage.
 
 Failed runs also report process-lineage evidence and exit unsuccessfully. If provider or transport cleanup is unconfirmed, the report says `cleanup: "incomplete"` and records `retained_workspace`; that directory is preserved for investigation and cleanup retries.
+
+Doctor reports an invalid Kuna cache, job count, or timeout setting with that
+setting's correction. Correct or unset the named setting and restart REA; these
+configuration rejections do not require replacing the selected Kuna executable.

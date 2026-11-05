@@ -2,6 +2,7 @@ import { crc32, deflateSync } from "node:zlib";
 
 import { describe, expect, it } from "vitest";
 
+import { readPngHeaderDimensions } from "../domain/pngHeader.js";
 import { comparePngScreenshots } from "./PngVisualDiff.js";
 import {
   AnalysisResourceConstraintError,
@@ -12,6 +13,48 @@ import {
   createWebScreenshotArtifact,
   webScreenshotDiffSchema,
 } from "../domain/webScreenshot.js";
+
+describe("PNG header admission", () => {
+  it.each([16, 20])(
+    "shares dimension admission with header sniffing at %s",
+    (offset) => {
+      for (const dimension of [0, 0x8000_0000]) {
+        const bytes = png(1, 1, [0, 0, 0, 255]);
+        bytes.writeUInt32BE(dimension, offset);
+        bytes.writeUInt32BE(crc32(bytes.subarray(12, 29)), 29);
+        expect(readPngHeaderDimensions(bytes)).toBeUndefined();
+        const image = createWebScreenshotArtifact(bytes);
+        expect(() =>
+          comparePngScreenshots(
+            compareWebScreenshotsInputSchema.parse({
+              before: image,
+              after: image,
+            }),
+          ),
+        ).toThrow("Invalid PNG header");
+      }
+    },
+  );
+
+  it.each([24, 25, 26, 27, 28])(
+    "preserves header dimensions for unknown encoding field at %s",
+    (offset) => {
+      const bytes = png(1, 1, [0, 0, 0, 255]);
+      bytes[offset] = 255;
+      bytes.writeUInt32BE(crc32(bytes.subarray(12, 29)), 29);
+      expect(readPngHeaderDimensions(bytes)).toEqual({ width: 1, height: 1 });
+      const image = createWebScreenshotArtifact(bytes);
+      expect(() =>
+        comparePngScreenshots(
+          compareWebScreenshotsInputSchema.parse({
+            before: image,
+            after: image,
+          }),
+        ),
+      ).toThrow("Invalid PNG header");
+    },
+  );
+});
 
 describe("PNG visual diff", () => {
   it("reports exact changed-pixel and channel metrics", () => {

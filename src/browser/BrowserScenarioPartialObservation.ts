@@ -10,12 +10,9 @@ import type {
 } from "../domain/browserScenarioCaptureValues.js";
 import type { BrowserScenarioSessionPort } from "./BrowserScenarioSessionPort.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
-import {
-  AnalysisCancelledError,
-  AnalysisTimeoutError,
-} from "../domain/analysisErrorCore.js";
-import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
-import { BrowserObservationError } from "../domain/browserObservationError.js";
+import { browserCleanupObservation } from "../domain/browserObservationError.js";
+import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { PLAYWRIGHT_BROWSER_SCENARIO_PROVIDER_IDENTITY } from "./providerIdentities.js";
 
@@ -46,6 +43,11 @@ const browserScenarioLimitations = (
       : []),
     "Playwright scenario events do not expose request initiator stacks; receipt order does not prove causality.",
     "Storage values are hashed only after declared-secret redaction.",
+    ...(scenario.actions.some(({ action }) => action === "request")
+      ? [
+          "Request steps sent their declared requests through the page's own fetch with its cookies and session, following no redirects; they are REA-initiated, not user-interface activity, and header values of at least 8 characters they read from page cookies or local storage are redacted like declared secrets from records made after they were read.",
+        ]
+      : []),
     ...(scenario.storage.local_storage.length === 0 &&
     scenario.storage.session_storage.length === 0
       ? []
@@ -53,6 +55,7 @@ const browserScenarioLimitations = (
           "Non-cookie storage seeds use CDP pre-script instrumentation; only pauses in the scenario's private seed script are resumed by this observer.",
         ]),
     ...(session.eventLimitations?.() ?? []),
+    ...(session.storageLimitations?.() ?? []),
     ...(session.mode === "connect"
       ? [
           "CDP attachment cannot recover pre-attach events or guarantee launch-time context options.",
@@ -108,20 +111,6 @@ export const browserScenarioCaptureData = (input: {
   };
 };
 
-/** Describe the cleanup failure without discarding its resource evidence. */
-export const browserScenarioCleanupObservation = (
-  cause: unknown,
-): { readonly reason: string; readonly resources: readonly string[] } =>
-  cause instanceof AnalysisError && cause.cleanup !== undefined
-    ? cause.cleanup
-    : {
-        reason: cause instanceof Error ? cause.message : String(cause),
-        resources:
-          cause instanceof AnalysisError && cause.cleanupResources.length > 0
-            ? cause.cleanupResources
-            : ["browser_transport"],
-      };
-
 /** Retain operation diagnostics and capture data after cleanup settles. */
 export const browserScenarioOperationFailure = (
   cause: unknown,
@@ -136,68 +125,22 @@ export const browserScenarioOperationFailure = (
           OPERATION,
           { cause },
         );
-  const primaryProjection = projectAnalysisError(primary);
-  const cleanupCause =
-    cleanupFailure === undefined
-      ? undefined
-      : cleanupFailure.cause instanceof AnalysisError
-        ? cleanupFailure.cause
-        : new ProviderAdapterError(
-            PLAYWRIGHT_BROWSER_SCENARIO_PROVIDER_IDENTITY.id,
-            "close_browser_scenario",
-            { cause: cleanupFailure.cause },
-          );
-  const cleanupObservation =
-    cleanupFailure === undefined
-      ? undefined
-      : browserScenarioCleanupObservation(cleanupFailure.cause);
-  const retainedOptions = {
-    cause: primary,
-    partialObservation,
-    ...(primary.capturedOutput === undefined
-      ? {}
-      : { capturedOutput: primary.capturedOutput }),
-    ...(primary.cleanup === undefined ? {} : { cleanup: primary.cleanup }),
-  };
-  if (cleanupCause === undefined) {
-    if (primary instanceof AnalysisCancelledError)
-      return new AnalysisCancelledError(primary.operation, retainedOptions);
-    if (primary instanceof AnalysisTimeoutError)
-      return new AnalysisTimeoutError(
-        primary.operation,
-        primary.timeoutMs,
-        retainedOptions,
-      );
-    if (primary instanceof BrowserObservationError)
-      return new BrowserObservationError(primary.operation, primary.reason, {
-        ...retainedOptions,
-        ...(primary.userMessage === undefined
-          ? {}
-          : { detail: primary.userMessage }),
-      });
-  }
-  const cleanup = cleanupObservation ?? primary.cleanup;
-  return new ProviderAdapterError(
-    PLAYWRIGHT_BROWSER_SCENARIO_PROVIDER_IDENTITY.id,
+  primary.retainPartialObservation(partialObservation);
+  if (cleanupFailure === undefined) return primary;
+  const observation = browserCleanupObservation(cleanupFailure.cause);
+  const cleanup =
+    cleanupFailure.cause instanceof AnalysisError &&
+    cleanupFailure.cause.cleanupIncomplete
+      ? cleanupFailure.cause
+      : new ProviderCleanupError(
+          PLAYWRIGHT_BROWSER_SCENARIO_PROVIDER_IDENTITY.id,
+          observation.resources,
+          { reason: observation.reason },
+          { operation: "close_browser_scenario", cause: cleanupFailure.cause },
+        );
+  return analysisErrorWithCleanupFailure(
+    primary,
+    cleanup,
     OPERATION,
-    {
-      ...retainedOptions,
-      cause:
-        cleanupCause === undefined
-          ? primary
-          : new AggregateError(
-              [primary, cleanupCause],
-              "Browser scenario operation and cleanup both failed",
-              { cause: primary },
-            ),
-      userMessage: primaryProjection.message,
-      ...(cleanup === undefined ? {} : { cleanup }),
-      diagnostics: {
-        primary_error: primaryProjection,
-        ...(cleanupCause === undefined
-          ? {}
-          : { cleanup_error: projectAnalysisError(cleanupCause) }),
-      },
-    },
-  );
+  ).bindCleanupDependencies([primary, cleanup]);
 };

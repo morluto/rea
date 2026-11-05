@@ -125,6 +125,23 @@ it("preserves a dyld read failure when the same read observes cancellation", asy
   expect(fault.handles.every((handle) => handle.fd === -1)).toBe(true);
 });
 
+it("retains the original dyld I/O cause through provider translation", async () => {
+  const { client } = await fixture();
+  const cause = Object.assign(new Error("controlled dyld EIO"), {
+    code: "EIO",
+    path: fault.path,
+  });
+  fault.readFailure = cause;
+  const result = await client.execute("trace_dylib_resolution", {
+    roots: ["Main"],
+  });
+  if (result.ok) throw new Error("Expected failed dyld read");
+  expect(result.error).toMatchObject({ reason: "io" });
+  expect(result.error.cause).toBe(cause);
+  expect(fault.handles.every((handle) => handle.fd === -1)).toBe(true);
+  await expect(client.close()).resolves.toMatchObject({ ok: true });
+});
+
 it("observes cancellation during the final dyld digest close", async () => {
   const { trace } = await fixture();
   fault.abortClose = 2;
@@ -381,3 +398,32 @@ it("waits for an in-flight final dyld close before completing provider close", a
     await running;
   }
 });
+
+it.each(["image", "digest"] as const)(
+  "retains the path and filesystem cause when the pathname disappears during the dyld %s read",
+  async (stage) => {
+    const { client } = await fixture();
+    fault.onRead = async () => {
+      if (fault.handles.length !== (stage === "image" ? 1 : 2)) return;
+      fault.onRead = undefined;
+      await rename(fault.path, `${fault.path}.old`);
+    };
+    const result = await client.execute("trace_dylib_resolution", {
+      roots: ["Main"],
+    });
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        reason: "integrity",
+        detail: expect.stringContaining(fault.path),
+        cause: {
+          reason: "integrity",
+          cause: { code: "ENOENT", path: fault.path },
+        },
+      },
+    });
+    expect(fault.handles).toHaveLength(stage === "image" ? 1 : 2);
+    expect(fault.handles.every((handle) => handle.fd === -1)).toBe(true);
+    await expect(client.close()).resolves.toMatchObject({ ok: true });
+  },
+);

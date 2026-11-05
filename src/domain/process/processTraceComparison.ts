@@ -3,6 +3,7 @@ import {
   evaluateProcessTraceSide,
   processTraceComparisonResultSchema,
   type ProcessTraceComparisonResult,
+  type EvaluatedSide,
 } from "./processTraceEvaluation.js";
 import {
   processTraceSpecificationSchema,
@@ -10,11 +11,14 @@ import {
 } from "./processTraceSpecification.js";
 
 /** Compare two captures against an explicit finite trace language. */
-export const compareProcessTraces = (
+export const evaluateProcessTraceComparison = (
   left: ProcessCapture,
   right: ProcessCapture,
   specificationInput: ProcessTraceSpecification,
-): ProcessTraceComparisonResult => {
+): {
+  readonly result: ProcessTraceComparisonResult;
+  readonly diagnostics: readonly NonNullable<EvaluatedSide["diagnostic"]>[];
+} => {
   const specification =
     processTraceSpecificationSchema.parse(specificationInput);
   const leftEvaluation = evaluateProcessTraceSide(left, specification);
@@ -25,15 +29,11 @@ export const compareProcessTraces = (
         ? null
         : { side: "right" as const, ...rightEvaluation.diagnostic }
       : { side: "left" as const, ...leftEvaluation.diagnostic };
-  const outcomesDiffer =
-    leftEvaluation.result.status !== rightEvaluation.result.status ||
-    JSON.stringify(
-      leftEvaluation.result.raw_trace.map(({ event_id }) => event_id),
-    ) !==
-      JSON.stringify(
-        rightEvaluation.result.raw_trace.map(({ event_id }) => event_id),
-      );
-  return processTraceComparisonResultSchema.parse({
+  const outcomesDiffer = processTraceOutcomesDiffer({
+    left: leftEvaluation.result,
+    right: rightEvaluation.result,
+  });
+  const result = processTraceComparisonResultSchema.parse({
     verdict:
       leftEvaluation.result.status === "unknown" ||
       rightEvaluation.result.status === "unknown"
@@ -48,12 +48,30 @@ export const compareProcessTraces = (
     right: rightEvaluation.result,
     diagnostic,
   });
+  return {
+    result,
+    diagnostics: [leftEvaluation.diagnostic, rightEvaluation.diagnostic].filter(
+      (value): value is NonNullable<EvaluatedSide["diagnostic"]> =>
+        value !== null,
+    ),
+  };
 };
+
+/** Compare two captures against an explicit finite trace language. */
+export const compareProcessTraces = (
+  left: ProcessCapture,
+  right: ProcessCapture,
+  specification: ProcessTraceSpecification,
+): ProcessTraceComparisonResult =>
+  evaluateProcessTraceComparison(left, right, specification).result;
 
 /** Whether trace conformance or raw declared order differs across captures. */
 export const processTraceOutcomesDiffer = (
-  comparison: ProcessTraceComparisonResult,
+  comparison: Pick<ProcessTraceComparisonResult, "left" | "right">,
 ): boolean =>
   comparison.left.status !== comparison.right.status ||
-  JSON.stringify(comparison.left.raw_trace.map(({ event_id }) => event_id)) !==
-    JSON.stringify(comparison.right.raw_trace.map(({ event_id }) => event_id));
+  comparison.left.raw_trace.length !== comparison.right.raw_trace.length ||
+  comparison.left.raw_trace.some(
+    ({ event_id }, index) =>
+      event_id !== comparison.right.raw_trace[index]?.event_id,
+  );

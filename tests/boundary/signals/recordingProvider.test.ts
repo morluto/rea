@@ -1,8 +1,14 @@
+import {
+  AnalysisOutputError,
+  AnalysisResourceConstraintError,
+} from "../../../src/domain/analysisErrorCore.js";
 import { signalDecodersSchema } from "../../../src/domain/signals/signalDecoders.js";
+import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { OwnedCommandFailure } from "../../../src/process/OwnedCommand.js";
 import { it, expect, onTestFinished } from "vitest";
-import { writeFile, readdir, chmod, symlink } from "node:fs/promises";
-import { join } from "node:path";
+import { writeFile, readFile, readdir, chmod, symlink } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { basename, join } from "node:path";
 import { readStableArtifact } from "../../../src/artifacts/readStableArtifact.js";
 import { SigrokRecordingProvider } from "../../../src/signals/SigrokRecordingProvider.js";
 import { SignalRecordingService } from "../../../src/application/signals/SignalRecordingService.js";
@@ -14,30 +20,77 @@ import { PrivateRuntimeRoot } from "../../../src/process/PrivateRuntimeRoot.js";
 import { spawnOwnedProviderProcess } from "../../../src/process/ProviderProcess.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { createDeferred } from "../../fixtures/binarySession.js";
+import { analysisErrorRemediationAction } from "../../../src/domain/analysisErrorPresentation.js";
+import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
+import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
+import { Cli } from "incur";
+import { registerSignalCommands } from "../../../src/cli/signalCommands.js";
+import { silentLogger } from "../../../src/logger.js";
 
-// A command-boundary simulator: real process ownership/filesystem, not real sigrok coverage.
-const fixture = async (mode = "ok", failCleanup = false) => {
-  const directory = await createTestTempDirectory("rea-signal-test-");
-  const path = join(directory, "recorded bytes.vcd");
-  await writeFile(path, "recording bytes");
-  const script = join(directory, "producer.mjs");
-  await writeFile(
-    script,
-    `import {readFileSync, writeFileSync, chmodSync, truncateSync} from 'node:fs';
-if (process.argv.includes('--version')) { console.log(${JSON.stringify(mode)} === 'bad-version' ? 'sigrok-cli 0.7.1' : 'sigrok-cli 0.7.2\\nlibsigrokdecode 0.5.3'); console.error('version warning'); }
+const producerSource = (mode: string, snapshotName: string): string =>
+  `import {readFileSync, writeFileSync, chmodSync, truncateSync} from 'node:fs';
+const inputFileArgument = process.argv.find((argument) => argument.startsWith('--input-file='));
+const snapshotName = inputFileArgument?.slice('--input-file='.length);
+if (${JSON.stringify(mode)} !== 'input-operand' && inputFileArgument !== undefined && inputFileArgument !== ${JSON.stringify(`--input-file=./${snapshotName}`)}) throw Error('wrong snapshot name');
+if (process.argv.includes('--version')) {
+  if (${JSON.stringify(mode)} === 'invalid-version-stdout') process.stdout.write(Buffer.concat([Buffer.from('sigrok-cli 0.7.2\\nlibsigrokdecode 0.5.3\\n'), Buffer.from([0xff])]));
+  else console.log(${JSON.stringify(mode)} === 'bad-version' ? 'sigrok-cli 0.7.1' : 'sigrok-cli 0.7.2\\nlibsigrokdecode 0.5.3');
+  if (${JSON.stringify(mode)} === 'nonzero-version') process.exitCode = 1;
+  if (${JSON.stringify(mode)} === 'invalid-version-stderr') process.stderr.write(Buffer.from([0xfe]));
+  else console.error('version warning');
+}
 else if (${JSON.stringify(mode)} === 'bad-version') console.log('unexpected version fallback');
 else if (${JSON.stringify(mode)} === 'nonzero') { console.error('invalid decoder'); process.exitCode = 1; }
-else if (${JSON.stringify(mode)} === 'malformed-copy') { chmodSync('recording', 0o600); writeFileSync('recording', 'changed'); }
-else if (${JSON.stringify(mode)} === 'oversized-copy') { chmodSync('recording', 0o600); truncateSync('recording', 32 * 1024 * 1024 + 1); }
+else if (${JSON.stringify(mode)} === 'unknown-input-format') { if (!process.argv.includes('--input-format=missingformat')) console.error('fixture: selected input format was not forwarded'); console.error("cli: Error: unknown input module 'missingformat'."); process.exitCode = 1; }
+else if (${JSON.stringify(mode)} === 'unknown-input-option') { if (!process.argv.includes('--input-format=vcd:down_sample=2')) throw Error('selected input option was not forwarded'); process.stdout.write('1104-1938 uart-1: 52\\n'); console.error('Unknown keyword: down_sample.'); }
+else if (${JSON.stringify(mode)} === 'unknown-multiline-input-option') { if (!process.argv.includes(${JSON.stringify("--input-format=vcd:down\nsample=2")})) throw Error('selected input option was not forwarded'); process.stdout.write('1104-1938 uart-1: 52\\n'); console.error(${JSON.stringify("Unknown keyword: down\nsample.")}); }
+else if (${JSON.stringify(mode)} === 'other-input-option-warning') { process.stdout.write('10-20 uart-1: 42\\n'); console.error('Unknown keyword: down_sample.'); }
+else if (${JSON.stringify(mode)} === 'embedded-input-option-warning') { process.stdout.write('10-20 uart-1: 42\\n'); console.error('context: Unknown keyword: down_sample. suffix'); }
+else if (${JSON.stringify(mode)} === 'unknown-decoder') { console.error("srd: ModuleNotFoundError: Failed to load decoder nosuchdecoder: import by name failed: No module named 'nosuchdecoder'\\nFailed to load protocol decoder nosuchdecoder."); process.exitCode = 1; }
+else if (${JSON.stringify(mode)} === 'broken-decoder') { console.error("srd: ModuleNotFoundError: Failed to load decoder uart: import by name failed: No module named 'serial'\\nFailed to load protocol decoder uart."); process.exitCode = 1; }
+else if (${JSON.stringify(mode)} === 'unknown-annotation') { console.error("Annotation 'nosuchclass' not found for protocol decoder 'uart'."); process.exitCode = 1; }
+else if (${JSON.stringify(mode)} === 'unknown-channel') { process.stdout.write('1000-1105 uart-1: Start bit\\n'); console.error('cli: No channel with name "NONEXISTENT" found.'); }
+else if (${JSON.stringify(mode)} === 'other-channel-warning') { process.stdout.write('1000-1105 uart-1: Start bit\\n'); console.error('cli: No channel with name "OTHER" found.'); }
+else if (${JSON.stringify(mode)} === 'missing-channel-target') { process.stdout.write('1000-1105 uart-1: Start bit\\n'); console.error('cli: Channel name for "rx" missing.'); }
+else if (${JSON.stringify(mode)} === 'other-missing-channel-target-warning') { process.stdout.write('1000-1105 uart-1: Start bit\\n'); console.error('cli: Channel name for "OTHER" missing.'); }
+else if (${JSON.stringify(mode)} === 'invalid-stdout') { process.stdout.write(Buffer.concat([Buffer.from('10-20 uart-1: '), Buffer.from([0xff]), Buffer.from('\\n')])); }
+else if (${JSON.stringify(mode)} === 'invalid-stderr') { process.stdout.write('10-20 uart-1: 42\\n'); process.stderr.write(Buffer.from([0xfe])); }
+else if (${JSON.stringify(mode)} === 'literal-replacement') process.stdout.write('10-20 uart-1: �\\n');
+else if (${JSON.stringify(mode)} === 'invalid-catalog-stdout' && process.argv.includes('--list-supported')) process.stdout.write(Buffer.concat([Buffer.from('Supported protocol decoders:\\n  uart  '), Buffer.from([0xff])]));
+else if (${JSON.stringify(mode)} === 'invalid-help-stdout' && process.argv.includes('--show')) process.stdout.write(Buffer.concat([Buffer.from('ID: uart\\nOptions:\\n'), Buffer.from([0xfe])]));
+else if (${JSON.stringify(mode)} === 'malformed-copy') { chmodSync(snapshotName, 0o600); writeFileSync(snapshotName, 'changed'); }
+else if (${JSON.stringify(mode)} === 'oversized-copy') { chmodSync(snapshotName, 0o600); truncateSync(snapshotName, 32 * 1024 * 1024 + 1); }
 else if (${JSON.stringify(mode)} === 'line-budget') process.stdout.write('ID: uart' + '\\n'.repeat(65536));
 else if (${JSON.stringify(mode)} === 'overflow') process.stdout.write('x'.repeat(5 * 1024 * 1024));
 else if (${JSON.stringify(mode)} === 'wait') { console.log('ready'); setInterval(() => {}, 1000); }
 else if (${JSON.stringify(mode)} === 'many') process.stdout.write(Array.from({length:90},(_,i)=>'line '+(i+1)+'\\r\\n').join(''));
-else if (process.argv.includes('--list-supported')) { console.log('Supported hardware drivers:\\n  ignored Device\\nSupported protocol decoders:\\n  uart                 Universal Asynchronous Receiver/Transmitter\\n  i2c                  Inter-Integrated Circuit\\n'); console.error('catalog warning'); }
-else if (process.argv.includes('--show')) console.log('ID: uart\\nOptions:\\n- baudrate: Baud rate (default 115200)\\n- parity: Parity');
-else { if(readFileSync('recording', 'utf8') !== 'recording bytes') throw Error('wrong copy'); console.log('10-20 uart-1: 42'); console.error('producer warning'); }
-`,
+else if (process.argv.includes('--list-supported')) { console.log(${JSON.stringify(mode)} === 'unicode-search' ? 'Supported protocol decoders:\\n  uart                 Universal Asynchronous Receiver/Transmitter\\n  sigma                ΟΣ\\n' : 'Supported hardware drivers:\\n  ignored Device\\nSupported protocol decoders:\\n  uart                 Universal Asynchronous Receiver/Transmitter\\n  i2c                  Inter-Integrated Circuit\\n'); console.error('catalog warning'); }
+else if (process.argv.includes('--show')) console.log(${JSON.stringify(mode)} === 'unicode-search' ? 'ID: uart\\nOptions:\\n- label: ΟΣ' : 'ID: uart\\nOptions:\\n- baudrate: Baud rate (default 115200)\\n- parity: Parity');
+else if (${JSON.stringify(mode)} === 'csv-autodetect') { if (!process.argv.includes(${JSON.stringify(`--input-file=./${snapshotName}`)}) || readFileSync(snapshotName, 'utf8') !== 'CLK,MOSI\\n0,0\\n1,0\\n') throw Error('CSV suffix or copy bytes lost'); console.log('10-20 spi-1: 1'); }
+else if (${JSON.stringify(mode)} === 'input-operand') { console.log(readFileSync(snapshotName === '-' ? 0 : snapshotName).toString('hex')); }
+else if (${JSON.stringify(mode)} === 'long-basename') { if (!process.argv.includes('--input-format=vcd') || readFileSync(snapshotName, 'utf8') !== 'recording bytes') throw Error('long source basename or explicit format was lost'); console.log('10-20 uart-1: 42'); }
+else { if(readFileSync(snapshotName, 'utf8') !== 'recording bytes') throw Error('wrong copy'); console.log('10-20 uart-1: 42'); console.error('producer warning'); }
+`;
+
+// A command-boundary simulator: real process ownership/filesystem, not real sigrok coverage.
+const fixture = async (
+  mode = "ok",
+  failCleanup = false,
+  recordingName?: string,
+) => {
+  const directory = await createTestTempDirectory("rea-signal-test-");
+  const path = join(
+    directory,
+    recordingName ??
+      (mode === "csv-autodetect" ? "capture.csv" : "recorded bytes.vcd"),
   );
+  const snapshotName = basename(path);
+  await writeFile(
+    path,
+    mode === "csv-autodetect" ? "CLK,MOSI\n0,0\n1,0\n" : "recording bytes",
+  );
+  const script = join(directory, "producer.mjs");
+  await writeFile(script, producerSource(mode, snapshotName));
   await chmod(script, 0o700);
   const configuredCommand =
     mode === "symlink" ? join(directory, "configured-tool") : script;
@@ -93,10 +146,12 @@ else { if(readFileSync('recording', 'utf8') !== 'recording bytes') throw Error('
         await release.promise;
       }
       if (mode === "snapshot-write-failure")
-        await writeFile(join(root.path, "recording"), "already exists");
+        await writeFile(join(root.path, snapshotName), "already exists");
       return {
         path: root.path,
         close: async () => {
+          if (mode === "close-abort")
+            controller.abort({ request: "cancel during workspace close" });
           if (!mayClean) throw new Error("cleanup fixture failure");
           await root.close();
         },
@@ -167,7 +222,7 @@ it("pages literal output without changing decoder arguments or normalizing text"
     expect(report.output_window.returned_lines).toBe(count);
     expect(report.tool.arguments).toEqual([
       "--dont-scan",
-      "--input-file=recording",
+      `--input-file=./${basename(f.path)}`,
       "--protocol-decoders=uart",
       "--protocol-decoder-samplenum",
     ]);
@@ -210,7 +265,7 @@ it("decodes an immutable copy, preserves options and warnings, and releases its 
   expect(report.selection.input_format).toBeNull();
   expect(report.tool.arguments).toEqual([
     "--dont-scan",
-    "--input-file=recording",
+    "--input-file=./recorded bytes.vcd",
     "--protocol-decoders=uart:rx=RX:baudrate=9600",
     "--protocol-decoder-samplenum",
     "--protocol-decoder-annotations=uart=rx-data",
@@ -220,6 +275,88 @@ it("decodes an immutable copy, preserves options and warnings, and releases its 
     "recorded bytes.vcd",
   ]);
 });
+
+it.each(["capture.csv", ".capture.csv", ".csv"])(
+  "preserves the CSV filename hint from %s through the private copy",
+  async (recordingName) => {
+    const f = await fixture("csv-autodetect", false, recordingName);
+    const result = await f.service.decode({
+      path: f.path,
+      decoders: "spi:clk=CLK:mosi=MOSI",
+    });
+    if (!result.ok) throw result.error;
+    const report = signalRecordingSchema.parse(result.value.normalized_result);
+    expect(report.selection).toMatchObject({
+      path: f.path,
+      input_format: null,
+    });
+    expect(report.tool.arguments).toEqual([
+      "--dont-scan",
+      `--input-file=./${recordingName}`,
+      "--protocol-decoders=spi:clk=CLK:mosi=MOSI",
+      "--protocol-decoder-samplenum",
+    ]);
+  },
+);
+
+it("stages a long source basename without expanding it before decoding", async () => {
+  const recordingName = `a.${"x".repeat(246)}`;
+  expect(Buffer.byteLength(recordingName)).toBe(248);
+  const f = await fixture("long-basename", false, recordingName);
+  const result = await f.service.decode({
+    path: f.path,
+    decoders: "uart",
+    input_format: "vcd",
+  });
+  if (!result.ok) throw result.error;
+
+  const report = signalRecordingSchema.parse(result.value.normalized_result);
+  expect(report.artifact.path).toBe(f.path);
+  expect(report.selection.input_format).toBe("vcd");
+  expect(report.annotations_text).toBe("10-20 uart-1: 42\n");
+  expect(report.tool.arguments).toContain(`--input-file=./${recordingName}`);
+  expect(f.calls()).toBe(2);
+  expect(
+    (await readdir(f.directory)).filter((name) => name.startsWith("decoder-")),
+  ).toEqual([]);
+});
+
+it.each([
+  ["control.vcd", null],
+  ["control.vcd", "vcd"],
+  ["-", null],
+  ["-", "vcd"],
+] as const)(
+  "opens the complete private recording for %s rather than stdin with input_format=%s",
+  async (recordingName, inputFormat) => {
+    // Model only the tagged sigrok input operand rule, not protocol decoding.
+    const f = await fixture("input-operand", false, recordingName);
+    const source = await readFile(f.path);
+    const result = await f.service.decode({
+      path: f.path,
+      decoders: "uart",
+      input_format: inputFormat,
+    });
+    if (!result.ok) throw result.error;
+    const report = signalRecordingSchema.parse(result.value.normalized_result);
+    expect(report.artifact).toEqual({
+      path: f.path,
+      bytes: source.length,
+      sha256: createHash("sha256").update(source).digest("hex"),
+    });
+    expect(report.selection).toMatchObject({
+      path: f.path,
+      input_format: inputFormat,
+    });
+    expect(report.annotations_text).toBe(`${source.toString("hex")}\n`);
+    expect(report.tool.arguments).toContain(`--input-file=./${recordingName}`);
+    expect(report.tool.arguments).not.toContain("--input-file=-");
+    expect(Buffer.compare(await readFile(f.path), source)).toBe(0);
+    expect((await readdir(f.directory)).sort()).toEqual(
+      [recordingName, "producer.mjs"].sort(),
+    );
+  },
+);
 
 it.each([
   ["nonzero", "ProviderAdapterError"],
@@ -236,12 +373,560 @@ it.each([
     );
     if (result.ok) throw new Error("Expected decoder failure");
     expect(result.error._tag).toBe(tag);
+    if (mode === "wait")
+      expect(result.error.cause).toBe(f.controller.signal.reason);
     expect(result.error.cleanupIncomplete).toBe(false);
     expect(
       (await readdir(f.directory)).filter((name) =>
         name.startsWith("decoder-"),
       ),
     ).toEqual([]);
+  },
+);
+
+it.each([
+  [
+    "unknown-decoder",
+    { decoders: "uart:rx=RX,nosuchdecoder" },
+    "decoders",
+    "Failed to load protocol decoder nosuchdecoder.",
+    "inspect_signal_decoders",
+  ],
+  [
+    "unknown-annotation",
+    { decoders: "uart", annotations: "uart=rx-data:nosuchclass" },
+    "annotations",
+    "Annotation 'nosuchclass' not found for protocol decoder 'uart'.",
+    "inspect_signal_decoders",
+  ],
+  [
+    "unknown-input-format",
+    { decoders: "uart", input_format: "missingformat" },
+    "input_format",
+    "Error: unknown input module 'missingformat'.",
+    "omit input_format",
+  ],
+] as const)(
+  "reports sigrok's %s refusal as invalid caller input",
+  async (mode, selection, field, refusal, recovery) => {
+    const f = await fixture(mode);
+    const result = await f.service.decode({ path: f.path, ...selection });
+    if (result.ok) throw new Error("Expected selector refusal");
+    expect(result.error._tag).toBe("AnalysisInputError");
+    expect(projectAnalysisError(result.error)).toMatchObject({
+      code: "invalid_request",
+      message: expect.stringContaining(recovery),
+      details: {
+        issues: [
+          {
+            path: [field],
+            reason: "invalid_value",
+            message: expect.stringContaining(refusal),
+          },
+        ],
+        captured_output: {
+          exit_code: 1,
+          stderr: expect.stringContaining(refusal),
+        },
+      },
+    });
+    expect(result.error.cleanupIncomplete).toBe(false);
+    expect(
+      (await readdir(f.directory)).filter((name) =>
+        name.startsWith("decoder-"),
+      ),
+    ).toEqual([]);
+  },
+);
+
+it.each([
+  {
+    mode: "unknown-input-format",
+    inputFormat: "missingformat",
+    refusal: "Error: unknown input module 'missingformat'.",
+    recovery:
+      "Use a supported sigrok input format name, or omit input_format to let sigrok-cli autodetect the recording.",
+    producerExit: 1,
+    producerStdout: "",
+  },
+  {
+    mode: "unknown-input-option",
+    inputFormat: "vcd:down_sample=2",
+    refusal: "Unknown keyword: down_sample.",
+    recovery:
+      "Use options supported by the selected sigrok input format, or remove the rejected option.",
+    producerExit: 0,
+    producerStdout: "1104-1938 uart-1: 52\n",
+  },
+  {
+    mode: "unknown-multiline-input-option",
+    inputFormat: "vcd:down\nsample=2",
+    refusal: "Unknown keyword: down\nsample.",
+    recovery:
+      "Use options supported by the selected sigrok input format, or remove the rejected option.",
+    producerExit: 0,
+    producerStdout: "1104-1938 uart-1: 52\n",
+  },
+])(
+  "reports $mode through CLI and MCP without successful fallback Evidence",
+  async ({
+    mode,
+    inputFormat,
+    refusal,
+    recovery,
+    producerExit,
+    producerStdout,
+  }) => {
+    const f = await fixture(mode);
+    const issueMessage =
+      `sigrok-cli rejected the input_format selector: ${refusal} ` + recovery;
+    const harness = await createApplicationMcpHarness({
+      serverOptions: { environment: {}, signalRecording: f.service },
+    });
+    onTestFinished(harness.close);
+    const { error } = parseMcpToolError(
+      await harness.client.callTool({
+        name: "decode_signal_recording",
+        arguments: {
+          path: f.path,
+          decoders: "uart",
+          input_format: inputFormat,
+        },
+      }),
+    );
+    expect(error).toMatchObject({
+      code: "invalid_request",
+      category: "invalid_input",
+      message: expect.stringContaining(issueMessage),
+      details: {
+        issues: [
+          {
+            path: ["input_format"],
+            reason: "invalid_value",
+            message: expect.stringContaining(issueMessage),
+          },
+        ],
+        captured_output: {
+          exit_code: producerExit,
+          stdout: producerStdout,
+          stderr: expect.stringContaining(refusal),
+        },
+      },
+    });
+    expect(JSON.stringify(error)).not.toContain(
+      "fixture: selected input format was not forwarded",
+    );
+
+    const cli = Cli.create("signal-input-format-refusal-test", { sync: false });
+    registerSignalCommands(cli, silentLogger, {}, f.service);
+    let stdout = "";
+    let commandExitCode: typeof process.exitCode;
+    const previousExitCode = process.exitCode;
+    try {
+      process.exitCode = 0;
+      await cli.serve(
+        [
+          "decode-signal-recording",
+          f.path,
+          "--decoders",
+          "uart",
+          "--input_format",
+          inputFormat,
+          "--format",
+          "json",
+        ],
+        {
+          stdout: (text) => {
+            stdout += text;
+          },
+          exit: () => {},
+        },
+      );
+      commandExitCode = process.exitCode;
+    } finally {
+      process.exitCode = previousExitCode;
+    }
+    expect(commandExitCode).toBe(1);
+    const envelope: unknown = JSON.parse(stdout);
+    expect(envelope).not.toHaveProperty("evidence_id");
+    expect(envelope).toMatchObject({
+      code: "invalid_request",
+      message: expect.stringContaining(issueMessage),
+      details: {
+        issues: [
+          {
+            path: ["input_format"],
+            reason: "invalid_value",
+            message: expect.stringContaining(issueMessage),
+          },
+        ],
+        captured_output: {
+          exit_code: producerExit,
+          stdout: producerStdout,
+          stderr: expect.stringContaining(refusal),
+        },
+      },
+    });
+    expect(stdout).not.toContain(
+      "fixture: selected input format was not forwarded",
+    );
+    expect(f.calls()).toBe(4);
+    expect(
+      (await readdir(f.directory)).filter((name) =>
+        name.startsWith("decoder-"),
+      ),
+    ).toEqual([]);
+  },
+);
+
+it.each([
+  "vcd:downsample=2",
+  "vcd:down_sample_extra=2",
+  "vcd:label=down_sample",
+  null,
+])(
+  "retains an unrelated input-option warning with selection %s",
+  async (inputFormat) => {
+    const f = await fixture("other-input-option-warning");
+    const result = await f.service.decode({
+      path: f.path,
+      decoders: "uart",
+      input_format: inputFormat,
+    });
+    if (!result.ok) throw result.error;
+    const report = signalRecordingSchema.parse(result.value.normalized_result);
+    expect(report.selection.input_format).toBe(inputFormat);
+    expect(report.annotations_text).toBe("10-20 uart-1: 42\n");
+    expect(report.diagnostics).toBe("Unknown keyword: down_sample.\n");
+    if (inputFormat !== null)
+      expect(report.tool.arguments).toContain(`--input-format=${inputFormat}`);
+    else
+      expect(
+        report.tool.arguments.some((argument) =>
+          argument.startsWith("--input-format="),
+        ),
+      ).toBe(false);
+  },
+);
+
+it("recognizes a rejected bare input-format option key", async () => {
+  const f = await fixture("other-input-option-warning");
+  const result = await f.service.decode({
+    path: f.path,
+    decoders: "uart",
+    input_format: "vcd:down_sample",
+  });
+  if (result.ok) throw new Error("Expected selected bare option refusal");
+  expect(projectAnalysisError(result.error)).toMatchObject({
+    code: "invalid_request",
+    details: {
+      issues: [{ path: ["input_format"], reason: "invalid_value" }],
+      captured_output: {
+        exit_code: 0,
+        stdout: "10-20 uart-1: 42\n",
+        stderr: "Unknown keyword: down_sample.\n",
+      },
+    },
+  });
+});
+
+it("does not treat an embedded warning substring as a selected option refusal", async () => {
+  const f = await fixture("embedded-input-option-warning");
+  const result = await f.service.decode({
+    path: f.path,
+    decoders: "uart",
+    input_format: "vcd:down_sample=2",
+  });
+  if (!result.ok) throw result.error;
+  const report = signalRecordingSchema.parse(result.value.normalized_result);
+  expect(report.selection.input_format).toBe("vcd:down_sample=2");
+  expect(report.annotations_text).toBe("10-20 uart-1: 42\n");
+  expect(report.diagnostics).toBe(
+    "context: Unknown keyword: down_sample. suffix\n",
+  );
+});
+
+it("projects sigrok's zero-exit missing-channel refusal through CLI and MCP with partial output", async () => {
+  const f = await fixture("unknown-channel");
+  const refusal = 'No channel with name "NONEXISTENT" found.';
+  const message = `sigrok-cli rejected the decoders selector: ${refusal}`;
+
+  const harness = await createApplicationMcpHarness({
+    serverOptions: { environment: {}, signalRecording: f.service },
+  });
+  onTestFinished(harness.close);
+  const { error } = parseMcpToolError(
+    await harness.client.callTool({
+      name: "decode_signal_recording",
+      arguments: {
+        path: f.path,
+        decoders: "uart:rx=NONEXISTENT:baudrate=9600",
+      },
+    }),
+  );
+  expect(error).toMatchObject({
+    code: "invalid_request",
+    category: "invalid_input",
+    message: expect.stringContaining(message),
+    details: {
+      issues: [{ path: ["decoders"], reason: "invalid_value" }],
+      captured_output: {
+        exit_code: 0,
+        stdout: "1000-1105 uart-1: Start bit\n",
+        stderr: expect.stringContaining(refusal),
+      },
+    },
+  });
+
+  const cli = Cli.create("signal-channel-refusal-test", { sync: false });
+  registerSignalCommands(cli, silentLogger, {}, f.service);
+  let stdout = "";
+  await cli.serve(
+    [
+      "decode-signal-recording",
+      f.path,
+      "--decoders",
+      "uart:rx=NONEXISTENT:baudrate=9600",
+      "--format",
+      "json",
+    ],
+    {
+      stdout: (text) => {
+        stdout += text;
+      },
+      exit: () => {},
+    },
+  );
+  expect(JSON.parse(stdout)).toMatchObject({
+    code: "invalid_request",
+    details: {
+      issues: [{ path: ["decoders"], reason: "invalid_value" }],
+      captured_output: {
+        exit_code: 0,
+        stdout: "1000-1105 uart-1: Start bit\n",
+        stderr: expect.stringContaining(refusal),
+      },
+    },
+  });
+});
+
+it("does not match channel refusals by substring", async () => {
+  const f = await fixture("other-channel-warning");
+  const result = await f.service.decode({
+    path: f.path,
+    decoders: "uart:rx=RX:baudrate=9600",
+  });
+  expect(result.ok).toBe(true);
+});
+
+it("projects a missing bare channel target as invalid decoder input through the CLI", async () => {
+  const f = await fixture("missing-channel-target");
+  const cli = Cli.create("signal-channel-target-test", { sync: false });
+  registerSignalCommands(cli, silentLogger, {}, f.service);
+  let stdout = "";
+  await cli.serve(
+    [
+      "decode-signal-recording",
+      f.path,
+      "--decoders",
+      "uart:rx:baudrate=9600",
+      "--format",
+      "json",
+    ],
+    {
+      stdout: (text) => {
+        stdout += text;
+      },
+      exit: () => {},
+    },
+  );
+  expect(JSON.parse(stdout)).toMatchObject({
+    code: "invalid_request",
+    details: {
+      issues: [
+        {
+          path: ["decoders"],
+          reason: "invalid_value",
+          message: expect.stringContaining('Channel name for "rx" missing.'),
+        },
+      ],
+      captured_output: {
+        exit_code: 0,
+        stdout: "1000-1105 uart-1: Start bit\n",
+        stderr: expect.stringContaining('Channel name for "rx" missing.'),
+      },
+    },
+  });
+});
+
+it("does not classify an unselected bare channel warning as caller input", async () => {
+  const f = await fixture("other-missing-channel-target-warning");
+  const result = await f.service.decode({
+    path: f.path,
+    decoders: "uart:rx=RX:baudrate=9600",
+  });
+  if (!result.ok) throw result.error;
+  expect(
+    signalRecordingSchema.parse(result.value.normalized_result).diagnostics,
+  ).toBe('cli: Channel name for "OTHER" missing.\n');
+});
+
+it.each([
+  ["invalid-version-stdout", "configuration", ["stdout"], "decode"],
+  ["invalid-version-stderr", "configuration", ["stderr"], "decode"],
+  ["invalid-stdout", "producer", ["stdout"], "decode"],
+  ["invalid-stderr", "producer", ["stderr"], "decode"],
+  ["invalid-catalog-stdout", "producer", ["stdout"], "catalog"],
+  ["invalid-help-stdout", "producer", ["stdout"], "help"],
+] as const)(
+  "returns an unreadable-output error for invalid UTF-8 in %s",
+  async (mode, stage, streams, operation) => {
+    const f = await fixture(mode);
+    const result =
+      operation === "decode"
+        ? await f.service.decode({ path: f.path, decoders: "uart" })
+        : await f.service.inspectDecoders(
+            operation === "catalog" ? {} : { decoder: "uart" },
+          );
+    if (result.ok) throw new Error("Expected invalid output failure");
+    expect(result.error).toBeInstanceOf(AnalysisOutputError);
+    expect(result.error.diagnostics).toEqual({
+      stage,
+      invalid_utf8_streams: streams,
+    });
+    expect(result.error.capturedOutput).toMatchObject({
+      stdout: expect.any(String),
+      stderr: expect.any(String),
+    });
+    expect(projectAnalysisError(result.error)).toMatchObject({
+      code: "unreadable_output",
+      details: {
+        diagnostics: { stage, invalid_utf8_streams: streams },
+        captured_output: {
+          stdout: expect.any(String),
+          stderr: expect.any(String),
+        },
+      },
+    });
+    expect(
+      `${result.error.capturedOutput?.stdout}${result.error.capturedOutput?.stderr}`,
+    ).toContain("�");
+  },
+);
+
+it("keeps a literal replacement character distinct from invalid UTF-8", async () => {
+  const f = await fixture("literal-replacement");
+  const result = await f.service.decode({ path: f.path, decoders: "uart" });
+  if (!result.ok) throw result.error;
+  expect(
+    signalRecordingSchema.parse(result.value.normalized_result)
+      .annotations_text,
+  ).toBe("10-20 uart-1: �\n");
+});
+
+it("reports an unknown decoder ID as the rejected field of each MCP operation", async () => {
+  const f = await fixture("unknown-decoder");
+  const harness = await createApplicationMcpHarness({
+    serverOptions: { environment: {}, signalRecording: f.service },
+  });
+  onTestFinished(harness.close);
+  const refusal = "Failed to load protocol decoder nosuchdecoder.";
+  for (const [name, args, field, recovery] of [
+    [
+      "inspect_signal_decoders",
+      { decoder: "nosuchdecoder" },
+      "decoder",
+      "Omit decoder to list installed decoder IDs",
+    ],
+    [
+      "decode_signal_recording",
+      { path: f.path, decoders: "nosuchdecoder" },
+      "decoders",
+      "Use inspect_signal_decoders to list installed decoder IDs",
+    ],
+  ] as const) {
+    const { error } = parseMcpToolError(
+      await harness.client.callTool({ name, arguments: args }),
+    );
+    const message = `sigrok-cli rejected the ${field} selector: ${refusal} ${recovery}`;
+    expect(error).toMatchObject({
+      code: "invalid_request",
+      category: "invalid_input",
+      message: expect.stringContaining(message),
+      recovery: { kind: "inspect_input_contract", operation: name },
+      details: {
+        operation: name,
+        issues: [
+          {
+            path: [field],
+            reason: "invalid_value",
+            message: expect.stringContaining(message),
+          },
+        ],
+        captured_output: {
+          exit_code: 1,
+          stderr: expect.stringContaining(refusal),
+        },
+      },
+    });
+  }
+  expect(
+    (await readdir(f.directory)).filter((name) => name.startsWith("decoder-")),
+  ).toEqual([]);
+});
+
+it("reports an unknown decoder help selection as CLI invalid input", async () => {
+  const f = await fixture("unknown-decoder");
+  const cli = Cli.create("signal-refusal-test", { sync: false });
+  registerSignalCommands(cli, silentLogger, {}, f.service);
+  let stdout = "";
+  await cli.serve(
+    [
+      "inspect-signal-decoders",
+      "--decoder",
+      "nosuchdecoder",
+      "--format",
+      "json",
+    ],
+    {
+      stdout: (text) => {
+        stdout += text;
+      },
+      exit: () => {},
+    },
+  );
+  expect(JSON.parse(stdout)).toMatchObject({
+    code: "invalid_request",
+    message: expect.stringContaining("Omit decoder"),
+    details: {
+      operation: "inspect_signal_decoders",
+      issues: [{ path: ["decoder"], reason: "invalid_value" }],
+      captured_output: { exit_code: 1 },
+    },
+  });
+});
+
+it.each([
+  // An installed decoder whose own dependency is missing is an installation fault.
+  ["broken-decoder", { decoders: "uart" }],
+  ["broken-decoder", { decoder: "uart" }],
+  // Refusals naming selectors the caller did not supply stay unclassified.
+  ["unknown-decoder", { decoders: "uart" }],
+  ["unknown-decoder", { decoder: "uart" }],
+  ["unknown-decoder", {}],
+  ["unknown-annotation", { decoders: "uart", annotations: "uart=rx-data" }],
+  ["unknown-input-format", { decoders: "uart", input_format: null }],
+  ["unknown-input-format", { decoders: "uart", input_format: "vcd" }],
+] as const)(
+  "keeps %s outside caller selectors %j as a provider failure",
+  async (mode, selection) => {
+    const f = await fixture(mode);
+    const result =
+      "decoders" in selection
+        ? await f.service.decode({ path: f.path, ...selection })
+        : await f.service.inspectDecoders(selection);
+    if (result.ok) throw new Error("Expected decoder failure");
+    expect(result.error._tag).toBe("ProviderAdapterError");
   },
 );
 
@@ -311,7 +996,7 @@ it("retains a completed observation when cancellation arrives at the service bou
       throw new Error("Unexpected discovery call");
     },
     decode: async () => {
-      f.controller.abort();
+      f.controller.abort({ request: "cancel at Evidence boundary" });
       return execution;
     },
     close: async () => {},
@@ -319,6 +1004,7 @@ it("retains a completed observation when cancellation arrives at the service bou
   const result = await service.decode(input, { signal: f.controller.signal });
   if (result.ok) throw new Error("Expected late cancellation");
   expect(result.error._tag).toBe("AnalysisCancelledError");
+  expect(result.error.cause).toBe(f.controller.signal.reason);
   expect(result.error.partialObservation).toMatchObject({
     operation: "decode_signal_recording",
     normalized_result: { annotations_text: "10-20 uart-1: 42\n" },
@@ -424,7 +1110,7 @@ it.each(["oversized-copy", "oversized-tool"])(
       path:
         mode === "oversized-tool"
           ? join(f.directory, "producer.mjs")
-          : expect.stringMatching(/decoder-.*[/\\]recording$/u),
+          : expect.stringMatching(/decoder-.*[/\\]recorded bytes\.vcd$/u),
     });
     expect(
       (await readdir(f.directory)).filter((name) =>
@@ -443,6 +1129,9 @@ it("preserves termination signal and effective file ceiling as a resource failur
     reportedLimits: { file_bytes: 1048576 },
     capturedOutput: { signal: "SIGXFSZ", stderr: "before file limit\n" },
   });
+  expect(analysisErrorRemediationAction(result.error)).toContain(
+    "REA retains the tighter inherited limit",
+  );
 });
 
 it("discovers decoders without reading a recording and retains installation provenance", async () => {
@@ -511,6 +1200,33 @@ it("discovers decoders without reading a recording and retains installation prov
   ).toEqual([]);
 });
 
+it("matches decoder ID/name independently and uses Unicode simple case folding", async () => {
+  const f = await fixture("unicode-search");
+  for (const [query, expected] of [
+    ["uart U", []],
+    ["art Uni", []],
+    [
+      "uart",
+      [{ id: "uart", name: "Universal Asynchronous Receiver/Transmitter" }],
+    ],
+    ["Σ", [{ id: "sigma", name: "ΟΣ" }]],
+  ] as const) {
+    const result = await f.service.inspectDecoders({ query, limit: null });
+    if (!result.ok) throw result.error;
+    const report = signalDecodersSchema.parse(result.value.normalized_result);
+    expect(report.decoders).toEqual(expected);
+    expect(report.output_window.matching).toBe(expected.length);
+  }
+  const help = await f.service.inspectDecoders({
+    decoder: "uart",
+    query: "Σ",
+  });
+  if (!help.ok) throw help.error;
+  expect(
+    signalDecodersSchema.parse(help.value.normalized_result).help_lines,
+  ).toEqual([{ line_number: 3, text: "- label: ΟΣ" }]);
+});
+
 it("attributes discovery admission failures to discovery while sharing the decoding slot", async () => {
   const f = await fixture("gated");
   const active = f.service.decode({ path: f.path, decoders: "uart" });
@@ -563,6 +1279,21 @@ it.each([
       stdout: "sigrok-cli 0.7.1\n",
       stderr: "version warning\n",
     });
+  if (mode === "overflow") {
+    expect(result.error).toBeInstanceOf(AnalysisResourceConstraintError);
+    if (!(result.error instanceof AnalysisResourceConstraintError))
+      throw new Error("Expected command-output allowance refusal");
+    expect(result.error).toMatchObject({
+      resource: "memory",
+      retryable: false,
+    });
+    expect(analysisErrorRemediationAction(result.error)).toContain(
+      "The retained command-output allowance",
+    );
+    expect(analysisErrorRemediationAction(result.error)).not.toMatch(
+      /Review the reported worker memory limits/u,
+    );
+  }
 });
 
 it("retains completed discovery when cleanup fails, then retries before accepting work", async () => {
@@ -625,4 +1356,62 @@ it("retains completed discovery on cancellation during identity verification", a
       },
     },
   });
+});
+
+it.each(
+  [false, true].flatMap((failsClose) =>
+    [false, true].map((discovery) => ({ failsClose, discovery })),
+  ),
+)(
+  "retains completed Evidence and exact cancellation during workspace close: %j",
+  async ({ failsClose, discovery }) => {
+    const f = await fixture("close-abort", failsClose);
+    const result = discovery
+      ? await f.service.inspectDecoders({}, { signal: f.controller.signal })
+      : await f.service.decode(
+          { path: f.path, decoders: "uart" },
+          { signal: f.controller.signal },
+        );
+    if (result.ok) throw new Error("Expected finalization cancellation");
+    const primary = failsClose ? result.error.cleanupPrimary : result.error;
+    expect(primary).toMatchObject({ _tag: "AnalysisCancelledError" });
+    expect(primary?.cause).toBe(f.controller.signal.reason);
+    expect(result.error.partialObservation).toMatchObject({
+      operation: discovery
+        ? "inspect_signal_decoders"
+        : "decode_signal_recording",
+    });
+    expect(result.error.cleanupIncomplete).toBe(failsClose);
+    if (failsClose)
+      await expect(f.service.close()).rejects.toMatchObject({
+        cleanupIncomplete: true,
+      });
+    f.allowCleanup();
+    await f.service.close();
+    expect(result.error.cleanupIncomplete).toBe(false);
+    expect(primary?.cause).toBe(f.controller.signal.reason);
+  },
+);
+
+it("classifies completed nonzero version probes as configuration failures for both signal operations", async () => {
+  const f = await fixture("nonzero-version");
+  for (const task of [
+    () => f.service.decode({ path: f.path, decoders: "uart" }),
+    () => f.service.inspectDecoders({}),
+  ]) {
+    const result = await task();
+    if (result.ok) throw new Error("Expected version admission refusal");
+    expect(projectAnalysisError(result.error)).toMatchObject({
+      code: "capability_unavailable",
+      message: expect.stringContaining("REA_SIGROK_COMMAND"),
+      details: {
+        captured_output: {
+          exit_code: 1,
+          stdout: expect.stringContaining("sigrok-cli 0.7.2"),
+          stderr: "version warning\n",
+        },
+      },
+    });
+  }
+  expect(f.calls()).toBe(2);
 });

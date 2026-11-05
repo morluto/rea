@@ -178,3 +178,182 @@ it.each(["draft-2020-12", "draft-07"] as const)(
     }
   },
 );
+
+it.each(
+  (["draft-2020-12", "draft-07"] as const).flatMap((target) =>
+    (["const", "enum", "default", "examples"] as const).map((keyword) => ({
+      target,
+      keyword,
+    })),
+  ),
+)(
+  "keeps literal reference-looking data in $keyword from changing $target schema identity",
+  ({ target, keyword }) => {
+    const data = {
+      payload: {
+        $ref: "child.json",
+        $id: "literal-id",
+        $dynamicRef: "other.json",
+      },
+    };
+    const annotation =
+      keyword === "enum" || keyword === "examples" ? [data] : data;
+    const canonical = z
+      .strictObject({ payload: z.record(z.string(), z.string()) })
+      .meta({ [keyword]: annotation });
+    const advertised = toolOutputSchemaWithMetadata({
+      ...toolContract("binary_session"),
+      outputSchema: canonical,
+    })["~standard"].jsonSchema.output({ target });
+    expect(advertised.$id).toMatch(
+      /^urn:rea:tool-output:sha256:[a-f0-9]{64}$/u,
+    );
+    expect(Reflect.get(advertised, keyword)).toEqual(annotation);
+    const validate = new AjvJsonSchemaValidator().getValidator(
+      JSON.parse(JSON.stringify(advertised)),
+    );
+    expect(validate(data).valid).toBe(true);
+    expect(validate({ payload: 7 }).valid).toBe(false);
+    expect(validate({ ...data, unexpected: true }).valid).toBe(false);
+  },
+);
+
+it.each(["draft-2020-12", "draft-07"] as const)(
+  "preserves relative references reached through literal values in %s",
+  (target) => {
+    const canonical = z.looseObject({}).meta({
+      $ref: "#/default/a~1b~0c%20value/0",
+      default: { "a/b~c value": [{ $ref: "child.json" }] },
+    });
+    const projected = toolOutputSchemaWithMetadata({
+      ...toolContract("binary_session"),
+      outputSchema: canonical,
+    })["~standard"].jsonSchema.output({ target });
+    expect(projected).not.toHaveProperty("$id");
+    const ajv =
+      target === "draft-2020-12"
+        ? new Ajv2020({ strict: false })
+        : new Ajv({ strict: false });
+    ajv.addSchema({
+      $id: "child.json",
+      type: "object",
+      properties: { value: { type: "string", minLength: 3 } },
+      required: ["value"],
+    });
+    const validate = ajv.compile(projected);
+    expect(validate({ value: "abc" })).toBe(true);
+    expect(validate({ value: "ab" })).toBe(false);
+  },
+);
+
+it.each(["const", "enum", "default", "examples", "$ref", "$id"])(
+  "examines real schemas whose property name is %s",
+  (name) => {
+    const canonical = z.looseObject({}).meta({
+      type: "object",
+      properties: { [name]: { $ref: "child.json" } },
+    });
+    const projected = toolOutputSchemaWithMetadata({
+      ...toolContract("binary_session"),
+      outputSchema: canonical,
+    })["~standard"].jsonSchema.output({ target: "draft-2020-12" });
+    expect(projected).not.toHaveProperty("$id");
+    const ajv = new Ajv2020({ strict: false });
+    ajv.addSchema({ $id: "child.json", type: "string", minLength: 3 });
+    const validate = ajv.compile(projected);
+    expect(validate({ [name]: "abc" })).toBe(true);
+    expect(validate({ [name]: "ab" })).toBe(false);
+  },
+);
+
+it("resolves local pointers against the containing identified resource", () => {
+  const canonical = z.looseObject({}).meta({
+    type: "object",
+    properties: {
+      value: {
+        $id: "https://example.test/nested.json",
+        $ref: "#/default",
+        default: { $ref: "child.json" },
+      },
+    },
+  });
+  const projected = toolOutputSchemaWithMetadata({
+    ...toolContract("binary_session"),
+    outputSchema: canonical,
+  })["~standard"].jsonSchema.output({ target: "draft-2020-12" });
+  expect(projected).not.toHaveProperty("$id");
+  expect(projected.properties).toEqual(canonical.meta()?.properties);
+});
+
+it.each(["#/missing", "#/%XX", "#/default/bad~2key"])(
+  "keeps the existing base when a local pointer cannot be resolved: %s",
+  ($ref) => {
+    const canonical = z
+      .looseObject({})
+      .meta({ $ref, default: { "bad~2key": {} } });
+    const projected = toolOutputSchemaWithMetadata({
+      ...toolContract("binary_session"),
+      outputSchema: canonical,
+    })["~standard"].jsonSchema.output({ target: "draft-2020-12" });
+    expect(projected).not.toHaveProperty("$id");
+  },
+);
+
+it("keeps reference discovery conservative for unknown schema vocabulary", () => {
+  const canonical = z
+    .looseObject({})
+    .meta({ "x-schema": { $ref: "child.json" } });
+  const projected = toolOutputSchemaWithMetadata({
+    ...toolContract("binary_session"),
+    outputSchema: canonical,
+  })["~standard"].jsonSchema.output({ target: "draft-2020-12" });
+  expect(projected).not.toHaveProperty("$id");
+});
+
+it.each(["relative/", "https://example.test/nested.json"])(
+  "preserves the base when a pointer crosses an intermediate $id: %s",
+  ($id) => {
+    const canonical = z.looseObject({}).meta({
+      $ref: "#/default/inner/target",
+      default: {
+        inner: { $id, target: { $ref: "#/other" }, other: { type: "object" } },
+      },
+      other: {},
+    });
+    const projected = toolOutputSchemaWithMetadata({
+      ...toolContract("binary_session"),
+      outputSchema: canonical,
+    })["~standard"].jsonSchema.output({ target: "draft-2020-12" });
+    expect(projected).not.toHaveProperty("$id");
+  },
+);
+
+it("does not synthesize an output base for duplicate embedded resource identifiers", () => {
+  const canonical = z.looseObject({}).meta({
+    type: "object",
+    properties: {
+      before: { $id: "https://example.test/repeated", type: "string" },
+      after: { $id: "https://example.test/repeated", type: "number" },
+    },
+  });
+  const projected = toolOutputSchemaWithMetadata({
+    ...toolContract("binary_session"),
+    outputSchema: canonical,
+  })["~standard"].jsonSchema.output({ target: "draft-2020-12" });
+  expect(projected).not.toHaveProperty("$id");
+});
+
+it.each(["$dynamicRef", "$recursiveRef"])(
+  "preserves the output base for %s",
+  (keyword) => {
+    const canonical = z.looseObject({}).meta({
+      type: "object",
+      properties: { next: { [keyword]: "#" } },
+    });
+    const projected = toolOutputSchemaWithMetadata({
+      ...toolContract("binary_session"),
+      outputSchema: canonical,
+    })["~standard"].jsonSchema.output({ target: "draft-2020-12" });
+    expect(projected).not.toHaveProperty("$id");
+  },
+);

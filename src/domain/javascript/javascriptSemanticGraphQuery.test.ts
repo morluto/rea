@@ -1,3 +1,4 @@
+import { javaScriptSemanticQueryInputSchema } from "./javascriptSemanticQuerySchemas.js";
 import {
   semanticFixtureGraph,
   semanticFixtureInput,
@@ -16,6 +17,7 @@ import {
   JAVASCRIPT_SEMANTIC_NODE_KINDS,
   JAVASCRIPT_SEMANTIC_RELATIONS,
   type JavaScriptSemanticGraphInput,
+  type JavaScriptSemanticGraphNode,
 } from "./javascriptSemanticGraphSchemas.js";
 import {
   createJavaScriptSemanticGraph,
@@ -29,14 +31,80 @@ import {
   resolveJavaScriptSemanticEvidence,
   type JavaScriptSemanticGraph,
 } from "./javascriptSemanticGraph.js";
-import type { JavaScriptSemanticGraphNode } from "./javascriptSemanticGraphSchemas.js";
-import {
-  parseJavaScriptSemanticGraph,
-  serializeJavaScriptSemanticGraph,
-} from "./javascriptSemanticGraphSerialization.js";
 import { queryJavaScriptSemanticGraph } from "./javascriptSemanticQuery.js";
 
 const SHA = "a".repeat(64);
+
+it.each(["unknown", "unavailable", "partial"] as const)(
+  "rejects contradictory truncated %s graph coverage",
+  (status) => {
+    const input = semanticFixtureInput();
+    expect(() =>
+      createJavaScriptSemanticGraph({
+        ...input,
+        coverage: {
+          ...input.coverage,
+          status,
+          truncated: true,
+          limits: [{ name: "nodes", value: 1, unit: "items" }],
+        },
+        limitations: [
+          "Authored truncation tests status and omission coupling.",
+        ],
+      }),
+    ).toThrow(
+      status === "partial"
+        ? "Truncated semantic graph coverage must acknowledge omitted facts"
+        : "Truncated semantic graph coverage must be partial",
+    );
+  },
+);
+
+it("accepts truncated partial coverage with unknown omission extents", () => {
+  const input = semanticFixtureInput();
+  expect(
+    createJavaScriptSemanticGraph({
+      ...input,
+      coverage: {
+        ...input.coverage,
+        status: "partial",
+        truncated: true,
+        omitted_nodes: null,
+        omitted_relations: null,
+        limits: [{ name: "nodes", value: 1, unit: "items" }],
+      },
+      limitations: ["Node ceiling left semantic omission extents unknown."],
+    }).coverage,
+  ).toMatchObject({ status: "partial", truncated: true });
+});
+
+it("accepts omitted unknown occurrences as the reason for semantic truncation", () => {
+  const input = semanticFixtureInput();
+  const family = input.coverage.families[0]!.family;
+  const graph = createJavaScriptSemanticGraph({
+    ...input,
+    coverage: {
+      ...input.coverage,
+      status: "partial",
+      truncated: true,
+      omitted_unknown_occurrences: [
+        { family, reason: "resource-limit", occurrences: 1 },
+      ],
+      limits: [{ name: "unknowns", value: 1, unit: "items" }],
+      families: input.coverage.families.map((coverage) =>
+        coverage.family === family
+          ? { ...coverage, status: "partial" }
+          : coverage,
+      ),
+    },
+    limitations: ["Unknown ceiling omitted one resource-limit occurrence."],
+  });
+  expect(graph.coverage).toMatchObject({
+    truncated: true,
+    omitted_nodes: 0,
+    omitted_relations: 0,
+  });
+});
 const node = (
   kind: (typeof JAVASCRIPT_SEMANTIC_NODE_KINDS)[number],
   role: string,
@@ -191,11 +259,14 @@ it("counts candidate edges by query direction and relation filter", () => {
     direction: "forward-influence" | "backward-provenance",
     allowedRelations: (typeof JAVASCRIPT_SEMANTIC_RELATIONS)[number][],
   ) =>
-    queryJavaScriptSemanticGraph(graph, {
-      seed: { kind: "semantic-node", node_id: binding.node_id },
-      direction,
-      allowed_relations: allowedRelations,
-    });
+    queryJavaScriptSemanticGraph(
+      graph,
+      javaScriptSemanticQueryInputSchema.parse({
+        seed: { kind: "semantic-node", node_id: binding.node_id },
+        direction,
+        allowed_relations: allowedRelations,
+      }),
+    );
 
   expect(query("forward-influence", ["captures"]).status).toBe("ambiguous");
   expect(query("forward-influence", ["defines"]).status).toBe("found");
@@ -225,10 +296,13 @@ it("matches scalar literal seeds and skips non-scalar literal metadata", () => {
   input.nodes.push(...literals);
   const graph = createJavaScriptSemanticGraph(input);
   const query = (value: string | number | boolean | null) =>
-    queryJavaScriptSemanticGraph(graph, {
-      seed: { kind: "literal", value },
-      direction: "forward-influence",
-    }).seed_node_ids;
+    queryJavaScriptSemanticGraph(
+      graph,
+      javaScriptSemanticQueryInputSchema.parse({
+        seed: { kind: "literal", value },
+        direction: "forward-influence",
+      }),
+    ).seed_node_ids;
   const nodeId = (role: string) => {
     const literal = literals.find(({ identity }) => identity.role_key === role);
     if (literal === undefined) throw new Error(`Missing literal ${role}`);
@@ -270,10 +344,13 @@ it("matches exact endpoint properties on request and response carriers only", ()
   const request = input.nodes.find(({ kind }) => kind === "request");
   if (request === undefined) throw new Error("Expected request carrier");
   const query = (value: string) =>
-    queryJavaScriptSemanticGraph(graph, {
-      seed: { kind: "endpoint", value },
-      direction: "forward-influence",
-    });
+    queryJavaScriptSemanticGraph(
+      graph,
+      javaScriptSemanticQueryInputSchema.parse({
+        seed: { kind: "endpoint", value },
+        direction: "forward-influence",
+      }),
+    );
   expect(query(endpoint).seed_node_ids).toEqual(
     [request.node_id, response.node_id].toSorted(),
   );
@@ -341,11 +418,14 @@ it("scopes callers unknowns to call relations while preserving graph uncertainty
     direction: "callers" | "backward-provenance",
     allowed_relations?: ["calls"],
   ) =>
-    queryJavaScriptSemanticGraph(graph, {
-      seed: { kind: "semantic-node", node_id: seed.node_id },
-      direction,
-      ...(allowed_relations === undefined ? {} : { allowed_relations }),
-    });
+    queryJavaScriptSemanticGraph(
+      graph,
+      javaScriptSemanticQueryInputSchema.parse({
+        seed: { kind: "semantic-node", node_id: seed.node_id },
+        direction,
+        ...(allowed_relations === undefined ? {} : { allowed_relations }),
+      }),
+    );
   const callers = query("callers");
   const filtered = query("callers", ["calls"]);
   const backward = query("backward-provenance");
@@ -366,23 +446,29 @@ it("counts candidate ownership cycles once and traverses them finitely", () => {
   const graph = graphWithCandidateRelations();
   const binding = graph.nodes.find(({ label }) => label === "binding");
   if (binding === undefined) throw new Error("Expected binding seed");
-  const result = queryJavaScriptSemanticGraph(graph, {
-    seed: { kind: "semantic-node", node_id: binding.node_id },
-    direction: "ownership",
-    allowed_relations: ["owns"],
-    include_ambiguous_dynamic_edges: true,
-  });
+  const result = queryJavaScriptSemanticGraph(
+    graph,
+    javaScriptSemanticQueryInputSchema.parse({
+      seed: { kind: "semantic-node", node_id: binding.node_id },
+      direction: "ownership",
+      allowed_relations: ["owns"],
+      include_ambiguous_dynamic_edges: true,
+    }),
+  );
 
   expect(result.status).toBe("ambiguous");
   expect(result.relations).toHaveLength(2);
   expect(result.summary.traversed_nodes).toBe(2);
   expect(result.summary.traversed_relations).toBe(2);
   expect(
-    queryJavaScriptSemanticGraph(graph, {
-      seed: { kind: "semantic-node", node_id: binding.node_id },
-      direction: "ownership",
-      allowed_relations: ["constructs-request"],
-    }).status,
+    queryJavaScriptSemanticGraph(
+      graph,
+      javaScriptSemanticQueryInputSchema.parse({
+        seed: { kind: "semantic-node", node_id: binding.node_id },
+        direction: "ownership",
+        allowed_relations: ["constructs-request"],
+      }),
+    ).status,
   ).toBe("found");
 });
 
@@ -392,11 +478,6 @@ it("defines every required relation family and canonicalizes records", () => {
   expect(JAVASCRIPT_SEMANTIC_RELATIONS).toContain("forwards-signal");
   expect(JAVASCRIPT_SEMANTIC_RELATIONS).toContain("validates");
   const graph = semanticFixtureGraph();
-  expect(
-    parseJavaScriptSemanticGraph(
-      JSON.parse(serializeJavaScriptSemanticGraph(graph)),
-    ),
-  ).toEqual(graph);
   expect(graph.nodes.map(({ node_id }) => node_id)).toEqual(
     graph.nodes.map(({ node_id }) => node_id).toSorted(),
   );
@@ -405,7 +486,7 @@ it("defines every required relation family and canonicalizes records", () => {
 it("rejects stale identities, dangling endpoints, and incomplete coverage claims", () => {
   const graph = semanticFixtureGraph();
   expect(() =>
-    parseJavaScriptSemanticGraph({
+    javaScriptSemanticGraphSchema.parse({
       ...graph,
       graph_id: `jsrg_${"0".repeat(64)}`,
     }),
@@ -682,9 +763,7 @@ it("captures nested input before yielding and preserves the synchronous graph co
   const graph = complete(steps);
   expect(graph).toEqual(expected);
   expect(
-    parseJavaScriptSemanticGraph(
-      JSON.parse(serializeJavaScriptSemanticGraph(graph)),
-    ),
+    javaScriptSemanticGraphSchema.parse(JSON.parse(JSON.stringify(graph))),
   ).toEqual(expected);
   expect(isValidatedImmutableJavaScriptSemanticGraph(graph)).toBe(true);
   expect(isValidatedImmutableJavaScriptSemanticGraph(expected)).toBe(false);

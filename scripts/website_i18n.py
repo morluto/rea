@@ -25,6 +25,14 @@ LITERALS = {"REA", "Reverse Engineer Anything", "REA · Reverse Engineer Anythin
 FALLBACK_NOTICE = "Translation is being updated. Read this page in English for now."
 
 
+LANGUAGE_CODE = re.compile(r"[a-z]{2}(?:-[A-Z][a-z]{3})?(?:-[A-Z]{2})?")
+
+
+def is_language_code(value):
+    """Recognize canonical language, optional script and region inventory codes."""
+    return LANGUAGE_CODE.fullmatch(value) is not None
+
+
 def readme_edition_paths(root):
     """Return repo-relative README editions: root English plus docs/readme translations."""
     editions = set()
@@ -57,7 +65,7 @@ def languages(root):
             raise ValueError("Each language needs code, name, readme and dir")
         if not all(isinstance(value, str) and value for value in item.values()):
             raise ValueError("Language fields must be nonempty strings")
-        if not re.fullmatch(r"[a-z]{2}(?:-[A-Z]{2})?", item["code"]) or item["code"] in codes:
+        if not is_language_code(item["code"]) or item["code"] in codes:
             raise ValueError(f"Invalid or duplicate language: {item['code']}")
         if item["dir"] not in ("ltr", "rtl"):
             raise ValueError(f"Invalid text direction: {item['code']}")

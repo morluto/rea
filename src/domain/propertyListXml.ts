@@ -1,49 +1,63 @@
-import type { Document, Node } from "@xmldom/xmldom";
+import { markPlistDictionary } from "./apple/plistUid.js";
+import type { Node } from "@xmldom/xmldom";
 
+import { readXmlPlistSource } from "./propertyListXmlSource.js";
+
+import { createPlistNumberCollector } from "./apple/plistNumbers.js";
+import { UnknownPlistScalar } from "./apple/unknownPlistScalar.js";
+import { MAX_PLIST_DEPTH } from "./apple/plistValue.js";
 import {
-  createPlistNumberCollector,
-  parsePlistIntegerLiteral,
-} from "./apple/plistNumbers.js";
+  decodeXmlPlistDateLiteral,
+  parseXmlPlistIntegerLiteral,
+  parseXmlPlistRealLiteral,
+} from "./propertyListXmlScalar.js";
 
-/** Interpret an already validated, depth-bounded DOM, owning values and number facts together. */
-export const decodeXmlPropertyList = (document: Document) => {
+/** Own source interpretation, depth, values and numeric facts together. */
+export const decodeXmlPropertyList = (
+  text: string,
+  maximumDepth = MAX_PLIST_DEPTH,
+) => {
+  const source = readXmlPlistSource(text, maximumDepth);
+  const document = source.document;
   const root = document.documentElement;
   if (root?.nodeName !== "plist")
     throw new TypeError("malformed document. First element should be <plist>");
   const numbers = createPlistNumberCollector();
-  const requireContent = (node: Node): Node => {
-    if (node.firstChild === null)
-      throw new TypeError(`Cannot parse "" as ${node.nodeName}`);
-    return node.firstChild;
-  };
   const textNode = (node: Node) => node.nodeType === node.TEXT_NODE;
   const characterNode = (node: Node) =>
     textNode(node) || node.nodeType === node.CDATA_SECTION_NODE;
   const content = (node: Node, accepts: (child: Node) => boolean) => {
     let text = "";
-    let complete = true;
     for (
       let child = node.firstChild;
       child !== null;
       child = child.nextSibling
     ) {
       if (accepts(child)) text += child.nodeValue ?? "";
-      else complete = false;
     }
-    return { text, complete };
+    return text;
+  };
+  const hasUnsupportedMarkup = (
+    node: Node,
+    accepts: (child: Node) => boolean,
+  ): boolean => {
+    for (let child = node.firstChild; child !== null; child = child.nextSibling)
+      if (!accepts(child)) return true;
+    return false;
   };
   const dictionaryKey = (node: Node): string => {
     for (let child = node.firstChild; child !== null; child = child.nextSibling)
       if (child.nodeType === child.ELEMENT_NODE)
         return String(node.firstChild?.nodeValue ?? null);
-    return content(node, characterNode).text;
+    return content(node, characterNode);
   };
   const members = function* (node: Node) {
     for (let child = node.firstChild; child !== null; child = child.nextSibling)
       if (
         child.nodeType !== child.TEXT_NODE &&
         child.nodeType !== child.CDATA_SECTION_NODE &&
-        child.nodeType !== child.COMMENT_NODE
+        child.nodeType !== child.COMMENT_NODE &&
+        child.nodeType !== child.PROCESSING_INSTRUCTION_NODE
       )
         yield child;
   };
@@ -76,58 +90,98 @@ export const decodeXmlPropertyList = (document: Document) => {
             key = undefined;
           }
         }
-        if (key !== undefined) entries.push([key, ""]);
-        // Define own properties safely, including __proto__; the caller owns omission accounting.
-        return Object.fromEntries(entries);
+        if (key !== undefined)
+          throw new TypeError("Missing value for key while parsing <dict/>");
+        // Dictionary names are data, including __proto__.
+        const value = Object.fromEntries(entries);
+        // XML archives use Foundation's CF$UID convention; a UID key is data.
+        const keys = Object.keys(value);
+        markPlistDictionary(
+          value,
+          keys.length === 1 &&
+            keys[0] === "CF$UID" &&
+            typeof value["CF$UID"] === "number"
+            ? value["CF$UID"]
+            : undefined,
+        );
+        return value;
       }
       case "key": {
         // The pinned decoder also accepted key elements as scalars. Keep their
         // first-child interpretation separate from dictionary key identities.
         const value = node.firstChild === null ? "" : node.firstChild.nodeValue;
-        if (value === "__proto__")
-          throw new TypeError("__proto__ is not a scalar plist key");
         return value;
       }
       case "string":
-        return content(node, characterNode).text;
+        return content(node, characterNode);
       case "integer": {
-        const first = requireContent(node);
-        const literal = content(node, textNode);
-        const exact = literal.complete
-          ? parsePlistIntegerLiteral(literal.text)
+        const raw = source.scalarLiteral(node);
+        if (!raw.ok) throw raw.error;
+        const unsupportedMarkup = hasUnsupportedMarkup(node, textNode);
+        const exact = !unsupportedMarkup
+          ? parseXmlPlistIntegerLiteral(raw.value)
           : undefined;
-        if (exact === undefined) {
-          numbers.markIncomplete();
-          return Number.parseInt(first.nodeValue ?? "", 10);
-        }
+        if (exact === undefined)
+          return new UnknownPlistScalar(
+            "integer",
+            raw.value,
+            unsupportedMarkup ? "unsupported-markup" : "invalid-literal",
+          );
         numbers.integer(exact);
         const decoded = Number(exact);
-        // Keep a finite integer's identity when it cannot fit even a Number
-        // approximation; otherwise it would be mislabeled as a non-finite real.
+        // Arbitrary-precision integers are a REA extension to CF's range.
         return Number.isFinite(decoded) ? decoded : exact;
       }
       case "real": {
-        requireContent(node);
-        const literal = content(node, characterNode);
-        const value = Number.parseFloat(literal.text);
-        if (literal.complete) numbers.real(value);
-        else numbers.markIncomplete();
-        return value;
+        const raw = source.scalarLiteral(node);
+        if (!raw.ok) throw raw.error;
+        if (hasUnsupportedMarkup(node, characterNode))
+          return new UnknownPlistScalar(
+            "real",
+            raw.value,
+            "unsupported-markup",
+          );
+        const value = parseXmlPlistRealLiteral(raw.value);
+        if (!value.ok)
+          return new UnknownPlistScalar("real", raw.value, value.error);
+        numbers.real(value.value);
+        return value.value;
       }
       case "data": {
-        const binary = atob(content(node, textNode).text.replace(/\s+/gu, ""));
-        return Uint8Array.from(binary, (character) => character.charCodeAt(0));
+        const value = source.dataValue(node);
+        if (!value.ok) throw value.error;
+        return value.value;
       }
       case "date": {
-        const value = requireContent(node).nodeValue;
-        return new Date(value === null ? 0 : value);
+        const raw = source.scalarLiteral(node);
+        if (!raw.ok) throw raw.error;
+        if (hasUnsupportedMarkup(node, textNode))
+          return new UnknownPlistScalar(
+            "date",
+            raw.value,
+            "unsupported-markup",
+          );
+        const date = decodeXmlPlistDateLiteral(raw.value);
+        return date.ok
+          ? date.value
+          : new UnknownPlistScalar("date", raw.value, date.error);
       }
       case "null":
         return null;
       case "true":
-        return true;
-      case "false":
-        return false;
+      case "false": {
+        const raw = source.scalarLiteral(node);
+        if (!raw.ok) throw raw.error;
+        return raw.value === ""
+          ? node.nodeName === "true"
+          : new UnknownPlistScalar(
+              node.nodeName,
+              raw.value,
+              hasUnsupportedMarkup(node, textNode)
+                ? "unsupported-markup"
+                : "invalid-literal",
+            );
+      }
       default:
         throw new TypeError(`Invalid PLIST tag ${node.nodeName}`);
     }

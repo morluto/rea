@@ -8,6 +8,46 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
 cliTest(
+  "rejects a regular-file Electron application root through CLI and MCP",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-electron-file-root-");
+    const app = join(root, "main.js");
+    await writeFile(app, "module.exports = {};");
+    const input = {
+      executable_path: process.execPath,
+      application_path: app,
+      application_root: app,
+    };
+    const request = join(root, "request.json");
+    await writeFile(request, JSON.stringify(input));
+    const result = await cli.run({
+      arguments: ["capture-electron-scenario", request, "--format", "json"],
+      environment: { REA_LOG_LEVEL: "silent" },
+    });
+    const error = {
+      code: "invalid_request",
+      details: {
+        issues: [
+          {
+            path: ["application_root"],
+            reason: "invalid_value",
+            message: expect.stringContaining("not a directory"),
+          },
+        ],
+      },
+    };
+    expect(result.exitCode).toBe(1);
+    expect(result.json).toMatchObject(error);
+    const { call } = await connectLocalToolsMcp();
+    const reply = await call("capture_electron_scenario", input);
+    expect(reply.isError).toBe(true);
+    const content = reply.content.find((item) => item.type === "text");
+    if (content?.type !== "text") throw new Error("Missing error response");
+    expect(JSON.parse(content.text)).toMatchObject({ error });
+  },
+);
+
+cliTest(
   "reports every unresolved Electron path through CLI and MCP without launching",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-electron-invalid-paths-");
@@ -217,9 +257,8 @@ cliTest(
         issues: [
           {
             path: ["executable_path"],
-            message: expect.stringContaining(
-              "must be absolute local filesystem paths",
-            ),
+            reason: "invalid_format",
+            message: expect.stringContaining("absolute local filesystem path"),
           },
         ],
       },

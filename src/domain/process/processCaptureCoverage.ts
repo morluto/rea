@@ -3,41 +3,65 @@ import type { UnverifiedProcessCapture } from "./processCapture.js";
 import type { ProcessObservationSource } from "./processObservation.js";
 
 const byteRetentionSchema = z.strictObject({
-  budget_bytes: z.number().int().nonnegative(),
-  observed_bytes: z.number().int().nonnegative(),
-  retained_bytes: z.number().int().nonnegative(),
-  observed_frames: z.number().int().nonnegative(),
-  retained_frames: z.number().int().nonnegative(),
-  unknown_size_frames: z.number().int().nonnegative().optional(),
+  budget_bytes: z.int().nonnegative(),
+  observed_bytes: z.int().nonnegative(),
+  retained_bytes: z.int().nonnegative(),
+  observed_frames: z.int().nonnegative(),
+  retained_frames: z.int().nonnegative(),
+  unknown_size_frames: z.int().nonnegative().optional(),
+  normalization_over_budget_frames: z.int().nonnegative().optional(),
 });
+
+const enumerationOmissionReasonSchema = z.enum([
+  "identity_changed",
+  "directory_unavailable",
+  "entry_unavailable",
+  "symlink_not_followed",
+]);
 
 /** Filesystem enumeration and whole-file digest coverage for one checkpoint. */
 export const filesystemCoverageSchema = z.strictObject({
-  files_limit: z.number().int().nonnegative(),
-  depth_limit: z.number().int().nonnegative(),
+  files_limit: z.int().nonnegative(),
+  depth_limit: z.int().nonnegative(),
   enumeration_truncated: z.boolean(),
   enumeration_reasons: z.array(
     z.enum([
       "files_limit",
       "depth_limit",
-      "identity_changed",
-      "directory_unavailable",
+      "unrepresentable_name",
+      ...enumerationOmissionReasonSchema.options,
     ]),
   ),
   enumeration_omissions: z.array(
-    z.strictObject({
-      path: z.string(),
-      reason: z.literal("directory_unavailable"),
-      system_code: z.string().nullable(),
-    }),
+    z.union([
+      z.strictObject({
+        path: z.string(),
+        reason: enumerationOmissionReasonSchema,
+        system_code: z.string().nullable(),
+      }),
+      z.strictObject({
+        path: z.string(),
+        reason: z.literal("unrepresentable_name"),
+        system_code: z.null(),
+        raw_name_hex: z.string().regex(/^(?:[0-9a-f]{2})+$/u),
+      }),
+    ]),
   ),
-  hash_budget_bytes: z.number().int().nonnegative(),
-  hashed_bytes: z.number().int().nonnegative(),
+  unobserved_subtrees: z
+    .array(
+      z.strictObject({
+        path: z.string(),
+        reason: z.enum(["symlink_not_followed", "observer_owned"]),
+      }),
+    )
+    .optional(),
+  hash_budget_bytes: z.int().nonnegative(),
+  hashed_bytes: z.int().nonnegative(),
   hash_omissions: z.array(
     z.strictObject({
       path: z.string(),
-      size_bytes: z.number().int().nonnegative(),
-      remaining_budget_bytes: z.number().int().nonnegative(),
+      size_bytes: z.int().nonnegative(),
+      remaining_budget_bytes: z.int().nonnegative(),
       reason: z.enum([
         "file_bytes_budget",
         "file_changed_or_short_read",
@@ -51,17 +75,21 @@ export type FilesystemCoverage = z.infer<typeof filesystemCoverageSchema>;
 
 /** Actual budget accounting; rendered bytes count state and visible lines, not JSON. */
 export const processCaptureTruncationDetailsSchema = z.strictObject({
-  raw_terminal: byteRetentionSchema.describe(
-    "UTF-8 bytes of original PTY chunks; whole chunks are retained or omitted.",
-  ),
+  raw_terminal: byteRetentionSchema
+    .extend({
+      redacted_bytes: z.int().nonnegative().optional(),
+    })
+    .describe(
+      "Original PTY UTF-8 admission accounting. retained_bytes counts the safe projection; redacted_bytes counts removed bytes from admitted chunks. Their sum consumes the original output budget. Whole chunks are otherwise retained or omitted.",
+    ),
   rendered_terminal: byteRetentionSchema.describe(
-    "Cumulative UTF-8 bytes of serialized state plus visible lines, evaluated from retained PTY input; whole frames are retained or omitted. When normalization exceeds a bound before the frame size is known, observed_bytes contains the exact total for size-known frames and unknown_size_frames counts the other omissions.",
+    "Cumulative UTF-8 bytes of serialized state plus visible lines, evaluated from retained PTY input; whole frames are retained or omitted. observed_bytes contains the exact total for size-known frames; unknown_size_frames counts frames whose complete size was not calculated. normalization_over_budget_frames identifies the subset stopped by an ordered normalization stage rather than final representation retention.",
   ),
   normalized_terminal: z
     .strictObject({
-      budget_bytes: z.number().int().nonnegative(),
-      retained_bytes: z.number().int().nonnegative(),
-      omitted_frames: z.number().int().nonnegative(),
+      budget_bytes: z.int().nonnegative(),
+      retained_bytes: z.int().nonnegative(),
+      omitted_frames: z.int().nonnegative(),
     })
     .optional()
     .describe(
@@ -70,11 +98,11 @@ export const processCaptureTruncationDetailsSchema = z.strictObject({
   filesystem_before: filesystemCoverageSchema,
   filesystem_after: filesystemCoverageSchema,
   process: z.strictObject({
-    sample_limit: z.number().int().nonnegative(),
+    sample_limit: z.int().nonnegative(),
     sampling_partial: z.boolean(),
-    retained_samples: z.number().int().nonnegative(),
+    retained_samples: z.int().nonnegative(),
     sample_limit_reached: z.boolean(),
-    sampling_failures: z.number().int().nonnegative(),
+    sampling_failures: z.int().nonnegative(),
     first_sampling_failure: z.string().nullable(),
     coverage: z.literal("sampled"),
   }),
@@ -110,7 +138,7 @@ export const hasCaptureTruncation = (
 
 /** Whether producer accounting reports a gap in the selected observation source. */
 export const processSourceTruncated = (
-  capture: UnverifiedProcessCapture,
+  capture: Pick<UnverifiedProcessCapture, "truncation_details">,
   source: ProcessObservationSource,
 ): boolean => {
   const details = capture.truncation_details;

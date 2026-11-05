@@ -13,7 +13,10 @@ import type {
   ObserveJavaScriptRuntimeInput,
 } from "../../domain/javascript/javascriptRuntimeObservation.js";
 import { err, ok, type Result } from "../../domain/result.js";
-import { completeProviderEvidence } from "../ProviderOperationExecution.js";
+import {
+  completeProviderEvidence,
+  keepIncompleteObservation,
+} from "../ProviderOperationExecution.js";
 import {
   javascriptRuntimeObservationSchema,
   javascriptRuntimeTargetListSchema,
@@ -28,7 +31,11 @@ export const listJavaScriptRuntimeTargets = async (
   const ready = requireProvider(provider, "list_javascript_runtime_targets");
   if (!ready.ok) return ready;
   if (options.signal?.aborted)
-    return err(new AnalysisCancelledError("list_javascript_runtime_targets"));
+    return err(
+      new AnalysisCancelledError("list_javascript_runtime_targets", {
+        cause: options.signal.reason,
+      }),
+    );
   const result = await ready.value.listTargets(input, options);
   if (!result.ok) return result;
   const report = javascriptRuntimeTargetListSchema.safeParse(result.value);
@@ -58,7 +65,11 @@ export const observeJavaScriptRuntime = async (
   const ready = requireProvider(provider, "observe_javascript_runtime");
   if (!ready.ok) return ready;
   if (options.signal?.aborted)
-    return err(new AnalysisCancelledError("observe_javascript_runtime"));
+    return err(
+      new AnalysisCancelledError("observe_javascript_runtime", {
+        cause: options.signal.reason,
+      }),
+    );
   const result = await ready.value.observe(input, options);
   if (!result.ok) {
     const partial = result.error.partialObservation;
@@ -68,15 +79,7 @@ export const observeJavaScriptRuntime = async (
       !("kind" in partial)
     ) {
       const report = javascriptRuntimeObservationSchema.safeParse(partial);
-      if (!report.success && result.error instanceof AnalysisCancelledError)
-        return err(
-          new AnalysisOutputError(
-            "observe_javascript_runtime",
-            "Inspector retained a malformed completed runtime observation.",
-            { cause: report.error },
-          ),
-        );
-      if (report.success)
+      if (report.success) {
         result.error.partialObservation =
           createJavaScriptRuntimeObservationEvidence(
             "observe_javascript_runtime",
@@ -84,8 +87,16 @@ export const observeJavaScriptRuntime = async (
             report.data,
             ready.value.identity(),
           );
+        return result;
+      }
     }
-    return result;
+    return err(
+      keepIncompleteObservation(
+        result.error,
+        "observe_javascript_runtime",
+        "Inspector retained a non-JSON incomplete observation.",
+      ),
+    );
   }
   const report = javascriptRuntimeObservationSchema.safeParse(result.value);
   if (!report.success)

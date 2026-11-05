@@ -16,7 +16,10 @@ describe("bounded file byte reads", () => {
       await writeFile(path, content);
       const handle = await open(path, "r");
       try {
-        expect(await readBoundedFileBytes(handle, limit)).toEqual(content);
+        const actual = await readBoundedFileBytes(handle, limit);
+        if (actual === undefined)
+          throw new Error("Expected complete file bytes");
+        expect(actual.equals(content)).toBe(true);
       } finally {
         await handle.close();
       }
@@ -35,20 +38,21 @@ describe("bounded file byte reads", () => {
           const controller = new AbortController();
           controller.abort(reason);
           await expect(
-            readBoundedFileBytes(handle, 5, controller.signal, expectedSize),
+            readBoundedFileBytes(handle, 5, {
+              signal: controller.signal,
+              expectedSize,
+            }),
           ).rejects.toBe(reason);
           const typed = new Error("typed cancellation", { cause: reason });
           await expect(
-            readBoundedFileBytes(
-              handle,
-              5,
-              controller.signal,
+            readBoundedFileBytes(handle, 5, {
+              signal: controller.signal,
               expectedSize,
-              (observed) => {
+              cancellationFailure: (observed) => {
                 expect(observed).toBe(reason);
                 return typed;
               },
-            ),
+            }),
           ).rejects.toBe(typed);
         }
       } finally {

@@ -8,12 +8,103 @@ API access on this thread: moving dispatch to a worker can deadlock Hopper.
 import json
 import hmac
 import os
+import re
 import socket
 from typing import Any, Optional, Protocol, Sequence
 
 BAD_ADDRESSES = (-1, 0xFFFFFFFFFFFFFFFF, None)
 # The native label setter truncates NSString names at this UTF-16 extent.
 HOPPER_SYMBOL_NAME_UTF16_UNITS = 1024
+# Request JSON payload budget in bytes, excluding the trailing LF.
+# REA_BRIDGE_MAX_REQUEST_BYTES selects it. Unset stays 16777216.
+# 7464 is the authenticated Cutter frame of the largest bounded symbol name.
+# Cutter's 64-receipt recovery status is smaller with a null path. A path
+# that does not fit is null, not an older descriptor path.
+# 536870887 is Node's 536870888-character string ceiling minus the framing LF.
+# The ceiling is the encoded payload; JSON expansion is measured before it.
+# Encoded JSON allowance, in bytes, shared by one instruction list, one
+# native-caller list, and one caller-scan page. This release has no runtime override.
+CALLER_SCAN_ALLOWANCE_BYTES = 512 * 1024
+_BRIDGE_MAX_REQUEST_BYTES_SETTING = "REA_BRIDGE_MAX_REQUEST_BYTES"
+DEFAULT_BRIDGE_MAX_REQUEST_BYTES = 16 * 1024 * 1024
+MINIMUM_BRIDGE_MAX_REQUEST_BYTES = 7464
+MAXIMUM_BRIDGE_MAX_REQUEST_BYTES = 536870887
+
+
+def _bridge_max_request_bytes_constraint():
+    return (
+        "REA_BRIDGE_MAX_REQUEST_BYTES must be a positive decimal integer "
+        "from %d to %d bytes; the default is %d bytes (16 MiB). "
+        "A value below %d bytes cannot carry the largest admitted "
+        "symbol-name command, and a larger value is refused so the encoded "
+        "payload plus its framing LF stays one string under Node's "
+        "single-string ceiling."
+        % (
+            MINIMUM_BRIDGE_MAX_REQUEST_BYTES,
+            MAXIMUM_BRIDGE_MAX_REQUEST_BYTES,
+            DEFAULT_BRIDGE_MAX_REQUEST_BYTES,
+            MINIMUM_BRIDGE_MAX_REQUEST_BYTES,
+        )
+    )
+
+
+def _parse_bridge_max_request_bytes(raw):
+    """Refuse a non-decimal or out-of-range ceiling. Never fall back."""
+    constraint = _bridge_max_request_bytes_constraint()
+    if isinstance(raw, bool):
+        raise RuntimeError(constraint)
+    if isinstance(raw, int):
+        value = raw
+    elif isinstance(raw, str):
+        # ASCII digits only. str.isdigit() accepts numerals such as U+0668
+        # that the TypeScript setting rejects.
+        if re.fullmatch(r"[1-9][0-9]*", raw) is None:
+            raise RuntimeError(constraint)
+        value = int(raw)
+    else:
+        raise RuntimeError(constraint)
+    if (
+        value < MINIMUM_BRIDGE_MAX_REQUEST_BYTES
+        or value > MAXIMUM_BRIDGE_MAX_REQUEST_BYTES
+    ):
+        raise RuntimeError(constraint)
+    return value
+
+
+def _resolve_bridge_max_request_bytes():
+    """Prefer the bootstrap injection, then the process environment, then 16 MiB."""
+    injected = globals().get(_BRIDGE_MAX_REQUEST_BYTES_SETTING)
+    if injected is not None:
+        return _parse_bridge_max_request_bytes(injected), "setting"
+    raw = os.environ.get(_BRIDGE_MAX_REQUEST_BYTES_SETTING)
+    if raw is None:
+        return DEFAULT_BRIDGE_MAX_REQUEST_BYTES, "default"
+    return _parse_bridge_max_request_bytes(raw), "setting"
+
+
+MAX_REQUEST_BYTES, BRIDGE_MAX_REQUEST_BYTES_SOURCE = (
+    _resolve_bridge_max_request_bytes()
+)
+
+
+def _bridge_max_request_bytes_recovery():
+    return (
+        "The effective REA_BRIDGE_MAX_REQUEST_BYTES value is %d bytes "
+        "(source %s; default %d, floor %d, maximum %d). "
+        "Set REA_BRIDGE_MAX_REQUEST_BYTES in the environment that starts REA "
+        "to a decimal integer from %d to %d, then restart REA. "
+        "Restart Hopper or Cutter from that same environment so the bridge "
+        "uses this ceiling."
+        % (
+            MAX_REQUEST_BYTES,
+            BRIDGE_MAX_REQUEST_BYTES_SOURCE,
+            DEFAULT_BRIDGE_MAX_REQUEST_BYTES,
+            MINIMUM_BRIDGE_MAX_REQUEST_BYTES,
+            MAXIMUM_BRIDGE_MAX_REQUEST_BYTES,
+            MINIMUM_BRIDGE_MAX_REQUEST_BYTES,
+            MAXIMUM_BRIDGE_MAX_REQUEST_BYTES,
+        )
+    )
 _rea_session_document = None
 _search_inventory_cache = {}
 _pseudocode_cache = {}
@@ -144,6 +235,9 @@ EXHAUSTIVE_ANALYSIS_METHODS = frozenset(
         "procedure_assembly",
         "procedure_callees",
         "procedure_callers",
+        "rea_caller_scan_page",
+        "rea_caller_scan_target",
+        "rea_caller_base",
         "procedure_info",
         "procedure_pseudo_code",
         "procedure_references",
@@ -236,11 +330,27 @@ def _name_matches(document, address, name):
     return observed == name or (not name and observed is None)
 
 
-def _address(document, value=None):
-    """Keep explicit hexadecimal coordinates distinct from symbol names."""
+def _bookmark_api(document, name):
+    method = getattr(document, name, None)
+    if not callable(method):
+        raise CapabilityUnavailableError(
+            "Hopper's public Python API does not expose %s" % name
+        )
+    return method
+
+
+def _bookmark_name(document, address):
+    return _bookmark_api(document, "getBookmarkName")(address)
+
+
+def _address_selection(document, value=None):
+    """Own the coordinate and whether it was selected by symbol or address."""
     if value is None:
-        return document.getCurrentAddress()
+        return document.getCurrentAddress(), "cursor"
     _api_text(value, "Address")
+    if value.startswith("file-offset:"):
+        raise InvalidRequestError("Hopper does not support file-offset: selectors; select Ghidra for source-file coordinates or use a Hopper analysis address")
+    source = "address"
     if value.lower().startswith("0x"):
         try:
             address = int(value, 16)
@@ -251,6 +361,8 @@ def _address(document, value=None):
         # Prefer an observed symbol, retaining bare-hex compatibility only
         # when Hopper has no symbol with the supplied name.
         address = document.getAddressForName(value)
+        if address not in BAD_ADDRESSES:
+            source = "symbol"
         if address in BAD_ADDRESSES:
             try:
                 address = int(value, 16)
@@ -258,7 +370,11 @@ def _address(document, value=None):
                 raise InvalidRequestError("Unknown Hopper address or name: %s" % value) from error
     if not 0 <= address < 0xFFFFFFFFFFFFFFFF:
         raise InvalidRequestError("Address is outside Hopper's usable unsigned 64-bit range: %s" % value)
-    return address
+    return address, source
+
+
+def _address(document, value=None):
+    return _address_selection(document, value)[0]
 
 
 def _segment(document, address):
@@ -269,10 +385,15 @@ def _segment(document, address):
 
 
 def _procedure(document, value=None):
-    address = document.getCurrentAddress() if value is None else _address(document, value)
+    address, source = _address_selection(document, value)
     result = _segment(document, address).getProcedureAtAddress(address)
     if result is None:
         raise InvalidRequestError("No procedure exists at the requested address")
+    if source == "symbol" and address != result.getEntryPoint():
+        raise InvalidRequestError(
+            "Symbol %s at %s is inside procedure %s at %s; select its entry name/address or use resolve_containing_procedure for explicit containment"
+            % (value, _hex(address), _procedure_name(result), _hex(result.getEntryPoint()))
+        )
     return result
 
 
@@ -285,6 +406,7 @@ def _procedure_identity(procedure):
     return {
         "address": _hex(procedure.getEntryPoint()),
         "name": _procedure_name(procedure),
+        "symbol": None,
         "classification": None,
         "body": {
             "available": False,
@@ -369,19 +491,30 @@ def _instruction_addresses(procedure):
     return result
 
 
-def _native_calls(procedure, direction):
+def _iter_native_calls(procedure, direction):
     references = procedure.getAllCallees() if direction == "outgoing" else procedure.getAllCallers()
     kinds = {0: "none", 1: "unknown", 2: "direct", 3: "objective_c"}
-    calls = {}
-    unresolved = []
     for reference in references:
         source, target, kind = reference.fromAddress(), reference.toAddress(), reference.type()
         if source in BAD_ADDRESSES:
+            yield None, None, None
             continue
         if target in BAD_ADDRESSES:
-            unresolved.append({"address": _hex(source), "reason": "Native CallReference has no resolved target (type %s)" % kind})
+            yield source, None, {"address": _hex(source), "reason": "Native CallReference has no resolved target (type %s)" % kind}
             continue
-        calls[(source, target)] = {"classification": kinds.get(kind, "unknown"), "provider_type": kind, "provenance": "hopper-public-python-api:CallReference"}
+        yield source, target, {"classification": kinds.get(kind, "unknown"), "provider_type": kind, "provenance": "hopper-public-python-api:CallReference"}
+
+
+def _native_calls(procedure, direction):
+    calls = {}
+    unresolved = []
+    for source, target, detail in _iter_native_calls(procedure, direction):
+        if detail is None:
+            continue
+        if target is None:
+            unresolved.append(detail)
+        else:
+            calls[(source, target)] = detail
     return calls, sorted(unresolved, key=lambda item: int(item["address"], 16))
 
 
@@ -431,8 +564,134 @@ def _procedure_map(document):
     return result
 
 
-def _strings(document):
-    return {address: record["value"] for address, record in _string_inventory(document).items()}
+def _caller_target_data(procedure):
+    addresses = []
+    seen = set()
+    size = 0
+    for block in procedure.basicBlockIterator():
+        for address in _block_instruction_addresses(procedure, block):
+            if address in seen:
+                continue
+            encoded = _hex(address)
+            size += len(encoded) + 4
+            if size > CALLER_SCAN_ALLOWANCE_BYTES:
+                return {"target": _procedure_identity(procedure), "instructions": addresses, "instructions_complete": False}
+            addresses.append(encoded)
+            seen.add(address)
+    return {"target": _procedure_identity(procedure), "instructions": addresses, "instructions_complete": True}
+
+
+def _caller_scan_target(document, params):
+    return _caller_target_data(_procedure(document, params.get("procedure")))
+
+
+def _caller_base(document, params):
+    procedure = _procedure(document, params.get("procedure"))
+    callers = []
+    size = 0
+    complete = True
+    for item in procedure.getAllCallerProcedures():
+        address = _hex(item.getEntryPoint())
+        size += len(address) + 4
+        if size > CALLER_SCAN_ALLOWANCE_BYTES:
+            complete = False
+            break
+        callers.append(address)
+    return {
+        **_caller_target_data(procedure),
+        "callers": sorted(callers, key=lambda value: int(value, 16)),
+        "callers_complete": complete,
+    }
+
+
+def _caller_scan_page(document, params):
+    """Observe forward relationships in one bounded, stateless bridge request."""
+    start = params.get("start")
+    if isinstance(start, bool) or not isinstance(start, int) or start < 0:
+        raise InvalidRequestError("Caller scan start must be a non-negative integer")
+    segments = document.getSegmentsList()
+    counts = [segment.getProcedureCount() for segment in segments]
+    total = sum(counts)
+    end = min(start + 64, total)
+    if start > total:
+        raise InvalidRequestError("Caller scan start exceeds the procedure inventory")
+    items = []
+    item_bytes = 0
+    page_limit = CALLER_SCAN_ALLOWANCE_BYTES
+    oversized = False
+    identities = {}
+    containing = {}
+
+    def identity(procedure):
+        entry = procedure.getEntryPoint()
+        if entry not in identities:
+            identities[entry] = _procedure_identity(procedure)
+        return identities[entry]
+
+    def owner(address):
+        if address not in containing:
+            procedure, _ = _containing_procedure(document, address)
+            containing[address] = identity(procedure) if procedure is not None else None
+        return containing[address]
+
+    segment_start = 0
+    for segment, count in zip(segments, counts):
+        begin, stop = max(start - segment_start, 0), min(end - segment_start, count)
+        segment_start += count
+        for index in range(begin, max(begin, stop)):
+            candidate = segment.getProcedureAtIndex(index)
+            item = {"caller": identity(candidate), "callees": [], "references": []}
+            size = len(json.dumps(item, ensure_ascii=True).encode("utf-8")) + 1
+            remaining = page_limit - item_bytes
+            too_large = size > remaining
+            if not too_large:
+                for callee in candidate.getAllCalleeProcedures():
+                    address = _hex(callee.getEntryPoint())
+                    size += len(address) + 4
+                    if size > remaining:
+                        too_large = True
+                        break
+                    item["callees"].append(address)
+            if not too_large:
+                callee_entries = set(item["callees"])
+                for source, destination, call in _iter_native_calls(candidate, "outgoing"):
+                    # Account for every native record, even when its target cannot
+                    # be associated with an observed procedure.
+                    size += 32
+                    if size > remaining:
+                        too_large = True
+                        break
+                    if destination is None:
+                        continue
+                    source_procedure = item["caller"] if _hex(source) == item["caller"]["address"] else owner(source)
+                    target_address = _hex(destination)
+                    if target_address in callee_entries:
+                        target_entry = target_address
+                    else:
+                        target_procedure = owner(destination)
+                        if target_procedure is None:
+                            continue
+                        target_entry = target_procedure["address"]
+                    edge = {
+                        "source_address": _hex(source), "target_address": _hex(destination),
+                        "source_procedure": "caller" if source_procedure is not None and source_procedure["address"] == item["caller"]["address"] else source_procedure,
+                        "target_procedure": target_entry,
+                        "call": call,
+                    }
+                    size += len(json.dumps(edge, ensure_ascii=True).encode("utf-8")) + 1
+                    if size > remaining:
+                        too_large = True
+                        break
+                    item["references"].append(edge)
+            if too_large:
+                oversized = not items
+                break
+            items.append(item)
+            item_bytes += size
+        else:
+            continue
+        break
+    return {"start": start, "next": start + len(items), "total": total, "items": items, "oversized": oversized}
 
 
 def _string_record(segment, address, display):
@@ -521,7 +780,7 @@ def _search_inventory(document, kind):
         if kind == "procedure":
             values = _procedure_map(document)
         elif kind == "string":
-            values = _strings(document)
+            values = _string_inventory(document)
         elif kind == "name":
             values = {_hex(address): value for address, value in _name_map(document).items()}
         else:
@@ -548,23 +807,17 @@ def _search_results(document, kind, params):
     else:
         raise CapabilityUnavailableError("Regex matching requires REA's supervised worker; the native bridge only executes literal searches")
 
-    selected = []
-    for item in _search_inventory(document, kind):
-        if not matches(item[1]):
-            continue
-        selected.append(item)
-    if not selected:
-        return []
     if kind == "string":
-        records = _string_inventory(document)
-        return [{"address": address, **records[address]} for address, _ in selected]
-    return [
-            {
-                "address": address,
-                "value": value,
-            }
-            for address, value in selected
+        return [
+            {"address": address, **record}
+            for address, record in _search_inventory(document, kind)
+            if matches(record["value"])
         ]
+    return [
+        {"address": address, "value": value}
+        for address, value in _search_inventory(document, kind)
+        if matches(value)
+    ]
 
 
 def _unavailable(reason):
@@ -741,6 +994,7 @@ def _dispatch(method, params):
             "version": "1.0.0",
             "run_id": REA_RUN_ID,
             "process_id": os.getpid(),
+            "max_request_bytes": MAX_REQUEST_BYTES,
         }
     if method in ("shutdown", "shutdown_document"):
         document = _session_document()
@@ -779,6 +1033,15 @@ def _dispatch(method, params):
     document = _document(params.get("document"))
     if method in EXHAUSTIVE_ANALYSIS_METHODS:
         _api().require_analysis_complete(document, method)
+
+    if method == "rea_caller_scan_target":
+        return _caller_scan_target(document, params)
+
+    if method == "rea_caller_base":
+        return _caller_base(document, params)
+
+    if method == "rea_caller_scan_page":
+        return _caller_scan_page(document, params)
 
     if method == "analyze_function":
         return _analyze_function(document, params)
@@ -964,6 +1227,7 @@ def _dispatch(method, params):
             length = sum(max(0, _basic_block_end(procedure, block) - block.getStartingAddress()) for block in blocks)
             return {
                 "name": _procedure_name(procedure),
+                "symbol": None,
                 "entrypoint": _hex(procedure.getEntryPoint()),
                 "basicblock_count": procedure.getBasicBlockCount(),
                 "length": length,
@@ -1004,23 +1268,41 @@ def _dispatch(method, params):
         observed = getter(address)
         return observed == comment or (comment == "" and observed is None)
     if method == "list_bookmarks":
-        return [{"address": _hex(item), "name": document.getBookmarkName(item)} for item in document.getBookmarks()]
+        return [{"address": _hex(item), "name": _bookmark_name(document, item)} for item in _bookmark_api(document, "getBookmarks")()]
     if method == "set_bookmark":
         address = _address(document, params.get("address"))
         _segment(document, address)
         name = params.get("name")
         if name is not None:
             _api_text(name, "Bookmark name")
-        document.setBookmarkAtAddress(address, name)
-        return document.hasBookmarkAtAddress(address)
+        has_bookmark = _bookmark_api(document, "hasBookmarkAtAddress")
+        exists = has_bookmark(address)
+        if name is None and exists:
+            # Omission means preserve the existing bookmark and its name.
+            return True
+        _bookmark_api(document, "getBookmarkName")
+        if name == "" and exists:
+            rename = _bookmark_api(document, "renameBookmarkAtAddress")
+            rename(address, name)
+        else:
+            setter = _bookmark_api(document, "setBookmarkAtAddress")
+            setter(address, name)
+        if not has_bookmark(address):
+            return False
+        observed = _bookmark_name(document, address)
+        if name is None:
+            return observed is None or observed == ""
+        return observed == name or (name == "" and observed is None)
     if method == "unset_bookmark":
         address = _address(document, params.get("address"))
         # Permit removing a legacy orphan bookmark, but do not report success
         # for an unmapped address with no bookmark to remove.
-        if not document.hasBookmarkAtAddress(address):
+        has_bookmark = _bookmark_api(document, "hasBookmarkAtAddress")
+        remove_bookmark = _bookmark_api(document, "removeBookmarkAtAddress")
+        if not has_bookmark(address):
             _segment(document, address)
-        document.removeBookmarkAtAddress(address)
-        return not document.hasBookmarkAtAddress(address)
+        remove_bookmark(address)
+        return not has_bookmark(address)
     raise InvalidRequestError("Unknown bridge method")
 
 
@@ -1030,8 +1312,22 @@ def _serve_connection(connection):
     should_stop = False
     try:
         while True:
-            line = file.readline()
+            # Bound the read itself. The payload budget excludes LF, so permit
+            # one additional byte for the delimiter while still refusing an
+            # oversized unterminated peer without waiting for EOF.
+            line = file.readline(MAX_REQUEST_BYTES + 1)
             if not line:
+                break
+            if not line.endswith(b"\n"):
+                message = (
+                    "Bridge request exceeds the %d-byte payload limit. %s"
+                    % (MAX_REQUEST_BYTES, _bridge_max_request_bytes_recovery())
+                    if len(line) > MAX_REQUEST_BYTES
+                    else "Incomplete bridge request frame"
+                )
+                _write_message(file, {"id": 0, "error": _safe_diagnostic(
+                    InvalidRequestError(message)
+                )})
                 break
             request_id = None
             authenticated = False

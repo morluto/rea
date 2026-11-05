@@ -23,11 +23,20 @@ const metaInfoTag = {
 };
 
 /**
- * Read values from Apktool's tagged metadata document. YAML's core schema
- * distinguishes null from quoted strings; numeric values use their source
- * range so version codes retain the spelling Apktool emitted.
+ * Read the producer's metadata dialect once. Apktool 2.9.0 and later (including
+ * 3) emit an untagged, line-oriented document with Java-escaped strings; older
+ * tagged documents use YAML core semantics. Numeric values retain their source
+ * spelling.
  */
 export const parseApktoolYml = (yml: string): ApktoolMetadata => {
+  const source = yml.replace(/^\uFEFF/u, "");
+  const header = source.split(/\r\n?|\n/u, 1)[0] ?? "";
+  if (
+    /^version: (?:2\.(?:9|[1-9]\d)|3\.\d+)\.\d+(?:[-+][0-9A-Za-z.+-]+)?$/u.test(
+      header,
+    )
+  )
+    return parseApktool3Metadata(source);
   const document = parseDocument(yml, {
     schema: "core",
     customTags: [metaInfoTag],
@@ -50,6 +59,81 @@ export const parseApktoolYml = (yml: string): ApktoolMetadata => {
       yml,
     ),
   };
+};
+
+/** Fields written by VersionInfo.write and SdkInfo.write in Apktool 3. */
+const apktool3Fields = new Map<string, keyof ApktoolMetadata>([
+  ["versionInfo.versionName", "versionName"],
+  ["versionInfo.versionCode", "versionCode"],
+  ["sdkInfo.minSdkVersion", "minSdkVersion"],
+  ["sdkInfo.targetSdkVersion", "targetSdkVersion"],
+]);
+
+/**
+ * Apktool 3.0.3 YamlWriter, like the 2.9.0 writer it descends from, writes
+ * strings without YAML quoting or comment syntax. Read its direct mapping
+ * records before a YAML parser can discard hashes, consume quotes, or
+ * reinterpret an empty string or literal `null`.
+ */
+const parseApktool3Metadata = (source: string): ApktoolMetadata => {
+  const values = new Map<keyof ApktoolMetadata, string>();
+  const sections = new Set<string>();
+  let section: string | undefined;
+  for (const line of source.split(/\r\n?|\n/u)) {
+    if (line.trim() === "" || /^[#!]/u.test(line)) continue;
+    if (!line.startsWith(" ")) {
+      const separator = line.indexOf(":");
+      section = separator === -1 ? undefined : line.slice(0, separator);
+      if (section === "version") {
+        if (sections.has(section))
+          throw new TypeError("apktool.yml has a duplicate producer version");
+        sections.add(section);
+        continue;
+      }
+      if (section !== "versionInfo" && section !== "sdkInfo") continue;
+      if (line.slice(separator + 1).trim() !== "" || sections.has(section))
+        throw new TypeError(`apktool.yml has an invalid ${section} mapping`);
+      sections.add(section);
+      continue;
+    }
+    const record = /^  ([^ :]+):(?: (.*))?$/su.exec(line);
+    if (record === null) continue;
+    const path = `${section ?? ""}.${record[1] ?? ""}`;
+    const field = apktool3Fields.get(path);
+    if (field === undefined) continue;
+    if (values.has(field))
+      throw new TypeError(`apktool.yml has a duplicate ${path} field`);
+    const value = record[2] ?? "";
+    values.set(field, field === "versionCode" ? value : apktool3String(value));
+  }
+  return {
+    versionName: values.get("versionName") ?? null,
+    versionCode: values.get("versionCode") ?? null,
+    minSdkVersion: values.get("minSdkVersion") ?? null,
+    targetSdkVersion: values.get("targetSdkVersion") ?? null,
+  };
+};
+
+const apktool3String = (source: string): string => {
+  // The producer escapes every double quote. An unescaped opening double
+  // quote therefore belongs to a standard quoted-YAML compatibility input.
+  if (source.startsWith('"')) {
+    const document = parseDocument(source, { schema: "core", strict: true });
+    if (
+      document.errors.length === 0 &&
+      isScalar(document.contents) &&
+      typeof document.contents.value === "string"
+    )
+      return document.contents.value;
+    throw new TypeError("apktool.yml has an invalid quoted string");
+  }
+  // Every escape emitted by YamlStringEscapeUtils is also a JSON string
+  // escape, including UTF-16 surrogate pairs. Decode once, preserving a
+  // doubled backslash followed by literal `u` or `n` as source text.
+  const decoded: unknown = JSON.parse(`"${source}"`);
+  if (typeof decoded !== "string")
+    throw new TypeError("apktool.yml has an invalid Apktool 3 string");
+  return decoded;
 };
 
 /** Read the package attribute from the decoded Android manifest root. */

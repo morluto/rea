@@ -1,12 +1,19 @@
 import { expect, it } from "vitest";
 
-import { snapshotRoots } from "./FilesystemSnapshot.js";
+import {
+  ProcessCaptureSnapshotFailure,
+  snapshotRoots,
+} from "./FilesystemSnapshot.js";
 import { buildCaptureResult } from "./ProcessCaptureLifecycle.js";
-import { isInitializedPtyRoot, readLinuxChildren } from "./ProcessSampling.js";
+import { isInitializedPtyRoot } from "./ProcessSampling.js";
+import { readLinuxChildren } from "./LinuxProcessSampling.js";
 import { TerminalRenderer } from "./TerminalRenderer.js";
-import { parseProcessScenario } from "../../domain/process/processScenario.js";
+import { processScenarioSchema } from "../../domain/process/processScenario.js";
 import type { ProcessCapture } from "../../domain/process/processCaptureParsing.js";
-import type { ProcessCaptureTruncationDetails } from "../../domain/process/processCaptureCoverage.js";
+import type {
+  FilesystemCoverage,
+  ProcessCaptureTruncationDetails,
+} from "../../domain/process/processCaptureCoverage.js";
 import { emptyProcessCapture as emptyCapture } from "../../domain/process/processCapture.fixture.js";
 
 const base = {
@@ -70,7 +77,7 @@ it("returns detached terminal observations", async () => {
       const utf8Bytes = Buffer.byteLength(value);
       return utf8Bytes <= maxBytes
         ? { state: "normalized", value, utf8Bytes }
-        : { state: "over_budget" };
+        : { state: "over_budget", reason: "retention" };
     },
     recordEvent: (collection, index) =>
       observed.push(`${collection}:${String(index)}`),
@@ -136,7 +143,7 @@ it("preserves rendered observation order instead of timestamp sorting", () => {
       coverage: emptyFilesystemCoverage(),
     },
     truncationDetails: truncationDetails([], renderedFrames, []),
-    scenario: parseProcessScenario(base),
+    scenario: processScenarioSchema.parse(base),
     rootPid: 1,
     samplingPartial: false,
     renderedFrames,
@@ -172,7 +179,7 @@ it("marks redacted scripted input as an interaction unknown", () => {
       coverage: emptyFilesystemCoverage(),
     },
     truncationDetails: truncationDetails([], [], []),
-    scenario: parseProcessScenario({
+    scenario: processScenarioSchema.parse({
       ...base,
       events: [{ type: "input", at_ms: 0, data: "secret", sensitive: true }],
     }),
@@ -185,7 +192,9 @@ it("marks redacted scripted input as an interaction unknown", () => {
         scheduled_at_ms: 0,
         dispatched_at_ms: 0,
         type: "input",
-        data: "<redacted-input:6-bytes>",
+        data: "",
+        sensitive: true,
+        input_bytes: 6,
         outcome: "dispatched",
       },
     ],
@@ -201,7 +210,7 @@ it("marks redacted scripted input as an interaction unknown", () => {
   expect(result.residual_unknowns).toContainEqual({
     scope: "interaction",
     reason:
-      "Sensitive scripted input values are redacted from process capture Evidence.",
+      "Sensitive scripted input literals and retained terminal echoes are redacted. Terminal states are reconstructed from the redacted stream; private display effects and transformed values remain unknown.",
   });
 });
 
@@ -215,7 +224,10 @@ it("collects and deduplicates children from every Linux thread", async () => {
           taskId === 100 ? "201 202" : taskId === 101 ? "202 203" : "",
         ),
     }),
-  ).toEqual([201, 202, 203]);
+  ).toEqual({
+    value: [201, 202, 203],
+    diagnostics: { count: 0, first: null, interrupted: false },
+  });
 });
 
 it("admits PTY samples only after stable session and token setup", () => {
@@ -267,13 +279,99 @@ it("admits PTY samples only after stable session and token setup", () => {
 it("cancels filesystem snapshots before traversing declared roots", async () => {
   const controller = new AbortController();
   controller.abort();
-  await expect(
-    snapshotRoots(
-      parseProcessScenario({
-        ...base,
-        filesystem_observation_paths: ["/tmp"],
-      }),
-      controller.signal,
-    ),
-  ).rejects.toMatchObject({ name: "AbortError" });
+  const failure: unknown = await snapshotRoots(
+    processScenarioSchema.parse({
+      ...base,
+      filesystem_observation_paths: ["/tmp"],
+    }),
+    controller.signal,
+  ).catch((cause: unknown) => cause);
+  expect(failure).toBeInstanceOf(ProcessCaptureSnapshotFailure);
+  expect(failure).toMatchObject({
+    _tag: "ProcessCaptureError",
+    reason: "cancelled",
+    userCategory: "cancelled",
+    cause: expect.objectContaining({ name: "AbortError" }),
+    snapshot: {
+      files: [],
+      truncated: true,
+      completeRoots: [],
+      coverage: {
+        hashed_bytes: 0,
+        enumeration_omissions: [],
+        hash_omissions: [],
+      },
+    },
+    cleanupLeases: [],
+    readFailures: [],
+  });
+  expect(failure instanceof Error ? failure.cause : undefined).toBe(
+    controller.signal.reason,
+  );
 });
+
+it.each(["symlink_not_followed", "observer_owned"] as const)(
+  "projects %s subtree coverage into Evidence limitations and residual unknowns",
+  (reason) => {
+    const capture = emptyCapture();
+    const build = (coverage: FilesystemCoverage) => {
+      const snapshot = {
+        files: [],
+        truncated: false,
+        completeRoots: ["root_0"],
+        coverage,
+      };
+      return buildCaptureResult({
+        frames: [],
+        exit: { exitCode: 0, reason: "exited" },
+        samples: [],
+        before: snapshot,
+        after: snapshot,
+        truncationDetails: {
+          ...truncationDetails([], [], []),
+          filesystem_before: coverage,
+          filesystem_after: coverage,
+        },
+        scenario: processScenarioSchema.parse({
+          ...base,
+          filesystem_observation_paths: ["/selected"],
+        }),
+        rootPid: 1,
+        samplingPartial: false,
+        renderedFrames: [],
+        interactions: [],
+        checkpoints: capture.filesystem_checkpoints,
+        settlement: {
+          state: capture.settlement.state,
+          elapsed_ms: capture.settlement.elapsed_ms,
+        },
+        manifest: capture.manifest,
+        eventJournal: [],
+      });
+    };
+    const complete = { ...emptyFilesystemCoverage(), unobserved_subtrees: [] };
+    expect(
+      build(complete).residual_unknowns.filter(
+        ({ scope }) => scope === "filesystem",
+      ),
+    ).toEqual([]);
+    const result = build({
+      ...complete,
+      unobserved_subtrees: [{ path: "root_0:.", reason }],
+    });
+    const unknowns = result.residual_unknowns.filter(
+      ({ scope }) => scope === "filesystem",
+    );
+    expect(unknowns).toHaveLength(2);
+    for (const unknown of unknowns) {
+      expect(unknown.reason).toContain("root_0:.");
+      expect(unknown.reason).toContain(
+        reason === "symlink_not_followed"
+          ? "symbolic links are not followed"
+          : "exact observer-owned directory",
+      );
+      expect(result.limitations).toContain(unknown.reason);
+    }
+    expect(result.truncated).toBe(false);
+  },
+);

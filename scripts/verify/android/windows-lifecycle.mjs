@@ -13,10 +13,8 @@ import { dirname, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
-import {
-  resolveJadxConfigurationInputs,
-  validateJadxConfiguration,
-} from "../../../dist/android/JadxConfiguration.js";
+import { resolveJadxConfigurationInputs } from "../../../dist/android/JadxConfiguration.js";
+import { validateVerifierJadxConfiguration } from "../../lib/jadx-configuration-inspection.mjs";
 import { verifyWindowsGuardianIsolation } from "./windows-guardian-isolation.mjs";
 
 /** Verify real Windows cancellation, disconnect and abrupt CLI owner exit. */
@@ -45,7 +43,7 @@ async function verifyJavaSelection(environment) {
     environment,
     "inspect_android_package",
   );
-  await validateJadxConfiguration(
+  await validateVerifierJadxConfiguration(
     selected,
     environment,
     "inspect_android_package",
@@ -65,7 +63,7 @@ async function verifyJavaSelection(environment) {
       pathEnvironment,
       "inspect_android_package",
     );
-    await validateJadxConfiguration(
+    await validateVerifierJadxConfiguration(
       onPath,
       pathEnvironment,
       "inspect_android_package",

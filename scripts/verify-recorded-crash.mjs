@@ -13,6 +13,7 @@ import {
   startCoreSentinel,
 } from "./verify/recorded-crash/fixtures.mjs";
 import { verifyCoreInspectionTrace } from "./verify/recorded-crash/trace.mjs";
+import { historicalPidTraceContract } from "./verify/recorded-crash/trace-policy.mjs";
 
 const environment = Object.fromEntries(
   Object.entries(process.env).filter(([, value]) => typeof value === "string"),
@@ -61,6 +62,10 @@ try {
   const core = await createRecordedCore(options);
   sentinel = await startCoreSentinel(options);
   sentinel.assertAlive();
+  // Valid signed ELF PID, outside this Linux host's assignable PID range.
+  const unlistedPid = 2 ** 31 - 1;
+  const pidMaximum = Number(await readFile("/proc/sys/kernel/pid_max", "utf8"));
+  assert.ok(Number.isSafeInteger(pidMaximum) && pidMaximum < unlistedPid);
   const fixtures = JSON.parse(
     await fixtureCommand(
       environment.REA_PWNTOOLS_PYTHON,
@@ -72,6 +77,7 @@ try {
         core,
         root.path,
         String(sentinel.pid),
+        String(unlistedPid),
       ],
       options,
     ),
@@ -174,6 +180,33 @@ try {
     );
     assert.equal(opaque.threads.length, 1);
     cases++;
+    for (const [name, kind] of [
+      ["gnu-type3", 3],
+      ["gnu-file-collision", 0x46494c45],
+    ]) {
+      const value = await basic.inspect(mode, fixtures[name]);
+      assert.ok(
+        value.notes.some(
+          (note) =>
+            note.owner_display === "GNU" &&
+            note.type === kind &&
+            note.type_id === kind,
+        ),
+      );
+      assert.equal(value.threads.length, 1);
+      cases++;
+    }
+    for (const [name, kind, label] of [
+      ["aarch64-archext", 0x70000000, "PT_AARCH64_ARCHEXT"],
+      ["aarch64-unwind", 0x70000001, "PT_AARCH64_UNWIND"],
+    ]) {
+      const value = await basic.inspect(mode, fixtures[name]);
+      assert.equal(value.architecture, "aarch64-little-endian");
+      assert.equal(value.segments[0]?.type_id, kind);
+      assert.equal(value.segments[0]?.type, label);
+      assert.equal(value.threads.length, 0);
+      cases++;
+    }
     const noSignals = await basic.inspect(mode, fixtures["unknown-signals"]);
     assert.equal(noSignals.signals.length, 0);
     assert.equal(noSignals.threads.length, 2);
@@ -183,6 +216,22 @@ try {
     assert.equal(noNotes.threads.length, 0);
     assert.equal(noNotes.note_interpretation_completeness, "unknown");
     cases++;
+    for (const [name, architecture, type] of [
+      ["aarch64-archext", "aarch64-little-endian", "PT_AARCH64_ARCHEXT"],
+      ["aarch64-unwind", "aarch64-little-endian", "PT_AARCH64_UNWIND"],
+      ["aarch64-mte-opaque", "aarch64-little-endian", 0x70000002],
+      ["amd64-processor-opaque", "x86_64-little-endian", 0x70000001],
+    ]) {
+      const auxiliary = await basic.inspect(mode, fixtures[name]);
+      assert.equal(auxiliary.architecture, architecture);
+      assert.equal(auxiliary.segments.length, 1);
+      assert.equal(auxiliary.segments[0].type, type);
+      assert.equal(auxiliary.notes.length, 0);
+      assert.equal(auxiliary.threads.length, 0);
+      assert.equal(auxiliary.note_interpretation_completeness, "unknown");
+      assert.equal(auxiliary.live_process_identity, "unknown");
+      cases++;
+    }
     const negative = await basic.inspect(mode, fixtures["negative-pid"]);
     assert.ok(negative.threads.some((thread) => thread.historical_pid === -2));
     cases++;
@@ -276,6 +325,15 @@ try {
     core: fixtures["historical-pid-collision"],
     sentinel,
   });
+  trace.push(
+    ...(await verifyCoreInspectionTrace({
+      ...options,
+      entrypoint,
+      core: fixtures["historical-pid-unlisted"],
+      historicalPid: unlistedPid,
+      sentinel,
+    })),
+  );
   cases += trace.length;
   assert.ok((await readFile(core)).length > 0);
 } catch (cause) {
@@ -308,6 +366,7 @@ const result = {
     "Linux x64; pwntools4.15.0/pyelftools0.33/Unicorn2.1.2; core-only BYO GDB/pwndbg2026.09.15",
   fixture_generation: "owned test program executed",
   inspection_trace: trace,
+  historical_pid_access_coverage: historicalPidTraceContract,
   verifier,
 };
 console.log(JSON.stringify(result, null, 2));
