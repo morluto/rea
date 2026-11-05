@@ -344,10 +344,13 @@ const escapeTableCell = (value: string): string =>
     .replace(/\r\n|\r|\n/g, "<br>");
 
 const encodeMarkdownWhitespace = (whitespace: string): string =>
-  whitespace.replace(
-    /[\s\p{White_Space}]/gu,
-    (character) => `&#${character.codePointAt(0)};`,
-  );
+  whitespace.replace(/[\s\p{White_Space}]/gu, (character) => {
+    const codePoint = character.codePointAt(0);
+    if (codePoint === undefined || (codePoint >= 0x80 && codePoint <= 0x9f)) {
+      return character;
+    }
+    return `&#${codePoint};`;
+  });
 
 /** Heading and paragraph facts are literal data, including block syntax. */
 const escapeMarkdownText = (value: string): string =>
