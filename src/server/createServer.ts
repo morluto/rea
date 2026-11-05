@@ -22,6 +22,7 @@ import { registerElfNotesTool } from "./registerElfNotesTool.js";
 import { registerAppleIpsTool } from "./registerAppleIpsTool.js";
 import { registerKernelModuleTool } from "./registerKernelModuleTool.js";
 import { registerPeLoadConfigTool } from "./registerPeLoadConfigTool.js";
+import { registerBinaryHardeningTool } from "./registerBinaryHardeningTool.js";
 import { registerPeCertificatesTool } from "./registerPeCertificatesTool.js";
 import { registerPeImportsTool } from "./registerPeImportsTool.js";
 import { registerPeResourcesTool } from "./registerPeResourcesTool.js";
@@ -42,6 +43,7 @@ import { registerFridaTools } from "./registerFridaTools.js";
 import { EvidenceMcpServer } from "./EvidenceMcpServer.js";
 import { catalogIdentityForToolFamilies } from "../catalogIdentity.js";
 import { parseMcpToolFamilies } from "../config/mcpToolFamilies.js";
+import { parseMcpToolCatalogProfile } from "../config/mcpToolCatalogProfile.js";
 import { createToolResultDelivery } from "./toolResult.js";
 import type { ToolResultDelivery } from "./ToolResultDelivery.js";
 import { parseMcpResponseBudget } from "../config/mcpResponseBudget.js";
@@ -170,6 +172,10 @@ export const createServer = (
   const compactInputPresentation =
     selectCompactInputSchemaPresentation(environment);
   const selectedOutputSchemaProfile = outputSchemaProfile(environment);
+  const catalogProfile = parseMcpToolCatalogProfile(
+    environment.REA_MCP_TOOL_CATALOG_PROFILE,
+  );
+  if (!catalogProfile.ok) throw catalogProfile.error;
   const advertisedToolFamilies = selectAdvertisedToolFamilies(environment);
   const providerEnvironment = captureProviderEnvironment(
     options.providerEnvironment,
@@ -211,6 +217,7 @@ export const createServer = (
     appleIps,
     kernelModule,
     peLoadConfig,
+    binaryHardening,
     peCertificates,
     peImports,
     electronFuses,
@@ -478,6 +485,13 @@ export const createServer = (
       registerPeLoadConfigTool(
         server,
         peLoadConfig,
+        toolLogger,
+        recordEvidence,
+        analysisAdmission,
+      );
+      registerBinaryHardeningTool(
+        server,
+        binaryHardening,
         toolLogger,
         recordEvidence,
         analysisAdmission,
@@ -801,6 +815,7 @@ export const createServer = (
     },
   });
   registerGuidedPrompts(server, analysis, session);
+  if (catalogProfile.value === "hot-cold") server.enableProgressiveCatalog();
   return server;
 };
 

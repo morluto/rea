@@ -191,6 +191,103 @@ export const adaptCliOutputArgumentsForIncur = (
   return adapted;
 };
 
+/**
+ * Expand equals-form `mcp add` valued options into spaced forms. Single
+ * owner: the project-scope guard and the `mcp add` dispatch in `cli.ts`
+ * both consume this, so `--agent=amp` and `--agent amp` select the same
+ * agent in both places. An empty `--flag=` form is left intact for the
+ * caller's missing-value handling.
+ */
+export const expandMcpAddEqualsArguments = (
+  arguments_: readonly string[],
+): string[] =>
+  arguments_.flatMap((token) => {
+    if (token.startsWith("--agent=") || token.startsWith("--command=")) {
+      const separator = token.indexOf("=");
+      const value = token.slice(separator + 1);
+      return value === "" ? [token] : [token.slice(0, separator), value];
+    }
+    return [token];
+  });
+
+/**
+ * Agent selection for an `mcp add` command, after equals-form expansion.
+ * Single owner: the project-scope guard and the `mcp add` dispatch in
+ * `cli.ts` both consume this. Incur consumes command values before agent
+ * flags, so a `--command` value is never read as an agent.
+ */
+export const mcpAddAgents = (
+  command: IncurBuiltinArgumentSplit["command"],
+): string[] => {
+  const agents: string[] = [];
+  for (let index = 0; index < command.length; index += 1) {
+    if (
+      (command[index] === "--command" || command[index] === "-c") &&
+      command[index + 1]
+    )
+      index += 1;
+    else if (command[index] === "--agent" && command[index + 1])
+      agents.push(command[++index]!);
+  }
+  return agents;
+};
+
+/**
+ * Detect a project-scoped Amp registration before Incur dispatches it.
+ * Incur's `mcp add` parses `--no-global` into `global: false` and honors it
+ * for its package-runner agents, but its Amp writer always writes the global
+ * settings file and ignores the flag. The guard reads the agent selection
+ * dispatch reads: equals forms expand to spaced forms first through
+ * `expandMcpAddEqualsArguments`, `--command`/`-c` consumes its value, and
+ * Amp registers by default when no agent is given, so a bare project-scoped
+ * request would still write global Amp settings. Discovery requests are not
+ * registrations: `classifyMcpAddDiscovery` below is the single owner of the
+ * discovery classification, so the guard cannot drift from the routing it
+ * mirrors.
+ */
+// ponytail: reject instead of implementing project-scoped Amp registration.
+// Ceiling: `mcp add --no-global` with Amp fails until Incur supports Amp
+// project scope. Upgrade: drop this guard and its rea.mjs wiring once the
+// dependency writes project Amp settings, and cover that path instead.
+/**
+ * How `mcp add` answers a request instead of registering it. Single owner
+ * for the discovery flags: the Amp-scope guard and the `mcp add` routing in
+ * `cli.ts` both consume this classification, so a new discovery switch
+ * cannot diverge between the guard and the routing. Precedence matches the
+ * routing: bypass flags skip the `mcp add` special-casing entirely, and
+ * version beats schema inside it.
+ */
+export type McpAddDiscoveryHandling = "bypass" | "version" | "schema";
+
+export const classifyMcpAddDiscovery = (
+  flags: ReadonlySet<string>,
+): McpAddDiscoveryHandling | undefined => {
+  if (
+    flags.has("--help") ||
+    flags.has("-h") ||
+    flags.has("--llms") ||
+    flags.has("--llms-full")
+  )
+    return "bypass";
+  if (flags.has("--version")) return "version";
+  if (flags.has("--schema")) return "schema";
+  return undefined;
+};
+
+export const isProjectScopedAmpRegistration = (
+  arguments_: readonly string[],
+): boolean => {
+  const { command, flags } = splitIncurBuiltinArguments(
+    expandMcpAddEqualsArguments(arguments_),
+  );
+  if (command[0] !== "mcp" || command[1] !== "add") return false;
+  if (classifyMcpAddDiscovery(flags) !== undefined) return false;
+  const rest = command.slice(2);
+  if (!rest.includes("--no-global")) return false;
+  const agents = mcpAddAgents(rest);
+  return agents.length === 0 || agents.includes("amp");
+};
+
 /** Select production doctor using the same normalized builtin argument owner as CLI dispatch. */
 export const productionMcpDoctorArguments = (
   arguments_: readonly string[],
