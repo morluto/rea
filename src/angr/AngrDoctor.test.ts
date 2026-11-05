@@ -169,3 +169,39 @@ it("finishes doctor and releases a registration whose close failed before later 
   expect(await host.close?.()).toBeUndefined();
   expect(released).toBe(true);
 });
+
+it("keeps a failed close from concurrent setup reads of different registrations", async () => {
+  const root = await createTestTempDirectory("rea-angr-doctor-setup-");
+  const first = join(root, "first.json");
+  const second = join(root, "second.json");
+  await writeFile(first, JSON.stringify({ command: "python" }));
+  await writeFile(second, JSON.stringify({ command: "python" }));
+  let firstLookup: Promise<unknown> | undefined;
+  const close = OwnedFileHandle.prototype.close;
+  let closes = 0;
+  const denied: OwnedFileHandle[] = [];
+  let released = false;
+  vi.spyOn(OwnedFileHandle.prototype, "close").mockImplementation(
+    async function (this: OwnedFileHandle) {
+      closes += 1;
+      if (closes === 2) {
+        // The other lookup finishes cleanly before this close fails.
+        await firstLookup;
+        denied.push(this);
+        throw new Error("descriptor close denied");
+      }
+      if (denied.includes(this)) released = true;
+      return close.call(this);
+    },
+  );
+  const host = createSystemDoctorHost({});
+  const budget = (path: string) =>
+    host.resolveProviderRequestBudget!("angr", { REA_ANGR_MCP_CONFIG: path });
+  const lookups = [budget(first), budget(second)];
+  firstLookup = Promise.race(lookups);
+  await Promise.allSettled(lookups);
+  expect(denied).toHaveLength(1);
+  expect(released).toBe(false);
+  expect(await host.close?.()).toBeUndefined();
+  expect(released).toBe(true);
+});

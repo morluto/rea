@@ -15,7 +15,8 @@ import {
 import { inspectKunaProvider } from "./kuna/KunaDoctor.js";
 import { readIdaConfiguration } from "./ida/IdaConfiguration.js";
 import { selectLinuxPrivateDisplayStrategy } from "./hopper/LinuxPrivateDisplayProbe.js";
-import { ok } from "./domain/result.js";
+import { ok, type Result } from "./domain/result.js";
+import type { ConfigurationError } from "./domain/configurationErrors.js";
 import { AnalysisCancelledError } from "./domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "./domain/providerCleanupError.js";
 import {
@@ -58,66 +59,6 @@ export const createSystemDoctorHost = (
     }
     return registration;
   };
-  // angr reads run in their own scope. A failed close retained directly in the
-  // doctor's scope would make the next nested run wait for its own caller, so
-  // it moves there only after the caller's admitted work has finished.
-  const angrScopes = new WeakMap<
-    RetainedResourceScope,
-    {
-      readonly resources: ArtifactResourceScope;
-      readonly reads: Map<string, ReturnType<typeof readAngrConfiguration>>;
-    }
-  >();
-  const readAngr = (
-    registrationEnvironment: Readonly<NodeJS.ProcessEnv>,
-    resourceScope: RetainedResourceScope,
-    inspectionSignal: AbortSignal,
-  ) => {
-    const sources = {
-      mcpConfigPath: registrationEnvironment.REA_ANGR_MCP_CONFIG,
-      pythonPath: registrationEnvironment.REA_ANGR_PYTHON,
-    };
-    let child = angrScopes.get(resourceScope);
-    if (child === undefined) {
-      child = { resources: new ArtifactResourceScope(), reads: new Map() };
-      angrScopes.set(resourceScope, child);
-    }
-    const { resources, reads } = child;
-    const key = JSON.stringify([sources.mcpConfigPath, sources.pythonPath]);
-    let registration = reads.get(key);
-    if (registration === undefined) {
-      registration = readAngrConfiguration(sources, {
-        resourceScope: {
-          retain: (owner, resource) =>
-            resources.retain({
-              kind: "lease",
-              resource,
-              lease: AnalysisCleanupLease.forCloseOwner(owner, resource),
-            }),
-          run: (operation) => resources.run(operation),
-        },
-        signal: inspectionSignal,
-      });
-      reads.set(key, registration);
-    }
-    return { sources, registration };
-  };
-  const releaseAngrScope = (resourceScope: RetainedResourceScope) => {
-    const child = angrScopes.get(resourceScope);
-    if (child === undefined) return;
-    angrScopes.delete(resourceScope);
-    const { resources } = child;
-    if (resources.hasPending)
-      resourceScope.retain(
-        {
-          close: () => resources.close(),
-          get cleanupResources() {
-            return resources.cleanupResources;
-          },
-        },
-        "angr-registration",
-      );
-  };
   return systemDoctorHost({
     environment,
     ...(signal === undefined ? {} : { signal }),
@@ -144,75 +85,47 @@ export const createSystemDoctorHost = (
         }
       }
       if (analysisProvider === "angr" || analysisProvider === "auto") {
-        if (
-          registrationEnvironment.REA_ANGR_MCP_CONFIG !== undefined ||
-          registrationEnvironment.REA_ANGR_PYTHON !== undefined
-        ) {
-          let registration: Awaited<ReturnType<typeof readAngrConfiguration>>;
-          try {
-            registration = await readAngr(
-              registrationEnvironment,
-              resourceScope,
-              inspectionSignal,
-            ).registration;
-          } finally {
-            releaseAngrScope(resourceScope);
-          }
-          if (registration.ok)
-            budgets.push(angrRequestBudgetMs(registration.value));
-          else if (analysisProvider === "angr") return registration;
-        }
+        const angr = await readAngrBudget(
+          registrationEnvironment,
+          resourceScope,
+          inspectionSignal,
+        );
+        if (angr?.ok === true) budgets.push(angr.value);
+        else if (angr !== undefined && analysisProvider === "angr") return angr;
       }
       return ok(budgets.length === 0 ? undefined : Math.max(...budgets));
     },
-    providerInspections: async (resourceScope, inspectionSignal) => {
-      const inspectAngr = () => {
-        const { sources, registration } = readAngr(
+    // Spans every inspection; see withAngrRegistrationScope.
+    providerInspections: (resourceScope, inspectionSignal) =>
+      withAngrRegistrationScope(resourceScope, async (angrScope) => [
+        await inspectSystemGhidraProvider(
           environment,
           resourceScope,
           inspectionSignal,
-        );
-        return inspectAngrRegistration(
-          sources,
+        ),
+        await inspectIdaRegistration(
+          environment.REA_IDA_MCP_CONFIG,
           resourceScope,
           inspectionSignal,
-          registration,
-        );
-      };
-      try {
-        return [
-          await inspectSystemGhidraProvider(
-            environment,
-            resourceScope,
-            inspectionSignal,
-          ),
-          await inspectIdaRegistration(
-            environment.REA_IDA_MCP_CONFIG,
-            resourceScope,
-            inspectionSignal,
-            environment.REA_IDA_MCP_CONFIG === undefined
-              ? undefined
-              : readRegistration(
-                  environment.REA_IDA_MCP_CONFIG,
-                  resourceScope,
-                  inspectionSignal,
-                ),
-          ),
-          await inspectJadxProvider(
-            environment,
-            resourceScope,
-            inspectionSignal,
-          ),
-          await inspectAngr(),
-          await inspectKunaProvider(environment, process.platform, {
-            resourceScope,
-            signal: inspectionSignal,
-          }),
-        ];
-      } finally {
-        releaseAngrScope(resourceScope);
-      }
-    },
+          environment.REA_IDA_MCP_CONFIG === undefined
+            ? undefined
+            : readRegistration(
+                environment.REA_IDA_MCP_CONFIG,
+                resourceScope,
+                inspectionSignal,
+              ),
+        ),
+        await inspectJadxProvider(environment, resourceScope, inspectionSignal),
+        await inspectAngrRegistration(
+          angrSources(environment),
+          angrScope,
+          inspectionSignal,
+        ),
+        await inspectKunaProvider(environment, process.platform, {
+          resourceScope,
+          signal: inspectionSignal,
+        }),
+      ]),
     linuxDemoRuntimeCheck: (resourceScope, inspectionSignal) =>
       inspectLinuxHopperDemoRuntime(
         environment,
@@ -361,4 +274,68 @@ const inspectLinuxHopperDemoRuntime = async (
       .filter((message) => message !== undefined)
       .join(" "),
   };
+};
+
+/** angr's request budget for a registration, or undefined when none is set. */
+const readAngrBudget = async (
+  environment: Readonly<NodeJS.ProcessEnv>,
+  resourceScope: RetainedResourceScope,
+  signal: AbortSignal,
+): Promise<Result<number, ConfigurationError> | undefined> => {
+  if (
+    environment.REA_ANGR_MCP_CONFIG === undefined &&
+    environment.REA_ANGR_PYTHON === undefined
+  )
+    return undefined;
+  const registration = await withAngrRegistrationScope(
+    resourceScope,
+    (angrScope) =>
+      readAngrConfiguration(angrSources(environment), {
+        resourceScope: angrScope,
+        signal,
+      }),
+  );
+  return registration.ok
+    ? ok(angrRequestBudgetMs(registration.value))
+    : registration;
+};
+
+const angrSources = (environment: Readonly<NodeJS.ProcessEnv>) => ({
+  mcpConfigPath: environment.REA_ANGR_MCP_CONFIG,
+  pythonPath: environment.REA_ANGR_PYTHON,
+});
+
+/**
+ * Give one operation's angr registration reads their own scope. A failed
+ * close retained directly in the doctor's scope would make the next nested
+ * run wait for its own caller, so it moves there only after the operation
+ * settles. Concurrent operations never share a scope.
+ */
+const withAngrRegistrationScope = async <T>(
+  parent: RetainedResourceScope,
+  operation: (scope: RetainedResourceScope) => Promise<T>,
+): Promise<T> => {
+  const resources = new ArtifactResourceScope();
+  try {
+    return await operation({
+      retain: (owner, resource) =>
+        resources.retain({
+          kind: "lease",
+          resource,
+          lease: AnalysisCleanupLease.forCloseOwner(owner, resource),
+        }),
+      run: (run) => resources.run(run),
+    });
+  } finally {
+    if (resources.hasPending)
+      parent.retain(
+        {
+          close: () => resources.close(),
+          get cleanupResources() {
+            return resources.cleanupResources;
+          },
+        },
+        "angr-registration",
+      );
+  }
 };
