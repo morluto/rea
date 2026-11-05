@@ -7,12 +7,13 @@ import { ghidraProfileInstallationHost as host } from "./GhidraInstallation.fixt
 import { GhidraProvider } from "./GhidraProvider.js";
 
 // Digests commit to the current shared policy, including the instruction
-// status, load-image relocation-symbol and procedure search revisions that
-// prevent reuse of snapshots with earlier results.
+// status, load-image relocation-symbol, procedure search, byte-search and
+// bit-field base-type revisions that prevent reuse of snapshots with earlier
+// results.
 const RAW_DIGESTS = {
-  "6502": "33bd13e6e65e741e615095bf8c1d62868384a0e2535db8dcee610c043364c80a",
+  "6502": "afb7d1b23c25d91a9109fc0c90a45cc0b17d751ee8cd5989e5bd486e1a9d6d86",
   "x86-disabled-analyzer":
-    "5d336b0b490fa9c3ac0a59899aca8807dc72ef9f02b626c13b5ab4169c87c2bc",
+    "cf1d2d5b6ac896e727788faed2f3c17f3943fa35e587b1c3d73a800794c1dffd",
 } as const;
 
 const configFor = (environment: NodeJS.ProcessEnv) => {
@@ -48,6 +49,8 @@ describe("raw-binary analysis profile digest", () => {
       load_image_observations:
         "source-mappings-entry-context-relocation-symbol-v3",
       instruction_status: "unlisted-address-without-decode-v1",
+      byte_search_boundary: "contiguous-eligible-initialized-blocks-v1",
+      data_type_observations: "bit-field-base-and-lookup-v1",
       analyzer_preset: "ghidra-default",
     });
   });

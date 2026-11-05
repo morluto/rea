@@ -4,7 +4,7 @@ import {
   ArtifactResourceScope,
 } from "../artifacts/ArtifactResourceScope.js";
 import { withArtifactRegularFile } from "../artifacts/ArtifactFileOperation.js";
-import { writeFile } from "node:fs/promises";
+import { symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
@@ -27,6 +27,42 @@ import { err, ok } from "../domain/result.js";
 import { ArtifactAnalysisResources } from "./ArtifactAnalysisResources.js";
 import { readLinuxResourceLimits } from "./LinuxResourceLimits.js";
 import { ProviderProcessSupervisor } from "./ProviderProcess.js";
+
+it.runIf(process.platform !== "win32")(
+  "offers a resolved-file retry from the shared selected-artifact boundary",
+  async () => {
+    const root = await createTestTempDirectory("rea-selected-artifact-");
+    const target = join(root, "target.bin");
+    const selected = join(root, "selected");
+    await writeFile(target, "fixture");
+    await symlink(target, selected);
+    const resources = new ArtifactAnalysisResources(
+      "fixture-provider",
+      "decode_signal_recording",
+      readStableArtifact,
+      readLinuxResourceLimits,
+      { message: "busy", details: {} },
+    );
+    try {
+      const result = await resources.run(async () =>
+        ok(
+          await resources.readSelectedArtifact({
+            path: selected,
+            maximumBytes: 1024,
+            allowanceName: "fixture input allowance",
+            observedOutput: undefined,
+          }),
+        ),
+      );
+      if (result.ok) throw new Error("Expected selected symlink refusal");
+      const projected = projectAnalysisError(result.error);
+      expect(projected.remediation.action).toContain(target);
+      expect(projected).not.toHaveProperty("recovery");
+    } finally {
+      await resources.close();
+    }
+  },
+);
 
 it.each(["command", "limiter"])(
   "attributes post-run %s read failure to its exact artifact and retains producer output",
