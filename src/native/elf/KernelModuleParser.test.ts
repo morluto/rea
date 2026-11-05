@@ -133,6 +133,22 @@ it.each([
   });
 });
 
+it.each([
+  [".init.text", "init_text", 4],
+  [".exit.text", "exit_text", 1],
+] as const)(
+  "discloses duplicate %s sections while retaining the first size",
+  (name, key, size) => {
+    const report = parse(
+      kernelModuleFixture({ sharedNameSections: { name, count: 1 } }),
+    );
+    expect(report[key]).toMatchObject({ status: "present", bytes: size });
+    expect(report.limitations).toContain(
+      `Multiple ${name} sections are declared; the first is examined.`,
+    );
+  },
+);
+
 it("keeps earlier .modinfo entries when the last span is unterminated", () => {
   const report = parse(
     kernelModuleFixture({
