@@ -193,6 +193,97 @@ cliTest(
   },
 );
 
+/** One dense-NOP method exhausts the member representation budget. */
+const capacityExhaustingFixture = (): Buffer => {
+  const il = Buffer.alloc(270_001);
+  il[il.length - 1] = 0x2a;
+  const header = Buffer.alloc(12);
+  header.writeUInt16LE(0x3003, 0);
+  header.writeUInt16LE(8, 2);
+  header.writeUInt32LE(il.length, 4);
+  return buildManagedPeFixture({
+    additionalEmptyTypes: 1,
+    ilBody: Buffer.concat([header, il]),
+  });
+};
+
+cliTest(
+  "surfaces one side's member capacity limit in the comparison and recovers with a shared --type selection",
+  async ({ cli }) => {
+    const directory = await createTestTempDirectory("rea-managed-capacity-");
+    const left = join(directory, "left.dll");
+    const right = join(directory, "right.dll");
+    await writeFile(left, buildManagedPeFixture({ additionalEmptyTypes: 1 }));
+    await writeFile(right, capacityExhaustingFixture());
+    const capacity =
+      "exceeded capacity at metadata.representation: Managed metadata exceeds the 67108864 byte representation budget.";
+
+    const whole = await cli.run({
+      arguments: ["compare-managed-members", left, right, "--json"],
+    });
+    expect(whole.exitCode, whole.stderr).toBe(0);
+    const wholeEvidence = parseEvidence(whole.json);
+    const wholeReport = managedMemberComparisonResultSchema.parse(
+      wholeEvidence.normalized_result,
+    );
+    expect(wholeReport.coverage).toEqual({
+      status: "partial",
+      left_status: "complete",
+      right_status: "partial",
+    });
+    expect(wholeReport.right.methods_total).toBe(0);
+    expect(wholeReport.limitations).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining(
+          `The right managed member observation ${capacity}`,
+        ),
+        expect.stringMatching(/^Compare a smaller selection .*--type/u),
+      ]),
+    );
+    expect(
+      wholeReport.limitations.some((text) => text.startsWith("The left ")),
+    ).toBe(false);
+    expect(wholeEvidence.limitations).toEqual(
+      expect.arrayContaining(wholeReport.limitations),
+    );
+
+    const selected = await cli.run({
+      arguments: [
+        "compare-managed-members",
+        left,
+        right,
+        "--type",
+        "Fixture.Empty0",
+        "--json",
+      ],
+    });
+    expect(selected.exitCode, selected.stderr).toBe(0);
+    const selectedEvidence = parseEvidence(selected.json);
+    expect(selectedEvidence.parameters).toMatchObject({
+      left_path: left,
+      right_path: right,
+      type_names: ["Fixture.Empty0"],
+    });
+    const selectedReport = managedMemberComparisonResultSchema.parse(
+      selectedEvidence.normalized_result,
+    );
+    expect(selectedReport.coverage).toMatchObject({
+      left_status: "complete",
+      right_status: "complete",
+    });
+    expect(selectedReport.limitations).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining(
+          "Both observations cover only the selected declaring types (Fixture.Empty0)",
+        ),
+      ]),
+    );
+    expect(
+      selectedReport.limitations.some((text) => text.includes(capacity)),
+    ).toBe(false);
+  },
+);
+
 const managedComparisonEvidence = async () => {
   const directory = await createTestTempDirectory("rea-managed-finalization-");
   const path = join(directory, "comparison.dll");
@@ -248,6 +339,7 @@ it.each([true, false])(
     try {
       const result = await registeredComparisonCommand().run({
         args: { leftPath: "left.dll", rightPath: "right.dll" },
+        options: {},
       });
       expect(result).toMatchObject({
         error: "Managed member comparison failed",
@@ -296,6 +388,7 @@ it("retains completed comparison Evidence when interrupted during final cleanup"
   try {
     const result = await registeredComparisonCommand().run({
       args: { leftPath: "left.dll", rightPath: "right.dll" },
+      options: {},
     });
     expect(result).toMatchObject({
       error: "Managed member comparison failed",

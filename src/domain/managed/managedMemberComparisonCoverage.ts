@@ -180,6 +180,29 @@ export const buildComparisonMatching = (
   ).length,
 });
 
+/** Carry each side's representation-budget diagnostic and its recovery. */
+const capacityLimitations = (
+  left: ManagedMemberInspection,
+  right: ManagedMemberInspection,
+): string[] => {
+  const exceeded = new Set(
+    (["left", "right"] as const).flatMap((side) =>
+      (side === "left" ? left : right).coverage.issues
+        .filter(({ code }) => code === "resource-limit")
+        .map(
+          ({ scope, detail }) =>
+            `The ${side} managed member observation exceeded capacity at ${scope}: ${detail}. Its member collections are not examined to completion, so empty or missing members do not establish absence, addition or removal.`,
+        ),
+    ),
+  );
+  return exceeded.size === 0
+    ? []
+    : [
+        ...exceeded,
+        "Compare a smaller selection by inspecting both sides with the same type_names, or by passing --type to CLI compare-managed-members; a single selected type can still exceed capacity.",
+      ];
+};
+
 export const comparisonLimitations = (
   left: ManagedMemberInspection,
   right: ManagedMemberInspection,
@@ -220,6 +243,7 @@ export const comparisonLimitations = (
     );
   if (left.coverage.state !== "complete" || right.coverage.state !== "complete")
     limitations.push("At least one managed member observation is partial.");
+  limitations.push(...capacityLimitations(left, right));
   if (selectionAgreement === "different")
     limitations.push(
       "The observations select different declaring types; a member outside the other side's selection is unknown, not added or removed.",
