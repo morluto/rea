@@ -3,6 +3,8 @@ import type {
   DesktopStateChange,
 } from "../../domain/desktop/desktopCapture.js";
 import type { DesktopStatePath } from "../../domain/desktop/desktopState.js";
+import { isWithinAny } from "../../domain/desktop/desktopStateDiff.js";
+import { SQLITE_SIDECARS } from "../../domain/desktop/stateFormats.js";
 
 type Version = DesktopStatePath["versions"][number];
 
@@ -19,6 +21,8 @@ export interface StateIndex {
   readonly baseline: ReadonlyMap<string, string>;
   /** Paths a walk saw as files whose bytes were not retained. */
   readonly omitted: ReadonlySet<string>;
+  /** Where the baseline retained or omitted every file it saw. */
+  readonly contentRoots: readonly string[];
   readonly checkpoints: number;
 }
 
@@ -43,6 +47,7 @@ export const indexState = (capture: DesktopApplicationCapture): StateIndex => {
       ]),
     ),
     omitted: new Set(capture.state.omitted_content.map((entry) => entry.path)),
+    contentRoots: capture.state.content_roots,
     checkpoints: capture.state.checkpoints.length,
   };
 };
@@ -69,34 +74,42 @@ export const digestsAt = (
   return digests;
 };
 
-/** Whether a path existed after each checkpoint, whether or not it was retained. */
+/** Whether a path existed at the baseline, or null when the capture does not say. */
+const baselinePresence = (
+  path: string,
+  first: DesktopStateChange | undefined,
+  index: StateIndex,
+): boolean | null => {
+  if (index.baseline.has(path)) return true;
+  if (first !== undefined) return first.before?.type === "file";
+  // An omission without a change of its own was made at the baseline walk.
+  if (index.omitted.has(path)) return true;
+  // The baseline kept or omitted every file under the content roots; elsewhere
+  // only changes are recorded, so an unchanged file and a missing one look alike.
+  return isWithinAny(path, index.contentRoots) ? false : null;
+};
+
+/**
+ * Whether a path existed after each checkpoint, whether or not it was
+ * retained; null where the capture did not record it.
+ */
 export const presenceAt = (
   path: string,
   index: StateIndex,
-): readonly boolean[] => {
+): readonly (boolean | null)[] => {
   const own = index.changes.get(path) ?? [];
   const byIndex = new Map(own.map((entry) => [entry.index, entry.change]));
-  const first = own[0]?.change;
-  // An omission without a change of its own was made at the baseline walk.
-  const presence = [
-    index.baseline.has(path) ||
-      (first === undefined
-        ? index.omitted.has(path)
-        : first.before?.type === "file"),
-  ];
+  const presence = [baselinePresence(path, own[0]?.change, index)];
   for (let position = 1; position < index.checkpoints; position += 1) {
     const change = byIndex.get(position);
     presence.push(
       change === undefined
-        ? (presence[position - 1] ?? false)
+        ? (presence[position - 1] ?? null)
         : change.after?.type === "file",
     );
   }
   return presence;
 };
-
-/** Files whose changes alter what a SQLite database holds. */
-const SIDECARS = ["-wal", "-journal"];
 
 /**
  * Versions of one path: its baseline, then its state after each checkpoint
@@ -113,7 +126,10 @@ export const pathVersions = (
   const digests = digestsAt(path, index);
   const positions = [
     ...new Set(
-      [path, ...SIDECARS.map((suffix) => `${path}${suffix}`)].flatMap((name) =>
+      [
+        path,
+        ...SQLITE_SIDECARS.map(({ suffix }) => `${path}${suffix}`),
+      ].flatMap((name) =>
         (index.changes.get(name) ?? []).map((entry) => entry.index),
       ),
     ),
@@ -122,7 +138,8 @@ export const pathVersions = (
     .sort((left, right) => left - right);
   const versions: Version[] = [];
   for (const position of [0, ...positions]) {
-    const present = presence[position] ?? false;
+    // Listed paths were retained or changed, so their presence is recorded.
+    const present = presence[position] === true;
     if (!present && versions.at(-1)?.present === false) continue;
     versions.push({
       checkpoint_index: position,

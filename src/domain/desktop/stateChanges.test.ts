@@ -85,11 +85,37 @@ describe("diffStateViews fidelity", () => {
   it("keeps empty containers as values", () => {
     expect(diffStateViews("json", {}, { items: [] })).toMatchObject({
       added: ["/items"],
-      removed: [""],
+      removed: [],
     });
     expect(diffStateViews("json", { items: [] }, { items: {} })).toMatchObject({
       changed: ["/items"],
     });
+  });
+
+  it("reports an array that becomes an object with the same members", () => {
+    expect(
+      diffStateViews("json", { items: [1] }, { items: { "0": 1 } }),
+    ).toMatchObject({ added: [], removed: [], changed: ["/items"] });
+    expect(diffStateViews("json", [[1]], { "0": [1] })).toMatchObject({
+      changed: [""],
+      changed_count: 1,
+    });
+  });
+
+  it("keeps a key holding / apart from a group holding it", () => {
+    const nested = { "a/b": { c: "1" } };
+    const flat = { a: { "b/c": "1" } };
+    expect(
+      diffStateViews("keyfile", { groups: nested }, { groups: flat }),
+    ).toMatchObject({ added: ["a/b~1c"], removed: ["a/b/c"], changed: [] });
+    // Both spellings in one file stay two entries rather than one replacing the other.
+    expect(
+      diffStateViews(
+        "keyfile",
+        { groups: { ...nested, ...flat } },
+        { groups: { "a/b": { c: "2" }, ...flat } },
+      ),
+    ).toMatchObject({ changed: ["a/b/c"], changed_count: 1 });
   });
 
   it("marks comparisons of truncated views as incomplete", () => {

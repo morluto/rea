@@ -10,6 +10,7 @@ import {
   parseOneLineSources,
   type AptIndexTarget,
   type AptSourceEntry,
+  type AptSourceStanza,
 } from "../domain/desktop/aptRepositories.js";
 import type { AptRepository } from "../domain/desktop/desktopCapture.js";
 import { withGpgvKeyCheck, type VerifiedKey } from "./GpgvKeyCheck.js";
@@ -39,6 +40,8 @@ export interface AptRepositoryHost {
 export interface AptRepositoryFacts {
   readonly repositories: readonly AptRepository[];
   readonly keys: ReadonlyMap<string, Buffer>;
+  /** The Packages indexes apt lists; empty when it was not asked or could not list them. */
+  readonly indexTargets: readonly AptIndexTarget[];
   readonly limitations: readonly string[];
 }
 
@@ -63,23 +66,23 @@ const indexTargets = async (
   return targets;
 };
 
-/** The entries of each sources file apt names, read once; files that could not be read are kept for the limitations. */
+/** The stanzas of each sources file apt names, read once; files that could not be read are kept for the limitations. */
 const sourcesFiles = (signal: AbortSignal | undefined) => {
-  const parsed = new Map<string, readonly AptSourceEntry[]>();
+  const parsed = new Map<string, readonly AptSourceStanza[]>();
   const unreadable: string[] = [];
-  const read = async (file: string): Promise<readonly AptSourceEntry[]> => {
+  const read = async (file: string): Promise<readonly AptSourceStanza[]> => {
     const cached = parsed.get(file);
     if (cached !== undefined) return cached;
     const bytes = await readHostFile(file, FILE_MAX_BYTES, signal);
     if (bytes === "unreadable") unreadable.push(file);
-    const entries =
+    const stanzas =
       typeof bytes === "string"
         ? []
         : (file.endsWith(".sources")
             ? parseDeb822Sources
             : parseOneLineSources)(bytes.toString("utf8"), file);
-    parsed.set(file, entries);
-    return entries;
+    parsed.set(file, stanzas);
+    return stanzas;
   };
   return { read, unreadable };
 };
@@ -120,7 +123,7 @@ const signedRelease = async (
 interface RepositoryContext {
   readonly apt: AptLocations;
   readonly targets: ReadonlyMap<string, AptIndexTarget> | undefined;
-  readonly sources: (file: string) => Promise<readonly AptSourceEntry[]>;
+  readonly sources: (file: string) => Promise<readonly AptSourceStanza[]>;
   readonly verify: (
     candidates: readonly string[],
     release: readonly string[],
@@ -240,7 +243,12 @@ export const inspectAptRepositories = async (
     return origin === "Ubuntu" ? [] : [{ source, origin }];
   });
   if (vendor.length === 0)
-    return { repositories: [], keys: new Map(), limitations: [] };
+    return {
+      repositories: [],
+      keys: new Map(),
+      indexTargets: [],
+      limitations: [],
+    };
   const targets = await indexTargets(host.runQuery, signal);
   const files = sourcesFiles(signal);
   return withGpgvKeyCheck(host.runQuery, signal, async (check) => {
@@ -261,6 +269,7 @@ export const inspectAptRepositories = async (
     return {
       repositories,
       keys,
+      indexTargets: [...(targets?.values() ?? [])],
       limitations: files.unreadable.map(
         (file) =>
           `The apt sources file ${file} could not be read, so repositories it lists are not matched.`,

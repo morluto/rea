@@ -1,6 +1,11 @@
 import { stat } from "node:fs/promises";
 
-import { withOwnedRegularFile } from "../filesystem/OwnedRegularFile.js";
+import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
+import { ArtifactFileCleanupFailure } from "../artifacts/ArtifactFileOperation.js";
+import {
+  RegularFileCleanupFailure,
+  withOwnedRegularFile,
+} from "../filesystem/OwnedRegularFile.js";
 import {
   NonRegularFileReadError,
   RegularFileChangedError,
@@ -21,6 +26,19 @@ export const isRefusedRead = (cause: unknown): boolean =>
   isSelectedRegularFileError(cause) ||
   DENIED_CODES.has((cause as NodeJS.ErrnoException).code ?? "");
 
+/**
+ * A host read whose close failed, as a cleanup failure with a lease on the
+ * exact handle: the capture reports the file and keeps its owner, even when
+ * cancelled or beside another failure.
+ */
+export const hostCloseFailure = (
+  cause: RegularFileCleanupFailure,
+): ArtifactFileCleanupFailure =>
+  new ArtifactFileCleanupFailure(
+    cause,
+    new AnalysisCleanupLease(() => cause.owner.close(), [cause.path]),
+  );
+
 /** A small host file's bytes, following links; `missing` when the path names nothing. */
 export const readHostFile = async (
   path: string,
@@ -36,6 +54,8 @@ export const readHostFile = async (
       readStableFileBytes(handle, path, maximumBytes, options),
     );
   } catch (cause: unknown) {
+    if (cause instanceof RegularFileCleanupFailure)
+      throw hostCloseFailure(cause);
     signal?.throwIfAborted();
     if (!isRefusedRead(cause)) throw cause;
     return (cause as NodeJS.ErrnoException).code === "ENOENT"

@@ -17,6 +17,11 @@ export type DesktopStateFormat =
   | "binary";
 
 const SQLITE_HEADER = "SQLite format 3\0";
+/** Files beside a SQLite database that hold or undo its committed changes. */
+export const SQLITE_SIDECARS = [
+  { suffix: "-wal", label: "write-ahead log" },
+  { suffix: "-journal", label: "rollback journal" },
+] as const;
 const GVDB_HEADER = "GVariant";
 const XML_EXTENSIONS = /\.(?:xml|xbel|plist|svg|ui)$/iu;
 const MAX_TEXT_LINES = 5000;

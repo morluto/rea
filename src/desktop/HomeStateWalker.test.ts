@@ -44,6 +44,22 @@ describe("walkHomeState", () => {
     expect(walk.truncated).toBe(true);
   });
 
+  it("counts roots toward the entry limit and leaves a root past it unchecked", async () => {
+    const home = await createTestTempDirectory("desktop-walk-root-limit-");
+    const outside = await createTestTempDirectory("desktop-walk-root-file-");
+    await writeFile(join(outside, "notes.md"), "x");
+
+    const walk = await walkHomeState(
+      [home, join(outside, "notes.md"), join(outside, "missing")],
+      [],
+      1,
+    );
+
+    expect([...walk.entries.keys()]).toEqual([home]);
+    expect([...walk.roots]).toEqual([home, join(outside, "missing")]);
+    expect(walk.truncated).toBe(true);
+  });
+
   it("skips roots that do not exist", async () => {
     const home = await createTestTempDirectory("desktop-walk-missing-");
     const walk = await walkHomeState([join(home, "missing")], [], 10);
