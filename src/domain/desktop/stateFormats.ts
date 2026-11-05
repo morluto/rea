@@ -43,13 +43,16 @@ const keyfileLine = (raw: string): KeyfileLine => {
     return { kind: "skip" };
   const name = /^\[(?<name>[^\]]+)\]$/u.exec(line)?.groups?.name;
   if (name !== undefined) return { kind: "group", name };
-  const equals = line.indexOf("=");
-  return equals <= 0
+  const equals = raw.indexOf("=");
+  if (equals < 0) return { kind: "other" };
+  const key = raw.slice(0, equals).trim();
+  return key.length === 0
     ? { kind: "other" }
     : {
         kind: "entry",
-        key: line.slice(0, equals).trim(),
-        value: line.slice(equals + 1).trim(),
+        key,
+        // Only ASCII space and tab immediately after '=' are padding.
+        value: raw.slice(equals + 1).replace(/^[ \t]+/u, ""),
       };
 };
 

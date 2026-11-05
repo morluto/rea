@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { JsonValue } from "../jsonValue.js";
 import { diffStateViews } from "./stateChanges.js";
+import { keyfileView } from "./stateFormats.js";
 
 describe("diffStateViews", () => {
   it("reports added and removed lines as a multiset", () => {
@@ -83,6 +84,33 @@ describe("diffStateViews", () => {
 });
 
 describe("diffStateViews fidelity", () => {
+  it("preserves significant keyfile whitespace in views and differences", () => {
+    const view = (suffix: string, unicode: string, padding: string) =>
+      keyfileView(
+        `[ui]\r\nsuffix=${suffix}\r\nunicode=${unicode}\r\npadded=${padding}\r\n`,
+      );
+    const before = view("hello ", "\u00a0hello\u00a0", "   hello");
+    const after = view("hello  ", "\u00a0hello\u00a0\u00a0", "\thello");
+    expect(before.ui).toEqual({
+      suffix: "hello ",
+      unicode: "\u00a0hello\u00a0",
+      padded: "hello",
+    });
+    expect(after.ui).toEqual({
+      suffix: "hello  ",
+      unicode: "\u00a0hello\u00a0\u00a0",
+      padded: "hello",
+    });
+    expect(
+      diffStateViews("keyfile", { groups: before }, { groups: after }),
+    ).toMatchObject({
+      kind: "keys",
+      changed: ["ui/suffix", "ui/unicode"],
+      changed_count: 2,
+      complete: true,
+    });
+  });
+
   it("keeps empty containers as values", () => {
     expect(diffStateViews("json", {}, { items: [] })).toMatchObject({
       added: ["/items"],
