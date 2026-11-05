@@ -130,6 +130,43 @@ cliTest(
     });
     expect(mcpResponse.isError, JSON.stringify(mcpResponse)).not.toBe(true);
     expect(mcpResponse.structuredContent).toEqual(response.json);
+    const pastColumn = await client.callTool({
+      name: "trace_web_source_location",
+      arguments: {
+        manifest_path: manifest,
+        script_index: 0,
+        source_map: { path: map, url: fixture.sourceMap.url },
+        generated_position: { line: 1, column: 10 },
+      },
+    });
+    expect(parseMcpToolError(pastColumn).error).toMatchObject({
+      code: "invalid_request",
+      details: {
+        issues: [
+          {
+            path: ["generated_position", "column"],
+            reason: "out_of_range",
+            maximum: fixture.source.length,
+          },
+        ],
+      },
+    });
+  },
+  // Allow cold CLI and MCP ownership preparation across the full parity sequence.
+  180_000,
+);
+
+cliTest(
+  "reports out-of-range generated lines with the retained partial observation through CLI",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-source-map-line-bounds-");
+    const fixture = webSourceLocationFixture();
+    await mkdir(join(root, "files", "modules"), { recursive: true });
+    await writeFile(join(root, "files", "modules", "main.js"), fixture.source);
+    const manifest = join(root, "manifest.json").replaceAll("\\", "/");
+    const map = join(root, "app.js.map");
+    await writeFile(manifest, JSON.stringify(fixture.manifest));
+    await writeFile(map, fixture.sourceMap.text);
     const invalid = await cli.run({
       arguments: [
         "trace-web-source-location",
@@ -148,7 +185,13 @@ cliTest(
     expect(invalid.json).toMatchObject({
       code: "invalid_request",
       details: {
-        issues: [{ path: ["generated_position"] }],
+        issues: [
+          {
+            path: ["generated_position", "line"],
+            reason: "out_of_range",
+            maximum: 1,
+          },
+        ],
         partial_observation: {
           kind: "web-trace-observation",
           analysis: "incomplete",
@@ -164,7 +207,6 @@ cliTest(
       },
     });
   },
-  // Allow cold CLI and MCP ownership preparation across the full parity sequence.
   180_000,
 );
 
