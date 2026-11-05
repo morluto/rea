@@ -188,7 +188,9 @@ it("refuses oversized text before JSON interpretation while retaining body ident
           representation: "fetch-response-body-bytes",
         },
         mappings: [],
-        limitation: expect.stringContaining("Response text was not retained"),
+        limitation: expect.stringMatching(
+          /JSON-escaped response text and map metadata would exceed the remaining space in the shared 32 MiB source-map output budget.*Response text was not retained/,
+        ),
       },
       { status: "included", artifact: { text: valid }, mappings: [{}] },
     ],
