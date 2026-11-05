@@ -172,6 +172,8 @@ it("compares recoverable symlink bytes across old and current captures", () => {
     };
     return {
       ...base,
+      files_before: [target],
+      files_after: [target],
       filesystem_effects: [effect],
       filesystem_checkpoints: base.filesystem_checkpoints.map((checkpoint) => ({
         ...checkpoint,
