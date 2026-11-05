@@ -82,6 +82,8 @@ export type FixtureExtraBlock =
     }
   | {
       readonly kind: "tracker";
+      readonly length?: number;
+      readonly version?: number;
       readonly machineId?: string;
       readonly droid?: readonly [Buffer, Buffer];
       readonly birthDroid?: readonly [Buffer, Buffer];
@@ -359,8 +361,8 @@ const extraBlockBytes = (block: FixtureExtraBlock): Buffer => {
     const bytes = Buffer.alloc(0x60);
     writeU32(bytes, 0, 0x60);
     writeU32(bytes, 4, EXTRA_SIGNATURE.Tracker);
-    writeU32(bytes, 8, 0x58);
-    writeU32(bytes, 12, 0);
+    writeU32(bytes, 8, block.length ?? 0x58);
+    writeU32(bytes, 12, block.version ?? 0);
     padField(block.machineId ?? "WORKSTATION", 16, "latin1").copy(bytes, 16);
     const droid0 = block.droid?.[0] ?? defaultTrackerGuid(1);
     const droid1 = block.droid?.[1] ?? defaultTrackerGuid(2);

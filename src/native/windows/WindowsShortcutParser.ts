@@ -823,6 +823,17 @@ const decodeExtra = (
       );
       return { kind: "raw", bytes: payload.length, sha256: sha256(payload) };
     }
+    const length = payload.readUInt32LE(0);
+    const version = payload.readUInt32LE(4);
+    if (length !== 0x58 || version !== 0) {
+      note(
+        walk,
+        "malformed_structure",
+        offset,
+        `TrackerDataBlock header is unsupported (Length 0x${length.toString(16)}, Version ${String(version)})`,
+      );
+      return { kind: "raw", bytes: payload.length, sha256: sha256(payload) };
+    }
     const machine = latin1Z(payload.subarray(8, 24));
     charge(walk, machine.length);
     const droid0 = formatGuid(payload, 24);

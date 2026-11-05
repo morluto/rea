@@ -184,6 +184,29 @@ it("does not derive Tracker facts from non-RFC 4122 variant GUIDs", async () => 
   expect(tracker.decoded.droid[1]).toEqual(expect.any(String));
 });
 
+it.each([
+  { length: 0, version: 0 },
+  { length: 0x58, version: 1 },
+])(
+  "keeps a Tracker block with Length $length and Version $version as raw data",
+  async ({ length, version }) => {
+    const report = await parse(
+      windowsShortcutBytes({
+        extraData: [{ kind: "tracker", length, version }],
+      }),
+    );
+    const tracker = report.extra_data.blocks.find(
+      (block) => block.signature === 0xa0000003,
+    );
+    expect(tracker?.decoded.kind).toBe("raw");
+    expect(
+      report.issues.some((issue) => issue.code === "malformed_structure"),
+    ).toBe(true);
+    expect(report.coverage.status).toBe("partial");
+    expect(windowsShortcutSchema.safeParse(report).success).toBe(true);
+  },
+);
+
 it("reads ANSI StringData when IsUnicode is unset", async () => {
   const report = await parse(ansiShortcut());
   expect(report.string_data.name?.encoding).toBe("ansi");
