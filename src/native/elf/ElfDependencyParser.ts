@@ -1191,7 +1191,8 @@ const followVersionLink = (
     if (link !== 0) fail(`${chain} chain continues past its declared count`);
     return offset;
   }
-  if (link === 0) fail(`${chain} chain is cyclic`);
+  // A zero link ends the chain early, as it does for the loader. Links are
+  // unsigned and at least one record long, so the walk only moves forward.
   if (link < recordSize) fail(`${chain} chain ends before its declared count`);
   return offset + link;
 };
@@ -1258,11 +1259,8 @@ const parseVerneed = (
   };
   try {
     reader.range(table.offset, Math.min(table.size, 16), "GNU verneed");
-    const seen = new Set<number>();
     let offset = 0;
     for (let record = 0; record < count; record += 1) {
-      if (seen.has(offset)) fail("GNU version requirement chain is cyclic");
-      seen.add(offset);
       if (offset + 16 > table.size)
         fail("GNU version requirement chain leaves its table");
       chargeVersion();
@@ -1285,11 +1283,7 @@ const parseVerneed = (
       const pending: [number, { name: string | null; file: string | null }][] =
         [];
       let auxiliary = offset + auxiliaryOffset;
-      const auxSeen = new Set<number>();
       for (let item = 0; item < auxiliaryCount; item += 1) {
-        if (auxSeen.has(auxiliary))
-          fail("GNU version requirement auxiliary chain is cyclic");
-        auxSeen.add(auxiliary);
         if (auxiliary + 16 > table.size)
           fail("GNU version requirement auxiliary chain leaves its table");
         chargeVersion();
@@ -1335,8 +1329,6 @@ const parseVerneed = (
     return { status: "present", location: table.location, files };
   } catch (cause) {
     if (cause instanceof ArtifactReaderFailure) throw cause;
-    if (cause instanceof BinaryFormatFailure && /cyclic/u.test(cause.message))
-      throw cause;
     settleConflicts();
     issues.push({
       code: "version_unresolved",
@@ -1398,11 +1390,8 @@ const parseVerdef = (
     return { status: "present", location: table.location, names: [] };
   const names: ElfVersionDefinition[] = [];
   try {
-    const seen = new Set<number>();
     let offset = 0;
     for (let record = 0; record < count; record += 1) {
-      if (seen.has(offset)) fail("GNU version definition chain is cyclic");
-      seen.add(offset);
       if (offset + 20 > table.size)
         fail("GNU version definition chain leaves its table");
       chargeVersion();
@@ -1425,11 +1414,7 @@ const parseVerdef = (
       // The first auxiliary record names the definition; the rest name its
       // parents. Walk them all so a count and link mismatch is reported.
       let auxiliary = offset + aux;
-      const auxSeen = new Set<number>();
       for (let item = 0; item < auxiliaryCount; item += 1) {
-        if (auxSeen.has(auxiliary))
-          fail("GNU version definition auxiliary chain is cyclic");
-        auxSeen.add(auxiliary);
         if (auxiliary + 8 > table.size)
           fail("GNU version definition auxiliary chain leaves its table");
         if (item > 0) chargeVersion();
@@ -1457,8 +1442,6 @@ const parseVerdef = (
     return { status: "present", location: table.location, names };
   } catch (cause) {
     if (cause instanceof ArtifactReaderFailure) throw cause;
-    if (cause instanceof BinaryFormatFailure && /cyclic/u.test(cause.message))
-      throw cause;
     issues.push({
       code: "version_unresolved",
       location: hex(table.offset),

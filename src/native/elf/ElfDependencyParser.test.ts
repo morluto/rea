@@ -380,12 +380,41 @@ it("rejects a non-ELF buffer before decoding dynamic tags", () => {
   }
 });
 
-it("fails cyclic GNU version requirement chains without a complete inventory", () => {
-  expect(() => parse(elfDependencyFixture({ cyclicVerneed: true }))).toThrow(
-    /cyclic/u,
+it("keeps the readable prefix when a GNU version chain ends before its count", () => {
+  const healthy = parse(elfDependencyFixture());
+  const verneed = parse(
+    elfDependencyFixture({ earlyVersionLinkEnd: "verneed" }),
   );
-  expect(() => parse(elfDependencyFixture({ cyclicVernaux: true }))).toThrow(
-    /cyclic/u,
+  expect(verneed.coverage.status).toBe("partial");
+  expect(verneed.needed).toEqual(healthy.needed);
+  expect(verneed.version_requirements.status).toBe("unreadable");
+  expect(verneed.version_requirements.files.map((file) => file.file)).toEqual([
+    "libc.so.6",
+  ]);
+  expect(verneed.issues).toContainEqual(
+    expect.objectContaining({
+      code: "version_unresolved",
+      message: expect.stringContaining(
+        "GNU version requirement chain ends before its declared count",
+      ),
+    }),
+  );
+
+  // The file entry whose auxiliary chain ended early stays out of the join.
+  const vernaux = parse(
+    elfDependencyFixture({ earlyVersionLinkEnd: "vernaux" }),
+  );
+  expect(vernaux.coverage.status).toBe("partial");
+  expect(vernaux.needed).toEqual(healthy.needed);
+  expect(vernaux.version_requirements.status).toBe("unreadable");
+  expect(vernaux.version_requirements.files).toEqual([]);
+  expect(vernaux.issues).toContainEqual(
+    expect.objectContaining({
+      code: "version_unresolved",
+      message: expect.stringContaining(
+        "GNU version requirement auxiliary chain ends before its declared count",
+      ),
+    }),
   );
 });
 
@@ -433,6 +462,10 @@ it.each([
   {
     label: "declares more auxiliary records than it holds",
     auxiliary: { count: 2, next: 8 },
+  },
+  {
+    label: "ends its auxiliary chain with a zero link before its count",
+    auxiliary: { count: 2, next: 0 },
   },
   {
     label: "links past its declared auxiliary count",

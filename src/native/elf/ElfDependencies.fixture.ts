@@ -96,8 +96,8 @@ export interface ElfDependencyFixtureOptions {
   readonly gnuHash?: boolean;
   readonly gnuBucketBelowFirstSymbol?: boolean;
   readonly gnuEmptyBuckets?: boolean;
-  readonly cyclicVerneed?: boolean;
-  readonly cyclicVernaux?: boolean;
+  /** Gives the first record of this chain a zero link before its count ends. */
+  readonly earlyVersionLinkEnd?: "verneed" | "vernaux";
   /** Gives the final record of this chain a nonzero link past its count. */
   readonly danglingVersionLink?: "verneed" | "vernaux" | "verdef";
   /** Writes revision 0 into the first record of this table. */
@@ -211,7 +211,7 @@ const verneedRecord = (
   nameOffsets: readonly number[],
   next: number,
   little: boolean,
-  cyclicAux: boolean,
+  zeroFirstAuxLink: boolean,
   finalAuxLink = 0,
   revision = 1,
 ): Buffer => {
@@ -229,7 +229,7 @@ const verneedRecord = (
     write32(record, 8, nameOffsets[index] ?? 0, little);
     const last = index + 1 === versions.length;
     const auxLink = last ? finalAuxLink : 16;
-    write32(record, 12, cyclicAux && index === 0 ? 0 : auxLink, little);
+    write32(record, 12, zeroFirstAuxLink && index === 0 ? 0 : auxLink, little);
     return record;
   });
   return concat(header, ...aux);
@@ -384,8 +384,7 @@ interface FixtureConfig {
   readonly gnuHash: boolean;
   readonly gnuBucketBelowFirstSymbol: boolean;
   readonly gnuEmptyBuckets: boolean;
-  readonly cyclicVerneed: boolean;
-  readonly cyclicVernaux: boolean;
+  readonly earlyVersionLinkEnd: ElfDependencyFixtureOptions["earlyVersionLinkEnd"];
   readonly danglingVersionLink: ElfDependencyFixtureOptions["danglingVersionLink"];
   readonly unsupportedVersionRevision: ElfDependencyFixtureOptions["unsupportedVersionRevision"];
   readonly verdefAuxiliary: ElfDependencyFixtureOptions["verdefAuxiliary"];
@@ -477,8 +476,7 @@ const fixtureConfig = (options: ElfDependencyFixtureOptions): FixtureConfig => {
     gnuHash: options.gnuHash === true,
     gnuBucketBelowFirstSymbol: options.gnuBucketBelowFirstSymbol === true,
     gnuEmptyBuckets: options.gnuEmptyBuckets === true,
-    cyclicVerneed: options.cyclicVerneed === true,
-    cyclicVernaux: options.cyclicVernaux === true,
+    earlyVersionLinkEnd: options.earlyVersionLinkEnd,
     danglingVersionLink: options.danglingVersionLink,
     unsupportedVersionRevision: options.unsupportedVersionRevision,
     verdefAuxiliary: options.verdefAuxiliary,
@@ -529,7 +527,7 @@ const buildDependencyTables = (config: FixtureConfig): DependencyTables => {
       const last = index + 1 === verneed.length;
       const dangling = last && config.danglingVersionLink === "verneed";
       const next =
-        config.cyclicVerneed && index === 0
+        config.earlyVersionLinkEnd === "verneed" && index === 0
           ? 0
           : dangling
             ? 32
@@ -542,7 +540,7 @@ const buildDependencyTables = (config: FixtureConfig): DependencyTables => {
         verneedNameOffsets[index] ?? [],
         next,
         little,
-        config.cyclicVernaux && index === 0,
+        config.earlyVersionLinkEnd === "vernaux" && index === 0,
         last && config.danglingVersionLink === "vernaux" ? 16 : 0,
         index === 0 && config.unsupportedVersionRevision === "verneed" ? 0 : 1,
       );
@@ -633,7 +631,7 @@ const buildDynamicTags = (
     addTag(0x6ffffffe, offsets.verneedOff);
     addTag(
       0x6fffffff,
-      config.cyclicVerneed
+      config.earlyVersionLinkEnd === "verneed"
         ? Math.max(config.verneed.length, 2)
         : config.verneed.length,
     );
