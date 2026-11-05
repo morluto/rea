@@ -53,6 +53,8 @@ const SUBJECT_UNAVAILABLE =
   "The whole file is not hashed: only the selected bytes were read, and the observation records the file size at read time.";
 const OFFSET_LIMITATION =
   "Offsets are absolute positions in the file on disk, not program memory addresses; a loader-adjusted address from an analyzed program generally differs.";
+const ZERO_SIZE_LIMITATION =
+  "The file reports a size of 0, so no bytes were read. Generated files such as Linux /proc entries can report 0 while holding content; this result does not show that the file is empty.";
 
 const invalidInput = (operation: string, field: string, message: string) =>
   new AnalysisInputError(operation, undefined, [
@@ -200,6 +202,7 @@ export class RawBytesService {
                   : [
                       "The match limit was reached before the end of the file; repeat with start_offset set to next_offset to continue.",
                     ]),
+                ...(admitted.size === 0 ? [ZERO_SIZE_LIMITATION] : []),
               ],
             };
           },

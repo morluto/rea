@@ -45,10 +45,15 @@ export const scanForPattern = async (
 ): Promise<PatternScan> => {
   const { value, mask } = decodeBytePattern(input);
   const length = value.length;
-  // The validated pattern constrains at least one bit; anchor the scan on its
-  // first constrained byte so unconstrained leading bytes cost nothing extra.
-  const anchor = mask.findIndex((selected) => selected !== 0);
-  const anchorExact = mask[anchor] === 0xff;
+  // The validated pattern constrains at least one bit. Prefer a fully
+  // constrained byte anywhere in the pattern so Buffer.indexOf can skip
+  // unmatching regions rapidly; fall back to the first partially constrained byte.
+  const exactAnchor = mask.findIndex((selected) => selected === 0xff);
+  const anchor =
+    exactAnchor >= 0
+      ? exactAnchor
+      : mask.findIndex((selected) => selected !== 0);
+  const anchorExact = exactAnchor >= 0;
   const buffer = Buffer.alloc(RAW_BYTES_SCAN_CHUNK_BYTES + length - 1);
   const offsets: number[] = [];
   let nextOffset: number | null = null;

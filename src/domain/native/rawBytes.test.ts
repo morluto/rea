@@ -99,3 +99,12 @@ it("decodes wildcards and masks into value and mask bytes", () => {
     mask: Uint8Array.from([0xf0, 0x00, 0x00]),
   });
 });
+
+it("rejects pattern and mask strings exceeding the maximum text length", () => {
+  const search = (extra: Record<string, unknown>) =>
+    searchRawBytesInputSchema.safeParse({ path: "/f", ...extra });
+  expect(search({ pattern: "ff", mask: "ff" + " ".repeat(2047) }).success).toBe(
+    false,
+  );
+  expect(search({ pattern: "ff" + " ".repeat(2047) }).success).toBe(false);
+});
