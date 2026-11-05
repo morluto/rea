@@ -90,7 +90,7 @@ code cache. A short header, a payload-length disagreement, or bytes past the dec
 payload is a typed `invalid_request` failure. Neither is a partial parse, and no Evidence
 is recorded for them.
 
-`max_file_bytes` (default 64 MiB, ceiling 512 MiB) is the caller-selected read budget. The
+`max_file_bytes` (default 32 MiB, ceiling 64 MiB) is the caller-selected read budget. The
 payload SHA-256 is computed over the declared payload, so two containers with the same
 payload length and content but different version hashes have different whole-file digests
 and identical payload digests.
@@ -98,7 +98,11 @@ and identical payload digests.
 ## Relationship to other tools
 
 - `inspect_binary_layout` reads the surrounding ELF/PE container of a single-executable
-  application; it does not decode the embedded code cache. Use this tool for that.
+  application; it does not decode the embedded code cache.
+- A cache embedded in a Node single-executable application or an Electron app must be
+  **extracted first**: this reader admits a container whose magic is at byte zero, so
+  passing the surrounding ELF/PE executable here returns `unsupported_target`. Run
+  `extract_artifact` on the application, then pass the extracted `.jsc` path to this tool.
 - `inspect_artifact` inventories the file without decoding V8 structures.
 - This tool is in the same family as `inspect_python_pyc`, `inspect_erlang_beam`, and
   `inspect_kernel_module`: one explicit local file, bounded parsing, no execution.

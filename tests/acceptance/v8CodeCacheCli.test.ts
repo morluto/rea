@@ -1,12 +1,12 @@
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
-import { toolContract } from "../../src/contracts/toolContracts.js";
+import { V8_CODE_CACHE_TOOL_CONTRACTS } from "../../src/contracts/v8/v8CodeCacheToolContracts.js";
 import { v8CodeCacheFixture } from "../../src/v8/V8CodeCache.fixture.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
 
-const outputSchema = toolContract("inspect_v8_code_cache").outputSchema;
+const outputSchema = V8_CODE_CACHE_TOOL_CONTRACTS[0].outputSchema;
 
 cliTest(
   "reports the observed header and payload through the public CLI",
