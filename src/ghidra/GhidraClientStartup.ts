@@ -39,8 +39,9 @@ export async function completeGhidraStartupHandshake(
   );
   if (!ping.ok) {
     const failure =
-      ping.error.kind === "cancelled" &&
-      options.deadline.interruption !== undefined
+      ping.error.kind === "timeout" ||
+      (ping.error.kind === "cancelled" &&
+        options.deadline.interruption !== undefined)
         ? interruptionFailure(options)
         : ping.error;
     if (
