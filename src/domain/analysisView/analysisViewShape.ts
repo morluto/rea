@@ -74,6 +74,7 @@ export const nativeViewSchema = z.strictObject({
     "swift_string_literals",
     "swift_string_literal_omissions",
     "native_api",
+    "unresolved_indirect_branches",
     "value_flow_summary",
     "value_flow_operations",
     "value_flow_def_use",

@@ -6,7 +6,10 @@ import {
 import { expect, it } from "vitest";
 
 import { functionDossierSchema } from "../native/functionDossier.js";
-import { ghidraFunctionDossier } from "../ghidraValues.fixture.js";
+import {
+  ghidraFunctionDossier,
+  ghidraNativeApiBoundary,
+} from "../ghidraValues.fixture.js";
 import { JAVASCRIPT_APPLICATION_EVIDENCE_EXAMPLE } from "../../contracts/javascript/javascriptRuntimeReconciliationExample.js";
 import { ARTIFACT_COMPARISON_EXAMPLE } from "../../contracts/artifactComparisonExample.js";
 import {
@@ -102,6 +105,70 @@ it("projects native procedure and bounded assembly and high-pcode with exact par
   });
   if (!flow.ok) throw flow.error;
   expect(flow.value).toMatchObject({ item: [{ opcode: "COPY" }] });
+});
+
+it("pages unresolved indirect branches and keeps omitted and uninspected sites unknown", () => {
+  const branch = (address: string) => ({
+    branch_address: address,
+    decompiler_outcome: "jump_table_recovery_failed",
+    listing_targets: [],
+    evidence: [
+      {
+        kind: "indirect-branch",
+        source: "ghidra-listing",
+        detail: "computed jump",
+      },
+    ],
+  });
+  const dossier = (nativeApi: unknown) => ({
+    ...(ghidraFunctionDossier() as Record<string, unknown>),
+    native_api: nativeApi,
+  });
+  const boundary = dossier({
+    ...ghidraNativeApiBoundary(),
+    unresolved_indirect_branches: ["0x401010", "0x401020", "0x401030"].map(
+      branch,
+    ),
+    unresolved_indirect_branches_omitted: 2,
+  });
+  const view = {
+    kind: "native",
+    facet: "unresolved_indirect_branches",
+    offset: 0,
+    limit: 2,
+  } as const;
+  const page = projectAnalysisView(nativeParent(boundary), view);
+  if (!page.ok) throw page.error;
+  expect(page.value).toMatchObject({
+    coverage: { examined: 2, total: 3, next_offset: 2 },
+    item: [{ branch_address: "0x401010" }, { branch_address: "0x401020" }],
+  });
+  expect(page.value.unknowns).toContain(
+    "2 further unresolved indirect branch(es) beyond the provider's inventory bound were not reported; their sites remain unknown",
+  );
+
+  const { unresolved_indirect_branches: _omitted, ...uninspected } =
+    ghidraNativeApiBoundary();
+  const absent = projectAnalysisView(nativeParent(dossier(uninspected)), view);
+  if (!absent.ok) throw absent.error;
+  expect(absent.value).toMatchObject({
+    item: { available: false, reason: "not recorded" },
+  });
+
+  const unavailable = projectAnalysisView(
+    nativeParent(
+      dossier({
+        available: false,
+        reason: "decompiler unavailable",
+        residual_unknowns: ["Which types cross this function boundary?"],
+      }),
+    ),
+    view,
+  );
+  if (!unavailable.ok) throw unavailable.error;
+  expect(unavailable.value).toMatchObject({
+    item: { available: false, reason: "decompiler unavailable" },
+  });
 });
 
 it("projects a compact analyze_function summary that validates and retains the dossier", () => {

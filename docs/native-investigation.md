@@ -555,7 +555,10 @@ are discounted by rendered occurrence instead of being treated as decompiler
 warnings. The inventory lists at most 256 sites and 64 listing
 targets per site; `unresolved_indirect_branches_omitted` and
 `listing_targets_omitted` count the rest, and omitted sites add one residual
-unknown.
+unknown. `inspect_analysis_view` pages the retained inventory with
+`view: {kind: "native", facet: "unresolved_indirect_branches", offset: 0, limit: 64}`;
+the page's unknowns repeat the omitted count, and the facet reports "not
+recorded" when the provider did not inspect indirect branches.
 Any entry adds
 `indirect-branch-target-recovery` to `inspect_native_api.unsupported_branches`
 and a residual unknown per site. The field is absent when the provider did not
