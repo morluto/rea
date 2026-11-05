@@ -459,6 +459,11 @@ symbol-bearing and stripped Mach-O fixtures, including cold and warm reads,
 references, and cleanup. Linux, other hosts, and the larger 1.833 target matrix
 were not verified with 1.989.
 
+Kuna 1.990 passed the real-provider lane on macOS arm64 with the generated
+symbol-bearing and stripped Mach-O fixtures, including cold and warm reads,
+references, timeout recovery, and cleanup. Linux, other hosts, and the larger
+1.833 target matrix were not verified with 1.990.
+
 ## DOS Ghidra analysis
 
 `npm run verify:ghidra:dos` requires the supported Ghidra and JDK installation
@@ -506,8 +511,9 @@ has been run on macOS; Linux has not been exercised.
 through the compiled CLI and stdio MCP server. With the same Ghidra/JDK
 prerequisites, it checks preparation and bridge startup, verified load mappings,
 instruction and byte readback, canonical-entry session reuse, replacement when
-the entry changes without `provider_id`, unchanged source bytes, and owned
-cleanup. Six-byte x86 and x86_64 controls also verify supported compiler
+the entry changes without `provider_id`, preservation of a session annotation
+and the target/provider receipt after a rejected open, unchanged source bytes,
+and owned cleanup. Six-byte x86 and x86_64 controls also verify supported compiler
 specifications, independent mappings, unchanged bytes, and decompilation of a
 known return value. AArch64 remains covered by deterministic tests rather than
 this real-provider lane. See [raw binary analysis](raw-binary.md).

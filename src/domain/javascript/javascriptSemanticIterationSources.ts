@@ -11,7 +11,10 @@ import {
   type JavaScriptSemanticPropertyPath,
 } from "./javascriptSemanticPropertyPaths.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
-import { semanticCopiedReferencePath } from "./javascriptSemanticReferenceSources.js";
+
+import { semanticCopiedReferencePath } from "./javascriptSemanticCopiedReferencePaths.js";
+import { semanticMethodDefinitionExpression } from "./javascriptSemanticEvaluationOrder.js";
+import { childNodes } from "./javascriptSemanticTraversal.js";
 import type {
   IterationSourceValue,
   SemanticIterationSource,
@@ -278,6 +281,50 @@ const emptySourceFacts: SemanticSourceFacts = {
   iterations: [],
   propertyReads: [],
 };
+// Immutable AST subtree summaries are reused by enclosing and nested catches.
+// Property reads can invoke getters; tags and coercions can execute user code.
+const guardedExecutions = new WeakMap<t.Node, boolean>();
+const guardedBodyMayCall = (body: t.BlockStatement): boolean => {
+  const pending: { node: t.Node; parent: t.Node | null; finish: boolean }[] = [
+    { node: body, parent: null, finish: false },
+  ];
+  while (pending.length > 0) {
+    const frame = pending.pop();
+    if (frame === undefined || guardedExecutions.has(frame.node)) continue;
+    const { node, parent } = frame;
+    const children = [...childNodes(node)].filter(
+      (child) =>
+        !t.isFunction(node) || semanticMethodDefinitionExpression(node, child),
+    );
+    if (!frame.finish) {
+      pending.push({ node, parent, finish: true });
+      for (const child of children)
+        pending.push({ node: child, parent: node, finish: false });
+    } else {
+      const direct =
+        t.isCallExpression(node) ||
+        t.isOptionalCallExpression(node) ||
+        t.isNewExpression(node) ||
+        t.isTaggedTemplateExpression(node) ||
+        t.isMemberExpression(node) ||
+        t.isOptionalMemberExpression(node) ||
+        t.isBinaryExpression(node) ||
+        t.isUnaryExpression(node) ||
+        t.isUpdateExpression(node) ||
+        t.isSpreadElement(node) ||
+        t.isForOfStatement(node) ||
+        t.isAwaitExpression(node) ||
+        ((t.isVariableDeclarator(node) || t.isAssignmentExpression(node)) &&
+          semanticSourceFacts(node, parent).propertyReads.length > 0);
+      guardedExecutions.set(
+        node,
+        direct ||
+          children.some((child) => guardedExecutions.get(child) === true),
+      );
+    }
+  }
+  return guardedExecutions.get(body) === true;
+};
 const sourceFacts = new WeakMap<
   t.Node,
   { readonly parent: t.Node | null; readonly facts: SemanticSourceFacts }
@@ -295,6 +342,7 @@ const semanticSourceFacts = (
       t.isForOfStatement(node) ||
       t.isSpreadElement(node) ||
       t.isYieldExpression(node) ||
+      t.isCatchClause(node) ||
       t.isFunction(node)
     )
   )
@@ -336,9 +384,19 @@ const semanticSourceFacts = (
     node.argument != null
   )
     add(sources, { node: node.argument, projection: [] }, node, {});
+  else if (
+    t.isCatchClause(node) &&
+    node.param != null &&
+    t.isTryStatement(parent) &&
+    guardedBodyMayCall(parent.block)
+  )
+    visit(context, node.param, { node: node.param, projection: [null] });
   else if (t.isFunction(node))
     for (const parameter of runtimeFunctionParameters(node))
-      visit(context, parameter, undefined);
+      // A caller-supplied value is unknown, not an absent property-read source.
+      // Retain the owning pattern as an unresolved source, including alongside
+      // default-value projections, instead of dropping its property lookups.
+      visit(context, parameter, { node: parameter, projection: [] });
   const facts = {
     iterations: sources,
     propertyReads,
@@ -361,8 +419,28 @@ export const semanticIterationSources = (
 ): readonly SemanticIterationSource[] =>
   semanticSourceFacts(node, parent).iterations;
 
+/** Pattern reads from an explicitly retained source, including thrown values. */
+export const semanticPatternPropertyReadSources = (
+  pattern: t.Node,
+  source: IterationSourceValue,
+  mutation: t.Node,
+): readonly SemanticPropertyReadSource[] => {
+  const propertyReads: SemanticPropertyReadSource[] = [];
+  visit({ sources: [], propertyReads, mutation }, pattern, source);
+  return propertyReads;
+};
+
 export const semanticPropertyReadSources = (
   node: t.Node,
   parent: t.Node | null,
-): readonly SemanticPropertyReadSource[] =>
-  semanticSourceFacts(node, parent).propertyReads;
+  supplemental?: {
+    readonly implicitPropertyReads: WeakMap<
+      t.Node,
+      readonly SemanticPropertyReadSource[]
+    >;
+  },
+): readonly SemanticPropertyReadSource[] => {
+  const ordinary = semanticSourceFacts(node, parent).propertyReads;
+  const implicit = supplemental?.implicitPropertyReads.get(node);
+  return implicit === undefined ? ordinary : [...ordinary, ...implicit];
+};

@@ -1,5 +1,7 @@
+import { BinaryFormatFailure } from "../metadata/BinaryContainer.js";
 import {
   projectStableArtifactFailure,
+  stableArtifactInputRecovery,
   projectArtifactCloseFailure,
 } from "../../artifacts/StableArtifactFailure.js";
 import { isSelectedRegularFileError } from "../../filesystem/RegularFile.js";
@@ -20,6 +22,7 @@ import {
   AnalysisCancelledError,
   AnalysisInputError,
   AnalysisResourceConstraintError,
+  AnalysisUnsupportedTargetError,
 } from "../../domain/analysisErrorCore.js";
 import {
   MAX_INSPECT_PE_CERTIFICATE_ENTRIES,
@@ -122,6 +125,14 @@ const peCertificatesFailurePrimary = (
   input: InspectPeCertificatesInput,
 ) => {
   const { cause, origin } = facts;
+  if (cause instanceof BinaryFormatFailure && cause.kind === "unsupported")
+    return new AnalysisUnsupportedTargetError(
+      OPERATION,
+      input.path,
+      cause.message,
+      { cause },
+    );
+
   if (
     origin === "owned-or-classified" &&
     cause instanceof ArtifactReaderFailure &&
@@ -176,13 +187,17 @@ const peCertificatesFailurePrimary = (
         },
       );
     if (cause.reason === "path" || cause.reason === "format")
-      return new AnalysisInputError(OPERATION, { cause }, [
-        {
-          path: ["path"],
-          reason: "invalid_format",
-          message: cause.message,
-        },
-      ]);
+      return new AnalysisInputError(
+        OPERATION,
+        { cause, ...stableArtifactInputRecovery(cause) },
+        [
+          {
+            path: ["path"],
+            reason: "invalid_format",
+            message: cause.message,
+          },
+        ],
+      );
   }
   if (cause instanceof Error && "code" in cause) {
     if (cause.code === "EACCES" || cause.code === "EPERM")

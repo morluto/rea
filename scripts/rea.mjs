@@ -70,15 +70,8 @@ if (!(await compiledRuntimeExists(runtimeFiles))) {
   guardClosedStdout();
   // Doctor runs outside Incur, so handle its global timing flag here. Keep a
   // token consumed by --format as a value, even when it looks like a flag.
-  const outputValues = new Set(
-    builtinArguments
-      .splitIncurBuiltinArguments(doctorArguments)
-      .outputValues.map(({ index }) => index),
-  );
-  const doctorCliArguments = doctorArguments.filter(
-    (argument, index) => argument !== "--timings" || outputValues.has(index),
-  );
-  const timingRequested = doctorCliArguments.length !== doctorArguments.length;
+  const { arguments: doctorCliArguments, enabled: timingRequested } =
+    builtinArguments.splitCliTimingArguments(doctorArguments);
   const started = performance.now();
   try {
     const { runProductionMcpDoctorCli } =
@@ -174,7 +167,7 @@ if (!(await compiledRuntimeExists(runtimeFiles))) {
           exit: (code) => {
             exiting = true;
             void (async () => {
-              let status = code;
+              let status = typeof code === "number" ? code : 0;
               try {
                 await closeCliResources();
               } catch (cleanup) {
@@ -184,7 +177,7 @@ if (!(await compiledRuntimeExists(runtimeFiles))) {
                 if (status === 0) status = 1;
               }
               try {
-                await resultOutput?.finishSdkOutput(code);
+                await resultOutput?.finishSdkOutput(status);
               } catch (cause) {
                 if (!stdoutClosed)
                   process.stderr.write(`${cleanupFailureText(cause)}\n`);
