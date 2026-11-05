@@ -75,9 +75,18 @@ the first source that has the app:
 
 ## Drive the app
 
+- Pass `computer_id` and the action's fields at the top level: click
+  `{x, y, count}`, scroll `{x, y, direction, amount}`, a screenshot region
+  `[x0, y0, x1, y1]`. The rest are in
+  [the build-computer guide](https://github.com/morluto/rea/blob/main/docs/desktop-build-computer.md).
 - Take a `screenshot` before pointing: points are pixels of the latest
   frame. If a response is too large, ask for a `region`, or `jpeg` with a
-  lower `quality`.
+  lower `quality`. A region crops the latest frame and becomes it: take a
+  full screenshot before pointing again.
+- A drawn caret does not prove keyboard focus. After using a toolbar
+  control, click into the document, then type a few characters and look
+  before a long text.
+- Confirm a dialog with `key` Return, not a trailing `\n` in `type`.
 - An action's own screenshot is taken at once. After opening a menu, a
   dialog or a window, look with
   `{"action": "wait", "ms": 500, "screenshot": true}`.
@@ -95,8 +104,9 @@ the first source that has the app:
   typed without one runs as commands.
 - Save As opens in the home: click Documents in its sidebar and type only
   the file name. Answer the app's save questions, such as keeping the
-  format, then check the saved path in the title or status bar, and that
-  it shows no unsaved mark, before you mark a checkpoint or check.
+  format, then check the saved path in the title or status bar, or the
+  dialog's folder when the app shows only the name, and that it shows no
+  unsaved mark, before you mark a checkpoint or check.
 - Everything saved under the home before `seed` is part of the seed,
   including a file you move to the Trash. If a stray file would mislead a
   solver, start a new build computer before `seed`.
@@ -161,6 +171,14 @@ Write `{"name", "prompt", "checks"}` from the draft and what you did.
   worth checking; it passes on the seed too, which is fine, since the export
   needs only one check to fail there.
 - Give `value_equals` a `tolerance` for a number the app writes as text.
+- When the draft shows an XML document's changes as `lines`, REA read it
+  as text; AbiWord's `.abw`, whose DOCTYPE REA refuses, is one. Selectors
+  are impossible there: use `line_count` with a short `contains`.
+- Some apps save a document reloaded from disk differently from one typed
+  in the same session: AbiWord wraps each new insertion in its own markup.
+  Your build's end state hides this, so keep text checks to the short value
+  the edit types, such as `3:30`, and expect the witness to show the real
+  format.
 
 The kinds and pointer rules are in
 [the desktop tasks section](environments.md#pick-the-checks).
@@ -194,7 +212,7 @@ checks. Give every `check_build_task` the task exactly as exported.
    screenshot first, since the desktop may not have drawn yet.
 2. `check_build_task` with `stage: "seed"` and `directory`, the absolute
    path of a new or empty folder for the record. A check must fail.
-   Recording starts.
+   Recording starts. Later stages take no `directory`.
 3. Do the task from the prompt with `act_on_build_computer` and save.
    `check_build_task` with `stage: "after_edit"`: every check must pass.
 4. Make a near miss on top of it: a plausible wrong edit, such as a typo or
