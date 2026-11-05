@@ -28,7 +28,7 @@ for name, text in json.load(sys.stdin):
     encoding: "utf8",
   })
     .trim()
-    .split("\n");
+    .split(/\r?\n/u);
 };
 
 it("detects key files by the state view's rule rather than a name or any group header", () => {
@@ -75,17 +75,18 @@ const pythonUtf16Respelled = (files: readonly string[]) => {
     .filter((line) => !line.includes("agentenv_protocol"))
     .join("\n");
   const program = `${imports}
+from pathlib import PurePosixPath
 CAPTURED_HOME = "/home/ada"
 ${PYTHON_HELPERS}
 for data in json.load(sys.stdin):
-    print(_respelled_utf16(bytes.fromhex(data), Path("/home/user")).hex())
+    print(_respelled_utf16(bytes.fromhex(data), PurePosixPath("/home/user")).hex())
 `;
   return execFileSync("python3", ["-I", "-B", "-c", program], {
     input: JSON.stringify(files),
     encoding: "utf8",
   })
     .trim()
-    .split("\n");
+    .split(/\r?\n/u);
 };
 
 const utf16 = (text: string, order: "le" | "be") => {
@@ -196,7 +197,7 @@ for text in json.load(sys.stdin):
     encoding: "utf8",
   })
     .trim()
-    .split("\n")
+    .split(/\r?\n/u)
     .map((line) => JSON.parse(line) as { view: unknown; error?: string });
 };
 
