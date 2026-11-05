@@ -1,4 +1,12 @@
 /** The generated module's imports. */
+/** The class method that holds readiness until the app's own window shows, not a splash screen with its class. */
+export const PYTHON_READY_CHECK = `
+    @ready_check
+    def main_window_shown(self) -> bool:
+        """A window of the app's class that the taskbar lists is shown, not only a splash screen or a dialog."""
+        return _taskbar_window(WINDOW_CLASS)
+`;
+
 export const PYTHON_IMPORTS = `from __future__ import annotations
 
 import contextlib
@@ -13,7 +21,7 @@ import xml.etree.ElementTree as ElementTree
 from pathlib import Path
 
 from agentenv_protocol import add_data, get_data, reset_data
-from agentenv_protocol.computer import AptSource, ComputerAppEnvironment, Download, Launch, Packages, Ready, RunScript, computer_app, linux
+from agentenv_protocol.computer import AptSource, ComputerAppEnvironment, Download, Launch, Packages, Ready, RunScript, computer_app, linux, ready_check
 from agentenv_protocol.computer.app_data import INITIAL, add, get, in_thread, keep_initial, reset
 from agentenv_protocol.types import DataPart
 `;
@@ -50,6 +58,21 @@ def _respelled_utf16(data: bytes, home: Path) -> bytes:
                 return data
             return mark + _respelled(text, home).encode(codec) if CAPTURED_HOME in text else data
     return data
+
+
+def _taskbar_window(window_class: str) -> bool:
+    """Whether a top-level window of the given class that the taskbar lists is shown; a splash screen or a dialog
+    skips the taskbar."""
+    def xprop(*args: str) -> str:
+        done = subprocess.run(["xprop", *args], capture_output=True, text=True)
+        return done.stdout if done.returncode == 0 else ""
+
+    for window in re.findall(r"0x[0-9a-f]+", xprop("-root", "_NET_CLIENT_LIST").partition("#")[2]):
+        props = xprop("-id", window, "WM_CLASS", "_NET_WM_STATE")
+        classes = re.findall(r'"((?:[^"\\]|\\.)*)"', props.partition("WM_CLASS")[2].split("\n", 1)[0])
+        if window_class in classes and "_NET_WM_STATE_SKIP_TASKBAR" not in props:
+            return True
+    return False
 
 
 def _seed_home(home: Path) -> None:
@@ -290,6 +313,7 @@ const PYTHON_CONSTANTS = [
   "PATHS",
   "DCONF",
   "TEXT_SEEDS",
+  "WINDOW_CLASS",
 ] as const;
 
 /** Names a Python source binds at its top level: imports, assignments, functions and classes. */

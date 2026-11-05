@@ -8,6 +8,7 @@ import {
   PYTHON_HELPERS,
   PYTHON_IMPORTS,
   PYTHON_MODULE_NAMES,
+  PYTHON_READY_CHECK,
 } from "./appExportPython.js";
 import type { DesktopApplicationCapture } from "./desktopCapture.js";
 import type { DesktopApplicationState } from "./desktopState.js";
@@ -301,15 +302,15 @@ const classBody = (plan: DesktopAppExportPlan): string => {
             _seed_home(Path.home())
             _load_dconf(Path.home())
         keep_initial(self.paths)
-${PYTHON_DATA_HOOKS}`;
+${PYTHON_DATA_HOOKS}${PYTHON_READY_CHECK}`;
   if (plan.dconf.length > 0)
     return `    """${title}, launched at boot with its captured settings. It owns no files, so it serves no data operations."""
 
     def __init__(self) -> None:
         super().__init__()
         _load_dconf(Path.home())
-`;
-  return `    """${title}, launched at boot. No state was observed, so it serves no data operations."""\n`;
+${PYTHON_READY_CHECK}`;
+  return `    """${title}, launched at boot. No state was observed, so it serves no data operations."""\n${PYTHON_READY_CHECK}`;
 };
 
 /** The package as apt takes it: `name`, or `name/release` for a vendor release. */
@@ -368,6 +369,7 @@ CAPTURED_HOME = ${py(plan.capturedHome)}
 PATHS = ${pyList(plan.paths)}
 DCONF = ${py(plan.dconf)}
 TEXT_SEEDS = frozenset(${pyList(plan.textSeeds)})
+WINDOW_CLASS = ${py(plan.windowClass)}
 ${PYTHON_HELPERS}
 
 @computer_app(supports=[{"os": {"type": "linux", "display": ["x11"]}, "arch": ${pyList(plan.architectures)}}])

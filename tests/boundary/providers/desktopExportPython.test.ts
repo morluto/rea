@@ -1,4 +1,6 @@
 import { execFileSync } from "node:child_process";
+import { chmod, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 
 import { expect, it } from "vitest";
 
@@ -7,6 +9,7 @@ import {
   PYTHON_IMPORTS,
 } from "../../../src/domain/desktop/appExportPython.js";
 import { detectStateFormat } from "../../../src/domain/desktop/stateFormats.js";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 /** The exported module's view format for each file, run with only its standard library imports. */
 const pythonFormats = (files: readonly (readonly [string, string])[]) => {
@@ -89,4 +92,65 @@ it("respells the captured home in UTF-16 seeds with a byte-order mark, keeping t
     utf16(expected, "be").toString("hex"),
     ...files.slice(2).map((file) => file.toString("hex")),
   ]);
+});
+
+/** A stand-in xprop answering the root window list and each window's class and state from a table. */
+const fakeXprop = async (windows: Record<string, string>) => {
+  const bin = await createTestTempDirectory("desktop-xprop-");
+  const table = JSON.stringify(windows);
+  await writeFile(
+    join(bin, "xprop"),
+    `#!/usr/bin/env python3
+import json, sys
+windows = json.loads(${JSON.stringify(table)})
+if sys.argv[1:3] == ["-root", "_NET_CLIENT_LIST"]:
+    print("_NET_CLIENT_LIST(WINDOW): window id # " + ", ".join(windows))
+else:
+    print(windows[sys.argv[2]])
+`,
+  );
+  await chmod(join(bin, "xprop"), 0o755);
+  return bin;
+};
+
+const taskbarWindow = (bin: string, windowClass: string): string => {
+  const imports = PYTHON_IMPORTS.split("\n")
+    .filter((line) => !line.includes("agentenv_protocol"))
+    .join("\n");
+  return execFileSync(
+    "python3",
+    [
+      "-I",
+      "-B",
+      "-c",
+      `${imports}\nCAPTURED_HOME = "/home/ada"\n${PYTHON_HELPERS}\nprint(_taskbar_window(sys.argv[1]))`,
+      windowClass,
+    ],
+    {
+      encoding: "utf8",
+      env: { ...process.env, PATH: `${bin}:${process.env.PATH ?? ""}` },
+    },
+  ).trim();
+};
+
+it("holds readiness until a window of the app's class that the taskbar lists is shown, not its splash", async () => {
+  const splash =
+    'WM_CLASS(STRING) = "varicad", "varicad"\n_NET_WM_STATE(ATOM) = _NET_WM_STATE_SKIP_PAGER, _NET_WM_STATE_SKIP_TASKBAR, _NET_WM_STATE_ABOVE';
+  const main =
+    'WM_CLASS(STRING) = "varicad", "varicad"\n_NET_WM_STATE(ATOM) = _NET_WM_STATE_MAXIMIZED_HORZ, _NET_WM_STATE_FOCUSED';
+  const other =
+    'WM_CLASS(STRING) = "mousepad", "Mousepad"\n_NET_WM_STATE(ATOM) = ';
+
+  expect(taskbarWindow(await fakeXprop({ "0x1": splash }), "varicad")).toBe(
+    "False",
+  );
+  expect(
+    taskbarWindow(await fakeXprop({ "0x1": splash, "0x2": main }), "varicad"),
+  ).toBe("True");
+  expect(
+    taskbarWindow(await fakeXprop({ "0x1": splash, "0x3": other }), "varicad"),
+  ).toBe("False");
+  expect(taskbarWindow(await fakeXprop({ "0x3": other }), "Mousepad")).toBe(
+    "True",
+  );
 });
