@@ -53,6 +53,26 @@ export type ReverseEngineeringOperation =
   | "inspect_with_objdump"
   | "execute_rizin_command";
 
+export interface CommandProviderLaunchFailure {
+  readonly reason: string;
+  readonly remediation: string;
+}
+
+export type CommandProviderLaunchFailures = Readonly<
+  Partial<Record<ReverseEngineeringOperation, CommandProviderLaunchFailure>>
+>;
+
+interface CommandLaunchOutcome {
+  failure:
+    | {
+        readonly dispatch: number;
+        readonly reason: string;
+        readonly remediation: string;
+      }
+    | undefined;
+  succeeded: number;
+}
+
 const MAX_COMBINED_OUTPUT_BYTES = 16 * 1024 * 1024;
 // Eight concurrent captures bound retained provider output to 128 MiB.
 const MAX_CONCURRENT_REVERSE_ENGINEERING_OPERATIONS = 8;
@@ -125,6 +145,11 @@ export class ReverseEngineeringService {
   >();
   #closing = false;
   #closePromise: Promise<void> | undefined;
+  #dispatched = 0;
+  readonly #outcomes = new Map<
+    ReverseEngineeringOperation,
+    CommandLaunchOutcome
+  >();
 
   constructor(options: ReverseEngineeringServiceOptions) {
     this.#environment = { ...(options.environment ?? process.env) };
@@ -187,6 +212,38 @@ export class ReverseEngineeringService {
   }
 
   /** Retry cleanup for provider process groups retained after an incomplete stop. */
+  #outcome(operation: ReverseEngineeringOperation): CommandLaunchOutcome {
+    const existing = this.#outcomes.get(operation);
+    if (existing !== undefined) return existing;
+    const created: CommandLaunchOutcome = { failure: undefined, succeeded: 0 };
+    this.#outcomes.set(operation, created);
+    return created;
+  }
+
+  /** Current launch failures observed for caller-configured standalone tools. */
+  observedLaunchFailures(): CommandProviderLaunchFailures {
+    const result: Partial<
+      Record<ReverseEngineeringOperation, CommandProviderLaunchFailure>
+    > = {};
+    for (const [operation, outcome] of this.#outcomes) {
+      if (
+        outcome.failure !== undefined &&
+        outcome.failure.dispatch > outcome.succeeded
+      ) {
+        result[operation] = {
+          reason: outcome.failure.reason,
+          remediation: outcome.failure.remediation,
+        };
+      }
+    }
+    return result;
+  }
+
+  /** Forget runtime launch outcomes observed for standalone tools. */
+  clearObservedFailures(): void {
+    this.#outcomes.clear();
+  }
+
   close(): Promise<void> {
     this.#closing = true;
     this.#closePromise ??= this.#closeActiveOperationsAndCleanup().catch(
@@ -456,6 +513,7 @@ export class ReverseEngineeringService {
     let failure: AnalysisError | undefined;
     let cleanupOwner: ProviderProcessSupervisor | undefined;
     let earlyFailure: AnalysisError | undefined;
+    const dispatch = ++this.#dispatched;
     try {
       const output = await this.#run(command, args, {
         env: {
@@ -652,8 +710,27 @@ export class ReverseEngineeringService {
         }
       }
     }
-    if (earlyFailure !== undefined)
+    if (earlyFailure !== undefined) {
+      if (
+        earlyFailure instanceof AnalysisCapabilityUnavailableError &&
+        earlyFailure.diagnostics?.boundary === "provider-launch"
+      ) {
+        const outcome = this.#outcome(operation);
+        if (
+          outcome.failure === undefined ||
+          dispatch > outcome.failure.dispatch
+        ) {
+          outcome.failure = {
+            dispatch,
+            reason: earlyFailure.userMessage ?? earlyFailure.message,
+            remediation:
+              earlyFailure.remediationAction ??
+              `Set ${operation === "inspect_with_objdump" ? "REA_OBJDUMP_COMMAND" : "REA_RIZIN_COMMAND"} to an installed executable command.`,
+          };
+        }
+      }
       return err(this.#registerCleanupFailure(earlyFailure, cleanupOwner));
+    }
     if (failure !== undefined && cleanupOwner !== undefined)
       failure = this.#registerCleanupFailure(failure, cleanupOwner);
     let digestAfter: string | null = null;
@@ -810,6 +887,13 @@ export class ReverseEngineeringService {
             }),
       },
     );
+    if (
+      failure?._tag !== "AnalysisCancelledError" &&
+      failure?._tag !== "AnalysisTimeoutError"
+    ) {
+      const outcome = this.#outcome(operation);
+      outcome.succeeded = Math.max(outcome.succeeded, dispatch);
+    }
     return failure === undefined
       ? ok(evidence)
       : err(failure.retainPartialObservation(evidence));

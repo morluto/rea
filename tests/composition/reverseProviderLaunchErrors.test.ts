@@ -114,3 +114,45 @@ it("retains successful architecture and artifact output for an admitted provider
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+it("tracks observed launch failures and clears them after subsequent successful launch", async () => {
+  const { directory, path } = await createArtifact();
+  const command = resolve(directory, "failing-objdump");
+  let failLaunch = true;
+  const service = new TestReverseEngineeringService({
+    environment: { REA_OBJDUMP_COMMAND: command },
+    runOwned: async () => {
+      if (failLaunch) {
+        throw new OwnedCommandFailure("process", "launch failed", null, null, {
+          cause: Object.assign(new Error("missing executable"), {
+            code: "ENOENT",
+          }),
+        });
+      }
+      return providerSnapshot();
+    },
+  });
+  try {
+    expect(service.observedLaunchFailures()).toEqual({});
+    const failed = await service.inspectWithObjdump({
+      operation: "architectures",
+    });
+    expect(failed.ok).toBe(false);
+    expect(service.observedLaunchFailures()).toMatchObject({
+      inspect_with_objdump: {
+        reason: expect.stringContaining(command),
+        remediation: expect.stringContaining("REA_OBJDUMP_COMMAND"),
+      },
+    });
+
+    failLaunch = false;
+    const succeeded = await service.inspectWithObjdump({
+      operation: "architectures",
+    });
+    expect(succeeded.ok).toBe(true);
+    expect(service.observedLaunchFailures()).toEqual({});
+  } finally {
+    await service.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});

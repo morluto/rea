@@ -16,6 +16,10 @@ import type {
   OptionalProviderLoadFailures,
   OptionalProviderLoadFailure,
 } from "./OptionalObservationProviders.js";
+import type {
+  CommandProviderLaunchFailures,
+  ReverseEngineeringOperation,
+} from "./reverse/ReverseEngineeringService.js";
 
 import {
   expandProviderCapabilities,
@@ -102,6 +106,7 @@ export type AvailabilityPolicy = {
   readonly evmLimiterAvailability?: ProviderAvailability;
   readonly processCaptureEnabled: boolean;
   readonly optionalProviderLoadFailures?: OptionalProviderLoadFailures;
+  readonly commandProviderFailures?: CommandProviderLaunchFailures;
   readonly binaryLayoutEnabled?: boolean;
   readonly recordedCrashEnabled?: boolean;
   readonly firmwareInspectionEnabled?: boolean;
@@ -885,8 +890,16 @@ const providerAvailability = ({
   descriptors,
   kind,
   name,
+  policy,
 }: AvailabilityContext): Availability => {
   if (kind === "enhanced") return composedAvailability(name, descriptors);
+  const launchFailure =
+    policy.commandProviderFailures?.[name as ReverseEngineeringOperation];
+  if (launchFailure !== undefined)
+    return {
+      reason: "provider_unavailable",
+      remediation: launchFailure.remediation,
+    };
   const descriptor = descriptors.get(name);
   if (
     descriptor === undefined &&

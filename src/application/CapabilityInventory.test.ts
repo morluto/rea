@@ -1115,6 +1115,34 @@ it("keeps independent native sessions discoverable without an unrelated binary t
   );
 });
 
+it("reports standalone reverse-engineering tools unavailable when launch failure is observed", () => {
+  const repair =
+    "Set REA_OBJDUMP_COMMAND to an installed executable GNU objdump command.";
+  const entries = buildCapabilityInventory(status(), {
+    ...enabledPolicy,
+    commandProviderFailures: {
+      inspect_with_objdump: {
+        reason: "Could not launch selected objdump executable",
+        remediation: repair,
+      },
+    },
+  });
+  expect(
+    entries.find((entry) => entry.name === "inspect_with_objdump"),
+  ).toMatchObject({
+    available: false,
+    reason: "provider_unavailable",
+    remediation: repair,
+  });
+  expect(
+    entries.find((entry) => entry.name === "execute_rizin_command"),
+  ).toMatchObject({
+    available: true,
+    reason: "available",
+    remediation: null,
+  });
+});
+
 it.each(["darwin", "linux", "win32"] as const)(
   "reports the persistent debugger start host restriction on %s",
   (platform) => {
