@@ -6,7 +6,6 @@ import {
   kunaTimeoutRecovery,
   type KunaProcessLauncher,
 } from "../../../../src/kuna/KunaCommand.js";
-import { cleanupOwnedProcessGroup } from "../../../../src/process/ProcessOwnership.js";
 import { spawnOwnedProviderProcess } from "../../../../src/process/ProviderProcess.js";
 
 import {
@@ -254,32 +253,45 @@ it("keeps answering repeats from the completed run after the export fails", asyn
 
 const deferred = <T>() => {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((r) => {
-    resolve = r;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
   });
-  return { promise, resolve };
+  return { promise, resolve, reject };
 };
 
 it("reports sibling unavailability when fallback observes settled export failure without prior assembly call", async () => {
   const exportSettled = deferred<void>();
+  exportSettled.promise.catch(() => undefined);
+  let synchronization: Promise<void> | undefined;
   const launcher: KunaProcessLauncher = async (options) => {
     if (options.arguments[0] === "decompile") {
       await exportSettled.promise;
     }
     const spawned = await spawnOwnedProviderProcess(options);
     if (options.arguments[0] === "decompile-project") {
-      const output = options.arguments[options.arguments.indexOf("-o") + 1];
+      const outputIndex = options.arguments.indexOf("-o");
+      const output =
+        outputIndex === -1 ? undefined : options.arguments[outputIndex + 1];
       const synchronize = async () => {
-        if (output !== undefined) {
-          await expect.poll(() => existsSync(output)).toBe(false);
+        try {
+          if (output !== undefined) {
+            await expect.poll(() => existsSync(output)).toBe(false);
+          }
+          exportSettled.resolve();
+        } catch (error) {
+          exportSettled.reject(error);
+          throw error;
         }
-        exportSettled.resolve();
       };
-      if (spawned.process.exitCode !== null) {
-        void synchronize();
-      } else {
-        spawned.process.once("exit", () => void synchronize());
-      }
+      const exitPromise =
+        spawned.process.exitCode !== null
+          ? Promise.resolve()
+          : new Promise<void>((resolve) => {
+              spawned.process.once("exit", () => resolve());
+            });
+      synchronization = exitPromise.then(synchronize);
     }
     return spawned;
   };
@@ -304,7 +316,10 @@ it("reports sibling unavailability when fallback observes settled export failure
     ]);
     expect(answer.siblingUnavailability?.providerId).toBe("kuna");
     expect(await decompilesOf(kuna)).toHaveLength(1);
+    await synchronization;
   } finally {
+    exportSettled.resolve();
+    await synchronization?.catch(() => undefined);
     expect(await client.close()).toEqual({ ok: true, value: null });
   }
 });
