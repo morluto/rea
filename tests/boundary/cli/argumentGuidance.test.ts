@@ -1,6 +1,7 @@
 import { expect, it } from "vitest";
 
 import { createCli } from "../../../src/cli.js";
+import { encodeMarkdownTableCell } from "../../../src/cli/cliOutputFormatter.js";
 import { MAX_SELECTED_LOCALES } from "../../../src/domain/apktool/apktoolResourceAnalysis.js";
 import { serveCli } from "./cliServeHarness.js";
 
@@ -89,4 +90,16 @@ it("leaves non-ADB over-limit argument errors unchanged", async () => {
     ],
   });
   expect(output.fieldErrors[0]).not.toHaveProperty("maximum");
+});
+
+it("preserves Markdown argument encoding in the public CLI middleware chain", async () => {
+  const args = ["search", "/nonexistent/input", "needle", "--kind", "unknown"];
+  const json = await serveCli([...args, "--format", "json"]);
+  const markdown = await serveCli([...args, "--format", "md"]);
+  expect(json.exitCode).toBe(1);
+  expect(markdown.exitCode).toBe(1);
+  const message = JSON.parse(json.stdout).fieldErrors[0].message as string;
+  expect(message).toContain("|");
+  expect(markdown.stdout).toContain(encodeMarkdownTableCell(message));
+  expect(markdown.stdout).toContain("\\|");
 });

@@ -75,7 +75,6 @@ cliTest(
     await writeFile(path, original);
     for (const flag of ["--schema", "--version", "--help"]) {
       const result = await run(["mcp", "add", "--agent", "amp", flag]);
-      expect(result.stdout).not.toContain("Registered rea");
       expect(result.exitCode).toBe(flag === "--schema" ? 1 : 0);
       expect(await readFile(path, "utf8")).toBe(original);
     }

@@ -24,12 +24,15 @@ import { registerAnalysisViewCommands } from "./cli/analysisViewCommands.js";
 import { registerBinaryDiagnosticsCommands } from "./cli/binaryDiagnosticsCommands.js";
 import { registerFridaCommands } from "./cli/fridaCommands.js";
 import type { FridaInstrumentationPort } from "./application/frida/FridaInstrumentationPort.js";
-import { Cli, z } from "incur";
+import { Cli, Filter, SyncMcp, z } from "incur";
 import {
   adaptCliOutputArgumentsForIncur,
+  declaredSensitiveValues,
   normalizeCliArguments,
+  normalizeMcpAddArguments,
   splitIncurBuiltinArguments,
 } from "./cliBuiltinArguments.js";
+import { redactExplicitText } from "./domain/explicitSensitiveValues.js";
 import {
   parseCliOutputArguments,
   renderCliDocument,
@@ -129,6 +132,9 @@ export const createCli = (
     "cli",
     level?.ok === true ? level.value : "silent",
   );
+  const registrationCommand = clientRegistrationCommandText(
+    currentClientRegistrationCommand({ environment }),
+  );
   const timedCli = Cli.create(PRODUCT_IDENTITY.cliBinary, {
     version: PRODUCT_IDENTITY.packageVersion,
     description: "Reverse engineer anything from your terminal or agent.",
@@ -139,9 +145,7 @@ export const createCli = (
         .describe("Write measured command timing to stderr."),
     }),
     mcp: {
-      command: clientRegistrationCommandText(
-        currentClientRegistrationCommand({ environment }),
-      ),
+      command: registrationCommand,
       instructions:
         "Ask what software, artifact, protocol, or behavior the user wants to understand, then choose the available investigation capabilities that can produce evidence.",
     },
@@ -258,7 +262,11 @@ export const createCli = (
   );
   cli.serve = (arguments_ = process.argv.slice(2), options) => {
     if (complete(arguments_, options ?? {})) return Promise.resolve();
-    let normalized = normalizeCliArguments(arguments_);
+    const normalizedArguments = normalizeCliArguments(arguments_);
+    const normalized = normalizeMcpAddArguments(
+      normalizedArguments,
+      PRODUCT_IDENTITY.cliBinary,
+    );
     const { command, flags } = splitIncurBuiltinArguments(normalized);
     const builtin = command[0] === PRODUCT_IDENTITY.cliBinary ? 1 : 0;
     if (
@@ -314,19 +322,23 @@ export const createCli = (
       // the requested agent or command. Reject a trailing --agent/--command/-c,
       // a value position occupied by another flag, and an empty `--flag=` form
       // up front.
+      // Validate the caller tokens before equals expansion, so bound values
+      // cannot be reinterpreted as registration options by this guard.
+      const originalCommand =
+        splitIncurBuiltinArguments(normalizedArguments).command;
       const valued = ["--agent", "--command", "-c"];
       let missingValue: string | undefined;
-      for (let index = 0; index < command.length; index += 1) {
-        const next = command[index + 1];
+      for (let index = 0; index < originalCommand.length; index += 1) {
+        const next = originalCommand[index + 1];
         if (
-          valued.includes(command[index]!) &&
+          valued.includes(originalCommand[index]!) &&
           (next === undefined || next.startsWith("-"))
         ) {
-          missingValue = command[index];
+          missingValue = originalCommand[index];
           break;
         }
       }
-      const emptyValue = command.find(
+      const emptyValue = originalCommand.find(
         (token) =>
           (token.startsWith("--agent=") ||
             token.startsWith("--command=") ||
@@ -370,18 +382,89 @@ export const createCli = (
         )(1);
         return Promise.resolve();
       }
-      // Incur's mcp add parser only understands spaced `--agent amp` forms; an
-      // equals form like `--agent=amp` is silently ignored, which would drop
-      // the requested agent and register against the default target. Normalize
-      // equals forms back to spaced forms before handing over to Incur.
-      const serveArguments = normalized.flatMap((token) => {
-        if (token.startsWith("--agent=") || token.startsWith("--command=")) {
-          const separator = token.indexOf("=");
-          const value = token.slice(separator + 1);
-          return value === "" ? [token] : [token.slice(0, separator), value];
+      const output = parseCliOutputArguments(normalized);
+      const jsonRegistration =
+        output.validation.ok &&
+        output.format === "json" &&
+        !flags.has("--mcp") &&
+        !flags.has("--update") &&
+        !flags.has("--incur-update-check");
+      const sensitiveValues = declaredSensitiveValues(command);
+      const redactRegistrationText = (text: string): string =>
+        redactExplicitText(text, sensitiveValues);
+      let registrationDocument: string | undefined;
+      let registrationFailed = false;
+      const flushRegistration = (): void => {
+        if (registrationDocument !== undefined) write(registrationDocument);
+      };
+      const serveRegistration: typeof serve = (tokens = [], selected) => {
+        if (!jsonRegistration)
+          return serve(adaptCliOutputArgumentsForIncur(tokens), selected);
+        // Incur's builtin mixes progress with its formatted result. Use its
+        // public registration producer directly for JSON, rather than recover
+        // a document from human stdout. Preserve the pinned builtin's option
+        // consumption; argument rejection remains with the admission layers.
+        const rest = splitIncurBuiltinArguments(tokens).command.slice(
+          builtin + 2,
+        );
+        let command = registrationCommand;
+        const agents: string[] = [];
+        for (let index = 0; index < rest.length; index += 1) {
+          if (
+            (rest[index] === "--command" || rest[index] === "-c") &&
+            rest[index + 1]
+          )
+            command = rest[++index]!;
+          else if (rest[index] === "--agent" && rest[index + 1])
+            agents.push(rest[++index]!);
         }
-        return [token];
-      });
+        return SyncMcp.register(PRODUCT_IDENTITY.cliBinary, {
+          command,
+          agents,
+          global: !rest.includes("--no-global"),
+        }).then(
+          (result) => {
+            const registered = {
+              name: redactRegistrationText(PRODUCT_IDENTITY.cliBinary),
+              command: redactRegistrationText(result.command),
+              agents: result.agents.map(redactRegistrationText),
+            };
+            // Amp verification must finish before a success document is sent.
+            // Incur filters successful data before formatting; keep that
+            // selection on this direct JSON document.
+            const filtered =
+              output.filterOutput === undefined
+                ? registered
+                : Filter.apply(registered, Filter.parse(output.filterOutput));
+            registrationDocument = renderCliDocument(
+              filtered === undefined ? {} : filtered,
+              "json",
+              process.stdout.isTTY === true,
+            );
+          },
+          (cause: unknown) => {
+            registrationFailed = true;
+            write(
+              renderCliDocument(
+                {
+                  code: "MCP_ADD_FAILED",
+                  message: redactRegistrationText(
+                    cause instanceof Error ? cause.message : String(cause),
+                  ),
+                },
+                "json",
+                process.stdout.isTTY === true,
+              ),
+            );
+            (
+              selected?.exit ??
+              ((code: number) => {
+                process.exitCode = code;
+              })
+            )(1);
+          },
+        );
+      };
       // Incur's Amp registration overwrites an existing rea entry (dropping its
       // environment map) and reports success even when the settings file
       // prevents a save. Guard that path: reject a settings file REA cannot
@@ -391,8 +474,7 @@ export const createCli = (
       // switches return before registration and must not touch its settings.
       // Use the same normalized arguments for selection and dispatch, including
       // non-Amp equals forms. Incur consumes command values before agent flags.
-      normalized = serveArguments;
-      const registration = splitIncurBuiltinArguments(serveArguments);
+      const registration = splitIncurBuiltinArguments(normalized);
       const rest = registration.command.slice(builtin + 2);
       const agents: string[] = [];
       for (let index = 0; index < rest.length; index += 1) {
@@ -502,7 +584,7 @@ export const createCli = (
         const runRegistration = (backupPath?: string): Promise<void> => {
           let failed = false;
           const result = serveStrict(
-            serveArguments,
+            normalized,
             {
               ...options,
               exit: (code) => {
@@ -513,14 +595,11 @@ export const createCli = (
             },
             (tokens, selected) =>
               serveDeclared(tokens, selected, (declared, declaredOptions) =>
-                serve(
-                  adaptCliOutputArgumentsForIncur(declared),
-                  declaredOptions,
-                ),
+                serveRegistration(declared, declaredOptions),
               ),
           );
           return result.then(() => {
-            if (failed) return;
+            if (registrationFailed || failed) return;
             let failure: string | undefined;
             try {
               if (!existsSync(settingsPath))
@@ -583,10 +662,13 @@ export const createCli = (
                   process.exitCode = code;
                 })
               )(1);
-            } else if (backupPath !== undefined)
-              process.stderr.write(
-                `Amp MCP registration backup retained at ${backupPath}\n`,
-              );
+            } else {
+              flushRegistration();
+              if (backupPath !== undefined)
+                process.stderr.write(
+                  `Amp MCP registration backup retained at ${backupPath}\n`,
+                );
+            }
           });
         };
 
@@ -611,6 +693,10 @@ export const createCli = (
           },
         );
       }
+      if (jsonRegistration)
+        return serveStrict(normalized, options ?? {}, (tokens, selected) =>
+          serveDeclared(tokens, selected, serveRegistration),
+        ).then(flushRegistration);
     }
     const result = serveStrict(normalized, options ?? {}, (tokens, selected) =>
       serveDeclared(tokens, selected, (declared, declaredOptions) =>

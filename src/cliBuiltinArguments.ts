@@ -67,6 +67,8 @@ export const splitCliTimingArguments = (
 export interface IncurBuiltinArgumentSplit {
   /** Tokens left for command resolution and command option parsing. */
   readonly command: readonly string[];
+  /** Original normalized-argument position for each command token. */
+  readonly commandIndices: readonly number[];
   /** Valueless global flags extracted by Incur before command dispatch. */
   readonly flags: ReadonlySet<string>;
   /** Positions of nonempty values consumed by valued output flags. */
@@ -85,6 +87,7 @@ export const splitIncurBuiltinArguments = (
   arguments_: readonly string[],
 ): IncurBuiltinArgumentSplit => {
   const command: string[] = [];
+  const commandIndices: number[] = [];
   const flags = new Set<string>();
   const outputValues: { readonly flag: string; readonly index: number }[] = [];
   for (let index = 0; index < arguments_.length; index += 1) {
@@ -104,20 +107,28 @@ export const splitIncurBuiltinArguments = (
       continue;
     }
     command.push(argument);
+    commandIndices.push(index);
   }
   // Incur extracts builtin output values first, then parses globals until `--`.
   // A timing-shaped output value is data; a command option's value is still
   // subject to this global pass before the registration builtin consumes it.
   let globalsEnded = false;
-  const remaining = command.filter((token) => {
+  const remainingIndices: number[] = [];
+  const remaining = command.filter((token, index) => {
     if (token === "--") globalsEnded = true;
     if (!globalsEnded && cliTimingFlagValue(token) !== undefined) {
       flags.add(token);
       return false;
     }
+    remainingIndices.push(commandIndices[index]!);
     return true;
   });
-  return { command: remaining, flags, outputValues };
+  return {
+    command: remaining,
+    commandIndices: remainingIndices,
+    flags,
+    outputValues,
+  };
 };
 
 /**
@@ -237,6 +248,64 @@ export const declaredSensitiveValues = (
   values.delete("");
   return [...values];
 };
+/** Expand only actual registration options, retaining their bound values. */
+export const normalizeMcpAddArguments = (
+  arguments_: readonly string[],
+  name: string,
+): string[] => {
+  const split = splitIncurBuiltinArguments(arguments_);
+  const offset = split.command[0] === name ? 1 : 0;
+  if (
+    split.command[offset] !== "mcp" ||
+    split.command[offset + 1] !== "add" ||
+    // Preserve an already-selected mode and Incur's precedence. Expanding data
+    // after `--help`, for example, must not introduce a new `--mcp` invocation.
+    [
+      "--help",
+      "-h",
+      "--llms",
+      "--llms-full",
+      "--version",
+      "--schema",
+      "--mcp",
+      "--update",
+      "--incur-update-check",
+    ].some((flag) => split.flags.has(flag))
+  )
+    return [...arguments_];
+
+  // Declarations apply even when the parser binds the declaration flag as
+  // another option's value. Retain their complete literal independently.
+  const declaredValues = new Set<number>();
+  for (let index = 0; index < split.command.length; index += 1) {
+    if (
+      FLAGS.some((flag) => split.command[index] === flag) &&
+      index + 1 < split.command.length
+    )
+      declaredValues.add(split.commandIndices[index + 1]!);
+  }
+  const expand = new Set<number>();
+  for (let index = offset + 2; index < split.command.length; index += 1) {
+    const token = split.command[index]!;
+    // Incur registration consumes options after `--`; preserve its targets.
+    if (FLAGS.some((flag) => token === flag)) {
+      if (index + 1 < split.command.length) index += 1;
+    } else if (token === "--command" || token === "-c" || token === "--agent") {
+      if (split.command[index + 1]) index += 1;
+    } else if (
+      !declaredValues.has(split.commandIndices[index]!) &&
+      (token.startsWith("--agent=") || token.startsWith("--command="))
+    )
+      expand.add(split.commandIndices[index]!);
+  }
+  return arguments_.flatMap((token, index) => {
+    if (!expand.has(index)) return [token];
+    const separator = token.indexOf("=");
+    const value = token.slice(separator + 1);
+    return value === "" ? [token] : [token.slice(0, separator), value];
+  });
+};
+
 /** Shell completion is a transport protocol; its words are not CLI invocations. */
 export const CLI_COMPLETION_SHELLS = [
   "bash",

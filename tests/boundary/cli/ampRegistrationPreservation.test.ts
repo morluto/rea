@@ -1,4 +1,11 @@
-import { chmod, mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  readFile,
+  readdir,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 
@@ -8,6 +15,17 @@ import { cliTest } from "../../support/cli/cliFixture.js";
 
 const ampSettings = (home: string) =>
   join(home, ".config", "amp", "settings.json");
+
+const ampValidationError = {
+  code: "VALIDATION_ERROR",
+  fieldErrors: expect.arrayContaining([
+    expect.objectContaining({
+      code: "invalid_value",
+      missing: false,
+      path: "amp",
+    }),
+  ]),
+};
 
 cliTest(
   "mcp add preserves Amp environment and reports unreadable settings",
@@ -28,6 +46,7 @@ cliTest(
 
     // An existing rea registration keeps its environment map and the file is
     // backed up before the refresh.
+    const directory = join(home, ".config", "amp");
     const settingsPath = ampSettings(home);
     const original = JSON.stringify(
       {
@@ -44,7 +63,7 @@ cliTest(
       null,
       2,
     );
-    await mkdir(join(home, ".config", "amp"), { recursive: true });
+    await mkdir(directory, { recursive: true });
     await writeFile(settingsPath, original);
 
     const refreshed = await run(["mcp", "add", "--agent", "amp"]);
@@ -63,6 +82,7 @@ cliTest(
     // The equals form --agent=amp is parsed as a spaced form before Incur sees
     // it, so the Amp registration lands and keeps the environment map.
     const settingsBeforeEquals = await readFile(settingsPath, "utf8");
+    const beforeRecovery = new Set(await readdir(directory));
     const equals = await run(["mcp", "add", "--agent=amp"]);
     expect(equals.exitCode, equals.stderr).toBe(0);
     const afterEquals = JSON.parse(await readFile(settingsPath, "utf8"));
@@ -72,12 +92,12 @@ cliTest(
     });
     expect(afterEquals["amp.mcpServers"].other).toEqual({ command: "other" });
     expect(await readFile(registrationBackupPath, "utf8")).toBe(original);
-    const recoveryBackupPath = equals.stderr.match(
-      /Amp MCP registration backup retained at (.+)/,
-    )?.[1];
-    expect(recoveryBackupPath).toContain(".recovery");
-    if (recoveryBackupPath === undefined)
-      throw new Error("Amp did not report the current recovery backup path.");
+    const created = (await readdir(directory)).filter(
+      (name) => !beforeRecovery.has(name),
+    );
+    expect(created).toEqual([expect.stringContaining(".recovery")]);
+    const recoveryBackupPath = join(directory, created[0]!);
+    expect(equals.stderr).toContain(recoveryBackupPath);
     expect(await readFile(recoveryBackupPath, "utf8")).toBe(
       settingsBeforeEquals,
     );
@@ -95,16 +115,7 @@ cliTest(
       timeoutMs: 20_000,
     });
     expect(rejected.exitCode, rejected.stderr).toBe(1);
-    expect(rejected.json).toMatchObject({
-      code: "VALIDATION_ERROR",
-      fieldErrors: expect.arrayContaining([
-        expect.objectContaining({
-          code: "invalid_value",
-          missing: false,
-          path: "amp",
-        }),
-      ]),
-    });
+    expect(rejected.json).toMatchObject(ampValidationError);
     expect(await readFile(brokenSettings, "utf8")).toBe(malformed);
 
     // JSON null is valid JSON but not a settings object; reject it as a
@@ -120,10 +131,7 @@ cliTest(
       timeoutMs: 20_000,
     });
     expect(nullRejected.exitCode, nullRejected.stderr).toBe(1);
-    expect(nullRejected.json).toMatchObject({
-      code: "VALIDATION_ERROR",
-      message: expect.stringContaining("must contain a JSON object"),
-    });
+    expect(nullRejected.json).toMatchObject(ampValidationError);
     expect(await readFile(nullSettings, "utf8")).toBe("null\n");
 
     // An array-valued amp.mcpServers is rejected instead of claiming success.
@@ -139,16 +147,7 @@ cliTest(
       timeoutMs: 20_000,
     });
     expect(arrayRejected.exitCode, arrayRejected.stderr).toBe(1);
-    expect(arrayRejected.json).toMatchObject({
-      code: "VALIDATION_ERROR",
-      fieldErrors: expect.arrayContaining([
-        expect.objectContaining({
-          code: "invalid_value",
-          missing: false,
-          path: "amp",
-        }),
-      ]),
-    });
+    expect(arrayRejected.json).toMatchObject(ampValidationError);
     expect(await readFile(arraySettings, "utf8")).toBe(array);
 
     // A backup write failure is reported as a filesystem problem, not as bad
@@ -167,8 +166,8 @@ cliTest(
     });
     expect(backupRejected.exitCode, backupRejected.stderr).toBe(1);
     expect(backupRejected.json).toMatchObject({
-      code: "VALIDATION_ERROR",
-      message: expect.stringContaining("Unable to create Amp settings backup"),
+      ...ampValidationError,
+      message: expect.stringContaining(`(occupied) at ${backupPath}`),
     });
   },
 );
