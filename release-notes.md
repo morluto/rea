@@ -1096,6 +1096,7 @@
 * **skill:** clarify scenario pause deadlines ([#7961](https://github.com/morluto/rea/issues/7961)) ([bd37925](https://github.com/morluto/rea/commit/bd3792566d7817b2feb0246be1e5eb2cff16dbaf))
 * **skill:** route SPA passive capture through allowed_origins ([#7252](https://github.com/morluto/rea/issues/7252)) ([7570aab](https://github.com/morluto/rea/commit/7570aabd9d484c41738461253f66d793c4fc766e))
 * **testing:** explain npm launcher selection in PowerShell ([#8962](https://github.com/morluto/rea/issues/8962)) ([455d795](https://github.com/morluto/rea/commit/455d7953ec2d75795a4780e603f4dd9ee4457fae))
+* **tool-design:** audit agent workflow guidance ([#8439](https://github.com/morluto/rea/issues/8439)) ([65986d0](https://github.com/morluto/rea/commit/65986d0a0f355f47dda687ff5a26ab80c2579823))
 * **uninstall:** clarify malformed shared config retention ([#7507](https://github.com/morluto/rea/issues/7507)) ([6efb384](https://github.com/morluto/rea/commit/6efb384261ea462064d83b692a9524d1700c7124)), closes [#7320](https://github.com/morluto/rea/issues/7320)
 * **update:** align error catalog with current recovery ([#7795](https://github.com/morluto/rea/issues/7795)) ([b9a8f8e](https://github.com/morluto/rea/commit/b9a8f8e9f25feb9cc97bf4960748f2bdf8c898bc))
 * **website:** clarify platform setup requirements ([#7925](https://github.com/morluto/rea/issues/7925)) ([d3ecf68](https://github.com/morluto/rea/commit/d3ecf6800015f2183a298d78ffb30a266a9efd2a))
