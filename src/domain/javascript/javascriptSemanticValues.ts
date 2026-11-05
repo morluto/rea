@@ -1421,17 +1421,31 @@ const mergeValues = (
   return merged;
 };
 
-const nestedContext = (context: EvaluationContext): EvaluationContext => ({
-  state: context.state,
-  primitiveBindingValues: context.primitiveBindingValues,
-  ...(context.capturePoint === undefined
-    ? {}
-    : { capturePoint: context.capturePoint }),
-  expressionDepth: context.expressionDepth + 1,
-  bindings: context.bindings,
-  dependence: context.dependence,
-  memo: context.memo,
-});
+// One context is allocated per evaluated expression, which makes this the
+// hottest allocation in semantic analysis. A conditional spread builds the
+// object through the generic property-copy path even when it contributes no
+// fields, and keeps V8 from giving the result a stable shape. Two explicit
+// shapes allocate directly and keep the field set identical, including the
+// optional capturePoint under exactOptionalPropertyTypes.
+const nestedContext = (context: EvaluationContext): EvaluationContext =>
+  context.capturePoint === undefined
+    ? {
+        state: context.state,
+        primitiveBindingValues: context.primitiveBindingValues,
+        expressionDepth: context.expressionDepth + 1,
+        bindings: context.bindings,
+        dependence: context.dependence,
+        memo: context.memo,
+      }
+    : {
+        state: context.state,
+        primitiveBindingValues: context.primitiveBindingValues,
+        capturePoint: context.capturePoint,
+        expressionDepth: context.expressionDepth + 1,
+        bindings: context.bindings,
+        dependence: context.dependence,
+        memo: context.memo,
+      };
 
 const isPrimitive = (value: JavaScriptSemanticValue): boolean =>
   value.status === "literal" || value.status === "union";
