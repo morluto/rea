@@ -73,6 +73,21 @@ export const repositoryRefusal = (
 };
 
 /**
+ * Why a repository's architecture restriction leaves out the host's. A
+ * capture written before restrictions were recorded counts as unrestricted:
+ * apt listed the installed version from it on that host.
+ */
+const architectureRefusal = (
+  repository: AptRepository,
+  architecture: string,
+): string | undefined => {
+  const served = repository.architectures ?? [];
+  return served.length === 0 || served.includes(architecture)
+    ? undefined
+    : `it serves only ${served.join(", ")}, not the capture host's ${architecture}`;
+};
+
+/**
  * Each usable repository as an apt source, one per URI and suite since apt
  * allows one key for them: entries with the same key merge their
  * components, and one with another key is left out.
@@ -88,14 +103,9 @@ const declaredSources = (
   let first: AptRepository | undefined;
   for (const repository of repositories) {
     const { uri, suite, components, signing_key: key } = repository;
-    const restricted =
-      repository.architectures.length > 0 &&
-      !repository.architectures.includes(architecture);
     const reason =
       repositoryRefusal(repository) ??
-      (restricted
-        ? `it serves only ${repository.architectures.join(", ")}, not the capture host's ${architecture}`
-        : undefined);
+      architectureRefusal(repository, architecture);
     if (
       reason !== undefined ||
       key === null ||

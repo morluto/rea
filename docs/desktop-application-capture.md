@@ -164,7 +164,8 @@ machine. It asks `dpkg-query -S` for each library's package. Libraries in the
 executable's own folder belong to the application: they are walked but not
 listed, and neither is the application's own package. One batched
 `apt-cache policy` then keeps only the packages the Ubuntu 24.04 archive or a
-recorded vendor repository with a verified key offers; the rest, such as
+recorded vendor repository with a verified key offers, in any component its
+sources entry lists, since the export declares them all; the rest, such as
 packages from a PPA or a local `.deb`, are listed in
 `uninstallable_library_packages`. Sonames found nowhere are listed in
 `missing_libraries`, and libraries no package owns in `unpackaged_libraries`.
@@ -172,6 +173,11 @@ packages from a PPA or a local `.deb`, are listed in
 not an ELF image (a launcher script, for example), `ldconfig`, `dpkg-query` or
 `apt-cache` is missing, a library could not be read or names more than 512
 libraries, or the walk stopped after 512 libraries.
+
+A sources file, key or library whose handle REA cannot close fails the capture
+with the file as its cleanup resource. When the repository check and the
+library walk both fail, the capture reports both failures and every folder or
+file either could not release.
 
 Snaps, flatpaks and
 AppImages are recognised from their paths, and flatpaks also from a

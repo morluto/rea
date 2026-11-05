@@ -1,7 +1,8 @@
 # Plan
 
-1. Schema: optional `apt_repositories` (each with its entry, architecture
-   restriction, release and key), `library_packages`,
+1. Schema: optional `apt_repositories` (each with its entry, key, and an
+   architecture restriction and release that older captures omit),
+   `library_packages`,
    `uninstallable_library_packages`, `missing_libraries`,
    `unpackaged_libraries` and `library_packages_reason` in the capture's
    package section.
