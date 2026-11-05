@@ -29,7 +29,10 @@ const command = currentClientRegistrationCommand();
 
 beforeEach(clearClientLocationEnvironment);
 
-afterEach(() => vi.unstubAllEnvs());
+afterEach(() => {
+  vi.unstubAllEnvs();
+  vi.restoreAllMocks();
+});
 
 const getClients = (home: string) =>
   supportedClients(home).filter(({ name }) =>
@@ -881,15 +884,25 @@ describe("OpenCode activation provenance across layers", () => {
     expect(status?.remediation).not.toContain(subConfigPath);
   });
 
-  it("excludes projectConfigPaths when OpenCode config matches user configuration case-insensitively", () => {
-    const projectDir = "C:\\Projects\\App";
-    vi.spyOn(process, "cwd").mockReturnValue(projectDir);
-    const clients = supportedClients("C:\\Users\\a", "win32", {
-      OPENCODE_CONFIG: "c:\\projects\\app\\opencode.json",
-    });
-    const opencode = clients.find(({ name }) => name === "opencode");
-    expect(opencode?.projectConfigPaths).toBeUndefined();
-  });
+  it.runIf(process.platform === "win32")(
+    "excludes projectConfigPaths when OpenCode config matches user configuration case-insensitively",
+    async () => {
+      const home = await createTestTempDirectory("rea-opencode-case-home-");
+      const projectDir = await createTestTempDirectory(
+        "rea-opencode-case-cwd-",
+      );
+      const cwd = vi.spyOn(process, "cwd").mockReturnValue(projectDir);
+      try {
+        const clients = supportedClients(home, "win32", {
+          OPENCODE_CONFIG: join(projectDir.toLowerCase(), "opencode.json"),
+        });
+        const opencode = clients.find(({ name }) => name === "opencode");
+        expect(opencode?.projectConfigPaths).toBeUndefined();
+      } finally {
+        cwd.mockRestore();
+      }
+    },
+  );
 });
 
 describe("OpenCode cross-setting environment merge and launcher uninstall", () => {

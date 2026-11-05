@@ -533,7 +533,8 @@ const normalizePathIdentity = (
   path: string,
   platform: NodeJS.Platform = process.platform,
 ): string => {
-  const resolved = resolve(path);
+  const pathModule = platform === "win32" ? win32 : posix;
+  const resolved = pathModule.resolve(path);
   return platform === "win32" || platform === "darwin"
     ? resolved.toLowerCase()
     : resolved;
@@ -550,6 +551,7 @@ const openCodeProjectConfigurationPaths = (
     readonly configPaths?: readonly string[];
   },
 ): readonly string[] => {
+  const pathModule = context.platform === "win32" ? win32 : posix;
   const userSet = new Set([
     normalizePathIdentity(userPaths.configPath, context.platform),
     ...(userPaths.configPaths ?? []).map((path) =>
@@ -559,13 +561,13 @@ const openCodeProjectConfigurationPaths = (
   const paths: string[] = [];
   for (const dir of openCodeDirectoryHierarchy(process.cwd())) {
     const candidates = [
-      join(dir, "opencode.json"),
-      join(dir, "opencode.jsonc"),
-      join(dir, ".opencode", "opencode.json"),
-      join(dir, ".opencode", "opencode.jsonc"),
+      pathModule.join(dir, "opencode.json"),
+      pathModule.join(dir, "opencode.jsonc"),
+      pathModule.join(dir, ".opencode", "opencode.json"),
+      pathModule.join(dir, ".opencode", "opencode.jsonc"),
     ];
     for (const candidate of candidates) {
-      const resolved = resolve(candidate);
+      const resolved = pathModule.resolve(candidate);
       if (
         !userSet.has(normalizePathIdentity(resolved, context.platform)) &&
         pathPresentOrUnresolved(resolved)
@@ -616,7 +618,8 @@ const piProjectConfigurationPaths = (
     readonly configPaths?: readonly string[];
   },
 ): readonly string[] => {
-  const candidate = resolve(process.cwd(), ".pi", "mcp.json");
+  const pathModule = context.platform === "win32" ? win32 : posix;
+  const candidate = pathModule.resolve(process.cwd(), ".pi", "mcp.json");
   if (
     normalizePathIdentity(candidate, context.platform) ===
     normalizePathIdentity(userPaths.configPath, context.platform)

@@ -17,7 +17,10 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { clearClientLocationEnvironment } from "../../fixtures/clientEnvironment.js";
 
 beforeEach(clearClientLocationEnvironment);
-afterEach(() => vi.unstubAllEnvs());
+afterEach(() => {
+  vi.unstubAllEnvs();
+  vi.restoreAllMocks();
+});
 
 const piPath = (
   home: string,
@@ -468,15 +471,23 @@ describe("Pi project-scoped discovery and overrides", () => {
     });
   });
 
-  it("excludes projectConfigPaths when PI_CODING_AGENT_DIR matches project directory case-insensitively", () => {
-    const projectDir = "C:\\Projects\\App";
-    vi.spyOn(process, "cwd").mockReturnValue(projectDir);
-    const clients = supportedClients("C:\\Users\\a", "win32", {
-      PI_CODING_AGENT_DIR: "c:\\projects\\app\\.pi",
-    });
-    const pi = clients.find(({ name }) => name === "pi");
-    expect(pi?.projectConfigPaths).toBeUndefined();
-  });
+  it.runIf(process.platform === "win32")(
+    "excludes projectConfigPaths when PI_CODING_AGENT_DIR matches project directory case-insensitively",
+    async () => {
+      const home = await createTestTempDirectory("rea-pi-case-home-");
+      const projectDir = await createTestTempDirectory("rea-pi-case-cwd-");
+      const cwd = vi.spyOn(process, "cwd").mockReturnValue(projectDir);
+      try {
+        const clients = supportedClients(home, "win32", {
+          PI_CODING_AGENT_DIR: join(projectDir.toLowerCase(), ".pi"),
+        });
+        const pi = clients.find(({ name }) => name === "pi");
+        expect(pi?.projectConfigPaths).toBeUndefined();
+      } finally {
+        cwd.mockRestore();
+      }
+    },
+  );
 });
 
 describe("Pi project-scoped partial overrides", () => {
