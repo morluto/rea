@@ -34,7 +34,7 @@ failed startup, missing usage, and unverified cleanup remain failed measurements
 They do not become zero-cost successes.
 
 Each repetition compares no server, all REA tools, and a client-selected subset
-(`binary_session` by default), in both direct and client-code modes. Alternate
+(`binary_session` by default), in the supported client-code host mode. Alternate
 repetitions reverse ordering. All variants receive the same developer instructions
 and exact-response prompt. A valid loading trial completes one turn, returns
 `CATALOG_OK`, and performs no tool calls. REA is marked `required` in every
@@ -42,8 +42,11 @@ server-enabled configuration. The runner explicitly disables/enables the stable
 `code_mode_host` feature for direct/client-code modes. The old `code_mode` and
 `code_mode_only` switches do not override Codex 0.165's enabled host default.
 The requested flags and CLI version are retained; verify the actual call shape
-in completed-task traces too. Direct mode does not promise eager schema
-loading: discovery behavior still belongs to the client.
+in completed-task traces too. `--modes direct client-code` adds a diagnostic
+host-disabled control. This installed Codex reports that disabling the host
+makes tool dispatch unavailable; it does not provide a qualified eager/direct
+comparison. An empty response alone cannot qualify tool availability. Errors
+invalidate that profile even when the model still emits the expected marker.
 
 Useful controls:
 
@@ -52,9 +55,9 @@ Useful controls:
 npm run eval:mcp-catalog -- --model gpt-6.1-sol \
   --output "$HOME/.cache/rea-catalog-full" --input-profile full --repetitions 3
 
-# Choose exact tool names and one client mode.
+# Choose exact tool names in the working host mode.
 npm run eval:mcp-catalog -- --model gpt-6.1-sol \
-  --output "$HOME/.cache/rea-catalog-selected" --modes direct \
+  --output "$HOME/.cache/rea-catalog-selected" --modes client-code \
   --selected-tools analyze_javascript_application inspect_analysis_view
 ```
 
@@ -104,7 +107,9 @@ Use `npm run verify:agent` and its known-answer rubric, or run a selected real
 artifact through `tests/support/analysis-efficiency/agent-trial.py` under
 `resource-run.py --observe-payload-exit`. Use the same task, artifact digest,
 model/reasoning, authority, result coverage, and correctness oracle in every arm.
-The existing runner accepts exact `--enabled-tools` and direct/client-code modes.
+The existing runner accepts exact `--enabled-tools` and defaults to client-code
+host mode. Its direct option is a host-disabled diagnostic, not a claim of
+working native dispatch in the installed client.
 Use `--capture-tool-context` to locate per-response costs. Its task summary
 explicitly leaves factual correctness unassessed until an independent oracle or
 transcript review establishes the requested facts.

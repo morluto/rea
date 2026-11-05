@@ -37,8 +37,8 @@ def runtime_fingerprint(root):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--mode', choices=['direct', 'client-code'], default='direct',
-                        help='Disable/enable the Codex code_mode_host feature explicitly')
+    parser.add_argument('--mode', choices=['direct', 'client-code'], default='client-code',
+                        help='client-code enables code_mode_host; direct is a host-disabled diagnostic')
     parser.add_argument('--runtime-root', type=Path, required=True)
     parser.add_argument('--revision', required=True)
     parser.add_argument('--prompt', type=Path, required=True)

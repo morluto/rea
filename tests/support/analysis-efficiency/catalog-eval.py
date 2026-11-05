@@ -52,6 +52,9 @@ def assess_trial(directory, returncode):
         result['usage']['uncached_input_tokens'] = (
             result['usage']['input_tokens'] - result['usage']['cached_input_tokens'])
         items = [event.get('item') for event in events if event.get('type') in ['item.started', 'item.completed']]
+        for item in items:
+            if isinstance(item, dict) and item.get('type') == 'error':
+                raise ValueError('Client item error: ' + str(item.get('message')))
         if any(not isinstance(item, dict) or item.get('type') not in ['agent_message', 'reasoning'] for item in items):
             raise ValueError('A load-only trial performed a tool/action or an unknown item')
         completed = [event['item'] for event in events if event.get('type') == 'item.completed']
@@ -143,7 +146,8 @@ def main():
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--model', required=True, help='Explicit Codex model alias; never inferred from user config')
     parser.add_argument('--reasoning', default='low')
-    parser.add_argument('--modes', nargs='+', choices=['direct', 'client-code'], default=['direct', 'client-code'])
+    parser.add_argument('--modes', nargs='+', choices=['direct', 'client-code'], default=['client-code'],
+                        help='Default: supported host mode. direct disables the host as a diagnostic control.')
     parser.add_argument('--input-profile', choices=['compact', 'full'], default='compact')
     parser.add_argument('--selected-tools', nargs='+', default=['binary_session'])
     parser.add_argument('--repetitions', type=int, default=1)
