@@ -160,6 +160,7 @@ it("orders extracted firmware paths by code point independently of host locale",
     root,
     1024,
     16,
+    Number.MAX_SAFE_INTEGER,
     "inspect_firmware_regions",
   );
   // Locale collation would interleave case and place "ä" by language rules.
@@ -186,7 +187,13 @@ it.skipIf(process.platform !== "linux")(
     );
     await writeFile(join(root, "good.bin"), "1234");
     await expect(
-      inventoryFirmwareOutput(root, 4, 10, "extract_firmware"),
+      inventoryFirmwareOutput(
+        root,
+        4,
+        10,
+        Number.MAX_SAFE_INTEGER,
+        "extract_firmware",
+      ),
     ).rejects.toMatchObject({
       _tag: "AnalysisOutputError",
       diagnostics: { raw_name_hex: "626164ff2e62696e" },
@@ -204,7 +211,13 @@ it.each([
     await writeFile(join(root, "a"), "1");
     await writeFile(join(root, "b"), "2");
     await expect(
-      inventoryFirmwareOutput(root, bytes, files, "extract_firmware"),
+      inventoryFirmwareOutput(
+        root,
+        bytes,
+        files,
+        Number.MAX_SAFE_INTEGER,
+        "extract_firmware",
+      ),
     ).rejects.toMatchObject({
       _tag: "AnalysisResourceConstraintError",
       resource: "capacity",
@@ -214,6 +227,23 @@ it.each([
     });
   },
 );
+
+it("refuses a staged file that reaches the producer's per-file limit", async () => {
+  const root = await createTestTempDirectory("rea-firmware-file-limit-");
+  await writeFile(join(root, "below"), "123");
+  await expect(
+    inventoryFirmwareOutput(root, 1024, 10, 4, "extract_firmware"),
+  ).resolves.toEqual([expect.objectContaining({ size: 3 })]);
+  await writeFile(join(root, "reached"), "1234");
+  await expect(
+    inventoryFirmwareOutput(root, 1024, 10, 4, "extract_firmware"),
+  ).rejects.toMatchObject({
+    _tag: "AnalysisResourceConstraintError",
+    resource: "file-size",
+    reportedLimits: { file_size_bytes: 4 },
+    retryable: false,
+  });
+});
 
 it("attributes missing sources to the selected path without relabeling snapshot destination failure", async () => {
   const root = await createTestTempDirectory("rea-firmware-source-");
