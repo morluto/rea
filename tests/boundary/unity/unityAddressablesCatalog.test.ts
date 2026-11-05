@@ -803,3 +803,41 @@ it("refuses an expanded internal id before joining or measuring the expanded pat
   expect(measured).not.toContain(path);
   expect(measured).toContain("Assets/Samples/");
 });
+
+it.each([
+  ["JSON", "ASCII", "A"],
+  ["JSON", "UTF-16", "é"],
+  ["binary", "ASCII", "A"],
+  ["binary", "UTF-16", "é"],
+])(
+  "refuses a long %s %s key from its stored size before decoding it",
+  (format, _encoding, unit) => {
+    const value = unit.repeat(4096);
+    const catalog = sampleCatalog();
+    catalog.keys.push({ key: { kind: "string", value }, locations: [0] });
+    const bytes =
+      format === "JSON" ? jsonCatalog(catalog) : binaryCatalog(catalog);
+    const refusal = new RangeError("text budget");
+    const decoded: number[] = [];
+    const toString = Buffer.prototype.toString;
+    const spy = vi
+      .spyOn(Buffer.prototype, "toString")
+      .mockImplementation(function (this: Buffer, ...args) {
+        const text = toString.apply(this, args as never);
+        decoded.push(text.length);
+        return text;
+      });
+    try {
+      expect(() =>
+        decode(bytes, {
+          beforeText: (charged) => {
+            if (charged > 1024) throw refusal;
+          },
+        }),
+      ).toThrow(refusal);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(decoded.some((length) => length >= value.length)).toBe(false);
+  },
+);

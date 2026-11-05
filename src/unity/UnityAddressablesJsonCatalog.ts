@@ -10,6 +10,7 @@ import {
   ROWS_PER_YIELD,
   type UnityAddressablesReadOptions,
   type UnityAddressablesSteps,
+  beforeStoredText,
 } from "./UnityAddressablesShared.js";
 
 // Entry record: internalId, provider, dependencyKey, depHash, dataIndex, primaryKey, resourceType.
@@ -118,6 +119,8 @@ const readObject = (
           "invalid-string",
           `${label} has an odd UTF-16 byte length`,
         );
+      // Refused text is never decoded.
+      beforeStoredText(options, length, tag === TAG.unicode);
       return {
         kind: "string",
         value: text(

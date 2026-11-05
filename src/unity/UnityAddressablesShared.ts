@@ -33,6 +33,19 @@ export type UnityAddressablesSteps = Generator<
   undefined
 >;
 
+/**
+ * Check stored string bytes before decoding them. Each ASCII byte and each
+ * UTF-16 code unit serializes to at least one JSON byte, so this lower bound
+ * never refuses text that would fit; the exact size is checked after decoding.
+ */
+export const beforeStoredText = (
+  options: UnityAddressablesReadOptions,
+  storedBytes: number,
+  utf16: boolean,
+): void => {
+  options.beforeText?.(2 + (utf16 ? storedBytes / 2 : storedBytes));
+};
+
 /** Rows decoded between cooperative yields. */
 export const ROWS_PER_YIELD = 256;
 

@@ -12,6 +12,7 @@ import {
   hash128Text,
   type UnityAddressablesReadOptions,
   type UnityAddressablesSteps,
+  beforeStoredText,
 } from "./UnityAddressablesShared.js";
 
 /** Scratch held per chain part before the join: one array slot. */
@@ -76,6 +77,8 @@ class BinaryReader {
         "string-overlap",
         `${label} at ${offset} brings decoded string bytes to ${this.#segmentBytes}, more than the ${this.bytes.length}-byte catalog holds without overlapping strings`,
       );
+    // Check the stored size before decoding: refused text is never allocated.
+    beforeStoredText(this.options, length, (id & UNICODE) !== 0);
     const raw = this.bytes.subarray(offset, offset + length);
     let text: string;
     if ((id & UNICODE) !== 0) {
