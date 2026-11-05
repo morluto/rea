@@ -125,7 +125,9 @@ it.each([
   );
   expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(1);
   expect(result.stderr).toContain(
-    stage === "compiler" ? "controlled compiler failure" : "controlled analysis failure",
+    stage === "compiler"
+      ? "controlled compiler failure"
+      : "controlled analysis failure",
   );
   const attempted = (await readFile(events, "utf8"))
     .trim()
