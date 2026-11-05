@@ -3,6 +3,9 @@
 Use actual harness usage to evaluate catalog changes. A `tools/list` JSON byte
 count measures transport size. It does not establish how many tokens a client
 submits to a model, whether it defers schemas, or the total cost of an analysis.
+The pinned [Codex observations](verification/mcp-catalog-codex-2026-11-05.md)
+include actual loading controls, an unavailable-host negative control and a
+completed real-package pilot.
 
 ## Run a controlled loading comparison
 
@@ -98,6 +101,8 @@ These are fresh client/server sessions. OS caches and API prefix caches can
 already be warm. No cold-cache claim follows from a new session. The requested
 model alias is recorded; a resolved server-side model version is not inferred.
 The harness usage is not an independent billing reconciliation.
+The usage event shape follows the documented
+[Codex non-interactive JSON output](https://developers.openai.com/codex/noninteractive#make-output-machine-readable).
 
 ## Evaluate completed investigations too
 
