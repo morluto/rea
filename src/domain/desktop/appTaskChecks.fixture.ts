@@ -114,8 +114,16 @@ export const CHECK_VIEWS: Readonly<Record<string, TaskFileView>> = {
           view: null,
           view_error: "larger than the 16 MiB an entry's view reads",
         },
+        {
+          name: "empty.json",
+          size: 4,
+          sha256: "f".repeat(64),
+          format: "json",
+          view: null,
+          view_error: null,
+        },
       ],
-      entry_count: 4,
+      entry_count: 5,
       truncated: false,
     },
   },
@@ -357,6 +365,24 @@ const SELECTOR_CASES: readonly (readonly [DesktopTaskCheckInput, boolean])[] = [
     false,
   ],
   [{ kind: "lines_present", file: plate, lines: ["a"] }, false],
+  [
+    {
+      kind: "value_equals",
+      file: plate,
+      pointer: "/entries/[name=huge.brp]/view",
+      value: null,
+    },
+    false,
+  ],
+  [
+    {
+      kind: "value_equals",
+      file: plate,
+      pointer: "/entries/[name=empty.json]/view",
+      value: null,
+    },
+    true,
+  ],
   ...PARTIAL_SELECTOR_CASES,
 ];
 

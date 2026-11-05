@@ -143,6 +143,20 @@ export const zipEntryAt = (
   return isRecord(entry.value) ? entry.value : undefined;
 };
 
+/** The entry whose view a pointer goes into when that view could not be read, so its `null` is no JSON value. */
+export const unreadEntryAt = (
+  view: JsonValue | null,
+  pointer: string,
+): { readonly name: string; readonly error: string } | undefined => {
+  const entry = zipEntryAt(view, pointer);
+  if (typeof entry !== "object" || pointer.split("/")[3] !== "view")
+    return undefined;
+  const { name, view_error: error } = entry;
+  return typeof error === "string"
+    ? { name: typeof name === "string" ? name : "", error }
+    : undefined;
+};
+
 /**
  * Whether a zip view leaves out what a pointer reaches: for a pointer into one
  * listed entry, only that entry; for an entry not listed, the listing; else anything.

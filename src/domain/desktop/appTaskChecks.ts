@@ -2,7 +2,7 @@ import type { JsonValue } from "../jsonValue.js";
 import { countComparison, type DesktopTaskCheck } from "./appTask.js";
 import type { DesktopStatePath } from "./desktopState.js";
 import { locatePointer, type Located } from "./viewPointer.js";
-import { zipArrayLeavesOut, zipLeavesOutAt } from "./zipView.js";
+import { unreadEntryAt, zipArrayLeavesOut, zipLeavesOutAt } from "./zipView.js";
 
 /** One file as the app's data/get reports it: its view, or why it has none. An absent file has no entry. */
 export interface TaskFileView {
@@ -205,6 +205,29 @@ const nearVerdict = (
     : fail(`${at} is ${shown(found)}, not ${within}`);
 };
 
+/**
+ * Why a value check cannot be decided on what the view holds: the entry its
+ * pointer goes into was not read, or a selector searched an array the view may
+ * hold only part of. Undefined when it can be.
+ */
+const unreadOrPartial = (
+  check: Check<"value_equals" | "value_absent">,
+  format: string | null | undefined,
+  read: { readonly view: JsonValue | null; readonly truncated: boolean },
+  located: Located,
+): Verdict | undefined => {
+  const zip = format === "zip";
+  const unread = zip ? unreadEntryAt(read.view, check.pointer) : undefined;
+  if (unread !== undefined)
+    return fail(
+      `${check.file} entry ${unread.name} has no view: ${unread.error}`,
+    );
+  // A selector tells one member from several only in an array the view holds whole.
+  const partial = (array: string) =>
+    zip ? zipArrayLeavesOut(read.view, array) : read.truncated;
+  return located.searched.some(partial) ? undecided(check.file) : undefined;
+};
+
 const valueVerdict = (
   check: Check<"value_equals" | "value_absent">,
   entry: TaskFileView | undefined,
@@ -216,12 +239,8 @@ const valueVerdict = (
       ? { kind: "none", searched: [], byPosition: [] }
       : locatePointer(read.view, check.pointer);
   const at = `${check.file} at ${check.pointer}`;
-  // A selector tells one member from several only in an array the view holds whole.
-  const partial = (array: string) =>
-    entry?.format === "zip"
-      ? zipArrayLeavesOut(read.view, array)
-      : read.truncated;
-  if (located.searched.some(partial)) return undecided(check.file);
+  const unknown = unreadOrPartial(check, entry?.format, read, located);
+  if (unknown !== undefined) return unknown;
   if (located.kind === "unresolved") return fail(`${at}: ${located.problem}`);
   // A zip view's truncation that matters is the entry the pointer goes into.
   const truncated =

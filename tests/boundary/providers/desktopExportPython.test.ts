@@ -242,6 +242,33 @@ it("refuses JSON nested deeper than the 500 levels REA's view keeps, reading the
   });
 });
 
+it("checks JSON depth with one iterator per level, copying no wide list", () => {
+  const imports = PYTHON_IMPORTS.split("\n")
+    .filter((line) => !line.includes("agentenv_protocol"))
+    .join("\n");
+  const program = `${imports}
+import tracemalloc
+${PYTHON_HELPERS}
+wide = [None] * 800_000
+tracemalloc.start()
+deep = _deeper_than(wide, 500)
+peak = tracemalloc.get_traced_memory()[1]
+tracemalloc.stop()
+nested = []
+for _ in range(501):
+    nested = [nested]
+print(json.dumps({"deep": deep, "peak": peak, "edge": _deeper_than(nested, 501), "over": _deeper_than(nested, 500)}))
+`;
+
+  const result = JSON.parse(
+    execFileSync("python3", ["-I", "-B", "-c", program], { encoding: "utf8" }),
+  ) as { deep: boolean; peak: number; edge: boolean; over: boolean };
+
+  expect(result).toMatchObject({ deep: false, edge: false, over: true });
+  // Queuing each member of the 800,000-item list traced about 51 MB.
+  expect(result.peak).toBeLessThan(1024 * 1024);
+});
+
 it("spells infinite and negative-zero SQLite reals as REA's SQLite reader does", () => {
   const imports = PYTHON_IMPORTS.split("\n")
     .filter((line) => !line.includes("agentenv_protocol"))

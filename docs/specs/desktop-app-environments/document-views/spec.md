@@ -43,7 +43,8 @@ tolerance. Both evaluators, REA's and the exported verifier's, agree.
   listing truncated when the entry is not listed. A pointer whose selector
   searches an array the view may hold only part of (any array of a truncated
   XML view or entry view, or a cut listing) fails as undecided in both
-  evaluators.
+  evaluators. A check into the view of an entry that has a `view_error`
+  fails, and the draft treats only entries without one as readable.
 - Changes: `values` between zip versions pair array members one to one, by
   the first selector naming a member alone in its version and one unpaired
   member of the other (entries by name, XML elements by tag and attribute),

@@ -126,10 +126,15 @@ const innermost = (pointers: readonly string[]): readonly string[] =>
     (pointer) => !pointers.some((other) => other.startsWith(`${pointer}/`)),
   );
 
-/** The entry a pointer into a zip view goes into, when both evaluators read it alike: JSON, a key file, or XML without namespaces. */
+/**
+ * The entry a pointer into a zip view goes into, when it was read and both
+ * evaluators read it alike: JSON, a key file, or XML without namespaces. An
+ * entry that was not read also holds a `null` view, which is no JSON `null`.
+ */
 const readableEntry = (view: JsonValue | null, pointer: string) => {
   const entry = zipEntryAt(view, pointer);
   return typeof entry === "object" &&
+    entry.view_error === null &&
     (entry.format === "json" ||
       entry.format === "keyfile" ||
       (entry.format === "xml" && !namesXmlNamespace(entry.view ?? null)))
@@ -195,7 +200,7 @@ const zipSuggestions = (
     if (
       values.length < MAX_SUGGESTIONS &&
       value !== undefined &&
-      !isRecord(value) &&
+      !(isRecord(value) && Object.keys(value).length > 0) &&
       !isTimestamp(value) &&
       byName(final.view, pointer)
     )
@@ -216,14 +221,15 @@ const zipSuggestions = (
           pointer: `${pointer}/name`,
           value: name,
         });
-    } else if (Array.isArray(value)) {
+    } else if (Array.isArray(value) && value.length > 0) {
       const { keys } = pairMembers(value, []).newer;
       value.forEach((item, index) =>
         added(`${pointer}/${escapeToken(keys[index] ?? String(index))}`, item),
       );
-    } else if (isRecord(value))
+    } else if (isRecord(value) && Object.keys(value).length > 0)
       for (const [key, item] of Object.entries(value))
         added(`${pointer}/${escapeToken(key)}`, item);
+    // A scalar, or an empty array or object, is checked as it is.
     else equals(pointer, value);
   };
   for (const pointer of change.added) {

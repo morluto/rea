@@ -112,6 +112,18 @@ def _entry_leaves_out(entry) -> bool:
         and entry["view"].get("truncated") is True))
 
 
+def _unread_entry(view, pointer: str):
+    """The name and error of the entry whose view a pointer goes into when that view could not be read, so its
+    null is no JSON value; None otherwise."""
+    parts = pointer[1:].split("/")
+    if len(parts) < 3 or parts[0] != "entries" or parts[2] != "view":
+        return None
+    kind, item, _ = _locate(view, "/entries/" + parts[1])
+    if kind != "value" or not isinstance(item, dict) or not isinstance(item.get("view_error"), str):
+        return None
+    return (item["name"] if isinstance(item.get("name"), str) else ""), item["view_error"]
+
+
 def _array_leaves_out(form, view, array: str) -> bool:
     """Whether an array a selector searched may lack members: in a zip the listing or its entry's view, else the
     view's own truncation."""
@@ -212,6 +224,9 @@ def _value(check, entry):
         return False, problem
     kind, found, searched = ("none", None, []) if entry is None else _locate(view, check["pointer"])
     at = f"{check['file']} at {check['pointer']}"
+    unread = _unread_entry(view, check["pointer"]) if entry is not None and entry.get("format") == "zip" else None
+    if unread is not None:
+        return False, f"{check['file']} entry {unread[0]} has no view: {unread[1]}"
     # A selector tells one member from several only in an array the view holds whole.
     if any(_array_leaves_out(entry.get("format"), view, array) for array in searched):
         return _undecided(check)

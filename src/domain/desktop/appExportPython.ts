@@ -312,7 +312,7 @@ def _exact_number(text: str):
 
 
 _INEXACT = object()
-_INEXACT_END = object()
+_LEVEL_END = object()
 
 
 def _number_or_mark(spelling: str):
@@ -328,8 +328,8 @@ def _holds_inexact(value) -> bool:
     iterator per nesting level, so no child list is copied."""
     levels = [iter((value,))]
     while levels:
-        item = next(levels[-1], _INEXACT_END)
-        if item is _INEXACT_END:
+        item = next(levels[-1], _LEVEL_END)
+        if item is _LEVEL_END:
             levels.pop()
         elif item is _INEXACT:
             return True
@@ -341,16 +341,19 @@ def _holds_inexact(value) -> bool:
 
 
 def _deeper_than(root, limit: int) -> bool:
-    """Whether a parsed JSON value nests deeper than a limit, checked without recursion as REA checks it."""
-    pending = [(root, 0)]
-    while pending:
-        value, depth = pending.pop()
-        if depth > limit:
+    """Whether a parsed JSON value nests deeper than a limit, as REA checks it: a value's depth is the number of
+    iterators open above it, one per nesting level, so no child list is copied."""
+    levels = [iter((root,))]
+    while levels:
+        item = next(levels[-1], _LEVEL_END)
+        if item is _LEVEL_END:
+            levels.pop()
+        elif len(levels) - 1 > limit:
             return True
-        if isinstance(value, dict):
-            pending.extend((item, depth + 1) for item in value.values())
-        elif isinstance(value, list):
-            pending.extend((item, depth + 1) for item in value)
+        elif isinstance(item, dict):
+            levels.append(iter(item.values()))
+        elif isinstance(item, list):
+            levels.append(iter(item))
     return False
 
 
