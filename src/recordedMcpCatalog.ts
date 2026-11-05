@@ -16,6 +16,8 @@ export interface RecordedMcpCatalog {
   readonly instructions: string;
   readonly identity: ReturnType<typeof createCatalogIdentity>;
   readonly tools: readonly Tool[];
+  /** Tool names derived from canonical Evidence-input declarations at build time. */
+  readonly evidenceReferenceAlternatives: readonly string[];
   readonly prompts: readonly (Prompt & {
     readonly parameters: Readonly<Record<string, PromptArgumentContract>>;
   })[];

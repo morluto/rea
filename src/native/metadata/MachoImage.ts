@@ -3,7 +3,10 @@ import {
   readMachoSectionHeader,
   type MachoSectionHeader,
 } from "../../domain/apple/machoSectionHeader.js";
-import { readMachoSegmentHeader } from "../../domain/apple/machoSegmentHeader.js";
+import {
+  admitMachoSegmentMapping,
+  readMachoSegmentHeader,
+} from "../../domain/apple/machoSegmentHeader.js";
 import {
   declaredFileRange,
   BinaryFormatFailure,
@@ -77,15 +80,13 @@ export const readMachoImage = (bytes: Buffer): BinaryContainer => {
         sectionCount,
         nameBytes,
       } = parsedSegment.value;
-      const unmapped = memorySize === 0n && protection === 0;
-      if (
-        (!unmapped && fileSize > memorySize) ||
-        address + memorySize > 1n << BigInt(bits)
-      )
+      const admitted = admitMachoSegmentMapping(parsedSegment.value, bits);
+      if (!admitted.ok)
         throw new BinaryFormatFailure(
-          "malformed",
-          "Mach-O segment addresses or sizes are invalid",
+          admitted.error.kind,
+          admitted.error.message,
         );
+      const { unmapped } = admitted.value;
       if (sectionCount > Math.floor((size - segmentHeader) / sectionWidth))
         throw new BinaryFormatFailure(
           "malformed",

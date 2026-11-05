@@ -4,10 +4,12 @@ import { join, resolve } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
+import { evidenceSchema } from "../../../src/domain/evidence.js";
 import { RizinDebugSessionManager } from "../../../src/rizin/RizinDebugSessionManager.js";
 import {
   createRizinTestManager,
   rizinTestInferiorTty,
+  stopFakeNoInferior,
 } from "./RizinTestInferiorTty.js";
 
 describe.skipIf(process.platform === "win32")(
@@ -97,13 +99,34 @@ process.stdin.on("data", (chunk) => {
       expect((await manager.close(started.value.session_id)).ok).toBe(true);
       expect(manager.status(started.value.session_id)).toBeUndefined();
     });
+  },
+);
 
-    it("stops and invalidates a Rizin session after its completion-marker timeout", async () => {
-      directory = await mkdtemp(join(tmpdir(), "rea-rizin-timeout-"));
-      const provider = join(directory, "fake-rizin-stall.mjs");
-      await writeFile(
-        provider,
-        `#!/usr/bin/env node
+describe.skipIf(process.platform === "win32")(
+  "Rizin debugger timeout cleanup",
+  () => {
+    let directory: string | undefined;
+    const managers: Array<{ closeAll(): Promise<void> }> = [];
+
+    afterEach(async () => {
+      await Promise.all(
+        managers
+          .splice(0)
+          .map((manager) => manager.closeAll().catch(() => undefined)),
+      );
+      if (directory !== undefined)
+        await rm(directory, { recursive: true, force: true });
+      directory = undefined;
+    });
+
+    it.each(["stopped", "throw", "reject"] as const)(
+      "retains timeout output and retryable cleanup when stop outcome is %s",
+      async (stopOutcome) => {
+        directory = await mkdtemp(join(tmpdir(), "rea-rizin-timeout-"));
+        const provider = join(directory, "fake-rizin-stall.mjs");
+        await writeFile(
+          provider,
+          `#!/usr/bin/env node
 process.stdout.write("\\0");
 let input = "";
 let stalled = false;
@@ -124,38 +147,65 @@ process.stdin.on("data", (chunk) => {
   }
 });
 `,
-      );
-      await chmod(provider, 0o700);
-      const manager = createRizinTestManager(
-        { REA_RIZIN_COMMAND: provider },
-        { frameTimeoutMs: 50 },
-      );
-      managers.push(manager);
-
-      const started = await manager.start({
-        path: "/tmp/fixture.bin",
-        inferior_tty: await rizinTestInferiorTty(),
-      });
-      expect(started.ok).toBe(true);
-      if (!started.ok) return;
-      const timedOut = await manager.execute(started.value.session_id, "slow");
-      expect(timedOut.ok).toBe(true);
-      if (timedOut.ok) {
-        expect(timedOut.value.result).toMatchObject({
-          output: "partial-timeout",
-          output_truncated: true,
-          completion_status: "unknown",
-        });
-        expect(timedOut.value.evidence.limitations.join(" ")).toContain(
-          "timed out",
         );
-      }
-      expect(manager.status(started.value.session_id)?.state).toBe("closed");
-      expect((await manager.execute(started.value.session_id, "dr")).ok).toBe(
-        false,
-      );
-      expect((await manager.close(started.value.session_id)).ok).toBe(true);
-    });
+        await chmod(provider, 0o700);
+        let stopRejected = false;
+        const manager = createRizinTestManager(
+          { REA_RIZIN_COMMAND: provider },
+          {
+            frameTimeoutMs: 50,
+            stopProcess: (session, name, options) => {
+              if (stopOutcome !== "stopped" && !stopRejected) {
+                stopRejected = true;
+                if (stopOutcome === "throw") throw new Error("stop failed");
+                return Promise.reject("stop failed");
+              }
+              return stopFakeNoInferior(session, name, options);
+            },
+          },
+        );
+        managers.push(manager);
+
+        const started = await manager.start({
+          path: "/tmp/fixture.bin",
+          inferior_tty: await rizinTestInferiorTty(),
+        });
+        expect(started.ok).toBe(true);
+        if (!started.ok) return;
+        const timedOut = await manager.execute(
+          started.value.session_id,
+          "slow",
+        );
+        expect(timedOut.ok).toBe(stopOutcome === "stopped");
+        if (!timedOut.ok) {
+          expect(timedOut.error.cleanupIncomplete).toBe(true);
+          const partialEvidence = evidenceSchema.parse(
+            timedOut.error.partialObservation,
+          );
+          expect(partialEvidence.normalized_result).toMatchObject({
+            output: "partial-timeout",
+            completion_status: "unknown",
+          });
+          expect(timedOut.error.cleanup?.reason).toContain("stop failed");
+        }
+        if (timedOut.ok) {
+          expect(timedOut.value.result).toMatchObject({
+            output: "partial-timeout",
+            output_truncated: true,
+            completion_status: "unknown",
+          });
+          expect(timedOut.value.evidence.limitations.join(" ")).toContain(
+            "timed out",
+          );
+        }
+        expect(manager.status(started.value.session_id)?.state).toBe("closed");
+        expect((await manager.execute(started.value.session_id, "dr")).ok).toBe(
+          false,
+        );
+        expect((await manager.close(started.value.session_id)).ok).toBe(true);
+        if (!timedOut.ok) expect(timedOut.error.cleanupIncomplete).toBe(false);
+      },
+    );
   },
 );
 

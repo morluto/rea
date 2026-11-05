@@ -31,7 +31,8 @@ operation-scoped JVM `OutOfMemoryError` observations retain their separate resou
 classification. Automatic kernel or cgroup OOM attribution is not implemented.
 
 After the authenticated startup handshake, rejected inputs (`invalid_request`,
-`not_found`, `ambiguous`, or an invalid function name) use
+`not_found`, `ambiguous`, an invalid function name, or an address without one
+exact file offset) use
 `diagnostics.diagnostic_scope: "request"` when their active output checkpoint is
 available. They preserve the active request's
 `failure_output`, target/profile identity and runtime/log coordinates, while
@@ -171,6 +172,11 @@ have no file backing. ELF mappings are observed
 without independent format-specific load-image verification, as the result's
 status and limitations state.
 
+Relocation rows retain Ghidra's `symbol` value, including an empty string or
+null when returned by Ghidra. It is a provider observation, not proof of the
+runtime-resolved address. Older Evidence may not have recorded this field;
+a relocation page requesting it reports that uncertainty.
+
 For large relocation inventories, select MCP `inspect_native_load_image` with
 `detail: "summary"`. It returns verification state, observed identity and counts,
 while retaining complete Evidence. Use `normalized_result.parent_evidence_id`
@@ -299,7 +305,7 @@ host/provider acceptance run with only the host compiler.
 `--dll`. These static fixtures contain source-owned encoded instructions; they
 are not compiler-produced programs. See the [Windows verification scope](windows-ghidra-p0.md#native-authority-and-target-identity)
 for real-provider coverage and exclusions.
-These lanes check all 26 read-only operations, target/snapshot/import SHA-256 linkage,
+These lanes check all 27 read-only operations, target/snapshot/import SHA-256 linkage,
 and project, endpoint, process, and runtime cleanup. The independent native
 lane checks DACLs, handle admission, cancellation, and Job Object lifecycle.
 `npm run verify:ghidra:windows:package` packs and installs REA into an isolated
@@ -324,9 +330,11 @@ Without bounds, loaded memory blocks are eligible, in Ghidra address order.
 Blocks that are not loaded (file parts such as `.symtab`) and overlay blocks are
 listed in `searched.skipped_not_loaded` and are not searched; pass `start` or
 `end` in their address space to search them.
-Overlapping matches are included; matches never cross block boundaries.
-Each match reports its address, segment, unique source file offset (or null),
-and containing procedure (or null).
+Overlapping matches are included, including across adjacent eligible initialized
+blocks in the same address space. Gaps and excluded or uninitialized blocks break
+a search run. Each match reports its address, starting segment, unique source file
+offset for that starting address (or null), and containing procedure (or null).
+A starting offset does not imply the full match is contiguous in the file.
 
 Pages default to 100 matches and accept 1 to 1000. Pass `next_cursor` as `cursor`
 with the same target, profile, pattern, mask and bounds to continue. `complete`

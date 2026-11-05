@@ -17,7 +17,7 @@ import {
   semanticStaticPropertyName,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
-import type { JavaScriptOpenReceiverFact } from "./javascriptSemanticAnalysis.js";
+import type { JavaScriptOpenReceiverFact } from "./javascriptSemanticReceiverFacts.js";
 import {
   compareUnicodeCodePoints,
   compositeKey,
@@ -49,6 +49,7 @@ export const failedJavaScriptStaticAnalysis = (): JavaScriptStaticAnalysis => ({
     sender_validations: [],
     utility_processes: [],
     native_addon_bindings: [],
+    protocols: [],
   },
   limitations: [
     "JavaScript source could not be parsed; absence of findings is not evidence of absence.",
@@ -311,12 +312,6 @@ export interface JavaScriptStaticSourceUrlPath {
   readonly directory: boolean;
 }
 
-/** Convert an exact static file URL expression to a POSIX path. */
-export const staticFileUrlPath = (
-  node: t.CallExpression | t.NewExpression,
-  pathIntrinsics?: JavaScriptStaticPathIntrinsicQuery,
-): string | undefined => staticFileUrlPathFact(node, pathIntrinsics)?.path;
-
 const staticFileUrlPathFact = (
   node: t.CallExpression | t.NewExpression,
   pathIntrinsics?: JavaScriptStaticPathIntrinsicQuery,
@@ -535,7 +530,7 @@ const WINDOW_OPEN_CALL =
   /(?:^|\.)(?:window|self|globalThis|top|parent|opener|frames|document)\.open$/u;
 
 /** Node `fs.open` flag strings, which are never request URLs. */
-const FS_OPEN_FLAGS = new Set([
+export const FS_OPEN_FLAGS: ReadonlySet<string> = new Set([
   "a",
   "a+",
   "as",

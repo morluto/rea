@@ -52,11 +52,33 @@ interface Ambiguous<Item> {
 /** A declared type: a historical bare name or a tagged observed nominal digest. */
 type DeclaredName = string | string[] | null;
 type DeclaredNameOf = (item: Method | Field) => DeclaredName;
+const keyIdentity = (
+  item: Method | Field,
+  declared: DeclaredNameOf,
+  kind: "method" | "field",
+) => {
+  const declaringType = declared(item);
+  const signatureId = signatureIdentity(item.signature);
+  return {
+    identity: digestCanonicalValue(
+      [declaringType, item.name],
+      "Managed comparison",
+    ),
+    identityUnavailable: declaringType === null,
+    signatureId,
+    signatureKey:
+      declaringType === null
+        ? null
+        : digestCanonicalValue(
+            [`${kind}-signature`, declaringType, item.name, signatureId],
+            "Managed comparison",
+          ),
+  };
+};
+
 const keyMethod = (item: Method, declared: DeclaredNameOf): Keyed<Method> => ({
   item,
-  identity: identityOf({ declaring_type: declared(item), name: item.name }),
-  identityUnavailable: declared(item) === null,
-  signatureId: signatureIdentity(item.signature),
+  ...keyIdentity(item, declared, "method"),
   exactKey:
     item.body.status === "present" &&
     item.body.il_sha256 !== null &&
@@ -71,20 +93,6 @@ const keyMethod = (item: Method, declared: DeclaredNameOf): Keyed<Method> => ({
           "Managed comparison",
         )
       : null,
-  // The blob, with type operands named, is the exact signature; decoding
-  // only gates the shape keys.
-  signatureKey:
-    declared(item) === null
-      ? null
-      : digestCanonicalValue(
-          [
-            "method-signature",
-            declared(item),
-            item.name,
-            signatureIdentity(item.signature),
-          ],
-          "Managed comparison",
-        ),
   structuralKey:
     item.signature.parse_status === "decoded" && item.body.status === "present"
       ? digestCanonicalValue(
@@ -118,9 +126,7 @@ const keyMethod = (item: Method, declared: DeclaredNameOf): Keyed<Method> => ({
 
 const keyField = (item: Field, declared: DeclaredNameOf): Keyed<Field> => ({
   item,
-  identity: identityOf({ declaring_type: declared(item), name: item.name }),
-  identityUnavailable: declared(item) === null,
-  signatureId: signatureIdentity(item.signature),
+  ...keyIdentity(item, declared, "field"),
   exactKey:
     item.signature.parse_status === "decoded"
       ? digestCanonicalValue(
@@ -128,29 +134,9 @@ const keyField = (item: Field, declared: DeclaredNameOf): Keyed<Field> => ({
           "Managed comparison",
         )
       : null,
-  // Only an undecoded field reaches this round: a decoded field with the
-  // same signature already met its counterpart in the exact round.
-  signatureKey:
-    declared(item) === null
-      ? null
-      : digestCanonicalValue(
-          [
-            "field-signature",
-            declared(item),
-            item.name,
-            signatureIdentity(item.signature),
-          ],
-          "Managed comparison",
-        ),
-  structuralKey: digestCanonicalValue(
-    [
-      "field-structural",
-      item.signature.kind,
-      item.signature.field_type,
-      item.flags,
-    ],
-    "Managed comparison",
-  ),
+  // Field matching has no structural round: flags/type display strings do
+  // not establish a field signature identity.
+  structuralKey: null,
 });
 
 const matchMethods = (
@@ -242,15 +228,6 @@ interface MatchByKeysInput<Item> {
   readonly right: readonly Keyed<Item>[];
   readonly rounds: readonly MatchRound<Item>[];
 }
-
-export const identityOf = ({
-  declaring_type,
-  name,
-}: {
-  readonly declaring_type: DeclaredName;
-  readonly name: string;
-}): string =>
-  digestCanonicalValue([declaring_type, name], "Managed comparison");
 
 /** Narrow a key to members of one declared type and name. */
 const declaredAs =

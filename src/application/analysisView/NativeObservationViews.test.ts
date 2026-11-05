@@ -18,7 +18,11 @@ import {
   type AnalysisViewRequest,
   type AnalysisViewResult,
 } from "../../domain/analysisView/analysisView.js";
-import { inspectAnalysisView } from "./AnalysisViewService.js";
+import {
+  inspectAnalysisView,
+  projectRetainedAnalysis,
+} from "./AnalysisViewService.js";
+import { EvidenceLedger } from "../investigation/EvidenceLedger.js";
 
 const provider = { id: "fixture", name: "Fixture provider", version: "1" };
 const parent = (
@@ -117,53 +121,56 @@ const graph = (): NativeCallGraph =>
     limitations: ["Graph caveat", "Graph caveat"],
   });
 
-it("returns useful caller/callee facts with exact source context identity and partial coverage", async () => {
-  const source = parent("procedure_callees", [
-    "ram:0x0010",
-    "ram:0x0010",
-    "ram:0x0020",
-  ]);
-  const before = JSON.stringify(source);
-  const summary = await project(source, { kind: "summary" });
-  expect(summary.value).toMatchObject({
-    kind: "summary",
-    parent_evidence_id: source.evidence_id,
-    source_provider: source.provider,
-    source_parameters: source.parameters,
-    source_analysis_profile_digest: source.analysis_profile?.digest,
-    source_context: {
-      evidence_limitation_count: 1,
-      result_limitation_count: null,
-    },
-    summary: { observations: 3 },
-    items: {
-      type: "addresses",
-      rows: [
-        { source_index: 0, address: "ram:0x0010" },
-        { source_index: 1, address: "ram:0x0010" },
-        { source_index: 2, address: "ram:0x0020" },
-      ],
-    },
-  });
-  expect(summary.evidence.relationship_coverage).toEqual(
-    source.relationship_coverage,
-  );
-  const page = await project(source, {
-    kind: "native-observation",
-    offset: 1,
-    limit: 1,
-  });
-  expect(page.value).toMatchObject({
-    items: { rows: [{ source_index: 1, address: "ram:0x0010" }] },
-    coverage: { total: 3, next_offset: 2, exhausted: false },
-  });
-  expect(page.value).toHaveProperty(
-    "source_context.digest",
-    contextDigest(summary.value),
-  );
-  expect(JSON.stringify(summary.value)).not.toContain('"analysis_profile":');
-  expect(JSON.stringify(source)).toBe(before);
-});
+it.each(["procedure_callees", "xrefs"])(
+  "pages %s addresses with exact source context and duplicate identity",
+  async (operation) => {
+    const source = parent(operation, [
+      "ram:0x0010",
+      "ram:0x0010",
+      "ram:0x0020",
+    ]);
+    const before = JSON.stringify(source);
+    const summary = await project(source, { kind: "summary" });
+    expect(summary.value).toMatchObject({
+      kind: "summary",
+      parent_evidence_id: source.evidence_id,
+      source_provider: source.provider,
+      source_parameters: source.parameters,
+      source_analysis_profile_digest: source.analysis_profile?.digest,
+      source_context: {
+        evidence_limitation_count: 1,
+        result_limitation_count: null,
+      },
+      summary: { observations: 3 },
+      items: {
+        type: "addresses",
+        rows: [
+          { source_index: 0, address: "ram:0x0010" },
+          { source_index: 1, address: "ram:0x0010" },
+          { source_index: 2, address: "ram:0x0020" },
+        ],
+      },
+    });
+    expect(summary.evidence.relationship_coverage).toEqual(
+      source.relationship_coverage,
+    );
+    const page = await project(source, {
+      kind: "native-observation",
+      offset: 1,
+      limit: 1,
+    });
+    expect(page.value).toMatchObject({
+      items: { rows: [{ source_index: 1, address: "ram:0x0010" }] },
+      coverage: { total: 3, next_offset: 2, exhausted: false },
+    });
+    expect(page.value).toHaveProperty(
+      "source_context.digest",
+      contextDigest(summary.value),
+    );
+    expect(JSON.stringify(summary.value)).not.toContain('"analysis_profile":');
+    expect(JSON.stringify(source)).toBe(before);
+  },
+);
 
 it("pages complete context fields and changes its digest when source profile or caveats change", async () => {
   const source = parent("procedure_callers", []);
@@ -245,6 +252,13 @@ it("keeps absent profile and inapplicable result caveats distinct from observed 
   ).toMatchObject({
     source_context: { result_limitation_count: null },
     items: { rows: null },
+    coverage: {
+      status: "unavailable",
+      examined: 0,
+      total: null,
+      next_offset: null,
+      exhausted: false,
+    },
     unknowns: expect.arrayContaining([
       expect.stringContaining("not applicable"),
     ]),
@@ -494,6 +508,46 @@ it("keeps context identity across authenticated target path aliases while preser
   });
   expect(second.evidence.subject?.local_path).toBe("/other/alias.elf");
   expect(second.evidence.evidence_id).not.toBe(first.evidence.evidence_id);
+  const ledger = new EvidenceLedger();
+  expect(ledger.record(original).ok).toBe(true);
+  const retained = ledger.forAnalysis(original.evidence_id)!;
+  const delivered = projectRetainedAnalysis(
+    rebound,
+    {
+      recordEvidence: (evidence) => ledger.record(evidence),
+      evidenceById: (id) => ledger.forAnalysis(id),
+    },
+    view,
+  );
+  if (!delivered.ok) throw delivered.error;
+  expect(delivered.value.subject?.local_path).toBe("/other/alias.elf");
+  expect(delivered.value.normalized_result).toMatchObject({
+    artifact: { path: "/other/alias.elf" },
+    items: {
+      rows: [{ record: { subject: { local_path: "/other/alias.elf" } } }],
+    },
+  });
+  expect(ledger.forAnalysis(original.evidence_id)).toBe(retained);
+  expect(retained.subject?.local_path).toBe("/selected/fixture.elf");
+  const imported = new EvidenceLedger();
+  const exporting = new EvidenceLedger();
+  expect(exporting.record(rebound).ok).toBe(true);
+  expect(imported.import(exporting.export()).ok).toBe(true);
+  const replay = await inspectAnalysisView(
+    {
+      source: { kind: "retained-evidence", evidence_id: rebound.evidence_id },
+      view,
+    },
+    (id) => imported.forAnalysis(id),
+  );
+  if (!replay.ok) throw replay.error;
+  expect(replay.value.subject?.local_path).toBe("/other/alias.elf");
+  expect(replay.value.normalized_result).toMatchObject({
+    artifact: { path: "/other/alias.elf" },
+    items: {
+      rows: [{ record: { subject: { local_path: "/other/alias.elf" } } }],
+    },
+  });
 });
 
 it("pages recorded empty graph levels without inventing nodes or dropping their identity", async () => {

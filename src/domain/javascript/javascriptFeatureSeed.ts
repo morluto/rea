@@ -42,7 +42,7 @@ const seedMatch = (
 ): ApplicationFeatureSeedMatch[] => {
   const mode = featureSeedMatchMode(seed);
   const caseSensitive = seed.case_sensitive;
-  const query = normalized(seed.value, caseSensitive);
+  const query = normalizeFeatureSeedText(seed.value, caseSensitive);
   if (!kindMatches(node, seed.kind)) return [];
   const requestedEntryPath =
     seed.kind === "api" && "entry_path" in seed ? seed.entry_path : undefined;
@@ -62,7 +62,7 @@ const seedMatch = (
   )
     return [];
   const match = candidateFields(node, seed.kind).find((candidate) => {
-    const value = normalized(candidate.value, caseSensitive);
+    const value = normalizeFeatureSeedText(candidate.value, caseSensitive);
     return mode === "exact" ? value === query : value.includes(query);
   });
   return match === undefined
@@ -272,7 +272,11 @@ const propertyFields = (
   return output;
 };
 
-const normalized = (value: string, caseSensitive: boolean): string => {
+/** Normalize literal matching identically across application and semantic labels. */
+export const normalizeFeatureSeedText = (
+  value: string,
+  caseSensitive: boolean,
+): string => {
   const normalizedValue = value.normalize(caseSensitive ? "NFC" : "NFKC");
   return caseSensitive
     ? normalizedValue

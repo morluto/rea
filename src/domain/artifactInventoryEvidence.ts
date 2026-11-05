@@ -427,6 +427,26 @@ const assembleInventoryResults = (
     throw new ArtifactInventoryValidationError(
       "Artifact inventory members exceed their manifest counts",
     );
+  const occurrencesById = new Map(
+    inventory.occurrences.map((occurrence) => [
+      occurrence.occurrence_id,
+      occurrence,
+    ]),
+  );
+  for (const edge of inventory.edges) {
+    const occurrence = occurrencesById.get(edge.occurrence_id);
+    // Missing pages leave references unresolved, but a supplied occurrence
+    // already provides every input to the edge's identity commitment.
+    if (occurrence === undefined) continue;
+    if (occurrence.artifact_id === null)
+      throw new ArtifactInventoryValidationError(
+        "Artifact edge references a missing graph member",
+      );
+    if (edge.edge_id !== artifactEdgeId(edge, occurrence))
+      throw new ArtifactInventoryValidationError(
+        "Artifact edge ID does not match its identity",
+      );
+  }
   if (inventory.complete) validateCompleteInventory(inventory);
   return inventory;
 };
@@ -616,10 +636,6 @@ const validateEdge = (
   )
     throw new ArtifactInventoryValidationError(
       "Artifact edge references a missing graph member",
-    );
-  if (edge.edge_id !== artifactEdgeId(edge, occurrence))
-    throw new ArtifactInventoryValidationError(
-      "Artifact edge ID does not match its identity",
     );
 };
 

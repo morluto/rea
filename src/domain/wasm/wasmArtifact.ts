@@ -174,20 +174,20 @@ export type InspectWasmArtifactInput = z.infer<
 >;
 export type WasmArtifact = z.infer<typeof wasmArtifactSchema>;
 
-/** A WASM observation must identify the selected file path and byte digest. */
+/** Semantic WASM subject identity excludes delivery-only local paths. */
 export type WasmArtifactSubject = Pick<
   EvidenceSubjectTarget,
-  "path" | "sha256" | "format"
+  "sha256" | "format"
 >;
 type WasmArtifactFileSubject = WasmArtifactSubject & {
   readonly format: "file";
 };
 
+/** Match semantic artifact identity; local subject paths are delivery metadata. */
 export const wasmArtifactMatchesSubject = (
   artifact: WasmArtifact["artifact"],
   subject: WasmArtifactSubject | null | undefined,
 ): subject is WasmArtifactFileSubject =>
   subject != null &&
-  subject.path === artifact.path &&
   subject.sha256 === artifact.sha256 &&
   subject.format === "file";

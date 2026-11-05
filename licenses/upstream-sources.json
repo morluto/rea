@@ -78,5 +78,10 @@
     "file": "licenses/pefile-2024.8.26-LICENSE.txt",
     "source": "https://raw.githubusercontent.com/erocarrera/pefile/4b3b1e2e568a88d4f1897d694d684f23d9e270c4/LICENSE",
     "sha256": "b44409c067c6da52bfb54bb6624fb11a7b52157c3a13ae1400232f8196e86ad3"
+  },
+  {
+    "file": "licenses/microsoft-uf2-MIT.txt",
+    "source": "https://raw.githubusercontent.com/microsoft/uf2/cf3bd7f9c274b949528f8cd6a19eef2502a687d2/LICENSE.txt",
+    "sha256": "c581accf1e5449482b70ac5fcdfb171599317ccff559cf0794d771671486f800"
   }
 ]

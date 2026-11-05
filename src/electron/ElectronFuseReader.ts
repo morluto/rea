@@ -276,31 +276,10 @@ const identifyMacho = async (
     architecture: slice.architecture,
     ...(slice.hidden === undefined ? {} : { hidden: slice.hidden }),
   }));
-  assertNonOverlappingSlices(slices);
   return {
     format,
     slices,
   };
-};
-
-/** A FAT architecture owns a distinct byte range; overlap is malformed. */
-const assertNonOverlappingSlices = (ranges: readonly SliceRange[]): void => {
-  const ordered = [...ranges].sort(
-    (left, right) => left.fileOffset - right.fileOffset,
-  );
-  for (let index = 1; index < ordered.length; index += 1) {
-    const previous = ordered[index - 1];
-    const current = ordered[index];
-    if (
-      previous !== undefined &&
-      current !== undefined &&
-      current.fileOffset < previous.fileOffset + previous.size
-    )
-      throw new ElectronFuseFormatFailure(
-        "malformed",
-        `Mach-O slices ${previous.index} and ${current.index} overlap.`,
-      );
-  }
 };
 
 const scanSlices = async (

@@ -17,4 +17,6 @@ export const recoveryInstructions = (
 ): string =>
   `${RECOVERY_START}${runtimeSettingsAvailable ? RUNTIME_SETTINGS_RECOVERY : LAUNCH_SETTINGS_RECOVERY}${EXPLICIT_ARGUMENT_RECOVERY}${RECOVERY_END}`;
 
-export const RECOVERY_INSTRUCTIONS = recoveryInstructions(true);
+/** Recovery when a scoped session cannot advertise the target lifecycle. */
+export const SCOPED_NO_TARGET_RECOVERY =
+  "No target is open, and this MCP connection does not advertise open_binary. Preserve needed outputs before restarting; retained in-memory Evidence and Unknown history will not carry over. Add session to REA_MCP_TOOL_FAMILIES in the environment that starts REA and restart the server; then call open_binary with the chosen local path.";

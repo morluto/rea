@@ -124,4 +124,36 @@ describe("child-process options detection", () => {
 
     expect(ir.childProcessSpawns).toHaveLength(3);
   });
+
+  it("reads env as Node does, where a falsy value inherits the parent environment", () => {
+    // Node's normalizeSpawnArguments does `const env = options.env || { ...process.env }`,
+    // so a nullish or otherwise falsy env supplies nothing and the child inherits.
+    const cases = [
+      ["absent", `spawn("tool")`, false],
+      ["null", `spawn("tool", [], { env: null })`, false],
+      ["undefined", `spawn("tool", [], { env: undefined })`, false],
+      ["void", `spawn("tool", [], { env: void 0 })`, false],
+      ["zero", `spawn("tool", [], { env: 0 })`, false],
+      ["negative-zero", `spawn("tool", [], { env: -0 })`, false],
+      ["bigint-zero", `spawn("tool", [], { env: 0n })`, false],
+      ["zero-float", `spawn("tool", [], { env: 0.0 })`, false],
+      ["nan", `spawn("tool", [], { env: NaN })`, true],
+      ["empty-string", `spawn("tool", [], { env: "" })`, false],
+      ["false", `spawn("tool", [], { env: false })`, false],
+      ["empty-object", `spawn("tool", [], { env: {} })`, true],
+      ["with-key", `spawn("tool", [], { env: { A: "1" } })`, true],
+      ["inline-spread", `spawn("tool", [], { ...{ env: { A: "1" } } })`, true],
+      ["unresolved-value", `spawn("tool", [], { env: input })`, true],
+      ["unresolved-options", `spawn("tool", [], input)`, false],
+    ] as const;
+
+    for (const [label, call, supplied] of cases) {
+      const ir = analyzeJavaScriptSemantics(
+        `import { spawn } from "node:child_process"; ${call};`,
+      );
+      expect(ir.childProcessSpawns[0]?.environmentSupplied, label).toBe(
+        supplied,
+      );
+    }
+  });
 });

@@ -62,7 +62,7 @@ export const readMachoLoadCommandDeclarations = (
 export const readMachoLoadCommandTableHeader = (
   bytes: Uint8Array,
   fileSize: number,
-): Result<MachoLoadCommandTableHeader | null, string> => {
+): Result<MachoHeaderDeclarations | null, string> => {
   const parsed = readMachoLoadCommandDeclarations(bytes, fileSize);
   if (!parsed.ok || parsed.value === null) return parsed;
   const { commandBytes, headerSize } = parsed.value;

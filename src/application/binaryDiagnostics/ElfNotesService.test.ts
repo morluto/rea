@@ -6,6 +6,7 @@ import { ok } from "../../domain/result.js";
 import {
   AnalysisCancelledError,
   AnalysisInputError,
+  AnalysisOutputError,
 } from "../../domain/analysisErrorCore.js";
 
 const identity = ELF_NOTES_PROVIDER;
@@ -59,6 +60,51 @@ it("records the selected ELF and an absent note table", async () => {
     subject: { format: "elf", architecture: "x86_64" },
     normalized_result: report,
   });
+});
+
+it.each(["examined_tables", "examined_entries"] as const)(
+  "rejects complete provider coverage with inconsistent %s",
+  async (count) => {
+    const result = await new ElfNotesService({
+      identity,
+      inspect: () =>
+        Promise.resolve(
+          ok({
+            ...report,
+            coverage: { ...report.coverage, [count]: 1 },
+          }),
+        ),
+    }).inspect({ path: report.artifact.path });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toBeInstanceOf(AnalysisOutputError);
+  },
+);
+
+it("retains an examined empty table and rejects an uncounted table", async () => {
+  const table = {
+    kind: "program" as const,
+    index: 0,
+    name: null,
+    location: { offset: 128, bytes: 0 },
+    alignment: 4,
+  };
+  for (const examinedTables of [0, 1]) {
+    const result = await new ElfNotesService({
+      identity,
+      inspect: () =>
+        Promise.resolve(
+          ok({
+            ...report,
+            tables: [table],
+            coverage: { ...report.coverage, examined_tables: examinedTables },
+          }),
+        ),
+    }).inspect({ path: report.artifact.path });
+    expect(result.ok).toBe(examinedTables === 1);
+    if (result.ok)
+      expect(result.value.normalized_result).toMatchObject({ tables: [table] });
+    else expect(result.error).toBeInstanceOf(AnalysisOutputError);
+  }
 });
 
 it("discards an observation if the caller cancels while the provider completes", async () => {

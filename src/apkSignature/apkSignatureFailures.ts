@@ -1,4 +1,6 @@
+import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import { stableArtifactInputRecovery } from "../artifacts/StableArtifactFailure.js";
 import {
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
@@ -66,6 +68,10 @@ export const mapApkBlockError = (
         "capacity",
         `APK Signing Block holds more ${error.resource} than the ${String(error.limit)} limit.`,
         { max_signing_block_pairs: error.limit },
+        fixedAllowanceOptions(
+          `The APK Signing Block allowance of ${String(error.limit)} pairs (this release has no runtime override)`,
+          "count",
+        ),
       );
   }
 };
@@ -84,6 +90,10 @@ export const mapApkSchemeError = (
         "capacity",
         `APK Signature Scheme ${scheme} holds more ${error.resource} than the ${String(error.limit)} limit.`,
         { [`max_${error.resource.replace(/-/g, "_")}`]: error.limit },
+        fixedAllowanceOptions(
+          `The APK Signature Scheme ${scheme} allowance of ${String(error.limit)} ${error.resource} (this release has no runtime override)`,
+          "count",
+        ),
       );
 
 /** A central directory that cannot be walked leaves v1 presence unknown: refuse. */
@@ -96,6 +106,10 @@ export const mapCentralDirectoryError = (
         "capacity",
         `The central directory holds more than ${String(error.limit)} META-INF v1 signing entries.`,
         { max_v1_signature_entries: error.limit },
+        fixedAllowanceOptions(
+          `The APK v1 allowance of ${String(error.limit)} META-INF signing entries (this release has no runtime override)`,
+          "count",
+        ),
       )
     : inputError(
         `Malformed ZIP central directory at byte ${String(error.offset)}: ${error.detail}.`,
@@ -108,6 +122,10 @@ export const v1SignerCapacityError = (limit: number): AnalysisError =>
     "capacity",
     `The archive pairs more than ${String(limit)} v1 signature blocks with .SF files.`,
     { max_v1_signers: limit },
+    fixedAllowanceOptions(
+      `The APK v1 allowance of ${String(limit)} signers (this release has no runtime override)`,
+      "count",
+    ),
   );
 
 /** The decoded result would exceed the inline output budget. */
@@ -117,6 +135,10 @@ export const apkOutputBudgetError = (projectedBytes: number): AnalysisError =>
     "capacity",
     `The decoded signing report (${String(projectedBytes)} bytes) exceeds the ${String(APK_SIGNATURE_LIMITS.outputBytes)}-byte output budget.`,
     { max_output_bytes: APK_SIGNATURE_LIMITS.outputBytes },
+    fixedAllowanceOptions(
+      `The decoded APK signing report allowance of ${String(APK_SIGNATURE_LIMITS.outputBytes)} bytes (this release has no runtime override)`,
+      "report",
+    ),
   );
 
 /**
@@ -209,9 +231,11 @@ const artifactReaderFailure = (
         },
       );
     case "path":
-      return new AnalysisInputError(OPERATION, { cause }, [
-        { path: ["path"], reason: "invalid_format", message: cause.message },
-      ]);
+      return new AnalysisInputError(
+        OPERATION,
+        { cause, ...stableArtifactInputRecovery(cause) },
+        [{ path: ["path"], reason: "invalid_format", message: cause.message }],
+      );
     default:
       return adapterFailure(cause, path);
   }

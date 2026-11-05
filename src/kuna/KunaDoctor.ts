@@ -138,6 +138,9 @@ export const inspectKunaProvider = async (
   }
   const { value } = installation;
   const cache = await cacheCheck(environment, platform);
+  const versionGuidance = value.verified
+    ? null
+    : `To use the verified release, select Kuna ${KUNA_VERIFIED_VERSION} by setting REA_KUNA_COMMAND to its absolute executable path in the environment that starts REA, then restart REA. You may continue with the selected unverified release.`;
   return {
     id: KUNA_PROVIDER_ID,
     configured,
@@ -157,9 +160,9 @@ export const inspectKunaProvider = async (
         detail: `${value.executable} reports Kuna ${value.version} (sha256 ${value.sha256})${
           value.verified
             ? "."
-            : `; REA verified ${KUNA_VERIFIED_VERSION}, so this release's project layout is unverified.`
+            : `; REA verified ${KUNA_VERIFIED_VERSION}, so this release's project layout is unverified. ${versionGuidance}`
         }`,
-        remediation: null,
+        remediation: versionGuidance,
         classification: "config_drift",
         details: {
           executable: value.executable,

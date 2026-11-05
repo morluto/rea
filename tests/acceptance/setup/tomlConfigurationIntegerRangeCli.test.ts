@@ -79,7 +79,7 @@ cliTest(
     const original =
       "# retained comment\n" +
       'mcp_servers = { other = { command = "other", budget = 9007199254740993 }, ' +
-      'rea = { command = "previous", tool_timeout_sec = 9223372036854775807 } }\n';
+      'rea = { command = "npx", args = ["-y", "rea-agents@6.1.0", "mcp"], tool_timeout_sec = 9223372036854775807 } }\n';
     await mkdir(dirname(config), { recursive: true });
     await writeFile(config, original);
     const applied = await cli.run({
@@ -92,7 +92,7 @@ cliTest(
     expect(configured.startsWith("# retained comment\n")).toBe(true);
     expect(configured).toContain("budget = 9007199254740993");
     expect(configured).toContain("tool_timeout_sec = 9223372036854775807");
-    expect(configured).not.toContain('"previous"');
+    expect(configured).not.toContain("rea-agents@6.1.0");
   },
 );
 

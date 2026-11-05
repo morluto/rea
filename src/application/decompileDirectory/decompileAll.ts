@@ -1,6 +1,8 @@
 import { join } from "node:path";
 import { z } from "zod";
 
+import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+
 import {
   DECOMPILE_DIRECTORY_INDEX_NAME,
   DECOMPILE_DIRECTORY_INLINE_FAILURE_LIMIT,
@@ -33,6 +35,7 @@ import { err, ok, type Result } from "../../domain/result.js";
 import {
   classifyOutputPath,
   DecompileExport,
+  exportOutputFailure,
   type ExportIdentity,
 } from "./exportTree.js";
 import {
@@ -355,6 +358,7 @@ const publishSelected = async (
       procedure.address,
       input.signal,
     );
+    if (typeof existing === "object") return err(existing.error);
     if (isAborted(input.signal)) return err(cancelled(input.signal));
     if (existing === "skip") {
       input.state.skipped += 1;
@@ -422,13 +426,12 @@ const attemptOne = async (
         "The function file already exists and does not match this export.",
     };
     recordFailure(input.state, procedure, reason);
+    const retained = retainedObservation(input.session, procedure.address);
     const appended = await input.session.append(
-      failureRecord(
-        procedure,
-        retainedBody(input.session, procedure.address),
-        reason,
-        { relativePath: input.session.pathFor(procedure.address) },
-      ),
+      failureRecord(procedure, retained.body, reason, {
+        relativePath: input.session.pathFor(procedure.address),
+        ...retained.options,
+      }),
     );
     return { result: appended, bodySupport };
   }
@@ -438,13 +441,12 @@ const attemptOne = async (
       message: "The existing function file could not be read.",
     };
     recordFailure(input.state, procedure, reason);
+    const retained = retainedObservation(input.session, procedure.address);
     const appended = await input.session.append(
-      failureRecord(
-        procedure,
-        retainedBody(input.session, procedure.address),
-        reason,
-        { relativePath: input.session.pathFor(procedure.address) },
-      ),
+      failureRecord(procedure, retained.body, reason, {
+        relativePath: input.session.pathFor(procedure.address),
+        ...retained.options,
+      }),
     );
     return { result: appended, bodySupport };
   }
@@ -533,6 +535,12 @@ const publishOne = async (input: {
   const caveats = [
     ...new Set([...infoCaveats, ...decompiled.value.limitations]),
   ];
+  const observationSource: NonNullable<
+    DecompileDirectoryFunctionRecord["provider_source"]
+  > =
+    decompiled.value.sourceDescriptor === undefined
+      ? { status: "unknown", reason: "source_not_available" }
+      : { status: "reported", source: decompiled.value.sourceDescriptor };
   const pseudocode = decompiled.value.result;
   if (typeof pseudocode !== "string" || pseudocode.length === 0) {
     const reason = pseudocodeFailure(pseudocode);
@@ -541,6 +549,7 @@ const publishOne = async (input: {
       result: await input.session.append(
         failureRecord(input.procedure, body.fact, reason, {
           limitations: caveats,
+          providerSource: observationSource,
         }),
       ),
       bodySupport: body.support,
@@ -558,6 +567,8 @@ const publishOne = async (input: {
     "utf8",
   );
   const committed = await input.session.commitFunctionFile(relativePath, bytes);
+  if (committed.status === "error")
+    return { result: err(committed.error), bodySupport: body.support };
   if (committed.status === "conflict" || committed.status === "io") {
     const reason =
       committed.status === "conflict"
@@ -576,6 +587,7 @@ const publishOne = async (input: {
         failureRecord(input.procedure, body.fact, reason, {
           relativePath,
           limitations: caveats,
+          providerSource: observationSource,
         }),
       ),
       bodySupport: body.support,
@@ -587,6 +599,11 @@ const publishOne = async (input: {
     status: "written",
     relative_path: relativePath,
     sha256: committed.sha256,
+    // Matching existing bytes prove equality, not who originally wrote them.
+    provider_source:
+      committed.status === "matched"
+        ? { status: "unknown", reason: "existing_file_origin_unknown" }
+        : observationSource,
     body: bodyRecord(body.fact),
     // The header may truncate; the journal keeps the complete list.
     ...(caveats.length === 0 ? {} : { limitations: caveats }),
@@ -705,7 +722,12 @@ const readBody = async (
   };
 };
 
-type ExistingFile = "skip" | "write" | "conflict" | "io";
+type ExistingFile =
+  | "skip"
+  | "write"
+  | "conflict"
+  | "io"
+  | { readonly error: AnalysisError };
 
 const existingFile = async (
   session: DecompileExport,
@@ -722,6 +744,13 @@ const existingFile = async (
   const digest = await session
     .hashFile(record.relative_path, signal)
     .catch((cause: unknown) => cause);
+  if (digest instanceof ArtifactReaderFailure && digest.cleanup !== undefined)
+    return {
+      error: exportOutputFailure(
+        "decompile file verification cleanup failed",
+        digest,
+      ),
+    };
   if (typeof digest === "string")
     return digest === record.sha256 ? "skip" : "conflict";
   return nodeAbsent(digest) ? "write" : "io";
@@ -873,6 +902,7 @@ const failureRecord = (
     readonly relativePath?: string;
     /** Caveats of the observations this attempt used. */
     readonly limitations?: readonly string[];
+    readonly providerSource?: DecompileDirectoryFunctionRecord["provider_source"];
   } = {},
 ): DecompileDirectoryFunctionRecord => ({
   address: procedure.address,
@@ -880,6 +910,9 @@ const failureRecord = (
   status: "failed",
   body: bodyRecord(body),
   failure: reason,
+  ...(options.providerSource === undefined
+    ? {}
+    : { provider_source: options.providerSource }),
   ...(options.relativePath === undefined
     ? {}
     : { relative_path: options.relativePath }),
@@ -923,12 +956,19 @@ const unavailableBody = (reason: string): FunctionBody => ({
   reason: reason.length === 0 ? "unavailable" : reason,
 });
 
-/** Keep the journal's body fact when a conflicting file is left unchanged. */
-const retainedBody = (
+/** Preserve the observations and their caveats when a file cannot be reused. */
+const retainedObservation = (
   session: DecompileExport,
   address: string,
-): FunctionBody => {
-  return session.record(address)?.body ?? unavailableBody("not rewritten");
+): { body: FunctionBody; options: { limitations?: readonly string[] } } => {
+  const record = session.record(address);
+  return {
+    body: record?.body ?? unavailableBody("not rewritten"),
+    options:
+      record?.limitations === undefined
+        ? {}
+        : { limitations: record.limitations },
+  };
 };
 
 const exportLimitations = (

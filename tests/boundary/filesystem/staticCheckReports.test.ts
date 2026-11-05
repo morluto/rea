@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { access, chmod, mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname, join, sep } from "node:path";
+import { delimiter, dirname, join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
 import { z } from "zod";
@@ -27,12 +27,20 @@ const fixture = async () => {
   );
   return root;
 };
-const invoke = (root: string, mode: string, ...arguments_: string[]) =>
+const invokeWithEnvironment = (
+  root: string,
+  mode: string,
+  environment: NodeJS.ProcessEnv,
+  ...arguments_: string[]
+) =>
   spawnSync(process.execPath, [script, mode, ...arguments_], {
     cwd: root,
     encoding: "utf8",
     timeout: 15_000,
+    env: environment,
   });
+const invoke = (root: string, mode: string, ...arguments_: string[]) =>
+  invokeWithEnvironment(root, mode, process.env, ...arguments_);
 const lintDiagnostics = async (root: string) =>
   z
     .object({
@@ -143,6 +151,114 @@ it("keeps lint errors failing and visible alongside the retained warnings", asyn
       expect.objectContaining({ severity: "error" }),
     ]),
   );
+});
+
+it("preserves cross-file typed errors and explicit worker choices", async () => {
+  const root = await fixture();
+  await Promise.all([
+    writeFile(join(root, "package.json"), '{"type":"module"}'),
+    writeFile(
+      join(root, "tsconfig.json"),
+      JSON.stringify({
+        compilerOptions: {
+          module: "NodeNext",
+          target: "ES2023",
+          lib: ["ES2023"],
+          strict: true,
+          types: [],
+        },
+        include: ["src/**/*.ts"],
+      }),
+    ),
+    writeFile(
+      join(root, ".oxlintrc.json"),
+      JSON.stringify({
+        plugins: ["typescript"],
+        rules: {
+          "no-unused-vars": "warn",
+          "typescript/no-floating-promises": "error",
+          "typescript/switch-exhaustiveness-check": "error",
+        },
+      }),
+    ),
+    writeFile(
+      join(root, "src/types.ts"),
+      'export type State = "ready" | "failed";\n' +
+        "export function pending(): Promise<void> { return Promise.resolve(); }\n",
+    ),
+  ]);
+  const caller = join(root, "src/caller.ts");
+  const source =
+    'import { pending, type State } from "./types.js";\n' +
+    "const forgotten = 1;\n";
+  await writeFile(
+    caller,
+    source +
+      "pending();\n" +
+      'export function inspect(state: State) { switch (state) { case "ready": return 1; } }\n',
+  );
+  const diagnostics: string[][] = [];
+  const typedEnvironment = {
+    ...process.env,
+    PATH: [join(repository, "node_modules", ".bin"), process.env.PATH]
+      .filter((path) => path !== undefined)
+      .join(delimiter),
+  };
+  for (const workers of [undefined, "2"]) {
+    const result = invokeWithEnvironment(root, "typed-lint", {
+      ...typedEnvironment,
+      GOMAXPROCS: workers,
+      OXC_LOG: "debug",
+    });
+    expect(result.error).toBeUndefined();
+    expect(result.status, result.stderr).toBe(1);
+    expect(result.stderr).toContain(
+      `Starting linter with ${workers ?? "1"} workers`,
+    );
+    expect(result.stdout).toContain("2 errors, 1 warnings");
+    const report = z
+      .object({
+        number_of_files: z.number(),
+        diagnostics: z.array(
+          z.object({ code: z.string(), severity: z.string() }).passthrough(),
+        ),
+      })
+      .parse(
+        JSON.parse(
+          await readFile(
+            join(root, ".cache/static-checks/typed-oxlint.json"),
+            "utf8",
+          ),
+        ),
+      );
+    expect(report.number_of_files).toBe(2);
+    expect(
+      report.diagnostics
+        .filter(({ severity }) => severity === "error")
+        .map(({ code }) => code)
+        .sort(),
+    ).toEqual([
+      "typescript(no-floating-promises)",
+      "typescript(switch-exhaustiveness-check)",
+    ]);
+    diagnostics.push(
+      report.diagnostics.map((item) => JSON.stringify(item)).sort(),
+    );
+  }
+  expect(diagnostics[1]).toEqual(diagnostics[0]);
+  await writeFile(
+    caller,
+    source +
+      "await pending();\n" +
+      'export function inspect(state: State) { switch (state) { case "ready": return 1; case "failed": return 0; } }\n',
+  );
+  const corrected = invokeWithEnvironment(root, "typed-lint", {
+    ...typedEnvironment,
+    GOMAXPROCS: undefined,
+  });
+  expect(corrected.error).toBeUndefined();
+  expect(corrected.status, corrected.stderr).toBe(0);
+  expect(corrected.stdout).toContain("0 errors, 1 warnings");
 });
 
 it("excludes translation staging while retaining authored website errors", async () => {
