@@ -300,7 +300,7 @@ describe("repositories whose URI held credentials", () => {
     const marked = repository({ uri_credentials_removed: true });
     // A capture written before credentials were removed holds them in its URI.
     const older = repository({
-      uri: "https://rea-user:hunter2@downloads.typora.io/linux",
+      uri: "https://rea-user:hunter2@apt.example.com/typora",
     });
     const open = repository({ uri: "https://b.example.com/typora" });
     const refused = exportInstall(typora([marked]), "typora", "arm64");
@@ -312,7 +312,7 @@ describe("repositories whose URI held credentials", () => {
       repositoryRefusal(older),
     ]) {
       expect(reason).toContain("user name or password");
-      expect(reason).not.toMatch(/downloads\.typora\.io|rea-user|hunter2/u);
+      expect(reason).not.toMatch(/apt\.example\.com|rea-user|hunter2/u);
     }
     expect(refused).toMatchObject({
       ok: false,
