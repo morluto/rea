@@ -38,6 +38,7 @@ import { registerIl2cppTools } from "./registerIl2cppTools.js";
 import { registerRustTools } from "./registerRustTools.js";
 import { registerPythonPycTool } from "./registerPythonPycTool.js";
 import { registerErlangTools } from "./registerErlangTools.js";
+import { registerV8CodeCacheTool } from "./registerV8CodeCacheTool.js";
 import { registerAnalysisViewTool } from "./registerAnalysisViewTool.js";
 import { registerBinaryDiagnosticsTools } from "./registerBinaryDiagnosticsTools.js";
 import { registerFridaTools } from "./registerFridaTools.js";
@@ -209,6 +210,7 @@ export const createServer = (
     goBinary,
     rustBinary,
     erlangBeam,
+    v8CodeCache,
     modelArtifact,
     gpuCodeObjects,
     il2cppMetadata,
@@ -602,6 +604,13 @@ export const createServer = (
         recordEvidence,
         analysisAdmission,
         evidenceById,
+      );
+      registerV8CodeCacheTool(
+        server,
+        v8CodeCache,
+        toolLogger,
+        recordEvidence,
+        analysisAdmission,
       );
       registerWasmTools(
         server,
