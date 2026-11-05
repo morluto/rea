@@ -73,7 +73,10 @@ const aptRepositorySchema = z.strictObject({
   source: z.string().min(1),
   /** Null when no sources file entry matches the source. */
   sources_file: z.string().nullable(),
+  /** Without the user name and password the entry may hold. */
   uri: z.string().nullable(),
+  /** Whether the entry's URI held a user name or password, which REA does not record; absent from captures written before it was recorded. */
+  uri_credentials_removed: z.boolean().optional(),
   suite: z.string().nullable(),
   /** Empty for a flat repository. */
   components: z.array(z.string()),

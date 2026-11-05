@@ -4,6 +4,7 @@ import { GPGV_A_ONLY, VENDOR_A } from "./aptKeys.fixture.js";
 import {
   aptListFileName,
   dearmorPublicKeys,
+  declaredPackageFiles,
   entryForTarget,
   isArmoredKey,
   isUbuntuProRepository,
@@ -101,6 +102,7 @@ describe("parseOneLineSources", () => {
         file: TYPORA_LIST,
         position: 1,
         uris: ["https://downloads.typora.io/linux"],
+        credentialed: [],
         suites: ["./"],
         components: [],
         architectures: [],
@@ -297,6 +299,125 @@ describe("apt index targets", () => {
       position: 1,
     });
     expect(entryForTarget({ ...typora, position: 2 }, stanzas)).toBeUndefined();
+  });
+});
+
+describe("credentials in a source URI", () => {
+  const ONE_LINE_FILE = "/etc/apt/sources.list.d/private.list";
+  const DEB822_FILE = "/etc/apt/sources.list.d/private.sources";
+  const CREDENTIALS = /rea-user|hunter2/u;
+
+  it("removes a user name and password from one-line entries and marks the URIs that held them", () => {
+    const stanzas = parseOneLineSources(
+      [
+        "deb https://rea-user:hunter2@apt.example.com/repo/ stable main",
+        "deb [arch=amd64] https://rea-user@apt.example.com/user-only noble main",
+        "deb https://rea-user:hunter2@ss@apt.example.com/at-sign stable main",
+        "deb https://apt.example.com/open stable main",
+      ].join("\n"),
+      ONE_LINE_FILE,
+    );
+
+    expect(
+      stanzas.map(({ uris, credentialed }) => ({ uris, credentialed })),
+    ).toEqual([
+      {
+        uris: ["https://apt.example.com/repo"],
+        credentialed: ["https://apt.example.com/repo"],
+      },
+      {
+        uris: ["https://apt.example.com/user-only"],
+        credentialed: ["https://apt.example.com/user-only"],
+      },
+      {
+        uris: ["https://apt.example.com/at-sign"],
+        credentialed: ["https://apt.example.com/at-sign"],
+      },
+      { uris: ["https://apt.example.com/open"], credentialed: [] },
+    ]);
+    expect(JSON.stringify(stanzas)).not.toMatch(CREDENTIALS);
+  });
+
+  it("removes them from each URI of a deb822 stanza, marking only the URIs that held them", () => {
+    const stanzas = parseDeb822Sources(
+      [
+        "Types: deb",
+        "URIs: https://rea-user:hunter2@apt.example.com/repo/ https://rea-user@mirror.example.com/repo https://open.example.com/repo",
+        "Suites: stable",
+        "Components: main",
+      ].join("\n"),
+      DEB822_FILE,
+    );
+
+    expect(stanzas).toEqual([
+      expect.objectContaining({
+        uris: [
+          "https://apt.example.com/repo",
+          "https://mirror.example.com/repo",
+          "https://open.example.com/repo",
+        ],
+        credentialed: [
+          "https://apt.example.com/repo",
+          "https://mirror.example.com/repo",
+        ],
+      }),
+    ]);
+    expect(JSON.stringify(stanzas)).not.toMatch(CREDENTIALS);
+  });
+
+  it("matches index targets to entries whether or not apt-get indextargets prints the credentials", () => {
+    const stanzas = parseDeb822Sources(
+      [
+        "Types: deb",
+        "URIs: https://rea-user:hunter2@apt.example.com/repo/ https://open.example.com/repo",
+        "Suites: stable",
+        "Components: main",
+      ].join("\n"),
+      DEB822_FILE,
+    );
+    const description =
+      "https://apt.example.com/repo stable/main amd64 Packages";
+    for (const repoUri of [
+      "https://rea-user:hunter2@apt.example.com/repo/",
+      "https://apt.example.com/repo/",
+    ]) {
+      const [target] = parseAptIndexTargets(
+        [
+          `Description: ${repoUri.slice(0, -1)} stable/main amd64 Packages`,
+          "Filename: /var/lib/apt/lists/apt.example.com_repo_dists_stable_main_binary-amd64_Packages",
+          `Base-URI: ${repoUri}dists/stable/`,
+          "Component: main",
+          "Release: stable",
+          `Repo-URI: ${repoUri}`,
+          `Sourcesentry: ${DEB822_FILE}:1`,
+        ].join("\n"),
+      );
+      if (target === undefined) throw new Error("missing target");
+
+      expect(target).toMatchObject({
+        description,
+        repoUri: "https://apt.example.com/repo/",
+        baseUri: "https://apt.example.com/repo/dists/stable/",
+      });
+      const entry = entryForTarget(target, stanzas);
+      expect(entry).toMatchObject({
+        uri: "https://apt.example.com/repo",
+        credentials: true,
+      });
+      expect(JSON.stringify([target, entry])).not.toMatch(CREDENTIALS);
+      expect([
+        ...declaredPackageFiles(
+          [
+            {
+              uri: "https://apt.example.com/repo",
+              suite: "stable",
+              components: ["main"],
+            },
+          ],
+          [target],
+        ),
+      ]).toEqual([description]);
+    }
   });
 });
 

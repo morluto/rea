@@ -48,7 +48,7 @@ const captureOptions = z.object({
     .array(z.string().min(1))
     .optional()
     .describe(
-      "File (with its SQLite -wal and -journal) or directory whose starting content is retained in addition to the application's state directories (repeatable)",
+      "File or directory whose starting content is retained in addition to the application's state directories; a file brings its SQLite write-ahead log and rollback journal (repeatable)",
     ),
   exclude: z
     .array(z.string().min(1))

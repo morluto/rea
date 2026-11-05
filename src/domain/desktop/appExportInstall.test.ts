@@ -5,6 +5,7 @@ import {
   exportInstall,
   fromUbuntuNobleArchive,
   installLimitations,
+  repositoryRefusal,
 } from "./appExportInstall.js";
 import type { AptRepository, DesktopPackage } from "./desktopCapture.js";
 
@@ -291,6 +292,43 @@ describe("exportInstall sources", () => {
       ok: false,
       error: expect.stringContaining("architecture riscv64"),
     });
+  });
+});
+
+describe("repositories whose URI held credentials", () => {
+  it("refuses a repository whose sources entry held a user name or password, naming neither them nor its URI in the reason", () => {
+    const marked = repository({ uri_credentials_removed: true });
+    // A capture written before credentials were removed holds them in its URI.
+    const older = repository({
+      uri: "https://rea-user:hunter2@downloads.typora.io/linux",
+    });
+    const refused = exportInstall(typora([marked]), "typora", "arm64");
+    const skipped = exportInstall(
+      typora([older, repository({ uri: "https://b.example.com/typora" })]),
+      "typora",
+      "arm64",
+    );
+
+    for (const reason of [
+      repositoryRefusal(marked),
+      repositoryRefusal(older),
+    ]) {
+      expect(reason).toContain("user name or password");
+      expect(reason).not.toMatch(/downloads\.typora\.io|rea-user|hunter2/u);
+    }
+    expect(refused).toMatchObject({
+      ok: false,
+      error: expect.stringContaining("user name or password"),
+    });
+    expect(skipped.ok && skipped.value.sources).toEqual([
+      expect.objectContaining({ uri: "https://b.example.com/typora" }),
+    ]);
+    expect(skipped.ok && skipped.value.skipped).toEqual([
+      expect.stringMatching(
+        /^https:\/\/downloads\.typora\.io\/linux \.\/: .*user name or password/u,
+      ),
+    ]);
+    expect(JSON.stringify([refused, skipped])).not.toMatch(/rea-user|hunter2/u);
   });
 });
 
