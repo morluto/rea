@@ -1,7 +1,12 @@
 import { expect, it as test } from "vitest";
 
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
-import { kunaTimeoutRecovery } from "../../../../src/kuna/KunaCommand.js";
+import {
+  kunaTimeoutRecovery,
+  type KunaProcessLauncher,
+} from "../../../../src/kuna/KunaCommand.js";
+import { cleanupOwnedProcessGroup } from "../../../../src/process/ProcessOwnership.js";
+import { spawnOwnedProviderProcess } from "../../../../src/process/ProviderProcess.js";
 
 import {
   fakeKunaCalls,
@@ -19,6 +24,14 @@ const it = test.skipIf(process.platform === "win32");
 
 const decompilesOf = async (kuna: string) =>
   (await fakeKunaCalls(kuna)).filter(({ argv }) => argv[0] === "decompile");
+
+const deferred = <T>() => {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((r) => {
+    resolve = r;
+  });
+  return { promise, resolve };
+};
 
 it("shares one single-function run among concurrent requests for one entry", async () => {
   const { kuna, open } = await session("rea-kuna-single-shared-", {
@@ -247,9 +260,29 @@ it("keeps answering repeats from the completed run after the export fails", asyn
 });
 
 it("reports sibling unavailability when fallback observes settled export failure without prior assembly call", async () => {
-  const { kuna, open } = await session("rea-kuna-single-fallback-unavail-", {
-    project: "exit-failure",
-  });
+  const exportFailed = deferred<void>();
+  const launcher: KunaProcessLauncher = async (options) => {
+    const spawned = await spawnOwnedProviderProcess(options);
+    if (options.arguments[0] === "decompile-project") {
+      if (spawned.process.exitCode !== null) {
+        exportFailed.resolve();
+      } else {
+        spawned.process.once("exit", () => exportFailed.resolve());
+      }
+      return spawned;
+    }
+    if (options.arguments[0] === "decompile") {
+      await exportFailed.promise;
+      return spawned;
+    }
+    return spawned;
+  };
+  const { kuna, open } = await session(
+    "rea-kuna-single-fallback-unavail-",
+    { project: "exit-failure" },
+    {},
+    launcher,
+  );
   const client = open();
   try {
     const answer = await run(client, "procedure_pseudo_code", {

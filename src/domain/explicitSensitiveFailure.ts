@@ -258,7 +258,16 @@ const redactFailure = (
   if (error instanceof AnalysisInputError)
     return new AnalysisInputError(
       error.operation,
-      context,
+      {
+        ...context,
+        ...(error.userMessage === undefined
+          ? {}
+          : { userMessage: text(error.userMessage) }),
+        ...(error.remediationAction === undefined
+          ? {}
+          : { remediationAction: text(error.remediationAction) }),
+        conformsToInputContract: error.conformsToInputContract,
+      },
       error.issues.map(issueProjection),
     );
   if (error instanceof AnalysisOutputError)

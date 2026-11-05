@@ -31,6 +31,38 @@ export const INCUR_BUILTIN_FLAGS: ReadonlySet<string> = new Set([
   "--timings",
 ]);
 
+/** Supported boolean spelling under the pinned Incur global parser. */
+const cliTimingFlagValue = (token: string): boolean | undefined =>
+  token === "--timings"
+    ? true
+    : token === "--no-timings"
+      ? false
+      : token.startsWith("--timings=")
+        ? token.slice("--timings=".length) === "true"
+        : undefined;
+
+/** Remove only timing globals, preserving valued output data and the -- boundary. */
+export const splitCliTimingArguments = (
+  arguments_: readonly string[],
+): { arguments: string[]; enabled: boolean } => {
+  const values = new Set(
+    splitIncurBuiltinArguments(arguments_).outputValues.map(
+      ({ index }) => index,
+    ),
+  );
+  let enabled = false;
+  let ended = false;
+  const remaining = arguments_.filter((token, index) => {
+    if (values.has(index)) return true;
+    if (token === "--") ended = true;
+    const value = ended ? undefined : cliTimingFlagValue(token);
+    if (value === undefined) return true;
+    enabled = value;
+    return false;
+  });
+  return { arguments: remaining, enabled };
+};
+
 /** Command tokens and output-flag values as Incur's builtin pass assigns them. */
 export interface IncurBuiltinArgumentSplit {
   /** Tokens left for command resolution and command option parsing. */
@@ -79,12 +111,7 @@ export const splitIncurBuiltinArguments = (
   let globalsEnded = false;
   const remaining = command.filter((token) => {
     if (token === "--") globalsEnded = true;
-    if (
-      !globalsEnded &&
-      (token === "--timings" ||
-        token === "--no-timings" ||
-        token.startsWith("--timings="))
-    ) {
+    if (!globalsEnded && cliTimingFlagValue(token) !== undefined) {
       flags.add(token);
       return false;
     }
@@ -119,7 +146,11 @@ export const normalizeCliArguments = (
       normalized.push(flag, argument.slice(separator + 1));
     else {
       if (argument === "--update") updates.add(normalized.length);
-      else if (!OUTPUT_SWITCHES.has(argument)) rootUpdate = false;
+      else if (
+        !OUTPUT_SWITCHES.has(argument) &&
+        cliTimingFlagValue(argument) === undefined
+      )
+        rootUpdate = false;
       normalized.push(argument);
     }
   }

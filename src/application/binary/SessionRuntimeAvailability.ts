@@ -35,7 +35,7 @@ export const runtimeFailureReason = (
   failure: AnalysisError,
 ): string | undefined => {
   if (failure._tag === "AnalysisCapabilityUnavailableError")
-    return failure.message;
+    return failure.userMessage ?? failure.message;
   return PROVIDER_WIDE_FAILURES.has(failure._tag)
     ? `${failure._tag}: ${failure.message}`
     : undefined;

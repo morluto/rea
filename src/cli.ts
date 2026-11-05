@@ -56,6 +56,7 @@ import { registerAdbCommands } from "./cli/adbCommands.js";
 import { registerEvidenceCommands } from "./cliEvidenceCommands.js";
 import { registerEnvironmentCommands } from "./cli/environmentCommands.js";
 import { registerProcessCommands } from "./cli/processCommands.js";
+import { registerDesktopCaptureCommands } from "./cli/desktopCaptureCommands.js";
 import { registerBrowserCommands } from "./cli/browserCommands.js";
 import { registerWebScriptCommands } from "./cli/webScriptCommands.js";
 import { registerWebModuleCommands } from "./cli/webModuleCommands.js";
@@ -78,7 +79,10 @@ import { registerReverseEngineeringCommands } from "./cli/reverseEngineeringComm
 import { registerCutterCommands } from "./cli/cutterCommands.js";
 import { excludeDeclaredSensitiveArguments } from "./cli/explicitSensitiveArguments.js";
 import { rejectSurplusCliArguments } from "./cli/strictPositionals.js";
-import { presentCliArgumentErrors } from "./cli/argumentErrors.js";
+import {
+  encodeCliArgumentErrors,
+  presentCliArgumentErrors,
+} from "./cli/argumentErrors.js";
 import { completionHelpNote, createCliCompletions } from "./cli/completions.js";
 import {
   closeCliGuidanceResources,
@@ -231,6 +235,7 @@ export const createCli = (
       registerEvidenceCommands(cli, logger);
       registerEnvironmentCommands(cli, logger, environment);
       registerProcessCommands(cli, logger, environment);
+      registerDesktopCaptureCommands(cli, logger, environment);
       registerJavaScriptRecoveryCommands(cli, logger, environment);
       registerWebScriptCommands(cli, logger);
       registerWebModuleCommands(cli, logger, environment);
@@ -245,6 +250,7 @@ export const createCli = (
   const serveStrict = rejectSurplusCliArguments(cli);
   presentCliArgumentErrors(cli);
   const serveDeclared = excludeDeclaredSensitiveArguments(cli);
+  encodeCliArgumentErrors(cli);
   const serve = cli.serve.bind(cli);
   const complete = createCliCompletions(
     cli as unknown as Parameters<typeof createCliCompletions>[0],
@@ -290,6 +296,67 @@ export const createCli = (
                 code: "SCHEMA_UNAVAILABLE",
                 message:
                   "Schema discovery is not supported for mcp add. Use 'rea mcp add --help' for its options.",
+              },
+              output.format,
+              process.stdout.isTTY === true,
+            ),
+          );
+        (
+          options?.exit ??
+          ((code: number) => {
+            process.exitCode = code;
+          })
+        )(1);
+        return Promise.resolve();
+      }
+      // Incur's `mcp add` silently skips a valued option with no value and
+      // swallows the next flag as the value: the registration succeeds without
+      // the requested agent or command. Reject a trailing --agent/--command/-c,
+      // a value position occupied by another flag, and an empty `--flag=` form
+      // up front.
+      const valued = ["--agent", "--command", "-c"];
+      let missingValue: string | undefined;
+      for (let index = 0; index < command.length; index += 1) {
+        const next = command[index + 1];
+        if (
+          valued.includes(command[index]!) &&
+          (next === undefined || next.startsWith("-"))
+        ) {
+          missingValue = command[index];
+          break;
+        }
+      }
+      const emptyValue = command.find(
+        (token) =>
+          (token.startsWith("--agent=") ||
+            token.startsWith("--command=") ||
+            token.startsWith("-c=")) &&
+          token.length === token.indexOf("=") + 1,
+      );
+      if (missingValue !== undefined || emptyValue !== undefined) {
+        const flag = missingValue ?? emptyValue!;
+        const message = `Missing value for flag: ${flag.replace(/=.*$/, "")}`;
+        const field =
+          flag.includes("command") || flag === "-c" || flag.startsWith("-c=")
+            ? "command"
+            : "agent";
+        const output = parseCliOutputArguments(normalized);
+        if (!output.validation.ok)
+          write(renderCliOutputArgumentError(output.validation));
+        else
+          write(
+            renderCliDocument(
+              {
+                code: "VALIDATION_ERROR",
+                message,
+                fieldErrors: [
+                  {
+                    code: "invalid_value",
+                    missing: false,
+                    path: field,
+                    message,
+                  },
+                ],
               },
               output.format,
               process.stdout.isTTY === true,

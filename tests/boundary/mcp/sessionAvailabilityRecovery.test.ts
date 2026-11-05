@@ -532,6 +532,42 @@ const DIRECT_OPERATIONS = [
 const ADDRESS = { address: "0x1000", document: "fixture" };
 const PROCEDURE = { procedure: "main" };
 
+it("preserves the user-facing recovery for an observed refusal and clears it after success", async () => {
+  let failing = true;
+  const respond = {
+    current: (operation: string): Promise<Reply> =>
+      failing
+        ? Promise.resolve(
+            err(
+              new AnalysisCapabilityUnavailableError(
+                FIXTURE.id,
+                operation,
+                "project export failed",
+                {
+                  userMessage:
+                    "Project export failed. Resolve the cause and reopen the target.",
+                },
+              ),
+            ),
+          )
+        : Promise.resolve(observed("fixture-text")),
+  };
+  const { call, availability } = await connectScripted({
+    operations: ["address_name"],
+    respond,
+  });
+  expect(await call("address_name", ADDRESS)).toBe("error");
+  expect(await availability(["address_name"])).toEqual({
+    address_name:
+      "Project export failed. Resolve the cause and reopen the target.",
+  });
+  failing = false;
+  expect(await call("address_name", ADDRESS)).toBe("ok");
+  expect(await availability(["address_name"])).toEqual({
+    address_name: "available",
+  });
+});
+
 it("returns provider-inferred siblings to declared availability after one success", async () => {
   let broken = false;
   const respond = {
