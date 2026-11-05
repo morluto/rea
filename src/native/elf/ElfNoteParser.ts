@@ -317,6 +317,14 @@ const AUXV_TYPE_NAMES: Readonly<Record<number, string>> = {
 
 const hexWord = (val: bigint | number): string => `0x${val.toString(16)}`;
 
+/** Linux ELF32 ABIs whose PRPSINFO UID/GID fields are 32 bits. */
+const LINUX_PRPSINFO_UID32_MACHINES = new Set([
+  8, // EM_MIPS
+  20, // EM_PPC
+  164, // EM_HEXAGON
+  243, // EM_RISCV
+]);
+
 const decodeCorePrpsinfo = (
   descriptor: Buffer,
   little: boolean,
@@ -324,9 +332,7 @@ const decodeCorePrpsinfo = (
   machine: number,
   text: TextBudget,
 ): ElfNotes["entries"][number]["core"] => {
-  // Linux ELF32 MIPS, PowerPC and RISC-V use 32-bit IDs with a 32-bit pr_flag.
-  const idSize =
-    wide || machine === 8 || machine === 20 || machine === 243 ? 4 : 2;
+  const idSize = wide || LINUX_PRPSINFO_UID32_MACHINES.has(machine) ? 4 : 2;
   const uidOff = wide ? 16 : 8;
   const gidOff = uidOff + idSize;
   const pidOff = gidOff + idSize;

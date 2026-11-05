@@ -203,13 +203,19 @@ const linuxPrpsinfo32Descriptor = (little: boolean): Buffer => {
 };
 
 cliTest.for([
-  { name: "MIPS little", machine: 8, byteOrder: "little" },
-  { name: "MIPS big", machine: 8, byteOrder: "big" },
-  { name: "PowerPC big", machine: 20, byteOrder: "big" },
-  { name: "RISC-V little", machine: 243, byteOrder: "little" },
+  { name: "MIPS little", machine: 8, byteOrder: "little", coreFlags: 0 },
+  { name: "MIPS big", machine: 8, byteOrder: "big", coreFlags: 0 },
+  { name: "PowerPC big", machine: 20, byteOrder: "big", coreFlags: 0 },
+  { name: "RISC-V little", machine: 243, byteOrder: "little", coreFlags: 0 },
+  {
+    name: "Hexagon V4 little",
+    machine: 164,
+    byteOrder: "little",
+    coreFlags: 3,
+  },
 ] as const)(
   "decodes Linux ELF32 process identity through CLI and MCP ($name)",
-  async ({ machine, byteOrder }, { cli }) => {
+  async ({ machine, byteOrder, coreFlags }, { cli }) => {
     const root = await createTestTempDirectory("rea-elf-prpsinfo32-core-");
     const path = join(root, "core.elf");
     const little = byteOrder === "little";
@@ -225,6 +231,8 @@ cliTest.for([
         elfNote("CORE", 3, descriptor.subarray(0, 124), little),
       ]),
     });
+    if (little) bytes.writeUInt32LE(coreFlags, 0x24);
+    else bytes.writeUInt32BE(coreFlags, 0x24);
     await writeFile(path, bytes);
 
     const output = await cli.sharedCliRun!({
