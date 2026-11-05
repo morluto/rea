@@ -10,6 +10,7 @@ import {
 } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it, onTestFinished, vi } from "vitest";
+import { setupPluginOperation } from "../../tests/fixtures/setupPluginProtocol.mjs";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
 import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
@@ -291,7 +292,10 @@ it.each(["codex", "claude_code"] as const)(
       invocation.resources.run(async () => {
         if (command !== "codex" && command !== "claude")
           return f.launch(command, args, invocation);
-        if (args[1] !== "list") installed = true;
+        const operation = setupPluginOperation(command, args);
+        if (operation === "enable" && !installed)
+          throw new Error("Cannot enable a plugin that is not installed");
+        if (operation === "install") installed = true;
         const entries = installed
           ? [
               {

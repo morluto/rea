@@ -202,6 +202,8 @@ export interface SetupDoctorSummary {
   readonly healthy: boolean;
   readonly environment_healthy: boolean;
   readonly scope: DoctorReport["scope"];
+  /** Client-owned plugin checks are only available during setup. */
+  readonly pluginChecks?: DoctorReport["scope_checks"];
   readonly hopperPath?: string;
   readonly availableProviders: readonly string[];
   readonly providerInspections?: DoctorReport["providerInspections"];

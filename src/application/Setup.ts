@@ -430,6 +430,9 @@ const runSetupWorkflow = async (
   }
   const doctor = summarizeDoctor(await host.doctor(readinessScope));
   const remediation = combineRemediation(
+    ...(doctor.pluginChecks ?? [])
+      .filter(({ ok }) => !ok)
+      .map(({ remediation, detail }) => remediation ?? detail),
     hopperFailure?.remediation ??
       finalSetupRemediation(
         host.platform,
@@ -643,6 +646,13 @@ const summarizeDoctor = (report: DoctorReport): SetupDoctorSummary => ({
   healthy: report.healthy,
   environment_healthy: report.environment_healthy,
   scope: report.scope,
+  ...(report.scope.plugin_clients === undefined
+    ? {}
+    : {
+        pluginChecks: report.scope_checks.filter(({ name }) =>
+          report.scope.plugin_clients?.some((id) => name === `plugin:${id}`),
+        ),
+      }),
   availableProviders: [
     ...(report.hopperPath !== undefined &&
     report.checks

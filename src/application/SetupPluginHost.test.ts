@@ -1,9 +1,25 @@
 import { expect, it } from "vitest";
+import { setupPluginOperation } from "../../tests/fixtures/setupPluginProtocol.mjs";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { runSetup } from "./Setup.js";
 import { FakeSetupHost, options } from "./Setup.fixture.js";
 import { withPluginSetup } from "./SetupPluginHost.js";
 import type { SetupPluginCommandLauncher } from "./SetupPluginCommand.js";
+
+it.each([
+  { client: "cursor", args: ["plugin", "list", "--json"] },
+  { client: "codex", args: ["plugin", "remove", "rea@rea"] },
+  { client: "codex", args: ["plugin", "list", "--xml"] },
+  { client: "codex", args: ["plugin", "marketplace", "add", "other/repo"] },
+  { client: "claude", args: ["plugin", "add", "rea@rea"] },
+  {
+    client: "claude",
+    args: ["plugin", "install", "rea@rea", "--scope", "project"],
+  },
+  { client: "codex", args: ["plugin", "enable", "rea@rea", "--force"] },
+])("rejects an unmodeled plugin fixture command: %j", ({ client, args }) => {
+  expect(() => setupPluginOperation(client, args)).toThrow(/Unmodeled/u);
+});
 
 const fixture = (clientId = "codex", platform: NodeJS.Platform = "win32") => {
   const base = new FakeSetupHost(platform);
@@ -45,6 +61,7 @@ const fixture = (clientId = "codex", platform: NodeJS.Platform = "win32") => {
           : {}),
       };
     calls.push({ command, args });
+    const operation = setupPluginOperation(command, args);
     if (calls.length === interruptAt) {
       doctorsAtInterrupt = base.doctorCalls;
       return {
@@ -57,7 +74,7 @@ const fixture = (clientId = "codex", platform: NodeJS.Platform = "win32") => {
         cleanupFailure: "controlled cleanup refusal",
       };
     }
-    const listing = args[1] === "list";
+    const listing = operation === "list";
     if (listing && inspectionFailure !== undefined)
       return {
         exitCode: 1,
@@ -74,7 +91,8 @@ const fixture = (clientId = "codex", platform: NodeJS.Platform = "win32") => {
         stderr: failure,
         timedOut: false,
       };
-    if (!listing && args[1] !== "marketplace") {
+    if (operation === "enable") expect(installed).toBe(true);
+    if (operation === "install" || operation === "enable") {
       installed = true;
       enabled = true;
       if (dropNodeOnInstall) nodeVersion = undefined;
@@ -513,5 +531,16 @@ it("readiness retains the Node failure when it disappears during plugin installa
   const result = await runSetup(f.setupOptions, f.host());
   expect(result.status).toBe("needs_human");
   expect(result.doctor.healthy).toBe(false);
+  expect(result.remediation).toContain("standalone");
+  expect(result.remediation).toContain("Node");
+  expect(result.doctor).toMatchObject({
+    pluginChecks: [
+      {
+        name: "plugin:codex",
+        ok: false,
+        detail: expect.stringContaining("standalone"),
+      },
+    ],
+  });
   expect(f.base.configurations + f.base.skillInstalls).toBe(0);
 });
