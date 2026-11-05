@@ -21,13 +21,17 @@ generation reads the kinds of change.
 - Each version is the baseline or the file after a checkpoint that changed it.
   Formats: SQLite through REA's worker on a private copy with any retained
   `-wal` or `-journal` beside it (a hot journal is refused by the worker),
-  refused when either existed but was not retained; dconf through `dconf dump /` on a private file profile, keeping only
+  refused when either existed but was not retained or the capture did not
+  record whether it existed (unknown is never read as absent); dconf through
+  `dconf dump /` on a private file profile, keeping only
   groups whose path names the application; JSON up to 4 MiB and 500 levels
   with exact numbers; XML through the shared strict parser with DOCTYPEs
   refused; key files up to 4 MiB whose every line parses; text; binary.
 - Changes between versions are created, deleted, or lines, values, keys or
   rows with added, removed and changed lists (100 each, with counts); content
-  for binary files and unreadable when a view is missing.
+  for binary files and unreadable when a view is missing. Values are JSON
+  pointers to every value, containers included; keys are `group/key` with the
+  key escaped as a JSON pointer segment, so distinct entries never share a name.
 - The Evidence has operation `inspect_desktop_application_state`, predicate
   type `rea.desktop-application-state` and confidence `inferred`.
 

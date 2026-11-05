@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import { AnalysisCleanupLease } from "../../artifacts/AnalysisCleanupLease.js";
 import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
+import type { Evidence } from "../../domain/evidence.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { DesktopSessionCleanupError } from "../../desktop/DesktopApplicationSession.js";
 import { DesktopContentStore } from "../../desktop/DesktopContentStore.js";
@@ -154,6 +155,34 @@ describe("discardFailedCapture", () => {
     await store.close();
     expect(error.cleanupIncomplete).toBe(false);
     expect(await readdir(join(root, "capture"))).toEqual([]);
+  });
+
+  it("reports the unpublished capture file's handle until its close succeeds", async () => {
+    const root = await createTestTempDirectory("desktop-failure-publish-");
+    const store = new DesktopContentStore(root, 1024, 1024);
+    await store.prepare();
+    const captureFile = new CaptureFile(root);
+    const close = vi.spyOn(OwnedFileHandle.prototype, "close");
+    close.mockRejectedValueOnce(new Error("close denied"));
+    close.mockRejectedValueOnce(new Error("close denied"));
+    const failure = await captureFile
+      .publish({ id: "evidence" } as unknown as Evidence)
+      .catch((cause: unknown) => cause);
+
+    const error = failedCaptureError(
+      failure,
+      await discardFailedCapture(store, captureFile),
+    ) as ProviderAdapterError;
+
+    expect(error.cause).toBe(failure);
+    expect(error.cleanup).toEqual({
+      reason:
+        "the unpublished capture file's handle could not be closed after a retry",
+      resources: [captureFile.partial],
+    });
+    await captureFile.close();
+    expect(error.cleanupIncomplete).toBe(false);
+    expect(await readdir(root)).toEqual([]);
   });
 });
 

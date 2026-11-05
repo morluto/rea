@@ -34,28 +34,35 @@ type ContentOwner = Pick<
 
 const HANDLES_UNCLOSED =
   "a retained file's handle could not be closed after a retry";
+const CAPTURE_FILE_UNCLOSED =
+  "the unpublished capture file's handle could not be closed after a retry";
 const PROCESS_REMEDIATION =
   "Check for processes still carrying the listed run token and stop them before capturing again.";
 
 /**
- * Retry the store's failed handle closes. Handles that fail again stay bound
- * through their exact leases; the store itself backs any other failure.
+ * Retry an owner's failed handle closes. Handles that fail again stay bound
+ * through their exact leases; the owner itself backs any other failure.
  */
 const closeHandles = async (
-  store: ContentOwner,
+  owner: { close(): Promise<void> },
+  resource: string,
+  reason: string,
 ): Promise<readonly UnresolvedCleanup[]> =>
-  store.close().then(
+  owner.close().then(
     () => [],
     (cause: unknown) => [
       {
-        reason: HANDLES_UNCLOSED,
+        reason,
         leases:
           cause instanceof ArtifactResourceRetryFailure
             ? cause.cleanupLeases
-            : [AnalysisCleanupLease.forCloseOwner(store, store.directory)],
+            : [AnalysisCleanupLease.forCloseOwner(owner, resource)],
       },
     ],
   );
+
+const closeStoreHandles = (store: ContentOwner) =>
+  closeHandles(store, store.directory, HANDLES_UNCLOSED);
 
 /**
  * One cleanup error for every unresolved owner. The error stays incomplete,
@@ -99,7 +106,7 @@ export const publishedCaptureCleanup = async (
 ): Promise<ProviderAdapterError | undefined> => {
   const unresolved = [
     ...(processes === undefined ? [] : [processes]),
-    ...(await closeHandles(store)),
+    ...(await closeStoreHandles(store)),
   ];
   if (!nonEmpty(unresolved)) return undefined;
   return cleanupError(unresolved, (reason) => ({
@@ -114,12 +121,13 @@ export const publishedCaptureCleanup = async (
 
 /**
  * Remove what a capture that failed before publishing `capture.json` wrote,
- * each through the owner that wrote it, and close its retained-file handles.
- * Returns what could not be cleaned up, with the owners that still hold it.
+ * each through the owner that wrote it, and close the handles the capture
+ * file and the store still hold. Returns what could not be cleaned up, with
+ * the owners that still hold it.
  */
 export const discardFailedCapture = async (
   store: ContentOwner,
-  captureFile: Pick<CaptureFile, "discard" | "partial">,
+  captureFile: Pick<CaptureFile, "close" | "discard" | "partial">,
 ): Promise<readonly UnresolvedCleanup[]> => {
   const resources = new ArtifactResourceScope();
   const removals = [
@@ -144,7 +152,12 @@ export const discardFailedCapture = async (
     ...removals.flatMap(({ reason, attempt }) =>
       attempt.kind === "failed" ? [{ reason, leases: [attempt.lease] }] : [],
     ),
-    ...(await closeHandles(store)),
+    ...(await closeHandles(
+      captureFile,
+      captureFile.partial,
+      CAPTURE_FILE_UNCLOSED,
+    )),
+    ...(await closeStoreHandles(store)),
   ];
 };
 

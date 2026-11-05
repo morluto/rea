@@ -12,6 +12,8 @@ import {
 } from "../process/capture/LinuxProcessSampling.js";
 import type { ProcessLifecycle } from "../process/ProcessLifecycle.js";
 import { readProcessRunId } from "../process/ProcessOwnership.js";
+import { systemProcessOwnershipHost } from "../process/ProcessOwnershipObservation.js";
+import { readRunTokenCarriers } from "../process/ProcessRunTokenObservations.js";
 import type { ObservedWindow } from "./X11WindowObserver.js";
 
 const COMMAND_TEXT_LIMIT = 512;
@@ -49,6 +51,11 @@ export interface SessionProcfs {
   /** The run token in the environment, undefined when absent or unreadable. */
   runId(pid: number, signal: AbortSignal): Promise<string | undefined>;
   command(pid: number): Promise<string>;
+  /** Live processes carrying the run token, undefined when the process table is unreadable. */
+  tokenCarriers(
+    runId: string,
+    signal: AbortSignal,
+  ): Promise<readonly number[] | undefined>;
 }
 
 /** A zombie keeps its stat record until reaped, but it no longer runs. */
@@ -79,6 +86,14 @@ const systemProcfs: SessionProcfs = {
     );
     return text.replaceAll("\0", " ").trim().slice(0, COMMAND_TEXT_LIMIT);
   },
+  tokenCarriers: (runId, signal) =>
+    readRunTokenCarriers(systemProcessOwnershipHost, runId, signal).then(
+      (carriers) => carriers.map(({ pid }) => pid),
+      () => {
+        signal.throwIfAborted();
+        return undefined;
+      },
+    ),
 };
 
 /** Whether a window's class or instance names the application. */
@@ -99,6 +114,8 @@ export class SessionObservations {
   readonly openedFiles = new Map<string, number>();
   firstWindowMs: number | null = null;
   announced = false;
+  /** Samples whose window list could not be read, so their windows are unknown. */
+  unreadableWindowSamples = 0;
 
   constructor(
     readonly startedAt: number,
@@ -226,6 +243,24 @@ export const sampleProcesses = async (
     for (const child of await observations.procfs.children(pid, signal))
       await trackProcess(observations, child, signal);
   }
+};
+
+/**
+ * Track live run-token carriers that no parent link reached, such as a worker
+ * whose launcher exited before a sample. False when the process table could
+ * not be read, so whether any carrier remains is unknown.
+ */
+export const sampleTokenCarriers = async (
+  observations: SessionObservations,
+  signal: AbortSignal,
+): Promise<boolean> => {
+  const carriers = await observations.procfs.tokenCarriers(
+    observations.run.runId,
+    signal,
+  );
+  if (carriers === undefined) return false;
+  for (const pid of carriers) await trackProcess(observations, pid, signal);
+  return true;
 };
 
 /** Record files under the walked roots that live processes hold open. */

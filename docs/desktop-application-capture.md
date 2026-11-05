@@ -37,9 +37,11 @@ Desktop entries are looked up in `$XDG_DATA_HOME/applications` and then each
 `$XDG_DATA_DIRS` directory; an entry installed as a symbolic link, as flatpak
 and Nix do, is followed to its file. The entry's `Exec` line is expanded with no files;
 `--argument` values are appended in its place, and the application runs in the
-entry's `Path` or the home directory. An `--executable` runs from the current
-directory, as it would from a shell, and a relative path to it is resolved
-there.
+entry's `Path` or the home directory. When the line starts with
+`env NAME=value`, the program is found on the `PATH` those assignments set,
+and their XDG folders name the state directories. An `--executable` runs from
+the current directory, as it would from a shell, and a relative path to it is
+resolved there.
 
 Before writing anything the command refuses to start if a window of the
 application is already open, or if the window list cannot be read. A launch
@@ -60,9 +62,13 @@ own names (`baseline`, `stop`, `time-limit`, `exit`), is refused with a
 progress line on stderr; no checkpoint is taken and the session continues.
 
 The session also finishes when the launched process has exited and the
-application's processes and windows are all gone, or when
-`--max-duration-seconds` passes. One queued line is handled between samples,
-and reading stdin pauses while 16 lines wait. Progress lines on stderr say when
+application's processes and windows are all gone in two consecutive samples,
+or when `--max-duration-seconds` passes. Before deciding the processes are
+gone, the capture looks for any process still carrying the run token, so a
+worker whose launcher exited before it was sampled keeps the session open. A
+sample whose window list could not be read is not taken as an empty one; the
+limitations say how many there were. One queued line is handled between
+samples, and reading stdin pauses while 16 lines wait. Progress lines on stderr say when
 the window has opened and when each checkpoint is taken.
 
 When the session ends the capture sends SIGTERM to the launched process, its
@@ -94,9 +100,12 @@ line.
 | `--state-path`           | none    | File or directory whose starting content is retained too (repeatable)                     |
 | `--exclude`              | none    | Path left out of every checkpoint walk (repeatable); the output folder is always left out |
 | `--max-duration-seconds` | 3600    | Stop the session after this long                                                          |
-| `--max-entries`          | 250,000 | Paths recorded per checkpoint walk                                                        |
+| `--max-entries`          | 250,000 | Paths recorded per checkpoint walk, its roots included                                    |
 | `--max-file-bytes`       | 64 MiB  | Largest file whose content is retained                                                    |
 | `--max-content-bytes`    | 1 GiB   | Total retained content                                                                    |
+
+`--state-path`, `--exclude` and `--output` refuse an empty value, which
+would otherwise name the current directory.
 
 ## The capture folder
 
@@ -120,13 +129,14 @@ for the Ubuntu archive and its mirrors or `LP-PPA-<name>` for a PPA; an empty
 source list means the version came from a local `.deb` or the package lists
 are missing, which `package_lists_present` tells apart. Snaps, flatpaks and
 AppImages are recognised from their paths, and flatpaks also from a
-`flatpak run` launch. Electron applications are marked by
+`flatpak run` launch, whose application id is the first operand after
+flatpak's options and their values. Electron applications are marked by
 the fuse sentinel in their binary or a `resources/app.asar` beside it. State
 directories are the XDG config, data, state and cache folders and the
-dot-folder named after the package, the executable, the desktop entry id and
-name, with whether each existed at the start. A `flatpak run` launch is named
-after its application id rather than the `flatpak` launcher, and adds
-`~/.var/app/<id>`.
+dot-folder named after the package, the executable, the desktop entry's full
+id and its last part, and the entry's name, with whether each existed at the
+start. A `flatpak run` launch is named after its application id rather than
+the `flatpak` launcher, and adds `~/.var/app/<id>`.
 
 **Session.** When it started, how long it ran and why it ended; the launched
 process's exit status; every process seen in the application's tree; every
@@ -156,7 +166,9 @@ running.
 **State.** The walked roots (the home directory plus any content root
 outside it), the content roots (state directories, `--state-path` values and
 absolute `--argument` values, except `/` or a directory that contains the home
-directory, which are named in the limitations instead), the state directories
+directory, which are named in the limitations instead; a selected path that is
+not a directory brings the `-wal` and `-journal` paths beside it, so a database
+selected on its own is captured with its logs), the state directories
 as walked (their physical spelling, which differs from the inventory's when one
 is a symlink), and the checkpoints in order: `baseline` before
 launch, each requested checkpoint, `stop` or `time-limit`, and `exit` after the
