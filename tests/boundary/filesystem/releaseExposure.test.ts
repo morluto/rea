@@ -7,6 +7,7 @@ import { createReleaseExposureService } from "../../../src/composition/releaseEx
 import { DEFAULT_ASAR_MAX_HEADER_BYTES } from "../../../src/domain/analysisResourceLimits.js";
 import { AnalysisResourceConstraintError } from "../../../src/domain/analysisErrorCore.js";
 import { releaseExposureReportSchema } from "../../../src/domain/releaseExposure.js";
+import { prependAsarJsonWhitespace } from "../../fixtures/asarHeader.js";
 import { thinFuseImage } from "../../fixtures/electron/fuseImage.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
@@ -192,7 +193,7 @@ describe("release exposure ASAR header admission", () => {
     await writeFile(archive, Buffer.concat([prefix, json]));
     // Declare the extent without allocating a header-sized buffer.
     await truncate(archive, headerBytes + 8);
-    const service = createReleaseExposureService();
+    const service = createReleaseExposureService({});
     try {
       const result = await service.inspect({ path: root });
       expect(result.ok).toBe(false);
@@ -207,10 +208,66 @@ describe("release exposure ASAR header admission", () => {
         required_header_bytes: headerBytes,
       });
       expect(error.reason).toContain("ASAR header/index");
-      expect(error.fixedAllowance?.name).toContain("ASAR header/index");
-      expect(error.remediationAction).toBeUndefined();
+      expect(error.fixedAllowance).toBeUndefined();
+      expect(error.remediationAction).toContain("asar.max_header_bytes");
+      expect(error.limit).toMatchObject({
+        setting: "asar.max_header_bytes",
+        effective_value: DEFAULT_ASAR_MAX_HEADER_BYTES,
+        source: "default",
+      });
     } finally {
       await service.close();
     }
   });
+
+  it("reads a 20 MiB header under a 32 MiB setting and refuses it under a lower caller limit", async () => {
+    const root = await createTestTempDirectory("rea-release-exposure-wide-");
+    const source = join(root, "source");
+    await mkdir(source);
+    await writeFile(join(source, "main.js"), "console.log('app');\n");
+    const install = join(root, "install");
+    await mkdir(install);
+    const archive = join(install, "app.asar");
+    await createPackageWithOptions(source, archive, {});
+    await prependAsarJsonWhitespace(archive, " ".repeat(20 * 1024 * 1024));
+    const environment = {
+      REA_ASAR_MAX_HEADER_BYTES: String(32 * 1024 * 1024),
+    };
+
+    const admitted = createReleaseExposureService(environment);
+    try {
+      const result = await admitted.inspect({ path: install });
+      if (!result.ok) throw result.error;
+      expect(
+        releaseExposureReportSchema
+          .parse(result.value.normalized_result)
+          .checks.find((check) => check.id === "packaging.extractable_payload")
+          ?.status,
+      ).toBe("exposed");
+    } finally {
+      await admitted.close();
+    }
+
+    const lowered = createReleaseExposureService(environment, () => ({
+      revision: 1,
+      overrides: { "asar.max_header_bytes": DEFAULT_ASAR_MAX_HEADER_BYTES },
+    }));
+    try {
+      const result = await lowered.inspect({ path: install });
+      if (result.ok) throw new Error("Expected ASAR header admission refusal");
+      const error = result.error;
+      expect(error).toBeInstanceOf(AnalysisResourceConstraintError);
+      if (!(error instanceof AnalysisResourceConstraintError)) return;
+      expect(error.reportedLimits).toMatchObject({
+        asar_max_header_bytes: DEFAULT_ASAR_MAX_HEADER_BYTES,
+      });
+      expect(error.limit).toMatchObject({
+        setting: "asar.max_header_bytes",
+        effective_value: DEFAULT_ASAR_MAX_HEADER_BYTES,
+        source: "runtime",
+      });
+    } finally {
+      await lowered.close();
+    }
+  }, 60_000);
 });

@@ -20,6 +20,7 @@ import type { CliInstance } from "./types.js";
 export const registerReleaseExposureCommands = (
   cli: CliInstance,
   logger: Logger,
+  environment: Readonly<Record<string, string | undefined>>,
 ): void => {
   cli.command(CLI_COMMANDS.auditReleaseExposure, {
     description:
@@ -40,7 +41,7 @@ export const registerReleaseExposureCommands = (
     }),
     run: ({ args, options }) =>
       withCommandCancellation(async (signal) => {
-        const service = createReleaseExposureService();
+        const service = createReleaseExposureService(environment);
         return await logCliCommand(
           logger,
           CLI_COMMANDS.auditReleaseExposure,

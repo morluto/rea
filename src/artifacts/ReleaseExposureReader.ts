@@ -29,7 +29,15 @@ import {
 } from "./ArtifactFileOperation.js";
 import { decodeBinaryPlistText } from "./apple/BinaryPlistMaterializer.js";
 import { ArtifactEmbeddedFormatProbes } from "./ArtifactEmbeddedFormatProbes.js";
-import { createAsarHeaderSignatureProbe } from "./AsarHeader.js";
+import {
+  asarHeaderAdmissionRecovery,
+  createAsarHeaderSignatureProbe,
+} from "./AsarHeader.js";
+import {
+  DEFAULT_ASAR_HEADER_ADMISSION,
+  type AsarHeaderAdmission,
+} from "../config/asarHeaderAdmission.js";
+import { analysisSettingLimit } from "../domain/analysisSettingDefinitions.js";
 import { ArtifactTraversalObservation } from "./ArtifactTraversalObservation.js";
 import { classifyEmbeddedExecutablePackage } from "./inventory/classify.js";
 import { inventoryArtifactInScope } from "./inventory/ArtifactInventory.js";
@@ -178,6 +186,16 @@ export class ReleaseExposureReader implements ReleaseExposurePort {
   readonly identity = RELEASE_EXPOSURE_PROVIDER;
   readonly #resources = new ArtifactResourceScope();
 
+  /**
+   * @param asarHeaderAdmission The shared ASAR header/index admission the
+   * composition resolved from REA_ASAR_MAX_HEADER_BYTES and the runtime
+   * asar.max_header_bytes setting; read on each use, so a runtime change
+   * applies to the next audit.
+   */
+  constructor(
+    private readonly asarHeaderAdmission: AsarHeaderAdmission = DEFAULT_ASAR_HEADER_ADMISSION,
+  ) {}
+
   async close(): Promise<void> {
     try {
       await this.#resources.close();
@@ -202,6 +220,7 @@ export class ReleaseExposureReader implements ReleaseExposurePort {
       signal: options?.signal,
       resources: this.#resources,
       maxFileBytes,
+      asarHeaderAdmission: this.asarHeaderAdmission,
       visitText,
       visitInterruptedScan,
       siblingCleanup: [],
@@ -255,6 +274,7 @@ const scanDirectory = async (
     resourceScope: context.resources,
     signal: context.signal,
     selectedPath: path,
+    asarHeaderAdmission: context.asarHeaderAdmission,
   });
   return consumeInventory({
     ...context,
@@ -286,6 +306,7 @@ const scanFile = async (
       signal: context.signal,
       selectedPath: path,
       expectedRootSha256: sha256,
+      asarHeaderAdmission: context.asarHeaderAdmission,
     });
   } catch (cause) {
     rethrowReadFailure(cause);
@@ -316,6 +337,7 @@ interface ScanContext {
   readonly signal: AbortSignal | undefined;
   readonly resources: ArtifactResourceScope;
   readonly maxFileBytes: number;
+  readonly asarHeaderAdmission: AsarHeaderAdmission;
   readonly visitText: ReleaseExposureTextVisitor;
   readonly visitInterruptedScan: ReleaseExposureScanVisitor | undefined;
   readonly siblingCleanup: Extract<
@@ -479,7 +501,7 @@ const scanOccurrences = async (
       ? "directory"
       : sniffNativeFormat(input.snapshot)) ??
     "file";
-  const state = createState(input.visitText);
+  const state = createState(input.visitText, input.asarHeaderAdmission);
   progress.assemble = () => assembleScan(input, state, rootFormat);
   if (EXTRACTABLE.has(rootFormat)) state.formats.add(rootFormat);
   if (input.snapshot !== null)
@@ -780,9 +802,14 @@ interface ScanState {
   /** Members already examined as a script. */
   examinedScripts: Set<string>;
   visitText: ReleaseExposureTextVisitor;
+  readonly asarHeaderAdmission: AsarHeaderAdmission;
 }
 
-const createState = (visitText: ReleaseExposureTextVisitor): ScanState => ({
+const createState = (
+  visitText: ReleaseExposureTextVisitor,
+  asarHeaderAdmission: AsarHeaderAdmission,
+): ScanState => ({
+  asarHeaderAdmission,
   embedded: 0,
   withoutSources: 0,
   unparsedMaps: 0,
@@ -1063,7 +1090,9 @@ const examineMapMember = async (
     : { ...member, logical: `${member.logical}.js.map` };
   const read = await readMap(state, declared);
   const packaged =
-    read === null ? null : packagedFormatOfRead(member, read.loaded);
+    read === null
+      ? null
+      : packagedFormatOfRead(member, read.loaded, state.asarHeaderAdmission);
   if (packaged === "asar") {
     noteNestedPackage(state, "asar", member.location);
     return true;
@@ -1284,7 +1313,11 @@ const examineTextMember = async (
   const loaded = await member.read(
     Math.min(MAX_RELEASE_EXPOSURE_TEXT_MEMBER_BYTES, remaining),
   );
-  const packaged = packagedFormatOfRead(member, loaded);
+  const packaged = packagedFormatOfRead(
+    member,
+    loaded,
+    state.asarHeaderAdmission,
+  );
   if (packaged !== null) {
     state.textBytes += state.memberBytesRead - bytesReadBefore;
     if (packaged !== "asar")
@@ -1379,6 +1412,7 @@ const envProgram = (args: string[]): string | undefined => {
 const packagedFormatOfRead = (
   member: MemberView,
   loaded: MemberRead,
+  asarHeaderAdmission: AsarHeaderAdmission,
 ): NativeFormat | "asar" | null => {
   if (member.packageFormat === null || member.kindStated) return null;
   if (loaded.kind === "unread") return null;
@@ -1389,7 +1423,7 @@ const packagedFormatOfRead = (
     loaded.kind === "bytes" ? header.length : member.declaredSize,
   );
   if (native !== null) return native;
-  return holdsAsarHeader(header) ? "asar" : null;
+  return holdsAsarHeader(header, asarHeaderAdmission) ? "asar" : null;
 };
 
 /**
@@ -1736,7 +1770,11 @@ const examinePackagedBinary = async (
       noteUnexaminedPackage(state);
     }
   }
-  if (native === null && header !== null && holdsAsarHeader(header)) {
+  if (
+    native === null &&
+    header !== null &&
+    holdsAsarHeader(header, state.asarHeaderAdmission)
+  ) {
     noteNestedPackage(state, "asar", member.location);
     return true;
   }
@@ -2192,8 +2230,11 @@ const noteNestedPackage = (
 };
 
 /** The ASAR owner's signature test. A match does not establish a valid archive. */
-const holdsAsarHeader = (bytes: Buffer): boolean =>
-  createAsarHeaderSignatureProbe().write(bytes).state === "matched";
+const holdsAsarHeader = (
+  bytes: Buffer,
+  admission: AsarHeaderAdmission,
+): boolean =>
+  createAsarHeaderSignatureProbe(admission).write(bytes).state === "matched";
 
 const readListedEntry = async (
   container: OpenContainer | undefined,
@@ -2280,6 +2321,7 @@ const openContainer = async (
   const reader = createArtifactReader(filePath, format, {
     environment: process.env,
     unreadableDirectories: "omit",
+    asarHeaderAdmission: state.asarHeaderAdmission,
   });
   if (reader === undefined) return null;
   const container: OpenContainer = {
@@ -2846,15 +2888,14 @@ const fileSizeRecovery = (maxFileBytes: number) =>
 
 /**
  * The header admission is its own bound, not the selected-file ceiling, so
- * max_file_bytes cannot repair it. This tool reads the default admission, so
- * the runtime setting the inventory owner names does not reach it either.
+ * max_file_bytes cannot repair it. The recovery names the shared setting the
+ * composition threaded into this reader.
  */
 const asarHeaderAdmissionFailure = (
   cause: ArtifactReaderFailure,
   admission: ArtifactAdmissionLimit,
-): AnalysisResourceConstraintError => {
-  const allowance = `The ASAR header/index admission of ${String(admission.maximumBytes)} bytes (${OPERATION} has no runtime override)`;
-  return new AnalysisResourceConstraintError(
+): AnalysisResourceConstraintError =>
+  new AnalysisResourceConstraintError(
     OPERATION,
     "capacity",
     admission.requiredBytes === undefined
@@ -2866,9 +2907,22 @@ const asarHeaderAdmissionFailure = (
         ? {}
         : { required_header_bytes: admission.requiredBytes }),
     },
-    { cause, ...fixedAllowanceOptions(allowance, "input") },
+    {
+      cause,
+      retryable: false,
+      remediationAction: asarHeaderAdmissionRecovery(admission),
+      limit: {
+        ...analysisSettingLimit(
+          "asar.max_header_bytes",
+          admission.maximumBytes,
+          admission.source,
+        ),
+        ...(admission.requiredBytes === undefined
+          ? {}
+          : { required_value: admission.requiredBytes }),
+      },
+    },
   );
-};
 
 const releaseExposureLimitFailure = (
   cause: ArtifactReaderFailure,

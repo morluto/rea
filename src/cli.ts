@@ -202,7 +202,7 @@ export const createCli = (
       registerSignalCommands(cli, logger, environment);
       registerEvmCommands(cli, logger, environment);
       registerDesktopApplicationCommands(cli, logger);
-      registerReleaseExposureCommands(cli, logger);
+      registerReleaseExposureCommands(cli, logger, environment);
       registerGoCommands(cli, logger);
       registerIl2cppCommands(cli, logger);
       registerModelCommands(cli, logger);

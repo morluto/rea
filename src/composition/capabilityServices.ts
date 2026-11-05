@@ -346,7 +346,9 @@ const modules = {
   electronFuses: service(
     ({ options }) => options.electronFuses ?? createElectronFuseService(),
   ),
-  releaseExposure: service(() => createReleaseExposureService()),
+  releaseExposure: service(({ environment, settings }) =>
+    createReleaseExposureService(environment, settings),
+  ),
   pythonPyc: service(
     ({ options }) => options.pythonPyc ?? createPythonPycService(),
   ),
