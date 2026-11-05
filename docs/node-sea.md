@@ -8,6 +8,7 @@ or code cache.
 ```sh
 rea inspect-artifact ./application --json
 rea inspect-artifact ./application --detail summary --evidence_output evidence.json --json
+rea extract-artifact ./application --dry-run --json
 rea extract-artifact ./application --json
 ```
 

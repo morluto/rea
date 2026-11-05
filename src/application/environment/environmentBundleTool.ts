@@ -1,4 +1,7 @@
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
+import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
+import { bindArtifactFileCleanup } from "../../artifacts/ArtifactFileOperation.js";
+import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import { SafeOutputTree } from "../../artifacts/SafeOutputTree.js";
 import { outputDirectoryAdmissionRefusal } from "../../artifacts/SafeOutputTreeAdmission.js";
 import type {
@@ -64,6 +67,21 @@ export const exportEnvironmentBundleTool = async (
       cause,
     );
     if (refusal instanceof AnalysisError) return err(refusal);
+    if (
+      refusal instanceof ArtifactReaderFailure &&
+      refusal.cleanup !== undefined
+    ) {
+      const error = new AnalysisOutputError(
+        EXPORT_ENVIRONMENT_BUNDLE_OPERATION,
+        refusal.message,
+        {
+          cause: refusal,
+          cleanup: refusal.cleanup,
+        },
+      );
+      bindArtifactFileCleanup(refusal, error);
+      return err(error);
+    }
     throw refusal;
   }
   const capture = await captureFile(input.source, lookup);
