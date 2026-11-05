@@ -11,6 +11,7 @@ import {
 
 import { lstat } from "node:fs/promises";
 import type { Stats } from "node:fs";
+import { settleChangeTimeBaseline } from "../../filesystem/ChangeTimeBaseline.js";
 import type { RootInventorySource } from "./classify.js";
 import { isZipPackageFormat } from "../../domain/zipPackageFormat.js";
 
@@ -107,7 +108,7 @@ const scanCanonical = async (
   readonly snapshot: ArtifactInventorySnapshot;
   readonly transferredSource: TransferredArtifactInventorySource | undefined;
 }> => {
-  const metadata = await lstat(path);
+  const metadata = await settleChangeTimeBaseline(() => lstat(path));
   const {
     format: rootFormat,
     digest: rootDigest,

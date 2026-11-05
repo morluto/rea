@@ -3,6 +3,7 @@ import { constants as osConstants } from "node:os";
 import type { BigIntStats, Stats } from "node:fs";
 import { lstat, open, stat, type FileHandle } from "node:fs/promises";
 
+import { settleChangeTimeBaseline } from "./ChangeTimeBaseline.js";
 import { OwnedFileHandle } from "./OwnedFileHandle.js";
 
 /** Cancellation observed at a file operation's explicit checkpoint. */
@@ -117,9 +118,17 @@ export const openRegularFile = async (
   const owner = new OwnedFileHandle(handle);
   try {
     assertRegularFileActive(options.signal);
-    const metadata = await handle.stat();
-    if (!metadata.isFile())
-      throw new NonRegularFileReadError(path, metadata.isDirectory());
+    // The admitted facts become the baseline every later comparison tests
+    // against, so a ChangeTime still settling on Windows must not be recorded
+    // as an established one. The first observation still validates the file
+    // type, so a directory is refused before any settling delay.
+    const metadata = await settleChangeTimeBaseline(async () => {
+      assertRegularFileActive(options.signal);
+      const observed = await handle.stat();
+      if (!observed.isFile())
+        throw new NonRegularFileReadError(path, observed.isDirectory());
+      return observed;
+    });
     assertRegularFileActive(options.signal);
     // O_NOFOLLOW is unavailable on Windows. Recheck the name only on hosts
     // where open could have followed a symlink, while the descriptor is owned.
