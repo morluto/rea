@@ -13,6 +13,7 @@ import {
 import type { DesktopApplicationCapture } from "./desktopCapture.js";
 import type { DesktopApplicationState } from "./desktopState.js";
 import { isWithinAny } from "./desktopStateDiff.js";
+import { stateDirectoryOf } from "./stateRoles.js";
 
 /** agentenv-framework release the exported class was checked against. */
 export const DESKTOP_EXPORT_FRAMEWORK_VERSION = "0.9.1431";
@@ -35,6 +36,8 @@ export interface DesktopAppExportPlan {
   readonly architectures: readonly string[];
   /** The package file downloaded and installed in place of the app's apt package; null when apt installs it. */
   readonly packageFile: ExportPackageFile | null;
+  /** The package of the program the desktop entry runs, installed by name after the app's; absent when the app's package owns it. */
+  readonly executablePackage?: string;
   /** Whether the app is Electron, whose launch then runs without Chromium's sandbox. */
   readonly electron: boolean;
   readonly command: readonly string[];
@@ -101,9 +104,10 @@ const SHARED_FOLDERS = new Set([
 ]);
 
 /**
- * The paths the app owns: the state directory holding each state file, or
- * a document's folder; a file directly in the home or a shared folder is
- * owned as itself. Nested paths collapse into the outermost one.
+ * The paths the app owns: the state directory holding each state file, in
+ * the file's letter case, or a document's folder; a file directly in the home
+ * or a shared folder is owned as itself. Nested paths collapse into the
+ * outermost one.
  */
 export const ownedPaths = (
   stateFiles: readonly string[],
@@ -114,12 +118,10 @@ export const ownedPaths = (
   const owner = (file: string, folder: string) =>
     SHARED_FOLDERS.has(folder) ? file : folder;
   const folderOf = (file: string) => file.split("/").slice(0, -1).join("/");
-  for (const file of stateFiles) {
-    const directory = stateDirectories.find((candidate) =>
-      isWithinAny(file, [candidate]),
+  for (const file of stateFiles)
+    folders.add(
+      owner(file, stateDirectoryOf(file, stateDirectories) ?? folderOf(file)),
     );
-    folders.add(owner(file, directory ?? folderOf(file)));
-  }
   for (const file of documents) folders.add(owner(file, folderOf(file)));
   const sorted = [...folders].filter((folder) => folder.length > 0).sort();
   return sorted.filter(
@@ -319,10 +321,11 @@ const installName = (plan: DesktopAppExportPlan): string =>
     ? plan.aptPackage
     : `${plan.aptPackage}/${plan.aptRelease}`;
 
-/** The app's package, or a package file's dependencies, then its library packages and dconf-cli when settings are loaded. */
+/** The app's package, or a package file's dependencies, then its program's package, its library packages and dconf-cli when settings are loaded. */
 const aptPackages = (plan: DesktopAppExportPlan): readonly string[] => [
   ...new Set([
     ...(plan.packageFile?.dependencies ?? [installName(plan)]),
+    ...(plan.executablePackage === undefined ? [] : [plan.executablePackage]),
     ...plan.libraryPackages,
     ...(plan.dconf.length === 0 ? [] : ["dconf-cli"]),
   ]),
@@ -430,6 +433,11 @@ const packageFileNotes = ({ packageFile: file }: DesktopAppExportPlan) =>
 const installNotes = (plan: DesktopAppExportPlan): string =>
   [
     ...packageFileNotes(plan),
+    ...(plan.executablePackage === undefined
+      ? []
+      : [
+          `- \`${plan.executablePackage}\`, which owns the program the desktop entry runs, is installed with it.`,
+        ]),
     ...(plan.libraryPackages.length === 0
       ? []
       : [

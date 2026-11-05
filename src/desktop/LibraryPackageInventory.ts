@@ -205,6 +205,25 @@ const packageSources = async (
   return sources;
 };
 
+/** The packages the computer can install by name, and the rest, as `installableLibraryPackages` decides from `apt-cache policy`; undefined when apt could not be asked. */
+export const installablePackages = async (
+  names: readonly string[],
+  available: {
+    readonly origins: ReadonlyMap<string, string | null> | undefined;
+    readonly declared: ReadonlySet<string>;
+  },
+  runQuery: QueryRunner,
+  signal: AbortSignal | undefined,
+): Promise<ReturnType<typeof installableLibraryPackages> | undefined> => {
+  const sources =
+    names.length === 0
+      ? new Map<string, readonly string[]>()
+      : await packageSources(names, runQuery, signal);
+  return sources === undefined
+    ? undefined
+    : installableLibraryPackages(names, { ...available, sources });
+};
+
 /**
  * Keep the library packages the computer can install: those some version of
  * which the Ubuntu 24.04 archive or a declared vendor source offers, as
@@ -212,19 +231,13 @@ const packageSources = async (
  */
 export const installableLibraries = async (
   libraries: LibraryPackages,
-  available: {
-    readonly origins: ReadonlyMap<string, string | null> | undefined;
-    readonly declared: ReadonlySet<string>;
-  },
+  available: Parameters<typeof installablePackages>[1],
   runQuery: QueryRunner,
   signal: AbortSignal | undefined,
 ): Promise<LibraryPackages> => {
   const names = libraries.library_packages;
-  const sources =
-    names.length === 0
-      ? new Map<string, readonly string[]>()
-      : await packageSources(names, runQuery, signal);
-  if (sources === undefined)
+  const split = await installablePackages(names, available, runQuery, signal);
+  if (split === undefined)
     return {
       ...libraries,
       library_packages: [],
@@ -236,7 +249,6 @@ export const installableLibraries = async (
         .filter((reason) => reason !== undefined)
         .join("; "),
     };
-  const split = installableLibraryPackages(names, { ...available, sources });
   return {
     ...libraries,
     library_packages: split.installable,

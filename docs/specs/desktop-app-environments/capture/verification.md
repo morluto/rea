@@ -80,13 +80,36 @@ exported five applications found two inventory gaps:
   An adapter test with GIMP's layout and a domain test cover both, and leave
   out `GIMPshop`, `MyGIMP` and a nested `Other/GIMP`.
 
-Each new test failed on the code before the fixes, run in a copy of `HEAD`
+Review of those fixes found three more gaps, each now covered by a test that
+failed on the first fix:
+
+- The entry's package need not depend on the program's (`vim-common` owns
+  Vim's entry, `vim` its program), so the export now installs
+  `executable_package` by name beside the app's package, for archive, vendor
+  repository and package-file installs alike. The capture checks it by the
+  library packages' rule and records `executable_package_reason` when neither
+  the archive nor a declared repository offers it, or apt could not say; the
+  export then refuses. Adapter, domain and export service tests cover the
+  record, the three install paths, the refusal and the rendered
+  `Packages(apt=[...])`.
+- A profile folder created during the capture in another letter case than its
+  candidate was application state but owned as the folder of its first file
+  (`.config/GIMP/2.10`), so later files elsewhere in it escaped `data/get` and
+  `data/reset`. Owned paths now use the same match as roles and own
+  `.config/GIMP` in the files' spelling; a domain test and an export service
+  test of a created profile cover it.
+- A `dpkg-query -S` that timed out or exited with an error counted as "no
+  owner", so a failed entry lookup quietly recorded the program's package. It
+  now leaves the package `unknown` with a limitation naming the path, for the
+  entry and the executable, after a timeout or an exit status of 2.
+
+Each new test failed on the code before its fix, run in a copy of that commit
 with only the new tests added. `npm run typecheck`, `lint`, `lint:typed`
 (no diagnostics in the touched files), `format:check`, `build:cached`,
 `knip`, `jscpd`, `docs:check`, `docs:build`, `verify:test-discovery` and
 `verify:architecture-guards` passed, and
 `npx vitest run src/domain/desktop src/application/desktop src/desktop tests/boundary/cli/cliStartupImports.test.ts`
-ran 336 passed and 18 skipped. Neither application was captured again.
+ran 344 passed and 18 skipped. Neither application was captured again.
 
 ## Limits of this verification
 

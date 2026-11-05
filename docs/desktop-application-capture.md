@@ -139,11 +139,19 @@ desktop entry the capture launched, or else of the executable, since the
 entry's package is what installs the application: LibreOffice Writer's entry
 belongs to `libreoffice-writer`, while the `/usr/bin/libreoffice` it runs
 belongs to `libreoffice-common`, which does not bring Writer with it. When the
-two differ, `executable_package` names the executable's package. An
-`--executable` launch, or an entry no package owns, such as one in
-`~/.local/share/applications`, records the executable's package. The sources,
-vendor repositories and `--package-file` match below are the recorded
-package's; the library walk still reads the executable.
+two differ, `executable_package` names the executable's package, which the
+export installs beside the entry's, since the entry's package need not depend
+on it (`vim-common` owns Vim's entry but does not depend on `vim`).
+`executable_package_reason` says why the computer could not install it by
+name, by the rule for library packages below: neither the Ubuntu 24.04 archive
+nor a vendor repository the export declares offers it, or `apt-cache policy`
+did not say. An `--executable` launch, or an entry no package owns, such as
+one in `~/.local/share/applications`, records the executable's package. When
+`dpkg-query` does not finish or exits with an error for the executable or the
+entry, the package is `unknown` and the limitations say which path, since a
+failed lookup is not proof that no package owns it. The sources, vendor
+repositories and `--package-file` match below are the recorded package's; the
+library walk still reads the executable.
 
 Each source whose origin is not `Ubuntu` is also recorded in
 `apt_repositories`. `apt-get indextargets` names the sources file entry apt

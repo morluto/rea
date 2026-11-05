@@ -195,6 +195,9 @@ const planExport = (
     aptSources: install.sources,
     architectures: install.architectures,
     packageFile: install.packageFile,
+    ...(install.executablePackage === undefined
+      ? {}
+      : { executablePackage: install.executablePackage }),
     electron,
     command: launchCommand(
       electronLaunchArguments(application.argv, electron),

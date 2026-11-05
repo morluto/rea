@@ -214,6 +214,65 @@ describe("exportInstall", () => {
   });
 });
 
+describe("exportInstall with the program in another package", () => {
+  const archive: DesktopPackage = {
+    ...typora(undefined),
+    name: "vim-common",
+    executable_package: "vim",
+    sources: ["http://archive.ubuntu.com/ubuntu noble/main amd64 Packages"],
+    source_origins: ["Ubuntu"],
+  };
+
+  it("installs the program's package beside the entry's from the archive, a vendor repository or a package file", () => {
+    const fromVendor = exportInstall(
+      { ...typora([repository()]), executable_package: "typora-bin" },
+      "typora",
+      "arm64",
+    );
+    const fromFile = exportInstall(
+      varicadPackage({ executable_package: "varicad-bin" }),
+      "varicad",
+      "x64",
+      VARICAD_URL,
+    );
+
+    expect(exportInstall(archive, "vim", "arm64")).toMatchObject({
+      ok: true,
+      value: { aptPackage: "vim-common", executablePackage: "vim" },
+    });
+    expect(fromVendor).toMatchObject({
+      ok: true,
+      value: { aptPackage: "typora", executablePackage: "typora-bin" },
+    });
+    expect(fromFile).toMatchObject({
+      ok: true,
+      value: {
+        packageFile: { url: VARICAD_URL },
+        executablePackage: "varicad-bin",
+      },
+    });
+  });
+
+  it("refuses when the computer cannot install the program's package", () => {
+    const reason =
+      "neither the Ubuntu 24.04 archive nor a vendor repository the export declares offers vim";
+
+    expect(
+      exportInstall(
+        { ...archive, executable_package_reason: reason },
+        "vim",
+        "arm64",
+      ),
+    ).toEqual({
+      ok: false,
+      error: expect.objectContaining({
+        field: "capture",
+        reason: `The desktop entry belongs to vim-common, but the program it runs belongs to vim, which the computer cannot install: ${reason}.`,
+      }),
+    });
+  });
+});
+
 describe("exportInstall sources", () => {
   const amd64 = "https://apt.example.com/repo stable/main amd64 Packages";
   const i386 = "https://apt.example.com/repo stable/main i386 Packages";

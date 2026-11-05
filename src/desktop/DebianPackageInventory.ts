@@ -26,6 +26,7 @@ import { succeeded } from "./HostQuery.js";
 import {
   inspectLibraryPackages,
   installableLibraries,
+  installablePackages,
 } from "./LibraryPackageInventory.js";
 
 /** The host commands and apt folders Debian package identification reads. */
@@ -108,7 +109,10 @@ const settled = async <First, Second>(
  * the repository check.
  */
 const installFacts = async (
-  installed: Pick<Package, "name" | "sources" | "source_origins">,
+  installed: Pick<
+    Package,
+    "name" | "sources" | "source_origins" | "executable_package"
+  >,
   executable: string,
   context: InventoryContext,
   origins: ReadonlyMap<string, string | null> | undefined,
@@ -138,6 +142,7 @@ const installFacts = async (
     ),
     vendor.indexTargets,
   );
+  const program = installed.executable_package;
   return {
     apt_repositories: [...vendor.repositories],
     ...(libraries === undefined
@@ -148,21 +153,58 @@ const installFacts = async (
           runQuery,
           context.signal,
         )),
+    ...(program === undefined
+      ? {}
+      : await executablePackageFacts(program, { origins, declared }, context)),
   };
 };
 
-/** The first package dpkg names as an owner of one of the paths; null when it owns none, undefined without dpkg-query. */
+/** Why the computer cannot install the executable's package by name beside the entry's, by the library packages' rule; nothing when it can. */
+const executablePackageFacts = async (
+  name: string,
+  available: Parameters<typeof installablePackages>[1],
+  { host, signal }: InventoryContext,
+): Promise<Pick<Package, "executable_package_reason">> => {
+  const split = await installablePackages(
+    [name],
+    available,
+    host.runQuery,
+    signal,
+  );
+  if (split?.installable.includes(name) === true) return {};
+  return {
+    executable_package_reason:
+      split === undefined
+        ? `apt-cache policy did not say where ${name} comes from`
+        : `neither the Ubuntu 24.04 archive nor a vendor repository the export declares offers ${name}`,
+  };
+};
+
+/** Which package dpkg says owns the paths, or why it could not say. */
+type Ownership =
+  | { readonly kind: "owned"; readonly name: string }
+  | { readonly kind: "unowned" }
+  | { readonly kind: "unknown"; readonly reason: string };
+
+/** The owner of the first path dpkg owns; unknown once a query fails, since that path's owner would have come first. */
 const dpkgOwner = async (
   paths: readonly string[],
   { host, signal }: InventoryContext,
-): Promise<string | null | undefined> => {
+): Promise<Ownership> => {
   for (const path of ownershipCandidates(paths)) {
-    const owners = await host.runQuery("dpkg-query", ["-S", path], signal);
-    if (owners === "missing") return undefined;
-    const [name] = parseDpkgOwners(succeeded(owners) ?? "", path);
-    if (name !== undefined) return name;
+    const outcome = await host.runQuery("dpkg-query", ["-S", path], signal);
+    if (outcome === "missing")
+      return { kind: "unknown", reason: "dpkg-query is not installed" };
+    // dpkg-query exits 1 when no package owns the path and 2 when it could not tell.
+    if (outcome === "failed" || outcome.exitCode > 1)
+      return {
+        kind: "unknown",
+        reason: `dpkg-query could not say which package owns ${path}`,
+      };
+    const [name] = parseDpkgOwners(outcome.stdout, path);
+    if (name !== undefined) return { kind: "owned", name };
   }
-  return null;
+  return { kind: "unowned" };
 };
 
 /** A package name without the `:<architecture>` dpkg may qualify it with. */
@@ -197,17 +239,26 @@ export const debianPackage = async (
     sources: [],
     package_lists_present: null,
   };
-  const owner = await dpkgOwner(program, context);
-  if (owner === undefined) {
+  const executableOwner = await dpkgOwner(program, context);
+  if (executableOwner.kind === "unknown") {
     limitations.push(
-      "dpkg-query is not installed, so the package that owns the executable is unknown.",
+      `${executableOwner.reason}, so the package that owns the executable is unknown.`,
     );
     return unknown;
   }
-  // The entry's package installs the application, whose program can come from a package it depends on.
+  // The entry's package installs the application, whose program can come from another package.
   const entryOwner =
-    entry.length === 0 ? null : await dpkgOwner(entry, context);
-  const name = entryOwner ?? owner;
+    entry.length === 0
+      ? ({ kind: "unowned" } as const)
+      : await dpkgOwner(entry, context);
+  if (entryOwner.kind === "unknown") {
+    limitations.push(
+      `${entryOwner.reason}, so the package that owns the desktop entry, which installs the application, is unknown.`,
+    );
+    return unknown;
+  }
+  const owner = executableOwner.kind === "owned" ? executableOwner.name : null;
+  const name = entryOwner.kind === "owned" ? entryOwner.name : owner;
   if (name === null) return unknown;
   const status = succeeded(
     await host.runQuery(

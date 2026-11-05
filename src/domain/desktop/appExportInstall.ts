@@ -69,6 +69,8 @@ export interface ExportInstall {
   readonly architectures: readonly string[];
   /** The package file installed in place of an apt package; null when apt installs the package. */
   readonly packageFile: ExportPackageFile | null;
+  /** The package of the program the desktop entry runs, installed by name beside the app's; absent when the app's package owns it. */
+  readonly executablePackage?: string;
 }
 
 /** Why the computer cannot install the captured package: the input to change, and how. */
@@ -350,7 +352,7 @@ const packageFileInstall = (
  * `--package-url`, is downloaded from it and installed from its captured
  * package file; anything else is refused with the reason.
  */
-export const exportInstall = (
+const packageInstall = (
   installed: DesktopPackage,
   environment: string,
   hostArchitecture: string,
@@ -395,6 +397,23 @@ export const exportInstall = (
     packageUrl,
     hostArchitecture,
   );
+};
+
+/** How the computer installs the captured package and, when another package owns the program its desktop entry runs, that package too. */
+export const exportInstall = (
+  ...request: Parameters<typeof packageInstall>
+): Result<ExportInstall, InstallRefusal> => {
+  const install = packageInstall(...request);
+  const [{ executable_package: program, executable_package_reason: reason }] =
+    request;
+  if (!install.ok || program === undefined) return install;
+  return reason === undefined
+    ? ok({ ...install.value, executablePackage: program })
+    : err(
+        refusal(
+          `The desktop entry belongs to ${install.value.aptPackage}, but the program it runs belongs to ${program}, which the computer cannot install: ${reason}.`,
+        ),
+      );
 };
 
 /** Chromium's sandbox needs user namespaces a container does not grant, so an Electron launch runs with `--no-sandbox` right after the program. */
