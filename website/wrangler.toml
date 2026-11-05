@@ -1,18 +1,26 @@
 # Serve only the public website. The default deployment is a workers.dev preview.
 name = "rea-website-preview"
+main = "worker.mjs"
 compatibility_date = "2026-10-08"
 workers_dev = true
 preview_urls = false
 
 [assets]
 directory = "./_site"
+binding = "ASSETS"
+run_worker_first = ["/", "/*/", "/*.html"]
 html_handling = "auto-trailing-slash"
 not_found_handling = "none"
 
 [build]
 cwd = ".."
 command = "python3 scripts/website.py check"
-watch_dir = ["./public", "./locales", "./templates"]
+watch_dir = [
+  "./public",
+  "./locales",
+  "./templates",
+  "../.agents/skills/reverse-engineer-anything",
+]
 
 # Public HTTPS depends on zone activation and certificate readiness.
 [env.production]

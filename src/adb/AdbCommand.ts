@@ -18,7 +18,11 @@ import {
   spawnCapacityExhausted,
 } from "../process/ExecFileOutput.js";
 import { packageChangeFailureReason } from "./AdbShellOutput.js";
-import { isSuccessfulDaemonStartNotice } from "./AdbDeviceOutput.js";
+import {
+  isSuccessfulDaemonStartNotice,
+  isDaemonStartingNotice,
+  hasOnlySuccessfulAdbStartupNotices,
+} from "./AdbDeviceOutput.js";
 import {
   adbHostCapacityRemediation,
   type AdbBinarySelection,
@@ -189,12 +193,7 @@ export const runAdbCapture = async (
       const line = stderr
         .slice(diagnosticStart, newline === -1 ? stderr.length : newline)
         .trimEnd();
-      if (
-        !isSuccessfulDaemonStartNotice(line) &&
-        !/^\* daemon not running(?:; starting now at [^\r\n]*|\. starting it now on port \d+ \*)$/u.test(
-          line,
-        )
-      )
+      if (!isSuccessfulDaemonStartNotice(line) && !isDaemonStartingNotice(line))
         break;
       diagnosticStart = newline === -1 ? stderr.length : newline + 1;
     }
@@ -302,7 +301,38 @@ export const packageChangeRefusal = (
       );
 };
 
-/** Only the clean false result of test -e establishes absence. */
+/** Parsed predicate and the complete output that supports it. */
+export interface AdbPathProbe {
+  readonly matches: boolean;
+  readonly capturedOutput: {
+    readonly stdout: string;
+    readonly stderr: string;
+    readonly stdout_bytes: number;
+    readonly stderr_bytes: number;
+    readonly exit_code: 0 | 1;
+    readonly signal: null;
+    readonly truncated: false;
+  };
+}
+const completedAdbPathProbe = (
+  matches: boolean,
+  stderr: string,
+): AdbPathProbe => ({
+  matches,
+  capturedOutput: {
+    stdout: "",
+    stderr,
+    stdout_bytes: 0,
+    stderr_bytes: Buffer.byteLength(stderr),
+    exit_code: matches ? 0 : 1,
+    signal: null,
+    truncated: false,
+  },
+});
+const recognizedProbeStderr = (stderr: string): boolean =>
+  stderr === "" || hasOnlySuccessfulAdbStartupNotices(stderr);
+
+/** Only a complete false predicate, with no device diagnostics, establishes absence. */
 export const probeAdbPathExistence = async (
   operation: string,
   serial: string,
@@ -310,11 +340,11 @@ export const probeAdbPathExistence = async (
   selection: AdbBinarySelection,
   limits: AdbRunLimits,
   signal: AbortSignal | undefined,
-): Promise<Result<boolean, AnalysisError>> => {
+): Promise<Result<AdbPathProbe, AnalysisError>> => {
   return probeAdbPath(operation, serial, path, selection, limits, signal, "-e");
 };
 
-/** Only the clean true/false result of test -d establishes directory status. */
+/** Completed predicate status is independent of recognized host startup notices. */
 export const probeAdbPathDirectory = async (
   operation: string,
   serial: string,
@@ -322,7 +352,7 @@ export const probeAdbPathDirectory = async (
   selection: AdbBinarySelection,
   limits: AdbRunLimits,
   signal: AbortSignal | undefined,
-): Promise<Result<boolean, AnalysisError>> =>
+): Promise<Result<AdbPathProbe, AnalysisError>> =>
   probeAdbPath(operation, serial, path, selection, limits, signal, "-d");
 
 const probeAdbPath = async (
@@ -333,7 +363,7 @@ const probeAdbPath = async (
   limits: AdbRunLimits,
   signal: AbortSignal | undefined,
   predicate: "-d" | "-e",
-): Promise<Result<boolean, AnalysisError>> => {
+): Promise<Result<AdbPathProbe, AnalysisError>> => {
   const fact =
     predicate === "-d" ? "destination_directory" : "destination_existence";
   const probed = await runAdbCapture(
@@ -345,8 +375,9 @@ const probeAdbPath = async (
     signal,
   );
   if (probed.ok) {
-    if (probed.value.stdout.length === 0 && probed.value.stderr.length === 0)
-      return ok(true);
+    const stderr = probed.value.stderr.toString("utf8");
+    if (probed.value.stdout.length === 0 && recognizedProbeStderr(stderr))
+      return ok(completedAdbPathProbe(true, stderr));
     return err(
       new AnalysisProtocolError(
         `The ADB path ${predicate === "-d" ? "directory" : "existence"} probe returned unexpected output; destination status is unknown`,
@@ -375,9 +406,9 @@ const probeAdbPath = async (
     !failure.outputTruncated &&
     failure.collectionFailure !== true &&
     failure.stdout === "" &&
-    failure.stderr === ""
+    recognizedProbeStderr(failure.stderr)
   )
-    return ok(false);
+    return ok(completedAdbPathProbe(false, failure.stderr));
   return err(
     new AnalysisProtocolError(error.message, {
       cause: error.cause,

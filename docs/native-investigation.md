@@ -128,6 +128,16 @@ rea inspect-native-data-type <binary> --type /MyStruct --provider ghidra
 rea inspect-native-data-type <binary> --address <typed-data-address> --provider ghidra
 ```
 
+Ghidra bit-field components may have a `type_id` that is not a registered
+database type. When `bit_field` is present, `base_type_id` is the provider's
+base type and the lookup fields report whether the manager resolves equivalent
+types at those exact paths. `bit_size` is the effective width;
+`declared_bit_size` can be larger. `bit_offset` is the least-significant-bit
+offset within the base type, not a byte-order-independent offset from the start
+of the containing structure. Account for the component's storage size and byte
+order before applying that offset to a larger word. Missing `bit_field` details
+are unreported, not proof that a component is not a bit-field.
+
 Instruction facts include bytes, length, decoder text, ordered register/scalar/
 address tokens, typed references and flow destinations. Mid-instruction, data,
 outside-memory and unlisted addresses have separate outcomes. For Ghidra,
@@ -201,6 +211,11 @@ remains valid. This tool
 has no dedicated CLI command; the existing `decompile` command remains the
 single-procedure CLI operation.
 
+`detail: "summary"` retains the complete batch and returns only its counts,
+identities and sizes. `inspect_analysis_view` then reads rows or one body from
+the retained record, an Evidence file or a portable bundle without repeating
+decompilation: see [selected batch results](mcp-contracts.md#selected-batch-decompile-results).
+
 Each batch schedules one provider read at a time, but has no shared input-count
 or aggregate retained-output allowance. It retains every requested row and full
 pseudocode body through Evidence construction. The MCP response budget checks
@@ -222,7 +237,17 @@ caveats. Failure details retain at most 32 rows within 2,048 JSON-encoded
 UTF-8 bytes; names may be omitted to keep complete addresses and reasons. The
 index retains every failure and its complete observed name.
 Each function's `decompile-index.json` record, whatever its status, keeps the
-complete limitations of the observations it used. The returned Evidence keeps
+complete limitations of the observations it used.
+When available, `provider_source` records the source of that attempt's
+pseudocode observation: a file path, SHA-256 and byte range, or a
+single-function decompile. The latter describes the method, not a unique run. A file
+descriptor records the source as observed; the file may since have changed or
+been removed, so compare its current digest before using it. The descriptor
+does not authenticate the journal. `status: "unknown"` distinguishes
+an unavailable source from an existing matching output whose original producer
+is unknown. Older journal records can omit this field; omission is unknown.
+Failed attempts retain their source in the append-only journal when the
+provider supplied one, even if a later attempt succeeds. The returned Evidence keeps
 at most eight first-observed distinct per-function provider limitations within an 8,000-byte JSON-encoded UTF-8 text budget and counts omitted observations. Repeated omitted text is counted per observation, not as a distinct caveat. This summary does not retain every omitted string in memory. A fresh output directory must not already exist. `--resume`
 continues an export for the same target SHA-256, provider, analysis profile,
 and layout; it requires the directory to exist, and an export without a known
@@ -295,6 +320,20 @@ relationships but reports their completeness as unknown. In particular, a resolv
 tail call observed in one direction does not prove that the reverse inventory is
 complete. An empty Hopper inventory cannot establish that no such call exists.
 No whole-binary reverse scan is performed.
+
+For large native traces, `trace_feature` accepts `detail: "summary"`. It retains
+the complete trace and returns counts and its parent Evidence ID. Use
+`inspect_analysis_view` with that ID and `view: {kind: "native-feature-trace",
+collection: "references", offset: 0, limit: 64}` to page the original rows;
+`matches` and `unknowns` are separate collections. Matches accept an exact
+`address`; references accept exact `source_address` and `target_address`
+filters. Row indices refer to the retained collection, and page coverage does not establish provider discovery
+completeness. `list_unknowns` pages the independently managed question heads.
+In the one-shot CLI, `rea trace ... --detail summary --evidence_output PATH`
+stores the trace and its linked source Evidence for later
+`inspect-analysis-view` calls. This bundle does not include the CLI session's
+Unknown registry; its original question texts remain available in the trace's
+`unknowns` pages.
 Regex searches use ECMAScript Unicode syntax in a cancellable worker with a
 matching deadline and a worker old-generation heap. Deadline or cancellation
 stops matching while leaving the Hopper API available. The deadline is
@@ -383,6 +422,11 @@ sites remain distinct. A static route does not establish runtime reachability.
 Swift/closure dispatch requires resolved static references; unavailable ABI
 forms remain unknown.
 
+Encoded Objective-C method records retain their own locations in dispatch
+Evidence. A handler node uses the implementation address with an unknown file
+offset unless that function already has an independently located graph node;
+the method-record offset does not locate the handler's code.
+
 Incomplete reference kinds do not discard known typed calls or partial
 provider call references. A `provider_call` with `observed` resolution retains
 the provider-reported call site and endpoint without claiming generic direct,
@@ -424,21 +468,41 @@ nodes and edges. Node payloads are bounded to 8 MiB and serialized results to
 32 MiB. Pagination returns edges whose source is on the node page and preserves
 stable IDs for endpoints outside that page.
 
+Procedure, node and edge `evidence_id` values identify the source function
+observations used by the trace. In an MCP session, retrieve them from the
+Evidence bundle for inspection or export. A replayed source keeps the original
+observation's identity; the trace also reports that replay occurred. Older
+cached value traces are not replayed under the revised workflow profile, while
+their historical Evidence remains available.
+
+The one-shot CLI accepts `--evidence_output <new-path>` to save the trace and
+the transitive source Evidence closure named by its links. The destination is
+never overwritten. `--detail summary` requires `--evidence_output`; the bundle
+still retains the complete trace and source Evidence.
+
 Within one value trace, each exact procedure selector is attempted at most once,
 including failed analyses. A failed seed returns the provider's original typed
 failure and corrective guidance; it cannot establish a trace or target identity.
 Failures while expanding a validated seed remain unknown observations and do not
-establish canonical function identity. A successful seed without a native def-use
-model still returns its procedure and an explicit coverage unknown. A new trace
-can retry failed selectors.
+establish canonical function identity. A cancelled expansion read returns the
+cancellation. An expansion read whose provider cannot confirm cleanup of
+resources it owns stops the trace: the result is that provider's own
+`cleanup_incomplete` failure with its resources and any bound cleanup retry, and the work
+admitted before the stop is retained as partial Evidence with a located unknown
+at the stopping read. A successful seed without a native def-use
+model still returns its procedure and an explicit coverage unknown. An unrecorded
+facet stays unknown; when the provider explicitly reports unavailability, the trace
+retains its reason. REA's Kuna provider explicitly reports that it does not supply
+native def-use observations. A new trace can retry failed selectors.
 
 Paging and traversal completeness are separate facts. `page_truncated` means the
 page omits retained nodes, and the edges they source, before `offset` or after
 `next_offset`. Every page repeats `traversal`: `complete`, or `truncated` with
 `reasons` naming each observed cause: the `max_depth`, `max_functions`,
 `max_call_sites`, `max_nodes` or `max_edges` budget, the fixed
-`node_payload_bytes` allowance, `provider_pcode_truncated`, or
-`ambiguous_call_candidates`. Each cause also has a located unknown. A budget is
+`node_payload_bytes` allowance, `provider_pcode_truncated`,
+`ambiguous_call_candidates`, or, only in a stopped trace's partial Evidence,
+`cleanup_incomplete`. Each cause also has a located unknown. A budget is
 reported only after it rejects work, so an exactly filled budget is not
 truncation; a depth or candidate limit is reported only when no other path
 analyzes or queues that destination. `total_nodes` and `total_edges` count
@@ -993,7 +1057,9 @@ with a path-specific gap and incomplete capture coverage. Null alone does not
 establish that an accessibility value was successfully read or absent.
 
 An initial PID or window mismatch is `invalid_request` on `pid` or
-`window_id` and leaves provider availability intact. An unavailable executable
+`window_id` and leaves provider availability intact. A selected window that
+exists off screen is not a mismatch: selection succeeds and the permission and
+capture checks report their own outcome. An unavailable executable
 URL or unresolved executable path leaves identity unknown and reports
 `capability_unavailable`. Identity or window loss
 after the initial capture remains an observation failure with collected facts.
@@ -1381,7 +1447,7 @@ procedures. The CLI equivalent is
 Use `start`/`end` to constrain the inclusive address window, and continue with
 `next_cursor` until `complete` is true. Inspect `searched` for page coverage and
 skipped uninitialized blocks. A missing match does not establish absence from
-uninitialized memory or across block boundaries. See
+uninitialized or excluded memory. See
 [Ghidra byte search](ghidra-provider.md#masked-byte-search) for mask and coverage
 semantics. This query never executes or modifies target bytes.
 
