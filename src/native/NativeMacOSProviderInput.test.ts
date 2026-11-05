@@ -155,10 +155,13 @@ it("refuses a missing Mach-O source before running lipo", async () => {
   }
 });
 
-it("declares the signature snapshot write in provider capabilities", () => {
-  expect(
-    nativeMacOSCapabilities("darwin").find(
-      ({ operation }) => operation === "inspect_signature",
-    )?.effects,
-  ).toMatchObject({ mayWriteFilesystem: true, mutatesArtifact: false });
-});
+it.each(["inspect_macho", "inspect_signature"] as const)(
+  "declares %s temporary filesystem writes in provider capabilities",
+  (operation) => {
+    expect(
+      nativeMacOSCapabilities("darwin").find(
+        (capability) => capability.operation === operation,
+      )?.effects,
+    ).toMatchObject({ mayWriteFilesystem: true, mutatesArtifact: false });
+  },
+);
