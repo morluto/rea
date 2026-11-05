@@ -1,7 +1,8 @@
 import { copyFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { describe, expect } from "vitest";
+import { afterAll, describe, expect } from "vitest";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 import { z } from "zod";
 
 import { inspectMachoSchema } from "../../../src/domain/native/nativeInspection.js";
@@ -16,6 +17,9 @@ import { mcpTest } from "../../support/mcp/mcpFixture.js";
 import { openProductionTarget } from "../../support/mcp/productionSession.js";
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
 import { advertisedMcpToolSchemas } from "../../fixtures/advertisedMcpTool.js";
+
+const schemaValidation = createMcpSchemaValidation();
+afterAll(() => schemaValidation.clear());
 
 const evidenceOf = <Schema extends z.ZodType>(schema: Schema) =>
   z.object({
@@ -132,6 +136,7 @@ const binaryUncertainFixture = () => {
     imports: empty,
     exports: empty,
     segments: incomplete(segment),
+    encryption: empty,
     provenance: [],
     limitations: [],
   });
@@ -156,7 +161,8 @@ mcpTest(
       throw new Error("No provider expected");
     });
     onTestFinished(async () => {
-      await session.close();
+      const closed = await session.close();
+      if (!closed.ok) throw closed.error;
     });
     const client = await mcp.connect(
       createServer(
@@ -165,8 +171,14 @@ mcpTest(
           environment: { ...process.env, REA_MCP_INPUT_SCHEMA_PROFILE: "full" },
         },
       ),
+      undefined,
+      schemaValidation,
     );
-    const tool = await advertisedMcpToolSchemas(client, "inspect_macho");
+    const tool = await advertisedMcpToolSchemas(
+      client,
+      "inspect_macho",
+      schemaValidation.assertions,
+    );
     expect(
       tool.ajv.validate(tool.outputSchema, source),
       JSON.stringify(tool.ajv.errors),
@@ -174,6 +186,7 @@ mcpTest(
     const view = await advertisedMcpToolSchemas(
       client,
       "inspect_analysis_view",
+      schemaValidation.assertions,
     );
     for (const [facet, expected] of [
       ["segments", segment],
@@ -298,6 +311,7 @@ mcpTest(
       imports: { ...empty, items: [imported], total: 1 },
       exports: { ...empty, items: [exported], total: 1 },
       segments: empty,
+      encryption: empty,
       provenance: [],
       limitations: [],
     });
@@ -314,7 +328,8 @@ mcpTest(
       throw new Error("Imported views must not start a provider");
     });
     onTestFinished(async () => {
-      await session.close();
+      const closed = await session.close();
+      if (!closed.ok) throw closed.error;
     });
     const client = await mcp.connect(
       createServer(
@@ -323,10 +338,13 @@ mcpTest(
           environment: { ...process.env, REA_MCP_INPUT_SCHEMA_PROFILE: "full" },
         },
       ),
+      undefined,
+      schemaValidation,
     );
     const schemas = await advertisedMcpToolSchemas(
       client,
       "inspect_analysis_view",
+      schemaValidation.assertions,
     );
     for (const [facet, expected] of [
       ["imports", imported],
@@ -399,7 +417,12 @@ describe.skipIf(process.platform !== "darwin")(
         const report = full.normalized_result;
         expect(summary.summary.uuid).toBe(report.uuid);
         expect(summary.summary.provenance_count).toBe(report.provenance.length);
-        for (const name of ["imports", "exports", "dependencies"] as const)
+        for (const name of [
+          "imports",
+          "exports",
+          "dependencies",
+          "encryption",
+        ] as const)
           expect(summary.summary.collections[name]).toEqual({
             returned: report[name].items.length,
             total: report[name].total,
@@ -422,6 +445,7 @@ describe.skipIf(process.platform !== "darwin")(
           "imports",
           "exports",
           "segments",
+          "encryption",
           "provenance",
         ] as const;
         for (const facet of facets) {
@@ -489,7 +513,8 @@ mcpTest(
       close: () => Promise.resolve(ok(null)),
     }));
     onTestFinished(async () => {
-      await session.close();
+      const closed = await session.close();
+      if (!closed.ok) throw closed.error;
     });
     const opened = await session.open(target);
     if (!opened.ok) throw opened.error;

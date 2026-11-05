@@ -7,7 +7,7 @@ import {
   WEB_NETWORK_CAPTURE_LIMITS,
   type WebNetworkCaptureRecord,
 } from "../../domain/webNetworkCapture.js";
-import { SAZ_CAPTURE_PROVIDER_IDENTITY } from "./CaptureRelease.js";
+import { SAZ_CAPTURE_PROVIDER_IDENTITY } from "./CaptureProviderIdentities.js";
 import { CaptureFormatError } from "./CaptureFormatError.js";
 import { decodeSazHttp } from "./SazHttp.js";
 import { decodeSazMetadata } from "./SazMetadata.js";

@@ -9,6 +9,7 @@ import * as nativeExportContracts from "../../domain/native/nativeExports.js";
 import {
   BinaryFormatFailure,
   BinaryResourceFailure,
+  BinaryStringReadLimitFailure,
 } from "../metadata/BinaryContainer.js";
 import {
   parseNativeExports,
@@ -378,18 +379,26 @@ describe("ELF dynamic symbol exports", () => {
     });
     expect(
       result.format === "elf" &&
-        result.exports.map(({ name, type, binding, version }) => ({
+        result.exports.map(({ name, type, binding, visibility, version }) => ({
           name,
           type,
           binding,
+          visibility,
           version,
         })),
     ).toEqual([
-      { name: "plain_fn", type: "function", binding: "global", version: null },
+      {
+        name: "plain_fn",
+        type: "function",
+        binding: "global",
+        visibility: "default",
+        version: null,
+      },
       {
         name: "versioned_fn",
         type: "function",
         binding: "global",
+        visibility: "default",
         version: {
           index: 2,
           name: "VER_1",
@@ -402,6 +411,7 @@ describe("ELF dynamic symbol exports", () => {
         name: "old_fn",
         type: "function",
         binding: "global",
+        visibility: "default",
         version: {
           index: 3,
           name: "VER_0",
@@ -410,15 +420,62 @@ describe("ELF dynamic symbol exports", () => {
           hidden: true,
         },
       },
-      { name: "weak_obj", type: "object", binding: "weak", version: null },
-      { name: "ifunc_sym", type: "ifunc", binding: "global", version: null },
+      {
+        name: "weak_obj",
+        type: "object",
+        binding: "weak",
+        visibility: "default",
+        version: null,
+      },
+      {
+        name: "ifunc_sym",
+        type: "ifunc",
+        binding: "global",
+        visibility: "default",
+        version: null,
+      },
       {
         name: "protected_fn",
         type: "function",
         binding: "global",
+        visibility: "protected",
         version: null,
       },
     ]);
+  });
+
+  it("normalizes historical ELF export evidence lacking visibility to unknown", () => {
+    const historical = {
+      artifact,
+      format: "elf" as const,
+      architecture: "amd64",
+      bits: 64 as const,
+      byte_order: "little" as const,
+      exports: [
+        {
+          name: "legacy_fn",
+          name_bytes_base64: null,
+          name_utf8_decodable: true,
+          value: "0x1000",
+          size: "16",
+          type: "function" as const,
+          binding: "global" as const,
+          version: null,
+        },
+      ],
+      coverage: {
+        status: "complete" as const,
+        reason: null,
+        examined_entries: 1,
+        exports: 1,
+      },
+      issues: [],
+      limitations: [],
+    };
+    const parsed = nativeExportContracts.nativeExportsSchema.parse(historical);
+    expect(parsed.format).toBe("elf");
+    if (parsed.format !== "elf") throw new Error("Expected ELF result");
+    expect(parsed.exports[0]?.visibility).toBe("unknown");
   });
 
   it("reads a big-endian ELF32 table", () => {
@@ -503,6 +560,17 @@ describe("ELF export version and name coverage", () => {
       }),
     );
 
+    expect(result.exports.map(({ name }) => name)).toEqual(["kept"]);
+    expect(result.issues).toMatchObject([{ code: "name_unreadable" }]);
+    expect(result.coverage.status).toBe("partial");
+  });
+
+  it("keeps unrelated exports when a symbol name exceeds the string scan allowance", () => {
+    const result = parse(
+      elfExportImage({
+        symbols: [{ name: "kept" }, { name: "k".repeat(65_536) }],
+      }),
+    );
     expect(result.exports.map(({ name }) => name)).toEqual(["kept"]);
     expect(result.issues).toMatchObject([{ code: "name_unreadable" }]);
     expect(result.coverage.status).toBe("partial");
@@ -777,7 +845,7 @@ describe("ELF symbol-name text", () => {
         expect(result.issues).toContainEqual(
           expect.objectContaining({
             message: expect.stringContaining(
-              "unterminated or exceeds the string budget",
+              new BinaryStringReadLimitFailure(65_536).message,
             ),
           }),
         );

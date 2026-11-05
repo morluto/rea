@@ -16,7 +16,8 @@ import {
 } from "./recordedResponseBody.js";
 import { readRecordedRequestBody } from "./recordedExchangeBody.js";
 import { isJson, isJsonLike, mediaTypeEssence } from "./recordedMediaType.js";
-import type { UnsignedAnalysisView } from "./analysisView.js";
+import { z } from "zod";
+import { environmentManifestFields } from "./environmentManifestSchema.js";
 import type { ScenarioResponseBodyRetention } from "./scenarioCaptureRecords.js";
 import { WebNetworkProjectionAccumulator } from "./WebNetworkProjectionAccumulator.js";
 import {
@@ -55,21 +56,13 @@ import {
   type RouteTemplate,
 } from "./webNetworkRouteTemplates.js";
 
-type Manifest = Extract<UnsignedAnalysisView, { kind: "environment-manifest" }>;
-type ManifestFields = Pick<
-  Manifest,
-  | "origin"
-  | "name"
-  | "tools"
-  | "records"
-  | "excluded"
-  | "unknowns"
-  | "templated_groups"
-  | "coverage"
-  | "limitations"
->;
-type Tool = Manifest["tools"][number];
-type Exclusion = Manifest["excluded"][number];
+type ManifestCore = {
+  [Key in keyof typeof environmentManifestFields]: z.output<
+    (typeof environmentManifestFields)[Key]
+  >;
+};
+type Tool = ManifestCore["tools"][number];
+type Exclusion = ManifestCore["excluded"][number];
 type RequestLine = Extract<RecordedRequestLine, { kind: "line" }>;
 
 interface RecordLine {
@@ -134,7 +127,7 @@ const WRITE_METHODS = new Set(["POST", "PUT", "PATCH"]);
 const BODILESS_WRITE_METHODS = new Set([...WRITE_METHODS, "DELETE"]);
 /** Quotes, separators and brackets a four-part composite key adds around its texts. */
 const KEY_OVERHEAD_CHARS = 32;
-const UNKNOWNS: Manifest["unknowns"] = [
+const UNKNOWNS: ManifestCore["unknowns"] = [
   {
     kind: "authorization-model",
     statement:
@@ -477,7 +470,7 @@ export class EnvironmentManifestAccumulator extends WebNetworkProjectionAccumula
   }
 
   /** Project the complete manifest; tools, records and exclusions are sorted deterministically. */
-  finish(): Result<ManifestFields, AnalysisError> {
+  finish() {
     const primary = primaryOrigin(this.#origins);
     const toolGroups: GroupState[] = [];
     const exclusions = new Map<string, Exclusion & { templated: boolean }>();

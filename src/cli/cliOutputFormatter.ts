@@ -323,39 +323,56 @@ const escapeTableCell = (value: string): string =>
       (character) =>
         `\\u${character.charCodeAt(0).toString(16).padStart(4, "0")}`,
     )
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/[\\|`*[\]~]|_+/g, escapeInlineSyntax)
+    .replace(/[\\|`*[\]~{}#]|_+/g, escapeInlineSyntax)
+    // Encode renderer-extension introducers at the same boundary as HTML
+    // characters. Generated entities must not themselves be re-escaped.
+    .replace(/[&<>:]|;(?=-?[)(])/g, (character) => {
+      switch (character) {
+        case "&":
+          return "&amp;";
+        case "<":
+          return "&lt;";
+        case ">":
+          return "&gt;";
+        case ":":
+          return "&#58;";
+        default:
+          return "&#59;";
+      }
+    })
+    .replace(/([xXB8]-)\)/g, "$1&#41;")
     .replace(/\r\n|\r|\n/g, "<br>");
+
+const encodeMarkdownWhitespace = (whitespace: string): string =>
+  whitespace.replace(/ /g, "&#32;").replace(/\t/g, "&#9;");
 
 /** Heading and paragraph facts are literal data, including block syntax. */
 const escapeMarkdownText = (value: string): string =>
   escapeTableCell(value)
-    .replace(/#/g, "\\#")
     .replace(/^(\s*)([-+=])/, "$1\\$2")
-    .replace(/^(\s*\d{1,9})([.)])(?=\s)/, "$1\\$2")
-    .replace(/^[ \t]+/, (indent) =>
-      indent.replace(/ /g, "&#32;").replace(/\t/g, "&#9;"),
-    );
+    .replace(/^(\s*\d{1,9})([.)])(?=\s|$)/, "$1\\$2")
+    .replace(/^[ \t]+/, encodeMarkdownWhitespace)
+    .replace(/[ \t]+$/u, encodeMarkdownWhitespace);
 
 const markdownHeading = (path: readonly string[]): string =>
   `## ${escapeMarkdownText(path.join("."))}\n\n`;
+
+/** Encode literal text for a Markdown table cell, including edge whitespace. */
+export const encodeMarkdownTableCell = (value: string): string =>
+  escapeTableCell(value).replace(/^[ \t]+|[ \t]+$/g, (whitespace) =>
+    encodeMarkdownWhitespace(whitespace),
+  );
 
 const renderTable = (
   headers: readonly string[],
   rows: readonly string[][],
 ): string => {
   if (headers.length === 0) return "";
-  const encodeTableCell = (value: string): string =>
-    escapeTableCell(value).replace(/^ +| +$/g, (spaces) =>
-      "&#32;".repeat(spaces.length),
-    );
-  const escapedHeaders = headers.map(encodeTableCell);
+  const escapedHeaders = headers.map(encodeMarkdownTableCell);
   const widths = escapedHeaders.map((header) => header.length);
   for (const row of rows) {
     for (let index = 0; index < escapedHeaders.length; index += 1) {
-      const width = encodeTableCell(row[index] ?? "").length;
+      const width = encodeMarkdownTableCell(row[index] ?? "").length;
       if (width > widths[index]!) widths[index] = width;
     }
   }
@@ -369,7 +386,9 @@ const renderTable = (
   for (const row of rows) {
     lines.push(
       `| ${escapedHeaders
-        .map((_, index) => pad(encodeTableCell(row[index] ?? ""), index))
+        .map((_, index) =>
+          pad(encodeMarkdownTableCell(row[index] ?? ""), index),
+        )
         .join(" | ")} |`,
     );
   }

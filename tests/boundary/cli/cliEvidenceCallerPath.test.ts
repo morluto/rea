@@ -55,7 +55,12 @@ it("binds authenticated partial Evidence but preserves raw partial observations"
         sha256: "a".repeat(64),
         bytes: 1,
       },
-      { kind: "file-snapshot-hash", path: "/tmp/selected", bytes: 1 },
+      {
+        kind: "file-snapshot-hash",
+        path: "/tmp/selected",
+        sha256: "a".repeat(64),
+        bytes: 1,
+      },
     ],
   ] as const) {
     const result = await finishCliEvidenceCommand(
@@ -74,5 +79,7 @@ it("binds authenticated partial Evidence but preserves raw partial observations"
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected cancellation");
     expect(result.error.details?.partial_observation).toMatchObject(expected);
+    if ("kind" in expected)
+      expect(result.error.details?.partial_observation).toEqual(expected);
   }
 });

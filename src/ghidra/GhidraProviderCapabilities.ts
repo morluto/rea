@@ -1,40 +1,23 @@
-import type {
-  CapabilityDescriptor,
-  ProviderIdentity,
-} from "../application/AnalysisProvider.js";
+import { GHIDRA_PROVIDER_IDENTITY } from "./GhidraProviderMetadata.js";
+import type { CapabilityDescriptor } from "../application/AnalysisProvider.js";
 import {
   inspectWindowsNativeReadiness,
   type WindowsNativeReadiness,
 } from "../process/WindowsAuthority.js";
-import { GHIDRA_FUNCTION_OPERATIONS } from "./GhidraFunctionValues.js";
-import { GHIDRA_INVENTORY_OPERATIONS } from "./GhidraInventoryValues.js";
+import { GHIDRA_FUNCTION_OPERATIONS } from "./GhidraFunctionOperations.js";
+import { GHIDRA_INVENTORY_OPERATIONS } from "./GhidraInventoryOperations.js";
 import { GHIDRA_MUTATING_OPERATIONS } from "./GhidraSessionValues.js";
+import { ghidraLoadImageVerificationNote } from "./GhidraVerifiedLoadImageFormats.js";
 
 /** Target architectures admitted by the Windows P0 native PE boundary. */
 export const WINDOWS_P0_NATIVE_PE_ARCHITECTURES: readonly string[] =
   Object.freeze(["x86", "x86_64", "arm", "arm64"]);
-
-/** Public identity committed by every Ghidra-backed observation. */
-export const GHIDRA_PROVIDER_IDENTITY: ProviderIdentity = Object.freeze({
-  id: "ghidra",
-  name: "Ghidra",
-  version: null,
-});
 
 /** Provider observations, including internal aggregates consumed by workflows. */
 const providerOperations = Object.freeze([
   ...GHIDRA_INVENTORY_OPERATIONS,
   ...GHIDRA_FUNCTION_OPERATIONS,
 ]);
-
-/** Public analyst tools backed by these observations; aggregates stay internal. */
-export const GHIDRA_OPERATIONS = Object.freeze(
-  providerOperations.map((operation) =>
-    operation === "read_binary_inventory_summary"
-      ? "binary_overview"
-      : operation,
-  ),
-);
 
 /** Health limitations shared by every Ghidra-backed capability. */
 export const healthLimitations = Object.freeze([
@@ -68,6 +51,34 @@ const stringInventoryLimitation =
 const searchLimitation =
   "Regex mode uses Java Pattern semantics. Matcher or compiler stack exhaustion returns a resource constraint without closing the session; literal mode avoids regex recursion and returns complete matching values.";
 
+/** Attached to an empty xrefs result: absence of resolved references is not proof. */
+export const ghidraEmptyXrefsLimitation =
+  "Ghidra's ReferenceManager returned no actionable references to this address in this session. An empty list reflects what this analysis resolved, not proof that the address is unreferenced; synthetic entry-point references are omitted. No independent in-product cross-check exists for this empty result: surrounding disassembly can confirm direct references at a code address, and data or string addresses need an external disassembly scan (for example otool -tV, pairing adrp with add or ldr) before concluding there are no xrefs.";
+
+/** Attached to an empty incoming-reference facet of a function result. */
+export const ghidraEmptyIncomingReferencesLimitation =
+  "Ghidra's ReferenceManager returned no actionable incoming references for this function in this session. An empty incoming list reflects what this analysis resolved, not proof that nothing references this function; synthetic entry-point references are omitted. Incoming references have no independent in-product check and require scanning other code (for example an external otool -tV adrp/add pairing) before concluding there are none.";
+
+/**
+ * Attached to an empty incoming-reference facet of an analyzed-function
+ * dossier, which omits synthetic entry-point references and excludes sources
+ * inside the function's own body.
+ */
+export const ghidraEmptyDossierIncomingLimitation =
+  "Ghidra's ReferenceManager returned no actionable incoming references from outside this function's body in this session. An empty incoming list reflects what this analysis resolved, not proof that nothing references this function: synthetic entry-point references are omitted before the dossier's body filter, and sources inside the body are excluded (a self-recursive call is one), so the list can be empty even when such edges exist. In-body edges remain visible in the outgoing references and disassembly, and procedure_references(incoming) reads the same ReferenceManager stream without the in-body exclusion (it omits synthetic entry-point references as well) to separate the cases. Sources outside the program's observed references still require an external scan (for example otool -tV, pairing adrp with add or ldr) before concluding there are none.";
+
+/** Attached to an empty outgoing-reference facet of an external function. */
+export const ghidraEmptyExternalOutgoingLimitation =
+  "Ghidra's ReferenceManager returned no actionable outgoing references for this external function in this session. An external function's defining body is not part of this program database, so its outgoing list cannot describe what the function references: this program's call sites (its incoming references and callers) and the defining artifact are the checks before concluding anything about its behavior.";
+
+/** Attached to an empty outgoing-reference facet of a function result. */
+export const ghidraEmptyOutgoingReferencesLimitation =
+  "Ghidra's ReferenceManager returned no actionable outgoing references for this function in this session. An empty outgoing list reflects what this analysis resolved, not proof that the function references nothing; synthetic entry-point references are omitted. The function's own disassembly is an independent check for direct outgoing references before concluding there are none.";
+
+/** Attached to an empty outgoing-reference list of one instruction result. */
+export const ghidraEmptyInstructionOutgoingLimitation =
+  "Ghidra's ReferenceManager returned no actionable outgoing references from this instruction in this session. An empty list reflects what this analysis resolved, not proof that the instruction references nothing. The instruction's own disassembly is an independent check for direct outgoing references (a direct operand naming a target with no recorded reference contradicts the empty result) before concluding there are none.";
+
 /** Limitation text for one admitted operation, including the common base. */
 export const limitationsFor = (
   operation: string,
@@ -97,14 +108,13 @@ export const limitationsFor = (
       return [
         ...common,
         "Names use Ghidra USER_DEFINED source. A local function entry renames that function; any other mapped address receives a new or renamed primary label. Existing symbols retain their namespace and accept leaf names or qualified names within that namespace; qualified readback can be reused without adding namespace prefixes. Readback compares the primary symbol name.",
-        "set_addresses_names applies each address in its own transaction and reports per-address success; invalid names, unmapped addresses, and readback mismatches roll back only that address.",
+        operation === "set_address_name"
+          ? "A name held by another address in the destination namespace is not moved; a false result reports its reason in raw_result.failures."
+          : "set_addresses_names decides every address from the names held before the batch: addresses requesting one destination name, or a name another selected address holds, are rejected rather than ordered. Others apply in their own transactions. raw_result.failures gives each failure's reason; raw_result.conflicts lists each contested name once with its requesting and holding addresses.",
         "Metadata edits invalidate immutable analysis snapshots and are discarded on close; this is not a saved Ghidra project.",
       ];
     case "inspect_native_load_image":
-      return [
-        ...common,
-        "Independent verification covers admitted DOS MZ, explicitly selected COM with measured entry context, and caller-supplied raw-binary imports. Measured source mappings use inclusive end addresses and complete region digests; no target execution or project mutation occurs.",
-      ];
+      return [...common, ghidraLoadImageVerificationNote()];
     case "read_bytes":
       return [
         ...common,
@@ -113,7 +123,7 @@ export const limitationsFor = (
     case "search_bytes":
       return [
         ...common,
-        "Searches initialized loader-adjusted memory independently per block, in provider address order. Bounds and page coverage ends are inclusive. Uninitialized blocks are listed separately. Overlapping matches are included; patterns never cross block boundaries. A cursor resumes the same target, profile and query. Cancellation discards the active search and returns no successful partial page.",
+        "Searches contiguous eligible initialized loader-adjusted memory in provider address order, including across adjacent blocks. Bounds and page coverage ends are inclusive. Uninitialized blocks are listed separately and break search runs. Overlapping matches are included. A cursor resumes the same target, profile and query. Cancellation discards the active search and returns no successful partial page.",
       ];
     case "address_to_file_offset":
       return [
@@ -235,6 +245,10 @@ export const CAPABILITIES: readonly CapabilityDescriptor[] = Object.freeze(
 export const EXISTING_PROJECT_WINDOWS_UNAVAILABLE =
   "An existing Ghidra project cannot be opened on the Windows launch path.";
 
+/** Windows P0 imports targets into ephemeral projects only. */
+export const EXISTING_PROJECT_WINDOWS_REMEDIATION =
+  "Unset REA_GHIDRA_PROJECT_PATH in the environment that starts REA to import targets into an ephemeral project, or open the existing project on a supported Linux or macOS host; restart REA after changing the environment.";
+
 /** Read-only project mode retains precise unavailable mutation capabilities. */
 export const existingProjectCapabilities = (
   platform: NodeJS.Platform,
@@ -253,6 +267,7 @@ export const existingProjectCapabilities = (
         available: false,
         reason: EXISTING_PROJECT_WINDOWS_UNAVAILABLE,
         availabilityCode: "unsupported_host",
+        remediation: EXISTING_PROJECT_WINDOWS_REMEDIATION,
       };
     if (capability.effects.mutatesArtifact)
       return {
@@ -261,6 +276,10 @@ export const existingProjectCapabilities = (
         available: false,
         reason: "Existing Ghidra project sessions are read-only.",
         availabilityCode: "open_options_invalid",
+        userMessage:
+          "This Ghidra project session is read-only; the requested edit was not applied.",
+        remediation:
+          "Continue inspecting the selected project. To make session-only edits, start a separate REA session with REA_GHIDRA_PROJECT_PATH and REA_GHIDRA_PROGRAM_NAME unset, then open a fresh Ghidra import. It is a separate ephemeral analysis and does not preserve the selected project's state.",
       };
     return { ...capability, limitations };
   });
@@ -289,6 +308,7 @@ export const windowsP0Capabilities = (
             available: false,
             reason: readiness.reason,
             availabilityCode: readiness.code,
+            remediation: readiness.remediation,
             limitations,
           });
     }),
