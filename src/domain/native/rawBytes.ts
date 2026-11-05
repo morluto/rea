@@ -19,6 +19,8 @@ export const MAX_RAW_BYTES_LENGTH = 4096;
 export const MAX_RAW_BYTE_CONTEXT_LINES = 8;
 /** Longest pattern, in bytes, that search_raw_bytes admits. */
 export const MAX_RAW_BYTE_PATTERN_BYTES = 256;
+/** Maximum character length of input pattern and mask strings. */
+export const MAX_RAW_BYTE_PATTERN_TEXT_LENGTH = 2048;
 /** Largest page of matches one search_raw_bytes call returns. */
 export const MAX_RAW_BYTE_MATCHES = 1000;
 /** Bytes per hex-dump line. */
@@ -48,8 +50,14 @@ export const inspectRawBytesInputSchema = z.strictObject({
 export const searchRawBytesInputSchema = z
   .strictObject({
     path: localPathStringSchema,
-    pattern: bytePatternFields.pattern.max(2048),
-    mask: bytePatternFields.mask,
+    pattern: bytePatternFields.pattern
+      .max(MAX_RAW_BYTE_PATTERN_TEXT_LENGTH)
+      .describe(bytePatternFields.pattern.description ?? ""),
+    mask: bytePatternFields.mask
+      .unwrap()
+      .max(MAX_RAW_BYTE_PATTERN_TEXT_LENGTH)
+      .optional()
+      .describe(bytePatternFields.mask.description ?? ""),
     start_offset: offsetSchema
       .default(0)
       .describe("Absolute file offset where the scan starts (default 0)"),

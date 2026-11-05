@@ -1,6 +1,6 @@
 import { open, stat, writeFile, appendFile } from "node:fs/promises";
 import { join } from "node:path";
-import { expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import {
   inspectRawBytesSchema,
@@ -453,3 +453,208 @@ it.each([
     }
   },
 );
+
+it("discloses the zero-size limitation when searching an empty file", async () => {
+  const root = await createTestTempDirectory("rea-raw-zero-");
+  const path = join(root, "empty.bin");
+  await writeFile(path, Buffer.alloc(0));
+  const service = new RawBytesService();
+  try {
+    const report = await searchResult(service, { path, pattern: "50 45" });
+    expect(report.matches).toEqual([]);
+    expect(report.complete).toBe(true);
+    expect(report.limitations).toContainEqual(
+      expect.stringMatching(
+        /The file reports a size of 0, so no bytes were read/,
+      ),
+    );
+  } finally {
+    await service.close();
+  }
+});
+
+it("anchors on an exact byte when the first byte is only partially masked", async () => {
+  const root = await createTestTempDirectory("rea-raw-partial-exact-");
+  const path = join(root, "data.bin");
+  const bytes = Buffer.alloc(512, 0x00);
+  bytes[100] = 0xd0;
+  bytes[101] = 0x42;
+  await writeFile(path, bytes);
+  const service = new RawBytesService();
+  try {
+    const report = await searchResult(service, {
+      path,
+      pattern: "d0 42",
+      mask: "f0 ff",
+    });
+    expect(report.matches.map(({ offset }) => offset)).toEqual([100]);
+  } finally {
+    await service.close();
+  }
+});
+
+describe.each([
+  {
+    operation: "inspect" as const,
+    call: (service: RawBytesService, path: string, opts?: any) =>
+      service.inspect({ path, offset: 0, length: 16 }, opts),
+    opName: "inspect_raw_bytes",
+  },
+  {
+    operation: "search" as const,
+    call: (service: RawBytesService, path: string, opts?: any) =>
+      service.search({ path, pattern: "00", max_matches: 10 }, opts),
+    opName: "search_raw_bytes",
+  },
+])("lifecycle suite for $operation", ({ operation, call, opName }) => {
+  it.each([false, true])(
+    "retains completed Evidence when final close is cancelled (close fails: %s)",
+    async (closeFails) => {
+      const root = await createTestTempDirectory(
+        `rea-raw-${operation}-final-cancel-`,
+      );
+      const path = join(root, "bytes.bin");
+      await writeFile(path, Buffer.alloc(128, 0xaa));
+      const controller = new AbortController();
+      const reason = new Error("cancelled during close");
+      const closeFailure = new Error("injected close failure");
+      let failClose = closeFails;
+      let closes = 0;
+      const service = new RawBytesService({
+        stat,
+        open: async (...args) => {
+          const file = await open(...args);
+          const close = file.close.bind(file);
+          vi.spyOn(file, "close").mockImplementation(async () => {
+            closes += 1;
+            controller.abort(reason);
+            if (failClose) throw closeFailure;
+            await close();
+          });
+          return file;
+        },
+      });
+
+      const result = await call(service, path, { signal: controller.signal });
+      if (result.ok)
+        throw new Error("Expected cancellation during finalization");
+      expect(result.error).toMatchObject({
+        _tag: "AnalysisCancelledError",
+        cleanupIncomplete: closeFails,
+      });
+      expect(result.error.cause).toBe(reason);
+      const evidence = result.error.partialObservation;
+      expect(evidence).toMatchObject({
+        operation: opName,
+        normalized_result: { artifact: { path } },
+      });
+      expect(closes).toBe(1);
+      if (closeFails) {
+        expect(result.error.secondaryFailures).toMatchObject([
+          { _tag: "AnalysisOutputError", cleanupIncomplete: true },
+        ]);
+      } else {
+        expect(result.error.secondaryFailures).toEqual([]);
+      }
+      failClose = false;
+      await service.close();
+      expect(result.error.cleanupIncomplete).toBe(false);
+      expect(result.error.partialObservation).toBe(evidence);
+      expect(closes).toBe(closeFails ? 2 : 1);
+    },
+  );
+
+  it("retains a failed descriptor close and retries it before opening another file", async () => {
+    const root = await createTestTempDirectory(
+      `rea-raw-${operation}-close-retry-`,
+    );
+    const path = join(root, "bytes.bin");
+    await writeFile(path, Buffer.alloc(128, 0xaa));
+    let failClose = true;
+    let opens = 0;
+    const service = new RawBytesService({
+      stat,
+      open: async (...args) => {
+        opens += 1;
+        const file = await open(...args);
+        const close = file.close.bind(file);
+        vi.spyOn(file, "close").mockImplementation(async () => {
+          if (failClose) throw new Error("injected close failure");
+          await close();
+        });
+        return file;
+      },
+    });
+
+    const first = await call(service, path);
+    if (first.ok) throw new Error("Expected the first close to fail");
+    expect(first.error).toMatchObject({
+      _tag: "AnalysisOutputError",
+      cleanupIncomplete: true,
+    });
+    const observation = first.error.partialObservation;
+    expect(observation).toMatchObject({
+      operation: opName,
+      normalized_result: { artifact: { path } },
+    });
+    expect(opens).toBe(1);
+
+    const retryDenied = await call(service, path);
+    expect(retryDenied).toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisOutputError", cleanupIncomplete: true },
+    });
+    expect(opens).toBe(1);
+
+    failClose = false;
+    const recovered = await call(service, path);
+    expect(recovered.ok).toBe(true);
+    expect(first.error.cleanupIncomplete).toBe(false);
+    expect(first.error.partialObservation).toBe(observation);
+    expect(opens).toBe(2);
+    await service.close();
+  });
+
+  it("preserves a primary read failure through failed close and resolves it on retry", async () => {
+    const root = await createTestTempDirectory(
+      `rea-raw-${operation}-read-close-`,
+    );
+    const path = join(root, "bytes.bin");
+    await writeFile(path, Buffer.alloc(128, 0xaa));
+    const readFailure = new Error("injected read failure");
+    let failClose = true;
+    let failRead = true;
+    const service = new RawBytesService({
+      stat,
+      open: async (...args) => {
+        const file = await open(...args);
+        const read = file.read.bind(file);
+        const close = file.close.bind(file);
+        vi.spyOn(file, "read").mockImplementation(async (...readArgs) => {
+          if (failRead) throw readFailure;
+          return await read(...readArgs);
+        });
+        vi.spyOn(file, "close").mockImplementation(async () => {
+          if (failClose) throw new Error("injected close failure");
+          await close();
+        });
+        return file;
+      },
+    });
+
+    const first = await call(service, path);
+    if (first.ok) throw new Error("Expected the read and close to fail");
+    expect(first.error).toMatchObject({
+      cleanupIncomplete: true,
+      cleanupPrimary: { _tag: "AnalysisOutputError" },
+    });
+    expect(first.error.cleanupPrimary?.cause).toBe(readFailure);
+
+    failClose = false;
+    failRead = false;
+    const recovered = await call(service, path);
+    expect(recovered.ok).toBe(true);
+    expect(first.error.cleanupIncomplete).toBe(false);
+    await service.close();
+  });
+});
