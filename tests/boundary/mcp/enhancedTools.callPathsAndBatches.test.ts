@@ -488,12 +488,18 @@ describe("enhanced MCP batch cancellation", () => {
 describe("enhanced MCP batches", () => {
   it("advertises and enforces the batch input budget before provider calls", async () => {
     let calls = 0;
-    const client = await connect({
-      execute: async () => {
-        calls += 1;
-        throw new Error("provider must not be called for invalid input");
+    const client = await connect(
+      {
+        execute: async () => {
+          calls += 1;
+          throw new Error("provider must not be called for invalid input");
+        },
       },
-    });
+      {
+        // Admit the array plus its object member before schema validation.
+        REA_MCP_MAX_INPUT_ELEMENTS: String(MAX_ENHANCED_RECORDS + 2),
+      },
+    );
     const { tools } = await client.listTools();
     expect(
       tools.find(({ name }) => name === "batch_decompile")?.inputSchema,
