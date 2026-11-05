@@ -11,10 +11,8 @@ import {
 } from "../../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { describeValidationFailure } from "../../domain/validationFailure.js";
-import {
-  resolveProgram,
-  type LinuxApplicationRefusal,
-} from "../../desktop/LinuxApplicationInventory.js";
+import type { LinuxApplicationRefusal } from "../../desktop/LinuxApplicationInventory.js";
+import { resolveProgram } from "../../desktop/ProgramLookup.js";
 import type { ObservedWindow } from "../../desktop/X11WindowObserver.js";
 import type { OutputRefusal } from "./DesktopCaptureOutput.js";
 
