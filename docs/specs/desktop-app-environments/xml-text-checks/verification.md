@@ -92,7 +92,8 @@ of Python 3.9 to 3.14.
   of a run among the paragraph's own text all draft `text_equals` on
   `[name=p][@xid=6]`, which passes on the edited save and on one splitting the
   text into other runs; in an archive, text turned into two spans drafts the
-  `text:p`.
+  `text:p`. A link whose label and `href` both change drafts the paragraph's
+  text and keeps `value_equals` on the new `href`.
 - Text checks read only an element, a text node or an attribute's value: an
   element's `name` and the `doctype`'s fields fail in both evaluators, in a
   file or an archive entry, while an attribute's value in an entry passes.

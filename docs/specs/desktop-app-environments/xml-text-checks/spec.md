@@ -74,7 +74,9 @@ verifier's, agree.
   run a later save may split or merge; it is kept when that element is the
   outermost such, at both ends, named without positions, held whole by the
   final view, its text changed, at most 2,000 characters and no timestamp.
-  The text nodes and runs inside it get no other check.
+  The text nodes and runs inside it get no other check, but a changed name or
+  attribute of an element inside it that both ends hold, such as a link's
+  `href`, keeps its own.
 
 ## Non-goals
 

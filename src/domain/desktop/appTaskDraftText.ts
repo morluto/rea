@@ -22,7 +22,7 @@ export interface TextPlacement {
   readonly limit: { readonly suggestions: number; readonly chars: number };
 }
 
-/** Text checks for the elements whose text changed, and the pointers into their runs those checks make redundant. */
+/** Text checks for the elements whose text changed, and the pointers into them those checks make redundant: text and whole runs, not an attribute or name of an element both ends hold. */
 export interface WholeTextSuggestions {
   readonly suggestions: readonly DesktopTaskCheckInput[];
   readonly covers: (pointer: string) => boolean;
@@ -33,6 +33,11 @@ const parentOf = (pointer: string): string | undefined =>
   /^(?<parent>.+)\/children\/[^/]+$/u.exec(pointer)?.groups?.parent;
 
 const isWhitespace = (text: string) => /^[ \t\r\n]*$/u.test(text);
+
+/** The element whose name or attribute a pointer reaches; none for text or a whole element. */
+const ownerOf = (pointer: string): string | undefined =>
+  /^(?<owner>.+)\/(?:name|attributes)(?:\/[^/]+)?$/u.exec(pointer)?.groups
+    ?.owner;
 
 /** Whether an element holds text of its own beside its children, as a paragraph holds the text between its runs. */
 const holdsText = (value: JsonValue | undefined): boolean =>
@@ -136,9 +141,19 @@ export const wholeTextSuggestions = (
       suggestions.push({ kind: "text_equals", file, pointer, value });
     }
   }
+  const kept = (element: string) =>
+    [ends.baseline, ends.final].every((view) =>
+      isXmlElement(resolvePointer(view, element)),
+    );
   return {
     suggestions,
-    covers: (pointer) =>
-      suggested.some((element) => pointer.startsWith(`${element}/children/`)),
+    covers: (pointer) => {
+      if (
+        !suggested.some((element) => pointer.startsWith(`${element}/children/`))
+      )
+        return false;
+      const owner = ownerOf(pointer);
+      return owner === undefined || !kept(owner);
+    },
   };
 };
