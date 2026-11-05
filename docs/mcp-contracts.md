@@ -899,7 +899,7 @@ registrations, reports their command vectors as aligned, stale, missing, or
 invalid, and keeps live-server state `unknown` unless the active connection
 supplies identity.
 
-`tools/list` returns the complete canonical tool inventory, including tools that
+By default, `tools/list` returns the complete canonical tool inventory, including tools that
 are currently unavailable. Opening or closing a target or observing a provider
 health transition leaves that catalog unchanged and does not emit
 `notifications/tools/list_changed`.
@@ -911,7 +911,7 @@ share status facts. `tool_availability.client_requirements` is the baseline for
 each group; a group's optional `client_requirements` replaces that baseline for
 the group's tools. Expand each group's `names` into one tool entry, carrying its
 availability, reason, remediation, default-mode status, modes, and client
-requirements. Compare the union of group names with `tools/list` when checking
+requirements. With the default full catalog, compare the union of group names with `tools/list` when checking
 that a client received the full catalog. An operation absent from all groups is
 missing from the complete inventory; it is not an implicit unavailable entry.
 
@@ -1852,6 +1852,43 @@ managed selection, and WASM timeout and detail restrictions. Path-contract tests
 check full-profile local-path rules. Compact MCP workflow tests verify canonical
 rejection of invalid inputs before provider work, independent of how much detail
 the selected advertisement retains.
+
+### Hot/cold catalog discovery
+
+`REA_MCP_TOOL_CATALOG_PROFILE=hot-cold` opts into per-connection loading for
+clients that refresh `tools/list` after `notifications/tools/list_changed`.
+The default, `full`, retains the complete upfront advertisement. Restart the
+server to change profiles. See [client configuration](client-configuration.md#hotcold-catalogs).
+
+Hot/cold initially advertises `binary_session`, `open_binary`, `close_binary`,
+`get_evidence_bundle`, `inspect_analysis_view`, and the adapter's `discover_tools`.
+An explicit tool-family scope can remove any of those domain tools.
+`discover_tools` searches canonical names and descriptions using case-insensitive
+words, or accepts exact `names`. It loads the matching page and returns names
+and abbreviated descriptions with their configured input schemas, so the next
+call can use the returned arguments contract. Output schemas remain in
+`tools/list`. Search defaults to three results, allows up to
+20 per page, and returns `total_matches` and `next_offset`. Exact names preserve
+request order and reject unknown or excluded names before loading anything.
+Use fewer keywords when no result matches; search requires every word to match.
+
+Loaded definitions retain their original names, complete configured schemas,
+annotations, handlers and client approval rules. Loading does not execute an
+analysis, open a target, or initialize the deferred analysis runtime. A batch
+emits one list-change notification; repeating it emits none. Loaded tools remain
+available until the connection ends. There is no generic execution gateway.
+If a loaded tool does not appear in the client, enable client catalog refresh
+or reconnect using `REA_MCP_TOOL_CATALOG_PROFILE=full`.
+
+The catalog identity covers the complete in-scope inventory, the discovery
+contract and the hot/cold policy; its count includes `discover_tools`. It differs
+from full advertisement and remains stable as tools load. `rea mcp doctor`
+checks the profile's initial advertisement and identity. The domain inventory in
+`binary_session.tool_availability` continues to describe provider and target
+availability, independently of whether a definition is loaded. Load a listed
+cold tool before calling it. Provider health and target changes do not load,
+unload or remove definitions. The input/output schema profiles and explicit
+family exclusions continue to apply.
 
 ### Tool family advertising scope
 
