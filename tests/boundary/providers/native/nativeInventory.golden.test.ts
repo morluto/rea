@@ -27,7 +27,26 @@ import {
 } from "../../../fixtures/nativeCommands.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 
-const inventoryTarget = async (chained = false) => {
+/** One format-1 `LC_DYLD_CHAINED_FIXUPS` payload holding only import names. */
+const chainedImportPayload = (names: readonly string[]): Buffer => {
+  const pool = Buffer.from(`\0${names.join("\0")}\0`);
+  const imports = Buffer.alloc(names.length * 4);
+  let nameOffset = 1;
+  names.forEach((name, index) => {
+    imports.writeUInt32LE((nameOffset << 9) >>> 0, index * 4);
+    nameOffset += Buffer.byteLength(name) + 1;
+  });
+  const starts = Buffer.alloc(4);
+  const header = Buffer.alloc(28);
+  header.writeUInt32LE(28, 4);
+  header.writeUInt32LE(28 + starts.length, 8);
+  header.writeUInt32LE(28 + starts.length + imports.length, 12);
+  header.writeUInt32LE(names.length, 16);
+  header.writeUInt32LE(1, 20);
+  return Buffer.concat([header, starts, imports, pool]);
+};
+
+const inventoryTarget = async (chained = false, payload?: Buffer) => {
   const path = join(
     await createTestTempDirectory("rea-native-inventory-"),
     "fixture",
@@ -41,17 +60,21 @@ const inventoryTarget = async (chained = false) => {
   segment.writeBigUInt64LE(0x4000n, 48);
   segment.writeUInt32LE(7, 56);
   segment.writeUInt32LE(5, 60);
+  const payloadOffset = 0x2000;
   const fixups = Buffer.alloc(16);
   fixups.writeUInt32LE(0x80000034, 0);
   fixups.writeUInt32LE(16, 4);
+  if (payload !== undefined) {
+    fixups.writeUInt32LE(payloadOffset, 8);
+    fixups.writeUInt32LE(payload.length, 12);
+  }
   const image = machoImage({
     cpu: CPU.arm64,
     commands: chained ? [segment, fixups] : [segment],
   });
-  await writeFile(
-    path,
-    Buffer.concat([image, Buffer.alloc(0x4000 - image.byteLength)]),
-  );
+  const file = Buffer.concat([image, Buffer.alloc(0x4000 - image.byteLength)]);
+  payload?.copy(file, payloadOffset);
+  await writeFile(path, file);
   return nativeMachoTargetForFile(path);
 };
 
@@ -791,6 +814,126 @@ it("uses independent undefined names to resolve chained producer spacing", async
       ]),
     },
   });
+});
+
+it("names chained imports from the binary's import table when the symbol table omits them", async () => {
+  const outputs: Record<string, string> = {};
+  for (const tool of ["lipo", "nm", "dwarfdump", "vtool"])
+    outputs[tool] = await fixture(`dyld-inventory/${tool}.txt`);
+  // Weak-def coalescing binds a defined symbol, and Swift images can import
+  // names that have no symbol-table entry, so nm -gju lists neither.
+  outputs["nm:-gju"] = "";
+  outputs["dyld_info:-imports"] = [
+    "    -imports:",
+    "      0x0000  __Z3inli  (from <weak-def-coalesce>)",
+    "      0x0001  _$s10AppIntents0A4EnumMp  (from AppIntents)",
+  ].join("\n");
+  const client = new NativeMacOSProvider(
+    {},
+    inventoryRunner(outputs),
+    "darwin",
+  ).createClient(
+    await inventoryTarget(
+      true,
+      chainedImportPayload(["__Z3inli", "_$s10AppIntents0A4EnumMp"]),
+    ),
+  );
+  const execution = await client.execute("inspect_macho", {});
+  if (!execution.ok) throw execution.error;
+  expect(execution.value.result).toMatchObject({
+    imports: {
+      items: [
+        {
+          name: "__Z3inli",
+          name_status: "exact",
+          source: "<weak-def-coalesce>",
+        },
+        {
+          name: "_$s10AppIntents0A4EnumMp",
+          name_status: "exact",
+          source: "AppIntents",
+        },
+      ],
+    },
+  });
+  // The binary-owned table settles the spacing without the nm inventory.
+  expect(JSON.stringify(execution.value.result)).not.toContain('"-gju"');
+});
+
+it("names each chained row by its ordinal when the table holds both spacing readings", async () => {
+  const outputs: Record<string, string> = {};
+  for (const tool of ["lipo", "nm", "dwarfdump", "vtool"])
+    outputs[tool] = await fixture(`dyld-inventory/${tool}.txt`);
+  outputs["nm:-gju"] = "_foo\n";
+  // Ordinal 1 names " _foo"; installed dyld_info prints two spaces before it.
+  outputs["dyld_info:-imports"] = [
+    "    -imports:",
+    "      0x0000  _foo  (from <weak-def-coalesce>)",
+    "      0x0001   _foo  (from <weak-def-coalesce>)",
+  ].join("\n");
+  const client = new NativeMacOSProvider(
+    {},
+    inventoryRunner(outputs),
+    "darwin",
+  ).createClient(
+    await inventoryTarget(true, chainedImportPayload(["_foo", " _foo"])),
+  );
+  const execution = await client.execute("inspect_macho", {});
+  if (!execution.ok) throw execution.error;
+  expect(execution.value.result).toMatchObject({
+    imports: {
+      items: [
+        { name: "_foo", name_status: "exact" },
+        { name: " _foo", name_status: "exact" },
+      ],
+    },
+  });
+});
+
+it("records why an unusable chained import table falls back to the symbol table", async () => {
+  const outputs: Record<string, string> = {};
+  for (const tool of ["lipo", "nm", "dwarfdump", "vtool"])
+    outputs[tool] = await fixture(`dyld-inventory/${tool}.txt`);
+  outputs["nm:-gju"] = "__Z3inli\n";
+  outputs["dyld_info:-imports"] = [
+    "    -imports:",
+    "      0x0000  __Z3inli  (from libc++)",
+  ].join("\n");
+  // A compressed symbol pool has no decodable names.
+  const payload = chainedImportPayload(["__Z3inli"]);
+  payload.writeUInt32LE(1, 24);
+  const client = new NativeMacOSProvider(
+    {},
+    inventoryRunner(outputs),
+    "darwin",
+  ).createClient(await inventoryTarget(true, payload));
+  const execution = await client.execute("inspect_macho", {});
+  if (!execution.ok) throw execution.error;
+  expect(execution.value.result).toMatchObject({
+    imports: { items: [{ name: "__Z3inli", name_status: "exact" }] },
+    limitations: expect.arrayContaining([
+      expect.stringContaining(
+        "Compressed chained-fixup symbol names are not supported",
+      ),
+    ]),
+  });
+  expect(JSON.stringify(execution.value.result)).toContain('"-gju"');
+});
+
+it("keeps a chained row unknown when its ordinal is outside the import table", () => {
+  const output = "      0x0005  _foo  (from library)";
+  expect(parseDyldImports(output, true, undefined, ["_foo"]).items).toEqual([
+    {
+      name: null,
+      raw_name: output.slice(6),
+      name_status: "ambiguous",
+      addend: null,
+      address: null,
+      weak: null,
+      reexport: null,
+      source: "library",
+    },
+  ]);
 });
 
 it("keeps missing and competing undefined-name matches unknown", () => {
