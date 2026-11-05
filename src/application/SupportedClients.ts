@@ -529,20 +529,32 @@ const openCodeDirectoryHierarchy = (startDir: string): readonly string[] => {
   return dirs.reverse();
 };
 
+const normalizePathIdentity = (
+  path: string,
+  platform: NodeJS.Platform = process.platform,
+): string => {
+  const resolved = resolve(path);
+  return platform === "win32" || platform === "darwin"
+    ? resolved.toLowerCase()
+    : resolved;
+};
+
 /**
  * OpenCode project configuration paths in increasing precedence: outermost
  * ancestor down to the current working directory, checking JSON before JSONC.
  */
 const openCodeProjectConfigurationPaths = (
-  _context: ClientPathContext,
+  context: ClientPathContext,
   userPaths: {
     readonly configPath: string;
     readonly configPaths?: readonly string[];
   },
 ): readonly string[] => {
   const userSet = new Set([
-    resolve(userPaths.configPath),
-    ...(userPaths.configPaths ?? []).map((path) => resolve(path)),
+    normalizePathIdentity(userPaths.configPath, context.platform),
+    ...(userPaths.configPaths ?? []).map((path) =>
+      normalizePathIdentity(path, context.platform),
+    ),
   ]);
   const paths: string[] = [];
   for (const dir of openCodeDirectoryHierarchy(process.cwd())) {
@@ -554,11 +566,21 @@ const openCodeProjectConfigurationPaths = (
     ];
     for (const candidate of candidates) {
       const resolved = resolve(candidate);
-      if (!userSet.has(resolved) && pathPresentOrUnresolved(resolved))
+      if (
+        !userSet.has(normalizePathIdentity(resolved, context.platform)) &&
+        pathPresentOrUnresolved(resolved)
+      )
         paths.push(resolved);
     }
   }
-  return paths.filter((path, index) => paths.lastIndexOf(path) === index);
+  return paths.filter(
+    (path, index) =>
+      paths.findIndex(
+        (p) =>
+          normalizePathIdentity(p, context.platform) ===
+          normalizePathIdentity(path, context.platform),
+      ) === index,
+  );
 };
 
 const existingOpenCodeConfigPath = (context: ClientPathContext): string => {
@@ -588,14 +610,18 @@ const existingOpenCodeConfigPath = (context: ClientPathContext): string => {
 };
 
 const piProjectConfigurationPaths = (
-  _context: ClientPathContext,
+  context: ClientPathContext,
   userPaths: {
     readonly configPath: string;
     readonly configPaths?: readonly string[];
   },
 ): readonly string[] => {
   const candidate = resolve(process.cwd(), ".pi", "mcp.json");
-  if (resolve(candidate) === resolve(userPaths.configPath)) return [];
+  if (
+    normalizePathIdentity(candidate, context.platform) ===
+    normalizePathIdentity(userPaths.configPath, context.platform)
+  )
+    return [];
   if (!pathPresentOrUnresolved(candidate)) return [];
   return [candidate];
 };

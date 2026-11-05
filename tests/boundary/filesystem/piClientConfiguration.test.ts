@@ -467,6 +467,16 @@ describe("Pi project-scoped discovery and overrides", () => {
       config_path: projectConfigPath,
     });
   });
+
+  it("excludes projectConfigPaths when PI_CODING_AGENT_DIR matches project directory case-insensitively", () => {
+    const projectDir = "C:\\Projects\\App";
+    vi.spyOn(process, "cwd").mockReturnValue(projectDir);
+    const clients = supportedClients("C:\\Users\\a", "win32", {
+      PI_CODING_AGENT_DIR: "c:\\projects\\app\\.pi",
+    });
+    const pi = clients.find(({ name }) => name === "pi");
+    expect(pi?.projectConfigPaths).toBeUndefined();
+  });
 });
 
 describe("Pi project-scoped partial overrides", () => {

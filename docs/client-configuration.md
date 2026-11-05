@@ -349,16 +349,20 @@ Pi registration. Doctor accepts an omitted `type` for stdio but reports a
 non-stdio type as invalid; `enabled: false` stays disabled.
 
 REA setup configures only the user scope. Pi also reads `.pi/mcp.json` in
-projects; a project entry replaces the user entry if it defines a launcher or
-type, or overrides only its enabled state and exposure when omitting those
-fields. Doctor discovers project-scoped registrations in `.pi/mcp.json` for the
-current working directory and evaluates them with project precedence; its
-remediation text points to the project file instead of user setup. Uninstall
-removes REA-owned registrations from `.pi/mcp.json` with the same backup and
-readback verification used for user files, while leaving non-owned entries and
-partial overrides intact. An extension that registers `/mcp` can replace
-Pi's built-in MCP support and use its own configuration instead. Run `/reload`
-in an existing Pi session after changing servers outside the session.
+trusted projects; when a project directory has not been approved (including
+the default with no recorded trust decision or when default trust is not
+`always`), Pi does not load `.pi/mcp.json`, and doctor falls back to inspecting
+user configuration. In trusted projects, a project entry replaces the user
+entry if it defines a launcher or type, or overrides only its enabled state and
+exposure when omitting those fields. Doctor discovers project-scoped
+registrations in `.pi/mcp.json` for the current working directory in trusted
+projects and evaluates them with project precedence; its remediation text
+points to the project file instead of user setup. Uninstall removes REA-owned
+registrations from `.pi/mcp.json` with the same backup and readback verification
+used for user files, while leaving non-owned entries and partial overrides intact.
+An extension that registers `/mcp` can replace Pi's built-in MCP support and use
+its own configuration instead. Run `/reload` in an existing Pi session after
+changing servers outside the session.
 
 ## Qwen Code
 

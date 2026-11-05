@@ -237,6 +237,8 @@ export const readClientRegistrationInspections = async (
         scope,
         launcherScope,
         launcherConfigPath,
+        activationScope,
+        activationConfigPath,
       } = configuration.value;
       selectedConfigPath = configPath;
       if (scope !== undefined) selectedScope = scope;
@@ -394,6 +396,7 @@ export const readClientRegistrationInspections = async (
                   launcherScope,
                   launcherConfigPath,
                   activation,
+                  activationConfigPath,
                 )
               : alignment === "unknown"
                 ? unknownEntryPointRemediation()
@@ -429,6 +432,9 @@ export const readClientRegistrationInspections = async (
                 options.providerSettings,
                 options.platform,
               ),
+          activationScope,
+          activationConfigPath,
+          activation === "disabled",
         ),
         activation,
         commandFacts.identity,
@@ -577,11 +583,20 @@ const configuredStatus = (
   launcherConfigPath?: string,
   alignmentStale = false,
   providerSettings?: RecordedProviderSettings,
+  activationScope?: ClientRegistrationScope,
+  activationConfigPath?: string,
+  activationDisabled = false,
 ): ClientRegistrationStatus => {
-  const remediationScope = alignmentStale ? (launcherScope ?? scope) : scope;
+  const remediationScope = alignmentStale
+    ? (launcherScope ?? scope)
+    : activationDisabled
+      ? (activationScope ?? scope)
+      : scope;
   const remediationPath = alignmentStale
     ? (launcherConfigPath ?? configPath)
-    : configPath;
+    : activationDisabled
+      ? (activationConfigPath ?? configPath)
+      : configPath;
   return state === "aligned"
     ? {
         client: client.name,
@@ -669,12 +684,13 @@ const packageVersionRemediation = (
   launcherScope?: ClientRegistrationScope,
   launcherConfigPath?: string,
   activation?: "enabled" | "disabled" | "unknown",
+  activationConfigPath?: string,
 ): string => {
   if (launcherScope === "project")
     return `This project-scoped registration in ${launcherConfigPath ?? configPath ?? client.configPath} requests ${packageReference}, while the current REA CLI package is ${PRODUCT_IDENTITY.packageVersion}. REA setup writes only user-level configuration; update the package version in ${launcherConfigPath ?? configPath ?? client.configPath}, then restart the client.`;
   const base = `This registration requests ${packageReference}, while the current REA CLI package is ${PRODUCT_IDENTITY.packageVersion}. REA does not resolve package-runner requests during doctor; update the registration with rea setup --client ${client.name}, then restart the client.`;
   if (scope === "project" && activation === "disabled") {
-    const target = configPath ?? client.configPath;
+    const target = activationConfigPath ?? configPath ?? client.configPath;
     return `${base} REA setup writes only user-level client configuration and does not modify project-scoped configuration at ${target}. Update or remove the rea registration in ${target}, then restart the client.`;
   }
   return base;

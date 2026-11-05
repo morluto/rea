@@ -826,6 +826,72 @@ describe("OpenCode project-scoped precedence and drift", () => {
   });
 });
 
+describe("OpenCode activation provenance across layers", () => {
+  it("preserves activation provenance across OpenCode layers and points remediation to disabling file", async () => {
+    const home = await createTestTempDirectory("rea-opencode-act-home-");
+    const parentDir = await createTestTempDirectory("rea-opencode-act-parent-");
+    await mkdir(join(parentDir, ".git"), { recursive: true });
+    const subDir = join(parentDir, "sub");
+    await mkdir(subDir, { recursive: true });
+    vi.spyOn(process, "cwd").mockReturnValue(subDir);
+
+    const parentConfigPath = resolve(parentDir, "opencode.json");
+    await writeFile(
+      parentConfigPath,
+      JSON.stringify({
+        mcp: {
+          servers: {
+            rea: {
+              type: "local",
+              command,
+              disabled: true,
+            },
+          },
+        },
+      }),
+    );
+
+    const subConfigPath = resolve(subDir, "opencode.json");
+    await writeFile(
+      subConfigPath,
+      JSON.stringify({
+        mcp: {
+          servers: {
+            rea: {
+              environment: {
+                REA_LOG: "debug",
+              },
+            },
+          },
+        },
+      }),
+    );
+
+    const statuses = await readClientRegistrationStatuses(home, undefined, {
+      environment: {},
+    });
+    const status = statuses.find(({ client }) => client === "opencode");
+    expect(status).toMatchObject({
+      client: "opencode",
+      state: "stale",
+      scope: "project",
+      config_path: subConfigPath,
+    });
+    expect(status?.remediation).toContain(parentConfigPath);
+    expect(status?.remediation).not.toContain(subConfigPath);
+  });
+
+  it("excludes projectConfigPaths when OpenCode config matches user configuration case-insensitively", () => {
+    const projectDir = "C:\\Projects\\App";
+    vi.spyOn(process, "cwd").mockReturnValue(projectDir);
+    const clients = supportedClients("C:\\Users\\a", "win32", {
+      OPENCODE_CONFIG: "c:\\projects\\app\\opencode.json",
+    });
+    const opencode = clients.find(({ name }) => name === "opencode");
+    expect(opencode?.projectConfigPaths).toBeUndefined();
+  });
+});
+
 describe("OpenCode cross-setting environment merge and launcher uninstall", () => {
   it("merges user and project settings so that cross-setting requirements satisfied by project layer pass doctor", async () => {
     const home = await createTestTempDirectory(

@@ -430,6 +430,8 @@ export interface EffectiveClientRegistrationConfiguration {
   readonly scope?: ClientRegistrationScope;
   readonly launcherScope?: ClientRegistrationScope;
   readonly launcherConfigPath?: string;
+  readonly activationScope?: ClientRegistrationScope;
+  readonly activationConfigPath?: string;
 }
 
 /** Read the configuration the client will load across project and user scopes. */
@@ -502,6 +504,8 @@ export const readEffectiveClientRegistrationConfiguration = async (
               scope: "project",
               launcherScope: "project",
               launcherConfigPath: projectPath,
+              activationScope: "project",
+              activationConfigPath: projectPath,
             });
           }
         }
@@ -566,13 +570,19 @@ export const readEffectiveClientRegistrationConfiguration = async (
           let effectiveRea = rawProjectRea;
           let isProjectLauncher = true;
           let launcherConfigPath = projectPath;
+          let isProjectActivation = true;
+          let activationConfigPath = projectPath;
           if (
             isPiPartialServerOverride(rawProjectRea) &&
             isObject(rawUserRea)
           ) {
             const merged: Record<string, unknown> = { ...rawUserRea };
-            if (Object.hasOwn(rawProjectRea, "enabled"))
+            if (Object.hasOwn(rawProjectRea, "enabled")) {
               merged.enabled = rawProjectRea.enabled;
+            } else {
+              isProjectActivation = false;
+              activationConfigPath = client.configPath;
+            }
             if (Object.hasOwn(rawProjectRea, "exposure"))
               merged.exposure = rawProjectRea.exposure;
             if (Object.hasOwn(rawProjectRea, "toolExposure"))
@@ -618,6 +628,8 @@ export const readEffectiveClientRegistrationConfiguration = async (
             scope: "project",
             launcherScope: isProjectLauncher ? "project" : "user",
             launcherConfigPath,
+            activationScope: isProjectActivation ? "project" : "user",
+            activationConfigPath,
           });
         }
       }
@@ -705,6 +717,28 @@ export const readEffectiveClientRegistrationConfiguration = async (
           projectSources.some(
             (proj) => proj.sourcePath === launcherDoc.sourcePath,
           );
+        const activationDoc = [...allSources].reverse().find((doc) => {
+          const s = effectiveClientServer(doc, PRODUCT_IDENTITY.mcpServerKey);
+          return (
+            isObject(s) &&
+            (Object.hasOwn(s, "disabled") ||
+              Object.hasOwn(s, "enabled") ||
+              Object.hasOwn(s, "enable"))
+          );
+        });
+        const isProjectActivation =
+          activationDoc !== undefined &&
+          projectSources.some(
+            (proj) => proj.sourcePath === activationDoc.sourcePath,
+          );
+        const activationConfigPath =
+          activationDoc?.sourcePath ?? winningProjectDoc.sourcePath;
+        const activationScope: ClientRegistrationScope =
+          activationDoc !== undefined
+            ? isProjectActivation
+              ? "project"
+              : "user"
+            : "project";
         return ok({
           document: effectiveDoc,
           configPath: winningProjectDoc.sourcePath,
@@ -712,6 +746,8 @@ export const readEffectiveClientRegistrationConfiguration = async (
           launcherScope: isProjectLauncher ? "project" : "user",
           launcherConfigPath:
             launcherDoc?.sourcePath ?? winningProjectDoc.sourcePath,
+          activationScope,
+          activationConfigPath,
         });
       }
     }
