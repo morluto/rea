@@ -339,21 +339,33 @@ it.each(["unknown platform", "old arm64e bind opcodes not supported"])(
       true,
     );
     if (!result.ok) return;
+    const importsLimitation = `dyld_info -imports reported '${diagnostic}'; import observations are unavailable.`;
+    const exportsLimitation = `dyld_info -exports reported '${diagnostic}'; exports include nm symbol-table observations only.`;
     expect(result.value.result).toMatchObject({
-      imports: { items: [], total: null, exhaustive: false },
+      load_commands: { exhaustive: true },
+      imports: {
+        items: [],
+        total: null,
+        exhaustive: false,
+        limitations: expect.arrayContaining([importsLimitation]),
+      },
       exports: {
         items: expect.arrayContaining([
           expect.objectContaining({ name: "_main", source: "nm" }),
         ]),
         total: null,
         exhaustive: false,
+        limitations: expect.arrayContaining([exportsLimitation]),
       },
     });
     expect(result.value.limitations).toEqual(
-      expect.arrayContaining([
-        `dyld_info -imports reported '${diagnostic}'; import observations are unavailable.`,
-        `dyld_info -exports reported '${diagnostic}'; exports include nm symbol-table observations only.`,
-      ]),
+      expect.arrayContaining([importsLimitation, exportsLimitation]),
     );
+    expect(runner.commands.filter(({ tool }) => tool === "nm")).toEqual([
+      {
+        tool: "nm",
+        args: ["-gjU", "--no-dyldinfo", "-arch", "arm64", target.path],
+      },
+    ]);
   },
 );

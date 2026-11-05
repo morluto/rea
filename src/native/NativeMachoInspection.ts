@@ -321,10 +321,7 @@ export const inspectNativeMacho = async (
     sliceOutput(dyldImports),
     hasChainedFixups,
   );
-  if (
-    dyldSliceRefusal(dyldImports) === null &&
-    parsedImports.needsNameInventory
-  ) {
+  if (parsedImports.needsNameInventory) {
     const importNames = await runSliceCommand(SYMBOL_TABLE_IMPORTS);
     if (!importNames.ok) return err(importNames.error);
     captures.push(importNames.value);
@@ -458,14 +455,11 @@ const normalizeMacho = (
         segment.file_size <= sliceSize,
     )?.vm_address ?? null;
   const nmExports = parseNmExports(exportNames.stdout);
-  const dyldExports =
-    exportsRefusal !== null
-      ? []
-      : parseDyldExports(
-          sliceOutput(dyldExportsCapture),
-          imageBase,
-          new Set(nmExports.map(({ name }) => name)),
-        );
+  const dyldExports = parseDyldExports(
+    sliceOutput(dyldExportsCapture),
+    imageBase,
+    new Set(nmExports.map(({ name }) => name)),
+  );
   const exports = uniqueSymbols([...dyldExports, ...nmExports]).map(
     withRuntimeName,
   );
