@@ -10,6 +10,10 @@ import { artifactFilePrimaryFacts } from "../artifacts/ArtifactFileOperation.js"
 import { fileURLToPath } from "node:url";
 import { GHIDRA_BRIDGE_SOURCES } from "./GhidraBridgeSources.js";
 import { GhidraAdmissionError } from "./GhidraAdmissionError.js";
+import {
+  GHIDRA_RESTRICTED_TEMP_REMEDIATION,
+  ghidraJavaHomeSaveDenial,
+} from "./GhidraTemporaryDirectory.js";
 
 import {
   createAnalysisExecution,
@@ -439,6 +443,9 @@ export const createGhidraProviderClient = (input: {
   const mipsProfileMismatch = ghidraMipsProfileMismatchReason(
     target,
     committedProfile.parameters,
+    project !== undefined &&
+      committedProfile.parameters.import_mode ===
+        "existing-project-private-copy-v1",
   );
   if (mipsProfileMismatch !== null)
     return err(
@@ -1427,6 +1434,26 @@ const projectPrimarySessionError = (
       },
     );
   }
+  if (
+    failure.kind === "remote" &&
+    failure.remoteCode === "invalid_regex_pattern"
+  )
+    return new AnalysisInputError(
+      operation,
+      {
+        ...context,
+        userMessage: failure.message,
+        remediationAction:
+          "Correct the pattern using the reported Ghidra regex syntax error, or select mode literal to search for the text literally, then retry.",
+      },
+      [
+        {
+          path: ["pattern"],
+          reason: "invalid_format",
+          message: failure.message,
+        },
+      ],
+    );
   if (failure.kind === "remote" && isGhidraInputFailureCode(failure.remoteCode))
     return new AnalysisInputError(operation, context, [
       { path: [], reason: "invalid_value", message: failure.message },
@@ -1465,6 +1492,16 @@ const projectPrimarySessionError = (
       limits.ghidraExistingProject?.programName !== undefined,
       context,
     );
+  const javaHomeSave =
+    output === undefined ? undefined : ghidraJavaHomeSaveDenial(output.text);
+  if (javaHomeSave !== undefined)
+    return new ProviderAdapterError("ghidra", operation, {
+      ...context,
+      userMessage: `Ghidra's launcher could not open ${javaHomeSave.path} ("Access is denied", Win32 error 5), so Ghidra exited before its bridge started. The output does not establish why the host denied the write.${
+        uncertainty === undefined ? "" : ` ${uncertainty}`
+      }`,
+      remediationAction: GHIDRA_RESTRICTED_TEMP_REMEDIATION,
+    });
   const killed = projectSigkill(operation, failure, context, {
     restart: exitedProviderMessage(operation, failure, health),
     uncertainty,

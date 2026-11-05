@@ -784,6 +784,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
         return result;
     }
 
+    private record ByteSearchBlock(MemoryBlock block, Address low, Address high) {}
+
     private JsonObject searchMemoryBytes(JsonObject params, SessionDescriptor descriptor) throws Exception {
         // mask, start, end, and cursor are omitted when absent; JSON encoding drops those keys.
         Set<String> keys = params.keySet();
@@ -844,16 +846,13 @@ public final class ReaGhidraBridge extends HeadlessScript {
         JsonArray blocks = new JsonArray();
         JsonArray skipped = new JsonArray();
         JsonArray notLoaded = new JsonArray();
-        long covered = 0;
-        String next = null;
+        List<ByteSearchBlock> eligible = new ArrayList<>();
         for (MemoryBlock block : ordered) {
             monitor.checkCancelled();
             Address low = block.getStart();
             Address high = block.getEnd();
             Address bound = start == null ? end : start;
             if (bound != null && !bound.getAddressSpace().equals(low.getAddressSpace())) continue;
-            // Without bounds, search loaded memory only. Non-loaded file parts
-            // (such as .symtab) and overlays stay reachable through explicit bounds.
             if (bound == null && (!block.isLoaded() || block.isOverlay())) {
                 notLoaded.add(byteSearchCoverage(block, low, high));
                 continue;
@@ -865,40 +864,66 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 skipped.add(byteSearchCoverage(block, low, high));
                 continue;
             }
-            if (next != null) continue;
-            if (resume != null && low.compareTo(resume) < 0) low = resume;
-            if (low.compareTo(high) > 0 || !low.getAddressSpace().equals(high.getAddressSpace())) continue;
-            Address at = low;
-            Address examinedEnd = high;
-            while (at != null && at.compareTo(high) <= 0 && high.subtract(at) >= bytes.length - 1L) {
+            eligible.add(new ByteSearchBlock(block, low, high));
+        }
+        long covered = 0;
+        String next = null;
+        for (int first = 0; first < eligible.size() && next == null;) {
+            monitor.checkCancelled();
+            int last = first;
+            while (last + 1 < eligible.size()) {
                 monitor.checkCancelled();
-                // Ghidra's end address bounds candidate starts, not the final matched byte.
-                Address found = currentProgram.getMemory().findBytes(at, high.subtract(bytes.length - 1L), bytes, masks, true, monitor);
-                monitor.checkCancelled();
-                if (found == null || high.subtract(found) < bytes.length - 1L) break;
-                if (matches.size() == limit) {
-                    next = binding + ":" + canonicalAddress(found);
-                    examinedEnd = found.addNoWrap(bytes.length - 1L);
-                    break;
-                }
-                JsonObject match = new JsonObject();
-                match.addProperty("address", canonicalAddress(found));
-                match.addProperty("segment", block.getName());
-                Long offset = targetFileOffset(block, found).offset();
-                match.add("file_offset", offset == null ? JsonNull.INSTANCE : GSON.toJsonTree(offset));
-                Function function = currentProgram.getFunctionManager().getFunctionContaining(found);
-                JsonObject procedure = new JsonObject();
-                if (function != null) {
-                    procedure.addProperty("address", canonicalAddress(function.getEntryPoint()));
-                    procedure.addProperty("name", function.getName(true));
-                }
-                match.add("procedure", function == null ? JsonNull.INSTANCE : procedure);
-                matches.add(match);
-                at = found.next();
+                ByteSearchBlock previous = eligible.get(last);
+                ByteSearchBlock following = eligible.get(last + 1);
+                if (!previous.high().getAddressSpace().equals(following.low().getAddressSpace()) ||
+                    previous.high().next() == null || !previous.high().next().equals(following.low())) break;
+                last++;
             }
-            JsonObject coverage = byteSearchCoverage(block, low, examinedEnd);
-            covered = Math.addExact(covered, coverage.get("bytes").getAsLong());
-            blocks.add(coverage);
+            Address low = eligible.get(first).low();
+            Address high = eligible.get(last).high();
+            if (resume != null && low.compareTo(resume) < 0) low = resume;
+            if (low.compareTo(high) <= 0 && low.getAddressSpace().equals(high.getAddressSpace())) {
+                Address at = low;
+                Address examinedEnd = high;
+                while (at != null && at.compareTo(high) <= 0 && high.subtract(at) >= bytes.length - 1L) {
+                    monitor.checkCancelled();
+                    // findBytes bounds candidate starts. The entire candidate remains in this eligible run.
+                    Address found = currentProgram.getMemory().findBytes(at, high.subtract(bytes.length - 1L), bytes, masks, true, monitor);
+                    monitor.checkCancelled();
+                    if (found == null || high.subtract(found) < bytes.length - 1L) break;
+                    if (matches.size() == limit) {
+                        next = binding + ":" + canonicalAddress(found);
+                        examinedEnd = found.addNoWrap(bytes.length - 1L);
+                        break;
+                    }
+                    MemoryBlock matchBlock = currentProgram.getMemory().getBlock(found);
+                    JsonObject match = new JsonObject();
+                    match.addProperty("address", canonicalAddress(found));
+                    match.addProperty("segment", matchBlock.getName());
+                    Long offset = targetFileOffset(matchBlock, found).offset();
+                    match.add("file_offset", offset == null ? JsonNull.INSTANCE : GSON.toJsonTree(offset));
+                    Function function = currentProgram.getFunctionManager().getFunctionContaining(found);
+                    JsonObject procedure = new JsonObject();
+                    if (function != null) {
+                        procedure.addProperty("address", canonicalAddress(function.getEntryPoint()));
+                        procedure.addProperty("name", function.getName(true));
+                    }
+                    match.add("procedure", function == null ? JsonNull.INSTANCE : procedure);
+                    matches.add(match);
+                    at = found.next();
+                }
+                for (int index = first; index <= last; index++) {
+                    monitor.checkCancelled();
+                    ByteSearchBlock item = eligible.get(index);
+                    Address coveredLow = item.low().compareTo(low) < 0 ? low : item.low();
+                    Address coveredHigh = item.high().compareTo(examinedEnd) > 0 ? examinedEnd : item.high();
+                    if (coveredLow.compareTo(coveredHigh) > 0) continue;
+                    JsonObject coverage = byteSearchCoverage(item.block(), coveredLow, coveredHigh);
+                    covered = Math.addExact(covered, coverage.get("bytes").getAsLong());
+                    blocks.add(coverage);
+                }
+            }
+            first = last + 1;
         }
         JsonObject searched = new JsonObject();
         searched.add("blocks", blocks);
@@ -1263,6 +1288,12 @@ public final class ReaGhidraBridge extends HeadlessScript {
                     if (component.getDataType() instanceof ghidra.program.model.data.BitFieldDataType bitfield) {
                         field.addProperty("bit_size", bitfield.getBitSize());
                         field.addProperty("bit_offset", bitfield.getBitOffset());
+                        JsonObject bitField = new JsonObject();
+                        bitField.addProperty("base_type_id", bitfield.getBaseDataType().getPathName());
+                        bitField.addProperty("declared_bit_size", bitfield.getDeclaredBitSize());
+                        bitField.addProperty("component_type_lookup", typeLookupResult(bitfield));
+                        bitField.addProperty("base_type_lookup", typeLookupResult(bitfield.getBaseDataType()));
+                        field.add("bit_field", bitField);
                     }
                     field.addProperty("status", "observed");
                     field.addProperty("flexible_tail", "unknown");
@@ -1293,12 +1324,17 @@ public final class ReaGhidraBridge extends HeadlessScript {
         result.add("members", members);
         result.addProperty("total_fields", totalFields);
         result.addProperty("truncated", totalFields > 20_000);
-        result.add("limitations", GSON.toJsonTree(List.of("Layouts are Ghidra data-type database observations; original debug/source authority and flexible-tail semantics are not inferred. Nested and recursive types retain category-path identities for separate inspection.", "At most 20000 fields or enum members are serialized per type to bound provider output. total_fields and truncated report omissions. Enum values preserve Ghidra's signed long representation.")));
+        result.add("limitations", GSON.toJsonTree(List.of("Layouts are Ghidra data-type database observations; original debug/source authority and flexible-tail semantics are not inferred. Component type paths do not necessarily identify separately registered types; bit-field lookups report whether the manager resolves equivalent types.", "At most 20000 fields or enum members are serialized per type to bound provider output. total_fields and truncated report omissions. Enum values preserve Ghidra's signed long representation.")));
         if (type != null) {
             JsonObject metadata = analysisExtensions.inspectDataType(currentProgram, type, address, monitor);
             if (metadata != null) result.add("metadata_recovery", metadata);
         }
         return result;
+    }
+
+    private String typeLookupResult(DataType type) {
+        DataType resolved = currentProgram.getDataTypeManager().getDataType(type.getPathName());
+        return resolved == null ? "not-found" : resolved.isEquivalent(type) ? "equivalent" : "different";
     }
 
     private JsonObject instructionReference(Reference reference) {
@@ -4929,7 +4965,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
             // without retaining its cause. This producer reason is not bad syntax.
             if (exception.getDescription().equals("Stack overflow during pattern compilation"))
                 throw regexStackExhausted(expression, "compiling");
-            throw new RequestFailure("invalid_request", "Invalid regex pattern " + expression + ": " + exception.getDescription() + " at index " + exception.getIndex());
+            throw new RequestFailure("invalid_regex_pattern", "Invalid regex pattern " + expression + ": " + exception.getDescription() + " at index " + exception.getIndex());
         }
         catch (StackOverflowError exhausted) {
             throw regexStackExhausted(expression, "compiling");
