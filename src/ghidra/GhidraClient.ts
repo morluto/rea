@@ -88,7 +88,6 @@ import {
 } from "../artifacts/ArtifactFileOperation.js";
 import { readArtifactFileChunks } from "../artifacts/readArtifactFileChunks.js";
 import { stageGhidraDebugCompanion } from "./GhidraDebugCompanion.js";
-import { readFileHandleChunks } from "../filesystem/readFileHandleChunks.js";
 import { readBoundedFileBytes } from "../process/BoundedFileBytes.js";
 import {
   assertRegularFileActive,
@@ -980,7 +979,7 @@ export class GhidraClient {
           this.#options.debugCompanion,
           this.#runtimeRoot.path,
           this.#snapshotPath,
-          { signal: deadline.signal },
+          { signal: deadline.signal, resourceScope: this.#fileResources },
         );
         this.#targetAdmission =
           this.#targetAdmission === undefined
@@ -990,12 +989,19 @@ export class GhidraClient {
                 ...(staged as Record<string, JsonValue>),
               };
       } catch (cause: unknown) {
-        if (deadline.signal.aborted) return this.#startupInterrupted(deadline);
-        const failure = this.#failure(
-          "start",
-          "Ghidra debug companion staging failed",
-          cause,
-        );
+        // Classify the producer's outcome before any later deadline state, so
+        // a real staging failure is never hidden by an unrelated abort.
+        const failure =
+          cause instanceof ArtifactReaderFailure && cause.reason === "cancelled"
+            ? this.#interruptionFailure(
+                deadline,
+                artifactFileCancellationCause(cause),
+              )
+            : this.#failure(
+                "start",
+                "Ghidra debug companion staging failed",
+                cause,
+              );
         return this.#startupFailure(failure);
       }
     }

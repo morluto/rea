@@ -1,19 +1,25 @@
+import {
+  readFatContainerHeader,
+  validateFatSlice,
+} from "./apple/machoContainer.js";
+import { machoCpuSubtypeBase } from "./apple/machoCpuIdentity.js";
 import { validMachOLoadCommandSize } from "./apple/machoLoadCommand.js";
 import { err, ok, type Result } from "./result.js";
 
 const LC_UUID = 0x1b;
-const FAT_MAGIC_BE = 0xcafebabe;
-const FAT_MAGIC_64_BE = 0xcafebabf;
-const FAT_MAGIC_LE = 0xbebafeca;
-const FAT_MAGIC_64_LE = 0xbfbafeca;
 const THIN_LITTLE_MAGICS = new Set([0xcefaedfe, 0xcffaedfe]);
 const THIN_BIG_MAGICS = new Set([0xfeedface, 0xfeedfacf]);
 const UUID_BYTES = 16;
 
-/** One LC_UUID with the cputype of the Mach-O image that declares it. */
+/**
+ * One LC_UUID with the CPU identity of the Mach-O image that declares it.
+ * The subtype keeps only its base bits: capability flags do not change which
+ * image a UUID belongs to. A UUID-less image keeps its place as a null entry.
+ */
 export interface MachOUuidEntry {
   readonly cpuType: number;
-  readonly uuid: string;
+  readonly cpuSubtypeBase: number;
+  readonly uuid: string | null;
 }
 
 const formatUuid = (raw: Buffer): string => {
@@ -101,11 +107,11 @@ export function* machoUuidReads(
   return ok({ cpuType, cpuSubtype, uuid: observed });
 }
 
-const readUuidsFromThin = (
+const readThinImage = (
   bytes: Buffer,
   offset: number,
   end: number,
-): Result<MachOUuidEntry[], string> => {
+): Result<MachOImageUuid, string> => {
   const decoder = machoUuidReads(end - offset);
   let step = decoder.next();
   while (!step.done) {
@@ -117,88 +123,62 @@ const readUuidsFromThin = (
       ),
     );
   }
-  if (!step.value.ok) return step.value;
-  const identity = step.value.value;
-  return ok(
-    identity.uuid === null
-      ? []
-      : [
-          {
-            cpuType: identity.cpuType,
-            uuid: identity.uuid,
-          },
-        ],
-  );
+  return step.value;
 };
 
+const thinEntry = (identity: MachOImageUuid): MachOUuidEntry => ({
+  cpuType: identity.cpuType,
+  cpuSubtypeBase: machoCpuSubtypeBase(identity.cpuSubtype),
+  uuid: identity.uuid,
+});
+
 /**
- * Read the LC_UUID of a Mach-O image with its declaring cputype, descending
- * into universal (FAT) containers of either byte order. Slice order is
- * preserved so a caller can attribute each UUID to its architecture; a zero
- * UUID is preserved: it is an observed value, not an unknown.
+ * Read the LC_UUID of a Mach-O image with its declaring CPU identity,
+ * descending into universal (FAT) containers through the shared container
+ * owner: slice ranges, alignment, and table-versus-header CPU agreement get
+ * the same checks every other FAT consumer applies. Slice order is preserved
+ * so a caller can attribute each UUID to its architecture; a zero UUID is
+ * preserved: it is an observed value, not an unknown.
  */
 export const readMachoUuidEntries = (
   bytes: Buffer,
 ): Result<MachOUuidEntry[], string> => {
-  if (bytes.length < 8) return err("Mach-O image is truncated");
-  const magic = bytes.readUInt32BE(0);
-  const fat =
-    magic === FAT_MAGIC_BE ||
-    magic === FAT_MAGIC_64_BE ||
-    magic === FAT_MAGIC_LE ||
-    magic === FAT_MAGIC_64_LE;
-  if (fat) {
-    const wide = magic === FAT_MAGIC_64_BE || magic === FAT_MAGIC_64_LE;
-    // The architecture table's byte order follows the observed magic.
-    const big = magic === FAT_MAGIC_BE || magic === FAT_MAGIC_64_BE;
-    const read32 = big
-      ? (position: number) => bytes.readUInt32BE(position)
-      : (position: number) => bytes.readUInt32LE(position);
-    const count = read32(4);
-    const entrySize = wide ? 32 : 20;
-    if (count > 128 || 8 + count * entrySize > bytes.length)
-      return err(
-        "universal Mach-O container has an invalid architecture table",
-      );
-    const entries: MachOUuidEntry[] = [];
-    for (let index = 0; index < count; index += 1) {
-      const entry = 8 + index * entrySize;
-      const cpuType = big ? bytes.readInt32BE(entry) : bytes.readInt32LE(entry);
-      const sliceOffset = wide
-        ? Number(
-            big
-              ? bytes.readBigUInt64BE(entry + 8)
-              : bytes.readBigUInt64LE(entry + 8),
-          )
-        : read32(entry + 8);
-      const sliceSize = wide
-        ? Number(
-            big
-              ? bytes.readBigUInt64BE(entry + 16)
-              : bytes.readBigUInt64LE(entry + 16),
-          )
-        : read32(entry + 12);
-      if (sliceSize === 0) return err("universal Mach-O slice is empty");
-      if (sliceOffset > bytes.length || sliceSize > bytes.length - sliceOffset)
-        return err("universal Mach-O slice is out of bounds");
-      const slice = readUuidsFromThin(
-        bytes,
-        sliceOffset,
-        sliceOffset + sliceSize,
-      );
-      if (!slice.ok) return slice;
-      for (const item of slice.value)
-        entries.push({ cpuType, uuid: item.uuid });
-    }
-    return ok(entries);
+  const container = readFatContainerHeader(bytes, bytes.length);
+  if (container.state === "not-fat") {
+    const image = readThinImage(bytes, 0, bytes.length);
+    return image.ok ? ok([thinEntry(image.value)]) : image;
   }
-  return readUuidsFromThin(bytes, 0, bytes.length);
-};
-
-/** The LC_UUID values of a Mach-O image, without their architecture owner. */
-export const readMachoUuids = (bytes: Buffer): Result<string[], string> => {
-  const entries = readMachoUuidEntries(bytes);
-  return entries.ok ? ok(entries.value.map(({ uuid }) => uuid)) : entries;
+  if (container.state === "needs-data")
+    return err("the universal Mach-O container table is truncated");
+  if (container.state === "malformed") return err(container.reason);
+  const entries: MachOUuidEntry[] = [];
+  for (const declaration of container.slices) {
+    const rangeIssue = validateFatSlice(
+      declaration,
+      bytes.length,
+      container.tableEnd,
+    );
+    if (rangeIssue !== null) return err(rangeIssue);
+    const image = readThinImage(
+      bytes,
+      declaration.offset,
+      declaration.offset + declaration.size,
+    );
+    if (!image.ok) return image;
+    const identityIssue = validateFatSlice(
+      declaration,
+      bytes.length,
+      container.tableEnd,
+      image.value,
+    );
+    if (identityIssue !== null) return err(identityIssue);
+    entries.push({
+      cpuType: declaration.cpuType,
+      cpuSubtypeBase: machoCpuSubtypeBase(declaration.cpuSubtype),
+      uuid: image.value.uuid,
+    });
+  }
+  return ok(entries);
 };
 
 /**

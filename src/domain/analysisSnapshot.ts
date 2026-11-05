@@ -503,18 +503,13 @@ const sameDebugCompanion = (
   snapshot: AnalysisSnapshotTarget,
   target: BinaryTarget,
 ): boolean => {
-  const selected =
-    (target.format === "mach-o" || target.format === "mach-o-universal") &&
-    target.debugCompanion !== undefined
-      ? target.debugCompanion
-      : undefined;
+  const selected = machOCompanionIdentity(target);
   const recorded = snapshot.debug_companion ?? null;
-  if (selected === undefined) return recorded === null;
+  if (selected === null || recorded === null) return selected === recorded;
   return (
-    recorded !== null &&
     recorded.uuid === selected.uuid &&
-    recorded.member_sha256 === selected.memberSha256 &&
-    (recorded.source_path ?? null) === selected.sourcePath
+    recorded.member_sha256 === selected.member_sha256 &&
+    recorded.source_path === selected.source_path
   );
 };
 

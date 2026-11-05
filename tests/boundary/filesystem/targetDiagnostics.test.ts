@@ -1,6 +1,5 @@
 import { execFile } from "node:child_process";
 import { chmod, mkdir, readFile, realpath, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
@@ -524,7 +523,9 @@ describe("debug companion fixture admission", () => {
       ).toBe(true);
     },
   );
+});
 
+describe("debug companion resource limits and mismatch", () => {
   it.skipIf(!onDarwin)(
     "rejects a DWARF directory with too many entries",
     async () => {
@@ -548,11 +549,19 @@ describe("debug companion fixture admission", () => {
       const projected = projectAnalysisError(result.error);
       expect(projected).toMatchObject({
         code: "invalid_request",
+        remediation: {
+          action: expect.stringContaining("no runtime override"),
+        },
         details: {
           constraint: "debug_companion_rejected",
           reason: expect.stringContaining(
             "more than 16 DWARF directory entries",
           ),
+          diagnostics: {
+            limit: "dsym_dwarf_directory_entries",
+            maximum_entries: 16,
+            runtime_override: false,
+          },
         },
       });
     },
@@ -582,9 +591,19 @@ describe("debug companion fixture admission", () => {
       const projected = projectAnalysisError(result.error);
       expect(projected).toMatchObject({
         code: "invalid_request",
+        remediation: {
+          action: expect.stringContaining("no runtime override"),
+        },
         details: {
           constraint: "debug_companion_rejected",
           reason: expect.stringContaining("exceeds the supported size"),
+          diagnostics: {
+            limit: "dsym_member_size_bytes",
+            maximum_bytes: 1024 * 1024 * 1024,
+            observed_bytes: 1024 * 1024 * 1024 + 1,
+            member_path: huge,
+            runtime_override: false,
+          },
         },
       });
     },
@@ -661,8 +680,8 @@ describe("debug companion universal slice selection", () => {
       expect(entries).toEqual({
         ok: true,
         value: [
-          { cpuType: 0x01000007, uuid: null },
-          { cpuType: 0x01000007, uuid: siblingUuid },
+          { cpuType: 0x01000007, cpuSubtypeBase: 0, uuid: null },
+          { cpuType: 0x01000007, cpuSubtypeBase: 0, uuid: siblingUuid },
         ],
       });
     } finally {

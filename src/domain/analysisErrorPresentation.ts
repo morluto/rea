@@ -194,7 +194,10 @@ export const analysisErrorRemediationAction = (
     error instanceof BinaryTargetError &&
     error.constraint === "debug_companion_rejected"
   )
-    return "Correct dsym_path (--dsym-path on the CLI; dsym_path through MCP) so it names a .dSYM bundle whose DWARF member carries the target image's LC_UUID, or omit it to analyze without debug types.";
+    return (
+      error.remediationAction ??
+      "Correct dsym_path (--dsym-path on the CLI; dsym_path through MCP) so it names a .dSYM bundle whose DWARF member carries the target image's LC_UUID, or omit it to analyze without debug types."
+    );
   if (
     error instanceof BinaryTargetError &&
     error.constraint === "file_format_rejected"

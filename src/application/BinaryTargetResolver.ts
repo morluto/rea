@@ -26,14 +26,8 @@ import { jsonValueSchema } from "../domain/jsonValue.js";
 import { childFailureDiagnostics } from "../domain/analysisErrorProjection.js";
 import { constants, type Stats } from "node:fs";
 import { createHash } from "node:crypto";
-import {
-  access,
-  lstat,
-  realpath,
-  stat,
-  type FileHandle,
-} from "node:fs/promises";
-import { extname, resolve } from "node:path";
+import { access, realpath, stat, type FileHandle } from "node:fs/promises";
+import { extname } from "node:path";
 
 import { BinaryTargetError } from "../domain/configurationErrors.js";
 import {
@@ -609,12 +603,21 @@ const readOpenedBinaryTarget = async (
       ...(detected.value.format === "mach-o-universal"
         ? { targetSlice: detected.value.universalSlice }
         : {}),
+      ...(options.resources === undefined
+        ? {}
+        : { resources: options.resources }),
       ...(signal === undefined ? {} : { signal }),
     });
     if (!companion.ok)
       return err(
         new BinaryTargetError(path, companion.error.reason, {
           constraint: "debug_companion_rejected",
+          ...(companion.error.remediationAction === undefined
+            ? {}
+            : { remediationAction: companion.error.remediationAction }),
+          ...(companion.error.diagnostics === undefined
+            ? {}
+            : { diagnostics: companion.error.diagnostics }),
         }),
       );
     debugCompanion = companion.value;
@@ -725,6 +728,40 @@ const targetResolutionFailure = (
     physical instanceof BinaryTargetError
   )
     return err(physical);
+  if (cause instanceof OwnedRegularFileOperationFailure) {
+    if (physical instanceof RetainedRegularFileCleanupFailure) {
+      const error = new BinaryTargetError(
+        physical.path,
+        "The debug companion file handle could not be closed",
+        {
+          cause: physical,
+          cleanup: {
+            reason:
+              physical.cleanupCause instanceof Error
+                ? physical.cleanupCause.message
+                : String(physical.cleanupCause),
+            resources: [physical.path],
+          },
+        },
+      );
+      bindRegularFileCleanup(physical, error);
+      return err(error);
+    }
+    if (
+      physical instanceof ArtifactReaderFailure &&
+      physical.cleanup !== undefined
+    )
+      return err(
+        new BinaryTargetError(
+          physical.cleanup.resources[0] ?? candidate,
+          "The debug companion directory handle could not be closed",
+          {
+            cause: physical,
+            cleanup: physical.cleanup,
+          },
+        ),
+      );
+  }
   if (!(cause instanceof OwnedRegularFileOperationFailure)) {
     const cancellation = regularFileCancellation(cause);
     if (cancellation !== undefined)

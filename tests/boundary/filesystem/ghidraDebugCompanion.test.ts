@@ -11,7 +11,7 @@ import {
 } from "node:fs/promises";
 import { join } from "node:path";
 
-import { expect, it, vi } from "vitest";
+import { expect, it } from "vitest";
 
 import { AnalysisArtifactChangedError } from "../../../src/domain/analysisErrorCore.js";
 
@@ -127,7 +127,10 @@ it("cleans partial staging after cancellation without changing the selected memb
       fixture.snapshot,
       { signal: controller.signal },
     ),
-  ).rejects.toMatchObject({ name: "AbortError" });
+  ).rejects.toMatchObject({
+    name: "ArtifactReaderFailure",
+    reason: "cancelled",
+  });
   expect(await readdir(fixture.runtime)).toEqual([]);
   expect(
     (await readFile(fixture.companion.memberPath)).equals(fixture.bytes),
@@ -157,7 +160,11 @@ it("reads a UUID after a sparse command span above the former allocation ceiling
     expect(await readMachoFileUuidEntries(handle, 32 + commandBytes)).toEqual({
       ok: true,
       value: [
-        { cpuType: 0x01000007, uuid: "11111111-2222-3333-4444-555555555555" },
+        {
+          cpuType: 0x01000007,
+          cpuSubtypeBase: 0,
+          uuid: "11111111-2222-3333-4444-555555555555",
+        },
       ],
     });
   } finally {

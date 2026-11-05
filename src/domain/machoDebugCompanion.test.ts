@@ -1,20 +1,36 @@
 import { describe, expect, it } from "vitest";
 
+import { ok, type Result } from "./result.js";
 import {
   debugCompanionMatches,
   readMachoUuidEntries,
-  readMachoUuids,
 } from "./machoDebugCompanion.js";
+
+/** The LC_UUID values an image declares, without their CPU identities. */
+const readMachoUuids = (bytes: Buffer): Result<string[], string> => {
+  const entries = readMachoUuidEntries(bytes);
+  return entries.ok
+    ? ok(
+        entries.value
+          .map(({ uuid }) => uuid)
+          .filter((uuid): uuid is string => uuid !== null),
+      )
+    : entries;
+};
 
 const uuidBytes = (text: string): Buffer =>
   Buffer.from(text.replace(/-/gu, ""), "hex");
 
-const withUuidLoadCommand = (uuid: string): Buffer => {
+const withUuidLoadCommand = (
+  uuid: string,
+  cpuType = 0x0100000c,
+  cpuSubtype = 0,
+): Buffer => {
   const commandSize = 8 + 16;
   const bytes = Buffer.alloc(32 + commandSize);
   bytes.writeUInt32LE(0xfeedfacf, 0); // 64-bit little-endian thin image
-  bytes.writeUInt32LE(0x0100000c, 4); // cputype arm64
-  bytes.writeUInt32LE(0, 8); // cpusubtype
+  bytes.writeUInt32LE(cpuType, 4); // cputype
+  bytes.writeUInt32LE(cpuSubtype, 8); // cpusubtype
   bytes.writeUInt32LE(2, 12); // MH_EXECUTE
   bytes.writeUInt32LE(1, 16); // ncmds
   bytes.writeUInt32LE(commandSize, 20); // sizeofcmds
@@ -26,7 +42,12 @@ const withUuidLoadCommand = (uuid: string): Buffer => {
   return bytes;
 };
 
-const universalWithSlices = (slices: readonly Buffer[]): Buffer => {
+/** The table's CPU declaration must agree with every embedded thin header. */
+const universalWithSlices = (
+  slices: readonly Buffer[],
+  cpuType = 0x01000007,
+  cpuSubtype = 3,
+): Buffer => {
   const headerSize = 8 + slices.length * 20;
   const total = slices.reduce((size, slice) => size + slice.length, headerSize);
   const bytes = Buffer.alloc(total);
@@ -35,11 +56,11 @@ const universalWithSlices = (slices: readonly Buffer[]): Buffer => {
   let offset = headerSize;
   slices.forEach((slice, index) => {
     const entry = 8 + index * 20;
-    bytes.writeInt32BE(0x01000007, entry); // cputype x86_64
-    bytes.writeInt32BE(3, entry + 4);
+    bytes.writeInt32BE(cpuType, entry);
+    bytes.writeInt32BE(cpuSubtype, entry + 4);
     bytes.writeUInt32BE(offset, entry + 8);
     bytes.writeUInt32BE(slice.length, entry + 12);
-    bytes.writeUInt32BE(12, entry + 16);
+    bytes.writeUInt32BE(0, entry + 16); // align exponent 0: offset stays valid
     slice.copy(bytes, offset);
     offset += slice.length;
   });
@@ -62,8 +83,16 @@ describe("Mach-O LC_UUID reading", () => {
   });
   it("descends into universal containers and keeps slice order", () => {
     const container = universalWithSlices([
-      withUuidLoadCommand("11111111-1111-1111-1111-111111111111"),
-      withUuidLoadCommand("22222222-2222-2222-2222-222222222222"),
+      withUuidLoadCommand(
+        "11111111-1111-1111-1111-111111111111",
+        0x01000007,
+        3,
+      ),
+      withUuidLoadCommand(
+        "22222222-2222-2222-2222-222222222222",
+        0x01000007,
+        3,
+      ),
     ]);
     expect(readMachoUuids(container)).toEqual({
       ok: true,
@@ -108,6 +137,7 @@ describe("UUID entry attribution", () => {
       value: [
         {
           cpuType: 0x0100000c,
+          cpuSubtypeBase: 0,
           uuid: "A1B2C3D4-E5F6-0789-ABCD-EF0123456789",
         },
       ],
@@ -115,8 +145,16 @@ describe("UUID entry attribution", () => {
   });
   it("attributes each universal slice UUID to its own cputype", () => {
     const container = universalWithSlices([
-      withUuidLoadCommand("11111111-1111-1111-1111-111111111111"),
-      withUuidLoadCommand("22222222-2222-2222-2222-222222222222"),
+      withUuidLoadCommand(
+        "11111111-1111-1111-1111-111111111111",
+        0x01000007,
+        3,
+      ),
+      withUuidLoadCommand(
+        "22222222-2222-2222-2222-222222222222",
+        0x01000007,
+        3,
+      ),
     ]);
     const entries = readMachoUuidEntries(container);
     expect(entries.ok).toBe(true);
@@ -126,29 +164,40 @@ describe("UUID entry attribution", () => {
       [0x01000007, "22222222-2222-2222-2222-222222222222"],
     ]);
   });
-  it("decodes a byte-swapped little-endian universal container", () => {
-    // FAT_CIGAM: the magic reads 0xbebafeca big-endian; table fields are LE.
-    const container = universalWithSlices([
-      withUuidLoadCommand("33333333-3333-3333-3333-333333333333"),
-    ]);
-    const swapped = Buffer.from(container);
+  it("decodes a little-endian universal container", () => {
+    // FAT_CIGAM: the magic reads 0xbebafeca big-endian; every table field is LE.
+    const slice = withUuidLoadCommand(
+      "33333333-3333-3333-3333-333333333333",
+      0x01000007,
+      3,
+    );
+    const headerSize = 8 + 20;
+    const swapped = Buffer.alloc(headerSize + slice.length);
     swapped.writeUInt32LE(0xcafebabe, 0);
     swapped.writeUInt32LE(1, 4);
-    const entry = 8;
-    swapped.writeUInt32LE(swapped.readUInt32BE(entry + 8), entry + 8 - 0);
-    // rewrite the first arch entry fields little-endian
-    const offsetBE = container.readUInt32BE(entry + 8);
-    const sizeBE = container.readUInt32BE(entry + 12);
-    swapped.writeUInt32LE(0x01000007, entry);
-    swapped.writeUInt32LE(offsetBE, entry + 8);
-    swapped.writeUInt32LE(sizeBE, entry + 12);
-    swapped.writeUInt32LE(12, entry + 16);
+    swapped.writeInt32LE(0x01000007, 8);
+    swapped.writeInt32LE(3, 12);
+    swapped.writeUInt32LE(headerSize, 16);
+    swapped.writeUInt32LE(slice.length, 20);
+    swapped.writeUInt32LE(0, 24);
+    slice.copy(swapped, headerSize);
     expect(readMachoUuidEntries(swapped)).toEqual({
       ok: true,
       value: [
-        { cpuType: 0x01000007, uuid: "33333333-3333-3333-3333-333333333333" },
+        {
+          cpuType: 0x01000007,
+          cpuSubtypeBase: 3,
+          uuid: "33333333-3333-3333-3333-333333333333",
+        },
       ],
     });
+  });
+  it("rejects a universal slice whose header CPU disagrees with the table", () => {
+    // The table declares x86_64; the embedded thin header still says arm64.
+    const container = universalWithSlices([
+      withUuidLoadCommand("55555555-5555-5555-5555-555555555555"),
+    ]);
+    expect(readMachoUuidEntries(container).ok).toBe(false);
   });
   it("reads a UUID declared beyond a 64 KiB load-command span", () => {
     const fillerSize = 8 + 8; // one LC_SOURCE_VERSION-shaped filler command
@@ -257,21 +306,32 @@ describe("LC_UUID admission invariants", () => {
     expect(readMachoUuidEntries(container).ok).toBe(false);
   });
   it("decodes a byte-swapped FAT64 container", () => {
-    const slice = withUuidLoadCommand("44444444-4444-4444-4444-444444444444");
+    const slice = withUuidLoadCommand(
+      "44444444-4444-4444-4444-444444444444",
+      0x01000007,
+      3,
+    );
     const entrySize = 32;
     const headerSize = 8 + entrySize;
     const bytes = Buffer.alloc(headerSize + slice.length);
     bytes.writeUInt32LE(0xcafebabf, 0); // reads 0xbfbafeca big-endian
     bytes.writeUInt32LE(1, 4);
     const entry = 8;
-    bytes.writeUInt32LE(0x01000007, entry);
+    bytes.writeInt32LE(0x01000007, entry);
+    bytes.writeInt32LE(3, entry + 4);
     bytes.writeBigUInt64LE(BigInt(headerSize), entry + 8);
     bytes.writeBigUInt64LE(BigInt(slice.length), entry + 16);
+    bytes.writeUInt32LE(0, entry + 24); // alignment exponent
+    bytes.writeUInt32LE(0, entry + 28); // reserved
     slice.copy(bytes, headerSize);
     expect(readMachoUuidEntries(bytes)).toEqual({
       ok: true,
       value: [
-        { cpuType: 0x01000007, uuid: "44444444-4444-4444-4444-444444444444" },
+        {
+          cpuType: 0x01000007,
+          cpuSubtypeBase: 3,
+          uuid: "44444444-4444-4444-4444-444444444444",
+        },
       ],
     });
   });

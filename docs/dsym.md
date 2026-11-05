@@ -64,8 +64,15 @@ flow.
 - The selected architecture slice of a universal target must be covered by a
   matching member UUID in the bundle; per-slice selection inside the bundle is
   not exposed.
+- A member UUID matches only when it is declared by a member image or slice
+  with the selected target slice's own CPU type and base CPU subtype, so a
+  UUID repeated under another CPU (for example an `arm64e` or `x86_64h`
+  sibling) is never staged for the selected slice.
 - Admission examines at most 16 DWARF directory entries, including entries
-  that are not regular files. The matched member may be at most 1 GiB.
+  that are not regular files. The matched member may be at most 1 GiB, and at
+  most 1 GiB is digested across all matching members; hard links and copies
+  that share one file identity are digested once. These limits are fixed and
+  cannot be raised at runtime.
 - UUID traversal incrementally reads command headers and UUID payloads with a
   cached window of at most 64 KiB. Large command bodies are skipped rather than
   allocated or classified as malformed solely for their size. At most 64 MiB
