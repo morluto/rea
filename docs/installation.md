@@ -1741,6 +1741,9 @@ that retains a bounded excerpt of the command output and timeout or cleanup
 details, including failures during installation readback;
 setup never hides that failure by creating another MCP server. Resolve a plugin
 from another source or scope in the client's plugin manager before rerunning.
+Final plugin readiness checks are retained in `doctor.pluginChecks` in the setup
+result. Failed checks also contribute their repair advice to `remediation`,
+including a standalone Node runtime that disappears during installation.
 For Claude Code versions without plugin commands, update the client or explicitly
 choose direct setup with `--skill=false`.
 

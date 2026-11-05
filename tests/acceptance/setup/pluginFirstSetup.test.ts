@@ -8,11 +8,12 @@ import { cliTest } from "../../support/cli/cliFixture.js";
 // A real child command exercises setup's CLI wiring and owned-process boundary.
 const clientSource = `import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
+import { setupPluginOperation } from ${JSON.stringify(new URL("../../fixtures/setupPluginProtocol.mjs", import.meta.url).href)};
+const args = process.argv.slice(2);
+const operation = setupPluginOperation(process.env.PLUGIN_TEST_CLIENT, args);
 const path = process.env.PLUGIN_TEST_STATE;
 const state = existsSync(path) ? JSON.parse(readFileSync(path, 'utf8')) : { installed: false, mutations: [] };
-const args = process.argv.slice(2);
-if (args[0] !== 'plugin') process.exit(2);
-if (args[1] === 'list') {
+if (operation === 'list') {
   if (!existsSync(process.env.PLUGIN_TEST_CONFIG)) {
     mkdirSync(dirname(process.env.PLUGIN_TEST_CONFIG), { recursive: true });
     writeFileSync(process.env.PLUGIN_TEST_CONFIG, process.env.PLUGIN_TEST_CLIENT === 'codex' ? 'model = "fixture"\\n' : '{"existing":true}');
@@ -22,8 +23,9 @@ if (args[1] === 'list') {
     : { id: 'rea@rea', scope: 'user', enabled: true }] : [];
   console.log(JSON.stringify(process.env.PLUGIN_TEST_CLIENT === 'codex' ? { installed: entries } : entries));
 } else {
+  if (operation === 'enable' && !state.installed) throw new Error('Cannot enable a plugin that is not installed');
   state.mutations.push(args);
-  if (args[1] !== 'marketplace') state.installed = true;
+  if (operation === 'install') state.installed = true;
   writeFileSync(path, JSON.stringify(state));
 }
 `;
@@ -34,7 +36,7 @@ for (const [id, command] of [
 ] as const)
   cliTest(
     `public setup installs the ${id} plugin after approval and is idempotent`,
-    async ({ cli }) => {
+    async ({ cli, processes }) => {
       const root = await createTestTempDirectory("rea-plugin-first-");
       const home = join(
         root,
@@ -63,20 +65,30 @@ for (const [id, command] of [
         command === "codex"
           ? join(home, ".codex", "config.toml")
           : join(home, ".claude", ".claude.json");
+      const environment = {
+        HOME: home,
+        USERPROFILE: home,
+        CODEX_HOME: join(home, ".codex"),
+        CLAUDE_CONFIG_DIR: join(home, ".claude"),
+        PATH: `${bin}${delimiter}${process.env.PATH ?? ""}`,
+        PLUGIN_TEST_STATE: state,
+        PLUGIN_TEST_CLIENT: command,
+        PLUGIN_TEST_CONFIG: config,
+      };
+      const rejected = await processes.run(
+        process.execPath,
+        [script, "plugin", "list", "--xml"],
+        { cwd: home, env: environment, timeoutMs: 10_000 },
+      );
+      expect(rejected.exitCode).not.toBe(0);
+      expect(rejected.stderr).toContain("Unmodeled");
+      await expect(access(state)).rejects.toMatchObject({ code: "ENOENT" });
+      await expect(access(config)).rejects.toMatchObject({ code: "ENOENT" });
       const run = (mode: string) =>
         cli.run({
           arguments: ["setup", "--client", id, "--json", mode],
           cwd: home,
-          environment: {
-            HOME: home,
-            USERPROFILE: home,
-            CODEX_HOME: join(home, ".codex"),
-            CLAUDE_CONFIG_DIR: join(home, ".claude"),
-            PATH: `${bin}${delimiter}${process.env.PATH ?? ""}`,
-            PLUGIN_TEST_STATE: state,
-            PLUGIN_TEST_CLIENT: command,
-            PLUGIN_TEST_CONFIG: config,
-          },
+          environment,
         });
       const preview = await run("--dry-run");
       expect(preview.exitCode, `${preview.stdout}\n${preview.stderr}`).toBe(0);
