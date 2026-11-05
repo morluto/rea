@@ -32,7 +32,10 @@ class CatalogEvaluationTests(unittest.TestCase):
                 self.assertEqual(catalog.main(), 0)
             launch.assert_not_called()
             self.assertFalse(output.exists())
-            self.assertEqual(json.loads(stream.getvalue())['model'], 'explicit-test-alias')
+            plan = json.loads(stream.getvalue())
+            self.assertEqual(plan['model'], 'explicit-test-alias')
+            self.assertEqual({cell['mode'] for cell in plan['matrix']}, {'client-code'})
+            self.assertEqual({cell['arm'] for cell in plan['matrix']}, {'none', 'all', 'selected'})
 
     def test_unknown_or_invalid_usage_never_becomes_zero(self):
         for value in [None, {}, {'input_tokens': 10},
@@ -92,6 +95,8 @@ class CatalogEvaluationTests(unittest.TestCase):
                 self.assertEqual(assess(changed_events=[action, *events])['status'], 'invalid')
             self.assertEqual(assess(changed_events=events + [events[-1]])['status'], 'invalid')
             self.assertEqual(assess(changed_events=events[:1])['status'], 'invalid')
+            notice = {'type': 'item.completed', 'item': {'type': 'error', 'message': 'Host disabled; tool dispatch is unavailable'}}
+            self.assertIn(notice['item']['message'], assess(changed_events=[notice, *events])['reason'])
             for event in [{'type': 'turn.failed'}, {'type': 'error'}, None,
                           {'type': 'item.started', 'item': {'type': 'mcp_tool_call'}},
                           {'type': 'item.completed', 'item': []}]:
