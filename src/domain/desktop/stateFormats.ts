@@ -110,14 +110,26 @@ export const detectStateFormat = (
   return isKeyfile(text) ? "keyfile" : "text";
 };
 
-/** Whether a parsed JSON value nests deeper than a limit, checked without recursion. */
-const deeperThan = (root: JsonValue, limit: number): boolean => {
-  const pending: [JsonValue, number][] = [[root, 0]];
-  for (let next = pending.pop(); next !== undefined; next = pending.pop()) {
-    const [value, depth] = next;
-    if (depth > limit) return true;
-    if (typeof value === "object" && value !== null)
-      for (const item of Object.values(value)) pending.push([item, depth + 1]);
+/** An object's own values one at a time, without copying them into an array. */
+function* ownValues(record: Record<string, JsonValue>): Generator<JsonValue> {
+  for (const key in record)
+    if (Object.hasOwn(record, key)) yield record[key] ?? null;
+}
+
+/**
+ * Whether a parsed JSON value nests deeper than a limit, checked without
+ * recursion: a value's depth is the number of levels open above it, each
+ * walked by one iterator, so no container's members are copied or queued.
+ */
+export const deeperThan = (root: JsonValue, limit: number): boolean => {
+  const levels: Iterator<JsonValue>[] = [[root].values()];
+  for (let level = levels.at(-1); level !== undefined; level = levels.at(-1)) {
+    const next = level.next();
+    if (next.done === true) levels.pop();
+    else if (levels.length - 1 > limit) return true;
+    else if (Array.isArray(next.value)) levels.push(next.value.values());
+    else if (typeof next.value === "object" && next.value !== null)
+      levels.push(ownValues(next.value));
   }
   return false;
 };

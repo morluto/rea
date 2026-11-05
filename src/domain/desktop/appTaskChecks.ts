@@ -2,7 +2,11 @@ import type { JsonValue } from "../jsonValue.js";
 import { countComparison, type DesktopTaskCheck } from "./appTask.js";
 import type { DesktopStatePath } from "./desktopState.js";
 import { locatePointer, type Located } from "./viewPointer.js";
-import { unreadEntryAt, zipArrayLeavesOut, zipLeavesOutAt } from "./zipView.js";
+import {
+  viewlessEntryAt,
+  zipArrayLeavesOut,
+  zipLeavesOutAt,
+} from "./zipView.js";
 
 /** One file as the app's data/get reports it: its view, or why it has none. An absent file has no entry. */
 export interface TaskFileView {
@@ -206,9 +210,9 @@ const nearVerdict = (
 };
 
 /**
- * Why a value check cannot be decided on what the view holds: the entry its
- * pointer goes into was not read, or a selector searched an array the view may
- * hold only part of. Undefined when it can be.
+ * Why a value check cannot be decided on what the view holds: the entry whose
+ * view its pointer goes into has none, or a selector searched an array the view
+ * may hold only part of. Undefined when it can be.
  */
 const unreadOrPartial = (
   check: Check<"value_equals" | "value_absent">,
@@ -217,11 +221,9 @@ const unreadOrPartial = (
   located: Located,
 ): Verdict | undefined => {
   const zip = format === "zip";
-  const unread = zip ? unreadEntryAt(read.view, check.pointer) : undefined;
-  if (unread !== undefined)
-    return fail(
-      `${check.file} entry ${unread.name} has no view: ${unread.error}`,
-    );
+  const viewless = zip ? viewlessEntryAt(read.view, check.pointer) : undefined;
+  if (viewless !== undefined)
+    return fail(`${check.file} entry ${viewless.name} ${viewless.reason}`);
   // A selector tells one member from several only in an array the view holds whole.
   const partial = (array: string) =>
     zip ? zipArrayLeavesOut(read.view, array) : read.truncated;

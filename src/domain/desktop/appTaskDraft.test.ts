@@ -482,6 +482,19 @@ describe("draftTaskFiles archives added to whole", () => {
     ]);
   });
 
+  it("suggests no absence inside an entry that ends with no view, such as one now binary", () => {
+    const [file] = draft({
+      "Documents/a.zip": path(
+        "document",
+        "zip",
+        listing([zipEntry("a.json", "json", { a: 1 })]),
+        listing([zipEntry("a.json", "binary", null)]),
+      ),
+    });
+
+    expect(file).toMatchObject({ change: { kind: "values" }, suggested: [] });
+  });
+
   it("suggests no element by its position, even at the last step", () => {
     const page = (paragraphs: string[]) =>
       listing([

@@ -4,7 +4,7 @@ import { namesXmlNamespace } from "./appTaskChecks.js";
 import type { DesktopStatePath } from "./desktopState.js";
 import { diffStateViews, diffZipMembers } from "./stateChanges.js";
 import { locatePointer, pairMembers, resolvePointer } from "./viewPointer.js";
-import { zipArrayLeavesOut, zipEntryAt } from "./zipView.js";
+import { entryWithoutView, zipArrayLeavesOut, zipEntryAt } from "./zipView.js";
 
 type Version = DesktopStatePath["versions"][number];
 type Suggestion = DesktopTaskCheckInput;
@@ -127,14 +127,14 @@ const innermost = (pointers: readonly string[]): readonly string[] =>
   );
 
 /**
- * The entry a pointer into a zip view goes into, when it was read and both
- * evaluators read it alike: JSON, a key file, or XML without namespaces. An
- * entry that was not read also holds a `null` view, which is no JSON `null`.
+ * The entry a pointer into a zip view goes into, when it has a view and both
+ * evaluators read it alike: JSON, a key file, or XML without namespaces. A
+ * binary or unread entry also holds a `null` view, which is no JSON `null`.
  */
 const readableEntry = (view: JsonValue | null, pointer: string) => {
   const entry = zipEntryAt(view, pointer);
   return typeof entry === "object" &&
-    entry.view_error === null &&
+    entryWithoutView(entry) === undefined &&
     (entry.format === "json" ||
       entry.format === "keyfile" ||
       (entry.format === "xml" && !namesXmlNamespace(entry.view ?? null)))
@@ -239,9 +239,11 @@ const zipSuggestions = (
   for (const pointer of innermost(change.changed))
     if (checkRoot(final.view, pointer) === pointer)
       equals(pointer, resolvePointer(final.view, pointer));
+  // An absence is checked only where the entry still has a view to lack it in.
   for (const pointer of change.removed)
     if (
       checkRoot(baseline.view, pointer) === pointer &&
+      checkRoot(final.view, pointer) === pointer &&
       byName(baseline.view, pointer) &&
       byName(final.view, pointer)
     )

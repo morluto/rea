@@ -239,6 +239,18 @@ describe("evaluateTaskChecks selectors and tolerance", () => {
         value: null,
       })?.passed,
     ).toBe(true);
+    expect(
+      outcome({
+        kind: "value_equals",
+        pointer: "/entries/[name=thumbnails~1Thumbnail.png]/view",
+        value: null,
+      }),
+    ).toEqual({
+      id: "c",
+      passed: false,
+      description:
+        "Documents/plate.FCStd entry thumbnails/Thumbnail.png is binary and has no view",
+    });
   });
 
   it("fails a selector that matches several members or, on the way, none, and says which", () => {
