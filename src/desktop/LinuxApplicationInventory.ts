@@ -1,13 +1,5 @@
-import { constants } from "node:fs";
-import { access, lstat, readdir, realpath, stat } from "node:fs/promises";
-import {
-  basename,
-  delimiter,
-  dirname,
-  isAbsolute,
-  join,
-  resolve,
-} from "node:path";
+import { lstat, readdir, realpath, stat } from "node:fs/promises";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 
 import type { DesktopApplicationInventory } from "../domain/desktop/desktopCapture.js";
 import {
@@ -43,6 +35,7 @@ import {
   execFileOutput,
   execFileOutputFailure,
 } from "../process/ExecFileOutput.js";
+import { resolveProgram } from "./ProgramLookup.js";
 
 const DESKTOP_ENTRY_MAX_BYTES = 1024 * 1024;
 const DENIED_CODES = new Set(["EACCES", "EPERM"]);
@@ -84,15 +77,6 @@ export interface LinuxApplicationFacts {
 }
 
 type Package = DesktopApplicationInventory["package"];
-
-const isExecutable = async (path: string): Promise<boolean> => {
-  try {
-    await access(path, constants.X_OK);
-    return (await lstat(path)).isDirectory() === false;
-  } catch {
-    return false;
-  }
-};
 
 /** Directories searched for desktop entries, most specific first. */
 export const desktopEntryDirectories = (
@@ -163,26 +147,6 @@ const readDesktopEntry = async (
       detail: "not an Application entry with an Exec key",
     });
   return ok(parsed.value);
-};
-
-/**
- * Find a program the way a shell would, without running a shell: a relative
- * path, or an empty or relative PATH entry, is read from the directory the
- * program is started in.
- */
-export const resolveProgram = async (
-  program: string,
-  environment: LinuxApplicationRequest["environment"],
-  startedIn: string,
-): Promise<string | undefined> => {
-  const directories = program.includes("/")
-    ? [""]
-    : (environment.PATH?.split(delimiter) ?? []);
-  for (const directory of directories) {
-    const candidate = resolve(startedIn, directory, program);
-    if (await isExecutable(candidate)) return candidate;
-  }
-  return undefined;
 };
 
 const runQuery = async (

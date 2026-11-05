@@ -5,10 +5,8 @@ import {
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
 } from "../../domain/analysisErrorCore.js";
-import {
-  resolveProgram,
-  type LinuxApplicationRefusal,
-} from "../../desktop/LinuxApplicationInventory.js";
+import type { LinuxApplicationRefusal } from "../../desktop/LinuxApplicationInventory.js";
+import { resolveProgram } from "../../desktop/ProgramLookup.js";
 import type { ObservedWindow } from "../../desktop/X11WindowObserver.js";
 import type { OutputRefusal } from "./DesktopCaptureOutput.js";
 
