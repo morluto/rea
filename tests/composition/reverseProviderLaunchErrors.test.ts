@@ -230,6 +230,7 @@ it("preserves newer launch failure when older successful launch completes out of
     expect(call3Result.ok).toBe(true);
     expect(service.observedLaunchFailures()).toEqual({});
   } finally {
+    call1Release.resolve();
     await service.close();
     await rm(directory, { recursive: true, force: true });
   }
@@ -295,6 +296,7 @@ it("ignores older launch failure when newer successful launch completes first an
       },
     });
   } finally {
+    call1Release.resolve();
     await service.close();
     await rm(directory, { recursive: true, force: true });
   }
