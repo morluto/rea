@@ -1421,11 +1421,12 @@ msgid ""
 "identical functions to appear in training. I would instead hold out source "
 "families and keep their accepted answers out of both training and retrieval."
 msgstr ""
-"Të dyja detyrat kanë nevojë për shembuj të vërtetë të mbajtur. Për shkak se "
-"lojërat e lidhura Touhou ndajnë kodin e motorit, mbajtja e emrit të lojës do"
-" të lejonte akoma funksione pothuajse identike të shfaqen në stërvitje. Në "
-"vend të kësaj do të mbaja familjet burimore dhe do t'i mbaja përgjigjet e "
-"tyre të pranuara jashtë trajnimit dhe rikthimit."
+"Të dyja detyrat kanë nevojë për shembuj vërtet të lënë jashtë trajnimit. Për"
+" shkak se lojërat e lidhura Touhou ndajnë kodin e motorit, lënia jashtë "
+"vetëm e emrit të lojës do të lejonte ende që funksione pothuajse identike të"
+" shfaqeshin në trajnim. Në vend të kësaj, do të lija jashtë familje të kodit"
+" burimor dhe do t'i mbaja si ato ashtu edhe përgjigjet e tyre të pranuara "
+"jashtë trajnimit dhe kërkimit."
 
 #: website/public/blog/reverse-engineering-models/index.html:707
 msgctxt "page:blog/reverse-engineering-models/index.html"
@@ -3052,8 +3053,8 @@ msgid ""
 msgstr ""
 "{ph0}Jemi në fazat e hershme të këtij ndryshimi industrial.{ph1} Pjesa më e "
 "madhe e infrastrukturës është ende e papjekur. Agjentët mund të lëvizin më "
-"shpejt nga sa janë krijuar për të mbështetur çeqet tona, kështu që procesi "
-"duhet të zhvillohet së bashku me ta. Kur gjejmë një defekt në një mjet të "
+"shpejt nga sa mund të mbështesin kontrollet tona, kështu që procesi duhet të"
+" zhvillohet së bashku me ta. Kur gjejmë një defekt në një mjet të "
 "përbashkët, duhet ta riparojmë atë dhe të rishikojmë rezultatet që ka "
 "ndikuar. Projekti tjetër më pas mund të trashëgojë një mjet më të fortë."
 
@@ -4139,7 +4140,7 @@ msgid ""
 "relevant constants. JavaScript analysis returns modules, their relationships"
 " and source locations."
 msgstr ""
-"Analiza native kthen kodi assemblyn dhe pseudokodin, me thirrje, referenca "
+"Analiza native kthen kodin assembly dhe pseudokodin, me thirrje, referenca "
 "dhe konstante përkatëse. Analiza e JavaScript kthen modulet, marrëdhëniet e "
 "tyre dhe vendndodhjet e burimit."
 
@@ -7770,8 +7771,9 @@ msgid ""
 "Selected assembly from the installed Calculator DLL. The thoughts and reply "
 "illustrate the findings. {ph0}Continue with the Calculator example ↓{ph1}"
 msgstr ""
-"Asambleja e zgjedhur nga Llogaritësi i instaluar DLL. Mendimet dhe përgjigja"
-" ilustrojnë gjetjet. {ph0}Vazhdo me shembullin e Llogaritësit ↓{ph1}"
+"Kodi assembly i zgjedhur nga DLL-ja e instaluar e Llogaritësit. Mendimet dhe"
+" përgjigja ilustrojnë gjetjet. {ph0}Vazhdo me shembullin e Llogaritësit "
+"↓{ph1}"
 
 #: website/public/index.html:605
 msgctxt "page:index.html"
@@ -10504,7 +10506,7 @@ msgstr ""
 #: website/public/showcase/dx-ball/index.html:578
 msgctxt "page:showcase/dx-ball/index.html"
 msgid "Full assembly and supporting evidence"
-msgstr "Asamble e plotë dhe prova mbështetëse"
+msgstr "Kodi i plotë assembly dhe prova mbështetëse"
 
 #: website/public/showcase/dx-ball/index.html:581
 msgctxt "page:showcase/dx-ball/index.html"
@@ -10955,7 +10957,7 @@ msgstr "Lexoni studimin e rastit CTF"
 #: website/public/showcase/index.html:248
 msgctxt "page:showcase/index.html"
 msgid "Native · Reconstruction"
-msgstr "Vendas · Rindërtim"
+msgstr "Native · Rindërtim"
 
 #: website/public/showcase/index.html:250
 msgctxt "page:showcase/index.html"
@@ -12381,9 +12383,9 @@ msgid ""
 " The C++ above is a readable summary. Compiler checks below apply to the "
 "maintained source in the linked project."
 msgstr ""
-"Asambleja zgjedh degën e unazës së synuar, llogaritjen e synimit dhe "
+"Kodi assembly zgjedh degën e unazës së synuar, llogaritjen e synimit dhe "
 "ruajtjen përfundimtare. C++ e mësipërme është një përmbledhje e lexueshme. "
-"Kontrollet e përpiluesit më poshtë zbatohen për burimin e ruajtur në "
+"Kontrollet e përpiluesit më poshtë zbatohen për burimin e mirëmbajtur në "
 "projektin e lidhur."
 
 #: website/public/showcase/th04/index.html:619
@@ -12668,9 +12670,9 @@ msgid ""
 "recovered C++ to see how a ring of bullets is spaced and aimed at the "
 "player."
 msgstr ""
-"Inspektoni kodin origjinal DOS 16-bit të TH04 me REA. Ndiqni kodi assemblyn "
-"dhe C++ të rikuperuar për të parë se si një unazë plumbash është e ndarë dhe"
-" e drejtuar nga lojtari."
+"Inspektoni kodin origjinal DOS 16-bit të TH04 me REA. Ndiqni kodin assembly "
+"dhe C++ të rikuperuar për të parë se si një unazë plumbash shpërndahet dhe "
+"drejtohet drejt lojtarit."
 
 #: website/public/showcase/th04/index.html:260
 msgctxt "page:showcase/th04/index.html"
@@ -13942,7 +13944,7 @@ msgstr ""
 #: website/public/get-started/index.html:1023
 msgctxt "page:get-started/index.html"
 msgid "Native executables and libraries · Hopper, Ghidra or IDA"
-msgstr "Ekzekutuesit dhe bibliotekat vendase · Hopper, Ghidra ose IDA"
+msgstr "Ekzekutuesit dhe bibliotekat native · Hopper, Ghidra ose IDA"
 
 #: website/public/get-started/index.html:1026
 msgctxt "page:get-started/index.html"
@@ -14090,13 +14092,13 @@ msgid ""
 "before continuing."
 msgstr ""
 "Zëvendësoni të dyja shtigjet me instalimet tuaja ekzistuese. Për një "
-"instalim të ri macOS ose Linux arm64, ndërtoni dekompiluesin vendas për "
+"instalim të ri macOS ose Linux arm64, ndërtoni dekompiluesin native për "
 "kompjuterin tuaj përpara se të vazhdoni."
 
 #: website/public/get-started/index.html:1214
 msgctxt "page:get-started/index.html"
 msgid "Build Ghidra's native decompiler"
-msgstr "Ndërtoni dekompiluesin vendas të Ghidra"
+msgstr "Ndërtoni dekompiluesin native të Ghidra"
 
 #. {ph0}: <span translate="no">make</span>
 #. {ph1}: <span translate="no">bison</span>
@@ -14199,7 +14201,7 @@ msgid ""
 msgstr ""
 "Profilet e verifikuara përfshijnë GUI-në e vjetër të Windows dhe "
 "mbikëqyrësin pa kokë, plus një mbikëqyrës pa kokë macOS arm64 me IDA "
-"Professional 9.1. Ura opsionale amtare GUI ka kërkesat e veta për versionin "
+"Professional 9.1. Ura opsionale native GUI ka kërkesat e veta për versionin "
 "dhe platformën."
 
 #. {ph0}: <a
@@ -14328,7 +14330,7 @@ msgstr ""
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid "{ph0}Follow a native analysis example{ph1}"
-msgstr "{ph0}Ndiq një shembull të analizës vendase{ph1}"
+msgstr "{ph0}Ndiq një shembull të analizës native{ph1}"
 
 #: website/public/get-started/index.html:1407
 msgctxt "page:get-started/index.html"
@@ -14965,7 +14967,7 @@ msgstr "Lexoni studimin e rastit Notion"
 #: website/public/index.html:1082
 msgctxt "page:index.html"
 msgid "Native · Reconstruction"
-msgstr "Vendas · Rindërtim"
+msgstr "Native · Rindërtim"
 
 #: website/public/index.html:1083
 msgctxt "page:index.html"

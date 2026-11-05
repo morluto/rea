@@ -679,15 +679,20 @@ class WebsiteTranslationChecks(unittest.TestCase):
         for original in reading_pages(ROOT / "website/public"):
             relative = original.relative_to(ROOT / "website/public")
             source = Document(original.read_text(encoding="utf-8"))
-            copy_labels = {node.attrs["data-copy"] for node in source.nodes if node.tag == "button" and "data-copy" in node.attrs and node.attrs.get("aria-label", "").startswith("Copy ")}
+            copy_labels = {node.attrs["data-copy"]: node.attrs["aria-label"] for node in source.nodes if node.tag == "button" and "data-copy" in node.attrs and node.attrs.get("aria-label", "").startswith("Copy ")}
             if not copy_labels:
                 continue
             translated = Document((ROOT / "website/_site/sq" / relative).read_text(encoding="utf-8"))
+            fallback = any(node.tag == "html" and node.attrs.get("data-translation-fallback") == "true" for node in translated.nodes)
             buttons = {node.attrs["data-copy"]: node for node in translated.nodes if node.tag == "button" and "data-copy" in node.attrs}
-            for target in copy_labels:
+            for target, source_label in copy_labels.items():
                 with self.subTest(page=str(relative), target=target):
-                    self.assertTrue(buttons[target].attrs.get("aria-label", "").startswith(("Kopjo ", "Kopjoni ", "Kopjojeni ")), buttons[target].attrs.get("aria-label"))
-                    checked += 1
+                    label = buttons[target].attrs.get("aria-label", "")
+                    if fallback:
+                        self.assertEqual(label, source_label)
+                    else:
+                        self.assertTrue(label.startswith(("Kopjo ", "Kopjoni ", "Kopjojeni ")), label)
+                        checked += 1
         self.assertGreater(checked, 0)
 
     def test_source_change_preserves_review_and_excludes_stale_translation_from_search(self):
