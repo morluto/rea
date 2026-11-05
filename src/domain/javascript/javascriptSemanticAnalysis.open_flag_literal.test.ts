@@ -88,6 +88,13 @@ it.each([
   ["a spread before the flag", `openSync(...args, "0600")`],
   ["a spread supplying every argument", `openSync(...args)`],
   ["a spread in the flag slot", `openSync(p, ...flags)`],
+  // A spread before the mode slot shifts the runtime position, and a spread in
+  // the mode slot hides the value, so the guard must keep the acquisition.
+  [
+    "a spread in the flag that shifts the mode slot",
+    `openSync(...args, "r", "0600")`,
+  ],
+  ["a spread in the mode slot", `openSync(p, "r", ...modes)`],
 ] as const)("keeps the acquisition for %s", (_name, call) => {
   expect(acquisitionsFor(call)).toEqual([
     { kind: "acquire", method: "openSync" },
