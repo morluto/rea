@@ -277,6 +277,22 @@ export const decodeObjcDispatchFacets = (input: {
       }
     }
   }
+  // An unreadable adopted-protocol list is a class-owned sublist failure:
+  // the caller retains the independently decoded class (and its metaclass)
+  // and reports the list as partial instead of discarding both rows.
+  const readAdoptedProtocols = (
+    owner: string,
+    list: () => string[],
+  ): { protocols: string[]; unreadable: boolean } => {
+    try {
+      return { protocols: list(), unreadable: false };
+    } catch (cause: unknown) {
+      failures.push(
+        `Protocol list of ${owner}: ${cause instanceof Error ? cause.message : String(cause)}`,
+      );
+      return { protocols: [], unreadable: true };
+    }
+  };
   const visited = new Set<string>();
   const readClass = (address: bigint, meta = false) => {
     if (address === 0n || visited.has(hex(address)) || !budget.admit()) return;
@@ -361,12 +377,16 @@ export const decodeObjcDispatchFacets = (input: {
       location: hex(read.pointer(ro + 64n)),
       onTruncated,
     });
-    const protocols = protocolReader.list(read.pointer(ro + 40n), onTruncated);
+    const { protocols, unreadable: protocolListUnreadable } =
+      readAdoptedProtocols(name, () =>
+        protocolReader.list(read.pointer(ro + 40n), onTruncated),
+      );
     const classDecodeReasons = [
       ...(superclass.name === null && !root
         ? ["superclass_binding_unresolved"]
         : []),
       ...(classListTruncated ? ["max_records_reached"] : []),
+      ...(protocolListUnreadable ? ["protocol_list_unreadable"] : []),
     ];
     result.objc_classes.push({
       name,

@@ -2478,3 +2478,84 @@ it.each([false, true])(
     ).toBe(unreadParent ? "partial" : "complete");
   },
 );
+
+describe("Objective-C adopted protocol-list count limit", () => {
+  // Root class and metaclass that adopt the fixture protocol through the
+  // class_ro_t base protocol list at 0x700.
+  const rootClass = (protocolCount: bigint) => {
+    const bytes = fixture();
+    bytes.writeUInt32LE(2, 12);
+    bytes.writeUInt32LE(5, 88);
+    bytes.writeUInt32LE(2, 0x300);
+    bytes.writeUInt32LE(3, 0x380);
+    bytes.writeBigUInt64LE(protocolCount, 0x700);
+    return bytes;
+  };
+  const classCoverage = (
+    result: ReturnType<typeof decodeAppleDispatchMetadata>,
+  ) =>
+    result.coverage.find(
+      ({ facet }) => facet === "objc_class_method_ivar_metadata",
+    );
+
+  it("retains the class and metaclass rows when the list exceeds its count limit", () => {
+    const result = decodeAppleDispatchMetadata(
+      rootClass(20001n),
+      100,
+      provenance,
+    );
+    expect(
+      result.objc_classes.map(({ name, is_meta_class, protocols, decode }) => ({
+        name,
+        is_meta_class,
+        protocols,
+        decode,
+      })),
+    ).toEqual([
+      {
+        name: "Fixture",
+        is_meta_class: false,
+        protocols: [],
+        decode: { status: "partial", reason: "protocol_list_unreadable" },
+      },
+      // The metaclass has no adopted-protocol list of its own.
+      {
+        name: "Fixture",
+        is_meta_class: true,
+        protocols: [],
+        decode: { status: "decoded", reason: null },
+      },
+    ]);
+    expect(result.objc_classes[0]?.properties).toHaveLength(3);
+    expect(result.objc_ivars).toHaveLength(1);
+    expect(result.objc_dispatch_implementations).toMatchObject([
+      { class_name: "Fixture", selector: "performAction:" },
+    ]);
+    expect(classCoverage(result)).toMatchObject({
+      status: "partial",
+      // The class row is retained as partial, so it is examined but not
+      // counted as fully decoded; the metaclass is fully decoded.
+      examined: 2,
+      decoded: 1,
+      reason: expect.stringContaining(
+        "Protocol list of Fixture: Protocol list exceeds 20000 entries",
+      ),
+    });
+  });
+
+  it.each([0n, 1n])(
+    "keeps complete class coverage for an in-limit count of %s",
+    (count) => {
+      const bytes = rootClass(count);
+      const result = decodeAppleDispatchMetadata(bytes, 100, provenance);
+      const reason = classCoverage(result)?.reason ?? "";
+      expect(reason).not.toContain("Protocol list of Fixture");
+      expect(result.objc_classes).toHaveLength(2);
+      for (const row of result.objc_classes)
+        expect(row.decode?.reason ?? "").not.toContain(
+          "protocol_list_unreadable",
+        );
+      expect(classCoverage(result)?.status).toBe("complete");
+    },
+  );
+});
