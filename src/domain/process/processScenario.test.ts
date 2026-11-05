@@ -10,6 +10,7 @@ import {
   PROCESS_TERMINAL_CELL_BUDGET,
   processComparisonContract,
   processScenarioCommitment,
+  processScenarioPlanSchema,
   processScenarioSchema,
 } from "./processScenario.js";
 
@@ -346,4 +347,69 @@ it("keeps native and PTY environment admission distinct through Standard Schema 
     );
   expect(ajv.compile(nativePublished)(environment)).toBe(true);
   expect(ajv.compile(ptyPublished)(environment)).toBe(false);
+});
+
+const planWith = (events: unknown[]) => {
+  // `dry_run` selects the operation, not the scenario, so a plan omits it.
+  const { dry_run: _dryRun, ...scenario } = processScenarioSchema.parse({
+    ...baseScenario,
+    events: [{ at_ms: 1, type: "signal", signal: "SIGINT" }],
+  });
+  return {
+    status: "planned",
+    ambient_environment: "inherited-at-run",
+    scenario: { ...scenario, events },
+  };
+};
+
+it("rejects a plan whose events are out of order, as the input contract does", () => {
+  // A plan says the scenario was validated, so it cannot accept an ordering
+  // the input contract refuses (codex review on rea#8469).
+  expect(
+    processScenarioPlanSchema.safeParse(
+      planWith([
+        { at_ms: 20, type: "signal", signal: "SIGINT" },
+        { at_ms: 10, type: "signal", signal: "SIGTERM" },
+      ]),
+    ).success,
+  ).toBe(false);
+});
+
+it("rejects a plan whose event lands after the scenario timeout", () => {
+  const plan = planWith([{ at_ms: 900, type: "signal", signal: "SIGINT" }]);
+  plan.scenario.timeout_ms = 100;
+  expect(processScenarioPlanSchema.safeParse(plan).success).toBe(false);
+});
+
+it("rejects a plan whose terminal exceeds the renderer cell budget", () => {
+  const plan = planWith([]);
+  plan.scenario.terminal = { columns: 65_535, rows: 65_535, scrollback: 1_000 };
+  expect(processScenarioPlanSchema.safeParse(plan).success).toBe(false);
+});
+
+it("rejects a sensitive input event that still carries its data", () => {
+  expect(
+    processScenarioPlanSchema.safeParse(
+      planWith([{ at_ms: 1, type: "input", data: "hunter2", sensitive: true }]),
+    ).success,
+  ).toBe(false);
+});
+
+it("requires a sensitive input event to report its byte length", () => {
+  expect(
+    processScenarioPlanSchema.safeParse(
+      planWith([{ at_ms: 1, type: "input", data: "", sensitive: true }]),
+    ).success,
+  ).toBe(false);
+});
+
+it("accepts the projection the producer actually emits", () => {
+  expect(
+    processScenarioPlanSchema.safeParse(
+      planWith([
+        { at_ms: 1, type: "input", data: "", sensitive: true, input_bytes: 7 },
+        { at_ms: 2, type: "input", data: "plain", sensitive: false },
+      ]),
+    ).success,
+  ).toBe(true);
 });
