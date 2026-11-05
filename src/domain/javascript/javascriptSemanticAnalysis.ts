@@ -40,12 +40,14 @@ import {
   semanticWriteSiteTarget,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
+import type {
+  JavaScriptSemanticAnalysisState,
+  JavaScriptSemanticBindingState,
+  JavaScriptSemanticScopeState,
+  JavaScriptBindingIndex,
+  JavaScriptSemanticReferenceEffectsAtSite,
+} from "./javascriptSemanticState.js";
 import {
-  type JavaScriptSemanticAnalysisState,
-  type JavaScriptSemanticBindingState,
-  type JavaScriptSemanticScopeState,
-  type JavaScriptBindingIndex,
-  type JavaScriptSemanticReferenceEffectsAtSite,
   currentSemanticScope,
   semanticPrototypeOwners,
   type SemanticPrototypeOwner,
