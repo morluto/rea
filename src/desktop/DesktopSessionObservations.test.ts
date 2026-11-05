@@ -6,6 +6,7 @@ import {
   observedSession,
   recordWindows,
   sampleProcesses,
+  sampleTokenCarriers,
   trackProcess,
   type SessionProcfs,
 } from "./DesktopSessionObservations.js";
@@ -19,7 +20,10 @@ interface FakeProcess {
   readonly lifecycle?: ProcessLifecycle;
 }
 
-const procfs = (table: Map<number, FakeProcess>): SessionProcfs => ({
+const procfs = (
+  table: Map<number, FakeProcess>,
+  tableReadable = true,
+): SessionProcfs => ({
   stat: async (pid) => {
     const entry = table.get(pid);
     return entry === undefined
@@ -36,6 +40,15 @@ const procfs = (table: Map<number, FakeProcess>): SessionProcfs => ({
       .map(([child]) => child),
   runId: async (pid) => table.get(pid)?.runId,
   command: async (pid) => `process ${String(pid)}`,
+  tokenCarriers: async (runId) =>
+    tableReadable
+      ? [...table]
+          .filter(
+            ([, entry]) =>
+              entry.runId === runId && entry.lifecycle !== "zombie",
+          )
+          .map(([pid]) => pid)
+      : undefined,
 });
 
 const window = (
@@ -51,12 +64,16 @@ const window = (
   window_type: "normal",
 });
 
-const observe = (table: Map<number, FakeProcess>, byPid = true) =>
+const observe = (
+  table: Map<number, FakeProcess>,
+  byPid = true,
+  tableReadable = true,
+) =>
   new SessionObservations(
     performance.now(),
     { runId: "run", launchPid: 100 },
     { names: new Set(["notes"]), byPid },
-    procfs(table),
+    procfs(table, tableReadable),
   );
 
 const startedBy = (observations: SessionObservations) =>
@@ -181,5 +198,40 @@ describe("SessionObservations", () => {
     expect(
       observedSession(observations).processes.map(({ pid }) => pid),
     ).toEqual([100]);
+  });
+});
+
+describe("sampleTokenCarriers", () => {
+  it("finds a worker whose launcher exited before any sample reached it", async () => {
+    const table = new Map<number, FakeProcess>([
+      [200, { parentPid: 1, startTime: "20", runId: "run" }],
+      [201, { parentPid: 200, startTime: "21" }],
+      [300, { parentPid: 1, startTime: "30", runId: "other" }],
+    ]);
+    const observations = observe(table);
+    await trackProcess(observations, 100, signal);
+    await sampleProcesses(observations, signal);
+    expect(observations.liveProcessIds(true)).toEqual([]);
+
+    expect(await sampleTokenCarriers(observations, signal)).toBe(true);
+    await sampleProcesses(observations, signal);
+
+    expect(observations.liveProcessIds(true)).toEqual([200, 201]);
+    expect(startedBy(observations)).toEqual({
+      100: true,
+      200: true,
+      201: true,
+    });
+  });
+
+  it("reports an unreadable process table as unknown", async () => {
+    const observations = observe(
+      new Map([[200, { parentPid: 1, startTime: "20", runId: "run" }]]),
+      true,
+      false,
+    );
+
+    expect(await sampleTokenCarriers(observations, signal)).toBe(false);
+    expect(observations.liveProcessIds()).toEqual([]);
   });
 });

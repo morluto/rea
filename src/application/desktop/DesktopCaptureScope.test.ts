@@ -5,10 +5,12 @@ import { describe, expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import type { DesktopApplicationInventory } from "../../domain/desktop/desktopCapture.js";
+import { DesktopContentStore } from "../../desktop/DesktopContentStore.js";
 import {
   applicationWindowMatching,
   captureScope,
 } from "./DesktopCaptureScope.js";
+import { CheckpointRecorder } from "./DesktopCheckpointRecorder.js";
 
 const inventory = (
   overrides: Partial<DesktopApplicationInventory> = {},
@@ -58,9 +60,52 @@ describe("captureScope", () => {
       join(root, "out"),
     );
 
+    const logs = [`${outside}-wal`, `${outside}-journal`];
     expect(broadArguments).toEqual(["/", home, dirname(home)]);
-    expect(scope.contentRoots).toEqual([outside]);
-    expect(scope.roots).toEqual([home, outside]);
+    expect(scope.contentRoots).toEqual([outside, ...logs]);
+    expect(scope.roots).toEqual([home, outside, ...logs]);
+  });
+
+  it("records the logs beside a database selected on its own, and none beside a directory", async () => {
+    const root = await realpath(
+      await createTestTempDirectory("desktop-scope-"),
+    );
+    const home = join(root, "home/ada");
+    const library = join(root, "data/library");
+    const database = join(root, "data/books.db");
+    await mkdir(home, { recursive: true });
+    await mkdir(library, { recursive: true });
+    await mkdir(join(root, "out"));
+    await writeFile(database, "SQLite format 3\0");
+    await writeFile(`${database}-wal`, "wal v1");
+
+    const { scope } = await captureScope(
+      { ...request([]), statePaths: [database, library] },
+      inventory(),
+      home,
+      join(root, "out"),
+    );
+    const store = new DesktopContentStore(join(root, "out"), 1024, 4096);
+    await store.prepare();
+    const recorder = new CheckpointRecorder(scope, store);
+    await recorder.record("baseline", "baseline", 0);
+    await writeFile(`${database}-journal`, "journal");
+    await recorder.record("saved", "request", 1);
+
+    expect(scope.contentRoots).toEqual([
+      database,
+      library,
+      `${database}-wal`,
+      `${database}-journal`,
+    ]);
+    const [baseline, saved] = recorder.checkpoints;
+    expect(baseline?.retained.map((file) => file.path).sort()).toEqual([
+      database,
+      `${database}-wal`,
+    ]);
+    expect(saved?.changes).toEqual([
+      expect.objectContaining({ path: `${database}-journal`, kind: "created" }),
+    ]);
   });
 });
 

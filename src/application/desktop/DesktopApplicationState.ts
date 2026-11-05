@@ -19,6 +19,7 @@ import {
   jsonView,
   keyfileView,
   plainRecord,
+  SQLITE_SIDECARS,
   textView,
   xmlView,
 } from "../../domain/desktop/stateFormats.js";
@@ -195,7 +196,7 @@ interface ReadInput {
 
 /** Whether a database's sidecar file existed at a version, and its retained digest. */
 const sidecarAt = (path: string, version: Version, index: StateIndex) => ({
-  present: presenceAt(path, index)[version.checkpoint_index] === true,
+  present: presenceAt(path, index)[version.checkpoint_index] ?? null,
   sha256: digestsAt(path, index)[version.checkpoint_index] ?? null,
 });
 
@@ -206,7 +207,7 @@ const sidecarAt = (path: string, version: Version, index: StateIndex) => ({
  */
 const sidecarBytes = async (
   { path, version }: Pick<ReadInput, "path" | "version">,
-  sidecar: { readonly suffix: string; readonly label: string },
+  sidecar: (typeof SQLITE_SIDECARS)[number],
   context: ViewContext,
 ): Promise<Result<Buffer | undefined, string>> => {
   const { present, sha256 } = sidecarAt(
@@ -214,6 +215,10 @@ const sidecarBytes = async (
     version,
     context.index,
   );
+  if (present === null)
+    return err(
+      `the capture did not record whether the database's ${sidecar.label} existed`,
+    );
   if (present && sha256 === null)
     return err(`the database's ${sidecar.label} was not retained`);
   if (sha256 === null) return ok(undefined);
@@ -227,28 +232,14 @@ const sqliteView = async (
   input: ReadInput,
   context: ViewContext,
 ): Promise<ViewOutcome> => {
-  const log = await sidecarBytes(
-    input,
-    { suffix: "-wal", label: "write-ahead log" },
-    context,
-  );
-  if (!log.ok) return failed(log.error);
   // The SQLite reader accepts an inactive rollback journal and refuses a hot one.
-  const journal = await sidecarBytes(
-    input,
-    { suffix: "-journal", label: "rollback journal" },
-    context,
-  );
-  if (!journal.ok) return failed(journal.error);
-  const staged = [
-    { name: "state.db", bytes: input.bytes },
-    ...(log.value === undefined
-      ? []
-      : [{ name: "state.db-wal", bytes: log.value }]),
-    ...(journal.value === undefined
-      ? []
-      : [{ name: "state.db-journal", bytes: journal.value }]),
-  ];
+  const staged = [{ name: "state.db", bytes: input.bytes }];
+  for (const sidecar of SQLITE_SIDECARS) {
+    const bytes = await sidecarBytes(input, sidecar, context);
+    if (!bytes.ok) return failed(bytes.error);
+    if (bytes.value !== undefined)
+      staged.push({ name: `state.db${sidecar.suffix}`, bytes: bytes.value });
+  }
   return withStaged(staged, async ([database]) => {
     const read = await context.readers.sqlite(database ?? "", context.signal);
     return read.ok ? { view: read.view, error: null } : failed(read.error);

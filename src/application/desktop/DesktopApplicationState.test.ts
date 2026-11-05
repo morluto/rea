@@ -119,7 +119,7 @@ describe("inspectDesktopApplicationState", () => {
     const byPath = await statePathsOf(folder);
     expect(byPath.get(".config/notes/state.json")).toMatchObject({
       versions: [{ view: null, view_error: null }, { view: { a: 1 } }],
-      changes: [{ kind: "values", added: ["/a"], removed: [""] }],
+      changes: [{ kind: "values", added: ["/a"], removed: [], changed: [""] }],
     });
     expect(byPath.get(".config/notes/log.db")).toMatchObject({
       versions: [{ checkpoint_index: 0 }, { checkpoint_index: 1 }],
@@ -345,7 +345,9 @@ describe("inspectDesktopApplicationState database sidecars", () => {
     let reads = 0;
     const folder = await writeCaptureFolder(
       extended({
-        baseline: [retained(`${HOME}/zz.db`, "SQLite format 3\0v1")],
+        baseline: [
+          retained(`${HOME}/.local/share/notes/zz.db`, "SQLite format 3\0v1"),
+        ],
       }),
     );
 
@@ -364,6 +366,51 @@ describe("inspectDesktopApplicationState database sidecars", () => {
 
     expect(reads).toBe(3);
     expect(result).toBeInstanceOf(AnalysisCancelledError);
+  });
+});
+
+describe("inspectDesktopApplicationState database selected on its own", () => {
+  const books = "/data/books.db";
+  /** The fixture capture with a database outside home retained under these content roots. */
+  const selecting = (roots: readonly string[]): DesktopApplicationCapture => {
+    const base = extended({
+      baseline: [retained(books, "SQLite format 3\0v1")],
+    });
+    return {
+      ...base,
+      state: {
+        ...base.state,
+        roots: [HOME, ...roots],
+        content_roots: [...base.state.content_roots, ...roots],
+      },
+    };
+  };
+
+  it("refuses it when the capture did not record whether its logs existed", async () => {
+    const folder = await writeCaptureFolder(selecting([books]));
+
+    const byPath = await statePathsOf(folder);
+
+    expect(byPath.get(null)?.versions).toMatchObject([
+      {
+        present: true,
+        view: null,
+        view_error:
+          "the capture did not record whether the database's write-ahead log existed",
+      },
+    ]);
+  });
+
+  it("reads it when its logs were content roots that held no file", async () => {
+    const folder = await writeCaptureFolder(
+      selecting([books, `${books}-wal`, `${books}-journal`]),
+    );
+
+    const byPath = await statePathsOf(folder);
+
+    expect(byPath.get(null)?.versions).toMatchObject([
+      { view_error: null, view: { tables: { notes: { rows: [[1, "a"]] } } } },
+    ]);
   });
 });
 

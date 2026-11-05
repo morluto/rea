@@ -121,11 +121,17 @@ export const walkHomeState = async (
     if (isWithinAny(root, excluded)) continue;
     const stats = await statPath(root);
     if (stats === undefined) continue;
+    if (stats !== null) {
+      // A root counts toward the limit like any entry; one left out is unchecked.
+      if (progress.entries.size >= maxEntries) {
+        progress.truncated = true;
+        continue;
+      }
+      progress.entries.set(root, pathState(stats));
+      if (stats.isDirectory())
+        progress.pending.push({ path: root, device: stats.dev });
+    }
     checkedRoots.add(root);
-    if (stats === null) continue;
-    progress.entries.set(root, pathState(stats));
-    if (stats.isDirectory())
-      progress.pending.push({ path: root, device: stats.dev });
   }
   while (progress.pending.length > 0 && !progress.truncated) {
     signal?.throwIfAborted();
