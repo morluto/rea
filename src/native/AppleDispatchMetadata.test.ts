@@ -1426,6 +1426,62 @@ describe("Apple dispatch coverage ownership", () => {
   });
 });
 
+describe("Objective-C category class references without a class name", () => {
+  const categoryCoverage = (bytes: Buffer) => {
+    const result = decodeAppleDispatchMetadata(bytes, 100, provenance);
+    expect(result.objc_categories).toMatchObject([
+      {
+        name: "FixtureCategory",
+        class_name: null,
+        class_source: "unresolved",
+        decode: { status: "partial", reason: "category_class_unresolved" },
+      },
+    ]);
+    return result.coverage.find(
+      ({ facet }) => facet === "objc_properties_categories",
+    );
+  };
+
+  it("names a class reference bound to a Swift class metadata symbol", () => {
+    // swiftc emits a category for @objc members of another module's Swift
+    // class and binds its class field to `_$s…CN`, not `_OBJC_CLASS_$_`.
+    const bytes = fixture(false, "unmapped-class");
+    bytes.writeBigUInt64LE(0n, 0xb48);
+    // LC_DYLD_INFO_ONLY after the segment command binds the class field.
+    bytes.writeUInt32LE(2, 16);
+    bytes.writeUInt32LE(280, 20);
+    bytes.writeUInt32LE(0x80000022, 264);
+    bytes.writeUInt32LE(48, 268);
+    const bindings = Buffer.from([
+      0x40,
+      ...Buffer.from("_$s4Main3FooCN\0"),
+      0x70,
+      0xc8,
+      0x16,
+      0x90,
+      0x00,
+    ]);
+    bindings.copy(bytes, 0xc00);
+    bytes.writeUInt32LE(0xc00, 280);
+    bytes.writeUInt32LE(bindings.length, 284);
+    expect(categoryCoverage(bytes)).toMatchObject({
+      status: "partial",
+      reason:
+        "category_class_unresolved at 0x100000b48: Category FixtureCategory class reference is bound to _$s4Main3FooCN, which is not read as an Objective-C class name",
+    });
+  });
+
+  it("explains a null class reference", () => {
+    const bytes = fixture(false, "unmapped-class");
+    bytes.writeBigUInt64LE(0n, 0xb48);
+    expect(categoryCoverage(bytes)).toMatchObject({
+      status: "partial",
+      reason:
+        "category_class_unresolved at 0x100000b48: Category FixtureCategory class reference is null",
+    });
+  });
+});
+
 describe("Objective-C declaration-local record-budget coverage", () => {
   it.each(["protocol", "class"] as const)(
     "preserves the decoded $0 method at a sufficient budget",

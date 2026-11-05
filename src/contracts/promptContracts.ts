@@ -169,7 +169,7 @@ export const PROMPT_CONTRACTS = [
       {
         tools: ["open_binary", "analyze_javascript_application"],
         instruction:
-          "For a JavaScript/Electron application directory, call analyze_javascript_application with input_path=target_path directly; no open_binary call is needed. For a file or macOS app bundle, open target_path only when the required target is not active.",
+          "For a JavaScript/Electron application directory, call analyze_javascript_application with input_path=target_path directly; no open_binary call is needed. For a file or Apple bundle directory, open target_path only when the required target is not active.",
       },
       {
         tools: ["current_document"],
@@ -348,7 +348,7 @@ export const PROMPT_CONTRACTS = [
           "analyze_function",
         ],
         instruction:
-          "Resolve crash text or addresses to function dossiers, requesting detail complete when build_call_path will consume them; do not infer a source location from symbol similarity alone.",
+          'Resolve crash text or addresses to function dossiers. For same-session build_call_path, put {kind: "retained-evidence", evidence_id: <normalized_result.parent_evidence_id>} for each default summary into functions; request detail complete when the dossier must travel inline. Do not infer a source location from symbol similarity alone.',
       },
       {
         tools: ["xrefs", "procedure_callers", "build_call_path"],

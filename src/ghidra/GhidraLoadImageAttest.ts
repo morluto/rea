@@ -17,6 +17,10 @@ import {
   attestGhidraRawBinaryLoadImage,
 } from "./GhidraLoadImageValues.js";
 import { attestGhidraDolLoadImage } from "./GhidraDolLoadImage.js";
+import {
+  ghidraUnverifiedLoadImageReason,
+  isGhidraVerifiedLoadImageFormat,
+} from "./GhidraVerifiedLoadImageFormats.js";
 import type { GhidraLanguageOverride } from "../config/ghidraLanguageOverride.js";
 import type { NativeAotPeResult } from "../domain/native/nativeAotPe.js";
 import type { GhidraClient } from "./GhidraClient.js";
@@ -92,13 +96,7 @@ const compareLoadImage = async (
   // These formats have no additional source work; retain already-derived PE facts.
   if (
     target.format === "pe" ||
-    ![
-      "dos-mz",
-      "dos-com",
-      "raw-binary",
-      "gamecube-dol",
-      "gameboy-rom",
-    ].includes(target.format)
+    !isGhidraVerifiedLoadImageFormat(target.format)
   ) {
     if (target.format === "pe" && nativeAotResult === undefined)
       return err(
@@ -109,8 +107,7 @@ const compareLoadImage = async (
       );
     const represented = nativeLoadImageSchema.safeParse({
       status: "unsupported",
-      reason:
-        "Independent load-image verification currently supports DOS MZ, explicit DOS COM, and caller-supplied raw-binary targets only.",
+      reason: ghidraUnverifiedLoadImageReason(),
       observations:
         target.format !== "pe" || nativeAotResult === undefined
           ? observations

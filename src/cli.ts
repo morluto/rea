@@ -1,3 +1,8 @@
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import { writeAmpRegistrationBackup } from "./cli/ampRegistrationBackup.js";
+import { registerToolFamilies } from "./contracts/toolFamilyIds.js";
 import { registerGpuCommands } from "./cli/gpuCommands.js";
 import { registerNativeFunctionMatchingCommands } from "./cli/nativeFunctionMatchingCommands.js";
 import { registerCaptureCommands } from "./cli/captureCommands.js";
@@ -51,6 +56,7 @@ import { registerAdbCommands } from "./cli/adbCommands.js";
 import { registerEvidenceCommands } from "./cliEvidenceCommands.js";
 import { registerEnvironmentCommands } from "./cli/environmentCommands.js";
 import { registerProcessCommands } from "./cli/processCommands.js";
+import { registerDesktopCaptureCommands } from "./cli/desktopCaptureCommands.js";
 import { registerBrowserCommands } from "./cli/browserCommands.js";
 import { registerWebScriptCommands } from "./cli/webScriptCommands.js";
 import { registerWebModuleCommands } from "./cli/webModuleCommands.js";
@@ -73,11 +79,31 @@ import { registerReverseEngineeringCommands } from "./cli/reverseEngineeringComm
 import { registerCutterCommands } from "./cli/cutterCommands.js";
 import { excludeDeclaredSensitiveArguments } from "./cli/explicitSensitiveArguments.js";
 import { rejectSurplusCliArguments } from "./cli/strictPositionals.js";
-import { presentCliArgumentErrors } from "./cli/argumentErrors.js";
+import {
+  encodeCliArgumentErrors,
+  presentCliArgumentErrors,
+} from "./cli/argumentErrors.js";
 import { completionHelpNote, createCliCompletions } from "./cli/completions.js";
+import {
+  closeCliGuidanceResources,
+  registerGuidanceCommands,
+} from "./cli/guidanceCommands.js";
+import { closeCliJavaScriptResources } from "./cli/javascriptApplicationAnalysis.js";
 import { registerGuidedWorkflowCommands } from "./cli/guidedWorkflowCommands.js";
 
-export { closeCliJavaScriptResources } from "./cli/javascriptApplicationAnalysis.js";
+/** Close every process-owned resource used by CLI commands. */
+export const closeCliResources = async (): Promise<void> => {
+  const results = await Promise.allSettled([
+    closeCliJavaScriptResources(),
+    closeCliGuidanceResources(),
+  ]);
+  const failures = results.flatMap((result) =>
+    result.status === "rejected" ? [result.reason] : [],
+  );
+  if (failures.length === 1) throw failures[0];
+  if (failures.length > 1)
+    throw new AggregateError(failures, "CLI resource cleanup failed");
+};
 
 /**
  * Build the one-shot Incur CLI without starting Hopper at import time.
@@ -149,63 +175,82 @@ export const createCli = (
   const cli = timedCli as unknown as CliInstance;
 
   registerSetupCommands(cli, logger, environment);
-  registerGuidedWorkflowCommands(cli, logger);
-  registerReverseEngineeringCommands(cli, logger, environment);
-  registerCutterCommands(cli, logger, environment);
-  registerCoreAnalysisCommands(
-    cli,
-    logger,
-    analysis.runDirectAnalysis,
-    environment,
-  );
-  registerUtilityCommands(cli, logger, environment, analysis);
-  registerWasmCommands(cli, logger, environment);
-  registerApkSignatureCommands(cli, logger, environment);
-  registerCaptureCommands(cli, logger, environment);
-  registerSignalCommands(cli, logger, environment);
-  registerEvmCommands(cli, logger, environment);
-  registerDesktopApplicationCommands(cli, logger);
-  registerGoCommands(cli, logger);
-  registerIl2cppCommands(cli, logger);
-  registerModelCommands(cli, logger);
-  registerGpuCommands(cli, logger);
-  registerRustCommands(cli, logger);
-  registerPythonPycCommands(cli, logger);
-  registerErlangCommands(cli, logger);
-  registerSqliteCommands(cli, logger, environment);
-  registerArtifactCommands(cli, logger, analysis.runProviderAnalysis);
-  registerManagedCommands(cli, logger, analysis.runProviderAnalysis);
-  registerAndroidCommands(cli, logger, environment);
-  registerApktoolCommands(cli, logger, environment);
-  registerPcapCommands(cli, logger, environment);
-  registerFlutterCommands(cli, logger);
-  registerJebCommands(cli, logger, environment);
-  registerAdbCommands(cli, logger, environment);
-  registerFirmwareCommands(cli, logger, environment);
-  registerBinaryDiagnosticsCommands(cli, logger, environment);
-  registerAnalysisViewCommands(cli, logger);
-  registerNativeFunctionMatchingCommands(cli, logger, environment);
-  registerFridaCommands(cli, logger, fridaInstrumentation);
-  registerEvidenceCommands(cli, logger);
-  registerEnvironmentCommands(cli, logger, environment);
-  registerProcessCommands(cli, logger, environment);
-  registerBrowserCommands(cli, logger);
-  registerWebScriptCommands(cli, logger);
-  registerWebModuleCommands(cli, logger, environment);
-  registerWebSourceLocationCommands(cli, logger, environment);
-  registerWebRuntimeCommands(cli, logger);
-  registerWebNetworkCaptureCommands(cli, logger, environment);
-  registerJavaScriptRecoveryCommands(cli, logger, environment);
-  registerAdvancedBrowserCommands(cli, logger);
-  registerBrowserScenarioCommands(cli, logger, environment);
-  registerElectronCommands(cli, logger, environment);
-  registerJavaScriptRuntimeObservationCommands(cli, logger, environment);
-  registerApplicationCommands(cli, logger);
+  registerToolFamilies({
+    direct: () =>
+      registerCoreAnalysisCommands(
+        cli,
+        logger,
+        analysis.runDirectAnalysis,
+        environment,
+      ),
+    // Enhanced workflows are MCP tools. Their CLI entry points live with core analysis.
+    enhanced: () => undefined,
+    native: () => {
+      registerReverseEngineeringCommands(cli, logger, environment);
+      registerCutterCommands(cli, logger, environment);
+      registerUtilityCommands(cli, logger, environment, analysis);
+      registerBinaryDiagnosticsCommands(cli, logger, environment);
+    },
+    artifact: () => {
+      registerWasmCommands(cli, logger, environment);
+      registerApkSignatureCommands(cli, logger, environment);
+      registerCaptureCommands(cli, logger, environment);
+      registerSignalCommands(cli, logger, environment);
+      registerEvmCommands(cli, logger, environment);
+      registerDesktopApplicationCommands(cli, logger);
+      registerGoCommands(cli, logger);
+      registerIl2cppCommands(cli, logger);
+      registerModelCommands(cli, logger);
+      registerGpuCommands(cli, logger);
+      registerRustCommands(cli, logger);
+      registerPythonPycCommands(cli, logger);
+      registerErlangCommands(cli, logger);
+      registerSqliteCommands(cli, logger, environment);
+      registerArtifactCommands(cli, logger, analysis.runProviderAnalysis);
+    },
+    managed: () =>
+      registerManagedCommands(cli, logger, analysis.runProviderAnalysis),
+    firmware: () => registerFirmwareCommands(cli, logger, environment),
+    android: () => registerAndroidCommands(cli, logger, environment),
+    pcap: () => registerPcapCommands(cli, logger, environment),
+    flutter: () => registerFlutterCommands(cli, logger),
+    frida: () => registerFridaCommands(cli, logger, fridaInstrumentation),
+    apktool: () => registerApktoolCommands(cli, logger, environment),
+    jeb: () => registerJebCommands(cli, logger, environment),
+    adb: () => registerAdbCommands(cli, logger, environment),
+    browser: () => {
+      registerBrowserCommands(cli, logger);
+      registerWebRuntimeCommands(cli, logger);
+      registerWebNetworkCaptureCommands(cli, logger, environment);
+      registerAdvancedBrowserCommands(cli, logger);
+      registerBrowserScenarioCommands(cli, logger, environment);
+    },
+    electron: () => registerElectronCommands(cli, logger, environment),
+    "javascript-runtime": () =>
+      registerJavaScriptRuntimeObservationCommands(cli, logger, environment),
+    application: () => {
+      registerGuidanceCommands(cli, logger);
+      registerGuidedWorkflowCommands(cli, logger);
+      registerAnalysisViewCommands(cli, logger);
+      registerEvidenceCommands(cli, logger);
+      registerEnvironmentCommands(cli, logger, environment);
+      registerProcessCommands(cli, logger, environment);
+      registerDesktopCaptureCommands(cli, logger, environment);
+      registerJavaScriptRecoveryCommands(cli, logger, environment);
+      registerWebScriptCommands(cli, logger);
+      registerWebModuleCommands(cli, logger, environment);
+      registerWebSourceLocationCommands(cli, logger, environment);
+      registerApplicationCommands(cli, logger);
+    },
+    session: () =>
+      registerNativeFunctionMatchingCommands(cli, logger, environment),
+  });
   presentOmittableDefaults(cli);
   if (resultOutput !== undefined) streamCliCommandResults(cli, resultOutput);
   const serveStrict = rejectSurplusCliArguments(cli);
   presentCliArgumentErrors(cli);
   const serveDeclared = excludeDeclaredSensitiveArguments(cli);
+  encodeCliArgumentErrors(cli);
   const serve = cli.serve.bind(cli);
   const complete = createCliCompletions(
     cli as unknown as Parameters<typeof createCliCompletions>[0],
@@ -213,7 +258,7 @@ export const createCli = (
   );
   cli.serve = (arguments_ = process.argv.slice(2), options) => {
     if (complete(arguments_, options ?? {})) return Promise.resolve();
-    const normalized = normalizeCliArguments(arguments_);
+    let normalized = normalizeCliArguments(arguments_);
     const { command, flags } = splitIncurBuiltinArguments(normalized);
     const builtin = command[0] === PRODUCT_IDENTITY.cliBinary ? 1 : 0;
     if (
@@ -263,6 +308,308 @@ export const createCli = (
           })
         )(1);
         return Promise.resolve();
+      }
+      // Incur's `mcp add` silently skips a valued option with no value and
+      // swallows the next flag as the value: the registration succeeds without
+      // the requested agent or command. Reject a trailing --agent/--command/-c,
+      // a value position occupied by another flag, and an empty `--flag=` form
+      // up front.
+      const valued = ["--agent", "--command", "-c"];
+      let missingValue: string | undefined;
+      for (let index = 0; index < command.length; index += 1) {
+        const next = command[index + 1];
+        if (
+          valued.includes(command[index]!) &&
+          (next === undefined || next.startsWith("-"))
+        ) {
+          missingValue = command[index];
+          break;
+        }
+      }
+      const emptyValue = command.find(
+        (token) =>
+          (token.startsWith("--agent=") ||
+            token.startsWith("--command=") ||
+            token.startsWith("-c=")) &&
+          token.length === token.indexOf("=") + 1,
+      );
+      if (missingValue !== undefined || emptyValue !== undefined) {
+        const flag = missingValue ?? emptyValue!;
+        const message = `Missing value for flag: ${flag.replace(/=.*$/, "")}`;
+        const field =
+          flag.includes("command") || flag === "-c" || flag.startsWith("-c=")
+            ? "command"
+            : "agent";
+        const output = parseCliOutputArguments(normalized);
+        if (!output.validation.ok)
+          write(renderCliOutputArgumentError(output.validation));
+        else
+          write(
+            renderCliDocument(
+              {
+                code: "VALIDATION_ERROR",
+                message,
+                fieldErrors: [
+                  {
+                    code: "invalid_value",
+                    missing: false,
+                    path: field,
+                    message,
+                  },
+                ],
+              },
+              output.format,
+              process.stdout.isTTY === true,
+            ),
+          );
+        (
+          options?.exit ??
+          ((code: number) => {
+            process.exitCode = code;
+          })
+        )(1);
+        return Promise.resolve();
+      }
+      // Incur's mcp add parser only understands spaced `--agent amp` forms; an
+      // equals form like `--agent=amp` is silently ignored, which would drop
+      // the requested agent and register against the default target. Normalize
+      // equals forms back to spaced forms before handing over to Incur.
+      const serveArguments = normalized.flatMap((token) => {
+        if (token.startsWith("--agent=") || token.startsWith("--command=")) {
+          const separator = token.indexOf("=");
+          const value = token.slice(separator + 1);
+          return value === "" ? [token] : [token.slice(0, separator), value];
+        }
+        return [token];
+      });
+      // Incur's Amp registration overwrites an existing rea entry (dropping its
+      // environment map) and reports success even when the settings file
+      // prevents a save. Guard that path: reject a settings file REA cannot
+      // update, back up the file, preserve the caller's environment, and verify
+      // the registration landed.
+      // SyncMcp.register also writes Amp when no agents are selected. Mode
+      // switches return before registration and must not touch its settings.
+      // Use the same normalized arguments for selection and dispatch, including
+      // non-Amp equals forms. Incur consumes command values before agent flags.
+      normalized = serveArguments;
+      const registration = splitIncurBuiltinArguments(serveArguments);
+      const rest = registration.command.slice(builtin + 2);
+      const agents: string[] = [];
+      for (let index = 0; index < rest.length; index += 1) {
+        if (
+          (rest[index] === "--command" || rest[index] === "-c") &&
+          rest[index + 1]
+        )
+          index += 1;
+        else if (rest[index] === "--agent" && rest[index + 1])
+          agents.push(rest[++index]!);
+      }
+      const ampRequested =
+        ![
+          "--help",
+          "-h",
+          "--llms",
+          "--llms-full",
+          "--mcp",
+          "--update",
+          "--incur-update-check",
+        ].some((flag) => registration.flags.has(flag)) &&
+        (agents.length === 0 || agents.includes("amp"));
+      if (ampRequested) {
+        const settingsPath = join(homedir(), ".config", "amp", "settings.json");
+        let priorEnv: unknown;
+        let guardError: string | undefined;
+        let settingsText: string | undefined;
+        let parsedSettings: Record<string, unknown> | undefined;
+        try {
+          if (existsSync(settingsPath))
+            settingsText = readFileSync(settingsPath, "utf8");
+        } catch (cause) {
+          guardError = `Unable to read Amp settings.json: ${
+            cause instanceof Error ? cause.message : String(cause)
+          }`;
+        }
+        if (settingsText !== undefined) {
+          try {
+            const parsed: unknown = JSON.parse(settingsText);
+            if (
+              typeof parsed !== "object" ||
+              parsed === null ||
+              Array.isArray(parsed)
+            )
+              guardError = "Amp settings.json must contain a JSON object.";
+            else parsedSettings = parsed as Record<string, unknown>;
+          } catch (cause) {
+            guardError = `Amp settings.json is not valid JSON: ${
+              cause instanceof Error ? cause.message : String(cause)
+            }`;
+          }
+        }
+        if (parsedSettings !== undefined && settingsText !== undefined) {
+          const servers = parsedSettings["amp.mcpServers"];
+          if (
+            servers !== undefined &&
+            (typeof servers !== "object" ||
+              servers === null ||
+              Array.isArray(servers))
+          )
+            guardError =
+              "amp.mcpServers must be an object in Amp settings.json.";
+          else {
+            const entry =
+              typeof servers === "object" && servers !== null
+                ? (servers as Record<string, unknown>)["rea"]
+                : undefined;
+            if (typeof entry === "object" && entry !== null)
+              priorEnv = (entry as Record<string, unknown>)["env"];
+          }
+        }
+        const reportValidationError = (message: string): void => {
+          const output = parseCliOutputArguments(normalized);
+          if (!output.validation.ok)
+            write(renderCliOutputArgumentError(output.validation));
+          else
+            write(
+              renderCliDocument(
+                {
+                  code: "VALIDATION_ERROR",
+                  message,
+                  fieldErrors: [
+                    {
+                      code: "invalid_value",
+                      missing: false,
+                      path: "amp",
+                      message,
+                    },
+                  ],
+                },
+                output.format,
+                process.stdout.isTTY === true,
+              ),
+            );
+          (
+            options?.exit ??
+            ((code: number) => {
+              process.exitCode = code;
+            })
+          )(1);
+        };
+        if (guardError !== undefined) {
+          reportValidationError(`${guardError} Fix it before registering.`);
+          return Promise.resolve();
+        }
+
+        const runRegistration = (backupPath?: string): Promise<void> => {
+          let failed = false;
+          const result = serveStrict(
+            serveArguments,
+            {
+              ...options,
+              exit: (code) => {
+                failed ||= code !== 0;
+                if (options?.exit !== undefined) options.exit(code);
+                else process.exitCode = code;
+              },
+            },
+            (tokens, selected) =>
+              serveDeclared(tokens, selected, (declared, declaredOptions) =>
+                serve(
+                  adaptCliOutputArgumentsForIncur(declared),
+                  declaredOptions,
+                ),
+              ),
+          );
+          return result.then(() => {
+            if (failed) return;
+            let failure: string | undefined;
+            try {
+              if (!existsSync(settingsPath))
+                failure = "Amp settings.json was not created.";
+              else {
+                const text = readFileSync(settingsPath, "utf8");
+                const parsed = JSON.parse(text) as Record<string, unknown>;
+                const servers = parsed["amp.mcpServers"];
+                if (
+                  typeof servers !== "object" ||
+                  servers === null ||
+                  Array.isArray(servers) ||
+                  !("rea" in servers)
+                )
+                  failure =
+                    "Amp settings.json does not contain the rea registration after mcp add.";
+                else {
+                  const entry = (servers as Record<string, unknown>)["rea"];
+                  if (
+                    priorEnv !== undefined &&
+                    typeof entry === "object" &&
+                    entry !== null &&
+                    (entry as Record<string, unknown>)["env"] === undefined
+                  ) {
+                    (entry as Record<string, unknown>)["env"] = priorEnv;
+                    writeFileSync(
+                      settingsPath,
+                      `${JSON.stringify(parsed, null, 2)}\n`,
+                    );
+                  }
+                }
+              }
+            } catch (cause) {
+              failure = cause instanceof Error ? cause.message : String(cause);
+            }
+            if (failure !== undefined) {
+              const output = parseCliOutputArguments(normalized);
+              if (output.validation.ok)
+                write(
+                  renderCliDocument(
+                    {
+                      code: "VALIDATION_ERROR",
+                      message: failure,
+                      fieldErrors: [
+                        {
+                          code: "invalid_value",
+                          missing: false,
+                          path: "amp",
+                          message: failure,
+                        },
+                      ],
+                    },
+                    output.format,
+                    process.stdout.isTTY === true,
+                  ),
+                );
+              (
+                options?.exit ??
+                ((code: number) => {
+                  process.exitCode = code;
+                })
+              )(1);
+            } else if (backupPath !== undefined)
+              process.stderr.write(
+                `Amp MCP registration backup retained at ${backupPath}\n`,
+              );
+          });
+        };
+
+        if (settingsText === undefined) return runRegistration();
+        return writeAmpRegistrationBackup(settingsPath, settingsText).then(
+          (backup) => {
+            if (!backup.ok) {
+              const { kind, path, detail } = backup.error;
+              reportValidationError(
+                `Unable to create Amp settings backup (${kind}) at ${path}: ${detail}`,
+              );
+              return;
+            }
+            return runRegistration(backup.value);
+          },
+          (cause: unknown) => {
+            const detail =
+              cause instanceof Error ? cause.message : String(cause);
+            reportValidationError(
+              `Unable to create Amp settings backup: ${detail}`,
+            );
+          },
+        );
       }
     }
     const result = serveStrict(normalized, options ?? {}, (tokens, selected) =>

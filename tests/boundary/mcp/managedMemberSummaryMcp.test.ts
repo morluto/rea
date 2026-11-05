@@ -146,6 +146,29 @@ const verifyProjection = async ({
   });
 };
 
+// ldarg.0; ldfld field; call member ref; ldstr "ok"; pop; ret
+const SUMMARY_METHOD_BODY = Buffer.from([
+  (18 << 2) | 2,
+  0x02,
+  0x7b,
+  1,
+  0,
+  0,
+  0x04,
+  0x28,
+  1,
+  0,
+  0,
+  0x0a,
+  0x72,
+  1,
+  0,
+  0,
+  0x70,
+  0x26,
+  0x2a,
+]);
+
 it("summarizes selected members and pages every original collection after the file disappears", async () => {
   const directory = await createTestTempDirectory("rea-member-summary-");
   const path = join(directory, "fixture.dll");
@@ -153,28 +176,9 @@ it("summarizes selected members and pages every original collection after the fi
     path,
     buildManagedPeFixture({
       methodRowCount: 2,
-      // ldarg.0; ldfld field; call member ref; ldstr "ok"; pop; ret
-      ilBody: Buffer.from([
-        (18 << 2) | 2,
-        0x02,
-        0x7b,
-        1,
-        0,
-        0,
-        0x04,
-        0x28,
-        1,
-        0,
-        0,
-        0x0a,
-        0x72,
-        1,
-        0,
-        0,
-        0x70,
-        0x26,
-        0x2a,
-      ]),
+      fieldSignature: Buffer.from([0x06, 0x12, 0x04]),
+      methodSignature: Buffer.from([0x00, 0x00, 0x12, 0x04]),
+      ilBody: SUMMARY_METHOD_BODY,
       userStringHeap: Buffer.from([0, 5, 0x6f, 0, 0x6b, 0, 0]),
       exportedTypes: [
         {
@@ -225,13 +229,16 @@ it("summarizes selected members and pages every original collection after the fi
   expect(parent.parameters).toEqual({ path, type_names });
   expect(receipt.evidence_links).toEqual([parent.evidence_id]);
   const report = managedMemberInspectionSchema.parse(parent.normalized_result);
+  expect(report.fields[0]?.signature.field_type).toBe(
+    "class:4 (Fixture.Program)",
+  );
   expect(view.summary.selection).toEqual({
     type_names,
     unmatched_type_names: ["Missing.Type"],
   });
   expect(view.summary.coverage).toEqual(report.coverage);
   expect(view.summary.method_rows).toEqual({ offset: 0, count: 2, total: 2 });
-  expect(view.summary.signature_resolution).toBe("type-names-v1");
+  expect(view.summary.signature_resolution).toBe("type-names-v2");
   expect(view.summary.identity_scope).toEqual(report.identity_scope);
   expect(view.summary).not.toHaveProperty("methods");
   for (const detail of [undefined, "complete"]) {
@@ -276,7 +283,7 @@ it("summarizes selected members and pages every original collection after the fi
       if (page.kind !== "managed-members")
         throw new Error("Unexpected page kind");
       expect(page.page.collection).toBe(collection);
-      expect(page.signature_resolution).toBe("type-names-v1");
+      expect(page.signature_resolution).toBe("type-names-v2");
       expect(page.selection).toEqual(report.selection);
       expect(page.coverage.total).toBe(rows.length);
       expect(page.method_rows).toEqual(report.method_rows);

@@ -1,4 +1,5 @@
 import { readFieldDefinitionRow } from "./ManagedFieldDefinitionRows.js";
+import { createManagedFieldConstantReader } from "./ManagedFieldConstants.js";
 import { readMemberReferenceRowFacts } from "./ManagedMemberReferenceRows.js";
 import { readMethodDefinitionRow } from "./ManagedMethodDefinitionRows.js";
 import { jsonStringByteLength } from "../domain/jsonStringByteLength.js";
@@ -27,6 +28,7 @@ import {
   type DecodedMethod,
   type MemberCore,
   type SignatureTypeName,
+  type SignatureDisplayTypeName,
   type DeclarationTypeName,
   type TypeRange,
 } from "./ManagedMemberInspectorCore.js";
@@ -65,10 +67,12 @@ export const parseFields = (
   memberLists: TypeMemberListFacts,
   {
     signatureTypeName,
+    displayTypeName,
     declarationTypeName,
     selected = null,
   }: {
     readonly signatureTypeName: SignatureTypeName;
+    readonly displayTypeName: SignatureDisplayTypeName;
     readonly declarationTypeName: DeclarationTypeName;
     readonly selected?: SelectedTypeTokens;
   },
@@ -80,6 +84,7 @@ export const parseFields = (
   const fields: ManagedField[] = [];
   const core = new Map<string, MemberCore>();
   const issues: ManagedParseIssue[] = [];
+  const constant = createManagedFieldConstantReader(bytes, layout, issues);
   const table = layout.table(4);
   const ownerRow = readManagedValue(
     () => memberDeclaringTypeRowLookup(bytes, layout, 4, memberLists),
@@ -117,6 +122,7 @@ export const parseFields = (
         sig,
         layout,
         signatureTypeName,
+        displayTypeName,
         issues,
         { scope: `Field:${token}.signature`, kind: "field", artifact: bytes },
       );
@@ -140,6 +146,7 @@ export const parseFields = (
         name,
         flags,
         signature: decoded,
+        constant: constant(row, flags),
       });
     }, issues);
   }
@@ -219,12 +226,14 @@ export const parseMemberRefs = (
   {
     typeName,
     signatureTypeName,
+    displayTypeName,
     declarationTypeName,
   }: {
     readonly typeName: (
       reference: Pick<MetadataTokenFact, "table" | "row" | "token"> | null,
     ) => string | null;
     readonly signatureTypeName: SignatureTypeName;
+    readonly displayTypeName: SignatureDisplayTypeName;
     readonly declarationTypeName: DeclarationTypeName;
   },
 ): {
@@ -268,6 +277,7 @@ export const parseMemberRefs = (
         sig,
         layout,
         signatureTypeName,
+        displayTypeName,
         issues,
         { scope: `MemberRef:${token}.signature`, artifact: bytes },
       );
@@ -303,6 +313,7 @@ interface ParseMethodsInput {
   readonly pe: ManagedPeLayout;
   readonly ranges: readonly TypeRange[];
   readonly signatureTypeName: SignatureTypeName;
+  readonly displayTypeName: SignatureDisplayTypeName;
   readonly declarationTypeName: DeclarationTypeName;
   readonly memberRefKinds: ReadonlyMap<string, "field" | "method">;
   readonly memberLists: TypeMemberListFacts;
@@ -317,6 +328,7 @@ export const parseMethods = ({
   pe,
   ranges,
   signatureTypeName,
+  displayTypeName,
   declarationTypeName,
   memberRefKinds,
   memberLists,
@@ -396,6 +408,7 @@ export const parseMethods = ({
         sig,
         layout,
         signatureTypeName,
+        displayTypeName,
         issues,
         {
           scope: `MethodDef:${token}.signature`,
@@ -568,6 +581,7 @@ const budgetedSignature = (
   bytes: Buffer,
   layout: ManagedMetadataLayout,
   signatureTypeName: SignatureTypeName,
+  displayTypeName: SignatureDisplayTypeName,
   issues: ManagedParseIssue[],
   owner: {
     readonly scope: string;
@@ -586,6 +600,15 @@ const budgetedSignature = (
       metadataSignature(bytes, {
         rawSha256: budget.digest(bytes, "sha256"),
         typeName: signatureTypeName,
+        displayTypeName: (operand, copies) => {
+          const name = displayTypeName(operand, copies);
+          if (name !== null)
+            budget.admitTransient(
+              (name.length * 6 + 2) * copies,
+              layout.blob?.offset ?? layout.rootOffset,
+            );
+          return name;
+        },
         layout,
         issues,
         scope: owner.scope,

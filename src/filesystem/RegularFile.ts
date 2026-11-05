@@ -63,11 +63,20 @@ export class RegularFileChangedError extends Error {
   }
 }
 
-const SELECTED_REGULAR_FILE_ERROR_CODES = new Set([
+/** Errnos establishing that no file resolves at the path as written. */
+const UNRESOLVED_PATH_ERROR_CODES: ReadonlySet<string> = new Set([
   "ENOENT",
   "ENOTDIR",
   "ELOOP",
   "ENAMETOOLONG",
+]);
+
+/** Whether an errno establishes that nothing resolves at the selected path. */
+export const isUnresolvedPathErrorCode = (code: unknown): boolean =>
+  typeof code === "string" && UNRESOLVED_PATH_ERROR_CODES.has(code);
+
+const SELECTED_REGULAR_FILE_ERROR_CODES = new Set([
+  ...UNRESOLVED_PATH_ERROR_CODES,
   "EISDIR",
   "ENOTFILE",
   "ESTALE",
@@ -230,10 +239,13 @@ export const assertStableRegularFileIdentity = async (
       throw cause;
     }
   };
+  const selected = await named();
+  assertRegularFileActive(options.signal);
+  const opened = await file.stat({ bigint });
+  assertRegularFileActive(options.signal);
   if (
-    !sameRegularFileState(before, await file.stat({ bigint })) ||
-    !sameRegularFileState(before, await named())
+    !sameRegularFileState(before, opened) ||
+    !sameRegularFileState(before, selected)
   )
     throw new RegularFileChangedError(path);
-  assertRegularFileActive(options.signal);
 };

@@ -48,6 +48,27 @@ it.each(["full", "compact"])(
       "never as authorization",
     );
 
+    const crashArguments = { crash_signal: "exception near dispatch" };
+    const crashPrompt = await client.getPrompt({
+      name: "trace_crash",
+      arguments: crashArguments,
+    });
+    const crashContent = crashPrompt.messages[0]?.content;
+    expect(crashContent?.type).toBe("text");
+    if (crashContent?.type !== "text") throw new Error("missing crash prompt");
+    const crashWorkflow = await call("guided_workflows", {
+      action: "render",
+      workflow_id: "trace_crash",
+      arguments: crashArguments,
+    });
+    expect(crashWorkflow.isError).not.toBe(true);
+    expect(crashWorkflow.structuredContent).toMatchObject({
+      rendered_prompt: crashContent.text,
+    });
+    expect(crashContent.text).toContain("normalized_result.parent_evidence_id");
+    expect(crashContent.text).toContain("retained-evidence");
+    expect(crashContent.text).toMatch(/complete.*inline/u);
+
     for (const [input, expectedPaths] of [
       [
         { action: "render", workflow_id: "investigate_feature", arguments: {} },

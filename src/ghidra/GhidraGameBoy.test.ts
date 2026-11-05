@@ -15,6 +15,8 @@ import { ghidraProfileInstallationHost as host } from "./GhidraInstallation.fixt
 import { silentLogger } from "../logger.js";
 import { parseGhidraSeeds } from "./GhidraAnalysisSeeds.js";
 import { attestGhidraGameBoyLoadImage } from "./GhidraGameBoyLoadImage.js";
+import { attestGhidraNativeLoadImage } from "./GhidraLoadImageAttest.js";
+import { ok } from "../domain/result.js";
 import { ghidraHeadlessArguments } from "./GhidraLauncher.js";
 import type { NativeLoadImageObservation } from "../domain/native/nativeLoadImage.js";
 
@@ -29,6 +31,15 @@ const targetFor = async (banks = 4) => {
   if (!parsed.ok) throw parsed.error;
   if (parsed.value.format !== "gameboy-rom") throw new Error("wrong target");
   return { target: parsed.value, rom, directory };
+};
+const installSm83Fixture = async (directory: string) => {
+  const languages = join(directory, "Ghidra/Processors/SM83/data/languages");
+  await mkdir(languages, { recursive: true });
+  await writeFile(
+    join(languages, "sm83.ldefs"),
+    '<language_definitions><language id="SM83:LE:16:default"><compiler id="default"/></language></language_definitions>',
+  );
+  return languages;
 };
 
 describe("Game Boy cartridge boundary", () => {
@@ -130,12 +141,7 @@ describe("Game Boy cartridge boundary", () => {
     const provider = new GhidraProvider(config.value, silentLogger, {}, host);
     const missing = await provider.resolveAnalysisProfile(target);
     expect(missing.ok).toBe(false);
-    const languages = join(directory, "Ghidra/Processors/SM83/data/languages");
-    await mkdir(languages, { recursive: true });
-    await writeFile(
-      join(languages, "sm83.ldefs"),
-      '<language_definitions><language id="SM83:LE:16:default"><compiler id="default"/></language></language_definitions>',
-    );
+    const languages = await installSm83Fixture(directory);
     await writeFile(join(directory, "Ghidra/Processors/.DS_Store"), "metadata");
     const resolved = await provider.resolveAnalysisProfile(target);
     if (!resolved.ok) throw resolved.error;
@@ -154,6 +160,54 @@ describe("Game Boy cartridge boundary", () => {
   });
 });
 
+it.each([undefined, "default"])(
+  "admits a matching SM83 override through client creation (compiler: %s)",
+  async (compilerSpecId) => {
+    const { target, directory } = await targetFor();
+    await installSm83Fixture(directory);
+    const config = parseConfig({
+      GHIDRA_INSTALL_DIR: directory,
+      REA_GHIDRA_LANGUAGE_ID: "SM83:LE:16:default",
+      ...(compilerSpecId === undefined
+        ? {}
+        : { REA_GHIDRA_COMPILER_SPEC_ID: compilerSpecId }),
+    });
+    if (!config.ok) throw config.error;
+    const created: unknown[] = [];
+    const provider = new GhidraProvider(
+      config.value,
+      silentLogger,
+      {},
+      host,
+      (options) => {
+        created.push({
+          languageId: options.expectedLanguageId,
+          compilerSpecId: options.expectedCompilerSpecId,
+        });
+        throw new Error("Stop at the engine construction boundary");
+      },
+    );
+    try {
+      const resolved = await provider.resolveAnalysisProfile(target);
+      if (!resolved.ok || resolved.value.profile === null)
+        throw new Error("Expected a configured SM83 profile");
+      const client = provider.createClient(target, resolved.value.profile);
+      try {
+        await client.execute("health", {});
+        expect(created).toEqual([
+          { languageId: "SM83:LE:16:default", compilerSpecId: "default" },
+        ]);
+        expect(resolved.value.profile.parameters.language_selection).toBe(
+          "configured-v1",
+        );
+      } finally {
+        await client.close();
+      }
+    } finally {
+      await provider.closeOwnedResources();
+    }
+  },
+);
 describe("Game Boy bank analysis", () => {
   it("accepts distinct overlay seeds and preserves duplicate detection", () => {
     expect(
@@ -218,7 +272,25 @@ describe("Game Boy bank analysis", () => {
       bytes: rom.length,
       rangeSha256: bankHashes,
     };
-    const correct = attestGhidraGameBoyLoadImage(snapshot, target, measured);
+    const correct = await attestGhidraNativeLoadImage({
+      operation: "inspect_native_load_image",
+      target,
+      measured,
+      client: {
+        hashTargetSnapshotRanges: async (ranges) => {
+          expect(ranges).toEqual([
+            { start: 0, end: 0x4000 },
+            { start: 0x4000, end: 0x8000 },
+            { start: 0x8000, end: 0xc000 },
+            { start: 0xc000, end: 0x10000 },
+          ]);
+          return ok(snapshot);
+        },
+      },
+      mapSessionError: (failure) => {
+        throw failure;
+      },
+    });
     expect(correct.ok && correct.value.status).toBe("verified");
     measured.mappings[2]!.sha256 = "0".repeat(64);
     const changed = attestGhidraGameBoyLoadImage(snapshot, target, measured);

@@ -10,14 +10,16 @@ import {
   CPU,
   machoImage,
 } from "../../../../src/artifacts/apple/MachoImage.fixture.js";
-import { ArtifactProvider } from "../../../../src/artifacts/ArtifactProvider.js";
 import { artifactExtractionExecutionSchema } from "../../../../src/contracts/artifactToolContracts.js";
 import {
   artifactExtractionResultSchema,
   artifactInventoryResultSchema,
 } from "../../../../src/domain/artifactGraph.js";
 import type { BinaryTarget } from "../../../../src/domain/binaryTargetTypes.js";
-import { withArtifactClient } from "../../../support/artifactClientScope.js";
+import {
+  createOwnedArtifactClient,
+  withArtifactClient,
+} from "../../../support/artifactClientScope.js";
 
 describe("artifact extraction", () => {
   it.skipIf(process.platform === "win32").each(["file/..", "missing"])(
@@ -61,15 +63,13 @@ describe("artifact extraction", () => {
     await mkdir(source);
     await writeFile(join(source, "payload.txt"), "committed\n");
     const output = join(root, "output");
-    const client = new ArtifactProvider(process.env).createClient(
-      await target(source),
-    );
+    const client = createOwnedArtifactClient(await target(source));
 
     const result = await client.execute("extract_artifact", {
       output_root: output,
     });
     if (!result.ok) throw result.error;
-    await client.close();
+    expect((await client.close()).ok).toBe(true);
     expect(await readFile(join(output, "payload.txt"), "utf8")).toBe(
       "committed\n",
     );
@@ -91,29 +91,25 @@ describe("artifact extraction", () => {
     const cancelledOutput = join(root, "cancelled-output");
     const controller = new AbortController();
     controller.abort();
-    const cancelled = await new ArtifactProvider(process.env)
-      .createClient(targetValue)
-      .execute(
-        "extract_artifact",
-        artifactExtractionExecutionSchema.parse({
-          output_root: cancelledOutput,
-        }),
-        { signal: controller.signal },
-      );
+    const cancelled = await createOwnedArtifactClient(targetValue).execute(
+      "extract_artifact",
+      artifactExtractionExecutionSchema.parse({
+        output_root: cancelledOutput,
+      }),
+      { signal: controller.signal },
+    );
     expect(cancelled).toMatchObject({
       ok: false,
       error: { _tag: "ArtifactOperationError", reason: "cancelled" },
     });
     await expect(access(cancelledOutput)).rejects.toThrow();
     const output = join(root, "output");
-    const result = await new ArtifactProvider(process.env)
-      .createClient(targetValue)
-      .execute(
-        "extract_artifact",
-        artifactExtractionExecutionSchema.parse({
-          output_root: output,
-        }),
-      );
+    const result = await createOwnedArtifactClient(targetValue).execute(
+      "extract_artifact",
+      artifactExtractionExecutionSchema.parse({
+        output_root: output,
+      }),
+    );
     if (!result.ok) throw result.error;
     const firstExtraction = artifactExtractionResultSchema.parse(
       result.value.result,
@@ -136,28 +132,24 @@ describe("artifact extraction", () => {
     );
 
     const relocatedOutput = join(root, "relocated-output");
-    const relocated = await new ArtifactProvider(process.env)
-      .createClient(targetValue)
-      .execute(
-        "extract_artifact",
-        artifactExtractionExecutionSchema.parse({
-          output_root: relocatedOutput,
-        }),
-      );
+    const relocated = await createOwnedArtifactClient(targetValue).execute(
+      "extract_artifact",
+      artifactExtractionExecutionSchema.parse({
+        output_root: relocatedOutput,
+      }),
+    );
     if (!relocated.ok) throw relocated.error;
     expect(
       artifactExtractionResultSchema.parse(relocated.value.result)
         .extraction_manifest,
     ).toEqual(firstExtraction.extraction_manifest);
 
-    const second = await new ArtifactProvider(process.env)
-      .createClient(targetValue)
-      .execute(
-        "extract_artifact",
-        artifactExtractionExecutionSchema.parse({
-          output_root: output,
-        }),
-      );
+    const second = await createOwnedArtifactClient(targetValue).execute(
+      "extract_artifact",
+      artifactExtractionExecutionSchema.parse({
+        output_root: output,
+      }),
+    );
     expect(second).toMatchObject({
       ok: false,
       error: { _tag: "ArtifactOperationError", reason: "path" },
@@ -170,9 +162,10 @@ describe("artifact extraction", () => {
   });
 });
 const inventory = async (targetValue: BinaryTarget) => {
-  const result = await new ArtifactProvider(process.env)
-    .createClient(targetValue)
-    .execute("inventory_artifact", {});
+  const result = await createOwnedArtifactClient(targetValue).execute(
+    "inventory_artifact",
+    {},
+  );
   if (!result.ok) throw result.error;
   return artifactInventoryResultSchema.parse(result.value.result);
 };

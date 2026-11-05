@@ -9,7 +9,7 @@ import {
   expectKeyedArchivePrototypeKeys,
   keyedArchivePrototypeKeyFixture,
 } from "../../fixtures/keyedArchivePrototypeKeys.js";
-import { cliTest } from "../../support/cli/cliFixture.js";
+import { cliTest, runFileCli } from "../../support/cli/cliFixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { keyedArchiveResultSchema } from "../../../src/domain/apple/keyedArchive.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
@@ -73,7 +73,7 @@ cliTest(
       const path = join(directory, `${name}.plist`);
       await writeFile(path, bytes);
       for (const rootArguments of [[], ["--root", "main"]]) {
-        const output = await cli.run({
+        const invocation = {
           arguments: [
             "inspect-keyed-archive",
             path,
@@ -85,7 +85,10 @@ cliTest(
             HOME: directory,
             USERPROFILE: directory,
           },
-        });
+        };
+        const output = await (name !== "plain" && rootArguments.length === 0
+          ? cli.run(invocation)
+          : runFileCli(cli, invocation));
         expect(output.exitCode, output.stdout).toBe(0);
         const result = keyedArchiveResultSchema.parse(
           parseEvidence(output.json).normalized_result,
