@@ -15,7 +15,7 @@ const lintReport = z.object({
       message: z.string(),
       code: z.string().optional(),
       severity: z.enum(["error", "warning", "advice"]),
-      filename: z.string(),
+      filename: z.string().optional(),
       labels: z.array(
         z.object({
           span: z.object({ line: z.number(), column: z.number() }),
@@ -91,7 +91,8 @@ try {
       typed
         ? {
             ...process.env,
-            GOMAXPROCS: process.env.GOMAXPROCS ?? "2",
+            // One worker reuses its checker caches across the full file queue.
+            GOMAXPROCS: process.env.GOMAXPROCS ?? "1",
             GOMEMLIMIT: process.env.GOMEMLIMIT ?? "1024MiB",
           }
         : process.env,
@@ -115,8 +116,12 @@ try {
     );
     for (const diagnostic of errors) {
       const location = diagnostic.labels[0]?.span;
+      const source =
+        diagnostic.filename === undefined
+          ? ""
+          : `${diagnostic.filename}${location === undefined ? "" : `:${location.line}:${location.column}`}: `;
       console.error(
-        `${diagnostic.filename}:${location?.line ?? 1}:${location?.column ?? 1}: ${diagnostic.code ?? "lint"}: ${diagnostic.message}`,
+        `${source}${diagnostic.code ?? "lint"}: ${diagnostic.message}`,
       );
     }
     const counts = new Map();

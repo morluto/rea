@@ -85,6 +85,37 @@ it("keeps a realpath I/O failure primary when cancellation is observed before re
   expect(result.error.cause).toBe(ioFailure);
 });
 
+it("retains exact cancellation observed after successful tool path resolution", async () => {
+  let finishRealpath!: () => void;
+  let realpathStarted!: () => void;
+  const started = new Promise<void>((resolve) => {
+    realpathStarted = resolve;
+  });
+  realpathState.resolve = () =>
+    new Promise<string>((resolve) => {
+      finishRealpath = () => resolve("/controlled/physical-tool");
+      realpathStarted();
+    });
+  const controller = new AbortController();
+  const cancellationReason = { source: "caller", phase: "tool selection" };
+  const pending = resolveXcrunTool("file", {}, controller.signal, launcher);
+  await started;
+  controller.abort(cancellationReason);
+  finishRealpath();
+
+  const result = await pending;
+  if (result.ok) throw new Error("Expected selection cancellation");
+  expect(result.error).toMatchObject({
+    reason: "cancelled",
+    cancellation: { reason: cancellationReason },
+  });
+  expect(result.error.cancellation?.reason).toBe(cancellationReason);
+  expect(result.error.cause).toMatchObject({
+    reason: "cancelled",
+    cause: cancellationReason,
+  });
+});
+
 it.skipIf(process.platform === "win32")(
   "uses the AbortError cause as the exact tool-hash cancellation fact",
   async () => {

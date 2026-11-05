@@ -1,6 +1,7 @@
+import { safeParseUtf8Json } from "../domain/safeJson.js";
 import { createHash } from "node:crypto";
 import { createWriteStream } from "node:fs";
-import { chmod, lstat, opendir, readlink, realpath } from "node:fs/promises";
+import { chmod, lstat, opendir, readlink } from "node:fs/promises";
 import { isAbsolute, join, relative, sep } from "node:path";
 import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
@@ -34,6 +35,7 @@ import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import { readArtifactFileChunks } from "../artifacts/readArtifactFileChunks.js";
 import { decodeDirectoryEntryName } from "../filesystem/decodeDirectoryEntryName.js";
 import { NonRegularFileReadError } from "../filesystem/RegularFile.js";
+import { observedSymlinkTarget } from "../domain/symlinkTarget.js";
 
 /** One regular file or unpublished filesystem entry in a private extraction. */
 export interface FirmwareEntry {
@@ -42,6 +44,7 @@ export interface FirmwareEntry {
   readonly size: number;
   readonly kind: "file" | "symlink" | "special";
   readonly linkTarget: string | null;
+  readonly linkTargetHex?: string;
 }
 
 const throwIfFirmwareInventoryCancelled = (
@@ -112,17 +115,10 @@ export class FirmwareFileAccess {
 
   async #snapshot(request: FirmwareRequest, root: string, signal: AbortSignal) {
     const sourcePath = absoluteCallerPath(request.input.path);
-    const source = await realpath(sourcePath).catch((cause: unknown) => {
-      throw firmwareSourceAdmissionFailure(
-        request.operation,
-        sourcePath,
-        cause,
-      );
-    });
     let sourceAdmitted = false;
     const fullPath = join(root, "firmware.bin");
     const copied = await withArtifactRegularFile(
-      source,
+      sourcePath,
       this.#resources,
       signal,
       async ({ handle, initial: stat }) => {
@@ -149,6 +145,7 @@ export class FirmwareFileAccess {
         );
         return { size, sha256: hash.digest("hex") };
       },
+      "follow",
     ).catch((cause: unknown) => {
       // Destination writes and reads after admission retain their own failure.
       throw sourceAdmitted
@@ -264,12 +261,9 @@ export class FirmwareFileAccess {
           if (bytes.length === 0)
             throw firmwareReportFailure(operation, "empty", "Report is empty");
           try {
-            const value: unknown = JSON.parse(
-              new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
-                bytes,
-              ),
-            );
-            return value;
+            const decoded = safeParseUtf8Json(bytes);
+            if (!decoded.ok) throw decoded.cause;
+            return decoded.value;
           } catch (cause: unknown) {
             throw firmwareReportFailure(
               operation,
@@ -362,11 +356,15 @@ const firmwareInputFailure = (operation: string, cause?: unknown) => {
   ]);
 };
 
-/** Inventory private output without following links, enforcing aggregate staging budgets. */
+/**
+ * Inventory private output without following links, enforcing aggregate staging
+ * budgets and the producer's per-file limit.
+ */
 export const inventoryFirmwareOutput = async (
   root: string,
   maxBytes: number,
   maxEntries: number,
+  fileSizeBytes: number,
   operation: string,
   signal?: AbortSignal,
 ): Promise<FirmwareEntry[]> => {
@@ -436,6 +434,11 @@ export const inventoryFirmwareOutput = async (
       if (stat.isFile()) bytes += stat.size;
       if (bytes > maxBytes)
         throw firmwareStagingLimit(operation, "max_output_bytes", maxBytes);
+      if (stat.isFile() && stat.size >= fileSizeBytes)
+        throw firmwareFileSizeLimitReached(operation, fileSizeBytes);
+      const linkTarget = stat.isSymbolicLink()
+        ? observedSymlinkTarget(await readlink(path, { encoding: "buffer" }))
+        : undefined;
       entries.push({
         path,
         relativePath: relative(root, path).split(sep).join("/"),
@@ -445,7 +448,8 @@ export const inventoryFirmwareOutput = async (
           : stat.isFile()
             ? "file"
             : "special",
-        linkTarget: stat.isSymbolicLink() ? await readlink(path) : null,
+        linkTarget: linkTarget?.text ?? null,
+        ...(linkTarget === undefined ? {} : { linkTargetHex: linkTarget.hex }),
       });
     }
   }
@@ -489,6 +493,26 @@ const firmwareStagingLimit = (
     {
       retryable: false,
       remediationAction: firmwareStagingBudgetRemediation(field, maximum),
+    },
+  );
+
+/**
+ * The kernel stops a write at RLIMIT_FSIZE without extending the file, so a
+ * staged file that reaches the producer's limit may be truncated. That limit
+ * sits one byte above every budget unless an inherited ceiling removed the byte.
+ */
+export const firmwareFileSizeLimitReached = (
+  operation: string,
+  fileSizeBytes: number,
+) =>
+  new AnalysisResourceConstraintError(
+    operation,
+    "file-size",
+    `A staged firmware file reached the ${String(fileSizeBytes)}-byte per-file limit and may be truncated`,
+    { file_size_bytes: fileSizeBytes },
+    {
+      retryable: false,
+      remediationAction: `REA inherited a ${String(fileSizeBytes)}-byte file-size limit (RLIMIT_FSIZE), so it could not keep one byte of headroom above max_output_bytes and the report and diagnostic allowances. A staged file that reaches the limit cannot be told apart from one the kernel cut short. Raise the file-size limit REA inherits (for example ulimit -f in the launching shell or service) above the largest file the extraction needs. analysis_timeout_ms does not raise it, and repeating the unchanged request fails the same way.`,
     },
   );
 

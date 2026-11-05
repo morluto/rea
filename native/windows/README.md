@@ -232,6 +232,12 @@ C++ compiler, or the same way they do, and pass its path:
 node scripts/verify-windows-native.mjs . C:\fixtures\process-boundary.exe
 ```
 
+The capability lane runs native behavior and inspection-recovery proofs after
+the verified artifact and runtime build, before the broad curated test group.
+An unrelated curated failure therefore cannot hide those real native checks.
+Inert PE identity fixtures are shared under `tests/fixtures/`; they exercise
+artifact admission and simulated loader outcomes, never native authority.
+
 `nonAdminRunner.cc` is a test-only launcher for an elevated development shell.
 It duplicates an existing non-elevated Explorer token belonging to the same
 user, creates private temporary window-station objects, and launches the test

@@ -2,8 +2,8 @@ import type { JavaScriptSemanticGraph } from "./javascriptSemanticGraph.js";
 import type {
   JavaScriptSemanticGraphNode,
   JavaScriptSemanticGraphRelation,
+  JavaScriptSemanticGraphUnknown,
 } from "./javascriptSemanticGraphSchemas.js";
-import type { JavaScriptSemanticGraphUnknown } from "./javascriptSemanticGraphSchemas.js";
 import { isJavaScriptSemanticOwnershipRelation as ownershipRelation } from "./javascriptSemanticQueryRelations.js";
 import {
   javaScriptSemanticQueryResultSchema,

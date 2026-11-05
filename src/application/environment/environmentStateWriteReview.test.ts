@@ -26,7 +26,13 @@ import { webNetworkCaptureSchema } from "../../domain/webNetworkCapture.js";
 const archived = (value: boolean) => ({ ...FIRST_BOOK, archived: value });
 
 describe("bodyless action evidence", () => {
-  it.each([
+  it.each<{
+    name: string;
+    postData: unknown;
+    bodySize?: unknown;
+    served?: boolean;
+    shape?: boolean;
+  }>([
     {
       name: "form",
       postData: {
@@ -46,9 +52,45 @@ describe("bodyless action evidence", () => {
       },
     },
     { name: "unretained body", postData: undefined },
+    {
+      name: "omitted body with zero size",
+      postData: undefined,
+      bodySize: 0,
+      served: true,
+    },
+    { name: "explicit null with zero size", postData: null, bodySize: 0 },
+    {
+      name: "params-only with zero size",
+      postData: {
+        mimeType: "application/json",
+        params: [{ name: "archived", value: "true" }],
+      },
+      bodySize: 0,
+    },
+    {
+      name: "empty text with nonempty params",
+      postData: {
+        mimeType: "application/json",
+        text: "",
+        params: [{ name: "archived", value: "true" }],
+      },
+      bodySize: 0,
+    },
+    {
+      name: "explicit empty body with zero size",
+      postData: { mimeType: "application/json", text: "", params: [] },
+      bodySize: 0,
+      served: true,
+    },
+    {
+      name: "invalid size with retained JSON",
+      postData: { mimeType: "application/json", text: '{"archived":true}' },
+      bodySize: "unknown",
+      shape: true,
+    },
   ])(
-    "does not use unreadable or unretained request bodies as a repeated bodyless action: $name",
-    ({ postData }) => {
+    "preserves literal request-body availability for repeated actions: $name",
+    ({ postData, bodySize = 12, served = false, shape = false }) => {
       const capture = timedCaptureEvidence([
         ["GET", "/api/books", [archived(false), SECOND_BOOK]],
         ["GET", "/api/books/1", archived(false)],
@@ -60,14 +102,18 @@ describe("bodyless action evidence", () => {
       ]);
       const result = capture.normalized_result as {
         records: {
-          reported: { request: { postData?: unknown; bodySize?: number } };
+          reported: { request: { postData?: unknown; bodySize?: unknown } };
         }[];
       };
       const request = result.records[5]!.reported.request;
-      request.bodySize = 12;
+      request.bodySize = bodySize;
       if (postData === undefined) delete request.postData;
       else request.postData = postData;
-      const { state } = environmentStateServeInputs(
+      if (shape) {
+        result.records[3]!.reported.request.bodySize = bodySize;
+        result.records[3]!.reported.request.postData = postData;
+      }
+      const { source, state } = environmentStateServeInputs(
         environmentStateServeFixture(
           analysisViewCaptureEvidence(
             webNetworkCaptureSchema.parse(capture.normalized_result),
@@ -75,8 +121,17 @@ describe("bodyless action evidence", () => {
         ),
       );
       expect(state.writes.get("post_books_archive_by_id")).toMatchObject({
-        served: false,
+        served,
       });
+      const tool = source.manifest.tools.find(
+        ({ name }) => name === "post_books_archive_by_id",
+      );
+      expect(tool).toBeDefined();
+      if (shape)
+        expect(tool?.body_shape).toMatchObject({
+          properties: { archived: "boolean" },
+        });
+      else if (bodySize === 0) expect(tool?.body_shape).toBeNull();
     },
   );
 });

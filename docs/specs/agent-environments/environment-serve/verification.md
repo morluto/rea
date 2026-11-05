@@ -235,8 +235,10 @@ parameters cannot mismatch, and a call without arguments is exact on the
 tool's first record. Request bodies on write tools are accepted and ignored.
 The post-bind listener `error` path is wired and type-checked but not
 provoked by a test, since the shared listener does not expose its
-`node:http` server. Non-loopback binds and the relaxed `Host` check were not
-exercised; the Python exchange, curl checks and every test used `127.0.0.1`.
+`node:http` server. These recorded runs predate the required non-loopback Host/Origin allowlist;
+the Python exchange, curl checks and tests recorded here used `127.0.0.1`.
+The current contract and later non-loopback coverage are described in the
+[transport specification](../http-transport/spec.md).
 Replay selection and body parsing were measured on the 28-record fixture
 only; no large-capture timing was taken. Resident-set figures are `ps` samples
 of the serving process before and after one request each. Token usage and

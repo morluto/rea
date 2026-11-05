@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { parseBinaryTarget } from "../application/BinaryTargetResolver.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { parseConfig } from "../config/parseConfig.js";
+import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import { buildGamecubeDol } from "../domain/gamecubeDol.fixture.js";
 import { parseDolHeader } from "../domain/gamecubeDol.js";
@@ -108,6 +109,8 @@ describe("GameCube DOL Ghidra profile", () => {
     );
     if (!left.ok) throw left.error;
     if (!right.ok) throw right.error;
+    expect(left.value.profile?.digest).toEqual(expect.any(String));
+    expect(right.value.profile?.digest).toEqual(expect.any(String));
     expect(left.value.profile?.digest).not.toBe(right.value.profile?.digest);
   });
 
@@ -160,11 +163,42 @@ describe("GameCube DOL Ghidra profile", () => {
       host,
     );
     const resolved = await ghidra.resolveAnalysisProfile(await dolTarget());
-    expect(resolved.ok).toBe(false);
-    if (!resolved.ok)
-      expect(resolved.error.message).toContain(
-        "requires a PowerPC:BE:32:* language",
-      );
+    if (resolved.ok) throw new Error("expected an override conflict");
+    expect(resolved.error.message).toContain(
+      "requires a PowerPC:BE:32:* language",
+    );
+    // The setting conflicts with the admitted DOL; the target stays supported.
+    expect(projectAnalysisError(resolved.error)).toMatchObject({
+      code: "configuration_invalid",
+      details: {
+        settings: [
+          expect.objectContaining({ setting: "REA_GHIDRA_LANGUAGE_ID" }),
+        ],
+      },
+    });
+  });
+
+  it("names only the language when a compiler spec accompanies a conflicting language", async () => {
+    const ghidra = new GhidraProvider(
+      await installedConfig({
+        REA_GHIDRA_LANGUAGE_ID: "x86:LE:32:default",
+        REA_GHIDRA_COMPILER_SPEC_ID: "gcc",
+      }),
+      silentLogger,
+      {},
+      host,
+    );
+    const resolved = await ghidra.resolveAnalysisProfile(await dolTarget());
+    if (resolved.ok) throw new Error("expected an override conflict");
+    // DOL accepts a compiler-spec override, so only the language is blamed.
+    expect(projectAnalysisError(resolved.error)).toMatchObject({
+      code: "configuration_invalid",
+      details: {
+        settings: [
+          expect.objectContaining({ setting: "REA_GHIDRA_LANGUAGE_ID" }),
+        ],
+      },
+    });
   });
 
   it("does not admit DOL through Windows Ghidra P0", async () => {

@@ -295,3 +295,84 @@ it("keeps later type identity, member ownership and constructor names at their o
     },
   ]);
 });
+
+it("keeps independent name failures ahead of conditional Extends diagnostics", () => {
+  const bytes = buildManagedPeFixture({ extendsRaw: 12 });
+  const readable = inspectManagedMembersBytes(
+    bytes,
+    managedPeFixtureTarget(bytes),
+  );
+  const row = readable.types[0]?.row_offset;
+  if (row === undefined) throw new Error("Expected TypeDef fixture");
+  expect(readable.coverage.issues).toContainEqual(
+    expect.objectContaining({
+      code: "invalid-row",
+      scope: "metadata.TypeDef:0x02000001",
+      offset: row + 8,
+      detail: expect.stringContaining("Extends"),
+    }),
+  );
+  bytes.writeUInt16LE(0xffff, row + 4);
+  bytes.writeUInt16LE(0xfffe, row + 6);
+  const partial = inspectManagedMembersBytes(
+    bytes,
+    managedPeFixtureTarget(bytes),
+  );
+  expect(partial.types).toEqual([]);
+  expect(partial.fields).toHaveLength(1);
+  expect(partial.methods).toHaveLength(1);
+  for (const member of [...partial.fields, ...partial.methods])
+    expect(member).toMatchObject({
+      declaring_type_token: "0x02000001",
+      declaring_type: null,
+    });
+  expect(partial.module).toEqual(readable.module);
+  expect(partial.coverage).toMatchObject({
+    state: "partial",
+    issues: [
+      expect.objectContaining({
+        code: "invalid-heap-index",
+        scope: "metadata.#Strings",
+      }),
+      expect.objectContaining({
+        code: "invalid-heap-index",
+        scope: "metadata.#Strings",
+      }),
+    ],
+  });
+  expect(
+    new Set(partial.coverage.issues.map(({ offset }) => offset)).size,
+  ).toBe(2);
+});
+
+it("reads inventory names on demand without admitting TypeDef member lists or Extends", () => {
+  const bytes = buildManagedPeFixture({
+    additionalEmptyTypes: 1,
+    typeName: "Lookup",
+  });
+  const pe = readManagedPeLayout(bytes);
+  if (pe.cli === null) throw new Error("Expected CLI fixture");
+  const layout = readManagedMetadataLayout(
+    bytes,
+    pe.rvaToOffset(pe.cli.metadata.rva, pe.cli.metadata.size, "cli.metadata"),
+    pe.cli.metadata.size,
+  );
+  expect(layout.stringIndexSize).toBe(2);
+  const earlier = metadataRowOffset(layout, 2, 1);
+  bytes.writeUInt16LE(0xffff, earlier + 4);
+  bytes.writeUInt16LE(0xfffe, earlier + 6);
+  const selected = metadataRowOffset(layout, 2, 2);
+  bytes.writeUInt16LE(0xffff, selected + 8);
+  bytes.writeUInt16LE(0, selected + 10);
+  bytes.writeUInt16LE(0, selected + 12);
+  const issues: ManagedParseIssue[] = [];
+  const names = managedMetadataTypeNames(bytes, layout, issues);
+  expect(names(2, 2)).toBe("Fixture.Lookup");
+  expect(issues).toEqual([]);
+  expect(readTypeMemberListFacts(bytes, layout).issues).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ code: "invalid-row", offset: selected + 10 }),
+      expect.objectContaining({ code: "invalid-row", offset: selected + 12 }),
+    ]),
+  );
+});

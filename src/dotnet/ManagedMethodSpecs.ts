@@ -1,3 +1,4 @@
+import { readMemberReferenceRowFacts } from "./ManagedMemberReferenceRows.js";
 import { readMethodDefinitionRow } from "./ManagedMethodDefinitionRows.js";
 import { createHash } from "node:crypto";
 import type { ManagedParseIssue } from "../domain/managed/managedArtifact.js";
@@ -8,7 +9,10 @@ import {
   type DecodedMethod,
   type MemberCore,
 } from "./ManagedMemberInspectorCore.js";
-import type { ManagedMetadataLayout } from "./ManagedMetadataLayout.js";
+import {
+  MANAGED_CODED_INDEXES,
+  type ManagedMetadataLayout,
+} from "./ManagedMetadataLayout.js";
 import {
   decodeMetadataCodedIndex,
   type MetadataTokenFact,
@@ -83,8 +87,8 @@ const readMethodSpec = (
   const instantiation = cursor.readIndex(layout.blobIndexSize);
   const method = decodeMetadataCodedIndex(
     methodRaw,
-    1,
-    [6, 10],
+    MANAGED_CODED_INDEXES.MethodDefOrRef.bits,
+    MANAGED_CODED_INDEXES.MethodDefOrRef.tables,
     layout.rowCounts,
   );
   if (method.kind !== "valid")
@@ -163,10 +167,11 @@ const methodSignatureBlob = (
   if (table === 6) {
     signatureIndex = readMethodDefinitionRow(bytes, layout, row).signatureIndex;
   } else {
-    const cursor = metadataRowCursor(bytes, layout, table, row);
-    cursor.readIndex(layout.codedIndexSize("MemberRefParent"));
-    cursor.readIndex(layout.stringIndexSize);
-    signatureIndex = cursor.readIndex(layout.blobIndexSize);
+    signatureIndex = readMemberReferenceRowFacts(
+      bytes,
+      layout,
+      row,
+    ).signatureIndex;
   }
   return readMetadataBlob(
     bytes,

@@ -12,8 +12,17 @@ import {
   createEvidenceBundle,
   serializeEvidenceBundle,
 } from "../../../src/domain/evidenceBundle.js";
+import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
+
+cliTest("rejects the removed compare-bundles command", async ({ cli }) => {
+  const result = await cli.run({
+    arguments: ["compare-bundles", "left.json", "right.json", "--json"],
+  });
+  expect(result.exitCode).toBe(1);
+  expect(result.stdout).toContain("COMMAND_NOT_FOUND");
+});
 
 cliTest(
   "compares Evidence bundles without unexplained display-only changes",
@@ -82,7 +91,11 @@ cliTest(
     const display = await compare(displayPath);
     expect(display.exitCode).toBe(0);
     const displayResult = bundleComparisonResultSchema.parse(display.json);
-    expect(displayResult).toMatchObject({ status: "unchanged", changes: [] });
+    expect(displayResult).toMatchObject({
+      status: "unchanged",
+      summary: { records_unchanged: 1, unresolved: 0 },
+      changes: [],
+    });
     expect(displayResult.left_bundle_sha256).not.toBe(
       displayResult.right_bundle_sha256,
     );
@@ -211,11 +224,19 @@ cliTest(
         name: "compare_bundles",
         arguments: { left_bundle_path: left, right_bundle_path: right },
       });
-      expect(result.isError).toBe(true);
-      expect(result.content[0]).toMatchObject({
-        text: expect.stringContaining(
-          `${rejectedField}: must be an absolute local filesystem path`,
-        ),
+      expect(parseMcpToolError(result).error).toMatchObject({
+        code: "invalid_request",
+        category: "invalid_input",
+        details: {
+          operation: "compare_bundles",
+          issues: expect.arrayContaining([
+            expect.objectContaining({
+              path: [rejectedField],
+              reason: "invalid_format",
+              expected: "regex",
+            }),
+          ]),
+        },
       });
     }
 

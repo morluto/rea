@@ -8,7 +8,7 @@ import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { toolContract } from "../dist/contracts/toolContracts.js";
 import { ArtifactResourceScope } from "../dist/artifacts/ArtifactResourceScope.js";
-import { mcpTextValue } from "./lib/mcp-verifier-results.mjs";
+import { requireMcpOutput } from "./lib/mcp-verifier-results.mjs";
 import {
   closeVerifierResources,
   withVerifierCleanup,
@@ -104,6 +104,10 @@ await withVerifierCleanup(
     }
     // The same checks apply to the default selection and each remaining ABI.
     const preferred = await run("inspect_dart_aot", { path: apk });
+    assert.ok(
+      abis.some((abi) => abi.abi === preferred.abi),
+      "Default AOT selection must be one of the identified ABIs",
+    );
     for (const abi of abis) {
       const aot =
         abi.abi === preferred.abi
@@ -234,8 +238,7 @@ async function run(operation, input) {
     { name: operation, arguments: input },
     { timeout: 60_000 },
   );
-  assert.notEqual(response.isError, true, mcpTextValue(response));
-  const mcp = contract.outputSchema.parse(JSON.parse(mcpTextValue(response)));
+  const mcp = requireMcpOutput(response, operation, contract);
   assert.deepEqual(cli.normalized_result, mcp.normalized_result);
   assert.deepEqual(cli.subject, mcp.subject);
   assert.equal(cli.subject.local_path, input.path);

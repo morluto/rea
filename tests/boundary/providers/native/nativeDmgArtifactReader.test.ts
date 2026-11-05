@@ -20,6 +20,7 @@ import {
 import {
   ArtifactReaderFailure,
   type ArtifactEntry,
+  type ArtifactReaderTraversal,
   type ArtifactTraversalOmission,
 } from "../../../../src/artifacts/ArtifactReader.js";
 import { ArtifactResourceScope } from "../../../../src/artifacts/ArtifactResourceScope.js";
@@ -1245,11 +1246,16 @@ describe("native DMG verification resource availability", () => {
     exitCode: 1,
   };
 
-  it("retries the explicit transient refusal before attachment and retains both attempts", async () => {
+  it("settles an explicit transient refusal within the verification deadline before attaching", async () => {
     const { host, state } = createOmittedInventoryHost();
     state.inventoryMode = "listed";
     state.detachAttempts = 4;
-    const delays = vi.fn(async () => {});
+    let now = 0;
+    const clock = vi.spyOn(performance, "now").mockImplementation(() => now);
+    onTestFinished(() => clock.mockRestore());
+    const delays = vi.fn(async (milliseconds: number) => {
+      now += milliseconds;
+    });
     const timeouts: number[] = [];
     let attempts = 0;
     const reader = await createAttachedReader(
@@ -1265,26 +1271,27 @@ describe("native DMG verification resource availability", () => {
             if (options === undefined)
               throw new Error("missing verify deadline");
             timeouts.push(options.timeoutMs);
-            if (attempts === 1) return transientFailure;
+            if (attempts < 5) return transientFailure;
           }
           return host.run(arguments_, signal, options);
         },
       },
     );
     onTestFinished(() => reader.close());
-    expect(attempts).toBe(2);
-    expect(delays.mock.calls).toEqual([[250]]);
+    expect(attempts).toBe(5);
+    expect(now).toBeGreaterThan(750);
     expect(timeouts[0]).toBeLessThanOrEqual(120_000);
-    expect(timeouts[1]).toBeLessThanOrEqual(timeouts[0]!);
-    expect(reader.provenance().slice(0, 2)).toMatchObject([
+    expect(timeouts.at(-1)).toBeLessThan(timeouts[0]!);
+    expect(
+      reader
+        .provenance()
+        .slice(0, 5)
+        .map(({ exit_code }) => exit_code),
+    ).toEqual([1, 1, 1, 1, 0]);
+    expect(reader.provenance().slice(0, 1)).toMatchObject([
       {
         arguments: ["verify", "/tmp/image.dmg"],
         exit_code: 1,
-        effects: ["read"],
-      },
-      {
-        arguments: ["verify", "/tmp/image.dmg"],
-        exit_code: 0,
         effects: ["read"],
       },
     ]);
@@ -1293,8 +1300,16 @@ describe("native DMG verification resource availability", () => {
   });
 
   it("bounds repeated transient refusals and never attaches an unverified image", async () => {
-    const run = vi.fn(async () => transientFailure);
-    const delay = vi.fn(async () => {});
+    let now = 0;
+    const clock = vi.spyOn(performance, "now").mockImplementation(() => now);
+    onTestFinished(() => clock.mockRestore());
+    const run = vi.fn(async () => {
+      now += 40_000;
+      return transientFailure;
+    });
+    const delay = vi.fn(async (milliseconds: number) => {
+      now += milliseconds;
+    });
     const reader = new NativeDmgArtifactReader("/tmp/image.dmg", process.env, {
       run,
       delay,
@@ -1305,7 +1320,8 @@ describe("native DMG verification resource availability", () => {
     });
     await reader.close();
     expect(run.mock.calls).toHaveLength(3);
-    expect(delay.mock.calls).toEqual([[250], [500]]);
+    expect(now).toBeGreaterThanOrEqual(120_000);
+    expect(delay.mock.calls).toHaveLength(2);
     expect(reader.provenance().map(({ exit_code }) => exit_code)).toEqual([
       1, 1, 1,
     ]);
@@ -1554,6 +1570,57 @@ describe("native DMG localized verification cleanup", () => {
     } finally {
       close.mockRestore();
     }
+  });
+});
+
+describe("native DMG checksum-free images", () => {
+  it("attaches after hdiutil reports no stored checksum and reports integrity as unverified", async () => {
+    const { host, state } = createOmittedInventoryHost();
+    state.inventoryMode = "listed";
+    state.detachAttempts = 4;
+    const verify = vi.fn(async () => ({
+      stdout: "",
+      stderr: 'hdiutil: verify: "/tmp/image.dmg" has no checksum.\n',
+      exitCode: 1,
+    }));
+    const reader = new NativeDmgArtifactReader("/tmp/image.dmg", process.env, {
+      ...host,
+      run: (arguments_, signal, options) =>
+        arguments_[0] === "verify"
+          ? verify()
+          : host.run(arguments_, signal, options),
+    });
+    onTestFinished(() => reader.close());
+    const coverage: ArtifactReaderTraversal[] = [];
+    const paths: string[] = [];
+    for await (const entry of reader.entries(undefined, {
+      onCoverage: (observed) => coverage.push(observed),
+    }))
+      paths.push(entry.path);
+
+    expect(paths).toContain("image.dmg/Fixture/hello.txt");
+    // Absence is a terminal answer, not a transient refusal to retry.
+    expect(verify).toHaveBeenCalledTimes(1);
+    expect(coverage).toEqual([
+      {
+        status: "complete",
+        limitations: [
+          expect.stringMatching(
+            /no stored checksum .* integrity was not verified/u,
+          ),
+        ],
+      },
+    ]);
+    expect(
+      reader
+        .provenance()
+        .map(({ arguments: [operation], exit_code }) => [operation, exit_code]),
+    ).toEqual([
+      ["verify", 1],
+      ["attach", 0],
+    ]);
+    await reader.close();
+    expect(state.attached).toBe(false);
   });
 });
 

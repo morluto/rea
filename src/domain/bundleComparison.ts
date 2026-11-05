@@ -9,8 +9,7 @@ import {
 } from "./evidenceBundle.js";
 import { AnalysisInputError } from "./analysisErrorCore.js";
 import type { ResidualUnknown } from "./residualUnknown.js";
-import { digestSchema } from "./../domain/digests.js";
-import { prefixedDigestSchema } from "./../domain/digests.js";
+import { digestSchema, prefixedDigestSchema } from "./../domain/digests.js";
 import { comparisonStatusSchema } from "./comparisonStatus.js";
 import { localPathStringSchema } from "./localPath.js";
 

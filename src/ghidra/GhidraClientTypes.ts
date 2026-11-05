@@ -33,12 +33,13 @@ export type GhidraDiagnostic =
     }
   | { readonly type: "cleanup-incomplete"; readonly reason: string };
 
-/** Dependencies and exact profile commitment for one headless import. */
+/** Dependencies and exact profile commitment for one headless Program session. */
 export interface GhidraClientOptions {
   readonly launcher: GhidraLauncher;
   readonly runId?: string;
   readonly targetPath: string;
   readonly targetSha256: string;
+  readonly existingProject?: boolean;
   /** Installation host shared by runtime allocation and snapshot admission. */
   readonly platform?: NodeJS.Platform;
   readonly transport?: GhidraTransportKind;

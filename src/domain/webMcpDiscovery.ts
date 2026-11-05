@@ -7,6 +7,7 @@ import {
   browserObservationEndpointSchema,
 } from "./browserObservation.js";
 import { browserVersionSchema } from "./browserObservationSchemas.js";
+import { cdpResourceColumnSchema } from "./cdpObservationSchemas.js";
 import { jsonValueSchema } from "./jsonValue.js";
 import { digestSchema, prefixedDigestSchema } from "./../domain/digests.js";
 
@@ -14,7 +15,7 @@ import { digestSchema, prefixedDigestSchema } from "./../domain/digests.js";
 export const discoverWebMcpToolsInputSchema = z.strictObject({
   cdp_endpoint: browserObservationEndpointSchema,
   allowed_origins: browserAllowedOriginsSchema,
-  target_id: z.string().trim().min(1),
+  target_id: z.string().min(1),
   observation_ms: z.int().min(0).default(100),
   command_timeout_ms: webRuntimeCommandTimeoutSchema,
 });
@@ -44,7 +45,7 @@ const webMcpToolSchema = z.object({
     .object({
       url: z.string(),
       line: z.int().min(0).nullable(),
-      column: z.int().min(0).nullable(),
+      column: cdpResourceColumnSchema.nullable(),
     })
     .nullable(),
   trust: z.literal("page-declared-untrusted"),

@@ -12,8 +12,8 @@ import type { Result } from "../../domain/result.js";
 /** Replaceable read-only Electron fuse reader with no target-execution authority. */
 export interface ElectronFusePort {
   readonly identity: ProviderIdentity;
-  /** Release owned read resources; legacy read-only ports may own none. */
-  close?(): Promise<void>;
+  /** Release owned read resources, retrying retained cleanup failures. */
+  close(): Promise<void>;
   inspect(
     input: InspectElectronFusesInput,
     options?: ExecutionOptions,

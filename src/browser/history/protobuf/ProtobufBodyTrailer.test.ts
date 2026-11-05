@@ -73,6 +73,25 @@ it("retains allowed whitespace, visible text, and valid UTF-8 obs-text", async (
   expect(result.examined_bytes).toBe(5 + Buffer.byteLength(text));
 });
 
+it("excludes trailing whitespace from trailer field values", async () => {
+  const text =
+    "grpc-status: 0 \r\ngrpc-message: alpha\tbeta \t\r\nx-empty: \t\r\n";
+  const result = await decodeProtobufBody(
+    trailerFrame(text),
+    "grpc-web",
+    source,
+    same,
+    new ProtobufBudget(),
+  );
+  expect(result.status).toBe("complete");
+  expect(result.frames[0]?.trailers).toEqual([
+    { name: "grpc-status", value: "0" },
+    { name: "grpc-message", value: "alpha\tbeta" },
+    { name: "x-empty", value: "" },
+  ]);
+  expect(result.examined_bytes).toBe(5 + Buffer.byteLength(text));
+});
+
 it.each(["grpc-web", "grpc-web-text"] as const)(
   "keeps valid trailer fields around an opaque non-UTF-8 value in %s framing",
   async (framing) => {

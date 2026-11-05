@@ -1,3 +1,4 @@
+import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import { Cli, z } from "incur";
 
 import { browserCliError } from "./browserCliError.js";
@@ -96,7 +97,7 @@ const registerWebMcp = (
             provider.identity().id,
             "discover_webmcp_tools",
             signal,
-          );
+          ).then(projectCliAnalysisResult);
         }),
       ),
   });
@@ -207,7 +208,7 @@ const registerScreenshot = (
             provider.identity().id,
             "capture_web_screenshot",
             signal,
-          );
+          ).then(projectCliAnalysisResult);
         }),
       ),
   });

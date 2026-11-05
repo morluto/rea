@@ -1,3 +1,5 @@
+import { GhidraAdmissionError } from "./GhidraAdmissionError.js";
+import { copyExistingGhidraProject } from "./GhidraProjectSnapshot.js";
 import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { GHIDRA_BRIDGE_SOURCES } from "./GhidraBridgeSources.js";
 import {
@@ -5,8 +7,9 @@ import {
   type GhidraSeedCommitment,
 } from "./GhidraAnalysisSeeds.js";
 import type { GhidraLanguageOverride } from "../config/ghidraLanguageOverride.js";
+import type { GhidraRiscvCallingConvention } from "./GhidraRiscvProfile.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
-import { mkdir, realpath } from "node:fs/promises";
+import { mkdir, readFile, realpath } from "node:fs/promises";
 import { basename, dirname, join, posix, win32 } from "node:path";
 
 import { writeGhidraRuntimeFile } from "./GhidraRuntimeFile.js";
@@ -32,7 +35,6 @@ import { boundedUtf8Text } from "../process/boundedUtf8Text.js";
 import { redactCapturedTransportCredential } from "../process/ProviderDiagnosticRedaction.js";
 import {
   cleanupOwnedProcessGroup,
-  cleanupWindowsProcessTree,
   type ProcessCleanupResult,
   type ProcessCleanupFailure,
 } from "../process/ProcessOwnership.js";
@@ -57,7 +59,6 @@ import {
   type GhidraPspExtension,
 } from "./GhidraPspExtension.js";
 
-/** Private paths and identity material for one headless Ghidra import. */
 export interface GhidraLaunchSession {
   readonly runtimeRoot: string;
   readonly transport: GhidraTransportKind;
@@ -203,6 +204,16 @@ const ghidraLaunchCommandOutput = (
   return execFileFailureCapturedOutput(failure);
 };
 
+/** An expanded caller project opened only through an owned private copy. */
+export interface GhidraExistingProject {
+  /** Directory holding the selected .gpr marker and .rep data directory. */
+  readonly projectPath: string;
+  readonly projectName?: string;
+  readonly sha256?: string;
+  /** Imported program name selected with -process. */
+  readonly programName: string;
+}
+
 /** Static coordinates for an extracted Ghidra release and packaged script. */
 export interface GhidraHeadlessLauncherOptions {
   readonly environment: Readonly<NodeJS.ProcessEnv>;
@@ -213,6 +224,8 @@ export interface GhidraHeadlessLauncherOptions {
   readonly javaVmName?: string;
   readonly bridgeScriptPath: string;
   readonly platform?: NodeJS.Platform;
+  /** Open a pre-imported project copy instead of importing the target again. */
+  readonly existingProject?: GhidraExistingProject;
   readonly comSpec?: string;
   /** Select the admitted 16-bit real-mode MZ import instead of auto-detection. */
   readonly dosMz?: true;
@@ -240,6 +253,8 @@ export interface GhidraHeadlessLauncherOptions {
   readonly pspExtension?: GhidraPspExtension;
   /** Remap typed float storage for the soft-float o32 ABI after analysis. */
   readonly mipsSoftFloat?: true;
+  /** Apply this committed RISC-V calling-convention policy after analysis. */
+  readonly riscvCallingConvention?: GhidraRiscvCallingConvention;
   /** Spawn seam for provider-boundary lifecycle tests. */
   readonly spawnProcess?: typeof spawnOwnedProviderProcess;
   /** LaunchSupport probe seam for Java-free launcher fixtures. */
@@ -271,6 +286,7 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
       );
     const paths = ghidraRuntimePaths(session.runtimeRoot);
     const platform = this.options.platform ?? process.platform;
+    const existingProject = this.options.existingProject;
     let started: SpawnedOwnedProviderProcess | undefined;
     let configuredMaxHeap: string | undefined;
     const launchSupport: GhidraLaunchSupportDiagnostic[] = [];
@@ -280,6 +296,11 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
           "Ghidra configuration directory identity is unresolved; restore application.version and application.release.name in the selected installation's application.properties.",
         );
       const psp = this.options.pspExtension;
+      validateExistingProjectOptions({
+        ...this.options,
+        platform,
+        ...(psp === undefined ? {} : { psp: true as const }),
+      });
       if (psp !== undefined) {
         const installedRoot = await realpath(
           join(
@@ -314,6 +335,19 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
         platform,
         this.options.configurationDirectoryName,
       );
+      // Copy-first: open the caller's project only through the owned copy so
+      // Ghidra never touches the original project files.
+      if (existingProject !== undefined)
+        await copyExistingGhidraProject(
+          existingProject.projectPath,
+          paths.projectRoot,
+          {
+            signal: options.signal,
+            projectName: existingProject.projectName,
+            expectedSha256: existingProject.sha256,
+            resources: options.resourceScope,
+          },
+        );
       let seedPath: string | undefined;
       let gamecubeDolSectionPath: string | undefined;
       let extensions: readonly GhidraExtension[] = [];
@@ -349,6 +383,7 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
           target_sha256: session.targetSha256,
           provider_version: session.providerVersion,
           profile_digest: session.profileDigest,
+          ...(existingProject === undefined ? {} : { existing_project: true }),
           ...(this.options.decompileTimeoutSeconds === undefined
             ? {}
             : {
@@ -383,8 +418,14 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
         ...(this.options.mipsSoftFloat === undefined
           ? {}
           : { mipsSoftFloat: this.options.mipsSoftFloat }),
+        ...(this.options.riscvCallingConvention === undefined
+          ? {}
+          : {
+              riscvCallingConvention: this.options.riscvCallingConvention,
+            }),
         projectRoot: paths.projectRoot,
         targetPath: session.targetPath,
+        ...(existingProject === undefined ? {} : { existingProject }),
         bridgeScriptPath: this.options.bridgeScriptPath,
         descriptorPath: paths.descriptorPath,
         ghidraLogPath: paths.ghidraLogPath,
@@ -712,7 +753,10 @@ const cleanupStartedProcess = (
   started.cleanup !== undefined
     ? started.cleanup()
     : platform === "win32"
-      ? cleanupWindowsProcessTree(started.ownership.leaderPid)
+      ? Promise.resolve({
+          cleaned: false,
+          reason: "Windows Ghidra process has no owned cleanup capability",
+        })
       : cleanupOwnedProcessGroup(started.ownership);
 
 /** Paths encoded into one bounded analyzeHeadless invocation. */
@@ -720,12 +764,18 @@ export interface GhidraHeadlessArgumentOptions {
   readonly platform?: NodeJS.Platform;
   readonly projectRoot: string;
   readonly targetPath: string;
+  /** Open this pre-imported program with -process instead of importing. */
+  readonly existingProject?: Pick<
+    GhidraExistingProject,
+    "programName" | "projectName"
+  >;
   readonly bridgeScriptPath: string;
   readonly descriptorPath: string;
   readonly ghidraLogPath: string;
   readonly scriptLogPath: string;
   readonly psp?: true;
   readonly mipsSoftFloat?: true;
+  readonly riscvCallingConvention?: GhidraRiscvCallingConvention;
   readonly dosMz?: true;
   readonly dosCom?: true;
   readonly rawBinary?: {
@@ -745,6 +795,58 @@ export interface GhidraHeadlessArgumentOptions {
   readonly seedPath?: string;
 }
 
+type ExistingProjectOptions = Pick<
+  GhidraHeadlessArgumentOptions,
+  | "platform"
+  | "existingProject"
+  | "psp"
+  | "dosMz"
+  | "dosCom"
+  | "rawBinary"
+  | "languageOverride"
+  | "mipsSoftFloat"
+  | "riscvCallingConvention"
+  | "seedPath"
+  | "disabledAnalyzers"
+> & { readonly analysisSeeds?: GhidraSeedCommitment };
+
+/** Admit existing-project compatibility before any runtime writes. */
+const validateExistingProjectOptions = (
+  options: ExistingProjectOptions,
+): void => {
+  const existing = options.existingProject;
+  const rawBinary = options.rawBinary;
+  const override = options.languageOverride;
+  if (existing !== undefined) {
+    // The pre-imported project carries its own analysis; every import-time
+    // selection is therefore rejected instead of silently ignored.
+    if ((options.platform ?? process.platform) === "win32")
+      throw new GhidraAdmissionError("existing_project_windows");
+    if (existing.programName.trim() === "")
+      throw new GhidraAdmissionError("existing_project_program_name");
+    if (options.psp === true)
+      throw new GhidraAdmissionError("existing_project_psp");
+    if (options.dosMz === true || options.dosCom === true)
+      throw new GhidraAdmissionError("existing_project_dos");
+    if (rawBinary !== undefined)
+      throw new GhidraAdmissionError("existing_project_raw_binary");
+    if (override !== undefined)
+      throw new GhidraAdmissionError("existing_project_language_override");
+    if (options.mipsSoftFloat === true)
+      throw new GhidraAdmissionError("existing_project_mips_soft_float");
+    if (options.riscvCallingConvention !== undefined)
+      throw new GhidraAdmissionError(
+        "existing_project_riscv_calling_convention",
+      );
+    if (
+      options.seedPath !== undefined ||
+      options.analysisSeeds !== undefined ||
+      (options.disabledAnalyzers?.length ?? 0) > 0
+    )
+      throw new GhidraAdmissionError("existing_project_analysis");
+  }
+};
+
 /** Build the complete read-only headless invocation in deterministic order. */
 export const ghidraHeadlessArguments = (
   options: GhidraHeadlessArgumentOptions,
@@ -756,32 +858,29 @@ export const ghidraHeadlessArguments = (
   const bridgeDirectory = scriptPath.dirname(options.bridgeScriptPath);
   const override = options.languageOverride;
   const rawBinary = options.rawBinary;
+  const existing = options.existingProject;
   const gamecubeDol = options.gamecubeDol;
+  validateExistingProjectOptions(options);
   if (
     gamecubeDol !== undefined &&
     (options.psp === true ||
       options.dosMz === true ||
       options.dosCom === true ||
       options.mipsSoftFloat === true ||
+      options.riscvCallingConvention !== undefined ||
       rawBinary !== undefined ||
       override !== undefined)
   )
-    throw new Error(
-      "A GameCube DOL import cannot be combined with another loader, language override, or analysis lane; its language is committed in the gamecubeDol option.",
-    );
+    throw new GhidraAdmissionError("gamecube_dol_combined");
   if (
     options.psp === true &&
     (options.dosMz === true ||
       options.dosCom === true ||
       override !== undefined)
   )
-    throw new Error(
-      "A PSP ELF import cannot be combined with DOS or a generic Ghidra language override.",
-    );
+    throw new GhidraAdmissionError("psp_combined");
   if (options.psp === true && rawBinary !== undefined)
-    throw new Error(
-      "A PSP ELF import cannot be combined with a raw-binary import.",
-    );
+    throw new GhidraAdmissionError("psp_raw_binary");
   if (
     options.mipsSoftFloat === true &&
     (options.psp === true ||
@@ -789,96 +888,104 @@ export const ghidraHeadlessArguments = (
       options.dosCom === true ||
       rawBinary !== undefined)
   )
-    throw new Error(
-      "MIPS soft-float storage applies only to a generic MIPS ELF import.",
-    );
+    throw new GhidraAdmissionError("mips_soft_float_scope");
+  if (
+    options.riscvCallingConvention !== undefined &&
+    (options.psp === true ||
+      options.mipsSoftFloat === true ||
+      options.dosMz === true ||
+      options.dosCom === true ||
+      rawBinary !== undefined)
+  )
+    throw new GhidraAdmissionError("riscv_calling_convention_scope");
   if (
     override !== undefined &&
     (options.dosMz === true || options.dosCom === true)
   )
-    throw new Error(
-      "A Ghidra language override cannot be combined with a DOS import.",
-    );
+    throw new GhidraAdmissionError("language_override_dos");
   if (override !== undefined && rawBinary !== undefined)
-    throw new Error(
-      "A Ghidra language override cannot be combined with a raw-binary import.",
-    );
+    throw new GhidraAdmissionError("language_override_raw_binary");
   if (
     rawBinary !== undefined &&
     (options.dosMz === true || options.dosCom === true)
   )
-    throw new Error(
-      "A raw-binary import cannot be combined with a DOS import.",
-    );
+    throw new GhidraAdmissionError("raw_binary_dos");
   return [
     options.projectRoot,
-    "rea-project",
-    "-import",
-    options.targetPath,
-    ...(gamecubeDol !== undefined
+    existing?.projectName ?? "rea-project",
+    ...(existing === undefined
       ? [
-          // One BinaryLoader block at file offset 0; the pre-script rebuilds the DOL section map.
-          "-loader",
-          "BinaryLoader",
-          "-loader-baseAddr",
-          "0x0",
-          "-processor",
-          gamecubeDol.languageId,
-          ...(gamecubeDol.compilerSpecId === undefined
-            ? []
-            : ["-cspec", gamecubeDol.compilerSpecId]),
-        ]
-      : options.dosMz === true
-        ? [
-            "-loader",
-            "MzLoader",
-            "-processor",
-            "x86:LE:16:Real Mode",
-            "-cspec",
-            "default",
-          ]
-        : options.dosCom === true
-          ? [
-              "-loader",
-              "BinaryLoader",
-              "-loader-baseAddr",
-              "1000:0100",
-              "-processor",
-              "x86:LE:16:Real Mode",
-              "-cspec",
-              "default",
-            ]
-          : rawBinary === undefined
-            ? options.psp === true
-              ? [
-                  "-loader",
-                  "PspElfLoader",
-                  "-processor",
-                  "Allegrex:LE:32:default",
-                  "-cspec",
-                  "default",
-                ]
-              : override !== undefined
-                ? [
-                    "-processor",
-                    override.languageId,
-                    ...(override.compilerSpecId === undefined
-                      ? []
-                      : ["-cspec", override.compilerSpecId]),
-                  ]
-                : []
-            : [
+          "-import",
+          options.targetPath,
+          ...(gamecubeDol !== undefined
+            ? [
+                // One BinaryLoader block at file offset 0; the pre-script rebuilds the DOL section map.
                 "-loader",
                 "BinaryLoader",
                 "-loader-baseAddr",
-                rawBinary.baseAddr,
+                "0x0",
                 "-processor",
-                rawBinary.languageId,
-                "-cspec",
-                rawBinary.compilerSpecId,
-              ]),
-    "-readOnly",
-    "-deleteProject",
+                gamecubeDol.languageId,
+                ...(gamecubeDol.compilerSpecId === undefined
+                  ? []
+                  : ["-cspec", gamecubeDol.compilerSpecId]),
+              ]
+            : options.dosMz === true
+              ? [
+                  "-loader",
+                  "MzLoader",
+                  "-processor",
+                  "x86:LE:16:Real Mode",
+                  "-cspec",
+                  "default",
+                ]
+              : options.dosCom === true
+                ? [
+                    "-loader",
+                    "BinaryLoader",
+                    "-loader-baseAddr",
+                    "1000:0100",
+                    "-processor",
+                    "x86:LE:16:Real Mode",
+                    "-cspec",
+                    "default",
+                  ]
+                : rawBinary === undefined
+                  ? options.psp === true
+                    ? [
+                        "-loader",
+                        "PspElfLoader",
+                        "-processor",
+                        "Allegrex:LE:32:default",
+                        "-cspec",
+                        "default",
+                      ]
+                    : override !== undefined
+                      ? [
+                          "-processor",
+                          override.languageId,
+                          ...(override.compilerSpecId === undefined
+                            ? []
+                            : ["-cspec", override.compilerSpecId]),
+                        ]
+                      : []
+                  : [
+                      "-loader",
+                      "BinaryLoader",
+                      "-loader-baseAddr",
+                      rawBinary.baseAddr,
+                      "-processor",
+                      rawBinary.languageId,
+                      "-cspec",
+                      rawBinary.compilerSpecId,
+                    ]),
+        ]
+      : ["-process", existing.programName]),
+    // An existing project opens with -noanalysis: its auto-analysis was paid
+    // when the project was imported, outside this session's startup deadline.
+    ...(existing === undefined
+      ? ["-readOnly", "-deleteProject"]
+      : ["-noanalysis", "-readOnly"]),
     "-log",
     options.ghidraLogPath,
     "-scriptlog",
@@ -927,7 +1034,8 @@ export const ghidraHeadlessArguments = (
           ),
           options.disabledAnalyzers.join(","),
         ]),
-    ...((options.platform ?? process.platform) === "win32"
+    ...(existing !== undefined ||
+    (options.platform ?? process.platform) === "win32"
       ? []
       : [
           "-postScript",
@@ -940,6 +1048,16 @@ export const ghidraHeadlessArguments = (
           scriptPath.join(bridgeDirectory, GHIDRA_BRIDGE_SOURCES.mipsSoftFloat),
         ]
       : []),
+    ...(options.riscvCallingConvention === undefined
+      ? []
+      : [
+          "-postScript",
+          scriptPath.join(
+            bridgeDirectory,
+            GHIDRA_BRIDGE_SOURCES.riscvCallingConvention,
+          ),
+          options.riscvCallingConvention,
+        ]),
     "-postScript",
     // Ghidra checks the caller's cwd before scriptPath for a basename. Select
     // the packaged source explicitly so unrelated entries cannot shadow it.

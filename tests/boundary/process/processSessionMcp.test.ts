@@ -115,11 +115,20 @@ itWithCaptureCapability(
     };
 
     const expanded = await capture("x".repeat(500));
-    expect(expanded.frames).toHaveLength(0);
     expect(expanded.truncated).toBe(true);
+    const retainedNormalized = expanded.frames.map(({ data }) => data).join("");
+    const retainedRaw = expanded.frames
+      .map(({ raw_data, data }) => raw_data ?? data)
+      .join("");
+    // PTY read boundaries need not match the child's write. A small chunk can
+    // fit even after another chunk was omitted for exceeding the budget.
+    expect(retainedNormalized).toBe(
+      retainedRaw.replaceAll("a", "x".repeat(500)),
+    );
+    expect(Buffer.byteLength(retainedNormalized)).toBeLessThanOrEqual(1_000);
     expect(expanded.truncation_details.normalized_terminal).toMatchObject({
       budget_bytes: 1_000,
-      retained_bytes: 0,
+      retained_bytes: Buffer.byteLength(retainedNormalized),
       omitted_frames: expect.any(Number),
     });
     expect(
@@ -128,9 +137,9 @@ itWithCaptureCapability(
     expect(expanded.truncation_details.raw_terminal).toMatchObject({
       budget_bytes: 1_000,
       observed_bytes: expect.any(Number),
-      retained_bytes: 0,
+      retained_bytes: Buffer.byteLength(retainedRaw),
       observed_frames: expect.any(Number),
-      retained_frames: 0,
+      retained_frames: expanded.frames.length,
     });
     expect(
       expanded.limitations.some((limitation) =>

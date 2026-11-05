@@ -53,10 +53,30 @@ export default defineConfig({
             text: "Web network captures",
             link: "/web-network-captures",
           },
-          { text: "Agent environments", link: "/agent-environments" },
+          {
+            text: "Build RL environments",
+            link: "/agent-environments-quickstart",
+          },
+          { text: "Environment reference", link: "/agent-environments" },
           { text: "Electron observation", link: "/electron-observation" },
           { text: "Electron fuses", link: "/electron-fuses" },
           { text: "Process capture", link: "/process-capture" },
+          {
+            text: "Desktop application capture",
+            link: "/desktop-application-capture",
+          },
+          {
+            text: "Desktop application state",
+            link: "/desktop-application-state",
+          },
+          {
+            text: "Desktop application export",
+            link: "/desktop-application-export",
+          },
+          {
+            text: "Desktop application tasks",
+            link: "/desktop-application-tasks",
+          },
           { text: ".NET assemblies", link: "/managed-code-analysis" },
           {
             text: "Python packaged applications",
@@ -66,6 +86,7 @@ export default defineConfig({
           { text: "Apple applications", link: "/apple-application-analysis" },
           { text: "Desktop installations", link: "/desktop-applications" },
           { text: "Firmware", link: "/firmware-analysis" },
+          { text: "iNES containers", link: "/ines-containers" },
           { text: "SQLite databases", link: "/sqlite-databases" },
           { text: "Packet captures", link: "/packet-captures" },
           { text: "Signal recordings", link: "/signal-recordings" },

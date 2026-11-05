@@ -87,7 +87,7 @@ const inferredJumpTableSchema = z
   })
   .strict();
 
-const availableNativeApiBoundarySchema = z
+export const availableNativeApiBoundarySchema = z
   .object({
     available: z.literal(true),
     provenance: z.string().min(1),
@@ -115,7 +115,7 @@ const availableNativeApiBoundarySchema = z
   })
   .strict();
 
-const unavailableNativeApiBoundarySchema = z
+export const unavailableNativeApiBoundarySchema = z
   .object({
     available: z.literal(false),
     reason: z.string().min(1),

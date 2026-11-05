@@ -13,8 +13,8 @@ import type { IncludedScript } from "../domain/webBundleAnalyzerState.js";
 import {
   webBundleWorkerMessageSchema,
   type WebBundleWorkerMessage,
+  WEB_BUNDLE_WORKER_LIMITS,
 } from "./WebBundleAnalysisWorkerProtocol.js";
-import { WEB_BUNDLE_WORKER_LIMITS } from "./WebBundleAnalysisWorkerProtocol.js";
 
 const makeScript = (text: string): IncludedScript => ({
   script_key: `scr_${createHash("sha256").update(text).digest("hex")}`,

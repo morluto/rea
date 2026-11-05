@@ -119,14 +119,11 @@ ${body}
       },
     });
 
-    const { client } = await connectLocalToolsMcp(environment);
-    const response = await client.callTool({
-      name: "inspect_wasm_artifact",
-      arguments: {
-        path: selected,
-        candidate_paths: [candidate],
-        glue_paths: [glue],
-      },
+    const { client, call } = await connectLocalToolsMcp(environment);
+    const response = await call("inspect_wasm_artifact", {
+      path: selected,
+      candidate_paths: [candidate],
+      glue_paths: [glue],
     });
     const mcpError = parseMcpToolError(response).error;
     expect(mcpError.code).toBe("invalid_request");
@@ -141,9 +138,8 @@ ${body}
           .passthrough()
           .parse(mcpError.details).partial_observation,
       );
-    const retainedReply = await client.callTool({
-      name: "get_evidence_bundle",
-      arguments: { detail: "complete" },
+    const retainedReply = await call("get_evidence_bundle", {
+      detail: "complete",
     });
     expect(retainedReply.isError).not.toBe(true);
     const retainedBundle = toolContract(

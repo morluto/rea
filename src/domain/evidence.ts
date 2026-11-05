@@ -1,6 +1,8 @@
 import { basename } from "node:path";
 import { z } from "zod";
 
+import { withEvidenceSubjectDeclaration } from "./evidenceSubject.js";
+
 import { digestCanonicalValue } from "./canonicalDigest.js";
 import { canonicalJsonDigestSteps } from "./canonicalJsonDigestSteps.js";
 import { nulFreeStringSchema } from "./localPath.js";
@@ -9,12 +11,7 @@ import {
   analysisProfileSchema,
   type AnalysisProfileCommitment,
 } from "./analysisProfile.js";
-import {
-  BINARY_ARCHITECTURES,
-  RAW_ONLY_ARCHITECTURES,
-  type BinaryArchitecture,
-  type BinaryTarget,
-} from "./binaryTargetTypes.js";
+import type { BinaryArchitecture, BinaryTarget } from "./binaryTargetTypes.js";
 import {
   jsonObjectSchema,
   jsonValueSchema,
@@ -29,12 +26,14 @@ import {
   immutableJsonSnapshotMember,
   isImmutableJsonSnapshot,
 } from "./immutableJson.js";
-import { digestSchema } from "./../domain/digests.js";
-import { prefixedDigestSchema } from "./../domain/digests.js";
+import { digestSchema, prefixedDigestSchema } from "./../domain/digests.js";
 import {
   relationshipCoverageSchema,
   type RelationshipCoverage,
 } from "./relationshipCoverage.js";
+
+/** Predicate shared by ordinary provider analysis observations. */
+export const ANALYSIS_EVIDENCE_PREDICATE = "rea.analysis";
 
 /** Provider identity schema shared by evidence-bearing persistence formats. */
 export const providerSchema = z.strictObject({
@@ -42,63 +41,12 @@ export const providerSchema = z.strictObject({
   name: z.string().min(1),
   version: z.string().nullable(),
 });
-const subjectFormatSchema = z.enum([
-  "hopper",
-  "analysis-database",
-  "mach-o",
-  "elf",
-  "pe",
-  "dos-mz",
-  "dos-com",
-  "raw-binary",
-  "gamecube-dol",
-  "zip",
-  "ipa",
-  "apk",
-  "msix",
-  "appx",
-  "hap",
-  "hsp",
-  "app-pack",
-  "asar",
-  "godot-pck",
-  "dmg",
-  "pkg",
-  "plist",
-  "javascript",
-  "source-map",
-  "directory",
-  "file",
-  "unknown",
-  "mach-o-universal",
-  "javascript-bundle",
-  "entitlements",
-  "pyinstaller",
-  "node-sea",
-]);
 const subjectBaseSchema = z.strictObject({
   name: z.string().min(1),
   digest: z.strictObject({ sha256: digestSchema }),
   local_path: nulFreeStringSchema,
 });
-// The format owns the architecture claim, including nested Evidence subjects.
-const subjectSchema = z.discriminatedUnion("format", [
-  subjectBaseSchema.extend({
-    format: subjectFormatSchema.exclude(["raw-binary", "gamecube-dol"]),
-    architecture: z
-      .enum(BINARY_ARCHITECTURES)
-      .exclude([...RAW_ONLY_ARCHITECTURES])
-      .nullable(),
-  }),
-  subjectBaseSchema.extend({
-    format: z.literal("raw-binary"),
-    architecture: z.enum(BINARY_ARCHITECTURES).nullable(),
-  }),
-  subjectBaseSchema.extend({
-    format: z.literal("gamecube-dol"),
-    architecture: z.literal("powerpc"),
-  }),
-]);
+const subjectSchema = withEvidenceSubjectDeclaration(subjectBaseSchema);
 /** Source location attached to an evidence observation. */
 /** Source-location schema shared by evidence-bearing persistence formats. */
 export const evidenceLocationSchema = z.discriminatedUnion("kind", [
@@ -270,18 +218,21 @@ export interface EvidenceObservation extends EvidenceObservationInput {
 
 type EvidenceWithoutId = Omit<EvidenceSchemaValue, "evidence_id">;
 
+/** Target identity shared by semantic commitments, excluding caller-selected display paths. */
+export const evidenceSubjectIdentity = (subject: Evidence["subject"]) =>
+  subject === null
+    ? null
+    : {
+        digest: subject.digest,
+        format: subject.format,
+        architecture: subject.architecture,
+      };
+
 /** Content committed by an Evidence ID, excluding local request/display metadata. */
 export const evidenceSemanticContent = (
   evidence: EvidenceWithoutId,
 ): Record<string, JsonValue> => ({
-  subject:
-    evidence.subject === null
-      ? null
-      : {
-          digest: evidence.subject.digest,
-          format: evidence.subject.format,
-          architecture: evidence.subject.architecture,
-        },
+  subject: evidenceSubjectIdentity(evidence.subject),
   provider: evidence.provider,
   analysis_profile: evidence.analysis_profile,
   predicate_type: evidence.predicate_type,
@@ -324,6 +275,16 @@ export const parseEvidence = (input: unknown): Evidence => {
       : undefined;
   if (immutable !== undefined) return immutable;
   return authenticatedEvidenceSchema.parse(input);
+};
+
+/** Recognize authenticated Evidence in a union of partial observations. */
+export const tryParseEvidence = (input: unknown): Evidence | undefined => {
+  if (typeof input !== "object" || input === null || !("evidence_id" in input))
+    return undefined;
+  const immutable = immutableEvidenceSnapshots.get(input);
+  if (immutable !== undefined) return immutable;
+  const parsed = authenticatedEvidenceSchema.safeParse(input);
+  return parsed.success ? parsed.data : undefined;
 };
 
 /** Authenticate and seal a ledger-owned snapshot; external mutable values are copied first. */
@@ -495,7 +456,7 @@ const normalizeEvidenceObservation = (
       version: provider.version,
     },
     analysis_profile: observation.analysisProfile ?? null,
-    predicate_type: observation.predicateType ?? "rea.analysis",
+    predicate_type: observation.predicateType ?? ANALYSIS_EVIDENCE_PREDICATE,
     operation: observation.operation,
     parameters: observation.parameters,
     raw_result: observation.rawResult ?? null,

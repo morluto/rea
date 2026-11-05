@@ -383,11 +383,7 @@ it("keeps ReportCrash-shaped producer facts and reports complete coverage", () =
     description: "(Data Abort) byte read Translation fault",
   });
   expect(parsed.exception?.unlisted_keys).toEqual(["rawCodes"]);
-  expect(parsed.termination?.unlisted_keys).toEqual([
-    "flags",
-    "byProc",
-    "byPid",
-  ]);
+  expect(parsed.termination?.unlisted_keys).toEqual([]);
   expect(parsed.unlisted_body_keys).toContain("sharedCache");
   expect(parsed.unlisted_body_keys).not.toContain("osVersion");
   expect(parsed.metadata.unlisted_keys).toContain("slice_uuid");
@@ -400,6 +396,70 @@ it("keeps ReportCrash-shaped producer facts and reports complete coverage", () =
     registers: 6,
     type_mismatches: [],
   });
+});
+
+it("keeps the documented terminating process, parent pid and metadata members", () => {
+  const parsed = report({});
+  expect(parsed.termination).toMatchObject({
+    flags: { decimal: "0", hex: "0x0" },
+    by_pid: { decimal: "4242", hex: "0x1092" },
+    by_proc: "exc handler",
+  });
+  expect(parsed.process.parent_pid).toEqual({ decimal: "100", hex: "0x64" });
+  expect(parsed.metadata).toMatchObject({
+    build_version: "",
+    platform: { decimal: "1", hex: "0x1" },
+  });
+  expect(parsed.metadata.unlisted_keys).not.toContain("build_version");
+  expect(parsed.metadata.unlisted_keys).not.toContain("platform");
+  expect(parsed.unlisted_body_keys).not.toContain("parentPid");
+  expect(parsed.coverage.status).toBe("complete");
+  const wrong = parse(
+    Buffer.from(
+      appleIpsReport().replace('"byPid": 4242', '"byPid": "4242"'),
+      "utf8",
+    ),
+  );
+  expect(wrong.termination?.by_pid).toBeNull();
+  expect(wrong.coverage.type_mismatches).toContainEqual(
+    expect.objectContaining({
+      path: "body.termination.byPid",
+      expected: "integer",
+    }),
+  );
+});
+
+it("keeps the recorded image name and symbol offset", () => {
+  const parsed = report({});
+  expect(parsed.images.map((image) => image.name)).toEqual([
+    "rea-crash-fixture",
+    null,
+  ]);
+  expect(parsed.threads[0]?.frames[0]).toMatchObject({
+    recorded_symbol: "rea_fixture_fault",
+    symbol_location: { decimal: "12", hex: "0xc" },
+  });
+  expect(parsed.threads[1]?.frames[0]?.symbol_location).toEqual({
+    decimal: "0",
+    hex: "0x0",
+  });
+  expect(parsed.coverage.status).toBe("complete");
+  const wrong = parse(
+    Buffer.from(
+      appleIpsReport().replace(
+        '"symbolLocation": 12',
+        '"symbolLocation": "12"',
+      ),
+      "utf8",
+    ),
+  );
+  expect(wrong.threads[0]?.frames[0]?.symbol_location).toBeNull();
+  expect(wrong.coverage.type_mismatches).toContainEqual(
+    expect.objectContaining({
+      path: "body.threads[0].frames[0].symbolLocation",
+      expected: "integer",
+    }),
+  );
 });
 
 it("assigns frame roles by recorded row without inventing inline stack addresses", () => {
@@ -478,8 +538,10 @@ it.each(["-1", "4294967296", `1${"0".repeat(1000)}`])(
 );
 
 it("bounds rejected index text before retaining it", () => {
-  const bytes = withBody(
-    '{"faultingThread":4294967296,"threads":[],"usedImages":[]}',
+  // A bare metadata line: its recorded platform integer would also count toward this allowance.
+  const bytes = Buffer.from(
+    '{"bug_type":"309"}\n{"faultingThread":4294967296,"threads":[],"usedImages":[]}',
+    "utf8",
   );
   expect(() =>
     parseAppleIps(bytes, artifact(bytes), {

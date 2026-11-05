@@ -2,6 +2,8 @@ import {
   artifactFileCancellationCause,
   bindArtifactFileCleanup,
 } from "../../artifacts/ArtifactFileOperation.js";
+import { completedStableArtifactObservation } from "../../artifacts/StableArtifactObservation.js";
+import { stableArtifactInputRecovery } from "../../artifacts/StableArtifactFailure.js";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import {
   AnalysisError,
@@ -24,11 +26,11 @@ import { OwnedCommandFailure } from "../../process/OwnedCommand.js";
 import type { PwntoolsFailureEvidence } from "./PwntoolsResourceLimits.js";
 import { nativeDeadlineRecovery } from "../../domain/native/nativeDeadlines.js";
 import {
-  PWNTOOLS_PROVIDER_IDENTITY,
   PWNTOOLS_LIMITS,
   PWNTOOLS_MEMORY_FAILURE_EXIT,
   PWNTOOLS_FILE_SIZE_FAILURE_EXIT,
 } from "./PwntoolsRelease.js";
+import { PWNTOOLS_PROVIDER_IDENTITY } from "./PwntoolsProviderIdentity.js";
 
 /** Operation identity supplied by each adapter sharing the pwntools boundary. */
 export interface PwntoolsFailureContext {
@@ -65,6 +67,29 @@ export const pwntoolsDecoderFailure = (
   failureEvidence: PwntoolsFailureEvidence = {},
   context: PwntoolsFailureContext = DEFAULT_CONTEXT,
 ): AnalysisError => {
+  const error = classifyPwntoolsDecoderFailure(
+    cause,
+    phase,
+    path,
+    executablePath,
+    failureEvidence,
+    context,
+  );
+  if (phase === "artifact-read") {
+    const observation = completedStableArtifactObservation(cause, path);
+    if (observation !== undefined) error.retainPartialObservation(observation);
+  }
+  return error;
+};
+
+const classifyPwntoolsDecoderFailure = (
+  cause: unknown,
+  phase: string,
+  path: string,
+  executablePath: string,
+  failureEvidence: PwntoolsFailureEvidence,
+  context: PwntoolsFailureContext,
+): AnalysisError => {
   const limitReport = failureEvidence.limits;
   if (cause instanceof AnalysisError) return cause;
   if (cause instanceof OwnedCommandFailure) {
@@ -83,10 +108,19 @@ export const pwntoolsDecoderFailure = (
               truncated:
                 context.precedingOutput.truncated || currentOutput.truncated,
             };
-    const outputOptions =
-      combinedOutput === undefined
-        ? undefined
-        : { capturedOutput: combinedOutput };
+    const outputOptions = {
+      ...(combinedOutput === undefined
+        ? {}
+        : { capturedOutput: combinedOutput }),
+      ...(failureEvidence.finalizationFailures === undefined
+        ? {}
+        : {
+            diagnostics: {
+              receipt_finalization_failures:
+                failureEvidence.finalizationFailures,
+            },
+          }),
+    };
     if (cause.cleanupFailure !== null)
       return new ProviderCleanupError(
         context.providerId,
@@ -241,6 +275,7 @@ export const pwntoolsDecoderFailure = (
         context.operation,
         {
           cause,
+          ...stableArtifactInputRecovery(cause),
           ...(cause.reason === "limit"
             ? {
                 userMessage: `${cause.message} Admitted artifact bytes use REA_PWNTOOLS_MAX_INPUT_BYTES (default ${String(PWNTOOLS_LIMITS.inputBytes)} bytes, maximum 1073741824). The 1073741824-byte maximum has no runtime override. Restart REA after changing the environment value. pwntools_timeout_ms does not raise this allowance. ${fixedPwntoolsBudgets}`,
@@ -298,6 +333,11 @@ export const pwntoolsDecoderFailure = (
     diagnostics: {
       phase,
       path,
+      ...(failureEvidence.finalizationFailures === undefined
+        ? {}
+        : {
+            receipt_finalization_failures: failureEvidence.finalizationFailures,
+          }),
       ...(context.precedingOutput === undefined
         ? {}
         : { preceding_output: { ...context.precedingOutput } }),
@@ -343,6 +383,7 @@ export const pwntoolsUnavailable = (
     rejections: [
       {
         providerId: context.providerId,
+        origin: "availability",
         code: "provider_unavailable",
         reason,
         diagnostics: {

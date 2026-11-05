@@ -6,6 +6,7 @@ import { ArtifactFileCleanupFailure } from "../../../../src/artifacts/ArtifactFi
 import {
   NativeFixtureRunner,
   nativeMachoTarget,
+  nativeMachoTargetForFile,
 } from "../../../fixtures/nativeCommands.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 import { OwnedFileHandle } from "../../../../src/filesystem/OwnedFileHandle.js";
@@ -451,3 +452,66 @@ it.for([
     });
   },
 );
+
+it("preserves a failed app plist read and its cleanup when the executable changes", async () => {
+  const root = await createTestTempDirectory("rea-app-plist-primary-");
+  const path = join(root, "Info.plist");
+  const executable = join(root, "program");
+  await writeFile(path, "<plist><string>value</string></plist>");
+  await writeFile(executable, "original executable");
+  const target = {
+    ...(await nativeMachoTargetForFile(executable)),
+    bundleInfoPlist: path,
+  };
+  const probe = await open(path, "r");
+  const inode = (await probe.stat()).ino;
+  const prototype = Object.getPrototypeOf(probe) as FileHandle;
+  await probe.close();
+  const primary = Object.assign(new Error("controlled plist read failure"), {
+    code: "EIO",
+  });
+  const cleanup = new Error("controlled plist close failure");
+  const original = prototype.read;
+  let release: (() => Promise<void>) | undefined;
+  let closeAttempts = 0;
+  const read = vi.spyOn(prototype, "read").mockImplementation(async function (
+    this: FileHandle,
+    ...args: Parameters<FileHandle["read"]>
+  ) {
+    if ((await this.stat()).ino !== inode)
+      return Reflect.apply(original, this, args);
+    await writeFile(executable, "changed executable");
+    release = this.close.bind(this);
+    this.close = async () => {
+      closeAttempts += 1;
+      if (closeAttempts === 1) throw cleanup;
+      await release!();
+    };
+    throw primary;
+  });
+  const client = new NativeMacOSProvider(
+    {},
+    new NativeFixtureRunner({ file: "ASCII text" }),
+    "darwin",
+  ).createClient(target);
+  onTestFinished(async () => {
+    read.mockRestore();
+    await release?.();
+    await client.close();
+  });
+  const result = await client.execute("inspect_plist", {});
+  if (result.ok) throw new Error("Expected retained plist failure");
+  expect(result.error.cleanupResources).toEqual([path]);
+  expect(result.error.cause).toBeInstanceOf(ArtifactFileCleanupFailure);
+  const failure = result.error.cause as ArtifactFileCleanupFailure;
+  expect(failure.fileCleanupFailure.outcome).toEqual({
+    kind: "failed",
+    cause: primary,
+  });
+  expect(failure.fileCleanupFailure.cleanupCause).toBe(cleanup);
+  expect(closeAttempts).toBe(1);
+  expect((await client.close()).ok).toBe(true);
+  expect(closeAttempts).toBe(2);
+  expect(result.error.cleanupIncomplete).toBe(false);
+  expect(resolvedAnalysisError(result.error).cause).toBe(primary);
+});

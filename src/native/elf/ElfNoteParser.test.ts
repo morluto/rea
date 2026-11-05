@@ -3,11 +3,15 @@ import { readFileSync } from "node:fs";
 import { expect, it } from "vitest";
 import { inspectElfNotesInputSchema } from "../../domain/native/elfNotes.js";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import { BinaryFormatFailure } from "../metadata/BinaryContainer.js";
 import { decodeElfSectionNameTable } from "../metadata/ElfSectionNameTable.js";
+import { readElfDirectoryFromBuffer } from "../metadata/NativeSectionDirectory.js";
 import {
   compressedElfNoteFixture,
   compressedElfNoteSectionFixture,
+  coreAuxvNote,
+  coreFileNote,
+  corePrpsinfoNote,
+  coreSiginfoNote,
   elfNote,
   elfNoteFixture,
   elfNoteTablePastEnd,
@@ -242,20 +246,6 @@ it("keeps note facts but marks section names unavailable for unknown compression
   );
 });
 
-it("tags valid extended section numbering as unsupported", () => {
-  let failure: unknown;
-  try {
-    parse(elfExtendedSectionCountFixture());
-  } catch (cause) {
-    failure = cause;
-  }
-  expect(failure).toBeInstanceOf(BinaryFormatFailure);
-  expect(failure).toMatchObject({
-    kind: "unsupported",
-    message: "ELF extended numbering is unsupported.",
-  });
-});
-
 it.each([1, 2])(
   "admits algorithm %i section names when max_file_bytes includes expansion",
   (compressionType) => {
@@ -474,6 +464,54 @@ const unterminatedNoteSections = (
   return image;
 };
 
+it.each([
+  { offset: 2, name: "é", state: "known" },
+  { offset: 3, name: "", state: "known" },
+  { offset: 4, name: null, state: "unavailable" },
+])(
+  "retains ELF section-name offset $offset consistently across consumers",
+  ({ offset, name, state }) => {
+    const bytes = unterminatedNoteSections(1, 4);
+    bytes.set([0x41, 0x42, 0xe9, 0], bytes.length - 4);
+    bytes.writeUInt32LE(offset, 64 + 2 * 64);
+    const notes = parse(bytes);
+    const directory = readElfDirectoryFromBuffer(bytes);
+    expect(notes.tables[0]?.name).toBe(name);
+    expect(directory.sections[2]).toMatchObject({ name, name_state: state });
+    if (name === null) {
+      expect(notes.coverage.status).toBe("complete");
+      expect(notes.limitations).toContain(
+        "ELF section names are incomplete because a name offset is outside its string table.",
+      );
+      expect(directory.section_names_limitation).toBe(
+        "ELF section names are incomplete because a name offset is outside its string table",
+      );
+    }
+  },
+);
+
+it.each([65535, 65536])(
+  "preserves consumer-specific section-name windows for NUL at byte %i",
+  (terminatorOffset) => {
+    const bytes = unterminatedNoteSections(1, terminatorOffset + 1);
+    bytes[bytes.length - 1] = 0;
+    const name = "A".repeat(terminatorOffset);
+    const notes = parse(bytes);
+    const directory = readElfDirectoryFromBuffer(bytes);
+    expect(notes.tables[0]?.name).toBe(name);
+    expect(notes.coverage.status).toBe("complete");
+    expect(directory.sections[2]).toMatchObject(
+      terminatorOffset === 65535
+        ? { name, name_state: "known" }
+        : { name: null, name_state: "truncated" },
+    );
+    if (terminatorOffset === 65536)
+      expect(directory.section_names_limitation).toBe(
+        "ELF section names are unavailable because a name is not NUL-terminated",
+      );
+  },
+);
+
 it("bounds repeated scans of an unterminated section name", () => {
   const report = parse(unterminatedNoteSections(2, 64));
   expect(report.tables.map(({ name }) => name)).toEqual([null, null]);
@@ -616,4 +654,429 @@ it("fails when the entry budget is exhausted", () => {
       inspectElfNotesInputSchema.parse({ path: defaults.path, max_entries: 1 }),
     ),
   ).toThrow(ArtifactReaderFailure);
+});
+
+it("keeps unsafe table offsets ahead of unsupported extended numbering", () => {
+  const bytes = elfExtendedSectionCountFixture();
+  bytes.writeBigUInt64LE(0xffffffffffffffffn, 32);
+  expect(() => parse(bytes)).toThrow(
+    "ELF offset or size exceeds a safe integer.",
+  );
+});
+
+it("does not apply note precision admission to unrelated program records", () => {
+  const bytes = elf64({ phoff: 64, phnum: 1 }, Buffer.alloc(56));
+  bytes.writeUInt32LE(0x70000001, 64);
+  for (const relative of [8, 16, 24, 32, 40, 48])
+    bytes.writeBigUInt64LE(0xffffffffffffffffn, 64 + relative);
+  expect(parse(bytes).tables).toEqual([]);
+  bytes.writeUInt32LE(4, 64);
+  expect(() => parse(bytes)).toThrow(
+    "ELF offset or size exceeds a safe integer.",
+  );
+});
+
+it("keeps compressed-note refusal ahead of alignment precision admission", () => {
+  const bytes = compressedElfNoteSectionFixture();
+  const sectionTable = Number(bytes.readBigUInt64LE(40));
+  bytes.writeBigUInt64LE(0xffffffffffffffffn, sectionTable + 64 + 48);
+  expect(() => parse(bytes)).toThrow(
+    "Compressed ELF note sections are unsupported",
+  );
+});
+
+it.each([
+  { bits: 32, little: true },
+  { bits: 32, little: false },
+  { bits: 64, little: true },
+  { bits: 64, little: false },
+] as const)(
+  "rejects dangling section names with and without notes (ELF$bits $little)",
+  ({ bits, little }) => {
+    for (const ownership of ["program", "none"] as const) {
+      const bytes = elfNoteFixture({ bits, little, ownership });
+      const before = parse(bytes);
+      const nameOffset = bits === 64 ? 62 : 50;
+      if (little) bytes.writeUInt16LE(5, nameOffset);
+      else bytes.writeUInt16BE(5, nameOffset);
+      expect(() => parse(bytes)).toThrow("ELF section table is missing");
+      if (little) bytes.writeUInt16LE(0, nameOffset);
+      else bytes.writeUInt16BE(0, nameOffset);
+      expect(parse(bytes)).toEqual(before);
+    }
+  },
+);
+
+it("decodes Linux core dump notes (NT_PRPSINFO, NT_FILE, NT_SIGINFO, NT_AUXV) for 64-bit little-endian", () => {
+  const notes = Buffer.concat([
+    corePrpsinfoNote({
+      bits: 64,
+      little: true,
+      state: 0,
+      sname: "R",
+      pid: 4242,
+      ppid: 1,
+      pgrp: 4242,
+      sid: 4242,
+      uid: 1001,
+      gid: 1002,
+      fname: "test-proc",
+      psargs: "/usr/bin/test-proc --daemon -v",
+    }),
+    coreFileNote(
+      [
+        {
+          start: 0x400000n,
+          end: 0x405000n,
+          file_ofs: 0n,
+          path: "/usr/bin/test-proc",
+        },
+        {
+          start: 0x7fff0000n,
+          end: 0x7fff2000n,
+          file_ofs: 10n,
+          path: "/lib/x86_64-linux-gnu/libc.so.6",
+        },
+      ],
+      4096,
+      64,
+      true,
+    ),
+    coreSiginfoNote(11, 1, 0, true), // SIGSEGV, SEGV_MAPERR
+    coreAuxvNote(
+      [
+        [6, 4096n], // AT_PAGESZ
+        [3, 0x400040n], // AT_PHDR
+        [9, 0x401000n], // AT_ENTRY
+        [999, 0x1234n], // Unknown auxv tag
+      ],
+      64,
+      true,
+    ),
+  ]);
+
+  const bytes = elfNoteFixture({
+    bits: 64,
+    little: true,
+    type: 4, // ET_CORE
+    ownership: "program",
+    notes,
+  });
+
+  const report = parse(bytes);
+  expect(report.entries).toHaveLength(4);
+
+  // 1. NT_PRPSINFO
+  expect(report.entries[0]).toMatchObject({
+    owner: "CORE",
+    type: 3,
+    type_name: "core_prpsinfo",
+    gnu: null,
+    core: {
+      prpsinfo: {
+        state: 0,
+        pid: 4242,
+        ppid: 1,
+        pgrp: 4242,
+        sid: 4242,
+        uid: 1001,
+        gid: 1002,
+        filename: "test-proc",
+        psargs: "/usr/bin/test-proc --daemon -v",
+      },
+      file: null,
+      siginfo: null,
+      auxv: null,
+    },
+  });
+
+  // 2. NT_FILE
+  expect(report.entries[1]).toMatchObject({
+    owner: "CORE",
+    type: 0x46494c45,
+    type_name: "core_file",
+    gnu: null,
+    core: {
+      prpsinfo: null,
+      file: {
+        count: 2,
+        page_size: 4096,
+        mappings: [
+          {
+            start_address: "0x400000",
+            end_address: "0x405000",
+            file_offset_pages: "0x0",
+            path: "/usr/bin/test-proc",
+            path_hex: Buffer.from("/usr/bin/test-proc").toString("hex"),
+          },
+          {
+            start_address: "0x7fff0000",
+            end_address: "0x7fff2000",
+            file_offset_pages: "0xa",
+            path: "/lib/x86_64-linux-gnu/libc.so.6",
+            path_hex: Buffer.from("/lib/x86_64-linux-gnu/libc.so.6").toString(
+              "hex",
+            ),
+          },
+        ],
+      },
+      siginfo: null,
+      auxv: null,
+    },
+  });
+
+  // 3. NT_SIGINFO
+  expect(report.entries[2]).toMatchObject({
+    owner: "CORE",
+    type: 0x53494749,
+    type_name: "core_siginfo",
+    gnu: null,
+    core: {
+      prpsinfo: null,
+      file: null,
+      siginfo: {
+        signo: 11,
+        errno: 0,
+        code: 1,
+      },
+      auxv: null,
+    },
+  });
+
+  // 4. NT_AUXV
+  expect(report.entries[3]).toMatchObject({
+    owner: "CORE",
+    type: 6,
+    type_name: "core_auxv",
+    gnu: null,
+    core: {
+      prpsinfo: null,
+      file: null,
+      siginfo: null,
+      auxv: [
+        { type: 6, type_name: "AT_PAGESZ", value: "0x1000" },
+        { type: 3, type_name: "AT_PHDR", value: "0x400040" },
+        { type: 9, type_name: "AT_ENTRY", value: "0x401000" },
+        { type: 999, type_name: null, value: "0x1234" },
+      ],
+    },
+  });
+});
+
+it("decodes Linux core dump notes for 32-bit big-endian", () => {
+  const notes = Buffer.concat([
+    corePrpsinfoNote({
+      bits: 32,
+      little: false,
+      state: 1,
+      pid: 123,
+      ppid: 1,
+      pgrp: 123,
+      sid: 123,
+      uid: 500,
+      gid: 500,
+      fname: "proc32",
+      psargs: "proc32 arg",
+    }),
+    coreFileNote(
+      [
+        {
+          start: 0x10000,
+          end: 0x12000,
+          file_ofs: 0,
+          path: "/bin/proc32",
+        },
+      ],
+      4096,
+      32,
+      false,
+    ),
+    coreAuxvNote(
+      [
+        [6, 4096],
+        [11, 500],
+      ],
+      32,
+      false,
+    ),
+  ]);
+
+  const bytes = elfNoteFixture({
+    bits: 32,
+    little: false,
+    type: 4,
+    ownership: "program",
+    notes,
+  });
+
+  const report = parse(bytes);
+  expect(report.entries).toHaveLength(3);
+  expect(report.entries[0]?.core?.prpsinfo).toMatchObject({
+    state: 1,
+    pid: 123,
+    uid: 500,
+    gid: 500,
+    filename: "proc32",
+    psargs: "proc32 arg",
+  });
+  expect(report.entries[1]?.core?.file).toMatchObject({
+    count: 1,
+    page_size: 4096,
+    mappings: [
+      {
+        start_address: "0x10000",
+        end_address: "0x12000",
+        file_offset_pages: "0x0",
+        path: "/bin/proc32",
+        path_hex: Buffer.from("/bin/proc32").toString("hex"),
+      },
+    ],
+  });
+  expect(report.entries[2]?.core?.auxv).toEqual([
+    { type: 6, type_name: "AT_PAGESZ", value: "0x1000" },
+    { type: 11, type_name: "AT_UID", value: "0x1f4" },
+  ]);
+});
+
+it("tolerates malformed core notes by returning null without throwing", () => {
+  const truncatedPrpsinfo = elfNote("CORE", 3, Buffer.alloc(20)); // requires 136 for 64-bit
+  const truncatedFile = elfNote(
+    "CORE",
+    0x46494c45,
+    Buffer.from("00000000000000010000000000001000", "hex"), // count 1, page_size 4096, but no map entries or filenames
+  );
+  const truncatedSiginfo = elfNote("CORE", 0x53494749, Buffer.alloc(4)); // requires 12 bytes
+  const unterminatedAuxv = elfNote(
+    "CORE",
+    6,
+    Buffer.from("00000000000000060000000000001000", "hex"), // AT_PAGESZ=4096 but lacks AT_NULL terminator
+  );
+  const truncatedAuxv = elfNote("CORE", 6, Buffer.alloc(7)); // not multiple of entry size
+  const notes = Buffer.concat([
+    truncatedPrpsinfo,
+    truncatedFile,
+    truncatedSiginfo,
+    unterminatedAuxv,
+    truncatedAuxv,
+  ]);
+
+  const bytes = elfNoteFixture({
+    bits: 64,
+    ownership: "program",
+    notes,
+  });
+
+  const report = parse(bytes);
+  expect(report.entries).toHaveLength(5);
+  expect(report.entries[0]?.core).toBeNull();
+  expect(report.entries[0]?.type_name).toBe("core_prpsinfo");
+  expect(report.entries[1]?.core).toBeNull();
+  expect(report.entries[1]?.type_name).toBe("core_file");
+  expect(report.entries[2]?.core).toBeNull();
+  expect(report.entries[2]?.type_name).toBe("core_siginfo");
+  expect(report.entries[3]?.core).toBeNull();
+  expect(report.entries[3]?.type_name).toBe("core_auxv");
+  expect(report.entries[4]?.core).toBeNull();
+  expect(report.entries[4]?.type_name).toBe("core_auxv");
+});
+
+it("decodes siginfo using target ABI for MIPS machines", () => {
+  const desc = Buffer.alloc(128);
+  desc.writeInt32LE(11, 0); // signo = SIGSEGV
+  desc.writeInt32LE(1, 4); // code = SEGV_MAPERR (offset 4 on MIPS)
+  desc.writeInt32LE(0, 8); // errno = 0 (offset 8 on MIPS)
+  const mipsSiginfo = elfNote("CORE", 0x53494749, desc, true);
+  const bytes = elfNoteFixture({
+    bits: 32,
+    machine: 8, // EM_MIPS
+    ownership: "program",
+    notes: mipsSiginfo,
+  });
+  const report = parse(bytes);
+  expect(report.entries[0]?.core?.siginfo).toEqual({
+    signo: 11,
+    code: 1,
+    errno: 0,
+  });
+});
+
+it("preserves negative process IDs and signal numbers without rewriting to zero", () => {
+  const prps = corePrpsinfoNote({
+    pid: -1,
+    ppid: -1,
+    pgrp: -1,
+    sid: -1,
+  });
+  const sig = coreSiginfoNote(-1, -2, -3);
+  const bytes = elfNoteFixture({
+    bits: 64,
+    ownership: "program",
+    notes: Buffer.concat([prps, sig]),
+  });
+  const report = parse(bytes);
+  expect(report.entries[0]?.core?.prpsinfo).toMatchObject({
+    pid: -1,
+    ppid: -1,
+    pgrp: -1,
+    sid: -1,
+  });
+  expect(report.entries[1]?.core?.siginfo).toMatchObject({
+    signo: -1,
+    code: -2,
+    errno: -3,
+  });
+});
+
+it("rejects 64-bit auxv tags and out-of-range page sizes with core: null without schema error", () => {
+  const validAuxv = coreAuxvNote([[6, 4096n]], 64, true);
+  const wideTagAuxv = Buffer.from(validAuxv);
+  wideTagAuxv.writeBigUInt64LE(0x100000000n, 20);
+
+  const validFile = coreFileNote(
+    [
+      {
+        start: 0x400000n,
+        end: 0x401000n,
+        file_ofs: 0n,
+        path: "/bin/app",
+      },
+    ],
+    4096,
+    64,
+    true,
+  );
+  const widePageSizeFile = Buffer.from(validFile);
+  widePageSizeFile.writeBigUInt64LE(0x100000000n, 28);
+
+  const bytes = elfNoteFixture({
+    bits: 64,
+    ownership: "program",
+    notes: Buffer.concat([wideTagAuxv, widePageSizeFile]),
+  });
+  const report = parse(bytes);
+  expect(report.entries[0]?.core).toBeNull();
+  expect(report.entries[1]?.core).toBeNull();
+});
+
+it("does not spend text budget on malformed or discarded NT_FILE paths", () => {
+  const header = Buffer.alloc(16);
+  header.writeBigUInt64LE(2n, 0); // count = 2
+  header.writeBigUInt64LE(4096n, 8); // page_size = 4096
+  const mappings = Buffer.alloc(48); // 2 mappings * 24 bytes
+  const paths = Buffer.from(
+    "/bin/app\0unterminated_path_without_null",
+    "latin1",
+  );
+  const badFileNote = elfNote(
+    "CORE",
+    0x46494c45,
+    Buffer.concat([header, mappings, paths]),
+  );
+  const bytes = elfNoteFixture({
+    bits: 64,
+    ownership: "program",
+    notes: badFileNote,
+  });
+  const report = parse(bytes);
+  expect(report.entries[0]?.core).toBeNull();
 });

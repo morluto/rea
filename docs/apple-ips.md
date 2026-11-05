@@ -29,7 +29,12 @@ body is parsed only when that string is `"309"`. Other types, including `"288"`
 stackshots, return no crash result.
 
 `process`, `exception`, `termination`, `faulting_thread`, `threads`, and
-`images` reproduce documented body fields when present. Integers keep their
+`images` reproduce documented body fields when present, including each image's
+`name` and each frame's `symbolLocation` (as `symbol_location`, the byte offset
+from the start of `recorded_symbol`). `termination` keeps the terminating
+process as `by_proc` and `by_pid` and its `flags`; `process.parent_pid` keeps
+`parentPid` next to `parent`; and `metadata` keeps `build_version` and
+`platform`. Integers keep their
 decimal literals and a hexadecimal form, including arm64e registers above
 2^53. Frame roles follow the recorded frame index: row zero of the resolved
 faulting thread is `faulting_instruction`, row zero of other threads is

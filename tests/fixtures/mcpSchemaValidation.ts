@@ -2,7 +2,10 @@ import type {
   JsonSchemaType,
   JsonSchemaValidator,
 } from "@modelcontextprotocol/client";
-import { AjvJsonSchemaValidator } from "@modelcontextprotocol/client/validators/ajv";
+import {
+  addFormats,
+  AjvJsonSchemaValidator,
+} from "@modelcontextprotocol/client/validators/ajv";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import type { ValidateFunction } from "ajv";
 
@@ -13,13 +16,33 @@ export const createMcpSchemaValidation = () => {
   const meta = new Ajv2020({ strict: false, validateFormats: false });
   let errors: unknown = null;
   return {
-    getValidator<T>(schema: JsonSchemaType): JsonSchemaValidator<T> {
+    getValidator<T>(
+      schema: JsonSchemaType | Readonly<Record<string, unknown>>,
+    ): JsonSchemaValidator<T> {
       const key = JSON.stringify(schema);
       let validator = sdkValidators.get(key);
       if (validator === undefined) {
-        // Each full schema owns its default provider, including dialect dispatch.
+        // Keep shared definitions as compiled functions instead of expanding
+        // them at every reference. Other dialects retain SDK dispatch.
+        const provider =
+          schema.$schema === undefined ||
+          schema.$schema === "https://json-schema.org/draft/2020-12/schema"
+            ? new AjvJsonSchemaValidator(
+                addFormats(
+                  new Ajv2020({
+                    strict: false,
+                    validateFormats: true,
+                    validateSchema: false,
+                    allErrors: true,
+                    inlineRefs: false,
+                    code: { optimize: false },
+                  }),
+                ),
+              )
+            : new AjvJsonSchemaValidator();
+        // Each full schema owns its provider, including dialect dispatch.
         // Distinct schemas may legally reuse the same $id in separate servers.
-        validator = new AjvJsonSchemaValidator().getValidator(JSON.parse(key));
+        validator = provider.getValidator(JSON.parse(key));
         sdkValidators.set(key, validator);
       }
       return validator as JsonSchemaValidator<T>;
@@ -42,6 +65,8 @@ export const createMcpSchemaValidation = () => {
           validator = new Ajv2020({
             strict: false,
             validateFormats: false,
+            inlineRefs: false,
+            code: { optimize: false },
           }).compile(JSON.parse(key));
           assertionValidators.set(key, validator);
         }

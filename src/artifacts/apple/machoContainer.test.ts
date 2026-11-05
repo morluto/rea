@@ -9,9 +9,13 @@ import {
 } from "./MachoImage.fixture.js";
 import { readMachoImage } from "./MachoLoadCommandReader.js";
 import { javaClassFile } from "../../../tests/fixtures/javaClassFile.js";
+import { classifyArtifactBytes } from "../inventory/ArtifactGraphConstruction.js";
+import { createArtifactClassificationProbe } from "../ArtifactClassificationProbe.js";
 import { parseExecutableHeader } from "../../domain/binaryTarget.js";
+import { isJvmClassFile } from "../../domain/apple/jvmClassFile.js";
 import {
   classifyFatContainerIdentity,
+  classifyFatContainerEvidence,
   findOverlappingFatSlices,
   readFatContainerHeader,
   readFatSliceDeclarations,
@@ -119,6 +123,66 @@ describe("FAT declaration facts", () => {
   });
 });
 
+it("preserves explicit unknown slice evidence instead of falling back to retained bytes", () => {
+  const bytes = Buffer.from(
+    fatImage([{ cpu: CPU.arm64, bytes: machoImage({ cpu: CPU.arm64 }) }]),
+  );
+  const header = readFatContainerHeader(bytes, bytes.length);
+  if (header.state !== "parsed") throw new Error("Expected FAT header");
+  const offset = header.slices[0]!.offset;
+  const unknown = new Map([
+    [offset, readMachoHeaderPrefixFacts(Buffer.alloc(0))],
+  ]);
+  expect(classifyFatContainerEvidence(header, bytes, new Map())).toEqual({
+    state: "mach-o",
+  });
+  expect(classifyFatContainerEvidence(header, bytes, unknown)).toEqual({
+    state: "needs-slice-header",
+    offsets: [offset],
+  });
+  const probe = createArtifactClassificationProbe();
+  probe.write(bytes);
+  const evidence = probe.finish(bytes.length);
+  expect(
+    classifyArtifactBytes(
+      {
+        ...evidence,
+        fatSliceHeaders: { header, sliceHeadersByOffset: new Map() },
+      },
+      bytes.length,
+    ),
+  ).toBe("mach-o-universal");
+  expect(
+    classifyArtifactBytes(
+      {
+        ...evidence,
+        fatSliceHeaders: { header, sliceHeadersByOffset: unknown },
+      },
+      bytes.length,
+    ),
+  ).toBe("unknown");
+  const native = parseExecutableHeader(
+    bytes,
+    "arm64",
+    bytes.length,
+    undefined,
+    {
+      header,
+      sliceHeadersByOffset: unknown,
+    },
+  );
+  expect(native).toEqual({
+    ok: false,
+    error: "FAT slice identity is outside the bounded prefix",
+  });
+  expect(
+    classifyFatContainerEvidence(header, bytes.subarray(0, offset + 3)),
+  ).toEqual({
+    state: "needs-slice-header",
+    offsets: [offset],
+  });
+});
+
 describe("FAT Mach-O identity", () => {
   it("does not treat known CPU declarations as proof when slices are ar archives", async () => {
     const archive = arArchive();
@@ -197,6 +261,7 @@ describe("FAT Mach-O identity", () => {
     bigEndian.writeUInt32BE(CPU.x86_64.subtype, 8);
     expect(readMachoHeaderPrefixFacts(littleEndian.subarray(0, 12))).toEqual({
       magic: 0xcffaedfe,
+      format: { wide: true, littleEndian: true, headerSize: 32 },
       identity: {
         cpuType: CPU.arm64.type,
         cpuSubtype: CPU.arm64.subtype,
@@ -204,6 +269,7 @@ describe("FAT Mach-O identity", () => {
     });
     expect(readMachoHeaderPrefixFacts(bigEndian)).toEqual({
       magic: 0xfeedfacf,
+      format: { wide: true, littleEndian: false, headerSize: 32 },
       identity: {
         cpuType: CPU.x86_64.type,
         cpuSubtype: CPU.x86_64.subtype,
@@ -211,10 +277,12 @@ describe("FAT Mach-O identity", () => {
     });
     expect(readMachoHeaderPrefixFacts(littleEndian.subarray(0, 11))).toEqual({
       magic: 0xcffaedfe,
+      format: { wide: true, littleEndian: true, headerSize: 32 },
       identity: null,
     });
     expect(readMachoHeaderPrefixFacts(littleEndian.subarray(0, 3))).toEqual({
       magic: null,
+      format: null,
       identity: null,
     });
   });
@@ -246,6 +314,39 @@ describe("FAT Mach-O identity", () => {
 });
 
 describe("FAT slice header identity and bounds", () => {
+  const classWithInterface = (reference: number): Buffer => {
+    // Retain enough bytes for the coincident FAT table claim to be readable;
+    // otherwise rejecting JVM identity would still yield not-fat on truncation.
+    const source = javaClassFile(2048, true);
+    const interfaceCountOffset = source.length - 8;
+    const bytes = Buffer.concat([
+      source.subarray(0, interfaceCountOffset + 2),
+      Buffer.alloc(2),
+      source.subarray(interfaceCountOffset + 2),
+    ]);
+    bytes.writeUInt16BE(1, interfaceCountOffset);
+    bytes.writeUInt16BE(reference, interfaceCountOffset + 2);
+    return bytes;
+  };
+
+  it("preserves JVM identity for class-tagged interface references", () => {
+    const bytes = classWithInterface(3);
+    expect(isJvmClassFile(bytes)).toBe(true);
+    expect(readFatContainerHeader(bytes, bytes.length)).toEqual({
+      state: "not-fat",
+    });
+  });
+
+  it.each([0, 2, 8, 65535])(
+    "does not suppress FAT examination for invalid JVM interface index %i",
+    (reference) => {
+      // Zero, a UTF-8 entry, and out-of-pool indices are not class references.
+      const bytes = classWithInterface(reference);
+      expect(isJvmClassFile(bytes)).toBe(false);
+      expect(readFatContainerHeader(bytes, bytes.length).state).toBe("parsed");
+    },
+  );
+
   it("keeps Java CAFEBABE class files outside FAT and Mach-O identity", async () => {
     const bytes = javaClassFile();
     expect(readFatContainerHeader(bytes, bytes.byteLength)).toEqual({

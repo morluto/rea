@@ -1,3 +1,6 @@
+import { FIRMWARE_OPERATION_ENGINES } from "../contracts/firmware/firmwareToolRequirements.js";
+import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
+import { assertArtifactCommandPath } from "../process/ArtifactCommandPath.js";
 import { join } from "node:path";
 import type { FirmwareAnalysisPort } from "../application/firmware/FirmwareAnalysisPort.js";
 import {
@@ -29,13 +32,14 @@ import { publishFirmwareExtraction } from "./FirmwarePublication.js";
 import {
   BINWALK_PROVIDER_IDENTITY,
   UNBLOB_PROVIDER_IDENTITY,
-} from "./FirmwareRelease.js";
+} from "./FirmwareProviderIdentities.js";
 import {
   startFirmwareDeadline,
   type FirmwareDeadline,
 } from "./FirmwareDeadline.js";
 import { admitFirmwareVersion } from "./FirmwareVersion.js";
 import {
+  firmwareFileSizeLimit,
   firmwareToolUnavailable,
   resolveFirmwareCommand,
   runFirmwareCommand,
@@ -326,10 +330,11 @@ export class FirmwareProvider implements FirmwareAnalysisPort {
     request: FirmwareRequest,
     options?: ExecutionOptions,
   ): Promise<Outcome> {
+    // Capture configuration after queue admission; later operations may select updates.
+    const environment = snapshotEnvironment(this.environment);
     let root: PrivateRuntimeRoot | undefined;
     let rootLease: AnalysisCleanupLease | undefined;
-    const engineName =
-      request.operation === "inspect_firmware_regions" ? "binwalk" : "unblob";
+    const engineName = FIRMWARE_OPERATION_ENGINES[request.operation];
     const withCaller = (phase: FirmwareDeadline) =>
       options?.signal === undefined
         ? phase.signal
@@ -357,7 +362,7 @@ export class FirmwareProvider implements FirmwareAnalysisPort {
           );
         });
       const command = await resolveFirmwareCommand(
-        this.environment,
+        environment,
         engineName,
         request.operation,
         this.#files,
@@ -368,17 +373,23 @@ export class FirmwareProvider implements FirmwareAnalysisPort {
       const ownedRootLease = new AnalysisCleanupLease(() => ownedRoot.close());
       rootLease = ownedRootLease;
       const target = await this.#files.snapshot(request, root.path, signal);
-      const run = (
+      const run = async (
         args: readonly string[],
         outputBudget?: { root: string; bytes: number; entries: number },
-      ) =>
-        runFirmwareCommand({
+      ) => {
+        for (const selected of [command.command, command.limiter])
+          await assertArtifactCommandPath(selected, request.operation, {
+            signal,
+          });
+        const output = await runFirmwareCommand({
           engine: engineName,
           operation: request.operation,
-          ...command,
+          fileSizeCeiling: command.fileSizeCeiling,
+          command: command.command.invocationPath,
+          limiter: command.limiter.invocationPath,
           args,
           cwd: root?.path ?? "",
-          environment: this.environment,
+          environment,
           signal,
           deadline,
           retainCleanup: (supervisor) => {
@@ -395,6 +406,20 @@ export class FirmwareProvider implements FirmwareAnalysisPort {
             ? {}
             : { outputBudget, acceptReportedExtractionFailure: true }),
         });
+        for (const selected of [command.command, command.limiter])
+          await assertArtifactCommandPath(selected, request.operation, {
+            capturedOutput: {
+              stdout: output.stdout.text,
+              stderr: output.stderr.text,
+              stdout_bytes: output.stdout.bytes,
+              stderr_bytes: output.stderr.bytes,
+              exit_code: output.exit_code ?? null,
+              signal: output.signal,
+              truncated: false,
+            },
+          });
+        return output;
+      };
       const versionRun = await run(["--version"]);
       const version = versionRun.stdout.text.trim();
       if (versionRun.stdout.bytes > 1024)
@@ -413,7 +438,7 @@ export class FirmwareProvider implements FirmwareAnalysisPort {
       const engine = {
         name: engineName,
         version: admitted.version,
-        executable_path: command.command,
+        executable_path: command.command.resolvedPath,
         executable_sha256: command.sha256,
         source_revision: null,
         worker_count: 1 as const,
@@ -498,6 +523,10 @@ export class FirmwareProvider implements FirmwareAnalysisPort {
           outputRoot,
           request.input.max_output_bytes,
           request.input.max_output_files,
+          firmwareFileSizeLimit(
+            command.fileSizeCeiling,
+            request.input.max_output_bytes,
+          ),
           request.operation,
           signal,
         );

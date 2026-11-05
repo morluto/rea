@@ -11,21 +11,25 @@ import {
   assertArtifactReadActive,
 } from "../artifacts/ArtifactFileOperation.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
-import { randomUUID } from "node:crypto";
-import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
-import { createConnection } from "node:net";
-import { lstat, opendir } from "node:fs/promises";
-import { join } from "node:path";
-import { z } from "zod";
-
 import {
+  AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
   AnalysisOutputError,
   AnalysisResourceConstraintError,
   resourceConstraintRecovery,
 } from "../domain/analysisErrorCore.js";
+import {
+  randomUUID,
+  createHmac,
+  randomBytes,
+  timingSafeEqual,
+} from "node:crypto";
+import { createConnection } from "node:net";
+import { lstat, opendir } from "node:fs/promises";
+import { join } from "node:path";
+import { z } from "zod";
+
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
 import type { JsonValue } from "../domain/jsonValue.js";
@@ -40,6 +44,7 @@ import { CutterBridgeResponseFrames } from "./cutterAuthenticatedResponse.js";
 import { requireWindowsNativeAuthority } from "../windows/WindowsNativeLoader.js";
 import { readBoundedFileBytes } from "../process/BoundedFileBytes.js";
 import { homeDirectoryFromEnvironment } from "../config/homeDirectory.js";
+import { appendCallerPath } from "../filesystem/callerPath.js";
 import {
   bridgeRequestLimitMismatchError,
   bridgeRequestOversizeError,
@@ -55,12 +60,6 @@ const descriptorSchema = z.object({
   token: z.string().min(20),
   max_request_bytes: z.int().positive().optional(),
 });
-
-export const CUTTER_PROVIDER_IDENTITY = {
-  id: "cutter.python-plugin",
-  name: "Cutter Python plugin",
-  version: null,
-} as const;
 
 const responseSchema = z.object({
   ok: z.boolean(),
@@ -895,7 +894,7 @@ export class CutterBridgeClient {
             );
           } else {
             const boundedBytes = await withArtifactRegularFile(
-              join(this.#directory, entry),
+              appendCallerPath(this.#directory, entry, this.#platform),
               this.#descriptorResources,
               signal,
               async ({ handle: file, initial: info }) => {
@@ -1155,14 +1154,18 @@ const resolveBridgeDirectory = (
   if (configured !== undefined && configured !== "") {
     if (configured === "~") return homeDirectory;
     if (configured.startsWith("~/"))
-      return join(homeDirectory, configured.slice(2));
+      return platform === "win32"
+        ? join(homeDirectory, configured.slice(2))
+        : appendCallerPath(homeDirectory, configured.slice(2), platform);
     if (platform === "win32" && configured.startsWith("~\\"))
       return join(homeDirectory, configured.slice(2));
     return configured;
   }
   return platform === "win32" && localAppData
     ? join(localAppData, "REA", "CutterBridge")
-    : join(homeDirectory, ".cache", "rea", "cutter-bridge");
+    : platform === "win32"
+      ? join(homeDirectory, ".cache", "rea", "cutter-bridge")
+      : appendCallerPath(homeDirectory, ".cache/rea/cutter-bridge", platform);
 };
 
 class CutterDiscoveryFailure extends Error {

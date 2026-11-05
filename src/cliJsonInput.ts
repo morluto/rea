@@ -100,7 +100,7 @@ export const parseCliJsonInput = async (
       const physicalCause = cause.physicalCause;
       const systemCode = accessDeniedSystemCode(physicalCause);
       return systemCode === undefined
-        ? jsonFileError(value, operation, "read-failed", physicalCause)
+        ? jsonFileReadError(value, operation, physicalCause)
         : jsonAccessDeniedError(value, operation, systemCode, physicalCause);
     }
     if (signal?.aborted && isJsonInputCancellation(cause, signal))
@@ -120,7 +120,7 @@ export const parseCliJsonInput = async (
       typeof cause.code !== "string"
     )
       throw cause;
-    return jsonFileError(value, operation, "read-failed", cause);
+    return jsonFileReadError(value, operation, cause);
   }
 };
 
@@ -332,26 +332,21 @@ const inputError = (operation: string): JsonValue => ({
   ),
 });
 
-const jsonFileError = (
-  path: string | undefined,
+const jsonFileReadError = (
+  path: string,
   operation: string,
-  reason: "invalid-json" | "read-failed",
-  cause?: unknown,
+  cause: unknown,
 ) => ({
   ok: false as const,
   error: {
     error: "Application workflow failed",
     ...projectAnalysisError(
-      new AnalysisInputError(
-        operation,
-        cause === undefined ? undefined : { cause },
-        reason === "invalid-json"
-          ? [{ path: [], reason: "invalid_format", expected: "JSON" }]
-          : [readFailureIssue(path, cause)],
-      ),
+      new AnalysisInputError(operation, { cause }, [
+        readFailureIssue(path, cause),
+      ]),
     ),
-    ...(path === undefined ? {} : { input_path: path }),
-    input_reason: reason,
+    input_path: path,
+    input_reason: "read-failed" as const,
   },
 });
 
@@ -373,7 +368,7 @@ const jsonAccessDeniedError = (
 });
 
 /** Preserve file-selection and system failures alongside the requested path. */
-const readFailureIssue = (path: string | undefined, cause: unknown) => {
+const readFailureIssue = (path: string, cause: unknown) => {
   const code =
     typeof cause === "object" &&
     cause !== null &&
@@ -386,7 +381,7 @@ const readFailureIssue = (path: string | undefined, cause: unknown) => {
     reason: "invalid_value" as const,
     message:
       cause instanceof NonRegularFileReadError && cause.code === "ENOTFILE"
-        ? `The JSON input must be a regular file${code}: ${path ?? ""}`
-        : `The JSON input file could not be read${code}: ${path ?? ""}`,
+        ? `The JSON input must be a regular file${code}: ${path}`
+        : `The JSON input file could not be read${code}: ${path}`,
   };
 };

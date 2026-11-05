@@ -69,6 +69,10 @@ export const existingMaintenanceScope = async (
     entryPoint,
     {
       environment,
+      // A registration REA wrote must be refreshed even when the product
+      // profile is absent, so maintenance reads ownership evidence instead of
+      // product applicability. Owned rows stay the only ones selected below.
+      evidence: "ownership",
       ...(resources === undefined ? {} : { resources }),
     },
   );
@@ -91,6 +95,14 @@ export const existingMaintenanceScope = async (
       continue;
     clients.push(registration.client);
   }
+  // Each setup action rewrites only that client's own configuration path, so
+  // maintenance keeps every selected client instead of deferring one view of
+  // a registration to another client's inspection: ZCode writes
+  // ~/.zcode/cli/config.json and deliberately leaves the ~/.agents/mcp.json
+  // fallback untouched (docs/client-configuration.md), while FreeBuff writes
+  // the shared file itself. Dropping FreeBuff because ZCode reads that
+  // fallback would leave the row both products load pinned to the old
+  // version.
   const skills = await existingSkillDestinations(
     home,
     environment,

@@ -10,6 +10,7 @@ import {
   AnalysisUnsupportedTargetError,
 } from "../domain/analysisErrorCore.js";
 import { decodeCanonicalBase64 } from "../domain/webScreenshot.js";
+import { hasPngSignature, readPngIhdrFacts } from "../domain/pngHeader.js";
 
 interface DecodedPng {
   readonly width: number;
@@ -102,7 +103,7 @@ const parsePng = (
   field: "before" | "after",
 ): ParsedPng => {
   const bytes = decodeCanonicalBase64(artifact.data_base64);
-  if (bytes === undefined || !bytes.subarray(0, 8).equals(PNG_SIGNATURE))
+  if (bytes === undefined || !hasPngSignature(bytes))
     throw new TypeError("Invalid PNG signature");
   let offset = 8;
   let header: ReturnType<typeof parseHeader> | undefined;
@@ -347,11 +348,17 @@ const inflatePng = (compressed: Buffer, maxOutputLength: number): Buffer => {
 };
 
 const parseHeader = (data: Buffer) => {
-  if (data.byteLength !== 13) throw new TypeError("Invalid PNG header");
-  const width = data.readUInt32BE(0);
-  const height = data.readUInt32BE(4);
-  const bitDepth = data[8] ?? 0;
-  const colorType = data[9] ?? -1;
+  const parsed = readPngIhdrFacts(data);
+  if (!parsed.ok) throw new TypeError(parsed.error);
+  const {
+    width,
+    height,
+    bitDepth,
+    colorType,
+    compressionMethod,
+    filterMethod,
+    interlaceMethod,
+  } = parsed.value;
   const validDepth =
     (colorType === 0 && [1, 2, 4, 8, 16].includes(bitDepth)) ||
     (colorType === 2 && [8, 16].includes(bitDepth)) ||
@@ -359,14 +366,10 @@ const parseHeader = (data: Buffer) => {
     (colorType === 4 && [8, 16].includes(bitDepth)) ||
     (colorType === 6 && [8, 16].includes(bitDepth));
   if (
-    width === 0 ||
-    height === 0 ||
-    width > 0x7fffffff ||
-    height > 0x7fffffff ||
     !validDepth ||
-    data[10] !== 0 ||
-    data[11] !== 0 ||
-    (data[12] !== 0 && data[12] !== 1)
+    compressionMethod !== 0 ||
+    filterMethod !== 0 ||
+    (interlaceMethod !== 0 && interlaceMethod !== 1)
   )
     throw new TypeError("Invalid PNG header");
   return {
@@ -374,10 +377,12 @@ const parseHeader = (data: Buffer) => {
     height,
     colorType,
     bitDepth,
-    interlace: data[12],
+    interlace: interlaceMethod,
     channels: colorType === 6 ? 4 : 3,
     supported:
-      bitDepth === 8 && (colorType === 2 || colorType === 6) && data[12] === 0,
+      bitDepth === 8 &&
+      (colorType === 2 || colorType === 6) &&
+      interlaceMethod === 0,
   };
 };
 
@@ -491,5 +496,3 @@ const limitations = (): string[] => [
   "Only non-interlaced 8-bit RGB and RGBA PNG screenshots are accepted.",
   "PNG tRNS transparency is accepted only as a six-byte RGB color key; tRNS on RGBA or with another length is rejected.",
 ];
-
-const PNG_SIGNATURE = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);

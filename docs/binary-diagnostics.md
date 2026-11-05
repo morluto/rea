@@ -8,9 +8,14 @@ ordinary binary inspection use the same modular capability.
 
 ## Bring your own engine
 
-Initial real verification covers **Linux x64, ELF64 x86-64 little-endian
-EXEC/DYN/REL**. Provide an absolute Python executable whose environment already
-contains unchanged pwntools 4.15.0, pyelftools 0.33 and Unicorn 2.1.2:
+Real verification covers **Linux x64** hosts and **EXEC/DYN/REL** objects in
+these profiles: ELF64 x86-64, ELF64 little-endian AArch64, ELF32 i386, ELF32
+little-endian ARM and ELF32 little- or big-endian MIPS. Other machines, classes
+and byte orders, including big-endian ARM, return `unsupported_target`. Other
+hosts, including Linux arm64, return `capability_unavailable` naming the
+detected host before any target is read. Provide an absolute
+Python executable whose environment already contains unchanged pwntools 4.15.0,
+pyelftools 0.33 and Unicorn 2.1.2:
 
 ```sh
 REA_PWNTOOLS_PYTHON=/absolute/isolated-env/bin/python \
@@ -421,8 +426,10 @@ rea inspect-native-exports ./libexample.so --detail summary --evidence_output ./
   without an export directory is a complete empty inventory.
 - ELF rows list defined `.dynsym` symbols with global, weak or GNU-unique
   binding and default or protected visibility. Each row keeps `value`
-  (`st_value` as stored; bit 0 marks Thumb code on 32-bit ARM), `size`, `type`
-  and `binding`. ELF string tables do not declare a text encoding. Names that
+  (`st_value` as stored; bit 0 marks Thumb code on 32-bit ARM), `size`, `type`,
+  `binding` and `visibility` (`"default"` or `"protected"`; `"unknown"` in older
+  historical Evidence where visibility was not recorded). ELF string tables do
+  not declare a text encoding. Names that
   contain non-ASCII bytes are decoded as UTF-8 when those bytes form valid
   UTF-8; `name_utf8_decodable` records whether the non-ASCII name bytes are
   valid UTF-8 and `name_bytes_base64` retains those exact bytes (`null` for

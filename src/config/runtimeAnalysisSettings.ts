@@ -1,4 +1,6 @@
 import type { AnalysisSettingsReader } from "../domain/analysisSettings.js";
+import type { ConfigurationError } from "../domain/configurationErrors.js";
+import { ok, type Result } from "../domain/result.js";
 import type { AppConfig } from "./types.js";
 import {
   parseAsarHeaderAdmission,
@@ -8,6 +10,10 @@ import {
   resolveCaptureDecoderHeap,
   type CaptureDecoderHeap,
 } from "./captureDecoderHeap.js";
+import {
+  parseNativeMatchingAllowance,
+  type NativeMatchingAllowance,
+} from "./nativeMatchingAllowance.js";
 
 /** Typed views read the enclosing operation snapshot, never the ambient environment. */
 export const runtimeAnalysisConfig = (
@@ -111,3 +117,19 @@ export const runtimeCaptureDecoderHeap = (
         },
       };
 };
+/**
+ * Resolve the accepted operation's allowance on each call. An invalid launch
+ * value is refused only by the operation it bounds, so MCP stays available
+ * and a runtime override can repair it.
+ */
+export const runtimeNativeMatchingAllowance =
+  (
+    environment: Readonly<Record<string, string | undefined>>,
+    read?: AnalysisSettingsReader,
+  ): (() => Result<NativeMatchingAllowance, ConfigurationError>) =>
+  () => {
+    const override = read?.().overrides["native.matching_representation_bytes"];
+    return override === undefined
+      ? parseNativeMatchingAllowance(environment)
+      : ok({ maximumBytes: override, source: "runtime" });
+  };

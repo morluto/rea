@@ -63,11 +63,20 @@ export class RegularFileChangedError extends Error {
   }
 }
 
-const SELECTED_REGULAR_FILE_ERROR_CODES = new Set([
+/** Errnos establishing that no file resolves at the path as written. */
+const UNRESOLVED_PATH_ERROR_CODES: ReadonlySet<string> = new Set([
   "ENOENT",
   "ENOTDIR",
   "ELOOP",
   "ENAMETOOLONG",
+]);
+
+/** Whether an errno establishes that nothing resolves at the selected path. */
+export const isUnresolvedPathErrorCode = (code: unknown): boolean =>
+  typeof code === "string" && UNRESOLVED_PATH_ERROR_CODES.has(code);
+
+const SELECTED_REGULAR_FILE_ERROR_CODES = new Set([
+  ...UNRESOLVED_PATH_ERROR_CODES,
   "EISDIR",
   "ENOTFILE",
   "ESTALE",
@@ -177,9 +186,24 @@ const isUnopenableFileTypeError = (cause: unknown): boolean =>
   typeof cause.errno === "number" &&
   UNOPENABLE_FILE_TYPE_ERRNOS.has(cause.errno);
 
+/** Stable content identity; access times are deliberately excluded. */
+export type RegularFileState = Pick<
+  Stats,
+  "dev" | "ino" | "size" | "mode" | "mtimeMs" | "ctimeMs"
+>;
+
+export const regularFileState = (stats: Stats): RegularFileState => ({
+  dev: stats.dev,
+  ino: stats.ino,
+  size: stats.size,
+  mode: stats.mode,
+  mtimeMs: stats.mtimeMs,
+  ctimeMs: stats.ctimeMs,
+});
+
 /** Compare one regular file's identity and mutable metadata across a read. */
 export const sameRegularFileState = (
-  expected: Stats | BigIntStats,
+  expected: RegularFileState | BigIntStats,
   observed: Stats | BigIntStats,
 ): boolean =>
   observed.isFile() &&
@@ -192,3 +216,36 @@ export const sameRegularFileState = (
       expected.ctimeNs === observed.ctimeNs
     : expected.mtimeMs === observed.mtimeMs &&
       expected.ctimeMs === observed.ctimeMs);
+
+/** Validate an admitted descriptor and selected name at the same precision as admission. */
+export const assertStableRegularFileIdentity = async (
+  file: FileHandle,
+  path: string,
+  before: Stats | BigIntStats,
+  options: {
+    readonly symlinks: "follow" | "reject";
+    readonly signal?: AbortSignal;
+  },
+): Promise<void> => {
+  assertRegularFileActive(options.signal);
+  const bigint = typeof before.dev === "bigint";
+  const named = async () => {
+    try {
+      const lookup = options.symlinks === "follow" ? stat : lstat;
+      return bigint ? await lookup(path, { bigint: true }) : await lookup(path);
+    } catch (cause: unknown) {
+      if (isSelectedRegularFileError(cause))
+        throw new RegularFileChangedError(path, { cause });
+      throw cause;
+    }
+  };
+  const selected = await named();
+  assertRegularFileActive(options.signal);
+  const opened = await file.stat({ bigint });
+  assertRegularFileActive(options.signal);
+  if (
+    !sameRegularFileState(before, opened) ||
+    !sameRegularFileState(before, selected)
+  )
+    throw new RegularFileChangedError(path);
+};

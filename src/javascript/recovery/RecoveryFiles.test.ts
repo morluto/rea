@@ -1,5 +1,12 @@
 import { execFile } from "node:child_process";
-import { mkdir, stat, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  readFile,
+  realpath,
+  stat,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { expect, it, vi } from "vitest";
@@ -190,6 +197,61 @@ it("reports one file selected twice as an input error", async () => {
     code: "EEXIST",
   });
 });
+
+it.skipIf(process.platform === "win32")(
+  "keeps distinct filesystem selections whose lexical paths collapse together",
+  async () => {
+    const root = await realpath(
+      await createTestTempDirectory("rea-recovery-selected-layout-"),
+    );
+    await mkdir(join(root, "target/child"), { recursive: true });
+    await symlink("target/child", join(root, "link"));
+    const selected = `${root}/link/../input.js`;
+    const sibling = join(root, "input.js");
+    await writeFile(selected, "export const selected = 1;\n");
+    await writeFile(sibling, "export const sibling = 2;\n");
+    const snapshots = await snapshotRecoveryInputs(
+      [selected, sibling],
+      join(root, "snapshots"),
+    );
+    expect(
+      snapshots.map(({ path, relative_path }) => ({ path, relative_path })),
+    ).toEqual([
+      { path: selected, relative_path: "target/input.js" },
+      { path: sibling, relative_path: "input.js" },
+    ]);
+    expect(await readFile(snapshots[0].snapshot_path, "utf8")).toBe(
+      "export const selected = 1;\n",
+    );
+    expect(await readFile(snapshots[1]!.snapshot_path, "utf8")).toBe(
+      "export const sibling = 2;\n",
+    );
+    await writeFile(selected, "export const selected = 3;\n");
+    const refreshed = await snapshotRecoveryInputs(
+      [selected, sibling],
+      join(root, "refreshed"),
+    );
+    expect(refreshed[0].sha256).not.toBe(snapshots[0].sha256);
+    expect(refreshed[1]!.sha256).toBe(snapshots[1]!.sha256);
+    expect(await readFile(snapshots[0].snapshot_path, "utf8")).toBe(
+      "export const selected = 1;\n",
+    );
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "refuses a regular-file/.. traversal before deriving the snapshot layout",
+  async () => {
+    const root = await createTestTempDirectory("rea-recovery-invalid-parent-");
+    await writeFile(join(root, "file"), "not a directory");
+    await writeFile(join(root, "input.js"), "export const sibling = 1;\n");
+    const snapshots = join(root, "snapshots");
+    await expect(
+      snapshotRecoveryInputs([`${root}/file/../input.js`], snapshots),
+    ).rejects.toMatchObject({ _tag: "AnalysisInputError" });
+    await expect(stat(snapshots)).rejects.toMatchObject({ code: "ENOENT" });
+  },
+);
 
 it("reports a file and directory name clash as an input error", async () => {
   const clash = filesystemError("ENOTDIR");

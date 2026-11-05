@@ -82,7 +82,7 @@
     <!-- prettier-ignore -->
     <meta
       property="og:image:alt"
-      content="REA — Find out how software works. Reverse engineering with your coding agent."
+      content="REA: Find out how software works. Reverse engineering with your coding agent."
     />
     <!-- prettier-ignore -->
     <meta name="twitter:card" content="summary_large_image" />
@@ -95,7 +95,7 @@
     <!-- prettier-ignore -->
     <meta
       name="twitter:image:alt"
-      content="REA — Find out how software works. Reverse engineering with your coding agent."
+      content="REA: Find out how software works. Reverse engineering with your coding agent."
     />
     <!-- website:sharing:end -->
     <!-- website:theme:start -->
@@ -122,8 +122,6 @@
           <a href="../../showcase/">Showcases</a>
           <a href="../../blog/">Blog</a>
           <a href="../../guides/" aria-current="page">Guides</a>
-          <a href="../../faq/">FAQ</a>
-          <a href="../../contributors/">Contributors</a>
         </nav>
         <div class="header-social">
           <details class="language-picker" data-i18n-skip><summary><span aria-hidden="true">文 / A</span> <span>English</span></summary><nav aria-label="English"><a href="../../guides/native/" lang="en" dir="ltr" data-language="en" aria-current="true">English</a><a href="../../zh-CN/guides/native/" lang="zh-CN" dir="ltr" data-language="zh-CN">简体中文</a><a href="../../zh-TW/guides/native/" lang="zh-TW" dir="ltr" data-language="zh-TW">繁體中文</a><a href="../../ja/guides/native/" lang="ja" dir="ltr" data-language="ja">日本語</a><a href="../../ko/guides/native/" lang="ko" dir="ltr" data-language="ko">한국어</a><a href="../../tr/guides/native/" lang="tr" dir="ltr" data-language="tr">Türkçe</a><a href="../../ru/guides/native/" lang="ru" dir="ltr" data-language="ru">Русский</a><a href="../../vi/guides/native/" lang="vi" dir="ltr" data-language="vi">Tiếng Việt</a><a href="../../th/guides/native/" lang="th" dir="ltr" data-language="th">ไทย</a><a href="../../de/guides/native/" lang="de" dir="ltr" data-language="de">Deutsch</a><a href="../../es/guides/native/" lang="es" dir="ltr" data-language="es">Español</a><a href="../../fr/guides/native/" lang="fr" dir="ltr" data-language="fr">Français</a><a href="../../uk/guides/native/" lang="uk" dir="ltr" data-language="uk">Українська</a><a href="../../pl/guides/native/" lang="pl" dir="ltr" data-language="pl">Polski</a><a href="../../pt-BR/guides/native/" lang="pt-BR" dir="ltr" data-language="pt-BR">Português (Brasil)</a><a href="../../ar/guides/native/" lang="ar" dir="rtl" data-language="ar">العربية</a><a href="../../fa/guides/native/" lang="fa" dir="rtl" data-language="fa">فارسی</a><a href="../../id/guides/native/" lang="id" dir="ltr" data-language="id">Bahasa Indonesia</a><a href="../../it/guides/native/" lang="it" dir="ltr" data-language="it">Italiano</a><a href="../../el/guides/native/" lang="el" dir="ltr" data-language="el">Ελληνικά</a><a href="../../ml/guides/native/" lang="ml" dir="ltr" data-language="ml">മലയാളം</a><a href="../../ur-Latn/guides/native/" lang="ur-Latn" dir="ltr" data-language="ur-Latn">Roman Urdu</a><a href="../../ro/guides/native/" lang="ro" dir="ltr" data-language="ro">Română</a></nav></details>
@@ -319,7 +317,8 @@
                   <strong>Hopper</strong> (macOS or Linux): REA's setup detects
                   it or offers to install it. On macOS, open Hopper once and
                   choose demo mode or activate a license before your first
-                  analysis.
+                  analysis. Automated Linux setup requires x86_64; use Ghidra on
+                  Linux arm64.
                 </li>
                 <li>
                   <strong>Ghidra</strong> (macOS or Linux; experimental on
@@ -327,8 +326,10 @@
                   installation and a 64-bit JDK 21 or newer.
                 </li>
                 <li>
-                  <strong>IDA</strong> (Windows): for an existing IDA setup with
-                  an MCP registration.
+                  <strong>IDA</strong> (Windows; macOS arm64 headless): use an
+                  existing IDA setup with an MCP registration. The macOS
+                  headless profile requires a source build or a release that
+                  includes it.
                 </li>
               </ul>
               <p>
@@ -507,7 +508,8 @@ return (DxBallInt)pan;</code></pre>
       <div class="container footer-inner">
         <p>REA · Reverse Engineer Anything</p>
         <div class="footer-links">
-          <a href="../../contributors/">Contributors</a
+          <a href="../../faq/">FAQ</a
+          ><a href="../../contributors/">Contributors</a
           ><a href="https://github.com/morluto/rea">Source</a
           ><a href="https://github.com/morluto/rea/blob/main/LICENSE">MIT license</a
           ><a href="https://discord.gg/GkcryMnJDM">Join the community</a

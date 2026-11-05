@@ -2,13 +2,9 @@ import { z } from "zod";
 import type { ExecutionOptions } from "./AnalysisProvider.js";
 import type { WebRuntimePort } from "./WebRuntimePort.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
-import {
-  AnalysisCancelledError,
-  AnalysisOutputError,
-} from "../domain/analysisErrorCore.js";
+import { AnalysisOutputError } from "../domain/analysisErrorCore.js";
 import { createEvidence, type Evidence } from "../domain/evidence.js";
-import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
-import { err, ok, type Result } from "../domain/result.js";
+import { err, type Result } from "../domain/result.js";
 import {
   observeWebExecutionInputSchema,
   webExecutionSchema,
@@ -23,6 +19,7 @@ import {
   completeProviderEvidence,
   keepIncompleteObservation,
 } from "./ProviderOperationExecution.js";
+import { parseAnalysisInput } from "./AnalysisInput.js";
 
 /** Shared public workflows keep instrumentation and listener inspection independently selectable. */
 export class WebRuntimeService {
@@ -34,11 +31,11 @@ export class WebRuntimeService {
     options?: ExecutionOptions,
   ): Promise<Result<Evidence, AnalysisError>> {
     const operation = "observe_web_execution";
-    const parsed = parseInput(
-      observeWebExecutionInputSchema,
-      rawInput,
+    const parsed = parseAnalysisInput(
       operation,
-      options,
+      rawInput,
+      observeWebExecutionInputSchema,
+      options?.signal,
     );
     if (!parsed.ok) return parsed;
     const result = await this.provider.observeExecution(parsed.value, options);
@@ -67,11 +64,11 @@ export class WebRuntimeService {
     options?: ExecutionOptions,
   ): Promise<Result<Evidence, AnalysisError>> {
     const operation = "inspect_web_event_listeners";
-    const parsed = parseInput(
-      inspectWebEventListenersInputSchema,
-      rawInput,
+    const parsed = parseAnalysisInput(
       operation,
-      options,
+      rawInput,
+      inspectWebEventListenersInputSchema,
+      options?.signal,
     );
     if (!parsed.ok) return parsed;
     const result = await this.provider.inspectEventListeners(
@@ -171,23 +168,3 @@ export class WebRuntimeService {
     );
   }
 }
-
-const parseInput = <T>(
-  schema: z.ZodType<T>,
-  rawInput: unknown,
-  operation: string,
-  options: ExecutionOptions | undefined,
-): Result<T, AnalysisError> => {
-  if (options?.signal?.aborted)
-    return err(
-      new AnalysisCancelledError(operation, { cause: options.signal.reason }),
-    );
-  const parsed = schema.safeParse(rawInput);
-  return parsed.success
-    ? ok(parsed.data)
-    : err(
-        analysisInputErrorFromIssues(operation, parsed.error.issues, rawInput, {
-          cause: parsed.error,
-        }),
-      );
-};
