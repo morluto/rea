@@ -6,11 +6,13 @@ import {
   ArtifactFileCleanupFailure,
   artifactFileCancellationCause,
 } from "../artifacts/ArtifactFileOperation.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import {
+  ArtifactReaderFailure,
+  selectedPathRecovery,
+} from "../artifacts/ArtifactReader.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { readStableArtifact } from "../artifacts/readStableArtifact.js";
 import { completedStableArtifactObservation } from "../artifacts/StableArtifactObservation.js";
-import { stableArtifactInputRecovery } from "../artifacts/StableArtifactFailure.js";
 import {
   AnalysisError,
   type AnalysisCapturedOutput,
@@ -227,7 +229,7 @@ export class ArtifactAnalysisResources {
       {
         cause,
         ...(cause instanceof ArtifactReaderFailure
-          ? stableArtifactInputRecovery(cause)
+          ? selectedPathRecovery(cause)
           : {}),
       },
       [{ path: ["path"], reason: "invalid_value", message: reason }],

@@ -1,16 +1,9 @@
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
-import {
-  ArtifactReaderFailure,
-  selectedPathRecovery,
-} from "./ArtifactReader.js";
+import { ArtifactReaderFailure } from "./ArtifactReader.js";
 import { bindArtifactFileCleanup } from "./ArtifactFileOperation.js";
 import { completedStableArtifactObservation } from "./StableArtifactObservation.js";
-
-/** Offer the verified regular-file target, or the reader's own guidance, after a selected symlink is rejected. */
-export const stableArtifactInputRecovery = (cause: ArtifactReaderFailure) =>
-  selectedPathRecovery(cause);
 
 const artifactCleanupFailure = (
   cause: unknown,
