@@ -232,7 +232,13 @@ const registerOpenLifecycleTool = ({
             },
             openContract,
           )
-        : server.delivery.toCallToolResult(opened, openContract);
+        : server.delivery.toErrorToolResult(
+            opened.error,
+            openContract.returnsTargetContent,
+            {
+              selection_at_failure: opened.selection,
+            },
+          );
     },
   );
 };
