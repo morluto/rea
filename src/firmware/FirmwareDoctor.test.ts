@@ -817,9 +817,11 @@ linuxIt(
     );
     await chmod(ps, 0o700);
     const run = vi.fn<NonNullable<FirmwareDoctorHost["runCommand"]>>();
-    const doctor = new FirmwareDoctor({ ...environment, PATH: root }, "linux", {
-      runCommand: run,
-    });
+    const doctor = new FirmwareDoctor(
+      { ...environment, PATH: root, REA_PROCESS_TABLE_MAX_BYTES: "65536" },
+      "linux",
+      { runCommand: run },
+    );
     const inspections = await doctor.inspect();
     expect(inspections).toHaveLength(2);
     for (const inspection of inspections) {
@@ -971,3 +973,31 @@ const snapshot = (
   exitCode,
   signal: null,
 });
+
+linuxIt(
+  "reports an invalid process-table setting without suggesting a procps install",
+  async () => {
+    const { environment } = await fixture();
+    const run = vi.fn<NonNullable<FirmwareDoctorHost["runCommand"]>>();
+    const doctor = new FirmwareDoctor(
+      {
+        ...environment,
+        REA_PROCESS_TABLE_MAX_BYTES: "invalid",
+      },
+      "linux",
+      { runCommand: run },
+    );
+    const inspections = await doctor.inspect();
+    for (const inspection of inspections)
+      expect(inspection.checks).toContainEqual(
+        expect.objectContaining({
+          name: "ps",
+          ok: false,
+          classification: "config_drift",
+          remediation: expect.stringContaining("REA_PROCESS_TABLE_MAX_BYTES"),
+        }),
+      );
+    expect(run).not.toHaveBeenCalled();
+    await doctor.close();
+  },
+);

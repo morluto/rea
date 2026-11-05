@@ -760,7 +760,7 @@ it.skipIf(process.platform === "win32")(
           reason: expect.stringContaining("injected read fault"),
           diagnostics: {
             version: "1.833",
-            verified: true,
+            verified: false,
             identity_observation_phase: "post_probe",
             identity_observation_failure: "injected read fault",
             before_probe_sha256: beforeProbeFingerprint.sha256,

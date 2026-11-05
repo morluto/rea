@@ -31,7 +31,7 @@ import { getterExpansionSource } from "../../../tests/fixtures/javascriptGetterE
 
 const SHA256 = "a".repeat(64);
 
-it("retains direct call literals and resolves literal queries to their call site", () => {
+it("retains direct call literals and resolves literal queries to their argument", () => {
   const source =
     'api.rpc("proc_0", 7, false, null, dynamic, ...values, `fixed`, -3);';
   const graph = graphFor(source);
@@ -57,7 +57,10 @@ it("retains direct call literals and resolves literal queries to their call site
       direction: "forward-influence",
     }),
   );
-  expect(trace.seed_node_ids).toContain(call.node_id);
+  expect(
+    trace.nodes.find((node) => node.node_id === trace.seed_node_ids[0])?.label,
+  ).toBe("argument 0");
+  expect(trace.nodes.some((node) => node.node_id === call.node_id)).toBe(true);
 });
 
 it("reports the primitive byte bound when a direct argument is too large", () => {

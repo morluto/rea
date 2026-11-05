@@ -12,6 +12,8 @@ import { createPackage } from "@electron/asar";
 import { describe, expect, it } from "vitest";
 
 import { AsarArtifactReader } from "../../../src/artifacts/AsarArtifactReader.js";
+import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
+import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const CONTENT = "module.exports = 'owned';\n";
@@ -174,12 +176,14 @@ describe("ASAR reader cleanup", () => {
       },
     });
 
-    try {
+    let opening: ReturnType<typeof reader.open> | undefined;
+    let closing: ReturnType<typeof reader.close> | undefined;
+    await withVerifierCleanup(async () => {
       const entry = await packedMember(reader);
       pauseMemberOpen = true;
-      const opening = reader.open(entry);
-      await memberOpenStarted;
-      const closing = reader.close();
+      opening = reader.open(entry);
+      await awaitAcknowledgement(memberOpenStarted, opening, "member open");
+      closing = reader.close();
       releaseMemberOpen();
       const output = await opening;
       const memberHandle = latestHandle(opened);
@@ -189,10 +193,16 @@ describe("ASAR reader cleanup", () => {
 
       expect(output.destroyed).toBe(true);
       await expectSnapshotRemoved(memberHandle.fd, root);
-    } finally {
-      releaseMemberOpen();
-      await reader.close();
-    }
+    }, [
+      releaseMemberOpen,
+      async () => {
+        await opening;
+      },
+      async () => {
+        await closing;
+      },
+      () => reader.close(),
+    ]);
   });
 });
 

@@ -60,7 +60,7 @@ cliTest.skipIf(process.platform !== "darwin").for([true, false])(
       }),
     );
     const registrationBytes = await readFile(registration);
-    const before = await readdir(physical);
+    const before = (await readdir(physical)).sort();
     const result = await cli.run({
       arguments: ["doctor", "--provider", "ida", "--json"],
       environment: { HOME: root, REA_IDA_MCP_CONFIG: registration },
@@ -85,7 +85,7 @@ cliTest.skipIf(process.platform !== "darwin").for([true, false])(
     expect(
       Buffer.compare(await readFile(registration), registrationBytes),
     ).toBe(0);
-    expect(await readdir(physical)).toEqual(before);
+    expect((await readdir(physical)).sort()).toEqual(before);
     if (usable) {
       expect(await readdir(parent)).toEqual([]);
       expect(await readFile(lexical, "utf8")).toBe("lexical parent is a file");

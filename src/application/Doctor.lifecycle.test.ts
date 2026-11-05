@@ -1,4 +1,6 @@
 import { expect, it } from "vitest";
+import { withVerifierCleanup } from "../../scripts/lib/verifier-cleanup.mjs";
+import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
@@ -53,18 +55,24 @@ it("joins a late provider inspection and retries only its unresolved cleanup own
     },
   });
   const inspection = host.providerInspections!();
-  const signal = await entered;
-  const closing = host.close!().then(
-    () => {
-      closed = true;
-      return undefined;
-    },
-    (cause: unknown) => {
-      closed = true;
-      return cause;
-    },
-  );
-  try {
+  let closing: Promise<unknown> | undefined;
+  await withVerifierCleanup(async () => {
+    await awaitAcknowledgement(
+      entered.then(() => {}),
+      inspection,
+      "provider inspection",
+    );
+    const signal = await entered;
+    closing = host.close!().then(
+      () => {
+        closed = true;
+        return undefined;
+      },
+      (cause: unknown) => {
+        closed = true;
+        return cause;
+      },
+    );
     expect(signal.aborted).toBe(true);
     expect(closed).toBe(false);
     handOff();
@@ -84,14 +92,20 @@ it("joins a late provider inspection and retries only its unresolved cleanup own
     await expect(host.providerInspections!()).rejects.toThrow(
       "scope is closed",
     );
-  } finally {
-    denied = false;
-    handOff();
-    finish();
-    await inspection;
-    await closing;
-    await host.close!();
-  }
+  }, [
+    () => {
+      denied = false;
+      handOff();
+      finish();
+    },
+    async () => {
+      await inspection;
+    },
+    async () => {
+      await closing;
+    },
+    () => host.close!(),
+  ]);
 });
 
 it("retains a completed healthy report when cancellation arrives during final cleanup", async () => {

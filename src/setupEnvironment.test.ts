@@ -192,6 +192,7 @@ it.each([
     environment: {
       REA_ANALYSIS_PROVIDER: "auto",
       REA_BRIDGE_MAX_REQUEST_BYTES: "33554432",
+      REA_PROCESS_TABLE_MAX_BYTES: "16777216",
       REA_GHIDRA_STARTUP_TIMEOUT_MS: "2700000",
       REA_HOPPER_STARTUP_TIMEOUT_MS: "120000",
       REA_MCP_INPUT_SCHEMA_PROFILE: "full",
@@ -232,6 +233,7 @@ it.each([
         expect(initial.providerEnvironment).toMatchObject({
           REA_ANALYSIS_PROVIDER: "auto",
           REA_BRIDGE_MAX_REQUEST_BYTES: "33554432",
+          REA_PROCESS_TABLE_MAX_BYTES: "16777216",
           REA_GHIDRA_STARTUP_TIMEOUT_MS: "2700000",
           REA_HOPPER_STARTUP_TIMEOUT_MS: "120000",
           REA_MCP_INPUT_SCHEMA_PROFILE: "full",
@@ -246,6 +248,9 @@ it.each([
       } else {
         expect(initial.providerEnvironment).not.toHaveProperty(
           "REA_BRIDGE_MAX_REQUEST_BYTES",
+        );
+        expect(initial.providerEnvironment).not.toHaveProperty(
+          "REA_PROCESS_TABLE_MAX_BYTES",
         );
         expect(initial.providerEnvironment).not.toHaveProperty(
           "REA_REGEX_MATCHING_DEADLINE_MS",

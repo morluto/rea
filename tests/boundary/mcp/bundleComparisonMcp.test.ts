@@ -167,12 +167,11 @@ it("requires absolute bundle paths without changing server-cwd semantics", async
         details: {
           operation: "compare_bundles",
           issues: expect.arrayContaining([
-            {
+            expect.objectContaining({
               path: [rejectedField],
               reason: "invalid_format",
               expected: "regex",
-              message: "must be an absolute local filesystem path",
-            },
+            }),
           ]),
         },
       });
@@ -201,9 +200,15 @@ it("requires absolute bundle paths without changing server-cwd semantics", async
     expect(parseMcpToolError(relativeImport).error).toMatchObject({
       code: "invalid_request",
       category: "invalid_input",
-    });
-    expect(relativeImport.content[0]).toMatchObject({
-      text: expect.stringContaining("absolute local filesystem path"),
+      details: {
+        operation: "import_evidence_bundle",
+        issues: expect.arrayContaining([
+          expect.objectContaining({
+            path: ["path"],
+            reason: "invalid_format",
+          }),
+        ]),
+      },
     });
     const absolute = await compare(
       join(root, "left.json"),

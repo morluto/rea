@@ -1,3 +1,5 @@
+import { ConfigurationError } from "../domain/configurationErrors.js";
+import { processTableMaxBytesConstraint } from "../config/processTableOutputBudget.js";
 import { randomUUID } from "node:crypto";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import type {
@@ -104,7 +106,7 @@ export class FirmwareDoctor {
             ? {}
             : {
                 firmware_secondary_probe_failures: jsonValueSchema.parse(
-                  secondary.map(projectAnalysisError),
+                  secondary.map((error) => projectAnalysisError(error)),
                 ),
               }),
         });
@@ -240,6 +242,14 @@ export class FirmwareDoctor {
       );
     } catch (cause: unknown) {
       this.#throwIfCancelled();
+      if (cause instanceof ConfigurationError)
+        return diagnostic(
+          "ps",
+          false,
+          cause.message,
+          "config_drift",
+          `${processTableMaxBytesConstraint} Set it in REA's launch environment and restart REA.`,
+        );
       if (
         cause instanceof LinuxOwnedProcessPrerequisiteError &&
         cause.outputLimitBytes !== undefined
@@ -250,7 +260,7 @@ export class FirmwareDoctor {
             false,
             cause.reason,
             "unknown",
-            "Process inspection exceeded its fixed output allowance; reduce the process-table output before retrying doctor. No firmware probe was launched.",
+            "Process inspection exceeded its configured output allowance. Raise REA_PROCESS_TABLE_MAX_BYTES in REA's launch environment if needed and restart REA; a larger allowance can retain more memory. No firmware probe was launched.",
           ),
           details: {
             reason: "output_limit",
