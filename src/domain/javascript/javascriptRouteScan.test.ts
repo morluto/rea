@@ -183,6 +183,30 @@ it.each([
   },
 );
 
+it.each([
+  "var PATH='/reports/stale';globalThis.PATH='/other';createBrowserRouter([{path:PATH},{path:'/reports'}]);",
+  "var PATH='/reports/stale';const ALIAS=(PATH as string);createBrowserRouter([{path:ALIAS},{path:'/reports'}]);",
+  "var PATH='/reports/stale';createBrowserRouter([{route:PATH,component:View},{path:'/reports'}]);",
+  "var PATH='/reports/stale';defineRoutes({stale:{_$:PATH},known:{_$:'/reports'}});",
+  "var TARGET='/reports/stale';router.push(TARGET);createBrowserRouter([{path:'/reports'}]);",
+  "var TARGET='/reports/stale';const NAV={pathname:TARGET};router.push(NAV);createBrowserRouter([{path:'/reports'}]);",
+] as const)(
+  "does not re-admit an unisolated route value as an independent constant: %s",
+  (source) => {
+    const facts = analyze(source + "const independent='/reports/help';");
+    expect(facts.candidates.map(({ path }) => path).sort()).toEqual([
+      "/reports",
+      "/reports/help",
+    ]);
+    expect(
+      facts.candidates.find(({ path }) => path === "/reports/help"),
+    ).toMatchObject({
+      mechanism: "route-string-constant",
+    });
+    expect(facts.unresolved).not.toEqual([]);
+  },
+);
+
 it("keeps literal child routes that an unisolated children array carries", () => {
   // The parent proof is unknown, but the child records are still source-owned.
   // Only the ancestry is in doubt, so the literal paths must stay reported next

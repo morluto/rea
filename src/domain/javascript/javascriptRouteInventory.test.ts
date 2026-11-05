@@ -39,6 +39,29 @@ const build = (inputs: JavaScriptRouteInventoryInput[], bytes?: number) =>
     completeSemanticSteps(buildJavaScriptRouteInventorySteps(inputs, bytes)),
   );
 
+it("keeps rejected program-var paths out of independent route inventory", () => {
+  const result = build([
+    source(
+      "routes.js",
+      "var PATH='/reports/stale';globalThis.PATH='/other';createBrowserRouter([{path:PATH},{path:'/reports'}]);const independent='/reports/help';",
+    ),
+  ]);
+  expect(result.routes.map(({ path }) => path)).toEqual([
+    "/reports",
+    "/reports/help",
+  ]);
+  expect(result.unknowns).toEqual([
+    expect.objectContaining({
+      kind: "interpretation",
+      reason: expect.stringContaining("parent segment is unknown"),
+    }),
+  ]);
+  expect(result.coverage).toMatchObject({
+    source_parsing: "complete",
+    candidate_enumeration: "partial",
+  });
+});
+
 it.each([
   ["hello world", "hello%20world"],
   ["team?admin", "team%3Fadmin"],

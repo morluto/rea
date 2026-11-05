@@ -1521,7 +1521,8 @@ export class JavaScriptRouteScan {
         // A segment read from an unisolated program variable can be replaced at
         // runtime, so it cannot establish a confident parent segment.
         const proven = literal?.unproven === undefined ? literal : undefined;
-        if (proven !== undefined) this.#propertyValues.add(proven.node);
+        // Source ownership survives rejection of the runtime value proof.
+        if (literal !== undefined) this.#propertyValues.add(literal.node);
         const value =
           proven === undefined ? undefined : stringValue(proven.node);
         if (

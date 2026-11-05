@@ -33,95 +33,138 @@ const indexRouteCases = [
   ],
 ] as const;
 
-cliTest(
-  "retains resolved index routes and reports unresolved flags through the public CLI",
-  async ({ cli }) => {
+cliTest.for(indexRouteCases)(
+  "retains resolved index routes and reports unresolved flags through the public CLI: %s",
+  async (
+    [name, prefix, flag, extension, paths, sourceType, partial],
+    { cli },
+  ) => {
     const root = await createTestTempDirectory("rea-index-routes-");
-    for (const [
-      name,
-      prefix,
-      flag,
-      extension,
-      paths,
-      sourceType,
-      partial,
-    ] of indexRouteCases) {
-      const path = join(root, name);
-      await mkdir(path);
-      await writeFile(
-        join(path, "package.json"),
+    const path = join(root, name);
+    await mkdir(path);
+    await writeFile(
+      join(path, "package.json"),
+      JSON.stringify({
+        name: "index-fixture",
+        private: true,
+        type: sourceType === "module" ? "module" : undefined,
+      }),
+    );
+    const route = `createBrowserRouter([{index:${flag},Component:Home}])`;
+    await writeFile(
+      join(path, `routes.${extension}`),
+      sourceType === "module"
+        ? `import {createBrowserRouter} from 'react-router';${prefix}export const router=${route};function Home(){return null;}`
+        : `${prefix}${route};function Home(){return null;}`,
+    );
+    const response = await cli.run({
+      arguments: [
+        "analyze-javascript-application",
+        path,
+        "--evidence_output",
+        join(root, `${name}-evidence.json`),
+        "--detail",
+        "summary",
+        "--view",
         JSON.stringify({
-          name: "index-fixture",
-          private: true,
-          type: sourceType === "module" ? "module" : undefined,
+          kind: "javascript-routes",
+          collection: "routes",
+          fields: ["path"],
         }),
-      );
-      const route = `createBrowserRouter([{index:${flag},Component:Home}])`;
-      await writeFile(
-        join(path, `routes.${extension}`),
-        sourceType === "module"
-          ? `import {createBrowserRouter} from 'react-router';${prefix}export const router=${route};function Home(){return null;}`
-          : `${prefix}${route};function Home(){return null;}`,
-      );
-      const response = await cli.run({
+        "--json",
+      ],
+    });
+    expect(
+      response.exitCode,
+      `${name}: ${response.stdout}\n${response.stderr}`,
+    ).toBe(0);
+    const envelope = z.object({ summary: z.unknown() }).parse(response.json);
+    const view = routeViewFromEvidence(envelope.summary);
+    expect(view.items, name).toEqual(
+      paths.map((path) => expect.objectContaining({ path })),
+    );
+    expect(view.source_coverage, name).toMatchObject({
+      source_parsing: "complete",
+      candidate_enumeration: partial ? "partial" : "complete",
+      application_routes: "unknown",
+    });
+    if (partial) {
+      const unknowns = await cli.run({
         arguments: [
           "analyze-javascript-application",
           path,
           "--evidence_output",
-          join(root, `${name}-evidence.json`),
+          join(root, `${name}-unknowns-evidence.json`),
           "--detail",
           "summary",
           "--view",
           JSON.stringify({
             kind: "javascript-routes",
-            collection: "routes",
-            fields: ["path"],
+            collection: "unknowns",
           }),
           "--json",
         ],
       });
-      expect(
-        response.exitCode,
-        `${name}: ${response.stdout}\n${response.stderr}`,
-      ).toBe(0);
+      expect(unknowns.exitCode, unknowns.stderr).toBe(0);
+      const unknownEnvelope = z
+        .object({ summary: z.unknown() })
+        .parse(unknowns.json);
+      expect(routeViewFromEvidence(unknownEnvelope.summary).items).toEqual([
+        expect.objectContaining({
+          kind: "interpretation",
+          reason: expect.stringContaining("index-route flag"),
+        }),
+      ]);
+    }
+  },
+);
+cliTest(
+  "keeps rejected program-var paths unknown through the public CLI",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-program-var-routes-");
+    const path = join(root, "application");
+    await mkdir(path);
+    await writeFile(
+      join(path, "package.json"),
+      JSON.stringify({ name: "program-var-fixture", private: true }),
+    );
+    await writeFile(
+      join(path, "routes.js"),
+      "var PATH='/reports/stale';globalThis.PATH='/other';createBrowserRouter([{path:PATH},{path:'/reports'}]);const independent='/reports/help';",
+    );
+    for (const collection of ["routes", "unknowns"] as const) {
+      const response = await cli.run({
+        arguments: [
+          "analyze-javascript-application",
+          path,
+          "--evidence_output",
+          join(root, collection + "-evidence.json"),
+          "--detail",
+          "summary",
+          "--view",
+          JSON.stringify({ kind: "javascript-routes", collection }),
+          "--json",
+        ],
+      });
+      expect(response.exitCode, response.stdout + response.stderr).toBe(0);
       const envelope = z.object({ summary: z.unknown() }).parse(response.json);
       const view = routeViewFromEvidence(envelope.summary);
-      expect(view.items, name).toEqual(
-        paths.map((path) => expect.objectContaining({ path })),
-      );
-      expect(view.source_coverage, name).toMatchObject({
+      expect(view.source_coverage).toMatchObject({
         source_parsing: "complete",
-        candidate_enumeration: partial ? "partial" : "complete",
-        application_routes: "unknown",
+        candidate_enumeration: "partial",
       });
-      if (partial) {
-        const unknowns = await cli.run({
-          arguments: [
-            "analyze-javascript-application",
-            path,
-            "--evidence_output",
-            join(root, `${name}-unknowns-evidence.json`),
-            "--detail",
-            "summary",
-            "--view",
-            JSON.stringify({
-              kind: "javascript-routes",
-              collection: "unknowns",
-            }),
-            "--json",
-          ],
-        });
-        expect(unknowns.exitCode, unknowns.stderr).toBe(0);
-        const unknownEnvelope = z
-          .object({ summary: z.unknown() })
-          .parse(unknowns.json);
-        expect(routeViewFromEvidence(unknownEnvelope.summary).items).toEqual([
+      if (collection === "routes")
+        expect(view.items).toEqual([
+          expect.objectContaining({ path: "/reports" }),
+          expect.objectContaining({ path: "/reports/help" }),
+        ]);
+      else
+        expect(view.items).toEqual([
           expect.objectContaining({
             kind: "interpretation",
-            reason: expect.stringContaining("index-route flag"),
+            reason: expect.stringContaining("parent segment is unknown"),
           }),
         ]);
-      }
     }
   },
 );
