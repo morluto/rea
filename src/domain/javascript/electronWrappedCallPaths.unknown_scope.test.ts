@@ -463,6 +463,21 @@ describe("later initializer loader input edge cases", () => {
     expect(result.limitations).toContainEqual(UNKNOWN_LIMITATION);
   });
 
+  it("keeps the unknown when a spread shifts a loader into rest parameters", () => {
+    const result = analyzeJavaScriptStaticSource(`
+      const args = [0, require];
+      function register() {
+        load(...args, "safe")[0]("electron").ipcMain.on("ping", () => {});
+      }
+      var load = (first, ...rest) => rest;
+      register();
+    `);
+
+    expect(result.parse_error_count).toBe(0);
+    expect(result.parse_status).toBe("partial");
+    expect(result.limitations).toContainEqual(UNKNOWN_LIMITATION);
+  });
+
   it("keeps the unknown when a late function returns new.target", () => {
     const result = analyzeJavaScriptStaticSource(`
       function register() {

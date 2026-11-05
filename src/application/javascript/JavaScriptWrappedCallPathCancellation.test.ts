@@ -111,3 +111,53 @@ it("cancels while a late initializer requests member-mutation indexing", async (
   expect(work.next()).toEqual({ done: true, value: undefined });
   expect(index.bindings.memberMutationFactsComplete).toBe(false);
 });
+
+it("counts unknowns once when mutation indexing retries a seed", () => {
+  const source = `
+    const holder = {};
+    holder.load = require;
+    function register(value) {
+      switch (value) {
+        case choose():
+          break;
+        case "run":
+          load().ipcMain.on("ping", () => {});
+      }
+    }
+    var load = () => holder.load("electron");
+    register("run");
+  `;
+  const collectUnknowns = (eager: boolean) => {
+    const parsed = parseJavaScriptSource(source);
+    if (parsed === null) throw new Error("Expected parsed source");
+    const index = completeSemanticSteps(
+      indexJavaScriptBindingsWithReceiversSteps(parsed.program),
+    );
+    if (eager) completeSemanticSteps(index.indexMemberMutationFactsSteps());
+    const identity = completeSemanticSteps(
+      indexJavaScriptElectronIdentitySteps(parsed.program, index.bindings),
+    );
+    const accumulator = createJavaScriptAnalysisAccumulator(source.length);
+    let indexRequests = 0;
+    completeSemanticSteps(
+      collectElectronWrappedCallPathsSteps(
+        parsed.program,
+        index.bindings,
+        source,
+        accumulator,
+        identity,
+        () => {
+          indexRequests += 1;
+          return index.indexMemberMutationFactsSteps();
+        },
+      ),
+    );
+    return { indexRequests, unknownFindings: accumulator.unknownFindings };
+  };
+
+  const eager = collectUnknowns(true);
+  const retried = collectUnknowns(false);
+
+  expect(retried.indexRequests).toBe(1);
+  expect(retried.unknownFindings).toBe(eager.unknownFindings);
+});
