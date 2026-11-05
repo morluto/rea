@@ -1,4 +1,3 @@
-import { isAbsolute } from "node:path";
 import { requireOutputSchema } from "./toolOutputSchemaPrimitives.js";
 import { z } from "zod";
 
@@ -12,7 +11,7 @@ import { toolContractMetadata } from "./toolEffects.js";
 import { appleAssetCatalogInputSchema } from "../domain/apple/appleAssetCatalog.js";
 import { dylibResolutionInputSchema } from "../domain/apple/dylibResolution.js";
 import { keyedArchiveInputSchema } from "../domain/apple/keyedArchive.js";
-import { localPathStringSchema } from "../domain/localPath.js";
+import { absoluteLocalPathStringSchema } from "../domain/localPath.js";
 import { analysisDetailSchema } from "./analysisDetail.js";
 /** Exact caller boundary for deterministic artifact inventory. */
 export const artifactInventoryInputSchema = z.strictObject({
@@ -33,8 +32,7 @@ export const artifactInspectionInputSchema =
 /** Omitted selection preserves complete extraction of the active reader. */
 export const artifactExtractionInputSchema = z.strictObject({
   integrity_policy: artifactIntegrityPolicySchema,
-  output_root: localPathStringSchema
-    .refine(isAbsolute, "Extraction output root must be absolute")
+  output_root: absoluteLocalPathStringSchema
     .exactOptional()
     .describe(
       "Absolute destination path on the REA host. It must not exist and its parent must exist. Omit to use a fresh temporary directory. Successful output persists after the call.",
