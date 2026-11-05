@@ -7,7 +7,11 @@ import { artifactInspectionResultSchema } from "../../../src/domain/artifactInsp
 import { artifactExtractionResultSchema } from "../../../src/domain/artifactGraph.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
-import { backupImage, backupTar } from "../../fixtures/androidBackup.js";
+import {
+  backupImage,
+  backupTar,
+  encryptedBackupImage,
+} from "../../fixtures/androidBackup.js";
 import { connectArtifactComparisonMcp } from "../../fixtures/artifactComparisonMcp.js";
 
 it.each(["full", "compact"] as const)(
@@ -75,10 +79,7 @@ it.each(["full", "compact"] as const)(
     expect(failed.isError).toBe(true);
     expect(JSON.stringify(failed)).toContain("checksum");
     await call("close_binary", {});
-    await writeFile(
-      path,
-      backupImage(Buffer.from("ciphertext"), { encryption: "AES-256" }),
-    );
+    await writeFile(path, encryptedBackupImage());
     expect((await call("open_binary", { path })).isError).not.toBe(true);
     const encrypted = await call("inspect_artifact", {});
     expect(encrypted.isError, JSON.stringify(encrypted)).not.toBe(true);
@@ -87,7 +88,13 @@ it.each(["full", "compact"] as const)(
     ).substeps[0]!.evidence.normalized_result;
     expect(unknown.coverage).toMatchObject({ status: "unknown" });
     expect(unknown.occurrences).toMatchObject([
-      { encrypted: true, format_metadata: { directory_status: "encrypted" } },
+      {
+        encrypted: true,
+        format_metadata: {
+          directory_status: "encrypted",
+          payload_offset: null,
+        },
+      },
     ]);
     const refusedRoot = join(root, "refused");
     expect(

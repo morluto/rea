@@ -31,6 +31,8 @@ headers, not the authenticity of the archived file contents. Stored modes
 are observations; extraction does not restore owners or apply archived modes.
 
 An `AES-256` header is identified as encrypted, with unknown member coverage.
+Its encryption-specific header is not parsed, so `payload_offset` is null;
+the end of the encryption-method line does not establish the payload start.
 Inspection retains the envelope facts; extraction refuses rather than creating
 an empty output. Unsupported versions, encryption methods, malformed numeric
 fields, header checksums, truncated data, invalid UTF-8, duplicate paths and

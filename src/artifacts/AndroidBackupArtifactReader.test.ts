@@ -6,6 +6,7 @@ import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory
 import {
   backupImage,
   backupTar,
+  encryptedBackupImage,
   paxRecord,
   tarChecksum,
 } from "../../tests/fixtures/androidBackup.js";
@@ -14,6 +15,7 @@ import {
   ANDROID_BACKUP_MAX_BYTES,
 } from "./AndroidBackupArtifactReader.js";
 import { artifactFormatMetadataSchema } from "../domain/artifactFormatMetadata.js";
+import { parseAndroidBackupHeader } from "../domain/androidBackup.js";
 import type { ArtifactEntry } from "./ArtifactReader.js";
 
 const withReader = async (
@@ -124,30 +126,29 @@ describe("offline Android backup reader", () => {
   });
 
   it("retains encrypted directory uncertainty rather than claiming an empty backup", async () => {
-    await withReader(
-      backupImage(Buffer.from("unread encrypted header"), {
+    const image = encryptedBackupImage();
+    expect(parseAndroidBackupHeader(image)).toMatchObject({
+      ok: true,
+      value: { encryption: "AES-256", payloadOffset: null },
+    });
+    await withReader(image, async (reader) => {
+      const coverage: unknown[] = [];
+      for await (const _entry of reader.entries(undefined, {
+        onCoverage: (value) => coverage.push(value),
+      }))
+        expect.fail("no decrypted entries");
+      expect(reader.formatMetadata()).toMatchObject({
         encryption: "AES-256",
-      }),
-      async (reader) => {
-        const coverage: unknown[] = [];
-        for await (const _entry of reader.entries(undefined, {
-          onCoverage: (value) => coverage.push(value),
-        }))
-          expect.fail("no decrypted entries");
-        expect(reader.formatMetadata()).toMatchObject({
-          encryption: "AES-256",
-          directory_status: "encrypted",
-        });
-        expect(coverage).toEqual([
-          {
-            status: "unknown",
-            limitations: [
-              expect.stringContaining("No decryption was attempted"),
-            ],
-          },
-        ]);
-      },
-    );
+        directory_status: "encrypted",
+        payload_offset: null,
+      });
+      expect(coverage).toEqual([
+        {
+          status: "unknown",
+          limitations: [expect.stringContaining("No decryption was attempted")],
+        },
+      ]);
+    });
   });
 });
 

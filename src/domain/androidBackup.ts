@@ -7,7 +7,8 @@ export interface AndroidBackupHeader {
   readonly version: number;
   readonly compressed: boolean;
   readonly encryption: string;
-  readonly payloadOffset: number;
+  /** Unknown when an encryption-specific header has not been parsed. */
+  readonly payloadOffset: number | null;
 }
 
 export interface AndroidBackupDecodeFailure {
@@ -58,7 +59,7 @@ export const parseAndroidBackupHeader = (
     version: Number(version),
     compressed: compression === "1",
     encryption,
-    payloadOffset: position,
+    payloadOffset: encryption === "none" ? position : null,
   });
 };
 

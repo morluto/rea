@@ -64,3 +64,22 @@ export const paxRecord = (key: string, value: string): string => {
     length = String(length).length + Buffer.byteLength(body);
   return `${String(length)}${body}`;
 };
+
+/** Authored AES envelope fields and opaque bytes, without performing encryption. */
+export const encryptedBackupImage = (): Buffer =>
+  backupImage(
+    Buffer.concat([
+      Buffer.from(
+        [
+          "01".repeat(64),
+          "02".repeat(64),
+          "10000",
+          "03".repeat(16),
+          "04".repeat(96),
+          "",
+        ].join("\n"),
+      ),
+      Buffer.alloc(16, 0x75),
+    ]),
+    { encryption: "AES-256" },
+  );

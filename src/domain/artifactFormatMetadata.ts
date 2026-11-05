@@ -80,7 +80,7 @@ const androidBackupMetadataSchema = z.strictObject({
   format_version: z.int().min(1).max(5),
   compressed: z.boolean(),
   encryption: z.string(),
-  payload_offset: offset,
+  payload_offset: offset.nullable(),
   directory_status: z.enum(["available", "encrypted"]),
 });
 const androidBackupEntryMetadataSchema = z.strictObject({

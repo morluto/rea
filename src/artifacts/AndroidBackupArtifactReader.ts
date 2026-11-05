@@ -253,6 +253,7 @@ export class AndroidBackupArtifactReader implements ArtifactReader {
     const parsed = parseAndroidBackupHeader(prefix);
     if (!parsed.ok) throw decodeFailure(parsed.error);
     const header = parsed.value;
+    const payloadOffset = header.payloadOffset;
     if (header.encryption !== "none" && header.encryption !== "AES-256")
       throw new ArtifactReaderFailure(
         "unavailable",
@@ -263,12 +264,12 @@ export class AndroidBackupArtifactReader implements ArtifactReader {
       format_version: header.version,
       compressed: header.compressed,
       encryption: header.encryption,
-      payload_offset: header.payloadOffset,
+      payload_offset: payloadOffset,
       directory_status:
         header.encryption === "none" ? "available" : "encrypted",
     };
-    if (header.encryption !== "none") return;
-    if (initial.size - header.payloadOffset > ANDROID_BACKUP_MAX_BYTES)
+    if (payloadOffset === null) return;
+    if (initial.size - payloadOffset > ANDROID_BACKUP_MAX_BYTES)
       throw artifactFixedLimitFailure(
         "Android backup encoded payload",
         ANDROID_BACKUP_MAX_BYTES,
@@ -276,8 +277,8 @@ export class AndroidBackupArtifactReader implements ArtifactReader {
       );
     const encoded = await readArtifactFileBytes(
       handle,
-      header.payloadOffset,
-      initial.size - header.payloadOffset,
+      payloadOffset,
+      initial.size - payloadOffset,
       initial.size,
       signal,
     );
@@ -325,7 +326,7 @@ export class AndroidBackupArtifactReader implements ArtifactReader {
           encrypted: false,
           byteOffset: header.compressed
             ? null
-            : header.payloadOffset + member.dataOffset,
+            : payloadOffset + member.dataOffset,
           declaredIntegrity: null,
           unpacked: false,
           limitations: [],

@@ -4,7 +4,11 @@ import { join } from "node:path";
 import { expect } from "vitest";
 import { cliTest } from "../support/cli/cliFixture.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
-import { backupImage, backupTar } from "../fixtures/androidBackup.js";
+import {
+  backupImage,
+  backupTar,
+  encryptedBackupImage,
+} from "../fixtures/androidBackup.js";
 import { parseEvidence } from "../../src/domain/evidence.js";
 import { artifactInspectionResultSchema } from "../../src/domain/artifactInspection.js";
 import { artifactExtractionResultSchema } from "../../src/domain/artifactGraph.js";
@@ -86,10 +90,7 @@ cliTest(
     const root = await createTestTempDirectory("rea-ab-encrypted-cli-");
     const source = join(root, "encrypted.ab");
     const output = join(root, "refused");
-    await writeFile(
-      source,
-      backupImage(Buffer.from("encrypted bytes"), { encryption: "AES-256" }),
-    );
+    await writeFile(source, encryptedBackupImage());
     const inspected = await cli.run({
       arguments: ["inspect-artifact", source, "--json"],
     });
@@ -104,6 +105,7 @@ cliTest(
         format_metadata: {
           kind: "android-backup",
           directory_status: "encrypted",
+          payload_offset: null,
         },
       },
     ]);
