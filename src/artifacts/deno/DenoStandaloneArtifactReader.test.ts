@@ -235,15 +235,20 @@ it("does not follow a symlink and refuses to open it", async () => {
     ),
   );
   const reader = new DenoStandaloneArtifactReader(path);
-  const entries = [];
-  for await (const entry of reader.entries()) entries.push(entry);
-  const link = entries.find((entry) => entry.kind === "symlink");
-  expect(link).toMatchObject({
-    path: "alias",
-    formatMetadata: { symlink_dest_parts: ["main.ts"] },
-  });
-  await expect(reader.open(link!)).rejects.toMatchObject({ reason: "format" });
-  await reader.close();
+  try {
+    const entries = [];
+    for await (const entry of reader.entries()) entries.push(entry);
+    const link = entries.find((entry) => entry.kind === "symlink");
+    expect(link).toMatchObject({
+      path: "alias",
+      formatMetadata: { symlink_dest_parts: ["main.ts"] },
+    });
+    await expect(reader.open(link!)).rejects.toMatchObject({
+      reason: "format",
+    });
+  } finally {
+    await reader.close();
+  }
   await expect(
     reader.entries()[Symbol.asyncIterator]().next(),
   ).rejects.toMatchObject({ reason: "unavailable" });
@@ -254,10 +259,13 @@ it("reports cancellation and keeps indexed paths for an unsupported remote listi
   controller.abort(new Error("stop"));
   const path = await writeCarrier("cancel", denoElf());
   const reader = new DenoStandaloneArtifactReader(path);
-  await expect(
-    reader.entries(controller.signal)[Symbol.asyncIterator]().next(),
-  ).rejects.toMatchObject({ reason: "cancelled" });
-  await reader.close();
+  try {
+    await expect(
+      reader.entries(controller.signal)[Symbol.asyncIterator]().next(),
+    ).rejects.toMatchObject({ reason: "cancelled" });
+  } finally {
+    await reader.close();
+  }
 
   const remote = await inventoryOf(
     "remote",
