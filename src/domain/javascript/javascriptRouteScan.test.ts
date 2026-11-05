@@ -207,6 +207,20 @@ it.each([
   },
 );
 
+it.each([
+  "var SHARED={query:{path:'/data',Component:View}};const HOLD=SHARED;router.push({pathname:'/reports',query:HOLD.query});",
+  "var SHARED={query:{path:'/data'}};router.push({pathname:'/reports',query:SHARED.query});",
+] as const)(
+  "never promotes unisolated navigation data to a route: %s",
+  (source) => {
+    // The slot is data, not a route record. Rejecting its runtime identity must
+    // not release the object back to the independent route-literal scan.
+    const facts = analyze(source);
+    expect(facts.candidates.map(({ path }) => path)).toEqual(["/reports"]);
+    expect(facts.candidates.some(({ path }) => path === "/data")).toBe(false);
+  },
+);
+
 it("keeps literal child routes that an unisolated children array carries", () => {
   // The parent proof is unknown, but the child records are still source-owned.
   // Only the ancestry is in doubt, so the literal paths must stay reported next

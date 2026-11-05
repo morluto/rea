@@ -1182,7 +1182,14 @@ export class JavaScriptRouteScan {
           continue;
         }
         const selected = this.#resolve(node, undefined, this.index);
-        if (selected === undefined || selected.unproven !== undefined) continue;
+        if (selected === undefined) continue;
+        if (selected.unproven !== undefined) {
+          // The slot is navigation data, only its runtime identity is unproven.
+          // Report the object as consumed data so a later independent scan does
+          // not reclassify it as a route literal, but never follow it as a path.
+          if (mechanism === "navigation-target") yield selected.node;
+          continue;
+        }
         if (
           !t.isObjectExpression(selected.node) &&
           !t.isArrayExpression(selected.node)
