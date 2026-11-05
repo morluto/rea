@@ -403,17 +403,20 @@ try {
   const entrySymbol = entryWindow.procedure.symbol;
   assert.ok(entrySymbol != null, "The DOS entry needs observed symbol facts");
   // Restoring the name is itself a user edit, so Ghidra records user provenance.
+  // Windows P0 refuses edits and never renames, so its entry stays unchanged.
   assert.deepEqual(
     await call("read_function_instructions", {
       procedure: identities.entry.address,
     }),
-    {
-      ...entryWindow,
-      procedure: {
-        ...entryWindow.procedure,
-        symbol: { ...entrySymbol, source: "user_defined" },
-      },
-    },
+    windows
+      ? entryWindow
+      : {
+          ...entryWindow,
+          procedure: {
+            ...entryWindow.procedure,
+            symbol: { ...entrySymbol, source: "user_defined" },
+          },
+        },
     "Restoring the entry name changed more than its symbol provenance",
   );
   assert.equal(
