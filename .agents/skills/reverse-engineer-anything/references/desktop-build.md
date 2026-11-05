@@ -107,9 +107,10 @@ the first source that has the app:
   format, then check the saved path in the title or status bar, or the
   dialog's folder when the app shows only the name, and that it shows no
   unsaved mark, before you mark a checkpoint or check.
-- Everything saved under the home before `seed` is part of the seed,
-  including a file you move to the Trash. If a stray file would mislead a
-  solver, start a new build computer before `seed`.
+- What the app saved under the home before `seed`, such as a document in
+  `~/Documents` or its settings, is part of the seed. A file you move to the
+  Trash is left out, and the export lists it in `limitations`. Trash a stray
+  file rather than starting over.
 - Dismiss first-run dialogs, such as a welcome screen, before `seed`. A
   choice the app saves only later, such as Inkscape's "show this every
   time", may not reach the seed, so expect the dialog in the witness too.
@@ -143,8 +144,9 @@ the first source that has the app:
 6. Only once the change is saved, `mark_build_checkpoint` with name `end`.
 7. `stop_build_capture`. Read `draft.files` (each file that changed, with
    its net change), `draft.task.checks` (suggested checks) and
-   `limitations`. A missing draft means a checkpoint is missing: capture
-   again on a new build computer.
+   `limitations`. When `draft` is null, read `draft_refusal` first: a
+   missing `seed` or `end` checkpoint means capturing again on a new build
+   computer, while a failed draft command names its own cause to fix.
 
 ## Write the task
 
@@ -173,12 +175,14 @@ Write `{"name", "prompt", "checks"}` from the draft and what you did.
 - Give `value_equals` a `tolerance` for a number the app writes as text.
 - When the draft shows an XML document's changes as `lines`, REA read it
   as text; AbiWord's `.abw`, whose DOCTYPE REA refuses, is one. Selectors
-  are impossible there: use `line_count` with a short `contains`.
+  are impossible there, and `line_count` with `contains` only approximates
+  a value: `3:30` also matches `13:30`. Bound it with neighbouring text the
+  same edit types where you can, and name the check as approximate in the
+  report's limitations.
 - Some apps save a document reloaded from disk differently from one typed
   in the same session: AbiWord wraps each new insertion in its own markup.
-  Your build's end state hides this, so keep text checks to the short value
-  the edit types, such as `3:30`, and expect the witness to show the real
-  format.
+  Your build's end state hides this, so keep text checks inside what one
+  insertion types, and expect the witness to show the real format.
 
 The kinds and pointer rules are in
 [the desktop tasks section](environments.md#pick-the-checks).
@@ -188,10 +192,12 @@ The kinds and pointer rules are in
 `export_build_environment` with `task` and `directory`, the absolute path of
 a new or empty folder here, such as `<home>/rea-builds/poster/bundle`. The
 export seeds what was saved at `seed`, scrubs the computer's host name and
-user, and checks the task against `seed` and `end`. It refuses a weak or
-invalid task with its reason, such as a check that already passes on the
-seed or a pointer that names nothing at the end: fix the task and export
-again, into another folder if that one is no longer empty. Keep
+user, and checks the task against `seed` and `end`. It refuses a task
+unless at least one check fails on the seed and every check passes at the
+end, and says why, such as a pointer that names nothing at the end. A
+check that the rest is untouched passes on the seed too, which is fine. On
+a refusal, fix the task and export again, into another folder if that one
+is no longer empty. Keep
 `seed_files`, `scrubbed_files`, `unscrubbed_files` and `limitations` for the
 report.
 
