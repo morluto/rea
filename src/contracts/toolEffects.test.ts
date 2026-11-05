@@ -17,6 +17,7 @@ const EXECUTION_WORDING =
   /\b(?:run|runs|running|launch|launches|launching|execute|executes|executing|execution|start|starts|install|installs|uninstall|uninstalls)\b/iu;
 
 const EXECUTION_WORDING_EXCEPTIONS: Readonly<Record<string, string>> = {
+  inspect_artifact: "states that mapper execution remains unobserved",
   guided_workflows:
     "renders existing guidance and states that it does not start analysis",
   inspect_analysis_settings:
@@ -257,6 +258,14 @@ describe("tool effects", () => {
 
 it("advertises signature inspection's temporary snapshot filesystem writes", () => {
   expect(TOOL_EFFECTS.inspect_signature).toMatchObject({
+    writesFilesystem: true,
+    mutatesTarget: false,
+    launchesProcess: true,
+  });
+});
+
+it("advertises inspect_macho's temporary private operand filesystem writes", () => {
+  expect(TOOL_EFFECTS.inspect_macho).toMatchObject({
     writesFilesystem: true,
     mutatesTarget: false,
     launchesProcess: true,

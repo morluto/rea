@@ -15,8 +15,8 @@ def fail(code, **details):
     raise SystemExit(1)
 
 
-class BridgeResult(unittest.TextTestResult):
-    """Record non-skipped test and subtest outcomes for required families."""
+class ExecutedResult(unittest.TextTestResult):
+    """Record tests with a non-skipped test or subtest outcome."""
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -25,10 +25,7 @@ class BridgeResult(unittest.TextTestResult):
         self.has_subtests = False
 
     def record(self, test):
-        parts = test.id().split(".")
-        if len(parts) > 2 and parts[0] == "bridge":
-            if parts[1] in REQUIRED_BRIDGE_FAMILIES:
-                self.completed.add(parts[1])
+        self.completed.add(test.id())
 
     def startTest(self, test):
         self.active_test = test
@@ -65,16 +62,34 @@ def run_bridge(modules):
     # The script directory is sys.path[0]; imports must resolve from the checkout.
     sys.path.insert(0, str(root))
     suite = unittest.defaultTestLoader.loadTestsFromNames(modules)
-    result = unittest.TextTestRunner(verbosity=2, resultclass=BridgeResult).run(suite)
+    result = unittest.TextTestRunner(verbosity=2, resultclass=ExecutedResult).run(suite)
+    completed_families = {
+        parts[1]
+        for name in result.completed
+        if len(parts := name.split(".")) > 2 and parts[0] == "bridge"
+    }
     missing = [
         family
         for family in REQUIRED_BRIDGE_FAMILIES
-        if family not in result.completed
+        if family not in completed_families
     ]
     if missing:
         fail("no_executed_bridge_tests", families=missing)
     if not result.wasSuccessful():
         raise SystemExit(1)
+
+
+def run_analysis_efficiency():
+    # Match the checkout-root import path of `python -m unittest discover`.
+    sys.path.insert(0, str(root))
+    suite = unittest.defaultTestLoader.discover(
+        str(root / "tests/support/analysis-efficiency"), pattern="test_*.py"
+    )
+    result = unittest.TextTestRunner(verbosity=2, resultclass=ExecutedResult).run(suite)
+    if not result.wasSuccessful():
+        raise SystemExit(1)
+    if not result.completed:
+        fail("no_executed_analysis_efficiency_tests")
 
 
 bridge_root = root / "bridge"
@@ -95,6 +110,9 @@ modules = [
 if sys.argv[1:] == ["--bridge"]:
     run_bridge(modules)
     raise SystemExit(0)
+if sys.argv[1:] == ["--analysis-efficiency"]:
+    run_analysis_efficiency()
+    raise SystemExit(0)
 if sys.argv[1:]:
     fail("invalid_python_test_arguments")
 bridge_result = subprocess.run(
@@ -103,10 +121,7 @@ bridge_result = subprocess.run(
 if bridge_result.returncode:
     sys.exit(bridge_result.returncode)
 result = subprocess.run(
-    [
-        sys.executable, "-m", "unittest", "discover",
-        "-s", "tests/support/analysis-efficiency", "-p", "test_*.py", "-v",
-    ],
+    [sys.executable, __file__, "--analysis-efficiency"],
     cwd=root,
     check=False,
 )

@@ -49,6 +49,9 @@ const report = (lane: "packet" | "signal") => ({
             "tests/boundary/captures/captureDescriptorCleanup.test.ts",
             cleanupCases,
           ),
+          testFile("tests/acceptance/pcapVerifier.test.ts", [
+            "verifies complete and unresolved HTTP coverage with real Wireshark tools",
+          ]),
         ]
       : [
           testFile(
@@ -100,7 +103,7 @@ it.each(["packet", "signal"] as const)(
       assertionResults: [{ fullName: "host-specific", status: "pending" }],
     });
     expect(run(lane, result)).toContain("cases passed");
-    for (const resultIndex of [0, 1]) {
+    for (const resultIndex of report(lane).testResults.keys()) {
       const skipped = report(lane);
       skipped.testResults[resultIndex]!.assertionResults[0]!.status = "pending";
       expect(() => run(lane, skipped)).toThrow(
@@ -208,6 +211,8 @@ it.each([
     expect(step?.run).toContain('--outputFile.json="$report"');
     expect(step?.run).toContain(limits);
     expect(step?.run).toContain(cleanup);
+    if (lane === "packet")
+      expect(step?.run).toContain("tests/acceptance/pcapVerifier.test.ts");
     expect(step?.run).toContain(
       `node scripts/ci/require-provider-tests.mjs ${lane} "$report"`,
     );

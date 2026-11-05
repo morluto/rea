@@ -24,13 +24,25 @@ CLI equivalent is `rea guidance --query "exact JavaScript module"`, followed
 by `rea guidance --action read --locator LOCATOR`. Search is limited to the
 packaged managed skill files, works without providers or a target, and returns
 deterministically paged matches. Every non-generic query word must occur in the
-section; generic-only queries return no matches. Results are documentation; locators
+section or its subsections; generic-only queries return no matches. Results are documentation; locators
 are bound to the installed bundle and report stale or unavailable guidance without
 returning cached section content. A no-match result says nothing about analysis
 capability availability.
 
+Each match reports its `match_scope`. A `section` match has every term in its
+own text, meaning its heading and body before its first subsection. A
+`subsections` match has the terms only spread across subsections, with no
+single subsection holding them all. Its `own_text_terms` lists the terms in its
+own text, and `subsections` lists up to 8 subsection locators, chosen greedily,
+whose own text holds the rest; `omitted_subsections` counts any more that were
+needed. Section matches rank first. A parent is not listed when one subsection
+holds every term, because that subsection is already a match, unless the
+parent's own text also holds them all. `content_length`
+is the size of the section that read returns, so callers can decide before
+reading a broad parent.
+
 Search returns at most 20 matches per page with 500-code-unit context excerpts.
-Read retrieves the complete selected section. Admission permits 1 MiB per file,
+Read retrieves the complete selected section, including its subsections. Admission permits 1 MiB per file,
 4 MiB per bundle, 4,096 sections, and 25,165,824 expanded UTF-16 code units before
 section text is materialized. Unreadable or oversized bundles return
 `bundle_unavailable`, with no partial index or inferred absence. Cleanup failures

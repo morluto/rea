@@ -109,6 +109,7 @@ const sampleAnalysis = (): WebBundleAnalysis => ({
 const makeParent = (
   overrides?: Partial<WebBundleAnalysis>,
 ): AnalysisViewParent => ({
+  predicateType: "rea.web-bundle-analysis",
   evidenceId: `ev_${"c".repeat(64)}`,
   operation: "analyze_web_bundle",
   limitations: ["Parent run was bounded"],
@@ -476,6 +477,7 @@ it.each(["indices", "values", "script_keys", "mechanisms"])(
 
 it("rejects non-web-bundle parent operation with invalid_value", () => {
   const invalidParent: AnalysisViewParent = {
+    predicateType: "rea.javascript-application-analysis",
     evidenceId: `ev_${"d".repeat(64)}`,
     operation: "analyze_javascript_application",
     limitations: [],
@@ -627,6 +629,7 @@ it("correctly counts zero findings in summary for an empty web bundle", () => {
 
 it("rejects malformed parent analysis report", () => {
   const malformedParent: AnalysisViewParent = {
+    predicateType: "rea.web-bundle-analysis",
     evidenceId: `ev_${"e".repeat(64)}`,
     operation: "analyze_web_bundle",
     limitations: [],

@@ -225,6 +225,7 @@ const projectResolvedAnalysisView = (
   const projected = projection.project({
     evidenceId: parent.evidence_id,
     operation: parent.operation,
+    predicateType: parent.predicate_type,
     provider: parent.provider,
     analysisProfile: parent.analysis_profile,
     authority: parent.authority,
@@ -401,6 +402,7 @@ const createAnalysisViewEvidence = (
   const nativeObservationView =
     result.kind === "native-observation" ||
     result.kind === "native-context" ||
+    result.kind === "native-instruction-references" ||
     (result.kind === "summary" &&
       isNativeObservationOperation(result.parent_operation));
   return createEvidence(

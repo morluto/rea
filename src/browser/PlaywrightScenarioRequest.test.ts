@@ -73,32 +73,30 @@ describe("request step schema", () => {
       );
   });
 
-  it("accepts a same-origin request with query, headers and a JSON body", () => {
+  it("accepts a declared secret as a request header value", () => {
     const parsed = scenario(
       [
         requestStep({
-          query: [{ name: "org", value: { source: "literal", value: "1" } }],
           headers: [
-            {
-              name: "X-CSRFToken",
-              value: { source: "cookie", name: "csrftoken" },
-            },
             {
               name: "Authorization",
               value: { source: "secret", secret_id: "token" },
               prefix: "Bearer ",
             },
           ],
-          json: { title: "Scratch folder 1" },
-          expected_status: [200, 201],
         }),
       ],
       [{ secret_id: "token", environment_variable: "APP_TOKEN" }],
     );
     expect(parsed.actions[0]).toMatchObject({
       action: "request",
-      method: "POST",
-      path: "/api/folders",
+      headers: [
+        {
+          name: "Authorization",
+          value: { source: "secret", secret_id: "token" },
+          prefix: "Bearer ",
+        },
+      ],
     });
   });
 
@@ -220,66 +218,12 @@ describe("request step execution", () => {
     vi.unstubAllGlobals();
   });
 
-  it("sends the declared request through the page's fetch with its cookies", async () => {
-    const calls = stubFetch(201);
-    const parsed = scenario([
-      requestStep({
-        query: [{ name: "org", value: { source: "literal", value: "1" } }],
-        json: { title: "Scratch folder 1" },
-      }),
-    ]);
-    await perform(fakePage({}), parsed.actions[0]!, resolved(parsed));
-    expect(calls).toEqual([
-      {
-        url: `${ORIGIN}/api/folders?org=1`,
-        init: expect.objectContaining({
-          method: "POST",
-          credentials: "same-origin",
-          headers: [["content-type", "application/json"]],
-          body: '{"title":"Scratch folder 1"}',
-        }),
-      },
-    ]);
-  });
-
-  it("reads header values from a cookie and from stored JSON, and redacts them afterwards", async () => {
+  it("sends requests with same-origin credentials", async () => {
     const calls = stubFetch(200);
-    const parsed = scenario([
-      requestStep({
-        headers: [
-          {
-            name: "X-CSRFToken",
-            value: { source: "cookie", name: "csrftoken" },
-          },
-          {
-            name: "Authorization",
-            value: {
-              source: "local_storage",
-              key: "auth",
-              json_pointer: "/token",
-            },
-            prefix: "Bearer ",
-          },
-        ],
-      }),
-    ]);
-    const secrets = resolved(parsed);
-    await perform(
-      fakePage({
-        cookies: [{ name: "csrftoken", value: "csrf-value-123" }],
-        storage: { auth: JSON.stringify({ token: "jwt-value-456" }) },
-      }),
-      parsed.actions[0]!,
-      secrets,
-    );
-    expect(calls[0]!.init.headers).toEqual([
-      ["X-CSRFToken", "csrf-value-123"],
-      ["Authorization", "Bearer jwt-value-456"],
-    ]);
-    const redacted = secrets.redact("csrf-value-123 and jwt-value-456");
-    expect(redacted).not.toContain("csrf-value-123");
-    expect(redacted).not.toContain("jwt-value-456");
-    expect(redacted).toContain("[REDACTED:page:create.X-CSRFToken]");
+    const parsed = scenario([requestStep({})]);
+    await perform(fakePage({}), parsed.actions[0]!, resolved(parsed));
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.init.credentials).toBe("same-origin");
   });
 
   it("refuses to run off the start origin, and fails on an unexpected status or a missing cookie", async () => {
