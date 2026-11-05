@@ -94,6 +94,8 @@ it("refuses the JSON numbers REA's state view refuses, as JSON with an error rat
     '{"a": 0.12345678901234567890}',
     '{"a": 1e20}',
     '{"a": 0.1, "b": 1e21, "c": 42, "d": 9007199254740991}',
+    '{"a": 9007199254740993, "a": 1}',
+    '{"a": 1, "a": 9007199254740993}',
   ];
 
   const python = pythonJson(texts);

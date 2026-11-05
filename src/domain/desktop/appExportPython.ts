@@ -253,27 +253,42 @@ def _exact_number(text: str):
     return int(text) if re.fullmatch(r"-?[0-9]+", text) else value
 
 
+_INEXACT = object()
+
+
+def _number_or_mark(spelling: str):
+    """A JSON number read exactly, or a mark for one REA's state view refuses."""
+    try:
+        return _exact_number(spelling)
+    except _Inexact:
+        return _INEXACT
+
+
+def _holds_inexact(value) -> bool:
+    """Whether a parsed JSON value still holds a marked number once duplicate keys kept their last value."""
+    pending = [value]
+    while pending:
+        item = pending.pop()
+        if item is _INEXACT:
+            return True
+        if isinstance(item, dict):
+            pending.extend(item.values())
+        elif isinstance(item, list):
+            pending.extend(item)
+    return False
+
+
 def _text_view(name: str, text: str) -> dict:
     """The format REA's state view detects for decoded text, and its view."""
     trimmed = re.sub(r"^[\s﻿]+", "", text)
     if name.endswith(".json") or trimmed[:1] in ("[", "{"):
-        # The whole text must parse before an inexact number makes it JSON with an error.
-        inexact = False
-
-        def number(spelling: str):
-            nonlocal inexact
-            try:
-                return _exact_number(spelling)
-            except _Inexact:
-                inexact = True
-                return None
-
+        # The whole text must parse, and duplicate keys settle, before an inexact number makes it JSON with an error.
         try:
-            view = json.loads(text, parse_constant=_not_json, parse_float=number, parse_int=number)
+            view = json.loads(text, parse_constant=_not_json, parse_float=_number_or_mark, parse_int=_number_or_mark)
         except ValueError:
             pass
         else:
-            if inexact:
+            if _holds_inexact(view):
                 return {"format": "json", "view": None,
                         "error": "a number in it cannot be read exactly, such as an integer above 2^53"}
             return {"format": "json", "view": view, "truncated": False}

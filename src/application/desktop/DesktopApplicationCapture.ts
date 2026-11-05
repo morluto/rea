@@ -277,6 +277,7 @@ const recordCapture = async (
       roots: [...scope.roots],
       content_roots: [...scope.contentRoots],
       state_directories: [...scope.stateDirectories],
+      excluded: [...scope.excluded],
       checkpoints: recorder.checkpoints,
       content_files: store.files,
       content_bytes: store.bytes,

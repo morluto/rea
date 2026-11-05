@@ -57,7 +57,7 @@ export interface ExportInstall {
 
 const describe = (repository: AptRepository): string =>
   repository.uri === null
-    ? repository.source
+    ? withoutCredentialsIn(repository.source)
     : `${withoutCredentials(repository.uri)} ${[repository.suite, ...repository.components].join(" ")}`;
 
 /** A repository from a capture written before credentials were removed whose URI still holds them. */

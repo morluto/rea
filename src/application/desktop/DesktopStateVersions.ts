@@ -21,8 +21,13 @@ export interface StateIndex {
   readonly baseline: ReadonlyMap<string, string>;
   /** Paths a walk saw as files whose bytes were not retained. */
   readonly omitted: ReadonlySet<string>;
-  /** Where the baseline retained or omitted every file it saw. */
+  /**
+   * Where the baseline retained or omitted every file it saw: the content
+   * roots, or none when its walk was incomplete or its exclusions unrecorded.
+   */
   readonly contentRoots: readonly string[];
+  /** Paths every walk left out, so nothing records whether they existed. */
+  readonly excluded: readonly string[];
   readonly checkpoints: number;
 }
 
@@ -38,16 +43,20 @@ export const indexState = (capture: DesktopApplicationCapture): StateIndex => {
       changes.set(change.path, entries);
     }
   });
+  const first = capture.state.checkpoints[0];
+  const complete =
+    first !== undefined &&
+    !first.truncated &&
+    first.unreadable_directories === 0 &&
+    capture.state.excluded !== undefined;
   return {
     changes,
     baseline: new Map(
-      (capture.state.checkpoints[0]?.retained ?? []).map((file) => [
-        file.path,
-        file.sha256,
-      ]),
+      (first?.retained ?? []).map((file) => [file.path, file.sha256]),
     ),
     omitted: new Set(capture.state.omitted_content.map((entry) => entry.path)),
-    contentRoots: capture.state.content_roots,
+    contentRoots: complete ? capture.state.content_roots : [],
+    excluded: capture.state.excluded ?? [],
     checkpoints: capture.state.checkpoints.length,
   };
 };
@@ -84,9 +93,12 @@ const baselinePresence = (
   if (first !== undefined) return first.before?.type === "file";
   // An omission without a change of its own was made at the baseline walk.
   if (index.omitted.has(path)) return true;
-  // The baseline kept or omitted every file under the content roots; elsewhere
-  // only changes are recorded, so an unchanged file and a missing one look alike.
-  return isWithinAny(path, index.contentRoots) ? false : null;
+  // The baseline kept or omitted every file it walked under the content roots;
+  // elsewhere an unchanged file and a missing one look alike.
+  return isWithinAny(path, index.contentRoots) &&
+    !isWithinAny(path, index.excluded)
+    ? false
+    : null;
 };
 
 /**

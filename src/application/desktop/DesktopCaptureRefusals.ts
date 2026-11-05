@@ -151,7 +151,8 @@ export const checkDesktopCaptureHost = async (
     );
   const xprop = host.environment.REA_XPROP_COMMAND ?? "xprop";
   if (
-    (await resolveProgram(xprop, host.environment, process.cwd())) === undefined
+    (await resolveProgram(xprop, host.environment, process.cwd(), false)) ===
+    undefined
   )
     throw unavailable(
       "executable_missing",
