@@ -1,10 +1,11 @@
-import { expect, it as test } from "vitest";
+import { expect, it as test, vi } from "vitest";
 
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
 import {
   kunaTimeoutRecovery,
   type KunaProcessLauncher,
 } from "../../../../src/kuna/KunaCommand.js";
+import { KunaProjectCache } from "../../../../src/kuna/KunaProjectCache.js";
 import { spawnOwnedProviderProcess } from "../../../../src/process/ProviderProcess.js";
 
 import {
@@ -261,26 +262,21 @@ const deferred = <T>() => {
 };
 
 it("reports sibling unavailability when fallback observes settled export failure without prior assembly call", async () => {
-  const exportFailed = deferred<void>();
-  exportFailed.promise.catch(() => undefined);
-  let synchronization: Promise<void> | undefined;
+  const exportSettled = deferred<void>();
+  exportSettled.promise.catch(() => undefined);
+  const originalBuild = KunaProjectCache.prototype.build;
+  const exportBuild = vi
+    .spyOn(KunaProjectCache.prototype, "build")
+    .mockImplementation(function (this: KunaProjectCache, ...args) {
+      const promise = originalBuild.apply(this, args);
+      promise.finally(() => exportSettled.resolve());
+      return promise;
+    });
   const launcher: KunaProcessLauncher = async (options) => {
     if (options.arguments[0] === "decompile") {
-      await exportFailed.promise;
+      await exportSettled.promise;
     }
-    const spawned = await spawnOwnedProviderProcess(options);
-    if (options.arguments[0] === "decompile-project") {
-      const exitPromise =
-        spawned.process.exitCode !== null
-          ? Promise.resolve()
-          : new Promise<void>((resolve) => {
-              spawned.process.once("exit", () => resolve());
-            });
-      synchronization = exitPromise.then(() => {
-        exportFailed.resolve();
-      });
-    }
-    return spawned;
+    return spawnOwnedProviderProcess(options);
   };
   const { kuna, open } = await session(
     "rea-kuna-single-fallback-unavail-",
@@ -303,10 +299,10 @@ it("reports sibling unavailability when fallback observes settled export failure
     ]);
     expect(answer.siblingUnavailability?.providerId).toBe("kuna");
     expect(await decompilesOf(kuna)).toHaveLength(1);
-    await synchronization;
+    await exportSettled.promise;
   } finally {
-    exportFailed.resolve();
-    await synchronization?.catch(() => undefined);
+    exportSettled.resolve();
+    exportBuild.mockRestore();
     expect(await client.close()).toEqual({ ok: true, value: null });
   }
 });
