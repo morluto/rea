@@ -1,5 +1,5 @@
 import { copyFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { delimiter, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { expect, onTestFinished } from "vitest";
@@ -233,7 +233,16 @@ console.log(JSON.stringify({
     const result = await processes.run(
       process.execPath,
       [workspace.path("probe.mjs")],
-      { cwd: workspace.root, timeoutMs: 20_000 },
+      {
+        cwd: workspace.root,
+        timeoutMs: 20_000,
+        env: {
+          ...process.env,
+          NODE_PATH: [resolve("node_modules"), process.env.NODE_PATH]
+            .filter(Boolean)
+            .join(delimiter),
+        },
+      },
     );
     expect(result.exitCode, result.stderr).toBe(0);
     expect(JSON.parse(result.stdout)).toEqual({

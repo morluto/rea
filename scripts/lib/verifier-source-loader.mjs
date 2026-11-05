@@ -43,6 +43,45 @@ const sourceResolution = (resolution) => {
     : resolution;
 };
 
+const transformSource = (source, format, url) => {
+  const options = { sourceMap: true, sourceUrl: url };
+  try {
+    return nodeModule.stripTypeScriptTypes(source, {
+      ...options,
+      mode: "transform",
+    });
+  } catch (cause) {
+    if (
+      errorCode(cause) !== "ERR_INVALID_ARG_VALUE" ||
+      !String(cause).includes("options.mode")
+    )
+      throw cause;
+  }
+
+  try {
+    return nodeModule.stripTypeScriptTypes(source, {
+      mode: "strip",
+      sourceUrl: url,
+    });
+  } catch (cause) {
+    if (errorCode(cause) !== "ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX") throw cause;
+  }
+
+  const typescript = nodeModule.createRequire(import.meta.url)("typescript6");
+  return typescript.transpileModule(source, {
+    fileName: fileURLToPath(url),
+    compilerOptions: {
+      module:
+        format === "module"
+          ? typescript.ModuleKind.ESNext
+          : typescript.ModuleKind.CommonJS,
+      target: typescript.ScriptTarget.ESNext,
+      inlineSourceMap: true,
+      inlineSources: true,
+    },
+  }).outputText;
+};
+
 const resolveSource = (specifier, context, nextResolve) => {
   try {
     return sourceResolution(nextResolve(specifier, context));
@@ -95,11 +134,7 @@ const loadSource = (url, context, nextLoad) => {
   return {
     ...loaded,
     format,
-    source: nodeModule.stripTypeScriptTypes(source, {
-      mode: "transform",
-      sourceMap: true,
-      sourceUrl: url,
-    }),
+    source: transformSource(source, format, url),
   };
 };
 
