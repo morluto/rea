@@ -125,6 +125,18 @@ now.
   aside, so a host named `host` is not found in `localhost`.
 - A host named `localhost` keeps that name, but `ada@localhost` becomes
   `user@localhost`, and a binary file holding it is reported.
+- A second review found member names rewritten too: on a host named
+  `ubuntu`, `{"ubuntu": 1, "localhost": 2}` got two `localhost` keys. Names
+  are now kept, an escaped one before a colon on the next line included, and
+  a seed whose JSON key holds the host ships as captured and is listed in
+  `unscrubbed_files`.
+- The same review found that the regular expression that found JSON strings
+  threw `RangeError: Maximum call stack size exceeded` on one string of
+  16,000,000 characters, which a 64 MiB capture can retain, so such a seed
+  stopped the export. The scrub now walks the document one string at a
+  time, and that seed is scrubbed in about 20 ms. The XML expressions, run on
+  a comment, CDATA section, processing instruction, attribute value and text
+  of the same length, finished within 6 ms each.
 
 The gates passed as before, `lint` and `lint:typed` again failing only on
 main's `webSourceLocationCli.test.ts` with no diagnostics in this change's

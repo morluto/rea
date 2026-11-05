@@ -86,6 +86,39 @@ describe("scrubSeed on JSON and XML", () => {
     });
   });
 
+  it("keeps member names, reporting one that holds the host rather than rewriting it into another", () => {
+    const named = { ...GEANY, hostname: "ubuntu" };
+    const text = String.raw`{"ubuntu": 1, "localhost": 2, "\u0075buntu-dock"
+      : "ubuntu", "list": ["ubuntu"]}`;
+
+    const outcome = scrubbed(text, "json", named);
+
+    expect(outcome).toEqual({
+      text: String.raw`{"ubuntu": 1, "localhost": 2, "\u0075buntu-dock"
+      : "localhost", "list": ["localhost"]}`,
+      holdsIdentity: true,
+    });
+    expect(Object.keys(JSON.parse(outcome.text ?? "") as object)).toEqual([
+      "ubuntu",
+      "localhost",
+      "ubuntu-dock",
+      "list",
+    ]);
+  });
+
+  it("walks a JSON string of 16,000,000 characters, which the capture can retain, without running out of stack", () => {
+    const note = "x".repeat(16_000_000);
+    const text = `{"note": "${note}", "mail": "ada@e81232be457d"}`;
+
+    const outcome = scrubSeed(Buffer.from(text), "json", GEANY);
+
+    expect(outcome.holdsIdentity).toBe(false);
+    expect(outcome.bytes?.length).toBe(text.length - 2);
+    expect(outcome.bytes?.subarray(-29).toString("utf8")).toBe(
+      `x", "mail": "user@localhost"}`,
+    );
+  });
+
   it("decodes JSON escapes, rewriting an escaped identity and finding one left inside a domain", () => {
     expect(
       scrubbed(

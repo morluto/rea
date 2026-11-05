@@ -31,7 +31,9 @@ const MAIL = {
   after: "[ui]\nmail=user@localhost\n",
 };
 const NAMED = `${HOME}/.config/notes/${HOSTNAME}-notes.txt`;
-const EXTRA_CONTENT = [MAIL.before, MAIL.after, "clean\n"];
+/** A JSON setting keyed by the host name, which the export must not rename. */
+const KEYED = `{"${HOSTNAME}": {"open": true}, "localhost": {"open": false}}`;
+const EXTRA_CONTENT = [MAIL.before, MAIL.after, "clean\n", KEYED];
 
 /** A capture whose seed names the host and user in a text file, a database and dconf keys. */
 const identityCapture = (
@@ -143,7 +145,7 @@ describe("exportDesktopApplication of a capture that names its host", () => {
     expect(readme).toContain("`envs/notes/seed/.local/share/notes/notes.db`");
   });
 
-  it("lists every shipped file that still holds the host name, by its name or content, generated ones included", async () => {
+  it("lists every shipped file that still holds the host name, by its name, a JSON key or content, generated ones included", async () => {
     const base = identityCapture();
     const [baseline, ...later] = base.state.checkpoints;
     const named = {
@@ -156,6 +158,7 @@ describe("exportDesktopApplication of a capture that names its host", () => {
             retained: [
               ...(baseline?.retained ?? []),
               retained(NAMED, "clean\n"),
+              retained(`${HOME}/.config/notes/hosts.json`, KEYED),
             ],
           },
           ...later,
@@ -170,13 +173,16 @@ describe("exportDesktopApplication of a capture that names its host", () => {
     );
 
     if (result instanceof Error) throw result;
-    const shipped = leaking(await bundleFiles(directory));
+    const files = await bundleFiles(directory);
+    const shipped = leaking(files);
     expect(shipped).toEqual([
       "README.md",
       "envs/notes/notes_app.py",
       `envs/notes/seed/.config/notes/${HOSTNAME}-notes.txt`,
+      "envs/notes/seed/.config/notes/hosts.json",
       "envs/notes/seed/.local/share/notes/notes.db",
     ]);
+    expect(files.get("envs/notes/seed/.config/notes/hosts.json")).toBe(KEYED);
     expect(result.normalized_result).toMatchObject({
       unscrubbed_files: shipped,
     });

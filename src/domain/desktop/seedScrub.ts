@@ -23,19 +23,55 @@ interface TextScrub {
   readonly decoded: string;
 }
 
-/** A JSON string literal in a document already read as JSON. */
-const JSON_STRING = /"(?:[^"\\]|\\.)*"/gsu;
+/** Whitespace JSON allows between tokens. */
+const JSON_SPACE = new Set([" ", "\t", "\n", "\r"]);
 
-/** JSON with each string scrubbed as its decoded value and rewritten only when that changed, so literals, numbers and other strings keep their spelling. */
+/** Where the string literal opening at `start` ends, just past its closing quote: the first quote no odd run of backslashes escapes. */
+const jsonStringEnd = (text: string, start: number): number => {
+  for (let quote = text.indexOf('"', start + 1); quote !== -1;) {
+    let slashes = 0;
+    while (text[quote - 1 - slashes] === "\\") slashes += 1;
+    if (slashes % 2 === 0) return quote + 1;
+    quote = text.indexOf('"', quote + 1);
+  }
+  return text.length;
+};
+
+/** Whether the token after a string literal is a colon, which makes it a member name. */
+const isMemberName = (text: string, end: number): boolean => {
+  let next = end;
+  while (JSON_SPACE.has(text[next] ?? "")) next += 1;
+  return text[next] === ":";
+};
+
+/**
+ * JSON with each string value scrubbed as its decoded value and rewritten
+ * only when that changed, so names, literals, numbers and other strings keep
+ * their spelling. A name is never rewritten, since two could then collide;
+ * one holding the identity is left for the search for what is left. The
+ * document, already read as JSON, is walked one string at a time, so a long
+ * string costs no more stack than a short one.
+ */
 const scrubJson = (text: string, identity: HostIdentity): TextScrub => {
-  const values: string[] = [];
-  const scrubbed = text.replace(JSON_STRING, (literal) => {
-    const value = JSON.parse(literal) as string;
-    const clean = scrubHostIdentity(value, identity);
-    values.push(clean);
-    return clean === value ? literal : JSON.stringify(clean);
-  });
-  return { text: scrubbed, decoded: [scrubbed, ...values].join("\n") };
+  const parts: string[] = [];
+  const strings: string[] = [];
+  let copied = 0;
+  for (let start = text.indexOf('"'); start !== -1;) {
+    const end = jsonStringEnd(text, start);
+    const value = JSON.parse(text.slice(start, end)) as string;
+    const clean = isMemberName(text, end)
+      ? value
+      : scrubHostIdentity(value, identity);
+    strings.push(clean);
+    if (clean !== value) {
+      parts.push(text.slice(copied, start), JSON.stringify(clean));
+      copied = end;
+    }
+    start = text.indexOf('"', end);
+  }
+  parts.push(text.slice(copied));
+  const scrubbed = parts.join("");
+  return { text: scrubbed, decoded: [scrubbed, ...strings].join("\n") };
 };
 
 /** Comments, CDATA sections, processing instructions and tags of a document already read as XML; the rest is character data. */

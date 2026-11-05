@@ -39,10 +39,10 @@ and the bundle holds neither the capture host's name nor its user's.
   UTF-8, in UTF-16 seeds with a byte-order mark, and in the dconf keys. A
   host named `localhost` keeps that name, but its captured `user@localhost`
   is still replaced. The user name alone is never replaced. JSON is scrubbed
-  by its strings' decoded values and XML by its decoded character data and
-  attribute values, plus comments and CDATA, so neither's syntax or names
-  change and escapes hide nothing. A rewritten seed is a generated file with
-  its own SHA-256. The class's `SEED_HOME` is `/home/user`, which it respells
+  by its string values, decoded, never its member names, and XML by its
+  decoded character data and attribute values, plus comments and CDATA, so
+  neither's syntax or names change and escapes hide nothing. A rewritten seed
+  is a generated file with its own SHA-256. The class's `SEED_HOME` is `/home/user`, which it respells
   to the computer's home at boot as before. A capture whose home is already
   `/home/user`, as inside a computer, has no home to replace. A capture
   without the host's name and user has only its home replaced, with a

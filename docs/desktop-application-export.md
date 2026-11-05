@@ -200,10 +200,13 @@ export removes them from what the bundle ships:
   name alone is never replaced, since a short one such as `ada` or `user` is
   also ordinary text. A rewritten seed is written with its own SHA-256, and
   `scrubbed_files` and the README list it.
-- JSON and XML keep their syntax. In JSON only strings change, each read as
-  its decoded value, so `\u0065` escapes cannot hide the host, and is written
-  back as JSON only when it changed; keys, numbers and `true`, `false` and
-  `null` stay as they are even for a host named `true`. In XML only character
+- JSON and XML keep their syntax. In JSON only string values change, each
+  read as its decoded value, so `\u0065` escapes cannot hide the host, and is
+  written back as JSON only when it changed; numbers and `true`, `false` and
+  `null` stay as they are even for a host named `true`. Member names are never
+  rewritten, since `{"ubuntu": 1, "localhost": 2}` on a host named `ubuntu`
+  would get two `localhost` keys and lose a setting; a file whose names hold
+  the host is listed in `unscrubbed_files` instead. In XML only character
   data, attribute values, comments and CDATA change, character references
   decoded the same way; element and attribute names and processing
   instructions stay.
