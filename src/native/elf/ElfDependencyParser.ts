@@ -512,21 +512,18 @@ const gnuSymbolCountAt = (
     if (value !== 0 && value < firstSymbol) return null;
     last = Math.max(last, value);
   }
-  let count = firstSymbol;
-  if (last !== 0) {
-    let index = last;
-    for (;;) {
-      const span = prefixBytes + (index - firstSymbol + 1) * 4;
-      if (header + span > end) return null;
-      const chain = reader.u32(header + span - 4);
-      index += 1;
-      if ((chain & 1) !== 0) {
-        count = index;
-        break;
-      }
-    }
+  // With every bucket empty the table hashes nothing, and its first-symbol
+  // index does not bound the unhashed imports: GNU ld writes 1 there for any
+  // image with no hashable exports. The count is unknown from this table.
+  if (last === 0) return null;
+  let index = last;
+  for (;;) {
+    const span = prefixBytes + (index - firstSymbol + 1) * 4;
+    if (header + span > end) return null;
+    const chain = reader.u32(header + span - 4);
+    index += 1;
+    if ((chain & 1) !== 0) return index;
   }
-  return count;
 };
 
 const gnuSymbolCount = (

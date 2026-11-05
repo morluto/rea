@@ -268,6 +268,22 @@ it("reports the symbol count as unavailable when a DT_GNU_HASH bucket precedes i
   ).toBe(true);
 });
 
+it("reports the symbol count as unavailable when every DT_GNU_HASH bucket is empty", () => {
+  const report = parse(
+    elfDependencyFixture({
+      stripped: true,
+      omitHash: true,
+      gnuHash: true,
+      gnuEmptyBuckets: true,
+    }),
+  );
+  expect(report.coverage.status).toBe("partial");
+  expect(report.imports).toEqual([]);
+  expect(
+    report.issues.some((issue) => issue.code === "table_unavailable"),
+  ).toBe(true);
+});
+
 it("keeps a complete empty import list when a stripped image has no hash table", () => {
   const report = parse(
     elfDependencyFixture({ stripped: true, omitHash: true }),

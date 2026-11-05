@@ -95,6 +95,7 @@ export interface ElfDependencyFixtureOptions {
   readonly omitHash?: boolean;
   readonly gnuHash?: boolean;
   readonly gnuBucketBelowFirstSymbol?: boolean;
+  readonly gnuEmptyBuckets?: boolean;
   readonly cyclicVerneed?: boolean;
   readonly cyclicVernaux?: boolean;
   /** Gives the final record of this chain a nonzero link past its count. */
@@ -269,8 +270,18 @@ const gnuHashTable = (
   symbolCount: number,
   bits: 32 | 64,
   little: boolean,
-  bucketBelowFirstSymbol: boolean,
+  layout: "chained" | "bucketBelowFirstSymbol" | "emptyBuckets",
 ): Buffer => {
+  const bucketBelowFirstSymbol = layout === "bucketBelowFirstSymbol";
+  // GNU ld's table for an image with no hashable exports: one empty bucket and
+  // a first-symbol index of 1 whatever the import count.
+  if (layout === "emptyBuckets") {
+    const empty = Buffer.alloc(16 + (bits === 64 ? 8 : 4) + 4);
+    write32(empty, 0, 1, little);
+    write32(empty, 4, 1, little);
+    write32(empty, 8, 1, little);
+    return empty;
+  }
   const firstSymbol = bucketBelowFirstSymbol
     ? Math.min(2, symbolCount)
     : Math.min(1, symbolCount);
@@ -372,6 +383,7 @@ interface FixtureConfig {
   readonly omitHash: boolean;
   readonly gnuHash: boolean;
   readonly gnuBucketBelowFirstSymbol: boolean;
+  readonly gnuEmptyBuckets: boolean;
   readonly cyclicVerneed: boolean;
   readonly cyclicVernaux: boolean;
   readonly danglingVersionLink: ElfDependencyFixtureOptions["danglingVersionLink"];
@@ -464,6 +476,7 @@ const fixtureConfig = (options: ElfDependencyFixtureOptions): FixtureConfig => {
     omitHash: options.omitHash === true,
     gnuHash: options.gnuHash === true,
     gnuBucketBelowFirstSymbol: options.gnuBucketBelowFirstSymbol === true,
+    gnuEmptyBuckets: options.gnuEmptyBuckets === true,
     cyclicVerneed: options.cyclicVerneed === true,
     cyclicVernaux: options.cyclicVernaux === true,
     danglingVersionLink: options.danglingVersionLink,
@@ -549,7 +562,11 @@ const buildDependencyTables = (config: FixtureConfig): DependencyTables => {
           symbols.length,
           bits,
           little,
-          config.gnuBucketBelowFirstSymbol,
+          config.gnuEmptyBuckets
+            ? "emptyBuckets"
+            : config.gnuBucketBelowFirstSymbol
+              ? "bucketBelowFirstSymbol"
+              : "chained",
         )
       : Buffer.alloc(0),
     verneedBytes,
