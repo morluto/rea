@@ -1110,6 +1110,7 @@
 * **firmware:** cover S-record high address workflows ([#8897](https://github.com/morluto/rea/issues/8897)) ([25b62db](https://github.com/morluto/rea/commit/25b62db838bca5305ef540ae33980778b0918017))
 * **firmware:** keep producer fixtures within supported Node limits ([#7048](https://github.com/morluto/rea/issues/7048)) ([b75419b](https://github.com/morluto/rea/commit/b75419b61e2e11760993b3e60046633e2532cbc4))
 * **firmware:** pin the staging ceiling at the request boundary ([#7775](https://github.com/morluto/rea/issues/7775)) ([4671947](https://github.com/morluto/rea/commit/4671947c97bb661b3507b7691f57227a2757a44f))
+* **gdb:** expect configurable stream truncation diagnostics ([#8965](https://github.com/morluto/rea/issues/8965)) ([ce07d35](https://github.com/morluto/rea/commit/ce07d358cdaa3d3f69711d71d1d9e03106b12dbe))
 * **ghidra:** expect carved MIPS copies to be refused at target opening ([#8227](https://github.com/morluto/rea/issues/8227)) ([091892d](https://github.com/morluto/rea/commit/091892dfedd9f50cc68c7bbb63e44d5ca1754fcb))
 * guard target format vocabularies and DOL snapshot saves ([#7481](https://github.com/morluto/rea/issues/7481)) ([54756ff](https://github.com/morluto/rea/commit/54756ff24e1f4c2e47554f61ea5efe57bab27b64))
 * **hopper:** verify bootstrap cleanup ownership ([c79bd41](https://github.com/morluto/rea/commit/c79bd41b5d6d65b7b2a9b6e0b58d376fc36910d6))
