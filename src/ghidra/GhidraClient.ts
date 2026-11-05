@@ -57,6 +57,7 @@ import {
   GHIDRA_PROCESS_DIAGNOSTIC_BYTES,
   type GhidraDiagnosticsScope,
 } from "./GhidraDiagnostics.js";
+import { GhidraAdmissionError } from "./GhidraAdmissionError.js";
 import { GhidraLaunchError, type GhidraLaunch } from "./GhidraLauncher.js";
 import { GhidraResponseRouter } from "./GhidraResponseRouter.js";
 import { GhidraRequestQueue } from "./GhidraRequestQueue.js";
@@ -914,6 +915,17 @@ export class GhidraClient {
   async #startWithin(
     deadline: ProviderStartupDeadline,
   ): Promise<GhidraStartResult> {
+    if (
+      this.#options.existingProject === true &&
+      this.#options.debugCompanion !== undefined
+    )
+      return err(
+        this.#failure(
+          "admission",
+          "Existing Ghidra project sessions cannot stage a dSYM debug companion",
+          new GhidraAdmissionError("existing_project_debug_companion"),
+        ),
+      );
     try {
       this.#runtimeRoot = await PrivateRuntimeRoot.create({
         parent: SESSION_ROOT,

@@ -21,7 +21,10 @@ import {
 } from "../../../src/application/DebugCompanionAdmission.js";
 import { parseBinaryTarget } from "../../../src/application/BinaryTargetResolver.js";
 import { openBinaryInputSchema } from "../../../src/contracts/sessionLifecycleInputs.js";
+import { GhidraAdmissionError } from "../../../src/ghidra/GhidraAdmissionError.js";
+import { GhidraClient } from "../../../src/ghidra/GhidraClient.js";
 import { stageGhidraDebugCompanion } from "../../../src/ghidra/GhidraDebugCompanion.js";
+import { silentLogger } from "../../../src/logger.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const stagingFixture = async () => {
@@ -378,3 +381,36 @@ it.each(["/", "/."])(
     });
   },
 );
+
+it("refuses existingProject + debugCompanion in GhidraClient.start before creating a runtime root or staging the companion", async () => {
+  const fixture = await stagingFixture();
+  const client = new GhidraClient({
+    launcher: {
+      launch: async () => {
+        throw new Error(
+          "existingProject + debugCompanion must fail before launching Ghidra",
+        );
+      },
+    },
+    targetPath: fixture.snapshot,
+    targetSha256: "a".repeat(64),
+    existingProject: true,
+    debugCompanion: fixture.companion,
+    providerVersion: "12.1.4",
+    profileDigest: "c".repeat(64),
+    logger: silentLogger,
+  });
+  try {
+    const started = await client.start();
+    expect(started.ok).toBe(false);
+    if (started.ok) return;
+    expect(started.error.kind).toBe("admission");
+    expect(started.error.cause).toBeInstanceOf(GhidraAdmissionError);
+    expect(started.error.cause).toMatchObject({
+      code: "existing_project_debug_companion",
+    });
+    expect(await readdir(fixture.runtime)).toEqual([]);
+  } finally {
+    await client.close();
+  }
+});

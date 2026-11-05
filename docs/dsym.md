@@ -34,8 +34,10 @@ without any `LC_UUID` cannot be matched and is rejected explicitly. Omitting
 
 `dsym_path` applies only to detected Mach-O executable targets
 (`mach-o` and `mach-o-universal`); pairing it with `format=raw-binary` or
-`format=dos-com` is rejected. Only the Ghidra provider stages the companion
-today; other providers leave it unused.
+`format=dos-com` is rejected. Only fresh Ghidra imports stage the companion
+today: `REA_GHIDRA_PROJECT_PATH` opens a saved program with
+`-process -noanalysis` and rejects `dsym_path` instead of ignoring it; other
+providers leave `dsym_path` unused.
 
 ## How the companion reaches Ghidra
 
