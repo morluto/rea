@@ -293,8 +293,9 @@ The views follow the [state view](desktop-application-state.md)'s formats and
 shapes: SQLite tables (at most 64 ordinary tables, `tables_truncated` past
 that, and per table `columns`, `primary_key`, at most 500 `rows` and
 `truncated`, with blobs, unsafe integers and text that is not UTF-8 tagged as
-REA tags them), JSON, XML as `{root, truncated}` with DOCTYPEs refused and REA's
-node, depth and whitespace rules, key file groups, text as
+REA tags them), JSON, XML as `{root, truncated}` with REA's node, depth and
+whitespace rules and its `doctype` when the document declares one, key file
+groups, text as
 `{lines, line_count, truncated}` split on `\n` and `\r\n`, and zip archives
 as their entries, read with Python's `zipfile` from the file in place, with
 REA's entry, size, compression ratio and archive limits and its wording for an
@@ -311,7 +312,12 @@ processing, which refuses what REA's parser refuses, such as an undeclared
 prefix, then without it, so element and attribute names keep the prefixes the
 document spells and namespace declarations stay attributes, as in REA's view;
 text splits into nodes where REA's splits it, at CDATA sections, comments and
-processing instructions. Known differences remain:
+processing instructions. Both passes read a DOCTYPE as REA does: with
+parameter entity parsing off, so the DTD it names is never read, and handlers
+that refuse an internal subset, an external entity and an entity expat would
+skip; the first pass also checks each start tag for a reference to an
+undeclared entity, which expat drops from an attribute value without a word
+when a DOCTYPE names a DTD. Known differences remain:
 
 - dconf databases are reported as binary, since REA reads them with `dconf`;
   inside an archive, one is `dconf` with an error, as in REA.

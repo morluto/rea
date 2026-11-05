@@ -262,12 +262,64 @@ describe("documents saved as zip archives", () => {
     ).toBe(true);
     expect(task.checks.filter(({ file }) => file === LIST)).toEqual([
       expect.objectContaining({
-        kind: "value_equals",
-        pointer: `${LIST_TEXT}/[name=text:p]/children/0`,
+        kind: "text_equals",
+        pointer: `${LIST_TEXT}/[name=text:p]`,
         value: "Buy milk",
       }),
     ]);
     const { result } = await exportTask(folder, task.checks);
     expect(result).not.toBeInstanceOf(Error);
+  });
+});
+
+describe("paragraphs split into runs", () => {
+  it("drafts and exports a paragraph's whole text once an edit split it into runs, which its first run does not hold", async () => {
+    const run = (text: string) =>
+      `<text:span text:style-name="T1">${text}</text:span>`;
+    const folder = await archiveCapture([
+      odtArchive("Buy bread"),
+      odtArchive(`Buy ${run("oat")} ${run("milk")}`),
+    ]);
+    const paragraph = `${LIST_TEXT}/[name=text:p]`;
+
+    const drafted = await draftDesktopApplicationTask(folder, readers);
+    if (drafted instanceof Error) throw drafted;
+    const { checks } = (
+      drafted.normalized_result as { task: { checks: { file: string }[] } }
+    ).task;
+    expect(checks.filter(({ file }) => file === LIST)).toEqual([
+      expect.objectContaining({
+        kind: "text_equals",
+        pointer: paragraph,
+        value: "Buy oat milk",
+      }),
+    ]);
+
+    const whole = await exportTask(folder, [
+      HOLE,
+      {
+        kind: "text_equals",
+        file: LIST,
+        pointer: paragraph,
+        value: "Buy oat milk",
+      },
+    ]);
+    if (whole.result instanceof Error) throw whole.result;
+    expect(whole.result.normalized_result).toMatchObject({
+      task: { failing_on_seed: ["check-1", "check-2"] },
+    });
+
+    const first = await exportTask(folder, [
+      HOLE,
+      {
+        kind: "value_equals",
+        file: LIST,
+        pointer: `${paragraph}/children/0`,
+        value: "Buy oat milk",
+      },
+    ]);
+    expect(
+      (first.result as Error & { userMessage: string }).userMessage,
+    ).toContain('is "Buy ", not "Buy oat milk"');
   });
 });

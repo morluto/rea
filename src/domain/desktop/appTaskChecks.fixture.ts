@@ -166,6 +166,31 @@ export const CHECK_VIEWS: Readonly<Record<string, TaskFileView>> = {
       truncated: true,
     },
   },
+  "Documents/meeting.xml": {
+    format: "xml",
+    view: {
+      root: element("doc", { lang: "en" }, [
+        element("p", { id: "time" }, [
+          "Starts at ",
+          element("c", {}, ["3"]),
+          ":",
+          element("c", {}, ["30"]),
+          " today.",
+        ]),
+        element("p", { id: "spaced" }, [
+          "\n  Doors\topen ",
+          element("b", {}, ["  early "]),
+          "\n",
+        ]),
+        element("p", { id: "empty" }),
+        element("p", { id: "deep" }, [
+          element("q", {}, [element("r", {}, ["x"]), "y"]),
+          "z",
+        ]),
+      ]),
+      truncated: false,
+    },
+  },
   "Documents/photo.png": { format: "binary", view: null },
   "Documents/huge.txt": {
     format: null,
@@ -487,6 +512,231 @@ const TOLERANCE_CASES: readonly (readonly [DesktopTaskCheckInput, boolean])[] =
     ],
   ];
 
+const meeting = "Documents/meeting.xml";
+const paragraph = (id: string) => `/root/children/[name=p][@id=${id}]`;
+
+/** An element's whole text, its runs and descendants included, compared or searched, exactly or with whitespace collapsed. */
+const TEXT_CASES: readonly (readonly [DesktopTaskCheckInput, boolean])[] = [
+  [
+    {
+      kind: "text_equals",
+      file: meeting,
+      pointer: paragraph("time"),
+      value: "Starts at 3:30 today.",
+    },
+    true,
+  ],
+  [
+    {
+      kind: "text_equals",
+      file: meeting,
+      pointer: paragraph("time"),
+      value: "Starts at 3:30",
+    },
+    false,
+  ],
+  [
+    {
+      kind: "text_contains",
+      file: meeting,
+      pointer: paragraph("time"),
+      value: "3:30",
+    },
+    true,
+  ],
+  [
+    {
+      kind: "text_contains",
+      file: meeting,
+      pointer: paragraph("time"),
+      value: "3:45",
+    },
+    false,
+  ],
+  [
+    {
+      kind: "text_equals",
+      file: meeting,
+      pointer: paragraph("spaced"),
+      value: "Doors open early",
+      normalize_whitespace: true,
+    },
+    true,
+  ],
+  [
+    {
+      kind: "text_equals",
+      file: meeting,
+      pointer: paragraph("spaced"),
+      value: "Doors open early",
+    },
+    false,
+  ],
+  [
+    {
+      kind: "text_contains",
+      file: meeting,
+      pointer: paragraph("spaced"),
+      value: "open\n early",
+      normalize_whitespace: true,
+    },
+    true,
+  ],
+  [
+    {
+      kind: "text_contains",
+      file: meeting,
+      pointer: paragraph("spaced"),
+      value: "open early",
+    },
+    false,
+  ],
+  [
+    {
+      kind: "text_equals",
+      file: meeting,
+      pointer: paragraph("empty"),
+      value: "",
+    },
+    true,
+  ],
+  [
+    {
+      kind: "text_equals",
+      file: meeting,
+      pointer: paragraph("deep"),
+      value: "xyz",
+    },
+    true,
+  ],
+  [
+    {
+      kind: "text_equals",
+      file: meeting,
+      pointer: `${paragraph("time")}/children/0`,
+      value: "Starts at ",
+    },
+    true,
+  ],
+  [
+    {
+      kind: "text_equals",
+      file: meeting,
+      pointer: "/root/attributes/lang",
+      value: "en",
+    },
+    true,
+  ],
+  [
+    {
+      kind: "text_equals",
+      file: meeting,
+      pointer: "/root/attributes",
+      value: "en",
+    },
+    false,
+  ],
+  [
+    {
+      kind: "text_equals",
+      file: meeting,
+      pointer: paragraph("gone"),
+      value: "x",
+    },
+    false,
+  ],
+  [{ kind: "text_equals", file: absent, pointer: "/root", value: "" }, false],
+  [
+    { kind: "text_equals", file: settings, pointer: "/tags/0", value: "a" },
+    false,
+  ],
+  [
+    { kind: "text_contains", file: todo, pointer: "/lines/0", value: "b" },
+    false,
+  ],
+  [
+    {
+      kind: "text_equals",
+      file: "Documents/cut.xml",
+      pointer: "/root/children/0",
+      value: "",
+    },
+    false,
+  ],
+  [
+    {
+      kind: "text_equals",
+      file: "Documents/cut.xml",
+      pointer: "/root/children/1",
+      value: "kept",
+    },
+    true,
+  ],
+  [
+    {
+      kind: "text_contains",
+      file: "Documents/cut.xml",
+      pointer: "/root/children/[name=p]",
+      value: "x",
+    },
+    false,
+  ],
+  [
+    {
+      kind: "text_equals",
+      file: plate,
+      pointer: "/entries/[name=Document.xml]/view/root",
+      value: "saved by hand",
+    },
+    true,
+  ],
+  [
+    {
+      kind: "text_equals",
+      file: plate,
+      pointer: "/entries/[name=empty.json]/view/x",
+      value: "x",
+    },
+    false,
+  ],
+  [
+    {
+      kind: "text_equals",
+      file: plate,
+      pointer: "/entries/0/name",
+      value: "Document.xml",
+    },
+    false,
+  ],
+  [
+    {
+      kind: "text_equals",
+      file: plate,
+      pointer: "/entries/[name=thumbnails~1Thumbnail.png]/view",
+      value: "",
+    },
+    false,
+  ],
+  [
+    {
+      kind: "text_equals",
+      file: "Documents/listing.zip",
+      pointer: "/entries/1/view/root",
+      value: "",
+    },
+    false,
+  ],
+  [
+    {
+      kind: "text_equals",
+      file: "Documents/photo.png",
+      pointer: "/root",
+      value: "",
+    },
+    false,
+  ],
+];
+
 /** Every kind of check against those views, each with the outcome both evaluators must give. */
 export const CHECK_CASES: readonly (readonly [
   DesktopTaskCheckInput,
@@ -735,4 +985,5 @@ export const CHECK_CASES: readonly (readonly [
   [{ kind: "row_count", file: absent, table: "notes", equals: 0 }, true],
   ...SELECTOR_CASES,
   ...TOLERANCE_CASES,
+  ...TEXT_CASES,
 ];

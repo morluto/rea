@@ -1,8 +1,12 @@
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
+
 import { describe, expect, it } from "vitest";
 
 import type { JsonValue } from "../jsonValue.js";
 import { draftTaskFiles } from "./appTaskDraft.js";
 import type { DesktopStatePath } from "./desktopState.js";
+import { xmlView } from "./stateFormats.js";
 
 type Format = DesktopStatePath["format"];
 
@@ -271,7 +275,7 @@ describe("draftTaskFiles for structured views", () => {
 });
 
 describe("draftTaskFiles for XML that uses namespaces", () => {
-  it("suggests values inside an XML file by pointer, as for any XML", () => {
+  it("suggests an element's whole text where its text changed, named by selector", () => {
     const poster = (headline: string): JsonValue => ({
       root: {
         name: "svg",
@@ -301,12 +305,106 @@ describe("draftTaskFiles for XML that uses namespaces", () => {
 
     expect(document?.suggested).toEqual([
       {
-        kind: "value_equals",
+        kind: "text_equals",
         file: "Pictures/poster.svg",
-        pointer: "/root/children/0/children/0",
+        pointer: "/root/children/[name=text]",
         value: "Summer Bake Sale",
       },
     ]);
+  });
+});
+
+describe("draftTaskFiles for text split into runs", () => {
+  const FIXTURES = join(import.meta.dirname, "../../../tests/fixtures");
+  const PARAGRAPH = "/root/children/[name=section]/children/[name=p][@xid=3]";
+
+  it("suggests an AbiWord paragraph's whole text, and nothing inside it, once an edit split it", async () => {
+    const [before, after] = await Promise.all(
+      ["before", "after"].map(async (end) =>
+        xmlView(
+          await readFile(join(FIXTURES, "abiword", end, "meeting.abw"), "utf8"),
+        ),
+      ),
+    );
+    if (before === undefined || after === undefined) throw new Error("fixture");
+
+    const [document] = draft({
+      "Documents/meeting.abw": path("document", "xml", before, after),
+    });
+
+    expect(document?.suggested).toContainEqual({
+      kind: "text_equals",
+      file: "Documents/meeting.abw",
+      pointer: PARAGRAPH,
+      value: "The team meeting starts at 3:30 in room 4.",
+    });
+    // The diff of an XML file lists the paragraph's runs by position.
+    const children = (value: unknown) =>
+      (value as { children: { name?: string; attributes?: object }[] })
+        .children;
+    const root = children((after as { root: unknown }).root);
+    const section = root.findIndex(({ name }) => name === "section");
+    const paragraph = children(root[section]).findIndex(
+      ({ attributes }) =>
+        (attributes as { xid?: string } | undefined)?.xid === "3",
+    );
+    const inside = [
+      PARAGRAPH,
+      `/root/children/${String(section)}/children/${String(paragraph)}`,
+    ];
+    expect(
+      document?.suggested.filter(
+        (check) =>
+          "pointer" in check &&
+          inside.some((pointer) => check.pointer.startsWith(`${pointer}/`)),
+      ),
+    ).toEqual([]);
+  });
+
+  it("suggests the text of a paragraph in an archive and none of its runs, and nothing where only whitespace changed", () => {
+    const run = (text: string) =>
+      xmlElement("text:span", { "text:style-name": "T1" }, [text]);
+    const list = (paragraph: JsonValue[], formatting: JsonValue[]) =>
+      listing([
+        zipEntry("content.xml", "xml", {
+          root: xmlElement("office:text", {}, [
+            xmlElement("text:p", { "text:style-name": "Body" }, paragraph),
+            xmlElement("text:list", {}, formatting),
+          ]),
+          truncated: false,
+        }),
+      ]);
+
+    const [file] = draft({
+      "Documents/list.odt": path(
+        "document",
+        "zip",
+        list(["Buy bread"], [xmlElement("text:list-item"), "\n"]),
+        list(
+          ["Buy ", run("oat"), " ", run("milk")],
+          [xmlElement("text:list-item"), "\n", "\n"],
+        ),
+      ),
+    });
+
+    const paragraph =
+      "/entries/[name=content.xml]/view/root/children/[name=text:p]";
+    expect(
+      file?.suggested.filter(({ kind }) => kind === "text_equals"),
+    ).toEqual([
+      {
+        kind: "text_equals",
+        file: "Documents/list.odt",
+        pointer: paragraph,
+        value: "Buy oat milk",
+      },
+    ]);
+    expect(
+      file?.suggested.filter(
+        (check) =>
+          "pointer" in check && check.pointer.startsWith(`${paragraph}/`),
+      ),
+    ).toEqual([]);
   });
 });
 
@@ -843,10 +941,10 @@ describe("draftTaskFiles archives", () => {
 
     expect(flyer?.suggested).toEqual([
       {
-        kind: "value_equals",
+        kind: "text_equals",
         file: "Documents/flyer.odt",
         pointer:
-          "/entries/[name=content.xml]/view/root/children/[name=text:p][@text:style-name=Subtitle]/children/0",
+          "/entries/[name=content.xml]/view/root/children/[name=text:p][@text:style-name=Subtitle]",
         value: "Monday 24 November",
       },
     ]);

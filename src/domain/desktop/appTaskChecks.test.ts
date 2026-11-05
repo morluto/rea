@@ -146,6 +146,63 @@ const REFUSALS: readonly (readonly [Record<string, unknown>, string])[] = [
     },
     "at checks.0.tolerance",
   ],
+  [
+    { checks: [{ kind: "text_equals", file: "a", pointer: "", value: "x" }] },
+    "the empty pointer names the whole file",
+  ],
+  [
+    {
+      checks: [{ kind: "text_contains", file: "a", pointer: "p", value: "x" }],
+    },
+    "must start with /",
+  ],
+  [
+    {
+      checks: [{ kind: "text_contains", file: "a", pointer: "/p", value: "" }],
+    },
+    "at checks.0.value",
+  ],
+  [
+    {
+      checks: [
+        {
+          kind: "text_contains",
+          file: "a",
+          pointer: "/p",
+          value: " \n",
+          normalize_whitespace: true,
+        },
+      ],
+    },
+    "text_contains needs a value with more than whitespace in it",
+  ],
+  [
+    {
+      checks: [
+        {
+          kind: "text_equals",
+          file: "a",
+          pointer: "/p",
+          value: "2026-11-04T10:12:00Z",
+        },
+      ],
+    },
+    "looks like a time the app stamps",
+  ],
+  [
+    {
+      checks: [
+        {
+          kind: "text_equals",
+          file: "a",
+          pointer: "/p",
+          value: "x",
+          normalize_whitespace: "yes",
+        },
+      ],
+    },
+    "at checks.0.normalize_whitespace",
+  ],
 ];
 
 describe("evaluateTaskChecks", () => {
@@ -307,6 +364,99 @@ describe("evaluateTaskChecks selectors and tolerance", () => {
         tolerance: 1,
       })?.description,
     ).toMatch(/is "Part::Cylinder", not a number$/u);
+  });
+});
+
+describe("evaluateTaskChecks whole text", () => {
+  const outcome = (check: Record<string, unknown>) =>
+    evaluateTaskChecks(
+      [{ id: "c", ...check } as never],
+      new Map(Object.entries(CHECK_VIEWS)),
+    )[0]?.description;
+  const meeting = "Documents/meeting.xml";
+  const time = "/root/children/[name=p][@id=time]";
+
+  it("says what text an element has, its runs joined, and how it was compared", () => {
+    expect(
+      outcome({
+        kind: "text_equals",
+        file: meeting,
+        pointer: time,
+        value: "Starts at 3:45 today.",
+      }),
+    ).toBe(
+      `${meeting} at ${time} has the text "Starts at 3:30 today.", not "Starts at 3:45 today."`,
+    );
+    expect(
+      outcome({
+        kind: "text_contains",
+        file: meeting,
+        pointer: "/root/children/[name=p][@id=spaced]",
+        value: "Doors  open",
+        normalize_whitespace: true,
+      }),
+    ).toBe(
+      `${meeting} at /root/children/[name=p][@id=spaced] has text containing "Doors open" with whitespace collapsed`,
+    );
+    expect(
+      outcome({
+        kind: "text_contains",
+        file: meeting,
+        pointer: time,
+        value: "3:45",
+      }),
+    ).toBe(
+      `${meeting} at ${time} has the text "Starts at 3:30 today.", without "3:45"`,
+    );
+  });
+
+  it("reads only XML elements and their text, and leaves an element of a truncated view undecided", () => {
+    expect(
+      outcome({
+        kind: "text_equals",
+        file: ".config/notes/settings.json",
+        pointer: "/tags/0",
+        value: "a",
+      }),
+    ).toBe(".config/notes/settings.json is read as json, not xml");
+    expect(
+      outcome({
+        kind: "text_equals",
+        file: meeting,
+        pointer: "/root/attributes",
+        value: "en",
+      }),
+    ).toBe(
+      `${meeting} at /root/attributes is {"lang":"en"}, not an element or its text`,
+    );
+    expect(
+      outcome({
+        kind: "text_equals",
+        file: "Documents/plate.FCStd",
+        pointer: "/entries/[name=empty.json]/view/x",
+        value: "x",
+      }),
+    ).toBe("Documents/plate.FCStd entry empty.json is read as json, not xml");
+    expect(
+      outcome({
+        kind: "text_equals",
+        file: "Documents/plate.FCStd",
+        pointer: "/entries/0/name",
+        value: "Document.xml",
+      }),
+    ).toBe(
+      "Documents/plate.FCStd at /entries/0/name does not point into an entry's view",
+    );
+    expect(
+      outcome({
+        kind: "text_equals",
+        file: "Documents/cut.xml",
+        pointer: "/root/children/0",
+        value: "",
+      }),
+    ).toBe(
+      "the view of Documents/cut.xml is truncated, so what it leaves out is unknown",
+    );
   });
 });
 

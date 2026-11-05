@@ -27,7 +27,9 @@ never runs code the agent wrote.
   kinds: `file_present`, `file_absent`, `lines_present`, `lines_absent`,
   `line_count` (`exact` or `contains`; `equals`, `at_least` or `at_most`),
   `value_equals` (optional numeric `tolerance`) and `value_absent` (RFC 6901
-  pointer, with selectors on arrays), `row_present`,
+  pointer, with selectors on arrays), `text_equals` and `text_contains` (an
+  XML element's whole text at a pointer, optional `normalize_whitespace`; see
+  [XML text checks](../xml-text-checks/spec.md)), `row_present`,
   `row_absent` and `row_count` (SQLite table, `where` by column). Ids default
   to `check-N` and must be unique.
 - Semantics: an absent file reads as empty; a file without a view fails every

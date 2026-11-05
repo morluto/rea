@@ -25,6 +25,15 @@ const comparison = {
   at_most: count.optional(),
 };
 const table = z.string().min(1);
+const wholeText = {
+  pointer: z.string(),
+  value: z.string(),
+  normalize_whitespace: z.boolean().optional(),
+};
+
+/** Text with each run of XML whitespace (space, tab, CR, LF) made one space and none at either end, as XPath's normalize-space(). */
+export const collapseWhitespace = (text: string): string =>
+  text.replace(/[ \t\r\n]+/gu, " ").replace(/^ | $/gu, "");
 
 /** One kind of check: its id, kind and file, then its own fields. */
 const kind = <Kind extends string, Shape extends z.ZodRawShape>(
@@ -54,6 +63,8 @@ const checkSchema = z.discriminatedUnion("kind", [
     tolerance: z.number().min(0).optional(),
   }),
   kind("value_absent", { pointer: z.string() }),
+  kind("text_equals", wholeText),
+  kind("text_contains", { ...wholeText, value: z.string().min(1) }),
   kind("row_present", { table, where }),
   kind("row_absent", { table, where }),
   kind("row_count", { table, where: where.optional(), ...comparison }),
@@ -91,6 +102,20 @@ export const countComparison = (
   return given.length === 1 ? given[0] : undefined;
 };
 
+/** Checks that read a view at a JSON pointer. */
+export type PointerCheck = Extract<
+  DesktopTaskCheck,
+  { kind: "value_equals" | "value_absent" | "text_equals" | "text_contains" }
+>;
+
+export const isPointerCheck = (
+  check: DesktopTaskCheck,
+): check is PointerCheck =>
+  check.kind === "value_equals" ||
+  check.kind === "value_absent" ||
+  check.kind === "text_equals" ||
+  check.kind === "text_contains";
+
 /** A home-relative path in its one spelling: no leading slash, empty, `.` or `..` segment. */
 const isHomePath = (path: string): boolean =>
   path
@@ -108,6 +133,8 @@ export const isTimestamp = (value: JsonValue): boolean =>
 const expectedValues = (check: DesktopTaskCheck): readonly JsonValue[] => {
   switch (check.kind) {
     case "value_equals":
+    case "text_equals":
+    case "text_contains":
       return [check.value];
     case "row_present":
     case "row_absent":
@@ -116,6 +143,19 @@ const expectedValues = (check: DesktopTaskCheck): readonly JsonValue[] => {
     default:
       return [];
   }
+};
+
+/** What is wrong with a pointer check's pointer, or with what a text check searches for, or undefined. */
+const pointerProblem = (check: PointerCheck): string | undefined => {
+  if (check.pointer === "")
+    return "the empty pointer names the whole file; point at the value that changed";
+  if (!check.pointer.startsWith("/"))
+    return `pointer ${JSON.stringify(check.pointer)} must start with /`;
+  return check.kind === "text_contains" &&
+    check.normalize_whitespace === true &&
+    collapseWhitespace(check.value) === ""
+    ? "text_contains needs a value with more than whitespace in it"
+    : undefined;
 };
 
 /** What is wrong with one check beyond its shape, or undefined. */
@@ -132,16 +172,8 @@ const checkProblem = (check: DesktopTaskCheck): string | undefined => {
     countComparison(check) === undefined
   )
     return `${check.kind} takes exactly one of equals, at_least and at_most`;
-  if (
-    (check.kind === "value_equals" || check.kind === "value_absent") &&
-    check.pointer === ""
-  )
-    return "the empty pointer names the whole file; point at the value that changed";
-  if (
-    (check.kind === "value_equals" || check.kind === "value_absent") &&
-    !check.pointer.startsWith("/")
-  )
-    return `pointer ${JSON.stringify(check.pointer)} must start with /`;
+  const pointed = isPointerCheck(check) ? pointerProblem(check) : undefined;
+  if (pointed !== undefined) return pointed;
   if (
     (check.kind === "lines_present" || check.kind === "lines_absent") &&
     new Set(check.lines).size !== check.lines.length

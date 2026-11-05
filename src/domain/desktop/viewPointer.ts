@@ -398,3 +398,30 @@ export const pairMembers = (
     older: side(oldKeys, oldPartners),
   };
 };
+
+/**
+ * A pointer into a view with each array member it reaches by position named
+ * instead by the most general selector naming it alone in that array, where
+ * one does, as `pairMembers` keys a version on its own.
+ */
+export const namedPointer = (
+  view: JsonValue | null,
+  pointer: string,
+): string => {
+  let current: JsonValue | undefined = view;
+  const named = pointer
+    .slice(1)
+    .split("/")
+    .map((segment) => {
+      const token = segment.replaceAll("~1", "/").replaceAll("~0", "~");
+      if (Array.isArray(current) && INDEX.test(token)) {
+        const index = Number(token);
+        const key = pairMembers(current, []).newer.keys[index] ?? token;
+        current = current[index];
+        return key.replaceAll("~", "~0").replaceAll("/", "~1");
+      }
+      current = isRecord(current) ? own(current, token) : undefined;
+      return segment;
+    });
+  return `/${named.join("/")}`;
+};

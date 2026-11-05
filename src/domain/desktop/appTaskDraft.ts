@@ -1,13 +1,25 @@
 import type { JsonValue } from "../jsonValue.js";
 import { isTimestamp, type DesktopTaskCheckInput } from "./appTask.js";
+import { isXmlElement } from "./appTaskChecks.js";
+import { wholeTextSuggestions } from "./appTaskDraftText.js";
 import {
   versionAt,
   type DesktopStatePath,
   type StateEnds,
 } from "./desktopState.js";
 import { diffStateViews, diffZipMembers } from "./stateChanges.js";
-import { locatePointer, pairMembers, resolvePointer } from "./viewPointer.js";
-import { entryWithoutView, zipArrayLeavesOut, zipEntryAt } from "./zipView.js";
+import {
+  locatePointer,
+  namedPointer,
+  pairMembers,
+  resolvePointer,
+} from "./viewPointer.js";
+import {
+  entryWithoutView,
+  zipArrayLeavesOut,
+  zipEntryAt,
+  zipLeavesOutAt,
+} from "./zipView.js";
 
 type Version = DesktopStatePath["versions"][number];
 type Suggestion = DesktopTaskCheckInput;
@@ -16,6 +28,14 @@ type Suggestion = DesktopTaskCheckInput;
 const MAX_SUGGESTIONS = 10;
 const MAX_ITEMS = 200;
 const MAX_CHARS = 2000;
+/** The most text checks a file gets, and the longest text one compares. */
+const LIMIT = { suggestions: MAX_SUGGESTIONS, chars: MAX_CHARS };
+
+/** The views at a file's two ends. */
+const versions = (baseline: Version, final: Version) => ({
+  baseline: baseline.view,
+  final: final.view,
+});
 
 const isRecord = (
   value: JsonValue | null | undefined,
@@ -178,12 +198,7 @@ const byName = (view: JsonValue | null, pointer: string) => {
 
 /** An element of REA's XML view, by its tag name, or undefined for any other value. */
 const elementName = (value: JsonValue | undefined): string | undefined =>
-  isRecord(value) &&
-  typeof value.name === "string" &&
-  isRecord(value.attributes) &&
-  Array.isArray(value.children)
-    ? value.name
-    : undefined;
+  isXmlElement(value) ? value.name : undefined;
 
 /**
  * Checks on the entries of an archive, by the selectors its diff names
@@ -197,11 +212,22 @@ const zipSuggestions = (
   final: Version,
 ): Suggestion[] => {
   const change = diffZipMembers(baseline.view, final.view);
+  const texts = wholeTextSuggestions(file, change, versions(baseline, final), {
+    limit: LIMIT,
+    inTree: (pointer) =>
+      readableEntry(final.view, pointer)?.format === "xml" &&
+      checkRoot(final.view, pointer) === pointer,
+    name: (pointer) =>
+      byName(final.view, pointer) && !zipLeavesOutAt(final.view, pointer)
+        ? pointer
+        : undefined,
+  });
   const elements: Suggestion[] = [];
   const values: Suggestion[] = [];
   const equals = (pointer: string, value: JsonValue | undefined) => {
     if (
       values.length < MAX_SUGGESTIONS &&
+      !texts.covers(pointer) &&
       value !== undefined &&
       !(isRecord(value) && Object.keys(value).length > 0) &&
       !isTimestamp(value) &&
@@ -210,7 +236,11 @@ const zipSuggestions = (
       values.push({ kind: "value_equals", file, pointer, value });
   };
   const added = (pointer: string, value: JsonValue | undefined): void => {
-    if (elements.length >= MAX_SUGGESTIONS && values.length >= MAX_SUGGESTIONS)
+    if (
+      (elements.length >= MAX_SUGGESTIONS &&
+        values.length >= MAX_SUGGESTIONS) ||
+      texts.covers(pointer)
+    )
       return;
     const name = elementName(value);
     if (name !== undefined) {
@@ -245,6 +275,7 @@ const zipSuggestions = (
   // An absence is checked only where the entry still has a view to lack it in.
   for (const pointer of change.removed)
     if (
+      !texts.covers(pointer) &&
       checkRoot(baseline.view, pointer) === pointer &&
       checkRoot(final.view, pointer) === pointer &&
       byName(baseline.view, pointer) &&
@@ -254,7 +285,7 @@ const zipSuggestions = (
         ? values
         : elements
       ).push({ kind: "value_absent", file, pointer });
-  return [...elements, ...values];
+  return [...elements, ...texts.suggestions, ...values];
 };
 
 const valueSuggestions = (
@@ -272,7 +303,16 @@ const valueSuggestions = (
   // Key file entries are flat; a group may hold `/`, so prefixes mean nothing there.
   const leaves = (entries: readonly string[]) =>
     format === "keyfile" ? entries : innermost(entries);
-  const suggestions: Suggestion[] = [];
+  const truncated = isRecord(final.view) && final.view.truncated === true;
+  const texts =
+    format === "xml"
+      ? wholeTextSuggestions(file, change, versions(baseline, final), {
+          limit: LIMIT,
+          inTree: (at) => at === "/root" || at.startsWith("/root/"),
+          name: (at) => (truncated ? undefined : namedPointer(final.view, at)),
+        })
+      : { suggestions: [], covers: () => false };
+  const suggestions: Suggestion[] = [...texts.suggestions];
   for (const entry of leaves([...change.added, ...change.changed])) {
     const at = pointer(entry);
     const value = at === undefined ? undefined : resolvePointer(final.view, at);
@@ -280,13 +320,14 @@ const valueSuggestions = (
       at !== undefined &&
       at !== "" &&
       value !== undefined &&
-      !isTimestamp(value)
+      !isTimestamp(value) &&
+      !texts.covers(at)
     )
       suggestions.push({ kind: "value_equals", file, pointer: at, value });
   }
   for (const entry of leaves(change.removed)) {
     const at = pointer(entry);
-    if (at !== undefined && at !== "")
+    if (at !== undefined && at !== "" && !texts.covers(at))
       suggestions.push({ kind: "value_absent", file, pointer: at });
   }
   return suggestions;
