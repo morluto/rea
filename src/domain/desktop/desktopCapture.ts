@@ -39,6 +39,8 @@ export const desktopCheckpointSchema = z.strictObject({
   entries: z.int().min(0),
   truncated: z.boolean(),
   unreadable_directories: z.int().min(0),
+  /** Paths whose state could not be read, and directories on another device not entered; absent from captures written before it was recorded. */
+  unchecked_paths: z.int().min(0).optional(),
   /** Differences left out because a walk did not list the parent directory. */
   unconfirmed_changes: z.int().min(0),
   changes: z.array(desktopStateChangeSchema),

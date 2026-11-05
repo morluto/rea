@@ -56,6 +56,7 @@ const checkpoint = (
   entries: 10,
   truncated: false,
   unreadable_directories: 0,
+  unchecked_paths: 0,
   unconfirmed_changes: 0,
   changes,
   retained: kept,

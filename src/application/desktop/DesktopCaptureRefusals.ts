@@ -72,6 +72,12 @@ export const applicationRefusal = (
         ["executable"],
         "Install the application, or pass the executable's path.",
       );
+    case "executable_on_relative_path":
+      return inputError(
+        `${refusal.program} was found through a relative or empty PATH entry, which the exported computer would not have, so its launch could run another program.`,
+        ["executable"],
+        "Pass the executable's absolute path, or capture with a PATH of absolute directories.",
+      );
   }
 };
 
@@ -151,8 +157,7 @@ export const checkDesktopCaptureHost = async (
     );
   const xprop = host.environment.REA_XPROP_COMMAND ?? "xprop";
   if (
-    (await resolveProgram(xprop, host.environment, process.cwd(), false)) ===
-    undefined
+    (await resolveProgram(xprop, host.environment, process.cwd())) === undefined
   )
     throw unavailable(
       "executable_missing",
