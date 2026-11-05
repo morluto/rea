@@ -156,3 +156,146 @@ it("tracks observed launch failures and clears them after subsequent successful 
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+function createGate<T = void>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
+it("preserves newer launch failure when older successful launch completes out of order and clears on newer recovery", async () => {
+  const { directory } = await createArtifact();
+  const command = resolve(directory, "failing-objdump");
+  const call1Started = createGate<void>();
+  const call1Release = createGate<void>();
+  let callCount = 0;
+  const service = new TestReverseEngineeringService({
+    environment: { REA_OBJDUMP_COMMAND: command },
+    runOwned: async () => {
+      callCount++;
+      const currentCall = callCount;
+      if (currentCall === 1) {
+        call1Started.resolve();
+        await call1Release.promise;
+        return providerSnapshot();
+      }
+      if (currentCall === 2) {
+        throw new OwnedCommandFailure("process", "launch failed", null, null, {
+          cause: Object.assign(new Error("missing executable"), {
+            code: "ENOENT",
+          }),
+        });
+      }
+      return providerSnapshot();
+    },
+  });
+  try {
+    expect(service.observedLaunchFailures()).toEqual({});
+
+    const call1Promise = service.inspectWithObjdump({
+      operation: "architectures",
+    });
+    await call1Started.promise;
+
+    const call2Result = await service.inspectWithObjdump({
+      operation: "architectures",
+    });
+    expect(call2Result.ok).toBe(false);
+    expect(service.observedLaunchFailures()).toMatchObject({
+      inspect_with_objdump: {
+        reason: expect.stringContaining(command),
+        remediation: expect.stringContaining("REA_OBJDUMP_COMMAND"),
+      },
+    });
+
+    call1Release.resolve();
+    const call1Result = await call1Promise;
+    expect(call1Result.ok).toBe(true);
+
+    // Call 1 succeeded with an older dispatch than call 2's failure; failure must not be cleared
+    expect(service.observedLaunchFailures()).toMatchObject({
+      inspect_with_objdump: {
+        reason: expect.stringContaining(command),
+        remediation: expect.stringContaining("REA_OBJDUMP_COMMAND"),
+      },
+    });
+
+    const call3Result = await service.inspectWithObjdump({
+      operation: "architectures",
+    });
+    expect(call3Result.ok).toBe(true);
+    expect(service.observedLaunchFailures()).toEqual({});
+  } finally {
+    await service.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+it("ignores older launch failure when newer successful launch completes first and records newer failure", async () => {
+  const { directory } = await createArtifact();
+  const command = resolve(directory, "failing-objdump");
+  const call1Started = createGate<void>();
+  const call1Release = createGate<void>();
+  let callCount = 0;
+  const launchError = () =>
+    new OwnedCommandFailure("process", "launch failed", null, null, {
+      cause: Object.assign(new Error("missing executable"), {
+        code: "ENOENT",
+      }),
+    });
+  const service = new TestReverseEngineeringService({
+    environment: { REA_OBJDUMP_COMMAND: command },
+    runOwned: async () => {
+      callCount++;
+      const currentCall = callCount;
+      if (currentCall === 1) {
+        call1Started.resolve();
+        await call1Release.promise;
+        throw launchError();
+      }
+      if (currentCall === 2) {
+        return providerSnapshot();
+      }
+      throw launchError();
+    },
+  });
+  try {
+    expect(service.observedLaunchFailures()).toEqual({});
+
+    const call1Promise = service.inspectWithObjdump({
+      operation: "architectures",
+    });
+    await call1Started.promise;
+
+    const call2Result = await service.inspectWithObjdump({
+      operation: "architectures",
+    });
+    expect(call2Result.ok).toBe(true);
+    expect(service.observedLaunchFailures()).toEqual({});
+
+    call1Release.resolve();
+    const call1Result = await call1Promise;
+    expect(call1Result.ok).toBe(false);
+
+    // Older failure must not clobber newer success
+    expect(service.observedLaunchFailures()).toEqual({});
+
+    const call3Result = await service.inspectWithObjdump({
+      operation: "architectures",
+    });
+    expect(call3Result.ok).toBe(false);
+    expect(service.observedLaunchFailures()).toMatchObject({
+      inspect_with_objdump: {
+        reason: expect.stringContaining(command),
+        remediation: expect.stringContaining("REA_OBJDUMP_COMMAND"),
+      },
+    });
+  } finally {
+    await service.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});

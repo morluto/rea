@@ -717,8 +717,9 @@ export class ReverseEngineeringService {
       ) {
         const outcome = this.#outcome(operation);
         if (
-          outcome.failure === undefined ||
-          dispatch > outcome.failure.dispatch
+          (outcome.failure === undefined ||
+            dispatch > outcome.failure.dispatch) &&
+          dispatch > outcome.succeeded
         ) {
           outcome.failure = {
             dispatch,
