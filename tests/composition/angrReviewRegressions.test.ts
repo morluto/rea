@@ -1106,3 +1106,68 @@ describe("startup cancellation and request timeouts", () => {
     }
   });
 });
+
+describe("cleanup after a cancelled startup", () => {
+  it("closes the loaded project and the connection when closed right after cancelling", async () => {
+    const { producer, client } = await open();
+    const controller = new AbortController();
+    producer.beforeCall = async (name) => {
+      if (name === "load_binary") controller.abort();
+    };
+    const cancelled = await client.execute(
+      "procedure_address",
+      { procedure: "main" },
+      { signal: controller.signal },
+    );
+    expect(cancelled.ok).toBe(false);
+    if (!cancelled.ok)
+      expect(cancelled.error._tag).toBe("AnalysisCancelledError");
+    expect(producer.openProjects.size).toBe(1);
+    delete producer.beforeCall;
+    // Close without resuming: the loaded project and the connection still go.
+    expect((await client.close()).ok).toBe(true);
+    expect(producer.calls.at(-1)).toMatchObject({
+      name: "close_project",
+      args: { project_id: "p1" },
+    });
+    expect(producer.openProjects.size).toBe(0);
+    expect(producer.closes).toBe(1);
+  });
+  it("keeps an attached project for retry when its close fails after a cancelled startup", async () => {
+    const { target, producer } = await open();
+    const client = new AngrSessionClient(
+      { ...configuration(), mode: "attached" },
+      target,
+      producer,
+    );
+    const controller = new AbortController();
+    producer.beforeCall = async (name) => {
+      if (name === "load_binary") controller.abort();
+    };
+    await client.execute(
+      "procedure_address",
+      { procedure: "main" },
+      { signal: controller.signal },
+    );
+    delete producer.beforeCall;
+    producer.overrideCall = (name) =>
+      name === "close_project"
+        ? { project_id: "other", closed: true }
+        : undefined;
+    const failed = await client.close();
+    expect(failed.ok).toBe(false);
+    if (!failed.ok) {
+      expect(failed.error.cleanupIncomplete).toBe(true);
+      expect(failed.error.cleanupResources).toEqual(["angr project p1"]);
+    }
+    delete producer.overrideCall;
+    expect((await client.close()).ok).toBe(true);
+    expect(producer.openProjects.size).toBe(0);
+  });
+  it("still has nothing to clean up when no request ever ran", async () => {
+    const { producer, client } = await open();
+    expect((await client.close()).ok).toBe(true);
+    expect(producer.connects).toBe(0);
+    expect(producer.closes).toBe(0);
+  });
+});

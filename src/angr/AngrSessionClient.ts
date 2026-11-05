@@ -108,6 +108,8 @@ export class AngrSessionClient implements AnalysisClient {
   readonly #limitations: string[] = [];
   /** Replies received while loading and preparing the project, retained for startup failures. */
   readonly #startupObservations: AngrRawObservation[] = [];
+  /** Set once a connection attempt began; close must then release it. */
+  #connectionOpened = false;
   /** Tools the server advertised; set once the connection is established. */
   #tools: ReadonlySet<string> | undefined;
   /** Whether the registration's flavor has been applied to the project. */
@@ -558,6 +560,9 @@ export class AngrSessionClient implements AnalysisClient {
         };
       });
       step();
+      // Recorded before connecting: a stdio connect spawns the server even if
+      // the handshake then fails or the caller cancels.
+      this.#connectionOpened = true;
       const tools = new Set(await this.connection.connect());
       const missing = ANGR_REQUIRED_TOOLS.filter((name) => !tools.has(name));
       if (missing.length > 0)
@@ -704,9 +709,11 @@ export class AngrSessionClient implements AnalysisClient {
         ? "angr MCP connection"
         : `angr project ${this.#projectId}`;
     try {
-      if (this.#startup !== undefined) {
-        // A failed startup may still have loaded the project before CFG recovery.
-        await this.#startup.catch(() => undefined);
+      // Clean up whatever was started. A cancelled startup clears its promise
+      // so a later request can resume, but may already hold a connection and a
+      // loaded project; a failed one may have loaded the project first.
+      if (this.#connectionOpened) {
+        await this.#startup?.catch(() => undefined);
         const transportClosed = await this.#closeProject();
         if (!transportClosed) await this.connection.close();
       }
