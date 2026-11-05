@@ -1,6 +1,7 @@
 import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import { inspectDevicetreeInputSchema } from "../domain/firmware/devicetree.js";
 import { inspectPeLoadConfigInputSchema } from "../domain/native/peLoadConfig.js";
+import { inspectBinaryHardeningInputSchema } from "../domain/native/binaryHardening.js";
 import { inspectByteEntropyInputSchema } from "../domain/native/byteEntropy.js";
 import { z } from "incur";
 import {
@@ -12,6 +13,7 @@ import {
   createDevicetreeService,
   createKernelModuleService,
   createPeLoadConfigService,
+  createBinaryHardeningService,
   createPeResourcesService,
   createPeCertificatesService,
   createPeImportsService,
@@ -197,6 +199,40 @@ export const registerBinaryDiagnosticsCommands = (
               elf,
               "rea-pe-load-config",
               "inspect_pe_load_config",
+              signal,
+            ).then(projectCliAnalysisResult),
+        );
+      }),
+  });
+  cli.command(CLI_COMMANDS.inspectBinaryHardening, {
+    description:
+      "Inspect ELF, PE, and Mach-O hardening without executing the image",
+    args: z.object({
+      path: localPathStringSchema.describe("Local ELF, PE, or Mach-O image"),
+    }),
+    options: z.object({
+      maxFileBytes: inspectBinaryHardeningInputSchema.shape.max_file_bytes,
+    }),
+    run: ({ args, options }) =>
+      withCommandCancellation(async (signal) => {
+        const hardening = createBinaryHardeningService();
+        return await logCliCommand(
+          logger,
+          CLI_COMMANDS.inspectBinaryHardening,
+          async () =>
+            finishCliEvidenceCommand(
+              args.path,
+              () =>
+                hardening.inspect(
+                  {
+                    path: absoluteCallerPath(args.path),
+                    max_file_bytes: options.maxFileBytes,
+                  },
+                  { signal },
+                ),
+              hardening,
+              "rea-binary-hardening",
+              "inspect_binary_hardening",
               signal,
             ).then(projectCliAnalysisResult),
         );
