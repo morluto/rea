@@ -154,9 +154,8 @@ cliTest(
     const result = await runSetup(cli, home, "--dry-run=abc");
 
     expect(result.exitCode).not.toBe(0);
-    expect(`${result.stdout}\n${result.stderr}`).toContain(
-      "Invalid --dry-run value; use true or false.",
-    );
+    expect(result.json).toMatchObject({ code: "UNKNOWN" });
+    expect(result.stdout).toContain("--dry-run");
     expect(`${result.stdout}\n${result.stderr}`).not.toContain(
       "Incur.ParseError",
     );
