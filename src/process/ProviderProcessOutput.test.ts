@@ -1,6 +1,8 @@
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import { expect, it, vi } from "vitest";
+import { withVerifierCleanup } from "../../scripts/lib/verifier-cleanup.mjs";
+import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
 import {
   ProviderProcessSupervisor,
   type ProcessDiagnosticBudget,
@@ -29,19 +31,33 @@ it("retains final stderr between verified exit and output close during stop", as
     },
   });
   const stopped = owner.stop();
-  expect(owner.stop()).toBe(stopped);
-  await started;
-  // Let cleanup observe exit before delivering the separately acknowledged output.
-  await new Promise<void>((resolve) => setImmediate(resolve));
-  producer.stderr.end("final launcher diagnostic");
-  producer.stdout.end();
-  producer.emit("close", 2, null);
-  await expect(stopped).resolves.toEqual({ status: "verified-cleanup" });
-  expect(owner.snapshot()).toMatchObject({
-    stderr: { text: "final launcher diagnostic" },
-    exitCode: 2,
-  });
-  expect(await owner.waitForOutputClose(0)).toBe(true);
+  await withVerifierCleanup(async () => {
+    expect(owner.stop()).toBe(stopped);
+    await awaitAcknowledgement(started, stopped, "process cleanup");
+    // Let cleanup observe exit before delivering the separately acknowledged output.
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    producer.stderr.end("final launcher diagnostic");
+    producer.stdout.end();
+    producer.emit("close", 2, null);
+    await expect(stopped).resolves.toEqual({ status: "verified-cleanup" });
+    expect(owner.snapshot()).toMatchObject({
+      stderr: { text: "final launcher diagnostic" },
+      exitCode: 2,
+    });
+    expect(await owner.waitForOutputClose(0)).toBe(true);
+  }, [
+    () => {
+      producer.stderr.end();
+      producer.stdout.end();
+      if (!owner.observedOutputClose()) producer.emit("close", 2, null);
+    },
+    async () => {
+      await stopped;
+    },
+    () => owner.dispose(),
+    () => producer.stderr.destroy(),
+    () => producer.stdout.destroy(),
+  ]);
 });
 
 it("bounds late output retention and drain without changing verified cleanup", async () => {

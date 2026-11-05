@@ -282,6 +282,7 @@ it("reserves retained request-body expansion before schema decoding or projectio
   try {
     const projected = admitScenarioCaptureParent(
       {
+        predicateType: "rea.browser-scenario-capture",
         evidenceId: `ev_${"a".repeat(64)}`,
         operation: "capture_browser_scenario",
         normalizedResult: capture,
@@ -330,6 +331,7 @@ it("reserves request text even when another event's body was not captured", () =
     // The capture's containers fit this budget; only its request text does not.
     const projected = admitScenarioCaptureParent(
       {
+        predicateType: "rea.browser-scenario-capture",
         evidenceId: `ev_${"a".repeat(64)}`,
         operation: "capture_browser_scenario",
         normalizedResult: { ...capture, events: { ...capture.events, items } },

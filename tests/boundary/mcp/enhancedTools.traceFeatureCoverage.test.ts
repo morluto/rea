@@ -3,7 +3,10 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { AnalysisOperationPort } from "../../../src/application/AnalysisProvider.js";
 import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
 import { EnhancedTools } from "../../../src/application/EnhancedTools.js";
-import { AnalysisOutputError } from "../../../src/domain/analysisErrorCore.js";
+import {
+  AnalysisCapabilityUnavailableError,
+  AnalysisOutputError,
+} from "../../../src/domain/analysisErrorCore.js";
 import { err, ok } from "../../../src/domain/result.js";
 
 import { closeEnhancedToolResources, connect } from "./enhancedToolsHarness.js";
@@ -136,6 +139,195 @@ const trace = async (analysis: AnalysisOperationPort) => {
   expect(result.isError).not.toBe(true);
   return result.structuredContent as { normalized_result: unknown };
 };
+
+it("preserves references and explicitly unknown owners without claiming truncation", async () => {
+  const baseline = provider();
+  const output = await trace({
+    execute: (operation, input, options) =>
+      operation === "resolve_containing_procedure" && input.address === "0x20"
+        ? Promise.resolve(
+            err(
+              new AnalysisCapabilityUnavailableError(
+                "fixture",
+                operation,
+                "not supported",
+              ),
+            ),
+          )
+        : baseline.execute(operation, input, options),
+  });
+  expect(output.normalized_result).toMatchObject({
+    truncated: false,
+    residual_unknowns: [expect.stringContaining("0x20")],
+    references: [
+      {
+        target_address: "0x10",
+        source_address: "0x20",
+        containing_procedure: {
+          query_address: "0x20",
+          status: "unavailable",
+          provider_id: "fixture",
+          reason: "not supported",
+        },
+      },
+      {
+        target_address: "0x11",
+        source_address: "0x21",
+        containing_procedure: containing("0x21"),
+      },
+    ],
+  });
+  expect(output.normalized_result).toMatchObject({
+    residual_unknowns: [expect.stringContaining("not supported")],
+  });
+});
+
+it("keeps distinct targets when a capped reference source has an unavailable owner", async () => {
+  const calls: string[] = [];
+  const baseline = provider({ duplicateProcedure: true, calls });
+  const output = await trace({
+    execute: (operation, input, options) => {
+      if (operation === "xrefs") {
+        calls.push(`xrefs:${String(input.address)}`);
+        return Promise.resolve(
+          ok(
+            createAnalysisExecution(["0x20"], PROVIDER, {
+              referencesTruncated: input.address === "0x10",
+            }),
+          ),
+        );
+      }
+      if (operation === "resolve_containing_procedure") {
+        calls.push(`resolve_containing_procedure:${String(input.address)}`);
+        return Promise.resolve(
+          err(
+            new AnalysisCapabilityUnavailableError(
+              "fixture",
+              operation,
+              "not supported",
+            ),
+          ),
+        );
+      }
+      return baseline.execute(operation, input, options);
+    },
+  });
+
+  expect(calls.filter((call) => call.startsWith("xrefs:"))).toEqual([
+    "xrefs:0x10",
+    "xrefs:0x11",
+  ]);
+  expect(
+    calls.filter((call) => call.startsWith("resolve_containing_procedure:")),
+  ).toEqual(["resolve_containing_procedure:0x20"]);
+  expect(output.normalized_result).toMatchObject({
+    truncated: true,
+    residual_unknowns: [
+      expect.stringContaining("0x10"),
+      expect.stringContaining("0x20"),
+    ],
+    references: [
+      {
+        target_address: "0x10",
+        source_address: "0x20",
+        containing_procedure: {
+          status: "unavailable",
+          reason: "not supported",
+        },
+      },
+      {
+        target_address: "0x11",
+        source_address: "0x20",
+        containing_procedure: {
+          status: "unavailable",
+          reason: "not supported",
+        },
+      },
+    ],
+  });
+});
+
+it("does not swallow an unavailable owner with incomplete cleanup", async () => {
+  const baseline = provider();
+  const result = await new EnhancedTools({
+    execute: (operation, input, options) =>
+      operation === "resolve_containing_procedure"
+        ? Promise.resolve(
+            err(
+              new AnalysisCapabilityUnavailableError(
+                "fixture",
+                operation,
+                "cleanup failed",
+                {
+                  cleanup: {
+                    reason: "cleanup failed",
+                    resources: ["owned worker"],
+                  },
+                },
+              ),
+            ),
+          )
+        : baseline.execute(operation, input, options),
+  }).execute("trace_feature", { query: "hello" });
+  expect(result.ok).toBe(false);
+  if (!result.ok) expect(result.error.cleanupIncomplete).toBe(true);
+});
+
+it("preserves cancellation that arrives during an unavailable owner lookup", async () => {
+  const baseline = provider();
+  const controller = new AbortController();
+  const reason = { request: "cancel during owner lookup" };
+  const result = await new EnhancedTools({
+    execute: (operation, input, options) => {
+      if (operation !== "resolve_containing_procedure")
+        return baseline.execute(operation, input, options);
+      controller.abort(reason);
+      return Promise.resolve(
+        err(
+          new AnalysisCapabilityUnavailableError(
+            "fixture",
+            operation,
+            "not supported",
+          ),
+        ),
+      );
+    },
+  }).execute("trace_feature", { query: "hello" }, controller.signal);
+  expect(result.ok).toBe(false);
+  if (!result.ok) {
+    expect(result.error._tag).toBe("AnalysisCancelledError");
+    expect(result.error.cause).toBe(reason);
+  }
+});
+
+it("retains incomplete cleanup when cancellation arrives during owner lookup", async () => {
+  const baseline = provider();
+  const controller = new AbortController();
+  const result = await new EnhancedTools({
+    execute: (operation, input, options) => {
+      if (operation !== "resolve_containing_procedure")
+        return baseline.execute(operation, input, options);
+      controller.abort();
+      return Promise.resolve(
+        err(
+          new AnalysisCapabilityUnavailableError(
+            "fixture",
+            operation,
+            "cleanup failed",
+            {
+              cleanup: {
+                reason: "cleanup failed",
+                resources: ["owned worker"],
+              },
+            },
+          ),
+        ),
+      );
+    },
+  }).execute("trace_feature", { query: "hello" }, controller.signal);
+  expect(result.ok).toBe(false);
+  if (!result.ok) expect(result.error.cleanupIncomplete).toBe(true);
+});
 
 describe("trace_feature reference coverage", () => {
   it("marks the trace truncated for the target whose references the provider capped", async () => {

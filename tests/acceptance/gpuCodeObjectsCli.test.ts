@@ -38,7 +38,7 @@ cliTest(
     ] as const) {
       const path = join(root, name);
       await writeFile(path, bytes);
-      const response = await cli.run({
+      const response = await runFileCli(cli, {
         arguments: [
           "inspect-gpu-code-objects",
           path,
@@ -66,6 +66,42 @@ cliTest(
       expect(report.kernels[0]!.parameter_bytes).toBe(12);
       expect(report.coverage.payloads).toBe("complete");
     }
+  },
+);
+
+cliTest(
+  "reports an exhausted ELF symbol string scan as capacity instead of corruption",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-cubin-string-limit-");
+    const bytes = cubinFixture({ name: "k".repeat(65_536) });
+    const path = join(root, "long-symbol.cubin");
+    await writeFile(path, bytes);
+    const response = await runFileCli(cli, {
+      arguments: [
+        "inspect-gpu-code-objects",
+        path,
+        "--analysis",
+        "kernels",
+        "--detail",
+        "complete",
+        "--json",
+      ],
+    });
+    expect(response.exitCode, response.stderr).toBe(0);
+    const evidence = parseEvidence(
+      toolContract("inspect_gpu_code_objects").outputSchema.parse(
+        response.json,
+      ),
+    );
+    const report = gpuCodeObjectsSchema.parse(evidence.normalized_result);
+    expect(report.objects[0]).toMatchObject({
+      kind: "cubin",
+      inspection: "capacity",
+    });
+    expect(report.artifact.sha256).toBe(
+      createHash("sha256").update(bytes).digest("hex"),
+    );
+    expect(report.coverage.payloads).toBe("partial");
   },
 );
 
@@ -817,7 +853,7 @@ cliTest(
   "attributes malformed selector JSON to its actual CLI option",
   async ({ cli }) => {
     for (const name of ["object_ids", "targets", "view"]) {
-      const response = await cli.run({
+      const response = await runFileCli(cli, {
         arguments: [
           "inspect-gpu-code-objects",
           "/not-opened-for-invalid-selectors",

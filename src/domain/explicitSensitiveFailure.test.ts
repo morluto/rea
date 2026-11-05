@@ -113,11 +113,15 @@ it("preserves cleanup failure authority and resources while excluding diagnostic
   const projected = projectAnalysisError(
     redactExplicitFailure(error, ["private", "REDACTED"]),
   );
-  expect(projected.code).toBe("cleanup_incomplete");
+  expect(projected).toMatchObject({
+    code: "cleanup_incomplete",
+    details: {
+      resources: expect.arrayContaining(["pid:123"]),
+      diagnostics: { exit_code: 2 },
+    },
+  });
   expect(JSON.stringify(projected)).not.toContain("private");
   expect(JSON.stringify(projected)).not.toContain("REDACTED");
-  expect(JSON.stringify(projected)).toContain("pid:123");
-  expect(JSON.stringify(projected)).toContain('"exit_code":2');
 });
 
 it("redacts cleanup primaries and mirrors the source error's live status", () => {
@@ -325,6 +329,23 @@ it("coarsens ordinary sensitive issue-path segments to their real parent", () =>
     throw new Error("Input error required");
   expect(result.issues[0]?.path).toEqual(["input"]);
   expect(JSON.stringify(projectAnalysisError(result))).not.toContain("secret");
+});
+
+it("retains input retry guidance while redacting marked text", () => {
+  const error = new AnalysisInputError(
+    "inspect_web_network_capture",
+    {
+      userMessage: "Selected private-marker capture is a symlink",
+      remediationAction: "Retry /resolved/private-marker/capture.har",
+      conformsToInputContract: true,
+    },
+    [{ path: ["capture_path"], reason: "invalid_format" }],
+  );
+  const redacted = redactExplicitFailure(error, ["private-marker"]);
+  const projected = projectAnalysisError(redacted);
+  expect(projected.remediation.action).toContain("/resolved/");
+  expect(projected).not.toHaveProperty("recovery");
+  expect(JSON.stringify(projected)).not.toContain("private-marker");
 });
 
 it("does not reinterpret an unknown argument name as a JSON pointer", () => {

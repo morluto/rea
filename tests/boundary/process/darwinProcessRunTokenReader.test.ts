@@ -1,4 +1,5 @@
 import { execFile, spawn, type ChildProcess } from "node:child_process";
+import { once } from "node:events";
 import {
   access,
   chmod,
@@ -17,6 +18,7 @@ import { promisify } from "node:util";
 import { _electron as electron } from "playwright-core";
 import { expect, it, onTestFinished, vi } from "vitest";
 import { z } from "zod";
+import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 import {
@@ -1269,7 +1271,7 @@ it.skipIf(!onDarwin)(
         timeout: 10_000,
       });
       expect(JSON.parse(stdout)).toEqual({
-        argvDecoyIgnored: true,
+        argvDecoyFailsClosed: true,
         readableEnvironmentWithoutToken: {
           runId: null,
           environmentEntryCount: 1,
@@ -1310,16 +1312,58 @@ it.skipIf(!onDarwin)(
         emptyArgv0Read: true,
         emptyEnvironmentRecordsBeforeTokenFailClosed: true,
         duplicateTokenFailsClosed: true,
+        invalidTokenEncodingFailsClosed: true,
         finalAssignmentArgumentRead: true,
         missingAppleBoundaryFailsClosed: true,
         malformedBuffersRejected: true,
+        invalidPointerSizeFailsClosed: true,
+        incompleteRestrictedArguments: [
+          "malformed_procargs_path_padding",
+          "malformed_procargs_arguments",
+          "apple_vector_unavailable",
+        ].map((reason) => [
+          {
+            state: "unavailable",
+            reason: "platform_binary_environment_withheld",
+          },
+          {
+            state: "unavailable",
+            reason: "restricted_process_environment_withheld",
+          },
+          { state: "unavailable", reason },
+        ]),
+        signedReadableTokens: [true, true],
+        signedInvalidTokens: [
+          "duplicate_run_token",
+          "invalid_run_token_encoding",
+        ].map((reason) => [
+          { state: "unavailable", reason },
+          { state: "unavailable", reason },
+        ]),
+        malformedStages: [
+          { state: "unavailable", reason: "malformed_procargs_header" },
+          { state: "unavailable", reason: "malformed_procargs_argument_count" },
+          {
+            state: "unavailable",
+            reason: "malformed_procargs_executable_path",
+          },
+          { state: "unavailable", reason: "malformed_procargs_pointer_size" },
+          { state: "unavailable", reason: "malformed_procargs_path_padding" },
+          { state: "unavailable", reason: "malformed_procargs_arguments" },
+          { state: "unavailable", reason: "malformed_procargs_terminator" },
+          {
+            state: "unavailable",
+            reason: "malformed_procargs_trailing_entries",
+          },
+        ],
         malformedObservation: {
           state: "unavailable",
           reason: "malformed_procargs",
         },
         nonAsciiPathRead: true,
         realTokenRead: true,
-        reservedArgumentIgnored: true,
+        reservedArgumentWithRealTokenFailsClosed: true,
+        titleOverwriteFailsClosed: true,
         truncatedArgvFailsClosed: true,
         zeroArgumentsRead: true,
       });
@@ -1368,6 +1412,7 @@ it.skipIf(!onDarwin)(
         zombieLifecycleIsSeparateFromIdentity: true,
         effectiveUidComesFromNativeIdentity: true,
         nativeRelationIsSeparateFromIdentity: true,
+        nativeNameIsSeparateFromIdentity: true,
       });
     } finally {
       await rm(root, { recursive: true, force: true });
@@ -1437,6 +1482,79 @@ it.skipIf(!onDarwin)(
       }
     }
   },
+);
+
+it.skipIf(!onDarwin)(
+  "keeps a long title overwrite unknown when it hides the child's token",
+  async () => {
+    const host = createSystemProcessOwnershipHost("darwin");
+    const children: ChildProcess[] = [];
+    try {
+      for (const length of [256, 384, 512, 1024]) {
+        const child = spawn(
+          process.execPath,
+          [
+            "-e",
+            `if(process.env.PROBE_TITLE!=='-') process.title=process.env.PROBE_TITLE;process.send({ready:true,stillOwned:process.env.REA_PROCESS_RUN_ID==='probe-owned'});setInterval(()=>{},1000)`,
+            "arg1",
+            "arg2",
+            "arg3",
+          ],
+          {
+            env: {
+              REA_PROCESS_RUN_ID: "probe-owned",
+              PROBE_TITLE: "n".repeat(length),
+              PATH: process.env.PATH,
+            },
+            stdio: ["ignore", "ignore", "ignore", "ipc"],
+          },
+        );
+        children.push(child);
+        const message = await waitForChildReadiness(child);
+        expect(message).toEqual({ ready: true, stillOwned: true });
+        if (child.pid === undefined)
+          throw new Error("test child did not receive a PID");
+        const entry = (await host.listProcesses()).find(
+          ({ pid }) => pid === child.pid,
+        );
+        if (
+          entry === undefined ||
+          host.processIdentities === undefined ||
+          host.runTokens === undefined
+        )
+          throw new Error("native child inspection unavailable");
+        const before = (await host.processIdentities([entry])).get(child.pid);
+        const token = (await host.runTokens([entry])).get(child.pid);
+        const after = (await host.processIdentities([entry])).get(child.pid);
+        expect(before).toMatchObject({
+          state: "readable",
+          lifecycle: { state: "observed", lifecycle: "non-zombie" },
+        });
+        if (before?.state !== "readable")
+          throw new Error("child identity unavailable");
+        expect(after).toMatchObject({
+          state: "readable",
+          identity: before.identity,
+          lifecycle: { state: "observed", lifecycle: "non-zombie" },
+        });
+        if (token?.state === "readable") {
+          expect(token.runId).toBe("probe-owned");
+        } else {
+          expect(token).toEqual({
+            state: "unavailable",
+            reason: "ambiguous_environment_boundary",
+          });
+        }
+      }
+    } finally {
+      try {
+        await Promise.all(children.map(stopNodeChild));
+      } finally {
+        await host.close?.();
+      }
+    }
+  },
+  150_000,
 );
 
 it.skipIf(!onDarwin)(
@@ -1516,6 +1634,36 @@ const stopNodeChild = async (child: ChildProcess) => {
   child.kill("SIGKILL");
   await exited;
 };
+
+const waitForChildReadiness = async (child: ChildProcess): Promise<unknown> => {
+  const listeners = new AbortController();
+  const message = once(child, "message", { signal: listeners.signal });
+  const exit = once(child, "exit", { signal: listeners.signal });
+  try {
+    await awaitAcknowledgement(
+      message.then(() => undefined),
+      exit,
+      "title-mutating child readiness",
+    );
+    return (await message)[0];
+  } finally {
+    listeners.abort();
+  }
+};
+
+it("stops a child that never acknowledges readiness", async () => {
+  const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
+    stdio: ["ignore", "ignore", "ignore", "ipc"],
+  });
+  try {
+    await expect(waitForChildReadiness(child)).rejects.toThrow(
+      "title-mutating child readiness was not acknowledged before the gate deadline",
+    );
+  } finally {
+    await stopNodeChild(child);
+  }
+  expect(child.exitCode !== null || child.signalCode !== null).toBe(true);
+});
 
 it.skipIf(process.platform === "win32").each([
   {

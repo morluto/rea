@@ -614,7 +614,7 @@ export const TOOL_EFFECTS: Readonly<Record<string, ToolEffects>> = {
     executesForeignCode: true,
     idempotent: false,
   }),
-  inspect_macho: nativeEvidence,
+  inspect_macho: { ...nativeEvidence, writesFilesystem: true },
   inspect_signature: { ...nativeEvidence, writesFilesystem: true },
   inspect_plist: nativeEvidence,
   list_architectures: nativeEvidence,
@@ -717,6 +717,12 @@ export const TOOL_EFFECTS: Readonly<Record<string, ToolEffects>> = {
   open_binary: effects({ mutatesSession: true, launchesProcess: true }),
   open_bundle_resources: effects({ mutatesSession: true }),
   close_binary: effects({
+    mutatesSession: true,
+    writesFilesystem: true,
+    mayDiscardData: true,
+    idempotent: false,
+  }),
+  reset_investigation: effects({
     mutatesSession: true,
     writesFilesystem: true,
     mayDiscardData: true,

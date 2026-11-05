@@ -7,6 +7,7 @@ import type { JsonValue } from "../domain/jsonValue.js";
 import { DarwinProcessOwnershipInspectionError } from "../process/DarwinProcessRunTokenReader.js";
 import { boundedUtf8Text } from "../process/boundedUtf8Text.js";
 import type { GhidraDiagnosticsScope } from "./GhidraDiagnostics.js";
+import { ghidraFileOffsetOutcome } from "./GhidraFileOffsetFailure.js";
 import { GhidraAdmissionError } from "./GhidraAdmissionError.js";
 import { GhidraLaunchSupportError } from "./GhidraJavaLaunch.js";
 import {
@@ -196,7 +197,14 @@ const createGhidraSessionError = (failure: {
 
 /** Bridge input failures share classification with their domain error projection. */
 export const isGhidraInputFailureCode = (code: string | undefined): boolean =>
-  code === "invalid_request" || code === "not_found" || code === "ambiguous";
+  code === "invalid_request" ||
+  code === "invalid_regex_pattern" ||
+  code === "not_found" ||
+  code === "procedure_not_found" ||
+  code === "file_offset_unmapped" ||
+  code === "procedure_ambiguous" ||
+  code === "file_offset_ambiguous" ||
+  code === "ambiguous";
 
 /** Bind session-failure construction to its causal diagnostic scope. */
 export const bindGhidraSessionFailure =
@@ -222,7 +230,8 @@ export const bindGhidraSessionFailure =
         ...diagnostics(
           kind === "remote" &&
             (isGhidraInputFailureCode(options.remoteCode) ||
-              options.remoteCode === "invalid_function_name")
+              options.remoteCode === "invalid_function_name" ||
+              ghidraFileOffsetOutcome(options.remoteCode) !== undefined)
             ? "request"
             : "session",
         ),
