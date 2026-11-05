@@ -45,7 +45,9 @@ folder to build the environment; this step builds nothing.
 - Paths are compared in their physical spelling. The walked roots are the
   home directory and every content root outside it: the state directories,
   `--state-path` values and absolute arguments other than `/` or a directory
-  containing the home directory, which the limitations name instead. The
+  containing the home directory, which the limitations name instead, plus the
+  `-wal` and `-journal` paths beside each of those selected paths that is not
+  a directory, so a database selected on its own is captured with its logs. The
   baseline walk runs before launch and retains every file under the content
   roots; each later checkpoint reports created, modified, deleted and retyped
   paths against the previous walk and retains every changed file. A creation

@@ -43,7 +43,7 @@ const captureOptions = z.object({
     .array(z.string())
     .optional()
     .describe(
-      "File or directory whose starting content is retained in addition to the application's state directories (repeatable)",
+      "File (with its SQLite -wal and -journal) or directory whose starting content is retained in addition to the application's state directories (repeatable)",
     ),
   exclude: z
     .array(z.string())

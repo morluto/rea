@@ -156,7 +156,9 @@ running.
 **State.** The walked roots (the home directory plus any content root
 outside it), the content roots (state directories, `--state-path` values and
 absolute `--argument` values, except `/` or a directory that contains the home
-directory, which are named in the limitations instead), the state directories
+directory, which are named in the limitations instead; a selected path that is
+not a directory brings the `-wal` and `-journal` paths beside it, so a database
+selected on its own is captured with its logs), the state directories
 as walked (their physical spelling, which differs from the inventory's when one
 is a symlink), and the checkpoints in order: `baseline` before
 launch, each requested checkpoint, `stop` or `time-limit`, and `exit` after the
