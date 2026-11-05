@@ -78,7 +78,9 @@ The class declares:
   another usable repository lists the same version it is left out instead,
   with a limitation. The export also refuses local `.deb` files, snaps,
   flatpaks, AppImages and captures that recorded no repositories, since the
-  computer could not install them by name.
+  computer could not install them by name, and a capture written before
+  credentials were removed whose repository URI still holds them, since it
+  counted that repository's libraries as installable; capture it again.
 - `@computer_app(supports=...)` with both `amd64` and `arm64` for an archive
   package, which the archive serves for both, and only the capture host's
   architecture for a vendor package, since its repository may serve no other.
