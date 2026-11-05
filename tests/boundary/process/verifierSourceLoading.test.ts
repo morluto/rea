@@ -213,6 +213,17 @@ processTest(
       workspace.write(
         "probe.mjs",
         `
+import module from "node:module";
+const stripTypeScriptTypes = module.stripTypeScriptTypes;
+module.stripTypeScriptTypes = (source, options) => {
+  if (options?.mode === "transform") {
+    const cause = new TypeError("The property 'options.mode' must be one of: 'strip'.");
+    cause.code = "ERR_INVALID_ARG_VALUE";
+    throw cause;
+  }
+  return stripTypeScriptTypes(source, { ...options, mode: options?.mode ?? "strip" });
+};
+module.syncBuiltinESMExports();
 import { importVerifierSource } from "./scripts/lib/verifier-source-loader.mjs";
 const url = new URL("./scripts/lib/owner.mts", import.meta.url);
 const first = await importVerifierSource(url);
