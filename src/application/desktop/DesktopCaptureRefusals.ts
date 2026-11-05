@@ -146,7 +146,9 @@ export const checkDesktopCaptureHost = async (
       "Run the command from a terminal in the X11 desktop session, or set DISPLAY.",
     );
   const xprop = host.environment.REA_XPROP_COMMAND ?? "xprop";
-  if ((await resolveProgram(xprop, host.environment)) === undefined)
+  if (
+    (await resolveProgram(xprop, host.environment, process.cwd())) === undefined
+  )
     throw unavailable(
       "executable_missing",
       `${xprop} was not found, so windows cannot be observed.`,
