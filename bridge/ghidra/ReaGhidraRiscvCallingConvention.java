@@ -109,6 +109,15 @@ public final class ReaGhidraRiscvCallingConvention extends GhidraScript {
     UNKNOWN
   }
 
+  /**
+   * The bytes a value's fields hold, and whether Ghidra left any untyped. Ghidra's DWARF import
+   * uses untyped types for an encoding it does not map, so `float _Complex`, which takes two float
+   * registers, shows as a `qword`. Fields of over 8 bytes in all pass by reference whatever they
+   * are, so only values within that limit have an unknown class.
+   */
+  private record Held(long bytes, boolean untyped) {}
+
+  private final Map<DataType, Held> heldFields = new HashMap<>();
   private final Map<DataType, Kind> psabiKinds = new HashMap<>();
   private final Map<DataType, Kind> parameterKinds = new HashMap<>();
   private final Map<DataType, Kind> returnKinds = new HashMap<>();
@@ -385,7 +394,7 @@ public final class ReaGhidraRiscvCallingConvention extends GhidraScript {
   /** Whether the prototype gives a first argument or return of this type another class. */
   private boolean misplaced(PrototypeModel model, DataType type, boolean returned) {
     if (strip(type) instanceof VoidDataType || type.getLength() <= 0) return false;
-    Kind psabi = psabiKinds.computeIfAbsent(type, ReaGhidraRiscvCallingConvention::psabiKind);
+    Kind psabi = psabiKinds.computeIfAbsent(type, this::psabiKind);
     Kind placed =
         (returned ? returnKinds : parameterKinds)
             .computeIfAbsent(type, value -> modelKind(model, value, returned));
@@ -416,8 +425,9 @@ public final class ReaGhidraRiscvCallingConvention extends GhidraScript {
   }
 
   /** The psABI's storage class for a first argument or return of this type, after flattening. */
-  private static Kind psabiKind(DataType type) {
-    if (held(type) <= 8 && untyped(type)) return Kind.UNKNOWN;
+  private Kind psabiKind(DataType type) {
+    Held held = held(type);
+    if (held.bytes() <= 8 && held.untyped()) return Kind.UNKNOWN;
     List<Boolean> fields = new ArrayList<>();
     // C passes no array by value, so an array here is a GNU vector, which Ghidra imports as one.
     DataType value = strip(type);
@@ -430,38 +440,38 @@ public final class ReaGhidraRiscvCallingConvention extends GhidraScript {
     return type.getLength() > 8 ? Kind.REFERENCE : Kind.INTEGER;
   }
 
-  /** The bytes a value's fields hold. Alignment can pad a structure past them. */
-  private static long held(DataType type) {
-    type = strip(type);
-    if (type instanceof Structure structure) {
-      long bytes = 0;
-      for (DataTypeComponent component : structure.getDefinedComponents())
-        bytes += held(component.getDataType());
-      return bytes;
-    }
-    if (type instanceof Array array) return array.getNumElements() * held(array.getDataType());
-    return type.getLength();
-  }
-
   /**
-   * Whether a value holds a field Ghidra left untyped. Ghidra's DWARF import uses these types for
-   * an encoding it does not map, so `float _Complex`, which takes two float registers, shows as a
-   * `qword`. Fields of over 8 bytes in all pass by reference whatever they are, and so do not
-   * reach this.
+   * What a value's fields hold, worked out once per type because nested types can repeat each
+   * other many times over. Alignment can pad a structure past the bytes its fields hold.
    */
-  private static boolean untyped(DataType type) {
-    type = strip(type);
-    if (type instanceof Structure structure) {
-      for (DataTypeComponent component : structure.getDefinedComponents())
-        if (untyped(component.getDataType())) return true;
-      return false;
+  private Held held(DataType type) {
+    DataType value = strip(type);
+    Held known = heldFields.get(value);
+    if (known != null) return known;
+    Held result;
+    if (value instanceof Structure structure) {
+      long bytes = 0;
+      boolean untyped = false;
+      for (DataTypeComponent component : structure.getDefinedComponents()) {
+        Held field = held(component.getDataType());
+        bytes += field.bytes();
+        untyped |= field.untyped();
+      }
+      result = new Held(bytes, untyped);
+    } else if (value instanceof Array array) {
+      Held element = held(array.getDataType());
+      int count = array.getNumElements();
+      result = new Held(count * element.bytes(), count > 0 && element.untyped());
+    } else {
+      boolean untyped =
+          value instanceof ByteDataType
+              || value instanceof WordDataType
+              || value instanceof DWordDataType
+              || value instanceof QWordDataType;
+      result = new Held(value.getLength(), untyped);
     }
-    if (type instanceof Array array)
-      return array.getNumElements() > 0 && untyped(array.getDataType());
-    return type instanceof ByteDataType
-        || type instanceof WordDataType
-        || type instanceof DWordDataType
-        || type instanceof QWordDataType;
+    heldFields.put(value, result);
+    return result;
   }
 
   /**
