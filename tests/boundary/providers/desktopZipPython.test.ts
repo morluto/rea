@@ -249,6 +249,35 @@ print(json.dumps([_zip_refusal(SimpleNamespace(flag_bits=0, compress_type=8, fil
 });
 
 describe("zip entries the exported module cannot fully read", () => {
+  it("reads an entry at most a byte past its declared size, so a forged small size holds no memory", async () => {
+    // 32 MiB of zeros deflate to about 32 KiB; the entry declares one byte.
+    const archive = zipArchive([
+      {
+        name: "bomb.txt",
+        data: Buffer.alloc(32 * MIB),
+        declaredSize: 1,
+        crc: 0,
+      },
+    ]);
+    await expectSameViews([archive]);
+
+    const measured = JSON.parse(
+      python(
+        `import tracemalloc
+tracemalloc.start()
+view = _view(Path(json.load(sys.stdin)[0]))
+peak = tracemalloc.get_traced_memory()[1]
+tracemalloc.stop()
+print(json.dumps({"error": view["view"]["entries"][0]["view_error"], "peak": peak}))`,
+        await archiveFiles([archive]),
+      ),
+    ) as { error: string; peak: number };
+
+    expect(measured.error).toBe("its compressed data is damaged");
+    // Reading the stream whole before clipping it traced about 77 MiB here.
+    expect(measured.peak).toBeLessThan(4 * MIB);
+  });
+
   it("keeps a JSON entry nested too deeply on that entry and reads its siblings, as REA does", async () => {
     const nested = (levels: number) =>
       `${"[".repeat(levels)}${"]".repeat(levels)}`;

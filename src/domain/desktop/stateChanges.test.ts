@@ -194,22 +194,52 @@ describe("diffStateViews fidelity", () => {
   });
 });
 
+/** An archive holding one JSON entry, `a.json`, whose view is `{items}`. */
+const jsonArchive = (items: JsonValue): JsonValue => ({
+  entries: [
+    {
+      name: "a.json",
+      size: 1,
+      sha256: "a",
+      format: "json",
+      view: { items },
+      view_error: null,
+    },
+  ],
+  entry_count: 1,
+  truncated: false,
+});
+
 describe("diffStateViews zip member pairing", () => {
-  it("compares an array's members with what their pointers name once it becomes an object", () => {
-    const archive = (items: JsonValue): JsonValue => ({
-      entries: [
-        {
-          name: "a.json",
-          size: 1,
-          sha256: "a",
-          format: "json",
-          view: { items },
-          view_error: null,
-        },
-      ],
-      entry_count: 1,
-      truncated: false,
+  it("compares counterparts by the evaluator's pointer rules, a bracketed key against an array as a selector", () => {
+    const keyed = { "[name=x]": 1 };
+    const listed = [{ name: "x" }];
+    const items = "/entries/[name=a.json]/view/items";
+
+    expect(
+      diffStateViews("zip", jsonArchive(keyed), jsonArchive(listed)),
+    ).toMatchObject({
+      added: [`${items}/[name=x]/name`],
+      removed: [],
+      changed: [items, `${items}/[name=x]`],
     });
+    expect(
+      diffStateViews("zip", jsonArchive(listed), jsonArchive(keyed)),
+    ).toMatchObject({
+      added: [],
+      removed: [`${items}/[name=x]/name`],
+      changed: [items, `${items}/[name=x]`],
+    });
+    expect(
+      diffStateViews("json", { items: keyed }, { items: listed }),
+    ).toMatchObject({
+      added: ["/items/0", "/items/0/name"],
+      removed: [],
+      changed: ["/items"],
+    });
+  });
+
+  it("compares an array's members with what their pointers name once it becomes an object", () => {
     const unchanged = {
       added: [],
       removed: [],
@@ -218,10 +248,10 @@ describe("diffStateViews zip member pairing", () => {
     };
 
     expect(
-      diffStateViews("zip", archive([1]), archive({ "0": 1 })),
+      diffStateViews("zip", jsonArchive([1]), jsonArchive({ "0": 1 })),
     ).toMatchObject(unchanged);
     expect(
-      diffStateViews("zip", archive({ "0": 1 }), archive([1])),
+      diffStateViews("zip", jsonArchive({ "0": 1 }), jsonArchive([1])),
     ).toMatchObject(unchanged);
   });
 

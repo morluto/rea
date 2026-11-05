@@ -136,6 +136,23 @@ export const locatePointer = (
   return { kind: "value", value: current, ...steps };
 };
 
+/**
+ * What one pointer token names in a value by the evaluator's rules: an own
+ * key, an index, or the one member a selector matches; undefined for none.
+ */
+export const memberAt = (
+  value: JsonValue | undefined,
+  token: string,
+): JsonValue | undefined => {
+  if (Array.isArray(value)) {
+    const step = arrayStep(value, token, true);
+    return "member" in step ? step.member : undefined;
+  }
+  return isRecord(value) && Object.hasOwn(value, token)
+    ? value[token]
+    : undefined;
+};
+
 /** The value a pointer names, or undefined when it names none or a selector on its way is unresolved. */
 export const resolvePointer = (
   view: JsonValue | null,

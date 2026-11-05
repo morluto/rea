@@ -10,12 +10,13 @@ v22.23.1 and Python 3.11.14.
   `verify:test-discovery` and `verify:architecture-guards`: passed, with no
   lint or typed-lint diagnostics in the touched files. The one clone jscpd
   lists in a touched file, `DesktopApplicationState.ts` against
-  `GpgvKeyCheck.ts`, was there before.
+  `GpgvKeyCheck.ts`, was there before. After main was merged in, `lint` and
+  `lint:typed` fail only on main's own `tests/acceptance/webSourceLocationCli.test.ts`.
 - `npx vitest run src/domain/desktop src/application/desktop src/desktop` with
   `tests/boundary/providers/desktopExportPython.test.ts`,
   `desktopTaskPython.test.ts` and `tests/boundary/cli/cliStartupImports.test.ts`:
-  371 passed and 18 skipped (Linux-only cases). The new
-  `tests/boundary/providers/desktopZipPython.test.ts`: 8 passed, and
+  374 passed and 18 skipped (Linux-only cases). The new
+  `tests/boundary/providers/desktopZipPython.test.ts`: 9 passed, and
   `desktopJsonDepthHeap.test.ts`: 1 passed. The desktop
   CLI boundary tests `desktopApplicationCli`, `cliInputSchemaRequired` and
   `cliToolCoverage`: 28 passed.
@@ -99,6 +100,19 @@ after it:
   short-lived iterator results, against 72.7 MB when it queued a pair per
   member, and runs under an 18 MiB old-space limit where the queue needed more
   than 64 MiB. A test runs it under a 32 MiB limit.
+- The exported reader reads an entry in 64 KiB chunks up to a byte past its
+  declared size: a 32,731-byte archive holding 32 MiB of zeros declared as one
+  byte peaks at 0.1 MiB of traced allocations, against 77.5 MiB when it read
+  the stream whole before clipping it, both reporting the entry damaged as REA
+  does. An 8.7 MiB text entry peaks at 48.5 MiB against 47.6 MiB. REA's zip.js
+  reader already stops at the first chunk past the declared size: reading that
+  archive grows the peak resident size by 0.8 MiB, as a one-byte archive does.
+- A check of a namespaced entry's `size`, or of its absence, exports; one
+  comparing the entry whole is refused.
+- The diff finds a counterpart by the evaluator's own step: a bracketed key
+  against an array is a selector, so `{"[name=x]": 1}` becoming
+  `[{"name": "x"}]` reports nothing removed, in an archive or a JSON file, and
+  the draft suggests no absence of a value the selector still names.
 
 ## FreeCAD captures
 

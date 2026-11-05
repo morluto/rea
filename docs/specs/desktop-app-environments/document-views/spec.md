@@ -58,8 +58,12 @@ tolerance. Both evaluators, REA's and the exported verifier's, agree.
   absent, then values changed, added and removed, with an entry or a JSON value
   added whole checked through its members.
 - Export refusals: a pointer into an archive entry's XML that uses namespaces,
-  or whose value holds such an entry, as the whole listing does; and a
+  or a `value_equals` whose value holds such an entry whole, as an entry or the
+  whole listing does, while its metadata and its absence export; and a
   `tolerance` whose value is not a number.
+- Reading: the exported reader reads an entry in bounded chunks, at most one
+  byte past its declared size, so a forged small size cannot make it expand
+  the rest of the stream.
 
 ## Non-goals
 

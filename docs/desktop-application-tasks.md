@@ -127,8 +127,10 @@ The rules both evaluators follow:
 
 The export refuses, naming the check, a file outside the owned paths, a file
 spelled with a leading slash, `.` or `..`, a pointer into a text file or into
-XML that uses namespaces, including an archive entry's (the verifier's reader
-names them differently), the empty pointer (the whole file), a value that
+XML that uses namespaces, including an archive entry's, or a value compared
+whole that holds such an entry (the verifier's reader names them differently;
+an entry's `name`, `size`, `sha256` and `format`, and its absence, are
+checked), the empty pointer (the whole file), a value that
 names the captured home, a `tolerance` with a value that is not a number, and a
 value that looks like an ISO 8601 date and time. Other volatile content, such
 as a counter the app bumps on every save, is for the author to leave out.

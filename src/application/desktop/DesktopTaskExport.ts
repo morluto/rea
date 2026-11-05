@@ -103,24 +103,35 @@ const readTaskFile = async (
   throw primary ?? typed(loaded.error);
 };
 
+/** A check that reads a value by pointer. */
+type ValueCheck = Extract<
+  DesktopTaskCheck,
+  { kind: "value_equals" | "value_absent" }
+>;
+
 /**
- * The XML views a pointer touches across a file's versions: the file's own, or
- * in an archive the entry it goes into, or every entry the value it names
- * holds, such as the whole listing.
+ * The XML views a check depends on across a file's versions: the file's own;
+ * in an archive, the view of the entry its pointer enters, or of every entry a
+ * compared value holds whole (an entry, or the listing). An entry's metadata
+ * and its absence name no XML, so they depend on none.
  */
 const pointedXml = (
-  file: string,
-  pointer: string,
+  check: ValueCheck,
   versions: readonly DesktopStatePath["versions"][number][],
 ) =>
   versions.flatMap((version) => {
-    if (version.format === "xml") return [{ name: file, view: version.view }];
+    if (version.format === "xml")
+      return [{ name: check.file, view: version.view }];
     if (version.format !== "zip") return [];
-    const entry = zipEntryAt(version.view, pointer);
-    const named = resolvePointer(version.view, pointer);
+    const segments = check.pointer.split("/");
+    const compared = check.kind === "value_equals";
+    const entry = zipEntryAt(version.view, check.pointer);
+    const named = compared ? resolvePointer(version.view, check.pointer) : null;
     const entries =
       typeof entry === "object"
-        ? [entry]
+        ? segments[3] === "view" || (compared && segments.length === 3)
+          ? [entry]
+          : []
         : entry === undefined && Array.isArray(named)
           ? named
           : [];
@@ -130,7 +141,7 @@ const pointedXml = (
       !Array.isArray(item) &&
       item.format === "xml" &&
       typeof item.name === "string"
-        ? [{ name: `${item.name} in ${file}`, view: item.view ?? null }]
+        ? [{ name: `${item.name} in ${check.file}`, view: item.view ?? null }]
         : [],
     );
   });
@@ -149,8 +160,8 @@ const targetProblem = (
   const versions = target.files.get(check.file)?.versions ?? [];
   if (versions.some((version) => version.format === "text"))
     return `points into ${check.file}, which is text; use lines_present, lines_absent or line_count`;
-  const named = pointedXml(check.file, check.pointer, versions).find(
-    ({ view }) => namesXmlNamespace(view ?? null),
+  const named = pointedXml(check, versions).find(({ view }) =>
+    namesXmlNamespace(view ?? null),
   );
   return named === undefined
     ? undefined
