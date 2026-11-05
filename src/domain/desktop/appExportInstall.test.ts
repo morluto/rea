@@ -303,9 +303,19 @@ describe("repositories whose URI held credentials", () => {
       uri: "https://rea-user:hunter2@apt.example.com/typora",
     });
     const open = repository({ uri: "https://b.example.com/typora" });
+    // An older capture whose policy source matched no sources entry kept it whole.
+    const unmatched = repository({
+      source: "https://rea-user:hunter2@apt.example.com/typora ./ Packages",
+      uri: null,
+    });
     const refused = exportInstall(typora([marked]), "typora", "arm64");
     const skipped = exportInstall(typora([marked, open]), "typora", "arm64");
     const recapture = exportInstall(typora([older, open]), "typora", "arm64");
+    const sourceOnly = exportInstall(
+      typora([unmatched, open]),
+      "typora",
+      "arm64",
+    );
 
     for (const reason of [
       repositoryRefusal(marked),
@@ -330,9 +340,14 @@ describe("repositories whose URI held credentials", () => {
       ok: false,
       error: expect.stringContaining("Capture the application again"),
     });
-    expect(JSON.stringify([refused, skipped, recapture])).not.toMatch(
-      /rea-user|hunter2/u,
-    );
+    expect(sourceOnly.ok && sourceOnly.value.skipped).toEqual([
+      expect.stringMatching(
+        /^https:\/\/apt\.example\.com\/typora \.\/ Packages: /u,
+      ),
+    ]);
+    expect(
+      JSON.stringify([refused, skipped, recapture, sourceOnly]),
+    ).not.toMatch(/rea-user|hunter2/u);
   });
 });
 
