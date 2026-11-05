@@ -14,7 +14,7 @@ v22.23.1 and Python 3.11.14.
 - `npx vitest run src/domain/desktop src/application/desktop src/desktop` with
   `tests/boundary/providers/desktopExportPython.test.ts`,
   `desktopTaskPython.test.ts` and `tests/boundary/cli/cliStartupImports.test.ts`:
-  365 passed and 18 skipped (Linux-only cases). The new
+  370 passed and 18 skipped (Linux-only cases). The new
   `tests/boundary/providers/desktopZipPython.test.ts`: 8 passed. The desktop
   CLI boundary tests `desktopApplicationCli`, `cliInputSchemaRequired` and
   `cliToolCoverage`: 28 passed.
@@ -97,6 +97,17 @@ after it:
   does, 501 levels read and 502 refused, in a file or an entry.
 - The exported reader reports an entry damaged when its declared size is
   short and its checksum is the prefix's, deflated or stored, as REA does.
+- An array that becomes an object with the same keys, or the reverse, is a
+  changed value, with nothing in it added or removed, so the draft suggests no
+  absence the end state contradicts.
+- The draft checks an empty array or object added to a JSON entry as it is.
+- An entry REA could not read, whose `view` is therefore `null`, gets no
+  drafted check, and both evaluators fail `value_equals null` into its view,
+  while a JSON entry holding `null` still passes it.
+- The exported reader's depth check holds one iterator per level: on a
+  4,000,001-byte array of 800,000 nulls, `_text_view` peaks at 6.7 MB of
+  traced allocations, as before the check, against 58.2 MB when it queued
+  every member.
 
 ## FreeCAD captures
 

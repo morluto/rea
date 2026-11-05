@@ -219,6 +219,28 @@ describe("evaluateTaskChecks selectors and tolerance", () => {
     ).toBe(true);
   });
 
+  it("fails a check into an entry's view that could not be read, where JSON null passes", () => {
+    expect(
+      outcome({
+        kind: "value_equals",
+        pointer: "/entries/[name=huge.brp]/view",
+        value: null,
+      }),
+    ).toEqual({
+      id: "c",
+      passed: false,
+      description:
+        "Documents/plate.FCStd entry huge.brp has no view: larger than the 16 MiB an entry's view reads",
+    });
+    expect(
+      outcome({
+        kind: "value_equals",
+        pointer: "/entries/[name=empty.json]/view",
+        value: null,
+      })?.passed,
+    ).toBe(true);
+  });
+
   it("fails a selector that matches several members or, on the way, none, and says which", () => {
     expect(
       outcome({

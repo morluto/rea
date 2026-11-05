@@ -51,8 +51,8 @@ operation `describe_desktop_application_task` and predicate type
   [selectors](#pointers-and-selectors) and never through an element by
   position: an element added whole that it exists, one removed whole that it
   is absent, then values changed, added and removed, an entry or a JSON value
-  added whole through its members. Values that look like a time the app stamps
-  are left out.
+  added whole through its members, and an empty array or object as it is.
+  Values that look like a time the app stamps are left out.
 
 The suggestions are a starting point. Keep the ones that say what the user
 did; drop the ones that only follow from how the app saves its file. A LibreCAD
@@ -190,7 +190,9 @@ truncated, or when the entry is not listed and the listing is truncated. A
 selector must see every member to know it names one, so a check whose pointer
 searches an array the view may hold only part of fails as undecided: any array
 of a truncated XML view, of a truncated entry's view, or the listing when it
-is cut. A position is decided on what the view holds.
+is cut. A position is decided on what the view holds. Like a file, an entry
+that has no view fails every check into its `view`; its `null` there is no
+value, while an entry holding the JSON document `null` reads as `null`.
 
 XML that uses namespaces is named as the document spells it, in both
 evaluators: an element or attribute by its prefixed name, such as `text:p`

@@ -90,6 +90,12 @@ const keyedMembers = (
   const side = older ? pairing.older : pairing.newer;
   return side.keys.map((key, index) => {
     const partner = side.partners[index];
+    // Once the array became another type, a member's counterpart is what its pointer names there.
+    if (!Array.isArray(other))
+      return {
+        key,
+        counterpart: other === undefined ? undefined : memberOf(other, key),
+      };
     return {
       key,
       counterpart: partner === undefined ? undefined : others[partner],

@@ -194,7 +194,37 @@ describe("diffStateViews fidelity", () => {
   });
 });
 
-describe("diffStateViews zip archives", () => {
+describe("diffStateViews zip member pairing", () => {
+  it("compares an array's members with what their pointers name once it becomes an object", () => {
+    const archive = (items: JsonValue): JsonValue => ({
+      entries: [
+        {
+          name: "a.json",
+          size: 1,
+          sha256: "a",
+          format: "json",
+          view: { items },
+          view_error: null,
+        },
+      ],
+      entry_count: 1,
+      truncated: false,
+    });
+    const unchanged = {
+      added: [],
+      removed: [],
+      changed: ["/entries/[name=a.json]/view/items"],
+      complete: true,
+    };
+
+    expect(
+      diffStateViews("zip", archive([1]), archive({ "0": 1 })),
+    ).toMatchObject(unchanged);
+    expect(
+      diffStateViews("zip", archive({ "0": 1 }), archive([1])),
+    ).toMatchObject(unchanged);
+  });
+
   it("pairs each element with at most one in the other version, so one split in two is an addition", () => {
     const item = (attributes: Record<string, string>) => ({
       name: "item",
@@ -239,7 +269,9 @@ describe("diffStateViews zip archives", () => {
       complete: true,
     });
   });
+});
 
+describe("diffStateViews zip archives", () => {
   it("matches zip entries and XML elements by name, so an inserted one shifts nothing", () => {
     const element = (name: string, attributes: Record<string, string>) => ({
       name,

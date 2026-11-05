@@ -458,6 +458,70 @@ describe("draftTaskFiles archives added to whole", () => {
     ]);
   });
 
+  it("checks an empty array or object added as a value, and nothing absent that a type change keeps", () => {
+    const [file] = draft({
+      "Documents/a.zip": path(
+        "document",
+        "zip",
+        listing([zipEntry("a.json", "json", { a: 1, kept: [1] })]),
+        listing([
+          zipEntry("a.json", "json", {
+            a: 1,
+            kept: { "0": 1 },
+            items: [],
+            meta: {},
+          }),
+        ]),
+      ),
+    });
+
+    expect(file?.suggested).toEqual([
+      {
+        kind: "value_equals",
+        file: "Documents/a.zip",
+        pointer: "/entries/[name=a.json]/view/items",
+        value: [],
+      },
+      {
+        kind: "value_equals",
+        file: "Documents/a.zip",
+        pointer: "/entries/[name=a.json]/view/meta",
+        value: {},
+      },
+    ]);
+  });
+
+  it("checks no entry whose view could not be read, though JSON null is a value", () => {
+    const [file] = draft({
+      "Documents/a.zip": path(
+        "document",
+        "zip",
+        listing([]),
+        listing([
+          {
+            name: "big.json",
+            size: 1,
+            sha256: "big.json",
+            format: "json",
+            view: null,
+            view_error:
+              "a number in it cannot be read exactly, such as an integer above 2^53",
+          },
+          zipEntry("null.json", "json", null),
+        ]),
+      ),
+    });
+
+    expect(file?.suggested).toEqual([
+      {
+        kind: "value_equals",
+        file: "Documents/a.zip",
+        pointer: "/entries/[name=null.json]/view",
+        value: null,
+      },
+    ]);
+  });
+
   it("suggests no element by its position, even at the last step", () => {
     const page = (paragraphs: string[]) =>
       listing([
