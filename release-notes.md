@@ -771,6 +771,7 @@
 * **session:** retain unknown cleanup across mixed failures ([eb24da4](https://github.com/morluto/rea/commit/eb24da4481f90f38eaf34088c721941b79ce6a99))
 * **session:** track retained bundle cleanup dependencies ([6a9911e](https://github.com/morluto/rea/commit/6a9911ea77f5556b684b03de2c6747f62e9a935b))
 * **setup:** bind managed registrations to selected installation ([c77735f](https://github.com/morluto/rea/commit/c77735fa83a66552ec45eef435ab3bb36026ecfe))
+* **setup:** flag unresolved migrated Claude Desktop storage ([#8971](https://github.com/morluto/rea/issues/8971)) ([3484432](https://github.com/morluto/rea/commit/3484432fb18482dcced81272e6181719a3cdfbfa))
 * **setup:** forward supported tool and runtime selections ([f498728](https://github.com/morluto/rea/commit/f4987281fab32825501f6e7b1726c8e2fd2f25a8))
 * **setup:** honor Droid home override ([768b58c](https://github.com/morluto/rea/commit/768b58c6dbb7092b71ad04acd9d015bc4fcc27e3))
 * **setup:** honor VS Code user data overrides ([19f9011](https://github.com/morluto/rea/commit/19f9011511db53fc9b0b8c518a6483baa89bb694))
