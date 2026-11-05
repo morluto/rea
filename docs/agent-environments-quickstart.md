@@ -19,7 +19,7 @@ records the app you provide; you start it and prepare its test data.
 To run the exported environment, install the
 [AgentEnv framework](https://github.com/scaleapi/agentenv-framework#install)
 and start Docker. REA's [compatibility check](testing.md#exported-environment-bundles)
-uses AgentEnv version `0.9.1334` with Python 3.12.
+uses AgentEnv version `0.9.1431` with Python 3.12.
 
 There are two ways to build an environment: ask your agent to record the app,
 or start from a recording you already have.
