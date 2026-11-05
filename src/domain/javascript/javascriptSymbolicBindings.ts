@@ -34,9 +34,9 @@ import {
 import {
   resolveSemanticBindingState,
   semanticResolutionBlocked,
-  type JavaScriptBuiltinPrototypeOwner,
   type JavaScriptSemanticAnalysisState,
   type JavaScriptSemanticBindingState,
+  type SemanticPrototypeOwner,
 } from "./javascriptSemanticState.js";
 import {
   symbolicCondition,
@@ -97,10 +97,11 @@ const LOADER_FREE_AMBIENT_VALUES: ReadonlySet<string> = new Set([
 
 const literalPrototypeOwner = (
   node: t.Node,
-): JavaScriptBuiltinPrototypeOwner | undefined => {
+): SemanticPrototypeOwner | undefined => {
   if (t.isObjectExpression(node)) return "Object";
   if (t.isArrayExpression(node)) return "Array";
   if (t.isStringLiteral(node) || t.isTemplateLiteral(node)) return "String";
+  if (t.isFunction(node) || t.isClass(node)) return "Function";
   if (t.isNumericLiteral(node)) return "Number";
   if (t.isBooleanLiteral(node)) return "Boolean";
   if (t.isRegExpLiteral(node)) return "RegExp";
@@ -108,15 +109,19 @@ const literalPrototypeOwner = (
   return undefined;
 };
 
+const isFreshObject = (node: t.Node): boolean =>
+  t.isObjectExpression(node) ||
+  t.isArrayExpression(node) ||
+  t.isFunction(node) ||
+  (t.isClass(node) && !node.decorators?.length) ||
+  t.isRegExpLiteral(node);
+
 /** Demand-driven substitutions for local bindings, closures and literal module tables. */
 export class JavaScriptSymbolicBindings {
   readonly #writes = new Map<string, PropertyWrite[]>();
   readonly #aliasMemberWrites = new Map<ReadonlySet<string>, PropertyWrite[]>();
   readonly #environments = new WeakMap<t.Node, SymbolicEnvironment>();
-  readonly #cache = new WeakMap<
-    SymbolicEnvironment,
-    WeakMap<t.Node, SymbolicValue>
-  >();
+  #cache = new WeakMap<SymbolicEnvironment, WeakMap<t.Node, SymbolicValue>>();
   readonly #active = new Set<t.Node>();
   readonly #activeFunctions = new Set<t.Function>();
   readonly #exportAliases = new Map<string, string>();
@@ -140,21 +145,19 @@ export class JavaScriptSymbolicBindings {
   readonly #mutated = new Set<string>();
   readonly #mutatedAliasGroups = new Set<ReadonlySet<string>>();
   readonly #electronIdentity: JavaScriptElectronIdentity;
-  readonly #indexMemberMutationFacts: () => void;
+  readonly #indexMemberMutationFacts: (() => boolean | void) | undefined;
   readonly #namespaceOwners = new Map<string, t.Function>();
   readonly #moduleFactories = new WeakSet<t.Function>();
   readonly #unsafeExports = new Set<string>();
   readonly #aliasesByBinding = new Map<string, string[]>();
   readonly #aliasSourcesByBinding = new Map<string, string[]>();
   readonly #bindingAliasGroups = new Map<string, ReadonlySet<string>>();
+  readonly #prototypeMutationOwners: ReadonlySet<SemanticPrototypeOwner>;
   readonly #loaderFreeBindings = new Map<string, boolean>();
   readonly #loaderFreeBindingsInProgress = new Set<string>();
-  readonly #loaderFreeFunctionCalls = new WeakMap<
-    t.Function,
-    Map<string, boolean>
-  >();
+  #loaderFreeFunctionCalls = new WeakMap<t.Function, Map<string, boolean>>();
   #loaderProofDepth = 0;
-  #memberMutationFactsIndexed = false;
+  #memberMutationFactsReady: boolean;
   readonly #bootstrapTables: Array<{
     readonly tableAliases: ReadonlySet<string>;
     readonly modules: Map<string, SymbolicValue>;
@@ -169,6 +172,8 @@ export class JavaScriptSymbolicBindings {
   unresolvedRequire = false;
   /** A read gave up before an initializer that may supply a module loader. */
   unresolvedLoader = false;
+  /** A loader-free proof needs the yielding member-mutation index. */
+  memberMutationFactsRequired = false;
 
   constructor(
     readonly state: JavaScriptSemanticAnalysisState,
@@ -176,15 +181,21 @@ export class JavaScriptSymbolicBindings {
     electronIdentity = completeSemanticSteps(
       indexJavaScriptElectronIdentitySteps(program, state),
     ),
-    indexMemberMutationFacts: () => void = () => {},
+    indexMemberMutationFacts?: () => boolean | void,
   ) {
     this.#electronIdentity = electronIdentity;
+    this.#indexMemberMutationFacts = indexMemberMutationFacts;
+    this.#memberMutationFactsReady =
+      state.memberMutationFactsComplete ||
+      indexMemberMutationFacts === undefined;
+    this.#prototypeMutationOwners = new Set(
+      state.prototypeMutationSites.map(({ owner }) => owner),
+    );
     const shapes = createSemanticExpressionShapeResolver(state);
     const defineProperty = createGlobalReferenceReader(state, [
       "Object",
       "defineProperty",
     ]);
-    this.#indexMemberMutationFacts = indexMemberMutationFacts;
     this.#indexBindingAliases();
     traverseJavaScriptAst(program, {
       enter: (node) => {
@@ -687,6 +698,15 @@ export class JavaScriptSymbolicBindings {
     });
   }
 
+  /** Retry provisional reads after the yielding mutation index completes. */
+  memberMutationFactsIndexed(): void {
+    this.memberMutationFactsRequired = false;
+    this.#memberMutationFactsReady = true;
+    this.#cache = new WeakMap();
+    this.#loaderFreeBindings.clear();
+    this.#loaderFreeFunctionCalls = new WeakMap();
+  }
+
   #evaluate(node: t.Node, env: SymbolicEnvironment): SymbolicValue {
     if (
       t.isStringLiteral(node) ||
@@ -866,7 +886,10 @@ export class JavaScriptSymbolicBindings {
     ) {
       this.unresolved = true;
       const invocation = this.#calleeInvocation(node);
-      if (!this.#isLoaderFreeBinding(binding, invocation))
+      if (
+        !this.#isLoaderFreeBinding(binding, invocation) &&
+        !this.memberMutationFactsRequired
+      )
         this.unresolvedLoader = true;
       return symbolicUnknown("initializer not available at this read");
     }
@@ -889,9 +912,12 @@ export class JavaScriptSymbolicBindings {
     callerParameterLoaderFree?: ReadonlyMap<string, LoaderFreeArgument>,
     proofInvocation?: t.CallExpression | t.OptionalCallExpression,
   ): boolean {
-    if (!this.#memberMutationFactsIndexed) {
-      this.#indexMemberMutationFacts();
-      this.#memberMutationFactsIndexed = true;
+    if (!this.#memberMutationFactsReady) {
+      if (this.#indexMemberMutationFacts?.() === false) {
+        this.memberMutationFactsRequired = true;
+        return false;
+      }
+      this.#memberMutationFactsReady = true;
     }
     if (
       this.#bindingMutated(binding.bindingId) ||
@@ -1105,6 +1131,8 @@ export class JavaScriptSymbolicBindings {
         ? argument
         : false;
     };
+    const firstSpread =
+      invocation?.arguments.findIndex(t.isSpreadElement) ?? -1;
     runtimeFunctionParameters(node).forEach((parameter, index) => {
       const target = t.isRestElement(parameter)
         ? parameter.argument
@@ -1123,7 +1151,9 @@ export class JavaScriptSymbolicBindings {
           invocation.arguments
             .slice(index)
             .every((argument) => argumentLoaderFree(argument) !== false)
-        : argumentLoaderFree(invocation?.arguments[index]);
+        : firstSpread >= 0 && index >= firstSpread
+          ? false
+          : argumentLoaderFree(invocation?.arguments[index]);
       if (binding !== undefined)
         parameterLoaderFree.set(binding.bindingId, loaderFree);
       parameterStates.push(
@@ -1228,7 +1258,7 @@ export class JavaScriptSymbolicBindings {
     )
       return true;
     const key = semanticStaticPropertyKey(parent.property, parent.computed);
-    if (key === null) return true;
+    if (key === null) return false;
     const path = ["global", node.name, key] as const;
     return (
       !this.state.ambientWrites.covers(path) &&
@@ -1324,8 +1354,8 @@ export class JavaScriptSymbolicBindings {
       (!node.computed || this.#isLoaderFree(node.property, depth + 1)) &&
       (ownObjectProperty ||
         (!inheritedMemberChanged &&
-          !this.state.prototypeRequireMutationOwners.has(owner) &&
-          !this.state.prototypeRequireMutationOwners.has("Object")))
+          !this.#prototypeMutationOwners.has(owner) &&
+          !this.#prototypeMutationOwners.has("Object")))
     );
   }
 
@@ -1999,8 +2029,7 @@ export class JavaScriptSymbolicBindings {
         (initializer) =>
           initializer === binding.initializers[0] ||
           initializer.projection.length > 0 ||
-          (!t.isObjectExpression(initializer.node) &&
-            !t.isArrayExpression(initializer.node)),
+          !isFreshObject(initializer.node),
       )
     );
   }
@@ -2014,10 +2043,10 @@ export class JavaScriptSymbolicBindings {
       const current = pending.pop()!;
       if (group.has(current)) continue;
       group.add(current);
-      pending.push(
-        ...(this.#aliasesByBinding.get(current) ?? []),
-        ...(this.#aliasSourcesByBinding.get(current) ?? []),
-      );
+      for (const alias of this.#aliasesByBinding.get(current) ?? [])
+        pending.push(alias);
+      for (const source of this.#aliasSourcesByBinding.get(current) ?? [])
+        pending.push(source);
     }
     for (const member of group) this.#bindingAliasGroups.set(member, group);
     return group;
