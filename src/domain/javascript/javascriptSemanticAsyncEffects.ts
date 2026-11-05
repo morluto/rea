@@ -69,11 +69,15 @@ const TIMER_CANCEL_METHODS = [
 ] as const;
 
 /**
- * Node keeps two disjoint timer handle families. `clearTimeout` and
- * `clearInterval` are aliases that act only on a `Timeout` from `setTimeout` or
- * `setInterval`, and `clearImmediate` acts only on an `Immediate` from
- * `setImmediate`. Clearing across the families returns without doing anything,
- * so the timer keeps running.
+ * Node keeps two timer handle families. `clearTimeout` and `clearInterval` are
+ * aliases that act only on a `Timeout` from `setTimeout` or `setInterval`, and
+ * `clearImmediate` acts only on an `Immediate` from `setImmediate`. Clearing
+ * within a family always cancels. Clearing across the families is
+ * runtime-dependent: `setImmediate` then `clearTimeout`/`clearInterval` never
+ * cancels, but `setTimeout` then `clearImmediate` reports as cancelled on some
+ * supported Node versions and fires on others. The analysis therefore treats a
+ * cross-family clear as unresolved rather than as proof that the timer kept
+ * running.
  */
 const timerHandleFamily = (
   method: JavaScriptSemanticTimerOperation["method"],
@@ -449,8 +453,8 @@ const resolveTimers = (
     const linked =
       candidate.handleRead?.origins.flatMap((origin) => {
         const schedule = schedules.get(origin);
-        // A handle only clears the family that produced it; clearing across
-        // families is a silent no-op in Node, so it establishes no link.
+        // A handle always clears its own family. Clearing across families is
+        // runtime-dependent, so it establishes no link in either direction.
         if (
           schedule === undefined ||
           timerHandleFamily(schedule.method) !==
