@@ -884,6 +884,27 @@ describe("version report rendering", () => {
   });
 });
 
+describe("unknown MCP subcommand correction", () => {
+  workspaceCliTest(
+    "keeps the correction on the subcommand after timing globals",
+    async ({ cli }) => {
+      for (const timing of ["--timings", "--no-timings", "--timings=false"]) {
+        const timed = await cli.run({
+          arguments: [timing, "mcp", timing, "ad", "--format", "json"],
+        });
+        expect(timed.json).toMatchObject({
+          cta: {
+            commands: [
+              { command: `rea ${timing} mcp ${timing} add --format json` },
+              {},
+            ],
+          },
+        });
+      }
+    },
+  );
+});
+
 describe("unknown MCP subcommand output", () => {
   workspaceCliTest(
     "reports the rejection in the explicitly selected format",
