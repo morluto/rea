@@ -93,7 +93,9 @@ const sha256 = async (path) =>
 /** Build and independently inspect a source-owned ELF; never execute it. */
 export async function buildRiscvFixture(directory, bits, buildOptions = {}) {
   const { floatAbi = "double", pie = false } =
-    typeof buildOptions === "string" ? { floatAbi: buildOptions } : buildOptions;
+    typeof buildOptions === "string"
+      ? { floatAbi: buildOptions }
+      : buildOptions;
   assert.ok(bits === 32 || bits === 64);
   const build = BUILDS[floatAbi];
   assert.ok(build !== undefined, `No ${floatAbi}-float RISC-V fixture`);
@@ -137,10 +139,7 @@ export async function buildRiscvFixture(directory, bits, buildOptions = {}) {
   const elf = await readRiscvElf(reader, path, floatAbi);
   assert.equal(elf.class, `ELF${bits}`);
   assert.match(elf.data, /little endian/u);
-  assert.match(
-    elf.type,
-    pie ? /^DYN\b/u : /^EXEC\b/u,
-  );
+  assert.match(elf.type, pie ? /^DYN\b/u : /^EXEC\b/u);
   if (pie) {
     assert.match(
       elf.stdout,

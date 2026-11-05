@@ -320,9 +320,7 @@ try {
       ? ["rea_riscv_abi_caller", "rea_riscv_isa_probe", "rea_riscv_probe"]
       : ["rea_riscv_leaf", "rea_riscv_probe"])
       assert.ok(
-        callees.some(
-          (address) => BigInt(address) === BigInt(addressFor(name)),
-        ),
+        callees.some((address) => BigInt(address) === BigInt(addressFor(name))),
         `${name} missing from the entry's callees`,
       );
     const dossier = functionDossierSchema.parse(
@@ -334,8 +332,7 @@ try {
     assert.ok(dossier.pseudocode.trim().length > 0);
     if (!stripped) {
       const floatCode = await call("procedure_pseudo_code", {
-        procedure:
-          addressFor(soft ? "rea_riscv_abi_wide" : "rea_riscv_float"),
+        procedure: addressFor(soft ? "rea_riscv_abi_wide" : "rea_riscv_float"),
       });
       assert.ok(typeof floatCode === "string" && floatCode.trim().length > 0);
       assert.match(floatCode, /\bdouble\b/u);
@@ -469,10 +466,7 @@ try {
       );
       const error = requireMcpToolError(reply);
       const reason = "shared libraries without PT_INTERP";
-      assert.ok(
-        JSON.stringify(error).includes(reason),
-        JSON.stringify(error),
-      );
+      assert.ok(JSON.stringify(error).includes(reason), JSON.stringify(error));
       headers.push({ flags: "shared", outcome: "refused", reason });
     } else {
       // Header-mutated copies test admission; they are not new compiler claims.
@@ -515,7 +509,11 @@ try {
           "ghidra",
           "--json",
         ];
-        const cliOptions = { env, timeout: 240000, maxBuffer: 16 * 1024 * 1024 };
+        const cliOptions = {
+          env,
+          timeout: 240000,
+          maxBuffer: 16 * 1024 * 1024,
+        };
         if (outcome === "admitted") {
           // The double-float image now declares ilp32: refused before, admitted
           // now through the soft-float lane with the image's own ISA string.
@@ -550,7 +548,10 @@ try {
           continue;
         }
         const error = requireMcpToolError(reply);
-        assert.ok(JSON.stringify(error).includes(outcome), JSON.stringify(error));
+        assert.ok(
+          JSON.stringify(error).includes(outcome),
+          JSON.stringify(error),
+        );
         await assert.rejects(
           execute(process.execPath, cliArguments, cliOptions),
           (cause) =>

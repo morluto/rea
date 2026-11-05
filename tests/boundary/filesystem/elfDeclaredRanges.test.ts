@@ -168,7 +168,7 @@ it("detects PT_INTERP in program headers and records hasInterpreter for RISC-V",
   fixture.u16(16, 3); // ET_DYN
   const withoutInterp = await admit(fixture.bytes);
   expect(withoutInterp.ok).toBe(true);
-  if (!withoutInterp.ok) throw new Error(withoutInterp.error.message);
+  if (!withoutInterp.ok) throw withoutInterp.error;
   expect(withoutInterp.value.architecture).toBe("riscv");
   if (withoutInterp.value.architecture === "riscv") {
     expect(withoutInterp.value.riscv.hasInterpreter).toBeUndefined();
@@ -177,7 +177,7 @@ it("detects PT_INTERP in program headers and records hasInterpreter for RISC-V",
   fixture.u32(fixture.program, 3); // PT_INTERP
   const withInterp = await admit(fixture.bytes);
   expect(withInterp.ok).toBe(true);
-  if (!withInterp.ok) throw new Error(withInterp.error.message);
+  if (!withInterp.ok) throw withInterp.error;
   expect(withInterp.value.architecture).toBe("riscv");
   if (withInterp.value.architecture === "riscv") {
     expect(withInterp.value.riscv.hasInterpreter).toBe(true);

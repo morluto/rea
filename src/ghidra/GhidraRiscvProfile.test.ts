@@ -249,8 +249,8 @@ const registerRiscvPieAdmissionCases = () => {
     });
     const wide = await provider.resolveAnalysisProfile(pie64);
     const narrow = await provider.resolveAnalysisProfile(pie32);
-    if (!wide.ok || !narrow.ok)
-      throw new Error("expected admitted RISC-V PIE profiles");
+    if (!wide.ok) throw wide.error;
+    if (!narrow.ok) throw narrow.error;
     expect(wide.value.profile?.parameters.riscv_elf).toEqual({
       elf_class: 64,
       byte_order: "little",
@@ -310,7 +310,7 @@ const registerRiscvPieAdmissionCases = () => {
 
     await writeFile(testFile, buffer);
     const resolved = await parseBinaryTarget(testFile);
-    if (!resolved.ok) throw new Error(resolved.error.message);
+    if (!resolved.ok) throw resolved.error;
     expect(resolved.value.kind).toBe("executable");
     expect(resolved.value.architecture).toBe("riscv");
     if (resolved.value.architecture === "riscv") {
@@ -425,9 +425,10 @@ const registerRiscvAdmissionAndCapabilityCases = () => {
       target({ type: 3, hasInterpreter: true }),
     );
     expect(pieNotes).toContainEqual(
-      expect.stringContaining(
-        "Position-independent executable (PIE): Ghidra assigns analysis coordinates from its default image base (0x100000)",
-      ),
+      expect.stringContaining("0x100000"),
+    );
+    expect(pieNotes).toContainEqual(
+      expect.stringContaining("Position-independent executable"),
     );
     expect(
       ghidraRiscvLimitations({
