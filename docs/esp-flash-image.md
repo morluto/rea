@@ -21,7 +21,7 @@ structure ESP-IDF's bootloader verifies (`esp_partition_table_verify`):
 32-byte `0x50AA` entries, at most one `0xEBEB` MD5 entry over the entries
 before it, and a terminating entry within `0xC00` bytes. ESP-IDF accepts a
 table with no partition entries, but REA requires one, so that neither
-erased flash nor a lone MD5 entry is read as a table. A table whose MD5 does not match, or that has a second MD5 entry, is
+erased flash nor a lone MD5 entry is read as a table. A table whose MD5 does not match, that has a second MD5 entry, or that has partition entries after the MD5 entry, is
 still read, with `md5.status` `invalid` and a limitation, because the
 bootloader would refuse it. The table is located in this order:
 
@@ -206,9 +206,9 @@ or anti-rollback, and `basis` names its branch:
 - `no-otadata`: the table declares no otadata partition, or one at offset 0,
   which the bootloader takes for none, so it selects the factory index, as in
   the common factory-only layout;
-- `none`: the bootloader rejects the table, for an MD5 mismatch or a second
-  MD5 entry, or cannot read an otadata partition smaller than two 4 KiB
-  sectors, and resets without selecting an app;
+- `none`: the bootloader rejects the table, for an MD5 mismatch, a second
+  MD5 entry, or partitions following the MD5 entry, or cannot read an otadata
+  partition smaller than two 4 KiB sectors, and resets without selecting an app;
 - `unknown`: the dump lacks an otadata record the bootloader reads.
 
 Without an OTA app the records do not matter, so a dump that lacks them
