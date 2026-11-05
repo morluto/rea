@@ -2,7 +2,7 @@ import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { expect, it, onTestFinished } from "vitest";
 
 import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
-import { toolContract } from "../../../src/contracts/toolContracts.js";
+import { OFFICIAL_TOOL_CONTRACTS } from "../../../src/contracts/officialToolContracts.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { jsonObjectSchema } from "../../../src/domain/jsonValue.js";
 import { ok } from "../../../src/domain/result.js";
@@ -29,6 +29,11 @@ const connectPseudocode = async (text: string | null) => {
 };
 
 it("retains a complete pseudocode observation once and pages its exact text through advertised MCP contracts", async () => {
+  const contract = OFFICIAL_TOOL_CONTRACTS.find(
+    ({ name }) => name === "procedure_pseudo_code",
+  );
+  if (contract === undefined)
+    throw new Error("Missing procedure_pseudo_code contract");
   const text =
     "int search(void) { return 42; }\n".repeat(3200) + "// 搜索😀\r\n";
   const { mcp, session, calls } = await connectPseudocode(text);
@@ -119,9 +124,7 @@ it("retains a complete pseudocode observation once and pages its exact text thro
     });
     expect(complete.isError).not.toBe(true);
     expect(
-      toolContract("procedure_pseudo_code").outputSchema.safeParse(
-        complete.structuredContent,
-      ).success,
+      contract.outputSchema.safeParse(complete.structuredContent).success,
     ).toBe(true);
     expect(parseEvidence(complete.structuredContent)).toEqual(parent);
   }
