@@ -250,9 +250,24 @@ describe.skipIf(process.platform === "win32")(
         `[Desktop Entry]\nType=Application\nName=Dot\nPath=${opt}\nExec=env PATH=. notes\n`,
       );
 
+      // `..` after a link climbs from the link's target, so the lookup keeps it.
+      const releases = join(home, "releases");
+      await mkdir(join(releases, "v2"), { recursive: true });
+      await mkdir(join(releases, "bin"));
+      await writeFile(join(releases, "bin/notes"), "#!/bin/sh\nexit 0\n");
+      await chmod(join(releases, "bin/notes"), 0o755);
+      await symlink(join(releases, "v2"), join(home, "opt/current"));
+      const linked = `${home}/opt/current/../bin/notes`;
+      await writeFile(
+        join(home, ".local/share/applications/org.example.link.desktop"),
+        `[Desktop Entry]\nType=Application\nName=Link\nExec=${linked}\n`,
+      );
+
       const inventory = await inventoryOf("org.example.dot", installed);
+      const viaLink = await inventoryOf("org.example.link", installed);
 
       expect(inventory.executable.path).toBe(join(opt, "notes"));
+      expect(viaLink.executable.path).toBe(linked);
     });
 
     it("names state directories after the entry's full id", async () => {
