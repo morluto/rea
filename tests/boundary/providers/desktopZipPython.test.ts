@@ -15,7 +15,9 @@ import {
 import { PYTHON_TASK_EVALUATOR } from "../../../src/domain/desktop/appTaskPython.js";
 import { detectStateFormat } from "../../../src/domain/desktop/stateFormats.js";
 import {
+  emptyEntriesArchive,
   odtArchive,
+  withZip64End,
   zipArchive,
   type ZipMember,
 } from "../../../src/domain/desktop/zipArchive.fixture.js";
@@ -83,6 +85,31 @@ const expectSameViews = async (archives: readonly Buffer[]) => {
     expect(theirs.error).toBe(ours.error);
   }
 };
+
+/** REA's view of an archive, once the exported module's is shown to be the same. */
+const sameView = async (archive: Buffer) => {
+  await expectSameViews([archive]);
+  const read = await readZipView(archive);
+  if (!read.ok) throw new Error(read.error);
+  return read.value;
+};
+
+/** The exported module's zip view of an archive file, and the most memory reading it traced. */
+const pythonPeak = async (archive: Buffer) =>
+  JSON.parse(
+    python(
+      `import tracemalloc
+tracemalloc.start()
+view = _view(Path(json.load(sys.stdin)[0]))["view"]
+peak = tracemalloc.get_traced_memory()[1]
+tracemalloc.stop()
+print(json.dumps({"view": view, "peak": peak}))`,
+      await archiveFiles([archive]),
+    ),
+  ) as {
+    view: { entries: Record<string, JsonValue>[]; entry_count: number };
+    peak: number;
+  };
 
 const sqliteHeader = Buffer.concat([
   Buffer.from("SQLite format 3\0"),
@@ -248,6 +275,56 @@ print(json.dumps([_zip_refusal(SimpleNamespace(flag_bits=0, compress_type=8, fil
   });
 });
 
+describe("zip directories in the exported module", () => {
+  it("tells directories apart as zip.js does: by a final slash, a Unix mode or the MS-DOS attribute", async () => {
+    const archive = zipArchive([
+      { name: "a.txt", data: "a\n" },
+      { name: "slash/", data: "" },
+      { name: "unix", data: "", madeBy: 0x0314, external: 0o040755 * 0x10000 },
+      { name: "dos", data: "", madeBy: 20, external: 0x10 },
+      {
+        name: "unix-file",
+        data: "u\n",
+        madeBy: 0x0314,
+        external: 0o100644 * 0x10000,
+      },
+    ]);
+
+    expect(await sameView(archive)).toMatchObject({
+      entries: [{ name: "a.txt" }, { name: "unix-file" }],
+      entry_count: 2,
+      truncated: false,
+    });
+  });
+
+  it("finds the directory through Zip64 end records, as zip.js and zipfile do", async () => {
+    const archive = withZip64End(
+      zipArchive([
+        { name: "a.txt", data: "a\n" },
+        { name: "d/" },
+        { name: "b.json", data: '{"b": 1}' },
+      ]),
+    );
+
+    expect(await sameView(archive)).toMatchObject({
+      entries: [{ name: "a.txt" }, { name: "b.json", view: { b: 1 } }],
+      entry_count: 2,
+    });
+  });
+
+  it("lists the first 1,000 of 50,000 entries holding no more of the directory than those", async () => {
+    const archive = emptyEntriesArchive(50_000);
+    await expectSameViews([archive]);
+
+    const { view, peak } = await pythonPeak(archive);
+
+    expect(view.entries).toHaveLength(1000);
+    expect(view.entry_count).toBe(50_000);
+    // Parsing every record before the listing limit applied traced about 25 MiB here.
+    expect(peak).toBeLessThan(4 * MIB);
+  });
+});
+
 describe("zip entries the exported module cannot fully read", () => {
   it("reads an entry at most a byte past its declared size, so a forged small size holds no memory", async () => {
     // 32 MiB of zeros deflate to about 32 KiB; the entry declares one byte.
@@ -261,21 +338,11 @@ describe("zip entries the exported module cannot fully read", () => {
     ]);
     await expectSameViews([archive]);
 
-    const measured = JSON.parse(
-      python(
-        `import tracemalloc
-tracemalloc.start()
-view = _view(Path(json.load(sys.stdin)[0]))
-peak = tracemalloc.get_traced_memory()[1]
-tracemalloc.stop()
-print(json.dumps({"error": view["view"]["entries"][0]["view_error"], "peak": peak}))`,
-        await archiveFiles([archive]),
-      ),
-    ) as { error: string; peak: number };
+    const { view, peak } = await pythonPeak(archive);
 
-    expect(measured.error).toBe("its compressed data is damaged");
+    expect(view.entries[0]?.view_error).toBe("its compressed data is damaged");
     // Reading the stream whole before clipping it traced about 77 MiB here.
-    expect(measured.peak).toBeLessThan(4 * MIB);
+    expect(peak).toBeLessThan(4 * MIB);
   });
 
   it("keeps a JSON entry nested too deeply on that entry and reads its siblings, as REA does", async () => {
@@ -287,10 +354,7 @@ print(json.dumps({"error": view["view"]["entries"][0]["view_error"], "peak": pea
       { name: "edge.json", data: nested(501) },
     ]);
 
-    await expectSameViews([archive]);
-    const read = await readZipView(archive);
-    if (!read.ok) throw new Error(read.error);
-    expect(read.value).toMatchObject({
+    expect(await sameView(archive)).toMatchObject({
       entries: [
         { name: "Document.xml", format: "xml", view_error: null },
         {

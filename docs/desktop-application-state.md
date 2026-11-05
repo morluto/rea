@@ -90,8 +90,9 @@ limit above, or its reader failed.
 Many applications save a document as a zip archive of XML and other files:
 FreeCAD's `.FCStd` and `.FCBak`, OpenDocument (`.odt`, `.ods`, whose
 `content.xml` is the document), Office Open XML, EPUB and JAR. Such a file is
-`zip`, and its view lists its file entries, without directories, in archive
-order:
+`zip`, and its view lists its file entries in archive order, leaving out
+directories: an entry whose name ends in `/`, or whose attributes mark a Unix
+directory or, from an MS-DOS host, the directory attribute:
 
 ```json
 {
@@ -123,7 +124,10 @@ deflated, larger than 16 MiB, more than 100 times its compressed size, past the
 database, or an archive, inside an archive keeps its format and `sha256` and
 has a `view_error` instead of a view: it is not read. The view lists at most
 1,000 entries; `entry_count` counts them all, and `truncated` is true when some
-are not listed. An archive whose central directory cannot be read has a
+are not listed. REA reads the central directory itself, a record at a time,
+through any Zip64 end record, and hands the zip reader only the records it
+lists, so an archive of hundreds of thousands of entries costs no more to read
+than one of a thousand. An archive whose central directory cannot be read has a
 `view_error` of its own.
 
 ## Kinds of change

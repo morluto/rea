@@ -15,9 +15,9 @@ v22.23.1 and Python 3.11.14.
 - `npx vitest run src/domain/desktop src/application/desktop src/desktop` with
   `tests/boundary/providers/desktopExportPython.test.ts`,
   `desktopTaskPython.test.ts` and `tests/boundary/cli/cliStartupImports.test.ts`:
-  374 passed and 18 skipped (Linux-only cases). The new
-  `tests/boundary/providers/desktopZipPython.test.ts`: 9 passed, and
-  `desktopJsonDepthHeap.test.ts`: 1 passed. The desktop
+  375 passed and 18 skipped (Linux-only cases). The new
+  `tests/boundary/providers/desktopZipPython.test.ts`: 12 passed, and
+  `desktopJsonDepthHeap.test.ts` and `desktopZipHeap.test.ts`: 1 passed each. The desktop
   CLI boundary tests `desktopApplicationCli`, `cliInputSchemaRequired` and
   `cliToolCoverage`: 28 passed.
 
@@ -113,6 +113,17 @@ after it:
   against an array is a selector, so `{"[name=x]": 1}` becoming
   `[{"name": "x"}]` reports nothing removed, in an archive or a JSON file, and
   the draft suggests no absence of a value the selector still names.
+- Both readers bound the central directory: an archive of 600,000 empty
+  entries (52.4 MiB) reads in a 24 MiB V8 old space against more than 48 MiB
+  when zip.js parsed every record, and grows peak RSS by 37 MiB against
+  184 MiB; the exported reader peaks at 1.3 MiB of traced allocations against
+  293.6 MiB, and at 1.3 MiB against 25.1 MiB for 50,000 entries. Directories
+  are told apart as zip.js tells them in both, and Zip64 end records are
+  followed.
+- A diff comparing an object of selector-shaped keys with an array indexes the
+  array once per set of selector fields: 2,000 keys read its members 4,000
+  times against 4,002,000, and 8,000 and 20,000 keys diff in 19 and 31 ms
+  against 980 ms and 5.4 s.
 
 ## FreeCAD captures
 

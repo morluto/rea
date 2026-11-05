@@ -1,3 +1,5 @@
+import { PYTHON_ZIP_HELPERS } from "./appExportPythonZip.js";
+
 /** The generated module's imports. */
 /** The class method that holds readiness until the app's own window shows, not a splash screen with its class. */
 export const PYTHON_READY_CHECK = `
@@ -12,11 +14,13 @@ export const PYTHON_IMPORTS = `from __future__ import annotations
 import contextlib
 import copy
 import hashlib
+import io
 import json
 import math
 import os
 import re
 import sqlite3
+import struct
 import subprocess
 import sys
 import tempfile
@@ -51,14 +55,6 @@ SQLITE_BUSY_S = 0.25
 MAX_PARSED_BYTES = 4 * 1024 * 1024
 MAX_JSON_VIEW_DEPTH = 500
 JSON_TOO_DEEP = f"nested deeper than the {MAX_JSON_VIEW_DEPTH} levels a JSON view keeps"
-MAX_ZIP_ENTRIES = 1000
-MAX_ZIP_ENTRY_BYTES = 16 * 1024 * 1024
-MAX_ZIP_BYTES = 64 * 1024 * 1024
-MAX_ZIP_RATIO = 100
-ZIP_READ_CHUNK = 64 * 1024
-#: Formats an archive entry may have whose reader needs a tool, a worker or another archive opened.
-NOT_READ_INSIDE = ((SQLITE_HEADER, "sqlite", "a SQLite database"), (GVDB_HEADER, "dconf", "a dconf database"),
-                   (ZIP_HEADER, "zip", "an archive"))
 
 
 def _respelled(text: str, home: Path) -> str:
@@ -386,94 +382,6 @@ def _text_view(name: str, text: str) -> dict:
     return _text(text)
 
 
-def _entry_view(name: str, data: bytes) -> dict:
-    """An archive entry's format and view by the rules a file's follow; a database or an archive inside is not
-    read."""
-    for header, form, inside in NOT_READ_INSIDE:
-        if data.startswith(header):
-            return {"format": form, "view": None, "error": f"{inside} inside an archive is not read"}
-    try:
-        text = data.decode("utf-8-sig") if b"\x00" not in data[:8192] else None
-    except UnicodeDecodeError:
-        text = None
-    if text is None:
-        return {"format": "binary", "view": None}
-    view = _text_view(name, text)
-    if view["format"] in ("json", "keyfile") and len(data) > MAX_PARSED_BYTES:
-        return {"format": view["format"], "view": None,
-                "error": "larger than the 4 MiB limit for JSON and key file views"}
-    return view
-
-
-def _zip_refusal(info, spent: int):
-    """Why an entry is not read, checked in REA's order, or None; spent is the archive's bytes read so far."""
-    if info.flag_bits & 0x1:
-        return "encrypted, so it is not read"
-    if info.compress_type not in (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED):
-        return f"compressed with method {info.compress_type}, which the view does not read"
-    if info.file_size > MAX_ZIP_ENTRY_BYTES:
-        return "larger than the 16 MiB an entry's view reads"
-    if info.file_size > MAX_ZIP_RATIO * info.compress_size:
-        return f"expands more than {MAX_ZIP_RATIO} times, so it is not read"
-    if spent + info.file_size > MAX_ZIP_BYTES:
-        return "past the 64 MiB read from one archive"
-    return None
-
-
-def _entry_bytes(archive, info):
-    """An entry's uncompressed bytes, or None when they fail its CRC-32 or are not exactly its declared size. Reading
-    stops one byte past that size, which data past a short declared size fills, and asks for a bounded chunk at a
-    time, which bounds what the decompressor expands per call, so a forged small size holds no more than that."""
-    probe = copy.copy(info)
-    probe.file_size = info.file_size + 1
-    data = bytearray()
-    try:
-        with archive.open(probe) as member:
-            while len(data) <= info.file_size:
-                chunk = member.read(min(probe.file_size - len(data), ZIP_READ_CHUNK))
-                if not chunk:
-                    break
-                data += chunk
-    except (zipfile.BadZipFile, zlib.error, EOFError, OSError, ValueError):
-        return None
-    return data if len(data) == info.file_size else None
-
-
-def _zip_entry(archive, info, refusal):
-    """One entry of a zip view: its name, size and digest, and its own format and view, or why it was not read."""
-    entry = {"name": info.filename, "size": info.file_size, "sha256": None, "format": None, "view": None,
-             "view_error": refusal}
-    if refusal is not None:
-        return entry
-    data = _entry_bytes(archive, info)
-    if data is None:
-        return {**entry, "view_error": "its compressed data is damaged"}
-    view = _entry_view(info.filename, data)
-    return {**entry, "sha256": hashlib.sha256(data).hexdigest(), "format": view["format"],
-            "view": view.get("view"), "view_error": view.get("error")}
-
-
-def _zip(path: Path) -> dict:
-    """A zip archive's file entries in archive order, up to REA's entry, size, ratio and archive limits; nothing is
-    extracted to disk and no archive inside is opened."""
-    entries, count, spent = [], 0, 0
-    try:
-        with zipfile.ZipFile(path) as archive:
-            for info in archive.infolist():
-                if info.is_dir():
-                    continue
-                count += 1
-                if len(entries) >= MAX_ZIP_ENTRIES:
-                    continue
-                refusal = _zip_refusal(info, spent)
-                spent += info.file_size if refusal is None else 0
-                entries.append(_zip_entry(archive, info, refusal))
-    except (zipfile.BadZipFile, zlib.error, EOFError, NotImplementedError, OSError, ValueError):
-        return {"format": "zip", "view": None, "error": "not a readable zip archive"}
-    view = {"entries": entries, "entry_count": count, "truncated": count > len(entries)}
-    return {"format": "zip", "view": view, "truncated": view["truncated"]}
-
-
 def _view(path: Path) -> dict:
     """A typed JSON view of one file in the shapes of REA's state view; truncated says the view is partial."""
     too_large = {"format": None, "view": None, "error": "larger than 64 MiB, the most the view reads"}
@@ -510,7 +418,7 @@ def _views(home: Path, paths: list) -> dict:
                 except (OSError, ValueError, sqlite3.Error, RecursionError) as error:
                     files[key] = {"format": None, "view": None, "error": str(error)}
     return files
-`;
+`.concat(PYTHON_ZIP_HELPERS);
 
 /** Constants the class module assigns before the helpers. */
 const PYTHON_CONSTANTS = [

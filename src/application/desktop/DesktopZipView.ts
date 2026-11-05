@@ -1,5 +1,5 @@
 import {
-  Uint8ArrayReader,
+  Reader,
   Uint8ArrayWriter,
   ZipReader,
   type FileEntry,
@@ -20,8 +20,43 @@ import {
   zipView,
   type ZipEntryHeader,
 } from "../../domain/desktop/zipView.js";
+import {
+  boundedDirectoryTail,
+  scanZipDirectory,
+} from "../../domain/desktop/zipDirectory.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
 import { err, ok, type Result } from "../../domain/result.js";
+
+/**
+ * An archive as zip.js reads it: its entries in place, then a directory of the
+ * kept records alone, so zip.js parses no more records than the view lists.
+ * Reads are copies, as zip.js's own byte array reader returns.
+ */
+class BoundedArchiveReader extends Reader<Uint8Array> {
+  readonly #entries: Uint8Array;
+  readonly #tail: Uint8Array;
+
+  constructor(entries: Uint8Array, tail: Uint8Array) {
+    super(entries);
+    this.#entries = entries;
+    this.#tail = tail;
+    this.size = entries.length + tail.length;
+  }
+
+  override readUint8Array(index: number, length: number): Promise<Uint8Array> {
+    const end = Math.min(index + length, this.size);
+    const split = this.#entries.length;
+    const read = new Uint8Array(Math.max(0, end - index));
+    if (index < split)
+      read.set(this.#entries.subarray(index, Math.min(end, split)));
+    if (end > split)
+      read.set(
+        this.#tail.subarray(Math.max(0, index - split), end - split),
+        Math.max(0, split - index),
+      );
+    return Promise.resolve(read);
+  }
+}
 
 /** An entry's view, its bytes checked against its CRC-32 and declared size, which bounds them. */
 const readEntry = async (
@@ -52,19 +87,25 @@ export const readZipView = async (
   bytes: Uint8Array,
   signal?: AbortSignal,
 ): Promise<Result<JsonValue, string>> => {
-  const reader = new ZipReader(new Uint8ArrayReader(bytes), ZIP_READER_OPTIONS);
+  // The directory is scanned first, so zip.js sees only the records the view lists.
+  const directory = scanZipDirectory(bytes, MAX_ZIP_ENTRIES);
+  if (directory === undefined) return err(UNREADABLE_ZIP);
+  const reader = new ZipReader(
+    new BoundedArchiveReader(
+      bytes.subarray(0, directory.start),
+      boundedDirectoryTail(directory),
+    ),
+    ZIP_READER_OPTIONS,
+  );
   const entries: JsonValue[] = [];
-  let count = 0;
   let spent = 0;
   try {
     for await (const entry of reader.getEntriesGenerator({
       decodeText: decodeZipEntryText,
     })) {
       signal?.throwIfAborted();
+      if (entry.directory) continue;
       const name = zipEntryPath(entry);
-      if (entry.directory || name.endsWith("/")) continue;
-      count += 1;
-      if (entries.length >= MAX_ZIP_ENTRIES) continue;
       const header: ZipEntryHeader = {
         name,
         size: entry.uncompressedSize,
@@ -86,5 +127,5 @@ export const readZipView = async (
   } finally {
     await reader.close();
   }
-  return ok(zipView(entries, count));
+  return ok(zipView(entries, directory.count));
 };
