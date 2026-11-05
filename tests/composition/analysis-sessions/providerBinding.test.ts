@@ -175,6 +175,7 @@ describe("target-bound provider routing", () => {
     expect(cancelled).toEqual({
       ok: false,
       error: new AnalysisCancelledError("open_binary", { cause: reason }),
+      selection: { kind: "binary", path: target, sha256: expect.any(String) },
     });
     if (!cancelled.ok) expect(cancelled.error.cause).toBe(reason);
     expect(alpha.clients[0]?.closed).toBe(false);
