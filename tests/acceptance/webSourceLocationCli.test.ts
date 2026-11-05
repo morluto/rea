@@ -14,6 +14,64 @@ import { webSourceLocationFixture } from "../fixtures/webSourceLocation.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
 
+const expectInvalidSourceLocation = (
+  json: unknown,
+  manifest: string,
+  root: string,
+  map: string,
+  sourceMapText: string,
+) => {
+  expect(json).toMatchObject({
+    code: "invalid_request",
+    details: {
+      issues: [
+        {
+          path: ["generated_position", "line"],
+          reason: "out_of_range",
+          maximum: 1,
+        },
+      ],
+      partial_observation: {
+        kind: "web-trace-observation",
+        analysis: "incomplete",
+        manifest: { path: manifest },
+        source: { path: join(root, "files", "modules", "main.js") },
+        source_map: {
+          path: map,
+          sha256: createHash("sha256").update(sourceMapText).digest("hex"),
+        },
+      },
+    },
+  });
+};
+
+const expectSourceLocationLimitations = (json: unknown) => {
+  const limitation =
+    "Source names and sourceRoot are reported declarations. REA derives resolved URLs using WHATWG URL resolution; the pinned upstream codec decodes mappings. No original source is fetched or executed.";
+  expect(json).toMatchObject({
+    limitations: expect.arrayContaining([limitation]),
+    normalized_result: { limitations: expect.arrayContaining([limitation]) },
+  });
+};
+
+const expectColumnOutOfRange = (
+  response: Parameters<typeof parseMcpToolError>[0],
+  sourceLength: number,
+) => {
+  expect(parseMcpToolError(response).error).toMatchObject({
+    code: "invalid_request",
+    details: {
+      issues: [
+        {
+          path: ["generated_position", "column"],
+          reason: "out_of_range",
+          maximum: sourceLength,
+        },
+      ],
+    },
+  });
+};
+
 cliTest(
   "accepts numeric UTF-16 coordinates and runs the actual owned source-map codec without a browser",
   async ({ cli }) => {
@@ -88,12 +146,7 @@ cliTest(
         },
       },
     });
-    const limitation =
-      "Source names and sourceRoot are reported declarations. REA derives resolved URLs using WHATWG URL resolution; the pinned upstream codec decodes mappings. No original source is fetched or executed.";
-    expect(response.json).toMatchObject({
-      limitations: expect.arrayContaining([limitation]),
-      normalized_result: { limitations: expect.arrayContaining([limitation]) },
-    });
+    expectSourceLocationLimitations(response.json);
     const transport = new StdioClientTransport({
       command: process.execPath,
       args: [
@@ -139,18 +192,7 @@ cliTest(
         generated_position: { line: 1, column: 10 },
       },
     });
-    expect(parseMcpToolError(pastColumn).error).toMatchObject({
-      code: "invalid_request",
-      details: {
-        issues: [
-          {
-            path: ["generated_position", "column"],
-            reason: "out_of_range",
-            maximum: fixture.source.length,
-          },
-        ],
-      },
-    });
+    expectColumnOutOfRange(pastColumn, fixture.source.length);
     const invalid = await cli.run({
       arguments: [
         "trace-web-source-location",
@@ -166,30 +208,13 @@ cliTest(
       timeoutMs: 45000,
     });
     expect(invalid.exitCode).toBe(1);
-    expect(invalid.json).toMatchObject({
-      code: "invalid_request",
-      details: {
-        issues: [
-          {
-            path: ["generated_position", "line"],
-            reason: "out_of_range",
-            maximum: 1,
-          },
-        ],
-        partial_observation: {
-          kind: "web-trace-observation",
-          analysis: "incomplete",
-          manifest: { path: manifest },
-          source: { path: join(root, "files", "modules", "main.js") },
-          source_map: {
-            path: map,
-            sha256: createHash("sha256")
-              .update(fixture.sourceMap.text)
-              .digest("hex"),
-          },
-        },
-      },
-    });
+    expectInvalidSourceLocation(
+      invalid.json,
+      manifest,
+      root,
+      map,
+      fixture.sourceMap.text,
+    );
   },
   // Allow cold CLI and MCP ownership preparation across the full parity sequence.
   180_000,
