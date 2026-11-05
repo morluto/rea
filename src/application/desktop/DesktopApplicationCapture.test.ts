@@ -35,6 +35,7 @@ const request = (output: string): DesktopCaptureRequest => ({
   maxEntries: 10_000,
   maxFileBytes: 1024 * 1024,
   maxContentBytes: 8 * 1024 * 1024,
+  packageFile: undefined,
 });
 
 const executable = async (path: string, text: string) => {

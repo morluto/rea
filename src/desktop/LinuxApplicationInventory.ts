@@ -30,6 +30,7 @@ import {
   readStableFilePrefix,
 } from "../filesystem/readStableFileBytes.js";
 import { APT_LOCATIONS } from "./AptRepositoryInventory.js";
+import { inspectPackageFile } from "./DebianPackageFile.js";
 import {
   debianPackage,
   type DebianPackageHost,
@@ -49,6 +50,8 @@ export interface LinuxApplicationRequest {
   readonly home: string;
   /** Where a relative executable is found and an executable launch runs. */
   readonly callerDirectory: string;
+  /** The absolute path of the `.deb` file the application was installed from, whose facts are recorded. */
+  readonly packageFile?: string | undefined;
 }
 
 /** Why the request does not name a launchable application. */
@@ -397,10 +400,22 @@ export const inspectLinuxApplication = async (
   };
   const { limitations, signingKeys } = context;
   const flatpak = wrapper.kind === "flatpak" ? wrapper.application_id : null;
-  const package_ = await identifyPackage(
+  const identified = await identifyPackage(
     { program: path, resolved, flatpak },
     context,
   );
+  const package_ =
+    request.packageFile === undefined
+      ? identified
+      : {
+          ...identified,
+          ...(await inspectPackageFile(
+            request.packageFile,
+            identified,
+            host.runQuery,
+            signal,
+          )),
+        };
   const sandboxDirectories = [
     ...(package_.kind === "snap" && package_.name !== null
       ? [join(request.home, "snap", package_.name)]

@@ -88,6 +88,21 @@ const aptRepositorySchema = z.strictObject({
 });
 export type AptRepository = z.infer<typeof aptRepositorySchema>;
 
+/** The `.deb` file the application was installed from, as `dpkg-deb` read it; the capture keeps these facts, never the file. */
+const packageFileSchema = z.strictObject({
+  /** The file's name, without its folder. */
+  name: z.string().regex(/^(?!\.\.?$)[^/\0]+$/u),
+  sha256,
+  size: z.int().min(0),
+  package: z.string().min(1),
+  version: z.string().min(1),
+  architecture: z.string().min(1),
+  /** Each Depends entry as the file declares it, alternatives and version constraints included. */
+  depends: z.array(z.string()),
+  pre_depends: z.array(z.string()),
+});
+export type DesktopPackageFile = z.infer<typeof packageFileSchema>;
+
 const packageSchema = z.strictObject({
   kind: z.enum(["deb", "snap", "flatpak", "appimage", "unknown"]),
   name: z.string().nullable(),
@@ -110,6 +125,10 @@ const packageSchema = z.strictObject({
   unpackaged_libraries: z.array(z.string()).optional(),
   /** Why the library lists are incomplete; absent when they are complete. */
   library_packages_reason: z.string().optional(),
+  /** The `--package-file` the capture named, when it holds the installed name, version and architecture. */
+  package_file: packageFileSchema.optional(),
+  /** Why the `--package-file` the capture named was not recorded. */
+  package_file_reason: z.string().optional(),
 });
 
 /** What REA found out about the application before launching it. */

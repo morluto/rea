@@ -58,9 +58,11 @@ const settled = async <First, Second>(
 };
 
 /**
- * Vendor repositories with their verified keys and, when the export would
- * install from one, the installable packages of the libraries the
- * executable loads; the library walk runs beside the repository check.
+ * Vendor repositories with their verified keys and, unless the archive
+ * installs the package by name, the installable packages of the libraries
+ * the executable loads, which a vendor repository's package or a local
+ * install's may leave out of its dependencies; the library walk runs beside
+ * the repository check.
  */
 const installFacts = async (
   installed: Pick<Package, "name" | "sources" | "source_origins">,
@@ -69,23 +71,20 @@ const installFacts = async (
   origins: ReadonlyMap<string, string | null> | undefined,
 ): Promise<Partial<Package>> => {
   const { runQuery } = context.host;
-  const fromVendor =
-    installed.sources.length > 0 &&
-    !fromUbuntuNobleArchive(installed.sources, installed.source_origins);
   const [vendor, libraries] = await settled(
     inspectAptRepositories(
       { sources: installed.sources, origins: installed.source_origins },
       context.host,
       context.signal,
     ),
-    fromVendor
-      ? inspectLibraryPackages(
+    fromUbuntuNobleArchive(installed.sources, installed.source_origins)
+      ? Promise.resolve(undefined)
+      : inspectLibraryPackages(
           executable,
           installed.name ?? "",
           runQuery,
           context.signal,
-        )
-      : Promise.resolve(undefined),
+        ),
   );
   context.limitations.push(...vendor.limitations);
   for (const [sha256, bytes] of vendor.keys)
@@ -157,10 +156,8 @@ export const debianPackage = async (
       );
     const sources =
       policy === undefined ? [] : [...parseAptPolicySources(policy)];
-    const origins =
-      sources.length === 0
-        ? new Map<string, string | null>()
-        : await policyOrigins(context);
+    // A local install's library packages are matched to the archive by origin too.
+    const origins = await policyOrigins(context);
     const installed = {
       kind: "deb" as const,
       name: parsed?.name ?? name,

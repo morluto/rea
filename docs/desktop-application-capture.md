@@ -97,6 +97,7 @@ line.
 | `--max-entries`          | 250,000 | Paths recorded per checkpoint walk                                                        |
 | `--max-file-bytes`       | 64 MiB  | Largest file whose content is retained                                                    |
 | `--max-content-bytes`    | 1 GiB   | Total retained content                                                                    |
+| `--package-file`         | none    | The `.deb` file the application was installed from; its facts are recorded, not the file  |
 
 ## The capture folder
 
@@ -151,10 +152,11 @@ missing, apt holds no signed release, no sources entry matches, the entry's
 `UbuntuESMApps`, host `esm.ubuntu.com`) are not checked: apt reaches them only
 with the host's Ubuntu Pro credentials, which a computer does not have.
 
-When the installed version has apt sources and none is the Ubuntu 24.04
-archive, `library_packages` lists the packages that own the shared libraries
-the executable loads at start; the walk runs beside the repository check, and
-not at all for an archive package, whose export does not use it. REA reads
+Unless the installed version comes from the Ubuntu 24.04 archive, so for a
+vendor repository's package and for a local install that no apt source lists,
+`library_packages` lists the packages that own the shared libraries the
+executable loads at start; the walk runs beside the repository check, and not
+at all for an archive package, whose export does not use it. REA reads
 DT_NEEDED from the resolved executable and from each library it finds, and
 looks each soname up as ld.so does: in the RPATH of the needing image and of
 each image up its chain of loaders to the executable when the needing image
@@ -172,6 +174,20 @@ packages from a PPA or a local `.deb`, are listed in
 not an ELF image (a launcher script, for example), `ldconfig`, `dpkg-query` or
 `apt-cache` is missing, a library could not be read or names more than 512
 libraries, or the walk stopped after 512 libraries.
+
+An application installed from a `.deb` file you downloaded, such as VariCAD
+from varicad.com, has no apt source a computer could install it from. Name
+that file with `--package-file` so the export can have the computer download
+it instead. REA reads the file's control fields with
+`dpkg-deb --field FILE Package Version Architecture Depends Pre-Depends`, and
+when its Package, Version and Architecture are the installed package's, it
+reads the file once more for its SHA-256 and size and records `package_file`:
+the file's `name` without its folder, `sha256`, `size`, `package`, `version`,
+`architecture`, and the `depends` and `pre_depends` entries as the file
+declares them. Otherwise `package_file_reason` says why, for example that
+`dpkg-deb` is not installed or that the file holds another version than the
+installed one. The capture never copies the file: it is the vendor's, and only
+these facts are kept.
 
 Snaps, flatpaks and
 AppImages are recognised from their paths, and flatpaks also from a

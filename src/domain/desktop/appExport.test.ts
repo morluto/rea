@@ -8,6 +8,7 @@ import {
   ownedPaths,
   renderAppClass,
   renderEnvToml,
+  renderInstallScript,
   renderReadme,
   type DesktopAppExportPlan,
 } from "./appExport.js";
@@ -22,6 +23,7 @@ const plan: DesktopAppExportPlan = {
   libraryPackages: [],
   aptSources: [],
   architectures: ["amd64", "arm64"],
+  packageFile: null,
   electron: false,
   command: ["mousepad"],
   windowClass: "Mousepad",
@@ -222,5 +224,62 @@ describe("renderers", () => {
     expect(readme).toContain("Chromium's sandbox is off (`--no-sandbox`)");
     expect(renderReadme(plan)).toContain("from the distribution archive");
     expect(renderReadme(plan)).not.toContain("sandbox");
+  });
+
+  it("downloads a package file, installs it with its run script after its dependencies, and supports its architecture only", () => {
+    const file = {
+      url: "https://mirror.example.com/varicad/varicad2026-en_2.03_amd64.deb",
+      sha256: "d".repeat(64),
+      path: "vendor/varicad2026-en_2.03_amd64.deb",
+      architecture: "amd64",
+      dependencies: ["libc6", "libgl1", "dpkg"],
+      unreadDependencies: [],
+    };
+    const varicad: DesktopAppExportPlan = {
+      ...plan,
+      name: "varicad",
+      title: "VariCAD",
+      aptPackage: "varicad2026-en",
+      packageVersion: "2.03",
+      architectures: ["amd64"],
+      libraryPackages: ["libgl1", "libxt6t64"],
+      packageFile: file,
+    };
+
+    const module = renderAppClass(varicad);
+
+    expect(module).toContain(
+      `@linux(
+    packages=Packages(apt=["libc6", "libgl1", "dpkg", "libxt6t64"]),
+    downloads=[Download(url="${file.url}", sha256="${file.sha256}", to="vendor/varicad2026-en_2.03_amd64.deb", arch="amd64")],
+    run=[RunScript(script="install-package.sh")],
+    launch=Launch(`,
+    );
+    expect(module).toContain(
+      "Download, Launch, Packages, Ready, RunScript, computer_app, linux",
+    );
+    expect(module).toContain('"arch": ["amd64"]');
+    expect(renderAppClass(plan)).not.toContain("downloads=");
+    expect(renderInstallScript(file)).toBe(
+      "#!/bin/sh\nset -eu\ndpkg -i 'vendor/varicad2026-en_2.03_amd64.deb'\nrm -f 'vendor/varicad2026-en_2.03_amd64.deb'\n",
+    );
+    expect(
+      renderInstallScript({ ...file, path: "vendor/it's $HOME.deb" }),
+    ).toContain(`dpkg -i 'vendor/it'"'"'s $HOME.deb'`);
+    const readme = renderReadme(varicad);
+    expect(readme).toContain(
+      `It installs \`varicad2026-en\` 2.03 from its package file, downloaded from\n  \`${file.url}\` when the bundle is put and refused unless its SHA-256 is \`${file.sha256}\``,
+    );
+    expect(readme).toContain(
+      "The bundle does not contain the package: `install-package.sh` installs `vendor/varicad2026-en_2.03_amd64.deb` with dpkg",
+    );
+    expect(readme).toContain("(`libc6`, `libgl1`, `dpkg`)");
+    expect(readme).toContain(
+      "runs exactly the captured version, on `amd64` only",
+    );
+    expect(readme).toContain("Vendor sites may refuse automated downloads");
+    expect(readme).toContain(
+      "such as a trial's terms, is the operator's to check",
+    );
   });
 });

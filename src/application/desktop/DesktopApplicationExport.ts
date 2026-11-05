@@ -19,6 +19,7 @@ import {
   launchCommand,
   renderAppClass,
   renderEnvToml,
+  renderInstallScript,
   renderReadme,
   renderSkill,
   renderSmokeTask,
@@ -26,6 +27,7 @@ import {
   type HomePathCollision,
 } from "../../domain/desktop/appExport.js";
 import {
+  INSTALL_SCRIPT,
   electronLaunchArguments,
   installLimitations,
 } from "../../domain/desktop/appExportInstall.js";
@@ -70,6 +72,8 @@ export interface DesktopExportRequest {
   readonly name: string | undefined;
   /** Task files to validate and add; a capture yields at most one. */
   readonly tasks: readonly string[];
+  /** Where the computer downloads the captured package file from, for an application installed from one. */
+  readonly packageUrl?: string | undefined;
 }
 
 /** What the export wrote. */
@@ -161,7 +165,11 @@ const planExport = (
 } => {
   const { application, host } = capture;
   const source = exportEnvironmentName(capture, request.name);
-  const { install, windowClass } = admitApplication(capture, source);
+  const { install, windowClass } = admitApplication(
+    capture,
+    source,
+    request.packageUrl,
+  );
   const electron = application.executable.electron_markers.length > 0;
   const { homePath, files, collisions, paths } = exportedStateFiles(
     capture,
@@ -186,6 +194,7 @@ const planExport = (
     libraryPackages: install.libraryPackages,
     aptSources: install.sources,
     architectures: install.architectures,
+    packageFile: install.packageFile,
     electron,
     command: launchCommand(
       electronLaunchArguments(application.argv, electron),
@@ -380,6 +389,14 @@ const runExport = async (
     text(`${environment}/env.toml`, renderEnvToml(plan)),
     text(`${environment}/${appModuleFile(plan.name)}`, renderAppClass(plan)),
     text(`${environment}/SKILL.md`, renderSkill(plan)),
+    ...(plan.packageFile === null
+      ? []
+      : [
+          text(
+            `${environment}/${INSTALL_SCRIPT}`,
+            renderInstallScript(plan.packageFile),
+          ),
+        ]),
     text("tasks/smoke.json", renderSmokeTask(plan)),
     ...(admitted?.files ?? []).map((file) => text(file.path, file.content)),
   ];
@@ -471,6 +488,7 @@ export const exportDesktopApplication = async (
         capture_evidence_id: captureEvidenceId,
         named: request.name !== undefined,
         tasks: request.tasks.length,
+        package_url: request.packageUrl !== undefined,
       },
       result: {
         ...result,

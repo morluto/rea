@@ -350,6 +350,13 @@ end state. A refusal names the check: one that fails on the end state does not
 match what the user left; "every check already passes on the seed" means no
 check captures the change.
 
+When the export refuses an application that no apt repository installs, ask
+the user for the `.deb` file they installed it from and capture with
+`--package-file`, then ask where the computer may download that file and pass
+it as `--package-url`. Never fetch a vendor's download page yourself: such
+sites often refuse automated downloads, and the copy and its licence are the
+user's to choose.
+
 Tell the user the task's name, prompt and checks, and how to measure a solve
 rate: run `agent-env run DIRECTORY --task NAME --agent claude-code` with
 `--model MODEL` three times and count the runs reported `passed`. Do not run

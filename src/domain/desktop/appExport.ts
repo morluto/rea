@@ -1,4 +1,8 @@
-import type { ExportAptSource } from "./appExportInstall.js";
+import {
+  INSTALL_SCRIPT,
+  type ExportAptSource,
+  type ExportPackageFile,
+} from "./appExportInstall.js";
 import {
   PYTHON_DATA_HOOKS,
   PYTHON_HELPERS,
@@ -28,6 +32,8 @@ export interface DesktopAppExportPlan {
   readonly aptSources: readonly ExportAptSource[];
   /** The Debian architectures the app supports. */
   readonly architectures: readonly string[];
+  /** The package file downloaded and installed in place of the app's apt package; null when apt installs it. */
+  readonly packageFile: ExportPackageFile | null;
   /** Whether the app is Electron, whose launch then runs without Chromium's sandbox. */
   readonly electron: boolean;
   readonly command: readonly string[];
@@ -312,10 +318,10 @@ const installName = (plan: DesktopAppExportPlan): string =>
     ? plan.aptPackage
     : `${plan.aptPackage}/${plan.aptRelease}`;
 
-/** The app's package, its library packages and dconf-cli when settings are loaded. */
+/** The app's package, or a package file's dependencies, then its library packages and dconf-cli when settings are loaded. */
 const aptPackages = (plan: DesktopAppExportPlan): readonly string[] => [
   ...new Set([
-    installName(plan),
+    ...(plan.packageFile?.dependencies ?? [installName(plan)]),
     ...plan.libraryPackages,
     ...(plan.dconf.length === 0 ? [] : ["dconf-cli"]),
   ]),
@@ -330,6 +336,22 @@ const aptSources = (plan: DesktopAppExportPlan): string =>
             `AptSource(apt=${py(source.uri)}, suite=${py(source.suite)}, components=${pyList(source.components)}, key=${py(source.keyFile)})`,
         )
         .join(", ")}],`;
+
+/** A package file is downloaded when the bundle is put and installed by the run script once the apt packages are in. */
+const packageFileInstall = ({ packageFile: file }: DesktopAppExportPlan) =>
+  file === null
+    ? ""
+    : `\n    downloads=[Download(url=${py(file.url)}, sha256=${py(file.sha256)}, to=${py(file.path)}, arch=${py(file.architecture)})],\n    run=[RunScript(script=${py(INSTALL_SCRIPT)})],`;
+
+/** The run script: agentenv runs it as root from the app's folder, with the network off, after the apt packages and the download are in. */
+export const renderInstallScript = (file: ExportPackageFile): string =>
+  [
+    "#!/bin/sh",
+    "set -eu",
+    `dpkg -i ${shellQuote(file.path)}`,
+    `rm -f ${shellQuote(file.path)}`,
+    "",
+  ].join("\n");
 
 /** The computer app class: install, launch, owned paths, seed and data hooks. */
 export const renderAppClass = (plan: DesktopAppExportPlan): string => {
@@ -350,7 +372,7 @@ ${PYTHON_HELPERS}
 
 @computer_app(supports=[{"os": {"type": "linux", "display": ["x11"]}, "arch": ${pyList(plan.architectures)}}])
 @linux(
-    packages=Packages(apt=${pyList(aptPackages(plan))}),${aptSources(plan)}
+    packages=Packages(apt=${pyList(aptPackages(plan))}),${aptSources(plan)}${packageFileInstall(plan)}
     launch=Launch(at="boot", command=${pyList(plan.command)}, window={"class": ${py(plan.windowClass)}}, ready=Ready(window=True)),
     paths=PATHS,
     skill="SKILL.md",
@@ -387,8 +409,25 @@ const installedFrom = (plan: DesktopAppExportPlan): string =>
         )
         .join(" and ");
 
+/** What the computer installs, and from where. */
+const installs = (plan: DesktopAppExportPlan): string =>
+  plan.packageFile === null
+    ? `\`${installName(plan)}\` from ${installedFrom(plan)}`
+    : `\`${plan.aptPackage}\`${plan.packageVersion === null ? "" : ` ${plan.packageVersion}`} from its package file, downloaded from
+  \`${plan.packageFile.url}\` when the bundle is put and refused unless its SHA-256 is \`${plan.packageFile.sha256}\``;
+
+const packageFileNotes = ({ packageFile: file }: DesktopAppExportPlan) =>
+  file === null
+    ? []
+    : [
+        `- The bundle does not contain the package: \`${INSTALL_SCRIPT}\` installs \`${file.path}\` with dpkg once the apt packages
+  it depends on are in${file.dependencies.length === 0 ? "" : ` (${file.dependencies.map((name) => `\`${name}\``).join(", ")})`}, so the computer runs exactly the captured version, on \`${file.architecture}\` only.`,
+        "- Vendor sites may refuse automated downloads, so the URL must point at a copy of the file the operator may use.\n  The package's licence, such as a trial's terms, is the operator's to check.",
+      ];
+
 const installNotes = (plan: DesktopAppExportPlan): string =>
   [
+    ...packageFileNotes(plan),
     ...(plan.libraryPackages.length === 0
       ? []
       : [
@@ -416,7 +455,7 @@ Exported by REA's \`export-desktop-application\` from a capture of the \`${plan.
 ${DESKTOP_EXPORT_FRAMEWORK_VERSION}.
 
 - \`envs/${plan.name}/\` is a computer app on the \`ubuntu-24.04\` base with the \`reference\` driver, for
-  ${plan.architectures.map((architecture) => `\`${architecture}\``).join(" and ")}. It installs \`${installName(plan)}\` from ${installedFrom(plan)}, launches \`${plan.command.join(" ")}\` at boot and is ready
+  ${plan.architectures.map((architecture) => `\`${architecture}\``).join(" and ")}. It installs ${installs(plan)}, launches \`${plan.command.join(" ")}\` at boot and is ready
   when a window of class \`${plan.windowClass}\` appears.${installNotes(plan)}
 - Owned paths: ${plan.paths.length === 0 ? "none" : plan.paths.map((path) => `\`~/${path}\``).join(", ")}.
   \`data/get\` returns their files and a typed JSON view of each; \`data/reset\` restores the seed.

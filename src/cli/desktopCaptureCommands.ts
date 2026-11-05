@@ -61,6 +61,12 @@ const captureOptions = z.object({
   maxContentBytes: positive(DESKTOP_CAPTURE_DEFAULTS.maxContentBytes).describe(
     "Total retained content",
   ),
+  packageFile: z
+    .string()
+    .optional()
+    .describe(
+      "The .deb file the application was installed from; its control fields, SHA-256 and size are recorded, never the file",
+    ),
 });
 
 /**
@@ -130,6 +136,12 @@ const registerDesktopExportCommand = (
         .describe(
           "Task file to validate against the capture and add with its verifier and eval; a capture yields one",
         ),
+      packageUrl: z
+        .string()
+        .optional()
+        .describe(
+          "http or https URL the computer downloads the captured --package-file from when the bundle is put, for an application installed from a .deb file",
+        ),
     }),
     run: ({ args, options }) =>
       withCommandCancellation((signal) =>
@@ -152,6 +164,7 @@ const registerDesktopExportCommand = (
                     tasks: (options.task ?? []).map((path) =>
                       absoluteCallerPath(path),
                     ),
+                    packageUrl: options.packageUrl,
                   },
                   readers,
                   signal,
@@ -276,6 +289,10 @@ export const registerDesktopCaptureCommands = (
                   maxEntries: options.maxEntries,
                   maxFileBytes: options.maxFileBytes,
                   maxContentBytes: options.maxContentBytes,
+                  packageFile:
+                    options.packageFile === undefined
+                      ? undefined
+                      : absoluteCallerPath(options.packageFile),
                 },
                 {
                   platform: process.platform,

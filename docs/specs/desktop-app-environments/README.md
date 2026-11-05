@@ -26,6 +26,10 @@ The work lands as one PR per step:
 8. [Vendor packages](vendor-packages/spec.md): closed-source applications from
    a vendor apt repository, with its verified signing key and the packages of
    the libraries they load, starting with Typora.
+9. [Vendor .deb files](vendor-deb-files/spec.md): closed-source applications
+   installed from a downloaded `.deb` file, which the computer downloads from
+   an operator's URL and checks by its captured SHA-256, starting with
+   VariCAD.
 
 Version 1 covers Linux with X11, applications whose state lives in files or
 SQLite under the home directory, and real applications from public packages.

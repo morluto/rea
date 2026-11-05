@@ -1,4 +1,5 @@
 import { err, ok, type Result } from "../result.js";
+import { dependencyPackages } from "./debianPackageFile.js";
 import type { AptRepository, DesktopPackage } from "./desktopCapture.js";
 import { unwrapDesktopCommand } from "./desktopEntry.js";
 
@@ -40,6 +41,19 @@ export interface ExportAptSource {
   readonly keySha256: string;
 }
 
+/** A captured package file the computer downloads when the bundle is put and installs with dpkg. */
+export interface ExportPackageFile {
+  readonly url: string;
+  readonly sha256: string;
+  /** Where the download is put, in the environment folder. */
+  readonly path: string;
+  readonly architecture: string;
+  /** apt packages installed before it: the first alternative of each of its Depends and Pre-Depends entries. */
+  readonly dependencies: readonly string[];
+  /** Relationship entries that name no package REA could read. */
+  readonly unreadDependencies: readonly string[];
+}
+
 /** How the computer installs the captured package. */
 export interface ExportInstall {
   readonly aptPackage: string;
@@ -52,7 +66,28 @@ export interface ExportInstall {
   readonly skipped: readonly string[];
   /** The Debian architectures the bundle supports. */
   readonly architectures: readonly string[];
+  /** The package file installed in place of an apt package; null when apt installs the package. */
+  readonly packageFile: ExportPackageFile | null;
 }
+
+/** Why the computer cannot install the captured package: the input to change, and how. */
+export interface InstallRefusal {
+  readonly field: "capture" | "package_url";
+  readonly reason: string;
+  readonly remediation: string;
+}
+
+/** The run script that installs a downloaded package file. */
+export const INSTALL_SCRIPT = "install-package.sh";
+
+const CAPTURE_REMEDIATION =
+  "Capture an application installed with apt from the Ubuntu 24.04 archive, or from a vendor repository reached over http or https on an amd64 or arm64 host where apt trusts its key and gpgv is installed. For one installed from a downloaded .deb file, capture it with --package-file and export it with --package-url.";
+
+const refusal = (
+  reason: string,
+  field: InstallRefusal["field"] = "capture",
+  remediation = CAPTURE_REMEDIATION,
+): InstallRefusal => ({ field, reason, remediation });
 
 const describe = (repository: AptRepository): string =>
   repository.uri === null
@@ -135,53 +170,59 @@ const declaredSources = (
   };
 };
 
-/**
- * Install from the Ubuntu 24.04 archive by name, or from each vendor
- * repository listing the installed version whose signing key the capture
- * verified and retained, taking the package from the first one's release
- * for the capture host's architecture; anything else is refused with the
- * reason.
- */
-export const exportInstall = (
+const describePackage = (installed: DesktopPackage): string =>
+  `${installed.kind}${installed.name === null ? "" : ` ${installed.name}`}; sources: ${installed.sources.join(", ") || "none"}; apt origins: ${installed.source_origins === undefined ? "not recorded" : installed.source_origins.map((origin) => origin ?? "none").join(", ") || "none"}`;
+
+/** A package no apt source the capture recorded lists: from its recorded package file, or else with how to record one. */
+const localInstallRefusal = (installed: DesktopPackage): InstallRefusal => {
+  const file = installed.package_file;
+  if (file !== undefined)
+    return refusal(
+      `The application was installed from ${file.name}, which no apt repository the capture recorded lists (${describePackage(installed)}), so the computer can install it only from a copy of that file.`,
+      "package_url",
+      `Pass --package-url with an http or https URL the computer may download ${file.name} from, byte for byte the captured file.`,
+    );
+  const reason = installed.package_file_reason;
+  return refusal(
+    `The application is not installed from the Ubuntu 24.04 package archive or a vendor apt repository the capture recorded (${describePackage(installed)}), so the computer cannot install it by name. An application installed from a downloaded .deb file is exported with --package-url once it was captured with --package-file${reason === undefined ? "" : `, which this capture could not record: ${reason}`}.`,
+    "capture",
+    "Capture again with --package-file naming the .deb file the application was installed from, then export with --package-url naming where the computer may download that file.",
+  );
+};
+
+/** Each usable vendor repository as an apt source, or why the computer cannot install from them, with the repositories left out. */
+const vendorInstall = (
   installed: DesktopPackage,
+  aptPackage: string,
   environment: string,
   hostArchitecture: string,
-): Result<ExportInstall, string> => {
-  const described = `${installed.kind}${installed.name === null ? "" : ` ${installed.name}`}; sources: ${installed.sources.join(", ") || "none"}; apt origins: ${installed.source_origins?.map((origin) => origin ?? "none").join(", ") ?? "not recorded"}`;
-  if (installed.kind !== "deb" || installed.name === null)
-    return err(
-      `The application is not an apt package (${described}), so the computer cannot install it.`,
-    );
-  const aptPackage = installed.name.split(":")[0] ?? installed.name;
-  // An archive package's declared dependencies are complete; a vendor package's may not be.
-  if (fromUbuntuNobleArchive(installed.sources, installed.source_origins))
-    return ok({
-      aptPackage,
-      release: null,
-      libraryPackages: [],
-      sources: [],
-      skipped: [],
-      architectures: [...COMPUTER_ARCHITECTURES.values()],
-    });
+): Result<
+  ExportInstall,
+  { readonly refusal: InstallRefusal; readonly skipped: readonly string[] }
+> => {
   const repositories = installed.apt_repositories ?? [];
   if (repositories.length === 0)
-    return err(
-      `The application is not installed from the Ubuntu 24.04 package archive or a vendor apt repository the capture recorded (${described}), so the computer cannot install it.`,
-    );
+    return err({ refusal: localInstallRefusal(installed), skipped: [] });
   const architecture = COMPUTER_ARCHITECTURES.get(hostArchitecture);
   if (architecture === undefined)
-    return err(
-      `The capture host's architecture ${hostArchitecture} is not one an agentenv computer runs (${[...COMPUTER_ARCHITECTURES.keys()].join(", ")}), so its vendor packages may not suit the computer.`,
-    );
+    return err({
+      refusal: refusal(
+        `The capture host's architecture ${hostArchitecture} is not one an agentenv computer runs (${[...COMPUTER_ARCHITECTURES.keys()].join(", ")}), so its vendor packages may not suit the computer.`,
+      ),
+      skipped: [],
+    });
   const { sources, refused, release } = declaredSources(
     repositories,
     environment,
     architecture,
   );
   if (sources.length === 0)
-    return err(
-      `The application comes from apt repositories the computer cannot use (${refused.join("; ")}).`,
-    );
+    return err({
+      refusal: refusal(
+        `The application comes from apt repositories the computer cannot use (${refused.join("; ")}).`,
+      ),
+      skipped: refused,
+    });
   return ok({
     aptPackage,
     release,
@@ -189,7 +230,141 @@ export const exportInstall = (
     sources,
     skipped: refused,
     architectures: [architecture],
+    packageFile: null,
   });
+};
+
+/** Why agentenv cannot download from a URL, or undefined when it can: http or https, spelled so, without a user name or password. */
+const packageUrlRefusal = (url: string): string | undefined => {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return `--package-url ${url} is not a URL`;
+  }
+  if (
+    !/^https?:\/\//u.test(url) ||
+    (parsed.protocol !== "http:" && parsed.protocol !== "https:")
+  )
+    return `--package-url ${url} is not an http or https URL, which is all the computer downloads`;
+  return parsed.username === "" && parsed.password === ""
+    ? undefined
+    : "--package-url holds a user name or password, which the bundle would keep in plain text";
+};
+
+/** The captured package file from the caller's URL, after its dependencies and library packages, for the file's architecture. */
+const packageFileInstall = (
+  installed: DesktopPackage,
+  named: Pick<ExportInstall, "aptPackage" | "skipped">,
+  packageUrl: string,
+  hostArchitecture: string,
+): Result<ExportInstall, InstallRefusal> => {
+  const file = installed.package_file;
+  const recordFile =
+    "Capture again with --package-file naming the .deb file the installed version came from.";
+  if (file === undefined)
+    return err(
+      refusal(
+        installed.package_file_reason === undefined
+          ? `--package-url was given, but the capture recorded no package file for ${named.aptPackage}.`
+          : `--package-url was given, but the capture did not record its package file: ${installed.package_file_reason}.`,
+        "capture",
+        recordFile,
+      ),
+    );
+  const url = packageUrlRefusal(packageUrl);
+  if (url !== undefined)
+    return err(
+      refusal(
+        url,
+        "package_url",
+        "Pass --package-url with an http:// or https:// URL that holds no user name or password.",
+      ),
+    );
+  // A package for all architectures installs on the capture host's.
+  const architecture =
+    file.architecture === "all"
+      ? COMPUTER_ARCHITECTURES.get(hostArchitecture)
+      : [...COMPUTER_ARCHITECTURES.values()].find(
+          (name) => name === file.architecture,
+        );
+  if (architecture === undefined)
+    return err(
+      refusal(
+        `${file.name} is built for ${file.architecture === "all" ? `all architectures, and the capture host's is ${hostArchitecture}` : file.architecture}, which an agentenv computer does not run (amd64, arm64).`,
+      ),
+    );
+  const { names, unread } = dependencyPackages(file);
+  return ok({
+    ...named,
+    release: null,
+    libraryPackages: installed.library_packages ?? [],
+    sources: [],
+    architectures: [architecture],
+    packageFile: {
+      url: packageUrl,
+      sha256: file.sha256,
+      path: `vendor/${file.name}`,
+      architecture,
+      dependencies: names,
+      unreadDependencies: unread,
+    },
+  });
+};
+
+/**
+ * Install from the Ubuntu 24.04 archive by name, or from each vendor
+ * repository listing the installed version whose signing key the capture
+ * verified and retained, taking the package from the first one's release
+ * for the capture host's architecture. A package neither installs, given
+ * `--package-url`, is downloaded from it and installed from its captured
+ * package file; anything else is refused with the reason.
+ */
+export const exportInstall = (
+  installed: DesktopPackage,
+  environment: string,
+  hostArchitecture: string,
+  packageUrl?: string,
+): Result<ExportInstall, InstallRefusal> => {
+  if (installed.kind !== "deb" || installed.name === null)
+    return err(
+      refusal(
+        `The application is not an apt package (${describePackage(installed)}), so the computer cannot install it.`,
+      ),
+    );
+  const aptPackage = installed.name.split(":")[0] ?? installed.name;
+  // An archive package's declared dependencies are complete; a vendor package's may not be.
+  const named = fromUbuntuNobleArchive(
+    installed.sources,
+    installed.source_origins,
+  )
+    ? ok({
+        aptPackage,
+        release: null,
+        libraryPackages: [],
+        sources: [],
+        skipped: [],
+        architectures: [...COMPUTER_ARCHITECTURES.values()],
+        packageFile: null,
+      })
+    : vendorInstall(installed, aptPackage, environment, hostArchitecture);
+  if (named.ok)
+    return packageUrl === undefined
+      ? named
+      : err(
+          refusal(
+            `--package-url is not needed: the computer installs ${aptPackage} from ${named.value.sources.length === 0 ? "the Ubuntu 24.04 archive by name" : `the vendor apt repository ${named.value.sources.map((source) => source.uri).join(", ")}`}.`,
+            "package_url",
+            "Export without --package-url.",
+          ),
+        );
+  if (packageUrl === undefined) return err(named.error.refusal);
+  return packageFileInstall(
+    installed,
+    { aptPackage, skipped: named.error.skipped },
+    packageUrl,
+    hostArchitecture,
+  );
 };
 
 /** Chromium's sandbox needs user namespaces a container does not grant, so an Electron launch runs with `--no-sandbox` right after the program. */
@@ -222,6 +397,20 @@ const unmappedLibraries = (installed: DesktopPackage): readonly string[] => [
     : []),
 ];
 
+/** What the export says about a package file the computer downloads and installs. */
+const packageFileLimitations = (
+  file: ExportPackageFile,
+  installed: DesktopPackage,
+): readonly string[] => [
+  `The computer downloads the package from ${file.url} once, when the bundle is put, and refuses the download unless its SHA-256 is ${file.sha256}, the captured file's; the bundle does not contain the package. It installs exactly that file's version, ${installed.version ?? "unknown"}, with dpkg after the apt packages it depends on, and the bundle supports only its architecture, ${file.architecture}.`,
+  "Vendor sites may refuse automated downloads, so the URL must point at a copy of the file the operator may use, and the package's licence, such as a trial's terms, is the operator's to check.",
+  ...(file.unreadDependencies.length === 0
+    ? []
+    : [
+        `REA could not read a package name from these dependencies, so the computer does not install them: ${file.unreadDependencies.join(", ")}.`,
+      ]),
+];
+
 /** What the export says about how the computer installs and starts the application. */
 export const installLimitations = (
   install: ExportInstall,
@@ -229,11 +418,16 @@ export const installLimitations = (
   electron: boolean,
 ): readonly string[] => {
   const unmapped = unmappedLibraries(installed);
-  const vendor = install.sources.length > 0;
+  // Library packages matter for any package the archive does not install by name.
+  const vendor = install.sources.length > 0 || install.packageFile !== null;
   return [
-    vendor
-      ? `The application is installed as ${install.aptPackage}${install.release === null ? "" : `/${install.release}`} from ${install.sources.map((source) => source.uri).join(", ")}, trusting the key that verified it on the capture host, so the computer installs the version that repository offers then, which may differ from the one captured; the bundle supports only the capture host's architecture, ${install.architectures.join(", ")}.`
-      : "The application is installed from the distribution archive by name, so the computer may install a different version than the one captured.",
+    ...(install.packageFile !== null
+      ? packageFileLimitations(install.packageFile, installed)
+      : [
+          install.sources.length > 0
+            ? `The application is installed as ${install.aptPackage}${install.release === null ? "" : `/${install.release}`} from ${install.sources.map((source) => source.uri).join(", ")}, trusting the key that verified it on the capture host, so the computer installs the version that repository offers then, which may differ from the one captured; the bundle supports only the capture host's architecture, ${install.architectures.join(", ")}.`
+            : "The application is installed from the distribution archive by name, so the computer may install a different version than the one captured.",
+        ]),
     ...install.skipped.map(
       (repository) => `The apt repository ${repository} was left out.`,
     ),

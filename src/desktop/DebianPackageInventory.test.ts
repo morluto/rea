@@ -87,8 +87,8 @@ interface FixtureOptions {
   readonly key?: Buffer;
   /** The legacy /etc/apt/trusted.gpg keyring. */
   readonly trusted?: Buffer;
-  /** Where the installed version comes from, when not the repository. */
-  readonly installedFrom?: string;
+  /** Where the installed version comes from, when not the repository; null for a local install no source lists. */
+  readonly installedFrom?: string | null;
   /** A library package only a PPA offers. */
   readonly ppaLibrary?: boolean;
 }
@@ -99,7 +99,10 @@ const policy = (
   repository: Repository,
   argv: readonly string[],
 ): string => {
-  const installed = options.installedFrom ?? repository.source;
+  const installed =
+    options.installedFrom === undefined
+      ? repository.source
+      : options.installedFrom;
   if (argv.length === 1)
     return [
       "Package files:",
@@ -115,13 +118,20 @@ const policy = (
     ].join("\n");
   return argv
     .slice(1)
-    .flatMap((name) => [
-      `${name}:`,
-      "  Version table:",
-      " *** 1.0-1 500",
-      `        500 ${name.startsWith("typora") ? installed : name === "libnspr4" && options.ppaLibrary === true ? PPA : NOBLE}`,
-      "        100 /var/lib/dpkg/status",
-    ])
+    .flatMap((name) => {
+      const source = name.startsWith("typora")
+        ? installed
+        : name === "libnspr4" && options.ppaLibrary === true
+          ? PPA
+          : NOBLE;
+      return [
+        `${name}:`,
+        "  Version table:",
+        " *** 1.0-1 500",
+        ...(source === null ? [] : [`        500 ${source}`]),
+        "        100 /var/lib/dpkg/status",
+      ];
+    })
     .join("\n");
 };
 
@@ -191,6 +201,10 @@ const vendorFixture = async (options: FixtureOptions = {}) => {
         : reply("[GNUPG:] NEWSIG\n[GNUPG:] NO_PUBKEY 6701CFD5B893036C\n", 2);
     }
     if (command === "apt-get") return reply(indexTargets);
+    if (command === "dpkg-deb")
+      return reply(
+        "Package: typora\nVersion: 1.14.9-1\nArchitecture: arm64\nDepends: libgtk-3-0, libnss3 (>= 2:3.13)\n",
+      );
     if (command.endsWith("ldconfig"))
       return reply(
         ["libnss3.so", "libnspr4.so"]
@@ -215,7 +229,7 @@ const vendorFixture = async (options: FixtureOptions = {}) => {
     trusted: join(root, "apt/trusted.gpg"),
     lists: join(root, "lists"),
   };
-  const inspect = (run: QueryRunner = runQuery) =>
+  const inspect = (run: QueryRunner = runQuery, packageFile?: string) =>
     inspectLinuxApplication(
       {
         desktopEntry: undefined,
@@ -224,6 +238,7 @@ const vendorFixture = async (options: FixtureOptions = {}) => {
         environment: { PATH: join(root, "bin") },
         home: join(root, "home"),
         callerDirectory: join(root, "home"),
+        packageFile,
       },
       undefined,
       { runQuery: run, apt },
@@ -401,6 +416,31 @@ describe.skipIf(process.platform === "win32")("library packages", () => {
     expect(ppa.package).toMatchObject({
       library_packages: ["libnss3"],
       uninstallable_library_packages: ["libnspr4"],
+    });
+  });
+
+  it("walks the libraries of a local install and records the package file it came from", async () => {
+    const { root, inspect } = await vendorFixture({ installedFrom: null });
+    const deb = join(root, "typora_1.14.9-1_arm64.deb");
+    await writeFile(deb, "package bytes");
+
+    const result = await inspect(undefined, deb);
+
+    if (!result.ok) throw new Error(result.error.reason);
+    expect(result.value.inventory.package).toMatchObject({
+      kind: "deb",
+      sources: [],
+      apt_repositories: [],
+      library_packages: ["libnspr4", "libnss3"],
+      uninstallable_library_packages: [],
+      package_file: {
+        name: "typora_1.14.9-1_arm64.deb",
+        sha256: sha256(Buffer.from("package bytes")),
+        size: 13,
+        package: "typora",
+        depends: ["libgtk-3-0", "libnss3 (>= 2:3.13)"],
+        pre_depends: [],
+      },
     });
   });
 

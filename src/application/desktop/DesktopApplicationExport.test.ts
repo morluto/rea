@@ -6,6 +6,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import { SafeOutputTree } from "../../artifacts/SafeOutputTree.js";
+import {
+  VARICAD_URL,
+  varicadPackage,
+} from "../../domain/desktop/debianPackageFile.fixture.js";
 import type {
   AptRepository,
   DesktopApplicationCapture,
@@ -345,6 +349,75 @@ describe("exportDesktopApplication from a vendor repository", () => {
     expect(result).toBeInstanceOf(Error);
     expect(JSON.stringify(result)).toContain(
       "https://downloads.typora.io/linux ./: gpgv is not installed",
+    );
+    expect(await exists(directory)).toBe(false);
+  });
+});
+
+/** The fixture app as VariCAD is installed: from its downloaded .deb, which no apt source lists. */
+const packageFileCapture = (): DesktopApplicationCapture => {
+  const local = capture();
+  return {
+    ...local,
+    application: { ...local.application, package: varicadPackage() },
+  };
+};
+
+const exportPackageFile = async (packageUrl: string | undefined) => {
+  const folder = await writeCaptureFolder(packageFileCapture());
+  const directory = join(
+    await createTestTempDirectory("desktop-export-"),
+    "bundle",
+  );
+  const result = await exportDesktopApplication(
+    { capture: folder, directory, name: undefined, tasks: [], packageUrl },
+    readers,
+  );
+  return { result, directory };
+};
+
+describe("exportDesktopApplication from a package file", () => {
+  it("declares the download and writes the run script that installs it, without the package", async () => {
+    const { result, directory } = await exportPackageFile(VARICAD_URL);
+
+    if (result instanceof Error) throw result;
+    expect(result.normalized_result).toMatchObject({
+      files: expect.arrayContaining(["envs/notes/install-package.sh"]),
+    });
+    expect(
+      await readFile(join(directory, "envs/notes/install-package.sh"), "utf8"),
+    ).toBe(
+      "#!/bin/sh\nset -eu\ndpkg -i 'vendor/varicad2026-en_2.03_amd64.deb'\nrm -f 'vendor/varicad2026-en_2.03_amd64.deb'\n",
+    );
+    expect(await exists(join(directory, "envs/notes/vendor"))).toBe(false);
+    const module = await readFile(
+      join(directory, "envs/notes/notes_app.py"),
+      "utf8",
+    );
+    expect(module).toContain(
+      `packages=Packages(apt=["libc6", "libgl1", "libstdc++6", "dpkg", "libxt6t64"]),\n    downloads=[Download(url="${VARICAD_URL}", sha256="${"d".repeat(64)}", to="vendor/varicad2026-en_2.03_amd64.deb", arch="amd64")],\n    run=[RunScript(script="install-package.sh")],`,
+    );
+    expect(module).toContain('"arch": ["amd64"]');
+    expect(result.limitations.join("\n")).toContain(
+      `The computer downloads the package from ${VARICAD_URL} once, when the bundle is put`,
+    );
+    expect(result.limitations.join("\n")).toContain(
+      "the package's licence, such as a trial's terms, is the operator's to check",
+    );
+    expect(await readFile(join(directory, "README.md"), "utf8")).toContain(
+      "The bundle does not contain the package",
+    );
+  });
+
+  it("refuses the capture without --package-url and writes nothing", async () => {
+    const { result, directory } = await exportPackageFile(undefined);
+
+    expect(result).toMatchObject({
+      _tag: "AnalysisInputError",
+      issues: [expect.objectContaining({ path: ["package_url"] })],
+    });
+    expect(JSON.stringify(result)).toContain(
+      "installed from varicad2026-en_2.03_amd64.deb, which no apt repository the capture recorded lists",
     );
     expect(await exists(directory)).toBe(false);
   });

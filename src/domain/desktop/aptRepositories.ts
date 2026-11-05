@@ -78,8 +78,10 @@ export const parseOneLineSources = (
     );
   });
 
-/** Fields of one deb822 paragraph by lowercase name; continuation lines keep their line breaks. */
-const paragraphs = (text: string): ReadonlyMap<string, string>[] => {
+/** Fields of each deb822 paragraph by lowercase name; continuation lines keep their line breaks. */
+export const deb822Paragraphs = (
+  text: string,
+): ReadonlyMap<string, string>[] => {
   const found: Map<string, string>[] = [];
   let current = new Map<string, string>();
   let last: string | undefined;
@@ -106,7 +108,7 @@ export const parseDeb822Sources = (
   text: string,
   file: string,
 ): readonly AptSourceEntry[] =>
-  paragraphs(text).flatMap((fields, index) => {
+  deb822Paragraphs(text).flatMap((fields, index) => {
     if (
       !listValues(fields.get("types")).includes("deb") ||
       fields.get("enabled")?.toLowerCase() === "no"
@@ -152,7 +154,7 @@ const SOURCES_ENTRY = /^(?<file>\/.*):(?<position>[1-9]\d*)$/u;
 export const parseAptIndexTargets = (
   output: string,
 ): readonly AptIndexTarget[] =>
-  paragraphs(output).flatMap((fields) => {
+  deb822Paragraphs(output).flatMap((fields) => {
     const at = SOURCES_ENTRY.exec(fields.get("sourcesentry") ?? "")?.groups;
     const description = fields.get("description");
     const repoUri = fields.get("repo-uri");

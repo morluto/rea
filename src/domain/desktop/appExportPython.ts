@@ -13,7 +13,7 @@ import xml.etree.ElementTree as ElementTree
 from pathlib import Path
 
 from agentenv_protocol import add_data, get_data, reset_data
-from agentenv_protocol.computer import AptSource, ComputerAppEnvironment, Launch, Packages, Ready, computer_app, linux
+from agentenv_protocol.computer import AptSource, ComputerAppEnvironment, Download, Launch, Packages, Ready, RunScript, computer_app, linux
 from agentenv_protocol.computer.app_data import INITIAL, add, get, in_thread, keep_initial, reset
 from agentenv_protocol.types import DataPart
 `;

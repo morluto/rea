@@ -45,17 +45,19 @@ export const exportEnvironmentName = (
 export const admitApplication = (
   capture: DesktopApplicationCapture,
   environment: string,
+  packageUrl: string | undefined,
 ) => {
   const install = exportInstall(
     capture.application.package,
     environment,
     capture.host.architecture,
+    packageUrl,
   );
   if (!install.ok)
     throw refuse(
-      install.error,
-      "capture",
-      "Capture an application installed with apt from the Ubuntu 24.04 archive, or from a vendor repository reached over http or https on an amd64 or arm64 host where apt trusts its key and gpgv is installed.",
+      install.error.reason,
+      install.error.field,
+      install.error.remediation,
     );
   const window = capture.session.window_match;
   if (window === null)

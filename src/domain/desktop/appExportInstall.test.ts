@@ -6,6 +6,11 @@ import {
   fromUbuntuNobleArchive,
   installLimitations,
 } from "./appExportInstall.js";
+import {
+  VARICAD_FILE,
+  VARICAD_URL,
+  varicadPackage,
+} from "./debianPackageFile.fixture.js";
 import type { AptRepository, DesktopPackage } from "./desktopCapture.js";
 
 const TYPORA_SOURCE = "https://downloads.typora.io/linux ./ Packages";
@@ -68,6 +73,7 @@ describe("exportInstall", () => {
         ],
         skipped: [],
         architectures: ["arm64"],
+        packageFile: null,
       },
     });
   });
@@ -117,9 +123,11 @@ describe("exportInstall", () => {
 
     expect(install).toEqual({
       ok: false,
-      error: expect.stringContaining(
-        "https://downloads.typora.io/linux ./: gpgv is not installed",
-      ),
+      error: expect.objectContaining({
+        reason: expect.stringContaining(
+          "https://downloads.typora.io/linux ./: gpgv is not installed",
+        ),
+      }),
     });
   });
 
@@ -152,13 +160,17 @@ describe("exportInstall", () => {
       ),
     ).toMatchObject({
       ok: false,
-      error: expect.stringContaining("http or https"),
+      error: expect.objectContaining({
+        reason: expect.stringContaining("http or https"),
+      }),
     });
     expect(exportInstall(typora(undefined), "typora", "arm64")).toMatchObject({
       ok: false,
-      error: expect.stringContaining(
-        "not installed from the Ubuntu 24.04 package archive or a vendor apt repository",
-      ),
+      error: expect.objectContaining({
+        reason: expect.stringContaining(
+          "not installed from the Ubuntu 24.04 package archive or a vendor apt repository",
+        ),
+      }),
     });
     expect(
       exportInstall(
@@ -168,7 +180,9 @@ describe("exportInstall", () => {
       ),
     ).toMatchObject({
       ok: false,
-      error: expect.stringContaining("not an apt package (snap typora"),
+      error: expect.objectContaining({
+        reason: expect.stringContaining("not an apt package (snap typora"),
+      }),
     });
   });
 
@@ -226,7 +240,7 @@ describe("exportInstall sources", () => {
       "x64",
     );
 
-    if (!install.ok) throw new Error(install.error);
+    if (!install.ok) throw new Error(install.error.reason);
     expect(install.value.sources).toEqual([
       {
         uri: "https://apt.example.com/repo",
@@ -289,7 +303,9 @@ describe("exportInstall sources", () => {
       exportInstall(typora([repository()]), "typora", "riscv64"),
     ).toMatchObject({
       ok: false,
-      error: expect.stringContaining("architecture riscv64"),
+      error: expect.objectContaining({
+        reason: expect.stringContaining("architecture riscv64"),
+      }),
     });
   });
 });
@@ -331,7 +347,7 @@ describe("installLimitations", () => {
       library_packages_reason: "REA stopped after 512 libraries",
     };
     const install = exportInstall(installed, "typora", "arm64");
-    if (!install.ok) throw new Error(install.error);
+    if (!install.ok) throw new Error(install.error.reason);
 
     const limitations = installLimitations(install.value, installed, true).join(
       "\n",
@@ -383,5 +399,240 @@ describe("fromUbuntuNobleArchive", () => {
     expect(fromUbuntuNobleArchive([ports], undefined)).toBe(true);
     expect(fromUbuntuNobleArchive([mirror], undefined)).toBe(false);
     expect(fromUbuntuNobleArchive([], [])).toBe(false);
+  });
+});
+
+const varicad = varicadPackage;
+
+const refusedWith = (
+  installed: DesktopPackage,
+  packageUrl: string | undefined,
+  hostArchitecture = "x64",
+) => {
+  const install = exportInstall(
+    installed,
+    "varicad",
+    hostArchitecture,
+    packageUrl,
+  );
+  if (install.ok) throw new Error("expected a refusal");
+  return install.error;
+};
+
+describe("exportInstall from a package file", () => {
+  it("downloads the captured file from the caller's URL after its dependencies and library packages, for its architecture", () => {
+    expect(exportInstall(varicad(), "varicad", "x64", VARICAD_URL)).toEqual({
+      ok: true,
+      value: {
+        aptPackage: "varicad2026-en",
+        release: null,
+        libraryPackages: ["libgl1", "libxt6t64"],
+        sources: [],
+        skipped: [],
+        architectures: ["amd64"],
+        packageFile: {
+          url: VARICAD_URL,
+          sha256: "d".repeat(64),
+          path: "vendor/varicad2026-en_2.03_amd64.deb",
+          architecture: "amd64",
+          dependencies: ["libc6", "libgl1", "libstdc++6", "dpkg"],
+          unreadDependencies: [],
+        },
+      },
+    });
+  });
+
+  it("installs a file for all architectures on the capture host's", () => {
+    const install = exportInstall(
+      varicad({ package_file: { ...VARICAD_FILE, architecture: "all" } }),
+      "varicad",
+      "arm64",
+      VARICAD_URL,
+    );
+
+    expect(install.ok && install.value.architectures).toEqual(["arm64"]);
+    expect(install.ok && install.value.packageFile?.architecture).toBe("arm64");
+  });
+
+  it("uses the file when no recorded repository can be declared, and leaves the repositories out", () => {
+    const install = exportInstall(
+      varicad({
+        sources: [TYPORA_SOURCE],
+        source_origins: ["typora.io"],
+        apt_repositories: [
+          repository({
+            signing_key: null,
+            signing_key_reason: "gpgv is not installed",
+          }),
+        ],
+      }),
+      "varicad",
+      "x64",
+      VARICAD_URL,
+    );
+
+    expect(install.ok && install.value.packageFile?.url).toBe(VARICAD_URL);
+    expect(install.ok && install.value.skipped).toEqual([
+      "https://downloads.typora.io/linux ./: gpgv is not installed",
+    ]);
+  });
+});
+
+describe("exportInstall refusals for a package file", () => {
+  it("refuses a local install without --package-url, saying how to capture and export one", () => {
+    expect(refusedWith(varicad(), undefined)).toEqual({
+      field: "package_url",
+      reason: expect.stringContaining(
+        "installed from varicad2026-en_2.03_amd64.deb, which no apt repository the capture recorded lists",
+      ),
+      remediation: expect.stringContaining("Pass --package-url"),
+    });
+    const unrecorded = refusedWith(
+      varicad({
+        package_file: undefined,
+        package_file_reason: "dpkg-deb is not installed",
+      }),
+      undefined,
+    );
+    expect(unrecorded).toMatchObject({ field: "capture" });
+    expect(unrecorded.reason).toContain(
+      "not installed from the Ubuntu 24.04 package archive or a vendor apt repository",
+    );
+    expect(unrecorded.reason).toContain(
+      "exported with --package-url once it was captured with --package-file, which this capture could not record: dpkg-deb is not installed.",
+    );
+    expect(unrecorded.remediation).toContain("--package-file");
+  });
+
+  it("refuses --package-url without a recorded package file, with why the capture did not record one", () => {
+    expect(
+      refusedWith(varicad({ package_file: undefined }), VARICAD_URL),
+    ).toEqual({
+      field: "capture",
+      reason:
+        "--package-url was given, but the capture recorded no package file for varicad2026-en.",
+      remediation: expect.stringContaining("Capture again with --package-file"),
+    });
+    expect(
+      refusedWith(
+        varicad({
+          package_file: undefined,
+          package_file_reason: "/tmp/a.deb holds varicad2026-en 2.02",
+        }),
+        VARICAD_URL,
+      ).reason,
+    ).toBe(
+      "--package-url was given, but the capture did not record its package file: /tmp/a.deb holds varicad2026-en 2.02.",
+    );
+  });
+
+  it("refuses --package-url for a package apt installs", () => {
+    const archive = refusedWith(
+      varicad({
+        sources: [
+          "http://archive.ubuntu.com/ubuntu noble/universe amd64 Packages",
+        ],
+        source_origins: ["Ubuntu"],
+      }),
+      VARICAD_URL,
+    );
+    const vendor = refusedWith(
+      varicad({
+        sources: [TYPORA_SOURCE],
+        source_origins: ["typora.io"],
+        apt_repositories: [repository()],
+      }),
+      VARICAD_URL,
+      "arm64",
+    );
+
+    expect(archive).toEqual({
+      field: "package_url",
+      reason:
+        "--package-url is not needed: the computer installs varicad2026-en from the Ubuntu 24.04 archive by name.",
+      remediation: "Export without --package-url.",
+    });
+    expect(vendor.reason).toContain(
+      "from the vendor apt repository https://downloads.typora.io/linux.",
+    );
+  });
+
+  it.each([
+    "ftp://mirror.example.com/v.deb",
+    "HTTPS://mirror.example.com/v.deb",
+  ])("refuses --package-url %s, which agentenv does not download", (url) => {
+    expect(refusedWith(varicad(), url)).toMatchObject({
+      field: "package_url",
+      reason: `--package-url ${url} is not an http or https URL, which is all the computer downloads`,
+    });
+  });
+
+  it("refuses a --package-url that is not a URL", () => {
+    expect(refusedWith(varicad(), "mirror.example.com/v.deb")).toMatchObject({
+      field: "package_url",
+      reason: "--package-url mirror.example.com/v.deb is not a URL",
+    });
+  });
+
+  it("refuses a URL with credentials without repeating them", () => {
+    // Built at run time so no credential-shaped URL sits in the source for scanners to flag.
+    const userinfo = ["ada", "hunter2"].join(":");
+    const refused = refusedWith(
+      varicad(),
+      `https://${userinfo}@mirror.example.com/v.deb`,
+    );
+
+    expect(refused.field).toBe("package_url");
+    expect(refused.reason).toContain("holds a user name or password");
+    expect(JSON.stringify(refused)).not.toContain("hunter2");
+  });
+
+  it("refuses a file built for an architecture no computer runs", () => {
+    expect(
+      refusedWith(
+        varicad({ package_file: { ...VARICAD_FILE, architecture: "i386" } }),
+        VARICAD_URL,
+      ).reason,
+    ).toBe(
+      "varicad2026-en_2.03_amd64.deb is built for i386, which an agentenv computer does not run (amd64, arm64).",
+    );
+  });
+});
+
+describe("installLimitations for a package file", () => {
+  it("says the computer downloads and checks the file, the bundle lacks it, and the operator answers for the URL and licence", () => {
+    const installed = varicad({
+      missing_libraries: ["libvc.so.1"],
+      package_file: {
+        ...VARICAD_FILE,
+        depends: ["libc6", "${misc:Depends}"],
+      },
+    });
+    const install = exportInstall(installed, "varicad", "x64", VARICAD_URL);
+    if (!install.ok) throw new Error(install.error.reason);
+
+    const limitations = installLimitations(
+      install.value,
+      installed,
+      false,
+    ).join("\n");
+
+    expect(limitations).toContain(
+      `The computer downloads the package from ${VARICAD_URL} once, when the bundle is put, and refuses the download unless its SHA-256 is ${"d".repeat(64)}`,
+    );
+    expect(limitations).toContain("the bundle does not contain the package");
+    expect(limitations).toContain(
+      "It installs exactly that file's version, 2.03, with dpkg",
+    );
+    expect(limitations).toContain("only its architecture, amd64");
+    expect(limitations).toContain(
+      "Vendor sites may refuse automated downloads, so the URL must point at a copy of the file the operator may use",
+    );
+    expect(limitations).toContain("such as a trial's terms");
+    expect(limitations).toContain(
+      "so the computer does not install them: ${misc:Depends}.",
+    );
+    expect(limitations).toContain("not found on the capture host: libvc.so.1");
+    expect(limitations).not.toContain("distribution archive");
   });
 });

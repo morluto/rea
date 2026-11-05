@@ -63,6 +63,8 @@ export interface DesktopCaptureRequest {
   readonly maxEntries: number;
   readonly maxFileBytes: number;
   readonly maxContentBytes: number;
+  /** The absolute path of the `.deb` file the application was installed from; only its facts are recorded. */
+  readonly packageFile: string | undefined;
 }
 
 /** Host facilities the capture reads, replaceable in tests. */
@@ -148,6 +150,7 @@ const captureEvidence = (
       argument_count: request.arguments.length,
       state_path_count: request.statePaths.length,
       exclude_count: request.excludes.length,
+      package_file: request.packageFile !== undefined,
     },
     result: capture,
     confidence: "observed",
