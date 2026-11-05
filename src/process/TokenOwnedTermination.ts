@@ -47,11 +47,12 @@ const tokenOwnedFacts = async (
       !processIdentityHasExited(fact.identityAfter),
   );
 
-const processGroupOf = ({ identityAfter, process }: ProcessOwnershipFact) =>
+/** The group this read observed, or undefined when membership is unknown; an older table row never grants group authority. */
+const processGroupOf = ({ identityAfter }: ProcessOwnershipFact) =>
   identityAfter.state === "readable" &&
   identityAfter.relation?.state === "observed"
     ? identityAfter.relation.processGroupId
-    : process.processGroupId;
+    : undefined;
 
 const identityOf = ({ identityAfter }: ProcessOwnershipFact) =>
   identityAfter.state === "readable" ? identityAfter.identity : undefined;

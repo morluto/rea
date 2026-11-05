@@ -422,6 +422,10 @@ describe("inspectDesktopApplicationState database selected on its own", () => {
       { ...logged.state, excluded: [`${books}-wal`] },
       {
         ...logged.state,
+        checkpoints: [{ ...baseline, unchecked_paths: 1 }, ...later],
+      },
+      {
+        ...logged.state,
         checkpoints: [{ ...baseline, truncated: true }, ...later],
       },
       older,
