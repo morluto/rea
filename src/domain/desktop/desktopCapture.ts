@@ -116,7 +116,7 @@ const packageSchema = z.strictObject({
   name: z.string().nullable(),
   /** The executable's Debian package when another package owns the desktop entry; absent otherwise. */
   executable_package: z.string().optional(),
-  /** Why the computer cannot install `executable_package` by name beside the package; absent when it can. */
+  /** Why the computer cannot install the program the desktop entry runs: `executable_package` is not offered, or, without it, no package owns the program; absent when it can. */
   executable_package_reason: z.string().optional(),
   version: z.string().nullable(),
   architecture: z.string().nullable(),

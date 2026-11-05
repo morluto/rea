@@ -112,13 +112,21 @@ repositories it leaves out supply. A capture adapter test, two export domain
 tests and a key-retention service test that drops one of two keys under the
 per-file limit cover it.
 
+A third review found that an entry owned by a package whose program no
+package owns, such as a `~/.local/bin` program found first on `PATH`, was
+recorded as the entry's package alone, which the export then installed though
+it does not bring that program. The capture now records that no package owns
+the program, and the export refuses it. An adapter test, an export domain test
+and an export service test cover it, and an adapter test keeps a program link
+whose resolved file dpkg owns counted as owned.
+
 Each new test failed on the code before its fix, run in a copy of that commit
 with only the new tests added. `npm run typecheck`, `lint`, `lint:typed`
 (no diagnostics in the touched files), `format:check`, `build:cached`,
 `knip`, `jscpd`, `docs:check`, `docs:build`, `verify:test-discovery` and
 `verify:architecture-guards` passed, and
 `npx vitest run src/domain/desktop src/application/desktop src/desktop tests/boundary/cli/cliStartupImports.test.ts`
-ran 347 passed and 18 skipped. Neither application was captured again.
+ran 351 passed and 18 skipped. Neither application was captured again.
 
 ## Limits of this verification
 

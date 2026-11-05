@@ -345,6 +345,29 @@ describe("exportDesktopApplication of a program in another package", () => {
     );
     expect(await exists(refused.directory)).toBe(false);
   });
+
+  it("refuses a capture whose desktop entry runs a program no package owns, and writes nothing", async () => {
+    const local = capture();
+    const { result, directory } = await exportCapture({
+      ...local,
+      application: {
+        ...local.application,
+        package: {
+          ...local.application.package,
+          executable_package_reason: `no package owns ${HOME}/.local/bin/notes`,
+        },
+      },
+    });
+
+    expect(result).toMatchObject({
+      _tag: "AnalysisInputError",
+      issues: [expect.objectContaining({ path: ["capture"] })],
+    });
+    expect(JSON.stringify(result)).toContain(
+      `the computer cannot install the program it runs: no package owns ${HOME}/.local/bin/notes`,
+    );
+    expect(await exists(directory)).toBe(false);
+  });
 });
 
 describe("exportDesktopApplication from a vendor repository", () => {

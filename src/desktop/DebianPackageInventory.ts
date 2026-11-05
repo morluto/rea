@@ -295,6 +295,10 @@ export const debianPackage = async (
     ...(owner === null || unqualified(owner) === unqualified(name)
       ? {}
       : { executable_package: unqualified(owner) }),
+    // Installing the entry's package does not bring a program no package owns, such as ~/.local/bin/<name>.
+    ...(owner === null
+      ? { executable_package_reason: `no package owns ${executable}` }
+      : {}),
     version: parsed?.version ?? null,
     architecture: parsed?.architecture ?? null,
     sources,

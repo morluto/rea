@@ -5,6 +5,8 @@ import {
   mkdir,
   readFile,
   realpath,
+  rm,
+  symlink,
   writeFile,
 } from "node:fs/promises";
 import { join } from "node:path";
@@ -823,3 +825,61 @@ describe.skipIf(process.platform === "win32")("desktop entry package", () => {
     });
   });
 });
+
+describe.skipIf(process.platform === "win32")(
+  "desktop entry program ownership",
+  () => {
+    it("keeps the entry's package and records that no package owns the program it runs", async () => {
+      const { runQuery, inspect } = await writerFixture();
+      // A program of the user's own, such as ~/.local/bin/libreoffice, found first on PATH.
+      const unpackaged: QueryRunner = async (command, argv, signal) =>
+        command === "dpkg-query" &&
+        argv[1]?.endsWith("/bin/libreoffice") === true
+          ? { stdout: "", exitCode: 1 }
+          : runQuery(command, argv, signal);
+
+      const { installed } = await inspect(
+        { desktopEntry: "libreoffice-writer" },
+        { run: unpackaged },
+      );
+
+      expect(installed).toMatchObject({
+        kind: "deb",
+        name: "libreoffice-writer",
+        executable_package_reason: expect.stringMatching(
+          /^no package owns \/\S+\/bin\/libreoffice$/u,
+        ),
+      });
+      expect(installed).not.toHaveProperty("executable_package");
+    });
+
+    it("counts the program as owned when dpkg owns the file its path resolves to, as for an alternatives link", async () => {
+      const { root, runQuery, inspect } = await writerFixture();
+      const soffice = join(root, "lib/libreoffice/program/soffice");
+      await mkdir(join(root, "lib/libreoffice/program"), { recursive: true });
+      await writeFile(soffice, "#!/bin/sh\nexit 0\n");
+      await chmod(soffice, 0o755);
+      await rm(join(root, "bin/libreoffice"));
+      await symlink(soffice, join(root, "bin/libreoffice"));
+      const resolvedOnly: QueryRunner = async (command, argv, signal) => {
+        const path = argv[1] ?? "";
+        if (command === "dpkg-query" && path.endsWith("/bin/libreoffice"))
+          return { stdout: "", exitCode: 1 };
+        if (command === "dpkg-query" && path.endsWith("/program/soffice"))
+          return { stdout: `libreoffice-common: ${path}`, exitCode: 0 };
+        return runQuery(command, argv, signal);
+      };
+
+      const { installed } = await inspect(
+        { desktopEntry: "libreoffice-writer" },
+        { run: resolvedOnly },
+      );
+
+      expect(installed).toMatchObject({
+        name: "libreoffice-writer",
+        executable_package: "libreoffice-common",
+      });
+      expect(installed).not.toHaveProperty("executable_package_reason");
+    });
+  },
+);

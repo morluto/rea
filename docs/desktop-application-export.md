@@ -71,7 +71,10 @@ The class declares:
   (`executable_package`) follows the app's by name, since the entry's package
   need not depend on it; a capture that found no archive or declared
   repository offering it records why, and the export refuses it with that
-  reason, as it does when only repositories it leaves out supply it. The package must come from the Ubuntu 24.04 archive or a mirror of it,
+  reason, as it does when only repositories it leaves out supply it, or when
+  no package owns the program at all (`executable_package_reason` without
+  `executable_package`). The package must come from the Ubuntu 24.04 archive
+  or a mirror of it,
   or from a vendor apt repository whose signing key the capture verified and
   retained. A source counts as the archive when apt reports its origin as
   `Ubuntu` for a noble suite; a capture made before origins were recorded

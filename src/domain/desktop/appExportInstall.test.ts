@@ -253,6 +253,30 @@ describe("exportInstall with the program in another package", () => {
     });
   });
 
+  it("refuses when no package owns the program the entry runs", () => {
+    const { executable_package: _program, ...entryOnly } = archive;
+
+    expect(
+      exportInstall(
+        {
+          ...entryOnly,
+          executable_package_reason: "no package owns /home/ada/.local/bin/vim",
+        },
+        "vim",
+        "arm64",
+      ),
+    ).toEqual({
+      ok: false,
+      error: {
+        field: "capture",
+        reason:
+          "The desktop entry belongs to vim-common, but the computer cannot install the program it runs: no package owns /home/ada/.local/bin/vim.",
+        remediation:
+          "Capture again with the packaged program first on PATH, or with --executable naming it.",
+      },
+    });
+  });
+
   it("refuses when the computer cannot install the program's package", () => {
     const reason =
       "neither the Ubuntu 24.04 archive nor a vendor repository the export declares offers vim";

@@ -145,7 +145,13 @@ on it (`vim-common` owns Vim's entry but does not depend on `vim`).
 `executable_package_reason` says why the computer could not install it by
 name, by the rule for library packages below: neither the Ubuntu 24.04 archive
 nor a vendor repository the export declares offers it, or `apt-cache policy`
-did not say. An `--executable` launch, or an entry no package owns, such as
+did not say. When a package owns the entry but none owns its program, such as
+a `~/.local/bin/<name>` found first on `PATH`, the entry's package is recorded
+without `executable_package`, and `executable_package_reason` says no package
+owns the program, so the export refuses rather than install a package that
+does not bring it. A program link that dpkg does not own counts as owned when
+dpkg owns the file it resolves to, as an alternatives link does. An
+`--executable` launch, or an entry no package owns, such as
 one in `~/.local/share/applications`, records the executable's package. When
 `dpkg-query` does not finish or exits with an error for the executable or the
 entry, the package is `unknown` and the limitations say which path, since a

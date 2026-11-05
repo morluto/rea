@@ -440,7 +440,17 @@ export const exportInstall = (
   const install = packageInstall(...request);
   const [{ executable_package: program, executable_package_reason: found }] =
     request;
-  if (!install.ok || program === undefined) return install;
+  if (!install.ok) return install;
+  if (program === undefined)
+    return found === undefined
+      ? install
+      : err(
+          refusal(
+            `The desktop entry belongs to ${install.value.aptPackage}, but the computer cannot install the program it runs: ${found}.`,
+            "capture",
+            "Capture again with the packaged program first on PATH, or with --executable naming it.",
+          ),
+        );
   const reason =
     found ??
     (install.value.strandedPackages?.includes(program) === true
