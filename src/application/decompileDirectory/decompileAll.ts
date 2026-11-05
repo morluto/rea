@@ -537,6 +537,12 @@ const publishOne = async (input: {
   const caveats = [
     ...new Set([...infoCaveats, ...decompiled.value.limitations]),
   ];
+  const observationSource: NonNullable<
+    DecompileDirectoryFunctionRecord["provider_source"]
+  > =
+    decompiled.value.sourceDescriptor === undefined
+      ? { status: "unknown", reason: "source_not_available" }
+      : { status: "reported", source: decompiled.value.sourceDescriptor };
   const pseudocode = decompiled.value.result;
   if (typeof pseudocode !== "string" || pseudocode.length === 0) {
     const reason = pseudocodeFailure(pseudocode);
@@ -545,6 +551,7 @@ const publishOne = async (input: {
       result: await input.session.append(
         failureRecord(input.procedure, body.fact, reason, {
           limitations: caveats,
+          providerSource: observationSource,
         }),
       ),
       bodySupport: body.support,
@@ -584,6 +591,7 @@ const publishOne = async (input: {
         failureRecord(input.procedure, body.fact, reason, {
           relativePath,
           limitations: caveats,
+          providerSource: observationSource,
           ...establishedPseudocodeFields(facts),
         }),
       ),
@@ -596,6 +604,11 @@ const publishOne = async (input: {
     status: "written",
     relative_path: relativePath,
     sha256: committed.sha256,
+    // Matching existing bytes prove equality, not who originally wrote them.
+    provider_source:
+      committed.status === "matched"
+        ? { status: "unknown", reason: "existing_file_origin_unknown" }
+        : observationSource,
     body: bodyRecord(body.fact),
     // The header may truncate; the journal keeps the complete list.
     ...(caveats.length === 0 ? {} : { limitations: caveats }),
@@ -895,6 +908,7 @@ const failureRecord = (
     readonly relativePath?: string;
     /** Caveats of the observations this attempt used. */
     readonly limitations?: readonly string[];
+    readonly providerSource?: DecompileDirectoryFunctionRecord["provider_source"];
     readonly language?: string;
     readonly representation?: string;
     readonly source?: string;
@@ -905,6 +919,9 @@ const failureRecord = (
   status: "failed",
   body: bodyRecord(body),
   failure: reason,
+  ...(options.providerSource === undefined
+    ? {}
+    : { provider_source: options.providerSource }),
   ...(options.relativePath === undefined
     ? {}
     : { relative_path: options.relativePath }),

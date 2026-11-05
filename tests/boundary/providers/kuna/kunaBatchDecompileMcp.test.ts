@@ -93,7 +93,7 @@ test("keeps each Kuna no-pseudocode observation's limitations on its batch item"
     // profile commits only analysis inputs. Composed and retained views must
     // preserve the same warning for agents reading those results.
     const verificationWarning =
-      "Kuna 1.833 is not REA's verified 1.989 release";
+      "Kuna 1.833 is not REA's verified 1.990 release";
     expect(batch.limitations).toContainEqual(
       expect.stringContaining(verificationWarning),
     );
@@ -131,15 +131,8 @@ test("keeps each Kuna no-pseudocode observation's limitations on its batch item"
     expect(main).toMatchObject({ address: "main", status: "ok" });
     expect(main).not.toHaveProperty("limitations");
     const noPseudocode = {
-      status: "error",
-      error: {
-        code: "capability_unavailable",
-        retryable: false,
-        details: {
-          provider_id: "kuna",
-          operation: "procedure_pseudo_code",
-        },
-      },
+      status: "unavailable",
+      reason: "no_pseudocode",
     };
     // The item keeps exactly the facts the provider reported for its own
     // observation, as the single-function Evidence does.

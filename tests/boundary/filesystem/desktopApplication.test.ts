@@ -500,6 +500,200 @@ it.each(["Game_Data/Managed", "Contents/Resources/Data/Managed"])(
   },
 );
 
+it("orders member probes for Unity predefined script assemblies before every managed artifact probe", async () => {
+  const root = await createTestTempDirectory("rea-desktop-mono-members-");
+  const unity = buildManagedPeFixture({
+    references: ["UnityEngine.CoreModule"],
+  });
+  const plain = buildManagedPeFixture({ references: ["System.Runtime"] });
+  await put(root, "Game_Data/Managed/Assembly-CSharp.dll", unity);
+  await put(root, "Game_Data/Managed/ASSEMBLY-CSHARP-FIRSTPASS.DLL", plain);
+  await put(root, "Game_Data/Managed/Game.Logic.dll", unity);
+  await put(root, "Game_Data/Managed/UnityEngine.CoreModule.dll", plain);
+  await put(root, "Game_Data/Managed/Nested/Assembly-CSharp.dll", plain);
+  await put(root, "Other_Data/Managed/Assembly-CSharp.dll", plain);
+  await put(root, "Plugins/Assembly-CSharp.dll", unity);
+  const { report } = await inspect(root);
+  const relative = new Map(
+    report.files.map((file) => [file.file_id, file.path]),
+  );
+  const rows = report.next_probes.map((probe) => [
+    probe.operation,
+    relative.get(probe.file_id),
+  ]);
+  expect(
+    rows.filter(([operation]) => operation === "inspect_managed_members"),
+  ).toEqual([
+    [
+      "inspect_managed_members",
+      "Game_Data/Managed/ASSEMBLY-CSHARP-FIRSTPASS.DLL",
+    ],
+    ["inspect_managed_members", "Game_Data/Managed/Assembly-CSharp.dll"],
+  ]);
+  expect(rows.slice(0, 2).map(([operation]) => operation)).toEqual([
+    "inspect_managed_members",
+    "inspect_managed_members",
+  ]);
+  expect(
+    rows.filter(([operation]) => operation === "inspect_managed_artifact"),
+  ).toHaveLength(7);
+  for (const probe of report.next_probes)
+    if (probe.operation === "inspect_managed_members")
+      expect(probe.rationale).toContain(
+        'Start with detail "summary" and page rows through inspect_analysis_view.',
+      );
+});
+
+it("offers member probes for predefined script assemblies in a macOS bundle's managed directory", async () => {
+  const root = await createTestTempDirectory("rea-desktop-mono-bundle-");
+  const managed = "Contents/Resources/Data/Managed";
+  await put(
+    root,
+    `${managed}/Assembly-CSharp.dll`,
+    buildManagedPeFixture({ references: ["UnityEngine.CoreModule"] }),
+  );
+  await put(
+    root,
+    `${managed}/Game.Logic.dll`,
+    buildManagedPeFixture({ references: ["System.Runtime"] }),
+  );
+  const { report } = await inspect(root);
+  const relative = new Map(
+    report.files.map((file) => [file.file_id, file.path]),
+  );
+  expect(
+    report.next_probes
+      .filter((probe) => probe.operation === "inspect_managed_members")
+      .map((probe) => relative.get(probe.file_id)),
+  ).toEqual([`${managed}/Assembly-CSharp.dll`]);
+  expect(report.next_probes[0]?.operation).toBe("inspect_managed_members");
+});
+
+it.each(["Game_Data", "Game_Data/Managed"])(
+  "offers no member probe when the root is %s itself",
+  async (rootDirectory) => {
+    const root = await createTestTempDirectory("rea-desktop-mono-data-root-");
+    await put(
+      root,
+      "Game_Data/Managed/Assembly-CSharp.dll",
+      buildManagedPeFixture({ references: ["UnityEngine.CoreModule"] }),
+    );
+    const { report } = await inspect(join(root, rootDirectory));
+    const operations = report.next_probes.map((probe) => probe.operation);
+    expect(operations).toContain("inspect_managed_artifact");
+    expect(operations).not.toContain("inspect_managed_members");
+  },
+);
+
+it("offers no member probes when no managed directory has a Unity reference witness", async () => {
+  const root = await createTestTempDirectory("rea-desktop-mono-no-witness-");
+  const plain = buildManagedPeFixture({ references: ["System.Runtime"] });
+  await put(root, "Game_Data/Managed/Assembly-CSharp.dll", plain);
+  await put(root, "Game_Data/Managed/Assembly-CSharp-firstpass.dll", plain);
+  await put(root, "Contents/Resources/Data/Managed/Assembly-CSharp.dll", plain);
+  const { report } = await inspect(root);
+  expect(report.candidates.map((row) => row.family)).toEqual(["dotnet"]);
+  expect(report.next_probes.map((probe) => probe.operation)).toEqual([
+    "inspect_managed_artifact",
+    "inspect_managed_artifact",
+    "inspect_managed_artifact",
+  ]);
+});
+
+const BACKUP = "Game_BackUpThisFolder_ButDontShipItWithYourGame";
+
+it("offers member probes for predefined script assemblies in a game directory's IL2CPP backup folder", async () => {
+  const root = await createTestTempDirectory("rea-desktop-il2cpp-backup-");
+  const plain = buildManagedPeFixture({ references: ["System.Runtime"] });
+  await put(root, `${BACKUP}/Managed/Assembly-CSharp.dll`, plain);
+  await put(
+    root,
+    "OTHER_BACKUPTHISFOLDER_BUTDONTSHIPITWITHYOURGAME/MANAGED/ASSEMBLY-CSHARP-FIRSTPASS.DLL",
+    plain,
+  );
+  await put(root, `${BACKUP}/Managed/Game.Logic.dll`, plain);
+  await put(root, `${BACKUP}/Managed/Nested/Assembly-CSharp.dll`, plain);
+  await put(root, `${BACKUP}/Assembly-CSharp.dll`, plain);
+  await put(
+    root,
+    "_BackUpThisFolder_ButDontShipItWithYourGame/Managed/Assembly-CSharp.dll",
+    plain,
+  );
+  await put(root, "Game_BackUpThisFolder/Managed/Assembly-CSharp.dll", plain);
+  const metadata = Buffer.alloc(8);
+  metadata.writeUInt32LE(0xfab11baf);
+  metadata.writeUInt32LE(31, 4);
+  await put(
+    root,
+    "Game_Data/il2cpp_data/Metadata/global-metadata.dat",
+    metadata,
+  );
+  const { report } = await inspect(root);
+  const relative = new Map(report.files.map((file) => [file.file_id, file]));
+  const members = report.next_probes.filter(
+    (probe) => probe.operation === "inspect_managed_members",
+  );
+  expect(
+    members.map((probe) => relative.get(probe.file_id)?.path).sort(),
+  ).toEqual(
+    [
+      `${BACKUP}/Managed/Assembly-CSharp.dll`,
+      "OTHER_BACKUPTHISFOLDER_BUTDONTSHIPITWITHYOURGAME/MANAGED/ASSEMBLY-CSHARP-FIRSTPASS.DLL",
+    ].sort(),
+  );
+  for (const probe of members) {
+    expect(probe.rationale).toContain(
+      "correspondence to the shipped native code is unknown",
+    );
+    expect(relative.get(probe.file_id)?.facts).toContainEqual({
+      kind: "unity-il2cpp-backup-convention",
+      offset: null,
+      value: {
+        backup_directory: relative.get(probe.file_id)!.path.split("/")[0],
+      },
+    });
+  }
+  const order = report.next_probes.map((probe) => probe.operation);
+  expect(order.lastIndexOf("inspect_managed_members")).toBeLessThan(
+    order.indexOf("inspect_il2cpp_metadata"),
+  );
+  expect(report.candidates.map((row) => row.family)).not.toContain(
+    "unity-mono",
+  );
+  expect(
+    report.files.filter((file) =>
+      file.facts.some((fact) => fact.kind === "unity-il2cpp-backup-convention"),
+    ),
+  ).toHaveLength(2);
+});
+
+it("recognizes an admitted root that is itself the IL2CPP backup folder", async () => {
+  const parent = await createTestTempDirectory(
+    "rea-desktop-il2cpp-backup-root-",
+  );
+  const plain = buildManagedPeFixture({ references: ["System.Runtime"] });
+  await put(parent, `${BACKUP}/Managed/Assembly-CSharp.dll`, plain);
+  await put(parent, "Ordinary/Managed/Assembly-CSharp.dll", plain);
+  const backup = await inspect(join(parent, BACKUP));
+  expect(backup.report.next_probes.map((probe) => probe.operation)).toEqual([
+    "inspect_managed_members",
+    "inspect_managed_artifact",
+  ]);
+  expect(
+    backup.report.files.find(
+      (file) => file.path === "Managed/Assembly-CSharp.dll",
+    )?.facts,
+  ).toContainEqual({
+    kind: "unity-il2cpp-backup-convention",
+    offset: null,
+    value: { backup_directory: "." },
+  });
+  const ordinary = await inspect(join(parent, "Ordinary"));
+  expect(ordinary.report.next_probes.map((probe) => probe.operation)).toEqual([
+    "inspect_managed_artifact",
+  ]);
+});
+
 it("retains complete observations through cancellation during directory finalization", async () => {
   const root = await createTestTempDirectory("rea-desktop-finalize-cancel-");
   await put(root, "notes.txt", "target content");

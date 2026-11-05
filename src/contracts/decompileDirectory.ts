@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { digestSchema } from "../domain/digests.js";
 import { absoluteLocalPathStringSchema } from "../domain/localPath.js";
+import { analysisSourceDescriptorSchema } from "../domain/analysisSource.js";
 
 /** On-disk journal. Append-only so a crash keeps committed function files. */
 export const DECOMPILE_DIRECTORY_JOURNAL_NAME = "decompile-journal.jsonl";
@@ -250,6 +251,22 @@ export const decompileDirectoryFunctionSchema = z
       )
       .optional(),
     sha256: digestSchema.optional(),
+    /** Source of this attempt's pseudocode observation; a matched file's original producer remains unknown. */
+    provider_source: z
+      .discriminatedUnion("status", [
+        z.strictObject({
+          status: z.literal("reported"),
+          source: analysisSourceDescriptorSchema,
+        }),
+        z.strictObject({
+          status: z.literal("unknown"),
+          reason: z.enum([
+            "source_not_available",
+            "existing_file_origin_unknown",
+          ]),
+        }),
+      ])
+      .optional(),
     body: bodySchema,
     failure: z
       .strictObject({
