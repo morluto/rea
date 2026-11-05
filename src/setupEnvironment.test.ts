@@ -1,4 +1,8 @@
-import { currentClientRegistrationCommand } from "./application/ClientRegistrationIdentity.js";
+import {
+  currentClientRegistrationCommand,
+  invokingPackageRunner,
+  withoutPackageRunnerIdentity,
+} from "./application/ClientRegistrationIdentity.js";
 import { UpdateCommandRunner } from "./application/UpdateCommandRunner.js";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -15,10 +19,6 @@ import { systemSetupHost } from "./application/SetupHost.js";
 import { systemUninstallHost } from "./application/Uninstall.js";
 import { createSystemDoctorHost } from "./doctorRuntime.js";
 import { PRODUCT_IDENTITY } from "./identity.js";
-import {
-  invokingPackageRunner,
-  withoutPackageRunnerIdentity,
-} from "./application/ClientRegistrationIdentity.js";
 import { snapshotEnvironment } from "./process/snapshotEnvironment.js";
 
 afterEach(() => vi.unstubAllEnvs());
@@ -202,6 +202,9 @@ it.each([
       REA_MCP_TOOLS_LIST_BUDGET_MS: "6000",
       REA_MCP_FIRST_CATALOG_BUDGET_MS: "21000",
       REA_MCP_DOCTOR_DEADLINE_MS: "31000",
+      REA_WINDOWS_CHANGE_TIME_DRIFT_MS: "4000",
+      REA_WINDOWS_CHANGE_TIME_SETTLE_POLL_MS: "50",
+      REA_WINDOWS_CHANGE_TIME_SETTLE_MAX_POLLS: "80",
     },
     providerConfigured: false,
     installHopper: true,
@@ -242,6 +245,9 @@ it.each([
           REA_MCP_TOOLS_LIST_BUDGET_MS: "6000",
           REA_MCP_FIRST_CATALOG_BUDGET_MS: "21000",
           REA_MCP_DOCTOR_DEADLINE_MS: "31000",
+          REA_WINDOWS_CHANGE_TIME_DRIFT_MS: "4000",
+          REA_WINDOWS_CHANGE_TIME_SETTLE_POLL_MS: "50",
+          REA_WINDOWS_CHANGE_TIME_SETTLE_MAX_POLLS: "80",
         });
       } else {
         expect(initial.providerEnvironment).not.toHaveProperty(

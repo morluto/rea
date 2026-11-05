@@ -1,30 +1,48 @@
 import type { Stats } from "node:fs";
 
+import {
+  resolveWindowsChangeTimeSettle,
+  type WindowsChangeTimeSettleLimits,
+} from "../config/windowsChangeTimeSettle.js";
+
 /**
  * Windows advances a file's ChangeTime shortly after it is written, without any
  * content change: security components attach catalog and file-hash extended
  * attributes asynchronously. A baseline captured while that is still in flight
  * disagrees with a later observation and reports an untouched file as changed.
  *
- * The drift window below is only an upper bound on when a write's ChangeTime has
- * finished moving, so a baseline is taken again until two observations agree.
- * That keeps `ctime` at full strength as a rewrite signal instead of dropping it,
- * which Windows needs because restoring the modification time is possible and
- * ordinary tools cannot restore the ChangeTime.
+ * The drift window is only an upper bound on when a write's ChangeTime has
+ * finished moving. `REA_WINDOWS_CHANGE_TIME_DRIFT_MS`,
+ * `REA_WINDOWS_CHANGE_TIME_SETTLE_POLL_MS`, and
+ * `REA_WINDOWS_CHANGE_TIME_SETTLE_MAX_POLLS` keep today's 2000 ms, 25 ms, and
+ * 40-poll defaults. That keeps `ctime` at full strength as a rewrite signal
+ * instead of dropping it, which Windows needs because restoring the
+ * modification time is possible and ordinary tools cannot restore the
+ * ChangeTime.
  */
-const WINDOWS_CHANGE_TIME_DRIFT_MS = 2_000;
-
-/** Settle a freshly written file's ChangeTime before recording it as a baseline. */
-const SETTLE_POLL_MS = 25;
-
-/** Give up settling rather than stall admission when ChangeTime never rests. */
-const SETTLE_MAX_POLLS = 40;
 
 export interface ChangeTimeSettleSeams {
   readonly platform?: NodeJS.Platform | undefined;
   readonly now?: (() => number) | undefined;
   readonly sleep?: ((delayMs: number) => Promise<void>) | undefined;
+  /** Launch environment. Omission reads `process.env`. */
+  readonly environment?:
+    | Readonly<Record<string, string | undefined>>
+    | undefined;
+  /** Already resolved budget. Omission parses `environment`. */
+  readonly limits?: WindowsChangeTimeSettleLimits | undefined;
 }
+
+const limitsFrom = (
+  seams: ChangeTimeSettleSeams,
+): WindowsChangeTimeSettleLimits => {
+  if (seams.limits !== undefined) return seams.limits;
+  const resolved = resolveWindowsChangeTimeSettle(
+    seams.environment ?? process.env,
+  );
+  if (!resolved.ok) throw resolved.error;
+  return resolved.value;
+};
 
 const defaultSleep = (delayMs: number): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, delayMs));
@@ -47,7 +65,7 @@ export const changeTimeMayStillDrift = (
   // is the only way to obtain a comparable value.
   if (!Number.isFinite(changeTime)) return true;
   const now = seams.now?.() ?? Date.now();
-  return now - changeTime < WINDOWS_CHANGE_TIME_DRIFT_MS;
+  return now - changeTime < limitsFrom(seams).driftMs;
 };
 
 /**
@@ -67,11 +85,13 @@ export const settleChangeTimeBaseline = async (
   read: () => Promise<Stats>,
   seams: ChangeTimeSettleSeams = {},
 ): Promise<Stats> => {
+  const limits = limitsFrom(seams);
+  const settled = { ...seams, limits };
   const sleep = seams.sleep ?? defaultSleep;
   let observed = await read();
-  for (let poll = 0; poll < SETTLE_MAX_POLLS; poll += 1) {
-    if (!changeTimeMayStillDrift(observed, seams)) return observed;
-    await sleep(SETTLE_POLL_MS);
+  for (let poll = 0; poll < limits.maxPolls; poll += 1) {
+    if (!changeTimeMayStillDrift(observed, settled)) return observed;
+    await sleep(limits.pollMs);
     observed = await read();
   }
   return observed;

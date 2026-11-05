@@ -109,3 +109,44 @@ it("gives up settling instead of stalling admission forever", async () => {
   expect(sleeps.length).toBe(40);
   expect(reads()).toBeLessThanOrEqual(41);
 });
+
+it("uses the configured drift window, poll, and poll budget", async () => {
+  const established = scriptedRead([1_000]);
+  const settled = await settleChangeTimeBaseline(established.read, {
+    platform: "win32",
+    now: () => 1_500,
+    environment: { REA_WINDOWS_CHANGE_TIME_DRIFT_MS: "100" },
+  });
+  expect(settled.ctimeMs).toBe(1_000);
+  expect(established.reads()).toBe(1);
+
+  const drifting = scriptedRead([1_000]);
+  const sleeps: number[] = [];
+  await settleChangeTimeBaseline(drifting.read, {
+    platform: "win32",
+    now: () => 1_000,
+    sleep: async (delayMs: number) => {
+      sleeps.push(delayMs);
+    },
+    environment: {
+      REA_WINDOWS_CHANGE_TIME_SETTLE_POLL_MS: "7",
+      REA_WINDOWS_CHANGE_TIME_SETTLE_MAX_POLLS: "2",
+    },
+  });
+  expect(sleeps).toEqual([7, 7]);
+  expect(drifting.reads()).toBe(3);
+});
+
+it("refuses an invalid drift setting instead of using the default", async () => {
+  const { read, reads } = scriptedRead([1_000]);
+  await expect(
+    settleChangeTimeBaseline(read, {
+      platform: "win32",
+      environment: { REA_WINDOWS_CHANGE_TIME_DRIFT_MS: "1e3" },
+    }),
+  ).rejects.toMatchObject({
+    _tag: "ConfigurationError",
+    settings: [{ setting: "REA_WINDOWS_CHANGE_TIME_DRIFT_MS" }],
+  });
+  expect(reads()).toBe(0);
+});
