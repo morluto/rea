@@ -7,6 +7,8 @@ import {
   type DarwinCompilerOutcome,
 } from "../../src/process/DarwinProcessRunTokenReader.js";
 import {
+  DARWIN_PROCESS_OWNERSHIP_REMEDIATION,
+  LINUX_PROCESS_OWNERSHIP_REMEDIATION,
   LinuxOwnedProcessPrerequisiteError,
   processOwnershipAdmissionRecovery,
   systemProcessOwnershipHost,
@@ -312,7 +314,9 @@ it("preserves missing Linux ps prerequisite error without blaming configured com
         provider_id: "process-ownership",
       });
       expect(projected.message).toContain("procps-compatible ps");
-      expect(projected.remediation.action).toContain("procps");
+      expect(projected.remediation.action).toContain(
+        LINUX_PROCESS_OWNERSHIP_REMEDIATION,
+      );
       expect(projected.remediation.action).not.toContain("REA_OBJDUMP_COMMAND");
     }
     expect(service.observedLaunchFailures()).toEqual({});
@@ -367,7 +371,7 @@ it("preserves Darwin process ownership inspection preparation error without blam
       });
       expect(projected.message).toContain("Swift compiler failed");
       expect(projected.remediation.action).toContain(
-        "Xcode or Command Line Tools and Swift compiler configuration",
+        DARWIN_PROCESS_OWNERSHIP_REMEDIATION,
       );
       expect(projected.remediation.action).toContain(
         "REA_OBJDUMP_COMMAND does not need to change",
@@ -413,7 +417,7 @@ it("preserves Darwin process ownership inspection error with cleanup state witho
         provider_id: "process-ownership",
       });
       expect(projected.remediation.action).toContain(
-        "Xcode or Command Line Tools and Swift compiler configuration",
+        DARWIN_PROCESS_OWNERSHIP_REMEDIATION,
       );
       expect(projected.remediation.action).toContain(
         "REA_RIZIN_COMMAND does not need to change",
@@ -699,15 +703,9 @@ it.each(["identity_snapshot_unavailable", "baseline_unavailable"] as const)(
           provider_id: "process-ownership",
         });
         expect(projected.message).toContain(code);
-        if (code === "identity_snapshot_unavailable") {
-          expect(projected.remediation.action).toContain(
-            "Check host process churn and ensure REA has permission",
-          );
-        } else if (code === "baseline_unavailable") {
-          expect(projected.remediation.action).toContain(
-            "Ensure process ownership inspection is supported",
-          );
-        }
+        expect(projected.remediation.action).toContain(
+          processOwnershipAdmissionRecovery(code, "linux"),
+        );
         expect(projected.remediation.action).toContain(
           "REA_OBJDUMP_COMMAND does not need to change",
         );
@@ -748,7 +746,10 @@ it("preserves Linux process ownership admission failure in baseline capture with
       });
       expect(projected.message).toContain("identity_snapshot_unavailable");
       expect(projected.remediation.action).toContain(
-        "Check host process churn and ensure REA has permission",
+        processOwnershipAdmissionRecovery(
+          "identity_snapshot_unavailable",
+          "linux",
+        ),
       );
       expect(projected.remediation.action).toContain(
         "REA_RIZIN_COMMAND does not need to change",

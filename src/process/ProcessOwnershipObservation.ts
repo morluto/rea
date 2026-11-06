@@ -1682,6 +1682,10 @@ export const signalProcessWithStartIdentity = async (
   }
 };
 
+/** Actionable remediation when Linux `ps` is missing or incompatible. */
+export const LINUX_PROCESS_OWNERSHIP_REMEDIATION =
+  "Install your distribution's procps or procps-ng package, or put a procps-compatible ps on REA's PATH, then retry.";
+
 /** Refusal before an owned launch when Linux `ps` is missing or incompatible. */
 export class LinuxOwnedProcessPrerequisiteError extends AnalysisCapabilityUnavailableError {
   constructor(cause: unknown) {
@@ -1689,8 +1693,7 @@ export class LinuxOwnedProcessPrerequisiteError extends AnalysisCapabilityUnavai
     super("process-ownership", "prepare_owned_process", reason, {
       cause,
       userMessage: reason,
-      remediationAction:
-        "Install your distribution's procps or procps-ng package, or put a procps-compatible ps on REA's PATH, then retry.",
+      remediationAction: LINUX_PROCESS_OWNERSHIP_REMEDIATION,
     });
   }
 }
