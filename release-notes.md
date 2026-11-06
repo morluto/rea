@@ -359,6 +359,7 @@
 * **cli:** share boolean timing argument handling ([#8857](https://github.com/morluto/rea/issues/8857)) ([650a459](https://github.com/morluto/rea/commit/650a4593461ca90e71731425148d9325f3a27b19))
 * **cli:** stop completion after the option terminator ([#9064](https://github.com/morluto/rea/issues/9064)) ([d3a4fc8](https://github.com/morluto/rea/commit/d3a4fc87cd2842146f4fb46262799651306b54f7))
 * **cli:** validate byte queries before opening targets ([#7723](https://github.com/morluto/rea/issues/7723)) ([a0a1962](https://github.com/morluto/rea/commit/a0a1962e06e47b641d1cf6afbeb60d1d00da2b70))
+* **cli:** validate MCP registration before side effects ([#9057](https://github.com/morluto/rea/issues/9057)) ([e9ea9d6](https://github.com/morluto/rea/commit/e9ea9d6f50b155a44af4b3ff4afbb5597c9d55f9))
 * **cli:** validate outline-depth before numeric coercion ([#7505](https://github.com/morluto/rea/issues/7505)) ([baec375](https://github.com/morluto/rea/commit/baec375c347f129cb109823cff31831e906039f0))
 * **comparison:** preserve same-entry correspondence across renames ([#8263](https://github.com/morluto/rea/issues/8263)) ([6e2404b](https://github.com/morluto/rea/commit/6e2404b8690f6faa75227d895c937be5b77ef238))
 * **config:** preserve captured environments across provider launches ([3864c7d](https://github.com/morluto/rea/commit/3864c7d667593c3149ae81861540194a7bf81e99))
