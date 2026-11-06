@@ -425,3 +425,48 @@ describe("records an app gave generated ids", () => {
     ).toBe(true);
   });
 });
+
+describe("shapes an ODF app numbers on every save", () => {
+  /** A Draw page's boxes, each named by the user, and numbered `id1`… by LibreOffice from `first` as it saves. */
+  const page = (second: string, first = 1) =>
+    `<draw:page xmlns:draw="d" xmlns:text="t" draw:name="page1">${[
+      "Order Received",
+      second,
+      "Pack Items",
+      "Ship Order",
+    ]
+      .map(
+        (text, index) =>
+          `<draw:custom-shape draw:name="Step ${String(index + 1)}" draw:style-name="gr1" xml:id="id${String(index + first)}" draw:id="id${String(index + first)}"><text:p>${text}</text:p></draw:custom-shape>`,
+      )
+      .join("")}</draw:page>`;
+  const shape = (step: number) =>
+    `/root/children/[name=draw:custom-shape][@draw:name=Step ${String(step)}]`;
+
+  it("names each box by the name the user gave it, not the id the save numbered, so a save numbering them anew keeps the checks and guards", () => {
+    const file = xmlDraft(page("Pick Items"), page("Pick and Scan"));
+
+    expect(file.suggested).toEqual([
+      {
+        kind: "text_equals",
+        file: FILE,
+        pointer: shape(2),
+        value: "Pick and Scan",
+      },
+    ]);
+    expect(file.guards.map(pointerOf)).toEqual([
+      shape(1),
+      shape(3),
+      "/root/children",
+    ]);
+    // Another save numbers the shapes from 5.
+    const renumbered = xml(page("Pick and Scan", 5));
+    expect(passing(FILE, renumbered, file.suggested)).toEqual([true]);
+    expect(passing(FILE, renumbered, file.guards)).toEqual([true, true, true]);
+    // The value lists no other pointer by an id the save numbered.
+    expect(file.values[0]).toMatchObject({
+      pointer: `${shape(2)}/children/[name=text:p]/children/0`,
+    });
+    expect(file.values[0]?.alternatives).toBeUndefined();
+  });
+});

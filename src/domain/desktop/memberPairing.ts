@@ -4,6 +4,7 @@ import {
   isGeneratedId,
   isIdentifyingAttribute,
   isPlaceholder,
+  isSaveNumberedId,
   rankAttributes,
 } from "./attributeRank.js";
 import {
@@ -56,7 +57,8 @@ const pairsOf = (paired: readonly (Attribute & { tier: number })[]) =>
  * then its identifiers, a `name` attribute first; then each other attribute
  * by itself, a name-like key, a worded value or a small integer first; then
  * two of the best `MAX_PAIRED` of those together; then a coordinate, a long
- * number or a token by itself; then a child element's text, as Osmo's record
+ * number or a token by itself, and an id an ODF app numbers anew on each save
+ * (`isSaveNumberedId`); then a child element's text, as Osmo's record
  * by `[>first_name=Delphine]` (`childConditions`), for an element no
  * identifier names; last, an id the app generates (`isGeneratedId`), as
  * Freeplane's `ID_329023692`. All are counted over every sibling, so a
@@ -90,13 +92,21 @@ const candidatesOf = (
   const generated = usable.filter(
     ({ key, value }) => isIdentifyingAttribute(key) && isGeneratedId(value),
   );
+  // An id the app numbers anew on each save names no member past it: it ranks with the tokens.
+  const numbered = usable.filter(({ key, value }) =>
+    isSaveNumberedId(key, value),
+  );
   const identities = usable.filter(
-    (field) => isIdentifyingAttribute(field.key) && !generated.includes(field),
+    (field) =>
+      isIdentifyingAttribute(field.key) &&
+      !generated.includes(field) &&
+      !numbered.includes(field),
   );
   const named = (key: string) => key.toLowerCase() === "name";
-  const ranked = rankAttributes(
-    usable.filter(({ key }) => !isIdentifyingAttribute(key)),
-  );
+  const ranked = [
+    ...rankAttributes(usable.filter(({ key }) => !isIdentifyingAttribute(key))),
+    ...numbered.map((field) => ({ ...field, tier: 3 as const })),
+  ];
   const pairable = ranked.filter(({ tier }) => tier < 3);
   const suffixes = [
     "",

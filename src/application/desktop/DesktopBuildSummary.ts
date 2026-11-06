@@ -56,6 +56,7 @@ type DraftValue = {
     readonly value: string;
     readonly element: string;
   }[];
+  readonly alternatives?: string[];
 };
 
 /** A draft's note as the stop returns it. */
@@ -78,6 +79,7 @@ const draftValue = ({
   after,
   note,
   refers_to,
+  alternatives,
 }: z.infer<typeof draftValueSchema>): DraftValue => ({
   pointer,
   kind,
@@ -93,6 +95,7 @@ const draftValue = ({
           element,
         })),
       }),
+  ...(alternatives === undefined ? {} : { alternatives }),
 });
 
 /** A note without the optional fields the draft left out. */

@@ -8,7 +8,16 @@ import {
 } from "./appTaskDraftNoise.js";
 import { isIdentifyingAttribute } from "./attributeRank.js";
 import type { DesktopStateDifference } from "./stateChanges.js";
+import { alternativePointers } from "./appTaskDraftAlternatives.js";
+import { recordListsOf } from "./appTaskDraftNested.js";
 import { holdsFields, isRecordAt } from "./appTaskDraftText.js";
+import {
+  attributesOf,
+  compactValue,
+  cut,
+  escapeText,
+  startTag,
+} from "./compactValue.js";
 import { pairMembers, pairedAtSeed } from "./memberPairing.js";
 import {
   escapeToken,
@@ -38,6 +47,7 @@ export interface DraftValue {
   readonly after: JsonValue;
   readonly note?: ValueNote;
   readonly refers_to?: readonly ValueReference[];
+  readonly alternatives?: readonly string[];
 }
 
 /** One entry of a drafted file's `values`, as the draft writes it. */
@@ -73,6 +83,12 @@ export const draftValueSchema = z.strictObject({
     .describe(
       'Other elements a value names by their key or id, such as category 44 naming <cat key="44" name="Groceries"/>.',
     ),
+  alternatives: z
+    .array(z.string())
+    .optional()
+    .describe(
+      "A changed value's pointer naming its element by another identifier or name it holds alone, such as a shape's draw:name, for a check to use instead; at most three.",
+    ),
 });
 
 /** Bounds on the values a draft lists, so a large change cannot crowd out the rest of it. */
@@ -81,104 +97,13 @@ export const VALUE_LIMITS = {
   fileBytes: 8 * 1024,
   draftBytes: 24 * 1024,
   chars: 600,
-  references: 3,
+  references: 5,
 } as const;
 
 const isRecord = (
   value: JsonValue | undefined,
 ): value is Record<string, JsonValue> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
-
-const cut = (text: string, max: number) =>
-  text.length > max ? `${text.slice(0, max)}…` : text;
-
-const escapeText = (text: string) =>
-  text.replaceAll("&", "&amp;").replaceAll("<", "&lt;");
-const escapeAttribute = (text: string) =>
-  escapeText(text).replaceAll('"', "&quot;");
-
-/** An element's attributes; none for a value that holds none. */
-const attributesOf = (element: Record<string, JsonValue>) => {
-  const { attributes } = element;
-  return isRecord(attributes) ? attributes : {};
-};
-
-/** An element's start tag with its attributes. */
-const startTag = (element: Record<string, JsonValue> & { name: string }) =>
-  `<${element.name}${Object.entries(attributesOf(element))
-    .map(([key, value]) => ` ${key}="${escapeAttribute(String(value))}"`)
-    .join("")}`;
-
-/** An archive entry's own fields, without its view. */
-const isArchiveEntry = (value: JsonValue): value is Record<string, JsonValue> =>
-  isRecord(value) && "sha256" in value && "view" in value && "name" in value;
-
-/**
- * A value as an author reads it: a scalar as it is, cut past `max`
- * characters; an element as compact XML, with every text node the XML reader
- * kept, which already leaves out the whitespace an app lays out between
- * elements; an archive entry as its name, format and size; anything else as
- * JSON. Writing stops once past `max`, so a large subtree costs no more than
- * the cut.
- */
-export const compactValue = (
-  value: JsonValue | undefined,
-  max: number = VALUE_LIMITS.chars,
-): JsonValue => {
-  if (value === undefined) return null;
-  if (typeof value === "string") return cut(value, max);
-  if (value === null || typeof value !== "object") return value;
-  const parts: string[] = [];
-  let length = 0;
-  const push = (text: string) => {
-    parts.push(text);
-    length += text.length;
-    return length <= max;
-  };
-  const write = (node: JsonValue): boolean => {
-    if (isXmlElement(node)) {
-      const start = startTag(node);
-      if (node.children.length === 0) return push(`${start}/>`);
-      return (
-        push(`${start}>`) &&
-        node.children.every((child) =>
-          typeof child === "string" ? push(escapeText(child)) : write(child),
-        ) &&
-        push(`</${node.name}>`)
-      );
-    }
-    if (isArchiveEntry(node))
-      return push(
-        JSON.stringify({
-          name: node.name,
-          format: node.format ?? null,
-          size: node.size ?? null,
-        }),
-      );
-    if (Array.isArray(node))
-      return (
-        push("[") &&
-        node.every(
-          (item, index) => (index === 0 || push(",")) && write(item),
-        ) &&
-        push("]")
-      );
-    if (isRecord(node))
-      return (
-        push("{") &&
-        Object.entries(node).every(
-          ([key, item], index) =>
-            (index === 0 || push(",")) &&
-            push(`${JSON.stringify(key)}:`) &&
-            write(item),
-        ) &&
-        push("}")
-      );
-    return push(JSON.stringify(node));
-  };
-  write(value);
-  return cut(parts.join(""), max);
-};
 
 /** The longest value a reference is resolved from. */
 const MAX_REFERENCE_CHARS = 64;
@@ -290,7 +215,7 @@ const stemOf = (attribute: string, tag: string) => {
   );
 };
 
-/** What a value a pointer reads names: the one other element whose `key` or `id` it equals, or, among several, the one whose tag shares the attribute's stem. */
+/** What a value a pointer reads names: the one other element whose `key` or `id` it equals, or, among several, the one whose tag shares the attribute's stem, the one named for it first; a plain number only through an attribute so named, or one ending in `id`, `ref` or `key`. */
 const referencesFrom = (
   index: ReadonlyMap<string, ReadonlyMap<string, readonly JsonValue[]>>,
 ) => {
@@ -300,15 +225,33 @@ const referencesFrom = (
     self: JsonValue | undefined,
   ): ValueReference | undefined => {
     if (!referable(value)) return undefined;
+    // A plain number, as a list's `count="5"`, names an element only through an attribute named for one.
+    const plain = /^-?\d+(?:\.\d+)?$/u.test(value);
     const found = [...(index.get(value)?.values() ?? [])]
       .flat()
-      .filter((node) => node !== self);
-    const hinted =
+      .filter(
+        (node) =>
+          node !== self &&
+          (!plain ||
+            (attribute !== undefined &&
+              isXmlElement(node) &&
+              (stemOf(attribute, node.name) ||
+                /(?:id|ref|key)$/iu.test(localOf(attribute))))),
+      );
+    const stemmed =
       found.length === 1 || attribute === undefined
         ? found
         : found.filter(
             (node) => isXmlElement(node) && stemOf(attribute, node.name),
           );
+    // Among several, the tag the attribute is named for, as `account` an `<ACCOUNT>` before an `<ACCOUNTID>`.
+    const named = stemmed.filter(
+      (node) =>
+        isXmlElement(node) &&
+        localOf(node.name).toLowerCase() ===
+          localOf(attribute ?? "").toLowerCase(),
+    );
+    const hinted = stemmed.length > 1 && named.length === 1 ? named : stemmed;
     const [element] = hinted;
     return hinted.length === 1 && isXmlElement(element)
       ? {
@@ -319,6 +262,17 @@ const referencesFrom = (
       : undefined;
   };
   return resolve;
+};
+
+/** References without repeats, the first of each attribute and value. */
+const uniqueReferences = (references: readonly ValueReference[]) => {
+  const seen = new Set<string>();
+  return references.filter(({ attribute, value }) => {
+    const key = JSON.stringify([attribute, value]);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 };
 
 /** What a values list reads: a file's two ends and how it treats each pointer. */
@@ -336,10 +290,28 @@ export interface ValueContext {
 const byteLength = (value: unknown) =>
   new TextEncoder().encode(JSON.stringify(value)).length;
 
+/** Records of attributes an element nests whose references a value lists, as the splits of a transaction. */
+const MAX_NESTED_RECORDS = 10;
+
+/** The references in an element's attributes other than its own identifiers. */
+const attributeReferences = (
+  resolve: ReturnType<typeof referencesFrom>,
+  element: JsonValue,
+) =>
+  Object.entries(isXmlElement(element) ? element.attributes : {}).flatMap(
+    ([key, item]) =>
+      typeof item === "string" &&
+      !isIdentifyingAttribute(key) &&
+      !/^key$/iu.test(key)
+        ? (resolve(item, key, element) ?? [])
+        : [],
+  );
+
 /**
  * The elements a value names: each attribute of an element by its own value,
- * other than the element's own identifiers, or a scalar, with the attribute
- * that holds it.
+ * other than the element's own identifiers, and of the records of
+ * attributes it nests, as a KMyMoney split's `account` and `payee`; or a
+ * scalar, with the attribute that holds it. Each once.
  */
 const referencesOf = (
   resolve: ReturnType<typeof referencesFrom>,
@@ -348,14 +320,12 @@ const referencesOf = (
 ): ValueReference[] => {
   const value = resolvePointer(view, pointer);
   if (isXmlElement(value))
-    return [
-      ...Object.entries(attributesOf(value)).flatMap(([key, item]) =>
-        typeof item === "string" &&
-        !isIdentifyingAttribute(key) &&
-        !/^key$/iu.test(key)
-          ? (resolve(item, key, value) ?? [])
-          : [],
-      ),
+    return uniqueReferences([
+      ...attributeReferences(resolve, value),
+      ...recordListsOf(value)
+        .flatMap(({ records }) => records)
+        .slice(0, MAX_NESTED_RECORDS)
+        .flatMap((record) => attributeReferences(resolve, record)),
       // A field holding another element's id as its text, as a split's `<split:account>`.
       ...[value, ...value.children].flatMap((field) => {
         const text = leafText(field);
@@ -365,7 +335,7 @@ const referencesOf = (
           ? (resolve(text, field.name, value) ?? [])
           : [];
       }),
-    ];
+    ]);
   if (typeof value !== "string") return [];
   const segments = pointer.split("/");
   const attribute =
@@ -401,14 +371,24 @@ const entryOf = (
     0,
     VALUE_LIMITS.references,
   );
+  const alternatives =
+    kind === "changed" && note === undefined
+      ? alternativePointers(view, pointer)
+      : [];
   return {
     pointer,
     kind,
-    before: kind === "added" ? null : compactValue(seedValue(context, pointer)),
+    before:
+      kind === "added"
+        ? null
+        : compactValue(seedValue(context, pointer), VALUE_LIMITS.chars),
     after:
-      kind === "removed" ? null : compactValue(resolvePointer(final, pointer)),
+      kind === "removed"
+        ? null
+        : compactValue(resolvePointer(final, pointer), VALUE_LIMITS.chars),
     ...(note === undefined ? {} : { note }),
     ...(refers.length === 0 ? {} : { refers_to: refers }),
+    ...(alternatives.length === 0 ? {} : { alternatives }),
   };
 };
 

@@ -274,8 +274,12 @@ Write `{"name", "prompt", "checks"}` from the draft and what you did.
   names it by, so copy the pointer and the `after` value into a check.
   Only XML files, archives, JSON and key files have values: a text file's
   or SQLite database's `change` already lists its lines and rows.
-  `refers_to` says what a number stands for, such as `category="44"`
-  naming `<cat key="44" name="Groceries"/>`; use it for the prompt's words.
+  `refers_to` says what a number or id stands for, such as `category="44"`
+  naming `<cat key="44" name="Groceries"/>`, or a new KMyMoney
+  transaction's splits naming their account and payee; use it for the
+  prompt's words. `alternatives` gives a changed value's pointer by the
+  element's other names, such as a label beside an id, to pick another key
+  without another export.
   Skip entries whose `note` is `by_position` (no check can use that
   pointer) or noise (`view_state`, `renumbered`, `volatile`,
   `timestamp`, `upkeep`, `layout`). `values_cut` means a limit left some out.

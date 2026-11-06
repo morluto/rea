@@ -191,3 +191,73 @@ describe("draftTaskFiles guards beyond a sibling's same field", () => {
     ]);
   });
 });
+
+describe("draftTaskFiles guards of siblings named by the field they check", () => {
+  /** A Tiled map's objects, each with an id, a name and a free-form type of its own. */
+  const map = (well: string) =>
+    `<map><objectgroup id="2" name="Landmarks"><object id="1" name="${well}" type="well" x="95.9"/><object id="2" name="Blacksmith Door" type="door" x="320.1"/><object id="3" name="Harbor Gate" type="gate" x="191.8"/><object id="4" name="Player Spawn" type="spawn" x="48.6"/></objectgroup></map>`;
+  const OBJECTS = "/root/children/[name=objectgroup][@id=2]/children";
+
+  it("selects each sibling by its id, not the name the guard reads, and counts the objects though each holds a type of its own", () => {
+    const file = xmlDraft(map("Old Well"), map("Wishing Well"));
+
+    expect(file.suggested.map(pointerOf)).toEqual([
+      `${OBJECTS}/[name=object][@id=1]/attributes/name`,
+      `${OBJECTS}/[name=object][@name=Old Well]`,
+    ]);
+    expect(file.guards).toEqual([
+      {
+        kind: "value_equals",
+        file: FILE,
+        pointer: `${OBJECTS}/[name=object][@id=2]/attributes/name`,
+        value: "Blacksmith Door",
+      },
+      {
+        kind: "value_equals",
+        file: FILE,
+        pointer: `${OBJECTS}/[name=object][@id=3]/attributes/name`,
+        value: "Harbor Gate",
+      },
+      {
+        kind: "member_count",
+        file: FILE,
+        pointer: OBJECTS,
+        matching: "[name=object]",
+        equals: 4,
+      },
+    ]);
+    // Renaming the door fails its guard, which a guard selecting it by that name could not.
+    const renamed = map("Wishing Well").replace("Blacksmith Door", "Bakery");
+    expect(passing(FILE, xml(renamed), file.guards)).toEqual([
+      false,
+      true,
+      true,
+    ]);
+  });
+
+  it("guards no attribute numbering the siblings in order, as MyPaint's `src`, which a layer added or moved renumbers", () => {
+    const stack = (top: string) =>
+      `<stack><layer name="${top}" src="data/layer-00.png" opacity="1.0"/><layer name="Sky" src="data/layer-01.png" opacity="0.8"/><layer name="Background" src="data/layer-02.png" opacity="0.5"/></stack>`;
+
+    const file = xmlDraft(stack("Layer"), stack("Sun"));
+
+    expect(file.guards.map(pointerOf)).toEqual([
+      "/root/children/[name=layer][@name=Sky]/attributes/opacity",
+      "/root/children/[name=layer][@name=Background]/attributes/opacity",
+      "/root/children",
+    ]);
+  });
+
+  it("guards another field of a sibling no other attribute names alone", () => {
+    const list = (first: string) =>
+      `<list><item name="${first}" qty="3"/><item name="Lantern" qty="1"/><item name="Rope" qty="2"/></list>`;
+
+    const file = xmlDraft(list("Tent"), list("Tarp"));
+
+    expect(file.guards.map(pointerOf)).toEqual([
+      "/root/children/[name=item][@name=Lantern]/attributes/qty",
+      "/root/children/[name=item][@name=Rope]/attributes/qty",
+      "/root/children",
+    ]);
+  });
+});

@@ -49,8 +49,16 @@ const membersOf = (view: JsonValue | null, { list, tag, kind }: Counted) => {
     : [];
 };
 
-/** The attribute naming a member's kind, as Dia's `type="Flowchart - Box"`, which a selector can carry; none when `before`, its seed version, holds another. */
-const kindOf = (member: JsonValue, before?: JsonValue) => {
+/** Whether the members of a tag in a list each hold a different value of a key, as Tiled's objects a free-form `type` (`well`, `door`, `gate`): a label of each, not a kind several share. */
+const eachOwn = (items: JsonValue, tag: string, key: string) => {
+  const values = (Array.isArray(items) ? items : []).flatMap((item) =>
+    isXmlElement(item) && item.name === tag ? [item.attributes[key]] : [],
+  );
+  return values.length > 1 && new Set(values).size === values.length;
+};
+
+/** The attribute naming a member's kind, as Dia's `type="Flowchart - Box"`, which a selector can carry; none when `before`, its seed version, holds another, or when every member of its tag in `items`, its list, holds its own (`eachOwn`). */
+const kindOf = (member: JsonValue, items: JsonValue, before?: JsonValue) => {
   if (!isXmlElement(member)) return undefined;
   const key = Object.keys(member.attributes).find((name) =>
     KIND_KEY.test(name),
@@ -59,6 +67,7 @@ const kindOf = (member: JsonValue, before?: JsonValue) => {
   return key === undefined ||
     typeof value !== "string" ||
     value.includes("][") ||
+    eachOwn(items, member.name, key) ||
     (before !== undefined &&
       (!isXmlElement(before) || before.attributes[key] !== value))
     ? undefined
@@ -125,7 +134,11 @@ const editedList = (
     const at = segments.slice(0, index + 1).join("/");
     const member = resolvePointer(ends.final, at);
     if (!isXmlElement(member)) return undefined;
-    const kind = kindOf(member, resolvePointer(ends.baseline, at) ?? null);
+    const kind = kindOf(
+      member,
+      resolvePointer(ends.final, list) ?? null,
+      resolvePointer(ends.baseline, at) ?? null,
+    );
     const counted = { list, tag: member.name, ...(kind && { kind }) };
     if (
       [ends.baseline, ends.final].every(
@@ -164,7 +177,7 @@ export const draftCounts = (
       context.covered(list.slice(0, -"/children".length))
     )
       return;
-    const kind = kindOf(value);
+    const kind = kindOf(value, resolvePointer(view, list) ?? null);
     const counted = { list, tag: value.name, ...(kind && { kind }) };
     changed.set(keyOf(counted), counted);
   };

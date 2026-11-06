@@ -2,7 +2,7 @@ import type { DesktopTaskCheckInput } from "./appTask.js";
 import { isVolatileValue } from "./appTaskDraftNoise.js";
 import type { FileNote } from "./appTaskDraftFileNotes.js";
 
-/** Lines a text file's guard names, and how far from the added line it looks for them. */
+/** Lines a text file's guard names, and how far from the added line it looks for them when it has no like sibling. */
 const MAX_GUARD_LINES = 2;
 const NEIGHBOURHOOD = 6;
 
@@ -10,51 +10,74 @@ const NEIGHBOURHOOD = 6;
 const markerOf = (line: string): string | undefined =>
   /^\s*(?<marker>\[[ xX*>]?\]|[-*+•]|\d+[.)])\s/u.exec(line)?.groups?.marker;
 
+/** Whether a line is a command, as LyX's `\begin_layout Section` or `\end_layout`. */
+const isCommand = (line: string) => /^\s*\\[\p{L}_]+\b/u.test(line);
+
+/** Whether a line is only markup: a command, or a lone closing tag, as `</node>`. */
+const isMarkup = (line: string) =>
+  isCommand(line) || /^\s*<\/[^>]*>\s*$/u.test(line);
+
+/** What kind of line a line is, for its like siblings: a list item's marker, or the command opening it, as `\begin_layout Section` opens a LyX heading. */
+const kindOf = (lines: readonly string[], index: number) => {
+  const marker = markerOf(lines[index] ?? "");
+  const opener = lines[index - 1];
+  return marker === undefined
+    ? opener !== undefined && isCommand(opener)
+      ? `opens\u0000${opener.trim()}`
+      : undefined
+    : `marker\u0000${marker}`;
+};
+
+/** How many times each line occurs. */
+const tally = (lines: readonly string[]) => {
+  const counts = new Map<string, number>();
+  for (const line of lines) counts.set(line, (counts.get(line) ?? 0) + 1);
+  return counts;
+};
+
 /**
  * A `lines_present` guard of a text file's unchanged lines beside the first
- * line an edit added, for an author to add by choice: the list items next to
- * it with the same marker, as the other `[ ]` action items around a new one,
- * nearest first and kept in file order; or, when it is no list item or has no
- * such sibling, the nearest lines with words in them. Each is a line the
- * seed and the end both hold. None when nothing was added.
+ * line an edit added, for an author to add by choice: the nearest lines of
+ * its kind (`kindOf`), as the other `[ ]` action items around a new one or
+ * the other headings a LyX command opens, kept in file order; or, when it
+ * has no such sibling, the nearest lines with words in them. Each is text
+ * the seed and the end both hold once: never a line of markup alone, nor one
+ * that repeats, as LyX's `\end_layout`. None when nothing was added.
  */
 export const lineGuards = (
   file: string,
   before: readonly string[],
   after: readonly string[],
 ): DesktopTaskCheckInput[] => {
-  const seed = new Set(before);
+  const [seed, end] = [tally(before), tally(after)];
   const at = after.findIndex((line) => !seed.has(line));
-  const added = after[at];
-  if (added === undefined) return [];
-  const near = after
+  if (at < 0) return [];
+  const kind = kindOf(after, at);
+  const kept = after
     .map((line, index) => ({ line, index }))
     .filter(
       ({ line, index }) =>
         index !== at &&
-        Math.abs(index - at) <= NEIGHBOURHOOD &&
-        seed.has(line) &&
+        seed.get(line) === 1 &&
+        end.get(line) === 1 &&
         /[\p{L}\d]/u.test(line) &&
-        // A lone closing tag, as `</node>`, is in any such file.
-        !/^\s*<\/[^>]*>\s*$/u.test(line),
+        !isMarkup(line),
     )
     .toSorted(
       (left, right) =>
         Math.abs(left.index - at) - Math.abs(right.index - at) ||
         left.index - right.index,
     );
-  const marker = markerOf(added);
-  const siblings = near.filter(
-    ({ line }) => marker !== undefined && markerOf(line) === marker,
+  const siblings = kept.filter(
+    ({ index }) => kind !== undefined && kindOf(after, index) === kind,
   );
-  const lines = [
-    ...new Set(
-      (siblings.length > 0 ? siblings : near)
-        .slice(0, MAX_GUARD_LINES)
-        .toSorted((left, right) => left.index - right.index)
-        .map(({ line }) => line),
-    ),
-  ];
+  const near = kept.filter(
+    ({ index }) => Math.abs(index - at) <= NEIGHBOURHOOD,
+  );
+  const lines = (siblings.length > 0 ? siblings : near)
+    .slice(0, MAX_GUARD_LINES)
+    .toSorted((left, right) => left.index - right.index)
+    .map(({ line }) => line);
   return lines.length === 0 ? [] : [{ kind: "lines_present", file, lines }];
 };
 

@@ -87,3 +87,56 @@ describe("draftTaskFiles for lines added to a text file longer than its view", (
     expect(file.suggested.map(({ kind }) => kind)).not.toContain("line_count");
   });
 });
+
+describe("draftTaskFiles guards of a document of commands and text, as LyX saves one", () => {
+  /** A LyX body: each heading and paragraph opened by a command and closed by `\end_layout`. */
+  const report = (heading: string) =>
+    [
+      "\\begin_body",
+      "",
+      "\\begin_layout Section",
+      "Introduction",
+      "\\end_layout",
+      "",
+      "\\begin_layout Standard",
+      "This report summarises the spring season.",
+      "\\end_layout",
+      "",
+      "\\begin_layout Section",
+      heading,
+      "\\end_layout",
+      "",
+      "\\begin_layout Standard",
+      "Volunteers spread compost in early March.",
+      "\\end_layout",
+      "",
+      "\\begin_layout Section",
+      "Harvest Results",
+      "\\end_layout",
+      "",
+      "\\end_body",
+    ].join("\n");
+  const doc = (heading: string) => {
+    const view = textView(report(heading));
+    return { view, file: "Documents/garden-report.lyx" };
+  };
+
+  it("guards the other headings the same command opens, never a command line or one every section repeats", () => {
+    const [seed, end] = [doc("Soil Preperation"), doc("Soil Preparation")];
+    const [file] = draftOf({
+      [seed.file]: statePath("document", "text", seed.view, end.view),
+    });
+
+    expect(file?.suggested).toEqual([
+      { kind: "lines_present", file: seed.file, lines: ["Soil Preparation"] },
+      { kind: "lines_absent", file: seed.file, lines: ["Soil Preperation"] },
+    ]);
+    expect(file?.guards).toEqual([
+      {
+        kind: "lines_present",
+        file: seed.file,
+        lines: ["Introduction", "Harvest Results"],
+      },
+    ]);
+  });
+});

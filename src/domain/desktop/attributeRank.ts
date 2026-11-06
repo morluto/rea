@@ -36,6 +36,10 @@ export const isGeneratedToken = (value: string): boolean =>
 export const isGeneratedId = (value: string): boolean =>
   /^[A-Za-z]*[_-]?\d{6,}$/u.test(value) || isGeneratedToken(value);
 
+/** Whether an identifier is one an ODF app numbers anew as it saves, as LibreOffice's `xml:id="id2"` and `draw:id="id2"` on a shape: where the shape came in that save, not which shape it is. */
+export const isSaveNumberedId = (key: string, value: string): boolean =>
+  /^(?:xml|draw):id$/iu.test(key) && /^id\d+$/u.test(value);
+
 /** Whether a key names what its element is called rather than a style or font it uses. */
 export const isNameLikeKey = (key: string): boolean => {
   const local = localName(key);

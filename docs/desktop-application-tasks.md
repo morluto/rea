@@ -63,13 +63,23 @@ operation `describe_desktop_application_task` and predicate type
   `<gnc:transaction>`, is listed field by field, and a field that lists
   records, as its `<trn:splits>`, record by record, so the cut never hides
   one. `refers_to` names up to
-  three other elements a value equals the `key` or `id` of, with the
+  five other elements a value equals the `key` or `id` of, with the
   `attribute` holding it, as HomeBank's `category="44"` names
   `<cat key="44" name="Groceries"/>`, or the id a child element holds, as a
   GnuCash split's `<split:account>` names the account whose `<act:id>` it
   is, shown with its name, `<gnc:account …><act:name>Groceries</act:name>…`;
-  where several elements share that key,
-  the one whose tag shares the attribute's stem, as `payee` and `<pay>`. What a check can
+  an element added whole lists those of the records of attributes it nests
+  too, as a KMyMoney transaction's splits name their `<ACCOUNT>` and
+  `<PAYEE>`, each once. Where several elements share that key, the one
+  whose tag shares the attribute's stem, as `payee` and `<pay>`, and of
+  those the one named for the attribute, as `account` an `<ACCOUNT>` before
+  an `<ACCOUNTID>`. A plain number names an element only through an
+  attribute so named or ending in `id`, `ref` or `key`, so a list's
+  `count="5"` names no `<FIXVERSION id="5"/>`. A value that changed lists,
+  in `alternatives`, its pointer naming the element by each other identifier
+  or name-like attribute it holds alone among its tag's members, up to
+  three, as an Inkscape text's `[@inkscape:label=Headline]` beside its
+  `[@id=text12]`, for a check to name it by instead. What a check can
   name comes first, text an edit changed before the rest, so no cut drops
   the edit, then what only position reaches, then noise. A file lists
   at most 20 values and 8 KB, the draft 24 KB, and `values_cut` says when a
@@ -99,7 +109,9 @@ operation `describe_desktop_application_task` and predicate type
     as Scribus's `ANNAME` or `inkscape:label`, a worded value or an integer of
     up to five digits first, then by two such attributes together, as
     Gnumeric's cells by `[@Col=3][@Row=2]`, then by a coordinate, a long
-    number, a length with its unit, as `svg:height="2.629cm"`, or a token,
+    number, a length with its unit, as `svg:height="2.629cm"`, an `xml:id`
+    or `draw:id` of the form `id2` that LibreOffice numbers anew as it saves,
+    so a Draw shape is named by its `draw:name`, or a token,
     such as `XPOS` or `ItemID`, an automatic style name an app numbers as it
     saves and renumbers on reload, as LibreOffice's
     `presentation:style-name="pr1"` (`P1`, `T1`, `MT1`, `L2` on a
@@ -204,7 +216,17 @@ operation `describe_desktop_application_task` and predicate type
     volatile values, view state and values standing for none, as HomeBank's
     new `<ope>` gets its `amount`, `category` and `payee`; a value two or
     more like siblings all hold, as Grisbi's `Cu="1"`, comes after those
-    that vary, as its `Pa`, `Ca`, `Dt` and `Am`. An element whose other attributes, two
+    that vary, as its `Pa`, `Ca`, `Dt` and `Am`. Records of attributes
+    alone that it nests, as a KMyMoney `<TRANSACTION>` its `<SPLITS>` of
+    `<SPLIT>`, get a `value_equals` of each attribute whose values vary among
+    the like records, its own and those under its like siblings, at most
+    three a record and six in all, as each split's `value` and `payee`, but
+    not one every split holds alike, as `price="1/1"`, nor one each holds
+    equal to an earlier one, as `shares` repeats `value`. Each record is
+    named by an identifier that the app neither generates nor numbers anew
+    in every record holding such a list, as KMyMoney's `S0001` in every
+    transaction, else by its best ranked attribute short of a coordinate or
+    an amount, as `[name=SPLIT][@account=A000001]`. An element whose other attributes, two
     or more, a like sibling holds every one of, as a new Planner task copies
     its neighbour's defaults, and any other element added whole, get a check
     that it exists. A record added to a list that a selector names, as
@@ -224,6 +246,9 @@ operation `describe_desktop_application_task` and predicate type
   - Where members of a list were added or removed, a `member_count` of the
     list's members of their tag, and of their kind where they share one
     (`type`, `kind` or `shape`, as `[name=dia:object][@type=Flowchart - Box]`),
+    unless every member of the tag holds a value of its own, as Tiled's
+    objects a free-form `type` (`well`, `door`, `gate`), which labels each
+    rather than grouping them,
     equal to the end's number, which differs from the seed's: at most two a
     file, the shallowest lists first, after the other checks. None for a
     list of one member at both ends, as a style an app adds for a run, for
@@ -297,15 +322,25 @@ operation `describe_desktop_application_task` and predicate type
   then the nearest first, at its seed value, which the end holds
   too: the check's own field where like siblings hold different values in
   it, and otherwise one that varies among them, as Planner's `work` rather
-  than the `type="normal"` every task shares; never through a sibling only
-  position or a renumbered id pairs; a `text_equals` with `text_attribute`
+  than the `type="normal"` every task shares, but not one numbering the
+  members in order, as MyPaint's `src`; never through a sibling only
+  position or a renumbered id pairs. A guard never selects its sibling by
+  what it reads: a sibling its selector names by the attribute the guard
+  checks is named by another identifier or name-like attribute it holds
+  alone at both ends instead, as Tiled's objects by `[@id=2]` rather than
+  the `name` the guard reads, or else the guard reads another field, or
+  there is none; one a child's text names, whose whole text is that text,
+  gets none. A `text_equals` with `text_attribute`
   reads its siblings the same way. Text that grew by lines gets a
   `text_contains` of each line it kept, of three or more characters, the
   four nearest the new text, so a correct edit that puts the line elsewhere
-  among them passes; a text file a `lines_present` of the unchanged list
-  items beside its first new line with the same marker, as Zim's other
-  `[ ]` action items, or else its nearest lines with words in them, never a
-  lone closing tag such as `</node>`; an item placed by its own position
+  among them passes; a text file a `lines_present` of the nearest two
+  unchanged lines of its first new line's kind, list items with the same
+  marker, as Zim's other `[ ]` action items, or lines the same command
+  opens, as the other headings after LyX's `\begin_layout Section`, or else
+  its nearest lines with words in them; each text both ends hold once, never
+  a line of markup alone, a command such as `\end_layout` or a lone closing
+  tag such as `</node>`, nor a line that repeats; an item placed by its own position
   that an edit added, a `text_contains` of each of up to four kept items'
   text, nearest first. Where members were only edited, a
   `member_count` of the outermost list an edit goes through by a member

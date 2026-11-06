@@ -12,6 +12,7 @@ import {
   textAttributes,
 } from "./appTaskDraftAttributeText.js";
 import { draftCounts } from "./appTaskDraftCounts.js";
+import { nestedRecordChecks } from "./appTaskDraftNested.js";
 import { draftGuards } from "./appTaskDraftGuards.js";
 import {
   attributeKeyOf,
@@ -236,7 +237,8 @@ const equals = (
 
 /**
  * Checks of an element added whole: a record only position names by its new
- * fields, beside any whole text; a list member by its own attributes; any
+ * fields, beside any whole text; a list member by its own attributes and
+ * those of the records of attributes it nests (`nestedRecordChecks`); any
  * other by its presence.
  */
 const elementChecks = (
@@ -266,6 +268,11 @@ const elementChecks = (
   const own = [
     ...attributeChecks(added, pointer, value),
     ...recordChecks(added, pointer, value),
+    ...nestedRecordChecks(
+      { file, final: ends.final, named: (at) => added.named(ends.final, at) },
+      pointer,
+      value,
+    ),
   ];
   take(
     collected,

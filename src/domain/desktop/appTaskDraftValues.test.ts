@@ -463,3 +463,128 @@ describe("draftTaskFiles for a transaction added to a book, as GnuCash saves one
     expect(slots.map(({ note }) => note)).toEqual(["upkeep", "upkeep"]);
   });
 });
+
+describe("draftTaskFiles for a transaction added to a book, as KMyMoney saves one", () => {
+  /** A split of a transaction: its id, which KMyMoney numbers anew in every transaction, amount, account and payee. */
+  const split = (id: string, value: string, account: string, payee: string) =>
+    `<SPLIT value="${value}" shares="${value}" memo="" account="${account}" price="1/1" id="${id}" payee="${payee}" reconcileflag="0"/>`;
+  const transaction = (id: string, date: string, splits: string) =>
+    `<TRANSACTION memo="" entrydate="2026-11-06" postdate="${date}" id="${id}" commodity="USD"><SPLITS>${splits}</SPLITS></TRANSACTION>`;
+  const WATER = transaction(
+    "T000000000000000001",
+    "2026-10-12",
+    split("S0001", "-209/5", "A000001", "P000002") +
+      split("S0002", "209/5", "A000011", "P000002"),
+  );
+  const ELECTRIC = transaction(
+    "T000000000000000002",
+    "2026-10-20",
+    split("S0001", "-921/10", "A000001", "P000003") +
+      split("S0002", "921/10", "A000011", "P000003"),
+  );
+  const PAYMENT = transaction(
+    "T000000000000000003",
+    "2026-11-03",
+    split("S0001", "-1749/20", "A000001", "P000003") +
+      split("S0002", "1749/20", "A000011", "P000003"),
+  );
+  /** A book: a file version whose id is a small number, payees, accounts the institution and parent list by id, and transactions. */
+  const kmy = (count: string, added: string) =>
+    `<KMYMONEY-FILE><FILEINFO><FIXVERSION id="3"/></FILEINFO><INSTITUTION id="I000001" name="Maple Grove Credit Union"><ACCOUNTIDS><ACCOUNTID id="A000001"/></ACCOUNTIDS></INSTITUTION><PAYEES><PAYEE id="P000002" name="Northside Water Co."/><PAYEE id="P000003" name="Riverside Electric"/></PAYEES><ACCOUNTS><ACCOUNT id="AStd::Expense" name="Expense"><SUBACCOUNTS><SUBACCOUNT id="A000011"/></SUBACCOUNTS></ACCOUNT><ACCOUNT id="A000001" name="Household Checking"/><ACCOUNT id="A000011" name="Utilities"/></ACCOUNTS><TRANSACTIONS count="${count}">${WATER}${ELECTRIC}${added}</TRANSACTIONS></KMYMONEY-FILE>`;
+  const SEED = kmy("2", "");
+  const END = kmy("3", PAYMENT);
+  const SPLITS =
+    "/root/children/[name=TRANSACTIONS]/children/[name=TRANSACTION][@postdate=2026-11-03]/children/[name=SPLITS]/children";
+
+  it("checks each split of the new transaction by the account it names, its amount and payee, not by the split id every transaction repeats", () => {
+    const file = xmlDraft(SEED, END);
+
+    const field = (account: string, key: string, value: string) => ({
+      kind: "value_equals",
+      file: "Documents/doc.xml",
+      pointer: `${SPLITS}/[name=SPLIT][@account=${account}]/attributes/${key}`,
+      value,
+    });
+    // `shares` repeats `value` in every split, and `memo`, `price` and `reconcileflag` are alike in all.
+    expect(file.suggested.slice(0, 4)).toEqual([
+      field("A000001", "value", "-1749/20"),
+      field("A000001", "payee", "P000003"),
+      field("A000011", "value", "1749/20"),
+      field("A000011", "payee", "P000003"),
+    ]);
+    const checks = file.suggested.slice(0, 4);
+    expect(passing("Documents/doc.xml", xml(SEED), checks)).toEqual([
+      false,
+      false,
+      false,
+      false,
+    ]);
+    expect(passing("Documents/doc.xml", xml(END), checks)).toEqual([
+      true,
+      true,
+      true,
+      true,
+    ]);
+    // A wrong amount fails.
+    const wrong = END.replace('value="1749/20"', 'value="1700/20"');
+    expect(passing("Documents/doc.xml", xml(wrong), checks)).toEqual([
+      true,
+      true,
+      false,
+      true,
+    ]);
+  });
+
+  it("names the account and payee each split refers to, the account over an id list naming it too, and no element a plain count equals", () => {
+    const file = xmlDraft(SEED, END);
+
+    const added = file.values.find(({ kind }) => kind === "added");
+    expect(
+      added?.refers_to?.map(({ attribute, value, element }) => [
+        attribute,
+        value,
+        element,
+      ]),
+    ).toEqual([
+      [
+        "account",
+        "A000001",
+        '<ACCOUNT id="A000001" name="Household Checking"/>',
+      ],
+      ["payee", "P000003", '<PAYEE id="P000003" name="Riverside Electric"/>'],
+      ["account", "A000011", '<ACCOUNT id="A000011" name="Utilities"/>'],
+    ]);
+    // count="3" equals FIXVERSION's id, but `count` names no element.
+    const count = file.values.find(({ pointer }) =>
+      pointer.endsWith("/attributes/count"),
+    );
+    expect(count).toMatchObject({ before: "2", after: "3" });
+    expect(count?.refers_to).toBeUndefined();
+  });
+});
+
+describe("draftTaskFiles values' other pointers", () => {
+  it("lists a changed value's pointer by each other name its element holds alone, as an Inkscape text's label beside its id", () => {
+    const poster = (headline: string) =>
+      `<svg xmlns:inkscape="i"><text id="text12" inkscape:label="Headline" x="10"><tspan>${headline}</tspan></text><text id="text14" inkscape:label="Venue" x="10"><tspan>Pier 4</tspan></text></svg>`;
+
+    const file = xmlDraft(poster("Jazz Night"), poster("Jazz Festival"));
+
+    const [changed] = file.values;
+    expect(changed).toMatchObject({
+      pointer:
+        "/root/children/[name=text][@id=text12]/children/[name=tspan]/children/0",
+      after: "Jazz Festival",
+      alternatives: [
+        "/root/children/[name=text][@inkscape:label=Headline]/children/[name=tspan]/children/0",
+      ],
+    });
+    // Each reads the same value at the end.
+    expect(
+      resolvePointer(
+        xml(poster("Jazz Festival")),
+        changed?.alternatives?.[0] ?? "",
+      ),
+    ).toBe("Jazz Festival");
+  });
+});
