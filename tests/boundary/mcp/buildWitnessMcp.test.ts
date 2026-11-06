@@ -234,6 +234,29 @@ it("witnesses a task: the seed fails, the edit passes, a near miss fails and so 
   ).toContain("already witnessed");
 });
 
+it("takes the after_reset stage after a reset whose screenshot the computer refused", async () => {
+  const witness = await witnessed();
+  const { app, check, client, computer, id } = witness;
+  await throughNearMiss(witness);
+  computer.refuseNext("computer_screenshot", "no display to capture");
+  await client.callTool({
+    name: "act_on_build_computer",
+    arguments: { computer_id: id, action: "reset", screenshot: true },
+  });
+  expect(app.state).toEqual(app.seed);
+  const checked = await check({ stage: "after_reset" });
+  expect(checked.isError, JSON.stringify(checked)).not.toBe(true);
+  const { witness: last } = parsed(checked);
+  expect(last).toMatchObject({
+    stage: "after_reset",
+    held: true,
+    status: "held",
+  });
+  expect(
+    last?.record?.actions.map(({ action, outcome }) => [action, outcome]),
+  ).toContainEqual(["reset", "applied"]);
+});
+
 it("ends the witness when the seed already passes, and refuses its later stages", async () => {
   const { check, act, directory } = await witnessed();
   const passing = {
