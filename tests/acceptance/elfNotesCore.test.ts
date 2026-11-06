@@ -213,6 +213,25 @@ cliTest.for([
     byteOrder: "little",
     coreFlags: 3,
   },
+  { name: "PA-RISC big", machine: 15, byteOrder: "big", coreFlags: 0 },
+  { name: "OpenRISC big", machine: 92, byteOrder: "big", coreFlags: 0 },
+  {
+    name: "OpenRISC Linux big",
+    machine: 0x8472,
+    byteOrder: "big",
+    coreFlags: 0,
+  },
+  {
+    name: "ARC compact little",
+    machine: 93,
+    byteOrder: "little",
+    coreFlags: 0,
+  },
+  { name: "ARCv2 big", machine: 195, byteOrder: "big", coreFlags: 0 },
+  { name: "Xtensa little", machine: 94, byteOrder: "little", coreFlags: 0 },
+  { name: "MicroBlaze big", machine: 189, byteOrder: "big", coreFlags: 0 },
+  { name: "C-SKY little", machine: 252, byteOrder: "little", coreFlags: 0 },
+  { name: "C-SKY big", machine: 252, byteOrder: "big", coreFlags: 0 },
 ] as const)(
   "decodes Linux ELF32 process identity through CLI and MCP ($name)",
   async ({ machine, byteOrder, coreFlags }, { cli }) => {

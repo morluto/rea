@@ -320,9 +320,17 @@ const hexWord = (val: bigint | number): string => `0x${val.toString(16)}`;
 /** Linux ELF32 ABIs whose PRPSINFO UID/GID fields are 32 bits. */
 const LINUX_PRPSINFO_UID32_MACHINES = new Set([
   8, // EM_MIPS
+  15, // EM_PARISC
   20, // EM_PPC
+  92, // EM_OPENRISC
+  93, // EM_ARCOMPACT
+  94, // EM_XTENSA
   164, // EM_HEXAGON
+  189, // EM_MICROBLAZE
+  195, // EM_ARCV2
   243, // EM_RISCV
+  252, // EM_CSKY
+  0x8472, // EM_OR32, used by Linux's OpenRISC core writer
 ]);
 
 const decodeCorePrpsinfo = (
