@@ -829,6 +829,7 @@
 * report provider admission failures as typed codes ([#8066](https://github.com/morluto/rea/issues/8066)) ([317bf3f](https://github.com/morluto/rea/commit/317bf3fe235e655b2d752d3be261cc0da7d00f2b))
 * retain address context cleanup failures ([#8417](https://github.com/morluto/rea/issues/8417)) ([7c755f2](https://github.com/morluto/rea/commit/7c755f2147528151d8186278d1c739fbf455f238))
 * **rizin:** keep debug targets off the debugger command stream ([#8647](https://github.com/morluto/rea/issues/8647)) ([fe677f6](https://github.com/morluto/rea/commit/fe677f6cf9853fb12490dfb8ef23ccae3a551049))
+* **rizin:** report the output cap instead of a provider signal ([#9033](https://github.com/morluto/rea/issues/9033)) ([abdbaa5](https://github.com/morluto/rea/commit/abdbaa544ad3e63444a58bebd1708cc51b136a8b))
 * **rizin:** retain rejected debugger shutdowns ([0793b6c](https://github.com/morluto/rea/commit/0793b6c3ca7ae329fe4e024b20d2da916deae6bf))
 * **runtime:** preserve exact selected target identities ([44b716f](https://github.com/morluto/rea/commit/44b716f2f288ae3416e076d4aa5c2809533d1c7b))
 * **rust:** state inflate limits on the consumed zlib stream ([#8835](https://github.com/morluto/rea/issues/8835)) ([6c3c5eb](https://github.com/morluto/rea/commit/6c3c5ebc69c408f938ec200b58c8876548fed2c6))
