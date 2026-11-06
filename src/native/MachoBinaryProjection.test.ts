@@ -408,6 +408,8 @@ it("distinguishes exact variable command extents from trailing bytes", async () 
   const note = (size: number) => {
     const bytes = command(0x31, size);
     bytes.write("fixture", 8, "ascii");
+    // Keep a nonzero byte after the NUL-terminated display name.
+    bytes[23] = 0xa5;
     bytes.writeBigUInt64LE(128n, 24);
     bytes.writeBigUInt64LE(16n, 32);
     return bytes;
@@ -443,6 +445,10 @@ it("distinguishes exact variable command extents from trailing bytes", async () 
     false,
   ]);
   const projection = projectMachoBinary(binary);
+  expect(projection.commands[2]?.fields).toMatchObject({
+    data_owner: "fixture",
+    data_owner_storage_hex: "66697874757265" + "00".repeat(8) + "a5",
+  });
   for (const [index, row] of binary.commands.entries()) {
     if (index % 2 === 0) {
       expect(row.rawSha256).toBeNull();
