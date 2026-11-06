@@ -671,7 +671,23 @@ export class ReverseEngineeringService {
       }
       const darwinFailure = darwinPreparationError(cause);
       if (earlyFailure === undefined && darwinFailure !== undefined) {
-        if (
+        const darwinCleanup =
+          darwinFailure.cleanupFailure !== undefined
+            ? {
+                reason: darwinFailure.cleanupFailure.message,
+                resources: darwinFailure.cleanupFailure.cleanupResources,
+              }
+            : (ownedCleanupOptions(cause).cleanup ?? undefined);
+        if (code === "ETIMEDOUT") {
+          earlyFailure = new AnalysisTimeoutError(operation, timeoutMs, {
+            cause,
+            ...(darwinCleanup === undefined ? {} : { cleanup: darwinCleanup }),
+            ...(darwinFailure.cleanupOwner === undefined
+              ? {}
+              : { cleanupOwner: darwinFailure.cleanupOwner }),
+            ...reverseCommandTimeoutGuidance(timeoutMs),
+          });
+        } else if (
           darwinFailure.cancellation !== undefined ||
           commandCancelled(signal, cause, code)
         ) {
@@ -679,7 +695,10 @@ export class ReverseEngineeringService {
             cause:
               callerCancellationCause(signal, cause) ??
               darwinFailure.cancellation?.reason,
-            ...ownedCleanupOptions(cause),
+            ...(darwinCleanup === undefined ? {} : { cleanup: darwinCleanup }),
+            ...(darwinFailure.cleanupOwner === undefined
+              ? {}
+              : { cleanupOwner: darwinFailure.cleanupOwner }),
           });
         } else {
           const provider =
@@ -688,13 +707,6 @@ export class ReverseEngineeringService {
             operation === "inspect_with_objdump"
               ? "REA_OBJDUMP_COMMAND"
               : "REA_RIZIN_COMMAND";
-          const darwinCleanup =
-            darwinFailure.cleanupFailure !== undefined
-              ? {
-                  reason: darwinFailure.cleanupFailure.message,
-                  resources: darwinFailure.cleanupFailure.cleanupResources,
-                }
-              : (ownedCleanupOptions(cause).cleanup ?? undefined);
           earlyFailure = new AnalysisCapabilityUnavailableError(
             "process-ownership",
             "prepare_owned_process",
@@ -725,11 +737,9 @@ export class ReverseEngineeringService {
                 : { cleanupOwner: darwinFailure.cleanupOwner }),
             },
           );
-          if (darwinFailure.cleanupFailure !== undefined) {
-            earlyFailure.bindCleanupDependencies([
-              darwinFailure.cleanupFailure,
-            ]);
-          }
+        }
+        if (darwinFailure.cleanupFailure !== undefined) {
+          earlyFailure.bindCleanupDependencies([darwinFailure.cleanupFailure]);
         }
       }
       if (

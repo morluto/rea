@@ -431,6 +431,109 @@ it("preserves Darwin process ownership inspection error with cleanup state witho
   }
 });
 
+it("preserves command deadline timeout when macOS helper preparation aborts and cleanup fails", async () => {
+  const { directory, path } = await createArtifact();
+  const command = resolve(directory, "configured-objdump");
+  const cleanupError = new AnalysisCapabilityUnavailableError(
+    "process-ownership",
+    "close_binary",
+    "helper staging directory cleanup failed",
+    { cleanup: { reason: "rmdir failed", resources: ["/tmp/helper"] } },
+  );
+  const darwinError = new DarwinProcessOwnershipInspectionError(
+    "Darwin process ownership helper preparation was cancelled",
+    {
+      cancellation: { reason: "timeout" },
+      cleanupFailure: cleanupError,
+    },
+  );
+  const service = new TestReverseEngineeringService({
+    environment: { REA_OBJDUMP_COMMAND: command },
+    runOwned: async () => {
+      throw new OwnedCommandFailure(
+        "timeout",
+        "Command deadline elapsed during ownership preparation.",
+        null,
+        null,
+        {
+          cause: darwinError,
+          preparationFailure: darwinError,
+        },
+      );
+    },
+  });
+  try {
+    const result = await service.inspectWithObjdump({
+      path,
+      operation: "file_headers",
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error._tag).toBe("AnalysisTimeoutError");
+      const projected = projectAnalysisError(result.error);
+      expect(projected.code).toBe("cleanup_incomplete");
+      expect(result.error.cleanupIncomplete).toBe(true);
+      expect(projected.remediation.action).toContain("command_timeout_ms");
+      expect(projected.remediation.action).not.toContain("REA_OBJDUMP_COMMAND");
+      expect(result.error.cleanup).toMatchObject({
+        reason: expect.stringContaining(
+          "helper staging directory cleanup failed",
+        ),
+        resources: ["/tmp/helper"],
+      });
+    }
+    expect(service.observedLaunchFailures()).toEqual({});
+  } finally {
+    await service.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+it("preserves command deadline timeout when macOS helper preparation aborts without cleanup failure", async () => {
+  const { directory, path } = await createArtifact();
+  const command = resolve(directory, "configured-objdump");
+  const darwinError = new DarwinProcessOwnershipInspectionError(
+    "Darwin process ownership helper preparation was cancelled",
+    {
+      cancellation: { reason: "timeout" },
+    },
+  );
+  const service = new TestReverseEngineeringService({
+    environment: { REA_OBJDUMP_COMMAND: command },
+    runOwned: async () => {
+      throw new OwnedCommandFailure(
+        "timeout",
+        "Command deadline elapsed during ownership preparation.",
+        null,
+        null,
+        {
+          cause: darwinError,
+          preparationFailure: darwinError,
+        },
+      );
+    },
+  });
+  try {
+    const result = await service.inspectWithObjdump({
+      path,
+      operation: "file_headers",
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error._tag).toBe("AnalysisTimeoutError");
+      const projected = projectAnalysisError(result.error);
+      expect(projected.code).toBe("provider_timeout");
+      expect(result.error.cleanupIncomplete).toBe(false);
+      expect(projected.remediation.action).toContain("command_timeout_ms");
+      expect(projected.remediation.action).not.toContain("REA_OBJDUMP_COMMAND");
+    }
+    expect(service.observedLaunchFailures()).toEqual({});
+  } finally {
+    await service.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 it.each(["identity_snapshot_unavailable", "baseline_unavailable"] as const)(
   "preserves Linux process ownership admission failure in baseline capture (%s) without blaming objdump command",
   async (code) => {
