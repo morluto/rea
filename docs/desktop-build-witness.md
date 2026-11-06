@@ -56,7 +56,8 @@ See [desktop builds](https://github.com/morluto/rea/blob/main/.agents/skills/rev
    REA counts a file as a document only when an app window's title shows its
    name or `~/` path, so name the file the app will save when its title shows
    something else, as MuseScore's shows a score's title: a file outside
-   hidden folders becomes a document, which the bundle owns, seeds and opens
+   hidden folders, other than a lock such as LibreOffice's `.~lock.<name>#`,
+   becomes a document, which the bundle owns, seeds and opens
    at launch, and one under a hidden folder such as `~/.config/MuseScore` the
    app's own state, also when that folder is a link elsewhere in the home. A
    path with `..`, or naming the home itself, is refused before the computer
@@ -81,7 +82,9 @@ See [desktop builds](https://github.com/morluto/rea/blob/main/.agents/skills/rev
    the owned paths, listing up to five in `files` with their roles, desktop
    files last, and counting the rest in `more`; `uncheckable_changes` when
    the app's keys in dconf were read and changed, listing the database in
-   `files`, since no check reads dconf; `unreadable_changes` when a dconf
+   `files`, since no check reads dconf (a version the capture kept no copy
+   of, as it keeps none of the database at the start, counts as holding
+   none of the app's keys); `unreadable_changes` when a dconf
    database changed but REA could not read it, such as without `dconf-cli`,
    with the read `error`, so whose keys changed is unknown; and
    `no_document` when no file has the document role.

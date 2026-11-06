@@ -53,6 +53,21 @@ describe("stateRole", () => {
     ).toBe("document");
   });
 
+  it("keeps a lock the app holds under a selected folder from being a document, unless a title names it", () => {
+    expect(stateRole(["selected_path"], "Documents/.~lock.today.txt#")).toBe(
+      "application_state",
+    );
+    expect(stateRole(["selected_path"], "Documents/lockfile")).toBe(
+      "application_state",
+    );
+    expect(
+      stateRole(
+        ["selected_path", "named_in_window_title"],
+        "Documents/.~lock.today.txt#",
+      ),
+    ).toBe("document");
+  });
+
   it("keeps a file in the desktop Trash shared, whatever else names it", () => {
     expect(
       stateRole([

@@ -3,7 +3,10 @@ import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
-import type { DesktopApplicationCapture } from "../../domain/desktop/desktopCapture.js";
+import type {
+  DesktopApplicationCapture,
+  DesktopStateChange,
+} from "../../domain/desktop/desktopCapture.js";
 import type { DesktopStateReaders } from "./DesktopApplicationState.js";
 import { draftDesktopApplicationTask } from "./DesktopTaskDraft.js";
 import {
@@ -55,7 +58,7 @@ const notesOf = async (
 const withEnd = (
   base: DesktopApplicationCapture,
   end: {
-    changes: ReturnType<typeof change>[];
+    changes: DesktopStateChange[];
     kept: ReturnType<typeof retained>[];
   },
 ): DesktopApplicationCapture => ({
@@ -69,6 +72,25 @@ const withEnd = (
     ),
   },
 });
+
+const database = `${HOME}/.config/dconf/user`;
+// dconf databases by the keys they hold; the reader dumps each as dconf does.
+const dumps: Readonly<Record<string, string>> = {
+  "GVariant wrap=false": "[org/example/notes]\nwrap=false\n",
+  "GVariant wrap=true": "[org/example/notes]\nwrap=true\n",
+  "GVariant wallpaper=blue":
+    "[org/example/notes]\nwrap=false\n\n[org/gnome/desktop/background]\ncolor='blue'\n",
+  "GVariant desktop only": "[org/gnome/desktop/background]\ncolor='blue'\n",
+};
+const dconfReaders: DesktopStateReaders = {
+  ...readers,
+  dconf: async (path) => {
+    const dump = dumps[await readFile(path, "latin1")];
+    return dump === undefined
+      ? { ok: false, error: "not a fixture database" }
+      : { ok: true, text: dump };
+  },
+};
 
 describe("draftDesktopApplicationTask notes", () => {
   it("has none when the draft has files", async () => {
@@ -137,23 +159,6 @@ describe("draftDesktopApplicationTask notes", () => {
   });
 
   it("says a change the app saved only in dconf is one no check reads, rather than that nothing changed", async () => {
-    const database = `${HOME}/.config/dconf/user`;
-    // dconf databases by the keys they hold; the reader dumps each as dconf does.
-    const dumps: Readonly<Record<string, string>> = {
-      "GVariant wrap=false": "[org/example/notes]\nwrap=false\n",
-      "GVariant wrap=true": "[org/example/notes]\nwrap=true\n",
-      "GVariant wallpaper=blue":
-        "[org/example/notes]\nwrap=false\n\n[org/gnome/desktop/background]\ncolor='blue'\n",
-    };
-    const dconfReaders: DesktopStateReaders = {
-      ...readers,
-      dconf: async (path) => {
-        const dump = dumps[await readFile(path, "latin1")];
-        return dump === undefined
-          ? { ok: false, error: "not a fixture database" }
-          : { ok: true, text: dump };
-      },
-    };
     /** The seed-and-end capture whose only change from seed to end is the dconf database's, to `after`. */
     const savedInDconf = (after: string): DesktopApplicationCapture => {
       const ended = withEnd(seedEndCapture(), {
@@ -214,5 +219,49 @@ describe("draftDesktopApplicationTask notes", () => {
         error: "not a fixture database",
       },
     ]);
+  });
+});
+
+describe("draftDesktopApplicationTask notes on a dconf database the capture kept no copy of", () => {
+  it("compares the app's dconf keys at the end with none, rather than calling the database unreadable, when the capture kept no copy of it from the start", async () => {
+    /** As the recorder writes it: the first walk keeps no copy of the database, so its change has no starting digest. */
+    const unkept = (after: string): DesktopApplicationCapture => {
+      const written = change(database, {
+        before: "GVariant wrap=false",
+        after,
+      });
+      return withEnd(seedEndCapture(), {
+        changes: [
+          {
+            ...written,
+            before:
+              written.before === null
+                ? null
+                : { ...written.before, sha256: null },
+          },
+        ],
+        kept: [retained(database, after)],
+      });
+    };
+
+    const saved = await notesOf(
+      unkept("GVariant wrap=true"),
+      Object.keys(dumps),
+      dconfReaders,
+    );
+    const desktop = await notesOf(
+      unkept("GVariant desktop only"),
+      Object.keys(dumps),
+      dconfReaders,
+    );
+
+    expect(saved.notes.map(({ code }) => code)).toEqual([
+      "uncheckable_changes",
+    ]);
+    expect(saved.notes[0]?.files).toEqual([
+      { file: ".config/dconf/user", role: "application_state" },
+    ]);
+    // The database holds none of the app's keys at the end, so none of them changed.
+    expect(desktop.notes.map(({ code }) => code)).toEqual(["no_change"]);
   });
 });

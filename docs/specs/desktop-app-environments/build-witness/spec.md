@@ -35,7 +35,8 @@ and the recording and writes the record as Evidence.
   nearest existing folder), refuses one outside it or in `~/.rea-build`
   either way before launching anything, and passes each as named to the
   capture as `--state-path`. A selected file is a document, or the app's own
-  state under a hidden folder of the home as named, before links.
+  state under a hidden folder of the home as named, before links, or when it
+  is a lock the app holds, such as LibreOffice's `.~lock.<name>#`.
 - Acknowledgement: `capture-desktop-application` reports, beside each progress
   message, an `event`: `window_open`; `checkpoint` with its name, trigger,
   time, entries walked, changes and retained files and bytes, and up to ten
@@ -54,7 +55,8 @@ and the recording and writes the record as Evidence.
   A draft with no files carries `notes`, coded `no_change`,
   `unowned_changes` (up to five changed home paths with their roles, and a
   count of the rest), `uncheckable_changes` (dconf databases whose app keys
-  were read and changed, which no check reads), `unreadable_changes` (dconf
+  were read and changed, which no check reads, a version kept without its
+  bytes counting as holding none), `unreadable_changes` (dconf
   databases that changed but could not be read, with the read `error`) and
   `no_document`.
 - `export_build_environment` writes the agent's task under `~/.rea-build`,
