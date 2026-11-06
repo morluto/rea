@@ -29,6 +29,7 @@ const plan: DesktopAppExportPlan = {
   windowClass: "Mousepad",
   paths: [".config/Mousepad", "Documents"],
   capturedHome: "/home/ada",
+  seedCheckpoint: "baseline",
   seedFiles: ["Documents/todo.txt"],
   textSeeds: ["Documents/todo.txt"],
   unseededFiles: [],
@@ -58,7 +59,7 @@ describe("names", () => {
   it("keeps the class off the module's own names and the module off other modules", () => {
     expect(className("path")).toBe("PathApp");
     expect(className("data-part")).toBe("DataPartApp");
-    expect(className("element-tree")).toBe("ElementTreeApp");
+    expect(className("run-script")).toBe("RunScriptApp");
     expect(className("p-a-t-h-s")).toBe("PATHSApp");
     expect(appModuleFile("calendar")).toBe("calendar_app.py");
     expect(appModuleFile("gnu-cash")).toBe("gnu_cash_app.py");
@@ -74,6 +75,19 @@ describe("ownedPaths", () => {
         [".config/app"],
       ),
     ).toEqual([".config/app", "Documents"]);
+  });
+
+  it("owns a folder beside a state directory, differing only in letter case, in the file's spelling", () => {
+    expect(
+      ownedPaths(
+        [".config/GIMP/2.10/sessionrc", ".Gimp/x"],
+        [],
+        [".config/gimp", ".gimp"],
+      ),
+    ).toEqual([".Gimp", ".config/GIMP"]);
+    expect(
+      ownedPaths([".config/GIMPshop/2.10/sessionrc"], [], [".config/gimp"]),
+    ).toEqual([".config/GIMPshop/2.10"]);
   });
 
   it("owns a file directly in the home or a shared folder as itself", () => {

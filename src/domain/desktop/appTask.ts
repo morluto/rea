@@ -48,7 +48,11 @@ const checkSchema = z.discriminatedUnion("kind", [
     contains: line.optional(),
     ...comparison,
   }),
-  kind("value_equals", { pointer: z.string(), value: jsonValueSchema }),
+  kind("value_equals", {
+    pointer: z.string(),
+    value: jsonValueSchema,
+    tolerance: z.number().min(0).optional(),
+  }),
   kind("value_absent", { pointer: z.string() }),
   kind("row_present", { table, where }),
   kind("row_absent", { table, where }),
@@ -143,6 +147,12 @@ const checkProblem = (check: DesktopTaskCheck): string | undefined => {
     new Set(check.lines).size !== check.lines.length
   )
     return "it lists a line twice";
+  if (
+    check.kind === "value_equals" &&
+    check.tolerance !== undefined &&
+    typeof check.value !== "number"
+  )
+    return "tolerance compares numbers, so value must be a number";
   const stamped = expectedValues(check).find(isTimestamp);
   return stamped === undefined
     ? undefined

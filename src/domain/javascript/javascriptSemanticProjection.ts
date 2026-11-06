@@ -47,7 +47,7 @@ import {
   type CommonJsExportSite,
 } from "./javascriptCommonJsExportReceivers.js";
 import type { JavaScriptSemanticPropertyPath } from "./javascriptSemanticPropertyPaths.js";
-import { semanticComputedMethodKey } from "./javascriptSemanticEvaluationOrder.js";
+import { semanticMethodDefinitionExpression } from "./javascriptSemanticEvaluationOrder.js";
 
 interface CollectCallableInput {
   readonly node: t.Node;
@@ -77,7 +77,7 @@ export const collectSemanticCallable = (input: CollectCallableInput): void => {
     computedKeyLocation:
       "key" in node &&
       t.isNode(node.key) &&
-      semanticComputedMethodKey(node, node.key)
+      semanticMethodDefinitionExpression(node, node.key)
         ? range(node.key)
         : null,
     returnSites: [],

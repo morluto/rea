@@ -26,6 +26,7 @@ import {
   APPLE_APPLICATION_PROVIDER,
   APPLE_IPS_PROVIDER,
   ARTIFACT_GRAPH_PROVIDER,
+  BINARY_HARDENING_PROVIDER,
   BYTE_ENTROPY_PROVIDER,
   DEVICETREE_PROVIDER,
   ELF_NOTES_PROVIDER,
@@ -427,6 +428,11 @@ export const CAPABILITY_DECLARATIONS = {
   peLoadConfig: {
     providers: [
       providerBinding(PE_LOAD_CONFIG_PROVIDER, ["inspect_pe_load_config"]),
+    ],
+  },
+  binaryHardening: {
+    providers: [
+      providerBinding(BINARY_HARDENING_PROVIDER, ["inspect_binary_hardening"]),
     ],
   },
   peResources: {
