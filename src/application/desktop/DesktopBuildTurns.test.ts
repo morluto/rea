@@ -73,11 +73,12 @@ it("keeps the place of a call cancelled while it waits, so the one after it stil
 it("on close cancels the call running, refuses those waiting and runs once the running one has ended", async () => {
   const turns = new DesktopBuildTurns();
   const log: string[] = [];
+  // It hides the abort and succeeds, as a step whose last await swallows it would.
   const running = turns.run("running", signal(), async (turn) => {
     await new Promise((resolve) => turn.addEventListener("abort", resolve));
     await settled();
     log.push("running ended");
-    return ok("cancelled");
+    return ok("finished");
   });
   const waiting = turns.run("waiting", signal(), async () => ok("ran"));
   await settled();
@@ -90,7 +91,10 @@ it("on close cancels the call running, refuses those waiting and runs once the r
     error: { _tag: "AnalysisCancelledError", operation: "waiting" },
   });
   expect(await closed).toBe("down");
-  await running;
+  expect(await running).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisCancelledError", operation: "running" },
+  });
   expect(log).toEqual(["running ended", "closed"]);
   expect(
     await turns.run("later", signal(), async () => ok("ran")),

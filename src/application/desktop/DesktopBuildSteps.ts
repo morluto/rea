@@ -62,6 +62,7 @@ export class DesktopBuildSteps {
         turn,
       );
       if (!started.ok) return started;
+      // A failed screenshot only leaves it out; the turn reports a close or abort meanwhile as cancelled.
       const shot = await steps.computer
         .callTool("computer_screenshot", {}, turn)
         .catch(() => undefined);

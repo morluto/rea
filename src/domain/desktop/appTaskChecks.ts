@@ -18,7 +18,7 @@ export interface TaskFileView {
 /**
  * How one check came out against one set of views. `undecided` marks a failure
  * that shows nothing about the task: its file or table could not be read, or
- * its view holds only part of what the check needs.
+ * what would turn it may lie in what its view left out.
  */
 export type TaskCheckOutcome = {
   readonly id: string;
@@ -49,6 +49,9 @@ const unread = (description: string): Verdict => ({
 });
 const undecided = (file: string): Verdict =>
   unread(`the view of ${file} is truncated, so what it leaves out is unknown`);
+/** A failure to find what a check looks for, undecided when its view is cut, since it may lie past what the view kept. */
+const notFound = (description: string, cut: boolean): Verdict =>
+  cut ? unread(description) : fail(description);
 
 const isRecord = (
   value: JsonValue | null | undefined,
@@ -168,7 +171,7 @@ const lineVerdict = (
     const missing = check.lines.find((line) => !lines.includes(line));
     return missing === undefined
       ? pass(`${file} has the line(s) ${shown(check.lines)}`)
-      : fail(`${file} has no line ${shown(missing)}`);
+      : notFound(`${file} has no line ${shown(missing)}`, read.truncated);
   }
   if (read.truncated) return undecided(file);
   if (check.kind === "lines_absent") {
@@ -256,10 +259,11 @@ const valueVerdict = (
   if (whole && truncated) return undecided(check.file);
   if (check.kind === "value_equals") {
     if (located.kind === "none")
-      return fail(
+      return notFound(
         located.reason === undefined
           ? `${at} has no value`
           : `${at}: ${located.reason}`,
+        truncated,
       );
     if (check.tolerance !== undefined && typeof check.value === "number")
       return nearVerdict(at, located.value, check.value, check.tolerance);
@@ -319,7 +323,10 @@ const rowVerdict = (
   if (check.kind === "row_present")
     return n > 0
       ? pass(`${name} has a row with ${shown(check.where)}`)
-      : fail(`${name} has no row with ${shown(check.where)}`);
+      : notFound(
+          `${name} has no row with ${shown(check.where)}`,
+          table.truncated,
+        );
   if (table.truncated) return undecided(check.file);
   if (check.kind === "row_absent")
     return n === 0

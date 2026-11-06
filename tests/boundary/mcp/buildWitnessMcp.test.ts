@@ -320,6 +320,46 @@ it("files no seed or near miss whose only failing check could not read its file,
   ).toHaveLength(1);
 });
 
+it("files no seed or near miss whose only failing check misses a line its cut view may have left out", async () => {
+  const witness = await witnessed();
+  const { app, check, directory } = witness;
+  const cut = {
+    "Documents/today.txt": {
+      format: "text",
+      view: {
+        lines: Array.from(
+          { length: 5000 },
+          (_, index) => `note ${String(index + 1)}`,
+        ),
+        line_count: 5001,
+        truncated: true,
+      },
+      truncated: true,
+    },
+  };
+  app.state = cut;
+  const seed = parseMcpToolError(await check({ stage: "seed", directory }));
+  expect(seed.error.message).toContain("cannot decide seed");
+  expect(seed.error.message).toContain("cut short");
+  expect(seed.error.message).toContain('has no line "eggs"');
+  app.state = lines("milk");
+  expect(
+    parsed(await check({ stage: "seed", directory })).witness,
+  ).toMatchObject({ stage: "seed", held: true });
+  await edit(witness, lines("milk", "eggs"));
+  await check({ stage: "after_edit" });
+  await edit(witness, cut);
+  expect(
+    parseMcpToolError(await check({ stage: "near_miss" })).error.message,
+  ).toContain("cannot decide near_miss");
+  app.state = lines("milk", "egg");
+  expect(parsed(await check({ stage: "near_miss" })).witness).toMatchObject({
+    stage: "near_miss",
+    held: true,
+    next_stage: "after_reset",
+  });
+});
+
 it("records a long witness from the bounded action log, naming what it dropped and what it cut", async () => {
   const witness = await witnessed();
   const { app, check, directory } = witness;

@@ -12,21 +12,28 @@ export class DesktopBuildTurns {
   #tail: Promise<void> = Promise.resolve();
   readonly #closing = new AbortController();
 
-  /** Run `work` once every call before it has ended; its signal also aborts when the computer closes. */
+  /**
+   * Run `work` once every call before it has ended; its signal also aborts
+   * when the computer closes. A turn aborted by the time `work` succeeds is
+   * cancelled, so no step reports success on a computer being removed.
+   */
   async run<Value>(
     operation: string,
     signal: AbortSignal,
     work: (signal: AbortSignal) => Promise<Result<Value, AnalysisError>>,
   ): Promise<Result<Value, AnalysisError>> {
     const turn = AbortSignal.any([signal, this.#closing.signal]);
+    const cancelled = () =>
+      err(new AnalysisCancelledError(operation, { cause: turn.reason }));
     const { previous, release } = this.#enqueue();
     if ((await waitForAbortable(previous, turn)) === ABORTED || turn.aborted) {
       // A call that never ran keeps its place until the one before it ends, so the next still waits for that one.
       void previous.then(release);
-      return err(new AnalysisCancelledError(operation, { cause: turn.reason }));
+      return cancelled();
     }
     try {
-      return await work(turn);
+      const result = await work(turn);
+      return result.ok && turn.aborted ? cancelled() : result;
     } finally {
       release();
     }

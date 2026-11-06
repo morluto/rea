@@ -124,11 +124,18 @@ answering, sending progress notifications while it waits.
 
 Only a check that fails on what the app's view shows counts as a failure. A
 check that fails because its file or table could not be read, such as an
-SQLite file locked past the reader's wait, or because its view is cut short,
-is `undecided` in its result: it shows nothing about the task. A stage that
-only undecided checks would settle, such as a near miss whose one failing
-check could not read its file, files nothing and is refused; check it again
-once the files read whole.
+SQLite file locked past the reader's wait, or because what it looks for may
+lie in what its view cut, is `undecided` in its result: it shows nothing
+about the task. That covers a line `lines_present` misses in a text view cut
+at 5,000 lines, a row `row_present` misses in a table whose view keeps only
+its first rows, a `value_equals` pointer that names nothing in a truncated
+view or past a cut zip listing, and the absence checks and counts on a cut
+view. A check that passes on what the view kept stays decided, and so does a
+value found there that differs from the one expected. The result's `passed`
+and description are the exported verifier's, which has no undecided results.
+A stage that only undecided checks would settle, such as a near miss whose
+one failing check could not read its file, files nothing and is refused;
+check it again once the files read whole.
 
 A stage whose checks do not show what it must ends the witness, and so does
 `after_reset`. REA then ends the recording, fetches its segments through

@@ -87,18 +87,23 @@ const realCliOutputs = async (install: CapturedInstall | undefined) => {
  * against a REA stand-in printing the real CLI's outputs. `dropReplies`
  * names controller commands, in order, whose reply is lost after they run;
  * `env` adds to the stand-in's environment; `install` replaces the captured
- * package, the archive's `notes`.
+ * package, the archive's `notes`; `screenshotDelaysMs` delays the computer's
+ * screenshots in order.
  */
 export const buildCaptureFakes = async (
   options: {
     readonly dropReplies?: string[];
     readonly env?: Readonly<Record<string, string>>;
     readonly install?: CapturedInstall;
+    readonly screenshotDelaysMs?: readonly number[];
   } = {},
 ) => {
   const outputs = await realCliOutputs(options.install);
   const rea = await fakeBuildComputerRea(outputs);
   const { computer, runner } = await buildComputerFakes({
+    ...(options.screenshotDelaysMs === undefined
+      ? {}
+      : { screenshotDelaysMs: options.screenshotDelaysMs }),
     exec: {
       home: rea.home,
       bin: rea.bin,

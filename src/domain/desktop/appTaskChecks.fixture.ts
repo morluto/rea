@@ -487,6 +487,30 @@ const TOLERANCE_CASES: readonly (readonly [DesktopTaskCheckInput, boolean])[] =
     ],
   ];
 
+/** Failures a cut view may have caused, which both evaluators fail alike and REA marks undecided. */
+const CUT_VIEW_CASES: readonly (readonly [DesktopTaskCheckInput, boolean])[] = [
+  [{ kind: "lines_present", file: "Documents/long.txt", lines: ["z"] }, false],
+  [{ kind: "row_present", file: db, table: "big", where: { id: 9 } }, false],
+  [
+    {
+      kind: "value_equals",
+      file: "Documents/long.txt",
+      pointer: "/lines/5500",
+      value: "z",
+    },
+    false,
+  ],
+  [
+    {
+      kind: "value_equals",
+      file: "Documents/many.zip",
+      pointer: "/entries/1100/name",
+      value: "a.txt",
+    },
+    false,
+  ],
+];
+
 /** Every kind of check against those views, each with the outcome both evaluators must give. */
 export const CHECK_CASES: readonly (readonly [
   DesktopTaskCheckInput,
@@ -735,4 +759,5 @@ export const CHECK_CASES: readonly (readonly [
   [{ kind: "row_count", file: absent, table: "notes", equals: 0 }, true],
   ...SELECTOR_CASES,
   ...TOLERANCE_CASES,
+  ...CUT_VIEW_CASES,
 ];

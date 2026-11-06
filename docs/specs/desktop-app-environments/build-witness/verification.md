@@ -204,6 +204,38 @@ action of each kind, and the record its kept entries.
   index 7 with `actions_dropped` 7, names `text` in the typed action's
   `truncated_arguments`, and its Evidence states both limitations.
 
+## Failures on cut views
+
+Run on macOS; the VM was not used. The first three tests failed on the
+reviewed head, with only the tests and fixtures added, and pass now.
+
+- `appTaskChecks.test.ts`: `lines_present` missing line 5,500 of a
+  6,000-line file, `row_present` missing row 501 of a table cut at 500, and
+  `value_equals` whose pointer names nothing in a cut text, SQLite, XML or
+  zip listing view are undecided; a line, row or value the view kept stays
+  decided. Before, each was a decided failure.
+- `buildWitnessMcp.test.ts`: a seed and a near miss whose only failing check
+  misses `eggs` in a text view cut at 5,000 lines are refused and filed once
+  the view is whole. Before, the seed was filed as held.
+- `DesktopTaskExport.test.ts`: a task whose only seed failure misses `milk`
+  in a 6,000-line note is refused, naming the failure, and with a row check
+  that fails on the seed too it is kept with only that check in
+  `failing_on_seed`. Before, the export kept the first task.
+- `desktopTaskPython.test.ts`: the exported verifier fails the same cut-view
+  cases with the same descriptions, as it did before.
+
+## Close during a capture's start
+
+Run on macOS; the VM was not used. A turn that its close or caller aborted
+now ends cancelled even when its step returns success after the abort, as a
+capture's start does when its screenshot of the opened app fails.
+
+- `buildCaptureRetryMcp.test.ts`: a close while `start_build_capture` waits
+  for that screenshot makes it return `cancelled`. Before, it returned
+  success for the computer being removed.
+- `DesktopBuildTurns.test.ts`: a running call that hides the close's abort
+  and succeeds ends cancelled. Before, its success was returned.
+
 ## Limits of this verification
 
 - The witness acts were scripted by this agent from the task's prompt; no

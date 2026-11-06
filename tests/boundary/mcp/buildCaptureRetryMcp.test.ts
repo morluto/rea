@@ -2,7 +2,7 @@ import { mkdir, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import type { Client } from "@modelcontextprotocol/client";
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import {
@@ -127,6 +127,19 @@ it("reports a failed package list download with apt's own message", async () => 
   expect(value.package_lists_error).toContain("Failed to fetch");
   await callOk(client, "stop_build_capture", { computer_id: id });
 });
+
+it("cancels a capture's start when the computer closes while it waits for the opened app's screenshot", async () => {
+  // The start's own screenshot answers at once; the capture's waits until its request is cancelled.
+  const { computer, client } = await fakes({ screenshotDelaysMs: [0, 60_000] });
+  const id = await startBuildComputer(client, BUILD_REQUEST);
+  const screenshots = () =>
+    computer.calls.filter(({ name }) => name === "computer_screenshot").length;
+  expect(screenshots()).toBe(1);
+  const started = call(client, "start_build_capture", { computer_id: id });
+  await vi.waitFor(() => expect(screenshots()).toBe(2), { timeout: 30_000 });
+  await callOk(client, "close_build_computer", { computer_id: id });
+  expect(parseMcpToolError(await started).error.code).toBe("cancelled");
+}, 60_000);
 
 /** Capture and export an app the request installs from a .deb at `url`; the stand-in's argv for capture and export. */
 const captureDebRequest = async (

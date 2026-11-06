@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
 
 import { parseDesktopTask } from "./appTask.js";
-import { evaluateTaskChecks } from "./appTaskChecks.js";
+import { evaluateTaskChecks, type TaskFileView } from "./appTaskChecks.js";
 import { CHECK_CASES, CHECK_VIEWS } from "./appTaskChecks.fixture.js";
+import { textView } from "./stateFormats.js";
 
 const portable = (name: string) => /^[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(name);
 
@@ -225,6 +226,135 @@ describe("evaluateTaskChecks", () => {
       ["shown", false, undefined],
       ["binary", false, undefined],
     ]);
+  });
+});
+
+describe("evaluateTaskChecks on cut views", () => {
+  const note = (index: number) => `note ${String(index + 1)}`;
+  const notes = Array.from({ length: 6000 }, (_, index) => note(index));
+  const rows = (count: number) =>
+    Array.from({ length: count }, (_, index) => [index + 1, note(index)]);
+  const views = new Map<string, TaskFileView>([
+    ["notes.txt", { format: "text", view: textView(notes.join("\n")) }],
+    [
+      "notes.db",
+      {
+        format: "sqlite",
+        view: {
+          tables: {
+            notes: {
+              columns: ["id", "body"],
+              primary_key: ["id"],
+              rows: rows(500),
+              truncated: true,
+            },
+          },
+          tables_truncated: false,
+        },
+      },
+    ],
+    [
+      "page.xml",
+      {
+        format: "xml",
+        view: {
+          root: { name: "doc", attributes: {}, children: ["kept"] },
+          truncated: true,
+        },
+      },
+    ],
+    [
+      "notes.zip",
+      {
+        format: "zip",
+        view: { entries: [], entry_count: 1200, truncated: true },
+      },
+    ],
+  ]);
+  const outcome = (check: Record<string, unknown>) =>
+    evaluateTaskChecks([{ id: "c", ...check } as never], views)[0];
+
+  it("leaves lines_present undecided on a line past the 5,000 a text view keeps, and decided on one it keeps", () => {
+    expect(
+      outcome({
+        kind: "lines_present",
+        file: "notes.txt",
+        lines: ["note 5500"],
+      }),
+    ).toEqual({
+      id: "c",
+      passed: false,
+      description: 'notes.txt has no line "note 5500"',
+      undecided: true,
+    });
+    expect(
+      outcome({
+        kind: "lines_present",
+        file: "notes.txt",
+        lines: ["note 5000"],
+      }),
+    ).toEqual({
+      id: "c",
+      passed: true,
+      description: 'notes.txt has the line(s) ["note 5000"]',
+    });
+  });
+
+  it("leaves row_present undecided on a row past those a table's view keeps, and decided on one it keeps", () => {
+    expect(
+      outcome({
+        kind: "row_present",
+        file: "notes.db",
+        table: "notes",
+        where: { id: 501 },
+      }),
+    ).toEqual({
+      id: "c",
+      passed: false,
+      description: 'notes.db table notes has no row with {"id":501}',
+      undecided: true,
+    });
+    expect(
+      outcome({
+        kind: "row_present",
+        file: "notes.db",
+        table: "notes",
+        where: { id: 500 },
+      }),
+    ).toEqual({
+      id: "c",
+      passed: true,
+      description: 'notes.db table notes has a row with {"id":500}',
+    });
+  });
+
+  it("leaves value_equals undecided where its pointer names nothing in a cut view, and decided on a value it keeps", () => {
+    for (const [file, pointer] of [
+      ["notes.txt", "/lines/5499"],
+      ["notes.db", "/tables/notes/rows/500/1"],
+      ["page.xml", "/root/children/1"],
+      ["notes.zip", "/entries/1100/name"],
+    ] as const)
+      expect(
+        outcome({ kind: "value_equals", file, pointer, value: "note 5500" }),
+      ).toEqual({
+        id: "c",
+        passed: false,
+        description: `${file} at ${pointer} has no value`,
+        undecided: true,
+      });
+    expect(
+      outcome({
+        kind: "value_equals",
+        file: "notes.txt",
+        pointer: "/lines/0",
+        value: "note 2",
+      }),
+    ).toEqual({
+      id: "c",
+      passed: false,
+      description: 'notes.txt at /lines/0 is "note 1", not "note 2"',
+    });
   });
 });
 

@@ -211,11 +211,11 @@ export class DesktopBuildWitness {
     if (verdict === "undecided")
       return err(
         refused(
-          `The checks cannot decide ${stage}: ${results
+          `The checks cannot decide ${stage}: each failure that would settle it may come from a view that could not be read or is cut short (${results
             .flatMap((result) =>
               result.undecided === true ? [result.description] : [],
             )
-            .join("; ")}. Nothing was filed.`,
+            .join("; ")}). Nothing was filed.`,
           `Check ${stage} again once the app's files read whole; a view that is always cut short or unreadable needs a task whose checks read other files.`,
         ),
       );
