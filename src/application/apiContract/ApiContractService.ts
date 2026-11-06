@@ -1,10 +1,8 @@
 import { isAbsolute } from "node:path";
-import { setImmediate } from "node:timers/promises";
 import { getHeapStatistics } from "node:v8";
 import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
-  AnalysisCancelledError,
   AnalysisInputError,
   AnalysisResourceConstraintError,
 } from "../../domain/analysisErrorCore.js";
@@ -25,41 +23,13 @@ import { parseAnalysisInput } from "../AnalysisInput.js";
 import { nativeJsonParseRequiredBytes } from "../JsonInputFile.js";
 import { parseUtf8Json } from "../Utf8JsonInput.js";
 import { readApiContract } from "./ApiContractRead.js";
+import { completeApiContractSteps } from "./ApiContractTraversal.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
 
 const inputFailure = (message: string, cause?: unknown) =>
   new AnalysisInputError(operation, { cause }, [
     { path: ["path"], reason: "invalid_format", message },
   ]);
-
-/** Cooperative traversals release their provisional state on cancellation. */
-const completeSteps = async <Value>(
-  steps: Generator<void, Result<Value, AnalysisError>>,
-  signal?: AbortSignal,
-): Promise<Result<Value, AnalysisError>> => {
-  let completed = false;
-  try {
-    for (;;) {
-      if (signal?.aborted)
-        return err(
-          new AnalysisCancelledError(operation, { cause: signal.reason }),
-        );
-      const next = steps.next();
-      if (next.done) {
-        completed = true;
-        if (!next.value.ok) return next.value;
-        // Include cancellation queued during the final synchronous projection.
-        await setImmediate();
-        return signal?.aborted
-          ? err(new AnalysisCancelledError(operation, { cause: signal.reason }))
-          : next.value;
-      }
-      await setImmediate();
-    }
-  } finally {
-    if (!completed) steps.return(undefined as never);
-  }
-};
 
 const decodeDocument = (
   bytes: Buffer,
@@ -102,14 +72,14 @@ function* documentSteps(document: unknown, artifact: ApiContractArtifact) {
 }
 
 const importDocument = async (
-  input: InspectApiContractInput,
+  input: Extract<InspectApiContractInput, { format: "openapi-json" }>,
   bytes: Buffer,
   sha256: string,
   signal?: AbortSignal,
 ): Promise<Result<Evidence, AnalysisError>> => {
   const document = decodeDocument(bytes, input.path);
   if (!document.ok) return document;
-  const parsed = await completeSteps(
+  const parsed = await completeApiContractSteps(
     documentSteps(document.value, {
       path: input.path,
       sha256,
@@ -141,7 +111,7 @@ const importDocument = async (
   );
 };
 
-/** Shared CLI/MCP import: one verified file read, no references, network or target execution. */
+/** Shared CLI/MCP entrypoint; format owners read selected files without network or execution. */
 export const inspectApiContractEvidence = async (
   rawInput: unknown,
   resources: ArtifactResourceScope,
@@ -159,6 +129,11 @@ export const inspectApiContractEvidence = async (
     return err(
       inputFailure("Expected an absolute filesystem path on this host."),
     );
+  if (input.format === "graphql-sdl") {
+    const { importGraphqlContract } =
+      await import("./GraphqlContractImport.js");
+    return importGraphqlContract(input, resources, options.signal);
+  }
   const source = await readApiContract(input, resources, options.signal);
   if (!source.ok) return source;
   const result = await importDocument(
