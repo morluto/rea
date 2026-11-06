@@ -210,6 +210,89 @@ describe("scrubSeed on JSON and XML", () => {
   });
 });
 
+describe("scrubSeed XML whitespace normalization", () => {
+  it("normalizes literal attribute whitespace to spaces when rewriting, matching XML attribute-value normalization", () => {
+    const fixture = {
+      home: "/home/fixture-user",
+      hostname: null,
+      user: null,
+    };
+
+    expect(
+      scrubbed(
+        '<root path="/home/fixture-user/a\n b"/>',
+        "xml",
+        fixture,
+      ).text,
+    ).toBe('<root path="/home/user/a  b"/>');
+    expect(
+      scrubbed(
+        '<root path="/home/fixture-user/a\t b"/>',
+        "xml",
+        fixture,
+      ).text,
+    ).toBe('<root path="/home/user/a  b"/>');
+  });
+
+  it("normalizes literal CRLF and CR in character data to LF when rewriting", () => {
+    const fixture = {
+      home: "/home/fixture-user",
+      hostname: null,
+      user: null,
+    };
+
+    expect(
+      scrubbed(
+        "<root>/home/fixture-user/a\r\n b</root>",
+        "xml",
+        fixture,
+      ).text,
+    ).toBe("<root>/home/user/a\n b</root>");
+    expect(
+      scrubbed("<root>/home/fixture-user/a\r b</root>", "xml", fixture).text,
+    ).toBe("<root>/home/user/a\n b</root>");
+  });
+
+  it("keeps intentional control character references when rewriting XML values", () => {
+    const fixture = {
+      home: "/home/fixture-user",
+      hostname: null,
+      user: null,
+    };
+
+    expect(
+      scrubbed(
+        '<root path="/home/fixture-user/a&#10; b"/>',
+        "xml",
+        fixture,
+      ).text,
+    ).toBe('<root path="/home/user/a&#10; b"/>');
+    expect(
+      scrubbed(
+        '<root path="/home/fixture-user/a&#9; b"/>',
+        "xml",
+        fixture,
+      ).text,
+    ).toBe('<root path="/home/user/a&#9; b"/>');
+    expect(
+      scrubbed(
+        "<root>/home/fixture-user/a&#13; b</root>",
+        "xml",
+        fixture,
+      ).text,
+    ).toBe("<root>/home/user/a&#13; b</root>");
+  });
+
+  it("leaves an XML seed whose identity is already clean byte-for-byte, including CRLF", () => {
+    const xml = "<root path=\"/home/user/a\r\n b\"/>";
+    expect(scrubbed(xml, "xml")).toEqual({
+      text: undefined,
+      holdsIdentity: false,
+    });
+  });
+
+});
+
 describe("scrubSeed on bytes it does not rewrite", () => {
   it("reports a seed whose shipped bytes still hold the host name or the captured home", () => {
     const database = Buffer.concat([

@@ -95,16 +95,42 @@ const XML_ENTITIES: Readonly<Record<string, string>> = {
 const referenced = (whole: string, point: number): string =>
   point <= 0x10ffff ? String.fromCodePoint(point) : whole;
 
-const decodeXml = (text: string): string =>
-  text.replace(
-    XML_REFERENCE,
-    (whole, hex?: string, decimal?: string, name?: string) =>
+/**
+ * Literal characters of an XML value after XML 1.0 end-of-line handling, and
+ * for an attribute value after attribute-value normalization of whitespace.
+ * Character references are not passed here, so intentional controls they name
+ * stay distinct from literal whitespace an XML processor would collapse.
+ */
+const normalizeXmlLiterals = (text: string, attribute: boolean): string => {
+  // https://www.w3.org/TR/xml/#sec-line-ends — CRLF and lone CR become LF.
+  const ended = text.replace(/\r\n?/gu, "\n");
+  // https://www.w3.org/TR/xml/#AVNormalize — literal white becomes a space.
+  return attribute ? ended.replace(/[\t\n ]/gu, " ") : ended;
+};
+
+/**
+ * What an XML 1.0 processor reads for character data or an attribute value:
+ * references decoded, literal line endings normalized, and literal attribute
+ * whitespace turned into spaces. A reference keeps the character it names.
+ */
+const decodeXml = (text: string, attribute = false): string => {
+  const parts: string[] = [];
+  let copied = 0;
+  for (const match of text.matchAll(XML_REFERENCE)) {
+    const [whole, hex, decimal, name] = match;
+    parts.push(normalizeXmlLiterals(text.slice(copied, match.index), attribute));
+    parts.push(
       hex !== undefined
         ? referenced(whole, Number.parseInt(hex, 16))
         : decimal !== undefined
           ? referenced(whole, Number(decimal))
           : (XML_ENTITIES[name ?? ""] ?? whole),
-  );
+    );
+    copied = match.index + whole.length;
+  }
+  parts.push(normalizeXmlLiterals(text.slice(copied), attribute));
+  return parts.join("");
+};
 
 /** Character data, or an attribute value in the given quote, escaped so XML reads it back as written. */
 const encodeXml = (text: string, quote: string | undefined): string =>
@@ -120,14 +146,16 @@ const encodeXml = (text: string, quote: string | undefined): string =>
 
 /**
  * XML with character data, attribute values, comments and CDATA scrubbed,
- * character data and attribute values as their decoded text and rewritten
- * only when that changed; names and processing instructions are kept. Only
- * changed spans are copied out, so however many elements the document has,
- * the scrub holds no more than its changes.
+ * character data and attribute values as an XML 1.0 processor would read
+ * them — references decoded, literal line endings normalized, and literal
+ * attribute whitespace turned into spaces — and rewritten only when that
+ * changed; names and processing instructions are kept. Only changed spans
+ * are copied out, so however many elements the document has, the scrub
+ * holds no more than its changes.
  */
 const scrubXml = (text: string, identity: HostIdentity): TextScrub => {
   const data = (raw: string, quote?: string) => {
-    const value = decodeXml(raw);
+    const value = decodeXml(raw, quote !== undefined);
     const clean = scrubHostIdentity(value, identity);
     return clean === value ? raw : encodeXml(clean, quote);
   };
