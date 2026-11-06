@@ -503,12 +503,12 @@ export const exportInstall = (
 
 /**
  * The install with the extra packages the export was asked for beside the
- * app, once each, leaving to apt the app's own package and what its captured
- * package file depends on; or why one is not a package name.
+ * app, once each, without those the bundle installs anyway: the app's own
+ * package and the packages its package file is installed after; or why one
+ * is not a package name.
  */
 export const withExtraPackages = (
   install: ExportInstall,
-  installed: DesktopPackage,
   extraPackages: readonly string[],
 ): Result<ExportInstall, InstallRefusal> => {
   const unnamed = extraPackages.find((name) => !DEBIAN_PACKAGE_NAME.test(name));
@@ -520,11 +520,10 @@ export const withExtraPackages = (
         "Pass --extra-package with a package name of the Ubuntu 24.04 archive: lowercase letters, digits, +, - and ., at least two long.",
       ),
     );
+  // Only what the bundle names: apt may satisfy an alternative the captured .deb lists with another package.
   const declared = new Set([
     install.aptPackage,
-    ...(installed.package_file === undefined
-      ? []
-      : dependencyPackages(installed.package_file).names),
+    ...(install.packageFile?.dependencies ?? []),
   ]);
   const extra = [...new Set(extraPackages)].filter(
     (name) => !declared.has(name),

@@ -8,6 +8,7 @@ import { z } from "zod";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import { SafeOutputTree } from "../../artifacts/SafeOutputTree.js";
 import {
+  VARICAD_FILE,
   VARICAD_URL,
   varicadPackage,
 } from "../../domain/desktop/debianPackageFile.fixture.js";
@@ -854,6 +855,45 @@ describe("exportDesktopApplication from a package file", () => {
     expect(await readFile(join(directory, "README.md"), "utf8")).toContain(
       "The bundle does not contain the package",
     );
+  });
+
+  it("installs an extra package beside an app apt offers, though its captured .deb names it as one alternative", async () => {
+    const local = capture();
+    const folder = await writeCaptureFolder({
+      ...local,
+      application: {
+        ...local.application,
+        package: varicadPackage({
+          sources: [
+            "http://archive.ubuntu.com/ubuntu noble/universe amd64 Packages",
+          ],
+          source_origins: ["Ubuntu"],
+          package_file: {
+            ...VARICAD_FILE,
+            depends: ["openjdk-17-jre | java-runtime"],
+          },
+        }),
+      },
+    });
+    const directory = join(
+      await createTestTempDirectory("desktop-export-"),
+      "bundle",
+    );
+    const result = await exportDesktopApplication(
+      {
+        capture: folder,
+        directory,
+        name: undefined,
+        tasks: [],
+        extraPackages: ["openjdk-17-jre"],
+      },
+      readers,
+    );
+
+    if (result instanceof Error) throw result;
+    expect(
+      await readFile(join(directory, "envs/notes/notes_app.py"), "utf8"),
+    ).toContain('packages=Packages(apt=["varicad2026-en", "openjdk-17-jre"])');
   });
 
   it("refuses the capture without --package-url and writes nothing", async () => {

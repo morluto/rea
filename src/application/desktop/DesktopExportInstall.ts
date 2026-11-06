@@ -51,15 +51,14 @@ export const admitApplication = (
   packageUrl: string | undefined,
   extraPackages: readonly string[] = [],
 ) => {
-  const installed = capture.application.package;
   const packaged = exportInstall(
-    installed,
+    capture.application.package,
     environment,
     capture.host.architecture,
     packageUrl,
   );
   const install = packaged.ok
-    ? withExtraPackages(packaged.value, installed, extraPackages)
+    ? withExtraPackages(packaged.value, extraPackages)
     : packaged;
   if (!install.ok)
     throw refuse(

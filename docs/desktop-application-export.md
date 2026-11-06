@@ -26,9 +26,12 @@ a `.deb` file; see [Applications from a .deb file](#applications-from-a-deb-file
 package beside the application, such as a runtime piece its package does not
 install; a [build computer](desktop-build-witness.md) passes its request's
 `extra_packages`, or a `.deb` request's `dependencies`, this way. A name that
-is not a Debian package name is refused (`extra_package`); the application's
-own package and what its captured `.deb` depends on are left to apt, and the
-rest are listed in the limitations and the README.
+is not a Debian package name is refused (`extra_package`). Names the bundle
+installs anyway, the application's own package and the dependencies it names
+for a package installed from its `.deb` file, are not repeated; the rest are
+listed in the limitations and the README. A package the captured `.deb` lists
+as one alternative, such as `openjdk-17-jre | java-runtime`, is kept when apt
+installs the application by name, since apt may satisfy it with another.
 `--seed-checkpoint` names the checkpoint whose state seeds the bundle, the
 baseline by default, and `--end-checkpoint` the one a task must pass on, the
 capture's last by default; see [The seed checkpoint](#the-seed-checkpoint).

@@ -745,21 +745,34 @@ describe("withExtraPackages", () => {
   ) => {
     const install = exportInstall(installed, "varicad", "x64", packageUrl);
     if (!install.ok) throw new Error(install.error.reason);
-    return withExtraPackages(install.value, installed, names);
+    return withExtraPackages(install.value, names);
   };
 
-  it("installs them beside a package apt offers, leaving out the package and what its captured file depends on", () => {
-    // As MyPaint's build request named librsvg2-common beside the archive's own .deb.
-    const install = extra(archive, undefined, [
+  it("installs them beside a package apt offers, leaving out only the package, even one its captured file names as an alternative", () => {
+    // apt may satisfy `openjdk-17-jre | java-runtime` with another Java, so the one the request named stays.
+    const installed = varicad({
+      sources: [
+        "http://archive.ubuntu.com/ubuntu noble/universe amd64 Packages",
+      ],
+      source_origins: ["Ubuntu"],
+      package_file: {
+        ...VARICAD_FILE,
+        depends: ["openjdk-17-jre | java-runtime"],
+      },
+    });
+    const install = extra(installed, undefined, [
       "librsvg2-common",
-      "libgl1",
+      "openjdk-17-jre",
       "varicad2026-en",
       "librsvg2-common",
     ]);
 
     if (!install.ok) throw new Error(install.error.reason);
     expect(install.value.packageFile).toBeNull();
-    expect(install.value.extraPackages).toEqual(["librsvg2-common"]);
+    expect(install.value.extraPackages).toEqual([
+      "librsvg2-common",
+      "openjdk-17-jre",
+    ]);
   });
 
   it("installs them beside a package file", () => {

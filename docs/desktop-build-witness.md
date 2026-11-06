@@ -125,8 +125,9 @@ See [desktop builds](https://github.com/morluto/rea/blob/main/.agents/skills/rev
    Either way the request's `dependencies` reach the export as
    `--extra-package`, as an archive request's `extra_packages` do, so a
    runtime piece the agent named, such as MyPaint's `librsvg2-common`, is
-   installed beside the app; the limitations and the README list those the
-   app's `.deb` does not already depend on. REA lists the bundle's files
+   installed beside the app; the limitations and the README list them,
+   except the app itself and dependencies the bundle already names for a
+   `.deb` it installs from the file. REA lists the bundle's files
    with their sizes and SHA-256 in the computer, into a file beside the
    bundle that it reads through `data/get`, since a large bundle's list
    outgrows a command's output; it then brings the files back through the

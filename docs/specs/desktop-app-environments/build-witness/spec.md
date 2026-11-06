@@ -139,8 +139,11 @@ and the recording and writes the record as Evidence.
   as repeatable `--extra-package` and installs them beside the app, and the
   build export passes them, and a `.deb` request's `dependencies` too, so a
   `.deb` apt also offers no longer loses them when it is installed by name.
-  The limitations and the README name them, leaving out the app's own
-  package and what its captured `.deb` depends on.
+  The limitations and the README name them, leaving out only what the
+  bundle installs anyway: the app's own package and, when it is installed
+  from its `.deb`, the dependencies the `Packages` line names. A package the
+  captured `.deb` lists only as one alternative stays, since apt may pick
+  another, such as `openjdk-17-jre | java-runtime`.
 - The witness reads the build computer's bounded action log: its stage rules
   use the log's count and the last applied action of each kind, and the
   record holds the entries the log keeps, `actions_dropped`, and a
