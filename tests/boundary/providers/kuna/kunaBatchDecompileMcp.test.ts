@@ -89,6 +89,36 @@ test("keeps each Kuna no-pseudocode observation's limitations on its batch item"
         })
       ).structuredContent,
     );
+    // The provider's version policy travels with this observation, while its
+    // profile commits only analysis inputs. Composed and retained views must
+    // preserve the same warning for agents reading those results.
+    const verificationWarning =
+      "Kuna 1.833 is not REA's verified 1.990 release";
+    expect(batch.limitations).toContainEqual(
+      expect.stringContaining(verificationWarning),
+    );
+    expect(broken.analysis_profile?.parameters).not.toHaveProperty(
+      "verified_release",
+    );
+    const summary = parseEvidence(
+      (await call("analyze_function", { procedure: "main", detail: "summary" }))
+        .structuredContent,
+    );
+    const parent = summary.normalized_result as { parent_evidence_id: string };
+    const page = parseEvidence(
+      (
+        await call("inspect_analysis_view", {
+          source: {
+            kind: "retained-evidence",
+            evidence_id: parent.parent_evidence_id,
+          },
+          view: { kind: "native", facet: "pseudocode" },
+        })
+      ).structuredContent,
+    );
+    expect(page.limitations).toContainEqual(
+      expect.stringContaining(verificationWarning),
+    );
     if (batchDecompile === undefined || getEvidenceBundle === undefined)
       throw new Error(
         "Missing batch_decompile or get_evidence_bundle contract",
@@ -101,15 +131,8 @@ test("keeps each Kuna no-pseudocode observation's limitations on its batch item"
     expect(main).toMatchObject({ address: "main", status: "ok" });
     expect(main).not.toHaveProperty("limitations");
     const noPseudocode = {
-      status: "error",
-      error: {
-        code: "capability_unavailable",
-        retryable: false,
-        details: {
-          provider_id: "kuna",
-          operation: "procedure_pseudo_code",
-        },
-      },
+      status: "unavailable",
+      reason: "no_pseudocode",
     };
     // The item keeps exactly the facts the provider reported for its own
     // observation, as the single-function Evidence does.

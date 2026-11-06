@@ -1,7 +1,10 @@
+import { playwrightTraceViewRequestSchema } from "../playwrightTrace/playwrightTraceQuery.js";
+import { apiContractViewRequestSchema } from "../apiContract/apiContractQuery.js";
 import {
   nativeObservationViewRequestSchema,
   nativeContextViewRequestSchema,
 } from "./nativeObservationSchemas.js";
+import { nativeInstructionReferencesRequestSchema } from "./nativeInstructionReferencesView.js";
 import { devicetreeViewRequestSchema } from "./devicetreeView.js";
 import { apkSignatureViewRequestSchema } from "../apkSignature/apkSignatureQuery.js";
 import { erlangBeamViewRequestSchema } from "./erlangBeamView.js";
@@ -10,7 +13,9 @@ import { nativeExportsViewRequestSchema } from "./nativeExportsView.js";
 import { javaScriptRoutesViewRequestSchema } from "./javascriptRoutesView.js";
 import { webBundleViewRequestSchema } from "./webBundleView.js";
 import { sourceToBundleViewRequestSchema } from "./sourceToBundleView.js";
+import { endpointComparisonViewRequestSchema } from "./endpointComparisonView.js";
 import { featureTraceViewRequestSchema } from "./featureTraceView.js";
+import { nativeFeatureTraceViewRequestSchema } from "./nativeFeatureTraceView.js";
 import { batchDecompileViewRequestSchema } from "./batchDecompileView.js";
 import { gpuCodeObjectsViewRequestSchema } from "./gpuCodeObjectsView.js";
 import { modelArtifactViewRequestSchema } from "../model/modelArtifactQuery.js";
@@ -31,6 +36,7 @@ import { desktopViewRequestSchema } from "./desktopApplicationView.js";
 import { javascriptModuleReferencesRequestSchema } from "./javascriptModuleReferences.js";
 import { javascriptFactsViewRequestSchema } from "./javascriptFactsView.js";
 import { evidenceSchema } from "../evidence.js";
+import { declareEvidenceReferenceAlternative } from "../evidenceInputContract.js";
 import { apiSurfaceViewSchema } from "./webNetworkApiSurfaceView.js";
 import { evmViewRequestSchema } from "./evmInterfaceView.js";
 import { artifactInventoryViewRequestSchema } from "./artifactInventoryView.js";
@@ -58,6 +64,7 @@ import {
 } from "./analysisViewShape.js";
 /** Caller-selected projection of already completed analysis Evidence. */
 export const analysisViewRequestSchema = z.discriminatedUnion("kind", [
+  nativeInstructionReferencesRequestSchema,
   nativeObservationViewRequestSchema,
   nativeContextViewRequestSchema,
   devicetreeViewRequestSchema,
@@ -68,7 +75,11 @@ export const analysisViewRequestSchema = z.discriminatedUnion("kind", [
   webBundleViewRequestSchema,
   nativeFunctionMatchingViewRequestSchema,
   sourceToBundleViewRequestSchema,
+  endpointComparisonViewRequestSchema,
+  apiContractViewRequestSchema,
+  playwrightTraceViewRequestSchema,
   featureTraceViewRequestSchema,
+  nativeFeatureTraceViewRequestSchema,
   batchDecompileViewRequestSchema,
   summaryViewSchema,
   goBinaryViewRequestSchema,
@@ -115,14 +126,16 @@ inlineEvidenceInputSchema._zod.processJSONSchema =
   evidenceSchema._zod.processJSONSchema;
 
 /** Unauthenticated inline input, an exact same-session retained reference, or one local Evidence file. */
-export const analysisViewSourceSchema = z.discriminatedUnion("kind", [
-  retainedEvidenceReferenceSchema,
-  z.strictObject({
-    kind: z.literal("inline"),
-    evidence: inlineEvidenceInputSchema,
-  }),
-  evidenceFileReferenceSchema,
-]);
+export const analysisViewSourceSchema = declareEvidenceReferenceAlternative(
+  z.discriminatedUnion("kind", [
+    retainedEvidenceReferenceSchema,
+    z.strictObject({
+      kind: z.literal("inline"),
+      evidence: inlineEvidenceInputSchema,
+    }),
+    evidenceFileReferenceSchema,
+  ]),
+);
 
 /** Public inspect_analysis_view input. */
 export const inspectAnalysisViewInputSchema = z.strictObject({

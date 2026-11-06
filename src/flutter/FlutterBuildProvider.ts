@@ -55,7 +55,7 @@ import {
 } from "../filesystem/RegularFile.js";
 import {
   MAX_SNAPSHOT_HASH_CANDIDATES,
-  FlutterEngineStringScanner,
+  LabeledStringScanner,
   SnapshotHashScanner,
 } from "./FlutterPayloadScan.js";
 import {
@@ -360,7 +360,7 @@ export interface FlutterProviderOptions {
 /**
  * Flutter build identification by pure parsing: reads `lib/<abi>/libapp.so`
  * and `libflutter.so` through the hardened ZIP reader and reports the Dart
- * snapshot hash, GNU build-id, and recognized Dart version strings verbatim.
+ * snapshot hash, GNU build-id, and any labeled version strings verbatim.
  * Runs no engine, installs nothing, and performs no external lookups.
  */
 export class FlutterBuildProvider {
@@ -838,7 +838,7 @@ export class FlutterBuildProvider {
       const stream = openEntrySafely(reader, entry, operation, path, signal);
       const hash = createHash("sha256");
       const snapshotScanner = new SnapshotHashScanner();
-      const engineStringScanner = new FlutterEngineStringScanner();
+      const labeledScanner = new LabeledStringScanner();
       const engineFile =
         kind === "libflutter"
           ? this.ownResource(
@@ -885,7 +885,7 @@ export class FlutterBuildProvider {
         hash.update(view);
         if (kind === "libapp") snapshotScanner.push(view);
         else {
-          engineStringScanner.push(view);
+          labeledScanner.push(view);
           await engineFile!.handle.writeFile(view);
         }
         // Enforce the cumulative cap inside the chunk loop so refusal
@@ -939,7 +939,7 @@ export class FlutterBuildProvider {
           },
         });
       } else {
-        const labeled = engineStringScanner.result();
+        const labeled = labeledScanner.result();
         const buildIds = await readElfBuildIds(
           engineFile!.handle,
           bytes,
@@ -1023,7 +1023,7 @@ export class FlutterBuildProvider {
           limitations: [
             "The APK is read through an owned read-only snapshot; concurrent changes to the original cannot mix into this observation",
             "The snapshot hash identifies a Dart SDK build only against an external mapping dataset; REA performs no lookup",
-            "Only complete labeled Dart VM version or source-defined Dart Version::String formats are reported; unmatched runs leave dart_version null",
+            "Unlabeled Dart version values are identified by their printable-string shape, not a symbol or other source identity; a matching unrelated string may be reported and a null value means no supported pattern was found",
             "Engine build IDs come only from ELF-declared PT_NOTE/SHT_NOTE records; conflicting or incompletely examined notes preserve candidates and report partial coverage",
             ...[...facts].flatMap(([abi, value]) => [
               ...value.libflutter.buildIdFailures.map(
@@ -1043,7 +1043,7 @@ export class FlutterBuildProvider {
               .filter((entry) => entry.libflutter.dart_version_capped)
               .map(
                 (entry) =>
-                  `lib/${entry.abi}/libflutter.so has labeled Dart runs rejected by grammar or distinct recognized version strings omitted by the single-version projection`,
+                  `lib/${entry.abi}/libflutter.so has Dart version labels omitted by the complete-label grammar or the single-version projection`,
               ),
             "The snapshot hash sits 20 bytes after each snapshot magic in the AOT payload; findings are observations of that layout",
             "ELF header validity checks the supported header layout and declared table extents; identification does not resolve symbols or validate table contents",

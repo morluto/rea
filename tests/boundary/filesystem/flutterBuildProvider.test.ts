@@ -1237,16 +1237,13 @@ it.each(["identify_flutter_build", "inspect_dart_aot"] as const)(
   },
 );
 
-it("projects a source-defined Dart VM version from the engine string pool", async () => {
-  const version = "2.14.0-151.0.dev (dev) (Tue May 25 10:58:39 2021 -0700)";
-  const path = await buildApk("dart-version.apk", [
+it("qualifies unlabeled Dart-shaped strings as candidates", async () => {
+  const candidate = "1.2.3 (stable) (unrelated string)";
+  const path = await buildApk("dart-pattern.apk", [
     { path: "lib/arm64-v8a/libapp.so", bytes: aotImage() },
     {
       path: "lib/arm64-v8a/libflutter.so",
-      bytes: engineFixtureImage({
-        notes: buildIdNote(),
-        labels: [version, TOOLCHAIN_LINE],
-      }),
+      bytes: Buffer.concat([libflutter(), Buffer.from(`\0${candidate}\0`)]),
     },
   ]);
   const provider = new FlutterBuildProvider();
@@ -1259,16 +1256,13 @@ it("projects a source-defined Dart VM version from the engine string pool", asyn
   const value = flutterResultSchemas.identify_flutter_build.parse(
     result.value.result,
   );
-  expect(value.coverage).toBe("complete");
-  expect(value.abis[0]?.libflutter).toMatchObject({
-    dart_version: version,
-    dart_version_capped: false,
-    toolchain_lines: [TOOLCHAIN_LINE],
-    toolchain_capped: false,
-  });
+  expect(value.abis[0]?.libflutter.dart_version).toBe(candidate);
+  expect(result.value.limitations.join(" ")).toContain(
+    "a matching unrelated string may be reported",
+  );
 });
 
-it("reports omitted labeled Dart runs independently of toolchain labels", async () => {
+it("reports omitted Dart labels independently of toolchain labels", async () => {
   const path = await buildApk("dart-label.apk", [
     { path: "lib/arm64-v8a/libapp.so", bytes: aotImage() },
     {

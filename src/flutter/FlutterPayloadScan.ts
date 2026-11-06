@@ -5,8 +5,8 @@ import { Buffer } from "node:buffer";
  *
  * All facts are observations of byte patterns at read time: the Dart
  * snapshot hash sits 20 bytes after each snapshot magic, the GNU build-id
- * is an ELF note, and engine strings are retained only when they fit a
- * complete recognized format. Nothing is inferred or looked up externally.
+ * is an ELF note, and version facts are ASCII strings. Nothing is inferred or
+ * looked up externally.
  */
 
 /** First index of `needle` in `haystack` at or after `from`, or -1. */
@@ -114,8 +114,8 @@ export class SnapshotHashScanner {
   }
 }
 
-/** Engine strings worth reporting when a build carries them. */
-export interface FlutterEngineStringScan {
+/** Labeled strings worth reporting when a build carries them. */
+export interface LabeledStringScan {
   readonly dartVersion: string | null;
   readonly dartVersionCapped: boolean;
   readonly toolchainLines: readonly string[];
@@ -123,23 +123,14 @@ export interface FlutterEngineStringScan {
   readonly toolchainCapped: boolean;
 }
 
-const DART_LABELED_VERSION_PATTERN = /^Dart VM version:[^\x00\n]{0,200}$/u;
-// Dart version_in.cc supplies the current channelled and legacy channel-less
-// templates; tools/utils.py defines each era's constrained version tokens.
-const DART_VERSION_NUMBER = "(?:0|[1-9]\\d{0,8})";
-const DART_VERSION_CORE = `${DART_VERSION_NUMBER}\\.${DART_VERSION_NUMBER}\\.${DART_VERSION_NUMBER}`;
-// Legacy Version::String tokens place "dev" before the numeric prerelease.
-const DART_VERSION_TOKEN = `${DART_VERSION_CORE}(?:-dev\\.${DART_VERSION_NUMBER}\\.${DART_VERSION_NUMBER}|-edge(?:\\.(?:[0-9a-f]{40}|${DART_VERSION_NUMBER}))?)?`;
-const DART_BUILD_TIME =
-  "(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun) (?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) (?:0[1-9]|[12][0-9]|3[01]| [1-9]) (?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9] \\d{4} [+-]\\d{4}";
-const DART_PLATFORM = "[a-z][a-z0-9]{0,15}_(?:sim)?[a-z][a-z0-9]{0,15}";
-// Current channelled builds repeat beta/dev after the version prerelease.
-const DART_CHANNELLED_VERSION = `(?:${DART_VERSION_CORE} \\(stable\\)|${DART_VERSION_CORE}-${DART_VERSION_NUMBER}\\.${DART_VERSION_NUMBER}\\.(beta|dev) \\(\\1\\)|${DART_VERSION_CORE}-edge(?:\\.(?:[0-9a-f]{40}|${DART_VERSION_NUMBER}))? \\((?:main|be)\\))`;
-const DART_VERSION_STRING_PATTERN = new RegExp(
-  `^(?:${DART_CHANNELLED_VERSION} \\(${DART_BUILD_TIME}\\)(?: on "${DART_PLATFORM}")?|${DART_VERSION_TOKEN} \\(${DART_BUILD_TIME}\\) on "${DART_PLATFORM}")$`,
-  "u",
-);
-const MAX_DART_VERSION_STRING_LENGTH = 192;
+const DART_VERSION_PATTERN = /^Dart VM version:[^\x00\n]{0,200}$/u;
+/**
+ * Unlabeled Dart `Version::String()` form embedded in release engines:
+ * `<version> (<channel>) (<commit time>)` with optional ` on "<os>_<arch>"`.
+ * Requires a channel token so ordinary dotted version text is ignored.
+ */
+const DART_EMBEDDED_VERSION_PATTERN =
+  /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)? \((?:stable|beta|dev|main)\) \([^)\x00\n]{1,80}\)(?: on "[a-z0-9._-]+")?$/u;
 const TOOLCHAIN_PATTERN =
   /^(?:Android \([^)\x00\n]{0,80}\) clang version [^\x00\n]{0,500}|based on LLVM \d[^\x00\n]{0,80})$/u;
 const MAX_TOOLCHAIN_LINES = 4;
@@ -151,12 +142,13 @@ const MAX_TOOLCHAIN_LINES = 4;
 const CARRY_BYTES = 640;
 
 /**
- * Incremental ASCII string collector that keeps only recognized Dart
- * version and toolchain facts. A match is committed only when a printable
- * run is terminated by a delimiter, so a value split across chunk
- * boundaries is never committed truncated.
+ * Incremental ASCII string collector that keeps Dart version and toolchain
+ * facts. A match is committed only when a printable run is terminated by a
+ * delimiter, so a value split across chunk boundaries is never committed
+ * truncated; the carry holds the longest accepted match so boundaries in
+ * either pattern survive.
  */
-export class FlutterEngineStringScanner {
+export class LabeledStringScanner {
   #dartVersion: string | null = null;
   #dartVersionCapped = false;
   private readonly toolchainLines: string[] = [];
@@ -188,27 +180,28 @@ export class FlutterEngineStringScanner {
     this.overflowed = false;
   }
 
-  #recordDartVersion(text: string): void {
+  #recordDartVersion(text: string, accepted: boolean): void {
+    if (!accepted) {
+      this.#dartVersionCapped = true;
+      return;
+    }
     if (this.#dartVersion === null) this.#dartVersion = text;
     else if (this.#dartVersion !== text) this.#dartVersionCapped = true;
   }
 
   #consider(text: string): void {
     // Keep a bounded prefix plus overflow state, never a sliding suffix.
-    // Every accepted version must consume its whole printable run so a
-    // shorter grammar cannot publish a fabricated prefix.
+    // Every accepted label must consume its whole printable run so a
+    // pattern's shorter grammar cannot publish a fabricated prefix.
     if (text.startsWith("Dart VM version:")) {
-      if (this.overflowed || !DART_LABELED_VERSION_PATTERN.test(text))
-        this.#dartVersionCapped = true;
-      else this.#recordDartVersion(text);
+      this.#recordDartVersion(
+        text,
+        !this.overflowed && DART_VERSION_PATTERN.test(text),
+      );
       return;
     }
-    if (
-      !this.overflowed &&
-      text.length <= MAX_DART_VERSION_STRING_LENGTH &&
-      DART_VERSION_STRING_PATTERN.test(text)
-    ) {
-      this.#recordDartVersion(text);
+    if (DART_EMBEDDED_VERSION_PATTERN.test(text)) {
+      this.#recordDartVersion(text, !this.overflowed);
       return;
     }
     if (!text.startsWith("Android (") && !text.startsWith("based on LLVM "))
@@ -224,7 +217,7 @@ export class FlutterEngineStringScanner {
     else this.#toolchainCapped = true;
   }
 
-  result(): FlutterEngineStringScan {
+  result(): LabeledStringScan {
     if (!this.#ended) this.end();
     return {
       dartVersion: this.#dartVersion,
