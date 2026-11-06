@@ -74,7 +74,8 @@ the first source that has the app:
   is `Inkscape`. AbiWord's entry is `abiword` and its class `Abiword`.
 - To find the entry, read the package's file list: its page on
   packages.ubuntu.com, or `apt-get download PKG && dpkg -c PKG_*.deb` where
-  apt runs. The entry's `StartupWMClass` may not be the window's real
+  apt runs. The entry may ship in a companion `-data` or `-common` package,
+  as Planner's in `planner-data`: read that package's list too. The entry's `StartupWMClass` may not be the window's real
   class, so do not take `window_class` from it: MuseScore 3's says
   `mscore3`, its window's is `MuseScore3`. The export uses the class the
   capture saw.
@@ -160,6 +161,11 @@ the first source that has the app:
      differs from the app's, such as `.config/MuseScore`, so the seed keeps
      the dismissed first-run dialogs. Do not pass the document as a launch
      argument to make REA see it: `state_paths` is the way.
+   - An app whose document is a folder of pages, such as a Zim notebook
+     (`Notebooks/Notes`, a `.txt` file per page), never shows a file in its
+     title: pass the folder in `state_paths`. Every page in it is then a
+     document, so the bundle opens none at launch and the app starts where
+     it keeps its place; check the page the task changes.
 3. Make the seed through the app and save it from the app under
    `~/Documents`: build the document in the app, or write its source where
    the app edits its format as text, then save it again from the app. Make
@@ -173,8 +179,9 @@ the first source that has the app:
      Osmo's contacts in `~/.local/share/osmo/contacts_records.xml`, has no
      document: that state is the seed. Build it in the app and mark `seed`
      once the app has written. To see whether it has, mark a throwaway
-     checkpoint, such as `probe-1`, and read its `changes` and
-     `retained_files`.
+     checkpoint, such as `probe-1`, and read its `changed_files`: up to ten
+     files that changed since the checkpoint before, those the app held
+     open first, with `more_changed_files` counting the rest.
    - When the app's own format is compressed, such as Gnumeric's
      `.gnumeric` (gzip XML), REA reads it as binary and no check can look
      inside. Save in an uncompressed format the app offers, such as
@@ -232,11 +239,13 @@ Write `{"name", "prompt", "checks"}` from the draft and what you did.
   added, changed and removed, with `before` and `after` (a scalar, or an
   element as compact XML, cut at 600 characters) at the pointer a check
   names it by, so copy the pointer and the `after` value into a check.
+  Only XML files, archives, JSON and key files have values: a text file's
+  or SQLite database's `change` already lists its lines and rows.
   `refers_to` says what a number stands for, such as `category="44"`
   naming `<cat key="44" name="Groceries"/>`; use it for the prompt's words.
   Skip entries whose `note` is `by_position` (no check can use that
   pointer) or noise (`view_state`, `renumbered`, `volatile`,
-  `timestamp`). `values_cut` means a limit left some out.
+  `timestamp`, `upkeep`). `values_cut` means a limit left some out.
 - Select elements by what they hold, never by position: SVG text by id,
   `/root/children/[name=g][@inkscape:label=Layer 1]/children/[name=text][@id=headline]/children/[name=tspan]/children/0`,
   or an ODF paragraph by style,
@@ -259,16 +268,26 @@ Write `{"name", "prompt", "checks"}` from the draft and what you did.
   unchanged element is in `draft.guards` when it is a like sibling of a
   changed one, and otherwise use the app's usual numbering, such as another
   paragraph's `xid`, and let the export confirm it.
+- In an ODS spreadsheet no attribute names a row or a cell. Name the sheet
+  in the seed, and check its whole text: `text_equals` on
+  `/entries/[name=content.xml]/view/root/children/[name=office:body]/children/[name=office:spreadsheet]/children/[name=table:table][@table:name=Q1 Sales]`,
+  or a stretch of it with `text_contains`. Cell texts join with nothing
+  between, so a row reads `February23100`.
+- For a line added to free text, such as an item on a note's list, the
+  draft suggests `text_contains` of the new line, which passes however the
+  app spaces or orders it, and a guard that the old text is still there.
 - Some apps keep text in an attribute, such as Scribus's `<ITEXT CH=...>`.
   `text_equals` cannot join it, so check the attribute with `value_equals`:
   `/root/children/[name=DOCUMENT]/children/[name=PAGEOBJECT][@ANNAME=Headline]/children/[name=StoryText]/children/[name=ITEXT]/attributes/CH`.
   A partial edit the app restyles splits the text into several runs and
   fails that check; list it in the report's limitations.
 - Where easy, add one check that the rest is untouched, such as another
-  text's value the edit must leave alone. `draft.guards` offers them: the
-  same field on the nearest like siblings at their seed values, which the
-  end holds too. Copy one or two into `checks`; they pass on the seed, which
-  is fine, since the export needs only one check to fail there.
+  text's value the edit must leave alone. `draft.guards` offers them at
+  their seed values, which the end holds too: a field on the nearest like
+  siblings, one the user sets, such as Planner's `work`, before a default
+  they all share; the text an addition kept; a text file's lines beside its
+  new one. Copy one or two into `checks`; they pass on the seed, which is
+  fine, since the export needs only one check to fail there.
 - The draft suggests a decimal the app writes as text, such as `146.83`,
   as a number with `tolerance: 0.001`; keep the tolerance for any number
   you check that way.
@@ -304,8 +323,11 @@ The limitations name the folders the app wrote that the bundle neither owns
 nor seeds, such as `~/.config/MuseScore`, so the app starts without them:
 expect its first-run wizard, a tour or a "restore session?" question at every
 boot. If the witness shows one, capture again on a new build computer with
-those folders in `state_paths`, and dismiss the dialogs before `seed`. They
-also name seeded lock files, WebKit or Chromium storage and caches; when the
+those folders in `state_paths`, and dismiss the dialogs before `seed`. Lock
+files the app holds while it runs, such as LibreOffice's `.lock` and
+`.~lock.<name>#`, are left out of the seed and listed after "Left out of the
+seed", so you need not close the document or delete them before `seed`. The
+limitations also name seeded WebKit or Chromium storage and caches; when the
 witness's boot is clean, list them in the report.
 
 Keep the build computer open until the witness holds: a task fix exports
@@ -324,7 +346,9 @@ checks. Give every `check_build_task` the task exactly as exported.
    seed holds exactly one and the app takes a file. When the export's
    `limitations` say it opens no document, open it from the prompt's path,
    as a solving agent would. Take a `wait` screenshot first, since the
-   desktop may not have drawn yet.
+   desktop may not have drawn yet. When the start fails because the
+   computer never got ready, and its error names lock files in the bundle's
+   seed, delete them from the bundle and start again.
 2. `check_build_task` with `stage: "seed"` and `directory`, the absolute
    path of a new or empty folder for the record. A check must fail.
    Recording starts. Later stages take no `directory`.

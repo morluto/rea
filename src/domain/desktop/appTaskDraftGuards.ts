@@ -1,7 +1,9 @@
 import type { JsonValue } from "../jsonValue.js";
-import { isTimestamp, type DesktopTaskCheckInput } from "./appTask.js";
+import type { DesktopTaskCheckInput } from "./appTask.js";
 import { elementText, isXmlElement, sameJson } from "./appTaskChecks.js";
+import { isRenumberedKey, isStamp } from "./appTaskDraftNoise.js";
 import { valueEqualsCheck } from "./appTaskDraftScalars.js";
+import { isIdentifyingAttribute, rankAttributes } from "./attributeRank.js";
 import { escapeToken, pairMembers, resolvePointer } from "./viewPointer.js";
 
 type Suggestion = DesktopTaskCheckInput;
@@ -60,22 +62,34 @@ const guardAt = (
     return value.trim() !== "" &&
       value === elementText(after) &&
       value.length <= context.chars &&
-      !isTimestamp(value)
+      !isStamp(value)
       ? { kind: "text_equals", file, pointer, value }
       : undefined;
   }
   return typeof before !== "object" &&
     sameJson(before, after) &&
-    !isTimestamp(before)
+    !isStamp(before)
     ? valueEqualsCheck(file, pointer, before)
     : undefined;
 };
 
-/** Pointers of like siblings, nearest first, each by the selector it pairs by at both ends. */
-const siblingPointers = (
+/** Whether a selector key keys a member by a value the app renumbers, as Gnumeric's `[@ExprID=2]`. */
+const renumberedKey = (key: string) =>
+  [...key.matchAll(/\[@(?<attribute>[^=\]]+)=/gu)].some(({ groups }) =>
+    isRenumberedKey(groups?.attribute ?? ""),
+  );
+
+/** A like sibling of a checked member: its pointer by the selector it pairs by at both ends, and its element at the seed. */
+interface Sibling {
+  readonly member: string;
+  readonly element: Record<string, JsonValue>;
+}
+
+/** The like siblings of the member a step goes through, nearest first, each paired by a selector, not by position or a renumbered id, and every like member at the seed. */
+const siblingsOf = (
   context: GuardContext,
   step: ReturnType<typeof listSteps>[number],
-): string[] => {
+): { readonly siblings: Sibling[]; readonly all: JsonValue[] } => {
   const newer = resolvePointer(context.ends.final, step.list);
   const older = resolvePointer(context.ends.baseline, step.list);
   const member = resolvePointer(
@@ -83,7 +97,7 @@ const siblingPointers = (
     `${step.list}/${step.member}`,
   );
   if (!Array.isArray(newer) || !Array.isArray(older) || !isXmlElement(member))
-    return [];
+    return { siblings: [], all: [] };
   const at = newer.indexOf(member);
   const likes = newer
     .map((item, index) => ({ item, index }))
@@ -96,28 +110,91 @@ const siblingPointers = (
         Math.abs(left.index - at) - Math.abs(right.index - at) ||
         left.index - right.index,
     );
-  if (likes.length === 0) return [];
+  const all = older.filter(
+    (item) => isXmlElement(item) && item.name === member.name,
+  );
+  if (likes.length === 0) return { siblings: [], all };
   const pairing = pairMembers(newer, older);
-  return likes.flatMap(({ index }) => {
-    const key = pairing.newer.keys[index];
-    const partner = pairing.newer.partners[index];
-    return key === undefined ||
-      /^\d+$/u.test(key) ||
-      partner === undefined ||
-      pairing.older.keys[partner] !== key
-      ? []
-      : [[step.list, escapeToken(key), ...step.rest].join("/")];
-  });
+  return {
+    siblings: likes.flatMap(({ index }) => {
+      const key = pairing.newer.keys[index];
+      const partner = pairing.newer.partners[index];
+      const element = partner === undefined ? undefined : older[partner];
+      return key === undefined ||
+        /^\d+$/u.test(key) ||
+        renumberedKey(key) ||
+        partner === undefined ||
+        pairing.older.keys[partner] !== key ||
+        !isXmlElement(element)
+        ? []
+        : [{ member: escapeToken(key), element }];
+    }),
+    all,
+  };
 };
 
-/** Up to two guards for one check: the same field on like siblings of the innermost list it goes through that has any. */
+const attributesOf = ({ attributes }: Record<string, JsonValue>) =>
+  typeof attributes === "object" &&
+  attributes !== null &&
+  !Array.isArray(attributes)
+    ? attributes
+    : {};
+
+/** Whether like members at the seed hold more than one value at a path into them, as Planner's `work` does and its shared `type="normal"` does not. */
+const varies = (all: readonly JsonValue[], rest: readonly string[]) =>
+  new Set(
+    all.map((item) =>
+      JSON.stringify(resolvePointer(item, `/${rest.join("/")}`) ?? null),
+    ),
+  ).size > 1;
+
+/**
+ * The path into a sibling a guard reads: the check's own field where like
+ * members hold different values in it; otherwise, as for a tag or a default
+ * every sibling shares, the sibling's best ranked attribute that varies, one
+ * a user sets, as Planner's `work`; the check's own field when none does.
+ */
+const guardField = (
+  sibling: Sibling,
+  all: readonly JsonValue[],
+  rest: readonly string[],
+) => {
+  if (rest.length > 0 && varies(all, rest)) return rest;
+  const selected = new Set(
+    [...sibling.member.matchAll(/\[@(?<key>[^=\]]+)=/gu)].map(
+      ({ groups }) => groups?.key ?? "",
+    ),
+  );
+  const [best] = rankAttributes(
+    Object.entries(attributesOf(sibling.element)).flatMap(([key, value]) =>
+      typeof value === "string" &&
+      !selected.has(key) &&
+      !isIdentifyingAttribute(key) &&
+      !isRenumberedKey(key) &&
+      !isStamp(value) &&
+      varies(all, ["attributes", escapeToken(key)])
+        ? [{ key, value }]
+        : [],
+    ),
+  );
+  return best === undefined ? rest : ["attributes", escapeToken(best.key)];
+};
+
+/** Up to two guards for one check: a field on like siblings of the innermost list it goes through that has any, preferring one that varies among them. */
 const guardsFor = (context: GuardContext, check: Suggestion): Suggestion[] => {
   if (check.kind !== "value_equals" && check.kind !== "text_equals") return [];
   for (const step of listSteps(check.pointer)) {
-    const siblings = siblingPointers(context, step);
+    const { siblings, all } = siblingsOf(context, step);
     if (siblings.length === 0) continue;
     const guards = siblings
-      .flatMap((pointer) => guardAt(context, check, pointer) ?? [])
+      .flatMap((sibling) => {
+        const field =
+          check.kind === "value_equals"
+            ? guardField(sibling, all, step.rest)
+            : step.rest;
+        const pointer = [step.list, sibling.member, ...field].join("/");
+        return guardAt(context, check, pointer) ?? [];
+      })
       .slice(0, MAX_GUARDS_PER_CHECK);
     if (guards.length > 0) return guards;
   }
@@ -125,10 +202,12 @@ const guardsFor = (context: GuardContext, check: Suggestion): Suggestion[] => {
 };
 
 /**
- * Checks that the rest stays as it was, for an author to add by choice: the
- * field each suggested check reads, on up to two like siblings of the
- * innermost list it goes through, nearest first, at its seed value, which the
- * end holds too; at most `MAX_GUARDS` a file, none at a suggested pointer.
+ * Checks that the rest stays as it was, for an author to add by choice: a
+ * field on up to two like siblings of the innermost list each suggested check
+ * goes through, nearest first, at its seed value, which the end holds too: the
+ * field the check reads where it varies among them, otherwise one that does;
+ * never through a sibling paired by position or a renumbered id; at most
+ * `MAX_GUARDS` a file, none at a suggested pointer.
  */
 export const draftGuards = (
   context: GuardContext,

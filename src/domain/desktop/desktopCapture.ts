@@ -48,10 +48,13 @@ export const desktopCheckpointSchema = z.strictObject({
 });
 export type DesktopCheckpoint = z.infer<typeof desktopCheckpointSchema>;
 
+/** The most changed files a checkpoint's acknowledgement names. */
+export const MAX_ACKNOWLEDGED_FILES = 10;
+
 /**
  * What a running capture reports beside its progress text, for a driver to
  * wait on: the window opening, a checkpoint once it has been taken, with its
- * counts, and a requested name it refused.
+ * counts and the files that changed, and a requested name it refused.
  */
 export const desktopCaptureEventSchema = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("window_open") }),
@@ -64,6 +67,10 @@ export const desktopCaptureEventSchema = z.discriminatedUnion("kind", [
     changes: z.int().min(0),
     retained_files: z.int().min(0),
     retained_bytes: z.int().min(0),
+    /** Files, not folders, changed since the checkpoint before: those the app held open, then those in its state directories, then the rest, each by path; home-relative under the home. */
+    changed_files: z.array(z.string().min(1)).max(MAX_ACKNOWLEDGED_FILES),
+    /** How many more changed files there are than `changed_files` names. */
+    more_changed_files: z.int().min(0),
   }),
   z.strictObject({
     kind: z.literal("checkpoint_refused"),
@@ -85,19 +92,41 @@ export type DesktopCaptureProgress = z.infer<
   typeof desktopCaptureProgressSchema
 >;
 
-/** The acknowledgement of a taken checkpoint, from what it recorded. */
+/** How early a changed file is named: one the app held open, then one in its state directories, then the rest. */
+const changeRank = (change: DesktopStateChange) =>
+  change.opened_by_application ? 0 : change.in_state_directory ? 1 : 2;
+
+/** The acknowledgement of a taken checkpoint, from what it recorded, naming changed files relative to the home. */
 export const checkpointTaken = (
   checkpoint: DesktopCheckpoint,
-): Extract<DesktopCaptureEvent, { kind: "checkpoint" }> => ({
-  kind: "checkpoint",
-  name: checkpoint.name,
-  trigger: checkpoint.trigger,
-  at_ms: checkpoint.at_ms,
-  entries: checkpoint.entries,
-  changes: checkpoint.changes.length,
-  retained_files: checkpoint.retained.length,
-  retained_bytes: checkpoint.retained.reduce((sum, file) => sum + file.size, 0),
-});
+  home: string,
+): Extract<DesktopCaptureEvent, { kind: "checkpoint" }> => {
+  const files = checkpoint.changes
+    .filter((change) => (change.after ?? change.before)?.type !== "directory")
+    .sort(
+      (left, right) =>
+        changeRank(left) - changeRank(right) ||
+        (left.path < right.path ? -1 : left.path > right.path ? 1 : 0),
+    )
+    .map(({ path }) =>
+      path.startsWith(`${home}/`) ? path.slice(home.length + 1) : path,
+    );
+  return {
+    kind: "checkpoint",
+    name: checkpoint.name,
+    trigger: checkpoint.trigger,
+    at_ms: checkpoint.at_ms,
+    entries: checkpoint.entries,
+    changes: checkpoint.changes.length,
+    retained_files: checkpoint.retained.length,
+    retained_bytes: checkpoint.retained.reduce(
+      (sum, file) => sum + file.size,
+      0,
+    ),
+    changed_files: files.slice(0, MAX_ACKNOWLEDGED_FILES),
+    more_changed_files: Math.max(0, files.length - MAX_ACKNOWLEDGED_FILES),
+  };
+};
 
 const desktopEntrySchema = z.strictObject({
   id: z.string().nullable(),

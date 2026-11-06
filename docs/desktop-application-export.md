@@ -167,10 +167,13 @@ retain is not seeded: one in the state view without retained content at that
 checkpoint, or one the capture omitted (for example too large or past the
 content budget). The result lists them in `unseeded_files` and the README
 names them. When the application held files open in folders whose starting
-content the capture did not retain, a limitation names those folders. The
-desktop Trash, `~/.local/share/Trash`, is never the application's, so a file
-the user moved there is neither owned nor seeded, even when a window title
-names it; a limitation lists the files the Trash held at the seed.
+content the capture did not retain, a limitation names those folders, spelled
+from `~/` under the home: a file there is seeded only when the capture
+retained it, as it does one written during the capture, and the limitation
+names the seed files there or says there are none. The desktop Trash,
+`~/.local/share/Trash`, is never the application's, so a file the user moved
+there is neither owned nor seeded, even when a window title names it; a
+limitation lists the files the Trash held at the seed.
 
 Files that changed during the capture outside the owned paths are neither
 owned nor seeded, so the app starts without what it saved there: MuseScore
@@ -180,12 +183,23 @@ those folders, leaving out desktop services' files, each collapsed to its
 folder in `~/.config`, `~/.local/share`, `~/.local/state` or `~/.local`, the
 hidden folder of the home it lies in, or else its own folder, up to eight and
 a count of the rest. Capture again naming them with `--state-path`, or
-`state_paths` on a build computer, to own them. Seed files the app keeps for
-its own running are named too, collapsed to the folder that holds them: lock
-files (`lockfile`, `lock`, `*.lock`, `*.lck`, `SingletonLock`), WebKit or
-Chromium storage (such as `hsts-storage.sqlite`, `storage/`, `mediakeys/`,
-`Local Storage/`, `IndexedDB/`, `Cookies`) and caches (a folder whose name
-ends in `cache`); a stale one can change how the app starts.
+`state_paths` on a build computer, to own them.
+
+Lock files the app holds while it runs are left out of the seed: a copied one
+makes the app find its profile or document in use, and a LibreOffice Calc
+bundle whose seed held its profile's `.lock` showed no window at boot. They
+are `lockfile`, `lock`, `.lock`, `.parentlock`, `parent.lock` and
+`SingletonLock` anywhere, LibreOffice's document lock `.~lock.<name>#`, and
+`*.lock` or `*.lck` in a hidden folder of the home or itself hidden; elsewhere
+such a file may be a project's own, such as `Cargo.lock`, and is seeded. A limitation and the README list them, up to
+eight and a count, after "Left out of the seed". They stay under the owned
+paths, so `data/get` returns the lock the running app holds, and `data/reset`
+restores the seed without them. Other seed files the app keeps for its own
+running are seeded as captured and named, collapsed to the folder that holds
+them: WebKit or Chromium storage (such as `hsts-storage.sqlite`, `storage/`,
+`mediakeys/`, `Local Storage/`, `IndexedDB/`, `Cookies`), which may hold the
+app's own data, and caches (a folder whose name ends in `cache`); a stale one
+can change how the app starts.
 
 The application's dconf keys at the seed, if any, are written once when the
 app first starts, also for an application that owns no files, and the class adds

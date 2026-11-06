@@ -147,7 +147,7 @@ export type StoppedCapture = {
       readonly prompt: string;
       readonly checks: Readonly<Record<string, JsonValue>>[];
     };
-    /** Checks that like siblings stay as they were, outside the task until an author adds them. */
+    /** Checks that the rest stays as it was, outside the task until an author adds them. */
     readonly guards: Readonly<Record<string, JsonValue>>[];
     /** Why the draft has no files, or why a file's suggestions are thin. */
     readonly notes: DraftNote[];

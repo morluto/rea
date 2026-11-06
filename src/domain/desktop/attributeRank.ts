@@ -12,6 +12,12 @@ const STYLE_NAME = /(?:style|font|family|class|type)-?name$/u;
 const HEX_TOKEN = /^[0-9a-f-]{8,}$/iu;
 const LONG_TOKEN = /^(?=.*\d)[A-Za-z0-9+/=_-]{16,}$/u;
 
+/** Whether a key names what its element is called rather than a style or font it uses. */
+export const isNameLikeKey = (key: string): boolean => {
+  const local = localName(key);
+  return NAME_LIKE.test(local) && !STYLE_NAME.test(local);
+};
+
 /**
  * How well an attribute names its element across saves, best first: 0 a
  * name-like key, 1 a worded value that is no generated token, 2 an integer of
@@ -19,8 +25,7 @@ const LONG_TOKEN = /^(?=.*\d)[A-Za-z0-9+/=_-]{16,}$/u;
  * token, which a later save may change.
  */
 export const attributeTier = (key: string, value: string): 0 | 1 | 2 | 3 => {
-  const local = localName(key);
-  if (NAME_LIKE.test(local) && !STYLE_NAME.test(local)) return 0;
+  if (isNameLikeKey(key)) return 0;
   if (/\p{L}/u.test(value) && !HEX_TOKEN.test(value) && !LONG_TOKEN.test(value))
     return 1;
   return /^-?\d{1,5}$/u.test(value) ? 2 : 3;

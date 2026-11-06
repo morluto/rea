@@ -1,8 +1,9 @@
 import type { JsonValue } from "../jsonValue.js";
-import { isTimestamp, type DesktopTaskCheckInput } from "./appTask.js";
+import type { DesktopTaskCheckInput } from "./appTask.js";
 import { elementText, isXmlElement } from "./appTaskChecks.js";
 import {
   isRenumberedKey,
+  isStamp,
   isViewStateName,
   isVolatileValue,
 } from "./appTaskDraftNoise.js";
@@ -15,6 +16,8 @@ type Suggestion = DesktopTaskCheckInput;
 /** Attributes of an added element checked one by one, and new fields of an added record. */
 const MAX_ATTRIBUTE_CHECKS = 6;
 const MAX_FIELD_CHECKS = 5;
+/** The fewest attributes a sibling must share for an added element to count as its copy: one alone may match by chance. */
+const MIN_COPIED = 2;
 /** The shortest field text checked: shorter text is too likely to be found elsewhere. */
 const MIN_FIELD_CHARS = 3;
 
@@ -38,6 +41,9 @@ const isRecord = (
 ): value is Record<string, JsonValue> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
+const attributesOf = (element: Element) =>
+  isRecord(element.attributes) ? element.attributes : {};
+
 const listOf = (pointer: string) => pointer.replace(/\/[^/]+$/u, "");
 const parentElementOf = (pointer: string): string | undefined =>
   /^(?<parent>.+)\/children\/[^/]+$/u.exec(pointer)?.groups?.parent;
@@ -49,6 +55,30 @@ const likeCount = (view: JsonValue | null, pointer: string, tag: string) => {
     ? list.filter((item) => isXmlElement(item) && item.name === tag).length
     : 0;
 };
+
+/** Whether a like sibling at either end holds every one of the attributes as they are, so they are the app's defaults for a new member rather than what the user entered. */
+const copiesSibling = (
+  { ends }: AddedContext,
+  pointer: string,
+  element: Element,
+  attributes: readonly { readonly key: string; readonly value: string }[],
+) =>
+  attributes.length >= MIN_COPIED &&
+  [ends.baseline, ends.final].some((view) => {
+    const list = resolvePointer(view, listOf(pointer));
+    return (
+      Array.isArray(list) &&
+      list.some(
+        (item) =>
+          item !== element &&
+          isXmlElement(item) &&
+          item.name === element.name &&
+          attributes.every(
+            ({ key, value }) => attributesOf(item)[key] === value,
+          ),
+      )
+    );
+  });
 
 /** The attribute keys the last segment of a pointer selects by. */
 const selectorKeys = (pointer: string): ReadonlySet<string> => {
@@ -67,7 +97,9 @@ const selectorKeys = (pointer: string): ReadonlySet<string> => {
  * HomeBank adds an `<ope>`, ranked by `attributeTier`, at most six: what the
  * user entered. Its selector's own attributes, identifiers, times, volatile
  * values and view state are left out. Empty for an element with no like
- * sibling at either end, which keeps the check that it is there.
+ * sibling at either end, or whose other attributes a like sibling holds
+ * every one of, as a new Planner task copies its neighbour's defaults; such
+ * an element keeps the check that it is there.
  */
 export const attributeChecks = (
   context: AddedContext,
@@ -81,19 +113,23 @@ export const attributeChecks = (
   )
     return [];
   const selected = selectorKeys(pointer);
+  const own = Object.entries(
+    isRecord(element.attributes) ? element.attributes : {},
+  ).flatMap(([key, value]) =>
+    typeof value === "string" &&
+    !selected.has(key) &&
+    !isIdentifyingAttribute(key)
+      ? [{ key, value }]
+      : [],
+  );
+  if (copiesSibling(context, pointer, element, own)) return [];
   return rankAttributes(
-    Object.entries(
-      isRecord(element.attributes) ? element.attributes : {},
-    ).flatMap(([key, value]) =>
-      typeof value === "string" &&
-      !selected.has(key) &&
-      !isIdentifyingAttribute(key) &&
-      !isTimestamp(value) &&
-      !isVolatileValue(value) &&
-      !isViewStateName(key) &&
-      !isRenumberedKey(key)
-        ? [{ key, value }]
-        : [],
+    own.filter(
+      ({ key, value }) =>
+        !isStamp(value) &&
+        !isVolatileValue(value) &&
+        !isViewStateName(key) &&
+        !isRenumberedKey(key),
     ),
   )
     .slice(0, MAX_ATTRIBUTE_CHECKS)
@@ -165,7 +201,7 @@ export const fieldChecks = (
         text.length >= MIN_FIELD_CHARS &&
         /[\p{L}\d]/u.test(text) &&
         !seen.includes(text) &&
-        !isTimestamp(text) &&
+        !isStamp(text) &&
         !isVolatileValue(text),
     )
     .slice(0, MAX_FIELD_CHECKS)

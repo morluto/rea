@@ -54,8 +54,8 @@ operation `describe_desktop_application_task` and predicate type
   element as compact XML or a JSON value as compact JSON, cut at 600
   characters, and null at the end that lacks it. A value only position
   reaches has `note: "by_position"`, and its pointer cannot go into a check;
-  noise a document's app writes as it saves has `view_state`, `renumbered`,
-  `volatile` or `timestamp` (see `task`). `refers_to` names up to three other
+  noise an app writes as it saves has `view_state`, `renumbered`,
+  `volatile`, `timestamp` or `upkeep` (see `task`). `refers_to` names up to three other
   elements a value equals the `key` or `id` of, with the `attribute` holding
   it, as HomeBank's `category="44"` names `<cat key="44" name="Groceries"/>`;
   where several elements share that key, the one whose tag shares the
@@ -85,47 +85,80 @@ operation `describe_desktop_application_task` and predicate type
     Gnumeric's cells by `[@Col=3][@Row=2]`, and last by a coordinate, a long
     number or a token, such as `XPOS` or `ItemID`. An element with
     identifiers is named by those alone. The selector must name the member
-    alone at both ends, with the same values.
+    alone at both ends, with the same values. An identifier the app numbers
+    by position names nothing: where the members of a tag hold it as 1..N
+    (or 0..N-1) in document order at both ends, and a member another
+    attribute names alone holds a different one at each, as Planner's task
+    `id` after a task is inserted, members are paired by their other
+    attributes, so an insertion reads as one task added.
   - The text check names the paragraph rather than a run inside it: it goes
     up from an element sitting in its parent's text, and from one named by
     its tag or position alone to the nearest ancestor named by an attribute,
     as AbiWord's `p` by its `xid`; where no attribute names one, to the
     nearest ancestor within three levels its tag names with no step by
-    position, as MuseScore's `VBox` around untitled `<Text>` elements. The
-    text nodes and runs inside it get no other check. A decimal that is an
-    element's only text, such as a spreadsheet cell's, is checked by its
-    number instead.
+    position, as MuseScore's `VBox` around untitled `<Text>` elements; and
+    where only position reaches the element, to the ancestor above the
+    outermost step by position, by an attribute of its own that names it
+    alone where one does, as an ODS sheet's `table:table[@table:name=Q1 Sales]`
+    above its rows. The text nodes and runs inside it get no other check. A
+    decimal that is an element's only text, such as a spreadsheet cell's, is
+    checked by its number instead. Text that grew by whole lines and kept the
+    rest, as a note gaining `olive oil` on a line of its own, gets a
+    `text_contains` of the added lines instead, so a correct edit with a
+    blank line after it or the line elsewhere still passes, and guards that
+    the kept text is still there; text replaced, or grown inside a line,
+    keeps `text_equals`.
   - An element added to a list, where another element of its tag is at
     either end, gets a `value_equals` for each of its attributes, best ranked
     first, at most six, leaving out its selector's attributes, identifiers,
     times, volatile values and view state, as HomeBank's new `<ope>` gets its
-    `amount`, `category` and `payee`. Any other element added whole gets a
-    check that it exists. A record only position names, such as Osmo's
+    `amount`, `category` and `payee`. An element whose other attributes, two
+    or more, a like sibling holds every one of, as a new Planner task copies
+    its neighbour's defaults, and any other element added whole, get a check
+    that it exists. A record only position names, such as Osmo's
     `<record>` of fields, also gets a `text_contains` for each new field of
     three or more characters, at most five, at the nearest ancestor a check
     can name, each absent from that ancestor's text at the seed.
   - A decimal written as text, such as `146.83`, is suggested as a number
     with `tolerance: 0.001`, unless the seed's value is that close too.
-  - In a document, noise leaves the suggestions when the file's change holds
-    anything else: view state, which a tag or attribute on the way names
-    (the cursor, a selection, scrolling, zoom, the viewport, windows,
-    splitters, Inkscape's `namedview`, a save's history, edit time
-    or last-saved time); an attribute ending in `ID` or `Id`, or an `rsid`,
-    that the app renumbered, with everything else in its element, as
-    Gnumeric empties a formula cell whose shared expression it renumbers;
-    and volatile values, UUIDs and epoch times. When the change holds
-    nothing else, up to three such checks stay and a note flags them. The
-    app's own state is not filtered, since a view setting may be its task.
+  - Noise leaves the suggestions when the file's change holds anything
+    else, a change only position reaches included: view state, which a tag
+    or attribute on the way names (the cursor, a selection, scrolling, zoom,
+    the viewport, windows, splitters, Inkscape's `namedview`, view and
+    configuration settings, the printer, a save's history, edit time,
+    editing duration and cycles, last-saved time, the generator and
+    document statistics), or the value of a name-like attribute or `key` on
+    the way, when it is one token of several words, as LibreOffice's
+    `config:config-item[@config:name=CursorPositionX]` inside
+    `[@config:name=ooo:view-settings]`; an attribute ending in `ID` or `Id`,
+    or an `rsid`, that the app renumbered, with everything else in its
+    element, as Gnumeric empties a formula cell whose shared expression it
+    renumbers, and an identifier the app numbers by position; volatile
+    values, UUIDs and epoch times, and durations and counts under a
+    document's metadata; times the app stamps; and `upkeep`, attributes the
+    elements of one archive entry only gained while another entry holds the
+    edit, as LibreOffice fills in `styles.xml` on save. When the change holds
+    nothing else, the checks stay and a note flags them: up to three in a
+    document, and as many as fit in the app's own state, where a view
+    setting may be the task.
   - Whitespace an app lays out between elements is not checked, and values
-    that look like a time the app stamps, in ISO 8601 or as C's `asctime`
-    writes it (`Thu Nov  5 09:20:31 2026`), are left out; such a time never
-    makes its ancestor's whole text a check.
+    that look like a time the app stamps, in ISO 8601, as C's `asctime`
+    writes it (`Thu Nov  5 09:20:31 2026`) or as a time of day to the
+    second (`05:16:21.675302540`), are left out; noise never makes its
+    ancestor's whole text a check.
 - `guards`: checks an author may add to show the edit left the rest alone,
   kept out of `task.checks`, with ids `guard-1` and on: for each suggested
-  `value_equals` or `text_equals` on a member of a list, the same field on
-  up to two like siblings, nearest first, at its seed value, which the end
-  holds too; at most four a file. They pass on the seed, which the export
-  allows, since one check failing there is enough.
+  `value_equals` or `text_equals` on a member of a list, a field on up to
+  two like siblings, nearest first, at its seed value, which the end holds
+  too: the check's own field where like siblings hold different values in
+  it, and otherwise one that varies among them, as Planner's `work` rather
+  than the `type="normal"` every task shares; never through a sibling only
+  position or a renumbered id pairs. Text that grew by lines gets a
+  `text_contains` of what it kept, and a text file a `lines_present` of the
+  unchanged list items beside its first new line with the same marker, as
+  Zim's other `[ ]` action items, or else its nearest lines with words in
+  them. At most four a file. They pass on the seed, which the export allows,
+  since one check failing there is enough.
 - `notes`: why `files` is empty, or why a file's suggestions are thin. Each
   note has a `code` and a `message`. For a draft with no files:
   `no_change` when no file under the home changed between the two

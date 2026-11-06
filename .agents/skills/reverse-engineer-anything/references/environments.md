@@ -311,12 +311,15 @@ Run `rea describe-desktop-application-task CAPTURE --format json`. Read:
 - `values` in each of those files: what the change added, changed and
   removed, `before` and `after`, at the pointer a check names it by, with
   `refers_to` naming the element a key such as `category="44"` stands for.
-  Skip entries noted `by_position` or as noise.
+  Skip entries noted `by_position` or as noise. Only XML files, archives,
+  JSON and key files have values: a text file's or database's change
+  already lists its lines and rows.
 - `task`: a draft whose `checks` are suggestions from the net change of the
   documents the user worked on, or of the app's own state when no document
   changed.
-- `guards`: optional checks that like siblings kept their seed values; add
-  one or two to show the rest is untouched.
+- `guards`: optional checks that the rest kept its seed values, such as a
+  like sibling's field or a text file's neighbouring lines; add one or two
+  to show the rest is untouched.
 - `notes`: why `files` is empty, or why a file's suggestions are thin, such
   as `by_position` when no attribute names the changed element.
 

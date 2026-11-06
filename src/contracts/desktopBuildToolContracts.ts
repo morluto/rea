@@ -18,7 +18,10 @@ import {
   computerActionInputSchema,
   screenshotOptionsSchema,
 } from "../domain/desktop/computerActions.js";
-import { desktopCheckpointSchema } from "../domain/desktop/desktopCapture.js";
+import {
+  desktopCheckpointSchema,
+  MAX_ACKNOWLEDGED_FILES,
+} from "../domain/desktop/desktopCapture.js";
 import {
   jsonObjectSchema,
   jsonValueSchema,
@@ -251,7 +254,7 @@ export const DESKTOP_BUILD_TOOL_CONTRACTS = [
     name: "mark_build_checkpoint",
     ...toolContractMetadata("mark_build_checkpoint"),
     kind: "application",
-    description: `Take a named checkpoint of the app's state in the capture under way and wait for the capture to acknowledge it, with its counts: entries walked, paths changed since the checkpoint before, and files retained. Mark ${SEED_CHECKPOINT} once the seed is saved and ${END_CHECKPOINT} once the change is; a name already taken is refused.`,
+    description: `Take a named checkpoint of the app's state in the capture under way and wait for the capture to acknowledge it, with its counts (entries walked, paths changed since the checkpoint before, files retained) and up to ${String(MAX_ACKNOWLEDGED_FILES)} of the files that changed, those the app held open first, so you can see which file a save wrote. Mark ${SEED_CHECKPOINT} once the seed is saved and ${END_CHECKPOINT} once the change is; a name already taken is refused.`,
     inputSchema: z.strictObject({
       computer_id: computerId,
       name: buildCheckpointNameSchema,
@@ -266,6 +269,16 @@ export const DESKTOP_BUILD_TOOL_CONTRACTS = [
         changes: z.int().nonnegative(),
         retained_files: z.int().nonnegative(),
         retained_bytes: z.int().nonnegative(),
+        changed_files: z
+          .array(z.string())
+          .max(MAX_ACKNOWLEDGED_FILES)
+          .describe(
+            "Files, not folders, changed since the checkpoint before, relative to the home: those the app held open, then those in its state directories, then the rest, each by path.",
+          ),
+        more_changed_files: z
+          .int()
+          .nonnegative()
+          .describe("How many more files changed than changed_files names."),
       }),
     }),
     examples: [
@@ -279,7 +292,7 @@ export const DESKTOP_BUILD_TOOL_CONTRACTS = [
     name: "stop_build_capture",
     ...toolContractMetadata("stop_build_capture"),
     kind: "application",
-    description: `Stop the capture: the app is closed and the capture finishes inside the computer. Returns its checkpoints, the package and sources it found, its limitations and, when ${SEED_CHECKPOINT} and ${END_CHECKPOINT} were marked, the task draft between them: the files that changed under the paths the bundle owns, each with its net change and the values it added, changed and removed (before and after, at the pointers a check names them by); suggested checks; and guards, optional checks that like siblings stay as they were. Notes say why a draft is empty (nothing changed, the changes lie outside the owned paths, listed with their roles, or REA recognized no document: capture again with state_paths naming the file) or why a file's suggestions are thin (only position names the change, it is all view state, its text is too long, or its view is cut or unreadable). Write the task from the draft, its prompt in the user's words, and give it to export_build_environment.`,
+    description: `Stop the capture: the app is closed and the capture finishes inside the computer. Returns its checkpoints, the package and sources it found, its limitations and, when ${SEED_CHECKPOINT} and ${END_CHECKPOINT} were marked, the task draft between them: the files that changed under the paths the bundle owns, each with its net change and, for XML files, archives, JSON and key files, the values it added, changed and removed (before and after, at the pointers a check names them by); suggested checks; and guards, optional checks that the rest stays as it was. Notes say why a draft is empty (nothing changed, the changes lie outside the owned paths, listed with their roles, or REA recognized no document: capture again with state_paths naming the file) or why a file's suggestions are thin (only position names the change, it is all view state, its text is too long, or its view is cut or unreadable). Write the task from the draft, its prompt in the user's words, and give it to export_build_environment.`,
     inputSchema: z.strictObject({ computer_id: computerId }),
     outputSchema: z.strictObject({
       computer_id: z.uuid(),
@@ -311,7 +324,7 @@ export const DESKTOP_BUILD_TOOL_CONTRACTS = [
               values: z
                 .array(draftValueSchema)
                 .describe(
-                  "The values the change added, changed and removed, ready to copy into a check: what a check can name first, then what only position reaches, then noise; at most 20 entries and 8 KB a file and 24 KB a draft.",
+                  "The values the change added, changed and removed, ready to copy into a check: what a check can name first, then what only position reaches, then noise; at most 20 entries and 8 KB a file and 24 KB a draft. Only XML files, archives, JSON and key files have values: a text file's or SQLite database's change already lists its lines and rows.",
                 ),
               values_cut: z
                 .boolean()
@@ -326,7 +339,7 @@ export const DESKTOP_BUILD_TOOL_CONTRACTS = [
           guards: z
             .array(jsonObjectSchema)
             .describe(
-              "Optional checks that the same field on like siblings keeps its seed value, which the end holds too; add those worth keeping to the task's checks.",
+              "Optional checks that the rest keeps its seed value, which the end holds too: a field on like siblings, one that varies among them before a default they all share; the text an addition kept; a text file's lines beside its new one. Add those worth keeping to the task's checks.",
             ),
           notes: z
             .array(draftNoteSchema)

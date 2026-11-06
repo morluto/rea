@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  heldOpenLimitation,
+  isLockFile,
   runtimeSeeds,
   unownedChangedFolders,
   unownedFoldersLimitation,
+  unretainedOpenedLimitation,
 } from "./appExportUnowned.js";
 import type { DesktopStatePath } from "./desktopState.js";
 
@@ -91,13 +94,67 @@ describe("unownedChangedFolders", () => {
   });
 });
 
+describe("isLockFile", () => {
+  it("knows profile and document locks, and a *.lock or *.lck file only where an app keeps its own files", () => {
+    const locks = [
+      ".config/libreoffice/4/.lock",
+      "Documents/.~lock.q1-sales.ods#",
+      ".config/osmo/lockfile",
+      ".config/app/SingletonLock",
+      ".mozilla/firefox/ab12.default/.parentlock",
+      ".mozilla/firefox/ab12.default/parent.lock",
+      ".config/app/db.lock",
+      ".local/share/app/prefs.lck",
+      "Documents/.notes.lock",
+    ];
+    const others = [
+      "Projects/tool/Cargo.lock",
+      "Projects/web/yarn.lock",
+      "Documents/locksmith.txt",
+      "Documents/~lock.ods",
+      ".config/app/lock.json",
+    ];
+
+    expect(locks.filter(isLockFile)).toEqual(locks);
+    expect(others.filter(isLockFile)).toEqual([]);
+  });
+});
+
+describe("the limitations on folders the app held files open in", () => {
+  it("names the folders, under the home from it, in the capture's", () => {
+    expect(
+      unretainedOpenedLimitation(
+        ["/home/user/Documents", "/home/user", "/media/usb"],
+        "/home/user",
+      ),
+    ).toContain("held files open in ~/Documents, ~, /media/usb, whose");
+    expect(unretainedOpenedLimitation([], "/home/user")).toBeUndefined();
+  });
+
+  it("names the seed files there in the export's, and says when there are none", () => {
+    const home = "/home/user";
+    const seeded = heldOpenLimitation([`${home}/Documents`], home, [
+      ".config/libreoffice/4/user/registrymodifications.xcu",
+      "Documents/q1-sales.ods",
+    ]);
+    const none = heldOpenLimitation([`${home}/Documents`], home, [
+      ".config/libreoffice/4/user/registrymodifications.xcu",
+    ]);
+
+    expect(seeded).toContain("held files open in ~/Documents,");
+    expect(seeded).toContain(
+      "the seed holds ~/Documents/q1-sales.ods from there",
+    );
+    expect(seeded).not.toContain("registrymodifications");
+    expect(none).toContain("the seed holds none from there");
+    expect(heldOpenLimitation([], home, [])).toBeUndefined();
+  });
+});
+
 describe("runtimeSeeds", () => {
-  it("finds lock files, WebKit and Chromium storage and caches, each by the folder that holds it, and nothing else", () => {
+  it("finds WebKit and Chromium storage and caches, each by the folder that holds it, and nothing else", () => {
     expect(
       runtimeSeeds([
-        ".config/osmo/lockfile",
-        ".config/app/SingletonLock",
-        ".config/app/db.lock",
         ".local/share/osmo/hsts-storage.sqlite",
         ".local/share/osmo/mediakeys/v1/salt",
         ".local/share/osmo/storage/HbE7/HbE7/origin",
@@ -111,14 +168,6 @@ describe("runtimeSeeds", () => {
         "Documents/locksmith.txt",
       ]),
     ).toEqual([
-      {
-        kind: "lock",
-        paths: [
-          ".config/app/SingletonLock",
-          ".config/app/db.lock",
-          ".config/osmo/lockfile",
-        ],
-      },
       {
         kind: "web_storage",
         paths: [

@@ -1,6 +1,7 @@
 import type { JsonValue } from "../jsonValue.js";
 import { isTimestamp } from "./appTask.js";
 import { isIdentifyingAttribute, rankAttributes } from "./attributeRank.js";
+import { isPositionalKey, positionalKeys } from "./positionalKeys.js";
 
 /** One condition of a selector: a member's string field, or with `@` one of its attributes, equal to a value. */
 interface Condition {
@@ -300,13 +301,15 @@ const pairsOf = (ranked: readonly (Attribute & { tier: number })[]) => {
  * itself. All are counted over every sibling, so a selector several siblings
  * match is never taken for one naming a member alone; but an element with
  * identifying attributes is keyed by those alone, so one whose identifiers
- * are new is another element, whatever else it shares. The ids number the
+ * are new is another element, whatever else it shares. An identifier the app
+ * numbers by position (`positional`) names no member. The ids number the
  * name among those seen, so a name is spelled into a selector only once one
  * is chosen, not per attribute.
  */
 const candidatesOf = (
   member: JsonValue,
   names: Map<string, number>,
+  positional: ReadonlySet<string>,
 ): Candidates | undefined => {
   if (!isRecord(member)) return undefined;
   const name = own(member, "name");
@@ -315,7 +318,10 @@ const candidatesOf = (
   const usable = (
     isRecord(attributes) ? Object.entries(attributes) : []
   ).flatMap(([key, value]) =>
-    typeof value === "string" && attributeName(key) && selectable(value)
+    typeof value === "string" &&
+    attributeName(key) &&
+    selectable(value) &&
+    !isPositionalKey(positional, name, key)
       ? [{ key, value }]
       : [],
   );
@@ -366,15 +372,21 @@ interface PairedSide {
  * its first candidate selector naming it alone in its version and one unpaired
  * member of the other, whichever before it name nothing there; one with no
  * partner keeps its first selector naming it alone and nothing in the other
- * version. Members left without a selector are keyed and paired by position.
+ * version. Members left without a selector are keyed and paired by position;
+ * so is an identifier the app numbers by position, as `positionalKeys` finds.
  */
 export const pairMembers = (
   newer: readonly JsonValue[],
   older: readonly JsonValue[],
 ): { readonly newer: PairedSide; readonly older: PairedSide } => {
   const names = new Map<string, number>();
-  const newCandidates = newer.map((member) => candidatesOf(member, names));
-  const oldCandidates = older.map((member) => candidatesOf(member, names));
+  const positional = positionalKeys(newer, older);
+  const newCandidates = newer.map((member) =>
+    candidatesOf(member, names, positional),
+  );
+  const oldCandidates = older.map((member) =>
+    candidatesOf(member, names, positional),
+  );
   const newCounts = countIds(newCandidates);
   const oldCounts = countIds(oldCandidates);
   const count = (counts: ReadonlyMap<string, number>, id: string) =>

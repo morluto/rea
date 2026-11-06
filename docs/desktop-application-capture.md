@@ -90,12 +90,15 @@ Progress lines on stderr are JSON, `{"rea_progress": {"phase":
 "desktop_capture", "message": ...}}`. Those a driver waits on also carry an
 `event`: `{"kind": "window_open"}` once the window opens; `{"kind":
 "checkpoint", "name", "trigger", "at_ms", "entries", "changes",
-"retained_files", "retained_bytes"}` once a checkpoint has been taken, the
-baseline, `stop` and `exit` included, with the paths walked, the paths
-changed since the checkpoint before and the files retained; and `{"kind":
-"checkpoint_refused", "name", "reason"}` for a requested name it refused. A
-driver that sends `checkpoint <name>` waits for the event naming it rather
-than for a fixed time.
+"retained_files", "retained_bytes", "changed_files", "more_changed_files"}`
+once a checkpoint has been taken, the baseline, `stop` and `exit` included,
+with the paths walked, the paths changed since the checkpoint before, the
+files retained, and up to ten of the files (not folders) that changed,
+home-relative, those the application held open first, then those in its
+state directories, then the rest, each by path, with a count of the rest;
+and `{"kind": "checkpoint_refused", "name", "reason"}` for a requested name it
+refused. A driver that sends `checkpoint <name>` waits for the event naming it
+rather than for a fixed time.
 
 When the session ends the capture sends SIGTERM to the launched process, its
 process group and every process that carries the run token, waits up to five
@@ -355,7 +358,8 @@ retained are listed with the reason: too large, over the content budget,
 changed since the walk, changed during the read, or unreadable.
 Directories the application held files open in, but whose starting content was
 not retained, are listed so a second capture can pass them with
-`--state-path`, or `state_paths` on a build computer's `start_build_capture`.
+`--state-path`, or `state_paths` on a build computer's `start_build_capture`,
+and a limitation names them, spelled from `~/` under the home.
 
 **Limitations.** What the capture could not establish, such as a truncated
 walk or a missing window.

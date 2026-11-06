@@ -36,11 +36,13 @@ and the recording and writes the record as Evidence.
   document, or the app's own state under a hidden folder of the home.
 - Acknowledgement: `capture-desktop-application` reports, beside each progress
   message, an `event`: `window_open`; `checkpoint` with its name, trigger,
-  time, entries walked, changes and retained files and bytes, once it is
-  taken, the baseline, `stop` and `exit` included; and `checkpoint_refused`
-  with the reason. `mark_build_checkpoint` writes `checkpoint <name>` and
-  waits for the event naming it, returning its counts. Names follow a narrow
-  pattern, without the capture's own names; a name already taken is refused.
+  time, entries walked, changes and retained files and bytes, and up to ten
+  changed files, home-relative, those the app held open first, with a count
+  of the rest, once it is taken, the baseline, `stop` and `exit` included;
+  and `checkpoint_refused` with the reason. `mark_build_checkpoint` writes
+  `checkpoint <name>` and waits for the event naming it, returning its counts
+  and changed files. Names follow a narrow pattern, without the capture's own
+  names; a name already taken is refused.
 - `stop_build_capture` sends `stop`, waits for the exit status, reads the
   capture's Evidence and, when `seed` and `end` were acknowledged, runs
   `describe-desktop-application-task --seed-checkpoint seed --end-checkpoint
@@ -53,7 +55,10 @@ and the recording and writes the record as Evidence.
   new folder there, reports a refused task with the export's own reason,
   lists the bundle with sizes and SHA-256, fetches it through the driver's
   `data/get` in answers of at most 8 MiB, checks each file and writes the
-  caller's new or empty folder through the safe output tree.
+  caller's new or empty folder through the safe output tree. The export
+  leaves lock files the app holds while it runs out of the seed, listing them
+  in its limitations and README; a start from a bundle whose computer never
+  gets ready names the lock files its seed holds.
 - `check_build_task` reads the one app's `data/get` through the card's
   child URL, takes the state views beside its files and evaluates the task's
   checks with `evaluateTaskChecks`, one result per check. With `stage`, the

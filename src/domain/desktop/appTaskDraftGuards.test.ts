@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 
-import { passing, pointerOf, xml, xmlDraft } from "./appTaskDraft.fixture.js";
+import {
+  draftOf,
+  passing,
+  pointerOf,
+  statePath,
+  xml,
+  xmlDraft,
+} from "./appTaskDraft.fixture.js";
 
 const FILE = "Documents/doc.xml";
 
@@ -74,6 +81,76 @@ describe("draftTaskFiles guards", () => {
         value: 174.9,
         tolerance: 0.001,
       },
+    ]);
+  });
+});
+
+describe("draftTaskFiles guards beyond a sibling's same field", () => {
+  it("guards a field a user sets on the siblings, not a default they all share", () => {
+    const plan = (designType: string) =>
+      `<project><tasks><task name="Requirements" work="28800" type="normal"/><task name="Design" work="86400" type="${designType}"/><task name="Launch" work="14400" type="normal"/></tasks></project>`;
+    const task = (name: string) =>
+      `/root/children/[name=tasks]/children/[name=task][@name=${name}]/attributes`;
+
+    const file = xmlDraft(plan("normal"), plan("milestone"));
+
+    expect(file.suggested.map(pointerOf)).toEqual([`${task("Design")}/type`]);
+    expect(file.guards).toEqual([
+      {
+        kind: "value_equals",
+        file: FILE,
+        pointer: `${task("Requirements")}/work`,
+        value: "28800",
+      },
+      {
+        kind: "value_equals",
+        file: FILE,
+        pointer: `${task("Launch")}/work`,
+        value: "14400",
+      },
+    ]);
+  });
+
+  it("guards no sibling paired by an id the app renumbers", () => {
+    const sheet = (march: string) =>
+      `<Cells><Cell Row="2" Col="3">${march}</Cell><Cell Row="5" Col="3" ExprID="1">=sum(C2:C4)</Cell><Cell Row="5" Col="4">=sum(D2:D4)</Cell></Cells>`;
+
+    const file = xmlDraft(sheet("405.1"), sheet("437.8"));
+
+    expect(file.suggested.map(pointerOf)).toEqual([
+      "/root/children/[name=Cell][@Row=2]/children/0",
+    ]);
+    expect(file.guards.map(pointerOf)).toEqual([
+      "/root/children/[name=Cell][@Col=4]/children/0",
+    ]);
+  });
+
+  it("guards a text file's list items beside the line an edit added", () => {
+    const page = (...items: string[]) => {
+      const lines = [
+        "====== Meeting Notes ======",
+        "Action items",
+        ...items,
+        "",
+        "Next sync: Thursday at 10:00",
+      ];
+      return { lines, line_count: lines.length, truncated: false };
+    };
+    const PRIYA = "[ ] Priya to send the revised budget";
+    const MARCO = "[ ] Marco to book a room for the offsite";
+    const file = "Notebooks/Notes/Meeting_Notes.txt";
+
+    const [drafted] = draftOf({
+      [file]: statePath(
+        "document",
+        "text",
+        page(PRIYA, MARCO),
+        page(PRIYA, MARCO, "[ ] Dana to update the release checklist"),
+      ),
+    });
+
+    expect(drafted?.guards).toEqual([
+      { kind: "lines_present", file, lines: [PRIYA, MARCO] },
     ]);
   });
 });
