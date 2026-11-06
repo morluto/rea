@@ -337,6 +337,54 @@ fixtures added, and passes now.
 The Linux-only capture test's acknowledgement now expects the changed state
 file; it is skipped on macOS and was not run.
 
+## Linked state paths, dconf changes, project lock files and older checkpoint replies
+
+Run on macOS with source tests and gates; no build computer was started.
+Each test below failed on the head before this change, with only the tests
+and their fixtures added, and passes now.
+
+- `buildCaptureStatePathsMcp.test.ts`: the computer refuses state paths that
+  a link leads out of the home, existing or not yet (through the nearest
+  existing folder, or a dangling link), or into `~/.rea-build`, and starts
+  nothing; a link that stays in the home is followed and the path passed to
+  the capture as named. Before, the first such path started a capture.
+- `DesktopCaptureScope.test.ts`: the capture scope records each selected
+  path as named beside the physical path it walks.
+- `DesktopApplicationExport.test.ts`: with `~/.config/MuseScore` selected as
+  a link to `~/settings/MuseScore` beside a selected note, the bundle's
+  launch opens the note. With only the capture's record of selected paths
+  added, the settings file was still a document and the launch opened none.
+- `DesktopTaskDraftNotes.test.ts`: a draft whose only change between `seed`
+  and `end` is to the app's keys in dconf carries `uncheckable_changes`
+  naming `~/.config/dconf/user`, not `no_change`; one where only another
+  group's keys changed still has `no_change`.
+- `appExportUnowned.test.ts`: `*.lock` and `*.lck` are locks only directly
+  in a state directory, so `Projects/.repo/Cargo.lock` is not; and 20,000
+  separate unowned folders collapse in tens of milliseconds, where comparing
+  every pair took 12.9 seconds.
+- `DesktopApplicationExport.test.ts`: `Projects/.repo/Cargo.lock` and
+  `.dotfiles/web/yarn.lock`, which the capture recognized as documents, and
+  a lock-named file the caller selected are seeded, a `*.lock` directly in a
+  state directory is left out, and the profile and document locks still are.
+- `buildCaptureMcp.test.ts`: checkpoints acknowledged without
+  `changed_files` and `more_changed_files`, as the previous REA in a build
+  computer does, are taken with both `null`, also when a lost reply is read
+  again from the capture's log. Before, the host refused the acknowledgement
+  although the checkpoint was taken.
+- `desktopCapture.test.ts`: a checkpoint's changed files name a document
+  under a selected path first, though the app did not hold it open, and
+  caches and browser-engine storage last, even one the app held open or in a
+  state directory, so ten KDE service-cache files no longer push the saved
+  document past the cut, as they did in a held-out Tellico build.
+- `LinuxApplicationInventory.test.ts`: the inventory lists KDE's
+  `~/.config/<name>rc` before it exists, so a Tellico capture owns
+  `~/.config/tellicorc`, whose absence brought back Tip of the Day at boot;
+  `DesktopApplicationExport.test.ts` shows such a file, written during the
+  capture, owned and seeded (that test passed before, given the inventory).
+
+The capture's recording of selected paths runs only on Linux; its scope is
+tested on macOS, and the capture itself was not run.
+
 ## Limits of this verification
 
 - The witness acts were scripted by this agent from the task's prompt; no

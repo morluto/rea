@@ -191,6 +191,53 @@ it("captures the app inside the computer, acknowledges checkpoints, drafts the t
   expectNoToken(computer, [started, seed, stopped, exported]);
 });
 
+it("takes checkpoints from a REA in the computer that predates their changed files, saying which changed is unknown, also from its log", async () => {
+  const { client } = await fakes({
+    env: { FAKE_REA_UNLISTED_CHANGES: "1" },
+    dropReplies: ["mark"],
+  });
+  const id = await startBuildComputer(client, REQUEST);
+  await callOk(client, "start_build_capture", { computer_id: id });
+  const mark = async (name: string) =>
+    toolContract("mark_build_checkpoint").outputSchema.parse(
+      (
+        await callOk(client, "mark_build_checkpoint", {
+          computer_id: id,
+          name,
+        })
+      ).structuredContent,
+    ).checkpoint;
+  // The first reply is lost, so the second call reads the checkpoint from the capture's log.
+  expect(
+    (
+      await client.callTool({
+        name: "mark_build_checkpoint",
+        arguments: { computer_id: id, name: "seed" },
+      })
+    ).isError,
+  ).toBe(true);
+
+  const seed = await mark("seed");
+  const end = await mark("end");
+
+  for (const [taken, name, atMs] of [
+    [seed, "seed", 1000],
+    [end, "end", 2000],
+  ] as const)
+    expect(taken).toEqual({
+      name,
+      trigger: "request",
+      at_ms: atMs,
+      entries: 5,
+      changes: 1,
+      retained_files: 1,
+      retained_bytes: 5,
+      changed_files: null,
+      more_changed_files: null,
+    });
+  await callOk(client, "stop_build_capture", { computer_id: id });
+});
+
 it("refuses capture steps out of order and a capture of a bundle's computer", async () => {
   const bundled = await fakes();
   const fromBundle = await startBuildComputer(bundled.client, {

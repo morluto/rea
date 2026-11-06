@@ -264,7 +264,11 @@ const recordCapture = async (
   const acknowledge = async () => {
     const taken = recorder.checkpoints.at(-1);
     if (taken === undefined) return;
-    const event = checkpointTaken(taken, home);
+    const event = checkpointTaken(
+      taken,
+      home,
+      context.scope.selectedPaths.map(({ physical }) => physical),
+    );
     await host.report(
       `Recorded checkpoint ${taken.name}: ${String(event.changes)} change(s), ${String(event.retained_files)} file(s) retained.`,
       event,
@@ -313,6 +317,7 @@ const recordCapture = async (
       roots: [...scope.roots],
       content_roots: [...scope.contentRoots],
       state_directories: [...scope.stateDirectories],
+      selected_paths: [...context.scope.selectedPaths],
       excluded: [...scope.excluded],
       checkpoints: recorder.checkpoints,
       content_files: store.files,

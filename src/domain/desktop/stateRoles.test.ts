@@ -72,6 +72,7 @@ describe("stateReasons", () => {
       stateDirectories: [],
       stateTails: [],
       selectedRoots: [],
+      linkedSelections: [],
       titles: ["*today.txt (~/Documents/plan.md) - Notes"],
       openedFiles: new Set(),
     };
@@ -93,6 +94,7 @@ describe("stateReasons", () => {
       stateDirectories: [],
       stateTails: [],
       selectedRoots: [],
+      linkedSelections: [],
       titles: ["poster.svg - Inkscape"],
       openedFiles: new Set(),
     };
@@ -118,6 +120,7 @@ describe("stateReasons for state directories", () => {
       stateDirectories: ["/data/ada/.config/gimp"],
       stateTails: [".config/gimp"],
       selectedRoots: [],
+      linkedSelections: [],
       titles: [],
       openedFiles: new Set(),
     };

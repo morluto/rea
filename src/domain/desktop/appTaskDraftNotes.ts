@@ -6,6 +6,7 @@ import type { DesktopStatePath, StateEnds } from "./desktopState.js";
 export const DRAFT_NOTE_CODES = [
   "no_change",
   "unowned_changes",
+  "uncheckable_changes",
   "no_document",
 ] as const;
 
@@ -13,7 +14,11 @@ export const DRAFT_NOTE_CODES = [
 export interface DraftNote {
   readonly code: (typeof DRAFT_NOTE_CODES)[number];
   readonly message: string;
-  /** `unowned_changes`: the changed home paths outside the owned paths, with their roles, up to five. */
+  /**
+   * `unowned_changes`: the changed home paths outside the owned paths, with
+   * their roles, up to five. `uncheckable_changes`: the dconf databases whose
+   * application keys changed, with their roles.
+   */
   readonly files?: readonly { readonly file: string; readonly role: string }[];
   /** `unowned_changes`: how many more changed. */
   readonly more?: number;
@@ -32,16 +37,18 @@ const homeList = (paths: readonly string[]) =>
   paths.map((path) => `~/${path}`).join(", ");
 
 /**
- * Why a draft of `drafted` files has none: no file changed between the seed
- * and end checkpoints, or those that changed lie outside the owned paths;
- * and, either way, when no file has the document role. Empty for a draft
- * with files.
+ * Why a draft of `drafted` files has none: nothing changed between the seed
+ * and end checkpoints, the files that changed lie outside the owned paths, or
+ * the app's keys in a dconf database changed, which no check reads; and,
+ * whichever, when no file has the document role. Empty for a draft with files.
  */
 export const draftNotes = (
   files: ReadonlyMap<string, DesktopStatePath>,
   facts: {
     readonly drafted: number;
     readonly owned: readonly string[];
+    /** The capture's dconf databases by home path, which `files` leaves out. */
+    readonly dconf: ReadonlyMap<string, DesktopStatePath>;
     readonly ends: StateEnds;
     readonly checkpoints: readonly string[];
   },
@@ -56,13 +63,17 @@ export const draftNotes = (
         ROLE_ORDER[left.role] - ROLE_ORDER[right.role] ||
         (left.file < right.file ? -1 : 1),
     );
+  // A dconf view holds only the app's groups, so it differs only when the app's keys changed or it is unreadable.
+  const settings = changedStateFiles(facts.dconf, facts.ends).map(
+    ({ home, path }) => ({ file: home, role: path.role }),
+  );
   const notes: DraftNote[] = [];
-  if (changed.length === 0)
+  if (changed.length === 0 && settings.length === 0)
     notes.push({
       code: "no_change",
       message: `No file under the home changed between checkpoints ${seed} and ${end}: save the change in the app before taking ${end}.`,
     });
-  else {
+  if (changed.length > 0) {
     const listed = changed.slice(0, MAX_NOTED_FILES);
     const more = changed.length - listed.length;
     notes.push({
@@ -72,6 +83,12 @@ export const draftNotes = (
       more,
     });
   }
+  if (settings.length > 0)
+    notes.push({
+      code: "uncheckable_changes",
+      message: `The app's keys in dconf (${homeList(settings.map(({ file }) => file))}) changed between ${seed} and ${end}, and no check can read them: checks read files under the owned paths, and the export only writes the app's keys as they were at ${seed} when the app first starts. Make the task's change one the app saves in a file.`,
+      files: settings,
+    });
   if (![...files.values()].some((path) => path.role === "document"))
     notes.push({
       code: "no_document",

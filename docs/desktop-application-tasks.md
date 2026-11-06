@@ -68,10 +68,15 @@ operation `describe_desktop_application_task` and predicate type
   `asctime` writes it (`Thu Nov  5 09:20:31 2026`), are left out.
 - `notes`: why `files` is empty, or nothing when it is not. Each note has a
   `code` and a `message`: `no_change` when no file under the home changed
-  between the two checkpoints; `unowned_changes` when files changed but none
-  under the owned paths, with up to five of them in `files`, each with its
-  home path and role (desktop services' files last), and how many more in
-  `more`; and `no_document` when no file has the document role, as when no
+  between the two checkpoints and nor did the application's dconf keys;
+  `unowned_changes` when files changed but none under the owned paths, with
+  up to five of them in `files`, each with its home path and role (desktop
+  services' files last), and how many more in `more`;
+  `uncheckable_changes` when the application's keys in a dconf database
+  changed, with the database in `files`: no check reads dconf, and the
+  export only writes the keys as they were at the seed checkpoint, so make
+  the task's change one the app saves in a file; and `no_document` when no
+  file has the document role, as when no
   window title shows the file's name. A capture again with `--state-path`
   naming the file, or `state_paths` on a build computer's
   `start_build_capture`, makes it the app's.

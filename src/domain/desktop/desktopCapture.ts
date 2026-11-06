@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { runtimeFile } from "./runtimeFiles.js";
+
 const sha256 = z.string().regex(/^[0-9a-f]{64}$/u);
 const milliseconds = z.int().min(0);
 
@@ -67,10 +69,19 @@ export const desktopCaptureEventSchema = z.discriminatedUnion("kind", [
     changes: z.int().min(0),
     retained_files: z.int().min(0),
     retained_bytes: z.int().min(0),
-    /** Files, not folders, changed since the checkpoint before: those the app held open, then those in its state directories, then the rest, each by path; home-relative under the home. */
-    changed_files: z.array(z.string().min(1)).max(MAX_ACKNOWLEDGED_FILES),
-    /** How many more changed files there are than `changed_files` names. */
-    more_changed_files: z.int().min(0),
+    /**
+     * Files, not folders, changed since the checkpoint before: those under a
+     * selected path, those the app held open, those in its state
+     * directories, the rest, then caches and browser-engine storage, each by
+     * path; home-relative under the home. Absent from the acknowledgement of
+     * a REA that predates it, such as an older one in a build computer.
+     */
+    changed_files: z
+      .array(z.string().min(1))
+      .max(MAX_ACKNOWLEDGED_FILES)
+      .optional(),
+    /** How many more changed files there are than `changed_files` names; absent with it. */
+    more_changed_files: z.int().min(0).optional(),
   }),
   z.strictObject({
     kind: z.literal("checkpoint_refused"),
@@ -92,25 +103,41 @@ export type DesktopCaptureProgress = z.infer<
   typeof desktopCaptureProgressSchema
 >;
 
-/** How early a changed file is named: one the app held open, then one in its state directories, then the rest. */
-const changeRank = (change: DesktopStateChange) =>
-  change.opened_by_application ? 0 : change.in_state_directory ? 1 : 2;
-
-/** The acknowledgement of a taken checkpoint, from what it recorded, naming changed files relative to the home. */
+/**
+ * The acknowledgement of a taken checkpoint, from what it recorded, naming
+ * changed files relative to the home. Files under a path the caller selected
+ * come first, then those the app held open, then those in its state
+ * directories, then the rest; caches and WebKit or Chromium storage come
+ * last unless selected, since an app may rewrite many of them on any save.
+ */
 export const checkpointTaken = (
   checkpoint: DesktopCheckpoint,
   home: string,
+  selectedPaths: readonly string[] = [],
 ): Extract<DesktopCaptureEvent, { kind: "checkpoint" }> => {
+  const relative = (path: string) =>
+    path.startsWith(`${home}/`) ? path.slice(home.length + 1) : path;
+  const rank = (change: DesktopStateChange) =>
+    selectedPaths.some(
+      (root) => change.path === root || change.path.startsWith(`${root}/`),
+    )
+      ? 0
+      : runtimeFile(relative(change.path)) !== undefined
+        ? 4
+        : change.opened_by_application
+          ? 1
+          : change.in_state_directory
+            ? 2
+            : 3;
   const files = checkpoint.changes
     .filter((change) => (change.after ?? change.before)?.type !== "directory")
+    .map((change) => ({ path: change.path, rank: rank(change) }))
     .sort(
       (left, right) =>
-        changeRank(left) - changeRank(right) ||
+        left.rank - right.rank ||
         (left.path < right.path ? -1 : left.path > right.path ? 1 : 0),
     )
-    .map(({ path }) =>
-      path.startsWith(`${home}/`) ? path.slice(home.length + 1) : path,
-    );
+    .map(({ path }) => relative(path));
   return {
     kind: "checkpoint",
     name: checkpoint.name,
@@ -326,6 +353,20 @@ export const desktopApplicationCaptureSchema = z.strictObject({
      * spelling; absent from captures written before it was recorded.
      */
     state_directories: z.array(z.string().min(1)).optional(),
+    /**
+     * Each `--state-path` and absolute `--argument` among the content roots,
+     * absolute as the caller named it, beside the physical spelling walked,
+     * so a link keeps what its name means; absent from captures written
+     * before it was recorded.
+     */
+    selected_paths: z
+      .array(
+        z.strictObject({
+          path: z.string().min(1),
+          physical: z.string().min(1),
+        }),
+      )
+      .optional(),
     /** Paths every walk left out; absent from captures written before it was recorded. */
     excluded: z.array(z.string().min(1)).optional(),
     /** At least the baseline; a cancelled capture can stop there. */

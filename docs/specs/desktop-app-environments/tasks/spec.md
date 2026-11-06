@@ -23,7 +23,8 @@ never runs code the agent wrote.
   state when no document changed. Views are shown only for those files, cut at
   200 items and 2,000 characters. A draft with no files says why in `notes`:
   `no_change`, `unowned_changes` with up to five changed home paths and their
-  roles, and `no_document`.
+  roles, `uncheckable_changes` with the dconf databases whose application
+  keys changed, and `no_document`.
 - The task file is JSON with a portable `name` other than `smoke`, a `prompt`
   and 1 to 32 `checks`, parsed by a zod schema in `src/domain/desktop/`. Check
   kinds: `file_present`, `file_absent`, `lines_present`, `lines_absent`,
