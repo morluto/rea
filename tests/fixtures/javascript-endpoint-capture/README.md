@@ -1,9 +1,11 @@
 # Static endpoint and capture fixture
 
 This source-owned loopback application was recorded on Linux with Playwright
-1.64.1 and Chromium headless shell 153.0.8010.12. `recording.har` is the original
+1.64.1 and Chromium headless shell 153.0.8010.12. `recording.har.txt` is the original
 HAR 1.2 from `browser.newContext({recordHar: {mode: "full", content: "embed"}})`;
 its SHA-256 is `f0e7d2c869c811d4272a7b2916c6531c8c6cc7938336a35575e2a6b7b6346714`.
+The `.txt` suffix preserves the recorder bytes without JSON formatting; the test
+copies it to `capture.har` before production decoding.
 The recorded origin is `http://127.0.0.1:42845`. Do not reserialize the HAR.
 
 The server returned the two adjacent text files as `/app.js` and `/`, and JSON

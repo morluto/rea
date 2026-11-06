@@ -39,7 +39,10 @@ const prepareInputs = async (cli: TestCli) => {
     await readFile(new URL("index.html.txt", fixture)),
   );
   const harPath = join(root, "capture.har");
-  const harBytes = await readFile(new URL("recording.har", fixture), "utf8");
+  const harBytes = await readFile(
+    new URL("recording.har.txt", fixture),
+    "utf8",
+  );
   expect(createHash("sha256").update(harBytes).digest("hex")).toBe(
     "f0e7d2c869c811d4272a7b2916c6531c8c6cc7938336a35575e2a6b7b6346714",
   );
