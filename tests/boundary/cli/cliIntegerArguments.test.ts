@@ -329,7 +329,7 @@ describe("objdump and Rizin command timeouts", () => {
         "execute-rizin-command",
         missing,
         "i",
-        "--command-timeout-ms=016",
+        "--command-timeout-ms=00120000",
         "--json",
       ],
     });
