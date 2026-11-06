@@ -646,6 +646,7 @@
 * **macho:** unify fixed-width name decoding ([f53c256](https://github.com/morluto/rea/commit/f53c25688676e5ba343483ca4894ccd46834f5c6))
 * **macho:** unify segment mapping admission ([8d747c2](https://github.com/morluto/rea/commit/8d747c2acde4203226042c5e38a68f45115ef315))
 * **macho:** validate slice overlap at shared reader ([82f50f5](https://github.com/morluto/rea/commit/82f50f56db1db65030add9b9468373ce57dba8df))
+* **managed:** decode only selected types in member inspection ([#9044](https://github.com/morluto/rea/issues/9044)) ([14d2c51](https://github.com/morluto/rea/commit/14d2c51d851425364929c701a1fcd8b4e1b90098))
 * **managed:** explain single-type member capacity exhaustion ([#9065](https://github.com/morluto/rea/issues/9065)) ([6993e4a](https://github.com/morluto/rea/commit/6993e4ac7361af5477450b0abc4f108a8d9b6878))
 * **managed:** report graph method page coverage ([3a6e4f2](https://github.com/morluto/rea/commit/3a6e4f2cb148b123ebba7c05f5aa5b75bfe71b30))
 * **managed:** report member signature issues at artifact offsets ([#7879](https://github.com/morluto/rea/issues/7879)) ([30936d7](https://github.com/morluto/rea/commit/30936d7596303dc77a6532aefd67ec1de4d81b0d)), closes [#7385](https://github.com/morluto/rea/issues/7385)
