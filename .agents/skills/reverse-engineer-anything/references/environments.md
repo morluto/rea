@@ -337,7 +337,13 @@ Kinds: `file_present` and `file_absent`; `lines_present` and `lines_absent`
 `at_most`); `value_equals` and `value_absent` (a JSON `pointer` into the view,
 such as `/groups/GROUP/KEY` for a key file); `row_present` and `row_absent`
 (`table`, `where` by column) and `row_count`. Each names its `file` as a path
-under the home. The
+under the home. A document saved as a zip archive, such as FreeCAD's
+`.FCStd`, reads as its entries: point into an entry's view, and name array
+members by selector rather than position, as
+`/entries/[name=Document.xml]/view/root/children/[name=Object][@name=Hole]`,
+so the check survives an app version that writes them in another order. Give
+`value_equals` a `tolerance` to compare a number the app writes as text, such
+as `"5.0000000000000000"`, with a number. The
 [desktop application tasks](https://github.com/morluto/rea/blob/main/docs/desktop-application-tasks.md)
 guide has the exact rules.
 
