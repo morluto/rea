@@ -69,7 +69,7 @@ const callerDirectory = (path: string): string =>
  */
 export const androidChromiumLaunchArgs = async (
   executablePath: string,
-): Promise<readonly string[]> => {
+): Promise<string[]> => {
   if (process.platform !== "android") return [];
   const args = ["--disable-dev-shm-usage", "--single-process"];
   const directory = callerDirectory(executablePath);
