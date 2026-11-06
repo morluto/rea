@@ -1,5 +1,6 @@
 import { registerPlaywrightTraceTool } from "./registerApplicationTools/playwrightTrace.js";
 import { registerApiContractTool } from "./registerApplicationTools/apiContract.js";
+import { registerMavenPomTool } from "./registerApplicationTools/mavenPom.js";
 import type { EvidenceMcpServer } from "./EvidenceMcpServer.js";
 
 import { registerTraceFeatureTool } from "./registerApplicationTools/traceFeature.js";
@@ -29,6 +30,7 @@ export const registerApplicationTools = (
   registerCompareEndpointsTool(server, options);
   registerApiContractTool(server, options);
   registerPlaywrightTraceTool(server, options);
+  registerMavenPomTool(server, options);
   registerCompareSourceToBundleTool(server, options);
   registerCompareJavaScriptExportShapesTool(server, options);
   registerReconstructionObligationLedgerTool(server, options);
