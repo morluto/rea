@@ -571,6 +571,7 @@
 * **javascript:** link a response body reader only to a settled fetch ([#8028](https://github.com/morluto/rea/issues/8028)) ([d5ba7ce](https://github.com/morluto/rea/commit/d5ba7cec60aeadd1bb7a5f4bef343d930651ecf9))
 * **javascript:** match resource release methods to the acquired handle ([#7773](https://github.com/morluto/rea/issues/7773)) ([b7442c1](https://github.com/morluto/rea/commit/b7442c19583a569d79d0c7fc61635e34d84c8626))
 * **javascript:** preserve artifact failures through cleanup ([ca3fd7b](https://github.com/morluto/rea/commit/ca3fd7baf927060da8ae91994071e8e4b07ec08d))
+* **javascript:** preserve loader identity across terminal origins ([#9107](https://github.com/morluto/rea/issues/9107)) ([3e0599a](https://github.com/morluto/rea/commit/3e0599a9499bffc9dbbb68aa3025e8983058902b))
 * **javascript:** preserve native export facts in comparisons ([046c4ce](https://github.com/morluto/rea/commit/046c4ce353fabe9eccf3ec43a5f9fc29027db05e))
 * **javascript:** preserve operator influence in semantic traces ([#7939](https://github.com/morluto/rea/issues/7939)) ([5c05eb8](https://github.com/morluto/rea/commit/5c05eb88e577843c68946f4c7fcf93a3a2547c22))
 * **javascript:** preserve renderer path anchors ([a6488a9](https://github.com/morluto/rea/commit/a6488a96a967d4e2ef75a896c65172ee72240c83))
