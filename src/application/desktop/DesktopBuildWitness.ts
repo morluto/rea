@@ -10,10 +10,7 @@ import {
   type desktopTaskSchema,
   type DesktopTask,
 } from "../../domain/desktop/appTask.js";
-import {
-  SETTLE_TIMING,
-  type SettleTiming,
-} from "../../domain/desktop/appSettle.js";
+import { SETTLE_TIMING } from "../../domain/desktop/appSettle.js";
 import {
   evaluateTaskChecks,
   type TaskCheckOutcome,
@@ -38,7 +35,7 @@ import {
 } from "../ProgressReporter.js";
 import type { ReadonlyActionLog } from "./DesktopBuildActionLog.js";
 import { errorText } from "./DesktopBuildCommands.js";
-import { settledAppData } from "./DesktopBuildSettle.js";
+import { settledAppData, type BuildSettle } from "./DesktopBuildSettle.js";
 import {
   writeWitnessRecord,
   type EndedWitness,
@@ -157,7 +154,7 @@ export class DesktopBuildWitness {
   constructor(
     private readonly computer: WitnessedComputer,
     private readonly actions: ReadonlyActionLog,
-    private readonly settle: SettleTiming = SETTLE_TIMING,
+    private readonly settle: BuildSettle = SETTLE_TIMING,
   ) {}
 
   async check(
