@@ -89,7 +89,7 @@ against the shared representation-expansion estimate before decoding. The
 shared JSON nesting limit is 1,000, including uninterpreted schema regions.
 Capacity refusals are typed; reply paging does not increase parser allowances.
 
-The committed [Petstore fixture](../tests/fixtures/openapi/README.md) is an
+The committed [Petstore fixture](https://github.com/morluto/rea/blob/b7c8caedd4166e6032c49024cdc6fb1154f1a2df/tests/fixtures/openapi/README.md) is an
 original document from the published application, replayed offline through
 public CLI/MCP tests. These check advertised schemas, complete/selected parity,
 retained paging, partial references, zero requests to a loopback reference
