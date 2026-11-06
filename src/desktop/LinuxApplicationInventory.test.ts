@@ -302,6 +302,40 @@ describe.skipIf(process.platform === "win32")(
       });
     });
 
+    it("adds a state folder named after the application in another letter case, such as GIMP's", async () => {
+      const installed = await fixture();
+      const { home, bin } = installed;
+      await writeFile(join(bin, "gimp-2.10"), "#!/bin/sh\nexit 0\n");
+      await chmod(join(bin, "gimp-2.10"), 0o755);
+      await mkdir(join(home, ".local/share/applications"), { recursive: true });
+      await writeFile(
+        join(home, ".local/share/applications/gimp.desktop"),
+        "[Desktop Entry]\nType=Application\nName=GNU Image Manipulation Program\nExec=gimp-2.10 %U\n",
+      );
+      await mkdir(join(home, ".config/GIMP/2.10"), { recursive: true });
+      await writeFile(join(home, ".config/GIMP/2.10/sessionrc"), "x\n");
+      await mkdir(join(home, ".Gimp"));
+      const unrelated = [
+        ".config/GIMPshop",
+        ".config/MyGIMP",
+        ".config/Other/GIMP",
+      ];
+      for (const folder of unrelated)
+        await mkdir(join(home, folder), { recursive: true });
+
+      const inventory = await inventoryOf("gimp", installed);
+
+      expect(inventory.state_directories).toEqual(
+        expect.arrayContaining([
+          { path: join(home, ".config/GIMP"), exists_at_start: true },
+          { path: join(home, ".Gimp"), exists_at_start: true },
+        ]),
+      );
+      const paths = inventory.state_directories.map((entry) => entry.path);
+      for (const folder of unrelated)
+        expect(paths).not.toContain(join(home, folder));
+    });
+
     it("adds the dotfiles in the home named after the application, which it may only read", async () => {
       const installed = await fixture();
       const { home } = installed;

@@ -8,6 +8,7 @@ import {
   writeFile,
   type FileHandle,
 } from "node:fs/promises";
+import { hostname, userInfo } from "node:os";
 import { join } from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
@@ -256,6 +257,10 @@ describe.skipIf(process.platform !== "linux")(
         window_match: { class: "FakeApp", instance: "fakeapp" },
       });
       expect(capture.session.first_window_ms).not.toBeNull();
+      expect(capture.host).toMatchObject({
+        hostname: hostname(),
+        user: userInfo().username,
+      });
       expect(
         capture.state.checkpoints.map((checkpoint) => checkpoint.name),
       ).toEqual(["baseline", "written", "stop", "exit"]);
