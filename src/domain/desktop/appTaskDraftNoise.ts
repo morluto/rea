@@ -1,7 +1,12 @@
 import type { JsonValue } from "../jsonValue.js";
 import { isTimestamp } from "./appTask.js";
-import { isXmlElement } from "./appTaskChecks.js";
-import { isIdentifyingAttribute, isNameLikeKey } from "./attributeRank.js";
+import { elementText, isXmlElement } from "./appTaskChecks.js";
+import {
+  isIdentifyingAttribute,
+  isNameLikeKey,
+  isViewStateName,
+  VIEW_STATE,
+} from "./attributeRank.js";
 import { isPositionalKey, positionalKeys } from "./positionalKeys.js";
 import type { DesktopStateDifference } from "./stateChanges.js";
 import { resolvePointer } from "./viewPointer.js";
@@ -15,18 +20,6 @@ export const NOISE_REASONS = [
   "upkeep",
 ] as const;
 export type NoiseReason = (typeof NOISE_REASONS)[number];
-
-/**
- * Words in a name for how the app showed, printed or kept the document rather
- * than what it holds: its cursor, selection, scroll, zoom, windows, view and
- * configuration settings, printer, and a save's history, edit time and count,
- * generator and statistics.
- */
-const VIEW_STATE =
-  /cursor|selection|selected|scroll|zoom|viewport|window|splitter|toplevel|topleft|uidata|namedview|view-?settings|config(?:uration)?-?settings|printer|history|edit(?:ing)?-?(?:time|duration|cycles?)|last-?saved|generator|document-?statistic/iu;
-
-/** Whether a tag or attribute name is about how the app showed the document rather than what it holds. */
-export const isViewStateName = (name: string): boolean => VIEW_STATE.test(name);
 
 /**
  * Whether a name-like attribute's value names view state: one token of two or
@@ -70,6 +63,30 @@ const TIME_OF_DAY = /^\d{2}:\d{2}:\d{2}(?:[.,]\d+)?(?:Z|[+-]\d{2}:?\d{2})?$/u;
 export const isStamp = (value: JsonValue): boolean =>
   isTimestamp(value) ||
   (typeof value === "string" && TIME_OF_DAY.test(value.trim()));
+
+/** A part of a date or time an app writes as an element of its own. */
+const DATE_PART = /^(?:year|month|day|hour|minute|second)$/u;
+
+/**
+ * Whether a value is a date an app writes in parts, as Tellico stamps an
+ * entry's `<cdate>` with `<year>`, `<month>` and `<day>`: an element whose
+ * children are such parts, year, month and day among them, each holding
+ * only digits.
+ */
+export const isSplitDate = (value: JsonValue | undefined): boolean => {
+  if (!isXmlElement(value)) return false;
+  const parts = new Set<string>();
+  for (const child of value.children) {
+    if (typeof child === "string" && /^[ \t\r\n]*$/u.test(child)) continue;
+    const part = isXmlElement(child)
+      ? (child.name.split(":").at(-1) ?? child.name).toLowerCase()
+      : "";
+    if (!DATE_PART.test(part) || !/^\s*\d+\s*$/u.test(elementText(child)))
+      return false;
+    parts.add(part);
+  }
+  return ["year", "month", "day"].every((part) => parts.has(part));
+};
 
 /** An ISO 8601 duration, as ODF's `meta:editing-duration` `PT2M2S`. */
 const DURATION =
@@ -115,6 +132,10 @@ const elementsAlong = (view: JsonValue | null, pointer: string): Element[] => {
   }
   return elements;
 };
+
+/** Whether a pointer is a date an app writes in parts, or inside one. */
+export const inSplitDate = (view: JsonValue | null, pointer: string): boolean =>
+  elementsAlong(view, pointer).some(isSplitDate);
 
 /** Whether an element is view state by its tag, or by a name-like attribute naming view state, as `[@config:name=CursorPositionX]`. */
 const showsView = (element: Element) =>
@@ -219,8 +240,9 @@ const upkeepOf = (
  * identifier it numbers by position, or anything inside an element both ends
  * hold whose renumbered attribute changed, as Gnumeric empties a formula cell
  * whose shared expression it renumbers; a UUID or epoch time, or a duration or
- * count under the document's metadata; a time the app stamps; an attribute an
- * archive entry only gained while another entry holds the edit.
+ * count under the document's metadata; a time the app stamps, whole or in
+ * parts (`isSplitDate`); an attribute an archive entry only gained while
+ * another entry holds the edit.
  */
 export const changeNoise = (
   change: Pick<DesktopStateDifference, "added" | "changed" | "removed">,
@@ -257,7 +279,7 @@ export const changeNoise = (
           : (typeof value === "string" && isVolatileValue(value)) ||
               metadataCount(elements, key, value)
             ? "volatile"
-            : isStamp(value ?? null)
+            : isStamp(value ?? null) || elements.some(isSplitDate)
               ? "timestamp"
               : undefined;
     known.set(pointer, reason);

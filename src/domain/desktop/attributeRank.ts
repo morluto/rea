@@ -2,6 +2,18 @@
 export const isIdentifyingAttribute = (key: string): boolean =>
   /^(?:name|id|xid|.+:id)$/iu.test(key);
 
+/**
+ * Words in a name for how the app showed, printed or kept the document rather
+ * than what it holds: its cursor, selection, scroll, zoom, windows, view and
+ * configuration settings, printer, and a save's history, edit time and count,
+ * generator and statistics.
+ */
+export const VIEW_STATE =
+  /cursor|selection|selected|scroll|zoom|viewport|window|splitter|toplevel|topleft|uidata|namedview|view-?settings|config(?:uration)?-?settings|printer|history|edit(?:ing)?-?(?:time|duration|cycles?)|last-?saved|generator|document-?statistic/iu;
+
+/** Whether a tag or attribute name is about how the app showed the document rather than what it holds. */
+export const isViewStateName = (name: string): boolean => VIEW_STATE.test(name);
+
 /** An attribute's name without its namespace prefix, in lower case. */
 const localName = (key: string) => (key.split(":").at(-1) ?? key).toLowerCase();
 
@@ -22,9 +34,11 @@ export const isNameLikeKey = (key: string): boolean => {
  * How well an attribute names its element across saves, best first: 0 a
  * name-like key, 1 a worded value that is no generated token, 2 an integer of
  * up to five digits, 3 anything else, such as a coordinate, a long number or a
- * token, which a later save may change.
+ * token, which a later save may change, as it may view state such as which
+ * layer is `selected`.
  */
 export const attributeTier = (key: string, value: string): 0 | 1 | 2 | 3 => {
+  if (isViewStateName(key)) return 3;
   if (isNameLikeKey(key)) return 0;
   if (/\p{L}/u.test(value) && !HEX_TOKEN.test(value) && !LONG_TOKEN.test(value))
     return 1;

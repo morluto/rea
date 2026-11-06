@@ -3,7 +3,14 @@ import { join } from "node:path";
 
 import { expect, it } from "vitest";
 
+import {
+  HOME,
+  change,
+  retained,
+  seedEndCapture,
+} from "../../../src/application/desktop/desktopCapture.fixture.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
+import type { DesktopApplicationCapture } from "../../../src/domain/desktop/desktopCapture.js";
 import { seedWording } from "../../../src/domain/desktop/appExport.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import {
@@ -189,6 +196,104 @@ it("captures the app inside the computer, acknowledges checkpoints, drafts the t
     }).notice,
   );
   expectNoToken(computer, [started, seed, stopped, exported]);
+});
+
+it("takes checkpoints from a REA in the computer that predates their changed files, saying which changed is unknown, also from its log", async () => {
+  const { client } = await fakes({
+    env: { FAKE_REA_UNLISTED_CHANGES: "1" },
+    dropReplies: ["mark"],
+  });
+  const id = await startBuildComputer(client, REQUEST);
+  await callOk(client, "start_build_capture", { computer_id: id });
+  const mark = async (name: string) =>
+    toolContract("mark_build_checkpoint").outputSchema.parse(
+      (
+        await callOk(client, "mark_build_checkpoint", {
+          computer_id: id,
+          name,
+        })
+      ).structuredContent,
+    ).checkpoint;
+  // The first reply is lost, so the second call reads the checkpoint from the capture's log.
+  expect(
+    (
+      await client.callTool({
+        name: "mark_build_checkpoint",
+        arguments: { computer_id: id, name: "seed" },
+      })
+    ).isError,
+  ).toBe(true);
+
+  const seed = await mark("seed");
+  const end = await mark("end");
+
+  for (const [taken, name, atMs] of [
+    [seed, "seed", 1000],
+    [end, "end", 2000],
+  ] as const)
+    expect(taken).toEqual({
+      name,
+      trigger: "request",
+      at_ms: atMs,
+      entries: 5,
+      changes: 1,
+      retained_files: 1,
+      retained_bytes: 5,
+      changed_files: null,
+      more_changed_files: null,
+    });
+  await callOk(client, "stop_build_capture", { computer_id: id });
+});
+
+it("returns a draft note's read error when only a dconf database REA cannot read changed between seed and end", async () => {
+  const database = `${HOME}/.config/dconf/user`;
+  const [before, after] = ["GVariant wrap=false", "GVariant wrap=true"];
+  const base = seedEndCapture();
+  const recorded: DesktopApplicationCapture = {
+    ...base,
+    state: {
+      ...base.state,
+      checkpoints: base.state.checkpoints.map((point) =>
+        point.name === "baseline"
+          ? {
+              ...point,
+              retained: [...point.retained, retained(database, before)],
+            }
+          : point.name === "end"
+            ? {
+                ...point,
+                changes: [change(database, { before, after })],
+                retained: [retained(database, after)],
+              }
+            : point,
+      ),
+    },
+  };
+  // The draft runs with no dconf on its PATH, so it cannot read the database; the note never gets eggs, so the export refuses the task.
+  const { client } = await fakes({
+    recorded,
+    extraContent: [before, after],
+    exportRefused: true,
+  });
+  const id = await startBuildComputer(client, REQUEST);
+  await callOk(client, "start_build_capture", { computer_id: id });
+  for (const name of ["seed", "end"])
+    await callOk(client, "mark_build_checkpoint", { computer_id: id, name });
+
+  const stopped = toolContract("stop_build_capture").outputSchema.parse(
+    (await callOk(client, "stop_build_capture", { computer_id: id }))
+      .structuredContent,
+  );
+
+  expect(stopped.draft?.files).toEqual([]);
+  expect(stopped.draft?.notes).toEqual([
+    {
+      code: "unreadable_changes",
+      message: expect.any(String),
+      files: [{ file: ".config/dconf/user", role: expect.any(String) }],
+      error: "dconf is not installed (dconf-cli); set REA_DCONF_COMMAND",
+    },
+  ]);
 });
 
 it("refuses capture steps out of order and a capture of a bundle's computer", async () => {

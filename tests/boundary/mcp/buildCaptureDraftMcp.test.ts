@@ -57,7 +57,7 @@ it("returns each changed file's values, with what a value names, and guards outs
   const { client } = await buildCaptureFakes({
     recorded: listCapture(),
     exportRefused: true,
-    content: [SEED, END],
+    extraContent: [SEED, END],
   });
   const id = await startBuildComputer(client, REQUEST);
   await callOk(client, "start_build_capture", { computer_id: id });
