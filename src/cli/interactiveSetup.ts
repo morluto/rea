@@ -53,6 +53,10 @@ export const confirmInteractiveSetup = async (
   }
   if (actions.length === 0) return { approved: true, selectedActionIds: [] };
   renderPreflight(actions);
+  if (context?.remediation !== undefined) {
+    writeLine("│");
+    writeLine(`│  ${context.remediation}`);
+  }
   const approved = await confirm({
     ...promptStreams,
     message:
