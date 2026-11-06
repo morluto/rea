@@ -81,3 +81,73 @@ it("refuses a stale lock before producing a release artifact", () => {
     "matching v3 package lock",
   );
 });
+
+type MutableManifest = {
+  name: string;
+  version: string;
+  dependencies?: Record<string, string>;
+  devDependencies?: Record<string, string>;
+  overrides?: Record<string, unknown>;
+};
+
+type MutableLock = {
+  name: string;
+  version: string;
+  lockfileVersion: number;
+  packages: Record<string, { version?: string; dependencies?: unknown }>;
+};
+
+const mutableFixture = () =>
+  fixture() as unknown as { manifest: MutableManifest; lock: MutableLock };
+
+it("pins an exact runtime override into the published shrinkwrap", () => {
+  const { manifest, lock } = mutableFixture();
+  manifest.overrides = { shared: "2.0.0" };
+  lock.packages["node_modules/runtime"]!.dependencies = { shared: "^1.0.0" };
+  lock.packages["node_modules/shared"] = { version: "2.0.0" };
+  const before = structuredClone(lock);
+  const packed = pluginPackageMetadata(manifest, lock);
+  expect(
+    (
+      packed.shrinkwrap.packages["node_modules/runtime"]!
+        .dependencies as Record<string, string>
+    ).shared,
+  ).toBe("2.0.0");
+  expect(packed.shrinkwrap.packages["node_modules/shared"]!.version).toBe(
+    "2.0.0",
+  );
+  expect(lock).toEqual(before);
+});
+
+it("refuses a runtime override that does not match the locked version", () => {
+  const { manifest, lock } = mutableFixture();
+  manifest.overrides = { shared: "2.0.0" };
+  lock.packages["node_modules/runtime"]!.dependencies = { shared: "^1.0.0" };
+  lock.packages["node_modules/shared"] = { version: "1.0.0" };
+  expect(() => pluginPackageMetadata(manifest, lock)).toThrow(
+    "runtime or unresolved override: shared",
+  );
+});
+
+it("refuses a non-exact runtime override", () => {
+  const { manifest, lock } = mutableFixture();
+  manifest.overrides = { shared: "^2.0.0" };
+  lock.packages["node_modules/runtime"]!.dependencies = { shared: "^1.0.0" };
+  lock.packages["node_modules/shared"] = { version: "2.0.0" };
+  expect(() => pluginPackageMetadata(manifest, lock)).toThrow(
+    "runtime or unresolved override: shared",
+  );
+});
+
+it("refuses an override for a published direct dependency", () => {
+  const { manifest, lock } = mutableFixture();
+  manifest.dependencies = {
+    ...manifest.dependencies,
+    shared: "2.0.0",
+  };
+  manifest.overrides = { shared: "2.0.0" };
+  lock.packages["node_modules/shared"] = { version: "2.0.0" };
+  expect(() => pluginPackageMetadata(manifest, lock)).toThrow(
+    "runtime or unresolved override: shared",
+  );
+});
