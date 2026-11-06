@@ -64,6 +64,7 @@ const IDA_ARCHITECTURES = {
   arm: "supported",
   arm64: "supported",
   arm64_32: "unsupported",
+  loongarch: "ghidra",
   mips: "ghidra",
   "6502": "unsupported",
   riscv: "ghidra",

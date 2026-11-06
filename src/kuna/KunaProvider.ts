@@ -59,6 +59,7 @@ const KUNA_ARCHITECTURE_LABELS = {
   arm64: "AArch64",
   arm: "ARM",
   arm64_32: null,
+  loongarch: null,
   mips: null,
   "6502": null,
   riscv: null,

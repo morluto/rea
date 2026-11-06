@@ -160,6 +160,7 @@ The [REA website](https://rea.tools/) has worked examples and product pages.
 - [Ghidra provider semantics](providers/ghidra-provider.md)
 - [DOS MZ and COM analysis with Ghidra](providers/ghidra-dos.md)
 - [Optional NativeAOT metadata recovery](providers/ghidra-nativeaot.md)
+- [LoongArch ELF analysis through Ghidra](providers/ghidra-loongarch.md)
 - [MIPS ELF analysis through Ghidra](providers/ghidra-mips.md)
 - [PSP static ELF analysis through Ghidra](providers/ghidra-psp.md)
 - [RISC-V ELF analysis through Ghidra](providers/ghidra-riscv.md)

@@ -107,6 +107,7 @@ const GHIDRA_ARCHITECTURES = {
   arm: true,
   arm64: true,
   arm64_32: false,
+  loongarch: true,
   mips: true,
   "6502": true,
   riscv: true,
