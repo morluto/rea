@@ -205,8 +205,10 @@ def _keyfile_line(raw: str) -> tuple:
     header = GROUP_HEADER.match(line)
     if header:
         return ("group", header.group(1))
-    key, equals, value = line.partition("=")
-    return ("entry", key.strip(), value.strip()) if equals and key else ("other",)
+    key, equals, value = raw.partition("=")
+    key = key.strip()
+    # Only ASCII space and tab immediately after '=' are padding.
+    return ("entry", key, value.lstrip(" \t")) if equals and key else ("other",)
 
 
 def _each_line(text: str):
