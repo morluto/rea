@@ -493,6 +493,38 @@ describe("interactive setup completion", () => {
       );
     },
   );
+
+  it("prints IDA and JADX with their product spellings", async () => {
+    const { stderr } = await execute(
+      process.execPath,
+      [
+        "--input-type=module",
+        "--eval",
+        [
+          'import { renderInteractiveSetupResult } from "./dist/cli/interactiveSetup.js";',
+          "renderInteractiveSetupResult({",
+          '  status: "ready",',
+          "  plannedActions: [],",
+          "  appliedActions: [],",
+          "  clients: {},",
+          "  doctor: {",
+          "    healthy: true,",
+          '    availableProviders: ["hopper", "ghidra", "ida", "jadx", "kuna"],',
+          "    checks: [],",
+          "  },",
+          "}, {});",
+        ].join("\n"),
+      ],
+      { cwd: process.cwd(), env: { ...process.env, NO_COLOR: "1" } },
+    );
+
+    expect(stderr).toContain(
+      "Deep analysis: Hopper, Ghidra, IDA, JADX, and Kuna",
+    );
+    expect(stderr).not.toContain("Ida");
+    expect(stderr).not.toContain("Jadx");
+  });
+
   it("prints retained cleanup resources without relying on paths in remediation", async () => {
     const resources = ["/fixture/owned backup", "/fixture/临时目录"];
     const result: SetupResult = {
