@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
+import { readExportedTaskChecks } from "../../../tests/fixtures/desktopTaskVerifier.js";
 import { exportDesktopApplication } from "./DesktopApplicationExport.js";
 import { draftDesktopApplicationTask } from "./DesktopTaskDraft.js";
 import {
@@ -161,9 +162,7 @@ describe("exportDesktopApplication with a task", () => {
       join(directory, "artifacts/note-milk-check/verify.py"),
       "utf8",
     );
-    const serialized = /^CHECKS = json.loads\((.+)\)$/mu.exec(verifier)?.[1];
-    expect(serialized).toBeDefined();
-    expect(JSON.parse(JSON.parse(serialized ?? '"\"') as string)).toEqual([
+    expect(readExportedTaskChecks(verifier)).toEqual([
       { id: "milk", kind: "lines_present", file: NOTE, lines: ["milk"] },
       {
         id: "check-2",
