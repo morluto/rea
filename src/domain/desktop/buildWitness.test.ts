@@ -44,6 +44,7 @@ const staged = (
   checked_at: "2026-11-05T00:00:00.000Z",
   expectation: stage === "after_edit" ? "all_pass" : "some_fail",
   held: true,
+  settled: true,
   results: [],
 });
 

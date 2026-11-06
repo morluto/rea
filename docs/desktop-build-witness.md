@@ -170,7 +170,16 @@ Then, with the task exactly as exported:
 `check_build_task` reads the app's `data/get`, takes the views it returns
 beside the files and evaluates each check with REA's evaluator, the one the
 export validates tasks with and the exported verifier mirrors, one result per
-check. Without `stage` it only grades. The `seed` stage begins a recording
+check. Like the verifier, it grades only once the app's files settle, since an
+app such as Gnote saves a few seconds after the last key. It reads `data/get`
+every 0.5 s and grades once every file's bytes have held for 3 s, counted
+from the first read or the last change. If the files are still changing 15 s
+after the first read, it grades the last read. It sends progress
+notifications while it waits, and the result's `settled` says whether the
+files settled. Every check therefore costs at least 3 s, and a save that
+lands more than 3 s after the first read is still missed; see
+[grading once the app has saved](desktop-application-export.md#grading-once-the-app-has-saved).
+Without `stage` it only grades. The `seed` stage begins a recording
 of the display under REA's own request id, one per computer; a seed check
 that fails after it, such as on a failed read of the app's state or a lost
 reply to the recording's start, can be asked again, and asks for the
@@ -208,13 +217,14 @@ A stage whose checks do not show what it must ends the witness, and so does
 - `recording/NNNN.mp4`, the recording's segments;
 - `witness.json`, REA Evidence (`rea.desktop-build-witness`) holding the
   verdict, the stage that failed if one did, the task's name and SHA-256,
-  each stage's results with how many logged actions came before it, the
+  each stage's results with how many logged actions came before it and
+  whether the app's files had settled (`settled`), the
   computer's [action log](desktop-build-computer.md#act) as it keeps it, each
   action with its arguments, timing and outcome, with `actions_dropped`
   counting the earliest actions it no longer keeps, and the recording's
   segments with their sizes and SHA-256. The record's limitations say when
   the log dropped actions or cut arguments, which each entry names in
-  `truncated_arguments`.
+  `truncated_arguments`, and which stages graded files that had not settled.
 
 The stages' rules read the log's count of actions and the last applied
 action of each kind, which it keeps for the whole session, so they hold

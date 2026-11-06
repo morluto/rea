@@ -38,6 +38,8 @@ export type WitnessStageRecord = {
   readonly checked_at: string;
   readonly expectation: WitnessExpectation;
   readonly held: boolean;
+  /** Whether the app's files had held for the settle window when the stage was graded, rather than at its bound. */
+  readonly settled: boolean;
   readonly results: TaskCheckOutcome[];
 };
 

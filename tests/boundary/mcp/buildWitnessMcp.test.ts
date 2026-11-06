@@ -5,6 +5,7 @@ import type { CallToolResult } from "@modelcontextprotocol/server";
 import { expect, it, vi } from "vitest";
 
 import { toolContract } from "../../../src/contracts/toolContracts.js";
+import type { SettleTiming } from "../../../src/domain/desktop/appSettle.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import {
   buildComputerFakes,
@@ -39,7 +40,11 @@ const lines = (...text: string[]) => ({
   },
 });
 
-const witnessed = async (slowReset = 0, options: FakeComputerOptions = {}) => {
+const witnessed = async (
+  slowReset = 0,
+  options: FakeComputerOptions = {},
+  settle?: SettleTiming,
+) => {
   const app: FakeApp = {
     name: "notes",
     state: lines("milk"),
@@ -48,7 +53,7 @@ const witnessed = async (slowReset = 0, options: FakeComputerOptions = {}) => {
     unreadyAfterReset: slowReset,
   };
   const { computer, runner } = await buildComputerFakes({ ...options, app });
-  const client = await connectBuildServer(runner.environment);
+  const client = await connectBuildServer(runner.environment, settle);
   const id = await startBuildComputer(client, {
     kind: "bundle",
     path: await bundleFolder(),
@@ -545,3 +550,81 @@ it("sends progress while a reset waits for the relaunched app", async () => {
   expect(reset.isError, JSON.stringify(reset)).not.toBe(true);
   expect(progress.length).toBeGreaterThan(0);
 }, 30_000);
+
+/** The shipped timing scaled down a tenfold: a read every 50 ms, a 300 ms window, a 1.5 s bound. */
+const SETTLE: SettleTiming = { intervalMs: 50, windowMs: 300, boundMs: 1500 };
+
+it("grades a stage on what the app saves after the check starts, with progress while it waits", async () => {
+  const witness = await witnessed(0, {}, SETTLE);
+  const { app, check, directory } = witness;
+  expect(
+    parsed(await check({ stage: "seed", directory })).witness,
+  ).toMatchObject({ held: true });
+  await witness.act("type", { text: "eggs\n" });
+  // The app saves on its own timer, a few reads into the check, as Gnote saves after the last key.
+  let gets = 0;
+  app.onGet = () => {
+    gets += 1;
+    if (gets === 3) app.state = lines("milk", "eggs");
+  };
+  const progress: unknown[] = [];
+  const edited = parsed(
+    await witness.client.callTool(
+      {
+        name: "check_build_task",
+        arguments: { computer_id: witness.id, task: TASK, stage: "after_edit" },
+      },
+      { onprogress: (update) => progress.push(update) },
+    ),
+  );
+  expect(edited).toMatchObject({
+    passed: 1,
+    settled: true,
+    witness: { stage: "after_edit", held: true, next_stage: "near_miss" },
+  });
+  expect(gets).toBeGreaterThan(3);
+  expect(progress.length).toBeGreaterThan(0);
+});
+
+it("grades files still changing at the bound on the last read, and records that they did not settle", async () => {
+  const { app, check, directory } = await witnessed(0, {}, SETTLE);
+  let gets = 0;
+  // Every read finds the file changed, with eggs on even reads only.
+  app.onGet = () => {
+    gets += 1;
+    app.state = lines(
+      "milk",
+      ...(gets % 2 === 0 ? ["eggs"] : []),
+      String(gets),
+    );
+  };
+  const started = performance.now();
+  const plain = parsed(await check({}));
+  expect(performance.now() - started).toBeGreaterThanOrEqual(SETTLE.boundMs);
+  expect(plain).toMatchObject({
+    settled: false,
+    passed: gets % 2 === 0 ? 1 : 0,
+  });
+
+  // A seed that passes every check ends the witness, so its record shows the stage unsettled.
+  const passing = {
+    ...TASK,
+    checks: [
+      { kind: "lines_present", file: "Documents/today.txt", lines: ["milk"] },
+    ],
+  };
+  const seed = parsed(await check({ task: passing, stage: "seed", directory }));
+  expect(seed.settled).toBe(false);
+  expect(
+    seed.witness?.record?.stages.map(({ stage, settled }) => [stage, settled]),
+  ).toEqual([["seed", false]]);
+});
+
+it("grades an app that saved before the check within the window plus one interval", async () => {
+  const { app, check } = await witnessed(0, {}, SETTLE);
+  app.state = lines("milk", "eggs");
+  const plain = parsed(await check({}));
+  expect(plain).toMatchObject({ passed: 1, settled: true });
+  const gets = app.methods.filter((method) => method === "data/get").length;
+  expect(gets).toBeLessThanOrEqual(SETTLE.windowMs / SETTLE.intervalMs + 2);
+});

@@ -10,6 +10,7 @@ import {
   versionView,
   type TaskFileView,
 } from "../../domain/desktop/appTaskChecks.js";
+import { SETTLE_TIMING } from "../../domain/desktop/appSettle.js";
 import {
   renderTaskEval,
   renderTaskSteps,
@@ -188,7 +189,9 @@ const taskReadme = (
 
 \`tasks/${task.name}.json\` deploys the app, has the agent work through the computer from the prompt below, and grades
 the outcome with \`artifacts/${taskVerifierArtifact(task)}/verify.py\`, which reads the app's \`data/get\` views and needs
-no model. \`evals/${app}.toml\` names it, so a run of the bundle runs it.
+no model. It grades once the app's files have held for ${String(SETTLE_TIMING.windowMs / 1000)} s, so a save the app makes on its own within that
+time of the agent stopping counts; each result's \`settled\` is false when they were still changing ${String(SETTLE_TIMING.boundMs / 1000)} s after the
+first read. \`evals/${app}.toml\` names it, so a run of the bundle runs it.
 
 ${task.prompt
   .split("\n")

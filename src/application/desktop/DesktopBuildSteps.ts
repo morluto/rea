@@ -5,6 +5,7 @@ import {
 } from "../../domain/analysisErrorCore.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
 import { err, ok, type Result } from "../../domain/result.js";
+import type { ProgressReporter } from "../ProgressReporter.js";
 import type { StoppedCapture } from "./DesktopBuildSummary.js";
 import type {
   BuildComputerSteps,
@@ -130,10 +131,11 @@ export class DesktopBuildSteps {
       readonly computer_id: string;
     },
     signal: AbortSignal,
+    progress?: ProgressReporter,
   ): Promise<Result<Identified<CheckedTask>, AnalysisError>> {
     const { computer_id: id, ...request } = input;
     return this.#on(id, "check_build_task", signal, (steps, turn) =>
-      steps.witness.check(request, turn),
+      steps.witness.check(request, turn, progress),
     );
   }
 

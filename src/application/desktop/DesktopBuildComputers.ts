@@ -5,6 +5,10 @@ import type {
   BuildSource,
 } from "../../domain/desktop/appBuild.js";
 import {
+  SETTLE_TIMING,
+  type SettleTiming,
+} from "../../domain/desktop/appSettle.js";
+import {
   driverCall,
   type ComputerAction,
   type ComputerActionInput,
@@ -148,6 +152,7 @@ const liveComputer = (
   computer: AgentEnvComputer,
   workspace: PrivateRuntimeRoot | undefined,
   request: BuildRequest | undefined,
+  settle: SettleTiming,
 ): HeldComputer => {
   const actions = new BuildComputerActionLog();
   const turns = new DesktopBuildTurns();
@@ -159,7 +164,7 @@ const liveComputer = (
     steps: {
       computer,
       capture: new DesktopBuildCapture(computer, request),
-      witness: new DesktopBuildWitness(computer, actions),
+      witness: new DesktopBuildWitness(computer, actions, settle),
       turns,
     },
     turns,
@@ -220,7 +225,10 @@ export class DesktopBuildComputers {
   readonly #starts = new Set<PendingStart>();
   #closed = false;
 
-  constructor(private readonly environment: Readonly<NodeJS.ProcessEnv>) {}
+  constructor(
+    private readonly environment: Readonly<NodeJS.ProcessEnv>,
+    private readonly settle: SettleTiming = SETTLE_TIMING,
+  ) {}
 
   async start(
     input: {
@@ -319,6 +327,7 @@ export class DesktopBuildComputers {
           computer,
           target.workspace,
           source.kind === "request" ? source : undefined,
+          this.settle,
         ),
       );
       return ok({

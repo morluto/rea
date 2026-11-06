@@ -218,8 +218,12 @@ Write `{"name", "prompt", "checks"}` from the draft and what you did.
 - `prompt`: what the requester wants, in their words and the app's terms,
   naming the document as a user would and ending with saving it: "Change the
   poster's headline in Documents/poster.svg to Summer Bake Sale and save
-  it." Leave saving out for an app that saves after every change, such as
-  Osmo. Never say how the file stores it, and never give the checks.
+  it." Leave saving out for an app that saves on its own, after every change
+  or a few seconds after the last one, such as Osmo or Gnote: grading waits
+  until the app's files have held for 3 s, so the solving agent need not
+  wait for the save. A save more than 3 s after the agent stops is still
+  missed; name such an app in the report. Never say how the file stores it,
+  and never give the checks.
 - Checks are file-based: content checks that prove the edit, never only that
   a file exists or changed. Start from the suggestions; keep those that say
   what the user did and drop what follows from how the app saves.
@@ -326,6 +330,10 @@ checks. Give every `check_build_task` the task exactly as exported.
    Recording starts. Later stages take no `directory`.
 3. Do the task from the prompt with `act_on_build_computer` and save.
    `check_build_task` with `stage: "after_edit"`: every check must pass.
+   Each check waits until the app's files have held for 3 s, as the
+   bundle's verifier does, so an app that saves on its own needs no wait of
+   yours. A result with `settled: false` means the files were still
+   changing at the 15 s bound.
 4. Make a near miss on top of it: a plausible wrong edit, such as a typo or
    a wrong number, and save. `check_build_task` with `stage: "near_miss"`:
    a check must fail.

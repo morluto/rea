@@ -92,6 +92,8 @@ export interface FakeApp {
   readonly methods: string[];
   /** data/get calls still to answer with an error, as a busy app would. */
   failGets?: number;
+  /** Called as each data/get arrives, before its answer, as an app saving on its own timer changes its files. */
+  onGet?: () => void;
   /** Readiness polls answered not ready after each data/reset, as a slow relaunch would. */
   readonly unreadyAfterReset?: number;
   /** Readiness polls left before the relaunched app is ready. */
@@ -255,6 +257,7 @@ const LOST = Symbol("lost reply");
 const appRoute = (app: FakeApp, request: { id?: number; method?: string }) => {
   const method = request.method ?? "";
   app.methods.push(method);
+  if (method === "data/get") app.onGet?.();
   if (method === "data/get" && (app.failGets ?? 0) > 0) {
     app.failGets = (app.failGets ?? 0) - 1;
     return {
@@ -274,7 +277,15 @@ const appRoute = (app: FakeApp, request: { id?: number; method?: string }) => {
       method === "data/get"
         ? {
             parts: [
-              { kind: "file", file: { bytes: "eA==" } },
+              // Each file's bytes follow its view, so they change when the state does.
+              ...Object.entries(app.state).map(([path, view]) => ({
+                kind: "file",
+                file: {
+                  bytes: Buffer.from(JSON.stringify(view)).toString("base64"),
+                  name: path.split("/").at(-1),
+                },
+                metadata: { "urn:agentenv:data-objects/v1": { path } },
+              })),
               { kind: "data", data: { state: app.state } },
             ],
           }

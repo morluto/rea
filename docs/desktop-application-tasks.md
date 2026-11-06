@@ -399,7 +399,9 @@ The bundle then holds, besides the app and `tasks/smoke.json`:
 
 The verifier finds the app among the computer's child environments, calls its
 `data/get` under the run's grant of the computer's control token, and reads
-the `state` data part. It raises when the app cannot be reached, so the run
+the `state` data part. It reads again until the app's files settle, as
+[grading once the app has saved](desktop-application-export.md#grading-once-the-app-has-saved)
+describes, and each result's `settled` says whether they did. It raises when the app cannot be reached, so the run
 fails rather than scoring the agent. The README lists the task, its prompt, its
 checks and the recipe below.
 

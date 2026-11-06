@@ -174,6 +174,20 @@ const logLimitations = (
     : []),
 ];
 
+/** Which stages graded files the app was still changing at the settle bound. */
+const unsettledLimitation = (
+  stages: readonly WitnessStageRecord[],
+): string[] => {
+  const unsettled = stages.flatMap(({ stage, settled }) =>
+    settled ? [] : [stage],
+  );
+  return unsettled.length === 0
+    ? []
+    : [
+        `The app's files were still changing at the settle bound when these stages were checked, so each graded its last read, with settled false: ${unsettled.join(", ")}.`,
+      ];
+};
+
 /**
  * End the witness's recording, fetch it, and write the segments and
  * `witness.json`, the record as Evidence, into the witness folder.
@@ -217,6 +231,7 @@ export const writeWitnessRecord = async (
         ? [`The recording is missing: ${recording.error}`]
         : []),
       ...logLimitations(actions, dropped),
+      ...unsettledLimitation(witness.stages),
     ],
   });
   const files = [

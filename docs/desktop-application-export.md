@@ -330,6 +330,32 @@ declared vendor repository installs the package already; when the URL is not
 written as `http://` or `https://` or holds a user name or password; and when
 the file is built for an architecture other than `amd64`, `arm64` or `all`.
 
+## Grading once the app has saved
+
+A task's verifier, `artifacts/<task>-check/verify.py`, grades the app's files
+only once they have settled, because an app can save on its own timer after the
+last change. Gnote saves a note 4 s after the last key, so a read taken as
+soon as the agent stops finds the text on screen but not yet in the file. The
+verifier reads the app's `data/get` every 0.5 s. It compares each file's bytes
+between reads by their SHA-256, as `data/get` returns them, and grades once
+every file has held for 3 s, counted from the first read or the last change it
+saw. If the files are still changing 15 s after the first read, it grades the
+last read. Each result records whether the files settled in `settled`.
+
+The window has a cost and a limit:
+
+- An app whose files do not change during the check, such as one that saved
+  at once, is graded 3 to 3.5 s after the first read.
+- A save that lands more than 3 s after the first read is still missed. An
+  app that saves 4 s after the last key is caught only when the agent stops
+  at least a second after that key.
+- Files the app rewrites more often than every 3 s, such as a log, never
+  settle, so every check waits the full 15 s.
+
+The bound and window are `SETTLE_BOUND_S` and `SETTLE_WINDOW_S` in the
+verifier. `check_build_task` waits the same way before it grades each
+witness stage; see [witnessing](desktop-build-witness.md#witness).
+
 ## Typed views
 
 The views follow the [state view](desktop-application-state.md)'s formats and
