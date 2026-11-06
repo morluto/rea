@@ -126,8 +126,43 @@ REA_MCP_TOOL_CATALOG_PROFILE = "hot-cold"
 The server setting alone does not enable client refresh. If a successful
 discovery call is followed by a missing tool, check the client's refresh feature
 and tool allow/deny lists. Clients without refresh should use the default
-`REA_MCP_TOOL_CATALOG_PROFILE=full`; reconnect after changing it. Other clients'
-hot/cold behavior has not been verified.
+`REA_MCP_TOOL_CATALOG_PROFILE=full`; reconnect after changing it. The
+[FastMCP HTTP trial](#fastmcp-and-unsloth-sse-catalog-limits) below covers
+explicit refreshes; other clients' automatic refresh remains unverified.
+
+## FastMCP and Unsloth SSE catalog limits
+
+If an HTTP client reports `Server-sent event exceeded the 1048576 byte limit`
+during `tools/list`, merge these settings into the **REA server process's**
+environment, then reconnect:
+
+```text
+REA_MCP_INPUT_SCHEMA_PROFILE=compact
+REA_MCP_OUTPUT_SCHEMA_PROFILE=compact
+REA_MCP_TOOL_CATALOG_PROFILE=full
+```
+
+This advertises all tools without requiring catalog refresh. Compact output
+schemas widen client-side validation; REA still validates complete results
+against the canonical contracts. See [output schemas](mcp-contracts.md#output-schemas).
+
+On main `3e0599a94`, a real FastMCP 4.1.6 / Python MCP 2.3.0 HTTP client with
+the default 1 MiB SSE event limit rejected the 4,108,975-byte full catalog.
+The settings above delivered all 240 tools in 611,305 bytes and a
+`binary_session` call succeeded. These are measured SSE response sizes for
+that catalog, not a size guarantee for future catalogs or other profiles.
+
+For a client that refreshes tools, combine `hot-cold` with the compact schema
+settings to reduce initial context further: the same trial delivered six
+initial tools in 33,903 bytes, then explicitly refreshed through 34 loaded
+tools. Hot/cold alone later exceeded the SSE limit during refresh. Follow
+the [refresh requirements](#hotcold-catalogs).
+
+The Unsloth report [#9093](https://github.com/morluto/rea/issues/9093) fails at
+catalog delivery; the Unsloth application itself was not exercised in this
+trial. Schema compaction does not bound analysis results. Continue to use
+summary/detail selection and tool-specific paging for larger results; client
+receive limits and full Evidence access still apply.
 
 ## Fiddler Everywhere alongside REA
 
