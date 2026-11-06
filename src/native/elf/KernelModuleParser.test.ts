@@ -140,7 +140,9 @@ it.each([
   "discloses duplicate %s sections while retaining the first size",
   (name, key, size) => {
     const report = parse(
-      kernelModuleFixture({ sharedNameSections: { name, count: 1 } }),
+      kernelModuleFixture({
+        sharedNameSections: { name, count: 1, body: Buffer.from([1, 2, 3]) },
+      }),
     );
     expect(report[key]).toMatchObject({ status: "present", bytes: size });
     expect(report.limitations).toContain(
