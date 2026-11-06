@@ -205,9 +205,11 @@ makes the app find its profile or document in use, and a LibreOffice Calc
 bundle whose seed held its profile's `.lock` showed no window at boot. They
 are `lockfile`, `lock`, `.lock`, `.parentlock`, `parent.lock` and
 `SingletonLock` anywhere, LibreOffice's document lock `.~lock.<name>#`, a
-`<file>.lck`, `.<file>.lock` or `.<file>.lck` beside a file the capture
-recorded in the same folder, such as GnuCash's `household.gnucash.LCK` and
-Grisbi's empty `.household.gsb.lock`, which made it refuse every save, and
+`<file>.lck`, `.<file>.lock`, `.<file>.lck` or `<file>.<ext>.lock` beside a
+file the capture recorded in the same folder, such as GnuCash's
+`household.gnucash.LCK`, Grisbi's empty `.household.gsb.lock`, which made it
+refuse every save, and VYM's `plan.vym.lock` (a project's `Gemfile.lock`
+beside its `Gemfile` has no extension to its file, so it is seeded), and
 `*.lock` or `*.lck` directly in one of the application's state directories;
 a lone `notes.lck` or `.notes.lock` elsewhere is seeded.
 Elsewhere such a file may be a project's own, such as `Cargo.lock` or

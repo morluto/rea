@@ -157,8 +157,15 @@ export const roleFacts = (
 
 const FILENAME_CHARACTER = /[\p{L}\p{M}\p{N}._~-]/u;
 
-/** Whether a title holds a spelling not joined to other file name characters. */
-const spelledIn = (title: string, spelling: string): boolean => {
+/** Home folders whose files a title never names as a document: caches, and dconf's databases. */
+const NEVER_NAMED = [".cache", ".config/dconf"];
+
+/**
+ * Whether a title holds a spelling as a whole token: not joined to other file
+ * name characters, and not a folder of a longer path shown there (followed by
+ * `/`); a bare name without an extension, not even its last segment.
+ */
+const spelledIn = (title: string, spelling: string, bare = false): boolean => {
   for (
     let at = title.indexOf(spelling);
     at >= 0;
@@ -168,14 +175,20 @@ const spelledIn = (title: string, spelling: string): boolean => {
     const after = title[at + spelling.length];
     if (
       (before === undefined || !FILENAME_CHARACTER.test(before)) &&
-      (after === undefined || !FILENAME_CHARACTER.test(after))
+      (after === undefined || !FILENAME_CHARACTER.test(after)) &&
+      after !== "/" &&
+      !(bare && before === "/")
     )
       return true;
   }
   return false;
 };
 
-/** Whether one of an application's window titles spells the file's name or home path. */
+/**
+ * Whether one of an application's window titles names the file: its whole
+ * name, with its extension, or its `~/` or absolute path. A file under a
+ * cache or a dconf database is never named, whatever a title shows.
+ */
 export const namedInTitles = (
   path: string,
   home: string,
@@ -183,12 +196,14 @@ export const namedInTitles = (
 ): boolean => {
   const name = path.split("/").at(-1) ?? "";
   const relative = homePath(path, home);
-  const spellings = [
-    ...(name.length >= 3 ? [name] : []),
-    ...(relative === null ? [] : [`~/${relative}`]),
-  ];
-  return titles.some((title) =>
-    spellings.some((spelling) => spelledIn(title, spelling)),
+  if (relative !== null && isWithinAny(relative, NEVER_NAMED)) return false;
+  // A dot after the first character starts an extension; `.bashrc` has none.
+  const bare = name.lastIndexOf(".") <= 0;
+  return titles.some(
+    (title) =>
+      (name.length >= 3 && spelledIn(title, name, bare)) ||
+      (relative !== null && spelledIn(title, `~/${relative}`)) ||
+      spelledIn(title, path),
   );
 };
 

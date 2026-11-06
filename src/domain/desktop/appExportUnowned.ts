@@ -106,15 +106,23 @@ const LOCK_NAMES = new Set([
 ]);
 /** LibreOffice's lock beside a document it has open: `.~lock.<name>#`. */
 const DOCUMENT_LOCK = /^\.~lock\..+#$/u;
-/** Locks named for the file beside them, by the name they lock: GnuCash's `<file>.LCK`, Grisbi's `.<file>.lock`. */
-const SIBLING_LOCKS = [/^(.+)\.lck$/iu, /^\.(.+)\.(?:lock|lck)$/iu];
+/**
+ * Locks named for the file beside them, by the name they lock: GnuCash's
+ * `<file>.LCK`, Grisbi's `.<file>.lock`, and VYM's `<file>.<ext>.lock`, whose
+ * file has an extension, so a project's `Gemfile.lock` or `Cargo.lock` is not
+ * one.
+ */
+const SIBLING_LOCKS = [
+  /^(.+)\.lck$/iu,
+  /^\.(.+)\.(?:lock|lck)$/iu,
+  /^([^.].*\.[^.]+)\.lock$/iu,
+];
 
 /**
  * Whether a home file is a lock an app holds while it runs: a profile lock's
- * name anywhere, LibreOffice's document lock, a `<file>.lck`, `.<file>.lock`
- * or `.<file>.lck` beside a file of the `recorded` home paths, as GnuCash's
- * `<book>.LCK` and Grisbi's `.<file>.lock`, or a `*.lock` or `*.lck` file
- * directly in one of the app's state directories, home-relative.
+ * name anywhere, LibreOffice's document lock, a lock named for a file of the
+ * `recorded` home paths beside it (`SIBLING_LOCKS`), or a `*.lock` or `*.lck`
+ * file directly in one of the app's state directories, home-relative.
  * Elsewhere such a file may be a project's own, such as `Cargo.lock`, which
  * pins dependencies rather than marking a profile in use.
  */
