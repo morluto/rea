@@ -359,6 +359,7 @@ describe("scrubSeed on gzip files", () => {
     );
 
     expect(outcome.holdsIdentity).toBe(false);
+    expect(outcome.recompressed).toBeUndefined();
     expect(header(outcome.bytes)).toEqual(DETERMINISTIC);
     expect(gunzipSync(outcome.bytes ?? Buffer.alloc(0)).toString("utf8")).toBe(
       XML(`user@localhost in ${SEED_HOME}/Documents`),
@@ -373,6 +374,7 @@ describe("scrubSeed on gzip files", () => {
     );
 
     expect(outcome.holdsIdentity).toBe(false);
+    expect(outcome.recompressed).toBe(true);
     expect(header(outcome.bytes)).toEqual(DETERMINISTIC);
     expect(outcome.bytes?.toString("latin1")).not.toContain("e81232be457d");
     expect(gunzipSync(outcome.bytes ?? Buffer.alloc(0)).toString("utf8")).toBe(

@@ -45,9 +45,14 @@ const workbook = (
 /**
  * The notes capture of a host with the workbook, named in a window title,
  * saved before and after the user changed the rent and set the author to the
- * value the scrub writes, each save made by `save`.
+ * value the scrub writes, each save made by `save`, with any other files the
+ * app kept unchanged by their home path.
  */
-const budgetCapture = (save: (text: string) => Buffer, comment = "") => {
+const budgetCapture = (
+  save: (text: string) => Buffer,
+  comment = "",
+  kept: Readonly<Record<string, Buffer>> = {},
+) => {
   const before = save(workbook("1200", `ada@${HOSTNAME}`, comment));
   const after = save(workbook("1350", "user@localhost", comment));
   const base = capture();
@@ -67,7 +72,16 @@ const budgetCapture = (save: (text: string) => Buffer, comment = "") => {
     state: {
       ...base.state,
       checkpoints: [
-        { ...first, retained: [...first.retained, retained(path, before)] },
+        {
+          ...first,
+          retained: [
+            ...first.retained,
+            retained(path, before),
+            ...Object.entries(kept).map(([home, bytes]) =>
+              retained(`${HOME}/${home}`, bytes),
+            ),
+          ],
+        },
         {
           ...second,
           changes: [...second.changes, change(path, { before, after })],
@@ -76,7 +90,11 @@ const budgetCapture = (save: (text: string) => Buffer, comment = "") => {
       ],
     },
   };
-  return writeCaptureFolder(captured, undefined, [before, after]);
+  return writeCaptureFolder(captured, undefined, [
+    before,
+    after,
+    ...Object.values(kept),
+  ]);
 };
 
 const gzipped = (text: string) => gzipSync(text);
@@ -194,6 +212,35 @@ describe("documents saved gzip-compressed", () => {
     expect(module).toContain(
       'TEXT_SEEDS = frozenset([".config/notes/settings.ini"])',
     );
+  });
+
+  it("lists gzip seeds recompressed only to clear their headers apart from the document whose content was scrubbed", async () => {
+    const templates = ["blank", "invoice", "loan"].map(
+      (name) => `.local/share/notes/templates/${name}.xml.gz`,
+    );
+    const kept = Object.fromEntries(
+      templates.map((home) => [home, gzipSync(`<template name="${home}"/>`)]),
+    );
+
+    const { result, directory } = await exportBudget(
+      await budgetCapture(gzipped, "", kept),
+    );
+
+    if (result instanceof Error) throw result;
+    const recompressed = templates.map((home) => `envs/notes/seed/${home}`);
+    expect(result.normalized_result).toMatchObject({
+      scrubbed_files: [SEED],
+      recompressed_files: recompressed,
+      unscrubbed_files: [],
+    });
+    const readme = await readFile(join(directory, "README.md"), "utf8");
+    expect(readme).toContain(`\`${SEED}\``);
+    expect(recompressed.filter((path) => readme.includes(path))).toEqual([]);
+    expect(readme).toMatch(/\b3 gzip file\(s\)/u);
+    for (const path of recompressed)
+      expect(
+        gunzipSync(await readFile(join(directory, path))).toString("utf8"),
+      ).toBe(`<template name="${path.slice("envs/notes/seed/".length)}"/>`);
   });
 
   it("keeps a seed the app stored uncompressed readable once scrubbed, where deflating it would pass the 100 times a view reads", async () => {

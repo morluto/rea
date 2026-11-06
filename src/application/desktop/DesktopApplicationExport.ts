@@ -96,6 +96,8 @@ export interface DesktopExportResult {
   readonly unseeded_files: readonly string[];
   /** Seed files rewritten to remove the capture host's name and user. */
   readonly scrubbed_files: readonly string[];
+  /** gzip seed files compressed again only to clear their headers, their documents as captured. */
+  readonly recompressed_files: readonly string[];
   /** Seed files that still hold them, in bytes the export does not rewrite or in their name. */
   readonly unscrubbed_files: readonly string[];
   readonly dconf_groups: number;
@@ -406,7 +408,11 @@ const runExport = async (
     signal,
   );
   const { generated, readme } = bundleText(plan, admitted, dconf.holdsIdentity);
-  let scrub: SeedScrubReport = { scrubbed: [], unscrubbed: [] };
+  let scrub: SeedScrubReport = {
+    scrubbed: [],
+    recompressed: [],
+    unscrubbed: [],
+  };
   const unclosed = await withRetainedContent(
     request.capture,
     (content) =>
@@ -439,6 +445,7 @@ const runExport = async (
     seed_files: plan.seedFiles,
     unseeded_files: plan.unseededFiles,
     scrubbed_files: [...scrub.scrubbed].sort(),
+    recompressed_files: [...scrub.recompressed].sort(),
     unscrubbed_files: [...scrub.unscrubbed].sort(),
     dconf_groups: dconf.groups,
     files: [
@@ -483,6 +490,7 @@ export const exportDesktopApplication = async (
         seed_files: [...result.seed_files],
         unseeded_files: [...result.unseeded_files],
         scrubbed_files: [...result.scrubbed_files],
+        recompressed_files: [...result.recompressed_files],
         unscrubbed_files: [...result.unscrubbed_files],
         files: [...result.files],
         limitations: [...result.limitations],
