@@ -32,6 +32,7 @@ import {
   mcpAddAgents,
   normalizeCliArguments,
   splitIncurBuiltinArguments,
+  unexpectedMcpAddArguments,
 } from "./cliBuiltinArguments.js";
 import {
   parseCliOutputArguments,
@@ -334,13 +335,33 @@ export const createCli = (
             token.startsWith("-c=")) &&
           token.length === token.indexOf("=") + 1,
       );
-      if (missingValue !== undefined || emptyValue !== undefined) {
-        const flag = missingValue ?? emptyValue!;
-        const message = `Missing value for flag: ${flag.replace(/=.*$/, "")}`;
+      // `mcp add` accepts options only. A stray word is not an option or its
+      // value, and Incur skips it, so registration would succeed for a request
+      // REA cannot honor. Reject it instead of writing configuration the caller
+      // did not ask for. Equals forms are valid syntax, so classify the expanded
+      // tokens rather than the raw ones.
+      const unexpectedArgument = unexpectedMcpAddArguments(
+        expandMcpAddEqualsArguments(command),
+        builtin + 2,
+      );
+      if (
+        missingValue !== undefined ||
+        emptyValue !== undefined ||
+        unexpectedArgument !== undefined
+      ) {
+        const flag = missingValue ?? emptyValue ?? unexpectedArgument!;
+        const message =
+          missingValue !== undefined || emptyValue !== undefined
+            ? `Missing value for flag: ${flag.replace(/=.*$/, "")}`
+            : `Unexpected argument: ${flag}`;
         const field =
-          flag.includes("command") || flag === "-c" || flag.startsWith("-c=")
-            ? "command"
-            : "agent";
+          unexpectedArgument !== undefined
+            ? "agent"
+            : flag.includes("command") ||
+                flag === "-c" ||
+                flag.startsWith("-c=")
+              ? "command"
+              : "agent";
         const output = parseCliOutputArguments(normalized);
         if (!output.validation.ok)
           write(renderCliOutputArgumentError(output.validation));
