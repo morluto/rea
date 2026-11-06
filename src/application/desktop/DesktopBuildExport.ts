@@ -31,6 +31,8 @@ const exportResultSchema = z.looseObject({
   environment: z.string(),
   seed_files: z.array(z.string()),
   scrubbed_files: z.array(z.string()),
+  // An export from before gzip seeds were listed apart has none.
+  recompressed_files: z.array(z.string()).default([]),
   unscrubbed_files: z.array(z.string()),
   limitations: z.array(z.string()),
   task: jsonValueSchema,
@@ -52,6 +54,7 @@ export type ExportedBuild = {
   readonly task: JsonValue;
   readonly seed_files: string[];
   readonly scrubbed_files: string[];
+  readonly recompressed_files: string[];
   readonly unscrubbed_files: string[];
   readonly limitations: string[];
 };
@@ -180,6 +183,7 @@ export const exportBuild = async (
       task: result.task,
       seed_files: result.seed_files,
       scrubbed_files: result.scrubbed_files,
+      recompressed_files: result.recompressed_files,
       unscrubbed_files: result.unscrubbed_files,
       limitations: result.limitations,
     });

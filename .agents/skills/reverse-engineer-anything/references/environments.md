@@ -359,7 +359,9 @@ document saved as a zip archive, such as FreeCAD's `.FCStd`, reads as its
 entries: point into an entry's view, and name array members by selector
 rather than position, as
 `/entries/[name=Document.xml]/view/root/children/[name=Object][@name=Hole]`,
-so the check survives an app version that writes them in another order. Give
+so the check survives an app version that writes them in another order. A
+gzip-compressed document, such as Gnumeric's `.gnumeric`, reads as the
+document inside: point into it as into the same document uncompressed. Give
 `value_equals` a `tolerance` to compare a number the app writes as text, such
 as `"5.0000000000000000"`, with a number. Check what the user wrote in a
 document with `text_equals` on its paragraph element, not `value_equals` on a

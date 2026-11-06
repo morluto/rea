@@ -8,16 +8,20 @@ import type {
 } from "../../domain/desktop/appExport.js";
 import type { TaskFileView } from "../../domain/desktop/appTaskChecks.js";
 import {
+  compressionOf,
+  openStateDocument,
+} from "../../domain/desktop/gzipDocument.js";
+import {
   identityLeftIn,
   type HostIdentity,
 } from "../../domain/desktop/hostIdentity.js";
 import { withoutRecoveryList } from "../../domain/desktop/seedRecoveryList.js";
 import { scrubSeed } from "../../domain/desktop/seedScrub.js";
 import {
-  detectStateFormat,
   isTextualFormat,
   textualView,
 } from "../../domain/desktop/stateFormats.js";
+import { err } from "../../domain/result.js";
 import { refuse } from "./DesktopExportInstall.js";
 import type { RetainedContent } from "./DesktopRetainedContent.js";
 
@@ -90,7 +94,11 @@ const retainedBytes = async (
   return bytes.value;
 };
 
-/** A seed as it ships: LibreOffice's recovery list left out, then the identity scrubbed. */
+/**
+ * A seed as it ships: LibreOffice's recovery list left out, then the
+ * identity scrubbed, a gzip seed's inside its document. LibreOffice writes
+ * its registry uncompressed, so a gzip seed holds no recovery list to drop.
+ */
 const shippedSeed = (
   bytes: Buffer,
   seed: NonNullable<RetainedCopy["seed"]>,
@@ -101,7 +109,8 @@ const shippedSeed = (
   return {
     bytes: scrub.bytes ?? recovered,
     holdsIdentity: scrub.holdsIdentity,
-    scrubbed: scrub.bytes !== undefined,
+    scrubbed: scrub.bytes !== undefined && scrub.recompressed !== true,
+    recompressed: scrub.recompressed === true,
     recovered: recovered !== undefined,
   };
 };
@@ -123,16 +132,21 @@ export const shippedSeedViews = async (
     const bytes = await retainedBytes(content, copy, signal);
     const shipped = shippedSeed(bytes, seed, identity).bytes;
     if (shipped === undefined) continue;
-    const format = detectStateFormat(seed.home, shipped);
-    const view = isTextualFormat(format)
-      ? textualView(format, shipped)
-      : undefined;
-    views.set(
-      seed.home,
-      view === undefined || view.ok
-        ? { format, view: view?.value ?? null }
-        : { format, view: null, error: view.error },
-    );
+    const document = openStateDocument(seed.home, shipped);
+    const { format } = document;
+    const view =
+      "error" in document
+        ? err(document.error)
+        : isTextualFormat(format)
+          ? textualView(format, document.bytes)
+          : undefined;
+    views.set(seed.home, {
+      format,
+      ...compressionOf(document),
+      ...(view === undefined || view.ok
+        ? { view: view?.value ?? null }
+        : { view: null, error: view.error }),
+    });
   }
   return views;
 };
@@ -141,7 +155,8 @@ export const shippedSeedViews = async (
  * Write the generated files, then each retained file as it is read, so one at
  * a time is in memory: a seed whose text names the capture host, or that
  * holds LibreOffice's recovery list, becomes a generated file with its own
- * digest. The README follows, listing them. Every file is listed as
+ * digest, and a gzip seed whose document did not change is listed apart as
+ * recompressed. The README follows, listing them. Every file is listed as
  * unscrubbed whose path or content still holds the identity.
  */
 export const writeFiles = async (
@@ -151,6 +166,7 @@ export const writeFiles = async (
   signal: AbortSignal | undefined,
 ): Promise<SeedScrubReport> => {
   const scrubbed: string[] = [];
+  const recompressed: string[] = [];
   const unscrubbed: string[] = [];
   const recovered: string[] = [];
   const write = async (
@@ -194,11 +210,17 @@ export const writeFiles = async (
       await write(copy.path, bytes, { sha256: copy.digest, holdsIdentity });
     else {
       if (shipped.scrubbed) scrubbed.push(copy.path);
+      else if (shipped.recompressed) recompressed.push(copy.path);
       await write(copy.path, shipped.bytes, { holdsIdentity });
     }
   }
   await generated(
-    bundle.readme({ scrubbed, unscrubbed: [...unscrubbed], recovered }),
+    bundle.readme({
+      scrubbed,
+      recompressed,
+      unscrubbed: [...unscrubbed],
+      recovered,
+    }),
   );
-  return { scrubbed, unscrubbed, recovered };
+  return { scrubbed, recompressed, unscrubbed, recovered };
 };

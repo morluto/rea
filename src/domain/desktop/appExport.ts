@@ -11,8 +11,7 @@ import {
   PYTHON_READY_CHECK,
 } from "./appExportPython.js";
 import {
-  isAppLog,
-  isLockFile,
+  leftOutFiles,
   unownedReadmeNotes,
   type RuntimeSeeds,
 } from "./appExportUnowned.js";
@@ -268,17 +267,8 @@ export const exportedStateFiles = (
     ...withRole("document"),
     ...homePaths(roleFacts(capture).selectedRoots),
   ]);
-  const recorded = new Set(files.keys());
-  // A log counts only in the app's own state, where no user keeps one.
-  const isLeftOutLog = (home: string) =>
-    !usersOwn.has(home) &&
-    isAppLog(home) &&
-    (files.get(home)?.role === "application_state" ||
-      stateDirectoryOf(home, stateDirectories) !== undefined);
-  const isLeftOut = (home: string) =>
-    isLeftOutLog(home) ||
-    (!usersOwn.has(home) && isLockFile(home, stateDirectories, recorded));
-  return { homePath, files, dconf, collisions, paths, isLeftOut, isLeftOutLog };
+  const leftOut = leftOutFiles(files, stateDirectories, usersOwn);
+  return { homePath, files, dconf, collisions, paths, ...leftOut };
 };
 
 /** Text safe inside a Python triple-quoted docstring. */
@@ -559,9 +549,15 @@ export const launchDocumentNote = ({
       ? `\n- ${launchDocumentLimitation(opens)}`
       : "";
 
-/** Bundle files: seeds the export rewrote to remove the capture host's identity, and files that still hold it. */
+/**
+ * Bundle files: seeds the export rewrote to remove the capture host's
+ * identity, gzip seeds it compressed again only to clear their headers,
+ * files that still hold the identity, and seeds it left LibreOffice's
+ * recovery list out of.
+ */
 export interface SeedScrubReport {
   readonly scrubbed: readonly string[];
+  readonly recompressed: readonly string[];
   readonly unscrubbed: readonly string[];
   /** Seeds whose LibreOffice recovery list was left out, as `~/<path>`. */
   readonly recovered?: readonly string[];
@@ -575,6 +571,7 @@ const bundleList = (paths: readonly string[]) =>
 
 const scrubNotes = ({
   scrubbed,
+  recompressed,
   unscrubbed,
   recovered = [],
 }: SeedScrubReport): string =>
@@ -582,6 +579,11 @@ const scrubNotes = ({
     ...(scrubbed.length === 0
       ? []
       : [`\n  Rewritten: ${bundleList(scrubbed)}.`]),
+    ...(recompressed.length === 0
+      ? []
+      : [
+          `\n  ${String(recompressed.length)} gzip file(s) were compressed again only to clear their headers, their content unchanged.`,
+        ]),
     ...(recovered.length === 0
       ? []
       : [
@@ -600,7 +602,7 @@ const scrubNotes = ({
 export const renderReadme = (
   plan: DesktopAppExportPlan,
   taskSection = "",
-  scrub: SeedScrubReport = { scrubbed: [], unscrubbed: [] },
+  scrub: SeedScrubReport = { scrubbed: [], recompressed: [], unscrubbed: [] },
 ): string =>
   `# ${plan.title} computer app
 

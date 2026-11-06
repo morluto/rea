@@ -397,6 +397,8 @@ export const DESKTOP_BUILD_TOOL_CONTRACTS = [
       task: jsonValueSchema,
       seed_files: strings,
       scrubbed_files: strings,
+      // gzip seeds compressed again only to clear their headers, their documents as captured.
+      recompressed_files: strings,
       unscrubbed_files: strings,
       limitations: strings,
     }),

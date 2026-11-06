@@ -281,6 +281,42 @@ export const unreadDconfLimitation = (
   return `${names} changed by the seed checkpoint but could not be read (${errors}), so the app's settings stored in dconf, if any, are not seeded. Export where dconf-cli is installed, or with REA_DCONF_COMMAND naming dconf; a build computer installs it, so capture again on a new one.`;
 };
 
+/** Files in the desktop Trash at the seed, which the state view never makes the app's, so the seed leaves them out. */
+export const trashedFiles = (
+  files: ReadonlyMap<string, DesktopStatePath>,
+  seed: number,
+): readonly string[] =>
+  [...files]
+    .filter(
+      ([, path]) =>
+        path.reasons.includes("desktop_trash") &&
+        versionAt(path, seed)?.present === true,
+    )
+    .map(([home]) => home)
+    .sort();
+
+/**
+ * Which home files the seed leaves out: the app's logs in its own state
+ * (application state, or under one of its state directories), and lock
+ * files; never one of `kept`, such as a document or a selected path.
+ */
+export const leftOutFiles = (
+  files: ReadonlyMap<string, DesktopStatePath>,
+  stateDirectories: readonly string[],
+  kept: ReadonlySet<string>,
+) => {
+  const recorded = new Set(files.keys());
+  const isLeftOutLog = (home: string) =>
+    !kept.has(home) &&
+    isAppLog(home) &&
+    (files.get(home)?.role === "application_state" ||
+      stateDirectoryOf(home, stateDirectories) !== undefined);
+  const isLeftOut = (home: string) =>
+    isLeftOutLog(home) ||
+    (!kept.has(home) && isLockFile(home, stateDirectories, recorded));
+  return { isLeftOut, isLeftOutLog };
+};
+
 /** The files left out of the seed, once each and by path: the app's logs apart from its lock files. */
 export const leftOutSeeds = (
   files: readonly string[],
