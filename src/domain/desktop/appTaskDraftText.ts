@@ -1,12 +1,11 @@
 import type { JsonValue } from "../jsonValue.js";
 import type { DesktopTaskCheckInput } from "./appTask.js";
-import { elementText, isXmlElement } from "./appTaskChecks.js";
 import { isStamp } from "./appTaskDraftNoise.js";
 import { valueEqualsCheck } from "./appTaskDraftScalars.js";
 import { addedTextChecks } from "./appTaskDraftTextAdded.js";
 import { rankAttributes } from "./attributeRank.js";
 import type { DesktopStateDifference } from "./stateChanges.js";
-import { resolvePointer } from "./viewPointer.js";
+import { elementText, isXmlElement, resolvePointer } from "./viewPointer.js";
 
 /** The pointers a diff lists, of every kind. */
 type Listed = Pick<DesktopStateDifference, "added" | "changed" | "removed">;

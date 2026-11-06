@@ -1,7 +1,6 @@
 import { z } from "zod";
 
 import { jsonValueSchema, type JsonValue } from "../jsonValue.js";
-import { isXmlElement } from "./appTaskChecks.js";
 import {
   attributeKeyOf,
   NOISE_REASONS,
@@ -9,7 +8,7 @@ import {
 } from "./appTaskDraftNoise.js";
 import { isIdentifyingAttribute } from "./attributeRank.js";
 import type { DesktopStateDifference } from "./stateChanges.js";
-import { locatePointer, resolvePointer } from "./viewPointer.js";
+import { isXmlElement, locatePointer, resolvePointer } from "./viewPointer.js";
 
 /** Why a value's pointer cannot go into a check as it is, or why the value is noise. */
 export const VALUE_NOTES = ["by_position", ...NOISE_REASONS] as const;

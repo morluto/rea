@@ -207,8 +207,11 @@ the first source that has the app:
 
    A note with a `file` says why that file's suggestions are thin:
    - `by_position`: only position names what changed; its `elements` lack
-     a naming attribute. Check an ancestor's text, or give the element a
-     name in the app, such as an id, and capture again.
+     a naming attribute. Name a record that keeps its fields as child
+     elements by one of them, as Osmo's contact by
+     `[name=contact][>first_name=Delphine]`, and count records with
+     `member_count`, `matching` `[name=contact]`; otherwise check an
+     ancestor's text, or give the element an id in the app and capture again.
    - `view_state_only`: every change is view state, a renumbered id or a
      time the app stamps, and its `pointers` are the checks kept. The edit
      was likely not saved: capture again and save it before `end`.
@@ -276,11 +279,11 @@ Write `{"name", "prompt", "checks"}` from the draft and what you did.
 - For a line added to free text, such as an item on a note's list, the
   draft suggests `text_contains` of the new line, which passes however the
   app spaces or orders it, and a guard that the old text is still there.
-- Some apps keep text in an attribute, such as Scribus's `<ITEXT CH=...>`.
-  `text_equals` cannot join it, so check the attribute with `value_equals`:
-  `/root/children/[name=DOCUMENT]/children/[name=PAGEOBJECT][@ANNAME=Headline]/children/[name=StoryText]/children/[name=ITEXT]/attributes/CH`.
-  A partial edit the app restyles splits the text into several runs and
-  fails that check; list it in the report's limitations.
+- Some apps keep text in an attribute, one element per run, such as
+  Scribus's `<ITEXT CH=...>`: add `"text_attribute": "CH"` to `text_equals`
+  or `text_contains` on the frame,
+  `/root/children/[name=DOCUMENT]/children/[name=PAGEOBJECT][@ANNAME=Headline]`,
+  to read its runs' values joined.
 - Where easy, add one check that the rest is untouched, such as another
   text's value the edit must leave alone. `draft.guards` offers them at
   their seed values, which the end holds too: a field on the nearest like

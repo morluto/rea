@@ -203,6 +203,50 @@ export const CHECK_VIEWS: Readonly<Record<string, TaskFileView>> = {
       truncated: false,
     },
   },
+  "Documents/flyer.sla": {
+    format: "xml",
+    view: {
+      root: element("SCRIBUSUTF8NEW", { Version: "1.6.1" }, [
+        element("DOCUMENT", {}, [
+          element("PAGEOBJECT", { ANNAME: "Headline" }, [
+            element("StoryText", {}, [
+              element("DefaultStyle", {}),
+              element("ITEXT", { CH: "Spring " }),
+              element("ITEXT", { FONT: "Sans Bold", CH: "Fair" }),
+              "typed",
+            ]),
+          ]),
+          element("PAGEOBJECT", { ANNAME: "Body" }, [
+            element("StoryText", {}, [
+              element("ITEXT", { CH: "Doors \n open" }),
+              element("ITEXT", { CH: "  at noon" }),
+            ]),
+          ]),
+        ]),
+      ]),
+      truncated: false,
+    },
+  },
+  ".local/share/osmo/contacts_records.xml": {
+    format: "xml",
+    view: {
+      root: element("osmo_contacts", {}, [
+        contact("Delphine", "Moreau"),
+        contact("\n  Bastien\t", "Roy"),
+        contact("Delphine", "Abara"),
+        element("group", {}, [element("first_name", {}, ["Delphine"])]),
+      ]),
+      truncated: false,
+    },
+  },
+  "Documents/ledger.json": {
+    format: "json",
+    view: [
+      { payee: "Grocer", amount: 12 },
+      { payee: "Rent", amount: 900 },
+      { payee: "Grocer", amount: 30 },
+    ],
+  },
   "Documents/photo.png": { format: "binary", view: null },
   "Documents/huge.txt": {
     format: null,
@@ -210,6 +254,14 @@ export const CHECK_VIEWS: Readonly<Record<string, TaskFileView>> = {
     error: "larger than 64 MiB, the most the view reads",
   },
 };
+
+/** An Osmo contact: fields as child elements, no attributes. */
+function contact(first: string, last: string): JsonValue {
+  return element("contact", {}, [
+    element("first_name", {}, [first]),
+    element("last_name", {}, [last]),
+  ]);
+}
 
 /** An element of REA's XML view. */
 function element(
@@ -898,6 +950,350 @@ const CUT_VIEW_CASES: readonly (readonly [DesktopTaskCheckInput, boolean])[] = [
   ],
 ];
 
+const flyer = "Documents/flyer.sla";
+const headline =
+  "/root/children/[name=DOCUMENT]/children/[name=PAGEOBJECT][@ANNAME=Headline]";
+const body =
+  "/root/children/[name=DOCUMENT]/children/[name=PAGEOBJECT][@ANNAME=Body]";
+
+/** Text joined from one attribute's values on an element and its descendants, its text nodes left out. */
+const ATTRIBUTE_TEXT_CASES: readonly (readonly [
+  DesktopTaskCheckInput,
+  boolean,
+])[] = [
+  [
+    {
+      kind: "text_equals",
+      file: flyer,
+      pointer: headline,
+      value: "Spring Fair",
+      text_attribute: "CH",
+    },
+    true,
+  ],
+  [
+    {
+      kind: "text_equals",
+      file: flyer,
+      pointer: headline,
+      value: "Spring Fete",
+      text_attribute: "CH",
+    },
+    false,
+  ],
+  [
+    {
+      kind: "text_contains",
+      file: flyer,
+      pointer: headline,
+      value: "typed",
+      text_attribute: "CH",
+    },
+    false,
+  ],
+  [
+    { kind: "text_equals", file: flyer, pointer: headline, value: "typed" },
+    true,
+  ],
+  [
+    {
+      kind: "text_equals",
+      file: flyer,
+      pointer: body,
+      value: "Doors open at noon",
+      text_attribute: "CH",
+      normalize_whitespace: true,
+    },
+    true,
+  ],
+  [
+    {
+      kind: "text_contains",
+      file: flyer,
+      pointer: body,
+      value: "open  at",
+      text_attribute: "CH",
+    },
+    true,
+  ],
+  [
+    {
+      kind: "text_equals",
+      file: plate,
+      pointer: `${objects}/[name=Object][@name=Hole]`,
+      value: "HoleRadius",
+      text_attribute: "name",
+    },
+    true,
+  ],
+  [
+    {
+      kind: "text_equals",
+      file: flyer,
+      pointer: `${headline}/attributes/ANNAME`,
+      value: "Headline",
+      text_attribute: "CH",
+    },
+    false,
+  ],
+  [
+    {
+      kind: "text_equals",
+      file: settings,
+      pointer: "/tags",
+      value: "ab",
+      text_attribute: "CH",
+    },
+    false,
+  ],
+  [
+    {
+      kind: "text_contains",
+      file: "Documents/cut.xml",
+      pointer: "/root",
+      value: "1",
+      text_attribute: "id",
+    },
+    false,
+  ],
+];
+
+const contacts = ".local/share/osmo/contacts_records.xml";
+const ledger = "Documents/ledger.json";
+
+/** Members named by a child element's text, its whitespace collapsed, alone or with other conditions. */
+const CHILD_TEXT_CASES: readonly (readonly [DesktopTaskCheckInput, boolean])[] =
+  [
+    [
+      {
+        kind: "text_equals",
+        file: contacts,
+        pointer:
+          "/root/children/[name=contact][>first_name=Bastien]/children/[name=last_name]",
+        value: "Roy",
+      },
+      true,
+    ],
+    [
+      {
+        kind: "value_equals",
+        file: contacts,
+        pointer:
+          "/root/children/[name=contact][>first_name=Delphine][>last_name=Abara]/children/1/children/0",
+        value: "Abara",
+      },
+      true,
+    ],
+    [
+      {
+        kind: "value_absent",
+        file: contacts,
+        pointer: "/root/children/[name=contact][>first_name=Delphine]",
+      },
+      false,
+    ],
+    [
+      {
+        kind: "value_absent",
+        file: contacts,
+        pointer: "/root/children/[name=contact][>first_name=Zoe]",
+      },
+      true,
+    ],
+    [
+      {
+        kind: "value_absent",
+        file: contacts,
+        pointer: "/root/children/[name=contact][>first_name=Zoe]/children",
+      },
+      false,
+    ],
+    [
+      {
+        kind: "value_equals",
+        file: contacts,
+        pointer: "/root/children/[name=group][>first_name=Delphine]/name",
+        value: "group",
+      },
+      true,
+    ],
+    [
+      {
+        kind: "value_absent",
+        file: contacts,
+        pointer: "/root/children/[>first_name]/name",
+      },
+      false,
+    ],
+    [
+      {
+        kind: "value_absent",
+        file: settings,
+        pointer: "/tags/[>a=a]",
+      },
+      true,
+    ],
+    [
+      {
+        kind: "value_absent",
+        file: "Documents/cut.xml",
+        pointer: "/root/children/[name=p][>q=x]",
+      },
+      false,
+    ],
+  ];
+
+/** Counts of an array's members, every one or those a selector matches, decided only on an array the view holds whole. */
+const MEMBER_COUNT_CASES: readonly (readonly [
+  DesktopTaskCheckInput,
+  boolean,
+])[] = [
+  [
+    {
+      kind: "member_count",
+      file: contacts,
+      pointer: "/root/children",
+      matching: "[name=contact]",
+      equals: 3,
+    },
+    true,
+  ],
+  [
+    {
+      kind: "member_count",
+      file: contacts,
+      pointer: "/root/children",
+      matching: "[name=contact][>first_name=Delphine]",
+      equals: 2,
+    },
+    true,
+  ],
+  [
+    {
+      kind: "member_count",
+      file: contacts,
+      pointer: "/root/children",
+      matching: "[>first_name=Delphine]",
+      at_most: 2,
+    },
+    false,
+  ],
+  [
+    {
+      kind: "member_count",
+      file: meeting,
+      pointer: `${paragraph("time")}/children`,
+      equals: 5,
+    },
+    true,
+  ],
+  [
+    {
+      kind: "member_count",
+      file: meeting,
+      pointer: `${paragraph("time")}/children`,
+      matching: "[name=c]",
+      equals: 2,
+    },
+    true,
+  ],
+  [
+    {
+      kind: "member_count",
+      file: settings,
+      pointer: "/tags",
+      at_least: 3,
+    },
+    false,
+  ],
+  [
+    {
+      kind: "member_count",
+      file: plate,
+      pointer: objects,
+      matching: "[name=Object][@type=Part::Box]",
+      equals: 2,
+    },
+    true,
+  ],
+  [
+    { kind: "member_count", file: settings, pointer: "/size", equals: 0 },
+    false,
+  ],
+  [
+    { kind: "member_count", file: settings, pointer: "/missing", equals: 0 },
+    false,
+  ],
+  [
+    {
+      kind: "member_count",
+      file: contacts,
+      pointer: "/root/children/[name=contact][>first_name=Zoe]/children",
+      equals: 0,
+    },
+    false,
+  ],
+  [{ kind: "member_count", file: absent, pointer: "/x", equals: 0 }, false],
+  [{ kind: "member_count", file: ledger, pointer: "", equals: 3 }, true],
+  [
+    {
+      kind: "member_count",
+      file: ledger,
+      pointer: "",
+      matching: "[payee=Grocer]",
+      equals: 2,
+    },
+    true,
+  ],
+  [
+    {
+      kind: "member_count",
+      file: ledger,
+      pointer: "",
+      matching: "[payee=Rent]",
+      at_least: 2,
+    },
+    false,
+  ],
+  [{ kind: "member_count", file: settings, pointer: "", equals: 0 }, false],
+  [
+    {
+      kind: "member_count",
+      file: "Documents/cut.xml",
+      pointer: "/root/children",
+      at_least: 1,
+    },
+    false,
+  ],
+  [
+    {
+      kind: "member_count",
+      file: "Documents/many.zip",
+      pointer: "/entries",
+      at_least: 1,
+    },
+    false,
+  ],
+  [
+    {
+      kind: "member_count",
+      file: "Documents/listing.zip",
+      pointer: "/entries/1/view/root/children",
+      equals: 1,
+    },
+    false,
+  ],
+  [
+    {
+      kind: "member_count",
+      file: "Documents/listing.zip",
+      pointer: "/entries/0/view",
+      equals: 1,
+    },
+    false,
+  ],
+];
+
 /** Every kind of check against those views, each with the outcome both evaluators must give. */
 export const CHECK_CASES: readonly (readonly [
   DesktopTaskCheckInput,
@@ -1148,4 +1544,7 @@ export const CHECK_CASES: readonly (readonly [
   ...TOLERANCE_CASES,
   ...TEXT_CASES,
   ...CUT_VIEW_CASES,
+  ...ATTRIBUTE_TEXT_CASES,
+  ...CHILD_TEXT_CASES,
+  ...MEMBER_COUNT_CASES,
 ];

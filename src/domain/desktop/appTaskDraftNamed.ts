@@ -1,6 +1,5 @@
 import type { JsonValue } from "../jsonValue.js";
 import type { DesktopTaskCheckInput } from "./appTask.js";
-import { isXmlElement } from "./appTaskChecks.js";
 import {
   attributeChecks,
   fieldChecks,
@@ -20,6 +19,7 @@ import {
 } from "./stateChanges.js";
 import {
   escapeToken,
+  isXmlElement,
   locatePointer,
   pairMembers,
   resolvePointer,

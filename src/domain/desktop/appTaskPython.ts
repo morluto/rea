@@ -1,6 +1,7 @@
 import type { JsonValue } from "../jsonValue.js";
 import { SETTLE_TIMING } from "./appSettle.js";
 import type { DesktopTask } from "./appTask.js";
+import { PYTHON_POINTER } from "./appTaskPythonPointer.js";
 
 /** The verifier's evaluator: the checks' semantics, kept equal to `evaluateTaskChecks`. */
 export const PYTHON_TASK_EVALUATOR = String.raw`
@@ -31,71 +32,7 @@ def _same(actual, expected) -> bool:
     return type(actual) is type(expected) and actual == expected
 
 
-def _bracketed(token: str) -> bool:
-    return len(token) >= 2 and token.startswith("[") and token.endswith("]")
-
-
-def _selector(token: str):
-    """A selector's conditions, [KEY=VALUE] or [@KEY=VALUE] one or more times, or None when the token is not one."""
-    if not _bracketed(token):
-        return None
-    conditions = []
-    for part in token[1:-1].split("]["):
-        key, equals, value = part.partition("=")
-        name = key[1:] if key.startswith("@") else key
-        if not equals or not name:
-            return None
-        conditions.append((key.startswith("@"), name, value))
-    return conditions
-
-
-def _selects(member, conditions) -> bool:
-    """Whether an array member meets every condition; selectors compare strings only."""
-    if not isinstance(member, dict):
-        return False
-    for attribute, key, value in conditions:
-        fields = member.get("attributes") if attribute else member
-        if not isinstance(fields, dict) or not isinstance(fields.get(key), str) or fields[key] != value:
-            return False
-    return True
-
-
-def _step(items: list, token: str, last: bool):
-    """One step into an array, by index or by a selector that must match one member, or none when it is the last."""
-    if INDEX.fullmatch(token):
-        return ("member", items[int(token)]) if int(token) < len(items) else ("none", None)
-    conditions = _selector(token)
-    if conditions is None:
-        return ("unresolved", f"{token} is not a selector of the form [KEY=VALUE]") if _bracketed(token) else (
-            "none", None)
-    matched = [item for item in items if _selects(item, conditions)]
-    if len(matched) == 1:
-        return "member", matched[0]
-    if len(matched) > 1:
-        return "unresolved", f"{token} matches {len(matched)} members, not one"
-    return ("none" if last else "unresolved"), f"{token} matches no member"
-
-
-def _locate(view, pointer: str):
-    """Where a pointer leads: ("value", value), ("none", why or None) or ("unresolved", problem), with the pointers
-    to the arrays a selector searched on the way."""
-    current, searched = view, []
-    segments = pointer[1:].split("/")
-    for position, segment in enumerate(segments):
-        token = segment.replace("~1", "/").replace("~0", "~")
-        if isinstance(current, list):
-            if not INDEX.fullmatch(token) and _selector(token) is not None:
-                searched.append("".join("/" + part for part in segments[:position]))
-            kind, found = _step(current, token, position == len(segments) - 1)
-            if kind != "member":
-                return kind, found, searched
-            current = found
-        elif isinstance(current, dict) and token in current:
-            current = current[token]
-        else:
-            return "none", None, searched
-    return "value", current, searched
-
+${PYTHON_POINTER}
 
 def _number(value):
     """A number, or a numeral string read as one; None for anything else, a boolean, or a numeral past the doubles."""
@@ -261,24 +198,6 @@ def _value(check, entry):
     return (True, f"{at} has no value") if kind == "none" else (False, f"{at} is {_shown(found)}")
 
 
-def _is_element(value) -> bool:
-    return (isinstance(value, dict) and isinstance(value.get("name"), str) and isinstance(value.get("attributes"), dict)
-            and isinstance(value.get("children"), list))
-
-
-def _element_text(element) -> str:
-    """An element's text as XPath's string() reads it from what the view keeps: every text node among its children
-    and its descendants', in document order."""
-    parts, pending = [], [element]
-    while pending:
-        node = pending.pop()
-        if isinstance(node, str):
-            parts.append(node)
-        elif _is_element(node):
-            pending.extend(reversed(node["children"]))
-    return "".join(parts)
-
-
 def _collapse_whitespace(text: str) -> str:
     """Each run of XML whitespace (space, tab, CR, LF) made one space, none at either end, as normalize-space()."""
     return WHITESPACE_RUN.sub(" ", text).strip(" ")
@@ -334,14 +253,17 @@ def _whole_text(check, entry):
         return False, f"{at}: {found}"
     if kind == "none":
         return False, f"{at} has no value" if found is None else f"{at}: {found}"
-    if not (_text_at(view, check["pointer"]) if isinstance(found, str) else _is_element(found)):
-        return False, f"{at} is {_shown(found)}, not an element, a text node or an attribute value"
+    # Only an element has attributes of its own and of its descendants to join.
+    attribute = check.get("text_attribute")
+    if not ((attribute is None and _text_at(view, check["pointer"])) if isinstance(found, str) else _is_element(found)):
+        what = "an element, a text node or an attribute value" if attribute is None else "an element"
+        return False, f"{at} is {_shown(found)}, not {what}"
     # A text node is whole. An element's text in a cut view may lack what the cut dropped from its middle.
     if form == "zip":
         truncated = _zip_leaves_out(view, check["pointer"])
     if not isinstance(found, str) and truncated:
         return _undecided(check)
-    return _compared_text(check, at, _element_text(found))
+    return _compared_text(check, at, _element_text(found, attribute))
 
 
 def _compared_text(check, at: str, found: str):
@@ -349,7 +271,9 @@ def _compared_text(check, at: str, found: str):
     collapse = check.get("normalize_whitespace") is True
     text = _collapse_whitespace(found) if collapse else found
     value = _collapse_whitespace(check["value"]) if collapse else check["value"]
-    how = " with whitespace collapsed" if collapse else ""
+    attribute = check.get("text_attribute")
+    read = "" if attribute is None else f" in its {attribute} values"
+    how = read + (" with whitespace collapsed" if collapse else "")
     if check["kind"] == "text_equals":
         if text == value:
             return True, f"{at} has the text {_shown(value)}{how}"
@@ -357,6 +281,38 @@ def _compared_text(check, at: str, found: str):
     if value in text:
         return True, f"{at} has text containing {_shown(value)}{how}"
     return False, f"{at} has the text {_shown(text)}{how}, without {_shown(value)}"
+
+
+def _members(check, entry):
+    """How many members of the array at a pointer, or of those a selector matches, compared with the expected
+    number."""
+    matching, pointer = check.get("matching"), check["pointer"]
+    view, truncated, problem = _view_of(check, entry, None)
+    if problem is not None:
+        return False, problem
+    form = None if entry is None else entry.get("format")
+    # The empty pointer names the whole view, as a JSON file whose top level is an array.
+    kind, found, searched = (("none", None, []) if entry is None else ("value", view, []) if pointer == ""
+                             else _locate(view, pointer))
+    at = check["file"] if pointer == "" else f"{check['file']} at {pointer}"
+    viewless = _viewless_entry(view, pointer) if form == "zip" else None
+    if viewless is not None:
+        return False, f"{check['file']} entry {viewless[0]} {viewless[1]}"
+    if any(_array_leaves_out(form, view, array) for array in searched):
+        return _undecided(check)
+    if kind == "unresolved":
+        return False, f"{at}: {found}"
+    if kind == "none":
+        return False, f"{at} has no value" if found is None else f"{at}: {found}"
+    if not isinstance(found, list):
+        return False, f"{at} is {_shown(found)}, not an array"
+    # A count is decided only on an array the view holds whole.
+    if _array_leaves_out(form, view, pointer):
+        return _undecided(check)
+    # The parser refuses a matching that is no selector.
+    conditions = None if matching is None else _selector(matching)
+    n = len(found) if matching is None else sum(1 for item in found if conditions and _selects(item, conditions))
+    return _compared(check, n, f"member(s) of {at}" + ("" if matching is None else f" matching {matching}"))
 
 
 def _rows(check, entry):
@@ -404,6 +360,8 @@ def _verdict(check, entry):
         return _value(check, entry)
     if kind in ("text_equals", "text_contains"):
         return _whole_text(check, entry)
+    if kind == "member_count":
+        return _members(check, entry)
     return _rows(check, entry)
 
 

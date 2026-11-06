@@ -209,25 +209,27 @@ checks. Each check has a `kind`, a `file` given as a path under the home such as
 position otherwise). A check reads the typed view `data/get` returns for that
 file, in the shapes of the state view.
 
-| Kind            | Fields                                                       | Passes when                                                              |
-| --------------- | ------------------------------------------------------------ | ------------------------------------------------------------------------ |
-| `file_present`  |                                                              | The file exists                                                          |
-| `file_absent`   |                                                              | The file does not exist                                                  |
-| `lines_present` | `lines`                                                      | Every listed line is a whole line of the text view                       |
-| `lines_absent`  | `lines`                                                      | None of the listed lines is                                              |
-| `line_count`    | `exact` or `contains`; `equals`, `at_least` or `at_most`     | The number of lines equal to `exact`, or holding `contains`, compares so |
-| `value_equals`  | `pointer`, `value`; optional `tolerance`                     | The pointer names a value equal to `value`, or within `tolerance` of it  |
-| `value_absent`  | `pointer`                                                    | The pointer names no value                                               |
-| `text_equals`   | `pointer`, `value`; optional `normalize_whitespace`          | The XML element's [whole text](#whole-text) equals `value`               |
-| `text_contains` | `pointer`, `value`; optional `normalize_whitespace`          | The XML element's whole text holds `value`                               |
-| `row_present`   | `table`, `where`                                             | A row of the SQLite table has every column in `where` equal              |
-| `row_absent`    | `table`, `where`                                             | No row does                                                              |
-| `row_count`     | `table`; optional `where`; `equals`, `at_least` or `at_most` | The number of rows, or of rows matching `where`, compares so             |
+| Kind            | Fields                                                                | Passes when                                                                                        |
+| --------------- | --------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| `file_present`  |                                                                       | The file exists                                                                                    |
+| `file_absent`   |                                                                       | The file does not exist                                                                            |
+| `lines_present` | `lines`                                                               | Every listed line is a whole line of the text view                                                 |
+| `lines_absent`  | `lines`                                                               | None of the listed lines is                                                                        |
+| `line_count`    | `exact` or `contains`; `equals`, `at_least` or `at_most`              | The number of lines equal to `exact`, or holding `contains`, compares so                           |
+| `value_equals`  | `pointer`, `value`; optional `tolerance`                              | The pointer names a value equal to `value`, or within `tolerance` of it                            |
+| `value_absent`  | `pointer`                                                             | The pointer names no value                                                                         |
+| `text_equals`   | `pointer`, `value`; optional `normalize_whitespace`, `text_attribute` | The XML element's [whole text](#whole-text) equals `value`                                         |
+| `text_contains` | `pointer`, `value`; optional `normalize_whitespace`, `text_attribute` | The XML element's whole text holds `value`                                                         |
+| `member_count`  | `pointer`; optional `matching`; `equals`, `at_least` or `at_most`     | The number of [members of the array](#counting-members), or of those `matching` names, compares so |
+| `row_present`   | `table`, `where`                                                      | A row of the SQLite table has every column in `where` equal                                        |
+| `row_absent`    | `table`, `where`                                                      | No row does                                                                                        |
+| `row_count`     | `table`; optional `where`; `equals`, `at_least` or `at_most`          | The number of rows, or of rows matching `where`, compares so                                       |
 
 The rules both evaluators follow:
 
 - An absent file reads as empty: no lines, values or rows. So `lines_absent`,
-  `value_absent` and `row_absent` pass on it and a count is 0.
+  `value_absent` and `row_absent` pass on it and a count of lines or rows is
+  0; `member_count` fails, since its pointer names no array.
 - A file that has no view (binary, over the read limit, or unreadable) fails
   every check but `file_present` and `file_absent`. Line checks need a text
   view, row checks a SQLite view and text checks an XML view, in a file or an
@@ -259,12 +261,15 @@ The rules both evaluators follow:
 The export refuses, naming the check, a file outside the owned paths, a file
 spelled with a leading slash, `.` or `..`, a pointer into a file that is text
 at the seed, as the bundle ships it, or at the end checkpoint, the empty
-pointer (the whole file), a value that names the captured home, or the
+pointer (the whole file) except in `member_count`, a `matching` that is no
+selector, a value that names the captured home, or the
 capture host's name or `user@host` anywhere (which the
 [export removes from the seed](desktop-application-export.md#host-name-and-user)), a
 `tolerance` with a value that is not a number, an empty `text_contains`
-value, or one of only whitespace with `normalize_whitespace`, and a value that
-looks like a date and time, in ISO 8601 or `asctime`'s form. Other volatile
+value, or one of only whitespace with `normalize_whitespace`, an empty
+`text_attribute`, a count without exactly one of `equals`, `at_least` and
+`at_most`, and a value that looks like a date and time, in ISO 8601 or
+`asctime`'s form. Other volatile
 content, such as a
 counter the app bumps on every save, is for the author to leave out.
 
@@ -281,9 +286,16 @@ rather than by its position:
   `[name=Object]`.
 - `[@KEY=VALUE]` names the member whose `attributes` hold `KEY="VALUE"`, as
   the XML view keeps an element's attributes.
+- `[>CHILD=VALUE]` names the XML element that has a child element `CHILD`
+  whose text, every text node in it with each run of whitespace collapsed to
+  one space and none at either end, is `VALUE`, for records that keep their
+  fields as elements: Osmo's `<contact><first_name>Delphine</first_name>…`
+  is `[name=contact][>first_name=Delphine]`. Any such child will do, and a
+  member that is no element never matches.
 - Conditions can follow one another, `[name=Object][@name=Hole]`, and all must
   hold. They compare strings only, the selector is escaped like any pointer
-  segment (`~1` for `/`), and a value cannot hold `][`.
+  segment (`~1` for `/`), and a value cannot hold `][`. A field whose key
+  begins with `@` or `>` cannot be selected by.
 
 A selector must name exactly one member. When several match, or none does
 before the last segment, the check fails and says which selector matched what.
@@ -404,6 +416,51 @@ read the element's whole text instead:
   and trims both ends before comparing, as XPath's `normalize-space()` does,
   for an app that reflows text or a value written across lines. A no-break
   space is not whitespace there.
+- `text_attribute` reads text an app keeps in an attribute: the element's
+  text is then that attribute's values on it and its descendants, joined in
+  document order, and its text nodes are left out. Scribus keeps a text
+  frame's text as `<StoryText><ITEXT CH="Spring "/><ITEXT CH="Fair"/></StoryText>`,
+  one `ITEXT` per run of formatting, so the check below reads `Spring Fair`
+  however the runs are split. The pointer must name an element; a text node
+  or attribute value fails.
+
+```json
+{
+  "id": "headline",
+  "kind": "text_equals",
+  "file": "Documents/flyer.sla",
+  "pointer": "/root/children/[name=DOCUMENT]/children/[name=PAGEOBJECT][@ANNAME=Headline]",
+  "value": "Spring Fair",
+  "text_attribute": "CH"
+}
+```
+
+## Counting members
+
+`member_count` counts the members of the array its pointer names: a JSON
+array, or an XML element's `children`. `matching`, a selector of one or more
+conditions as [above](#pointers-and-selectors), `[>CHILD=VALUE]` included,
+counts only the members it matches, however many; without it every member
+counts. An element's children hold its text nodes too, so give `matching`
+for XML, such as `[name=entry]`. A Tellico task that adds one book to a
+collection of 12:
+
+```json
+{
+  "id": "one-more-book",
+  "kind": "member_count",
+  "file": "Documents/books.tc",
+  "pointer": "/entries/[name=tellico.xml]/view/root/children/[name=collection]/children",
+  "matching": "[name=entry]",
+  "equals": 13
+}
+```
+
+It takes exactly one of `equals`, `at_least` and `at_most`. The empty
+pointer `""` names the whole file, for a JSON file whose top level is an
+array. A pointer that names no array, an absent file's included, fails and
+says what it found there. Like the other counts, it is undecided on a view
+that may hold only part of the array.
 
 ## Validation and export
 

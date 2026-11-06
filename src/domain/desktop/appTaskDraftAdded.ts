@@ -1,6 +1,5 @@
 import type { JsonValue } from "../jsonValue.js";
 import type { DesktopTaskCheckInput } from "./appTask.js";
-import { elementText, isXmlElement } from "./appTaskChecks.js";
 import {
   isRenumberedKey,
   isStamp,
@@ -9,7 +8,12 @@ import {
 } from "./appTaskDraftNoise.js";
 import { valueEqualsCheck } from "./appTaskDraftScalars.js";
 import { isIdentifyingAttribute, rankAttributes } from "./attributeRank.js";
-import { escapeToken, resolvePointer } from "./viewPointer.js";
+import {
+  elementText,
+  escapeToken,
+  isXmlElement,
+  resolvePointer,
+} from "./viewPointer.js";
 
 type Suggestion = DesktopTaskCheckInput;
 

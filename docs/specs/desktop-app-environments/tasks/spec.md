@@ -29,21 +29,32 @@ never runs code the agent wrote.
   kinds: `file_present`, `file_absent`, `lines_present`, `lines_absent`,
   `line_count` (`exact` or `contains`; `equals`, `at_least` or `at_most`),
   `value_equals` (optional numeric `tolerance`) and `value_absent` (RFC 6901
-  pointer, with selectors on arrays), `text_equals` and `text_contains` (an
-  XML element's whole text at a pointer, optional `normalize_whitespace`; see
-  [XML text checks](../xml-text-checks/spec.md)), `row_present`,
-  `row_absent` and `row_count` (SQLite table, `where` by column). Ids default
-  to `check-N` and must be unique.
+  pointer, with selectors on arrays: `[KEY=VALUE]` by a field, `[@KEY=VALUE]`
+  by an attribute, `[>CHILD=VALUE]` by a child element's text with its
+  whitespace collapsed), `text_equals` and `text_contains` (an XML element's
+  whole text at a pointer, optional `normalize_whitespace`; see
+  [XML text checks](../xml-text-checks/spec.md); with `text_attribute`, the
+  values of that attribute on the element and its descendants in document
+  order instead of its text nodes, as Scribus's `<ITEXT CH="Spring "/>`),
+  `member_count` (the members of the array at a pointer, a JSON array or an
+  element's `children`, or of those an optional `matching` selector matches;
+  `equals`, `at_least` or `at_most`), `row_present`, `row_absent` and
+  `row_count` (SQLite table, `where` by column). Ids default to `check-N` and
+  must be unique.
 - Semantics: an absent file reads as empty; a file without a view fails every
   check but presence; line checks need a text view and row checks a SQLite
   view; JSON equality by value, never a boolean for a number; `contains`
   matches a line holding it; checks decided by what a view leaves out, and
-  `value_equals` of a whole object or array, fail on a truncated view. No
+  `value_equals` of a whole object or array, fail on a truncated view;
+  `member_count` fails when its pointer names no array, an absent file's
+  included, and its empty pointer names the whole file. No
   regular expressions: a pattern run on agent-written text can stall the
   verifier, and the two evaluators would read some differently.
 - Refusals, each naming the check: a file outside the owned paths or not
-  spelled as a home path; the empty pointer; a pointer not starting with `/`
-  or into text; a repeated line; a `tolerance` whose value is not a number; a
+  spelled as a home path; the empty pointer, except in `member_count`; a
+  pointer not starting with `/` or into text; a `matching` that is no
+  selector; a repeated line; a count without exactly one comparison; an
+  empty `text_attribute`; a `tolerance` whose value is not a number; a
   value that names the captured home or looks like a date and time (ISO
   8601, or C's `asctime` form);
   the draft's placeholder prompt.

@@ -206,6 +206,32 @@ describe("exportDesktopApplication with a task's seed", () => {
     });
   });
 
+  it("keeps a task whose one check failing on the seed is a member count", async () => {
+    const { result } = await exportWithTasks(
+      task([
+        {
+          id: "first",
+          kind: "row_present",
+          file: DATABASE,
+          table: "notes",
+          where: { id: 1 },
+        },
+        {
+          id: "notes",
+          kind: "member_count",
+          file: DATABASE,
+          pointer: "/tables/notes/rows",
+          equals: 2,
+        },
+      ]),
+    );
+
+    if (result instanceof Error) throw result;
+    expect(result.normalized_result).toMatchObject({
+      task: { checks: 2, failing_on_seed: ["notes"] },
+    });
+  });
+
   it("treats a file present but not retained at the baseline as absent on the seed, as the computer starts", async () => {
     const scratch = await createTestTempDirectory("desktop-task-");
     const path = join(scratch, "task.json");

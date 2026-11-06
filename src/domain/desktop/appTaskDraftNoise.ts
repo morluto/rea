@@ -1,10 +1,9 @@
 import type { JsonValue } from "../jsonValue.js";
 import { isTimestamp } from "./appTask.js";
-import { isXmlElement } from "./appTaskChecks.js";
 import { isIdentifyingAttribute, isNameLikeKey } from "./attributeRank.js";
 import { isPositionalKey, positionalKeys } from "./positionalKeys.js";
 import type { DesktopStateDifference } from "./stateChanges.js";
-import { resolvePointer } from "./viewPointer.js";
+import { isXmlElement, resolvePointer } from "./viewPointer.js";
 
 /** Why a change is what an app writes as it saves or shows a document, rather than what its user made. */
 export const NOISE_REASONS = [

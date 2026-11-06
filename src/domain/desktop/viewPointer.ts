@@ -1,14 +1,8 @@
 import type { JsonValue } from "../jsonValue.js";
-import { isTimestamp } from "./appTask.js";
+import { collapseWhitespace, isTimestamp } from "./appTask.js";
 import { isIdentifyingAttribute, rankAttributes } from "./attributeRank.js";
 import { isPositionalKey, positionalKeys } from "./positionalKeys.js";
-
-/** One condition of a selector: a member's string field, or with `@` one of its attributes, equal to a value. */
-interface Condition {
-  readonly attribute: boolean;
-  readonly key: string;
-  readonly value: string;
-}
+import { bracketed, selectorOf, type Condition } from "./viewSelector.js";
 
 /** The arrays a pointer stepped into, each as the pointer to it. */
 interface ArraySteps {
@@ -47,31 +41,77 @@ const isRecord = (
 const own = (record: Record<string, JsonValue>, key: string) =>
   Object.hasOwn(record, key) ? record[key] : undefined;
 
-const bracketed = (segment: string) =>
-  segment.length >= 2 && segment.startsWith("[") && segment.endsWith("]");
+/** An element of REA's XML view: its tag name, attributes and children. */
+export const isXmlElement = (
+  value: JsonValue | null | undefined,
+): value is Record<string, JsonValue> & {
+  name: string;
+  attributes: Record<string, JsonValue>;
+  children: JsonValue[];
+} =>
+  isRecord(value) &&
+  typeof value.name === "string" &&
+  isRecord(value.attributes) &&
+  Array.isArray(value.children);
 
-/** A segment's conditions when it is a selector; otherwise undefined. A value cannot hold `][`. */
-const selectorOf = (segment: string): readonly Condition[] | undefined => {
-  if (!bracketed(segment)) return undefined;
-  const conditions: Condition[] = [];
-  for (const part of segment.slice(1, -1).split("][")) {
-    const equals = part.indexOf("=");
-    const key = equals < 0 ? "" : part.slice(0, equals);
-    const attribute = key.startsWith("@");
-    const name = attribute ? key.slice(1) : key;
-    if (name === "") return undefined;
-    conditions.push({ attribute, key: name, value: part.slice(equals + 1) });
-  }
-  return conditions;
+/**
+ * An element's text as XPath's `string()` reads it from what the view keeps:
+ * every text node among its children and its descendants', in document order.
+ * With `attribute`, the values of that attribute on it and its descendants
+ * instead, in document order, and no text node.
+ */
+export const elementText = (element: JsonValue, attribute?: string): string => {
+  const parts: string[] = [];
+  const pending: JsonValue[] = [element];
+  for (let node = pending.pop(); node !== undefined; node = pending.pop())
+    if (typeof node === "string") {
+      if (attribute === undefined) parts.push(node);
+    } else if (isXmlElement(node)) {
+      const value =
+        attribute === undefined ? undefined : own(node.attributes, attribute);
+      if (typeof value === "string") parts.push(value);
+      for (let index = node.children.length - 1; index >= 0; index -= 1)
+        pending.push(node.children[index] ?? null);
+    }
+  return parts.join("");
 };
+
+/** The field a condition reads from a member, when it is a string; a child's text is none, since several children may hold one. */
+const fieldOf = (member: JsonValue, { prefix, key }: Condition) => {
+  if (!isRecord(member) || prefix === ">") return undefined;
+  const fields = prefix === "@" ? own(member, "attributes") : member;
+  const value = isRecord(fields) ? own(fields, key) : undefined;
+  return typeof value === "string" ? value : undefined;
+};
+
+/** Whether an element has a child element named `key` whose text, its whitespace collapsed, is `value`. */
+const hasChildText = (member: JsonValue, { key, value }: Condition) =>
+  isXmlElement(member) &&
+  member.children.some(
+    (child) =>
+      isXmlElement(child) &&
+      child.name === key &&
+      collapseWhitespace(elementText(child)) === value,
+  );
 
 /** Whether an array member meets every condition; selectors compare strings only. */
 const selects = (member: JsonValue, conditions: readonly Condition[]) =>
   isRecord(member) &&
-  conditions.every(({ attribute, key, value }) => {
-    const fields = attribute ? own(member, "attributes") : member;
-    return isRecord(fields) && own(fields, key) === value;
-  });
+  conditions.every((condition) =>
+    condition.prefix === ">"
+      ? hasChildText(member, condition)
+      : fieldOf(member, condition) === condition.value,
+  );
+
+/** Whether a member meets a selector's conditions, or undefined when the string is no selector. */
+export const selectorTest = (
+  selector: string,
+): ((member: JsonValue) => boolean) | undefined => {
+  const conditions = selectorOf(selector);
+  return conditions === undefined
+    ? undefined
+    : (member) => selects(member, conditions);
+};
 
 /** One step into an array: by index, or by a selector that must match one member, or none when it is the last. */
 const arrayStep = (
@@ -109,8 +149,9 @@ const arrayStep = (
 /**
  * Follow an RFC 6901 pointer through a view, where a segment applied to an
  * array may also be a selector: `[KEY=VALUE]` one or more times, naming the one
- * member whose string field KEY equals VALUE, or with `@KEY` whose `attributes`
- * hold it, as REA's XML view keeps them. So `/root/children/[name=Object][@name=Hole]`
+ * member whose string field KEY equals VALUE, with `@KEY` whose `attributes`
+ * hold it, as REA's XML view keeps them, or with `>KEY` that has a child
+ * element KEY of that text. So `/root/children/[name=Object][@name=Hole]`
  * is the `Object` element named `Hole`, wherever it sits among its siblings.
  */
 export const locatePointer = (
@@ -142,13 +183,7 @@ export const locatePointer = (
   return { kind: "value", value: current, ...steps };
 };
 
-/** The field a condition reads from a member, when it is a string. */
-const fieldOf = (member: JsonValue, { attribute, key }: Condition) => {
-  if (!isRecord(member)) return undefined;
-  const fields = attribute ? own(member, "attributes") : member;
-  const value = isRecord(fields) ? own(fields, key) : undefined;
-  return typeof value === "string" ? value : undefined;
-};
+const readsChild = ({ prefix }: Condition) => prefix === ">";
 
 /** Marks selector values several members share, which therefore name none. */
 const SHARED = Symbol("shared");
@@ -163,7 +198,7 @@ const normalSelector = (token: string): readonly Condition[] | undefined => {
   if (conditions === undefined) return undefined;
   const byField = new Map<string, Condition>();
   for (const condition of conditions) {
-    const field = `${condition.attribute ? "@" : ""}${condition.key}`;
+    const field = `${condition.prefix}${condition.key}`;
     const seen = byField.get(field);
     if (seen !== undefined && seen.value !== condition.value) return undefined;
     byField.set(field, condition);
@@ -182,9 +217,9 @@ const selectorGroups = (tokens: Iterable<string>) => {
   for (const token of tokens) {
     if (INDEX.test(token)) continue;
     const conditions = normalSelector(token);
-    if (conditions === undefined) continue;
+    if (conditions === undefined || conditions.some(readsChild)) continue;
     const fields = JSON.stringify(
-      conditions.map(({ attribute, key }) => [attribute, key]),
+      conditions.map(({ prefix, key }) => [prefix, key]),
     );
     const values = JSON.stringify(conditions.map(({ value }) => value));
     const group = groups.get(fields) ?? { conditions, wanted: new Map() };
@@ -199,13 +234,22 @@ const selectorGroups = (tokens: Iterable<string>) => {
 /**
  * The member each selector among `tokens` names alone, found in one pass over
  * the array per set of fields they read, holding only the values they ask for.
+ * A selector reading a child's text, which no one field holds, is matched member by member.
  */
 const selectedMembers = (
   items: readonly JsonValue[],
   tokens: Iterable<string>,
 ): ReadonlyMap<string, JsonValue> => {
   const selected = new Map<string, JsonValue>();
-  for (const { conditions, wanted } of selectorGroups(tokens)) {
+  const listed = [...tokens];
+  for (const token of listed) {
+    const meets = selectorOf(token)?.some(readsChild)
+      ? selectorTest(token)
+      : undefined;
+    const matched = meets === undefined ? [] : items.filter(meets);
+    if (matched.length === 1) selected.set(token, matched[0] ?? null);
+  }
+  for (const { conditions, wanted } of selectorGroups(listed)) {
     const found = new Map<string, JsonValue | typeof SHARED>();
     for (const item of items) {
       const values = conditions.map((condition) => fieldOf(item, condition));
