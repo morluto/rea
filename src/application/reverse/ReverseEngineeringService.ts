@@ -47,6 +47,7 @@ import {
   runOwnedCommand,
 } from "../../process/OwnedCommand.js";
 import { LinuxOwnedProcessPrerequisiteError } from "../../process/ProcessOwnershipObservation.js";
+import { ProcessAdmissionError } from "../../process/ProcessAdmissionError.js";
 import type { ProviderProcessSupervisor } from "../../process/ProviderProcess.js";
 import { absoluteCallerPath } from "../../filesystem/callerPath.js";
 import { parseAnalysisInput } from "../AnalysisInput.js";
@@ -622,6 +623,40 @@ export class ReverseEngineeringService {
       ) {
         earlyFailure = cause;
       }
+      const admissionFailure =
+        cause instanceof ProcessAdmissionError
+          ? cause
+          : cause instanceof OwnedOutputFailure &&
+              cause.cause instanceof ProcessAdmissionError
+            ? cause.cause
+            : typeof cause === "object" &&
+                cause !== null &&
+                Reflect.get(cause, "_tag") === "ProcessAdmissionError"
+              ? (cause as ProcessAdmissionError)
+              : undefined;
+      if (earlyFailure === undefined && admissionFailure !== undefined) {
+        const provider =
+          operation === "inspect_with_objdump" ? "objdump" : "rizin";
+        const setting =
+          operation === "inspect_with_objdump"
+            ? "REA_OBJDUMP_COMMAND"
+            : "REA_RIZIN_COMMAND";
+        earlyFailure = new AnalysisCapabilityUnavailableError(
+          "process-ownership",
+          "prepare_owned_process",
+          `Process ownership admission failed (${admissionFailure.code}) before starting ${provider}: ${admissionFailure.message}`,
+          {
+            cause,
+            userMessage: `Process ownership admission failed (${admissionFailure.code}) before starting ${provider}.`,
+            remediationAction: `Process ownership admission failed (${admissionFailure.code}) before starting ${provider}; ${setting} does not need to change.`,
+            diagnostics: {
+              boundary: "process-ownership",
+              system_code: admissionFailure.code,
+            },
+            ...ownedCleanupOptions(cause),
+          },
+        );
+      }
       if (
         earlyFailure === undefined &&
         (capture === undefined ||
@@ -756,7 +791,8 @@ export class ReverseEngineeringService {
     if (earlyFailure !== undefined) {
       if (
         earlyFailure instanceof AnalysisCapabilityUnavailableError &&
-        earlyFailure.diagnostics?.boundary === "provider-launch"
+        earlyFailure.diagnostics?.boundary === "provider-launch" &&
+        earlyFailure.providerId === profile.identity.id
       ) {
         const outcome = this.#outcome(operation);
         if (

@@ -6,6 +6,7 @@ import {
   LinuxOwnedProcessPrerequisiteError,
   systemProcessOwnershipHost,
 } from "../../src/process/ProcessOwnershipObservation.js";
+import { ProcessAdmissionError } from "../../src/process/ProcessAdmissionError.js";
 import { projectAnalysisError } from "../../src/domain/analysisErrorProjection.js";
 import {
   createArtifact,
@@ -311,6 +312,87 @@ it("preserves missing Linux ps prerequisite error without blaming configured com
     expect(service.observedLaunchFailures()).toEqual({});
   } finally {
     prepareSpy.mockRestore();
+    await service.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+it.each(["identity_snapshot_unavailable", "baseline_unavailable"] as const)(
+  "preserves Linux process ownership admission failure in baseline capture (%s) without blaming objdump command",
+  async (code) => {
+    const { directory } = await createArtifact();
+    const command = resolve(directory, "configured-objdump");
+    const captureSpy = vi
+      .spyOn(systemProcessOwnershipHost, "captureBaseline")
+      .mockRejectedValue(
+        new ProcessAdmissionError(
+          code,
+          code === "identity_snapshot_unavailable"
+            ? { live_processes: 2 }
+            : undefined,
+        ),
+      );
+    const service = new TestReverseEngineeringService({
+      environment: { REA_OBJDUMP_COMMAND: command },
+    });
+    try {
+      const result = await service.inspectWithObjdump({
+        operation: "architectures",
+      });
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        const projected = projectAnalysisError(result.error);
+        expect(projected.code).toBe("capability_unavailable");
+        expect(projected.details).toMatchObject({
+          provider_id: "process-ownership",
+        });
+        expect(projected.message).toContain(code);
+        expect(projected.remediation.action).toContain(
+          "REA_OBJDUMP_COMMAND does not need to change",
+        );
+      }
+      expect(service.observedLaunchFailures()).toEqual({});
+    } finally {
+      captureSpy.mockRestore();
+      await service.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);
+
+it("preserves Linux process ownership admission failure in baseline capture without blaming rizin command", async () => {
+  const { directory, path } = await createArtifact();
+  const command = resolve(directory, "configured-rizin");
+  const captureSpy = vi
+    .spyOn(systemProcessOwnershipHost, "captureBaseline")
+    .mockRejectedValue(
+      new ProcessAdmissionError("identity_snapshot_unavailable", {
+        live_processes: 1,
+      }),
+    );
+  const service = new TestReverseEngineeringService({
+    environment: { REA_RIZIN_COMMAND: command },
+  });
+  try {
+    const result = await service.executeRizinCommand({
+      path,
+      command: "iI",
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      const projected = projectAnalysisError(result.error);
+      expect(projected.code).toBe("capability_unavailable");
+      expect(projected.details).toMatchObject({
+        provider_id: "process-ownership",
+      });
+      expect(projected.message).toContain("identity_snapshot_unavailable");
+      expect(projected.remediation.action).toContain(
+        "REA_RIZIN_COMMAND does not need to change",
+      );
+    }
+    expect(service.observedLaunchFailures()).toEqual({});
+  } finally {
+    captureSpy.mockRestore();
     await service.close();
     await rm(directory, { recursive: true, force: true });
   }
