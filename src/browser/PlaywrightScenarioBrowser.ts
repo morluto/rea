@@ -30,6 +30,13 @@ import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { isLiteralLoopbackHostname } from "../domain/browserObservation.js";
 import { BrowserObservationError } from "../domain/browserObservationError.js";
 import {
+  androidChromiumLaunchArgs,
+  androidScenarioTempDirectory,
+  loadPlaywrightCore,
+  nonemptyEnvironmentValue,
+  publishAndroidPlaywrightBrowsersPath,
+} from "./androidPlaywrightHost.js";
+import {
   absoluteCallerPath,
   appendCallerPath,
 } from "../filesystem/callerPath.js";
@@ -347,52 +354,6 @@ const acquireAttachedScenario = (
       }
     }
   });
-};
-
-const nonemptyEnvironmentValue = (
-  environment: Readonly<Record<string, string | undefined>>,
-  name: string,
-): string | undefined => {
-  const value = environment[name];
-  return value === undefined || value.length === 0 ? undefined : value;
-};
-
-/**
- * Android's `/tmp` belongs to the shell user, so a Termux process cannot create
- * a Chromium profile there. A caller-selected temp directory wins; otherwise
- * the Termux prefix temp directory is the writable location.
- */
-const androidScenarioTempDirectory = (
-  environment: Readonly<Record<string, string | undefined>>,
-): string | undefined => {
-  if (process.platform !== "android") return undefined;
-  const explicit = ["TMPDIR", "TMP", "TEMP"]
-    .map((name) => nonemptyEnvironmentValue(environment, name))
-    .find((value) => value !== undefined);
-  if (explicit !== undefined) return explicit;
-  const prefix = nonemptyEnvironmentValue(environment, "PREFIX");
-  return prefix === undefined ? undefined : appendCallerPath(prefix, "tmp");
-};
-
-/**
- * Playwright 1.58.2 throws `Unsupported platform: android` while resolving
- * its browser cache unless `PLAYWRIGHT_BROWSERS_PATH` is already set. The
- * path is process-wide, so it is published once from the first writable
- * Android temp directory and left for later launches.
- */
-const publishAndroidPlaywrightBrowsersPath = async (
-  directory: string | undefined,
-): Promise<void> => {
-  if (
-    process.platform !== "android" ||
-    directory === undefined ||
-    nonemptyEnvironmentValue(process.env, "PLAYWRIGHT_BROWSERS_PATH") !==
-      undefined
-  )
-    return;
-  const browsersPath = appendCallerPath(directory, "ms-playwright");
-  await mkdir(browsersPath, { recursive: true });
-  process.env.PLAYWRIGHT_BROWSERS_PATH = browsersPath;
 };
 
 const TERMUX_CHROMIUM_WRAPPERS = new Set(["chromium", "chromium-browser"]);
@@ -980,7 +941,7 @@ export const openPlaywrightScenarioBrowser = async (
     );
   // Load Playwright only when a scenario opens; MCP startup stays off its module graph.
   const launcher =
-    options.launcher ?? (await import("playwright-core")).chromium;
+    options.launcher ?? (await loadPlaywrightCore(environment)).chromium;
   const commandTimeoutMs = scenarioCommandTimeoutMs(scenario);
   if (scenario.browser.mode === "connect")
     return openAttachedScenarioBrowser(
@@ -1005,6 +966,7 @@ export const openPlaywrightScenarioBrowser = async (
   );
   const headless = scenario.browser.headless;
   const chromiumSandbox = chromiumSandboxEnabled(environment);
+  const launchArgs = await androidChromiumLaunchArgs(executablePath);
   let launchStarted = false;
   try {
     await chmod(profilePath, 0o700);
@@ -1038,10 +1000,7 @@ export const openPlaywrightScenarioBrowser = async (
             // the Termux-launched process so scenario navigation remains available.
             // Android has no usable /dev/shm, so shared-memory files stay in the
             // writable temp directory instead of failing the launch.
-            args:
-              process.platform === "android"
-                ? ["--disable-dev-shm-usage", "--single-process"]
-                : [],
+            args: launchArgs,
           }),
         commandTimeoutMs,
         "launch",

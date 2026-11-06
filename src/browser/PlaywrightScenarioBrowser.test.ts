@@ -30,6 +30,7 @@ import {
   absoluteCallerPath,
   appendCallerPath,
 } from "../filesystem/callerPath.js";
+import { loadPlaywrightCore } from "./androidPlaywrightHost.js";
 import {
   attachedScenarioLeaseKey,
   failBrowserScenarioOperation,
@@ -526,16 +527,36 @@ it("publishes a writable Playwright browsers path before an Android launch", asy
   );
 });
 
+it("publishes a writable Playwright browsers path before loading Playwright", async () => {
+  const prefix = await createTestTempDirectory("rea-termux-playwright-core-");
+  vi.stubEnv("PLAYWRIGHT_BROWSERS_PATH", "");
+  Object.defineProperty(process, "platform", { value: "android" });
+  await loadPlaywrightCore({
+    PREFIX: prefix,
+    TMPDIR: "",
+    TMP: "",
+    TEMP: "",
+  });
+  expect(process.env.PLAYWRIGHT_BROWSERS_PATH).toBe(
+    appendCallerPath(appendCallerPath(prefix, "tmp"), "ms-playwright"),
+  );
+});
+
 it("launches Termux Chromium from the binary next to its ICU data", async () => {
   const prefix = await createTestTempDirectory("rea-termux-icu-");
   const wrapper = join(prefix, "bin", "chromium-browser");
   const chrome = join(prefix, "lib", "chromium", "chrome");
+  const chromeDirectory = join(prefix, "lib", "chromium");
   await mkdir(join(prefix, "bin"), { recursive: true });
-  await mkdir(join(prefix, "lib", "chromium"), { recursive: true });
+  await mkdir(chromeDirectory, { recursive: true });
   await writeFile(wrapper, "#!/bin/sh\n");
   await writeFile(chrome, "#!/bin/sh\n");
+  await writeFile(join(chromeDirectory, "icudtl.dat"), "icu");
   Object.defineProperty(process, "platform", { value: "android" });
   let executablePath: string | undefined;
+  let launchOptions: Parameters<
+    typeof import("playwright-core").chromium.launchPersistentContext
+  >[1];
   await expect(
     openPlaywrightScenarioBrowser(
       androidLaunchScenario(wrapper),
@@ -547,6 +568,7 @@ it("launches Termux Chromium from the binary next to its ICU data", async () => 
           },
           launchPersistentContext: async (_profile, options) => {
             executablePath = options?.executablePath;
+            launchOptions = options;
             throw new Error("launch boundary reached");
           },
         },
@@ -555,9 +577,17 @@ it("launches Termux Chromium from the binary next to its ICU data", async () => 
   ).rejects.toMatchObject({
     diagnostics: { startup_error: "launch boundary reached" },
   });
-  expect(executablePath).toBe(
-    appendCallerPath(dirname(wrapper), "../lib/chromium/chrome"),
+  const remappedChrome = appendCallerPath(
+    dirname(wrapper),
+    "../lib/chromium/chrome",
   );
+  const icuDirectory = appendCallerPath(dirname(wrapper), "../lib/chromium");
+  expect(executablePath).toBe(remappedChrome);
+  expect(launchOptions?.args).toEqual([
+    "--disable-dev-shm-usage",
+    "--single-process",
+    `--icu-data-dir=${icuDirectory}`,
+  ]);
 });
 
 it.skipIf(process.platform === "win32")(

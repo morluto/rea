@@ -1,4 +1,5 @@
 import { snapshotEnvironment } from "../../process/snapshotEnvironment.js";
+import { loadPlaywrightCore } from "../androidPlaywrightHost.js";
 import {
   chromiumLaunchRemediation,
   chromiumSandboxEnabled,
@@ -74,8 +75,6 @@ interface ModuleResolverBrowser extends Pick<Browser, "version" | "close"> {
 export type ModuleResolverLauncher = (
   options: LaunchOptions,
 ) => Promise<ModuleResolverBrowser>;
-const launch: ModuleResolverLauncher = async (options) =>
-  (await import("playwright-core")).chromium.launch(options);
 
 const moduleResolverFailure = (
   cause: unknown,
@@ -99,12 +98,17 @@ export class NativeModuleResolver implements WebModuleResolutionPort {
   #pendingCleanup: AnalysisCleanupLease | undefined;
 
   readonly environment: Readonly<Record<string, string | undefined>>;
+  readonly launcher: ModuleResolverLauncher;
 
   constructor(
     environment: Readonly<Record<string, string | undefined>>,
-    readonly launcher: ModuleResolverLauncher = launch,
+    launcher?: ModuleResolverLauncher,
   ) {
     this.environment = snapshotEnvironment(environment);
+    this.launcher =
+      launcher ??
+      (async (options) =>
+        (await loadPlaywrightCore(this.environment)).chromium.launch(options));
   }
 
   resolve(
