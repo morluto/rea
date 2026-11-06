@@ -36,6 +36,7 @@ export default defineConfig({
           { text: "PE imports", link: "/pe-imports" },
           { text: "PE TLS/load config", link: "/pe-load-config" },
           { text: "ELF notes", link: "/elf-notes" },
+          { text: "Binary hardening", link: "/binary-hardening" },
           { text: "Apple IPS crash reports", link: "/apple-ips" },
           { text: "Linux kernel modules", link: "/kernel-modules" },
           { text: "CPython pyc files", link: "/python-pyc" },
@@ -76,6 +77,10 @@ export default defineConfig({
           {
             text: "Desktop application tasks",
             link: "/desktop-application-tasks",
+          },
+          {
+            text: "Desktop build computer",
+            link: "/desktop-build-computer",
           },
           { text: ".NET assemblies", link: "/managed-code-analysis" },
           {
