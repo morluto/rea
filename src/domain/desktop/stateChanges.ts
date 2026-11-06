@@ -1,6 +1,7 @@
 import type { JsonValue } from "../jsonValue.js";
 import type { DesktopStateFormat } from "./stateFormats.js";
-import { memberLookup, pairMembers } from "./viewPointer.js";
+import { holdsTagOnly, pairMembers } from "./memberPairing.js";
+import { memberLookup } from "./viewPointer.js";
 import { zipLeavesOut } from "./zipView.js";
 
 const MAX_LISTED = 100;
@@ -76,10 +77,14 @@ interface Noting extends WalkOptions {
 const keyedMembers = (
   from: readonly JsonValue[],
   other: JsonValue | undefined,
-  older: boolean,
+  at: { readonly older: boolean; readonly list: string },
 ) => {
   const others = Array.isArray(other) ? other : [];
-  const pairing = older ? pairMembers(others, from) : pairMembers(from, others);
+  const hold = holdsTagOnly(at.list);
+  const pairing = at.older
+    ? pairMembers(others, from, hold)
+    : pairMembers(from, others, hold);
+  const older = at.older;
   const side = older ? pairing.older : pairing.newer;
   const lookup = memberLookup(other);
   return side.keys.map((key, index) => {
@@ -119,7 +124,10 @@ const walk = (
     path.length -= segment.length + 1;
   };
   if (Array.isArray(from) && into.keyed === true) {
-    const members = keyedMembers(from, other, into.older === true);
+    const members = keyedMembers(from, other, {
+      older: into.older === true,
+      list: path.segments.map((segment) => `/${segment}`).join(""),
+    });
     from.forEach((item, index) => {
       const member = members[index];
       if (member !== undefined) visit(member.key, item, member.counterpart);

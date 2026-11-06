@@ -7,6 +7,7 @@ export const FILE_NOTE_CODES = [
   "long_text",
   "cut_view",
   "unreadable_view",
+  "volatile_lines",
 ] as const;
 
 /** One reason a drafted file's suggestions are thin, with the facts it rests on. */

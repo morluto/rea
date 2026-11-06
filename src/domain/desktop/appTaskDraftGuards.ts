@@ -1,14 +1,18 @@
 import type { JsonValue } from "../jsonValue.js";
 import type { DesktopTaskCheckInput } from "./appTask.js";
 import { sameJson } from "./appTaskChecks.js";
-import { isRenumberedKey, isStamp } from "./appTaskDraftNoise.js";
+import {
+  isCoordinates,
+  isRenumberedKey,
+  isStamp,
+} from "./appTaskDraftNoise.js";
 import { valueEqualsCheck } from "./appTaskDraftScalars.js";
 import { isIdentifyingAttribute, rankAttributes } from "./attributeRank.js";
+import { holdsTagOnly, pairMembers } from "./memberPairing.js";
 import {
   elementText,
   escapeToken,
   isXmlElement,
-  pairMembers,
   resolvePointer,
 } from "./viewPointer.js";
 
@@ -64,12 +68,19 @@ const guardAt = (
   if (before === undefined || after === undefined) return undefined;
   if (check.kind === "text_equals") {
     if (!isXmlElement(before) || !isXmlElement(after)) return undefined;
-    const value = elementText(before);
+    const attribute = check.text_attribute;
+    const value = elementText(before, attribute);
     return value.trim() !== "" &&
-      value === elementText(after) &&
+      value === elementText(after, attribute) &&
       value.length <= context.chars &&
       !isStamp(value)
-      ? { kind: "text_equals", file, pointer, value }
+      ? {
+          kind: "text_equals",
+          file,
+          pointer,
+          value,
+          ...(attribute === undefined ? {} : { text_attribute: attribute }),
+        }
       : undefined;
   }
   return typeof before !== "object" &&
@@ -120,7 +131,7 @@ const siblingsOf = (
     (item) => isXmlElement(item) && item.name === member.name,
   );
   if (likes.length === 0) return { siblings: [], all };
-  const pairing = pairMembers(newer, older);
+  const pairing = pairMembers(newer, older, holdsTagOnly(step.list));
   return {
     siblings: likes.flatMap(({ index }) => {
       const key = pairing.newer.keys[index];
@@ -213,7 +224,7 @@ const guardsFor = (context: GuardContext, check: Suggestion): Suggestion[] => {
  * goes through, nearest first, at its seed value, which the end holds too: the
  * field the check reads where it varies among them, otherwise one that does;
  * never through a sibling paired by position or a renumbered id; at most
- * `MAX_GUARDS` a file, none at a suggested pointer.
+ * `MAX_GUARDS` a file, none at a suggested pointer, coordinates last.
  */
 export const draftGuards = (
   context: GuardContext,
@@ -225,13 +236,14 @@ export const draftGuards = (
   const guards: Suggestion[] = [];
   for (const check of suggested)
     for (const guard of guardsFor(context, check))
-      if (
-        guards.length < MAX_GUARDS &&
-        "pointer" in guard &&
-        !taken.has(guard.pointer)
-      ) {
+      if ("pointer" in guard && !taken.has(guard.pointer)) {
         taken.add(guard.pointer);
         guards.push(guard);
       }
-  return guards;
+  // A coordinate an app may derive says less that the rest stayed than text does.
+  const placed = (guard: Suggestion) =>
+    "value" in guard && isCoordinates(guard.value) ? 1 : 0;
+  return guards
+    .toSorted((left, right) => placed(left) - placed(right))
+    .slice(0, MAX_GUARDS);
 };

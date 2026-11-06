@@ -1,15 +1,9 @@
 import type { JsonValue } from "../jsonValue.js";
 import { isTimestamp, type DesktopTaskCheckInput } from "./appTask.js";
 import { fileNotes, type FileNote } from "./appTaskDraftFileNotes.js";
-import { lineGuards } from "./appTaskDraftLineGuards.js";
-import {
-  ARCHIVE,
-  innermost,
-  namedDraft,
-  presenceValues,
-  XML_FILE,
-  type NamedFacts,
-} from "./appTaskDraftNamed.js";
+import { addedLineChecks, lineGuards } from "./appTaskDraftLineGuards.js";
+import { innermost, namedDraft, type NamedFacts } from "./appTaskDraftNamed.js";
+import { ARCHIVE, presenceValues, XML_FILE } from "./appTaskDraftTree.js";
 import { rowSuggestions } from "./appTaskDraftRows.js";
 import {
   draftValues,
@@ -105,18 +99,29 @@ const textSuggestions = (
   file: string,
   baseline: Version,
   final: Version,
-): Suggestion[] => {
+): { suggestions: Suggestion[]; notes: FileNote[] } => {
   const before = new Set(baseline.present ? linesOf(baseline) : []);
   const after = new Set(linesOf(final));
   const added = [...after].filter((line) => !before.has(line));
   const gone = [...before].filter((line) => !after.has(line));
   const suggestions: Suggestion[] = [];
-  if (added.length > 0 && added.length <= MAX_SUGGESTIONS)
-    suggestions.push({ kind: "lines_present", file, lines: added });
+  const gained =
+    added.length > 0 && added.length <= MAX_SUGGESTIONS
+      ? addedLineChecks(
+          file,
+          {
+            before: baseline.present ? linesOf(baseline) : [],
+            after: linesOf(final),
+          },
+          added,
+        )
+      : { checks: [], notes: [] };
+  suggestions.push(...gained.checks);
+  const result = { suggestions, notes: gained.notes };
   const truncated = [baseline, final].some(
     (version) => isRecord(version.view) && version.view.truncated === true,
   );
-  if (truncated) return suggestions;
+  if (truncated) return result;
   if (gone.length > 0 && gone.length <= MAX_SUGGESTIONS)
     suggestions.push({ kind: "lines_absent", file, lines: gone });
   // A line of digits and punctuation is usually a value a rewrite renumbers, not something the user made.
@@ -124,7 +129,7 @@ const textSuggestions = (
     ({ line }) => /\p{L}/u.test(line),
   ))
     suggestions.push({ kind: "line_count", file, exact: line, equals: n });
-  return suggestions;
+  return result;
 };
 
 /** `group/key` entries of key file views as JSON pointers into the view. */
@@ -151,6 +156,7 @@ interface FileDraft {
   readonly valuesCut: boolean;
   readonly guards: readonly Suggestion[];
   readonly facts?: NamedFacts;
+  readonly notes?: readonly FileNote[];
 }
 
 const NO_VALUES = { values: [], valuesCut: false, guards: [] } as const;
@@ -279,11 +285,16 @@ const suggestedChecks = (
   const created: Suggestion[] = baseline.present
     ? []
     : [{ kind: "file_present", file }];
-  const content: FileDraft =
+  const lines =
     final.format === "text"
+      ? textSuggestions(file, baseline, final)
+      : undefined;
+  const content: FileDraft =
+    lines !== undefined
       ? {
           ...NO_VALUES,
-          suggested: textSuggestions(file, baseline, final),
+          suggested: lines.suggestions,
+          notes: lines.notes,
           guards: baseline.present
             ? lineGuards(file, linesOf(baseline), linesOf(final))
             : [],
@@ -427,7 +438,10 @@ export const draftTaskFiles = (
         values_cut: draft.valuesCut,
         guards: draft.guards,
         notes: drafted
-          ? fileNotes(home, changeShape(change, final), draft.facts)
+          ? [
+              ...fileNotes(home, changeShape(change, final), draft.facts),
+              ...(draft.notes ?? []),
+            ]
           : [],
       };
     }),

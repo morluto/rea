@@ -391,7 +391,8 @@ def _text_view(name: str, text: str, size: int) -> dict:
         if view is not None:
             return view
     lowered = name.lower()
-    if lowered.endswith(XML_SUFFIXES) or trimmed.startswith("<?xml"):
+    # Text that opens with an element is XML if it parses, whatever the file is called, as a Freeplane map.
+    if lowered.endswith(XML_SUFFIXES) or trimmed.startswith("<?xml") or re.match(r"<[A-Za-z_:]", trimmed):
         view = _xml_view(text)
         return _text(text) if view is None else {"format": "xml", "view": view, "truncated": view["truncated"]}
     if _is_keyfile(text):

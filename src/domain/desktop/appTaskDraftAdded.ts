@@ -1,5 +1,5 @@
 import type { JsonValue } from "../jsonValue.js";
-import type { DesktopTaskCheckInput } from "./appTask.js";
+import { collapseWhitespace, type DesktopTaskCheckInput } from "./appTask.js";
 import {
   isRenumberedKey,
   inSplitDate,
@@ -7,19 +7,20 @@ import {
   isVolatileValue,
 } from "./appTaskDraftNoise.js";
 import { valueEqualsCheck } from "./appTaskDraftScalars.js";
-import { holdsFields, wholeTextCheck } from "./appTaskDraftText.js";
+import { holdsFields, isRecordAt, wholeTextCheck } from "./appTaskDraftText.js";
 import {
   isIdentifyingAttribute,
   isViewStateName,
   rankAttributes,
 } from "./attributeRank.js";
+import { pairMembers } from "./memberPairing.js";
 import {
   elementText,
   escapeToken,
   isXmlElement,
-  pairMembers,
   resolvePointer,
 } from "./viewPointer.js";
+import { selectorOf } from "./viewSelector.js";
 
 type Suggestion = DesktopTaskCheckInput;
 
@@ -42,6 +43,8 @@ export interface AddedContext {
   };
   readonly named: (view: JsonValue | null, pointer: string) => boolean;
   readonly chars: number;
+  /** Whether a change at a pointer is noise, which no field check takes. */
+  readonly noisy?: (pointer: string) => boolean;
 }
 
 type Element = Extract<JsonValue, Record<string, JsonValue>> & {
@@ -136,9 +139,22 @@ export const attributeChecks = (
       : [],
   );
   if (copiesSibling(context, pointer, element, own)) return [];
+  // A record's data is in its fields; an attribute every like record holds alike, as GnuCash's `version`, is its format's.
+  const fields = element.children.some(isXmlElement);
+  const list = resolvePointer(ends.final, listOf(pointer));
+  const likes = (Array.isArray(list) ? list : []).filter(
+    (item) =>
+      item !== element && isXmlElement(item) && item.name === element.name,
+  );
+  const everywhere = (key: string, value: string) =>
+    fields &&
+    likes.every(
+      (item) => isXmlElement(item) && attributesOf(item)[key] === value,
+    );
   return rankAttributes(
     own.filter(
       ({ key, value }) =>
+        !everywhere(key, value) &&
         !isStamp(value) &&
         !isVolatileValue(value) &&
         !isViewStateName(key) &&
@@ -195,7 +211,10 @@ export const fieldChecks = (
   element: Element,
 ): Suggestion[] => {
   const { ends, file } = context;
-  if (!holdsFields(element) || likeCount(ends.final, pointer, element.name) < 2)
+  if (
+    !isRecordAt(ends.final, pointer, element) ||
+    likeCount(ends.final, pointer, element.name) < 2
+  )
     return [];
   const at = keptNamedAncestor(context, pointer);
   if (at === undefined) return [];
@@ -213,12 +232,54 @@ export const fieldChecks = (
     .map((value) => ({ kind: "text_contains", file, pointer: at, value }));
 };
 
+/** Each field's text that every like sibling at the end holds in a field of its tag, as Osmo's `<group>None</group>` on every record: a default, not what the user entered. */
+const sharedFields = (
+  { ends }: AddedContext,
+  pointer: string,
+  element: Element,
+) => {
+  const list = resolvePointer(ends.final, listOf(pointer));
+  const likes = (Array.isArray(list) ? list : []).filter(
+    (item) =>
+      item !== element && isXmlElement(item) && item.name === element.name,
+  );
+  const fields = likes.map(
+    (item) =>
+      new Set(
+        (isXmlElement(item) ? item.children : []).flatMap((field) =>
+          isXmlElement(field)
+            ? [`${field.name}\u0000${elementText(field)}`]
+            : [],
+        ),
+      ),
+  );
+  const [first, ...rest] = fields;
+  return new Set(
+    [...(first ?? [])].filter((field) => rest.every((own) => own.has(field))),
+  );
+};
+
+/** The child fields a pointer's last selector names its member by, `[>first_name=Delphine]`, as tag NUL text. */
+const selectorFields = (pointer: string): ReadonlySet<string> =>
+  new Set(
+    (
+      selectorOf(
+        (pointer.split("/").at(-1) ?? "")
+          .replaceAll("~1", "/")
+          .replaceAll("~0", "~"),
+      ) ?? []
+    )
+      .filter(({ prefix }) => prefix === ">")
+      .map(({ key, value }) => `${key}\u0000${value}`),
+  );
+
 /**
  * A check per field of a record added whole to a list that a selector names,
  * as Tellico adds an `<entry id="4">` of `<title>`, `<authors>`, `<publisher>`
  * and `<pub_year>`: each child element a selector names among the record's
  * children, by its whole text as `wholeTextCheck` checks one, at most five;
- * leaving out a field repeating the record's identifier, a date the app
+ * leaving out a field repeating the record's identifier, the field its
+ * selector names it by, a default a like sibling holds too, a date the app
  * stamps in parts, and text that is blank, a time, a volatile value or past
  * the limit. Empty for an element that `holdsFields` says is no record, or
  * that has no like sibling.
@@ -228,40 +289,89 @@ export const recordChecks = (
   pointer: string,
   element: Element,
 ): Suggestion[] => {
-  const { ends, file } = context;
+  const { ends } = context;
   if (
-    !holdsFields(element) ||
+    !isRecordAt(ends.final, pointer, element) ||
     (likeCount(ends.final, pointer, element.name) < 2 &&
       likeCount(ends.baseline, pointer, element.name) === 0)
   )
     return [];
+  return fieldsOf(context, pointer, element, true).slice(0, MAX_FIELD_CHECKS);
+};
+
+/** Whether an element holds an identifier of its own among its descendants, as GnuCash's `<trn:splits>` holds each split's `<split:id>`, so its whole text holds ids a later save makes anew. */
+const holdsIds = (element: Element): boolean =>
+  element.children.some(
+    (child) =>
+      isXmlElement(child) && (ID_FIELD.test(child.name) || holdsIds(child)),
+  );
+
+/** Whether a field is a list of records of one tag, as `<trn:splits>` of `<trn:split>`, whose records are checked field by field instead. */
+const recordList = (field: Element): boolean => {
+  const records = field.children.filter(isXmlElement);
+  return (
+    records.length > 0 &&
+    records.every(
+      (record) => record.name === records[0]?.name && holdsFields(record),
+    )
+  );
+};
+
+/** The checks of a record's fields, as `recordChecks` says; a field that lists records, with `nested`, gives its records' own instead. */
+const fieldsOf = (
+  context: AddedContext,
+  pointer: string,
+  element: Element,
+  nested: boolean,
+): Suggestion[] => {
+  const { ends, file } = context;
   const { keys } = pairMembers(element.children, []).newer;
-  return element.children
-    .flatMap((field, index) => {
-      const key = keys[index] ?? "";
-      const at = `${pointer}/children/${escapeToken(key)}`;
-      if (
-        !isXmlElement(field) ||
-        !key.startsWith("[") ||
-        ID_FIELD.test(field.name) ||
-        inSplitDate(ends.final, at) ||
-        !context.named(ends.final, at)
-      )
-        return [];
-      const value = elementText(field);
-      return value.trim() === "" ||
-        value.length > context.chars ||
-        isStamp(value) ||
-        isVolatileValue(value)
-        ? []
-        : [
-            wholeTextCheck(
-              file,
-              at,
-              { value, children: field.children },
-              undefined,
-            ).check,
-          ];
-    })
-    .slice(0, MAX_FIELD_CHECKS);
+  const skipped = new Set([
+    ...sharedFields(context, pointer, element),
+    ...selectorFields(pointer),
+  ]);
+  return element.children.flatMap((field, index) => {
+    const key = keys[index] ?? "";
+    const at = `${pointer}/children/${escapeToken(key)}`;
+    if (
+      !isXmlElement(field) ||
+      !key.startsWith("[") ||
+      ID_FIELD.test(field.name) ||
+      context.noisy?.(at) === true ||
+      [elementText(field), collapseWhitespace(elementText(field))].some(
+        (text) => skipped.has(`${field.name}\u0000${text}`),
+      ) ||
+      inSplitDate(ends.final, at) ||
+      !context.named(ends.final, at)
+    )
+      return [];
+    if (nested && recordList(field)) {
+      const records = pairMembers(field.children, []).newer.keys;
+      return field.children.flatMap((record, place) =>
+        isXmlElement(record)
+          ? fieldsOf(
+              context,
+              `${at}/children/${escapeToken(records[place] ?? "")}`,
+              record,
+              false,
+            )
+          : [],
+      );
+    }
+    const value = elementText(field);
+    return value.trim() === "" ||
+      value.length > context.chars ||
+      isStamp(value) ||
+      isVolatileValue(value) ||
+      holdsIds(field)
+      ? []
+      : [
+          wholeTextCheck(
+            file,
+            at,
+            { value, children: field.children },
+            undefined,
+          ).check,
+        ];
+  });
 };

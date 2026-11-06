@@ -17,6 +17,7 @@ export const NOISE_REASONS = [
   "volatile",
   "timestamp",
   "upkeep",
+  "layout",
 ] as const;
 export type NoiseReason = (typeof NOISE_REASONS)[number];
 
@@ -71,7 +72,7 @@ const DATE_PART = /^(?:year|month|day|hour|minute|second)$/u;
  * `cdate` and `mdate`, or `created`, `modified`, `saved` or `updated`.
  */
 const BOOKKEEPING =
-  /^[cm]date$|creat(?:ed|ion)|modif(?:ied|ication)|updated|saved|changed|accessed|timestamp/u;
+  /^[cm]date$|creat(?:ed|ion)|modif(?:ied|ication)|updated|saved|changed|accessed|entered|timestamp/u;
 
 const isBookkeeping = (element: Element) =>
   BOOKKEEPING.test(
@@ -155,6 +156,54 @@ const stampedAlong = (elements: readonly Element[]) => {
     return named && isDateInParts(element);
   });
 };
+
+/** A date written whole, as GnuCash's `2026-11-06 08:50:12 +0000`, which `isTimestamp` reads only in ISO 8601's own spelling. */
+const DATE_TEXT = /^\s*\d{4}-\d{2}-\d{2}\b/u;
+
+/** Whether a value is a date under an element bookkeeping names, as GnuCash's `<trn:date-entered><ts:date>…`, or such an element holding one. */
+const stampedWhole = (
+  elements: readonly Element[],
+  value: JsonValue | undefined,
+) =>
+  elements.some(isBookkeeping) &&
+  DATE_TEXT.test(
+    typeof value === "string"
+      ? value
+      : isXmlElement(value)
+        ? elementText(value)
+        : "",
+  );
+
+/** Whether an element holds an id the app assigns, as GnuCash's `<trn:id type="guid">`. */
+const assignedId = (element: Element) =>
+  /^(?:[^:]*:)?id$/iu.test(element.name) &&
+  isRecord(element.attributes) &&
+  element.attributes.type === "guid";
+
+/** Whether text holds a control character other than a tab or line break, or the replacement character, which no user types, as GnuCash's options hold before it fills them. */
+const isGarbled = (value: string) =>
+  [...value].some((character) => {
+    const code = character.codePointAt(0) ?? 0;
+    return (
+      (code < 0x20 && code !== 0x09 && code !== 0x0a && code !== 0x0d) ||
+      code === 0x7f ||
+      code === 0xfffd
+    );
+  });
+
+/** Whether a value is one a program makes: a UUID, an epoch time or garbled text, a count under the metadata, or in or at an id the app assigns. */
+const volatileAt = (
+  elements: readonly Element[],
+  key: string | undefined,
+  value: JsonValue | undefined,
+) =>
+  (typeof value === "string" && (isVolatileValue(value) || isGarbled(value))) ||
+  metadataCount(elements, key, value) ||
+  elements.some(assignedId) ||
+  (isXmlElement(value) && assignedId(value));
+
+/** A container of an app's own bookkeeping slots, as GnuCash's `book:slots`, which it adds to and fills on reopening a book. */
+const isSlots = (element: Element) => /^(?:[^:]*:)?slots$/u.test(element.name);
 
 /** Whether a pointer is a date the app stamps in parts, or inside one. */
 export const inSplitDate = (view: JsonValue | null, pointer: string): boolean =>
@@ -278,6 +327,67 @@ const upkeepOf = (
   };
 };
 
+/** A number, or a list of numbers split by commas or semicolons, as Dia's `6.3225,6.15;12.5775,8.15`. */
+const COORDINATES =
+  /^-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?(?:[,;] ?-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)*$/u;
+
+/** Whether a value is a coordinate or a list of them, which an app may derive rather than its user enter. */
+export const isCoordinates = (value: JsonValue | undefined): boolean =>
+  typeof value === "string" && COORDINATES.test(value.trim());
+
+/** How far above an attribute's element the element whose text changed may sit for the attribute to be its layout. */
+const MAX_LAYOUT_CLIMB = 3;
+
+/**
+ * Attributes holding coordinates that changed inside an element whose text
+ * changed while their own element's did not, as Dia moves and resizes a box
+ * (`obj_pos`, `obj_bb`, `elem_width`) around its new text: layout the app
+ * derives from the edit. The element whose text changed is at most three
+ * levels up and below the root's own children; an attribute of an element
+ * whose own text changed, as a spreadsheet cell's `office:value` beside its
+ * text, is none.
+ */
+const derivedLayout = (
+  change: Pick<DesktopStateDifference, "changed">,
+  ends: Ends,
+) => {
+  const textAt = (view: JsonValue | null, pointer: string) => {
+    const element = resolvePointer(view, pointer);
+    return isXmlElement(element) ? elementText(element) : undefined;
+  };
+  const known = new Map<string, boolean>();
+  const retexted = (pointer: string) => {
+    const before = textAt(ends.baseline, pointer);
+    const found =
+      known.get(pointer) ??
+      (before !== undefined && before !== textAt(ends.final, pointer));
+    known.set(pointer, found);
+    return found;
+  };
+  const layout = new Set(
+    change.changed.filter((pointer) => {
+      const value = resolvePointer(ends.final, pointer);
+      const owner = ownerOfAttribute(pointer);
+      if (
+        attributeKeyOf(pointer) === undefined ||
+        !isCoordinates(value) ||
+        retexted(owner)
+      )
+        return false;
+      const segments = owner.split("/");
+      return Array.from({ length: MAX_LAYOUT_CLIMB }, (_, index) =>
+        segments.slice(0, -2 * (index + 1)).join("/"),
+      ).some(
+        (above) =>
+          /\/children\/[^/]+$/u.test(above) &&
+          above.split("/").at(-3) !== "root" &&
+          retexted(above),
+      );
+    }),
+  );
+  return (pointer: string) => layout.has(pointer);
+};
+
 /**
  * Why each pointer into a file is noise, or undefined when it is not: a tag,
  * attribute or name-like attribute value on its way naming view state, as
@@ -286,8 +396,11 @@ const upkeepOf = (
  * hold whose renumbered attribute changed, as Gnumeric empties a formula cell
  * whose shared expression it renumbers; a UUID or epoch time, or a duration or
  * count under the document's metadata; a time the app stamps, whole or in
- * parts (`inSplitDate`); an attribute an archive entry only gained while
- * another entry holds the edit.
+ * parts (`inSplitDate`), or a date under a tag naming bookkeeping; an id
+ * the app assigns (`type="guid"`), or text of control characters; upkeep, a
+ * change inside an app's `slots` or an attribute an archive entry only
+ * gained while another entry holds the edit; layout an edit's text derived
+ * (`derivedLayout`).
  */
 export const changeNoise = (
   change: Pick<DesktopStateDifference, "added" | "changed" | "removed">,
@@ -321,15 +434,21 @@ export const changeNoise = (
                 pointer === element || pointer.startsWith(`${element}/`),
             )
           ? "renumbered"
-          : (typeof value === "string" && isVolatileValue(value)) ||
-              metadataCount(elements, key, value)
+          : volatileAt(elements, key, value)
             ? "volatile"
-            : isStamp(value ?? null) || stampedAlong(elements)
+            : isStamp(value ?? null) ||
+                stampedAlong(elements) ||
+                stampedWhole(elements, value)
               ? "timestamp"
-              : undefined;
+              : elements.some(isSlots)
+                ? "upkeep"
+                : undefined;
     known.set(pointer, reason);
     return reason;
   };
   const upkeep = upkeepOf(change, ends, base);
-  return (pointer) => base(pointer) ?? (upkeep(pointer) ? "upkeep" : undefined);
+  const layout = derivedLayout(change, ends);
+  return (pointer) =>
+    base(pointer) ??
+    (upkeep(pointer) ? "upkeep" : layout(pointer) ? "layout" : undefined);
 };

@@ -29,7 +29,7 @@ export const draftNoteSchema = z.strictObject({
     .string()
     .optional()
     .describe(
-      "by_position, view_state_only, long_text, cut_view, unreadable_view: the drafted file the note is about.",
+      "by_position, view_state_only, long_text, cut_view, unreadable_view, volatile_lines: the drafted file the note is about.",
     ),
   files: z
     .array(z.strictObject({ file: z.string(), role: z.string() }))

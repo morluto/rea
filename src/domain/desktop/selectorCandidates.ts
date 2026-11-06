@@ -1,4 +1,10 @@
 import type { JsonValue } from "../jsonValue.js";
+import { collapseWhitespace, isTimestamp } from "./appTask.js";
+import {
+  isGeneratedId,
+  isIdentifyingAttribute,
+  rankAttributes,
+} from "./attributeRank.js";
 import { spellCondition, type Condition } from "./viewSelector.js";
 
 const isRecord = (
@@ -12,15 +18,16 @@ const own = (record: Record<string, JsonValue>, key: string) =>
 /**
  * A member's selectors as its name and the ids they are counted by, the
  * number its name is counted by and then the conditions after the name; how
- * many of them, from the first, may key it; and the keys of its attributes
- * that pair, best ranked first, its pairs spelled from the first
- * `MAX_PAIRED`.
+ * many of them, from the first, may key it, and where those by a child's
+ * text start; and the keys of its attributes that pair, best ranked first,
+ * its pairs spelled from the first `MAX_PAIRED`.
  */
 export interface Candidates {
   readonly name: string;
   readonly number: number;
   readonly ids: readonly string[];
   readonly choosable: number;
+  readonly byChild: number;
   readonly pairable: readonly string[];
 }
 
@@ -38,6 +45,61 @@ export const pairSuffix = (first: Attribute, second: Attribute) =>
   first.key < second.key
     ? `${condition(first)}${condition(second)}`
     : `${condition(second)}${condition(first)}`;
+
+/** The longest child text a selector names a member by, and the most nodes read to find it. */
+const MAX_CHILD_TEXT = 64;
+const MAX_CHILD_NODES = 64;
+
+/** An element's text with its whitespace collapsed, as `[>CHILD=VALUE]` reads it; undefined past the bounds. */
+const shortText = (element: JsonValue): string | undefined => {
+  let text = "";
+  let nodes = 0;
+  const pending: JsonValue[] = [element];
+  for (let node = pending.pop(); node !== undefined; node = pending.pop()) {
+    nodes += 1;
+    if (nodes > MAX_CHILD_NODES || text.length > 4 * MAX_CHILD_TEXT)
+      return undefined;
+    if (typeof node === "string") text += node;
+    else if (isRecord(node) && Array.isArray(node.children))
+      for (let index = node.children.length - 1; index >= 0; index -= 1)
+        pending.push(node.children[index] ?? null);
+  }
+  const collapsed = collapseWhitespace(text);
+  return collapsed.length > MAX_CHILD_TEXT ? undefined : collapsed;
+};
+
+/**
+ * The `[>CHILD=VALUE]` conditions that could name an element by a child's
+ * text, best first by `attributeTier`: a name-like tag, as Osmo's
+ * `first_name`, then worded text, then a small integer, then other numbers.
+ * A child whose text is long, blank, a time, or a token or id a program
+ * generates names nothing a later save keeps.
+ */
+export const childConditions = (member: JsonValue): string[] => {
+  const children = isRecord(member) ? own(member, "children") : undefined;
+  const found = (Array.isArray(children) ? children : []).flatMap((child) => {
+    const key = isRecord(child) ? own(child, "name") : undefined;
+    const value = typeof key === "string" ? shortText(child) : undefined;
+    return typeof key === "string" &&
+      value !== undefined &&
+      key !== "" &&
+      !/[=[\]]/u.test(key) &&
+      /[\p{L}\d]/u.test(value) &&
+      !value.includes("][") &&
+      !isTimestamp(value) &&
+      !isGeneratedId(value) &&
+      !/\d{10}/u.test(value)
+      ? [{ key, value }]
+      : [];
+  });
+  return [
+    ...new Set(
+      rankAttributes(found).map(({ key, value }) =>
+        spellCondition({ prefix: ">", key, value }),
+      ),
+    ),
+  ];
+};
 
 /** One version's members, their candidates, and how many members each id names. */
 interface CountedVersion {
@@ -127,4 +189,66 @@ export const countUnspelledPairs = (versions: readonly CountedVersion[]) => {
       for (const id of unspelledPairs(member, attributes, byKey))
         if (spelled(id)) counts.set(id, (counts.get(id) ?? 0) + 1);
     });
+};
+
+/** An identifier that holds its value at both versions and a selector can carry. */
+const keptIdentifier = (
+  after: Record<string, JsonValue>,
+  before: Record<string, JsonValue>,
+  name: string,
+) => {
+  const value = after[name];
+  return typeof value === "string" &&
+    value === before[name] &&
+    !/[=[\]]/u.test(name) &&
+    !value.includes("][") &&
+    !isTimestamp(value)
+    ? condition({ key: name, value })
+    : undefined;
+};
+
+/** Whether an element holds a list, two or more elements of one tag and no text of its own, as Dia's layer its boxes. */
+const isContainer = (member: JsonValue) => {
+  const children = isRecord(member) ? own(member, "children") : undefined;
+  const all = Array.isArray(children) ? children : [];
+  const tags = all.flatMap((child) => {
+    const tag = isRecord(child) ? own(child, "name") : undefined;
+    return typeof tag === "string" ? [tag] : [];
+  });
+  return (
+    new Set(tags).size < tags.length &&
+    all.every((child) => typeof child !== "string" || child.trim() === "")
+  );
+};
+
+/**
+ * A condition that keeps a member its tag alone names its own once the app
+ * adds a sibling of that tag, as Dia adds an empty `Background` layer each
+ * time it reopens a diagram, for a list's container with an identifier, a
+ * kind a document can hold several of: an id both versions hold, which a new
+ * sibling would not share; else a child's text both hold, which an empty one
+ * lacks; else its `name`, which a new one may repeat, as Dia's do. Undefined
+ * when none is there.
+ */
+export const holdingCondition = (
+  newer: JsonValue,
+  older: JsonValue,
+): string | undefined => {
+  const attributesOf = (member: JsonValue) => {
+    const attributes = isRecord(member) ? own(member, "attributes") : undefined;
+    return isRecord(attributes) ? attributes : {};
+  };
+  const [after, before] = [attributesOf(newer), attributesOf(older)];
+  const identifiers = isContainer(newer)
+    ? Object.keys(after).filter(isIdentifyingAttribute)
+    : [];
+  const named = (key: string) => key.toLowerCase() === "name";
+  const theirs = new Set(childConditions(older));
+  const kept = (keys: readonly string[]) =>
+    keys.flatMap((key) => keptIdentifier(after, before, key) ?? [])[0];
+  return identifiers.length === 0
+    ? undefined
+    : (kept(identifiers.filter((key) => !named(key))) ??
+        childConditions(newer).find((spelled) => theirs.has(spelled)) ??
+        kept(identifiers.filter(named)));
 };

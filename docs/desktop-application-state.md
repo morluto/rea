@@ -78,13 +78,18 @@ whether the file was present, the SHA-256 of its retained bytes, and a view:
 | `dconf`   | The `GVariant` header                                                  | Groups whose path names the application, plus the names of the other groups            |
 | `zip`     | A zip local file header, `PK\x03\x04`, whatever the name               | Its file entries in archive order, each with its own format and view                   |
 | `json`    | A `.json` name or a leading `{` or `[` that parses                     | The parsed value, from files up to 4 MiB nested up to 500 levels                       |
-| `xml`     | An XML name or declaration that parses                                 | An element tree (`name`, `attributes`, `children`); text kept exactly, DTDs never read |
+| `xml`     | An XML name, a declaration or a leading element that parses            | An element tree (`name`, `attributes`, `children`); text kept exactly, DTDs never read |
 | `keyfile` | Only `[group]`, `key=value` and comment lines, with at least one group | Groups of `key` → string value, from files up to 4 MiB                                 |
 | `text`    | Other UTF-8 text                                                       | Lines, up to 5,000                                                                     |
 | `binary`  | NUL bytes or invalid UTF-8                                             | None                                                                                   |
 
 A gzip file is read as the document inside it; see
 [compressed documents](#compressed-documents).
+
+Text that opens with an element, such as a Freeplane map's
+`<map version="freeplane 1.7.0">` with no declaration, is XML when the whole
+text is well formed, whatever the file is called, a `.txt` file included;
+otherwise it stays text. The exported verifier makes the same choice.
 
 A JSON value holding a number JavaScript would round, such as an integer above
 2^53, is not read rather than shown rounded.

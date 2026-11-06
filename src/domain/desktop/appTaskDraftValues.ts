@@ -8,7 +8,14 @@ import {
 } from "./appTaskDraftNoise.js";
 import { isIdentifyingAttribute } from "./attributeRank.js";
 import type { DesktopStateDifference } from "./stateChanges.js";
-import { isXmlElement, locatePointer, resolvePointer } from "./viewPointer.js";
+import { holdsFields, isRecordAt } from "./appTaskDraftText.js";
+import { pairMembers, pairedAtSeed } from "./memberPairing.js";
+import {
+  escapeToken,
+  isXmlElement,
+  locatePointer,
+  resolvePointer,
+} from "./viewPointer.js";
 
 /** Why a value's pointer cannot go into a check as it is, or why the value is noise. */
 export const VALUE_NOTES = ["by_position", ...NOISE_REASONS] as const;
@@ -52,7 +59,7 @@ export const draftValueSchema = z.strictObject({
     .enum(VALUE_NOTES)
     .optional()
     .describe(
-      "by_position: no selector names it, so no check can use the pointer; view_state, renumbered, volatile, timestamp or upkeep: noise the app writes, left out of the suggested checks.",
+      "by_position: no selector names it, so no check can use the pointer; view_state, renumbered, volatile, timestamp, upkeep or layout: noise the app writes, left out of the suggested checks.",
     ),
   refers_to: z
     .array(
@@ -208,14 +215,26 @@ const referenceIndex = (view: JsonValue | null) => {
   const index = new Map<string, Map<string, JsonValue[]>>();
   const pending: JsonValue[] = [view];
   for (let node = pending.pop(); node !== undefined; node = pending.pop()) {
-    if (isXmlElement(node))
+    if (isXmlElement(node)) {
       for (const [key, value] of Object.entries(attributesOf(node)))
         if (
           typeof value === "string" &&
           referable(value) &&
-          /^(?:key|id)$/iu.test(key.split(":").at(-1) ?? key)
+          /^(?:key|id)$/iu.test(localOf(key))
         )
           indexUnder(index, value, node);
+      // An id an app keeps as a child's text, as GnuCash's `<act:id type="guid">`, names the element it sits in.
+      for (const child of node.children) {
+        const id = leafText(child);
+        if (
+          isXmlElement(child) &&
+          /^id$/iu.test(localOf(child.name)) &&
+          id !== undefined &&
+          referable(id)
+        )
+          indexUnder(index, id, node);
+      }
+    }
     const children = isXmlElement(node)
       ? node.children
       : Array.isArray(node)
@@ -226,6 +245,36 @@ const referenceIndex = (view: JsonValue | null) => {
     for (const child of children) pending.push(child);
   }
   return index;
+};
+
+/** A name without its namespace prefix. */
+const localOf = (name: string) => name.split(":").at(-1) ?? name;
+
+/** An element's text when it holds only one text node, as `<act:name>Groceries</act:name>`. */
+const leafText = (node: JsonValue): string | undefined => {
+  const [only] = isXmlElement(node) ? node.children : [];
+  return isXmlElement(node) &&
+    node.children.length === 1 &&
+    typeof only === "string"
+    ? only
+    : undefined;
+};
+
+/** An element as a reference shows it: its start tag, and its name where a child holds one, as `<gnc:account version="2.0.0"><act:name>Groceries</act:name>…`. */
+const referenceTag = (
+  element: Record<string, JsonValue> & { name: string },
+) => {
+  const children = isXmlElement(element) ? element.children : [];
+  const named = children.find(
+    (child) =>
+      isXmlElement(child) &&
+      /^(?:name|title|label)$/iu.test(localOf(child.name)) &&
+      leafText(child) !== undefined,
+  );
+  const shown = isXmlElement(named)
+    ? `<${named.name}>${escapeText(leafText(named) ?? "")}</${named.name}>`
+    : "";
+  return `${startTag(element)}${children.length === 0 ? "/>" : `>${shown}…`}`;
 };
 
 /** Whether an attribute's name and an element's tag share a stem, as HomeBank's `payee` and `<pay>`. */
@@ -265,10 +314,7 @@ const referencesFrom = (
       ? {
           ...(attribute === undefined ? {} : { attribute }),
           value,
-          element: cut(
-            `${startTag(element)}${element.children.length === 0 ? "/>" : ">…"}`,
-            VALUE_LIMITS.chars,
-          ),
+          element: cut(referenceTag(element), VALUE_LIMITS.chars),
         }
       : undefined;
   };
@@ -302,19 +348,39 @@ const referencesOf = (
 ): ValueReference[] => {
   const value = resolvePointer(view, pointer);
   if (isXmlElement(value))
-    return Object.entries(attributesOf(value)).flatMap(([key, item]) =>
-      typeof item === "string" &&
-      !isIdentifyingAttribute(key) &&
-      !/^key$/iu.test(key)
-        ? (resolve(item, key, value) ?? [])
-        : [],
-    );
+    return [
+      ...Object.entries(attributesOf(value)).flatMap(([key, item]) =>
+        typeof item === "string" &&
+        !isIdentifyingAttribute(key) &&
+        !/^key$/iu.test(key)
+          ? (resolve(item, key, value) ?? [])
+          : [],
+      ),
+      // A field holding another element's id as its text, as a split's `<split:account>`.
+      ...[value, ...value.children].flatMap((field) => {
+        const text = leafText(field);
+        return isXmlElement(field) &&
+          text !== undefined &&
+          !/^id$/iu.test(localOf(field.name))
+          ? (resolve(text, field.name, value) ?? [])
+          : [];
+      }),
+    ];
   if (typeof value !== "string") return [];
   const segments = pointer.split("/");
   const attribute =
     segments.at(-2) === "attributes" ? attributeKeyOf(pointer) : undefined;
   const owner = resolvePointer(view, segments.slice(0, -2).join("/"));
   return [resolve(value, attribute, owner) ?? []].flat();
+};
+
+/** What a pointer names at the seed; an attribute of a member keyed by its new name, as a renamed layer, read from the member it pairs with there. */
+const seedValue = ({ ends }: ValueContext, pointer: string) => {
+  const key = attributeKeyOf(pointer);
+  const seen = resolvePointer(ends.baseline, pointer);
+  if (seen !== undefined || key === undefined) return seen;
+  const member = pairedAtSeed(ends, pointer.split("/").slice(0, -2).join("/"));
+  return isXmlElement(member) ? member.attributes[key] : undefined;
 };
 
 /** A value's entry, with the references it holds, before any limit. */
@@ -338,13 +404,57 @@ const entryOf = (
   return {
     pointer,
     kind,
-    before:
-      kind === "added" ? null : compactValue(resolvePointer(baseline, pointer)),
+    before: kind === "added" ? null : compactValue(seedValue(context, pointer)),
     after:
       kind === "removed" ? null : compactValue(resolvePointer(final, pointer)),
     ...(note === undefined ? {} : { note }),
     ...(refers.length === 0 ? {} : { refers_to: refers }),
   };
+};
+
+/**
+ * The pointers a value added whole is listed by: a record of text fields in
+ * a list of its kind, as GnuCash's `<gnc:transaction>`, by each of its
+ * fields, and a field that lists such records, as its `<trn:splits>`, by
+ * each record, so the cut on one value never hides a field; anything else
+ * whole, as a document's root or a FreeCAD object of property lists.
+ */
+const fieldsOf = (view: JsonValue | null, pointer: string): string[] => {
+  const value = resolvePointer(view, pointer);
+  const list = resolvePointer(view, pointer.replace(/\/[^/]+$/u, ""));
+  if (
+    !isXmlElement(value) ||
+    !/\/children\/[^/]+$/u.test(pointer) ||
+    !Array.isArray(list) ||
+    list.filter((item) => isXmlElement(item) && item.name === value.name)
+      .length < 2 ||
+    !isRecordAt(view, pointer, value) ||
+    !value.children.some((child) => leafText(child) !== undefined)
+  )
+    return [pointer];
+  const members = (element: JsonValue) => {
+    const { keys } = pairMembers(
+      isXmlElement(element) ? element.children : [],
+      [],
+    ).newer;
+    return (isXmlElement(element) ? element.children : []).flatMap(
+      (child, index) =>
+        isXmlElement(child)
+          ? [{ child, key: escapeToken(keys[index] ?? String(index)) }]
+          : [],
+    );
+  };
+  return members(value).flatMap(({ child, key }) => {
+    const at = `${pointer}/children/${key}`;
+    const records = members(child);
+    return records.length > 0 &&
+      records.every(
+        ({ child: record }) =>
+          record.name === records[0]?.child.name && holdsFields(record),
+      )
+      ? records.map((record) => `${at}/children/${record.key}`)
+      : [at];
+  });
 };
 
 /** How an entry sorts: what a check can name first, then what only position reaches, then noise. */
@@ -386,6 +496,7 @@ export const draftValues = (
   const entries = [
     ...change.added
       .filter((pointer) => context.listed(final, pointer))
+      .flatMap((pointer) => fieldsOf(final, pointer))
       .map((pointer) => entryOf(context, references, pointer, "added")),
     ...change.changed
       .filter((pointer) => context.listed(final, pointer))

@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import type { JsonValue } from "../jsonValue.js";
 import { passing, xml, xmlDraft } from "./appTaskDraft.fixture.js";
-import { pairMembers, resolvePointer } from "./viewPointer.js";
+import { pairMembers } from "./memberPairing.js";
+import { resolvePointer } from "./viewPointer.js";
 
 const FILE = "Documents/doc.xml";
 
@@ -14,9 +15,17 @@ const membersAt = (text: string, pointer: string): JsonValue[] => {
 };
 
 describe("draftTaskFiles for a change only position reaches", () => {
-  /** A sheet as an ODS spreadsheet keeps it: rows no attribute names, each cell's text in a paragraph, and a save counter. */
-  const sheet = (february: string, total: string, cycles: string) =>
-    `<spreadsheet><meta><editing-cycles>${cycles}</editing-cycles></meta><table name="Q1 Sales" style="ta1"><row><cell type="string"><p>Month</p></cell><cell type="string"><p>Sales</p></cell></row><row><cell type="string"><p>February</p></cell><cell type="float" value="${february}"><p>${february}</p></cell></row><row><cell type="string"><p>Total</p></cell><cell type="float" formula="sum" value="${total}"><p>${total}</p></cell></row></table></spreadsheet>`;
+  /** A sheet as an ODS spreadsheet keeps it: rows no attribute names, each cell's text in a paragraph, labelled apart or alike, and a save counter. */
+  const sheet = (
+    february: string,
+    total: string,
+    cycles: string,
+    labelled = false,
+  ) => {
+    const label = (text: string) =>
+      `<cell type="string"><p>${labelled ? text : "Q1"}</p></cell>`;
+    return `<spreadsheet><meta><editing-cycles>${cycles}</editing-cycles></meta><table name="Q1 Sales" style="ta1"><row><cell type="string"><p>Month</p></cell><cell type="string"><p>Sales</p></cell></row><row>${label("February")}<cell type="float" value="${february}"><p>${february}</p></cell></row><row>${label("Total")}<cell type="float" formula="sum" value="${total}"><p>${total}</p></cell></row></table></spreadsheet>`;
+  };
 
   it("checks the whole text of the ancestor above the step by position, by its name, and demotes the noise beside it rather than suggesting it", () => {
     const before = sheet("21300", "59625", "1");
@@ -29,12 +38,40 @@ describe("draftTaskFiles for a change only position reaches", () => {
         kind: "text_equals",
         file: FILE,
         pointer: "/root/children/[name=table][@name=Q1 Sales]",
-        value: "MonthSalesFebruary23100Total61425",
+        value: "MonthSalesQ123100Q161425",
       },
     ]);
     expect(passing(FILE, xml(before), file.suggested)).toEqual([false]);
     expect(passing(FILE, xml(after), file.suggested)).toEqual([true]);
     expect(file.notes.map(({ code }) => code)).not.toContain("view_state_only");
+  });
+
+  it("names a row by its label cell, so the edited cell is checked by name, not the table's whole text", () => {
+    const before = sheet("21300", "59625", "1", true);
+    const after = sheet("23100", "61425", "2", true);
+
+    const file = xmlDraft(before, after);
+
+    const row = (label: string) =>
+      `/root/children/[name=table][>row=MonthSales]/children/[name=row][>cell=${label}]/children/[name=cell][@type=float]`;
+    expect(file.suggested.slice(0, 2)).toEqual([
+      {
+        kind: "text_equals",
+        file: FILE,
+        pointer: row("February"),
+        value: "23100",
+      },
+      {
+        kind: "text_equals",
+        file: FILE,
+        pointer: row("Total"),
+        value: "61425",
+      },
+    ]);
+    expect(passing(FILE, xml(before), file.suggested).some(Boolean)).toBe(
+      false,
+    );
+    expect(passing(FILE, xml(after), file.suggested).every(Boolean)).toBe(true);
   });
 
   it("suggests no noise when position alone reaches the edit and no ancestor's text can take a check", () => {
@@ -100,6 +137,13 @@ describe("identifiers an app numbers by position", () => {
         pointer: `${tasks}[@name=User testing]/name`,
         value: "task",
       },
+      {
+        kind: "member_count",
+        file: FILE,
+        pointer: "/root/children/[name=tasks]/children",
+        matching: "[name=task][@type=normal]",
+        equals: 4,
+      },
     ]);
     expect(file.values.map(({ pointer, note }) => [pointer, note])).toEqual([
       [`${tasks}[@name=User testing]`, undefined],
@@ -116,6 +160,13 @@ describe("identifiers an app numbers by position", () => {
     const tasks = "/root/children/[name=tasks]/children/[name=task]";
     expect(file.suggested).toEqual([
       { kind: "value_absent", file: FILE, pointer: `${tasks}[@name=Design]` },
+      {
+        kind: "member_count",
+        file: FILE,
+        pointer: "/root/children/[name=tasks]/children",
+        matching: "[name=task][@type=normal]",
+        equals: 2,
+      },
     ]);
   });
 
@@ -166,28 +217,41 @@ describe("identifiers an app numbers by position", () => {
 });
 
 describe("an element renamed", () => {
-  /** A painting's layer stack as MyPaint saves it: each layer by name, its pixels in `src`, the one selected flagged. */
-  const stack = (top: string) =>
-    `<image w="800" h="600"><stack>${[
-      [top, "00", "576", "true"],
-      ["Sky", "01", "0", "false"],
-      ["Background", "02", "0", "false"],
-    ]
+  /**
+   * A painting's layer stack as MyPaint saves it: each layer by name, its
+   * pixels in `src`, numbered along the stack as MyPaint 2 writes it or named
+   * by the layer, the one selected flagged; the top layer first, or second.
+   */
+  const stack = (
+    top: string,
+    {
+      numbered = true,
+      moved = false,
+    }: { numbered?: boolean; moved?: boolean } = {},
+  ) => {
+    const layers = [
+      [top, "sun", "576", "true"],
+      ["Sky", "sky", "0", "false"],
+      ["Background", "ground", "0", "false"],
+    ];
+    const order = moved ? [1, 0, 2].map((at) => layers[at] ?? []) : layers;
+    return `<image w="800" h="600"><stack>${order
       .map(
-        ([name, layer, x, selected]) =>
-          `<layer composite-op="svg:src-over" name="${name ?? ""}" opacity="1.0" selected="${selected ?? ""}" src="data/layer-${layer ?? ""}.png" visibility="visible" x="${x ?? ""}" y="0"/>`,
+        ([name, own, x, selected], index) =>
+          `<layer composite-op="svg:src-over" name="${name ?? ""}" opacity="1.0" selected="${selected ?? ""}" src="data/${numbered ? `layer-0${String(index)}` : (own ?? "")}.png" visibility="visible" x="${x ?? ""}" y="0"/>`,
       )
       .join("")}</stack></image>`;
+  };
   const LAYER = "/root/children/[name=stack]/children/[name=layer]";
 
   it("pairs a layer whose name alone changed, at its place among the layers, by another attribute naming it alone rather than the one selected", () => {
     const layers = (top: string) =>
-      membersAt(stack(top), "/root/children/0/children");
+      membersAt(stack(top, { numbered: false }), "/root/children/0/children");
 
     const pairing = pairMembers(layers("Sun"), layers("Untitled"));
 
     const keys = [
-      "[name=layer][@src=data/layer-00.png]",
+      "[name=layer][@src=data/sun.png]",
       "[name=layer][@name=Sky]",
       "[name=layer][@name=Background]",
     ];
@@ -197,14 +261,25 @@ describe("an element renamed", () => {
     });
   });
 
-  it("checks the renamed layer's new name by the attribute that names it, and that the old name names nothing", () => {
+  it("keys a renamed layer by each version's own name where the attribute pairing it numbers the layers in order, as MyPaint's src", () => {
+    const layers = (top: string) =>
+      membersAt(stack(top), "/root/children/0/children");
+
+    const pairing = pairMembers(layers("Sun"), layers("Untitled"));
+
+    expect(pairing.newer.keys[0]).toBe("[name=layer][@name=Sun]");
+    expect(pairing.older.keys[0]).toBe("[name=layer][@name=Untitled]");
+    expect(pairing.newer.partners).toEqual([0, 1, 2]);
+  });
+
+  it("checks the renamed layer's new name by the attribute that names it, and that the old name names nothing, though a later save moves it", () => {
     const file = xmlDraft(stack("Untitled"), stack("Sun"));
 
     expect(file.suggested).toEqual([
       {
         kind: "value_equals",
         file: FILE,
-        pointer: `${LAYER}[@src=data~1layer-00.png]/attributes/name`,
+        pointer: `${LAYER}[@name=Sun]/attributes/name`,
         value: "Sun",
       },
       {
@@ -213,14 +288,30 @@ describe("an element renamed", () => {
         pointer: `${LAYER}[@name=Untitled]`,
       },
     ]);
+    expect(file.values).toMatchObject([
+      { kind: "changed", before: "Untitled", after: "Sun" },
+    ]);
+    // The move renumbers every src, which a check by src would have failed.
     expect(
-      [stack("Untitled"), stack("Sun"), stack("Moon")].map((text) =>
-        passing(FILE, xml(text), file.suggested),
-      ),
+      [
+        stack("Untitled"),
+        stack("Sun"),
+        stack("Moon"),
+        stack("Sun", { moved: true }),
+      ].map((text) => passing(FILE, xml(text), file.suggested)),
     ).toEqual([
       [false, false],
       [true, true],
       [false, true],
+      [true, true],
     ]);
+    // No layer added or removed is a guard at the unchanged count.
+    expect(file.guards.at(-1)).toEqual({
+      kind: "member_count",
+      file: FILE,
+      pointer: "/root/children/[name=stack]/children",
+      matching: "[name=layer]",
+      equals: 3,
+    });
   });
 });

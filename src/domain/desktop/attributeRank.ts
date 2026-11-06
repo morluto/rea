@@ -24,6 +24,14 @@ const STYLE_NAME = /(?:style|font|family|class|type)-?name$/u;
 const HEX_TOKEN = /^[0-9a-f-]{8,}$/iu;
 const LONG_TOKEN = /^(?=.*\d)[A-Za-z0-9+/=_-]{16,}$/u;
 
+/** Whether a value is a word a program makes, a hex run, UUID or long token, rather than one a user typed. */
+export const isGeneratedToken = (value: string): boolean =>
+  HEX_TOKEN.test(value) || LONG_TOKEN.test(value);
+
+/** Whether an identifier's value is one an app generates for a new element, as Freeplane's `ID_329023692` or a GUID, which another save of the same edit would not repeat. */
+export const isGeneratedId = (value: string): boolean =>
+  /^[A-Za-z]*[_-]?\d{6,}$/u.test(value) || isGeneratedToken(value);
+
 /** Whether a key names what its element is called rather than a style or font it uses. */
 export const isNameLikeKey = (key: string): boolean => {
   const local = localName(key);
@@ -40,8 +48,7 @@ export const isNameLikeKey = (key: string): boolean => {
 export const attributeTier = (key: string, value: string): 0 | 1 | 2 | 3 => {
   if (isViewStateName(key)) return 3;
   if (isNameLikeKey(key)) return 0;
-  if (/\p{L}/u.test(value) && !HEX_TOKEN.test(value) && !LONG_TOKEN.test(value))
-    return 1;
+  if (/\p{L}/u.test(value) && !isGeneratedToken(value)) return 1;
   return /^-?\d{1,5}$/u.test(value) ? 2 : 3;
 };
 

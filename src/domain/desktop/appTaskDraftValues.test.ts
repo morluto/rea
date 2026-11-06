@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 
-import { draftOf, statePath, xml, xmlDraft } from "./appTaskDraft.fixture.js";
+import {
+  draftOf,
+  passing,
+  pointerOf,
+  statePath,
+  xml,
+  xmlDraft,
+} from "./appTaskDraft.fixture.js";
 import { draftValues } from "./appTaskDraftValues.js";
 import { resolvePointer } from "./viewPointer.js";
 import { zipEntry, zipView } from "./zipView.js";
@@ -327,5 +334,131 @@ describe("draftTaskFiles values of a file created or deleted", () => {
     expect(
       new TextEncoder().encode(JSON.stringify(file?.values)).length,
     ).toBeLessThanOrEqual(8 * 1024);
+  });
+});
+
+describe("draftTaskFiles for a transaction added to a book, as GnuCash saves one", () => {
+  const GROCERIES = "98f0ee4c216a43e290133637df088843";
+  const CHECKING = "63fd8736eb444c57803945f330e68a28";
+  const account = (name: string, id: string) =>
+    `<gnc:account version="2.0.0"><act:name>${name}</act:name><act:id type="guid">${id}</act:id></gnc:account>`;
+  const split = (id: string, value: string, to: string) =>
+    `<trn:split><split:id type="guid">${id}</split:id><split:reconciled-state>n</split:reconciled-state><split:value>${value}</split:value><split:account type="guid">${to}</split:account></trn:split>`;
+  /** A transaction: its id, currency, dates, description, a slot the app keeps and its splits. */
+  const transaction = (
+    [id, description, posted, entered]: readonly string[],
+    splits: string,
+  ) =>
+    `<gnc:transaction version="2.0.0"><trn:id type="guid">${id ?? ""}</trn:id><trn:currency><cmdty:id>USD</cmdty:id></trn:currency><trn:date-posted><ts:date>${posted ?? ""}</ts:date></trn:date-posted><trn:date-entered><ts:date>${entered ?? ""}</ts:date></trn:date-entered><trn:description>${description ?? ""}</trn:description><trn:slots><slot><slot:key>date-posted</slot:key></slot></trn:slots><trn:splits>${splits}</trn:splits></gnc:transaction>`;
+  const CORNER = transaction(
+    [
+      "1b4e2dae15ea45c5889105a7ae939e04",
+      "Corner Grocer",
+      "2026-10-16 10:59:00 +0000",
+      "2026-11-06 08:49:09 +0000",
+    ],
+    split("0aa0a2a505ac40dd9c74f0abfe7e0ca1", "5275/100", GROCERIES) +
+      split("954a27fff0ad4d54a9a6f26436a60c54", "-5275/100", CHECKING),
+  );
+  const greenleaf = (ids: readonly string[], entered: string) =>
+    transaction(
+      [ids[0] ?? "", "Greenleaf Market", "2026-11-03 10:59:00 +0000", entered],
+      split(ids[1] ?? "", "6348/100", GROCERIES) +
+        split(ids[2] ?? "", "-6348/100", CHECKING),
+    );
+  /** A book: options GnuCash fills on reopening, from control bytes to an id, its accounts and transactions. */
+  const gnucash = (option: string, added: string, slots = "") =>
+    `<gnc-v2 xmlns:gnc="g" xmlns:act="a" xmlns:trn="t" xmlns:split="s" xmlns:ts="ts" xmlns:cmdty="c" xmlns:slot="sl" xmlns:book="b"><gnc:book version="2.0.0"><book:slots><slot><slot:key>Default Customer TaxTable</slot:key><slot:value type="guid">${option}</slot:value></slot>${slots}</book:slots>${account("Groceries", GROCERIES)}${account("Checking Account", CHECKING)}${CORNER}${added}</gnc:book></gnc-v2>`;
+  const SEED = gnucash("??\u007f", "");
+  const END = gnucash(
+    "99471669fefd47b7b6eb2131be4e6d00",
+    greenleaf(
+      [
+        "a893ecc337254562a3b167b4534dc020",
+        "c05c3906b2634257883cbf894462acc1",
+        "d15c3906b2634257883cbf894462acc2",
+      ],
+      "2026-11-06 08:53:08 +0000",
+    ),
+    "<slot><slot:key>remove-color-not-set-slots</slot:key></slot>",
+  );
+  const TRANSACTION =
+    "/root/children/[name=gnc:book]/children/[name=gnc:transaction][>trn:description=Greenleaf Market]";
+
+  it("names the transaction by its description, checks what the user entered under it, counts the transactions, and suggests none of what the app stamps or keeps", () => {
+    const file = xmlDraft(SEED, END);
+
+    expect(
+      file.suggested.map((check) => [
+        check.kind,
+        pointerOf(check)?.replace(TRANSACTION, "~"),
+      ]),
+    ).toEqual([
+      ["text_equals", "~/children/[name=trn:date-posted]"],
+      [
+        "text_equals",
+        "~/children/[name=trn:splits]/children/[name=trn:split][>split:value=6348~1100]/children/[name=split:account]",
+      ],
+      [
+        "text_equals",
+        "~/children/[name=trn:splits]/children/[name=trn:split][>split:value=-6348~1100]/children/[name=split:account]",
+      ],
+      ["member_count", "/root/children/[name=gnc:book]/children"],
+    ]);
+    // Another save of the same entry: new ids, another time entered.
+    const later = gnucash(
+      "11471669fefd47b7b6eb2131be4e6d01",
+      greenleaf(
+        [
+          "b893ecc337254562a3b167b4534dc021",
+          "e05c3906b2634257883cbf894462acc3",
+          "f15c3906b2634257883cbf894462acc4",
+        ],
+        "2026-11-09 14:02:41 +0000",
+      ),
+    );
+    expect(passing("Documents/doc.xml", xml(SEED), file.suggested)).toEqual([
+      false,
+      false,
+      false,
+      false,
+    ]);
+    expect(
+      passing("Documents/doc.xml", xml(later), file.suggested).every(Boolean),
+    ).toBe(true);
+  });
+
+  it("lists the transaction field by field and each split whole, naming the account a split's text refers to, and notes the app's ids, entry time and slots", () => {
+    const file = xmlDraft(SEED, END);
+
+    const listed = file.values.map(({ pointer, note, refers_to }) => [
+      pointer.replace(TRANSACTION, "~"),
+      note ?? null,
+      refers_to?.map(({ element }) => element) ?? null,
+    ]);
+    expect(listed).toEqual(
+      expect.arrayContaining([
+        ["~/children/[name=trn:description]", null, null],
+        [
+          "~/children/[name=trn:splits]/children/[name=trn:split][>split:value=6348~1100]",
+          null,
+          ['<gnc:account version="2.0.0"><act:name>Groceries</act:name>…'],
+        ],
+        [
+          "~/children/[name=trn:splits]/children/[name=trn:split][>split:value=-6348~1100]",
+          null,
+          [
+            '<gnc:account version="2.0.0"><act:name>Checking Account</act:name>…',
+          ],
+        ],
+        ["~/children/[name=trn:id]", "volatile", null],
+        ["~/children/[name=trn:date-entered]", "timestamp", null],
+        ["~/children/[name=trn:slots]/children/[name=slot]", "upkeep", null],
+      ]),
+    );
+    const slots = file.values.filter(({ pointer }) =>
+      pointer.includes("[name=book:slots]"),
+    );
+    expect(slots.map(({ note }) => note)).toEqual(["upkeep", "upkeep"]);
   });
 });

@@ -247,21 +247,62 @@ const recordLike = (value: JsonValue | undefined): boolean =>
 const TEXT_TAG = /^(?:p|h|h[1-6]|para|simpara|li|text|tspan|span|a)$/u;
 
 /**
+ * A tag of inline formatting, by its local name: bold, italic and the like,
+ * a span, link or code run, or Gnote's `size:` and `link:` runs. A record
+ * whose fields are only such, as `<list-item><bold>olive oil</bold>`, is text.
+ */
+const INLINE_TAG =
+  /^(?:b|i|u|s|em|strong|bold|italic|underline|strikethrough|emphasis|span|a|code|sub|sup|small|big|mark|font|tt|monospace|highlight|link)$/u;
+const INLINE_PREFIX = /^(?:size|link):/u;
+
+const isInline = (name: string) =>
+  INLINE_PREFIX.test(name) ||
+  INLINE_TAG.test((name.split(":").at(-1) ?? name).toLowerCase());
+
+/**
  * Whether an element holds fields: only elements, layout whitespace aside, as
  * Tellico's `<entry>` holds `<title>` and `<publisher>`, or a record holds
  * repeated `<field>` elements, whatever they are called; unless it is text
- * made of runs: its tag names a paragraph or other text (`TEXT_TAG`), or a
- * child's text opens or closes with whitespace, as a sentence splits into
- * runs, `Meet ` and a linked `Monday`, where a field holds a value whole.
+ * made of runs: its tag names a paragraph or other text (`TEXT_TAG`), its
+ * elements are all inline formatting (`INLINE_TAG`), or a child's text opens
+ * or closes with whitespace, as a sentence splits into runs, `Meet ` and a
+ * linked `Monday`, where a field holds a value whole.
  */
 export const holdsFields = (value: JsonValue | undefined): boolean =>
   recordLike(value) &&
   isXmlElement(value) &&
   !TEXT_TAG.test(value.name.split(":").at(-1) ?? value.name) &&
+  !value.children.every(
+    (child) => !isXmlElement(child) || isInline(child.name),
+  ) &&
   !value.children.some((child) => {
     const text = isXmlElement(child) ? elementText(child) : "";
     return text.trim() !== "" && text.trim() !== text;
   });
+
+/** Whether an element at a pointer sits in a paragraph or other text, an ancestor's tag naming one (`TEXT_TAG`), as Word's `<w:r>` run in its `<w:p>`. */
+const inText = (view: JsonValue | null, pointer: string): boolean => {
+  for (
+    let parent = parentOf(pointer);
+    parent !== undefined;
+    parent = parentOf(parent)
+  ) {
+    const element = resolvePointer(view, parent);
+    if (
+      isXmlElement(element) &&
+      TEXT_TAG.test(element.name.split(":").at(-1) ?? element.name)
+    )
+      return true;
+  }
+  return false;
+};
+
+/** Whether an element at a pointer is a record: it `holdsFields`, and sits in no paragraph, where it is a run of its text. */
+export const isRecordAt = (
+  view: JsonValue | null,
+  pointer: string,
+  value: JsonValue | undefined,
+): boolean => holdsFields(value) && !inText(view, pointer);
 
 /**
  * Whether the kept ancestor of a record added or removed whole is a list of
@@ -269,8 +310,18 @@ export const holdsFields = (value: JsonValue | undefined): boolean =>
  * holds no text of its own, and another element of that tag with text that
  * both ends hold alike, as Tellico's `<collection>` holds the other entries.
  */
-const listOf = (holder: string, element: JsonValue, ends: Ends) => {
-  if (!isXmlElement(element) || !holdsFields(element) || mixedAt(holder, ends))
+const listOf = (
+  holder: string,
+  pointer: string,
+  element: JsonValue,
+  ends: Ends,
+) => {
+  if (
+    !isXmlElement(element) ||
+    !isRecordAt(ends.final, pointer, element) ||
+    !isRecordAt(ends.baseline, pointer, element) ||
+    mixedAt(holder, ends)
+  )
     return false;
   const like = (view: JsonValue | null) => {
     const list = resolvePointer(view, holder);
@@ -320,7 +371,8 @@ const textHolder = (
 ) => {
   const kept = keptAncestor(pointer, ends);
   const unnamed = removed && /^\d+$/u.test(pointer.split("/").at(-1) ?? "");
-  const listed = kept !== undefined && !unnamed && listOf(kept, element, ends);
+  const listed =
+    kept !== undefined && !unnamed && listOf(kept, pointer, element, ends);
   return { holder: listed ? undefined : kept, listed };
 };
 

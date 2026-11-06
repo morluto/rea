@@ -78,7 +78,8 @@ See [desktop builds](https://github.com/morluto/rea/blob/main/.agents/skills/rev
    the values the change added, changed and removed with what each was and
    became, at the pointer a check names it by; suggested checks with a
    placeholder prompt; and `guards`, optional checks that the rest kept its
-   seed values. The draft's
+   seed values: like siblings' fields, each line kept beside new text, and
+   the count of a list whose members were only edited. The draft's
    [task section](desktop-application-tasks.md#describe-the-change) describes
    each. `notes`, each with a `code` and a `message`, say why a draft has no
    files: `no_change` when no file under the home changed between them and
@@ -92,7 +93,8 @@ See [desktop builds](https://github.com/morluto/rea/blob/main/.agents/skills/rev
    changed is unknown; and `no_document` when no file has the document role.
    `unowned_changes` and `no_document` point at `state_paths`. They also say,
    for a drafted `file`, why its suggestions are thin: `by_position`,
-   `view_state_only`, `long_text`, `cut_view` or `unreadable_view`.
+   `view_state_only`, `long_text`, `cut_view`, `unreadable_view` or
+   `volatile_lines`.
 6. Write the task: its name, the prompt in the user's own words, and checks
    that hold after the change and not on the seed, from the suggestions,
    `values` and any `guards` worth keeping.

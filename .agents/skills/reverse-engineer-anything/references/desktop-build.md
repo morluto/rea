@@ -130,6 +130,18 @@ the first source that has the app:
 - Dismiss first-run dialogs, such as a welcome screen, before `seed`. A
   choice the app saves only later, such as Inkscape's "show this every
   time", may not reach the seed, so expect the dialog in the witness too.
+- Some apps write their settings late: Freeplane writes
+  `~/.config/freeplane/1.7.x/auto.properties` only once Preferences is
+  confirmed, and a seed without it reopens its documentation map. Before
+  `seed`, open the app's preferences and confirm them, then read a probe
+  checkpoint's `changed_files` to see the settings file written.
+- Before `seed`, click into the document to clear any selection the app
+  would save: Gnote saves its cursor and selection with the note.
+- An app whose state folder is named after it, such as
+  `~/.local/share/gnote`, is found without `state_paths`.
+- After an app crashes, capture again on a fresh computer, so the seed
+  carries no crash-recovery state, such as MyPaint's "Recover interrupted
+  work?".
 - Give what the task changes a stable name where the app has one, such as an
   id in Inkscape's Object Properties, so a check can select it.
 - Expect apps to split text into runs: Writer's revision ids split an
@@ -137,6 +149,13 @@ the first source that has the app:
   `P1`, and AbiWord wraps each insertion in `<c>`. Check such text whole
   with `text_equals` (see Write the task), and find the paragraph by
   something the edit keeps, such as AbiWord's `xid`.
+- Freeplane's first launch opens a documentation map: close it with Ctrl+W.
+  Its Ctrl+N asks for a template.
+- MyPaint 2.0.1 crashes on brush strokes on the build computer: build its
+  seed with flood fill and layer operations.
+- GnuCash's Ctrl+S on a new book opens a Save dialog with no format choice:
+  use File > Save As to pick XML. Close the book (File > New File) before
+  `seed`, so its `.LCK` lock is not seeded.
 
 ## Build the seed and the edit
 
@@ -186,7 +205,8 @@ the first source that has the app:
    - The app's own compressed format works when it is gzip, such as
      Gnumeric's `.gnumeric`, Dia's `.dia` or Inkscape's `.svgz`: REA reads
      the document inside, and checks point into it as into the same
-     document uncompressed. A format REA reads as binary, such as one
+     document uncompressed. Compression may be off by default: Dia's
+     "Compress diagram files" is unticked, which REA reads as plain XML. A format REA reads as binary, such as one
      compressed with xz, has no view: save in a format the app offers that
      REA reads, then reopen the file once and check that a plain Ctrl+S
      keeps that format.
@@ -258,7 +278,7 @@ Write `{"name", "prompt", "checks"}` from the draft and what you did.
   naming `<cat key="44" name="Groceries"/>`; use it for the prompt's words.
   Skip entries whose `note` is `by_position` (no check can use that
   pointer) or noise (`view_state`, `renumbered`, `volatile`,
-  `timestamp`, `upkeep`). `values_cut` means a limit left some out.
+  `timestamp`, `upkeep`, `layout`). `values_cut` means a limit left some out.
 - Select elements by what they hold, never by position: SVG text by id,
   `/root/children/[name=g][@inkscape:label=Layer 1]/children/[name=text][@id=headline]/children/[name=tspan]/children/0`,
   or an ODF paragraph by style,
@@ -281,14 +301,16 @@ Write `{"name", "prompt", "checks"}` from the draft and what you did.
   unchanged element is in `draft.guards` when it is a like sibling of a
   changed one, and otherwise use the app's usual numbering, such as another
   paragraph's `xid`, and let the export confirm it.
-- In an ODS spreadsheet no attribute names a row or a cell. Name the sheet
-  in the seed, and check its whole text: `text_equals` on
+- In an ODS spreadsheet no attribute names a row: the draft names it by its
+  label cell, `[name=table:table-row][>table:table-cell=February]`. Where no
+  cell names it alone, name the sheet in the seed, and check its whole
+  text: `text_equals` on
   `/entries/[name=content.xml]/view/root/children/[name=office:body]/children/[name=office:spreadsheet]/children/[name=table:table][@table:name=Q1 Sales]`,
   or a stretch of it with `text_contains`. Cell texts join with nothing
   between, so a row reads `February23100`.
 - For a line added to free text, such as an item on a note's list, the
   draft suggests `text_contains` of the new line, which passes however the
-  app spaces or orders it, and a guard that the old text is still there.
+  app spaces or orders it, and a guard per line it kept.
 - Some apps keep text in an attribute, one element per run, such as
   Scribus's `<ITEXT CH=...>`: add `"text_attribute": "CH"` to `text_equals`
   or `text_contains` on the frame,

@@ -142,6 +142,27 @@ describe("XML with a DOCTYPE in the exported module", () => {
     });
   });
 
+  it("reads text that opens with an element as XML when it is well formed, whatever the file is called, alike in both", async () => {
+    const saved = (name: string, text: string) => ({
+      name,
+      bytes: new TextEncoder().encode(text),
+    });
+    const files = [
+      saved(
+        "weekend-trip.mm",
+        '<map version="freeplane 1.7.0">\n<node TEXT="Weekend Trip" ID="ID_1"><node TEXT="Packing" ID="ID_2"/></node>\n</map>\n',
+      ),
+      saved("notes.txt", "<b>bold</b> and <i>italic</b>\n"),
+      saved("plain.txt", "  <todo><item>milk</item></todo>\n"),
+    ];
+    await expectSameFileViews(files);
+
+    const formats = await Promise.all(
+      files.map(async (file) => (await typescriptFileView(file)).format),
+    );
+    expect(formats).toEqual(["xml", "text", "xml"]);
+  });
+
   it("never reads the DTD a DOCTYPE names: neither its entities nor its default attributes apply", async () => {
     const folder = await createTestTempDirectory("desktop-xml-dtd-");
     const dtd = join(folder, "a.dtd");

@@ -27,30 +27,37 @@ describe("draftTaskFiles guards", () => {
   const frame = (name: string) =>
     `/root/children/[name=DOCUMENT]/children/[name=PAGEOBJECT][@ANNAME=${name}]/children/[name=StoryText]/children/[name=ITEXT]/attributes/CH`;
 
-  it("offers the field a check reads on the nearest like siblings, at its seed value, outside the suggestions", () => {
+  it("offers the text a check reads on the nearest like siblings, at its seed value, outside the suggestions, and their count", () => {
     const before = flyer("Riverside Jazz Night");
     const after = flyer("Harbor Lights Jazz Festival");
 
     const file = xmlDraft(before, after);
 
-    expect(file.suggested.map(pointerOf)).toEqual([frame("Headline")]);
-    // The logo has no text, so it guards nothing.
+    const frameText = (name: string, value: string) => ({
+      kind: "text_equals",
+      file: FILE,
+      pointer: `/root/children/[name=DOCUMENT]/children/[name=PAGEOBJECT][@ANNAME=${name}]`,
+      value,
+      text_attribute: "CH",
+    });
+    expect(file.suggested).toEqual([
+      frameText("Headline", "Harbor Lights Jazz Festival"),
+    ]);
+    // The logo has no text, so it guards nothing but the frames' count.
     expect(file.guards).toEqual([
+      frameText("Details", "Saturday at 7 PM"),
+      frameText("Footer", "Free entry"),
       {
-        kind: "value_equals",
+        kind: "member_count",
         file: FILE,
-        pointer: frame("Details"),
-        value: "Saturday at 7 PM",
-      },
-      {
-        kind: "value_equals",
-        file: FILE,
-        pointer: frame("Footer"),
-        value: "Free entry",
+        pointer: "/root/children/[name=DOCUMENT]/children",
+        matching: "[name=PAGEOBJECT]",
+        equals: 4,
       },
     ]);
-    expect(passing(FILE, xml(before), file.guards)).toEqual([true, true]);
-    expect(passing(FILE, xml(after), file.guards)).toEqual([true, true]);
+    expect(passing(FILE, xml(before), file.guards)).toEqual([true, true, true]);
+    expect(passing(FILE, xml(after), file.guards)).toEqual([true, true, true]);
+    expect(frame("Headline")).toContain("[@ANNAME=Headline]");
   });
 
   it("guards no sibling whose field changed too, and a number by its value within the tolerance", () => {
@@ -81,6 +88,13 @@ describe("draftTaskFiles guards", () => {
         value: 174.9,
         tolerance: 0.001,
       },
+      {
+        kind: "member_count",
+        file: FILE,
+        pointer: "/root/children/[name=Cells]/children",
+        matching: "[name=Cell]",
+        equals: 4,
+      },
     ]);
   });
 });
@@ -108,6 +122,13 @@ describe("draftTaskFiles guards beyond a sibling's same field", () => {
         pointer: `${task("Launch")}/work`,
         value: "14400",
       },
+      {
+        kind: "member_count",
+        file: FILE,
+        pointer: "/root/children/[name=tasks]/children",
+        matching: "[name=task]",
+        equals: 3,
+      },
     ]);
   });
 
@@ -122,6 +143,7 @@ describe("draftTaskFiles guards beyond a sibling's same field", () => {
     ]);
     expect(file.guards.map(pointerOf)).toEqual([
       "/root/children/[name=Cell][@Col=4]/children/0",
+      "/root/children",
     ]);
   });
 

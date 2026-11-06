@@ -110,6 +110,15 @@ it("returns each changed file's values, with what a value names, and guards outs
     check("check-1", `${item("eggs")}/attributes/cat`, "1"),
     check("check-2", `${item("eggs")}/attributes/qty`, "12"),
     check("check-3", `${item("bread")}/attributes/qty`, "3"),
+    // An item was added, so the list's count is a check too.
+    {
+      id: "check-4",
+      kind: "member_count",
+      file: LIST,
+      pointer: "/root/children",
+      matching: "[name=item]",
+      equals: 3,
+    },
   ]);
   // The same fields on the nearest other items, which the user left alone.
   expect(draft?.guards).toEqual([

@@ -128,3 +128,28 @@ export const isPositionalKey = (
   tag: string,
   key: string,
 ) => keys.has(tagKey(tag, key));
+
+/**
+ * Whether an attribute's values on the members with a tag end in numbers that
+ * count up or down by one in document order, as MyPaint names each layer's
+ * `src` `data/layer-00.png`, `data/layer-01.png` and on along the stack on
+ * every save: they say where a member sits, not which it is.
+ */
+export const numberedInOrder = (
+  members: readonly JsonValue[],
+  tag: string,
+  key: string,
+): boolean => {
+  const numbers = (attributesByTag(members).get(tag) ?? []).map((attributes) =>
+    Number(
+      /(?<n>\d+)\D*$/u.exec(attributes[key] ?? "")?.groups?.n ?? Number.NaN,
+    ),
+  );
+  const [first, second] = numbers;
+  if (first === undefined || second === undefined) return false;
+  const step = second - first;
+  return (
+    Math.abs(step) === 1 &&
+    numbers.every((number, index) => number === first + step * index)
+  );
+};

@@ -6,7 +6,7 @@ import { draftOf, statePath, xml, xmlDraft } from "./appTaskDraft.fixture.js";
 describe("draftTaskFiles notes on thin files", () => {
   it("says which elements only position names when no check can name a change", () => {
     const table = (last: string) =>
-      `<doc><row><cell>1</cell><cell>2</cell></row><row><cell>3</cell><cell>${last}</cell></row></doc>`;
+      `<doc><row><cell>1</cell><cell>2</cell></row><row><cell>1</cell><cell>${last}</cell></row></doc>`;
 
     const file = xmlDraft(table("4"), table("5"));
 

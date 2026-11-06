@@ -5,13 +5,18 @@ import { passing, xml, xmlDraft } from "./appTaskDraft.fixture.js";
 const FILE = "Documents/doc.xml";
 
 describe("draftTaskFiles for elements no attribute names", () => {
-  /** A score whose title frame holds untitled texts, as MuseScore 3 saves one. */
-  const score = (title: string, composer: string) =>
-    `<museScore><Score><Staff><VBox><height>10</height><Text><style>Title</style><text>${title}</text></Text><Text><style>Composer</style><text>${composer}</text></Text></VBox><Measure><Chord>C</Chord></Measure></Staff></Score></museScore>`;
+  /** A score whose title frame holds untitled texts, as MuseScore 3 saves one, each with its style or none. */
+  const score = (title: string, composer: string, styled = true) => {
+    const text = (style: string, value: string) =>
+      `<Text>${styled ? `<style>${style}</style>` : ""}<text>${value}</text></Text>`;
+    return `<museScore><Score><Staff><VBox><height>10</height>${text("Title", title)}${text("Composer", composer)}</VBox><Measure><Chord>C</Chord></Measure></Staff></Score></museScore>`;
+  };
+  const FRAME =
+    "/root/children/[name=Score]/children/[name=Staff]/children/[name=VBox]";
 
   it("checks the whole text of the nearest ancestor its tag names, within three levels", () => {
-    const before = score("Morning Song", "Theo Ashby");
-    const after = score("Evening Lullaby", "Clara Hollis");
+    const before = score("Morning Song", "Theo Ashby", false);
+    const after = score("Evening Lullaby", "Clara Hollis", false);
 
     const file = xmlDraft(before, after);
 
@@ -19,13 +24,33 @@ describe("draftTaskFiles for elements no attribute names", () => {
       {
         kind: "text_equals",
         file: FILE,
-        pointer:
-          "/root/children/[name=Score]/children/[name=Staff]/children/[name=VBox]",
-        value: "10TitleEvening LullabyComposerClara Hollis",
+        pointer: FRAME,
+        value: "10Evening LullabyClara Hollis",
       },
     ]);
     expect(passing(FILE, xml(before), file.suggested)).toEqual([false]);
     expect(passing(FILE, xml(after), file.suggested)).toEqual([true]);
+  });
+
+  it("checks each text by the child that names it, as MuseScore's by its style, rather than the frame's whole text", () => {
+    const before = score("Morning Song", "Theo Ashby");
+    const after = score("Evening Lullaby", "Clara Hollis");
+
+    const file = xmlDraft(before, after);
+
+    expect(file.suggested).toEqual(
+      [
+        ["Title", "Evening Lullaby"],
+        ["Composer", "Clara Hollis"],
+      ].map(([style, value]) => ({
+        kind: "text_equals",
+        file: FILE,
+        pointer: `${FRAME}/children/[name=Text][>style=${style}]/children/[name=text]`,
+        value,
+      })),
+    );
+    expect(passing(FILE, xml(before), file.suggested)).toEqual([false, false]);
+    expect(passing(FILE, xml(after), file.suggested)).toEqual([true, true]);
   });
 
   /** An address book of records with no attributes, as Osmo keeps its contacts. */
@@ -41,7 +66,7 @@ describe("draftTaskFiles for elements no attribute names", () => {
   const DELPHINE =
     "<first_name>Delphine</first_name><last_name>Moreau</last_name><cell_phone_1>555-0163</cell_phone_1><email_1>delphine.moreau@example.com</email_1>";
 
-  it("checks each new field of a record added whole, each absent from the list's text at the seed, and never the list's whole text", () => {
+  it("names a record added whole by a child's text and checks each field it entered, never a default every record holds, then counts the records", () => {
     const before = contacts(HANNAH);
     const after = contacts(HANNAH, DELPHINE);
 
@@ -51,27 +76,26 @@ describe("draftTaskFiles for elements no attribute names", () => {
     });
 
     const list = "/root/children/[name=contacts_records]";
-    expect(
-      file.suggested.map((check) => [
-        check.kind,
-        "pointer" in check ? check.pointer : undefined,
-      ]),
-    ).toEqual([
-      ["text_contains", list],
-      ["text_contains", list],
-      ["text_contains", list],
-      ["text_contains", list],
-    ]);
-    // Not "None" or "0": the seed's text already holds them.
-    expect(
-      file.suggested.flatMap((check) =>
-        check.kind === "text_contains" ? [check.value] : [],
-      ),
-    ).toEqual([
-      "Delphine",
-      "Moreau",
-      "555-0163",
-      "delphine.moreau@example.com",
+    const record = `${list}/children/[name=record][>first_name=Delphine]`;
+    // Not "None" or "0", every record's, nor the first name that names it.
+    expect(file.suggested).toEqual([
+      ...[
+        ["last_name", "Moreau"],
+        ["cell_phone_1", "555-0163"],
+        ["email_1", "delphine.moreau@example.com"],
+      ].map(([field, value]) => ({
+        kind: "text_equals",
+        file: ".local/share/osmo/contacts.xml",
+        pointer: `${record}/children/[name=${field}]`,
+        value,
+      })),
+      {
+        kind: "member_count",
+        file: ".local/share/osmo/contacts.xml",
+        pointer: `${list}/children`,
+        matching: "[name=record]",
+        equals: 2,
+      },
     ]);
     const file_ = ".local/share/osmo/contacts.xml";
     expect(passing(file_, xml(before), file.suggested)).toEqual([
@@ -86,7 +110,7 @@ describe("draftTaskFiles for elements no attribute names", () => {
   });
 });
 
-describe("draftTaskFiles for a record only position names, removed whole", () => {
+describe("draftTaskFiles for a record removed whole", () => {
   const contacts = (...names: string[]) =>
     `<osmo_contacts><contacts_records>${names
       .map(
@@ -95,7 +119,7 @@ describe("draftTaskFiles for a record only position names, removed whole", () =>
       )
       .join("")}</contacts_records></osmo_contacts>`;
 
-  it("checks the list's text, the one check that can tell the record is gone", () => {
+  it("checks the record a child names is gone, and the records' count", () => {
     const before = contacts("Hannah", "Delphine");
     const after = contacts("Hannah");
 
@@ -104,23 +128,29 @@ describe("draftTaskFiles for a record only position names, removed whole", () =>
       file: ".local/share/osmo/contacts.xml",
     });
 
+    const list = "/root/children/[name=contacts_records]";
     expect(file.suggested).toMatchObject([
       {
-        kind: "text_equals",
-        pointer: "/root/children/[name=contacts_records]",
+        kind: "value_absent",
+        pointer: `${list}/children/[name=record][>first_name=Delphine]`,
       },
+      { kind: "member_count", pointer: `${list}/children`, equals: 1 },
     ]);
     const home = ".local/share/osmo/contacts.xml";
     expect(
       [before, after, contacts("Delphine")].map((text) =>
         passing(home, xml(text), file.suggested),
       ),
-    ).toEqual([[false], [true], [false]]);
+    ).toEqual([
+      [false, false],
+      [true, true],
+      [false, true],
+    ]);
   });
 });
 
 describe("draftTaskFiles for records whatever their fields are called", () => {
-  it("checks each new field of a record of repeated <field> children only position names, in a list at the root", () => {
+  it("names a record of repeated <field> children by a field's text and checks its whole text, in a list at the root", () => {
     const records = (...people: [string, string][]) =>
       `<records>${people
         .map(
@@ -133,14 +163,21 @@ describe("draftTaskFiles for records whatever their fields are called", () => {
 
     const file = xmlDraft(before, after);
 
-    expect(file.suggested).toEqual(
-      ["Delphine", "Moreau"].map((value) => ({
-        kind: "text_contains",
+    expect(file.suggested).toEqual([
+      {
+        kind: "text_equals",
         file: FILE,
-        pointer: "/root",
-        value,
-      })),
-    );
+        pointer: "/root/children/[name=record][>field=Delphine]",
+        value: "DelphineMoreau",
+      },
+      {
+        kind: "member_count",
+        file: FILE,
+        pointer: "/root/children",
+        matching: "[name=record]",
+        equals: 2,
+      },
+    ]);
     expect(
       [before, after].map((text) => passing(FILE, xml(text), file.suggested)),
     ).toEqual([
@@ -186,6 +223,13 @@ describe("draftTaskFiles for records whatever their fields are called", () => {
         pointer: `${bookmark}/children/[name=link]`,
         value: "https://example.com/notes",
       },
+      {
+        kind: "member_count",
+        file: FILE,
+        pointer: "/root/children",
+        matching: "[name=bookmark]",
+        equals: 2,
+      },
     ]);
   });
 });
@@ -218,6 +262,53 @@ describe("draftTaskFiles for a paragraph made of runs", () => {
       passing(FILE, xml(body(meeting("Tuesday"))), file.suggested),
     ).toContain(false);
     expect(passing(FILE, xml(after), file.suggested).every(Boolean)).toBe(true);
+  });
+
+  it("checks a Word paragraph's whole text where an edit appends a run of elements beside a kept run, not the run as a record", () => {
+    const paragraph = (runs: string) =>
+      `<w:document xmlns:w="urn:w"><w:body><w:p><w:r><w:t>Meeting at </w:t></w:r>${runs}</w:p></w:body></w:document>`;
+    const bold = (text: string) =>
+      `<w:r><w:rPr><w:b/></w:rPr><w:t>${text}</w:t></w:r>`;
+
+    const file = xmlDraft(paragraph(""), paragraph(bold("3:30")));
+
+    expect(file.suggested).toEqual([
+      {
+        kind: "text_equals",
+        file: FILE,
+        pointer: "/root/children/[name=w:body]/children/[name=w:p]",
+        value: "Meeting at 3:30",
+      },
+    ]);
+    expect(
+      [bold("3:30"), bold("13:30")].map((runs) =>
+        passing(FILE, xml(paragraph(runs)), file.suggested),
+      ),
+    ).toEqual([[true], [false]]);
+  });
+
+  it("checks a list's whole text where an edit appends an item that only formats its text, which a wrong item fails", () => {
+    const list = (items: string) =>
+      `<note><text><note-content><list><list-item>bread</list-item><list-item>eggs</list-item>${items}</list></note-content></text></note>`;
+    const item = (text: string) =>
+      `<list-item><bold>${text}</bold></list-item>`;
+
+    const file = xmlDraft(list(""), list(item("olive oil")));
+
+    expect(file.suggested).toEqual([
+      {
+        kind: "text_equals",
+        file: FILE,
+        pointer:
+          "/root/children/[name=text]/children/[name=note-content]/children/[name=list]",
+        value: "breadeggsolive oil",
+      },
+    ]);
+    expect(
+      [item("olive oil"), item("no olive oil")].map((items) =>
+        passing(FILE, xml(list(items)), file.suggested),
+      ),
+    ).toEqual([[true], [false]]);
   });
 });
 
@@ -252,6 +343,13 @@ describe("draftTaskFiles for an element added to a list", () => {
       check("date", "739924"),
       // A decimal the app writes as text is checked by its number.
       check("amount", -64.18, 0.001),
+      {
+        kind: "member_count",
+        file: FILE,
+        pointer: "/root/children",
+        matching: "[name=ope]",
+        equals: 2,
+      },
     ]);
   });
 
@@ -260,7 +358,9 @@ describe("draftTaskFiles for an element added to a list", () => {
       .map((key) => `${key}="value ${key}"`)
       .join(" ")} wording="Weekly groceries"/>`;
     const added = xmlDraft(ledger(RENT), ledger(RENT + wide));
-    expect(added.suggested).toHaveLength(6);
+    expect(
+      added.suggested.filter(({ kind }) => kind === "value_equals"),
+    ).toHaveLength(6);
 
     const alone = xmlDraft(ledger(""), ledger('<budget year="2026"/>'));
     expect(alone.suggested).toEqual([
@@ -343,15 +443,30 @@ describe("draftTaskFiles for records in a list, as Tellico keeps books", () => {
 
     const file = xmlDraft(before, after);
 
-    expect(file.values.map(({ pointer }) => pointer)).toEqual([entry("3")]);
-    expect(file.suggested).toEqual(
-      ["title", "authors", "publisher", "pub_year"].map((field, index) => ({
+    // Field by field, so no cut hides one; the id and the dates the app stamps last.
+    expect(file.values.map(({ pointer, note }) => [pointer, note])).toEqual([
+      ...["title", "authors", "publisher", "pub_year", "id"].map((field) => [
+        `${entry("3")}/children/[name=${field}]`,
+        undefined,
+      ]),
+      [`${entry("3")}/children/[name=cdate]`, "timestamp"],
+      [`${entry("3")}/children/[name=mdate]`, "timestamp"],
+    ]);
+    expect(file.suggested).toEqual([
+      ...["title", "authors", "publisher", "pub_year"].map((field, index) => ({
         kind: "text_equals",
         file: FILE,
         pointer: `${entry("3")}/children/[name=${field}]`,
         value: ORCHARD[index],
       })),
-    );
+      {
+        kind: "member_count",
+        file: FILE,
+        pointer: "/root/children/[name=collection]/children",
+        matching: "[name=entry]",
+        equals: 3,
+      },
+    ]);
     // The same edit saved on another day passes too.
     const later = books(
       book("1", LANTERN),
@@ -363,9 +478,9 @@ describe("draftTaskFiles for records in a list, as Tellico keeps books", () => {
         passing(FILE, xml(text), file.suggested),
       ),
     ).toEqual([
-      [false, false, false, false],
-      [true, true, true, true],
-      [true, true, true, true],
+      [false, false, false, false, false],
+      [true, true, true, true, true],
+      [true, true, true, true, true],
     ]);
   });
 
