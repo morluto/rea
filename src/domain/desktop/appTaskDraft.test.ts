@@ -46,6 +46,7 @@ const draft = (files: Record<string, DesktopStatePath>) =>
   draftTaskFiles(
     new Map(Object.entries(files)),
     (home) => home !== "elsewhere",
+    { seed: 0, end: 1 },
   );
 
 describe("draftTaskFiles", () => {
@@ -269,6 +270,46 @@ describe("draftTaskFiles for structured views", () => {
   });
 });
 
+describe("draftTaskFiles for XML that uses namespaces", () => {
+  it("suggests values inside an XML file by pointer, as for any XML", () => {
+    const poster = (headline: string): JsonValue => ({
+      root: {
+        name: "svg",
+        attributes: {
+          xmlns: "http://www.w3.org/2000/svg",
+          "sodipodi:docname": "poster.svg",
+        },
+        children: [
+          {
+            name: "text",
+            attributes: { id: "headline" },
+            children: [headline],
+          },
+        ],
+      },
+      truncated: false,
+    });
+
+    const [document] = draft({
+      "Pictures/poster.svg": path(
+        "document",
+        "xml",
+        poster("Spring Bake Sale"),
+        poster("Summer Bake Sale"),
+      ),
+    });
+
+    expect(document?.suggested).toEqual([
+      {
+        kind: "value_equals",
+        file: "Pictures/poster.svg",
+        pointer: "/root/children/0/children/0",
+        value: "Summer Bake Sale",
+      },
+    ]);
+  });
+});
+
 describe("draftTaskFiles with partial evidence", () => {
   const notes = (...rows: JsonValue[][]) => ({
     tables: {
@@ -347,5 +388,467 @@ describe("draftTaskFiles with partial evidence", () => {
       change: { kind: "content" },
       suggested: [],
     });
+  });
+});
+
+/** An element of REA's XML view. */
+const xmlElement = (
+  name: string,
+  attributes: Record<string, string> = {},
+  children: JsonValue[] = [],
+): JsonValue => ({ name, attributes, children });
+
+/** A zip view's entry, read, under a name. */
+const zipEntry = (
+  name: string,
+  format: string,
+  view: JsonValue,
+): JsonValue => ({
+  name,
+  size: 1,
+  sha256: name,
+  format,
+  view,
+  view_error: null,
+});
+
+const listing = (entries: JsonValue[]): JsonValue => ({
+  entries,
+  entry_count: entries.length,
+  truncated: false,
+});
+
+describe("draftTaskFiles archives added to whole", () => {
+  it("suggests checks inside a JSON value or a readable entry added whole", () => {
+    const [file] = draft({
+      "Documents/a.zip": path(
+        "document",
+        "zip",
+        listing([zipEntry("a.json", "json", { a: 1 })]),
+        listing([
+          zipEntry("a.json", "json", { a: 1, added: { x: 1 } }),
+          zipEntry("new.json", "json", { y: [2] }),
+          zipEntry("new.xml", "xml", {
+            root: xmlElement("doc"),
+            truncated: false,
+          }),
+          zipEntry("new.png", "binary", null),
+        ]),
+      ),
+    });
+
+    expect(file?.suggested).toEqual([
+      {
+        kind: "value_equals",
+        file: "Documents/a.zip",
+        pointer: "/entries/[name=new.xml]/view/root/name",
+        value: "doc",
+      },
+      {
+        kind: "value_equals",
+        file: "Documents/a.zip",
+        pointer: "/entries/[name=a.json]/view/added/x",
+        value: 1,
+      },
+      {
+        kind: "value_equals",
+        file: "Documents/a.zip",
+        pointer: "/entries/[name=new.json]/view/y/0",
+        value: 2,
+      },
+    ]);
+  });
+
+  it("checks an empty array or object added as a value, and nothing absent that a type change keeps", () => {
+    const [file] = draft({
+      "Documents/a.zip": path(
+        "document",
+        "zip",
+        listing([zipEntry("a.json", "json", { a: 1, kept: [1] })]),
+        listing([
+          zipEntry("a.json", "json", {
+            a: 1,
+            kept: { "0": 1 },
+            items: [],
+            meta: {},
+          }),
+        ]),
+      ),
+    });
+
+    expect(file?.suggested).toEqual([
+      {
+        kind: "value_equals",
+        file: "Documents/a.zip",
+        pointer: "/entries/[name=a.json]/view/items",
+        value: [],
+      },
+      {
+        kind: "value_equals",
+        file: "Documents/a.zip",
+        pointer: "/entries/[name=a.json]/view/meta",
+        value: {},
+      },
+    ]);
+  });
+
+  it("suggests no element by its position, even at the last step", () => {
+    const page = (paragraphs: string[]) =>
+      listing([
+        zipEntry("page.xml", "xml", {
+          root: xmlElement(
+            "page",
+            {},
+            paragraphs.map((text) => xmlElement("p", {}, [text])),
+          ),
+          truncated: false,
+        }),
+      ]);
+
+    const [file] = draft({
+      "Documents/page.zip": path(
+        "document",
+        "zip",
+        page(["a"]),
+        page(["a", "b"]),
+      ),
+    });
+
+    expect(file).toMatchObject({ change: { kind: "values" }, suggested: [] });
+  });
+});
+
+describe("draftTaskFiles archive elements by identity", () => {
+  it("checks an element replaced by another of its type as one added and one gone, not renamed", () => {
+    const document = (name: string, id: string) =>
+      listing([
+        zipEntry("Document.xml", "xml", {
+          root: xmlElement("Objects", {}, [
+            xmlElement("Object", { type: "Part::Box", name: "Plate" }),
+            xmlElement("Object", { type: "Part::Cylinder", name, id }),
+          ]),
+          truncated: false,
+        }),
+      ]);
+
+    const [file] = draft({
+      "Documents/plate.zip": path(
+        "document",
+        "zip",
+        document("Hole", "2"),
+        document("Hole001", "3"),
+      ),
+    });
+
+    const objects = "/entries/[name=Document.xml]/view/root/children";
+    expect(file?.suggested).toEqual([
+      {
+        kind: "value_equals",
+        file: "Documents/plate.zip",
+        pointer: `${objects}/[name=Object][@name=Hole001]/name`,
+        value: "Object",
+      },
+      {
+        kind: "value_absent",
+        file: "Documents/plate.zip",
+        pointer: `${objects}/[name=Object][@name=Hole]`,
+      },
+    ]);
+  });
+
+  it("checks an edit to an element its identifier still names, not a replacement", () => {
+    const list = (color: string) =>
+      listing([
+        zipEntry("list.xml", "xml", {
+          root: xmlElement("list", {}, [
+            xmlElement("item", { color, id: "1" }),
+            xmlElement("item", { id: "2" }),
+          ]),
+          truncated: false,
+        }),
+      ]);
+
+    const [file] = draft({
+      "Documents/list.zip": path("document", "zip", list("red"), list("green")),
+    });
+
+    expect(file?.suggested).toEqual([
+      {
+        kind: "value_equals",
+        file: "Documents/list.zip",
+        pointer:
+          "/entries/[name=list.xml]/view/root/children/[name=item][@id=1]/attributes/color",
+        value: "green",
+      },
+    ]);
+  });
+});
+
+/** The checks drafted for `list.xml` in an archive whose `item` elements change. */
+const itemChecks = (before: JsonValue[], after: JsonValue[]) => {
+  const list = (items: JsonValue[]) =>
+    listing([
+      zipEntry("list.xml", "xml", {
+        root: xmlElement("list", {}, items),
+        truncated: false,
+      }),
+    ]);
+  const [file] = draft({
+    "Documents/list.zip": path("document", "zip", list(before), list(after)),
+  });
+  return file?.suggested;
+};
+
+const ITEMS = "/entries/[name=list.xml]/view/root/children";
+
+describe("draftTaskFiles archive elements beside identified ones", () => {
+  it("counts an identified element's other attributes, so a selector it shares is not taken for absent", () => {
+    expect(
+      itemChecks(
+        [
+          xmlElement("item", { id: "1", color: "red" }),
+          xmlElement("item", { color: "blue" }),
+        ],
+        [
+          xmlElement("item", { id: "1", color: "blue" }),
+          xmlElement("item", { color: "red" }),
+        ],
+      ),
+    ).toEqual([
+      {
+        kind: "value_equals",
+        file: "Documents/list.zip",
+        pointer: `${ITEMS}/[name=item][@id=1]/attributes/color`,
+        value: "blue",
+      },
+    ]);
+  });
+
+  it("keys an element by a selector naming it alone, not one an identified sibling also matches", () => {
+    const body = (text: string) =>
+      xmlElement("item", { color: "red", role: "body" }, [text]);
+    const id = xmlElement("item", { id: "1", color: "red" });
+
+    expect(itemChecks([id, body("old")], [id, body("new")])).toEqual([
+      {
+        kind: "value_equals",
+        file: "Documents/list.zip",
+        pointer: `${ITEMS}/[name=item][@role=body]/children/0`,
+        value: "new",
+      },
+    ]);
+  });
+
+  it("passes over a selector an identified sibling shares for one naming the element alone", () => {
+    const second = (color: string) =>
+      xmlElement("item", { class: "common", role: "second", color });
+    const id = xmlElement("item", { id: "1", class: "common" });
+
+    expect(itemChecks([id, second("red")], [id, second("blue")])).toEqual([
+      {
+        kind: "value_equals",
+        file: "Documents/list.zip",
+        pointer: `${ITEMS}/[name=item][@role=second]/attributes/color`,
+        value: "blue",
+      },
+    ]);
+  });
+});
+
+describe("draftTaskFiles archive entries without a view, and type changes", () => {
+  it("checks no entry whose view could not be read, though JSON null is a value", () => {
+    const [file] = draft({
+      "Documents/a.zip": path(
+        "document",
+        "zip",
+        listing([]),
+        listing([
+          {
+            name: "big.json",
+            size: 1,
+            sha256: "big.json",
+            format: "json",
+            view: null,
+            view_error:
+              "a number in it cannot be read exactly, such as an integer above 2^53",
+          },
+          zipEntry("null.json", "json", null),
+        ]),
+      ),
+    });
+
+    expect(file?.suggested).toEqual([
+      {
+        kind: "value_equals",
+        file: "Documents/a.zip",
+        pointer: "/entries/[name=null.json]/view",
+        value: null,
+      },
+    ]);
+  });
+
+  it("suggests no absence inside an entry that ends with no view, such as one now binary", () => {
+    const [file] = draft({
+      "Documents/a.zip": path(
+        "document",
+        "zip",
+        listing([zipEntry("a.json", "json", { a: 1 })]),
+        listing([zipEntry("a.json", "binary", null)]),
+      ),
+    });
+
+    expect(file).toMatchObject({ change: { kind: "values" }, suggested: [] });
+  });
+
+  it("suggests no absence of a value a selector still names after a type change", () => {
+    const [file] = draft({
+      "Documents/a.zip": path(
+        "document",
+        "zip",
+        listing([zipEntry("a.json", "json", { items: { "[name=x]": 1 } })]),
+        listing([zipEntry("a.json", "json", { items: [{ name: "x" }] })]),
+      ),
+    });
+
+    expect(file?.suggested).toEqual([
+      {
+        kind: "value_equals",
+        file: "Documents/a.zip",
+        pointer: "/entries/[name=a.json]/view/items/[name=x]/name",
+        value: "x",
+      },
+    ]);
+  });
+});
+
+describe("draftTaskFiles archives", () => {
+  it("suggests checks inside an archive's XML by name: elements added or removed whole, then values", () => {
+    const element = (
+      name: string,
+      attributes: Record<string, string>,
+      children: JsonValue[] = [],
+    ): JsonValue => ({ name, attributes, children });
+    const archive = (objects: JsonValue[], saved: string): JsonValue => ({
+      entries: [
+        {
+          name: "Document.xml",
+          size: 1,
+          sha256: saved,
+          format: "xml",
+          view: {
+            root: element("Document", { saved }, [
+              element("Objects", {}, objects),
+            ]),
+            truncated: false,
+          },
+          view_error: null,
+        },
+        {
+          name: "thumb.png",
+          size: 1,
+          sha256: saved,
+          format: "binary",
+          view: null,
+          view_error: null,
+        },
+      ],
+      entry_count: 2,
+      truncated: false,
+    });
+    const plate = { name: "Plate", type: "Part::Box" };
+    const box = element("Object", { ...plate, count: "1" });
+    const sketch = element("Object", { name: "Sketch", type: "Sketcher" });
+    const hole = element("Object", { name: "Hole", type: "Part::Cylinder" }, [
+      element("Property", { name: "Radius" }, [
+        element("Float", { value: "5.0" }),
+      ]),
+    ]);
+
+    const [document] = draft({
+      "Documents/plate.FCStd": path(
+        "document",
+        "zip",
+        archive([box, sketch], "2026-11-04T10:12:00Z"),
+        archive(
+          [element("Object", { ...plate, count: "2" }), hole],
+          "2026-11-04T10:13:00Z",
+        ),
+      ),
+    });
+
+    const objects =
+      "/entries/[name=Document.xml]/view/root/children/[name=Objects]/children";
+    expect(document?.suggested).toEqual([
+      {
+        kind: "value_equals",
+        file: "Documents/plate.FCStd",
+        pointer: `${objects}/[name=Object][@name=Hole]/name`,
+        value: "Object",
+      },
+      {
+        kind: "value_absent",
+        file: "Documents/plate.FCStd",
+        pointer: `${objects}/[name=Object][@name=Sketch]`,
+      },
+      {
+        kind: "value_equals",
+        file: "Documents/plate.FCStd",
+        pointer: `${objects}/[name=Object][@name=Plate]/attributes/count`,
+        value: "2",
+      },
+    ]);
+  });
+
+  it("suggests checks inside XML that uses namespaces, by its prefixed names", () => {
+    const paragraph = (style: string, text: string): JsonValue => ({
+      name: "text:p",
+      attributes: { "text:style-name": style },
+      children: [text],
+    });
+    const odt = (date: string): JsonValue => ({
+      entries: [
+        {
+          name: "content.xml",
+          size: 1,
+          sha256: date,
+          format: "xml",
+          view: {
+            root: {
+              name: "office:text",
+              attributes: {
+                "xmlns:text": "urn:oasis:names:tc:opendocument:xmlns:text:1.0",
+              },
+              children: [
+                paragraph("Title", "Summer Bake Sale"),
+                paragraph("Subtitle", date),
+              ],
+            },
+            truncated: false,
+          },
+          view_error: null,
+        },
+      ],
+      entry_count: 1,
+      truncated: false,
+    });
+
+    const [flyer] = draft({
+      "Documents/flyer.odt": path(
+        "document",
+        "zip",
+        odt("Monday 17 November"),
+        odt("Monday 24 November"),
+      ),
+    });
+
+    expect(flyer?.suggested).toEqual([
+      {
+        kind: "value_equals",
+        file: "Documents/flyer.odt",
+        pointer:
+          "/entries/[name=content.xml]/view/root/children/[name=text:p][@text:style-name=Subtitle]/children/0",
+        value: "Monday 24 November",
+      },
+    ]);
   });
 });
