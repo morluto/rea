@@ -11,10 +11,11 @@ const run = promisify(execFile);
 it("publishes the Android browsers path before the first Playwright import", async () => {
   const prefix = await createTestTempDirectory("rea-termux-playwright-first-");
   const hostUrl = new URL("./androidPlaywrightHost.ts", import.meta.url).href;
-  const env = { ...process.env, REA_TERMUX_PREFIX: prefix };
+  const env: NodeJS.ProcessEnv = { ...process.env };
   delete env.PLAYWRIGHT_BROWSERS_PATH;
   delete env.npm_config_playwright_browsers_path;
   delete env.npm_package_config_playwright_browsers_path;
+  env.REA_TERMUX_PREFIX = prefix;
   const { stdout } = await run(
     process.execPath,
     [
