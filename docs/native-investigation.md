@@ -927,6 +927,12 @@ complete observation.
   section lengths and unsupported non-PowerPC big-endian CPU declarations return
   `unsupported_target` with the selected path and precise reason. Recovery
   selects a well-formed or supported artifact and reopens that target.
+  An unreadable adopted-protocol sublist leaves its class, category or
+  `objc_protocol_records` entry available with partial decode status and
+  `protocol_list_unreadable`. Independently decoded metadata and any readable
+  protocol-name prefix remain available; an empty partial list does not
+  establish that its owner adopts no protocols. Existing list and record
+  limits remain in effect.
   The byte reader holds the whole selected file in memory, so it admits files up
   to 64 MiB / 67108864 bytes by default. Select a larger budget with
   `max_input_bytes` (CLI `--max-input-bytes`), at most 1 GiB / 1073741824
