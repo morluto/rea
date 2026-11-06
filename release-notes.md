@@ -390,6 +390,7 @@
 * **desktop:** preserve significant keyfile value whitespace ([#9077](https://github.com/morluto/rea/issues/9077)) ([c92cbca](https://github.com/morluto/rea/commit/c92cbcaf281bea28e16146c3555d58a2d62edf03))
 * **desktop:** read bounded MZ signature evidence ([df0e2f7](https://github.com/morluto/rea/commit/df0e2f7b3e9f3af0ae0f9065936a341b37c6ec98))
 * **desktop:** read SQLite state despite metadata name collisions ([93ce13e](https://github.com/morluto/rea/commit/93ce13e76f0054dbe7a03e17ae188b37415232e3))
+* **desktop:** read the PPA key add-apt-repository writes into Signed-By ([#8982](https://github.com/morluto/rea/issues/8982)) ([f8356f3](https://github.com/morluto/rea/commit/f8356f3d713d707b4a6d9eb5ab3941787f546ccc))
 * **desktop:** recognise JSON scalar files with mixed-case suffixes ([#9152](https://github.com/morluto/rea/issues/9152)) ([2cf9c42](https://github.com/morluto/rea/commit/2cf9c42df61d05e1cc7c6db3e7f06fa9883b9f08))
 * **desktop:** retain UTF-16 seed content after the signature ([#9098](https://github.com/morluto/rea/issues/9098)) ([8766bce](https://github.com/morluto/rea/commit/8766bcef5987b04d3a19c2a739b990b47391893a))
 * **devicetree:** reject duplicate node paths in Evidence ([#8970](https://github.com/morluto/rea/issues/8970)) ([6fceda8](https://github.com/morluto/rea/commit/6fceda83d5cb1a0dac1993c9e6b1e93652668b72))
