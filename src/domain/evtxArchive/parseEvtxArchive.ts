@@ -44,15 +44,27 @@ const timestampMs = (bytes: Buffer, offset: number): number | null => {
   return Number(ticks / 10_000n) - WINDOWS_EPOCH_OFFSET_MS;
 };
 
+/** CRC32 (IEEE 802.3), the checksum EVTX uses for chunk headers. */
+const crc32 = (bytes: Buffer): number => {
+  let crc = 0xffffffff;
+  for (const byte of bytes) {
+    crc ^= byte;
+    for (let bit = 0; bit < 8; bit += 1)
+      crc = (crc >>> 1) ^ (0xedb88320 & -(crc & 1));
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+};
+
 /**
- * EVTX stores the checksum as the one's-complement sum of the 32-bit words in
- * the 512-byte chunk header, skipping the stored checksum field itself.
+ * EVTX stores the checksum as CRC32 over the 512-byte chunk header, skipping
+ * the four-byte stored checksum at `0x7c`.
  */
 const chunkChecksumMatches = (chunk: Buffer): boolean => {
-  let sum = 0;
-  for (let offset = 0; offset < CHUNK_HEADER_BYTES; offset += 4)
-    if (offset !== 0x7c) sum = (sum + chunk.readUInt32LE(offset)) >>> 0;
-  return sum === chunk.readUInt32LE(0x7c);
+  const signed = Buffer.concat([
+    chunk.subarray(0, 0x7c),
+    chunk.subarray(0x80, CHUNK_HEADER_BYTES),
+  ]);
+  return crc32(signed) >>> 0 === chunk.readUInt32LE(0x7c);
 };
 
 const diagnose = (
@@ -308,8 +320,10 @@ export const parseEvtxArchive = (
     format: "evtx",
     artifact,
     file_version: {
-      major: bytes.readUInt16LE(0x18),
-      minor: bytes.readUInt16LE(0x1a),
+      // `0x18` is the next-record identifier, not a version field; EVTX
+      // stores the minor version at `0x24` and the major at `0x26`.
+      major: bytes.readUInt16LE(0x26),
+      minor: bytes.readUInt16LE(0x24),
       header_block_bytes: headerBlockBytes,
       chunk_count: chunkCount,
     },

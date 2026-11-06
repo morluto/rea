@@ -13,12 +13,29 @@ const FILE_HEADER_BYTES = 128;
 const CHUNK_BYTES = 65_536;
 const CHUNK_HEADER_BYTES = 512;
 
+/**
+ * Computed here rather than shared with the parser: a fixture that reused the
+ * parser's own routine would keep passing if that routine were wrong.
+ */
+const crc32 = (bytes: Buffer): number => {
+  let crc = 0xffffffff;
+  for (const byte of bytes) {
+    crc ^= byte;
+    for (let bit = 0; bit < 8; bit += 1)
+      crc = (crc >>> 1) ^ (0xedb88320 & -(crc & 1));
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+};
+
 /** Builds a 128-byte file header with the fields this inventory reads. */
 const fileHeader = (chunks: number): Buffer => {
   const header = Buffer.alloc(FILE_HEADER_BYTES);
   header.write("ElfFile\u0000", 0, "latin1");
-  header.writeUInt16LE(3, 0x18);
-  header.writeUInt16LE(1, 0x1a);
+  // The version lives at 0x24 (minor) / 0x26 (major); 0x18 is the
+  // next-record identifier, which a real file advances with its record count.
+  header.writeUInt16LE(1, 0x24);
+  header.writeUInt16LE(3, 0x26);
+  header.writeBigUInt64LE(7n, 0x18);
   header.writeUInt16LE(FILE_HEADER_BYTES, 0x28);
   header.writeUInt16LE(chunks, 0x2a);
   return header;
@@ -50,8 +67,19 @@ const chunk = (number: number, records: readonly Buffer[]): Buffer => {
     entry.copy(bytes, cursor, 0, entry.length);
     cursor += entry.length;
   }
+  // A chunk this builder produces is intact, so it carries a valid signature.
+  bytes.writeUInt32LE(chunkCrc(bytes), 0x7c);
   return bytes;
 };
+
+/** CRC32 of the chunk header with the stored checksum field omitted. */
+const chunkCrc = (bytes: Buffer): number =>
+  crc32(
+    Buffer.concat([
+      bytes.subarray(0, 0x7c),
+      bytes.subarray(0x80, CHUNK_HEADER_BYTES),
+    ]),
+  );
 
 const evtx = (chunks: readonly Buffer[]): Buffer =>
   Buffer.concat([fileHeader(chunks.length), ...chunks]);
@@ -193,20 +221,18 @@ describe("parseEvtxArchive", () => {
   });
 
   it("evaluates the chunk header checksum", () => {
+    // An intact chunk is `matched`, not `mismatched`: EVTX signs the header
+    // with CRC32 over 0x00..0x77 and 0x80..0x1ff, so the stored value is
+    // independent of how many records follow it.
     const intact = parsed(evtx([chunk(0, [])]));
-    expect(intact.chunks[0]?.checksum).toBe("mismatched");
+    expect(intact.chunks[0]?.checksum).toBe("matched");
 
-    const sum = (() => {
-      const bytes = chunk(0, []);
-      let total = 0;
-      for (let offset = 0; offset < CHUNK_HEADER_BYTES; offset += 4)
-        if (offset !== 0x7c) total = (total + bytes.readUInt32LE(offset)) >>> 0;
-      return total;
-    })();
     const signed = chunk(0, []);
-    signed.writeUInt32LE(sum, 0x7c);
-    const archive = parsed(evtx([signed]));
-    expect(archive.chunks[0]?.checksum).toBe("matched");
+    expect(parsed(evtx([signed])).chunks[0]?.checksum).toBe("matched");
+
+    // One bit off the stored value is enough to fail it.
+    signed.writeUInt32LE(chunkCrc(signed) ^ 1, 0x7c);
+    expect(parsed(evtx([signed])).chunks[0]?.checksum).toBe("mismatched");
   });
 
   it("does not treat the tail of a wrapped chunk as an error", () => {
