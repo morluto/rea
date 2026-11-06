@@ -94,29 +94,34 @@ export const readTypeMemberListFacts = (
   }
   const nonmonotonicFields = new Set<number>();
   const nonmonotonicMethods = new Set<number>();
-  for (let index = 0; index + 1 < rows.length; index += 1) {
-    const current = rows[index];
-    const next = rows[index + 1];
-    if (current === undefined || next === undefined) continue;
-    for (const [name, before, after, affected] of [
-      ["FieldList", current.field, next.field, nonmonotonicFields],
-      ["MethodList", current.method, next.method, nonmonotonicMethods],
-    ] as const)
-      if (
-        before.value !== null &&
-        after.value !== null &&
-        after.value < before.value
-      ) {
-        managedDecodeBudget(layout).reserve(512, after.offset);
-        affected.add(index);
-        affected.add(index + 1);
-        issues.push({
-          code: "invalid-row",
-          scope: `metadata.TypeDef:${metadataToken(2, index + 2)}`,
-          offset: after.offset,
-          detail: `TypeDef ${name} start ${String(after.raw)} decreases from preceding start ${String(before.raw)}; adjacent member ranges are unknown`,
-        });
+  for (const [name, kind, affected] of [
+    ["FieldList", "field", nonmonotonicFields],
+    ["MethodList", "method", nonmonotonicMethods],
+  ] as const) {
+    let lastValidIndex: number | null = null;
+    for (let index = 0; index < rows.length; index += 1) {
+      const current = rows[index]?.[kind];
+      if (current === undefined || current.value === null) continue;
+      if (lastValidIndex !== null) {
+        const preceding = rows[lastValidIndex]?.[kind];
+        if (
+          preceding !== undefined &&
+          preceding.value !== null &&
+          current.value < preceding.value
+        ) {
+          managedDecodeBudget(layout).reserve(512, current.offset);
+          for (let row = lastValidIndex; row <= index; row += 1)
+            affected.add(row);
+          issues.push({
+            code: "invalid-row",
+            scope: `metadata.TypeDef:${metadataToken(2, index + 1)}`,
+            offset: current.offset,
+            detail: `TypeDef ${name} start ${String(current.raw)} decreases from preceding start ${String(preceding.raw)}; adjacent member ranges are unknown`,
+          });
+        }
       }
+      lastValidIndex = index;
+    }
   }
   const entries: TypeMemberListEntry[] = rows.map((entry, index) => {
     const next = rows[index + 1];

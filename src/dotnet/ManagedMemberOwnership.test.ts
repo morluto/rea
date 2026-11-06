@@ -155,3 +155,57 @@ describe("managed declaring type ownership", () => {
     }
   });
 });
+
+describe("managed TypeDef list monotonicity", () => {
+  it("marks list starts nonmonotonic when valid starts decrease across an invalid row", () => {
+    const bytes = buildManagedMemberPointerFixture();
+    const layout = metadataLayout(bytes);
+    const types = layout.table(2);
+    if (types === undefined) throw new Error("Fixture omitted TypeDef");
+    const starts = [2, 0, 1];
+    for (let row = 0; row < 3; row++) {
+      const fieldOffset =
+        types.offset +
+        row * types.rowSize +
+        4 +
+        2 * layout.stringIndexSize +
+        layout.codedIndexSize("TypeDefOrRef");
+      bytes.writeUInt16LE(starts[row] ?? 0, fieldOffset);
+      bytes.writeUInt16LE(
+        starts[row] ?? 0,
+        fieldOffset + memberListIndexSize(layout, 4),
+      );
+    }
+    const facts = readTypeMemberListFacts(bytes, layout);
+    expect(facts.entries.map((entry) => entry.field.start.value)).toEqual([
+      null,
+      null,
+      null,
+    ]);
+    expect(facts.entries.map((entry) => entry.method.start.value)).toEqual([
+      null,
+      null,
+      null,
+    ]);
+    expect(facts.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "invalid-row",
+          detail: expect.stringContaining(
+            "TypeDef FieldList start 1 decreases from preceding start 2",
+          ),
+        }),
+        expect.objectContaining({
+          code: "invalid-row",
+          detail: expect.stringContaining(
+            "TypeDef MethodList start 1 decreases from preceding start 2",
+          ),
+        }),
+      ]),
+    );
+    const fieldLookup = memberDeclaringTypeRowLookup(bytes, layout, 4, facts);
+    const methodLookup = memberDeclaringTypeRowLookup(bytes, layout, 6, facts);
+    expect([fieldLookup(1), fieldLookup(2)]).toEqual([0, 0]);
+    expect([methodLookup(1), methodLookup(2)]).toEqual([0, 0]);
+  });
+});
