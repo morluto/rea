@@ -11,6 +11,18 @@ export interface ManagedPeFixtureOptions {
   readonly cliFlags?: number;
   readonly corruptMetadataSignature?: boolean;
   readonly fieldName?: string;
+  readonly fields?: readonly {
+    readonly name: string;
+    readonly flags?: number;
+    readonly signature?: Buffer;
+  }[];
+  /** Constant rows: HasConstant parent defaults to Field row 1. */
+  readonly constants?: readonly {
+    readonly typeCode: number;
+    readonly padding?: number;
+    readonly parentRaw?: number;
+    readonly value: Buffer;
+  }[];
   readonly ilBody?: Buffer;
   readonly machine?: number;
   readonly metadataValidMaskExtra?: bigint;

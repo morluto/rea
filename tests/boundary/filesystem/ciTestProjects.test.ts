@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -112,14 +112,53 @@ describe("canonical test-project ownership", () => {
     const request = parseDevelopmentTestRequest("focused", [testPath]);
     expect(developmentTestPlan(request)).toMatchObject({ needsBuild: true });
   });
+});
 
-  it("uses canonical selectors in Vitest while retaining independent runner policy", async () => {
-    const config = await readFile(join(repository, "vitest.config.ts"), "utf8");
-    expect(config).toContain(
-      "[...SOURCE_TEST_PROJECTS, ...BUILT_TEST_PROJECTS]",
+describe("Vitest project configuration", () => {
+  it("uses canonical test-project selectors in Vitest", async () => {
+    const root = await createTestTempDirectory("rea-vitest-project-selectors-");
+    const script = join(root, "project-selectors.mjs");
+    await writeFile(
+      script,
+      `
+      const { default: config } = await import(process.argv[2]);
+      console.log(JSON.stringify(config.test.projects.map(({ test }) => ({
+        name: test.name,
+        include: test.include,
+        exclude: test.exclude ?? [],
+      }))));
+    `,
     );
-    expect(config).toContain("PROJECT_POLICIES");
-    expect(config).not.toContain('"src/{contracts,domain}/**/*.test.ts"');
+    const result = await execFileOutput(
+      process.execPath,
+      [
+        "--import",
+        "tsx",
+        script,
+        pathToFileURL(join(repository, "vitest.config.ts")).href,
+      ],
+      {
+        cwd: repository,
+        timeout: 10_000,
+        maxBuffer: 64 * 1024,
+        stopSignal: "SIGTERM",
+      },
+    );
+    const selectors = JSON.parse(result.stdout) as Array<{
+      name: string;
+      include: string[];
+      exclude: string[];
+    }>;
+    const canonical = [...SOURCE_TEST_PROJECTS, ...BUILT_TEST_PROJECTS].map(
+      ({ name, include, exclude }) => ({
+        name,
+        include,
+        exclude: exclude ?? [],
+      }),
+    );
+    expect(selectors.sort((a, b) => a.name.localeCompare(b.name))).toEqual(
+      canonical.sort((a, b) => a.name.localeCompare(b.name)),
+    );
   });
 
   it.each([

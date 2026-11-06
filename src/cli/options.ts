@@ -20,6 +20,29 @@ export const cliIntegerArgument = (min: number) =>
     .regex(/^[0-9]+$/u, "Expected a decimal integer")
     .pipe(z.coerce.number<string>().safe().min(min));
 
+/** Parse a decimal token, then let the canonical numeric field own bounds, defaults and help. */
+export function cliDecimalField(
+  field: z.ZodDefault<z.ZodNumber>,
+): z.ZodType<number>;
+export function cliDecimalField(
+  field: z.ZodOptional<z.ZodNumber>,
+): z.ZodType<number | undefined>;
+export function cliDecimalField(
+  field: z.ZodDefault<z.ZodNumber> | z.ZodOptional<z.ZodNumber>,
+): z.ZodType<number | undefined> {
+  const parsed = z
+    .string()
+    .regex(/^[0-9]+$/u, "Expected a decimal integer")
+    .pipe(z.coerce.number<string>())
+    .pipe(field.unwrap());
+  const omitted = field.parse(undefined);
+  const admitted =
+    omitted === undefined ? parsed.optional() : parsed.default(omitted);
+  return field.description === undefined
+    ? admitted
+    : admitted.describe(field.description);
+}
+
 export const providerSelectionOption = analysisProviderSelectorSchema
   .optional()
   .describe(
@@ -33,8 +56,12 @@ export const snapshotSelectionOption = z
   .optional()
   .describe("Load and update a local analysis snapshot");
 
-/** Explicit interpretation for headerless native executable formats. */
+/**
+ * Explicit interpretation for headerless native executable formats. Flash
+ * dumps take their offsets on the artifact commands instead.
+ */
 export const formatSelectionOption = executableFormatHintSchema
+  .exclude(["esp-flash-image"])
   .optional()
   .describe(
     "Explicit interpretation: dos-com or raw-binary (headerless), or gamecube-dol (GameCube/Wii DOL, never auto-detected); omission preserves header-based detection",
