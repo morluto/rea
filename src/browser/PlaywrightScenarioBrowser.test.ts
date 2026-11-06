@@ -185,8 +185,8 @@ it("keeps Termux execution support when launching Chromium on Android", async ()
     diagnostics: { startup_error: "launch boundary reached" },
   });
 
+  expect(launchOptions?.chromiumSandbox).toBe(false);
   expect(launchOptions?.args).toEqual([
-    "--no-sandbox",
     "--disable-dev-shm-usage",
     "--single-process",
   ]);
@@ -237,6 +237,50 @@ const captureAndroidLaunch = async (
   });
   return { launchedProfile, launchOptions };
 };
+
+const launchScenario = browserScenarioSchema.parse({
+  browser: { mode: "launch", executable_path: process.execPath },
+  start_url: { url: "https://example.test" },
+  actions: [{ step_id: "settle", action: "wait_for_timeout", duration_ms: 1 }],
+});
+
+it.each([
+  { environment: {}, sandbox: true },
+  { environment: { REA_BROWSER_NO_SANDBOX: "false" }, sandbox: true },
+  { environment: { REA_BROWSER_NO_SANDBOX: "1" }, sandbox: true },
+  { environment: { REA_BROWSER_NO_SANDBOX: "true" }, sandbox: false },
+])(
+  "launches Chromium with sandbox $sandbox for $environment",
+  async ({ environment, sandbox }) => {
+    Object.defineProperty(process, "platform", { value: "linux" });
+    let launchOptions: Parameters<
+      typeof import("playwright-core").chromium.launchPersistentContext
+    >[1];
+
+    await expect(
+      openPlaywrightScenarioBrowser(launchScenario, environment, {
+        launcher: {
+          connectOverCDP: async () => {
+            throw new Error("Unexpected connection");
+          },
+          launchPersistentContext: async (_profile, options) => {
+            launchOptions = options;
+            throw new Error("launch boundary reached");
+          },
+        },
+      }),
+    ).rejects.toMatchObject({
+      diagnostics: { startup_error: "launch boundary reached" },
+      remediationAction: sandbox
+        ? expect.stringContaining("REA_BROWSER_NO_SANDBOX=true")
+        : "Review the selected executable and startup diagnostics, then correct the launch configuration before retrying.",
+    });
+
+    expect(launchOptions?.chromiumSandbox).toBe(sandbox);
+    expect(launchOptions?.args).toEqual([]);
+    expect(launchOptions?.env).toEqual({});
+  },
+);
 
 it.each([
   {
@@ -319,8 +363,8 @@ it.each([
     const { launchedProfile, launchOptions } =
       await captureAndroidLaunch(selected);
     expect(launchedProfile?.startsWith(paths[parent])).toBe(true);
+    expect(launchOptions?.chromiumSandbox).toBe(false);
     expect(launchOptions?.args).toEqual([
-      "--no-sandbox",
       "--disable-dev-shm-usage",
       "--single-process",
     ]);

@@ -475,7 +475,7 @@ cliTest(
 );
 
 cliTest(
-  "diagnoses an obsolete explicit-null Evidence commitment without claiming the file was modified",
+  "diagnoses an obsolete explicit-null Evidence commitment",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-legacy-coverage-identity-");
     const path = join(root, "legacy.json");

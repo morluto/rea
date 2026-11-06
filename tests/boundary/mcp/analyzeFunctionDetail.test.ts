@@ -309,3 +309,32 @@ it("rejects a summary request before analysis when the server retains no Evidenc
   expect(reply.isError).toBe(true);
   expect(execute).not.toHaveBeenCalled();
 });
+
+it.each([true, false])(
+  "delivers an unreadable dossier's partial Evidence through the session writer (retained=%s)",
+  async (retain) => {
+    const { client, ledger } = await connect(retain, {
+      not: "a dossier",
+    } as never);
+
+    const reply = await client.callTool({
+      name: "analyze_function",
+      arguments: { procedure: "main", detail: "complete" },
+    });
+
+    expect(reply.isError).toBe(true);
+    const partial = JSON.parse(
+      reply.content.find((item) => item.type === "text")?.text ?? "{}",
+    ).error.details.partial_observation;
+    if (!retain) {
+      expect(parseEvidence(partial).operation).toBe("analyze_function");
+      return;
+    }
+    expect(partial).toMatchObject({ kind: "retained-evidence" });
+    expect(ledger.forAnalysis(partial.evidence_id)).toMatchObject({
+      evidence_id: partial.evidence_id,
+      operation: "analyze_function",
+      normalized_result: { not: "a dossier" },
+    });
+  },
+);

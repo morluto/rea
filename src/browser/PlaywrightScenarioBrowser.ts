@@ -1,4 +1,8 @@
 import { PLAYWRIGHT_BROWSER_SCENARIO_PROVIDER_IDENTITY } from "./providerIdentities.js";
+import {
+  chromiumLaunchRemediation,
+  chromiumSandboxEnabled,
+} from "./ChromiumSandbox.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import {
@@ -1000,6 +1004,7 @@ export const openPlaywrightScenarioBrowser = async (
     launchedBrowser.executable_path,
   );
   const headless = scenario.browser.headless;
+  const chromiumSandbox = chromiumSandboxEnabled(environment);
   let launchStarted = false;
   try {
     await chmod(profilePath, 0o700);
@@ -1027,6 +1032,7 @@ export const openPlaywrightScenarioBrowser = async (
             handleSIGINT: false,
             handleSIGTERM: false,
             timeout: commandTimeoutMs,
+            chromiumSandbox,
             // Termux's Chromium cannot create its renderer process through Android's
             // executable boundary. Single-process mode keeps the browser and page in
             // the Termux-launched process so scenario navigation remains available.
@@ -1034,11 +1040,7 @@ export const openPlaywrightScenarioBrowser = async (
             // writable temp directory instead of failing the launch.
             args:
               process.platform === "android"
-                ? [
-                    "--no-sandbox",
-                    "--disable-dev-shm-usage",
-                    "--single-process",
-                  ]
+                ? ["--disable-dev-shm-usage", "--single-process"]
                 : [],
           }),
         commandTimeoutMs,
@@ -1063,8 +1065,7 @@ export const openPlaywrightScenarioBrowser = async (
             {
               cause,
               userMessage: "The selected browser could not start.",
-              remediationAction:
-                "Review the selected executable and startup diagnostics, then correct the launch configuration before retrying.",
+              remediationAction: chromiumLaunchRemediation(chromiumSandbox),
               diagnostics: {
                 executable_path: executablePath,
                 startup_error:

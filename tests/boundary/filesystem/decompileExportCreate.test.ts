@@ -277,6 +277,19 @@ describe("decompile journal ownership", () => {
           await opened.value.writeIndex({
             layoutStatus: "address",
             limitations: [],
+            latestRun: {
+              resume: false,
+              selected: 1,
+              excluded: 0,
+              selection: {
+                name: null,
+                namespace: null,
+                address_start: null,
+                address_end: null,
+                limit: null,
+              },
+              inventoryLimitations: [],
+            },
           })
         ).ok,
       ).toBe(true);
