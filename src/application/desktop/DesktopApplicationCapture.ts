@@ -1,19 +1,20 @@
 import { arch, hostname, userInfo } from "node:os";
-import { dirname } from "node:path";
 
 import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
 import {
   projectAnalysisError,
   type AnalysisErrorProjection,
 } from "../../domain/analysisErrorProjection.js";
-import { unretainedOpenedLimitation } from "../../domain/desktop/appExportUnowned.js";
+import {
+  unretainedOpenedDirectories,
+  unretainedOpenedLimitation,
+} from "../../domain/desktop/appExportUnowned.js";
 import {
   checkpointTaken,
   type DesktopApplicationCapture,
   type DesktopCaptureEvent,
   type DesktopSession,
 } from "../../domain/desktop/desktopCapture.js";
-import { isWithinAny } from "../../domain/desktop/desktopStateDiff.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import { DesktopContentStore } from "../../desktop/DesktopContentStore.js";
 import {
@@ -88,8 +89,6 @@ export interface DesktopCaptureHost {
 export interface DesktopCaptureErrorOutput extends AnalysisErrorProjection {
   readonly error: "Desktop capture failed";
 }
-
-const unique = (paths: readonly string[]) => [...new Set(paths)];
 
 /** The host's name and the user's, each left out when the system cannot say, as for a user with no passwd entry. */
 const hostIdentity = (): { hostname?: string; user?: string } => {
@@ -299,10 +298,9 @@ const recordCapture = async (
     signal,
   });
   const { session, unreleased } = outcome;
-  const unretained = unique(
-    session.opened_files
-      .map((file) => dirname(file.path))
-      .filter((directory) => !isWithinAny(directory, scope.contentRoots)),
+  const unretained = unretainedOpenedDirectories(
+    session.opened_files.map((file) => file.path),
+    { ...scope, home },
   );
   const capture: DesktopApplicationCapture = {
     host: {
@@ -324,7 +322,7 @@ const recordCapture = async (
       content_files: store.files,
       content_bytes: store.bytes,
       omitted_content: [...store.omissions],
-      unretained_opened_directories: unretained,
+      unretained_opened_directories: [...unretained],
     },
     limitations: [
       ...admitted.limitations,

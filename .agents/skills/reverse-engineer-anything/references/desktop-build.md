@@ -169,6 +169,11 @@ the first source that has the app:
   keeps for the seed; also set autosaves per hour to 0, and dismiss the
   development-version dialog with "Don't show again". `pulseaudio` as an
   extra package does not help.
+- Poedit cannot add entries by hand. Use File → New, pick the language and
+  save to `Documents` first (Sources Paths stays locked until then), then
+  Properties → Sources Paths → + → Add Files with a source such as
+  `/usr/lib/python3.12/argparse.py`. It writes `fr.mo` beside the `.po`, and
+  the language box's autocomplete popup takes the first OK click.
 - CherryTree: its first-run autosave "Choose Storage Type" dialog swallows
   keys, so save once early as `.ctd` and untick autosave.
 - Glade: a new widget's id is empty until you set it, and a second save

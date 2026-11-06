@@ -65,7 +65,7 @@ import {
   type SeedVersion,
 } from "./DesktopExportFiles.js";
 import { withRetainedContent } from "./DesktopRetainedContent.js";
-import { planLaunch, seedVersions } from "./DesktopExportLaunch.js";
+import { planLaunch, seedModes, seedVersions } from "./DesktopExportLaunch.js";
 import { selectStateEnds } from "./DesktopStateVersions.js";
 import { admitDesktopTask, type AdmittedTask } from "./DesktopTaskExport.js";
 
@@ -236,12 +236,13 @@ const planExport = (
     syntheticSeed: request.syntheticSeed === true,
     seedFiles: [...seeds.keys()].sort(),
     textSeeds,
+    seedModes: seedModes(capture, seeds, files, context.seed),
     unseededFiles: unseeded.filter((file) => !isLeftOut(file)),
     ...leftOutSeeds(
       [...locks, ...unseeded.filter(isLeftOut)],
       stateFiles.isLeftOutLog,
     ),
-    unownedFolders: unownedChangedFolders(files, paths),
+    unownedFolders: unownedChangedFolders(files, paths, isLeftOut),
     runtimeSeeds: runtimeSeeds([...seeds.keys()]),
     dconf,
     captureEvidenceId: context.evidenceId,

@@ -203,15 +203,19 @@ a count of the rest. Capture again naming them with `--state-path`, or
 Lock files the app holds while it runs are left out of the seed: a copied one
 makes the app find its profile or document in use, and a LibreOffice Calc
 bundle whose seed held its profile's `.lock` showed no window at boot. They
-are `lockfile`, `lock`, `.lock`, `.parentlock`, `parent.lock` and
-`SingletonLock` anywhere, LibreOffice's document lock `.~lock.<name>#`, a
+are `lockfile`, `lock`, `.lock`, `.parentlock`, `parent.lock`,
+`SingletonLock` and Lucene's index lock `write.lock` anywhere, as Poedit's
+translation memory holds, LibreOffice's document lock `.~lock.<name>#`, a
 `<file>.lck`, `.<file>.lock`, `.<file>.lck` or `<file>.<ext>.lock` beside a
 file the capture recorded in the same folder, such as GnuCash's
 `household.gnucash.LCK`, Grisbi's empty `.household.gsb.lock`, which made it
 refuse every save, and VYM's `plan.vym.lock` (a project's `Gemfile.lock`
 beside its `Gemfile` has no extension to its file, so it is seeded), and
-`*.lock` or `*.lck` directly in one of the application's state directories;
-a lone `notes.lck` or `.notes.lock` elsewhere is seeded.
+`*.lock` or `*.lck` directly in the home, as wxWidgets' single-instance
+`~/poedit.lock`, or directly in one of the application's state directories;
+a lone `notes.lck` or `.notes.lock` elsewhere is seeded. A lock or a log (below)
+never makes a path the application's own, so `~/poedit.lock` is neither owned
+nor named among the folders the bundle does not own.
 Elsewhere such a file may be a project's own, such as `Cargo.lock` or
 `yarn.lock`, which pin dependencies, and is seeded, even under a folder whose
 name starts with a dot. A file the state view makes a document, or one named
@@ -220,6 +224,12 @@ whatever its name. A limitation and the README list them, up to
 eight and a count, after "Left out of the seed". They stay under the owned
 paths, so `data/get` returns the lock the running app holds, and `data/reset`
 restores the seed without them.
+
+A seed file keeps the permission bits it had at the seed when the capture saw
+it change, such as a `0600` file an app checks: the class module lists those
+other than `0644` in `SEED_MODES`, and the first boot sets them when it copies
+the seed. A file the capture never saw change has no recorded mode and is
+written `0644`.
 
 The app's logs are left out of the seed the same way, since they record facts
 about the capture host that the host scrub does not catch, such as Freeplane's
