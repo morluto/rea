@@ -37,6 +37,8 @@ def main():
     parser.add_argument('--profile-parent', type=Path,
                         help='External disposable-profile parent (default: cache beside the source Codex home)')
     parser.add_argument('--authority', choices=['static', 'browser'], default='static')
+    parser.add_argument('--include-account-tools', action='store_true',
+                        help='Allow account apps/plugins; default isolates REA from their catalogs')
     parser.add_argument('--capture-tool-context', action='store_true',
                         help='Retain owned tool/usage items; excludes account/ambient state')
     parser.add_argument('--guide-enabled-tools', action='store_true',
@@ -159,14 +161,20 @@ def main():
             'or delegate. Reply with exactly the text requested by the user.'
         )
     quote = json.dumps
+    # A disposable CODEX_HOME does not disable account-connected apps. Keep
+    # the requested feature policy identical in the config and its receipt.
+    features = {
+        'multi_agent': False, 'shell_snapshot': False, 'shell_tool': False,
+        'unified_exec': False, 'code_mode_host': args.mode == 'client-code',
+        'apps': args.include_account_tools, 'plugins': args.include_account_tools,
+    }
     config = '\n'.join([
         'approval_policy = "never"', 'sandbox_mode = "read-only"',
         'web_search = "disabled"', 'model = ' + quote(args.model),
         'model_reasoning_effort = ' + quote(args.reasoning),
         'developer_instructions = ' + quote(instruction),
-        '[features]', 'multi_agent = false', 'shell_snapshot = false',
-        'shell_tool = false', 'unified_exec = false',
-        'code_mode_host = ' + ('true' if args.mode == 'client-code' else 'false'),
+        '[features]',
+        *[name + ' = ' + str(enabled).lower() for name, enabled in features.items()],
         '[history]', 'persistence = "none"',
     ]) + '\n'
     if not args.no_mcp:
@@ -253,8 +261,7 @@ def main():
                 provider_env.get('PATH', os.environ.get('PATH', '')).encode()).hexdigest(),
             'provider_environment_policy_sha256': hashlib.sha256(
                 provider_policy_text.encode()).hexdigest(),
-            'features': {'shell_tool': False, 'unified_exec': False,
-                         'multi_agent': False, 'code_mode_host': args.mode == 'client-code'},
+            'features': features,
         }, indent=2) + '\n')
         invocation = [args.codex, '--no-daemon', 'exec', '--strict-config',
                       *([] if args.capture_tool_context else ['--ephemeral']),

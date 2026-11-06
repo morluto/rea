@@ -1,3 +1,4 @@
+import { registerApiContractCommand } from "./apiContractCommand.js";
 import { Cli, z } from "incur";
 
 import { CLI_COMMANDS } from "../cliCommandNames.js";
@@ -8,6 +9,7 @@ import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { Logger } from "pino";
 import { registerSourceToBundleCommand } from "./sourceToBundleCommand.js";
+import { registerStaticObservedEndpointsCommand } from "./staticObservedEndpointsCommand.js";
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
 import type { EvidenceLookup } from "../application/EvidenceInputResolver.js";
 import type { Evidence } from "../domain/evidence.js";
@@ -72,6 +74,8 @@ export const registerApplicationCommands = (
     },
   });
   registerSourceToBundleCommand(cli, logger);
+  registerStaticObservedEndpointsCommand(cli, logger);
+  registerApiContractCommand(cli, logger);
   registerEvidenceJsonCommand({
     cli,
     logger,
