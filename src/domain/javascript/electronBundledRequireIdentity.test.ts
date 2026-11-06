@@ -224,6 +224,7 @@ describe("Webpack loader alias bounds", () => {
         "getLoader()",
         "new GetLoader()",
         "holder.loader",
+        "unresolvedLoader",
       ].map((value) => ({ count, value })),
     ),
   )(
