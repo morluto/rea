@@ -629,6 +629,7 @@
 * **mcp:** advertise standard route path schemas ([76eecf7](https://github.com/morluto/rea/commit/76eecf7fa175023b7315f40bc7582baea401c2e2))
 * **mcp:** align retained view handoff guidance ([#7926](https://github.com/morluto/rea/issues/7926)) ([31c028f](https://github.com/morluto/rea/commit/31c028f4962e1f2a3a6fdd45406b5010ed5cf01d))
 * **mcp:** bound validation work before tool dispatch ([#7905](https://github.com/morluto/rea/issues/7905)) ([f60e42a](https://github.com/morluto/rea/commit/f60e42a9aece5119719e554715b012b5630735c0))
+* **mcp:** clarify discovery bounds and isolate catalog evals ([#9101](https://github.com/morluto/rea/issues/9101)) ([c467cf8](https://github.com/morluto/rea/commit/c467cf868583e378d8d8ce9dfffe25bce0f25376))
 * **mcp:** clarify retained dossier handoff in crash prompt ([#8437](https://github.com/morluto/rea/issues/8437)) ([b8963c1](https://github.com/morluto/rea/commit/b8963c18088c0333700d40849e359f2eca5f0f63))
 * **mcp:** distinguish unavailable batch pseudocode ([#8737](https://github.com/morluto/rea/issues/8737)) ([d896ab7](https://github.com/morluto/rea/commit/d896ab7bd78331efa15e35337c1f8eff45a21623))
 * **mcp:** distinguish validation from connection loss ([#7761](https://github.com/morluto/rea/issues/7761)) ([df7119a](https://github.com/morluto/rea/commit/df7119aeede60f9f81a74f29d6606c49adb79d8e))
