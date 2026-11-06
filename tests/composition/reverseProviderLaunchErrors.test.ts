@@ -3,10 +3,15 @@ import { resolve } from "node:path";
 import { expect, it, vi } from "vitest";
 import { OwnedCommandFailure } from "../../src/process/OwnedCommand.js";
 import {
+  DarwinProcessOwnershipInspectionError,
+  type DarwinCompilerOutcome,
+} from "../../src/process/DarwinProcessRunTokenReader.js";
+import {
   LinuxOwnedProcessPrerequisiteError,
   systemProcessOwnershipHost,
 } from "../../src/process/ProcessOwnershipObservation.js";
 import { ProcessAdmissionError } from "../../src/process/ProcessAdmissionError.js";
+import { AnalysisCapabilityUnavailableError } from "../../src/domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../src/domain/analysisErrorProjection.js";
 import {
   createArtifact,
@@ -308,6 +313,115 @@ it("preserves missing Linux ps prerequisite error without blaming configured com
       expect(projected.message).toContain("procps-compatible ps");
       expect(projected.remediation.action).toContain("procps");
       expect(projected.remediation.action).not.toContain("REA_OBJDUMP_COMMAND");
+    }
+    expect(service.observedLaunchFailures()).toEqual({});
+  } finally {
+    prepareSpy.mockRestore();
+    await service.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+it("preserves Darwin process ownership inspection preparation error without blaming objdump command", async () => {
+  const { directory } = await createArtifact();
+  const command = resolve(directory, "configured-objdump");
+  const compilerOutcome: DarwinCompilerOutcome = {
+    outcome: "exited",
+    code: 1,
+    signal: null,
+    stderr:
+      "xcrun: error: unable to find utility 'swiftc', not a developer tool or in PATH",
+    stderrTruncated: false,
+    outputTruncated: false,
+    killed: false,
+  };
+  const darwinError = new DarwinProcessOwnershipInspectionError(
+    "Swift compiler failed to build process reader helper",
+    { compilerOutcome },
+  );
+  const prepareSpy = vi
+    .spyOn(systemProcessOwnershipHost, "prepare")
+    .mockRejectedValue(darwinError);
+  const service = new TestReverseEngineeringService({
+    environment: { REA_OBJDUMP_COMMAND: command },
+  });
+  try {
+    const result = await service.inspectWithObjdump({
+      operation: "architectures",
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      const projected = projectAnalysisError(result.error);
+      expect(projected.code).toBe("capability_unavailable");
+      expect(projected.details).toMatchObject({
+        provider_id: "process-ownership",
+      });
+      expect(result.error.diagnostics).toMatchObject({
+        boundary: "process-ownership",
+        stage: "ownership_preparation",
+        compiler_outcome: expect.objectContaining({
+          outcome: "exited",
+          code: 1,
+        }),
+      });
+      expect(projected.message).toContain("Swift compiler failed");
+      expect(projected.remediation.action).toContain(
+        "Xcode or Command Line Tools and Swift compiler configuration",
+      );
+      expect(projected.remediation.action).toContain(
+        "REA_OBJDUMP_COMMAND does not need to change",
+      );
+    }
+    expect(service.observedLaunchFailures()).toEqual({});
+  } finally {
+    prepareSpy.mockRestore();
+    await service.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+it("preserves Darwin process ownership inspection error with cleanup state without blaming rizin command", async () => {
+  const { directory, path } = await createArtifact();
+  const command = resolve(directory, "configured-rizin");
+  const cleanupError = new AnalysisCapabilityUnavailableError(
+    "process-ownership",
+    "close_binary",
+    "staging cleanup failed",
+    { cleanup: { reason: "rmdir failed", resources: ["/tmp/helper"] } },
+  );
+  const darwinError = new DarwinProcessOwnershipInspectionError(
+    "Swift compiler failed to build process reader helper",
+    { cleanupFailure: cleanupError },
+  );
+  const prepareSpy = vi
+    .spyOn(systemProcessOwnershipHost, "prepare")
+    .mockRejectedValue(darwinError);
+  const service = new TestReverseEngineeringService({
+    environment: { REA_RIZIN_COMMAND: command },
+  });
+  try {
+    const result = await service.executeRizinCommand({
+      path,
+      command: "iI",
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      const projected = projectAnalysisError(result.error);
+      expect(projected.code).toBe("cleanup_incomplete");
+      expect(projected.details).toMatchObject({
+        provider_id: "process-ownership",
+      });
+      expect(projected.remediation.action).toContain(
+        "Xcode or Command Line Tools and Swift compiler configuration",
+      );
+      expect(projected.remediation.action).toContain(
+        "REA_RIZIN_COMMAND does not need to change",
+      );
+      expect(result.error.cleanupIncomplete).toBe(true);
+      expect(result.error.cleanup).toMatchObject({
+        reason: expect.stringContaining("staging cleanup failed"),
+        resources: ["/tmp/helper"],
+      });
     }
     expect(service.observedLaunchFailures()).toEqual({});
   } finally {

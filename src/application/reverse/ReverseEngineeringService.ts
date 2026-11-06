@@ -24,7 +24,7 @@ import {
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
-import type { JsonValue } from "../../domain/jsonValue.js";
+import { jsonValueSchema, type JsonValue } from "../../domain/jsonValue.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import {
   DEFAULT_REVERSE_COMMAND_TIMEOUT_MS,
@@ -46,7 +46,9 @@ import {
   OwnedCommandFailure,
   runOwnedCommand,
 } from "../../process/OwnedCommand.js";
+import { DarwinProcessOwnershipInspectionError } from "../../process/DarwinProcessRunTokenReader.js";
 import {
+  DARWIN_PROCESS_OWNERSHIP_REMEDIATION,
   LinuxOwnedProcessPrerequisiteError,
   processOwnershipAdmissionRecovery,
 } from "../../process/ProcessOwnershipObservation.js";
@@ -667,6 +669,67 @@ export class ReverseEngineeringService {
           },
         );
       }
+      const darwinFailure = darwinPreparationError(cause);
+      if (earlyFailure === undefined && darwinFailure !== undefined) {
+        if (
+          darwinFailure.cancellation !== undefined ||
+          commandCancelled(signal, cause, code)
+        ) {
+          earlyFailure = new AnalysisCancelledError(operation, {
+            cause:
+              callerCancellationCause(signal, cause) ??
+              darwinFailure.cancellation?.reason,
+            ...ownedCleanupOptions(cause),
+          });
+        } else {
+          const provider =
+            operation === "inspect_with_objdump" ? "objdump" : "rizin";
+          const setting =
+            operation === "inspect_with_objdump"
+              ? "REA_OBJDUMP_COMMAND"
+              : "REA_RIZIN_COMMAND";
+          const cleanup =
+            darwinFailure.cleanupFailure !== undefined
+              ? {
+                  reason: darwinFailure.cleanupFailure.message,
+                  resources: darwinFailure.cleanupFailure.cleanupResources,
+                }
+              : (ownedCleanupOptions(cause).cleanup ?? undefined);
+          earlyFailure = new AnalysisCapabilityUnavailableError(
+            "process-ownership",
+            "prepare_owned_process",
+            `Darwin process ownership inspection could not be prepared: ${darwinFailure.message}`,
+            {
+              cause,
+              userMessage: darwinFailure.message,
+              remediationAction: `${DARWIN_PROCESS_OWNERSHIP_REMEDIATION} ${setting} does not need to change.`,
+              diagnostics: {
+                boundary: "process-ownership",
+                stage: "ownership_preparation",
+                ...(darwinFailure.compilerOutcome === undefined
+                  ? {}
+                  : {
+                      compiler_outcome: jsonValueSchema.parse(
+                        darwinFailure.compilerOutcome,
+                      ),
+                    }),
+              },
+              ...(darwinFailure.capturedOutput === undefined
+                ? {}
+                : { capturedOutput: darwinFailure.capturedOutput }),
+              ...(cleanup === undefined ? {} : { cleanup }),
+              ...(darwinFailure.cleanupOwner === undefined
+                ? {}
+                : { cleanupOwner: darwinFailure.cleanupOwner }),
+            },
+          );
+          if (darwinFailure.cleanupFailure !== undefined) {
+            earlyFailure.bindCleanupDependencies([
+              darwinFailure.cleanupFailure,
+            ]);
+          }
+        }
+      }
       if (
         earlyFailure === undefined &&
         (capture === undefined ||
@@ -1180,6 +1243,28 @@ const ownedCleanupOptions = (
   cause instanceof OwnedOutputFailure && cause.cleanup !== undefined
     ? { cleanup: cause.cleanup }
     : {};
+
+const darwinPreparationError = (
+  cause: unknown,
+): DarwinProcessOwnershipInspectionError | undefined => {
+  if (cause instanceof DarwinProcessOwnershipInspectionError) return cause;
+  if (
+    typeof cause === "object" &&
+    cause !== null &&
+    Reflect.get(cause, "name") === "DarwinProcessOwnershipInspectionError"
+  )
+    return cause as DarwinProcessOwnershipInspectionError;
+  if (
+    cause instanceof OwnedCommandFailure &&
+    cause.preparationFailure !== undefined
+  )
+    return darwinPreparationError(cause.preparationFailure);
+  if (cause instanceof OwnedOutputFailure)
+    return darwinPreparationError(cause.cause);
+  if (cause instanceof Error && "cause" in cause && cause.cause !== undefined)
+    return darwinPreparationError(cause.cause);
+  return undefined;
+};
 
 const reverseCommandTimeoutGuidance = (
   timeoutMs: number,

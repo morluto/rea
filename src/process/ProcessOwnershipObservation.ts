@@ -1684,9 +1684,15 @@ export class LinuxOwnedProcessPrerequisiteError extends AnalysisCapabilityUnavai
     super("process-ownership", "prepare_owned_process", reason, {
       cause,
       userMessage: reason,
+      remediationAction:
+        "Install your distribution's procps or procps-ng package, or put a procps-compatible ps on REA's PATH, then retry.",
     });
   }
 }
+
+/** Actionable remediation for Darwin process ownership inspection preparation failure. */
+export const DARWIN_PROCESS_OWNERSHIP_REMEDIATION =
+  "Check the selected Xcode or Command Line Tools and Swift compiler configuration, then restart REA and retry.";
 
 /** Actionable recovery guidance for process ownership admission failures. */
 export const processOwnershipAdmissionRecovery = (code: string): string => {
