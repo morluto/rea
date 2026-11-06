@@ -1,10 +1,44 @@
-import { expect } from "vitest";
+import { runInNewContext } from "node:vm";
+
+import { transformSync } from "esbuild";
+import { expect, it } from "vitest";
 
 import type { JavaScriptApplicationGraph } from "../../../src/domain/javascript/javascriptApplicationGraph.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 import { analyzeJavaScriptDirectory } from "../../support/cli/javascriptApplication.js";
 import { writeFixtureFiles } from "../../support/javascriptApplicationFixture.js";
+
+const typeOnlyWorkerImports = [
+  'import type { Worker } from "node:worker_threads";',
+  'import { type Worker } from "node:worker_threads";',
+];
+
+it.each(typeOnlyWorkerImports)(
+  "preserves the ambient Worker at runtime after erasing %s",
+  (prefix) => {
+    const workerUrls: string[] = [];
+    const { code } = transformSync(
+      `${prefix}\nnew Worker(new URL("./worker.js", import.meta.url));`,
+      {
+        loader: "ts",
+        format: "iife",
+        define: {
+          "import.meta.url": JSON.stringify("file:///fixture/main.ts"),
+        },
+      },
+    );
+    runInNewContext(code, {
+      URL,
+      Worker: class {
+        constructor(url: URL) {
+          workerUrls.push(url.href);
+        }
+      },
+    });
+    expect(workerUrls).toEqual(["file:///fixture/worker.js"]);
+  },
+);
 
 const workerReferences = (graph: JavaScriptApplicationGraph) =>
   graph.nodes
@@ -84,6 +118,12 @@ cliTest(
         suffix: "",
         resolves: true,
       },
+      ...typeOnlyWorkerImports.map((prefix) => ({
+        prefix,
+        constructor: "new Worker",
+        suffix: "",
+        resolves: true,
+      })),
       ...[
         ["class Worker {}", "new Worker", ""],
         ["globalThis.Worker = Fake;", "new Worker", ""],
@@ -94,16 +134,6 @@ cliTest(
         ["const custom = { Worker: class {} };", "new custom.Worker", ""],
         ["function start(window) {", "new window.Worker", "}"],
         ["function start(globalThis) {", "new globalThis.Worker", "}"],
-        [
-          'import type { Worker } from "node:worker_threads";',
-          "new Worker",
-          "",
-        ],
-        [
-          'import { type Worker } from "node:worker_threads";',
-          "new Worker",
-          "",
-        ],
         [
           'import type * as threads from "node:worker_threads";',
           "new threads.Worker",
@@ -279,12 +309,6 @@ cliTest(
         specifier: "./worker.js",
         resolved: "bundled/worker.js",
       },
-      {
-        source: "nested/literal.mjs",
-        expression: 'new Worker("./literal-worker.js");',
-        specifier: "./literal-worker.js",
-        resolved: "nested/literal-worker.js",
-      },
     ];
     await writeFixtureFiles(root, {
       ...Object.fromEntries(
@@ -431,9 +455,6 @@ cliTest(
       "directory-dot.mjs": "./worker.js/.",
       "directory-parent.mjs": "./worker.js/child/..",
       "empty-segment.mjs": "./child//../worker.js",
-      "empty-worker-url.mjs": "",
-      "query-only-worker-url.mjs": "?cache=1",
-      "fragment-only-worker-url.mjs": "#worker",
       "package.mjs": "./package-worker",
       "external.mjs": "https://example.test/worker.js",
     };
@@ -474,6 +495,57 @@ cliTest(
           mapped_paths: [],
         }),
       );
+    }
+  },
+);
+
+cliTest(
+  "keeps string Worker paths unresolved because the document base is unknown",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-worker-document-base-");
+    // A browser resolves these strings against the document base URL, not the
+    // calling script; Node resolves them against the working directory.
+    const expressions = {
+      "scripts/main.js": 'new Worker("./worker.js")',
+      "scripts/service.js": 'navigator.serviceWorker.register("./sw.js")',
+    };
+    await writeFixtureFiles(root, {
+      "index.html": '<script src="./scripts/main.js"></script>',
+      ...Object.fromEntries(
+        Object.entries(expressions).map(([path, code]) => [path, `${code};`]),
+      ),
+      "worker.js": "self.postMessage('document-relative worker');",
+      "scripts/worker.js": "self.postMessage('script-relative decoy');",
+      "scripts/sw.js": "self.postMessage('script-relative decoy');",
+    });
+
+    const result = await analyzeJavaScriptDirectory("CLI", cli, root);
+    for (const [source, expression] of Object.entries(expressions)) {
+      const node = result.graph.nodes.find(
+        ({ kind, observations }) =>
+          (kind === "worker" || kind === "service-worker") &&
+          observations.some(
+            ({ evidence }) =>
+              evidence.location.available &&
+              evidence.location.value.kind === "source-range" &&
+              evidence.location.value.source === source,
+          ),
+      );
+      expect(node?.observations).toContainEqual(
+        expect.objectContaining({
+          properties: expect.objectContaining({
+            declared_specifier: null,
+            expression,
+            resolved_path: null,
+          }),
+        }),
+      );
+      expect(
+        result.graph.edges.some(
+          ({ relation, source_node_id }) =>
+            relation === "maps_to" && source_node_id === node?.node_id,
+        ),
+      ).toBe(false);
     }
   },
 );

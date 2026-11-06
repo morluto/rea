@@ -1,6 +1,6 @@
 {
   "repository": "morluto/rea",
-  "updated": "2026-10-14",
+  "updated": "2026-10-15",
   "contributors": [
     {
       "avatar_url": "https://avatars.githubusercontent.com/u/76467478?v=4",
@@ -38,17 +38,17 @@
       "type": "Bot"
     },
     {
-      "avatar_url": "https://avatars.githubusercontent.com/u/128062316?v=4",
-      "html_url": "https://github.com/sx4im",
-      "id": 128062316,
-      "login": "sx4im",
-      "type": "User"
-    },
-    {
       "avatar_url": "https://avatars.githubusercontent.com/u/114888155?v=4",
       "html_url": "https://github.com/DeryFerd",
       "id": 114888155,
       "login": "DeryFerd",
+      "type": "User"
+    },
+    {
+      "avatar_url": "https://avatars.githubusercontent.com/u/128062316?v=4",
+      "html_url": "https://github.com/sx4im",
+      "id": 128062316,
+      "login": "sx4im",
       "type": "User"
     },
     {
@@ -150,6 +150,13 @@
       "type": "User"
     },
     {
+      "avatar_url": "https://avatars.githubusercontent.com/u/140487034?v=4",
+      "html_url": "https://github.com/JayOfTheKeyboard",
+      "id": 140487034,
+      "login": "JayOfTheKeyboard",
+      "type": "User"
+    },
+    {
       "avatar_url": "https://avatars.githubusercontent.com/u/223882680?v=4",
       "html_url": "https://github.com/yasshmittal",
       "id": 223882680,
@@ -203,13 +210,6 @@
       "html_url": "https://github.com/huiq777",
       "id": 207747646,
       "login": "huiq777",
-      "type": "User"
-    },
-    {
-      "avatar_url": "https://avatars.githubusercontent.com/u/140487034?v=4",
-      "html_url": "https://github.com/JayOfTheKeyboard",
-      "id": 140487034,
-      "login": "JayOfTheKeyboard",
       "type": "User"
     },
     {
@@ -273,6 +273,13 @@
       "html_url": "https://github.com/1NormalGuy",
       "id": 115929844,
       "login": "1NormalGuy",
+      "type": "User"
+    },
+    {
+      "avatar_url": "https://avatars.githubusercontent.com/u/131595336?v=4",
+      "html_url": "https://github.com/To3akaRin",
+      "id": 131595336,
+      "login": "To3akaRin",
       "type": "User"
     },
     {
@@ -343,13 +350,6 @@
       "html_url": "https://github.com/TonyWu2333",
       "id": 75903587,
       "login": "TonyWu2333",
-      "type": "User"
-    },
-    {
-      "avatar_url": "https://avatars.githubusercontent.com/u/131595336?v=4",
-      "html_url": "https://github.com/To3akaRin",
-      "id": 131595336,
-      "login": "To3akaRin",
       "type": "User"
     },
     {
@@ -521,6 +521,13 @@
       "type": "User"
     },
     {
+      "avatar_url": "https://avatars.githubusercontent.com/u/330186599?v=4",
+      "html_url": "https://github.com/qorvr",
+      "id": 330186599,
+      "login": "qorvr",
+      "type": "User"
+    },
+    {
       "avatar_url": "https://avatars.githubusercontent.com/u/101505019?v=4",
       "html_url": "https://github.com/vilmerfrost",
       "id": 101505019,
@@ -598,6 +605,13 @@
       "type": "User"
     },
     {
+      "avatar_url": "https://avatars.githubusercontent.com/u/169631528?v=4",
+      "html_url": "https://github.com/Adkid-Zephyr",
+      "id": 169631528,
+      "login": "Adkid-Zephyr",
+      "type": "User"
+    },
+    {
       "avatar_url": "https://avatars.githubusercontent.com/u/8454518?v=4",
       "html_url": "https://github.com/jcamargos",
       "id": 8454518,
@@ -623,6 +637,13 @@
       "html_url": "https://github.com/JasonBuildAI",
       "id": 248806197,
       "login": "JasonBuildAI",
+      "type": "User"
+    },
+    {
+      "avatar_url": "https://avatars.githubusercontent.com/u/190670431?v=4",
+      "html_url": "https://github.com/8rulerstar",
+      "id": 190670431,
+      "login": "8rulerstar",
       "type": "User"
     },
     {
@@ -654,20 +675,6 @@
       "type": "User"
     },
     {
-      "avatar_url": "https://avatars.githubusercontent.com/u/169631528?v=4",
-      "html_url": "https://github.com/Adkid-Zephyr",
-      "id": 169631528,
-      "login": "Adkid-Zephyr",
-      "type": "User"
-    },
-    {
-      "avatar_url": "https://avatars.githubusercontent.com/u/152221558?v=4",
-      "html_url": "https://github.com/ShivekRanjan",
-      "id": 152221558,
-      "login": "ShivekRanjan",
-      "type": "User"
-    },
-    {
       "avatar_url": "https://avatars.githubusercontent.com/u/136733716?v=4",
       "html_url": "https://github.com/ShreyanshJain105",
       "id": 136733716,
@@ -686,6 +693,13 @@
       "html_url": "https://github.com/Sunil56224972",
       "id": 180283757,
       "login": "Sunil56224972",
+      "type": "User"
+    },
+    {
+      "avatar_url": "https://avatars.githubusercontent.com/u/112210438?v=4",
+      "html_url": "https://github.com/Swatantra-66",
+      "id": 112210438,
+      "login": "Swatantra-66",
       "type": "User"
     },
     {
@@ -763,6 +777,13 @@
       "html_url": "https://github.com/all-black-493",
       "id": 211421073,
       "login": "all-black-493",
+      "type": "User"
+    },
+    {
+      "avatar_url": "https://avatars.githubusercontent.com/u/152221558?v=4",
+      "html_url": "https://github.com/ShivekRanjan",
+      "id": 152221558,
+      "login": "ShivekRanjan",
       "type": "User"
     },
     {
@@ -864,10 +885,10 @@
       "type": "User"
     },
     {
-      "avatar_url": "https://avatars.githubusercontent.com/u/156576604?v=4",
-      "html_url": "https://github.com/Nik1313132",
-      "id": 156576604,
-      "login": "Nik1313132",
+      "avatar_url": "https://avatars.githubusercontent.com/u/186841349?v=4",
+      "html_url": "https://github.com/JNTMTMTM",
+      "id": 186841349,
+      "login": "JNTMTMTM",
       "type": "User"
     },
     {
@@ -959,13 +980,6 @@
       "html_url": "https://github.com/saurabh-sol",
       "id": 146759278,
       "login": "saurabh-sol",
-      "type": "User"
-    },
-    {
-      "avatar_url": "https://avatars.githubusercontent.com/u/330186599?v=4",
-      "html_url": "https://github.com/qorvr",
-      "id": 330186599,
-      "login": "qorvr",
       "type": "User"
     },
     {
@@ -1291,6 +1305,13 @@
       "type": "User"
     },
     {
+      "avatar_url": "https://avatars.githubusercontent.com/u/156576604?v=4",
+      "html_url": "https://github.com/Nik1313132",
+      "id": 156576604,
+      "login": "Nik1313132",
+      "type": "User"
+    },
+    {
       "avatar_url": "https://avatars.githubusercontent.com/u/226919216?v=4",
       "html_url": "https://github.com/wunianze666-netizen",
       "id": 226919216,
@@ -1372,13 +1393,6 @@
       "html_url": "https://github.com/Jackmeson1",
       "id": 130693642,
       "login": "Jackmeson1",
-      "type": "User"
-    },
-    {
-      "avatar_url": "https://avatars.githubusercontent.com/u/190670431?v=4",
-      "html_url": "https://github.com/8rulerstar",
-      "id": 190670431,
-      "login": "8rulerstar",
       "type": "User"
     },
     {

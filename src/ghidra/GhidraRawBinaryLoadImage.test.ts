@@ -5,6 +5,13 @@ import { fixtureRawBinaryLoadImage } from "./GhidraRawBinaryLoadImage.fixture.js
 import { ghidraRawBinaryLanguage } from "./GhidraRawBinaryLanguage.js";
 
 describe("raw-binary Ghidra language binding", () => {
+  it("maps the big-endian m68k family to the default 68000 language", () => {
+    expect(ghidraRawBinaryLanguage("m68k")).toEqual({
+      languageId: "68000:BE:32:default",
+      compilerSpecId: "default",
+      defaultAddressSpace: "ram",
+    });
+  });
   it("maps the four admitted families to little-endian generic languages", () => {
     expect(ghidraRawBinaryLanguage("x86")).toEqual({
       languageId: "x86:LE:32:default",
@@ -62,6 +69,45 @@ describe("raw-binary mapped-block state", () => {
               expected: "RAM",
               observed: space,
               matched: space === "RAM",
+            }),
+          ]),
+        },
+      });
+    },
+  );
+  it.each(["ram", "RAM"])(
+    "requires the bound m68k address space for %s observations",
+    (space) => {
+      const f = fixtureRawBinaryLoadImage();
+      const target = {
+        ...f.target,
+        architecture: "m68k" as const,
+        availableArchitectures: ["m68k" as const],
+        entryPoint: "0x1000",
+        entryPointSource: "0x1000",
+      };
+      f.observation.language_id = "68000:BE:32:default";
+      f.observation.default_address_space = space;
+      f.observation.entry_points = [target.entryPoint];
+      const mapping = f.observation.mappings[0];
+      if (mapping === undefined)
+        throw new Error("Missing source mapping fixture");
+      mapping.start = target.entryPoint;
+      mapping.end = "0x1003";
+      mapping.address_space = space;
+      expect(
+        attestGhidraRawBinaryLoadImage(f.snapshot, target, f.observation),
+      ).toMatchObject({
+        ok: true,
+        value: {
+          status: space === "ram" ? "verified" : "mismatch",
+          language_id: "68000:BE:32:default",
+          checks: expect.arrayContaining([
+            expect.objectContaining({
+              name: "default_address_space",
+              expected: "ram",
+              observed: space,
+              matched: space === "ram",
             }),
           ]),
         },
@@ -136,6 +182,9 @@ describe("raw-binary independent load-image checks", () => {
       initialized: false,
       loaded: true,
       overlay: false,
+      readable: true,
+      writable: true,
+      executable: false,
       length: 256,
       source_file_index: null,
       file_offset: null,

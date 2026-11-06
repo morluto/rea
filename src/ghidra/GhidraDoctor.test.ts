@@ -1,16 +1,30 @@
+import { createInspectionResources } from "../../tests/fixtures/inspectionResources.js";
+
+import { missingJavaProbe } from "./GhidraInstallation.fixture.js";
+import { ok as javaProbeOk } from "../domain/result.js";
+import type { GhidraJavaObservation } from "./GhidraJavaProbe.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { runDoctor, type DoctorHost } from "../application/Doctor.js";
 import { createDoctorHostFixture } from "../application/Doctor.fixture.js";
 import { providerRegistrationEnvironment } from "../application/SetupRegistrationEnvironment.js";
-import { WINDOWS_NATIVE_AUTHORITY_UNAVAILABLE_REASON } from "../process/WindowsAuthority.js";
 import * as nativeLoader from "../windows/WindowsNativeLoader.js";
 import {
   inspectGhidraInstallation,
   type GhidraInstallationHost,
   type GhidraInstallationInspection,
 } from "./GhidraInstallation.js";
-import { projectGhidraDoctorInspection } from "./GhidraDoctor.js";
+import {
+  inspectSystemGhidraProvider,
+  projectGhidraDoctorInspection,
+} from "./GhidraDoctor.js";
+import { GHIDRA_RESTRICTED_TEMP_REMEDIATION } from "./GhidraTemporaryDirectory.js";
+
+let inspectionResources = createInspectionResources();
+afterEach(async () => {
+  await inspectionResources.close();
+  inspectionResources = createInspectionResources();
+});
 
 const INSTALL = "/opt/ghidra_12.1.4_PUBLIC";
 const installationHost = (
@@ -19,28 +33,30 @@ const installationHost = (
 ): GhidraInstallationHost => ({
   readText: () => "application.version=12.1.4\napplication.java.min=21\n",
   executable: () => true,
-  probeJava: () => ({
-    osArch: "amd64",
-    osName: platform === "win32" ? "Windows 11" : "Linux",
-    version: "21.0.11",
-    major: 21,
-    home: "/usr/lib/jvm/jdk-21",
-    bits: 64,
-    runtime: "jdk",
-  }),
+  probeJava: () =>
+    javaProbeOk<GhidraJavaObservation>({
+      osArch: "amd64",
+      osName: platform === "win32" ? "Windows 11" : "Linux",
+      version: "21.0.11",
+      major: 21,
+      home: "/usr/lib/jvm/jdk-21",
+      bits: 64,
+      runtime: "jdk",
+    }),
   ...overrides,
 });
 
-const inspection = (
+const inspection = async (
   options: {
     readonly installDir?: string;
     readonly architecture?: NodeJS.Architecture;
     readonly platform?: NodeJS.Platform;
   } = { installDir: INSTALL },
   overrides: Partial<GhidraInstallationHost> = {},
-): GhidraInstallationInspection =>
-  inspectGhidraInstallation(
+): Promise<GhidraInstallationInspection> =>
+  await inspectGhidraInstallation(
     {
+      resourceOwner: inspectionResources.owner,
       environment: {},
       platform: options.platform ?? "linux",
       architecture: options.architecture ?? "x64",
@@ -69,7 +85,6 @@ const doctorHost = (
     validTarget: () => Promise.resolve(true),
     executable: (path) =>
       Promise.resolve(hopperAvailable && path.includes("Hopper")),
-    supportedLinuxHopper: () => Promise.resolve(true),
     linuxDemoRuntimeCheck: () =>
       Promise.resolve({
         name: "hopper-demo-runtime",
@@ -82,9 +97,9 @@ const doctorHost = (
       Promise.resolve([projectGhidraDoctorInspection(ghidra)]),
   });
 
-describe("Ghidra doctor integration", () => {
+describe("Ghidra doctor integration", async () => {
   it("accepts a valid BYO Ghidra engine when Hopper is absent", async () => {
-    const result = await runDoctor(undefined, doctorHost(inspection()));
+    const result = await runDoctor(undefined, doctorHost(await inspection()));
 
     expect(result.healthy).toBe(true);
     expect(result.hopperPath).toBeUndefined();
@@ -108,12 +123,12 @@ describe("Ghidra doctor integration", () => {
   it.each([
     [
       "bad installation",
-      inspection({ installDir: INSTALL }, { readText: () => undefined }),
+      await inspection({ installDir: INSTALL }, { readText: () => undefined }),
       "ghidra-installation",
     ],
     [
       "wrong version",
-      inspection(
+      await inspection(
         { installDir: INSTALL },
         {
           readText: () => "application.version=11.4\napplication.java.min=21\n",
@@ -123,30 +138,31 @@ describe("Ghidra doctor integration", () => {
     ],
     [
       "missing analyzeHeadless",
-      inspection({ installDir: INSTALL }, { executable: () => false }),
+      await inspection({ installDir: INSTALL }, { executable: () => false }),
       "ghidra-headless",
     ],
     [
       "wrong Java",
-      inspection(
+      await inspection(
         { installDir: INSTALL },
         {
-          probeJava: () => ({
-            osArch: "amd64",
-            osName: "Linux",
-            version: "17.0.12",
-            major: 17,
-            home: "/usr/lib/jvm/jdk-17",
-            bits: 64,
-            runtime: "jdk",
-          }),
+          probeJava: () =>
+            javaProbeOk<GhidraJavaObservation>({
+              osArch: "amd64",
+              osName: "Linux",
+              version: "17.0.12",
+              major: 17,
+              home: "/usr/lib/jvm/jdk-17",
+              bits: 64,
+              runtime: "jdk",
+            }),
         },
       ),
       "ghidra-java",
     ],
     [
       "missing Java minimum",
-      inspection(
+      await inspection(
         { installDir: INSTALL },
         { readText: () => "application.version=12.1.4\n" },
       ),
@@ -154,7 +170,7 @@ describe("Ghidra doctor integration", () => {
     ],
     [
       "unsupported architecture",
-      inspection({ installDir: INSTALL, architecture: "arm" }),
+      await inspection({ installDir: INSTALL, architecture: "arm" }),
       "ghidra-architecture",
     ],
   ] as const)("distinguishes %s", async (_label, ghidra, checkName) => {
@@ -168,7 +184,10 @@ describe("Ghidra doctor integration", () => {
   });
 
   it("treats unconfigured Ghidra as optional when Hopper is healthy", async () => {
-    const result = await runDoctor(undefined, doctorHost(inspection({}), true));
+    const result = await runDoctor(
+      undefined,
+      doctorHost(await inspection({}), true),
+    );
 
     expect(result.healthy).toBe(true);
     expect(result.checks.find(({ name }) => name === "ghidra")).toMatchObject({
@@ -183,12 +202,12 @@ describe("Windows Ghidra doctor authority", () => {
     vi.spyOn(nativeLoader, "systemWindowsNativeAuthority").mockReturnValue({
       available: false,
       failureStage: "artifact",
-      reason: WINDOWS_NATIVE_AUTHORITY_UNAVAILABLE_REASON,
+      reason: "Authored native artifact unavailable diagnostic",
     });
   });
   afterEach(() => vi.restoreAllMocks());
   it("distinguishes a valid Windows installation from unavailable native authority", async () => {
-    const ghidra = inspection({
+    const ghidra = await inspection({
       installDir: "C:\\tools\\ghidra_12.1.4_PUBLIC",
       platform: "win32",
     });
@@ -227,13 +246,13 @@ describe("Windows Ghidra doctor authority", () => {
     ).toMatchObject({
       ok: false,
       classification: "missing_dependency",
-      detail: WINDOWS_NATIVE_AUTHORITY_UNAVAILABLE_REASON,
+      detail: "Authored native artifact unavailable diagnostic",
       remediation: expect.stringContaining("matching Windows x64 REA package"),
     });
   });
 
   it("fails provider-scoped Windows readiness without blaming installation", async () => {
-    const ghidra = inspection({
+    const ghidra = await inspection({
       installDir: "C:\\tools\\ghidra_12.1.4_PUBLIC",
       platform: "win32",
     });
@@ -251,7 +270,7 @@ describe("Windows Ghidra doctor authority", () => {
       expect.objectContaining({
         name: "ghidra-native_authority",
         classification: "missing_dependency",
-        detail: WINDOWS_NATIVE_AUTHORITY_UNAVAILABLE_REASON,
+        detail: "Authored native artifact unavailable diagnostic",
       }),
     );
   });
@@ -262,7 +281,7 @@ describe("Windows native doctor failure diagnostics", () => {
     vi.spyOn(nativeLoader, "systemWindowsNativeAuthority").mockReturnValue({
       available: false,
       failureStage: "artifact",
-      reason: WINDOWS_NATIVE_AUTHORITY_UNAVAILABLE_REASON,
+      reason: "Authored native artifact unavailable diagnostic",
     });
   });
   afterEach(() => vi.restoreAllMocks());
@@ -273,7 +292,7 @@ describe("Windows native doctor failure diagnostics", () => {
       "artifact",
       "runtime_missing",
       "missing_dependency",
-      "bundled native addon",
+      "native/windows/README.md",
     ],
     [
       "self-test",
@@ -297,7 +316,9 @@ describe("Windows native doctor failure diagnostics", () => {
       const result = await runDoctor(
         undefined,
         {
-          ...doctorHost(inspection({ installDir: INSTALL, platform: "win32" })),
+          ...doctorHost(
+            await inspection({ installDir: INSTALL, platform: "win32" }),
+          ),
           platform: "win32",
           linuxDistribution: () => Promise.resolve(undefined),
         },
@@ -328,7 +349,7 @@ describe("Windows native doctor failure diagnostics", () => {
     },
   );
 
-  it("keeps one failure observation even when the next query would differ", () => {
+  it("keeps one failure observation even when the next query would differ", async () => {
     const load = vi.mocked(nativeLoader.systemWindowsNativeAuthority);
     load.mockReturnValueOnce({
       available: false,
@@ -336,7 +357,7 @@ describe("Windows native doctor failure diagnostics", () => {
       retryable: true,
       reason: "cleanup failed (145)",
     });
-    const ghidra = inspection({ installDir: INSTALL, platform: "win32" });
+    const ghidra = await inspection({ installDir: INSTALL, platform: "win32" });
     const failed = projectGhidraDoctorInspection(ghidra);
     expect(load).toHaveBeenCalledTimes(1);
     expect(failed.checks).toContainEqual(
@@ -353,19 +374,19 @@ describe("Windows native doctor failure diagnostics", () => {
       expect.objectContaining({
         name: "native_authority",
         code: "runtime_missing",
-        detail: WINDOWS_NATIVE_AUTHORITY_UNAVAILABLE_REASON,
+        detail: "Authored native artifact unavailable diagnostic",
       }),
     );
   });
 
-  it("keeps missing Windows Java actionable as a dependency failure", () => {
+  it("keeps missing Windows Java actionable as a dependency failure", async () => {
     const projected = projectGhidraDoctorInspection(
-      inspection(
+      await inspection(
         {
           installDir: "C:\\tools\\ghidra_12.1.4_PUBLIC",
           platform: "win32",
         },
-        { probeJava: () => undefined },
+        { probeJava: () => missingJavaProbe },
       ),
     );
     expect(projected.available).toBe(false);
@@ -376,6 +397,91 @@ describe("Windows native doctor failure diagnostics", () => {
         classification: "missing_dependency",
         remediation: expect.any(String),
       }),
+    );
+  });
+});
+
+describe("Windows Ghidra temporary directory check", () => {
+  const WINDOWS_INSTALL = "C:\\tools\\ghidra_12.1.4_PUBLIC";
+
+  it("fails the provider closed and keeps restricted-host remediation when the probe fails", async () => {
+    const projected = projectGhidraDoctorInspection(
+      await inspection({ installDir: WINDOWS_INSTALL, platform: "win32" }),
+      {
+        ok: false,
+        directory: "C:\\sandbox\\tmp",
+        stage: "write",
+        code: "EPERM",
+        message: "EPERM: operation not permitted",
+      },
+    );
+    expect(projected.available).toBe(false);
+    const check = projected.checks.find(
+      ({ name }) => name === "temp_directory",
+    );
+    expect(check).toMatchObject({
+      ok: false,
+      code: "temp_directory_unwritable",
+      classification: "runtime_failure",
+      remediation: GHIDRA_RESTRICTED_TEMP_REMEDIATION,
+      details: { directory: "C:\\sandbox\\tmp", system_code: "EPERM" },
+    });
+    expect(check?.detail).toContain("C:\\sandbox\\tmp");
+    expect(check?.detail).not.toMatch(/antivirus|DACL/iu);
+  });
+
+  it("reports a retained probe file whose cleanup doctor retries", async () => {
+    const projected = projectGhidraDoctorInspection(
+      await inspection({ installDir: WINDOWS_INSTALL, platform: "win32" }),
+      {
+        ok: false,
+        directory: "C:\\work",
+        stage: "cleanup",
+        code: "EPERM",
+        message: "EPERM: operation not permitted",
+        retainedPath: "C:\\work\\rea-doctor-probe-1",
+      },
+    );
+    const check = projected.checks.find(
+      ({ name }) => name === "temp_directory",
+    );
+    expect(check).toMatchObject({
+      details: {
+        directory: "C:\\work",
+        stage: "cleanup",
+        retained_path: "C:\\work\\rea-doctor-probe-1",
+      },
+    });
+    expect(check?.detail).toContain("retries removal when doctor finishes");
+  });
+
+  it("reports a passing probe without claiming child-process access", async () => {
+    const projected = projectGhidraDoctorInspection(
+      await inspection({ installDir: WINDOWS_INSTALL, platform: "win32" }),
+      { ok: true, directory: "C:\\Temp" },
+    );
+    expect(projected.checks).toContainEqual(
+      expect.objectContaining({
+        name: "temp_directory",
+        ok: true,
+        detail: expect.stringContaining(
+          "does not test writes by Ghidra's child JVM",
+        ),
+      }),
+    );
+  });
+
+  it("does not probe when no Windows installation was selected", async () => {
+    const probe = vi.fn(() => Promise.reject(new Error("unexpected probe")));
+    const projected = await inspectSystemGhidraProvider(
+      {},
+      inspectionResources.owner,
+      undefined,
+      probe,
+    );
+    expect(probe).not.toHaveBeenCalled();
+    expect(projected.checks.map(({ name }) => name)).not.toContain(
+      "temp_directory",
     );
   });
 });

@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
+import { jsonValueSchema } from "../jsonValue.js";
 import { parseProcessCapture } from "./processCaptureParsing.js";
 import type { ProcessTraceSpecification } from "./processTraceSpecification.js";
 import { processTraceSpecificationSchema as specificationSchema } from "./processTraceSpecification.js";
 import { processTraceComparisonResultSchema } from "./processTraceEvaluation.js";
 import {
   capture,
+  emptyCapture,
   partialSpecification,
   processStarted,
   terminal,
@@ -12,7 +14,39 @@ import {
 } from "./processTraceComparison.fixture.js";
 
 import { compareProcessCaptures } from "./processComparison.js";
-import { compareProcessTraces } from "./processTraceComparison.js";
+import {
+  compareProcessTraces,
+  processTraceOutcomesDiffer,
+} from "./processTraceComparison.js";
+
+const traced = (
+  left: ReturnType<typeof capture>,
+  right: ReturnType<typeof capture>,
+) =>
+  compareProcessCaptures(left, right, {
+    traceSpecification: partialSpecification(),
+  });
+
+const withPayloads = (data: string, command: string) =>
+  capture({
+    ...values(["terminal", "process"]),
+    frames: [{ ...terminal, data }],
+    process_samples: [{ ...processStarted, command }],
+  });
+
+type FiniteTraceLanguage = Extract<
+  ProcessTraceSpecification["language"],
+  { kind: "finite_traces" }
+>;
+
+const finiteTraceSpecification = (
+  events: ProcessTraceSpecification["events"],
+  variants: FiniteTraceLanguage["variants"],
+): ProcessTraceSpecification => ({
+  events,
+  language: { kind: "finite_traces", variants },
+});
+
 describe("generic capture trace comparison", () => {
   it("requires explicit partial ordering and never infers causality from timestamps", () => {
     const specification = partialSpecification();
@@ -34,9 +68,14 @@ describe("generic capture trace comparison", () => {
         suffix: [],
       },
     };
-    expect(compareProcessTraces(left, right, concurrent)).toMatchObject({
+    const concurrentComparison = compareProcessTraces(left, right, concurrent);
+    expect(concurrentComparison).toMatchObject({
       verdict: "equivalent",
     });
+    expect(processTraceOutcomesDiffer(concurrentComparison)).toBe(true);
+    expect(
+      processTraceOutcomesDiffer(compareProcessTraces(left, left, concurrent)),
+    ).toBe(false);
   });
 
   it("rejects malformed result contracts", () => {
@@ -73,8 +112,8 @@ describe("generic capture trace comparison", () => {
         { collection: "frames", index: 1 },
       ],
     });
-    const specification: ProcessTraceSpecification = {
-      events: [
+    const specification = finiteTraceSpecification(
+      [
         {
           id: "tick1",
           source: "terminal_raw",
@@ -88,14 +127,11 @@ describe("generic capture trace comparison", () => {
           cardinality: { kind: "optional" },
         },
       ],
-      language: {
-        kind: "finite_traces",
-        variants: [
-          { id: "one", trace: ["tick1"] },
-          { id: "two", trace: ["tick1", "tick2"] },
-        ],
-      },
-    };
+      [
+        { id: "one", trace: ["tick1"] },
+        { id: "two", trace: ["tick1", "tick2"] },
+      ],
+    );
     expect(compareProcessTraces(one, two, specification)).toMatchObject({
       verdict: "equivalent",
       left: { matched_variant: "one" },
@@ -108,8 +144,8 @@ describe("generic capture trace comparison", () => {
     // echoes those identifiers verbatim, so both must accept the same values
     // rather than handing the caller a raw schema error for its own input.
     const eventId = `e${"0".repeat(64)}`;
-    const specification: ProcessTraceSpecification = {
-      events: [
+    const specification = finiteTraceSpecification(
+      [
         {
           id: eventId,
           source: "terminal_raw",
@@ -117,16 +153,60 @@ describe("generic capture trace comparison", () => {
           cardinality: { kind: "required" },
         },
       ],
-      language: {
-        kind: "finite_traces",
-        variants: [{ id: "only", trace: [eventId] }],
-      },
-    };
+      [{ id: "only", trace: [eventId] }],
+    );
     expect(specificationSchema.safeParse(specification).success).toBe(true);
     const left = capture(values(["terminal", "process"]));
     expect(compareProcessTraces(left, left, specification)).toMatchObject({
       verdict: "equivalent",
       left: { matched_variant: "only", raw_trace: [{ event_id: eventId }] },
+    });
+  });
+});
+
+describe("finite trace variant mismatch attribution", () => {
+  it("reports tied best-prefix omissions across variants", () => {
+    const observed = capture({
+      frames: [terminal],
+      process_samples: [],
+      event_journal: [{ collection: "frames", index: 0 }],
+    });
+    const specification = finiteTraceSpecification(
+      [
+        {
+          id: "ready",
+          source: "terminal_raw",
+          exact: terminal,
+          cardinality: { kind: "required" },
+        },
+        {
+          id: "worker",
+          source: "process",
+          exact: processStarted,
+          cardinality: { kind: "optional" },
+        },
+        {
+          id: "worker_alt",
+          source: "process",
+          exact: { ...processStarted, command: "alternate-worker" },
+          cardinality: { kind: "optional" },
+        },
+      ],
+      [
+        { id: "ready_worker", trace: ["ready", "worker"] },
+        { id: "ready_worker_alt", trace: ["ready", "worker_alt"] },
+      ],
+    );
+
+    expect(
+      compareProcessTraces(observed, observed, specification),
+    ).toMatchObject({
+      verdict: "nonconforming",
+      diagnostic: {
+        kind: "trace",
+        event_ids: ["worker", "worker_alt"],
+        locations: [],
+      },
     });
   });
 });
@@ -288,38 +368,299 @@ describe("unknown process trace evidence", () => {
 });
 
 describe("process trace dimension attribution", () => {
-  const traced = (
-    left: ReturnType<typeof capture>,
-    right: ReturnType<typeof capture>,
-  ) =>
-    compareProcessCaptures(left, right, {
-      traceSpecification: partialSpecification(),
+  it.each([false, true])(
+    "preserves an independently observed terminal addition/removal (reversed: %s)",
+    (reversed) => {
+      const absent = capture({
+        frames: [],
+        process_samples: [],
+        event_journal: [],
+      });
+      const present = capture(values(["terminal", "process"]));
+      const specification = partialSpecification();
+      const result = compareProcessCaptures(
+        reversed ? present : absent,
+        reversed ? absent : present,
+        {
+          traceSpecification: {
+            ...specification,
+            events: specification.events.map((event) =>
+              event.id === "ready"
+                ? { ...event, cardinality: { kind: "optional" } }
+                : event,
+            ),
+            language: {
+              kind: "partial_order",
+              happens_before: [],
+              not_before: [],
+              unordered_groups: [{ events: ["ready", "worker"] }],
+              prefix: [],
+              suffix: [],
+            },
+          },
+        },
+      );
+      expect(result).toMatchObject({
+        terminal: reversed ? "removed" : "added",
+        process: "changed",
+        status: "changed",
+        trace: {
+          verdict: "different",
+          diagnostic: { event_ids: ["worker"], locations: [] },
+        },
+      });
+    },
+  );
+
+  it("applies passing filesystem trace timestamp omissions to exact comparison", () => {
+    const base = capture(values(["terminal", "process"]));
+    const left = base;
+    const right = parseProcessCapture({
+      ...base,
+      filesystem_checkpoints: base.filesystem_checkpoints.map((checkpoint) =>
+        checkpoint.name === "after_settlement"
+          ? { ...checkpoint, at_ms: checkpoint.at_ms + 10 }
+          : checkpoint,
+      ),
     });
-  const make = (data: string, command: string) =>
-    capture({
-      ...values(["terminal", "process"]),
-      frames: [{ ...terminal, data }],
-      process_samples: [{ ...processStarted, command }],
+    const specification = finiteTraceSpecification(
+      emptyCapture.filesystem_checkpoints.map(
+        ({ at_ms: _atMs, ...checkpoint }) => ({
+          id: checkpoint.name,
+          source: "filesystem" as const,
+          exact: jsonValueSchema.parse(checkpoint),
+          ignore_fields: ["at_ms"],
+          cardinality: { kind: "required" as const },
+        }),
+      ),
+      [{ id: "checkpoints", trace: ["before", "after_settlement"] }],
+    );
+
+    expect(compareProcessCaptures(left, right)).toMatchObject({
+      filesystem: "changed",
+      first_divergence: { status: "found", dimension: "filesystem" },
     });
+    expect(
+      compareProcessCaptures(left, right, {
+        traceSpecification: specification,
+      }),
+    ).toMatchObject({
+      trace: { verdict: "equivalent" },
+      filesystem: "unchanged",
+      first_divergence: { status: "none" },
+    });
+
+    const finalFile = {
+      path: "root_0:created.txt",
+      type: "file" as const,
+      mode: 0o644,
+      size: 4,
+      sha256: "a".repeat(64),
+      symlink_target: null,
+    };
+    const created = {
+      path: finalFile.path,
+      status: "created" as const,
+      before: null,
+      after: finalFile,
+    };
+    const changedRight = parseProcessCapture({
+      ...right,
+      filesystem_checkpoints: right.filesystem_checkpoints.map((checkpoint) =>
+        checkpoint.name === "after_settlement"
+          ? { ...checkpoint, files: [finalFile], effects: [created] }
+          : checkpoint,
+      ),
+      files_after: [finalFile],
+      filesystem_effects: [created],
+      truncation_details: {
+        ...right.truncation_details,
+        filesystem_after: {
+          ...right.truncation_details.filesystem_after,
+          hashed_bytes: finalFile.size,
+        },
+      },
+    });
+    expect(
+      compareProcessCaptures(left, changedRight, {
+        traceSpecification: specification,
+      }),
+    ).toMatchObject({
+      trace: { verdict: "different" },
+      filesystem: "changed",
+      first_divergence: { status: "found", dimension: "filesystem" },
+    });
+  });
 
   it("keeps equal dimensions unchanged when one side fails a predicate", () => {
     expect(
-      traced(make("Ready", "worker"), make("Different", "worker")),
+      traced(
+        withPayloads("Ready", "worker"),
+        withPayloads("Different", "worker"),
+      ),
     ).toMatchObject({
       trace: { verdict: "different" },
       terminal: "changed",
       process: "unchanged",
     });
     expect(
-      traced(make("Ready", "worker"), make("Ready", "other-worker")),
+      traced(
+        withPayloads("Ready", "worker"),
+        withPayloads("Ready", "other-worker"),
+      ),
     ).toMatchObject({
       trace: { verdict: "different" },
       terminal: "unchanged",
       process: "changed",
     });
   });
+});
 
-  it("still attributes an ordering difference to both ordered dimensions", () => {
+describe("finite trace dimension attribution", () => {
+  it("attributes a finite-trace omission to the omitted event dimension", () => {
+    const left = capture({
+      frames: [terminal],
+      process_samples: [],
+      event_journal: [{ collection: "frames", index: 0 }],
+    });
+    const right = capture(values(["terminal", "process"]));
+    const specification = finiteTraceSpecification(
+      [
+        {
+          id: "ready",
+          source: "terminal_raw",
+          exact: terminal,
+          cardinality: { kind: "required" },
+        },
+        {
+          id: "worker",
+          source: "process",
+          exact: processStarted,
+          cardinality: { kind: "optional" },
+        },
+      ],
+      [{ id: "ready_worker", trace: ["ready", "worker"] }],
+    );
+
+    expect(
+      compareProcessCaptures(left, right, {
+        traceSpecification: specification,
+      }),
+    ).toMatchObject({
+      status: "changed",
+      process: "changed",
+      terminal: "unchanged",
+      trace: {
+        verdict: "different",
+        diagnostic: { kind: "trace", event_ids: ["worker"], locations: [] },
+      },
+      first_divergence: {
+        status: "found",
+        dimension: "process",
+        index: 0,
+      },
+    });
+  });
+});
+
+describe("unordered finite trace mismatch attribution", () => {
+  it("attributes only the missing member of an unordered group", () => {
+    const db = { sequence: 1, at_ms: 901, data: "DB" };
+    const alert = { ...processStarted, pid: 2, command: "other-worker" };
+    const left = capture({
+      frames: [terminal],
+      process_samples: [processStarted],
+      event_journal: [
+        { collection: "frames", index: 0 },
+        { collection: "process_samples", index: 0 },
+      ],
+    });
+    const right = capture({
+      frames: [terminal, db],
+      process_samples: [processStarted],
+      event_journal: [
+        { collection: "frames", index: 0 },
+        { collection: "process_samples", index: 0 },
+        { collection: "frames", index: 1 },
+      ],
+    });
+    const specification = finiteTraceSpecification(
+      [
+        {
+          id: "ready",
+          source: "terminal_raw",
+          exact: terminal,
+          cardinality: { kind: "required" },
+        },
+        {
+          id: "worker",
+          source: "process",
+          exact: processStarted,
+          cardinality: { kind: "optional" },
+        },
+        {
+          id: "db",
+          source: "terminal_raw",
+          exact: db,
+          cardinality: { kind: "optional" },
+        },
+        {
+          id: "alert",
+          source: "process",
+          exact: alert,
+          cardinality: { kind: "optional" },
+        },
+      ],
+      [
+        {
+          id: "ready_then_work",
+          trace: ["ready", { unordered: ["worker", "db"] }],
+        },
+      ],
+    );
+
+    expect(
+      compareProcessCaptures(left, right, {
+        traceSpecification: specification,
+      }),
+    ).toMatchObject({
+      trace: {
+        verdict: "different",
+        diagnostic: {
+          side: "left",
+          event_ids: ["db"],
+          locations: [],
+        },
+      },
+      terminal: "changed",
+      process: "unchanged",
+      first_divergence: { status: "found", dimension: "terminal", index: 1 },
+    });
+
+    const unexpected = capture({
+      frames: [terminal],
+      process_samples: [processStarted, alert],
+      event_journal: [
+        { collection: "frames", index: 0 },
+        { collection: "process_samples", index: 0 },
+        { collection: "process_samples", index: 1 },
+      ],
+    });
+    expect(
+      compareProcessTraces(unexpected, unexpected, specification),
+    ).toMatchObject({
+      verdict: "nonconforming",
+      diagnostic: {
+        kind: "trace",
+        event_ids: ["db", "alert"],
+        locations: [{ collection: "process_samples", index: 1 }],
+      },
+    });
+  });
+});
+
+describe("partial-order dimension attribution", () => {
+  it("attributes an ordering difference to both ordered dimensions", () => {
     expect(
       traced(
         capture(values(["terminal", "process"])),

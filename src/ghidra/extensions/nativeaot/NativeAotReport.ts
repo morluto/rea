@@ -15,27 +15,27 @@ const report = z
       "failed",
     ]),
     reason: z.string().nullable(),
-    method_tables: z.number().int().nonnegative(),
+    method_tables: z.int().nonnegative(),
     diagnostics: z.array(z.string()),
     header_address: z
       .string()
       .regex(/^0x[0-9a-f]+$/u)
       .optional(),
     discovery: z.enum(["symbol", "signature-heuristic"]).optional(),
-    format_major: z.number().int().optional(),
-    format_minor: z.number().int().optional(),
+    format_major: z.int().optional(),
+    format_minor: z.int().optional(),
     derived_memory: z
       .object({
         address: z.string().regex(/^0x[0-9a-f]+$/u),
-        size_bytes: z.number().int().nonnegative(),
+        size_bytes: z.int().nonnegative(),
         sha256: z.string().regex(/^[a-f0-9]{64}$/u),
         file_offset: z.null(),
       })
       .optional(),
     coverage: z
       .strictObject({
-        frozen_object_candidates: z.number().int().nonnegative(),
-        frozen_objects_annotated: z.number().int().nonnegative(),
+        frozen_object_candidates: z.int().nonnegative(),
+        frozen_objects_annotated: z.int().nonnegative(),
         basis: z.literal(
           "rehydrated-pointer-candidates-and-committed-instance-types",
         ),

@@ -1,14 +1,23 @@
+import {
+  isBrowserNetworkRequest,
+  isFetchCall,
+} from "./javascriptNetworkRequests.js";
 import * as t from "@babel/types";
-import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
+import { isIntrinsicMapLookup } from "./javascriptSemanticMapOperations.js";
+import { traverseJavaScriptValueAst } from "./javascriptSemanticTraversal.js";
+import { semanticIdentifierRole } from "./javascriptSemanticProjection.js";
 
-import { htmlUrlText, stripQueryAndFragment } from "../artifactPathSyntax.js";
+import {
+  hasScheme,
+  htmlUrlText,
+  stripQueryAndFragment,
+} from "../artifactPathSyntax.js";
 import { sanitizeEndpointCandidate } from "../browserObservation.js";
 import {
   addFindingOnce,
   addLocatedFinding,
 } from "./javascriptStaticAnalysisFindings.js";
 import {
-  STATIC_ROUTE_CALL_NAMES,
   argumentNode,
   argumentValue,
   calleeName,
@@ -17,12 +26,11 @@ import {
   range,
   rangeForOffsets,
   sourceSlice,
-  staticPath,
-  staticPathResolutionContext,
-  storageKind,
   stringValue,
+  staticFileExpressionPath,
 } from "./javascriptStaticAnalysisHelpers.js";
 import {
+  semanticStaticPropertyKey,
   semanticStaticPropertyName,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
@@ -32,8 +40,11 @@ import type {
   JavaScriptFindingContext as FindingContext,
   JavaScriptReferenceInput as ReferenceInput,
 } from "./javascriptStaticAnalysisState.js";
+import { VITE_OUTPUT_DEPENDENCY_PREFIX } from "./javascriptStaticAnalysisTypes.js";
 import {
   resolveSemanticBindingState,
+  semanticStableInitializer,
+  type JavaScriptBindingIndex,
   type JavaScriptSemanticAnalysisState,
 } from "./javascriptSemanticState.js";
 import {
@@ -41,9 +52,16 @@ import {
   isUnmodifiedImportMetaUrl,
 } from "./javascriptSemanticAmbientWrites.js";
 import {
+  evaluateSemanticExpression,
+  evaluateSemanticExpressionProvenance,
+} from "./javascriptSemanticValues.js";
+import { semanticTopLevelEffectFollowsCapture } from "./javascriptSemanticMutationInitializers.js";
+import {
   semanticFactoryLoaderMemberAt,
-  semanticFactoryRequireLoaderAt,
+  semanticRequireCallAt,
   semanticRequireLoaderAt,
+  semanticModuleRequireCallAt,
+  semanticModuleRequireReceiver,
 } from "./javascriptSemanticRequireOrigin.js";
 
 type JavaScriptCallLike =
@@ -61,12 +79,30 @@ export const inspectCall = (
   const { accumulator } = context;
   const name = calleeName(node.callee);
   const first = stringValue(node.arguments[0]);
-  const requireCall = requireCallSpecifier(node, bindings, context);
+  const deferredRequireResolve =
+    isRequireResolveCall(node) &&
+    semanticRequireLoaderAt(
+      node,
+      bindings,
+      accumulator.factoryRequireBindingIds,
+    ) !== "local";
+  const deferredModuleRequire =
+    semanticModuleRequireReceiver(node) !== undefined ||
+    semanticModuleRequireCallAt(node, bindings, false) ||
+    deferredRequireResolve;
+  if (deferredModuleRequire) accumulator.pendingModuleRequireCalls.push(node);
+  const requireCall = deferredModuleRequire
+    ? null
+    : requireCallSpecifier(node, bindings, context);
   if (requireCall !== null)
     addReference(context, {
       node,
       kind: "require",
       specifier: requireCall.specifier,
+      operation: requireCall.operation,
+      ...(requireCall.resolutionBasePath === undefined
+        ? {}
+        : { resolutionBasePath: requireCall.resolutionBasePath }),
     });
   const chunkLoad = chunkLoadSpecifier(node, bindings, context);
   if (chunkLoad !== null)
@@ -95,61 +131,89 @@ export const inspectCall = (
     addReference(context, {
       node,
       kind: "worker",
-      // Node string paths use the process cwd or filesystem root, neither of
-      // which is established by the analyzed source's artifact location.
+      // A string path is relative to the document base URL in a browser and
+      // to the process cwd in Node; the analyzed source's artifact location
+      // establishes neither. Only `new URL(path, import.meta.url)` names a
+      // location relative to this module.
       specifier:
-        (workerConstructor === "node" ? undefined : first) ??
-        (workerConstructor === undefined || worker === undefined
+        workerConstructor === undefined || worker === undefined
           ? undefined
-          : workerUrlSpecifier(worker, bindings)),
+          : moduleUrlSpecifier(worker, bindings),
     });
+  // Service worker strings also use the document base URL. The complete called
+  // path must retain its platform identity, including the register method.
   if (
-    name === "serviceWorker.register" ||
-    name.endsWith(".serviceWorker.register")
+    !t.isNewExpression(node) &&
+    isUnmodifiedGlobalReference(node.callee, bindings, [
+      "navigator",
+      "serviceWorker",
+      "register",
+    ])
   )
-    addReference(context, { node, kind: "service-worker", specifier: first });
-  inspectEndpointCall(node, name, first, context);
-  inspectStorageCall(node, name, first, context);
-  if (first === "audio" || first === "video")
-    noteMediaElementPreloads(node, accumulator);
+    addReference(context, {
+      node,
+      kind: "service-worker",
+      specifier: moduleUrlSpecifier(node, bindings),
+    });
+  inspectEndpointCall(node, name, first, context, bindings);
+  inspectStorageCall(node, name, first, context, bindings);
   if (
     (name === "loadFile" || name.endsWith(".loadFile")) &&
-    first !== undefined
-  )
-    addLocatedFinding(context, {
-      collection: accumulator.roles,
-      key: `role\0renderer\0${first}`,
-      node,
-      value: {
-        role: "renderer",
-        path: first,
-        resolution_context: "filesystem-expression",
-        mechanism: `call:${name}`,
-        module_key: null,
-        location: range(node),
-      },
-    });
-  if ((name === "loadURL" || name.endsWith(".loadURL")) && first !== undefined)
-    addLocatedFinding(context, {
-      collection: accumulator.roles,
-      key: `role\0renderer\0${first}`,
-      node,
-      value: {
-        role: "renderer",
-        path: first,
-        resolution_context: "module-specifier",
-        mechanism: `call:${name}`,
-        module_key: null,
-        location: range(node),
-      },
-    });
+    context.rendererLoad?.(node.callee, node) === true
+  ) {
+    const argument = argumentNode(node.arguments[0]);
+    const filePath =
+      first === undefined && argument !== undefined
+        ? staticFileExpressionPath(argument, context.pathIntrinsics)
+        : first === undefined
+          ? undefined
+          : { path: first, base: "literal-path" as const };
+    if (filePath === undefined) accumulator.unknownFindings += 1;
+    else
+      addLocatedFinding(context, {
+        collection: accumulator.roles,
+        key: `role\0renderer\0${filePath.path}\0${filePath.base}`,
+        node,
+        value: {
+          role: "renderer",
+          path: filePath.path,
+          ...(filePath.base === "source-directory"
+            ? { path_base: "source-directory" as const }
+            : {}),
+          resolution_context: "filesystem-expression",
+          mechanism: `call:${name}`,
+          module_key: null,
+          location: range(node),
+        },
+      });
+  }
+  if (
+    (name === "loadURL" || name.endsWith(".loadURL")) &&
+    context.rendererLoad?.(node.callee, node) === true
+  ) {
+    if (first === undefined) accumulator.unknownFindings += 1;
+    else
+      addLocatedFinding(context, {
+        collection: accumulator.roles,
+        key: `role\0renderer\0${first}`,
+        node,
+        value: {
+          role: "renderer",
+          path: first,
+          resolution_context: "module-specifier",
+          mechanism: `call:${name}`,
+          module_key: null,
+          location: range(node),
+        },
+      });
+  }
 };
 
-const workerUrlSpecifier = (
-  worker: t.NewExpression,
+const moduleUrlSpecifier = (
+  call: JavaScriptCallLike,
   bindings: JavaScriptSemanticAnalysisState,
 ): string | undefined => {
-  const argumentExpression = argumentNode(worker.arguments[0]);
+  const argumentExpression = argumentNode(call.arguments[0]);
   if (argumentExpression === undefined) return undefined;
   const node = unwrapJavaScriptExpression(argumentExpression).node;
   if (!t.isNewExpression(node)) return undefined;
@@ -208,66 +272,90 @@ const workerConstructorKind = (
     : undefined;
 };
 
-// Element factories such as jsx("audio", props) and createElement("video",
-// props) carry the HTML media `preload` hint ("none", "metadata", "auto"),
-// which never names an Electron preload script.
-const noteMediaElementPreloads = (
-  node: JavaScriptCallLike,
-  accumulator: AnalysisAccumulator,
-): void => {
-  const props = node.arguments[1];
-  if (!t.isObjectExpression(props)) return;
-  for (const property of props.properties)
-    if (
-      t.isObjectProperty(property) &&
-      semanticStaticPropertyName(property.key, property.computed) === "preload"
-    )
-      accumulator.mediaElementPreloads.add(property);
-};
-
 const requireCallSpecifier = (
   node: JavaScriptCallLike,
   bindings: JavaScriptSemanticAnalysisState,
   context: FindingContext,
-): { readonly specifier: string | undefined } | null => {
-  const bareRequire = t.isIdentifier(node.callee, { name: "require" });
-  if (bareRequire) {
-    const loader = semanticRequireLoaderAt(
-      node,
-      bindings,
-      context.accumulator.factoryRequireBindingIds,
-    );
-    if (loader === "local") return null;
-    if (loader === "unknown") context.accumulator.unknownFindings += 1;
-    return {
-      specifier:
-        loader === "unknown" ? undefined : argumentValue(node.arguments[0]),
-    };
-  }
-  const factoryLoader = semanticFactoryRequireLoaderAt(
+  resolveMemberChanged = false,
+): {
+  readonly specifier: string | undefined;
+  readonly operation: "load" | "resolve";
+  readonly resolutionBasePath?: string;
+} | null => {
+  const call = semanticRequireCallAt(
     node,
     bindings,
     context.accumulator.factoryRequireBindingIds,
   );
-  if (factoryLoader === "factory-loader")
-    return {
-      specifier: argumentValue(
-        node.arguments[
-          t.isMemberExpression(unwrapJavaScriptExpression(node.callee).node) ||
-          t.isOptionalMemberExpression(
-            unwrapJavaScriptExpression(node.callee).node,
-          )
-            ? 1
-            : 0
-        ],
-      ),
-    };
-  if (factoryLoader === "unknown") {
+  if (call === undefined || call.loader === "local") return null;
+  if (
+    resolveMemberChanged ||
+    call.loader === "unknown" ||
+    !call.sourceRelative
+  ) {
     context.accumulator.unknownFindings += 1;
-    return { specifier: undefined };
+    return {
+      specifier: undefined,
+      operation: resolveMemberChanged ? "load" : call.operation,
+    };
   }
-  return null;
+  return {
+    operation: call.operation,
+    specifier: argumentValue(call.arguments?.[0]),
+    ...(call.sourceRelativePath === undefined
+      ? {}
+      : { resolutionBasePath: call.sourceRelativePath }),
+  };
 };
+
+/** Examine member-loader receivers only after shared alias mutation facts settle. */
+export const finishModuleRequireCalls = (
+  context: FindingContext,
+  index: JavaScriptBindingIndex,
+): void => {
+  for (const node of context.accumulator.pendingModuleRequireCalls) {
+    const resolveMemberChanged =
+      isRequireResolveCall(node) &&
+      (t.isMemberExpression(node.callee) ||
+        t.isOptionalMemberExpression(node.callee)) &&
+      index
+        .effectsForReferenceAt(node, node.callee.object, ["resolve"])
+        .effects.some(
+          ({ kind, timing }) =>
+            timing !== "after" &&
+            (kind === "member-write" || kind === "escape"),
+        );
+    const call = requireCallSpecifier(
+      node,
+      index.bindings,
+      context,
+      resolveMemberChanged,
+    );
+    if (call !== null)
+      addReference(context, {
+        node,
+        kind: "require",
+        specifier: call.specifier,
+        operation: call.operation,
+        ...(call.resolutionBasePath === undefined
+          ? {}
+          : { resolutionBasePath: call.resolutionBasePath }),
+      });
+  }
+  context.accumulator.pendingModuleRequireCalls.length = 0;
+  context.accumulator.references.sort(
+    (left, right) => left.offset - right.offset,
+  );
+};
+
+const isRequireResolveCall = (
+  node: JavaScriptCallLike,
+): node is t.CallExpression | t.OptionalCallExpression =>
+  (t.isCallExpression(node) || t.isOptionalCallExpression(node)) &&
+  (t.isMemberExpression(node.callee) ||
+    t.isOptionalMemberExpression(node.callee)) &&
+  semanticStaticPropertyKey(node.callee.property, node.callee.computed) ===
+    "resolve";
 
 const chunkLoadSpecifier = (
   node: JavaScriptCallLike,
@@ -309,9 +397,25 @@ const vitePreloadDependencySpecifiers = (
   return indexes.map((element) => {
     if (element === null || !t.isNumericLiteral(element)) return undefined;
     const index = element.value;
-    return Number.isSafeInteger(index) && index >= 0 ? table[index] : undefined;
+    return Number.isSafeInteger(index) && index >= 0
+      ? viteDependencySpecifier(table[index])
+      : undefined;
   });
 };
+
+// A relative base writes importer-relative `./` paths, which remain module
+// URLs. Without a scheme or leading dot or slash, the entry names a file under
+// the build output directory.
+const viteDependencySpecifier = (
+  dependency: string | undefined,
+): string | undefined =>
+  dependency === undefined ||
+  dependency === "" ||
+  dependency.startsWith(".") ||
+  dependency.startsWith("/") ||
+  hasScheme(dependency)
+    ? dependency
+    : `${VITE_OUTPUT_DEPENDENCY_PREFIX}${dependency}`;
 
 const isExplicitDefaultArgument = (
   argument: t.CallExpression["arguments"][number],
@@ -334,9 +438,10 @@ type ViteMapDepsFunction =
 /** Index the canonical Vite helper's cache initializer from parsed syntax. */
 export const indexVitePreloadDependencyTable = (
   program: t.Program,
+  erasedSyntaxNodes: WeakSet<t.Node>,
 ): readonly (string | undefined)[] | null => {
   const helpers: ViteMapDepsFunction[] = [];
-  traverseJavaScriptAst(program, {
+  traverseJavaScriptValueAst(program, erasedSyntaxNodes, {
     enter: (node) => {
       if (t.isFunctionDeclaration(node) && node.id?.name === "__vite__mapDeps")
         helpers.push(node);
@@ -359,7 +464,7 @@ export const indexVitePreloadDependencyTable = (
     : mapParameter;
   if (!t.isIdentifier(mapIdentifier)) return [];
   const tables: t.ArrayExpression[] = [];
-  traverseJavaScriptAst(helper, {
+  traverseJavaScriptValueAst(helper, erasedSyntaxNodes, {
     skip: (node) => t.isFunction(node),
     enter: (node) => {
       if (
@@ -378,23 +483,26 @@ export const indexVitePreloadDependencyTable = (
   if (tables.length !== 1) return [];
   const table = tables[0];
   if (table === undefined) return [];
-  const dependencies = table.elements.map((element) =>
+  // A spread contributes an unknown number of entries, so every later slot
+  // has an unknown index; leave those out instead of shifting them.
+  const spread = table.elements.findIndex((element) =>
+    t.isSpreadElement(element),
+  );
+  const dependencies = (
+    spread === -1 ? table.elements : table.elements.slice(0, spread)
+  ).map((element) =>
     element === null || t.isSpreadElement(element)
       ? undefined
       : stringValue(element),
   );
   let escapedOrMutated = false;
-  traverseJavaScriptAst(program, {
+  traverseJavaScriptValueAst(program, erasedSyntaxNodes, {
     skip: (node) => node === helper,
-    enter: (node, parent) => {
-      if (!t.isIdentifier(node, { name: "__vite__mapDeps" })) return;
+    enter: (node, parent, readAncestors) => {
       if (
-        (parent === helper &&
-          t.isFunctionDeclaration(parent) &&
-          parent.id === node) ||
-        (t.isVariableDeclarator(parent) &&
-          parent.init === helper &&
-          parent.id === node)
+        !t.isIdentifier(node, { name: "__vite__mapDeps" }) ||
+        parent === null ||
+        semanticIdentifierRole(node, parent, readAncestors) === null
       )
         return;
       if (
@@ -408,22 +516,86 @@ export const indexVitePreloadDependencyTable = (
   return escapedOrMutated ? dependencies.map(() => undefined) : dependencies;
 };
 
+const requestConstructorUrl = (
+  node: t.Node,
+  bindings: JavaScriptSemanticAnalysisState,
+): string | undefined => {
+  const target = unwrapJavaScriptExpression(node).node;
+  if (
+    t.isNewExpression(target) &&
+    isUnmodifiedGlobalReference(target.callee, bindings, "Request")
+  )
+    return stringValue(target.arguments[0]);
+  return undefined;
+};
+
 const inspectEndpointCall = (
   node: JavaScriptCallLike,
   name: string,
   first: string | undefined,
   context: FindingContext,
+  bindings: JavaScriptSemanticAnalysisState,
 ): void => {
-  const route = STATIC_ROUTE_CALL_NAMES.some(
-    (candidate) => name === candidate || name.endsWith(`.${candidate}`),
-  );
-  if (route && first !== undefined)
-    addEndpoint(context, {
-      node,
-      kind: "route",
-      value: first,
-      mechanism: `call:${name}`,
-    });
+  if (isKnownNetworkRequest(node, bindings, context)) {
+    const target = argumentNode(node.arguments[0]);
+    if (target === undefined) return;
+    const literal =
+      stringValue(target) ??
+      (isFetchCall(node, bindings)
+        ? requestConstructorUrl(target, bindings)
+        : undefined);
+    if (literal !== undefined) {
+      addEndpoint(context, {
+        node,
+        kind: "network",
+        value: literal,
+        mechanism: `call:${name}`,
+      });
+      return;
+    }
+    const reference = requestReferenceNode(target);
+    const unwrapped = unwrapJavaScriptExpression(reference).node;
+    if (
+      t.isIdentifier(unwrapped) ||
+      t.isMemberExpression(unwrapped) ||
+      t.isOptionalMemberExpression(unwrapped)
+    ) {
+      context.accumulator.pendingNetworkCalls.push({ node, name });
+      return;
+    }
+    addPartialNetworkEndpoint(context, node, name, target);
+    return;
+  }
+  // A local or shadowed function with a familiar network name is not a known
+  // browser request API. Do not let the literal fallback turn it into one.
+  if (isNetworkRequestSpelling(name)) return;
+  if (first !== undefined && /(?:^|\.)(?:get|delete)$/u.test(name)) {
+    // Apply existing literal exclusions before requesting whole-source alias
+    // mutation facts. Inline receivers and unbound names need no such index.
+    if (
+      endpointArgumentHelper(
+        name,
+        node.arguments,
+        node.callee,
+        context.openReceiverFacts?.get(node.start ?? -1),
+      ) === undefined
+    )
+      return;
+    const mapLookup = isIntrinsicMapLookup(node, bindings);
+    if (mapLookup === true) return;
+    if (mapLookup === undefined) {
+      context.accumulator.pendingNetworkCalls.push({ node, name });
+      return;
+    }
+  }
+  inspectLiteralEndpointCall(node, name, context);
+};
+
+const inspectLiteralEndpointCall = (
+  node: JavaScriptCallLike,
+  name: string,
+  context: FindingContext,
+): void => {
   const receiverFact = context.openReceiverFacts?.get(node.start ?? -1);
   const endpoint = endpointArgumentHelper(
     name,
@@ -437,8 +609,223 @@ const inspectEndpointCall = (
       kind: "network",
       value: endpoint.value,
       mechanism: `call:${name}`,
-      ...(endpoint.kind === "candidate" ? { interpretation: "candidate" } : {}),
+      ...(endpoint.kind === "candidate" &&
+      context.xhrOpenRequest?.(node) !== true
+        ? { interpretation: "candidate" }
+        : {}),
     });
+};
+
+const isNetworkRequestSpelling = (name: string): boolean =>
+  name === "fetch" ||
+  name === "WebSocket" ||
+  name === "EventSource" ||
+  name === "sendBeacon" ||
+  name === "window.fetch" ||
+  name === "globalThis.fetch" ||
+  name === "self.fetch" ||
+  name === "navigator.sendBeacon";
+
+/** Confirm that the call resolves to a built-in network API at this source site. */
+const isKnownNetworkRequest = (
+  node: JavaScriptCallLike,
+  bindings: JavaScriptSemanticAnalysisState,
+  context: FindingContext,
+): boolean => {
+  if (isBrowserNetworkRequest(node, bindings)) return true;
+  const callee = unwrapJavaScriptExpression(node.callee).node;
+  if (
+    (t.isCallExpression(node) || t.isOptionalCallExpression(node)) &&
+    (t.isMemberExpression(callee) || t.isOptionalMemberExpression(callee)) &&
+    semanticStaticPropertyKey(callee.property, callee.computed) === "loadURL" &&
+    context.rendererLoad?.(node.callee, node) === true
+  )
+    return true;
+  return false;
+};
+
+/** Finish queued targets after shared member-mutation facts are indexed. */
+export const finishPartialNetworkEndpoints = (
+  context: FindingContext,
+  bindings: JavaScriptSemanticAnalysisState,
+  index: JavaScriptBindingIndex,
+): void => {
+  for (const { node, name } of context.accumulator.pendingNetworkCalls) {
+    if (!isKnownNetworkRequest(node, bindings, context)) {
+      if (!isIntrinsicMapLookup(node, bindings, index))
+        inspectLiteralEndpointCall(node, name, context);
+      continue;
+    }
+    const target = argumentNode(node.arguments[0]);
+    if (target === undefined) continue;
+    const resolved = resolvedRequestTarget(target, node, bindings, index);
+    if (resolved !== undefined)
+      addEndpoint(context, {
+        node,
+        kind: "network",
+        value: resolved,
+        mechanism: `call:${name}`,
+      });
+    else addPartialNetworkEndpoint(context, node, name, target);
+  }
+  context.accumulator.pendingNetworkCalls.length = 0;
+  context.accumulator.endpoints.sort(
+    (left, right) => left.offset - right.offset,
+  );
+};
+
+const addPartialNetworkEndpoint = (
+  context: FindingContext,
+  node: JavaScriptCallLike,
+  name: string,
+  target: t.Node,
+): void =>
+  addEndpoint(context, {
+    node,
+    kind: "network",
+    // Partial values preserve the original expression text, byte for byte.
+    value: sourceSlice(context.source, target),
+    mechanism: `call:${name}`,
+    resolution: "partial",
+  });
+
+const resolvedRequestTarget = (
+  node: t.Node,
+  site: t.Node,
+  bindings: JavaScriptSemanticAnalysisState,
+  index: JavaScriptBindingIndex,
+): string | undefined => {
+  const reference = requestReferenceNode(node);
+  // A toString result is selected before the enclosing request invocation.
+  const expression = unwrapJavaScriptExpression(node).node;
+  const capture = reference === expression ? site : expression;
+  if (index.referenceMayHaveChangedAt(capture, reference)) return undefined;
+  if (!requestInitializerPrecedesSite(reference, capture, bindings, index))
+    return undefined;
+  const evaluated = evaluateSemanticExpression(node, bindings);
+  if (evaluated.status === "literal" && typeof evaluated.value === "string")
+    return evaluated.value;
+  return urlObjectRequestTarget(node, capture, bindings, index);
+};
+
+const requestInitializerPrecedesSite = (
+  reference: t.Node,
+  site: t.Node,
+  bindings: JavaScriptSemanticAnalysisState,
+  index: JavaScriptBindingIndex,
+): boolean => {
+  const binding = index.bindingForReferenceAt(reference);
+  const initializer = semanticStableInitializer(binding, bindings);
+  return (
+    initializer !== undefined &&
+    semanticTopLevelEffectFollowsCapture(
+      initializer.node,
+      site,
+      bindings.parentsByNode,
+    )
+  );
+};
+
+const requestReferenceNode = (node: t.Node): t.Node => {
+  const target = unwrapJavaScriptExpression(node).node;
+  if (
+    (t.isCallExpression(target) || t.isOptionalCallExpression(target)) &&
+    target.arguments.length === 0
+  ) {
+    const callee = unwrapJavaScriptExpression(target.callee).node;
+    if (
+      (t.isMemberExpression(callee) || t.isOptionalMemberExpression(callee)) &&
+      semanticStaticPropertyName(callee.property, callee.computed) ===
+        "toString"
+    )
+      return unwrapJavaScriptExpression(callee.object).node;
+  }
+  return target;
+};
+
+/** Resolve an immutable URL object or alias only while shared effects say it is unchanged. */
+const urlObjectRequestTarget = (
+  node: t.Node,
+  site: t.Node,
+  bindings: JavaScriptSemanticAnalysisState,
+  index: JavaScriptBindingIndex,
+  seen = new Set<string>(),
+  isToString = false,
+): string | undefined => {
+  let target = unwrapJavaScriptExpression(node).node;
+  if (
+    (t.isCallExpression(target) || t.isOptionalCallExpression(target)) &&
+    target.arguments.length === 0
+  ) {
+    const callee = unwrapJavaScriptExpression(target.callee).node;
+    if (
+      (t.isMemberExpression(callee) || t.isOptionalMemberExpression(callee)) &&
+      semanticStaticPropertyName(callee.property, callee.computed) ===
+        "toString"
+    ) {
+      target = unwrapJavaScriptExpression(callee.object).node;
+      isToString = true;
+    }
+  }
+  if (!t.isIdentifier(target) || index.referenceMayHaveChangedAt(site, target))
+    return undefined;
+  const binding = index.bindingForReferenceAt(target);
+  if (binding === undefined || seen.has(binding.bindingId)) return undefined;
+  seen.add(binding.bindingId);
+  const stable = semanticStableInitializer(binding, bindings);
+  if (
+    stable === undefined ||
+    !semanticTopLevelEffectFollowsCapture(
+      stable.node,
+      site,
+      bindings.parentsByNode,
+    )
+  )
+    return undefined;
+  const initializer = stable.node;
+  if (initializer === undefined) return undefined;
+  const initialized = unwrapJavaScriptExpression(initializer).node;
+  if (t.isIdentifier(initialized))
+    return urlObjectRequestTarget(
+      initialized,
+      site,
+      bindings,
+      index,
+      seen,
+      isToString,
+    );
+  if (!isToString && isFetchCall(site, bindings)) {
+    const requestUrl = requestConstructorUrl(initialized, bindings);
+    if (requestUrl !== undefined) return requestUrl;
+  }
+  if (!t.isNewExpression(initialized)) return undefined;
+  if (!isUnmodifiedGlobalReference(initialized.callee, bindings, "URL"))
+    return undefined;
+  if (
+    ["URL", "Object"].some((owner) =>
+      ["toString", "valueOf"].some((method) =>
+        bindings.ambientWrites.covers(["global", owner, "prototype", method]),
+      ),
+    )
+  )
+    return undefined;
+  const input = stringValue(initialized.arguments[0]);
+  if (input === undefined) return undefined;
+  if (initialized.arguments.length === 1) {
+    try {
+      return new URL(input).href;
+    } catch {
+      return undefined;
+    }
+  }
+  if (initialized.arguments.length !== 2) return undefined;
+  const base = stringValue(initialized.arguments[1]);
+  if (base === undefined) return undefined;
+  try {
+    return new URL(input, base).href;
+  } catch {
+    return undefined;
+  }
 };
 
 /** Record tRPC procedures, tRPC link URLs and named GraphQL operations. */
@@ -448,50 +835,27 @@ export const inspectRpcNode = (node: t.Node, context: FindingContext): void => {
     addEndpoint(context, { node, kind: "network", ...rpc });
 };
 
-export const inspectRouteProperty = (
-  node: t.ObjectProperty,
+/** Resolve deferred Source bodies after their document owners have been seen. */
+export function* finishRpcScanSteps(
   context: FindingContext,
-): void => {
-  const key = semanticStaticPropertyName(node.key, node.computed);
-  const value = stringValue(node.value);
-  if ((key === "path" || key === "route") && value !== undefined)
-    addEndpoint(context, {
-      node,
-      kind: "route",
-      value,
-      mechanism: `property:${key}`,
-    });
-};
-
-export const inspectRoleProperty = (
-  node: t.ObjectProperty,
-  context: FindingContext,
-): void => {
-  if (semanticStaticPropertyName(node.key, node.computed) !== "preload") return;
-  if (context.accumulator.mediaElementPreloads.has(node)) return;
-  const path = staticPath(node.value);
-  if (path === undefined) return;
-  addLocatedFinding(context, {
-    collection: context.accumulator.roles,
-    key: `role\0preload\0${path}`,
-    node,
-    value: {
-      role: "preload",
-      path,
-      resolution_context: staticPathResolutionContext(node.value),
-      mechanism: "property:preload",
-      module_key: null,
-      location: range(node),
-    },
-  });
-};
+): Generator<void, void> {
+  for (const rpc of context.rpcScan.finish()) {
+    if (rpc !== undefined) addEndpoint(context, { kind: "network", ...rpc });
+    yield;
+  }
+}
 
 const inspectStorageCall = (
   node: JavaScriptCallLike,
   name: string,
   first: string | undefined,
   context: FindingContext,
+  bindings: JavaScriptSemanticAnalysisState,
 ): void => {
+  if (name === "Database" || name.endsWith(".Database")) {
+    context.accumulator.pendingSqliteCalls.push({ node, name });
+    return;
+  }
   const receiverFact = context.openReceiverFacts?.get(node.start ?? -1);
   const storage =
     receiverFact === "local" ||
@@ -502,7 +866,7 @@ const inspectStorageCall = (
         ? "indexed-db"
         : receiverFact === "cache-storage"
           ? "cache-storage"
-          : storageKind(name);
+          : browserStorageKind(node.callee, bindings);
   if (storage === undefined) return;
   addLocatedFinding(context, {
     collection: context.accumulator.storage,
@@ -516,6 +880,82 @@ const inspectStorageCall = (
       location: range(node),
     },
   });
+};
+
+const browserStorageKind = (
+  callee: t.Node,
+  bindings: JavaScriptSemanticAnalysisState,
+):
+  | "local-storage"
+  | "session-storage"
+  | "indexed-db"
+  | "cache-storage"
+  | undefined => {
+  callee = unwrapJavaScriptExpression(callee).node;
+  if (!t.isMemberExpression(callee) && !t.isOptionalMemberExpression(callee))
+    return undefined;
+  const method = semanticStaticPropertyKey(callee.property, callee.computed);
+  if (method === null) return undefined;
+  if (["getItem", "setItem", "removeItem", "clear", "key"].includes(method)) {
+    if (isUnmodifiedGlobalReference(callee, bindings, ["localStorage", method]))
+      return "local-storage";
+    if (
+      isUnmodifiedGlobalReference(callee, bindings, ["sessionStorage", method])
+    )
+      return "session-storage";
+  }
+  if (isUnmodifiedGlobalReference(callee, bindings, ["indexedDB", "open"]))
+    return "indexed-db";
+  if (isUnmodifiedGlobalReference(callee, bindings, ["caches", "open"]))
+    return "cache-storage";
+  return undefined;
+};
+
+/** Constructor spelling selects a candidate; source provenance owns certainty. */
+export const finishSqliteStorageCalls = (
+  context: FindingContext,
+  bindings: JavaScriptSemanticAnalysisState,
+  index: JavaScriptBindingIndex,
+): void => {
+  for (const { node, name } of context.accumulator.pendingSqliteCalls) {
+    const callee = unwrapJavaScriptExpression(node.callee).node;
+    const provenance = evaluateSemanticExpressionProvenance(callee, bindings);
+    const changed = index.referenceMayHaveChangedAt(node, callee);
+    if (!changed && t.isIdentifier(callee) && provenance.status === "local")
+      continue;
+    const origin =
+      provenance.status === "module" ? provenance.origins[0] : undefined;
+    const path = origin?.importedPath;
+    const imported = origin?.resolutionMode !== "require";
+    const known =
+      !changed &&
+      origin !== undefined &&
+      ((origin.specifier === "better-sqlite3" &&
+        ((origin.resolutionMode === "require" && path?.length === 0) ||
+          (imported && path?.length === 1 && path[0] === "default"))) ||
+        (origin.specifier === "sqlite3" &&
+          ((path?.length === 1 && path[0] === "Database") ||
+            (imported &&
+              path?.length === 2 &&
+              (path[0] === "default" || path[0] === "*") &&
+              path[1] === "Database"))));
+    const first = stringValue(node.arguments[0]);
+    addLocatedFinding(context, {
+      collection: context.accumulator.storage,
+      key: `storage\0sqlite\0${known ? "api" : "candidate"}\0${first ?? ""}`,
+      node,
+      value: {
+        kind: "sqlite",
+        name: first ?? null,
+        mechanism: `call:${name}`,
+        ...(known ? {} : { interpretation: "candidate" as const }),
+        module_key: null,
+        location: range(node),
+      },
+    });
+  }
+  context.accumulator.pendingSqliteCalls.length = 0;
+  context.accumulator.storage.sort((left, right) => left.offset - right.offset);
 };
 
 export const addReference = (
@@ -532,29 +972,42 @@ export const addReference = (
       : { specifier, expression: null };
   addLocatedFinding(context, {
     collection: context.accumulator.references,
-    key: `reference\0${input.kind}\0${reference.specifier ?? reference.expression}`,
+    key: `reference\0${input.kind}\0${input.operation ?? "load"}\0${reference.specifier ?? reference.expression}\0${input.resolutionBasePath ?? ""}`,
     node: input.node,
     value: {
       kind: input.kind,
+      operation: input.operation ?? "load",
       ...reference,
+      ...(input.resolutionBasePath === undefined
+        ? {}
+        : { resolution_base_path: input.resolutionBasePath }),
       module_key: null,
       location: range(input.node),
     },
   });
 };
 
-const addEndpoint = (context: FindingContext, input: EndpointInput): void =>
+export const addEndpoint = (
+  context: FindingContext,
+  input: EndpointInput,
+): void =>
   addLocatedFinding(context, {
     collection: context.accumulator.endpoints,
-    key: `endpoint\0${input.kind}\0${input.interpretation ?? "literal"}\0${input.value}`,
+    key: `endpoint\0${input.kind}\0${input.interpretation ?? "literal"}\0${input.resolution ?? "exact"}\0${input.value}`,
     node: input.node,
     value: {
       kind: input.kind,
-      value: sanitizeEndpointCandidate(input.value),
+      value:
+        input.resolution === "partial"
+          ? input.value
+          : sanitizeEndpointCandidate(input.value),
       mechanism: input.mechanism,
       ...(input.interpretation === undefined
         ? {}
         : { interpretation: input.interpretation }),
+      ...(input.resolution === undefined
+        ? {}
+        : { resolution: input.resolution }),
       module_key: null,
       location: range(input.node),
     },

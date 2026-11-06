@@ -4,11 +4,26 @@ import {
   type SymbolicValue,
 } from "./javascriptSymbolicValues.js";
 
+/** Shared branch decision after each value lattice establishes truth/nullishness. */
+export const logicalRightOperand = (
+  operator: t.LogicalExpression["operator"],
+  truth: boolean | undefined,
+  nullish: boolean | undefined,
+): boolean | undefined =>
+  operator === "??"
+    ? nullish
+    : truth === undefined
+      ? undefined
+      : operator === "&&"
+        ? truth
+        : !truth;
+
 /** Whether short-circuit evaluation reaches the right operand; unknown stays unknown. */
 export const symbolicLogicalRight = (
   operator: t.LogicalExpression["operator"],
   left: SymbolicValue,
 ): boolean | undefined => {
+  if (left.kind === "namespace" && left.runtimeValueUnknown) return undefined;
   if (left.kind === "union") {
     const choices = left.values.map((value) =>
       symbolicLogicalRight(operator, value),
@@ -28,26 +43,12 @@ export const symbolicLogicalRight = (
       "array",
       "record",
       "loader",
+      "promise",
+      "iterator",
     ].includes(left.kind)
       ? false
       : undefined;
   }
   const truth = symbolicTruth(left);
-  return truth === undefined ? undefined : operator === "&&" ? truth : !truth;
-};
-
-/** Only definite synchronous exits; unsupported control flow stays unknown. */
-export const symbolicDefiniteExit = (
-  node: t.Node | null | undefined,
-  depth = 0,
-): boolean => {
-  if (!node || depth >= 128) return false;
-  if (t.isReturnStatement(node) || t.isThrowStatement(node)) return true;
-  if (t.isBlockStatement(node))
-    return node.body.some((child) => symbolicDefiniteExit(child, depth + 1));
-  return (
-    t.isIfStatement(node) &&
-    symbolicDefiniteExit(node.consequent, depth + 1) &&
-    symbolicDefiniteExit(node.alternate, depth + 1)
-  );
+  return logicalRightOperand(operator, truth, undefined);
 };

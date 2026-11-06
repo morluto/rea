@@ -1,9 +1,18 @@
-import { err, ok, type Result } from "../domain/result.js";
+import type { Result } from "../domain/result.js";
+
+const GHIDRA_JAVA_PROPERTIES_CODES = [
+  "trailing_escape",
+  "malformed_unicode_escape",
+] as const;
+
+/** Stable identity for a Java properties escape that invalidates the file. */
+export type GhidraJavaPropertiesCode =
+  (typeof GHIDRA_JAVA_PROPERTIES_CODES)[number];
 
 /** Parse Java Properties.load(InputStream) syntax from its ISO-8859-1 text. */
 export const parseGhidraJavaProperties = (
   content: string,
-): Result<ReadonlyMap<string, string>, string> => {
+): Result<ReadonlyMap<string, string>, GhidraJavaPropertiesCode> => {
   const values = new Map<string, string>();
   for (const line of logicalPropertyLines(content)) {
     let start = 0;
@@ -30,12 +39,12 @@ export const parseGhidraJavaProperties = (
     if (line[valueStart] === "=" || line[valueStart] === ":") valueStart += 1;
     while (isPropertyWhitespace(line[valueStart])) valueStart += 1;
     const key = decodePropertyEscapes(line.slice(start, end));
-    if (!key.ok) return err(key.error);
+    if (!key.ok) return key;
     const value = decodePropertyEscapes(line.slice(valueStart));
-    if (!value.ok) return err(value.error);
+    if (!value.ok) return value;
     values.set(key.value, value.value);
   }
-  return ok(values);
+  return { ok: true, value: values };
 };
 
 const isPropertyWhitespace = (value: string | undefined): boolean =>
@@ -88,7 +97,9 @@ function* logicalPropertyLines(content: string): Generator<string> {
   if (continuing) yield logical;
 }
 
-const decodePropertyEscapes = (value: string): Result<string, string> => {
+const decodePropertyEscapes = (
+  value: string,
+): Result<string, GhidraJavaPropertiesCode> => {
   let result = "";
   for (let index = 0; index < value.length; index += 1) {
     const character = value[index];
@@ -97,8 +108,7 @@ const decodePropertyEscapes = (value: string): Result<string, string> => {
       continue;
     }
     const escaped = value[++index];
-    if (escaped === undefined)
-      return err("Trailing escape in Java properties value");
+    if (escaped === undefined) return { ok: false, error: "trailing_escape" };
     if (escaped === "t") result += "\t";
     else if (escaped === "n") result += "\n";
     else if (escaped === "r") result += "\r";
@@ -106,10 +116,13 @@ const decodePropertyEscapes = (value: string): Result<string, string> => {
     else if (escaped === "u") {
       const digits = value.slice(index + 1, index + 5);
       if (digits.length !== 4 || !/^[0-9a-f]{4}$/iu.test(digits))
-        return err("Malformed Unicode escape in Java properties file");
+        return {
+          ok: false,
+          error: "malformed_unicode_escape",
+        };
       result += String.fromCharCode(Number.parseInt(digits, 16));
       index += 4;
     } else result += escaped;
   }
-  return ok(result);
+  return { ok: true, value: result };
 };

@@ -1,15 +1,17 @@
 import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { McpServer } from "@modelcontextprotocol/server";
 import { expect, it } from "vitest";
 import { z } from "zod";
 
+import { closeVerifierResources } from "../../../scripts/lib/verifier-cleanup.mjs";
 import { AnalysisCapabilityUnavailableError } from "../../../src/domain/analysisErrorCore.js";
 import { thinMach } from "../../../src/domain/binaryTarget.fixture.js";
 import { evidenceSchema } from "../../../src/domain/evidence.js";
+import { absoluteCallerPath } from "../../../src/filesystem/callerPath.js";
 import { err, ok } from "../../../src/domain/result.js";
 import {
   createRizinTestManager,
@@ -92,7 +94,7 @@ process.stdin.on("data", (chunk) => {
       const evidence = evidenceSchema.parse(command.structuredContent);
       expect(evidence.parameters.launch_provenance).toEqual({
         caller_selected_path: callerPath,
-        resolved_path: resolve(callerPath),
+        resolved_path: absoluteCallerPath(callerPath),
       });
       expect(evidence.normalized_result).toMatchObject({
         output_invalid_utf8: true,
@@ -109,9 +111,14 @@ process.stdin.on("data", (chunk) => {
       expect(status.output_invalid_utf8).toBe(true);
       expect(status.recent_output).toContain("�");
     } finally {
-      await Promise.allSettled([client.close(), server.close()]);
-      await manager.closeAll().catch(() => undefined);
-      await rm(directory, { recursive: true, force: true });
+      await closeVerifierResources([
+        () => client.close(),
+        () => server.close(),
+        async () => {
+          await manager.closeAll();
+          await rm(directory, { recursive: true, force: true });
+        },
+      ]);
     }
   },
 );
@@ -124,7 +131,7 @@ it("admits Rizin startup across a bound analysis session", async () => {
   expect((await analysisSession.open(target)).ok).toBe(true);
   const initialRunId = z
     .object({ analysis_run: z.object({ run_id: z.string() }) })
-    .parse(analysisSession.status()).analysis_run.run_id;
+    .parse(await analysisSession.status()).analysis_run.run_id;
   const manager = {
     start: async () => ({
       ok: true,
@@ -169,12 +176,18 @@ it("admits Rizin startup across a bound analysis session", async () => {
     expect((await analysisSession.open(target)).ok).toBe(true);
     const currentRunId = z
       .object({ analysis_run: z.object({ run_id: z.string() }) })
-      .parse(analysisSession.status()).analysis_run.run_id;
+      .parse(await analysisSession.status()).analysis_run.run_id;
     expect(currentRunId).not.toBe(initialRunId);
     expect(analysisSession.activeTarget()?.path).toBe(target);
   } finally {
-    await Promise.allSettled([client.close(), server.close()]);
-    await analysisSession.close();
+    await closeVerifierResources([
+      () => client.close(),
+      () => server.close(),
+      async () => {
+        const closed = await analysisSession.close();
+        if (!closed.ok) throw closed.error;
+      },
+    ]);
   }
 });
 
@@ -243,9 +256,14 @@ process.stdin.on("data", async (chunk) => {
       expect(status.state).toBe("closed");
       expect(status).toHaveProperty("diagnostics_truncated");
     } finally {
-      await Promise.allSettled([client.close(), server.close()]);
-      await manager.closeAll().catch(() => undefined);
-      await rm(directory, { recursive: true, force: true });
+      await closeVerifierResources([
+        () => client.close(),
+        () => server.close(),
+        async () => {
+          await manager.closeAll();
+          await rm(directory, { recursive: true, force: true });
+        },
+      ]);
     }
   },
 );

@@ -8,10 +8,12 @@ import { describe, expect, it } from "vitest";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 import { javascriptApplicationAnalysisResultSchema } from "../../../../src/domain/javascript/javascriptApplicationAnalysis.js";
 import { staticPath } from "../../../../src/domain/javascript/javascriptStaticAnalysisHelpers.js";
+import { analyzeJavaScriptStaticSource } from "../../../../src/domain/javascript/javascriptStaticAnalysis.js";
 import { analyzeJavaScriptApplication } from "../../../support/javascriptApplicationScope.js";
 
 const urlCases = [
   ["./preload%20name.cjs", "preload name.cjs", "main.mjs"],
+  ["./preload%252Fname.cjs", "preload%2Fname.cjs", "main.mjs"],
   ["./pr%C3%A9load.cjs", "préload.cjs", "main.mjs"],
   ["./preload%3F%23.cjs", "preload?#.cjs", "main.mjs"],
   ["./preload.cjs?cache=1#v2", "preload.cjs", "main.mjs"],
@@ -60,7 +62,7 @@ describe("JavaScript file URL paths", () => {
       expect(await readFile(nativePath, "utf8")).toContain("real preload");
       await writeFile(
         sourceFile,
-        `import { fileURLToPath } from "node:url";\nnew BrowserWindow({ webPreferences: { preload: fileURLToPath(new URL(${JSON.stringify(reference)}, import.meta.url)) } });\n`,
+        `import { fileURLToPath } from "node:url";\nimport { BrowserWindow } from "electron";\nnew BrowserWindow({ webPreferences: { preload: fileURLToPath(new URL(${JSON.stringify(reference)}, import.meta.url)) } });\n`,
       );
 
       const result = await analyzeJavaScriptApplication({
@@ -85,7 +87,7 @@ describe("JavaScript file URL paths", () => {
     },
   );
 
-  it("resolves a decoded literal file URL at the filesystem boundary", async () => {
+  it("keeps a decoded absolute file URL unmapped without host ownership", async () => {
     const root = await createTestTempDirectory("rea-literal-file-url-");
     await mkdir(join(root, "app"), { recursive: true });
     await writeFile(
@@ -109,10 +111,16 @@ describe("JavaScript file URL paths", () => {
     expect(preload?.observations).not.toHaveLength(0);
     for (const observation of preload?.observations ?? [])
       expect(observation.properties).toMatchObject({
-        resolved_path: "app/preload name.cjs",
-        resolution_status: "resolved",
+        resolved_path: null,
+        resolution_status: "unavailable",
         resolution_context: "filesystem-expression",
       });
+    expect(
+      graph.edges.filter(
+        ({ source_node_id, relation }) =>
+          source_node_id === preload?.node_id && relation === "maps_to",
+      ),
+    ).toEqual([]);
   });
 
   it.each(unknownExpressions)("leaves unsupported %s unknown", (expression) => {
@@ -122,9 +130,15 @@ describe("JavaScript file URL paths", () => {
   });
 
   it("does not URL-decode literal filesystem punctuation", () => {
-    const expression = 'path.join(__dirname, "preload%20?#.cjs")';
-    expect(
-      staticPath(parseExpression(expression, { sourceType: "module" })),
-    ).toBe("preload%20?#.cjs");
+    const analysis = analyzeJavaScriptStaticSource(`
+      const path = require('node:path');
+      const {BrowserWindow} = require('electron');
+      new BrowserWindow({webPreferences:{preload:path.join(__dirname,"preload%20?#.cjs")}});
+    `);
+    expect(analysis.parse_error_count).toBe(0);
+    expect(analysis.electron.browser_windows).toHaveLength(1);
+    expect(analysis.electron.browser_windows[0]?.preload_path).toBe(
+      "preload%20?#.cjs",
+    );
   });
 });

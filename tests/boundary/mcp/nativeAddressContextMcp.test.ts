@@ -7,7 +7,9 @@ import {
   jsonResult,
 } from "./enhancedToolsHarness.js";
 import { observed as ok } from "../../fixtures/analysisExecution.js";
-import type { SegmentSummary } from "../../../src/domain/hopperValues.js";
+import { err } from "../../../src/domain/result.js";
+import { AnalysisCapabilityUnavailableError } from "../../../src/domain/analysisErrorCore.js";
+import type { SegmentSummary } from "../../../src/domain/native/nativeSegments.js";
 
 afterEach(closeEnhancedToolResources);
 
@@ -25,6 +27,16 @@ const overviewClient = (segments: SegmentSummary[]) =>
   connect({
     execute: (name) => {
       switch (name) {
+        case "read_binary_inventory_summary":
+          return Promise.resolve(
+            err(
+              new AnalysisCapabilityUnavailableError(
+                "fixture",
+                name,
+                "No native overview",
+              ),
+            ),
+          );
         case "current_document":
           return Promise.resolve(ok("fixture"));
         case "list_documents":

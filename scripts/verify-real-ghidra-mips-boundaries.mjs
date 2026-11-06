@@ -14,8 +14,9 @@ import {
   requireMcpOperationResult,
   requireMcpToolError,
 } from "./lib/mcp-verifier-results.mjs";
+import { prepareVerifierTokenCleanup } from "./lib/verifier-token-cleanup.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
-import { functionDossierSchema } from "../dist/domain/hopperValues.js";
+import { functionDossierSchema } from "../dist/domain/native/functionDossier.js";
 
 // Static source-owned controls. Never execute an ELF or acquire a toolchain.
 if (!["darwin", "linux"].includes(process.platform))
@@ -48,6 +49,7 @@ for (const setting of ["GHIDRA_HEADLESS_MAXMEM", "GHIDRA_MAXMEM"]) {
 }
 const reports = [];
 let primaryFailure;
+const cleanup = await prepareVerifierTokenCleanup(run);
 try {
   for (const byteOrder of ["little", "big"]) {
     const original = await buildMips1Fixture(root, byteOrder);
@@ -64,6 +66,10 @@ try {
     u32(legacy, 36, 0x50000001); // Existing recordless MIPS32 lane.
     const legacyPath = join(root, `legacy-${byteOrder}.elf`);
     await writeFile(legacyPath, legacy);
+    const recordlessMips1 = Buffer.from(initial);
+    u32(recordlessMips1, 36, 0x1);
+    const recordlessMips1Path = join(root, `recordless-mips1-${byteOrder}.elf`);
+    await writeFile(recordlessMips1Path, recordlessMips1);
     const gnu = Buffer.alloc(0x1200);
     legacy.copy(gnu);
     u32(gnu, 68, gnu.length);
@@ -101,7 +107,10 @@ try {
     try {
       await client.connect(transport);
       for (const [path, pattern] of [
-        [original.path, /MIPS I.*load-delay semantics/u],
+        [
+          original.path,
+          /requires EF_MIPS_ARCH_32R2 for headers that declare an ABI/u,
+        ],
         [gnuPath, /GNU floating-point ABI attribute/u],
       ]) {
         const error = requireMcpToolError(
@@ -133,26 +142,37 @@ try {
         assert.equal(reply.ok, false);
         assert.match(JSON.stringify(reply), pattern);
       }
-      await call("open_binary", { path: legacyPath, provider_id: "ghidra" });
-      const dossier = functionDossierSchema.parse(
-        await call("analyze_function", { procedure: original.entry }),
-      );
-      assert.ok(dossier.pseudocode.length > 0);
-      const loaded = await call("read_bytes", {
-        address: original.entry,
-        length: 24,
-      });
-      assert.equal(
-        loaded.bytes_hex,
-        legacy.subarray(0x1000, 0x1018).toString("hex"),
-      );
-      await call("close_binary");
+      for (const [path, expected] of [
+        [legacyPath, legacy],
+        [recordlessMips1Path, recordlessMips1],
+      ]) {
+        await call("open_binary", { path, provider_id: "ghidra" });
+        const dossier = functionDossierSchema.parse(
+          await call("analyze_function", {
+            procedure: original.entry,
+            detail: "complete",
+          }),
+        );
+        assert.ok(dossier.pseudocode.length > 0);
+        const loaded = await call("read_bytes", {
+          address: original.entry,
+          length: 24,
+        });
+        assert.equal(
+          loaded.bytes_hex,
+          expected.subarray(0x1000, 0x1018).toString("hex"),
+        );
+        await call("close_binary");
+      }
       assert.deepEqual(await readFile(original.path), initial);
       assert.deepEqual(await readFile(gnuPath), gnu);
       assert.deepEqual(await readFile(legacyPath), legacy);
+      assert.deepEqual(await readFile(recordlessMips1Path), recordlessMips1);
       reports.push({
         byte_order: byteOrder,
-        mips1: "refused by CLI and MCP",
+        declared_o32_mips1: "refused by CLI and MCP",
+        recordless_mips1:
+          "real Ghidra dossier and exact loaded bytes; instruction subset/load-delay semantics unverified",
         gnu_fp_attributes:
           "independently decoded soft-float declaration; refused by CLI and MCP",
         existing_mips32_control: "real Ghidra dossier and exact loaded bytes",
@@ -160,6 +180,7 @@ try {
           mips1: digest(initial),
           gnu: digest(gnu),
           legacy: digest(legacy),
+          recordless_mips1: digest(recordlessMips1),
         },
         source_unchanged: true,
         target_executed: false,
@@ -175,13 +196,20 @@ try {
 } catch (cause) {
   primaryFailure = cause;
 }
+let tokenCleanup;
+try {
+  tokenCleanup = await cleanup.verify();
+} finally {
+  await cleanup.close();
+}
 const completed = await completeVerifierRun(run);
 if (
+  !tokenCleanup.cleaned ||
   completed.process_lineage.status !== "verified" ||
   completed.process_lineage.descendants.length !== 0
 )
   throw new Error(
-    `Cleanup unverified; retained diagnostic workspace: ${root}`,
+    `Cleanup unverified (${JSON.stringify(tokenCleanup)}); retained diagnostic workspace: ${root}`,
     { cause: primaryFailure },
   );
 if (primaryFailure !== undefined)
@@ -191,5 +219,9 @@ if (primaryFailure !== undefined)
   );
 await rm(root, { recursive: true, force: true });
 console.log(
-  JSON.stringify({ ...completed, status: "passed", reports }, null, 2),
+  JSON.stringify(
+    { ...completed, token_cleanup: tokenCleanup, status: "passed", reports },
+    null,
+    2,
+  ),
 );

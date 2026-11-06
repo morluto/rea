@@ -1,14 +1,14 @@
 import { analysisViewInputError } from "./analysisViewErrors.js";
 import { z } from "zod";
-import type { AnalysisError } from "../analysisErrorBase.js";
 import { flutterResultSchemas } from "../flutter/flutterBuildAnalysis.js";
-import { err, ok, type Result } from "../result.js";
+import { err, ok } from "../result.js";
 import { parseAnalysisViewResult } from "./analysisViewParent.js";
-import type {
-  AnalysisViewParent,
-  AnalysisViewRequest,
-  UnsignedAnalysisView,
-} from "./analysisView.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
+import {
+  ownedView,
+  type AdmittedView,
+  type SummaryAnalysisView,
+} from "./analysisViewShape.js";
 import {
   completeWithinViewCoverage,
   pageViewCoverage,
@@ -22,9 +22,9 @@ export const dartAotSummarySchema = aotSchema.extend({
     .omit({ package_uris: true, dart_uris: true, class_like_tokens: true })
     .extend({
       returned_counts: z.strictObject({
-        package_uris: z.number().int().nonnegative(),
-        dart_uris: z.number().int().nonnegative(),
-        class_like_tokens: z.number().int().nonnegative(),
+        package_uris: z.int().nonnegative(),
+        dart_uris: z.int().nonnegative(),
+        class_like_tokens: z.int().nonnegative(),
       }),
     }),
 });
@@ -33,8 +33,8 @@ export const dartAotSummarySchema = aotSchema.extend({
 export const dartAotViewRequestSchema = z.strictObject({
   kind: z.literal("dart-aot"),
   collection: z.enum(["package_uris", "dart_uris", "class_like_tokens"]),
-  offset: z.number().int().nonnegative().default(0),
-  limit: z.number().int().positive().default(64),
+  offset: z.int().nonnegative().default(0),
+  limit: z.int().positive().default(64),
 });
 
 export const dartAotViewContextSchema = z.strictObject({
@@ -47,9 +47,12 @@ export const dartAotViewContextSchema = z.strictObject({
 /** Reuse authenticated AOT Evidence without opening the APK or rescanning its ELF. */
 export const projectDartAotView = (
   parent: AnalysisViewParent,
-  view: AnalysisViewRequest,
-): Result<UnsignedAnalysisView, AnalysisError> => {
-  if (view.kind !== "summary" && view.kind !== "dart-aot")
+  admitted: AdmittedView,
+) => {
+  const view = ownedView<
+    SummaryAnalysisView | z.output<typeof dartAotViewRequestSchema>
+  >(admitted, "summary", "dart-aot");
+  if (view === undefined)
     return err(
       analysisViewInputError([
         {
@@ -90,7 +93,7 @@ export const projectDartAotView = (
   };
   if (view.kind === "summary")
     return ok({
-      kind: "summary",
+      kind: "summary" as const,
       view,
       ...shared,
       summary: { ...report, string_pool },
@@ -99,7 +102,7 @@ export const projectDartAotView = (
   const collection = report.string_pool[view.collection];
   const items = collection.slice(view.offset, view.offset + view.limit);
   return ok({
-    kind: "dart-aot",
+    kind: "dart-aot" as const,
     view,
     ...shared,
     items,

@@ -5,6 +5,139 @@ import { inspectWebPageInputSchema } from "../../../src/domain/browserObservatio
 import { startFakeCdpBrowser } from "../../fixtures/fakeCdpBrowser.js";
 import { trackBrowser } from "./cdpBrowserProvider.support.js";
 
+it.each([
+  ["related", { openerId: "allowed-page" }, 1, null],
+  ["foreign", { openerId: "other-page" }, 0, "out_of_target_scope"],
+  ["unknown", {}, 0, "unattributed_target"],
+] as const)(
+  "keeps %s worker ownership separate from attachment state",
+  async (_relation, ownership, count, exclusion) => {
+    const browser = await startFakeCdpBrowser({
+      commandResult: (command, origin) =>
+        command.method === "Target.getTargets"
+          ? {
+              targetInfos: [
+                {
+                  targetId: "worker",
+                  type: "worker",
+                  url: `${origin}/worker.js`,
+                  attached: true,
+                  ...ownership,
+                },
+              ],
+            }
+          : undefined,
+    });
+    trackBrowser(browser);
+    const result = await new CdpBrowserProvider().inspectPage(
+      inspectWebPageInputSchema.parse({
+        cdp_endpoint: browser.endpoint,
+        target_id: "allowed-page",
+        allowed_origins: [browser.allowedOrigin],
+        observation_ms: 0,
+      }),
+    );
+    if (!result.ok) throw result.error;
+    expect(result.value.workers).toHaveLength(count);
+    expect(result.value.completeness.attach_limited_sections).toContain(
+      "workers",
+    );
+    expect(result.value.limitations.join(" ")).toContain(
+      "not worker-session observation",
+    );
+    if (exclusion !== null)
+      expect(result.value.completeness.excluded).toContainEqual({
+        section: "workers",
+        reason: exclusion,
+        count: 1,
+      });
+    if (_relation === "unknown") {
+      expect(result.value.completeness.unavailable_sections).toContain(
+        "workers",
+      );
+      expect(result.value.completeness.policy_filtered_sections).not.toContain(
+        "workers",
+      );
+    }
+  },
+);
+
+it("preserves Document Link fields, structured policies and derived agent hints", async () => {
+  const browser = await startFakeCdpBrowser({
+    commandEvents(command, origin) {
+      if (command.method !== "Network.enable") return undefined;
+      const session =
+        command.sessionId === undefined ? {} : { sessionId: command.sessionId };
+      return [
+        {
+          ...session,
+          method: "Network.requestWillBeSent",
+          params: {
+            requestId: "repeated-document",
+            type: "Document",
+            request: { url: `${origin}/frame`, method: "GET" },
+            initiator: { type: "parser" },
+          },
+        },
+        {
+          ...session,
+          method: "Network.responseReceived",
+          params: {
+            requestId: "repeated-document",
+            type: "Document",
+            response: {
+              url: `${origin}/frame`,
+              status: 200,
+              mimeType: "text/html",
+              headers: {
+                Link: "</next>; rel=next\n</agent>; rel=mcp",
+                "Cross-Origin-Opener-Policy": 'same-origin; report-to="coop"',
+                "Cross-Origin-Embedder-Policy":
+                  'require-corp; report-to="coep"',
+              },
+            },
+          },
+        },
+      ];
+    },
+  });
+  trackBrowser(browser);
+  const result = await new CdpBrowserProvider().inspectPage(
+    inspectWebPageInputSchema.parse({
+      cdp_endpoint: browser.endpoint,
+      allowed_origins: [browser.allowedOrigin],
+      target_id: "allowed-page",
+      observation_ms: 1,
+    }),
+  );
+  if (!result.ok) throw result.error;
+  expect(result.value.metadata.responses).toContainEqual(
+    expect.objectContaining({
+      request_id: "repeated-document",
+      policies: expect.objectContaining({
+        coop: "same-origin",
+        coep: "require-corp",
+      }),
+      links: [
+        expect.objectContaining({
+          href: `${browser.allowedOrigin}/next`,
+          rel: ["next"],
+        }),
+        expect.objectContaining({
+          href: `${browser.allowedOrigin}/agent`,
+          rel: ["mcp"],
+        }),
+      ],
+    }),
+  );
+  expect(result.value.metadata.agent_hints).toContainEqual({
+    mechanism: "link_rel",
+    declaration: "mcp",
+    url: `${browser.allowedOrigin}/agent`,
+    trust: "page-declared-untrusted",
+  });
+});
+
 it("preserves unavailable response observations and captures completed peers", async () => {
   const browser = await startFakeCdpBrowser({
     commandEvents(command, origin) {
@@ -988,4 +1121,128 @@ describe("redirect origin policy", () => {
       count: expect.any(Number),
     });
   });
+});
+
+it("keeps response facts with an unknown optional status without changing request identity", async () => {
+  const browser = await startFakeCdpBrowser({
+    commandEvents(command, origin) {
+      if (command.method !== "Network.enable") return undefined;
+      return [
+        {
+          sessionId: command.sessionId,
+          method: "Network.requestWillBeSent",
+          params: {
+            requestId: "partial-response",
+            request: { url: `${origin}/requested`, method: "GET" },
+            initiator: { type: "parser" },
+          },
+        },
+        {
+          sessionId: command.sessionId,
+          method: "Network.responseReceived",
+          params: {
+            requestId: "partial-response",
+            response: {
+              url: `${origin}/reported-response`,
+              status: "malformed",
+              mimeType: "application/json",
+              headers: {
+                "Content-Type": "application/json",
+                "Content-Length": "123",
+                "Content-Encoding": "gzip",
+              },
+            },
+          },
+        },
+      ];
+    },
+  });
+  trackBrowser(browser);
+  const result = await new CdpBrowserProvider().inspectPage(
+    inspectWebPageInputSchema.parse({
+      cdp_endpoint: browser.endpoint,
+      allowed_origins: [browser.allowedOrigin],
+      target_id: "allowed-page",
+      observation_ms: 0,
+    }),
+  );
+  if (!result.ok) throw result.error;
+  expect(result.value.network.requests).toContainEqual(
+    expect.objectContaining({
+      request_id: "partial-response",
+      url: `${browser.allowedOrigin}/requested`,
+      status: null,
+      mime_type: "application/json",
+    }),
+  );
+  expect(result.value.metadata.responses).toContainEqual(
+    expect.objectContaining({
+      request_id: "partial-response",
+      url: `${browser.allowedOrigin}/reported-response`,
+      mime_type: "application/json",
+      content_length: 123,
+      content_encoding: "gzip",
+    }),
+  );
+});
+
+it("does not persist or join an empty passive request identity", async () => {
+  const browser = await startFakeCdpBrowser({
+    commandEvents(command, origin) {
+      if (command.method !== "Network.enable") return undefined;
+      return [
+        {
+          sessionId: command.sessionId,
+          method: "Network.requestWillBeSent",
+          params: {
+            requestId: "",
+            frameId: "frame-main",
+            type: "Document",
+            request: { url: `${origin}/empty-id`, method: "GET" },
+            initiator: { type: "parser" },
+          },
+        },
+        {
+          sessionId: command.sessionId,
+          method: "Network.responseReceived",
+          params: {
+            requestId: "",
+            response: {
+              url: `${origin}/empty-id`,
+              status: 200,
+              mimeType: "text/html",
+              headers: {},
+            },
+          },
+        },
+        {
+          sessionId: command.sessionId,
+          method: "Network.loadingFinished",
+          params: { requestId: "", encodedDataLength: 42 },
+        },
+      ];
+    },
+  });
+  trackBrowser(browser);
+  const result = await new CdpBrowserProvider().inspectPage(
+    inspectWebPageInputSchema.parse({
+      cdp_endpoint: browser.endpoint,
+      allowed_origins: [browser.allowedOrigin],
+      target_id: "allowed-page",
+      observation_ms: 0,
+    }),
+  );
+  if (!result.ok) throw result.error;
+  expect(result.value.network.requests).not.toContainEqual(
+    expect.objectContaining({ request_id: "" }),
+  );
+  expect(result.value.metadata.responses).not.toContainEqual(
+    expect.objectContaining({ request_id: "" }),
+  );
+  expect(result.value.completeness.excluded).toContainEqual(
+    expect.objectContaining({
+      section: "network_requests",
+      reason: "invalid_protocol_value",
+    }),
+  );
 });

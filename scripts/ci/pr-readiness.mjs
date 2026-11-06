@@ -2,6 +2,65 @@ import { readFile } from "node:fs/promises";
 
 const result = (state, description) => ({ state, description });
 
+// GitHub account IDs remain stable when a login changes.
+const EXEMPT_AUTHOR_IDS = new Set([
+  76467478, // morluto
+  208281322, // kaoru0822-kitauji
+  161784452, // N0zoM1z0
+  342580529, // gensokyo-dev
+]);
+
+const OPEN_HEADS_QUERY = `query ReadinessOpenHeads($owner: String!, $name: String!, $after: String) {
+  repository(owner: $owner, name: $name) {
+    pullRequests(first: 100, after: $after, states: OPEN, orderBy: {field: CREATED_AT, direction: ASC}) {
+      nodes { number headRefOid }
+      pageInfo { hasNextPage endCursor }
+    }
+  }
+}`;
+
+/** An unindexed commit needs complete live head coverage, not PR bodies. */
+async function openHeadsMatching(github, repository, sha) {
+  const matches = [];
+  const numbers = new Set();
+  const cursors = new Set();
+  let after = null;
+  do {
+    const response = await github.graphql(OPEN_HEADS_QUERY, {
+      owner: repository.owner,
+      name: repository.repo,
+      after,
+    });
+    const page = response?.repository?.pullRequests;
+    if (
+      !Array.isArray(page?.nodes) ||
+      typeof page.pageInfo?.hasNextPage !== "boolean"
+    )
+      throw new Error("GitHub returned incomplete open-PR head metadata.");
+    for (const node of page.nodes) {
+      if (
+        !Number.isSafeInteger(node?.number) ||
+        node.number <= 0 ||
+        typeof node.headRefOid !== "string" ||
+        !/^(?:[a-f\d]{40}|[a-f\d]{64})$/u.test(node.headRefOid) ||
+        numbers.has(node.number)
+      )
+        throw new Error(
+          "GitHub returned invalid or repeated open-PR head metadata.",
+        );
+      numbers.add(node.number);
+      if (node.headRefOid === sha)
+        matches.push({ number: node.number, state: "open", head: { sha } });
+    }
+    if (!page.pageInfo.hasNextPage) return matches;
+    const next = page.pageInfo.endCursor;
+    if (typeof next !== "string" || next.length === 0 || cursors.has(next))
+      throw new Error("GitHub open-PR head pagination did not advance.");
+    cursors.add(next);
+    after = next;
+  } while (true);
+}
+
 function readinessLines(markdown) {
   const lines = markdown.split(/\r?\n/u);
   const visible = [];
@@ -9,11 +68,11 @@ function readinessLines(markdown) {
   let comment = false;
   for (const source of lines) {
     if (fence) {
+      const closing = /^ {0,3}(`+|~+)\s*$/u.exec(source);
       if (
-        new RegExp(
-          `^ {0,3}${fence.character}{${fence.length},}\\s*$`,
-          "u",
-        ).test(source)
+        closing !== null &&
+        closing[1][0] === fence.character &&
+        closing[1].length >= fence.length
       )
         fence = undefined;
       continue;
@@ -53,6 +112,11 @@ export function evaluateReadiness(pull, template) {
     return result(
       "pending",
       "Draft PR: complete Author readiness before requesting review.",
+    );
+  if (EXEMPT_AUTHOR_IDS.has(pull.user?.id))
+    return result(
+      "success",
+      "PR author is exempt from the readiness declaration.",
     );
   const expected = readinessLines(template).flatMap((line) => {
     const match = /^- \[ \] (.+)$/u.exec(line);
@@ -125,18 +189,17 @@ export async function runReadinessCheck({ github, context, core }) {
   );
   let verdict = evaluateReadiness(pull, template);
   if (verdict.state === "success") {
-    const associated = await github.paginate(
+    let associated = await github.paginate(
       github.rest.repos.listPullRequestsAssociatedWithCommit,
       { ...repository, commit_sha: pull.head.sha, per_page: 100 },
     );
-    if (
-      !associated.some(
-        (other) =>
-          other.number === number &&
-          other.state === "open" &&
-          other.head.sha === pull.head.sha,
-      )
-    )
+    const ownsHead = (other) =>
+      other.number === number &&
+      other.state === "open" &&
+      other.head.sha === pull.head.sha;
+    if (!associated.some(ownsHead))
+      associated = await openHeadsMatching(github, repository, pull.head.sha);
+    if (!associated.some(ownsHead))
       verdict = result(
         "pending",
         "GitHub has not confirmed this PR's head association; rerun PR readiness.",
@@ -160,6 +223,7 @@ export async function runReadinessCheck({ github, context, core }) {
     latest.head.sha !== pull.head.sha ||
     latest.body !== pull.body ||
     latest.draft !== pull.draft ||
+    latest.user?.id !== pull.user?.id ||
     latest.base.ref !== pull.base.ref
   )
     verdict = result(

@@ -4,7 +4,6 @@ import {
   type Evidence,
   type EvidenceObservation,
 } from "../../domain/evidence.js";
-import { jsonValueSchema } from "../../domain/jsonValue.js";
 import type {
   JavaScriptRuntimeObservation,
   JavaScriptRuntimeTargetList,
@@ -30,7 +29,7 @@ export const createJavaScriptRuntimeObservationEvidence = (
         : "rea.javascript-runtime-observation",
     operation,
     parameters: parameters(input),
-    result: jsonValueSchema.parse(result),
+    result,
     rawResult: null,
     confidence: "observed",
     authority: "external-service",

@@ -73,7 +73,8 @@ export async function verifyGhidraEntryAliases({
         alias.address,
       );
       assert.equal(
-        (await call("analyze_function", { procedure })).procedure.address,
+        (await call("analyze_function", { procedure, detail: "complete" }))
+          .procedure.address,
         alias.address,
       );
       assert.equal(
@@ -86,11 +87,50 @@ export async function verifyGhidraEntryAliases({
       (await call("procedure_info", { procedure: alias.value })).entrypoint,
       alias.address,
     );
+    // Search matches the names exact lookup accepts, as one procedure row
+    // under its primary name.
+    const escaped = alias.value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+    for (const query of [
+      { pattern: alias.value },
+      { pattern: `^${escaped}$`, mode: "regex", case_sensitive: true },
+    ]) {
+      assert.deepEqual(
+        (await call("search_procedures", query))
+          .filter(({ address }) => address === alias.address)
+          .map(({ value, matched_aliases }) => ({ value, matched_aliases })),
+        [{ value: canonical.value, matched_aliases: [alias.value] }],
+        `Procedure search missed the entry alias for ${JSON.stringify(query)}`,
+      );
+    }
+    assert.ok(
+      (await call("list_procedures")).every(
+        (row) => row.matched_aliases === undefined,
+      ),
+      "Listings must not report search matches",
+    );
+    const traced = await call("trace_feature", { query: alias.value });
+    assert.ok(
+      traced.matches.some(
+        ({ type, address, matched_aliases }) =>
+          type === "procedure" &&
+          address === alias.address &&
+          matched_aliases?.includes(alias.value) === true,
+      ),
+      "trace_feature missed the procedure its entry alias names",
+    );
     const interior = names.find(
       ({ value }) => value === `${prefix}rea_interior`,
     );
     assert.ok(interior);
     assert.notEqual(interior.address, alias.address);
+    assert.ok(
+      (await call("search_procedures", { pattern: interior.value })).every(
+        ({ address, matched_aliases = [] }) =>
+          address !== interior.address &&
+          !matched_aliases.includes(interior.value),
+      ),
+      "An interior label must not match procedure search",
+    );
     assert.equal(
       interior.symbol.type,
       "label",

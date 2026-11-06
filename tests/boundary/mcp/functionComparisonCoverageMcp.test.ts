@@ -1,12 +1,11 @@
-import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { expect, it } from "vitest";
 
 import { FUNCTION_COMPARISON_EXAMPLE } from "../../../src/contracts/functionComparisonExample.js";
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
-import { functionDossierSchema } from "../../../src/domain/hopperValues.js";
+import { functionDossierSchema } from "../../../src/domain/native/functionDossier.js";
 import { jsonValueSchema } from "../../../src/domain/jsonValue.js";
-import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
+import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
 
 const sourceWithCoverage = (
   template: typeof FUNCTION_COMPARISON_EXAMPLE.left,
@@ -115,119 +114,122 @@ it("keeps incomplete calls unknown through public comparison and verification wh
   const session = createTestBinarySession(() => {
     throw new Error("Function comparison must not launch a provider");
   });
-  const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "function-coverage-test", version: "1" });
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
-  try {
-    await server.connect(serverTransport);
-    await client.connect(clientTransport);
-    const left = sourceWithCoverage(
-      FUNCTION_COMPARISON_EXAMPLE.left,
-      "coverage-left",
-      FUNCTION_COMPARISON_EXAMPLE.left.normalized_result,
-      { status: "complete" },
-    );
-    const right = sourceWithCoverage(
-      FUNCTION_COMPARISON_EXAMPLE.right,
-      "coverage-right",
-      FUNCTION_COMPARISON_EXAMPLE.left.normalized_result,
-      { status: "unknown", reason: "Call graph unavailable." },
-    );
-    expect(left.subject).not.toBeNull();
-    expect(right.subject).not.toBeNull();
-    expect(left.limitations).not.toContain(
-      "Artifact identity is unavailable for this observation.",
-    );
-    expect(right.limitations).not.toContain(
-      "Artifact identity is unavailable for this observation.",
-    );
-    const compared = await client.callTool({
-      name: "compare_functions",
-      arguments: { left, right },
-    });
-    expect(
-      compared.isError,
-      JSON.stringify(compared.structuredContent),
-    ).not.toBe(true);
-    const comparison = parseEvidence(compared.structuredContent);
-    expect(session.evidenceById(left.evidence_id)?.subject).not.toBeNull();
-    expect(session.evidenceById(right.evidence_id)?.subject).not.toBeNull();
-    expect(comparison.normalized_result).toMatchObject({
-      status: "unknown",
-      summary: { unchanged: 7, changed: 0, unknown: 1 },
-      dimensions: expect.arrayContaining([
+  const { client } = await createApplicationMcpHarness({
+    session,
+    clientIdentity: { name: "function-coverage-test", version: "1" },
+    serverOptions: {
+      environment: {
+        ...process.env,
+        REA_MCP_MAX_INPUT_ELEMENTS: process.env.REA_MCP_MAX_INPUT_ELEMENTS,
+      },
+    },
+  });
+  const left = sourceWithCoverage(
+    FUNCTION_COMPARISON_EXAMPLE.left,
+    "coverage-left",
+    FUNCTION_COMPARISON_EXAMPLE.left.normalized_result,
+    { status: "complete" },
+  );
+  const right = sourceWithCoverage(
+    FUNCTION_COMPARISON_EXAMPLE.right,
+    "coverage-right",
+    FUNCTION_COMPARISON_EXAMPLE.left.normalized_result,
+    { status: "unknown", reason: "Call graph unavailable." },
+  );
+  expect(left.subject).not.toBeNull();
+  expect(right.subject).not.toBeNull();
+  expect(left.limitations).not.toContain(
+    "Artifact identity is unavailable for this observation.",
+  );
+  expect(right.limitations).not.toContain(
+    "Artifact identity is unavailable for this observation.",
+  );
+  const compared = await client.callTool({
+    name: "compare_functions",
+    arguments: { left, right },
+  });
+  expect(compared.isError, JSON.stringify(compared.structuredContent)).not.toBe(
+    true,
+  );
+  const comparison = parseEvidence(compared.structuredContent);
+  expect(session.evidenceById(left.evidence_id)?.subject).toEqual(
+    expect.any(Object),
+  );
+  expect(session.evidenceById(right.evidence_id)?.subject).toEqual(
+    expect.any(Object),
+  );
+  expect(comparison.normalized_result).toMatchObject({
+    status: "unknown",
+    summary: { unchanged: 7, changed: 0, unknown: 1 },
+    dimensions: expect.arrayContaining([
+      expect.objectContaining({
+        dimension: "calls",
+        status: "unknown",
+        conclusion_kind: "unresolved_branch",
+        left_count: 0,
+        right_count: 0,
+        limitations: ["Right: Call graph unavailable."],
+        evidence_links: [left.evidence_id, right.evidence_id],
+      }),
+    ]),
+  });
+  expect(comparison.evidence_links).toEqual(
+    expect.arrayContaining([left.evidence_id, right.evidence_id]),
+  );
+
+  const unknowns = await client.callTool({
+    name: "list_unknowns",
+    arguments: { domain: "function-comparison" },
+  });
+  expect(unknowns.isError).not.toBe(true);
+  expect(unknowns.structuredContent).toMatchObject({
+    result: {
+      items: [
         expect.objectContaining({
-          dimension: "calls",
+          domain: "function-comparison",
+          status: "open",
+          supporting_evidence_ids: expect.arrayContaining([
+            left.evidence_id,
+            right.evidence_id,
+          ]),
+        }),
+      ],
+    },
+  });
+
+  const verification = await verify(
+    async (name, arguments_) =>
+      client.callTool({ name, arguments: arguments_ }),
+    comparison,
+    ["calls", "overall", "pseudocode"],
+  );
+  expect(verification.normalized_result).toMatchObject({
+    status: "unknown",
+    summary: { total: 3, passed: 1, failed: 0, unknown: 2 },
+    claims: {
+      items: expect.arrayContaining([
+        expect.objectContaining({
+          claim_id: "calls",
           status: "unknown",
-          conclusion_kind: "unresolved_branch",
-          left_count: 0,
-          right_count: 0,
-          limitations: ["Right: Call graph unavailable."],
-          evidence_links: [left.evidence_id, right.evidence_id],
+          observed_status: "unknown",
+        }),
+        expect.objectContaining({
+          claim_id: "overall",
+          status: "unknown",
+          observed_status: "unknown",
+        }),
+        expect.objectContaining({
+          claim_id: "pseudocode",
+          status: "pass",
+          observed_status: "unchanged",
         }),
       ]),
-    });
-    expect(comparison.evidence_links).toEqual(
-      expect.arrayContaining([left.evidence_id, right.evidence_id]),
-    );
+    },
+  });
 
-    const unknowns = await client.callTool({
-      name: "list_unknowns",
-      arguments: { domain: "function-comparison" },
-    });
-    expect(unknowns.isError).not.toBe(true);
-    expect(unknowns.structuredContent).toMatchObject({
-      result: {
-        items: [
-          expect.objectContaining({
-            domain: "function-comparison",
-            status: "open",
-            supporting_evidence_ids: expect.arrayContaining([
-              left.evidence_id,
-              right.evidence_id,
-            ]),
-          }),
-        ],
-      },
-    });
-
-    const verification = await verify(
-      async (name, arguments_) =>
-        client.callTool({ name, arguments: arguments_ }),
-      comparison,
-      ["calls", "overall", "pseudocode"],
-    );
-    expect(verification.normalized_result).toMatchObject({
-      status: "unknown",
-      summary: { total: 3, passed: 1, failed: 0, unknown: 2 },
-      claims: {
-        items: expect.arrayContaining([
-          expect.objectContaining({
-            claim_id: "calls",
-            status: "unknown",
-            observed_status: "unknown",
-          }),
-          expect.objectContaining({
-            claim_id: "overall",
-            status: "unknown",
-            observed_status: "unknown",
-          }),
-          expect.objectContaining({
-            claim_id: "pseudocode",
-            status: "pass",
-            observed_status: "unchanged",
-          }),
-        ]),
-      },
-    });
-
-    await assertChangedDespiteUnknownCalls(
-      async (name, arguments_) =>
-        client.callTool({ name, arguments: arguments_ }),
-      left,
-    );
-  } finally {
-    await Promise.allSettled([client.close(), server.close(), session.close()]);
-  }
+  await assertChangedDespiteUnknownCalls(
+    async (name, arguments_) =>
+      client.callTool({ name, arguments: arguments_ }),
+    left,
+  );
 });

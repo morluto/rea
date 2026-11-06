@@ -7,6 +7,129 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
 cliTest.skipIf(!["darwin", "linux"].includes(process.platform))(
+  "reports invalid Hopper startup timeouts without launching the discovered engine",
+  async ({ cli }) => {
+    const home = await createTestTempDirectory("rea-doctor-hopper-timeout-");
+    const launcher = join(home, "hopper");
+    const marker = join(home, "launched");
+    await writeFile(launcher, `#!/bin/sh\nprintf launched > '${marker}'\n`);
+    await chmod(launcher, 0o700);
+
+    for (const [timeout, expectedExit] of [
+      ["0", 1],
+      ["120000", 0],
+    ] as const) {
+      const environment = {
+        ...(process.platform === "linux"
+          ? {
+              // Keep the foreign launcher unsupported without reaching the
+              // release network. This qualifies timeout diagnostics only.
+              NODE_OPTIONS: `--import=${new URL("../../fixtures/hopperRejectionFeed.mjs", import.meta.url).href}`,
+            }
+          : {}),
+        HOME: home,
+        HOPPER_LAUNCHER_PATH: launcher,
+        REA_HOPPER_STARTUP_TIMEOUT_MS: timeout,
+        GHIDRA_INSTALL_DIR: join(home, "missing-ghidra"),
+      };
+      const providers = await cli.run({
+        arguments: ["providers", "--json"],
+        environment,
+      });
+      expect(providers.exitCode).toBe(expectedExit);
+      const doctor = await cli.run({
+        arguments: ["doctor", "--provider", "hopper", "--json"],
+        environment,
+      });
+      // Linux independently rejects this shell fixture as a Hopper build.
+      const healthy = process.platform === "darwin" && expectedExit === 0;
+      expect(doctor.exitCode).toBe(healthy ? 0 : 1);
+      expect(doctor.json).toMatchObject({
+        healthy,
+        scope_checks: expect.arrayContaining([
+          expect.objectContaining({
+            name: "hopper-startup-timeout",
+            ok: expectedExit === 0,
+            classification: expectedExit === 0 ? "healthy" : "config_drift",
+            detail: expect.stringContaining("REA_HOPPER_STARTUP_TIMEOUT_MS"),
+          }),
+        ]),
+      });
+    }
+    await expect(access(marker)).rejects.toMatchObject({ code: "ENOENT" });
+  },
+);
+
+cliTest.skipIf(!["darwin", "linux"].includes(process.platform))(
+  "reports native configuration that blocks the selected engine",
+  async ({ cli }) => {
+    const home = await createTestTempDirectory("rea-doctor-native-config-");
+    const shared = {
+      HOME: home,
+      USERPROFILE: home,
+      GHIDRA_INSTALL_DIR: join(home, "missing-ghidra"),
+      HOPPER_LAUNCHER_PATH: join(home, "missing-hopper"),
+    };
+    const invalid = await cli.run({
+      arguments: ["doctor", "--provider", "hopper", "--json"],
+      environment: {
+        ...shared,
+        REA_ANALYSIS_PROVIDER: "Hopper",
+        REA_GHIDRA_STARTUP_TIMEOUT_MS: "abc",
+      },
+    });
+    expect(invalid.exitCode, invalid.stderr).toBe(1);
+    expect(invalid.json).toMatchObject({
+      healthy: false,
+      scope_checks: expect.arrayContaining([
+        expect.objectContaining({
+          name: "runtime-configuration:REA_ANALYSIS_PROVIDER",
+          ok: false,
+          classification: "config_drift",
+        }),
+        expect.objectContaining({
+          name: "runtime-configuration:REA_GHIDRA_STARTUP_TIMEOUT_MS",
+          ok: false,
+          classification: "config_drift",
+        }),
+      ]),
+    });
+
+    const jebOnly = await cli.run({
+      arguments: ["doctor", "--provider", "hopper", "--json"],
+      environment: { ...shared, REA_JEB_MCP_TIMEOUT_MS: "abc" },
+    });
+    const checks = (jebOnly.json as { checks?: { name: string }[] } | undefined)
+      ?.checks;
+    expect(
+      checks?.some((check) => check.name.startsWith("runtime-configuration:")),
+    ).toBe(false);
+  },
+);
+
+cliTest(
+  "reports MCP startup failures for a selected client",
+  async ({ cli }) => {
+    const doctor = await cli.run({
+      arguments: ["--json", "doctor", "--client", "codex"],
+      environment: { REA_GHIDRA_STARTUP_TIMEOUT_MS: "abc" },
+    });
+    expect(doctor.exitCode, doctor.stderr).toBe(1);
+    expect(doctor.stderr).toBe("");
+    expect(doctor.json).toMatchObject({
+      healthy: false,
+      scope: { mode: "explicit", clients: ["codex"], providers: [] },
+      scope_checks: expect.arrayContaining([
+        expect.objectContaining({
+          name: "runtime-configuration:REA_GHIDRA_STARTUP_TIMEOUT_MS",
+          ok: false,
+        }),
+      ]),
+    });
+  },
+);
+
+cliTest.skipIf(!["darwin", "linux"].includes(process.platform))(
   "retains a configured Hopper path in host diagnostics without launching it",
   async ({ cli }) => {
     const home = await createTestTempDirectory("rea-doctor-hopper-home-");
@@ -45,6 +168,7 @@ cliTest.skipIf(!["darwin", "linux"].includes(process.platform))(
           ? {
               PATH: [join(home, "bin"), process.env.PATH ?? ""].join(delimiter),
               REA_HOPPER_LDD_TEST_MARKER: loaderMarker,
+              NODE_OPTIONS: `--import=${new URL("../../fixtures/hopperRejectionFeed.mjs", import.meta.url).href}`,
             }
           : {}),
         HOME: home,

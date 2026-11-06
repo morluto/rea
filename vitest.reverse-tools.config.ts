@@ -43,6 +43,7 @@ export default defineConfig({
       "tests/boundary/process/ownedDebuggerSession.test.ts",
       "tests/boundary/mcp/gdbCancellationMcp.test.ts",
       "tests/boundary/mcp/rizinDebuggerCancellationMcp.test.ts",
+      "tests/boundary/mcp/rizinPendingOutput.test.ts",
       "tests/boundary/mcp/cutterMcp.test.ts",
       "tests/boundary/mcp/cutterCancellationMcp.test.ts",
       "tests/boundary/mcp/reverseEngineeringEnvironmentMcp.test.ts",

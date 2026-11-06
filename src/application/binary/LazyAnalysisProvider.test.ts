@@ -1,13 +1,15 @@
 import { expect, it } from "vitest";
+import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
+import { awaitAcknowledgement } from "../../../tests/fixtures/lifecycleAcknowledgement.js";
 
 import { parseBinaryTarget } from "../BinaryTargetResolver.js";
 import type {
   AnalysisProvider,
   ProviderIdentity,
 } from "../AnalysisProvider.js";
+import { createAnalysisExecution } from "../AnalysisProvider.js";
 import { LazyAnalysisProvider } from "./LazyAnalysisProvider.js";
-import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
-import { err, ok as resultOk } from "../../domain/result.js";
+import { ok as resultOk } from "../../domain/result.js";
 
 const identity: ProviderIdentity = {
   id: "test-provider",
@@ -23,7 +25,7 @@ const providerWithClient = (
   createClient: () => {
     onCreate();
     return {
-      execute: async (operation) => err(new AnalysisCancelledError(operation)),
+      execute: async () => resultOk(createAnalysisExecution(null, identity)),
       close: async () => resultOk(null),
     };
   },
@@ -58,34 +60,64 @@ it("returns a tagged provider error when lazy loading fails", async () => {
   });
 });
 
-it("returns cancellation while an unabortable lazy load continues safely", async () => {
-  let finishLoading: ((provider: AnalysisProvider) => void) | undefined;
-  let markCreated: (() => void) | undefined;
-  const created = new Promise<void>((resolve) => {
-    markCreated = resolve;
+it("joins a cancelled unabortable module load and refuses late client acquisition", async () => {
+  let finishLoading!: (provider: AnalysisProvider) => void;
+  let enter!: () => void;
+  let creates = 0;
+  const entered = new Promise<void>((resolve) => {
+    enter = resolve;
+  });
+  const loading = new Promise<AnalysisProvider>((resolve) => {
+    finishLoading = resolve;
   });
   const provider = new LazyAnalysisProvider({
     identity,
     capabilities: [],
-    load: () =>
-      new Promise<AnalysisProvider>((resolve) => {
-        finishLoading = resolve;
-      }),
+    load: () => {
+      enter();
+      return loading;
+    },
   });
   const controller = new AbortController();
+  const reason = { request: "cancel during import" };
   const client = provider.createClient(await target());
-  const pending = client.execute("health", {}, { signal: controller.signal });
-
-  await Promise.resolve();
-  controller.abort();
-  expect(await pending).toMatchObject({
-    ok: false,
-    error: { _tag: "AnalysisCancelledError", operation: "health" },
-  });
-
-  finishLoading?.(providerWithClient(() => markCreated?.()));
-  await created;
-  await client.close();
+  let settled = false;
+  const pending = client
+    .execute("health", {}, { signal: controller.signal })
+    .then((value) => {
+      settled = true;
+      return value;
+    });
+  await withVerifierCleanup(async () => {
+    await awaitAcknowledgement(entered, pending, "provider module load");
+    controller.abort(reason);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(settled).toBe(false);
+    finishLoading(
+      providerWithClient(() => {
+        creates++;
+      }),
+    );
+    const result = await pending;
+    expect(result).toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisCancelledError", operation: "health" },
+    });
+    if (result.ok) throw new Error("Cancellation unexpectedly succeeded");
+    expect(result.error.cause).toBe(reason);
+    expect(creates).toBe(0);
+    expect(await client.close()).toEqual(resultOk(null));
+  }, [
+    () => controller.abort(),
+    () => finishLoading(providerWithClient()),
+    async () => {
+      await pending;
+    },
+    async () => {
+      const closed = await client.close();
+      if (!closed.ok) throw closed.error;
+    },
+  ]);
 });
 
 it("reports that a lazy client was closed before its first operation", async () => {

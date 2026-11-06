@@ -1,37 +1,32 @@
-import { chmod, mkdir, writeFile } from "node:fs/promises";
+import { chmod, mkdir, symlink, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { join } from "node:path";
 import { TextReader, Uint8ArrayWriter, ZipWriter } from "@zip.js/zip.js";
 import { expect } from "vitest";
+import { machoImage } from "../../../src/artifacts/apple/MachoImage.fixture.js";
 
 import {
   artifactInventoryResultSchema,
   type ArtifactInventoryResult,
 } from "../../../src/domain/artifactGraph.js";
-import { artifactInspectionResultSchema } from "../../../src/domain/artifactInspection.js";
+import { artifactIdForContent } from "../../../src/domain/artifactIdentity.js";
 import {
   createEvidence,
   parseEvidence,
   type Evidence,
 } from "../../../src/domain/evidence.js";
-import { jsonValueSchema } from "../../../src/domain/jsonValue.js";
+
+import {
+  connectArtifactComparisonMcp,
+  inventoryEvidence,
+} from "../../fixtures/artifactComparisonMcp.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
+import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest, type TestCli } from "../../support/cli/cliFixture.js";
 
 const plist = (message: string) =>
   `<?xml version="1.0" encoding="UTF-8"?>\n<plist version="1.0"><dict><key>message</key><string>${message}</string></dict></plist>\n`;
-
-const inventoryEvidence = (input: unknown): Evidence => {
-  const inspection = parseEvidence(input);
-  const inventory = artifactInspectionResultSchema
-    .parse(inspection.normalized_result)
-    .substeps.find(
-      ({ evidence }) => evidence.operation === "inventory_artifact",
-    )?.evidence;
-  if (inventory === undefined) throw new Error("Expected inventory Evidence");
-  return parseEvidence(inventory);
-};
 
 const inspectPair = async (
   cli: TestCli,
@@ -43,12 +38,8 @@ const inspectPair = async (
   });
   expect(result.exitCode, `${result.stderr}\n${result.stdout}`).toBe(0);
   const left = inventoryEvidence(result.json);
-  const { call } = await connectLocalToolsMcp();
-  const opened = await call("open_binary", { path: rightPath });
-  expect(opened.isError, JSON.stringify(opened)).not.toBe(true);
-  const inspected = await call("inspect_artifact", {});
-  expect(inspected.isError, JSON.stringify(inspected)).not.toBe(true);
-  return { left, right: inventoryEvidence(inspected.structuredContent), call };
+  const { call, inspect } = await connectArtifactComparisonMcp();
+  return { left, right: await inspect(rightPath), call };
 };
 
 const assertCoverageControls = async ({
@@ -75,7 +66,7 @@ const assertCoverageControls = async ({
       {
         operation: "inventory_artifact",
         parameters: {},
-        result: jsonValueSchema.parse(result),
+        result: result,
         confidence: "derived",
         authority: "shipped-artifact",
       },
@@ -105,7 +96,6 @@ const assertCoverageControls = async ({
     derive({
       ...inventory,
       coverage: { scope: "root", status: "unknown" },
-      coverage_status: "partial",
       limitations: [],
     }),
   );
@@ -125,27 +115,223 @@ const assertCoverageControls = async ({
     limitations: expect.arrayContaining(["Artifact inventory scopes differ."]),
   });
 
-  const { coverage, coverage_status: _coverageStatus, ...legacy } = inventory;
-  expect(coverage).toBeDefined();
-  const retained = await compare(left, derive(legacy));
-  expect(retained.normalized_result).toMatchObject({
-    status: "unchanged",
-    summary: { unchanged: 1, unknown: 0 },
+  const { coverage: _coverage, ...withoutCoverage } = inventory;
+  expect(() => artifactInventoryResultSchema.parse(withoutCoverage)).toThrow();
+  expect(() =>
+    artifactInventoryResultSchema.parse({
+      ...inventory,
+      coverage_status: "complete",
+    }),
+  ).toThrow();
+};
+
+const assertMalformedImportsRejected = async (
+  left: Evidence,
+  right: Evidence,
+  inventory: ArtifactInventoryResult,
+  call: Awaited<ReturnType<typeof connectLocalToolsMcp>>["call"],
+) => {
+  // Reauthenticate an imported malformed carrier; this does not claim that
+  // the real inventory producer emitted members beyond its commitment.
+  const sha256 = "f".repeat(64);
+  const oversized = createEvidence(
+    {
+      path: right.subject!.local_path,
+      sha256: inventory.manifest.root_sha256,
+      format: inventory.manifest.root_format,
+    },
+    right.provider,
+    {
+      operation: "inventory_artifact",
+      parameters: {},
+      result: {
+        ...inventory,
+        nodes: [
+          ...inventory.nodes,
+          {
+            ...inventory.nodes[0]!,
+            sha256,
+            artifact_id: artifactIdForContent(sha256),
+          },
+        ],
+      },
+      confidence: "derived",
+      authority: "shipped-artifact",
+    },
+  );
+  const rejected = await call("compare_artifacts", {
+    left,
+    right: oversized,
   });
-  for (const limitation of [
-    "Child inventory is unavailable.",
-    "Missing child observations; 1 integrity contradiction(s) were recorded.",
+  expect(rejected.isError, JSON.stringify(rejected)).toBe(true);
+  expect(parseMcpToolError(rejected)).toMatchObject({
+    error: { code: "evidence_integrity_mismatch" },
+  });
+  // Missing members do not prevent checking identities whose complete inputs
+  // are already present on an imported page.
+  for (const result of [
+    ...[
+      { occurrence_id: `occ_${"f".repeat(64)}` },
+      { artifact_id: null },
+      { artifact_format: "unknown" },
+      { entry_kind: "directory" },
+      { parent_occurrence_id: `occ_${"f".repeat(64)}` },
+    ].map((patch) => ({
+      ...inventory,
+      nodes: [],
+      occurrences: inventory.occurrences.map((occurrence) => ({
+        ...occurrence,
+        ...patch,
+      })),
+    })),
+    {
+      ...inventory,
+      nodes: [],
+      manifest: {
+        ...inventory.manifest,
+        manifest_id: `agm_${"f".repeat(64)}`,
+      },
+    },
+    {
+      ...inventory,
+      nodes: [],
+      manifest: {
+        ...inventory.manifest,
+        root_artifact_id: artifactIdForContent(sha256),
+      },
+    },
   ]) {
-    const unfamiliarLegacy = await compare(
-      left,
-      derive({ ...legacy, limitations: [limitation] }),
+    const malformed = createEvidence(
+      {
+        path: right.subject!.local_path,
+        sha256: inventory.manifest.root_sha256,
+        format: inventory.manifest.root_format,
+      },
+      right.provider,
+      {
+        operation: "inventory_artifact",
+        parameters: {},
+        result,
+        confidence: "derived",
+        authority: "shipped-artifact",
+      },
     );
-    expect(unfamiliarLegacy.normalized_result).toMatchObject({
-      status: "unknown",
-      summary: { unchanged: 0, unknown: 1 },
+    const response = await call("compare_artifacts", {
+      left,
+      right: malformed,
+    });
+    expect(response.isError, JSON.stringify(response)).toBe(true);
+    expect(parseMcpToolError(response)).toMatchObject({
+      error: { code: "evidence_integrity_mismatch" },
     });
   }
 };
+
+cliTest(
+  "validates supplied edge commitments on imported partial inventories",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-partial-edge-");
+    const path = join(root, "input.zip");
+    const writer = new ZipWriter(new Uint8ArrayWriter());
+    await writer.add("a.txt", new TextReader("abc"));
+    await writer.add("b.txt", new TextReader("def"));
+    await writeFile(path, await writer.close());
+    const inspected = await cli.run({
+      arguments: ["inspect-artifact", path, "--json"],
+    });
+    expect(inspected.exitCode, inspected.stderr).toBe(0);
+    const source = inventoryEvidence(inspected.json);
+    const inventory = artifactInventoryResultSchema.parse(
+      source.normalized_result,
+    );
+    const edge = inventory.edges[0]!;
+    const occurrence = inventory.occurrences.find(
+      (item) => item.occurrence_id === edge.occurrence_id,
+    )!;
+    const omittedNode = inventory.nodes.find(
+      (node) =>
+        node.artifact_id !== inventory.manifest.root_artifact_id &&
+        node.artifact_id !== occurrence.artifact_id,
+    )!;
+    const partial = {
+      ...inventory,
+      nodes: inventory.nodes.filter(
+        (node) => node.artifact_id !== omittedNode.artifact_id,
+      ),
+    };
+    const derive = (result: unknown) =>
+      createEvidence(
+        {
+          path,
+          sha256: inventory.manifest.root_sha256,
+          format: inventory.manifest.root_format,
+        },
+        source.provider,
+        {
+          operation: "inventory_artifact",
+          parameters: {},
+          result,
+          confidence: "derived",
+          authority: "shipped-artifact",
+        },
+      );
+    const { call } = await connectLocalToolsMcp();
+    const valid = await call("compare_artifacts", {
+      left: derive(partial),
+      right: derive(partial),
+    });
+    expect(valid.isError, JSON.stringify(valid)).not.toBe(true);
+    expect(
+      parseEvidence(valid.structuredContent).normalized_result,
+    ).toMatchObject({
+      status: "truncated",
+      summary: { changed: 0 },
+    });
+    const tampered = {
+      ...partial,
+      edges: partial.edges.map((item) =>
+        item === edge ? { ...item, relation: "loads" } : item,
+      ),
+    };
+    const rejected = await call("compare_artifacts", {
+      left: derive(partial),
+      right: derive(tampered),
+    });
+    expect(rejected.isError, JSON.stringify(rejected)).toBe(true);
+    expect(parseMcpToolError(rejected)).toMatchObject({
+      error: { code: "evidence_integrity_mismatch" },
+    });
+    const nullChild = await call("compare_artifacts", {
+      left: derive(partial),
+      right: derive({
+        ...partial,
+        occurrences: partial.occurrences.map((item) =>
+          item === occurrence ? { ...item, artifact_id: null } : item,
+        ),
+      }),
+    });
+    expect(nullChild.isError, JSON.stringify(nullChild)).toBe(true);
+    expect(parseMcpToolError(nullChild)).toMatchObject({
+      error: { code: "evidence_integrity_mismatch" },
+    });
+    // Without the referenced occurrence, the digest cannot yet be checked.
+    const unresolved = await call("compare_artifacts", {
+      left: derive(partial),
+      right: derive({
+        ...tampered,
+        occurrences: tampered.occurrences.filter(
+          (item) => item.occurrence_id !== edge.occurrence_id,
+        ),
+      }),
+    });
+    expect(unresolved.isError, JSON.stringify(unresolved)).not.toBe(true);
+    expect(
+      parseEvidence(unresolved.structuredContent).normalized_result,
+    ).toMatchObject({
+      status: "truncated",
+    });
+  },
+);
 
 cliTest(
   "compares fully observed roots without inventing coverage gaps through CLI and MCP",
@@ -162,14 +348,7 @@ cliTest(
     });
     expect(leftResult.exitCode, leftResult.stderr).toBe(0);
     const left = inventoryEvidence(leftResult.json);
-    const { call } = await connectLocalToolsMcp();
-    const inspect = async (path: string) => {
-      const opened = await call("open_binary", { path });
-      expect(opened.isError, JSON.stringify(opened)).not.toBe(true);
-      const result = await call("inspect_artifact", {});
-      expect(result.isError, JSON.stringify(result)).not.toBe(true);
-      return inventoryEvidence(result.structuredContent);
-    };
+    const { call, inspect } = await connectArtifactComparisonMcp();
     const compare = async (left: Evidence, right: Evidence) => {
       const result = await call("compare_artifacts", { left, right });
       expect(result.isError, JSON.stringify(result)).not.toBe(true);
@@ -179,6 +358,7 @@ cliTest(
     const inventory = artifactInventoryResultSchema.parse(
       right.normalized_result,
     );
+    await assertMalformedImportsRejected(left, right, inventory, call);
     expect(inventory.coverage).toEqual({ scope: "root", status: "complete" });
     expect(inventory.manifest).toMatchObject({
       root_format: "plist",
@@ -187,7 +367,7 @@ cliTest(
       edge_count: 0,
     });
     expect(inventory.limitations).toEqual([
-      "Artifact has no child container entries.",
+      "Inventory covers root bytes only; child container entries were not examined.",
     ]);
     const equal = await compare(left, right);
     expect(equal.normalized_result).toMatchObject({
@@ -195,8 +375,8 @@ cliTest(
       summary: { unchanged: 1, unknown: 0 },
       changes: [],
       limitations: [
-        "Left: Artifact has no child container entries.",
-        "Right: Artifact has no child container entries.",
+        "Left: Inventory covers root bytes only; child container entries were not examined.",
+        "Right: Inventory covers root bytes only; child container entries were not examined.",
       ],
     });
     const behavior = await call("find_changed_behavior", {
@@ -267,12 +447,8 @@ cliTest.skipIf(process.platform === "win32")(
     });
     expect(result.exitCode, result.stderr).toBe(0);
     const left = inventoryEvidence(result.json);
-    const { call } = await connectLocalToolsMcp();
-    const opened = await call("open_binary", { path: rightPath });
-    expect(opened.isError, JSON.stringify(opened)).not.toBe(true);
-    const inspected = await call("inspect_artifact", {});
-    expect(inspected.isError, JSON.stringify(inspected)).not.toBe(true);
-    const right = inventoryEvidence(inspected.structuredContent);
+    const { call, inspect } = await connectArtifactComparisonMcp();
+    const right = await inspect(rightPath);
     expect(right.subject?.digest.sha256).toBe(left.subject?.digest.sha256);
     const comparison = await call("compare_artifacts", { left, right });
     expect(comparison.isError, JSON.stringify(comparison)).not.toBe(true);
@@ -293,6 +469,58 @@ cliTest.skipIf(process.platform === "win32")(
 );
 
 cliTest.skipIf(process.platform === "win32")(
+  "reports a directory file that becomes a symlink without marking the link executable",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-directory-symlink-");
+    const leftPath = join(root, "l.app"),
+      rightPath = join(root, "r.app");
+    await Promise.all([mkdir(leftPath), mkdir(rightPath)]);
+    await Promise.all(
+      [leftPath, rightPath].flatMap((path) => [
+        writeFile(
+          join(path, "Info.plist"),
+          "<plist><dict><key>CFBundleExecutable</key><string>main</string></dict></plist>",
+        ),
+        writeFile(join(path, "main"), machoImage({})),
+        writeFile(join(path, "target.txt"), "target"),
+      ]),
+    );
+    // The file holds the bytes the link stores: its target path.
+    await writeFile(join(leftPath, "current"), "target.txt");
+    await chmod(join(leftPath, "current"), 0o644);
+    await symlink("target.txt", join(rightPath, "current"));
+    const { left, right, call } = await inspectPair(cli, leftPath, rightPath);
+    const current = (evidence: Evidence) =>
+      artifactInventoryResultSchema
+        .parse(evidence.normalized_result)
+        .occurrences.find(({ logical_path }) => logical_path === "current");
+    expect(current(left)).toMatchObject({
+      entry_kind: "file",
+      executable: false,
+    });
+    // The host gives the link permission bits of its own; they mark nothing.
+    expect(current(right)).toMatchObject({
+      entry_kind: "symlink",
+      executable: false,
+    });
+    const compared = await call("compare_artifacts", { left, right });
+    expect(compared.isError, JSON.stringify(compared)).not.toBe(true);
+    expect(
+      parseEvidence(compared.structuredContent).normalized_result,
+    ).toMatchObject({
+      changes: expect.arrayContaining([
+        expect.objectContaining({
+          logical_path: "current",
+          classification: "unknown",
+          dimensions: ["metadata", "availability"],
+        }),
+      ]),
+    });
+  },
+  30_000,
+);
+
+cliTest.skipIf(process.platform === "win32")(
   "retains traversal uncertainty when a directory omits special filesystem entries",
   async ({ cli, processes }) => {
     const root = await createTestTempDirectory("rea-gap-");
@@ -307,9 +535,9 @@ cliTest.skipIf(process.platform === "win32")(
       [leftPath, rightPath].flatMap((path) => [
         writeFile(
           join(path, "Info.plist"),
-          "<plist><dict><key>CFBundleExecutable</key><string>main.js</string></dict></plist>",
+          "<plist><dict><key>CFBundleExecutable</key><string>main</string></dict></plist>",
         ),
-        writeFile(join(path, "main.js"), "export const value = 1;"),
+        writeFile(join(path, "main"), machoImage({})),
       ]),
     );
     const fifo = await processes.run("mkfifo", [join(leftPath, "p")]);

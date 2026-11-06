@@ -1,3 +1,4 @@
+import { javascriptSourceRangeKey } from "../../domain/javascript/javascriptSourceCoordinates.js";
 import type { ApplicationNode } from "../../domain/javascript/javascriptApplicationGraphSchemas.js";
 import type {
   ElectronBrowserWindowFinding,
@@ -21,7 +22,6 @@ import {
   addElectronAstEdge,
   addElectronInferenceEdge,
   electronFindingSourceNode,
-  electronRangeKey,
 } from "./ElectronBoundaryGraphContext.js";
 import {
   artifactPathResolutionProperties,
@@ -86,11 +86,11 @@ const addBrowserWindow = (
     identity: artifactLocalIdentity(
       file.sha256,
       "electron-browser-window",
-      electronRangeKey(value.location),
+      javascriptSourceRangeKey(value.location),
     ),
     observations: [
       {
-        label: `BrowserWindow@${electronRangeKey(value.location)}`,
+        label: `BrowserWindow@${javascriptSourceRangeKey(value.location)}`,
         properties: {
           source_path: file.path,
           options_status: value.options_status,
@@ -98,13 +98,28 @@ const addBrowserWindow = (
           web_preferences: value.web_preferences,
           preload_path: value.preload_path,
           preload_resolution_context: value.preload_resolution_context,
+          ...(value.resolution_sources === undefined
+            ? {}
+            : {
+                resolution_sources: value.resolution_sources.map(
+                  (location) => ({
+                    source: file.path,
+                    ...location,
+                  }),
+                ),
+              }),
           absence_means_default: false,
         },
-        evidence: astObservationEvidence({
+        evidence: (value.resolution_sources === undefined
+          ? astObservationEvidence
+          : staticInferenceEvidence)({
           sha256: file.sha256,
           path: file.path,
           range: value.location,
-          operation: "observe-browser-window-construction",
+          operation:
+            value.resolution_sources === undefined
+              ? "observe-browser-window-construction"
+              : "resolve-browser-window-constant-options",
           coverage,
           limitations: [
             "Only explicitly present webPreferences are reported; omitted properties are not interpreted as Electron defaults.",
@@ -140,6 +155,7 @@ const addWindowPreload = (
     sourcePath: input.file.path,
     context: resolutionContext,
     files: input.context.filesByPath,
+    jsonDocuments: input.context.analysis.jsonDocuments,
     directoryPaths: input.context.directoryPaths,
     unanalyzedFiles: input.context.unanalyzedFiles,
     runtimePathKind: "exact-file",
@@ -187,7 +203,7 @@ const addContextBridge = (
     identity: artifactLocalIdentity(
       file.sha256,
       "electron-context-bridge",
-      `${value.world}:${value.api_key ?? value.api_key_expression ?? "[missing]"}:${electronRangeKey(value.location)}`,
+      `${value.world}:${value.api_key ?? value.api_key_expression ?? "[missing]"}:${javascriptSourceRangeKey(value.location)}`,
     ),
     observations: [
       {
@@ -242,6 +258,7 @@ const addUtilityProcess = (
           sourcePath: file.path,
           context: value.module_resolution_context,
           files: context.filesByPath,
+          jsonDocuments: context.analysis.jsonDocuments,
           directoryPaths: context.directoryPaths,
           unanalyzedFiles: context.unanalyzedFiles,
           runtimePathKind: "node-entrypoint",
@@ -256,7 +273,7 @@ const addUtilityProcess = (
     identity: artifactLocalIdentity(
       file.sha256,
       "electron-utility-process",
-      `${value.module_path ?? value.module_expression}:${electronRangeKey(value.location)}`,
+      `${value.module_path ?? value.module_expression}:${javascriptSourceRangeKey(value.location)}`,
     ),
     observations: [
       {

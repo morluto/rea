@@ -10,6 +10,8 @@ import {
   allocateByDuration,
   parseTestDurations,
   readTestDurations,
+  scheduleWall,
+  seedLoaderOwnershipDurations,
 } from "../../ciTestSequencer.js";
 
 describe("CI test history", () => {
@@ -81,6 +83,72 @@ describe("CI test history", () => {
     ).rejects.toMatchObject({
       code: "EISDIR",
     });
+  });
+});
+
+describe("loader ownership history", () => {
+  const source =
+    "tests/acceptance/applications/javascriptLiteralPercentPaths.test.ts";
+  const consolidated =
+    "tests/acceptance/applications/javascriptLiteralLoaderOwnership.test.ts";
+  const parts = [
+    "tests/acceptance/applications/javascriptLiteralLoaderOwnershipEarly.test.ts",
+    "tests/acceptance/applications/javascriptLiteralLoaderOwnershipMiddle.test.ts",
+    "tests/acceptance/applications/javascriptLiteralLoaderOwnershipLate.test.ts",
+  ];
+
+  it("assigns the pre-split loader share to the consolidated file", () => {
+    const seeded = seedLoaderOwnershipDurations(
+      new Map([
+        [source, 192_000],
+        ["tests/other.test.ts", 10],
+      ]),
+    );
+    expect(seeded.get(source)).toBe(54_000);
+    expect(seeded.get(consolidated)).toBe(138_000);
+    for (const path of parts) expect(seeded.has(path)).toBe(false);
+    expect(seeded.get("tests/other.test.ts")).toBe(10);
+    expect(
+      [...seeded.values()].reduce((sum, duration) => sum + duration, 0),
+    ).toBe(192_000 + 10);
+  });
+
+  it("sums retired shard durations onto the consolidated file", () => {
+    const seeded = seedLoaderOwnershipDurations(
+      new Map([
+        [source, 20_000],
+        [parts[0]!, 30_000],
+        [parts[1]!, 40_000],
+        [parts[2]!, 50_000],
+        ["tests/other.test.ts", 10],
+      ]),
+    );
+    expect(seeded.get(source)).toBe(20_000);
+    expect(seeded.get(consolidated)).toBe(120_000);
+    expect(seeded.get("tests/other.test.ts")).toBe(10);
+  });
+
+  it("scales a partial retired shard as three equal shares", () => {
+    const seeded = seedLoaderOwnershipDurations(
+      new Map([
+        [source, 20_000],
+        [parts[0]!, 30_000],
+      ]),
+    );
+    expect(seeded.get(source)).toBe(20_000);
+    expect(seeded.get(consolidated)).toBe(90_000);
+  });
+
+  it("keeps a published consolidated duration", () => {
+    const recorded = new Map<string, number>([
+      [source, 20_000],
+      [parts[0]!, 30_000],
+      [consolidated, 12_000],
+    ]);
+    expect(seedLoaderOwnershipDurations(recorded)).toEqual(recorded);
+    expect(
+      seedLoaderOwnershipDurations(new Map([["tests/other.test.ts", 10]])),
+    ).toEqual(new Map([["tests/other.test.ts", 10]]));
   });
 });
 
@@ -164,5 +232,73 @@ describe("duration shard allocation", () => {
     expect(reversedShards).toEqual(shards);
     expect(shards!.flat()).toHaveLength(items.length);
     expect(new Set(shards!.flat()).size).toBe(items.length);
+  });
+
+  it("keeps each file whole and runs the serial group after the parallel group", () => {
+    const parallel = (id: string, duration: number) => ({
+      item: id,
+      key: id,
+      duration,
+      laneWidth: 2,
+      groupOrder: 0,
+    });
+    const serial = (id: string, duration: number) => ({
+      item: id,
+      key: id,
+      duration,
+      laneWidth: 1,
+      groupOrder: 1,
+    });
+    const paired = [
+      parallel("wide", 300),
+      parallel("peer", 300),
+      parallel("third", 300),
+    ];
+    expect(scheduleWall(paired.slice(0, 1), 1)).toBe(300);
+    expect(scheduleWall(paired.slice(0, 2), 1)).toBe(300);
+    expect(scheduleWall(paired, 1)).toBe(600);
+    expect(
+      scheduleWall([parallel("ordinary", 100), serial("tail", 60)], 1),
+    ).toBe(160);
+    expect(() =>
+      scheduleWall(
+        [parallel("wide", 10), { ...parallel("wide", 10), laneWidth: 1 }],
+        1,
+      ),
+    ).toThrow(RangeError);
+
+    const packed = [
+      parallel("ordinary", 100),
+      serial("tail-a", 60),
+      serial("tail-b", 60),
+    ];
+    expect(allocateByDuration(packed, 2)).toEqual([
+      ["ordinary"],
+      ["tail-a", "tail-b"],
+    ]);
+    const spread = [
+      parallel("wide", 300),
+      serial("tail-a", 100),
+      serial("tail-b", 100),
+      parallel("small", 40),
+    ];
+    const shards = allocateByDuration(spread, 2);
+    expect(shards).toEqual([["wide"], ["tail-a", "tail-b", "small"]]);
+    expect(
+      scheduleWall(
+        spread.filter((entry) => entry.item === "wide"),
+        1,
+      ),
+    ).toBe(300);
+    expect(
+      Math.max(
+        ...shards!.map((ids) =>
+          scheduleWall(
+            spread.filter((entry) => ids.includes(entry.item)),
+            1,
+          ),
+        ),
+      ),
+    ).toBe(300);
   });
 });

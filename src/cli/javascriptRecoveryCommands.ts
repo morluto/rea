@@ -1,12 +1,14 @@
+import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
+import { javascriptRecoveryInputSchema } from "../domain/javascript/javascriptRecovery.js";
 import { z } from "incur";
 import { JavaScriptRecoveryService } from "../application/javascript/JavaScriptRecoveryService.js";
 import { createJavaScriptRecoveryProvider } from "../composition/javascriptRecovery.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { logCliCommand } from "../cliLogging.js";
-import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
 import { withCommandCancellation } from "./commandCancellation.js";
+import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
 
 /** Share source recovery with MCP while keeping CLI spelling at this boundary. */
 export const registerJavaScriptRecoveryCommands = (
@@ -21,39 +23,30 @@ export const registerJavaScriptRecoveryCommands = (
     description:
       "Recover readable JavaScript modules with source provenance and verified files",
     args: z.object({
-      path: z
-        .string()
-        .describe("Absolute UTF-8 JavaScript input; never executed"),
-      outputDirectory: z.string().describe("Absolute absent output directory"),
+      path: javascriptRecoveryInputSchema.shape.path,
+      outputDirectory: javascriptRecoveryInputSchema.shape.output_directory,
     }),
     options: z.object({
-      additionalPath: z
-        .array(z.string())
+      additionalPath: javascriptRecoveryInputSchema.shape.additional_paths,
+      extractionMode: javascriptRecoveryInputSchema.shape.extraction_mode
+        .removeDefault()
         .optional()
         .describe(
-          "Related absolute UTF-8 JavaScript file; repeat for multiple chunks",
+          javascriptRecoveryInputSchema.shape.extraction_mode.description!,
         ),
-      extractionMode: z
-        .enum(["structural", "heuristic", "inspection"])
+      rewriteLevel: javascriptRecoveryInputSchema.shape.rewrite_level
+        .removeDefault()
         .optional()
         .describe(
-          "Structural boundaries, heuristic fallback, or inspection-only regions",
-        ),
-      rewriteLevel: z
-        .enum(["minimal", "standard", "aggressive"])
-        .optional()
-        .describe(
-          "Upstream syntax recovery level; runtime equivalence remains unknown",
+          javascriptRecoveryInputSchema.shape.rewrite_level.description!,
         ),
     }),
     run: ({ args, options }) =>
-      withCommandCancellation(async (signal) => {
-        try {
-          return await logCliCommand(
-            logger,
-            CLI_COMMANDS.recoverJavaScriptSources,
-            async () => {
-              const result = await service.recover(
+      withCommandCancellation((signal) =>
+        logCliCommand(logger, CLI_COMMANDS.recoverJavaScriptSources, () =>
+          finishAnalysisCommand(
+            () =>
+              service.recover(
                 {
                   path: args.path,
                   output_directory: args.outputDirectory,
@@ -68,15 +61,13 @@ export const registerJavaScriptRecoveryCommands = (
                     : { rewrite_level: options.rewriteLevel }),
                 },
                 { signal },
-              );
-              return result.ok
-                ? result.value
-                : projectAnalysisError(result.error);
-            },
-          );
-        } finally {
-          await service.close();
-        }
-      }),
+              ),
+            service,
+            "wakaru",
+            "recover_javascript_sources",
+            signal,
+          ).then(projectCliAnalysisResult),
+        ),
+      ),
   });
 };

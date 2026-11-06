@@ -2,21 +2,30 @@ import * as t from "@babel/types";
 
 import type {
   JavaScriptSemanticCallable,
+  JavaScriptSemanticProjectedResultBinding,
   JavaScriptSemanticEventOperation,
   JavaScriptSemanticTimerOperation,
 } from "./javascriptSemanticIr.js";
 import { createSemanticCallableIdStack } from "./javascriptSemanticCallableStack.js";
-import { semanticStaticPropertyName } from "./javascriptAstValues.js";
+import {
+  readExactJavaScriptLiteral,
+  semanticStaticPropertyName,
+  unwrapJavaScriptExpression,
+} from "./javascriptAstValues.js";
 import {
   resolveSemanticBindingState,
   semanticResolutionBlocked,
   type JavaScriptSemanticAnalysisState,
   type JavaScriptSemanticBindingState,
 } from "./javascriptSemanticState.js";
-import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
+import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
+import { traverseJavaScriptValueAst } from "./javascriptSemanticTraversal.js";
+import { isUnmodifiedGlobalReference } from "./javascriptSemanticAmbientWrites.js";
+import { semanticOpaqueNameMayHaveChanged } from "./javascriptSemanticOpaqueEffects.js";
 import { range } from "./javascriptStaticAnalysisHelpers.js";
 import {
   builtinDataEffectMethod,
+  dataEffectArgumentBindingId,
   dataEffectLiteralString,
   dataEffectMemberCallee,
   assignedSemanticResultBindings,
@@ -70,11 +79,11 @@ interface TimerCandidate {
   readonly kind: JavaScriptSemanticTimerOperation["kind"];
   readonly ownerCallableId: string | null;
   readonly handleBindingId: string | null;
-  readonly projectedResultBindings: readonly {
-    readonly bindingId: string;
-    readonly projectionPath: readonly (string | number | null)[];
-    readonly resolution: "complete" | "partial";
-  }[];
+  readonly projectedResultBindings: readonly JavaScriptSemanticProjectedResultBinding[];
+  readonly handleRead: {
+    readonly origins: readonly t.Node[];
+    readonly complete: boolean;
+  } | null;
 }
 
 interface TimerCollectionInput {
@@ -96,7 +105,7 @@ export const collectJavaScriptSemanticAsyncEffects = (
   const callableIds = new Set(callables.map(({ callableId }) => callableId));
   const callableStack = createSemanticCallableIdStack(callableIds);
   const ancestors: t.Node[] = [];
-  traverseJavaScriptAst(program, {
+  traverseJavaScriptValueAst(program, state.erasedSyntaxNodes, {
     enter: (node, parent) => {
       callableStack.enter(node, parent);
       if (t.isCallExpression(node) || t.isOptionalCallExpression(node)) {
@@ -123,6 +132,36 @@ export const collectJavaScriptSemanticAsyncEffects = (
   };
 };
 
+/**
+ * A listener must be a function, and Node throws `ERR_INVALID_ARG_TYPE` before
+ * anything is registered or removed when it is not. An exactly readable literal
+ * that cannot be a function is therefore not an event operation, while an
+ * identifier, a call result or a spread may still supply one and keeps its
+ * operation.
+ *
+ * A class expression passes Node's own `typeof` check, so it is kept.
+ */
+const rejectsEventListener = (listener: t.Node): boolean => {
+  if (t.isSpreadElement(listener)) return false;
+  const value = unwrapJavaScriptExpression(listener).node;
+  if (t.isFunctionExpression(value) || t.isArrowFunctionExpression(value))
+    return false;
+  if (t.isClassExpression(value)) return false;
+  // A numeric literal is always a number, including the non-finite value Babel
+  // stores for `1e999`, which the exact-value reader refuses to price.
+  if (t.isNumericLiteral(value)) return true;
+  // Every unary operator yields a primitive, and a primitive is never callable.
+  return (
+    t.isUnaryExpression(value) ||
+    readExactJavaScriptLiteral(value).found ||
+    t.isTemplateLiteral(value) ||
+    t.isBigIntLiteral(value) ||
+    t.isRegExpLiteral(value) ||
+    t.isArrayExpression(value) ||
+    t.isObjectExpression(value)
+  );
+};
+
 const collectEvent = (
   node: t.CallExpression | t.OptionalCallExpression,
   ownerCallableId: string | null,
@@ -142,6 +181,15 @@ const collectEvent = (
   const listenerArgument = EVENT_LISTENER_METHODS.includes(method)
     ? node.arguments[1]
     : undefined;
+  // A leading spread shifts the runtime argument positions, so argument 1 is not
+  // provably the listener: `e.on(...["x", fn], 1)` registers `fn` and ignores the
+  // trailing `1`.
+  if (
+    !t.isSpreadElement(eventArgument) &&
+    listenerArgument !== undefined &&
+    rejectsEventListener(listenerArgument)
+  )
+    return;
   const emitter = emitterIdentity(member.object, state);
   const eventName = dataEffectLiteralString(eventArgument);
   output.push({
@@ -153,7 +201,7 @@ const collectEvent = (
     emitterKey: emitter.key,
     emitterBindingId: emitter.bindingId,
     eventName,
-    listenerBindingId: bindingId(listenerArgument, state),
+    listenerBindingId: dataEffectArgumentBindingId(listenerArgument, state),
     listenerLocation: t.isNode(listenerArgument)
       ? range(listenerArgument)
       : null,
@@ -186,20 +234,52 @@ const emitterIdentity = (
 } => {
   if (t.isIdentifier(node)) {
     const binding = resolveSemanticBindingState(state, node, node.name);
-    if (binding !== undefined)
+    if (binding !== undefined) {
+      const read = semanticBindingAtRead(binding, node, state);
+      const origins = [
+        ...read.binding.initializers,
+        ...read.binding.referenceInitializers,
+      ];
+      const replaced = binding.definitions.some(
+        ({ kind }) => kind === "assignment",
+      );
+      const origin = origins.length === 1 ? origins[0] : undefined;
+      const complete =
+        !replaced ||
+        (read.status === "ordered" &&
+          read.hasDefiniteInitializer &&
+          origin !== undefined);
       return {
-        key: `binding:${binding.bindingId}`,
+        key: !replaced
+          ? `binding:${binding.bindingId}`
+          : complete
+            ? `binding:${binding.bindingId}:origin:${origin?.node.start ?? -1}:${origin?.node.end ?? -1}`
+            : `expression:${node.start ?? -1}:${node.end ?? -1}`,
         bindingId: binding.bindingId,
-        complete: true,
+        complete,
       };
+    }
     return {
       key: `global:${node.name}`,
       bindingId: null,
       complete: !semanticResolutionBlocked(state, node, node.name),
     };
   }
-  if (t.isThisExpression(node))
-    return { key: "this", bindingId: null, complete: true };
+  if (t.isThisExpression(node)) {
+    let owner = state.parentsByNode.get(node);
+    while (
+      owner !== undefined &&
+      !t.isClass(owner) &&
+      !(t.isFunction(owner) && !t.isArrowFunctionExpression(owner))
+    )
+      owner = state.parentsByNode.get(owner);
+    // Lexical receiver ownership does not establish one runtime instance.
+    return {
+      key: `this:${owner?.start ?? -1}:${owner?.end ?? -1}`,
+      bindingId: null,
+      complete: false,
+    };
+  }
   return {
     key: `expression:${String(node.start ?? -1)}:${String(node.end ?? -1)}`,
     bindingId: null,
@@ -207,10 +287,79 @@ const emitterIdentity = (
   };
 };
 
+/**
+ * A timer proven to come from the Node `timers` module rather than a bare
+ * global. Browser and Electron renderer sources reach this analysis without a
+ * Node/browser distinction, and there `setTimeout("refresh()", 0)` is a real
+ * timer: the string is evaluated by the host. Node's callback rule therefore
+ * applies only when the timer is imported from `node:timers`, where that form
+ * cannot exist.
+ */
+const nodeBuiltinTimerMethod = (
+  callee: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): JavaScriptSemanticTimerOperation["method"] | null =>
+  admittedTimerMethod(
+    builtinDataEffectMethod(callee, state, ["timers", "node:timers"]) ?? "",
+  );
+
+/**
+ * A schedule imported from Node's `timers` module requires a function in
+ * argument 0. Node validates it before creating a handle, so a provable literal
+ * that is not a function throws ERR_INVALID_ARG_TYPE synchronously and no timer
+ * exists. Only literals the analyzer can read exactly are decided; an identifier
+ * or call may still be a function at runtime.
+ */
+const schedulesWithNonFunctionCallback = (
+  node: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  if (!t.isCallExpression(node) && !t.isOptionalCallExpression(node))
+    return false;
+  const argument = node.arguments[0];
+  // No argument at all cannot be a function. A spread may still expand to one.
+  if (argument === undefined) return true;
+  if (t.isSpreadElement(argument)) return false;
+  const value = unwrapJavaScriptExpression(argument).node;
+  if (t.isFunctionExpression(value) || t.isArrowFunctionExpression(value))
+    return false;
+  if (
+    t.isStringLiteral(value) ||
+    t.isNumericLiteral(value) ||
+    t.isBigIntLiteral(value) ||
+    t.isBooleanLiteral(value) ||
+    t.isNullLiteral(value) ||
+    t.isTemplateLiteral(value) ||
+    t.isArrayExpression(value) ||
+    t.isObjectExpression(value)
+  )
+    return true;
+  // `undefined`, `NaN` and `Infinity` are unmodified globals, and none is a
+  // function. A shadowed binding may still hold one, so only the global counts.
+  if (
+    t.isIdentifier(value) &&
+    ["undefined", "NaN", "Infinity"].includes(value.name) &&
+    isUnmodifiedGlobalReference(value, state, value.name) &&
+    !semanticOpaqueNameMayHaveChanged(value, state)
+  )
+    return true;
+  // A class passes Node's own typeof check; invoking it is a separate failure,
+  // so the schedule itself still happens. Every other unary operator (including
+  // `void`, `!`, `~`, `typeof` and `delete`) yields a primitive, never a
+  // function.
+  return t.isUnaryExpression(value);
+};
+
 const collectTimer = (input: TimerCollectionInput): void => {
   const { node, ownerCallableId, state, output, ancestors } = input;
   const method = timerMethod(node.callee, state);
   if (method === null) return;
+  if (
+    TIMER_SCHEDULE_METHODS.some((candidate) => candidate === method) &&
+    nodeBuiltinTimerMethod(node.callee, state) !== null &&
+    schedulesWithNonFunctionCallback(node, input.state)
+  )
+    return;
   const kind = TIMER_SCHEDULE_METHODS.some((candidate) => candidate === method)
     ? "schedule"
     : "cancel";
@@ -219,6 +368,38 @@ const collectTimer = (input: TimerCollectionInput): void => {
     ancestors,
     state,
   );
+  const handle =
+    kind === "cancel" && t.isIdentifier(node.arguments[0])
+      ? resolveSemanticBindingState(
+          state,
+          node.arguments[0],
+          node.arguments[0].name,
+        )
+      : undefined;
+  const handleRead =
+    handle === undefined || !t.isIdentifier(node.arguments[0])
+      ? null
+      : (() => {
+          const snapshot = semanticBindingAtRead(
+            handle,
+            node.arguments[0],
+            state,
+          );
+          // A const handle has the same value inside a later closure even
+          // when the source positions belong to different function bodies.
+          const stableClosureCapture =
+            !handle.mutable &&
+            handle.initializers.length === 1 &&
+            handle.referenceInitializers.length === 0;
+          const origins = [
+            ...snapshot.binding.initializers,
+            ...snapshot.binding.referenceInitializers,
+          ];
+          return {
+            origins: origins.map(({ node: origin }) => origin),
+            complete: snapshot.status === "ordered" || stableClosureCapture,
+          };
+        })();
   output.push({
     node,
     method,
@@ -227,7 +408,7 @@ const collectTimer = (input: TimerCollectionInput): void => {
     handleBindingId:
       kind === "schedule"
         ? scalarAssignedResultBinding(projectedResultBindings)
-        : bindingId(node.arguments[0], state),
+        : dataEffectArgumentBindingId(node.arguments[0], state),
     projectedResultBindings:
       kind === "schedule"
         ? semanticProjectedBindingFacts(
@@ -236,32 +417,29 @@ const collectTimer = (input: TimerCollectionInput): void => {
             ),
           )
         : [],
+    handleRead,
   });
 };
 
 const resolveTimers = (
   candidates: readonly TimerCandidate[],
 ): JavaScriptSemanticTimerOperation[] => {
-  const schedulesByBinding = new Map<string, TimerCandidate[]>();
-  for (const candidate of candidates) {
-    if (candidate.kind !== "schedule") continue;
-    const ids = [
-      ...(candidate.handleBindingId === null
-        ? []
-        : [candidate.handleBindingId]),
-      ...candidate.projectedResultBindings.map(({ bindingId }) => bindingId),
-    ];
-    for (const id of ids) {
-      const existing = schedulesByBinding.get(id) ?? [];
-      existing.push(candidate);
-      schedulesByBinding.set(id, existing);
-    }
-  }
+  const schedules = new Map<t.Node, TimerCandidate>(
+    candidates
+      .filter(({ kind }) => kind === "schedule")
+      .map((candidate) => [candidate.node, candidate] as const),
+  );
   return candidates.map((candidate) => {
+    // Unordered reads retain possible initializers as candidate edges. Only an
+    // ordered or immutable read can establish one complete cancellation link.
     const linked =
-      candidate.kind === "cancel" && candidate.handleBindingId !== null
-        ? (schedulesByBinding.get(candidate.handleBindingId) ?? [])
-        : [];
+      candidate.handleRead?.origins.flatMap((origin) => {
+        const schedule = schedules.get(origin);
+        return schedule === undefined ? [] : [schedule];
+      }) ?? [];
+    const incompleteOrigins =
+      candidate.handleRead !== null &&
+      candidate.handleRead.origins.length !== linked.length;
     return {
       timerId: timerId(candidate),
       kind: candidate.kind,
@@ -279,11 +457,13 @@ const resolveTimers = (
         candidate.kind === "schedule"
           ? "complete"
           : linked.length === 1 &&
+              candidate.handleRead?.complete &&
+              !incompleteOrigins &&
               !linked[0]?.projectedResultBindings.some(
                 ({ bindingId }) => bindingId === candidate.handleBindingId,
               )
             ? "complete"
-            : linked.length > 1
+            : linked.length > 0
               ? "partial"
               : "unresolved",
     };
@@ -299,7 +479,8 @@ const timerMethod = (
     if (binding === undefined) {
       const method = admittedTimerMethod(callee.name);
       if (method === null) return null;
-      return semanticResolutionBlocked(state, callee, callee.name)
+      return semanticResolutionBlocked(state, callee, callee.name) ||
+        !isUnmodifiedGlobalReference(callee, state, callee.name)
         ? null
         : method;
     }
@@ -315,24 +496,15 @@ const admittedTimerMethod = (
     (candidate) => candidate === value,
   ) ?? null;
 
-const bindingId = (
-  node:
-    | t.Expression
-    | t.SpreadElement
-    | t.JSXNamespacedName
-    | t.ArgumentPlaceholder
-    | undefined,
-  state: JavaScriptSemanticAnalysisState,
-): string | null =>
-  t.isIdentifier(node)
-    ? (resolveSemanticBindingState(state, node, node.name)?.bindingId ?? null)
-    : null;
-
 const timerDelay = (candidate: TimerCandidate): number | null => {
   if (candidate.kind !== "schedule" || candidate.method === "setImmediate")
     return null;
   const delay = candidate.node.arguments[1];
-  return t.isNumericLiteral(delay) ? delay.value : null;
+  // An overflowing literal such as 1e999 parses to Infinity, which JSON
+  // Evidence cannot carry; keep that delay unknown like any other.
+  return t.isNumericLiteral(delay) && Number.isFinite(delay.value)
+    ? delay.value
+    : null;
 };
 
 const timerId = (candidate: TimerCandidate): string =>

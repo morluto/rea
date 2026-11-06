@@ -12,16 +12,32 @@ struct ProcessIdentityObservation: Encodable {
   let pid: Int32
   let state: String
   let identity: String?
+  let effective_uid: UInt32?
+  let lifecycle: String?
+  let relation: ProcessRelationObservation?
+  /** Display-only kernel accounting name (p_comm, at most MAXCOMLEN bytes). */
+  let name: String?
   let reason: String?
 }
 
-private struct ProcessMetadata {
+struct ProcessRelationObservation: Encodable {
+  let state: String
+  let parent_pid: Int32
+  let process_group_id: Int32
+}
+
+struct ProcessMetadata {
   let identity: String
+  let effectiveUid: UInt32
+  let lifecycle: String
+  let parentPid: Int32
+  let processGroupId: Int32
   let pointerSize: Int
+  let name: String
 }
 
 struct ProcessSnapshot {
-  fileprivate let metadata: [Int32: ProcessMetadata]
+  let metadata: [Int32: ProcessMetadata]
   let failure: String?
 }
 
@@ -75,7 +91,12 @@ func readProcessSnapshot(
           process.kp_proc.p_pid,
           ProcessMetadata(
             identity: "\(start.tv_sec):\(start.tv_usec)",
-            pointerSize: process.kp_proc.p_flag & P_LP64 != 0 ? 8 : 4
+            effectiveUid: process.kp_eproc.e_ucred.cr_uid,
+            lifecycle: process.kp_proc.p_stat == SZOMB ? "zombie" : "non-zombie",
+            parentPid: process.kp_eproc.e_ppid,
+            processGroupId: process.kp_eproc.e_pgid,
+            pointerSize: process.kp_proc.p_flag & P_LP64 != 0 ? 8 : 4,
+            name: processName(process)
           )
         )
       },
@@ -86,25 +107,88 @@ func readProcessSnapshot(
   return ProcessSnapshot(metadata: [:], failure: "process_table_failed_\(ENOMEM)")
 }
 
+/** Decode the NUL-terminated accounting name; invalid UTF-8 is replaced for display. */
+private func processName(_ process: kinfo_proc) -> String {
+  withUnsafeBytes(of: process.kp_proc.p_comm) { bytes in
+    String(decoding: bytes.prefix { $0 != 0 }, as: UTF8.self)
+  }
+}
+
 func readProcessIdentities(pids: [Int32]) -> [ProcessIdentityObservation] {
-  let snapshot = readProcessSnapshot()
+  readProcessIdentities(pids: pids, snapshot: readProcessSnapshot())
+}
+
+func readProcessIdentities(
+  pids: [Int32],
+  snapshot: ProcessSnapshot
+) -> [ProcessIdentityObservation] {
   return pids.map { pid in
+    guard pid > 0 else {
+      return unavailableIdentity(pid: pid, reason: "invalid_process_id")
+    }
     guard let metadata = snapshot.metadata[pid] else {
-      return unavailableIdentity(
+      if let failure = snapshot.failure {
+        return unavailableIdentity(pid: pid, reason: failure)
+      }
+      // This records absence from this successful KERN_PROC_ALL snapshot only.
+      // Unlike the Linux procfs path, it has no PID-specific kill(0)
+      // corroboration; callers must not treat it as universal or future exit
+      // proof.
+      return ProcessIdentityObservation(
         pid: pid,
-        reason: snapshot.failure ?? "process_not_in_snapshot"
+        state: "absent",
+        identity: nil,
+        effective_uid: nil,
+        lifecycle: nil,
+        relation: nil,
+        name: nil,
+        reason: "not-in-snapshot"
       )
     }
-    return ProcessIdentityObservation(pid: pid, state: "readable", identity: metadata.identity, reason: nil)
+    return ProcessIdentityObservation(
+      pid: pid,
+      state: "readable",
+      identity: metadata.identity,
+      effective_uid: metadata.effectiveUid,
+      lifecycle: metadata.lifecycle,
+      relation: ProcessRelationObservation(
+        state: "observed",
+        parent_pid: metadata.parentPid,
+        process_group_id: metadata.processGroupId
+      ),
+      name: metadata.name,
+      reason: nil
+    )
   }
 }
 
 private func unavailableIdentity(pid: Int32, reason: String) -> ProcessIdentityObservation {
-  ProcessIdentityObservation(pid: pid, state: "unavailable", identity: nil, reason: reason)
+  ProcessIdentityObservation(
+    pid: pid,
+    state: "unavailable",
+    identity: nil,
+    effective_uid: nil,
+    lifecycle: nil,
+    relation: nil,
+    name: nil,
+    reason: reason
+  )
+}
+
+enum ProcargsMalformedStage: String, CaseIterable {
+  case header
+  case argumentCount = "argument_count"
+  case executablePath = "executable_path"
+  case pointerSize = "pointer_size"
+  case pathPadding = "path_padding"
+  case arguments
+  case terminator
+  case trailingEntries = "trailing_entries"
 }
 
 enum RunTokenReadError: Error {
   case invalidBuffer
+  case invalidBufferAt(ProcargsMalformedStage)
   case duplicateToken
   case invalidTokenEncoding
   case environmentUnavailable
@@ -144,6 +228,22 @@ func processRunTokenObservation(
   parse: Result<ParsedRunToken, RunTokenReadError>,
   codeSigningFlags: () -> UInt32?
 ) -> RunTokenObservation {
+  // Native inspection restrictions apply even when argv is incomplete or
+  // overwritten, before parsing reaches the environment. Keep this fact at
+  // the native boundary; cleanup still decides whether the process is related.
+  func withheldEnvironment() -> RunTokenObservation? {
+    guard let flags = codeSigningFlags() else { return nil }
+    if (flags & csPlatformBinary) != 0 {
+      return unavailable(pid: pid, reason: "platform_binary_environment_withheld")
+    }
+    if (flags & csRestrict) != 0 {
+      return unavailable(pid: pid, reason: "restricted_process_environment_withheld")
+    }
+    return nil
+  }
+  func unavailableEnvironment(_ reason: String) -> RunTokenObservation {
+    withheldEnvironment() ?? unavailable(pid: pid, reason: reason)
+  }
   switch parse {
   case .success(let parsed):
     if let runId = parsed.runId {
@@ -154,38 +254,25 @@ func processRunTokenObservation(
     if parsed.environmentEntryCount > 0 {
       return RunTokenObservation(pid: pid, state: "readable", run_id: nil, reason: nil)
     }
-    let flags = codeSigningFlags()
-    if let flags, (flags & csPlatformBinary) != 0 {
-      return unavailable(pid: pid, reason: "platform_binary_environment_withheld")
-    }
-    if let flags, (flags & csRestrict) != 0 {
-      return unavailable(pid: pid, reason: "restricted_process_environment_withheld")
-    }
+    if let withheld = withheldEnvironment() { return withheld }
     return RunTokenObservation(pid: pid, state: "readable", run_id: nil, reason: nil)
   case .failure(let failure):
     switch failure {
     case .environmentUnavailable:
-      let flags = codeSigningFlags()
-      if let flags, (flags & csPlatformBinary) != 0 {
-        return unavailable(pid: pid, reason: "platform_binary_environment_withheld")
-      }
-      if let flags, (flags & csRestrict) != 0 {
-        return unavailable(pid: pid, reason: "restricted_process_environment_withheld")
-      }
-      return unavailable(pid: pid, reason: "environment_unavailable")
+      return unavailableEnvironment("environment_unavailable")
     case .ambiguousEnvironmentBoundary:
-      if let flags = codeSigningFlags(), (flags & csRestrict) != 0 {
-        return unavailable(pid: pid, reason: "restricted_process_environment_withheld")
-      }
-      return unavailable(pid: pid, reason: "ambiguous_environment_boundary")
+      return unavailableEnvironment("ambiguous_environment_boundary")
+    // These failures already establish that token bytes were available.
     case .duplicateToken:
       return unavailable(pid: pid, reason: "duplicate_run_token")
     case .invalidTokenEncoding:
       return unavailable(pid: pid, reason: "invalid_run_token_encoding")
     case .appleVectorUnavailable:
-      return unavailable(pid: pid, reason: "apple_vector_unavailable")
+      return unavailableEnvironment("apple_vector_unavailable")
     case .invalidBuffer:
-      return unavailable(pid: pid, reason: "malformed_procargs")
+      return unavailableEnvironment("malformed_procargs")
+    case .invalidBufferAt(let stage):
+      return unavailableEnvironment("malformed_procargs_\(stage.rawValue)")
     }
   }
 }
@@ -244,27 +331,30 @@ func parseProcessEnvironment(
   in bytes: [UInt8],
   pointerSize: Int = MemoryLayout<UnsafeRawPointer>.size
 ) throws -> ParsedRunToken {
-  guard bytes.count >= MemoryLayout<Int32>.size else { throw RunTokenReadError.invalidBuffer }
+  guard bytes.count >= MemoryLayout<Int32>.size else { throw RunTokenReadError.invalidBufferAt(.header) }
   let argc = bytes.withUnsafeBytes { $0.loadUnaligned(as: Int32.self).littleEndian }
-  guard argc >= 0, Int(argc) <= bytes.count else { throw RunTokenReadError.invalidBuffer }
+  guard argc >= 0, Int(argc) <= bytes.count else { throw RunTokenReadError.invalidBufferAt(.argumentCount) }
   var offset = MemoryLayout<Int32>.size
   guard let executablePath = readString(in: bytes, offset: &offset) else {
-    throw RunTokenReadError.invalidBuffer
+    throw RunTokenReadError.invalidBufferAt(.executablePath)
   }
-  guard pointerSize == 4 || pointerSize == 8 else { throw RunTokenReadError.invalidBuffer }
+  guard pointerSize == 4 || pointerSize == 8 else { throw RunTokenReadError.invalidBufferAt(.pointerSize) }
   let pathRecordSize = Array("executable_path=".utf8).count + executablePath.count + 1
   let padding = (pointerSize - pathRecordSize % pointerSize) % pointerSize
   guard offset + padding <= bytes.count,
         bytes[offset..<(offset + padding)].allSatisfy({ $0 == 0 }) else {
-    throw RunTokenReadError.invalidBuffer
+    throw RunTokenReadError.invalidBufferAt(.pathPadding)
   }
   offset += padding
+  let tokenPrefix = Array("REA_PROCESS_RUN_ID=".utf8)
+  var tokenInArgument = false
   for _ in 0..<argc {
-    guard readString(in: bytes, offset: &offset, allowEmpty: true) != nil else {
-      throw RunTokenReadError.invalidBuffer
+    guard let argument = readString(in: bytes, offset: &offset, allowEmpty: true) else {
+      throw RunTokenReadError.invalidBufferAt(.arguments)
     }
+    tokenInArgument = tokenInArgument || argument.starts(with: tokenPrefix)
   }
-  guard bytes.last == 0 else { throw RunTokenReadError.invalidBuffer }
+  guard bytes.last == 0 else { throw RunTokenReadError.invalidBufferAt(.terminator) }
   if offset == bytes.count {
     throw RunTokenReadError.environmentUnavailable
   }
@@ -282,7 +372,7 @@ func parseProcessEnvironment(
       continue
     }
     guard let entry = readString(in: bytes, offset: &offset) else {
-      throw RunTokenReadError.invalidBuffer
+      throw RunTokenReadError.invalidBufferAt(.trailingEntries)
     }
     trailingEntries.append(entry)
   }
@@ -303,21 +393,27 @@ func parseProcessEnvironment(
     throw RunTokenReadError.appleVectorUnavailable
   }
   if trailingEntries[appleVectorStart...].contains(where: {
-    $0.starts(with: Array("REA_PROCESS_RUN_ID=".utf8))
+    $0.starts(with: tokenPrefix)
   }) {
     throw RunTokenReadError.ambiguousEnvironmentBoundary
   }
   let environmentEntries = trailingEntries[..<appleVectorStart]
   var found: String?
   for entry in environmentEntries {
-    if entry.starts(with: Array("REA_PROCESS_RUN_ID=".utf8)) {
+    if entry.starts(with: tokenPrefix) {
       guard found == nil else { throw RunTokenReadError.duplicateToken }
-      let value = entry.dropFirst("REA_PROCESS_RUN_ID=".utf8.count)
+      let value = entry.dropFirst(tokenPrefix.count)
       guard let decoded = String(bytes: value, encoding: .utf8) else {
         throw RunTokenReadError.invalidTokenEncoding
       }
       found = decoded
     }
+  }
+  // A changed process title can overwrite the original argument boundaries,
+  // causing a real environment entry to be consumed as an argument. A real
+  // argument can have this form too, so it proves neither ownership nor absence.
+  if tokenInArgument {
+    throw RunTokenReadError.ambiguousEnvironmentBoundary
   }
   return ParsedRunToken(runId: found, environmentEntryCount: environmentEntries.count)
 }

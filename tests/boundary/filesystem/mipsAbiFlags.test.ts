@@ -1,14 +1,23 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { open, readFile, writeFile } from "node:fs/promises";
+import { open, readFile, realpath, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 import { parseBinaryTarget } from "../../../src/application/BinaryTargetResolver.js";
 import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
+import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
+import {
+  assertMipsCarvedTargetRefusal,
+  carveMipsElfBeforeSectionTable,
+} from "../../conformance/ghidra/mips-checks.mjs";
 import { jsonObjectSchema } from "../../../src/domain/jsonValue.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { expectBinaryTargetError } from "../../fixtures/binaryTargetAdmission.js";
 import type { MipsElfMetadata } from "../../../src/domain/binaryTargetTypes.js";
-import { readMipsElfMetadata } from "../../../src/application/MipsElfMetadata.js";
+import {
+  readMipsElfMetadata,
+  type MipsElfInspection,
+} from "../../../src/application/MipsElfMetadata.js";
 import { ok } from "../../../src/domain/result.js";
 import {
   ghidraMipsProfileParameters,
@@ -134,6 +143,26 @@ const resolveFixture = async (bytes: Buffer) => {
   assert.deepEqual(await readFile(path), bytes);
   return result.value;
 };
+const refuseFixture = async (bytes: Buffer, reason: string) => {
+  const path = await writeFixture(bytes);
+  const error = expectBinaryTargetError(await parseBinaryTarget(path));
+  assert.equal(error.constraint, "file_format_rejected");
+  assert.equal(error.reason, reason);
+  assert.deepEqual(await readFile(path), bytes);
+};
+const withoutSectionTable = (source: Buffer, little = true): Buffer => {
+  const bytes = Buffer.from(source);
+  if (little) {
+    bytes.writeUInt32LE(0, 32);
+    bytes.writeUInt16LE(0, 48);
+    bytes.writeUInt16LE(0, 50);
+  } else {
+    bytes.writeUInt32BE(0, 32);
+    bytes.writeUInt16BE(0, 48);
+    bytes.writeUInt16BE(0, 50);
+  }
+  return bytes;
+};
 const inspectDeclarations = async (
   bytes: Buffer,
   little = true,
@@ -169,48 +198,21 @@ const target = (mips: MipsElfMetadata) => ({
   availableArchitectures: ["mips"] as const,
   mips: { gnuAttributes: null, ...mips },
 });
+const inspectedTarget = (
+  header: MipsElfMetadata,
+  observed: MipsElfInspection,
+) =>
+  target({
+    ...header,
+    abiFlags: observed.abiFlags,
+    gnuAttributes: observed.gnuAttributes,
+    limitations: observed.limitations,
+    ...(observed.sharedLoad === undefined
+      ? {}
+      : { sharedLoad: observed.sharedLoad }),
+  });
 
 for (const little of [true, false]) {
-  it(`refuses PT-backed admission when the final GNU section header is partial (${little ? "LE" : "BE"})`, async () => {
-    const original = fixture(little);
-    const bytes = Buffer.concat([original, Buffer.alloc(24)]);
-    const u32 = (value: number, offset: number) =>
-      little
-        ? bytes.writeUInt32LE(value, offset)
-        : bytes.writeUInt32BE(value, offset);
-    const u16 = (value: number, offset: number) =>
-      little
-        ? bytes.writeUInt16LE(value, offset)
-        : bytes.writeUInt16BE(value, offset);
-    // PT_MIPS_ABIFLAGS is valid; the partial section prefix still declares a
-    // conflicting soft-float payload, but full section coverage is unproved.
-    u32(original.length, 32);
-    u16(1, 48);
-    u32(0x6ffffff5, original.length + 4);
-    u32(abiOffset + 24, original.length + 16);
-    u32(16, original.length + 20);
-    bytes[abiOffset + 24] = 0x41;
-    u32(15, abiOffset + 25);
-    bytes.write("gnu\0", abiOffset + 29, "ascii");
-    bytes[abiOffset + 33] = 1;
-    u32(7, abiOffset + 34);
-    bytes[abiOffset + 38] = 4;
-    bytes[abiOffset + 39] = 3;
-    const path = await writeFixture(bytes);
-    const result = await parseBinaryTarget(path);
-    assert.ok(result.ok);
-    assert.ok(
-      result.value.kind === "executable" &&
-        result.value.format === "elf" &&
-        result.value.architecture === "mips",
-    );
-    assert.equal(result.value.mips.abiFlags?.fpAbi, 5);
-    assert.match(
-      ghidraMipsUnsupportedReason(result.value) ?? "",
-      /ABI declaration inspection is incomplete/u,
-    );
-    assert.deepEqual(await readFile(path), bytes);
-  });
   it(`reads a remote ABI record through both ELF tables (${little ? "LE" : "BE"})`, async () => {
     const bytes = fixture(little);
     const result = await inspect(bytes, little);
@@ -243,46 +245,94 @@ for (const little of [true, false]) {
   });
 }
 
-it("supports stripped section tables using PT_MIPS_ABIFLAGS", async () => {
-  const bytes = fixture();
-  bytes.writeUInt32LE(0, 32);
-  bytes.writeUInt16LE(0, 48);
-  const result = await inspect(bytes);
-  assert.ok(result.ok);
-  assert.equal(result.value?.fpAbi, 5);
-});
 for (const little of [true, false]) {
+  it(`admits a ${little ? "LE" : "BE"} ELF with no section table using PT_MIPS_ABIFLAGS`, async () => {
+    const bytes = withoutSectionTable(fixture(little), little);
+    const resolved = await resolveFixture(bytes);
+    assert.equal(resolved.mips.abiFlags?.fpAbi, 5);
+    assert.equal(resolved.mips.limitations, undefined);
+    assert.equal(ghidraMipsUnsupportedReason(resolved), null);
+  });
   for (const availableBytes of [0, 7, 47]) {
-    it(`resolves a carved ${little ? "LE" : "BE"} ELF with ${availableBytes} captured section-table bytes`, async () => {
+    it(`refuses a carved ${little ? "LE" : "BE"} ELF retaining a truncated section table with ${availableBytes} captured bytes`, async () => {
       const original = fixture(little);
       const bytes = Buffer.concat([original, Buffer.alloc(availableBytes)]);
       const sectionOffset = original.length + (availableBytes === 0 ? 1 : 0);
       if (little) bytes.writeUInt32LE(sectionOffset, 32);
       else bytes.writeUInt32BE(sectionOffset, 32);
-      const resolved = await resolveFixture(bytes);
-      assert.equal(resolved.mips.abiFlags?.fpAbi, 5);
+      await refuseFixture(
+        bytes,
+        `truncated ELF section header table: declared file range ${sectionOffset}..${sectionOffset + 80} exceeds the ${bytes.length}-byte file`,
+      );
+      // The specialized evidence reader may still inspect captured ABI facts.
+      // Its partial facts do not authorize opening this damaged target.
+      const declarations = await inspectDeclarations(bytes, little);
+      assert.ok(declarations.ok);
+      assert.equal(declarations.value.abiFlags?.fpAbi, 5);
+      const partial = inspectedTarget(metadata(little), declarations.value);
       assert.match(
-        ghidraMipsUnsupportedReason(resolved) ?? "",
+        ghidraMipsUnsupportedReason(partial) ?? "",
         /ABI declaration inspection is incomplete/u,
       );
       assert.match(
-        resolved.mips.limitations?.join(" ") ?? "",
-        /section header table/u,
+        declarations.value.limitations.join(" "),
+        new RegExp(
+          `section header table.*examined ${Math.floor(availableBytes / 40)} of 2 complete headers`,
+          "u",
+        ),
       );
     });
   }
 }
-it("keeps declarations in uncaptured section headers unknown when program ABI data is absent", async () => {
+it("refuses uncaptured section declarations while retaining unknown ABI evidence and admitting an explicit no-table recordless control", async () => {
   const bytes = fixture();
   bytes.writeUInt32LE(bytes.length + 1, 32);
   bytes.writeUInt32LE(0, 52);
-  const resolved = await resolveFixture(bytes);
-  assert.equal(resolved.mips.abiFlags, null);
+  await refuseFixture(
+    bytes,
+    `truncated ELF section header table: declared file range ${bytes.length + 1}..${bytes.length + 81} exceeds the ${bytes.length}-byte file`,
+  );
+  const declarations = await inspectDeclarations(bytes);
+  assert.ok(declarations.ok);
+  assert.equal(declarations.value.abiFlags, null);
   assert.match(
-    ghidraMipsUnsupportedReason(resolved) ?? "",
+    ghidraMipsUnsupportedReason(
+      inspectedTarget(metadata(), declarations.value),
+    ) ?? "",
     /ABI declaration inspection is incomplete.*unavailable headers remain unknown/u,
   );
+  const recordless = withoutSectionTable(bytes);
+  recordless.writeUInt32LE(0, 28);
+  recordless.writeUInt16LE(0, 44);
+  recordless.writeUInt32LE(0x50000001, 36); // Explicit legacy MIPS32 lane.
+  const resolved = await resolveFixture(recordless);
+  assert.equal(resolved.mips.abiFlags, null);
+  assert.equal(resolved.mips.limitations, undefined);
+  assert.equal(ghidraMipsUnsupportedReason(resolved), null);
 });
+for (const little of [true, false]) {
+  it(`matches the real MIPS lane's carved-copy refusal (${little ? "LE" : "BE"})`, async () => {
+    // Linker layout puts the section table last, so the lane's carve keeps
+    // every program header and payload while dropping the whole table.
+    const original = fixture(little);
+    const linked = Buffer.concat([original, original.subarray(128, 208)]);
+    if (little) linked.writeUInt32LE(original.length, 32);
+    else linked.writeUInt32BE(original.length, 32);
+    const carve = carveMipsElfBeforeSectionTable(
+      linked,
+      little ? "little" : "big",
+    );
+    const path = await writeFixture(carve.bytes);
+    const error = expectBinaryTargetError(await parseBinaryTarget(path));
+    // The real lane applies the same check to MCP and CLI error projections.
+    assertMipsCarvedTargetRefusal(
+      projectAnalysisError(error),
+      await realpath(path),
+      carve.reason,
+    );
+    assert.deepEqual(await readFile(path), carve.bytes);
+  });
+}
 for (const failure of ["conflicting", "outside", "duplicate"]) {
   it(`retains ${failure} ABI errors in a partly captured section table`, async () => {
     const original = fixture();
@@ -465,17 +515,16 @@ it("keeps missing ABI data unknown through the public target resolver", async ()
   assert.match(ghidraMipsUnsupportedReason(resolved) ?? "", /inspected ABI/u);
 });
 
-it("projects a malformed out-of-probe ABI record as a target error", async () => {
-  const directory = await createTestTempDirectory("rea-mips-resolution-");
-  const path = join(directory, "fixture.elf");
+it("refuses a declared out-of-file ABI payload before specialized ABI inspection", async () => {
   const bytes = fixture();
   bytes.writeUInt32LE(0xfffffff0, 56);
-  await writeFile(path, bytes);
-  const result = await parseBinaryTarget(path);
-  if (result.ok) throw new Error("Malformed ABI extent was accepted");
-  assert.equal(result.error._tag, "BinaryTargetError");
-  assert.match(result.error.message, /ABI record lies outside the file/u);
-  assert.deepEqual(await readFile(path), bytes);
+  await refuseFixture(
+    bytes,
+    `truncated ELF program 0: declared file range 4294967280..4294967304 exceeds the ${bytes.length}-byte file`,
+  );
+  const specialized = await inspect(bytes);
+  assert.ok(!specialized.ok);
+  assert.match(specialized.error, /ABI record lies outside the file/u);
 });
 
 for (const little of [true, false]) {

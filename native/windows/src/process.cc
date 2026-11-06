@@ -217,14 +217,19 @@ static napi_value readOutput(napi_env env, Handle& read, bool& ended) {
   constexpr size_t kMaximumReadPerPoll = 1024 * 1024;
   std::array<unsigned char, 65536> chunk;
   std::vector<unsigned char> bytes;
-  if (!read.valid()) ended = true;
+  // A close-blocked pipe is EOF. Its number may have been reused, so this
+  // poll must not pass it to PeekNamedPipe or ReadFile. process_close still
+  // owns that value.
+  if (!read.valid() || read.closeBlocked()) ended = true;
   else {
     while (bytes.size() < kMaximumReadPerPoll) {
       DWORD available = 0;
       if (!PeekNamedPipe(read.get(), nullptr, 0, nullptr, &available, nullptr)) {
         require(GetLastError() == ERROR_BROKEN_PIPE,
                 "Observe owned process output failed");
-        read.reset();
+        // Broken pipe is EOF for the bytes already queued. A failed close keeps
+        // this handle for process_close instead of dropping those bytes.
+        read.release();
         ended = true;
         break;
       }
@@ -350,7 +355,8 @@ static void completeInput(napi_env env, napi_status status, void* pointer) {
 }
 
 static napi_value inputWrite(napi_env env, napi_value owner, Process& process, napi_value input) {
-  require(process.stdinWrite.valid(), "Owned process has no writable input", L"", ERROR_BROKEN_PIPE);
+  require(process.stdinWrite.valid() && !process.stdinWrite.closeBlocked(),
+          "Owned process has no writable input", L"", ERROR_BROKEN_PIPE);
   require(!process.inputPending, "Owned process input already has a pending write", L"", ERROR_BUSY);
   auto work = std::make_unique<InputWork>(process);
   void* bytes = nullptr;
@@ -411,7 +417,7 @@ napi_value processCall(napi_env env, const std::wstring& operation, const std::v
   require(args.size() == 1, "Wrong native process handle argument count", L"", ERROR_INVALID_PARAMETER);
   auto& process = static_cast<Process&>(resource(env, args[0], Kind::Process));
   if (operation == L"process_stdin_close") {
-    process.stdinWrite.reset();
+    requireReleased(process.stdinWrite, "Close owned process stdin failed");
     return null(env);
   }
   if (operation == L"process_poll") {
@@ -446,25 +452,44 @@ napi_value processCall(napi_env env, const std::wstring& operation, const std::v
   }
   if (operation == L"process_close") {
     // Closing the job is the crash-safe authority; no PID enumeration is used.
-    process.job.reset(); process.process.reset(); process.stdoutRead.reset(); process.stderrRead.reset(); process.stdinWrite.reset();
-    process.notifications.reset();
+    // A failed close leaves that handle on this process so a later close can
+    // retry it. Handles that already closed stay released, so the retry
+    // resumes at the first handle still owned. Callers that have observed
+    // settlement must retry this close alone; kill and poll still need the job.
+    retryRetainedNativeHandles();
+    requireReleased(process.job, "Close owned Job Object failed");
+    requireReleased(process.process, "Close owned process failed");
+    requireReleased(process.stdoutRead, "Close owned process stdout failed");
+    requireReleased(process.stderrRead, "Close owned process stderr failed");
+    requireReleased(process.stdinWrite, "Close owned process stdin failed");
+    requireReleased(process.notifications, "Close owned process notifications failed");
     process.closed = true;
     return null(env);
   }
   throw Failure("Unknown native process operation", L"", ERROR_INVALID_PARAMETER);
 }
 
-napi_value inspect(napi_env env, std::unique_ptr<Runtime>& probe) {
+napi_value inspect(napi_env env, std::unique_ptr<Runtime>& pending) {
   // Settle the previous owner before admitting another probe. Failed cleanup
   // retains its handles, including when identity construction itself failed.
-  if (probe) { closeRuntime(*probe); probe.reset(); }
+  if (pending) { closeRuntime(*pending); pending.reset(); }
   wchar_t temp[32768];
   const auto length = GetTempPathW(32768, temp);
   require(length > 0 && length < 32768, "Read temporary directory coordinate failed");
-  probe = createRuntime(std::wstring(temp, length), L"rea-native-probe-");
-  auto filesystem = identity(env, probe->directory.get(), probe->path);
-  closeRuntime(*probe);
-  probe.reset();
+  createRuntime(std::wstring(temp, length), L"rea-native-probe-", pending);
+  napi_value filesystem;
+  try {
+    filesystem = identity(env, pending->directory.get(), pending->path);
+  } catch (Failure& primary) {
+    cleanupFailedRuntime(pending, primary);
+    throw;
+  } catch (const std::exception& error) {
+    Failure primary(error.what(), pending ? pending->path : L"", ERROR_GEN_FAILURE);
+    cleanupFailedRuntime(pending, primary);
+    throw primary;
+  }
+  closeRuntime(*pending);
+  pending.reset();
   auto job = createJob();
   Attributes attributes(1);
   HANDLE raw = job.get();

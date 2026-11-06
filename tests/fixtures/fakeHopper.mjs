@@ -7,7 +7,13 @@ const [
   shutdownMode = "acknowledge",
   diagnosticMode = "quiet",
   healthMode = "ready",
+  inventoryFailure = "none",
+  advertisedRequestBytes,
 ] = process.argv.slice(2);
+const maxRequestBytes =
+  advertisedRequestBytes === undefined
+    ? 16 * 1024 * 1024
+    : Number(advertisedRequestBytes);
 let diagnosticOutputEmitted = false;
 const heldReplies = new Map();
 const sockets = new Set();
@@ -106,6 +112,46 @@ const enhancedFixtureResult = (method) => {
       return [{ address: "0x1000", value: "fixture" }];
     case "procedure_pseudo_code":
       return "return 0;";
+    case "rea_caller_scan_target":
+      return {
+        target: {
+          address: "0x1000",
+          name: "fixture",
+          symbol: null,
+          classification: null,
+          body: {
+            available: false,
+            reason: "The fixture has no function body-extent observation.",
+          },
+        },
+        instructions: ["0x1000"],
+        instructions_complete: true,
+      };
+    case "rea_caller_base":
+      return {
+        target: {
+          address: "0x1000",
+          name: "fixture",
+          symbol: null,
+          classification: null,
+          body: {
+            available: false,
+            reason: "The fixture has no function body-extent observation.",
+          },
+        },
+        instructions: ["0x1000"],
+        instructions_complete: true,
+        callers: [],
+        callers_complete: true,
+      };
+    case "rea_caller_scan_page":
+      return {
+        start: 0,
+        next: 0,
+        total: 0,
+        oversized: false,
+        items: [],
+      };
     case "analyze_function": {
       return {
         procedure: {
@@ -218,6 +264,7 @@ const server = createServer((socket) => {
                 version: "1.0.0",
                 run_id: runId,
                 process_id: process.pid,
+                max_request_bytes: maxRequestBytes,
               },
             },
             true,
@@ -229,6 +276,7 @@ const server = createServer((socket) => {
         request.method === "shutdown" ||
         request.method === "shutdown_document"
       ) {
+        if (shutdownMode === "exit-without-ack") process.exit(0);
         send({ id: request.id, result: shutdownResult() });
         if (shutdownMode !== "cleanup-required") setTimeout(closeServer, 2);
       } else if (request.method === "hang") {
@@ -246,6 +294,19 @@ const server = createServer((socket) => {
         for (const message of bridgeEventMessages) send(message);
       } else if (request.method === "capability_unavailable") {
         send(capabilityUnavailableResult(request.id));
+      } else if (
+        inventoryFailure !== "none" &&
+        (request.method === "list_strings" ||
+          request.method === "list_procedures")
+      ) {
+        send({
+          id: request.id,
+          error: {
+            code: -32000,
+            type: inventoryFailure,
+            message: "fixture inventory unavailable",
+          },
+        });
       } else if (request.method === "current_document") {
         send({ id: request.id, result: "fixture" });
       } else if (enhancedFixtureResult(request.method) !== undefined) {

@@ -35,12 +35,12 @@ export const javascriptRecoveryInputSchema = z.strictObject({
 const fileSchema = z.strictObject({
   path: z.string().min(1),
   sha256: digestSchema,
-  bytes: z.number().int().nonnegative(),
+  bytes: z.int().nonnegative(),
 });
 
 const rangeSchema = z.strictObject({
-  start: z.number().int().nonnegative(),
-  end: z.number().int().nonnegative(),
+  start: z.int().nonnegative(),
+  end: z.int().nonnegative(),
 });
 
 const sourceSchema = fileSchema.extend({
@@ -70,8 +70,8 @@ export const javascriptRecoveryResultSchema = z.strictObject({
   reported_safety: z.string(),
   reported_strategy: z.string(),
   reported_format: z.string(),
-  total: z.number().int().nonnegative(),
-  failed: z.number().int().nonnegative(),
+  total: z.int().nonnegative(),
+  failed: z.int().nonnegative(),
   modules: z.array(
     z.strictObject({
       reported_filename: z.string().min(1),

@@ -27,15 +27,18 @@ it("compares identical complete plist inventories across CLI and MCP and creates
     leftPath,
     "--json",
   ]);
+  const cliEvidence = parseEvidence(JSON.parse(cliResult.stdout));
   const cliInspection = artifactInspectionResultSchema.parse(
-    parseEvidence(JSON.parse(cliResult.stdout)).normalized_result,
+    cliEvidence.normalized_result,
   );
   const cliInventory = cliInspection.substeps[0]?.evidence;
   if (cliInventory === undefined)
     throw new Error("CLI inspection did not retain inventory Evidence");
   expect(cliInventory.normalized_result).toMatchObject({
-    coverage_status: "complete",
-    limitations: ["Artifact has no child container entries."],
+    coverage: { scope: "root", status: "complete" },
+    limitations: [
+      "Inventory covers root bytes only; child container entries were not examined.",
+    ],
   });
 
   const { call } = await connectLocalToolsMcp();
@@ -43,20 +46,23 @@ it("compares identical complete plist inventories across CLI and MCP and creates
   expect(opened.isError, JSON.stringify(opened)).not.toBe(true);
   const inspected = await call("inspect_artifact", {});
   expect(inspected.isError, JSON.stringify(inspected)).not.toBe(true);
+  const mcpEvidence = parseEvidence(inspected.structuredContent);
   const mcpInspection = artifactInspectionResultSchema.parse(
-    parseEvidence(inspected.structuredContent).normalized_result,
+    mcpEvidence.normalized_result,
   );
   const mcpInventory = mcpInspection.substeps[0]?.evidence;
   if (mcpInventory === undefined)
     throw new Error("MCP inspection did not retain inventory Evidence");
   expect(mcpInventory.normalized_result).toMatchObject({
-    coverage_status: "complete",
-    limitations: ["Artifact has no child container entries."],
+    coverage: { scope: "root", status: "complete" },
+    limitations: [
+      "Inventory covers root bytes only; child container entries were not examined.",
+    ],
   });
 
   const compared = await call("compare_artifacts", {
-    left: cliInventory,
-    right: mcpInventory,
+    left: cliEvidence,
+    right: mcpEvidence,
   });
   expect(compared.isError, JSON.stringify(compared)).not.toBe(true);
   const comparison = parseEvidence(compared.structuredContent);
@@ -64,6 +70,40 @@ it("compares identical complete plist inventories across CLI and MCP and creates
     status: "unchanged",
     summary: { unchanged: 1, unknown: 0 },
     changes: [],
+  });
+
+  const verified = await call("verify_reconstruction", {
+    specification: {
+      name: "Inspected artifact structures agree",
+      claims: [
+        {
+          claim_id: "inspected-artifact",
+          title: "The inspected artifact structures agree",
+          kind: "structural-artifact",
+          dimension: "overall",
+          comparison_evidence_id: comparison.evidence_id,
+        },
+      ],
+    },
+  });
+  expect(verified.isError, JSON.stringify(verified)).not.toBe(true);
+  expect(verified.structuredContent).toMatchObject({
+    normalized_result: {
+      status: "pass",
+      claims: {
+        items: [
+          {
+            status: "pass",
+            observed_status: "unchanged",
+            evidence_links: expect.arrayContaining([
+              cliEvidence.evidence_id,
+              mcpEvidence.evidence_id,
+              comparison.evidence_id,
+            ]),
+          },
+        ],
+      },
+    },
   });
 
   const behavior = await call("find_changed_behavior", {

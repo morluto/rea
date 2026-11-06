@@ -1,5 +1,5 @@
-import { DOMParser, ParseError, type Node } from "@xmldom/xmldom";
-import { SaxesParser } from "saxes";
+import type { Node } from "@xmldom/xmldom";
+import { parseXmlDocument } from "../../domain/xmlDocument.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
 import { WEB_NETWORK_CAPTURE_LIMITS } from "../../domain/webNetworkCapture.js";
 import {
@@ -41,36 +41,20 @@ export const decodeSazMetadata = (bytes: Buffer): JsonValue => {
       cause,
     );
   }
-  validateSazXml(xml);
-  let parseFailed = false;
-  let document: ReturnType<DOMParser["parseFromString"]>;
-  try {
-    document = new DOMParser({
-      normalizeLineEndings: (source) => source,
-      onError: (level, message) => {
-        // The parser warns whenever the source contains U+FFFD. It is a legal
-        // XML Char, and the fatal decoder above already rejected invalid
-        // source bytes, so only that warning is not a well-formedness failure.
-        if (
-          level === "warning" &&
-          message.startsWith("Unicode replacement character detected")
-        )
-          return;
-        parseFailed = true;
-      },
-    }).parseFromString(xml, "application/xml");
-  } catch (cause: unknown) {
-    if (!(cause instanceof ParseError)) throw cause;
+  const parsed = parseXmlDocument(xml, {
+    doctype: "reject",
+    lineEndings: "preserve",
+  });
+  if (!parsed.ok)
     throw new CaptureFormatError(
-      "format",
-      "SAZ metadata is not well-formed XML.",
+      parsed.error.reason === "doctype" ? "unsupported" : "format",
+      parsed.error.reason === "doctype"
+        ? "SAZ metadata DTDs are unsupported."
+        : "SAZ metadata is not well-formed XML.",
+      "",
+      parsed.error,
     );
-  }
-  if (parseFailed)
-    throw new CaptureFormatError(
-      "format",
-      "SAZ metadata is not well-formed XML.",
-    );
+  const document = parsed.value;
   if (document.documentElement?.tagName !== "Session")
     throw new CaptureFormatError(
       "format",
@@ -80,7 +64,7 @@ export const decodeSazMetadata = (bytes: Buffer): JsonValue => {
     if (depth > WEB_NETWORK_CAPTURE_LIMITS.depth)
       throw new CaptureFormatError(
         "input-limit",
-        "SAZ metadata exceeds the complete-evidence nesting budget.",
+        "SAZ metadata exceeds the complete-evidence nesting budget. This release has no runtime override.",
       );
     const children: JsonValue[] = [];
     for (let child = node.firstChild; child !== null; child = child.nextSibling)
@@ -103,34 +87,4 @@ export const decodeSazMetadata = (bytes: Buffer): JsonValue => {
     };
   };
   return visit(document, 0);
-};
-
-/** Validate well-formedness before the DOM parser projects retained evidence. */
-const validateSazXml = (xml: string): void => {
-  const parser = new SaxesParser({
-    defaultXMLVersion: "1.0",
-    forceXMLVersion: true,
-  });
-  let hasDoctype = false;
-  parser.on("doctype", () => {
-    hasDoctype = true;
-  });
-  try {
-    parser.write(xml).close();
-  } catch {
-    if (hasDoctype)
-      throw new CaptureFormatError(
-        "unsupported",
-        "SAZ metadata DTDs are unsupported.",
-      );
-    throw new CaptureFormatError(
-      "format",
-      "SAZ metadata is not well-formed XML.",
-    );
-  }
-  if (hasDoctype)
-    throw new CaptureFormatError(
-      "unsupported",
-      "SAZ metadata DTDs are unsupported.",
-    );
 };

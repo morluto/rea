@@ -1,4 +1,5 @@
 import type { InspectSignalDecodersInput } from "../domain/signals/signalDecoders.js";
+import { literalSubstringPredicate } from "../domain/analysisSearch.js";
 
 export class DecoderDiscoveryBudgetError extends Error {}
 
@@ -20,7 +21,7 @@ export const parseDecoderDiscovery = (
       );
   const lines = text.split(/\r?\n/u);
   if (lines.at(-1) === "") lines.pop();
-  const query = input.query.toLowerCase();
+  const matches = literalSubstringPredicate(input.query, false);
   const decoders: { id: string; name: string }[] = [];
   const help: { line_number: number; text: string }[] = [];
   if (input.decoder === null) {
@@ -48,10 +49,8 @@ export const parseDecoderDiscovery = (
   }
   const catalog = input.decoder === null;
   const matching = catalog
-    ? decoders.filter(({ id, name }) =>
-        `${id} ${name}`.toLowerCase().includes(query),
-      )
-    : help.filter(({ text: line }) => line.toLowerCase().includes(query));
+    ? decoders.filter(({ id, name }) => matches(id) || matches(name))
+    : help.filter(({ text: line }) => matches(line));
   const start = Math.min(input.offset, matching.length);
   const count = Math.min(
     input.limit ?? matching.length,

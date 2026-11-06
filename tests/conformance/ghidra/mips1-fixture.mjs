@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-/** Source-owned MIPS I/o32 refusal control. Its integer words do not establish load-delay semantics. */
+/** Source-owned explicit-o32 MIPS I refusal control. Its integer words do not establish load-delay semantics. */
 export async function buildMips1Fixture(directory, byteOrder) {
   if (!["little", "big"].includes(byteOrder))
     throw new Error("Unknown fixture byte order");

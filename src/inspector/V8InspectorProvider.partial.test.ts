@@ -9,6 +9,7 @@ import { WebSocketServer } from "ws";
 import { z } from "zod";
 
 import { safeParseJson } from "../domain/safeJson.js";
+import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { V8InspectorProvider } from "./V8InspectorProvider.js";
 
 const failureCases = [
@@ -184,29 +185,34 @@ it.each(failureCases)(
       expect(result.ok).toBe(false);
       if (result.ok)
         throw new Error("Expected the Inspector operation to fail");
-      expect(result.error).toMatchObject({
-        _tag: "BrowserObservationError",
-        reason,
-        partialObservation: {
-          capture: { events_observed: 2 },
-          scripts: {
-            observed_total: 1,
-            items: [
-              {
-                location: {
-                  kind: "unresolved",
-                  reported_url: reportedScriptUrl,
-                  reason: "location-authorization-not-attempted",
-                },
-                cdp_hash: "captured-before-failure",
-                length: 24,
+      if (failure === "cancellation") {
+        expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+        expect(result.error.cause).toBe(controller.signal.reason);
+      } else {
+        expect(result.error).toMatchObject({
+          _tag: "BrowserObservationError",
+          reason,
+        });
+      }
+      expect(result.error.partialObservation).toMatchObject({
+        capture: { events_observed: 2 },
+        scripts: {
+          observed_total: 1,
+          items: [
+            {
+              location: {
+                kind: "unresolved",
+                reported_url: reportedScriptUrl,
+                reason: "location-authorization-not-attempted",
               },
-            ],
-          },
-          execution_contexts: [
-            { context_key: "1", name: "main", origin: reportedScriptUrl },
+              cdp_hash: "captured-before-failure",
+              length: 24,
+            },
           ],
         },
+        execution_contexts: [
+          { context_key: "1", name: "main", origin: reportedScriptUrl },
+        ],
       });
     } finally {
       vi.restoreAllMocks();

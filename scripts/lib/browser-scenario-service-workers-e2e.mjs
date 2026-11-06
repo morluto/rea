@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import { once } from "node:events";
-import { createServer } from "node:http";
 import { setTimeout as delay } from "node:timers/promises";
 
 import { chromium } from "playwright-core";
@@ -11,6 +10,7 @@ import { createBrowserScenarioProvider } from "../../dist/composition/browserSce
 import { browserScenarioSchema } from "../../dist/domain/browserScenario.js";
 import { runScenarioCli } from "./browser-scenario-verifier.mjs";
 import { verifyScenarioPolicySetup } from "./browser-scenario-service-worker-setup-e2e.mjs";
+import { createBrowserFixtureHttpServer } from "./browser-fixture-http.mjs";
 
 const diagnosticError = (error) =>
   error instanceof Error
@@ -26,38 +26,38 @@ const diagnosticError = (error) =>
       }
     : { kind: typeof error };
 
-const startSite = async () => {
+export const startSite = async () => {
   let otherOrigin;
-  const server = createServer((request, response) => {
-    const path = new URL(request.url, "http://localhost").pathname;
-    if (path === "/sw.js") {
-      response.setHeader("content-type", "application/javascript");
-      response.end(`self.addEventListener("install", () => self.skipWaiting());
+  const server = createBrowserFixtureHttpServer(
+    (_request, response, { pathname: path }) => {
+      if (path === "/sw.js") {
+        response.setHeader("content-type", "application/javascript");
+        response.end(`self.addEventListener("install", () => self.skipWaiting());
         self.addEventListener("activate", event => event.waitUntil(clients.claim()));
         self.addEventListener("fetch", event => {
           if (new URL(event.request.url).pathname === "/probe")
             event.respondWith(new Response("worker"));
         });`);
-    } else if (path === "/probe") {
-      response.end("network");
-    } else if (path === "/failed-navigation") {
-      response.destroy();
-    } else if (path === "/stalled-image.png") {
-      response.writeHead(200, { "content-type": "image/png" });
-      response.flushHeaders();
-    } else if (path === "/pending-image" || path === "/pending-child") {
-      response.setHeader("content-type", "text/html");
-      response.end(
-        '<!doctype html><img id="pending-image" src="/stalled-image.png">',
-      );
-    } else if (path === "/pending-frame") {
-      response.setHeader("content-type", "text/html");
-      response.end(
-        '<!doctype html><iframe id="pending-frame" src="/pending-child"></iframe>',
-      );
-    } else {
-      response.setHeader("content-type", "text/html");
-      response.end(`<!doctype html><p id="state">ready</p>
+      } else if (path === "/probe") {
+        response.end("network");
+      } else if (path === "/failed-navigation") {
+        response.destroy();
+      } else if (path === "/stalled-image.png") {
+        response.writeHead(200, { "content-type": "image/png" });
+        response.flushHeaders();
+      } else if (path === "/pending-image" || path === "/pending-child") {
+        response.setHeader("content-type", "text/html");
+        response.end(
+          '<!doctype html><img id="pending-image" src="/stalled-image.png">',
+        );
+      } else if (path === "/pending-frame") {
+        response.setHeader("content-type", "text/html");
+        response.end(
+          '<!doctype html><iframe id="pending-frame" src="/pending-child"></iframe>',
+        );
+      } else {
+        response.setHeader("content-type", "text/html");
+        response.end(`<!doctype html><p id="state">ready</p>
         <a id="navigate" href="${otherOrigin}/">Navigate</a>
         ${path === "/frame" ? `<iframe src="${otherOrigin}/"></iframe>` : ""}
         ${
@@ -72,8 +72,9 @@ const startSite = async () => {
         </script>`
             : ""
         }`);
-    }
-  });
+      }
+    },
+  );
   server.listen(0, "127.0.0.1");
   await once(server, "listening");
   return {
@@ -144,14 +145,19 @@ export async function verifyScenarioServiceWorkers(endpoint, targetId) {
         true,
       );
     };
-    const assertRejected = async (scenario) => {
+    const assertRejected = async (scenario, expectedReason) => {
       const result = await provider.captureScenario(scenario);
       assert.equal(
         result.ok,
         false,
         "Worker-influenced capture unexpectedly succeeded",
       );
-      assert.equal(result.error.reason, "target_not_allowed");
+      assert.equal(result.error.reason, expectedReason);
+      if (expectedReason === "service_worker_blocked")
+        assert.match(
+          result.error.userMessage,
+          /environment\.service_workers to allow/,
+        );
       assert.equal(
         result.error.partialObservation.capture.browser.cleanup,
         "disconnected-external",
@@ -229,7 +235,7 @@ export async function verifyScenarioServiceWorkers(endpoint, targetId) {
       "worker",
     );
     await page.goto("about:blank");
-    await assertRejected(scenarioFor(second.origin));
+    await assertRejected(scenarioFor(second.origin), "service_worker_blocked");
     await page.goto("about:blank");
     await assertRejected(
       scenarioFor(first.origin, [
@@ -240,6 +246,7 @@ export async function verifyScenarioServiceWorkers(endpoint, targetId) {
           wait_until: "load",
         },
       ]),
+      "service_worker_blocked",
     );
     await page.goto("about:blank");
     await assertRejected(
@@ -251,9 +258,13 @@ export async function verifyScenarioServiceWorkers(endpoint, targetId) {
         },
         { step_id: "loaded", action: "wait_for_timeout", duration_ms: 100 },
       ]),
+      "service_worker_blocked",
     );
     await page.goto("about:blank");
-    await assertRejected(scenarioFor(`${first.origin}/frame`));
+    await assertRejected(
+      scenarioFor(`${first.origin}/frame`),
+      "service_worker_blocked",
+    );
 
     const allowed = await provider.captureScenario(
       scenarioFor(second.origin, [], "allow"),
