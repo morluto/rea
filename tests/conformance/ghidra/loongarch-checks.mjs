@@ -87,6 +87,26 @@ export function parseLoongArchReadelf(text, expected = {}) {
   )) {
     relocations[match[1]] = (relocations[match[1]] ?? 0) + 1;
   }
+
+  // Retain each symbol-bearing relocation site so the lane can check the
+  // applied pointer, not only Ghidra's APPLIED label. `Info` packs the
+  // symbol-table index and the type id; GNU readelf prints both as one value.
+  const relocationEntries = [];
+  for (const match of text.matchAll(
+    /^\s*([\da-f]+)\s+([\da-f]+)\s+(R_LARCH_\w+)\s+([\da-f]+)\s+(\S+)(?:\s*\+\s*(-?[\da-f]+))?\s*$/gmu,
+  )) {
+    const [, offset, info, type, symbolValue, symbol, rawAddend = "0"] = match;
+    const negative = rawAddend.startsWith("-");
+    const magnitude = BigInt(`0x${negative ? rawAddend.slice(1) : rawAddend}`);
+    relocationEntries.push({
+      offset: `0x${BigInt(`0x${offset}`).toString(16)}`,
+      type,
+      typeId: Number(BigInt(`0x${info}`) & 0xffffffffn),
+      symbol,
+      symbolValue: `0x${BigInt(`0x${symbolValue}`).toString(16)}`,
+      addend: negative ? -magnitude : magnitude,
+    });
+  }
   return {
     loongarch: {
       elfClass: 64,
@@ -99,6 +119,7 @@ export function parseLoongArchReadelf(text, expected = {}) {
     },
     symbols,
     relocations,
+    relocationEntries,
   };
 }
 
@@ -132,6 +153,29 @@ export async function inspectLoongArchReadelf(path, expected = {}) {
     version: version.stdout.split("\n")[0],
     raw: result.stdout,
   };
+}
+
+/** Exactly one symbol-bearing relocation of a type, from the readelf report. */
+export function requireLoongArchRelocation(facts, type) {
+  const matches = facts.relocationEntries.filter(
+    (entry) => entry.type === type,
+  );
+  assert.equal(
+    matches.length,
+    1,
+    `Expected exactly one ${type} relocation, observed ${matches.length}`,
+  );
+  return matches[0];
+}
+
+/** Decode an 8-byte little-endian pointer observation from provider bytes. */
+export function loongArchPointer(bytesHex) {
+  assert.match(
+    String(bytesHex),
+    /^[0-9a-f]{16}$/u,
+    "Expected an 8-byte little-endian pointer observation",
+  );
+  return Buffer.from(String(bytesHex), "hex").readBigUInt64LE(0);
 }
 
 /** Numeric offset of a provider coordinate, ignoring an address-space prefix. */
