@@ -83,6 +83,10 @@ const executionEnvironmentSchema = z.strictObject({
   architecture: z.string().min(1),
   isolation: z.enum(["none", "process", "container", "virtual-machine"]),
 });
+const callerInputPathsSchema = z.record(
+  nulFreeStringSchema,
+  nulFreeStringSchema,
+);
 
 const evidenceBaseSchema = z
   .object({
@@ -97,6 +101,11 @@ const evidenceBaseSchema = z
     caller_input_path: nulFreeStringSchema
       .exactOptional()
       .describe("Verbatim direct-request path; not part of semantic identity."),
+    caller_input_paths: callerInputPathsSchema
+      .exactOptional()
+      .describe(
+        "Verbatim auxiliary input paths keyed by argument name; caller assertions outside semantic identity.",
+      ),
     raw_result: jsonValueSchema.nullable(),
     normalized_result: jsonValueSchema,
     confidence: z.enum(["observed", "derived", "inferred"]),
@@ -332,15 +341,29 @@ export const rebindEvidenceToTargetPath = (
 export const withEvidenceCallerInputPath = (
   evidence: Evidence,
   rawPath: string,
+  additionalPaths?: Readonly<Record<string, string>>,
 ): Evidence => {
   const callerInputPath = nulFreeStringSchema.parse(rawPath);
   const owned = immutableEvidence(evidence);
-  if (owned.caller_input_path === callerInputPath) return owned;
+  const paths =
+    additionalPaths === undefined
+      ? undefined
+      : callerInputPathsSchema.parse(additionalPaths);
+  const samePaths =
+    paths === undefined ||
+    (owned.caller_input_paths !== undefined &&
+      Object.keys(paths).length ===
+        Object.keys(owned.caller_input_paths).length &&
+      Object.entries(paths).every(
+        ([name, value]) => owned.caller_input_paths?.[name] === value,
+      ));
+  if (owned.caller_input_path === callerInputPath && samePaths) return owned;
   // The authenticated source owns its immutable payloads. Only this small
   // envelope changes, so replay does not copy a document-sized result.
   const rebound = {
     ...owned,
     caller_input_path: callerInputPath,
+    ...(paths === undefined ? {} : { caller_input_paths: paths }),
   };
   return rememberReboundEvidence(owned, rebound);
 };
