@@ -13,6 +13,7 @@ import type { CliInstance } from "./types.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { finishCliEvidenceCommand } from "./cliEvidenceCallerPath.js";
+import { cliDecimalField } from "./options.js";
 
 /** One-shot firmware CLI commands backed by the same workflows as MCP. */
 export const registerFirmwareCommands = (
@@ -46,11 +47,14 @@ export const registerFirmwareCommands = (
   const path = localPathStringSchema.describe(
     "Local firmware path; never executed",
   );
+  // Decimal tokens only: numeric coercion would read "" as 0, "0x10" as 16
+  // and "1e3" as 1000. The shared fields keep their bounds and defaults.
+  const analysisTimeoutMs = cliDecimalField(extractInput.analysis_timeout_ms);
   cli.command(CLI_COMMANDS.inspectFirmwareRegions, {
     description:
       "Inspect firmware signature candidates without extracting them",
     args: z.object({ path }),
-    options: z.object({ analysisTimeoutMs: extractInput.analysis_timeout_ms }),
+    options: z.object({ analysisTimeoutMs }),
     run: ({ args, options }) =>
       execute(
         CLI_COMMANDS.inspectFirmwareRegions,
@@ -75,17 +79,19 @@ export const registerFirmwareCommands = (
       ),
     }),
     options: z.object({
-      offset: range.offset
-        .optional()
-        .describe("Selected byte offset; requires length"),
-      length: range.length
-        .optional()
-        .describe("Selected byte length; requires offset"),
-      maxDepth: extractInput.max_depth,
-      maxOutputBytes: extractInput.max_output_bytes,
-      maxOutputFiles: extractInput.max_output_files,
-      publicationTimeoutMs: extractInput.publication_timeout_ms,
-      analysisTimeoutMs: extractInput.analysis_timeout_ms,
+      offset: cliDecimalField(range.offset.optional()).describe(
+        "Selected byte offset; requires length",
+      ),
+      length: cliDecimalField(range.length.optional()).describe(
+        "Selected byte length; requires offset",
+      ),
+      maxDepth: cliDecimalField(extractInput.max_depth),
+      maxOutputBytes: cliDecimalField(extractInput.max_output_bytes),
+      maxOutputFiles: cliDecimalField(extractInput.max_output_files),
+      publicationTimeoutMs: cliDecimalField(
+        extractInput.publication_timeout_ms,
+      ),
+      analysisTimeoutMs,
     }),
     run: ({ args, options }) =>
       execute(
