@@ -46,7 +46,6 @@ const unusedHostToolExecution = async (): Promise<never> => {
 // Android tools happen to be installed on the test host. The dedicated public
 // availability test below continues to exercise status projection separately.
 const androidAnalysis: AndroidAnalysisPort = {
-  setupGuidance: "Set REA_JADX_MCP_JAR to the fixture JAR.",
   inspectAvailability: async () => HOST_TOOLS_NOT_CONFIGURED,
   close: async () => {},
   execute: unusedHostToolExecution,

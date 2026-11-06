@@ -22,7 +22,6 @@ import {
 import {
   JADX_JAR_CONFIGURATION_REMEDIATION,
   JADX_RELEASE,
-  JADX_SETUP_GUIDANCE,
 } from "../../../src/android/JadxRelease.js";
 import { AnalysisCapabilityUnavailableError } from "../../../src/domain/analysisErrorCore.js";
 import {
@@ -153,10 +152,6 @@ it("points JAR remediation at the published pinned artifact", () => {
   expect(JADX_JAR_CONFIGURATION_REMEDIATION).toContain(JADX_RELEASE.url);
   expect(JADX_JAR_CONFIGURATION_REMEDIATION).toContain(JADX_RELEASE.sha256);
   expect(JADX_JAR_CONFIGURATION_REMEDIATION).toContain("com/zin/jadxheadless");
-  expect(
-    JADX_SETUP_GUIDANCE.startsWith(JADX_JAR_CONFIGURATION_REMEDIATION),
-  ).toBe(true);
-  expect(JADX_SETUP_GUIDANCE).toContain("full JDK");
 });
 
 it("rejects an explicit JAVA_HOME without an executable java binary", async () => {

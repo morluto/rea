@@ -248,8 +248,6 @@ const registerOpenLifecycleTool = ({
 /** Register MCP-only target lifecycle operations on a long-lived session. */
 export interface SessionToolOptions extends Partial<CapabilityAvailabilityProbes> {
   readonly artifactResources: ArtifactResourceScope;
-  /** Provider-owned Android setup guidance for surfaces without the provider. */
-  readonly androidSetupGuidance: string;
   /** Server environment snapshot that process capture resolves and inherits. */
   readonly environment: Readonly<NodeJS.ProcessEnv>;
   readonly startedAt?: string;
@@ -362,13 +360,12 @@ export const registerSessionTools = (
     closeContract,
     statusContract,
     startedAt: options.startedAt ?? new Date().toISOString(),
-    availabilityPolicy: withAndroidSetupGuidance(
-      sessionAvailabilityPolicy(options.availabilityPolicy, {}),
-      options.androidSetupGuidance,
+    availabilityPolicy: sessionAvailabilityPolicy(
+      options.availabilityPolicy,
+      {},
     ),
     androidAnalysisAvailability:
-      options.androidAnalysisAvailability ??
-      missingAndroidAvailability(options.androidSetupGuidance),
+      options.androidAnalysisAvailability ?? missingAndroidAvailability,
     closeProcessResources: async () => {
       try {
         await processResources.retryCleanup();
@@ -461,29 +458,11 @@ export const registerSessionTools = (
   registerContextTools(server, session);
 };
 
-const missingAndroidAvailability =
-  (remediation: string): (() => Promise<ProviderAvailability>) =>
-  async () => ({
-    status: "unavailable",
-    code: "not_configured",
-    reason: "No Android JADX analysis provider is configured.",
-    remediation,
-    diagnostics: { configured: false },
-  });
-
-/**
- * Carry the provider-owned Android setup guidance into capability projection
- * when no availability was probed. An explicit policy value wins so tests and
- * embedders can override it.
- */
-const withAndroidSetupGuidance =
-  (
-    policy: () => AvailabilityPolicy,
-    guidance: string,
-  ): (() => AvailabilityPolicy) =>
-  () => {
-    const value = policy();
-    return value.androidAnalysisRemediation === undefined
-      ? { ...value, androidAnalysisRemediation: guidance }
-      : value;
-  };
+const missingAndroidAvailability = async (): Promise<ProviderAvailability> => ({
+  status: "unavailable",
+  code: "not_configured",
+  reason: "No Android JADX analysis provider is configured.",
+  remediation:
+    "Set REA_JADX_MCP_JAR to a caller-supplied jadx-headless-mcp 0.7.1 JAR and provide a full JDK on Linux, macOS, or Windows x64 with its matching bundled native controls.",
+  diagnostics: { configured: false },
+});

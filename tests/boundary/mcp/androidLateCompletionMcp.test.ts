@@ -26,7 +26,6 @@ it("retains completed Android Evidence through the MCP cancellation delivery pat
     {
       logger: silentLogger,
       androidAnalysis: {
-        setupGuidance: fixture.provider.setupGuidance,
         inspectAvailability: fixture.provider.inspectAvailability.bind(
           fixture.provider,
         ),

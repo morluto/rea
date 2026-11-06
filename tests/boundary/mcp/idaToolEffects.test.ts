@@ -43,7 +43,6 @@ type DiscoveryStatus = {
 };
 
 const unconfiguredHostTool = {
-  setupGuidance: "Set REA_JADX_MCP_JAR to the fixture JAR.",
   inspectAvailability: async () => ({
     status: "unavailable" as const,
     code: "not_configured" as const,

@@ -16,8 +16,6 @@ export interface AndroidAnalysisExecution extends AnalysisExecution {
 
 /** Static Android inspection boundary; implementation details belong to the provider. */
 export interface AndroidAnalysisPort {
-  /** Provider-owned setup guidance shared with surfaces that do not hold the provider. */
-  readonly setupGuidance: string;
   /** Inspect the selected JAR and Java runtime without opening an APK. */
   inspectAvailability(signal?: AbortSignal): Promise<ProviderAvailability>;
   /** Cancel active work and join cleanup of any retained provider resources. */

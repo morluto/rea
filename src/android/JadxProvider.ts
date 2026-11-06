@@ -53,7 +53,6 @@ import type { JadxLauncher } from "./JadxMcpTransport.js";
 
 import { JadxSession } from "./JadxSession.js";
 import { captureJadxFailure } from "./JadxFailure.js";
-import { JADX_SETUP_GUIDANCE } from "./JadxRelease.js";
 
 const BRIDGE_SOURCE = fileURLToPath(
   new URL("../../bridge/android/ReaJadxBridge.java", import.meta.url),
@@ -275,7 +274,6 @@ interface RetainedSession {
 
 /** One serialized, immutable APK session per REA instance, retired on idle or shutdown. */
 export class JadxProvider implements AndroidAnalysisPort {
-  readonly setupGuidance = JADX_SETUP_GUIDANCE;
   #tail: Promise<void> = Promise.resolve();
   #pendingCleanup: PendingCleanup | undefined;
   #retained: RetainedSession | undefined;

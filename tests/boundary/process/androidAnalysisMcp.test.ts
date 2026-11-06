@@ -28,7 +28,6 @@ import {
 test("preserves Android caller field constraints before target or provider access", async () => {
   let calls = 0;
   const service = new AndroidAnalysisService({
-    setupGuidance: "Set REA_JADX_MCP_JAR to the fixture JAR.",
     inspectAvailability: () => Promise.reject(new Error("unused")),
     close: () => Promise.resolve(),
     execute: () => {

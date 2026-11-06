@@ -294,20 +294,6 @@ describe("ADB and Apktool host availability", () => {
 });
 
 describe("capability failure reasons", () => {
-  it("uses provider-owned Android setup guidance when availability is absent", () => {
-    const remediation =
-      "Set REA_JADX_MCP_JAR to the pinned fixture JAR (SHA-256 fixture).";
-    const availability = buildCapabilityInventory(status(), {
-      ...enabledPolicy,
-      androidAnalysisRemediation: remediation,
-    }).find(({ name }) => name === "inspect_android_package");
-    expect(availability).toMatchObject({
-      available: false,
-      reason: "provider_missing",
-      remediation,
-    });
-  });
-
   it("keeps an unavailable Android runtime distinct from a missing provider", () => {
     const inventory = buildCapabilityInventory(status(), {
       ...enabledPolicy,

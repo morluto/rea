@@ -809,7 +809,6 @@ export const createServer = (
       registerSessionTools(server, session, toolLogger, {
         environment,
         artifactResources,
-        androidSetupGuidance: android.setupGuidance,
         ...(availability === undefined
           ? {}
           : { availabilityPolicy: availability.policy }),

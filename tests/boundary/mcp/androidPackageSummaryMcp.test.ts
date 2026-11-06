@@ -166,7 +166,6 @@ const createJniSummaryContractFixture = async () => {
   const harness = await createApplicationMcpHarness({
     serverOptions: {
       androidAnalysis: {
-        setupGuidance: "Set REA_JADX_MCP_JAR to the fixture JAR.",
         execute,
         close: async () => {},
         inspectAvailability: vi.fn(),
@@ -504,7 +503,6 @@ it("preserves partial/unknown declarations and Unicode text while rejecting miss
 it("rejects unavailable retention, invalid selectors and cancellation before provider execution", async () => {
   const execute = vi.fn();
   const provider = {
-    setupGuidance: "Set REA_JADX_MCP_JAR to the fixture JAR.",
     execute,
     close: async () => {},
     inspectAvailability: vi.fn(),
@@ -631,7 +629,6 @@ it("delivers the selected retained page in one analysis and reads it later witho
     },
   );
   const provider = {
-    setupGuidance: "Set REA_JADX_MCP_JAR to the fixture JAR.",
     execute: vi.fn(),
     close: async () => {},
     inspectAvailability: vi.fn(),

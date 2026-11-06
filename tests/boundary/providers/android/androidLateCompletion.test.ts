@@ -36,7 +36,6 @@ it.each([
     let records = 0;
     const service = new AndroidAnalysisService(
       {
-        setupGuidance: fixture.provider.setupGuidance,
         inspectAvailability: fixture.provider.inspectAvailability.bind(
           fixture.provider,
         ),
