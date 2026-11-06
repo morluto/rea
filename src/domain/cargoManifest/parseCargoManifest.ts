@@ -92,9 +92,11 @@ const classify = (
     return { source: "workspace", sourceDetail: null, requirement: version };
   const path = declaration.path;
   if (typeof path === "string")
+    // A filesystem path is not a URL: redaction would rewrite directory names
+    // such as `//build@cache/helper` and send the reader elsewhere.
     return {
       source: "path",
-      sourceDetail: credentialFree(path),
+      sourceDetail: path,
       requirement: version,
     };
   const git = declaration.git;
@@ -275,7 +277,7 @@ class CargoInventory {
       name,
       classified.sourceDetail ?? "",
       classified.requirement ?? "",
-      ...features,
+      features,
     );
     if (!admitted.ok) return admitted;
     this.dependencies.push({
@@ -373,12 +375,15 @@ export const parseCargoManifest = (
     for (const name of DEPENDENCY_TABLES) {
       const entries = tableFailure(container[name]);
       if (entries === "absent") continue;
-      if (entries === "malformed")
-        return inventory.diagnostic(
+      if (entries === "malformed") {
+        const recorded = inventory.diagnostic(
           "invalid-dependency-table",
           `${prefix}${name}`,
           `[${prefix.slice(1)}${name}] is present but is not a table.`,
         );
+        if (!recorded.ok) return recorded;
+        continue;
+      }
       dependencyTables.push({
         pointer: `${prefix}${name}`,
         target,
@@ -401,7 +406,7 @@ export const parseCargoManifest = (
     );
     if (!recorded.ok) return recorded;
   }
-  if (targetField !== "absent")
+  if (targetField !== "absent" && targetField !== "malformed")
     for (const [condition, value] of Object.entries(targetField)) {
       const container = record(value);
       const pointer = `/target/${pointerPart(condition)}/`;
@@ -484,7 +489,7 @@ export const parseCargoManifest = (
     );
     if (!recorded.ok) return recorded;
   }
-  if (featuresField !== "absent")
+  if (featuresField !== "absent" && featuresField !== "malformed")
     for (const [name, value] of Object.entries(featuresField)) {
       const enables = stringArray(value);
       if (enables === undefined) {
@@ -504,6 +509,21 @@ export const parseCargoManifest = (
         source_pointer: `/features/${pointerPart(name)}`,
       });
     }
+
+  // `[patch]` and `[replace]` override dependency sources without appearing in
+  // any dependency table, and this parser does not inventory them. Their
+  // presence must make the scope partial rather than let it read complete.
+  const uninventoriedOverrides = ["patch", "replace"].filter(
+    (name) => table[name] !== undefined,
+  );
+  for (const name of uninventoriedOverrides) {
+    const recorded = inventory.diagnostic(
+      "unsupported-manifest-form",
+      `/${name}`,
+      `[${name}] overrides dependency sources and is not inventoried; source coverage is partial.`,
+    );
+    if (!recorded.ok) return recorded;
+  }
 
   const count = (predicate: (dependency: CargoDependency) => boolean) =>
     inventory.dependencies.filter(predicate).length;
@@ -558,6 +578,7 @@ export const parseCargoManifest = (
       "Target conditions are recorded as declared and are not evaluated for this host.",
       "Dependency aliases keep the manifest key and the package name apart; neither is verified.",
       "A `workspace = true` declaration records inheritance without reading the parent workspace.",
+      "`[patch]` and `[replace]` source overrides are not inventoried; their presence makes source coverage partial.",
     ],
   });
 };

@@ -380,3 +380,133 @@ members = [${members.map((m) => `"${m}"`).join(", ")}]
     expect(parseCargoManifest("not a table", artifact).ok).toBe(false);
   });
 });
+
+describe("parseCargoManifest source fidelity", () => {
+  it("keeps a local path byte for byte instead of redacting it as a URL", () => {
+    const value = required(
+      parse(`
+[package]
+name = "demo"
+
+[dependencies]
+helper = { path = "//build@cache/helper" }
+`),
+    );
+    expect(value.dependencies[0]?.source_detail).toBe("//build@cache/helper");
+  });
+
+  it("still redacts credentials from a git source", () => {
+    const value = required(
+      parse(`
+[package]
+name = "demo"
+
+[dependencies]
+private = { git = "https://user:token@example.test/repo" }
+`),
+    );
+    expect(value.dependencies[0]?.source_detail).toBe(
+      "https://example.test/repo",
+    );
+  });
+
+  it("keeps valid sibling tables after a malformed dependency table", () => {
+    const value = required(
+      parse(`
+dev-dependencies = ["serde"]
+
+[package]
+name = "demo"
+
+[build-dependencies]
+cc = "1"
+`),
+    );
+    expect(
+      [...value.dependencies].sort((a, b) => a.name.localeCompare(b.name)),
+    ).toMatchObject([{ name: "cc" }]);
+    expect(value.diagnostics).toEqual([
+      expect.objectContaining({
+        code: "invalid-dependency-table",
+        source_pointer: "/dev-dependencies",
+      }),
+    ]);
+  });
+
+  it("does not invent feature entries when [features] is not a table", () => {
+    const value = required(
+      parse(`
+features = "malformed"
+
+[package]
+name = "demo"
+`),
+    );
+    expect(value.features).toEqual([]);
+    expect(value.diagnostics).toEqual([
+      expect.objectContaining({
+        code: "invalid-feature-table",
+        source_pointer: "/features",
+      }),
+    ]);
+  });
+
+  it("does not invent target entries when [target] is not a table", () => {
+    const value = required(
+      parse(`
+target = "malformed"
+
+[package]
+name = "demo"
+`),
+    );
+    expect(value.dependencies).toEqual([]);
+    expect(value.diagnostics).toEqual([
+      expect.objectContaining({
+        code: "invalid-dependency-table",
+        source_pointer: "/target",
+      }),
+    ]);
+  });
+
+  it("does not claim complete coverage when [patch] or [replace] overrides exist", () => {
+    const value = required(
+      parse(`
+[package]
+name = "demo"
+
+[dependencies]
+helper = "1"
+
+[patch.crates-io]
+helper = { git = "https://example.test/helper" }
+`),
+    );
+    expect(value.source_coverage.status).toBe("partial");
+    expect(value.diagnostics).toEqual([
+      expect.objectContaining({
+        code: "unsupported-manifest-form",
+        source_pointer: "/patch",
+      }),
+    ]);
+    expect(value.limitations.join("\n")).toContain("[patch]");
+  });
+
+  it("keeps a dependency with a feature list that is too long to spread", () => {
+    // 200k short strings fit in the 32 MiB file allowance but exceed the
+    // argument limit a spread call hits.
+    const features = Array.from({ length: 200_000 }, (_, i) => `f${i}`);
+    const value = required(
+      parse(`
+[package]
+name = "demo"
+
+[dependencies]
+helper = { version = "1", features = [${features
+        .map((f) => `"${f}"`)
+        .join(", ")}] }
+`),
+    );
+    expect(value.dependencies[0]?.features).toHaveLength(200_000);
+  });
+});
