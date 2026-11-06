@@ -24,6 +24,27 @@ afterEach(() => {
 });
 
 describe("Binary Ninja registration ownership", () => {
+  it("rejects malformed UTF-8 in an endpoint without exposing credentials", async () => {
+    const { path } = await fixture();
+    await writeFile(
+      path,
+      Buffer.concat([
+        Buffer.from('{"url":"http://127.0.0.1:24642/'),
+        Buffer.from([0xff]),
+        Buffer.from('","headers":{"Authorization":"Bearer fixture-secret"}}'),
+      ]),
+    );
+    const result = await readBinaryNinjaConfiguration(path, { resourceScope });
+    expect(result).toMatchObject({
+      ok: false,
+      error: { message: expect.stringContaining("valid UTF-8 JSON") },
+    });
+    if (!result.ok) {
+      expect(result.error.message).not.toContain("fixture-secret");
+      expect(result.error.cause).toBeUndefined();
+    }
+  });
+
   it.each([
     { "bad name": "secret-header-value" },
     { "": "secret-header-value" },

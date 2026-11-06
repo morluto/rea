@@ -4,6 +4,7 @@ import type { RetainedResourceScope } from "../application/AnalysisProvider.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { err, type Result } from "../domain/result.js";
+import { safeParseUtf8Json } from "../domain/safeJson.js";
 import {
   withOwnedRegularFile,
   regularFileCancellation,
@@ -45,7 +46,7 @@ export const readProviderRegistration = <Value>(
       );
     let closeLease: AnalysisCleanupLease | undefined;
     try {
-      const text = await withOwnedRegularFile<string>(
+      const input = await withOwnedRegularFile<unknown>(
         path,
         {
           ...(options.signal === undefined ? {} : { signal: options.signal }),
@@ -75,10 +76,15 @@ export const readProviderRegistration = <Value>(
             },
           );
           if (bytes === undefined) throw registrationTooLarge();
-          return bytes.toString("utf8");
+          const parsed = safeParseUtf8Json(bytes);
+          if (!parsed.ok)
+            throw configurationError(
+              `${format.setting} must contain valid UTF-8 JSON.`,
+            );
+          return parsed.value;
         },
       );
-      return format.parse(JSON.parse(text));
+      return format.parse(input);
     } catch (cause: unknown) {
       if (cause instanceof ConfigurationError) return err(cause);
       if (cause instanceof NonRegularFileReadError)

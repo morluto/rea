@@ -200,7 +200,10 @@ const mcp = async (cliDossier) => {
   let opened = false;
   try {
     await client.connect(transport, { timeout: config.timeoutMs });
-    await call("open_binary", { path: target, provider_id: "binary-ninja" });
+    const admission = await call("open_binary", {
+      path: target,
+      provider_id: "binary-ninja",
+    });
     opened = true;
     const analyzed = await call("analyze_function", {
       procedure: values.procedure,
@@ -245,7 +248,7 @@ const mcp = async (cliDossier) => {
           );
           break;
         case "list_documents":
-          assert.deepEqual(value, [target]);
+          assert.deepEqual(value, [admission.result.path]);
           break;
         case "procedure_address":
           assert.equal(value, dossier.procedure.address);
