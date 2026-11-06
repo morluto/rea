@@ -152,7 +152,13 @@ cliTest(
     const har = join(root, "grafana.har");
     await writeFile(har, JSON.stringify(environmentManifestHar()));
     const planned = await cli.run({
-      arguments: ["environment-build", har, "--dry-run", "--json"],
+      arguments: [
+        "environment-build",
+        har,
+        "--dry-run",
+        "--capture-timeout-ms=030000",
+        "--json",
+      ],
       timeoutMs: 60_000,
     });
     expect(planned.exitCode, planned.stderr).toBe(0);
@@ -187,6 +193,22 @@ cliTest(
     });
     expect(conflicting.exitCode).toBe(1);
     expect(conflicting.json).toMatchObject({ code: "invalid_request" });
+
+    // Both capture readers share the field. Numeric coercion would read
+    // "0x1" as a 1 ms capture deadline.
+    for (const command of [
+      ["environment-build", har, "--dry-run"],
+      ["inspect-web-network-capture", har, "har"],
+    ]) {
+      const hexDeadline = await cli.run({
+        arguments: [...command, "--capture-timeout-ms=0x1", "--json"],
+      });
+      expect(hexDeadline.exitCode).toBe(1);
+      expect(hexDeadline.json).toMatchObject({
+        code: "VALIDATION_ERROR",
+        fieldErrors: [expect.objectContaining({ path: "captureTimeoutMs" })],
+      });
+    }
 
     const noDirectory = await cli.run({
       arguments: ["environment-build", har, "--json"],
