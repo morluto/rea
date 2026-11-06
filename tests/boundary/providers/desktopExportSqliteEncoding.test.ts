@@ -1,3 +1,4 @@
+import { writeFile } from "node:fs/promises";
 import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import { expect, it } from "vitest";
@@ -32,14 +33,17 @@ entry = _sqlite(path)
 checks = [{"id": "body-matches", "kind": "row_present", "file": "items.db", "table": "items", "where": {"id": 1, "body": {"text": "\ufffd", "bytes_hex": native[0][0].lower()}}}]
 print(json.dumps({"entry": entry, "native": native, "verdicts": evaluate(checks, {"items.db": entry}), "unchanged": before == path.read_bytes()}))
 `;
+    const script = join(root, "fixture.py");
+    await writeFile(script, program, "utf8");
     const result = JSON.parse(
       execFileSync(
         "python3",
         [
           "-I",
           "-B",
-          "-c",
-          program,
+          "-X",
+          "utf8",
+          script,
           join(root, "items.db"),
           encoding,
           malformed,

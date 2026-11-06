@@ -515,6 +515,44 @@ it("keeps subjectKeyIdentifier bytes on the signer", () => {
   ).toThrow(/decoded budget/u);
 });
 
+it("rejects a SignerInfo version that does not match its sid", () => {
+  const payload = (version: number, sid: Buffer) =>
+    contentInfo(
+      derSeq(
+        derInt(1),
+        derSet(SHA256_ALG),
+        derSeq(DATA_OID),
+        derSet(
+          derSeq(
+            derInt(version),
+            sid,
+            SHA256_ALG,
+            SHA256_ALG,
+            der(0x04, Buffer.from([1])),
+          ),
+        ),
+      ),
+    );
+  const issuerAndSerial = derSeq(derSeq(), derInt(1));
+  const ski = der(0x80, Buffer.from([0xab]));
+  for (const [version, sid] of [
+    [3, issuerAndSerial],
+    [2, issuerAndSerial],
+    [1, ski],
+  ] as const)
+    expect(() =>
+      parse(peCertificateFixture(false, payload(version, sid))),
+    ).toThrow(/SignerInfo version must be [13] with/u);
+  for (const [version, sid] of [
+    [1, issuerAndSerial],
+    [3, ski],
+  ] as const)
+    expect(
+      parse(peCertificateFixture(false, payload(version, sid))).entries[0]
+        ?.pkcs7?.signers,
+    ).toHaveLength(1);
+});
+
 // X.690 8.3.1 and 8.3.2 apply under BER as well as DER.
 const malformedSerials = [
   [],
@@ -678,6 +716,8 @@ it.each(["signature", "public-key", "issuer-id", "subject-id"] as const)(
       readAsn1(
         derSeq(
           derSeq(
+            // Unique identifiers need v2 or v3.
+            der(0xa0, derInt(2)),
             derInt(1),
             SHA256_ALG,
             name,
@@ -764,6 +804,48 @@ it("rejects a certificate missing subjectPublicKeyInfo or signatureValue", () =>
       ),
     ),
   ).toThrow(/trailing fields/u);
+});
+
+it("accepts only RFC 5280 certificate versions and the fields each allows", () => {
+  const name = directoryName(der(0x0c, Buffer.from("Fixture")));
+  const version = (value: number) => der(0xa0, derInt(value));
+  const uniqueId = der(0x81, Buffer.from([0]));
+  const extensions = der(0xa3, derSeq());
+  const certificate = (head: Buffer[], tail: Buffer[]) =>
+    readAsn1(
+      derSeq(
+        derSeq(
+          ...head,
+          derInt(1),
+          SHA256_ALG,
+          name,
+          validity,
+          name,
+          spki,
+          ...tail,
+        ),
+        SHA256_ALG,
+        der(0x03, Buffer.from([0])),
+      ),
+    );
+  for (const [head, tail, message] of [
+    [[version(3)], [], /version is not v1, v2 or v3/u],
+    [[version(0xff)], [], /version is not v1, v2 or v3/u],
+    [[], [uniqueId], /issuerUniqueID requires version 2 or 3/u],
+    [[], [extensions], /extensions require version 3/u],
+    [[version(1)], [extensions], /extensions require version 3/u],
+  ] as const)
+    expect(() => parseCertificate(certificate([...head], [...tail]))).toThrow(
+      message,
+    );
+  for (const [head, tail] of [
+    [[], []],
+    [[version(1)], [uniqueId]],
+    [[version(2)], [uniqueId, extensions]],
+  ] as const)
+    expect(
+      parseCertificate(certificate([...head], [...tail])).subject.text,
+    ).toBe("commonName=Fixture");
 });
 
 it("rejects a UTF8String name that is not valid UTF-8", () => {
@@ -1059,4 +1141,60 @@ it("rejects a certificate whose signatureAlgorithm differs from its TBS signatur
   expect(
     parseCertificate(certificate(SHA256_ALG)).signature_algorithm_oid,
   ).toBe("2.16.840.1.101.3.4.2.1");
+});
+
+it("rejects malformed and repeated certificate extensions", () => {
+  const name = directoryName(der(0x0c, Buffer.from("Fixture")));
+  const certificate = (...extensions: Buffer[]) =>
+    readAsn1(
+      derSeq(
+        derSeq(
+          der(0xa0, derInt(2)),
+          derInt(1),
+          SHA256_ALG,
+          name,
+          validity,
+          name,
+          spki,
+          der(0xa3, derSeq(...extensions)),
+        ),
+        SHA256_ALG,
+        der(0x03, Buffer.from([0])),
+      ),
+    );
+  const ski = der(0x06, Buffer.from([0x55, 0x1d, 0x0e]));
+  const skiValue = der(0x04, Buffer.from([0x04, 0x01, 0xaa]));
+  const basicConstraints = der(0x06, Buffer.from([0x55, 0x1d, 0x13]));
+  const basicConstraintsValue = der(0x04, Buffer.from([0x30, 0x00]));
+  const critical = (...content: number[]) => der(0x01, Buffer.from(content));
+  for (const extension of [
+    derInt(1),
+    derSeq(ski),
+    derSeq(skiValue),
+    derSeq(ski, derInt(1)),
+    derSeq(ski, derInt(1), skiValue),
+    derSeq(ski, critical(0xff, 0xff), skiValue),
+    derSeq(ski, skiValue, critical(0xff)),
+    derSeq(ski, skiValue, der(0x05, Buffer.alloc(0))),
+  ])
+    expect(() => parseCertificate(certificate(extension))).toThrow(
+      /TBSCertificate extension/u,
+    );
+  expect(() =>
+    parseCertificate(
+      certificate(
+        derSeq(ski, skiValue),
+        derSeq(basicConstraints, basicConstraintsValue),
+        derSeq(ski, skiValue),
+      ),
+    ),
+  ).toThrow(/repeats extension 2\.5\.29\.14/u);
+  expect(
+    parseCertificate(
+      certificate(
+        derSeq(ski, skiValue),
+        derSeq(basicConstraints, critical(0xff), basicConstraintsValue),
+      ),
+    ).subject.text,
+  ).toBe("commonName=Fixture");
 });

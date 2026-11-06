@@ -10,8 +10,11 @@ import {
 } from "../../../src/domain/desktop/appExportPython.js";
 import {
   detectStateFormat,
+  isJsonText,
   jsonView,
+  textualView,
 } from "../../../src/domain/desktop/stateFormats.js";
+import { safeParseJson } from "../../../src/domain/safeJson.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 /** The exported module's view format for each file, run with only its standard library imports. */
@@ -21,7 +24,7 @@ const pythonFormats = (files: readonly (readonly [string, string])[]) => {
     .join("\n");
   const program = `${imports}${PYTHON_HELPERS}
 for name, text in json.load(sys.stdin):
-    print(_text_view(name, text)["format"])
+    print(_text_view(name, text, len(text.encode()))["format"])
 `;
   return execFileSync("python3", ["-I", "-B", "-c", program], {
     input: JSON.stringify(files),
@@ -75,7 +78,7 @@ const pythonUtf16Respelled = (files: readonly string[]) => {
     .filter((line) => !line.includes("agentenv_protocol"))
     .join("\n");
   const program = `${imports}
-CAPTURED_HOME = "/home/ada"
+SEED_HOME = "/home/ada"
 ${PYTHON_HELPERS}
 for data in json.load(sys.stdin):
     print(_respelled_utf16(bytes.fromhex(data), Path("/home/user")).hex())
@@ -145,7 +148,7 @@ const taskbarWindow = (bin: string, windowClass: string): string => {
       "-I",
       "-B",
       "-c",
-      `${imports}\nCAPTURED_HOME = "/home/ada"\n${PYTHON_HELPERS}\nprint(_taskbar_window(sys.argv[1]))`,
+      `${imports}\nSEED_HOME = "/home/ada"\n${PYTHON_HELPERS}\nprint(_taskbar_window(sys.argv[1]))`,
       windowClass,
     ],
     {
@@ -189,7 +192,7 @@ const pythonJson = (texts: readonly string[]) => {
     .join("\n");
   const program = `${imports}${PYTHON_HELPERS}
 for text in json.load(sys.stdin):
-    print(json.dumps(_text_view("a.json", text)))
+    print(json.dumps(_text_view("a.json", text, len(text.encode()))))
 `;
   return execFileSync("python3", ["-I", "-B", "-c", program], {
     input: JSON.stringify(texts),
@@ -222,6 +225,159 @@ it("refuses the JSON numbers REA's state view refuses, as JSON with an error rat
     expect(verdict?.error === undefined).toBe(typescript.ok);
     if (typescript.ok) expect(verdict?.view).toEqual(typescript.value);
   });
+});
+
+it("refuses JSON nested deeper than the 500 levels REA's view keeps, reading the boundary itself", () => {
+  const nested = (levels: number) =>
+    `${"[".repeat(levels)}${"]".repeat(levels)}`;
+  const texts = [nested(501), nested(502), nested(1100)];
+
+  const python = pythonJson(texts);
+
+  expect(texts.map((text) => jsonView(text).ok)).toEqual([true, false, false]);
+  texts.forEach((text, index) => {
+    const typescript = jsonView(text);
+    expect(python[index]).toEqual(
+      typescript.ok
+        ? { format: "json", view: typescript.value, truncated: false }
+        : { format: "json", view: null, error: typescript.error },
+    );
+  });
+});
+
+/** The exported module's format, view and error for each named text, and REA's for the same bytes. */
+const textViews = (files: readonly (readonly [string, string])[]) => {
+  const imports = PYTHON_IMPORTS.split("\n")
+    .filter((line) => !line.includes("agentenv_protocol"))
+    .join("\n");
+  const program = `${imports}${PYTHON_HELPERS}
+for name, text in json.load(sys.stdin):
+    view = _text_view(name, text, len(text.encode()))
+    print(json.dumps({"format": view["format"], "view": view["view"], "error": view.get("error")}))
+`;
+  const python = execFileSync("python3", ["-I", "-B", "-c", program], {
+    input: JSON.stringify(files),
+    encoding: "utf8",
+    maxBuffer: 64 * 1024 * 1024,
+  })
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line) as unknown);
+  const rea = files.map(([name, text]) => {
+    const bytes = new TextEncoder().encode(text);
+    const format = detectStateFormat(name, bytes);
+    if (format !== "text" && format !== "json" && format !== "keyfile")
+      throw new Error(`${name} reads as ${format}`);
+    const read = textualView(format, bytes);
+    return read.ok
+      ? { format, view: read.value, error: null }
+      : { format, view: null, error: read.error };
+  });
+  return { python, rea };
+};
+
+it("reads text nested past Python's recursion limit as JSON only when all of it is, as REA does", () => {
+  const brackets = (open: number, close: number) =>
+    `${"[".repeat(open)}${"]".repeat(close)}`;
+  const files = [
+    ["deep.txt", brackets(1100, 1099)],
+    ["deep.json", brackets(1100, 1099)],
+    ["deep.txt", brackets(1100, 1100)],
+    ["deep.json", `${brackets(1100, 1100)} x`],
+  ] as const;
+
+  const { python, rea } = textViews(files);
+
+  expect(python).toEqual(rea);
+  expect(rea.map(({ format, error }) => [format, error])).toEqual([
+    ["text", null],
+    ["text", null],
+    ["json", "nested deeper than the 500 levels a JSON view keeps"],
+    ["text", null],
+  ]);
+});
+
+it("refuses JSON and key files over 4 MiB as REA does, telling JSON apart from text without parsing it", () => {
+  const objects = `[{}${",{}".repeat(1_400_000)}]`;
+  const files = [
+    ["objects.json", objects],
+    ["objects", `${objects.slice(0, -1)}}`],
+    ["settings", `[ui]\n${"wrap=false\n".repeat(400_000)}`],
+    ["log", `[0] ${"x".repeat(4_200_000)}`],
+  ] as const;
+
+  const { python, rea } = textViews(files);
+
+  expect(python).toEqual(rea);
+  const refused = "larger than the 4 MiB limit for JSON and key file views";
+  expect(rea.map(({ format, error }) => [format, error])).toEqual([
+    ["json", refused],
+    ["text", null],
+    ["keyfile", refused],
+    ["text", null],
+  ]);
+});
+
+it("checks text for JSON the way REA does, token by token, without parsing it", () => {
+  const [bom, nbsp, lineSeparator] = [0xfeff, 0xa0, 0x2028].map((code) =>
+    String.fromCharCode(code),
+  );
+  const texts = [
+    ["-0", "01", "1.", "1E+5", "-", "[1.5e+]", "truex", "[NaN]"],
+    ['"\\u00e9"', '"\\u00g9"', '"\\x"', '"\t"', '"a', '"\\uD800"'],
+    ["", " [1] ", "[1] x", "{}{}", `${bom}[1]`, `[1]${nbsp}`],
+    [`["${lineSeparator}"]`, "[]", "[1,]", "[,1]", "[1 2]", "[1]]", "[[1]"],
+    ["[}", "{}", '{"a":1}', '{"a" 1}', "{a:1}", '{"a":1,}', '{"a"::1}'],
+    ["{1:2}", '{"a":[1,{"b":null}],"c":-1.5e-3}'],
+  ].flat();
+  const imports = PYTHON_IMPORTS.split("\n")
+    .filter((line) => !line.includes("agentenv_protocol"))
+    .join("\n");
+
+  const python = JSON.parse(
+    execFileSync(
+      "python3",
+      [
+        "-I",
+        "-B",
+        "-c",
+        `${imports}${PYTHON_HELPERS}\nprint(json.dumps([_is_json(text) for text in json.load(sys.stdin)]))`,
+      ],
+      { input: JSON.stringify(texts), encoding: "utf8" },
+    ),
+  ) as boolean[];
+
+  const parsed = texts.map((text) => safeParseJson(text).ok);
+  expect(texts.map((text) => isJsonText(text))).toEqual(parsed);
+  expect(python).toEqual(parsed);
+  expect(parsed.filter(Boolean)).toHaveLength(10);
+});
+
+it("checks JSON depth with one iterator per level, copying no wide list", () => {
+  const imports = PYTHON_IMPORTS.split("\n")
+    .filter((line) => !line.includes("agentenv_protocol"))
+    .join("\n");
+  const program = `${imports}
+import tracemalloc
+${PYTHON_HELPERS}
+wide = [None] * 800_000
+tracemalloc.start()
+deep = _deeper_than(wide, 500)
+peak = tracemalloc.get_traced_memory()[1]
+tracemalloc.stop()
+nested = []
+for _ in range(501):
+    nested = [nested]
+print(json.dumps({"deep": deep, "peak": peak, "edge": _deeper_than(nested, 501), "over": _deeper_than(nested, 500)}))
+`;
+
+  const result = JSON.parse(
+    execFileSync("python3", ["-I", "-B", "-c", program], { encoding: "utf8" }),
+  ) as { deep: boolean; peak: number; edge: boolean; over: boolean };
+
+  expect(result).toMatchObject({ deep: false, edge: false, over: true });
+  // Queuing each member of the 800,000-item list traced about 51 MB.
+  expect(result.peak).toBeLessThan(1024 * 1024);
 });
 
 it("spells infinite and negative-zero SQLite reals as REA's SQLite reader does", () => {
