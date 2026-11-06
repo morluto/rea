@@ -5,7 +5,12 @@ import {
   type DesktopStatePath,
   type StateEnds,
 } from "./desktopState.js";
-import { diffStateViews, diffZipMembers } from "./stateChanges.js";
+import { countTaskRows } from "./appTaskChecks.js";
+import {
+  diffStateViews,
+  diffZipMembers,
+  sqliteRowIdentity,
+} from "./stateChanges.js";
 import { locatePointer, pairMembers, resolvePointer } from "./viewPointer.js";
 import { entryWithoutView, zipArrayLeavesOut, zipEntryAt } from "./zipView.js";
 
@@ -330,6 +335,58 @@ const rowWhere = (
     }),
   );
 
+/** Match uniquely keyed rows separately from multiset row conditions. */
+const keyedRows = (table: TableView) =>
+  new Map(
+    table.rows.flatMap((row) => {
+      const identity = sqliteRowIdentity(table.columns, table.key, row);
+      return identity.keyed ? [[identity.value, row] as const] : [];
+    }),
+  );
+
+/** The predicates a task can express after volatile values are omitted. */
+const rowConditions = (table: TableView) => {
+  const conditions = new Map<string, Record<string, JsonValue>>();
+  for (const row of table.rows) {
+    if (sqliteRowIdentity(table.columns, table.key, row).keyed) continue;
+    const where = rowWhere(table, row, () => true);
+    if (Object.keys(where).length === 0) continue;
+    conditions.set(JSON.stringify(where), where);
+  }
+  return conditions;
+};
+
+const unkeyedRowSuggestions = (
+  file: string,
+  table: string,
+  baseline: TableView,
+  final: TableView,
+): Suggestion[] => {
+  const conditions = new Map([
+    ...rowConditions(final),
+    ...rowConditions(baseline),
+  ]);
+  const suggestions: Suggestion[] = [];
+  for (const where of conditions.values()) {
+    const previous = countTaskRows(baseline.columns, baseline.rows, where);
+    const count = countTaskRows(final.columns, final.rows, where);
+    if (previous === count) continue;
+    if (count === 0)
+      suggestions.push({ kind: "row_absent", file, table, where });
+    else if (previous === 0)
+      suggestions.push({ kind: "row_present", file, table, where });
+    else
+      suggestions.push({
+        kind: "row_count",
+        file,
+        table,
+        where,
+        equals: count,
+      });
+  }
+  return suggestions;
+};
+
 const rowSuggestions = (
   file: string,
   baseline: Version,
@@ -347,28 +404,15 @@ const rowSuggestions = (
   };
   for (const [name, table] of tableViews(final)) {
     const old = before.get(name) ?? { ...table, rows: [] };
-    const identity = (view: TableView, row: readonly JsonValue[]) =>
-      JSON.stringify(
-        view.key.length === 0
-          ? row
-          : view.key.map((column) => row[view.columns.indexOf(column)] ?? null),
-      );
-    const oldRows = new Map(old.rows.map((row) => [identity(old, row), row]));
-    const newRows = new Map(
-      table.rows.map((row) => [identity(table, row), row]),
-    );
-    const keyed = (column: string) => table.key.includes(column);
+    const oldRows = keyedRows(old);
+    const newRows = keyedRows(table);
     for (const [id, row] of newRows) {
       const previous = oldRows.get(id);
       if (previous === undefined)
         push(
           "row_present",
           name,
-          rowWhere(
-            table,
-            row,
-            (column) => table.key.length === 0 || !keyed(column),
-          ),
+          rowWhere(table, row, (column) => !table.key.includes(column)),
         );
       else if (JSON.stringify(previous) !== JSON.stringify(row))
         push(
@@ -378,7 +422,7 @@ const rowSuggestions = (
             table,
             row,
             (column) =>
-              keyed(column) ||
+              table.key.includes(column) ||
               JSON.stringify(row[table.columns.indexOf(column)]) !==
                 JSON.stringify(previous[old.columns.indexOf(column)]),
           ),
@@ -389,12 +433,9 @@ const rowSuggestions = (
         push(
           "row_absent",
           name,
-          rowWhere(
-            old,
-            row,
-            (column) => old.key.length === 0 || old.key.includes(column),
-          ),
+          rowWhere(old, row, (column) => old.key.includes(column)),
         );
+    suggestions.push(...unkeyedRowSuggestions(file, name, old, table));
     if (old.rows.length !== table.rows.length)
       suggestions.push({
         kind: "row_count",
