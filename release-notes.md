@@ -2,7 +2,7 @@
 ---
 
 
-## [6.9.0](https://github.com/morluto/rea/compare/rea-agents-6.8.0...rea-agents-6.9.0) (2026-11-05)
+## [6.9.0](https://github.com/morluto/rea/compare/rea-agents-6.8.0...rea-agents-6.9.0) (2026-11-06)
 
 
 ### ⚠ BREAKING CHANGES
@@ -439,6 +439,7 @@
 * **filesystem:** complete plist and limits probes ([3ca1cc5](https://github.com/morluto/rea/commit/3ca1cc546607d18df2d9fa5ce9bcc31cc0ed0ef7))
 * **filesystem:** finish executable and project span reads ([a7004c7](https://github.com/morluto/rea/commit/a7004c7df1298724e8fbbeb42a4d36c1e0ec5025))
 * **filesystem:** preserve undecodable symlink targets ([#7935](https://github.com/morluto/rea/issues/7935)) ([34577eb](https://github.com/morluto/rea/commit/34577eb1cc264000a176ded68e5ebf8aba430edd))
+* **filesystem:** settle a Windows ChangeTime before recording a baseline ([#8979](https://github.com/morluto/rea/issues/8979)) ([a7574d4](https://github.com/morluto/rea/commit/a7574d4274728fcb0a13414d6ae43f1597864d94))
 * **filesystem:** unify stable file identity checks ([160648c](https://github.com/morluto/rea/commit/160648cc60e5550e2faf410f5f5bd693fe8a8afc))
 * **firmware:** admit caller-selected source directly ([c1e0f53](https://github.com/morluto/rea/commit/c1e0f531e600c7899d51f675d6fa2fef6f3aebb9))
 * **firmware:** preserve report metadata before semantic validation ([a7aad91](https://github.com/morluto/rea/commit/a7aad91320213f136062668110bf5c1e63606d0d))
