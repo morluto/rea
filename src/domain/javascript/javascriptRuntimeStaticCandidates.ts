@@ -1,4 +1,5 @@
 import { posix, win32 } from "node:path";
+import { applicationNodeContentDigest } from "./javascriptApplicationFileIdentity.js";
 
 import type { ApplicationNode } from "./javascriptApplicationGraphSchemas.js";
 import type { JavaScriptApplicationGraph } from "./javascriptApplicationGraph.js";
@@ -351,12 +352,10 @@ const candidateDigests = (
   node: ApplicationNode,
 ): StaticRuntimeCandidate["digests"] => {
   const values: StaticRuntimeCandidate["digests"][number][] = [];
-  if (
-    node.kind === "javascript-asset" &&
-    node.identity.strategy === "content-digest"
-  )
+  const digest = applicationNodeContentDigest(node);
+  if (node.kind === "javascript-asset" && digest !== null)
     values.push({
-      sha256: node.identity.sha256,
+      sha256: digest,
       basis: "content-sha256",
     });
   if (node.kind === "javascript-module")

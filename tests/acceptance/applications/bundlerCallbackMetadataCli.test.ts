@@ -15,7 +15,13 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
     ].join("\n");
     await writeFile(join(root, "bundle.js"), source);
     const { graph } = await analyzeJavaScriptDirectory(surface, cli, root);
-    const chunk = graph.nodes.find(({ kind }) => kind === "javascript-chunk");
+    const chunk = graph.nodes.find(
+      ({ kind, identity }) =>
+        kind === "javascript-chunk" &&
+        identity.strategy === "artifact-local-key" &&
+        identity.namespace === "bundler-chunk",
+    );
+    expect(chunk).toBeDefined();
     for (const [index, entry, asyncChunk] of [
       [0, "7", "chunk-a"],
       [1, "8", "chunk-b"],

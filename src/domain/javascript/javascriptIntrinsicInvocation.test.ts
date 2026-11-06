@@ -58,6 +58,45 @@ it("keeps a comma-expression intrinsic call unknown when its receiver is erased"
   ]);
 });
 
+it.each(["change.apply(null, args)", "Reflect.apply(change, null, args)"])(
+  "keeps unknown applied arguments after a known bound prefix: %s",
+  (invocation) => {
+    const resolved = invocationKinds(
+      `const change = Object.defineProperty.bind(null, Object); ${invocation};`,
+    ).at(-1);
+    expect(resolved).toEqual(
+      expect.objectContaining({
+        kind: "known",
+        path: ["intrinsic", "Object", "defineProperty"],
+        arguments: undefined,
+      }),
+    );
+  },
+);
+
+it.each([
+  'change.apply(null, ["create", {value: customCreate}])',
+  'Reflect.apply(change, null, ["create", {value: customCreate}])',
+])(
+  "retains a known bound prefix and literal applied arguments: %s",
+  (invocation) => {
+    const resolved = invocationKinds(
+      `const change = Object.defineProperty.bind(null, Object); ${invocation};`,
+    ).at(-1);
+    expect(resolved).toEqual(
+      expect.objectContaining({
+        kind: "known",
+        path: ["intrinsic", "Object", "defineProperty"],
+        arguments: [
+          expect.objectContaining({ type: "Identifier", name: "Object" }),
+          expect.objectContaining({ type: "StringLiteral", value: "create" }),
+          expect.objectContaining({ type: "ObjectExpression" }),
+        ],
+      }),
+    );
+  },
+);
+
 it.each([
   ["get.call(null)", "get"],
   ["get.apply(null,[])", "get"],

@@ -1,4 +1,5 @@
 import { nativeExportCorrespondenceKey } from "./javascriptNativeExportFacts.js";
+import { applicationNodeContentDigest } from "./javascriptApplicationFileIdentity.js";
 import { canonicalJson } from "../comparisonSemantics.js";
 import {
   compareUnicodeCodePoints,
@@ -55,12 +56,20 @@ const matchTiers = (): readonly MatchTier[] => [
     key: moduleSourceDigestKey,
   },
   {
+    match: { basis: "exact-module-source-digest", confidence: "exact" },
+    key: bundledSourceOccurrenceKey,
+  },
+  {
     match: { basis: "exact-node-identity", confidence: "exact" },
     key: nodeIdentityKey,
   },
   {
     match: { basis: "source-map-identity", confidence: "high" },
     key: sourceMapKey,
+  },
+  {
+    match: { basis: "source-map-identity", confidence: "high" },
+    key: sourceMapOccurrenceKey,
   },
   {
     match: { basis: "structural-fingerprint", confidence: "medium" },
@@ -108,6 +117,26 @@ export const matchJavaScriptApplicationVersions = (
     candidatesForLeft: sortedCandidates(leftCandidates),
     candidatesForRight: sortedCandidates(rightCandidates),
   };
+};
+
+/** A URL suffix is not a local path; scope the exact declaration to its map occurrence. */
+const sourceMapOccurrenceKey = (node: ApplicationNode): string | null => {
+  if (
+    node.kind !== "source-module" ||
+    node.identity.strategy !== "source-map-original"
+  )
+    return null;
+  const mapPaths = new Set<string>();
+  for (const { source_map_reference: reference } of node.observations) {
+    if (reference?.resolution.kind !== "suffix") return null;
+    mapPaths.add(reference.map_path);
+  }
+  if (mapPaths.size !== 1) return null;
+  return `source-map-occurrence\0${canonicalJson([
+    [...mapPaths][0],
+    node.identity.source_root,
+    node.identity.original_source,
+  ])}`;
 };
 
 interface AmbiguousGroup {
@@ -195,10 +224,10 @@ const sortedCandidates = (
 const nodeIdentityKey = (node: ApplicationNode): string =>
   `node\0${node.kind}\0${node.node_id}`;
 
-const contentDigestKey = (node: ApplicationNode): string | null =>
-  node.identity.strategy === "content-digest"
-    ? `content\0${node.kind}\0${node.identity.sha256}`
-    : null;
+const contentDigestKey = (node: ApplicationNode): string | null => {
+  const digest = applicationNodeContentDigest(node);
+  return digest === null ? null : `content\0${node.kind}\0${digest}`;
+};
 
 const moduleSourceDigestKey = (node: ApplicationNode): string | null => {
   if (node.kind !== "javascript-module") return null;
@@ -218,11 +247,68 @@ const moduleSourceDigestKey = (node: ApplicationNode): string | null => {
   return value === null ? null : `module-source\0${node.kind}\0${value}`;
 };
 
-const sourceMapKey = (node: ApplicationNode): string | null =>
-  node.kind === "source-module" &&
-  node.identity.strategy === "source-map-original"
-    ? `source-map\0${canonicalJson([node.identity.source_root, node.identity.original_source])}`
-    : null;
+/** unchanged bundle bytes and parsed member coordinates survive container changes. */
+const bundledSourceOccurrenceKey = (node: ApplicationNode): string | null => {
+  if (
+    (node.kind !== "javascript-module" && node.kind !== "javascript-chunk") ||
+    node.identity.strategy !== "artifact-local-key"
+  )
+    return null;
+  const path = uniqueStringProperty(node, "path");
+  const runtime = uniqueStringProperty(node, "runtime");
+  if (path === null || runtime === null) return null;
+  let member: string;
+  if (
+    node.kind === "javascript-module" &&
+    node.identity.namespace === `${runtime}:module`
+  ) {
+    const key = uniqueStringProperty(node, "module_key");
+    const source = uniqueStringProperty(node, "source_sha256");
+    if (key === null || source === null) return null;
+    member = compositeKey([key, source]);
+  } else if (
+    node.kind === "javascript-chunk" &&
+    node.identity.namespace === "bundler-chunk"
+  ) {
+    const keys = new Set<string>();
+    for (const { properties } of node.observations) {
+      const value = properties.chunk_keys;
+      if (
+        !Array.isArray(value) ||
+        !value.every((key) => typeof key === "string") ||
+        properties.unknown_chunk_keys !== 0
+      )
+        return null;
+      keys.add(canonicalJson(value));
+    }
+    if (keys.size !== 1) return null;
+    member = [...keys][0]!;
+  } else return null;
+  return compositeKey([
+    node.kind,
+    node.identity.namespace,
+    node.identity.artifact_sha256,
+    path,
+    runtime,
+    member,
+  ]);
+};
+
+const sourceMapKey = (node: ApplicationNode): string | null => {
+  if (
+    node.kind !== "source-module" ||
+    node.identity.strategy !== "source-map-original"
+  )
+    return null;
+  const paths = new Set<string>();
+  for (const observation of node.observations) {
+    const resolution = observation.source_map_reference?.resolution;
+    if (resolution?.kind !== "artifact-relative") return null;
+    paths.add(resolution.path);
+  }
+  if (paths.size !== 1) return null;
+  return `source-map\0${canonicalJson([...paths])}`;
+};
 
 const structuralFingerprintKey = (node: ApplicationNode): string | null => {
   if (node.kind !== "javascript-module") return null;

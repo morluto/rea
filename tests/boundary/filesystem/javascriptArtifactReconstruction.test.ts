@@ -343,10 +343,13 @@ it("retains unnamed source declarations without shifting later source evidence",
     content_available: false,
     content_sha256: null,
   });
+  const container = result.graph.nodes.find(({ kind }) => kind === "artifact");
+  if (container?.identity.strategy !== "content-digest")
+    throw new Error("expected the container digest");
   expect(unnamed?.identity).toMatchObject({
     strategy: "artifact-local-key",
     namespace: "source-map-unnamed-declaration",
-    key: "1",
+    key: JSON.stringify([container.identity.sha256, "bundle.js.map", 1]),
   });
   expect(result.graph.coverage.status).toBe("complete");
 });
@@ -363,7 +366,7 @@ it("retains every repeated content observation and containment path", async () =
   );
 
   const result = await reconstructJavaScriptArtifact({ input_path: root });
-  const duplicateNode = result.graph.nodes.find(
+  const duplicateNodes = result.graph.nodes.filter(
     ({ kind, observations }) =>
       kind === "javascript-asset" &&
       observations.some(({ properties }) =>
@@ -376,7 +379,35 @@ it("retains every repeated content observation and containment path", async () =
       String(properties.path).startsWith("duplicate-"),
   );
 
-  expect(duplicateNode?.observations).toHaveLength(70);
+  expect(duplicateNodes).toHaveLength(70);
+  expect(new Set(duplicateNodes.map(({ node_id }) => node_id)).size).toBe(70);
+  const expectedPaths = Array.from(
+    { length: 70 },
+    (_, index) => `duplicate-${String(index).padStart(2, "0")}.js`,
+  );
+  expect(
+    duplicateNodes
+      .flatMap(({ observations }) =>
+        observations.map(({ properties }) => properties.path),
+      )
+      .sort(),
+  ).toEqual(expectedPaths);
+  expect(
+    new Set(duplicateEdges.map(({ target_node_id }) => target_node_id)),
+  ).toEqual(new Set(duplicateNodes.map(({ node_id }) => node_id)));
+  expect(
+    new Set(
+      duplicateNodes.map(({ identity }) =>
+        identity.strategy === "artifact-local-key"
+          ? identity.artifact_sha256
+          : null,
+      ),
+    ),
+  ).toEqual(
+    new Set([
+      createHash("sha256").update("export const same = 1;\n").digest("hex"),
+    ]),
+  );
   expect(duplicateEdges).toHaveLength(70);
   expect(result.graph.coverage).toMatchObject({
     status: "complete",

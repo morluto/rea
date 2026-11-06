@@ -3,6 +3,7 @@ import type { JavaScriptSemanticObjectReference as Reference } from "./javascrip
 import type { JavaScriptSemanticPropertyPath as PropertyPath } from "./javascriptSemanticPropertyPaths.js";
 import type { JavaScriptSemanticAnalysisState } from "./javascriptSemanticState.js";
 import { SEMANTIC_GETTER_EXPANSION_LIMIT } from "./javascriptSemanticResourceLimits.js";
+import { completeSemanticSteps } from "./javascriptSemanticTraversal.js";
 
 export interface GetterInvocation {
   readonly getter: t.ObjectMethod | t.ClassMethod;
@@ -157,11 +158,15 @@ export class SemanticGetterQuery {
     });
   }
 
-  #collect(
-    root: () => readonly Reference[],
+  *#collectSteps(
+    root: () => Generator<void, readonly Reference[]>,
     expand: (job: GetterQueryJob) => void,
-  ): void {
-    for (const reference of root()) this.retain(reference);
+  ): Generator<void> {
+    let examined = 0;
+    for (const reference of yield* root()) {
+      if (examined++ % 1024 === 0) yield;
+      this.retain(reference);
+    }
     for (
       let cursor = 0;
       cursor < this.#pending.length && !this.#limited;
@@ -169,6 +174,7 @@ export class SemanticGetterQuery {
     ) {
       const job = this.#pending[cursor];
       if (job === undefined) break;
+      yield;
       this.#current = job;
       expand(job);
     }
@@ -179,7 +185,19 @@ export class SemanticGetterQuery {
     root: () => readonly Reference[],
     expand: (job: GetterQueryJob) => void,
   ): readonly Reference[] {
-    this.#collect(root, expand);
+    return completeSemanticSteps(
+      this.runSteps(function* () {
+        return root();
+      }, expand),
+    );
+  }
+
+  /** Literal walks yield cooperatively; each existing getter expansion remains synchronous. */
+  *runSteps(
+    root: () => Generator<void, readonly Reference[]>,
+    expand: (job: GetterQueryJob) => void,
+  ): Generator<void, readonly Reference[]> {
+    yield* this.#collectSteps(root, expand);
     if (this.#limited) {
       this.state.getterResourceLimits.add("getter-expansion");
       // Escaping each selected getter's result covers every omitted suffix.
@@ -189,7 +207,7 @@ export class SemanticGetterQuery {
       this.#memo = new WeakMap();
       this.#references = new SemanticObjectReferenceSet();
       this.#pending = [];
-      this.#collect(root, expand);
+      yield* this.#collectSteps(root, expand);
     }
     return this.#references.values();
   }

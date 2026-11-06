@@ -4,14 +4,8 @@ import {
 } from "./javascriptNetworkRequests.js";
 import * as t from "@babel/types";
 import { isIntrinsicMapLookup } from "./javascriptSemanticMapOperations.js";
-import { traverseJavaScriptValueAst } from "./javascriptSemanticTraversal.js";
-import { semanticIdentifierRole } from "./javascriptSemanticProjection.js";
 
-import {
-  hasScheme,
-  htmlUrlText,
-  stripQueryAndFragment,
-} from "../artifactPathSyntax.js";
+import { htmlUrlText, stripQueryAndFragment } from "../artifactPathSyntax.js";
 import { sanitizeEndpointCandidate } from "../browserObservation.js";
 import {
   addFindingOnce,
@@ -40,7 +34,6 @@ import type {
   JavaScriptFindingContext as FindingContext,
   JavaScriptReferenceInput as ReferenceInput,
 } from "./javascriptStaticAnalysisState.js";
-import { VITE_OUTPUT_DEPENDENCY_PREFIX } from "./javascriptStaticAnalysisTypes.js";
 import {
   resolveSemanticBindingState,
   semanticStableInitializer,
@@ -71,7 +64,6 @@ type JavaScriptCallLike =
 
 /** Inspect one call or new expression for references, endpoints, storage, and roles. */
 export const inspectCall = (
-  source: string,
   node: JavaScriptCallLike,
   context: FindingContext,
   bindings: JavaScriptSemanticAnalysisState,
@@ -111,13 +103,6 @@ export const inspectCall = (
       kind: "dynamic-import",
       specifier: chunkLoad.specifier,
     });
-  for (const specifier of vitePreloadDependencySpecifiers(
-    node,
-    name,
-    context.vitePreloadDependencyTable,
-    bindings,
-  ))
-    addReference(context, { node, kind: "dynamic-import", specifier });
   const worker = t.isNewExpression(node) ? node : undefined;
   const workerConstructor =
     worker === undefined
@@ -371,149 +356,6 @@ const chunkLoadSpecifier = (
   if (loader === undefined) return null;
   if (loader === "unknown") return { specifier: undefined };
   return { specifier: prefixedArgument("chunk:", node.arguments[0]) };
-};
-
-const vitePreloadDependencySpecifiers = (
-  node: JavaScriptCallLike,
-  name: string,
-  table: readonly (string | undefined)[] | null,
-  bindings: JavaScriptSemanticAnalysisState,
-): readonly (string | undefined)[] => {
-  if (
-    name !== "__vite__mapDeps" ||
-    table === null ||
-    !t.isArrayExpression(node.arguments[0])
-  )
-    return [];
-  const indexes = node.arguments[0].elements;
-  // Explicit cache overrides change which table the helper reads. Retain the
-  // call slots as unknown unless every override is statically undefined.
-  if (
-    !node.arguments
-      .slice(1)
-      .every((argument) => isExplicitDefaultArgument(argument, bindings))
-  )
-    return indexes.map(() => undefined);
-  return indexes.map((element) => {
-    if (element === null || !t.isNumericLiteral(element)) return undefined;
-    const index = element.value;
-    return Number.isSafeInteger(index) && index >= 0
-      ? viteDependencySpecifier(table[index])
-      : undefined;
-  });
-};
-
-// A relative base writes importer-relative `./` paths, which remain module
-// URLs. Without a scheme or leading dot or slash, the entry names a file under
-// the build output directory.
-const viteDependencySpecifier = (
-  dependency: string | undefined,
-): string | undefined =>
-  dependency === undefined ||
-  dependency === "" ||
-  dependency.startsWith(".") ||
-  dependency.startsWith("/") ||
-  hasScheme(dependency)
-    ? dependency
-    : `${VITE_OUTPUT_DEPENDENCY_PREFIX}${dependency}`;
-
-const isExplicitDefaultArgument = (
-  argument: t.CallExpression["arguments"][number],
-  bindings: JavaScriptSemanticAnalysisState,
-): boolean => {
-  if (!t.isNode(argument)) return false;
-  const value = unwrapJavaScriptExpression(argument).node;
-  return (
-    (t.isUnaryExpression(value) && value.operator === "void") ||
-    (t.isIdentifier(value, { name: "undefined" }) &&
-      isUnmodifiedGlobalReference(value, bindings, "undefined"))
-  );
-};
-
-type ViteMapDepsFunction =
-  | t.FunctionDeclaration
-  | t.FunctionExpression
-  | t.ArrowFunctionExpression;
-
-/** Index the canonical Vite helper's cache initializer from parsed syntax. */
-export const indexVitePreloadDependencyTable = (
-  program: t.Program,
-  erasedSyntaxNodes: WeakSet<t.Node>,
-): readonly (string | undefined)[] | null => {
-  const helpers: ViteMapDepsFunction[] = [];
-  traverseJavaScriptValueAst(program, erasedSyntaxNodes, {
-    enter: (node) => {
-      if (t.isFunctionDeclaration(node) && node.id?.name === "__vite__mapDeps")
-        helpers.push(node);
-      else if (
-        t.isVariableDeclarator(node) &&
-        t.isIdentifier(node.id, { name: "__vite__mapDeps" })
-      ) {
-        const init = node.init;
-        if (t.isFunctionExpression(init) || t.isArrowFunctionExpression(init))
-          helpers.push(init);
-      }
-    },
-  });
-  if (helpers.length !== 1) return null;
-  const helper = helpers[0];
-  if (helper === undefined) return null;
-  const mapParameter = helper.params[1];
-  const mapIdentifier = t.isAssignmentPattern(mapParameter)
-    ? mapParameter.left
-    : mapParameter;
-  if (!t.isIdentifier(mapIdentifier)) return [];
-  const tables: t.ArrayExpression[] = [];
-  traverseJavaScriptValueAst(helper, erasedSyntaxNodes, {
-    skip: (node) => t.isFunction(node),
-    enter: (node) => {
-      if (
-        t.isAssignmentExpression(node) &&
-        node.operator === "=" &&
-        (t.isMemberExpression(node.left) ||
-          t.isOptionalMemberExpression(node.left)) &&
-        t.isIdentifier(node.left.object, { name: mapIdentifier.name }) &&
-        semanticStaticPropertyName(node.left.property, node.left.computed) ===
-          "f" &&
-        t.isArrayExpression(node.right)
-      )
-        tables.push(node.right);
-    },
-  });
-  if (tables.length !== 1) return [];
-  const table = tables[0];
-  if (table === undefined) return [];
-  // A spread contributes an unknown number of entries, so every later slot
-  // has an unknown index; leave those out instead of shifting them.
-  const spread = table.elements.findIndex((element) =>
-    t.isSpreadElement(element),
-  );
-  const dependencies = (
-    spread === -1 ? table.elements : table.elements.slice(0, spread)
-  ).map((element) =>
-    element === null || t.isSpreadElement(element)
-      ? undefined
-      : stringValue(element),
-  );
-  let escapedOrMutated = false;
-  traverseJavaScriptValueAst(program, erasedSyntaxNodes, {
-    skip: (node) => node === helper,
-    enter: (node, parent, readAncestors) => {
-      if (
-        !t.isIdentifier(node, { name: "__vite__mapDeps" }) ||
-        parent === null ||
-        semanticIdentifierRole(node, parent, readAncestors) === null
-      )
-        return;
-      if (
-        (t.isCallExpression(parent) || t.isOptionalCallExpression(parent)) &&
-        parent.callee === node
-      )
-        return;
-      escapedOrMutated = true;
-    },
-  });
-  return escapedOrMutated ? dependencies.map(() => undefined) : dependencies;
 };
 
 const requestConstructorUrl = (
@@ -970,13 +812,16 @@ export const addReference = (
           expression: sourceSlice(context.source, input.node),
         }
       : { specifier, expression: null };
+  const identity =
+    input.kind === "vite-table-candidate"
+      ? { kind: input.kind, operation: input.operation }
+      : { kind: input.kind, operation: input.operation ?? "load" };
   addLocatedFinding(context, {
     collection: context.accumulator.references,
     key: `reference\0${input.kind}\0${input.operation ?? "load"}\0${reference.specifier ?? reference.expression}\0${input.resolutionBasePath ?? ""}`,
     node: input.node,
     value: {
-      kind: input.kind,
-      operation: input.operation ?? "load",
+      ...identity,
       ...reference,
       ...(input.resolutionBasePath === undefined
         ? {}

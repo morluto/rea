@@ -7,6 +7,7 @@ import { uniqueSorted } from "../canonicalOrdering.js";
 import { jsonObjectSchema, type JsonValue } from "../jsonValue.js";
 import type { JavaScriptApplicationAnalysisResult } from "../javascript/javascriptApplicationAnalysis.js";
 import type { ApplicationNode } from "../javascript/javascriptApplicationGraphSchemas.js";
+import { applicationNodeContentDigest } from "../javascript/javascriptApplicationFileIdentity.js";
 import { err, ok, type Result } from "../result.js";
 import { z } from "zod";
 import type { JavaScriptModuleReference } from "./javascriptModuleReferences.js";
@@ -149,7 +150,8 @@ const exportNames = (node: ApplicationNode): readonly string[] => {
 const nodeHashes = (node: ApplicationNode): readonly string[] => {
   const hashes = new Set<string>();
   const { identity } = node;
-  if (identity.strategy === "content-digest") hashes.add(identity.sha256);
+  const digest = applicationNodeContentDigest(node);
+  if (digest !== null) hashes.add(digest);
   if (identity.strategy === "canonical-path")
     hashes.add(identity.artifact_sha256);
   if (identity.strategy === "source-map-original") {

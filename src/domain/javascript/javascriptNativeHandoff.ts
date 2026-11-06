@@ -1,4 +1,5 @@
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
+import { applicationNodeContentDigest } from "./javascriptApplicationFileIdentity.js";
 import type { Evidence } from "../evidence.js";
 import type {
   ApplicationEdge,
@@ -27,8 +28,8 @@ export const buildJavaScriptNativeHandoffs = (
       // Observations may describe only a containing archive. A native target
       // requires the node owner's exact byte identity, independently of its
       // path, availability labels or the artifact supporting an observation.
-      if (node.identity.strategy !== "content-digest") return [];
-      const digest = node.identity.sha256;
+      const digest = applicationNodeContentDigest(node);
+      if (digest === null) return [];
       const linked = nativeEvidence.filter(
         ({ subject }) => subject?.digest.sha256 === digest,
       );

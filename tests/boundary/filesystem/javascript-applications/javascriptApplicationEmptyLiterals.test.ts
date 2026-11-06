@@ -83,6 +83,15 @@ it("retains empty literal evidence across the application boundary surfaces", as
 const literalEndpointKey = (value: string): string =>
   JSON.stringify(["literal", value]);
 
+const occurrenceValueKey = (key: string): string => {
+  const [container, path, value] = JSON.parse(key) as [string, string, unknown];
+  expect(container).toMatch(/^[a-f0-9]{64}$/u);
+  expect(path).toBe("app.js");
+  const encoded = typeof value === "string" ? value : JSON.stringify(value);
+  if (encoded === undefined) throw new Error("Missing occurrence value");
+  return encoded;
+};
+
 it("keeps bridge entry paths stable through worker validation and API seed matching", async () => {
   const output = await analyzeSource(`
     const { contextBridge, ipcRenderer } = require("electron");
@@ -180,8 +189,12 @@ it("analyzes a plain long-line loader without package metadata", async () => {
       strategy: "artifact-local-key",
       // A Worker string is relative to the unestablished document base, so
       // its identity is the retained expression rather than a specifier.
-      key: node.kind === "endpoint" ? literalEndpointKey("") : 'new Worker("")',
     });
+    if (node.identity.strategy !== "artifact-local-key")
+      throw new Error("Expected source-scoped identity");
+    expect(occurrenceValueKey(node.identity.key)).toBe(
+      node.kind === "endpoint" ? literalEndpointKey("") : 'new Worker("")',
+    );
     expect(node.observations.map(({ label }) => label)).toEqual([null]);
   }
 });
@@ -193,7 +206,10 @@ it("keeps exact values for empty literals without synthetic application labels",
   const endpoints = output.graph.nodes
     .filter(({ kind }) => kind === "endpoint")
     .map(({ identity, observations }) => ({
-      key: identity.strategy === "artifact-local-key" ? identity.key : null,
+      key:
+        identity.strategy === "artifact-local-key"
+          ? occurrenceValueKey(identity.key)
+          : null,
       labels: observations.map(({ label }) => label),
       values: observations.map(({ properties }) => properties.value),
     }));
@@ -277,7 +293,7 @@ it("does not match an empty endpoint with a literal two-quote seed", async () =>
       .map((node) => [
         node.node_id,
         node.identity.strategy === "artifact-local-key"
-          ? node.identity.key
+          ? occurrenceValueKey(node.identity.key)
           : null,
       ]),
   );
@@ -403,7 +419,7 @@ it("pairs indexed source-map leaves by raw source name and root", async () => {
         offset: { line, column: 0 },
         map: {
           version: 3,
-          sourceRoot: `../${name}`,
+          sourceRoot: name,
           sources: ["same.js"],
           sourcesContent: [`export const value = ${String(value)};`],
           names: [],

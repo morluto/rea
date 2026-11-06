@@ -12,11 +12,11 @@ import type { JavaScriptStaticAnalysis } from "../../domain/javascript/javascrip
 import { javaScriptRouteSourceFactsSchema } from "../../domain/javascript/javascriptRouteFacts.js";
 import { javaScriptStaticCoverageSchema } from "../../domain/javascript/javascriptStaticCoverage.js";
 import { JAVASCRIPT_AST_FINGERPRINT_ALGORITHM } from "../../domain/javascript/javascriptStaticAnalysisTypes.js";
-import type {
-  JavaScriptSemanticProperty,
-  JavaScriptSemanticValue,
+import {
+  javaScriptSemanticResourceLimitSchema,
+  type JavaScriptSemanticProperty,
+  type JavaScriptSemanticValue,
 } from "../../domain/javascript/javascriptSemanticValueTypes.js";
-import { javaScriptSemanticResourceLimitSchema } from "../../domain/javascript/javascriptSemanticValueTypes.js";
 
 const range =
   javaScriptSemanticNodeSchema.shape.identity.shape.source_range.unwrap();
@@ -323,10 +323,13 @@ const electron = z
     ...(app_path_changes === undefined ? {} : { app_path_changes }),
     ...(call_paths === undefined ? {} : { call_paths }),
   }));
-const referenceShape = {
+const referenceContext = {
   ...findingContext,
-  operation: z.enum(["load", "resolve"]),
   resolution_base_path: z.string().exactOptional(),
+};
+const referenceShape = {
+  ...referenceContext,
+  operation: z.enum(["load", "resolve"]),
   kind: z.enum([
     "static-import",
     "dynamic-import",
@@ -334,6 +337,11 @@ const referenceShape = {
     "worker",
     "service-worker",
   ]),
+};
+const viteTableCandidateShape = {
+  ...referenceContext,
+  operation: z.literal("candidate"),
+  kind: z.literal("vite-table-candidate"),
 };
 
 /** Exact producer facts recoverable before a later semantic worker failure. */
@@ -356,6 +364,20 @@ export const javaScriptWorkerStaticAnalysisSchema = z
         z
           .strictObject({
             ...referenceShape,
+            specifier: z.null(),
+            expression: z.string(),
+          })
+          .transform(withRuntime),
+        z
+          .strictObject({
+            ...viteTableCandidateShape,
+            specifier: z.string(),
+            expression: z.null(),
+          })
+          .transform(withRuntime),
+        z
+          .strictObject({
+            ...viteTableCandidateShape,
             specifier: z.null(),
             expression: z.string(),
           })

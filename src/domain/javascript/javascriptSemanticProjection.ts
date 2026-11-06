@@ -111,7 +111,40 @@ export const collectSemanticModuleLink = (
     return;
   if (t.isTSImportEqualsDeclaration(node)) collectImportEquals(node, state);
   else if (t.isImportDeclaration(node)) collectImports(node, state);
-  else if (t.isExportAllDeclaration(node))
+  else if (collectSemanticEsmExport(node, state)) return;
+  else if (t.isVariableDeclarator(node)) collectRequireLink(node, state);
+  else if (t.isAssignmentExpression(node))
+    collectCommonJsExport(node, state, commonJsReceivers.get(node));
+  else if (t.isCallExpression(node)) {
+    collectCommonJsExport(node, state, commonJsReceivers.get(node));
+    collectUnboundRequireLink(node, state);
+  }
+};
+
+const collectedEsmExports = new WeakMap<
+  JavaScriptSemanticAnalysisState,
+  WeakSet<t.Node>
+>();
+
+/** static consumers can request export facts without evaluating the complete IR. */
+export const collectSemanticEsmExport = (
+  node: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  if (
+    !t.isExportAllDeclaration(node) &&
+    !t.isExportNamedDeclaration(node) &&
+    !t.isExportDefaultDeclaration(node)
+  )
+    return false;
+  let collected = collectedEsmExports.get(state);
+  if (collected === undefined) {
+    collected = new WeakSet();
+    collectedEsmExports.set(state, collected);
+  }
+  if (collected.has(node)) return true;
+  collected.add(node);
+  if (t.isExportAllDeclaration(node))
     addModuleLink(
       state,
       {
@@ -141,13 +174,7 @@ export const collectSemanticModuleLink = (
       },
       node,
     );
-  else if (t.isVariableDeclarator(node)) collectRequireLink(node, state);
-  else if (t.isAssignmentExpression(node))
-    collectCommonJsExport(node, state, commonJsReceivers.get(node));
-  else if (t.isCallExpression(node)) {
-    collectCommonJsExport(node, state, commonJsReceivers.get(node));
-    collectUnboundRequireLink(node, state);
-  }
+  return true;
 };
 
 const collectImportEquals = (

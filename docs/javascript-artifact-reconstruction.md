@@ -364,13 +364,12 @@ Selected bounded text is then parsed as inert data to recover:
   relative to the calling module; string worker and service-worker paths use
   the document base URL or Node's working directory, which static analysis
   does not establish, so they keep their expression and stay unresolved);
-- Vite preload dependency tables (`__vite__mapDeps`): `./` entries resolve
-  relative to the importing chunk; base-relative entries such as
-  `assets/chunk.js` carry a `vite-output:` specifier and resolve under the one
-  ancestor directory of the importer that holds them, the build output
-  directory. A file found there but not analyzed, such as a stylesheet, stays
-  `unavailable` with its path. Selecting only the assets directory leaves them
-  `not-found`;
+- Vite dependency tables (`__vite__mapDeps`): selected literal entries retain
+  their original values as candidates. A matching local file may be reported as
+  a candidate path, but the table alone does not establish a load, runtime URL
+  base, or applicable import map. Candidate resolution stays unavailable and
+  graph coverage is partial; independently observed imports keep their own
+  resolution. Previously retained Evidence is not rewritten;
 - route, network endpoint, storage, and vendor-marker observations;
 - local source-map declarations and original
   source names and content digests;
@@ -390,6 +389,32 @@ document receivers are treated as browsing-context or document operations,
 while locally shadowed receivers can still contribute network endpoint
 candidates. A template recovered with a parser error and no cooked value stays
 dynamic; its raw spelling is not treated as a valid JavaScript string.
+
+Vite `__vite__mapDeps` dependency tables use decoded JavaScript string values,
+so an escaped path such as `caf\u00e9.js` is retained as `café.js`. array positions
+are preserved when entries are dynamic or missing; a spread of unknown length
+makes subsequent indexes unknown. calls use their own lexical helper binding,
+and unresolved dependencies retain the call expression and source evidence.
+equivalent function/block helpers, including Babel's lowered `arguments`
+defaults, retain the same table interpretation. explicit `undefined` defaults
+are distinguished from overrides; visible or unproven argument effects remain
+unknown. writes through helper/cache aliases and in-place cache mutations make
+dependencies unknown, including mutations of shared cache values in shallow
+copies. replacing a copied container's property leaves the original cache intact.
+ordinary calls receiving the helper, cache, or a shared container keep possible
+mutation explicit. inherited `f` overrides on `Function.prototype` or
+`Object.prototype` also leave the table unknown. a proven fresh replacement in
+the same straight-line block detaches a copied cache; conditional replacements
+and aliases captured before the replacement retain possible sharing. compressed
+return sequences preserve equivalent TypeScript default guards. chained calls
+keep the helper invocation's exact source range.
+
+cache ownership follows static object keys, array slots, `Object.assign` targets,
+and `Object.create` prototypes. a later write through another name for the same
+container can restore sharing after replacement. non-index metadata writes leave
+dependency slots intact; unproven methods and callbacks keep possible mutation
+explicit. table decoding, ownership propagation, and reference projection yield
+cooperatively during large analyses.
 
 RPC client syntax also contributes network endpoint candidates, in both
 `analyze_javascript_application` and `analyze_web_bundle`, distinguished by
@@ -744,8 +769,10 @@ checked before and between bounded parsing and traversal phases; the synchronous
 Babel and JSON parser calls cannot be preempted mid-call, so their input byte
 bounds remain the hard protection for an individual call.
 
-Byte-identical assets share a content-digest node. Every distinct observation
-and inventoried containment edge is retained. If parsing or artifact safety
+Inventoried files and nested archives retain separate nodes for each container
+and path, even when their bytes are identical. Each node retains its content digest for exact-byte
+matching. Source-map original declarations also retain their map occurrence.
+Every distinct observation and inventoried containment edge is retained. If parsing or artifact safety
 boundaries omit input, coverage reports that omission; when an exact omission
 count is not knowable, `omitted_count` is `null` rather than a guessed value.
 

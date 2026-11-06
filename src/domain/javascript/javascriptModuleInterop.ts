@@ -135,7 +135,7 @@ export const createSemanticModuleInterop = (
         const { root, members } = electronMemberPath(current);
         if (members.some((member) => member === null)) return finish(undefined);
         suffix = [...(members as readonly string[]), ...suffix];
-        for (const global of ["Object", "Function", "Reflect"])
+        for (const global of ["Object", "Function", "Reflect", "Array"])
           if (isUnshadowedGlobal(root, state, global))
             return finish(["intrinsic", global, ...suffix]);
         for (const global of ["globalThis", "global", "window", "self"])
@@ -226,24 +226,29 @@ export const createSemanticModuleInterop = (
   const intrinsicReadChanged = (
     node: t.Node,
     path: readonly string[],
+    readKind: "callable" | "wrapper" = "callable",
   ): boolean => {
     const capture = capturedIntrinsic(node)?.capturedAt ?? node;
-    const scope = opaqueMutationPath(capture).join(".");
+    const read = readKind === "wrapper" ? node : capture;
+    const scope = opaqueMutationPath(read).join(".");
     const method = path.at(-1);
     const invocationMethod =
-      method === "bind" || method === "call" || method === "apply";
+      path.length > 3 &&
+      (method === "bind" || method === "call" || method === "apply");
     return writes.some(
       (write) =>
         (write.scope === scope || write.scope === "intrinsic") &&
-        write.offset < (capture.start ?? -1) &&
-        (write.coverage.covers(path) ||
-          (invocationMethod &&
-            write.coverage.covers([
+        write.offset < (read.start ?? -1) &&
+        (readKind === "wrapper" && invocationMethod
+          ? write.coverage.covers([
               "intrinsic",
               "Function",
               "prototype",
               method,
-            ]))),
+            ]) ||
+            (write.coverage.covers(path) &&
+              !write.coverage.covers(path.slice(0, -1)))
+          : write.coverage.covers(path)),
     );
   };
 

@@ -126,7 +126,7 @@ describe("Webpack and Rspack runtime adapters", () => {
     ).toBe(false);
   });
 
-  it("recovers esbuild wrapper modules and Vite preload dependencies", async () => {
+  it("recovers esbuild wrapper modules and Vite table candidates", async () => {
     const root = await esmRuntimeFixture();
     const { graph } = await reconstructJavaScriptFixture(root);
     const commonJsModule = findModuleNodeByKey(graph, "src/dep.js");
@@ -143,12 +143,16 @@ describe("Webpack and Rspack runtime adapters", () => {
       module_key: "src/core.js",
     });
     expect(
-      graph.edges.filter(
-        ({ relation, properties }) =>
-          relation === "imports" &&
-          properties.kind === "dynamic-import" &&
-          ["./feature.js", "./main.css"].includes(String(properties.specifier)),
-      ),
+      graph.nodes
+        .flatMap((node) => node.observations)
+        .filter(
+          ({ properties }) =>
+            properties.vite_table_candidate === true &&
+            properties.resolution_status === "unavailable" &&
+            ["./feature.js", "./main.css"].includes(
+              String(properties.specifier),
+            ),
+        ),
     ).toHaveLength(2);
   });
 });

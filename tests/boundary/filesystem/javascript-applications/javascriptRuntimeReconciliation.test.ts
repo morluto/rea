@@ -10,6 +10,7 @@ import { javascriptApplicationAnalysisResultSchema } from "../../../../src/domai
 import { reconcileJavaScriptRuntimeEvidence } from "../../../../src/application/javascript/JavaScriptRuntimeReconciliationService.js";
 import { createEvidence } from "../../../../src/domain/evidence.js";
 import { mappedRuntimePaths } from "../../../../src/domain/javascript/javascriptRuntimeStaticCandidates.js";
+import { applicationNodeContentDigest } from "../../../../src/domain/javascript/javascriptApplicationFileIdentity.js";
 import { projectRuntimeCaptures } from "../../../../src/domain/javascript/javascriptRuntimeReconciliationRuntime.js";
 import { parseRuntimeCaptures } from "../../../../src/domain/javascript/javascriptRuntimeReconciliationCaptureParsing.js";
 import { electronPageInspectionSchema } from "../../../../src/domain/javascript/electronObservation.js";
@@ -606,16 +607,18 @@ it("imports an operator-provided cache layer through an explicit file mapping", 
     status: "unknown",
     reason: "layer-outside-runtime-scope",
   });
-  const sharedFile = result.graph.nodes.find(
-    ({ observations }) =>
-      observations.some(({ properties }) => properties.path === "app.js") &&
+  const fileOccurrences = result.graph.nodes.filter(
+    ({ kind, observations }) =>
+      kind === "javascript-asset" &&
       observations.some(
-        ({ properties }) => properties.path === "mapped/chunk.js",
+        ({ properties }) =>
+          properties.path === "app.js" || properties.path === "mapped/chunk.js",
       ),
   );
-  expect(
-    sharedFile?.observations.map(({ properties }) => properties.path),
-  ).toEqual(expect.arrayContaining(["app.js", "mapped/chunk.js"]));
+  expect(fileOccurrences).toHaveLength(2);
+  expect(new Set(fileOccurrences.map(applicationNodeContentDigest)).size).toBe(
+    1,
+  );
 });
 
 const sourceFreeRuntime = (runtimeRoot: string, scriptFile: string) => {

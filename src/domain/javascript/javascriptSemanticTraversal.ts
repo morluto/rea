@@ -106,12 +106,20 @@ export function* traverseJavaScriptAstSteps(
   visitor: JavaScriptAstVisitor,
 ): Generator<void, void> {
   const ancestors: t.Node[] = [];
-  const enter = (node: t.Node, parent: t.Node | null): TraversalFrame => {
+  const enter = function* (
+    node: t.Node,
+    parent: t.Node | null,
+  ): Generator<void, TraversalFrame> {
     visitor.enter(node, parent, () => [...ancestors]);
     ancestors.push(node);
-    return { node, parent, children: childNodes(node), nextIndex: 0 };
+    return {
+      node,
+      parent,
+      children: yield* childNodesSteps(node),
+      nextIndex: 0,
+    };
   };
-  const pending = [enter(root, null)];
+  const pending = [yield* enter(root, null)];
   let visited = 1;
   while (pending.length > 0) {
     const current = pending.at(-1);
@@ -122,7 +130,7 @@ export function* traverseJavaScriptAstSteps(
       if (visited % 1024 === 0) yield;
       visited += 1;
       if (visitor.skip?.(child) === true) continue;
-      pending.push(enter(child, current.node));
+      pending.push(yield* enter(child, current.node));
     } else {
       visitor.exit?.(current.node, current.parent);
       ancestors.pop();
@@ -153,9 +161,14 @@ interface TraversalFrame {
  * expansion; bespoke `Object.values` / duplicated `childNodes` walkers must
  * not be reintroduced (they diverge on loc/comment fields and ordering).
  */
-export const childNodes = (node: t.Node): t.Node[] => {
+export const childNodes = (node: t.Node): t.Node[] =>
+  completeSemanticSteps(childNodesSteps(node));
+
+/** expand child arrays in bounded batches using the same canonical key order. */
+export function* childNodesSteps(node: t.Node): Generator<void, t.Node[]> {
   const keys = javaScriptAstChildKeys(node);
   const children: t.Node[] = [];
+  let examined = 0;
   for (const key of keys) {
     const value: unknown = Reflect.get(node, key);
     if (t.isNode(value)) {
@@ -165,10 +178,11 @@ export const childNodes = (node: t.Node): t.Node[] => {
     if (!Array.isArray(value)) continue;
     for (const item of value) {
       if (t.isNode(item)) children.push(item);
+      if (++examined % 1024 === 0) yield;
     }
   }
   return children;
-};
+}
 
 /** Child-bearing fields; shared by traversal and structural AST comparison. */
 export const javaScriptAstChildKeys = (node: t.Node): readonly string[] =>

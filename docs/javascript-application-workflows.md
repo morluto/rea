@@ -378,6 +378,11 @@ The tiers are exact content digest, exact module-source digest, exact node
 identity, source-map identity, structural fingerprint, and a semantic key for
 non-module entities. Lower tiers never override a higher unique match.
 
+Source-map matching uses a unique artifact-relative source path when available.
+For URL-backed declarations, it can instead match the exact source name and
+root within a uniquely identified map path; this does not resolve the URL to a
+local file. Multiple map paths or duplicate candidates remain ambiguous.
+
 Module ordinals, stable minified names, and fuzzy text similarity are not
 persistent identities. Duplicate candidates remain ambiguous. Source-map and
 structural matches are high/medium-confidence inferences rather than exact
@@ -440,7 +445,7 @@ paths with exact identity to one current occurrence are merged. Fresh file
 observations carry their container digest, inventory path, and content digest.
 Their asset, source-module, and export-binding representations form one candidate,
 which retains `current_file_occurrence` and `representation_node_ids`. Equal bytes
-at two inventory paths remain two occurrences even when they share an asset node.
+at two inventory paths remain two occurrences with distinct asset nodes.
 Logical bundle modules and older observations without occurrence facts retain
 their graph identities; matching does not infer common ownership from a label.
 `removed` requires

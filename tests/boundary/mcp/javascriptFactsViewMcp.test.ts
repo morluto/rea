@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it, onTestFinished } from "vitest";
@@ -22,6 +23,8 @@ import {
   createJavaScriptApplicationGraph,
   createJavaScriptApplicationNode,
 } from "../../../src/domain/javascript/javascriptApplicationGraph.js";
+
+const nativeContent = Buffer.from([0, 1, 2, 3]);
 
 const connect = async () => {
   const harness = await createApplicationMcpHarness({
@@ -100,15 +103,15 @@ const expectSelectedSourceCoverage = async (
   );
 };
 
-it("pages selected real filesystem observations with shared identities and portable/retained parity", async () => {
+it("pages distinct source occurrences with shared content and portable/retained parity", async () => {
   const root = await createTestTempDirectory("rea-retained-file-facts-");
   await Promise.all(
     (
       [
         ["a.js", "export const observed = 7;"],
         ["b.js", "export const excluded = true;"],
-        ["first.node", Buffer.from([0, 1, 2, 3])],
-        ["second.node", Buffer.from([0, 1, 2, 3])],
+        ["first.node", nativeContent],
+        ["second.node", nativeContent],
         ["package.json", '{"name":"file-facts","main":"a.js"}'],
       ] as const
     ).map(([path, value]) => writeFile(join(root, path), value)),
@@ -167,7 +170,16 @@ it("pages selected real filesystem observations with shared identities and porta
     source_selection: { requested_paths: ["a.js"] },
   });
   const native = full.page.rows.filter(({ kind }) => kind === "native-addon");
-  expect(new Set(native.map(({ node_id }) => node_id)).size).toBe(1);
+  expect(new Set(native.map(({ node_id }) => node_id)).size).toBe(2);
+  expect(
+    new Set(
+      native.map(({ evidence }) =>
+        evidence.artifact.available ? evidence.artifact.sha256 : null,
+      ),
+    ),
+  ).toEqual(
+    new Set([createHash("sha256").update(nativeContent).digest("hex")]),
+  );
   expect(new Set(native.map(({ observation_id }) => observation_id)).size).toBe(
     native.length,
   );

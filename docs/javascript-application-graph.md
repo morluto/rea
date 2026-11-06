@@ -182,10 +182,10 @@ necessarily changing the node ID.
 
 | Strategy                  | Stability scope                  | Intended use                                                      |
 | ------------------------- | -------------------------------- | ----------------------------------------------------------------- |
-| `content-digest`          | Globally exact bytes             | Artifacts and byte-identical assets                               |
+| `content-digest`          | Globally exact bytes             | Root artifacts and historical byte-identity nodes                 |
 | `source-map-original`     | One source-map commitment        | Recovered original source modules                                 |
 | `canonical-path`          | One artifact version             | ASAR entries and assets at exact normalized paths                 |
-| `artifact-local-key`      | One artifact version             | IPC channels, handlers, exports, and other named entities         |
+| `artifact-local-key`      | One artifact version             | File and nested archive occurrences, IPC channels, named entities |
 | `structural-fingerprint`  | Explicit cross-version inference | Modules whose relationship is hypothesized from bounded structure |
 | `runtime-instance`        | One capture only                 | Targets, frames, runtime scripts, and workers                     |
 | `observation-fingerprint` | One observation scope            | Facts with no stronger justified identity                         |

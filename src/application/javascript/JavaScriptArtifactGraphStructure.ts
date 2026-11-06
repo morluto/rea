@@ -1,5 +1,11 @@
 import type { ArtifactInventorySnapshot } from "../../domain/artifactInventorySnapshot.js";
 import { isJsonModuleTarget } from "../../domain/javascript/javascriptModuleResolutionMode.js";
+import {
+  APPLICATION_FILE_OCCURRENCE,
+  NESTED_CONTAINER_OCCURRENCE,
+  applicationFileOccurrenceKey,
+} from "../../domain/javascript/javascriptApplicationFileIdentity.js";
+import { compositeKey } from "../../domain/unicodeCodePointOrder.js";
 import type { ApplicationNode } from "../../domain/javascript/javascriptApplicationGraphSchemas.js";
 import { htmlInlineScriptLimitation } from "./JavaScriptArtifactAnalysis.js";
 import {
@@ -104,11 +110,11 @@ export const addJavaScriptArtifactContainers = (
   for (const container of context.fileSet.containers) {
     const node = context.accumulator.addNode({
       kind: "artifact",
-      identity: {
-        strategy: "content-digest",
-        stability: "global-exact",
-        sha256: container.sha256,
-      },
+      identity: artifactLocalIdentity(
+        container.sha256,
+        NESTED_CONTAINER_OCCURRENCE,
+        container.path,
+      ),
       observations: [
         {
           label: container.path,
@@ -122,7 +128,10 @@ export const addJavaScriptArtifactContainers = (
         },
       ],
     });
-    context.containerNodes.set(container.sha256, node);
+    context.containerNodes.set(
+      compositeKey([container.sha256, container.path]),
+      node,
+    );
     context.accumulator.addEdge({
       source_node_id: context.root.node_id,
       target_node_id: node.node_id,
@@ -197,7 +206,9 @@ export const addJavaScriptArtifactFiles = (
     if (file.kind === "javascript") context.assetNodes.set(file.path, target);
     const entry = createAsarEntry(context, file);
     const parent =
-      context.containerNodes.get(file.container_sha256) ?? context.root;
+      context.containerNodes.get(
+        applicationContainerIdentity(context.fileSet, file),
+      ) ?? context.root;
     if (entry === undefined)
       addArtifactContainsEdge(context, {
         source: parent,
@@ -415,7 +426,9 @@ const addUnavailableArtifactEntries = (
       ],
     });
     const parent =
-      context.containerNodes.get(file.container_sha256) ?? context.root;
+      context.containerNodes.get(
+        applicationContainerIdentity(context.fileSet, file),
+      ) ?? context.root;
     context.accumulator.addEdge({
       source_node_id: parent.node_id,
       target_node_id: entry.node_id,
@@ -639,11 +652,11 @@ const createFileTarget = (
   const kind = artifactFileNodeKind(file.kind);
   return context.accumulator.addNode({
     kind,
-    identity: {
-      strategy: "content-digest",
-      stability: "global-exact",
-      sha256: file.sha256,
-    },
+    identity: artifactLocalIdentity(
+      file.sha256,
+      APPLICATION_FILE_OCCURRENCE,
+      applicationFileOccurrenceKey(file),
+    ),
     observations: [
       {
         label: file.path,

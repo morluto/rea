@@ -1,4 +1,5 @@
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
+import { applicationNodeContentDigest } from "./javascriptApplicationFileIdentity.js";
 import type { ApplicationNode } from "./javascriptApplicationGraphSchemas.js";
 import {
   featureSeedMatchMode,
@@ -187,8 +188,9 @@ const relevantFields = {
 
 const identityFields = (node: ApplicationNode): CandidateField[] => {
   const identity = node.identity;
-  if (identity.strategy === "content-digest")
-    return [{ basis: "identity", field: "identity", value: identity.sha256 }];
+  const digest = applicationNodeContentDigest(node);
+  if (digest !== null)
+    return [{ basis: "identity", field: "identity", value: digest }];
   if (identity.strategy === "source-map-original")
     return [
       {

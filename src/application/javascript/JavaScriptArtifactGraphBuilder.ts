@@ -182,7 +182,7 @@ function* buildJavaScriptArtifactGraphInputSteps(
     sourceModuleNodes: new Map(),
     chunkNodes: new Map(),
     moduleNodes: new Map(),
-    containerNodes: new Map([[snapshot.manifest.root_sha256, root]]),
+    containerNodes: new Map(),
     applicationRootsBySource: new Map(),
     applicationOwnershipUnknownContainers,
     applicationModuleGapSources,

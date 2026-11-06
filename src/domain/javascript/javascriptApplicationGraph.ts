@@ -8,6 +8,12 @@ import { canonicalJson } from "../comparisonSemantics.js";
 import { digestCanonicalValue } from "../canonicalDigest.js";
 import { uniqueSorted } from "../canonicalOrdering.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
+import { javaScriptFileOccurrenceSchema } from "./javascriptArtifactFiles.js";
+import {
+  APPLICATION_FILE_OCCURRENCE,
+  NESTED_CONTAINER_OCCURRENCE,
+  applicationFileOccurrenceKey,
+} from "./javascriptApplicationFileIdentity.js";
 import {
   freezeJsonSnapshot,
   freezeOwnedJsonSnapshotSteps,
@@ -173,6 +179,9 @@ const sourceMapObservationMatchesIdentity = (
   observation: ApplicationNode["observations"][number],
 ): boolean => {
   const { evidence, source_map_reference: reference } = observation;
+  const occurrence = javaScriptFileOccurrenceSchema.safeParse(
+    observation.properties.map_file_occurrence,
+  );
   const sourceDigests = [
     observation.properties.content_sha256,
     // Older graph producers used `source_sha256` for the same source-map fact.
@@ -199,6 +208,14 @@ const sourceMapObservationMatchesIdentity = (
     evidence.state === "observed" &&
     evidence.artifact.available &&
     evidence.artifact.sha256 === identity.source_map_sha256 &&
+    (identity.map_occurrence === undefined ||
+      (identity.map_occurrence.sha256 === identity.source_map_sha256 &&
+        identity.map_occurrence.path === reference.map_path &&
+        occurrence.success &&
+        occurrence.data.sha256 === identity.map_occurrence.sha256 &&
+        occurrence.data.path === identity.map_occurrence.path &&
+        occurrence.data.container_sha256 ===
+          identity.map_occurrence.container_sha256)) &&
     reference.source_name === identity.original_source &&
     reference.source_root === identity.source_root &&
     evidence.location.available &&
@@ -229,6 +246,34 @@ const observationMatchesIdentity = (
       evidence.location.value.kind === "artifact-path" &&
       evidence.location.value.path === identity.path
     );
+  if (identity.strategy === "artifact-local-key")
+    if (identity.namespace === NESTED_CONTAINER_OCCURRENCE)
+      return (
+        evidence.state === "observed" &&
+        evidence.artifact.available &&
+        evidence.artifact.sha256 === identity.artifact_sha256 &&
+        evidence.location.available &&
+        evidence.location.value.kind === "artifact-path" &&
+        evidence.location.value.path === identity.key &&
+        observation.properties.path === identity.key
+      );
+  if (identity.strategy === "artifact-local-key")
+    if (identity.namespace === APPLICATION_FILE_OCCURRENCE) {
+      const occurrence = javaScriptFileOccurrenceSchema.safeParse(
+        observation.properties.file_occurrence,
+      );
+      return (
+        occurrence.success &&
+        occurrence.data.sha256 === identity.artifact_sha256 &&
+        identity.key === applicationFileOccurrenceKey(occurrence.data) &&
+        evidence.state === "observed" &&
+        evidence.artifact.available &&
+        evidence.artifact.sha256 === identity.artifact_sha256 &&
+        evidence.location.available &&
+        evidence.location.value.kind === "artifact-path" &&
+        evidence.location.value.path === occurrence.data.path
+      );
+    }
   if (identity.strategy === "artifact-local-key")
     return (
       evidence.artifact.available &&

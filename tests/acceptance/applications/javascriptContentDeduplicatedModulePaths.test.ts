@@ -8,7 +8,7 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
 cliTest(
-  "selects each retained path of a content-deduplicated module",
+  "selects each source occurrence of equal-content modules",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-js-module-alias-view-");
     const source = "export const answer = 42;\n";
@@ -41,7 +41,7 @@ cliTest(
       );
     };
 
-    let sharedNodeId: string | undefined;
+    const occurrenceIds = new Set<string>();
     for (const path of ["a.js", "b.js"]) {
       const references = await inspect({
         kind: "javascript",
@@ -58,29 +58,27 @@ cliTest(
         throw new Error("expected JavaScript module references");
       const nodeId = references.rows[0]?.node_id;
       expect(nodeId).toBeDefined();
-      if (sharedNodeId === undefined) sharedNodeId = nodeId;
-      else expect(nodeId).toBe(sharedNodeId);
+      if (nodeId === undefined) throw new Error("expected occurrence node");
+      expect(occurrenceIds.has(nodeId)).toBe(false);
+      occurrenceIds.add(nodeId);
+      const item = await inspect({
+        kind: "item",
+        collection: "modules",
+        selector: { node_id: nodeId },
+      });
+      expect(item).toMatchObject({
+        kind: "item",
+        item: {
+          node_id: nodeId,
+          path,
+          observations: [
+            expect.objectContaining({
+              properties: expect.objectContaining({ path }),
+            }),
+          ],
+        },
+      });
     }
-    const item = await inspect({
-      kind: "item",
-      collection: "modules",
-      selector: { node_id: sharedNodeId },
-    });
-    expect(item).toMatchObject({
-      kind: "item",
-      item: {
-        node_id: sharedNodeId,
-        // Observations are ordered by identity, not by their path spelling.
-        path: expect.stringMatching(/^[ab]\.js$/u),
-        observations: expect.arrayContaining([
-          expect.objectContaining({
-            properties: expect.objectContaining({ path: "a.js" }),
-          }),
-          expect.objectContaining({
-            properties: expect.objectContaining({ path: "b.js" }),
-          }),
-        ]),
-      },
-    });
+    expect(occurrenceIds.size).toBe(2);
   },
 );

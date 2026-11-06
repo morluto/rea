@@ -270,6 +270,10 @@ const visit = (
 };
 
 interface SemanticSourceFacts {
+  readonly loopValue?: {
+    readonly node: t.Node;
+    readonly projection: readonly [null];
+  };
   readonly iterations: readonly SemanticIterationSource[];
   readonly propertyReads: readonly SemanticPropertyReadSource[];
 }
@@ -347,6 +351,7 @@ const semanticSourceFacts = (
   if (cached?.parent === parent) return cached.facts;
   const sources: SemanticIterationSource[] = [];
   const propertyReads: SemanticPropertyReadSource[] = [];
+  let loopValue: SemanticSourceFacts["loopValue"];
   const context = { sources, propertyReads, mutation: node };
   if (t.isVariableDeclarator(node) && node.init != null)
     visit(context, node.id, { node: node.init, projection: [] });
@@ -357,7 +362,8 @@ const semanticSourceFacts = (
     visit(context, node.left, { node: node.right, projection: [] });
   else if (t.isForOfStatement(node)) {
     add(sources, { node: node.right, projection: [] }, node, {});
-    const source = { node: node.right, projection: [null] };
+    const source = { node: node.right, projection: [null] } as const;
+    loopValue = source;
     if (t.isVariableDeclaration(node.left)) {
       for (const declaration of node.left.declarations)
         visit(context, declaration.id, source);
@@ -391,10 +397,21 @@ const semanticSourceFacts = (
       // Retain the owning pattern as an unresolved source, including alongside
       // default-value projections, instead of dropping its property lookups.
       visit(context, parameter, { node: parameter, projection: [] });
-  const facts = { iterations: sources, propertyReads };
+  const facts = {
+    iterations: sources,
+    propertyReads,
+    ...(loopValue === undefined ? {} : { loopValue }),
+  };
   sourceFacts.set(node, { parent, facts });
   return facts;
 };
+
+/** cached value origins for loop-bound aliases, distinct from iterator receivers. */
+export const semanticLoopValueSource = (
+  node: t.Node,
+  parent: t.Node | null,
+): SemanticSourceFacts["loopValue"] =>
+  semanticSourceFacts(node, parent).loopValue;
 
 export const semanticIterationSources = (
   node: t.Node,

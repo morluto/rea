@@ -3,17 +3,16 @@ import { posix } from "node:path";
 
 import { compactStringIdentityKey } from "../../domain/compactStringIdentity.js";
 import type { ApplicationNode } from "../../domain/javascript/javascriptApplicationGraphSchemas.js";
-import {
-  VITE_OUTPUT_DEPENDENCY_PREFIX,
-  type JavaScriptStaticAnalysis,
-} from "../../domain/javascript/javascriptStaticAnalysisTypes.js";
+import type { JavaScriptStaticAnalysis } from "../../domain/javascript/javascriptStaticAnalysisTypes.js";
 import type { JavaScriptArtifactFile } from "../../domain/javascript/javascriptArtifactFiles.js";
 import {
+  addAstContainsEdge,
   addStaticInferenceEdge,
   applicationRootPath,
   applicationContainerIdentity,
   addApplicationRootCandidate,
   artifactLocalIdentity,
+  artifactOccurrenceKey,
   chunkLookupKey,
   createElectronRoleNode,
   javascriptAnalysisCoverage,
@@ -205,14 +204,16 @@ const addReference = (
       input.value.module_runtime,
     ) ?? input.asset;
   const resolved =
+    input.value.kind === "vite-table-candidate" ||
     input.value.specifier === null
       ? null
       : resolveReference(context, input.file.path, input.value, input.coverage);
   if (
-    input.value.operation === "load" &&
-    (input.value.kind === "static-import" ||
-      input.value.kind === "dynamic-import" ||
-      input.value.kind === "require") &&
+    ((input.value.operation === "load" &&
+      (input.value.kind === "static-import" ||
+        input.value.kind === "dynamic-import" ||
+        input.value.kind === "require")) ||
+      input.value.kind === "vite-table-candidate") &&
     (input.value.specifier === null ||
       resolved === null ||
       resolved.targetImportsUnexamined === true)
@@ -222,6 +223,58 @@ const addReference = (
       context.applicationModuleGapSources.get(container) ?? new Set<string>();
     gaps.add(input.file.path);
     context.applicationModuleGapSources.set(container, gaps);
+  }
+  if (input.value.kind === "vite-table-candidate") {
+    const candidateResolution =
+      input.value.specifier === null
+        ? undefined
+        : resolveViteTableCandidate(
+            context,
+            input.file.path,
+            input.value.specifier,
+          );
+    const candidate = context.accumulator.addNode({
+      kind: "unknown",
+      identity: artifactLocalIdentity(
+        input.file.sha256,
+        "vite-table-candidate",
+        artifactOccurrenceKey(input.file, [
+          input.value.specifier ?? input.value.expression,
+          input.value.location,
+        ]),
+      ),
+      observations: [
+        {
+          label: input.value.specifier,
+          properties: {
+            vite_table_candidate: true,
+            specifier: input.value.specifier,
+            expression: input.value.expression,
+            resolution_status: "unavailable",
+            ...artifactPathResolutionProperties(candidateResolution),
+          },
+          evidence: astObservationEvidence({
+            sha256: input.file.sha256,
+            path: input.file.path,
+            range: input.value.location,
+            operation: "observe-vite-table-candidate",
+            coverage: input.coverage,
+            limitations: candidateResolution?.limitations ?? [
+              "The selected Vite table value is not proof of a runtime load or its deployed URL; import-map effects are unknown.",
+            ],
+          }),
+        },
+      ],
+    });
+    addAstContainsEdge(context, {
+      source,
+      target: candidate,
+      file: input.file,
+      range: input.value.location,
+      coverage: input.coverage,
+      properties: { vite_table_candidate: true },
+    });
+    return;
   }
   if (
     resolved !== null &&
@@ -242,7 +295,10 @@ const addReference = (
       identity: artifactLocalIdentity(
         input.file.sha256,
         input.value.kind,
-        input.value.specifier ?? input.value.expression,
+        artifactOccurrenceKey(
+          input.file,
+          input.value.specifier ?? input.value.expression,
+        ),
       ),
       observations: [
         {
@@ -363,7 +419,7 @@ const addEndpoint = (
     identity: artifactLocalIdentity(
       input.file.sha256,
       input.value.kind,
-      JSON.stringify([
+      artifactOccurrenceKey(input.file, [
         input.value.interpretation ?? "literal",
         ...(partial ? ["partial", input.value.location] : []),
         key,
@@ -443,7 +499,10 @@ const addStorage = (
     identity: artifactLocalIdentity(
       input.file.sha256,
       candidate ? `${input.value.kind}:candidate` : input.value.kind,
-      input.value.name ?? input.value.mechanism,
+      artifactOccurrenceKey(
+        input.file,
+        input.value.name ?? input.value.mechanism,
+      ),
     ),
     observations: [
       {
@@ -612,7 +671,7 @@ const addSourceMapEdge = (
         : artifactLocalIdentity(
             input.file.sha256,
             "unresolved-source-map",
-            declaredUrlSha256,
+            artifactOccurrenceKey(input.file, declaredUrlSha256),
           ),
     observations: [
       {
@@ -670,13 +729,9 @@ const resolveReference = (
           posix.join(posix.dirname(sourcePath), reference.resolution_base_path),
         )
       : sourcePath;
-  const viteDependency = specifier.startsWith(VITE_OUTPUT_DEPENDENCY_PREFIX)
-    ? specifier.slice(VITE_OUTPUT_DEPENDENCY_PREFIX.length)
-    : undefined;
-  const chunk =
-    isWorker || viteDependency !== undefined
-      ? null
-      : resolveBundlerChunkReference(context, sourcePath, reference);
+  const chunk = isWorker
+    ? null
+    : resolveBundlerChunkReference(context, sourcePath, reference);
   if (chunk !== null) return chunk;
   const module =
     isWorker || reference.module_runtime === undefined
@@ -696,38 +751,35 @@ const resolveReference = (
         };
   }
   // Worker scripts are URLs relative to the script, not module specifiers.
-  const resolution =
-    viteDependency !== undefined
-      ? resolveViteOutputDependency(context, sourcePath, viteDependency)
-      : isWorker
-        ? resolveArtifactPathByContext({
-            declaredPath: specifier,
-            sourcePath,
-            context: "url-reference",
-            files: context.filesByPath,
-            jsonDocuments: context.analysis.jsonDocuments,
-            directoryPaths: context.directoryPaths,
-            unanalyzedFiles: context.unanalyzedFiles,
-          })
-        : resolveArtifactPathByContext({
-            declaredPath: specifier,
-            sourcePath: resolutionSourcePath,
-            context: "module-specifier",
-            files: context.filesByPath,
-            jsonDocuments: context.analysis.jsonDocuments,
-            directoryPaths: context.directoryPaths,
-            unanalyzedFiles: context.unanalyzedFiles,
-            ...("require" === reference.kind ||
-            "static-import" === reference.kind ||
-            "dynamic-import" === reference.kind
-              ? {
-                  moduleKind: moduleResolutionModeForJavaScriptReference(
-                    resolutionSourcePath,
-                    reference.kind,
-                  ),
-                }
-              : {}),
-          });
+  const resolution = isWorker
+    ? resolveArtifactPathByContext({
+        declaredPath: specifier,
+        sourcePath,
+        context: "url-reference",
+        files: context.filesByPath,
+        jsonDocuments: context.analysis.jsonDocuments,
+        directoryPaths: context.directoryPaths,
+        unanalyzedFiles: context.unanalyzedFiles,
+      })
+    : resolveArtifactPathByContext({
+        declaredPath: specifier,
+        sourcePath: resolutionSourcePath,
+        context: "module-specifier",
+        files: context.filesByPath,
+        jsonDocuments: context.analysis.jsonDocuments,
+        directoryPaths: context.directoryPaths,
+        unanalyzedFiles: context.unanalyzedFiles,
+        ...("require" === reference.kind ||
+        "static-import" === reference.kind ||
+        "dynamic-import" === reference.kind
+          ? {
+              moduleKind: moduleResolutionModeForJavaScriptReference(
+                resolutionSourcePath,
+                reference.kind,
+              ),
+            }
+          : {}),
+      });
   const path = resolution.resolved_path;
   const targetPath = path ?? resolution.candidate_path;
   const targetKind =
@@ -786,12 +838,44 @@ const resolveReference = (
       };
 };
 
+/** A selected table value is not proof of its use or its deployed URL. */
+const resolveViteTableCandidate = (
+  context: JavaScriptArtifactGraphContext,
+  sourcePath: string,
+  specifier: string,
+): ArtifactPathResolution => {
+  const local =
+    specifier.startsWith(".") || specifier.startsWith("/")
+      ? resolveArtifactPathByContext({
+          declaredPath: specifier,
+          sourcePath,
+          context: "url-reference",
+          files: context.filesByPath,
+          jsonDocuments: context.analysis.jsonDocuments,
+          directoryPaths: context.directoryPaths,
+          unanalyzedFiles: context.unanalyzedFiles,
+        })
+      : findViteTableCandidateByAncestor(context, sourcePath, specifier);
+  const candidate = local.resolved_path ?? local.candidate_path;
+  return {
+    declared_path: specifier,
+    resolution_context: "url-reference",
+    resolved_path: null,
+    resolution_status: "unavailable",
+    ...(candidate === undefined ? {} : { candidate_path: candidate }),
+    limitations: [
+      "The selected Vite dependency table value is a candidate; its use, runtime URL base, and applicable import maps are not established.",
+      ...local.limitations,
+    ],
+    unexamined_module_imports: true,
+  };
+};
+
 /**
- * Vite's preload helper prefixes the configured base to a path under the
- * build output directory, which is an ancestor of the importing chunk. Only
- * one ancestor holding the file establishes that directory.
+ * Find possible matching table values in ancestor directories. A unique
+ * match is a candidate only; it does not establish the runtime URL base.
  */
-const resolveViteOutputDependency = (
+const findViteTableCandidateByAncestor = (
   context: JavaScriptArtifactGraphContext,
   sourcePath: string,
   dependency: string,
@@ -830,7 +914,7 @@ const resolveViteOutputDependency = (
       limitations: [
         ...new Set([
           ...candidates.flatMap(({ limitations }) => limitations),
-          `Several ancestors of the importing file may hold this Vite build-output path (${paths.join(", ")}); the build output directory is not established.`,
+          `Several importer ancestors may match this Vite table value (${paths.join(", ")}); the runtime URL base is not established.`,
         ]),
       ],
     };
@@ -840,11 +924,11 @@ const resolveViteOutputDependency = (
     resolved_path: null,
     resolution_status:
       root.resolution_status === "resolved"
-        ? "not-found"
+        ? "unavailable"
         : root.resolution_status,
     limitations: [
       ...root.limitations,
-      "A Vite preload dependency is relative to the build output directory, and no ancestor of the importing file holds it. Select the build output directory, which holds index.html and the assets directory.",
+      "No inventoried ancestor matched this Vite table value; its runtime URL remains unknown.",
     ],
   };
 };
@@ -910,7 +994,10 @@ const unresolvedReferenceNode = (
     identity: artifactLocalIdentity(
       file.sha256,
       "unresolved-reference",
-      `${reference.kind}:${reference.specifier ?? reference.expression}`,
+      artifactOccurrenceKey(file, [
+        reference.kind,
+        reference.specifier ?? reference.expression,
+      ]),
     ),
     observations: [
       {

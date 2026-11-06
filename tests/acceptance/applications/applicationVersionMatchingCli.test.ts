@@ -262,7 +262,7 @@ cliTest(
 );
 
 cliTest(
-  "pairs repeated factory bodies by identity when application versions retain a shared bundle",
+  "pairs repeated factory bodies by source coordinates when versions retain a shared bundle",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-version-matching-");
     const factoryCount = 32;
@@ -329,18 +329,23 @@ cliTest(
     );
     expect(result.matching.ambiguous).toBe(0);
     expect(result.coverage.status).toBe("complete-within-inputs");
-    expect(factoryNodes[0]?.map(({ node_id }) => node_id)).toEqual(
+    expect(factoryNodes[0]?.map(({ node_id }) => node_id)).not.toEqual(
       factoryNodes[1]?.map(({ node_id }) => node_id),
     );
     for (const node of factoryNodes[0] ?? []) {
+      const key = node.observations[0]?.properties.module_key;
+      const paired = factoryNodes[1]?.find(
+        (candidate) => candidate.observations[0]?.properties.module_key === key,
+      );
+      expect(paired).toBeDefined();
       expect(
         result.items.find(({ left_node_id }) => left_node_id === node.node_id),
       ).toMatchObject({
         status: "unchanged",
-        right_node_id: node.node_id,
+        right_node_id: paired?.node_id,
         match: {
           status: "matched",
-          basis: "exact-node-identity",
+          basis: "exact-module-source-digest",
           candidate_left_node_ids: [],
           candidate_right_node_ids: [],
         },

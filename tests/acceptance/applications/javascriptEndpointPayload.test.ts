@@ -122,9 +122,14 @@ cliTest(
         ),
       ).toHaveLength(1);
       expect(repeatedNode.observations).toHaveLength(2);
-      expect(repeatedNode.identity).toMatchObject({
-        key: JSON.stringify(["literal", "/ok"]),
-      });
+      expect(repeatedNode.identity.strategy).toBe("artifact-local-key");
+      if (repeatedNode.identity.strategy !== "artifact-local-key")
+        throw new Error("Expected source-scoped endpoint");
+      expect(JSON.parse(repeatedNode.identity.key)).toEqual([
+        expect.stringMatching(/^[a-f0-9]{64}$/u),
+        "main.js",
+        ["literal", "/ok"],
+      ]);
       expect(
         repeatedNode.observations.every(({ label }) => label === "/ok"),
       ).toBe(true);

@@ -1738,7 +1738,9 @@ for (const extension of ["ts", "tsx", "mts", "cts", "js", "mjs", "cjs"]) {
           observations.some(({ properties }) => properties.path === path),
       );
       expect(asset?.identity).toMatchObject({
-        sha256: createHash("sha256").update(source).digest("hex"),
+        strategy: "artifact-local-key",
+        namespace: "application-file-occurrence",
+        artifact_sha256: createHash("sha256").update(source).digest("hex"),
       });
       expect(asset?.observations[0]?.properties).toMatchObject({
         path,

@@ -37,7 +37,6 @@ const inspect = (source: string) => {
   const context: JavaScriptFindingContext = {
     source,
     accumulator: createJavaScriptAnalysisAccumulator(source.length),
-    vitePreloadDependencyTable: null,
     electronBindings: identity.bindings,
     electronExportIntact: identity.intactExport,
     rpcScan: createJavaScriptRpcScan(

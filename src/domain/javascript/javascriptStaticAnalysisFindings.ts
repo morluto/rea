@@ -5,6 +5,7 @@ import type {
   LocatedJavaScriptFinding,
   LocatedJavaScriptFindingInput,
 } from "./javascriptStaticAnalysisState.js";
+import { completeSemanticSteps } from "./javascriptSemanticTraversal.js";
 
 interface IndexedModuleRange {
   readonly order: number;
@@ -123,18 +124,31 @@ export const addFindingOnce = (
   add();
 };
 
-/** Attach recovered bundle-module ownership to findings after traversal. */
+/** attach recovered bundle-module ownership through the canonical stepped owner. */
 export const finalizeLocatedFindings = <
   Value extends { readonly module_key: string | null },
 >(
   values: readonly LocatedJavaScriptFinding<Value>[],
   modules: JavaScriptModuleRangeIndex,
 ): Value[] =>
-  values.map(({ offset, value }) => {
+  completeSemanticSteps(finalizeLocatedFindingsSteps(values, modules));
+
+/** retain all located facts while yielding between bounded attribution batches. */
+export function* finalizeLocatedFindingsSteps<
+  Value extends { readonly module_key: string | null },
+>(
+  values: readonly LocatedJavaScriptFinding<Value>[],
+  modules: JavaScriptModuleRangeIndex,
+): Generator<void, Value[]> {
+  const finalized: Value[] = [];
+  for (const [index, { offset, value }] of values.entries()) {
     const module = modules.find(offset);
-    return {
+    finalized.push({
       ...value,
       module_key: module?.key ?? null,
       ...(module === undefined ? {} : { module_runtime: module.runtime }),
-    };
-  });
+    });
+    if ((index + 1) % 1024 === 0) yield;
+  }
+  return finalized;
+}

@@ -14,6 +14,52 @@ import { compareJavaScriptApplicationVersions } from "./javascriptApplicationVer
 
 const ARTIFACT_SHA = "a".repeat(64);
 
+const bundledNodes = (
+  container: string,
+  file = "c".repeat(64),
+  path = "bundle.js",
+  unknownChunks = 0,
+) => [
+  ...["1", "2"].map((key) =>
+    fixtureNode(
+      "javascript-module",
+      {
+        strategy: "artifact-local-key",
+        stability: "artifact-version",
+        artifact_sha256: file,
+        namespace: "webpackChunkApp:module",
+        key: JSON.stringify([container, path, key]),
+      },
+      `factory ${key}`,
+      {
+        path,
+        runtime: "webpackChunkApp",
+        module_key: key,
+        source_sha256: "e".repeat(64),
+      },
+      artifactEvidence(file, path),
+    ),
+  ),
+  fixtureNode(
+    "javascript-chunk",
+    {
+      strategy: "artifact-local-key",
+      stability: "artifact-version",
+      artifact_sha256: file,
+      namespace: "bundler-chunk",
+      key: JSON.stringify([container, path, ["webpackChunkApp", ["main"]]]),
+    },
+    "main",
+    {
+      path,
+      runtime: "webpackChunkApp",
+      chunk_keys: ["main"],
+      unknown_chunk_keys: unknownChunks,
+    },
+    artifactEvidence(file, path),
+  ),
+];
+
 const moduleNode = (
   name: string,
   source: string,
@@ -69,6 +115,81 @@ const compare = (
     leftNativeEvidence: [],
     rightNativeEvidence: [],
   });
+
+describe("bundle source occurrence matching", () => {
+  it("pairs repeated bundle members by unchanged file content and parsed coordinates", () => {
+    const left = bundledNodes("a".repeat(64));
+    const right = bundledNodes("b".repeat(64));
+    expect(left.map(({ node_id }) => node_id)).not.toEqual(
+      right.map(({ node_id }) => node_id),
+    );
+    const result = compare(graph(left), graph(right));
+    expect(result.matching.ambiguous).toBe(0);
+    expect(result.items).toHaveLength(3);
+    expect(
+      result.items.every(
+        (item) =>
+          item.status === "unchanged" &&
+          item.match.basis === "exact-module-source-digest",
+      ),
+    ).toBe(true);
+  });
+
+  it.each(["content", "path"] as const)(
+    "keeps repeated factories ambiguous when their file %s changes",
+    (difference) => {
+      const result = compare(
+        graph(bundledNodes("a".repeat(64))),
+        graph(
+          bundledNodes(
+            "b".repeat(64),
+            difference === "content" ? "d".repeat(64) : "c".repeat(64),
+            difference === "path" ? "other.js" : "bundle.js",
+          ),
+        ),
+      );
+      const factories = result.items.filter(
+        ({ node_kind }) => node_kind === "javascript-module",
+      );
+      expect(factories).toHaveLength(4);
+      expect(factories.every(({ match }) => match.status === "ambiguous")).toBe(
+        true,
+      );
+    },
+  );
+
+  it("does not infer a chunk correspondence from incomplete chunk coordinates", () => {
+    const result = compare(
+      graph(bundledNodes("a".repeat(64), "c".repeat(64), "bundle.js", 1)),
+      graph(bundledNodes("b".repeat(64), "c".repeat(64), "bundle.js", 1)),
+    );
+    const chunks = result.items.filter(
+      ({ node_kind }) => node_kind === "javascript-chunk",
+    );
+    expect(chunks).toHaveLength(2);
+    expect(chunks.every(({ match }) => match.status === "unmatched")).toBe(
+      true,
+    );
+  });
+
+  it("does not infer a leftover pair after matching proven bundle coordinates", () => {
+    const leftOnly = moduleNode("left-only", "e");
+    const rightOnly = moduleNode("right-only", "e");
+    const result = compare(
+      graph([...bundledNodes("a".repeat(64)), leftOnly]),
+      graph([...bundledNodes("b".repeat(64)), rightOnly]),
+    );
+    const leftovers = result.items.filter(
+      ({ left_node_id, right_node_id }) =>
+        left_node_id === leftOnly.node_id ||
+        right_node_id === rightOnly.node_id,
+    );
+    expect(leftovers).toHaveLength(2);
+    expect(leftovers.every(({ match }) => match.status === "ambiguous")).toBe(
+      true,
+    );
+  });
+});
 
 describe("application version matching", () => {
   it.each([

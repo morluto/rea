@@ -35,7 +35,7 @@ import {
   type JavaScriptSemanticEffectTiming,
 } from "./javascriptSemanticState.js";
 
-interface StatementPosition {
+export interface StatementPosition {
   readonly body: readonly t.Statement[];
   readonly index: number;
   readonly declaratorIndex: number;
@@ -1959,6 +1959,50 @@ export const semanticEscapeFollowsCapture = (
   );
 };
 
+/** Prove a straight-line property write precedes a read in the same activation. */
+export const semanticWritePrecedesRead = (
+  write: t.Node,
+  read: t.Node,
+  parents: WeakMap<t.Node, t.Node>,
+): boolean => {
+  const left = directMutationPosition(write, parents);
+  const right = bindingReadPosition(read, parents);
+  return (
+    right.repeatingLoop === undefined &&
+    left !== null &&
+    right.position !== null &&
+    positionPrecedes(left, right.position)
+  );
+};
+
+/** Retain earlier property captures only within a proven single activation. */
+export const semanticReadPrecedesWrite = (
+  read: t.Node,
+  write: t.Node,
+  parents: WeakMap<t.Node, t.Node>,
+): boolean => {
+  const left = bindingReadPosition(read, parents);
+  const right = directMutationPosition(write, parents);
+  return (
+    left.repeatingLoop === undefined &&
+    left.position !== null &&
+    right !== null &&
+    positionPrecedes(left.position, right)
+  );
+};
+
+/** Shared ordering coordinates for indexing multiple effect queries. */
+export const semanticEffectStatementPosition = directMutationPosition;
+export const semanticStatementPositionPrecedes = positionPrecedes;
+
+/** A repeating or unpositioned read cannot exclude any later effect. */
+export const semanticReadStatementPosition = (
+  read: t.Node,
+  parents: WeakMap<t.Node, t.Node>,
+): StatementPosition | null => {
+  const result = bindingReadPosition(read, parents);
+  return result.repeatingLoop === undefined ? result.position : null;
+};
 /** Explicit wrapper facts and program `var` redeclarations retain their lexical identity. */
 export const commonJsWrapperBindingDeclaration = (
   node: t.Node,

@@ -394,6 +394,12 @@ export const fileOccurrenceIdentity = (file: JavaScriptArtifactFile) => ({
   sha256: file.sha256,
 });
 
+/** Key a derived fact to its source occurrence, independently of equal bytes. */
+export const artifactOccurrenceKey = (
+  file: JavaScriptArtifactFile,
+  value: unknown,
+): string => JSON.stringify([file.container_sha256, file.path, value]);
+
 /** Stable identity for a fact scoped to one exact artifact. */
 export const artifactLocalIdentity = (
   sha256: string,
@@ -433,8 +439,9 @@ export const createElectronRoleNode = (
   // Raw application-relative declarations keep their source occurrence even
   // when identical source bytes appear under separate application prefixes.
   const identityPath =
+    input.resolution.resolved_path === null ||
     input.resolution.runtime_path_base === "application-root"
-      ? compositeKey([input.anchor.path, target])
+      ? artifactOccurrenceKey(input.anchor, target)
       : target;
   return context.accumulator.addNode({
     kind: input.kind,

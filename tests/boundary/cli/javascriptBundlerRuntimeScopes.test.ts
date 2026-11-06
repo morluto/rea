@@ -23,6 +23,20 @@ const runtimeSource = (
   globalThis.${runtime}.push([["lazy"], {9: () => {}}]);
 `;
 
+const occurrenceKey = (
+  graph: {
+    nodes: readonly {
+      kind: string;
+      identity: { strategy: string; sha256?: string };
+    }[];
+  },
+  key: string,
+): string => {
+  const root = graph.nodes.find((node) => node.kind === "artifact");
+  expect(root?.identity.strategy).toBe("content-digest");
+  return JSON.stringify([root?.identity.sha256, "bundle.js", key]);
+};
+
 const appA = runtimeSource("webpackChunkAppA", "a");
 const appB = runtimeSource("webpackChunkAppB", "b");
 
@@ -71,7 +85,7 @@ cliTest(
       );
       expect(nodes.get(entry?.target_node_id ?? "")?.identity).toMatchObject({
         namespace: `${runtime}:module`,
-        key: module,
+        key: occurrenceKey(graph, module),
       });
       const call = graph.edges.find(
         (edge) =>
@@ -145,7 +159,7 @@ for (const scenario of [
           (node) =>
             node.identity.strategy === "artifact-local-key" &&
             node.identity.namespace === `${runtime}:module` &&
-            node.identity.key === key,
+            node.identity.key === occurrenceKey(graph, key),
         );
         expect(module).toBeDefined();
         const entry = graph.edges.find(
@@ -190,7 +204,7 @@ for (const scenario of [
           nodes.get(dependency?.target_node_id ?? "")?.identity,
         ).toMatchObject({
           namespace: `${runtime}:module`,
-          key: String(Number(key) + 1),
+          key: occurrenceKey(graph, String(Number(key) + 1)),
         });
         const lazy = ownedEdges.find(
           (edge) => edge.properties.specifier === "chunk:lazy",
@@ -225,7 +239,7 @@ cliTest(
         (node) =>
           node.identity.strategy === "artifact-local-key" &&
           node.identity.namespace === "webpackChunkApp:module" &&
-          node.identity.key === key,
+          node.identity.key === occurrenceKey(graph, key),
       );
     expect(
       graph.edges.find(

@@ -8,6 +8,7 @@ import type {
 import type { JavaScriptArtifactFile } from "../../domain/javascript/javascriptArtifactFiles.js";
 import {
   artifactLocalIdentity,
+  artifactOccurrenceKey,
   createElectronRoleNode,
   javascriptAnalysisCoverage,
   linkElectronRoleToAsset,
@@ -86,7 +87,7 @@ const addBrowserWindow = (
     identity: artifactLocalIdentity(
       file.sha256,
       "electron-browser-window",
-      javascriptSourceRangeKey(value.location),
+      artifactOccurrenceKey(file, javascriptSourceRangeKey(value.location)),
     ),
     observations: [
       {
@@ -203,7 +204,11 @@ const addContextBridge = (
     identity: artifactLocalIdentity(
       file.sha256,
       "electron-context-bridge",
-      `${value.world}:${value.api_key ?? value.api_key_expression ?? "[missing]"}:${javascriptSourceRangeKey(value.location)}`,
+      artifactOccurrenceKey(file, [
+        value.world,
+        value.api_key ?? value.api_key_expression ?? "[missing]",
+        javascriptSourceRangeKey(value.location),
+      ]),
     ),
     observations: [
       {
@@ -273,7 +278,10 @@ const addUtilityProcess = (
     identity: artifactLocalIdentity(
       file.sha256,
       "electron-utility-process",
-      `${value.module_path ?? value.module_expression}:${javascriptSourceRangeKey(value.location)}`,
+      artifactOccurrenceKey(file, [
+        value.module_path ?? value.module_expression,
+        javascriptSourceRangeKey(value.location),
+      ]),
     ),
     observations: [
       {
