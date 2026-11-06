@@ -739,6 +739,10 @@ refer to the pointer table when present rather than necessarily contiguous
 definition rows. Invalid or nonmonotonic list coordinates and malformed or
 ambiguous pointers leave affected owners unknown with partial coverage while
 preserving readable member and attribute facts.
+For each list column, ordering checks compare consecutive valid coordinates
+even across invalid rows. A provable decrease leaves the affected ownership
+unknown. Retained declaring-type filters count these candidates in
+`unresolved_filter_rows`; omit that filter to retrieve their known-name rows.
 The retained inverse indexes are admitted against the existing representation
 budget before allocation.
 
