@@ -1,6 +1,8 @@
 import type { JsonValue } from "../jsonValue.js";
 import { isTimestamp, type DesktopTaskCheckInput } from "./appTask.js";
 import { elementText, isXmlElement } from "./appTaskChecks.js";
+import { valueEqualsCheck } from "./appTaskDraftScalars.js";
+import { rankAttributes } from "./attributeRank.js";
 import type { DesktopStateDifference } from "./stateChanges.js";
 import { resolvePointer } from "./viewPointer.js";
 
@@ -25,6 +27,8 @@ export interface TextPlacement {
 /** Text checks for the elements whose text changed, and the pointers those checks make redundant: text and whole runs in them, or an element added whole checked itself, not an attribute or name of an element both ends hold. */
 export interface WholeTextSuggestions {
   readonly suggestions: readonly DesktopTaskCheckInput[];
+  /** Elements whose text changed that no check took, because every place for one held more text than the limit. */
+  readonly long: readonly string[];
   readonly covers: (pointer: string) => boolean;
 }
 
@@ -117,7 +121,14 @@ const byOwnAttribute = (element: string, ends: Ends): Candidate | undefined => {
   const keys = Object.keys(attributes);
   for (const key of [
     ...keys.filter(isIdentifier),
-    ...keys.filter((key) => !isIdentifier(key)),
+    ...rankAttributes(
+      keys
+        .filter((key) => !isIdentifier(key))
+        .map((key) => {
+          const value = attributes[key];
+          return { key, value: typeof value === "string" ? value : "" };
+        }),
+    ).map(({ key }) => key),
   ]) {
     const value = attributes[key];
     if (
@@ -139,6 +150,9 @@ const byOwnAttribute = (element: string, ends: Ends): Candidate | undefined => {
   return undefined;
 };
 
+/** How far a text check climbs from an element no attribute names to an ancestor its tag names. */
+const MAX_TAG_CLIMB = 3;
+
 /**
  * Where a text check goes for an element whose text changed, best first, so
  * the check names the paragraph, which a later save keeps, rather than a run
@@ -148,7 +162,10 @@ const byOwnAttribute = (element: string, ends: Ends): Candidate | undefined => {
  * attribute, as AbiWord's `p` by its `xid`, where one is below the document's
  * root. An element passed on the way that an identifier of its own names, the
  * outermost first, goes ahead of that ancestor unless an identifier names the
- * ancestor too; one that only another attribute names goes after it.
+ * ancestor too; one that only another attribute names goes after it. Where no
+ * attribute names an ancestor, as MuseScore's `<Text>` in a `<VBox>`, the
+ * element itself and then up to three ancestors, nearest first; `name` keeps
+ * only one its tag names, with no step by position.
  */
 const outsideRuns = (pointer: string, ends: Ends): readonly Candidate[] => {
   let current = pointer;
@@ -164,7 +181,9 @@ const outsideRuns = (pointer: string, ends: Ends): readonly Candidate[] => {
   while (!namedByAttribute(named)) {
     const parent = parentBelowRoot(named);
     if (parent === undefined)
-      return [{ element: current, pointer: current, identifier: false }];
+      return [current, ...[...passed.slice(1), named].slice(0, MAX_TAG_CLIMB)]
+        .filter((element, index, all) => all.indexOf(element) === index)
+        .map((element) => ({ element, pointer: element, identifier: false }));
     passed.push(named);
     named = parent;
   }
@@ -209,27 +228,79 @@ interface TextContext {
 }
 
 /**
+ * The check of an element's whole text: a decimal held as the element's one
+ * text node, as a spreadsheet keeps a cell's number, by its value within a
+ * tolerance, so another spelling of the number still passes; any other text
+ * whole.
+ */
+const wholeTextCheck = (
+  file: string,
+  pointer: string,
+  now: { readonly value: string; readonly children: readonly JsonValue[] },
+  before: string | undefined,
+): DesktopTaskCheckInput => {
+  const { value, children } = now;
+  const [only] = children;
+  if (children.length === 1 && typeof only === "string") {
+    const check = valueEqualsCheck(file, `${pointer}/children/0`, only, before);
+    if ("tolerance" in check) return check;
+  }
+  return { kind: "text_equals", file, pointer, value };
+};
+
+/** The element a candidate names in the final view, whole, at the pointer `name` gives it. */
+const candidateAt = (
+  { ends, place }: TextContext,
+  { pointer: named }: Candidate,
+) => {
+  const pointer = place.name(named);
+  const now =
+    pointer === undefined ? undefined : resolvePointer(ends.final, pointer);
+  return pointer === undefined || !isXmlElement(now)
+    ? undefined
+    : { pointer, now };
+};
+
+/**
  * The text check a candidate takes: an element the final view holds whole at
  * the pointer `name` gives it, its text at most the limit and no timestamp,
  * and changed from the baseline's or, for an element `added` whole, absent
  * there.
  */
 const textCheck = (
-  { file, ends, place }: TextContext,
-  { element, pointer: named }: Candidate,
+  context: TextContext,
+  candidate: Candidate,
   added: boolean,
 ): Placed | undefined => {
-  const pointer = place.name(named);
-  if (pointer === undefined) return undefined;
-  const now = resolvePointer(ends.final, pointer);
-  const before = resolvePointer(ends.baseline, pointer);
-  if (!isXmlElement(now) || (!added && !isXmlElement(before))) return undefined;
+  const found = candidateAt(context, candidate);
+  if (found === undefined) return undefined;
+  const { pointer, now } = found;
+  const before = resolvePointer(context.ends.baseline, pointer);
+  if (!added && !isXmlElement(before)) return undefined;
   const value = elementText(now);
-  return value !== (isXmlElement(before) ? elementText(before) : undefined) &&
-    value.length <= place.limit.chars &&
+  const old = isXmlElement(before) ? elementText(before) : undefined;
+  return value !== old &&
+    value.length <= context.place.limit.chars &&
     !isTimestamp(value)
-    ? { element, check: { kind: "text_equals", file, pointer, value } }
+    ? {
+        element: candidate.element,
+        check: wholeTextCheck(
+          context.file,
+          pointer,
+          { value, children: now.children },
+          old,
+        ),
+      }
     : undefined;
+};
+
+/** Whether a candidate's element holds text past the limit a text check compares. */
+const tooLong = (context: TextContext, candidate: Candidate) => {
+  const found = candidateAt(context, candidate);
+  return (
+    found !== undefined &&
+    elementText(found.now).length > context.place.limit.chars
+  );
 };
 
 /**
@@ -255,7 +326,13 @@ export const wholeTextSuggestions = (
     const value = resolvePointer(view, pointer);
     const parent = parentOf(pointer);
     if (typeof value === "string") {
-      if (parent !== undefined && !isWhitespace(value) && place.inTree(parent))
+      // A time the app stamps never makes its ancestor's whole text a check.
+      if (
+        parent !== undefined &&
+        !isWhitespace(value) &&
+        !isTimestamp(value) &&
+        place.inTree(parent)
+      )
         holders.add(parent);
     } else if (
       isXmlElement(value) &&
@@ -282,11 +359,19 @@ export const wholeTextSuggestions = (
     return checks.get(candidate.element);
   };
   const climbs = new Map<string, Placed | undefined>();
+  /** Elements whose text changed and that no check took because every place for it held too much text. */
+  const long = new Set<string>();
   const climb = (holder: string) => {
     if (!climbs.has(holder)) {
-      const found = outsideRuns(holder, ends).find(
+      const candidates = outsideRuns(holder, ends);
+      const found = candidates.find(
         (candidate) => check(candidate) !== undefined,
       );
+      if (
+        found === undefined &&
+        candidates.some((candidate) => tooLong(context, candidate))
+      )
+        long.add(holder);
       climbs.set(holder, found === undefined ? undefined : check(found));
     }
     return climbs.get(holder);
@@ -313,6 +398,7 @@ export const wholeTextSuggestions = (
     .slice(0, place.limit.suggestions);
   return {
     suggestions: suggested.map(({ check }) => check),
+    long: [...long],
     covers: (pointer) => {
       if (
         !suggested.some(

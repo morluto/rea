@@ -192,6 +192,17 @@ export const CHECK_VIEWS: Readonly<Record<string, TaskFileView>> = {
       truncated: false,
     },
   },
+  "Documents/budget.xml": {
+    format: "xml",
+    view: {
+      root: element("Cells", {}, [
+        element("Cell", { Row: "2", Col: "3" }, ["437.80000000000001"]),
+        element("Cell", { Row: "2", Col: "2" }, ["398.2"]),
+        element("Cell", { Row: "3", Col: "3" }, ["174.9"]),
+      ]),
+      truncated: false,
+    },
+  },
   "Documents/photo.png": { format: "binary", view: null },
   "Documents/huge.txt": {
     format: null,
@@ -508,6 +519,37 @@ const TOLERANCE_CASES: readonly (readonly [DesktopTaskCheckInput, boolean])[] =
         pointer: "/missing",
         value: 1,
         tolerance: 0,
+      },
+      false,
+    ],
+    // A cell's text by two attributes together, in either order, as drafts name cells.
+    [
+      {
+        kind: "value_equals",
+        file: "Documents/budget.xml",
+        pointer: "/root/children/[name=Cell][@Col=3][@Row=2]/children/0",
+        value: 437.8,
+        tolerance: 0.001,
+      },
+      true,
+    ],
+    [
+      {
+        kind: "value_equals",
+        file: "Documents/budget.xml",
+        pointer: "/root/children/[name=Cell][@Row=2][@Col=3]/children/0",
+        value: 437.9,
+        tolerance: 0.001,
+      },
+      false,
+    ],
+    [
+      {
+        kind: "value_equals",
+        file: "Documents/budget.xml",
+        pointer: "/root/children/[name=Cell][@Col=3]/children/0",
+        value: 437.8,
+        tolerance: 0.001,
       },
       false,
     ],

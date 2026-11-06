@@ -308,9 +308,17 @@ Run `rea describe-desktop-application-task CAPTURE --format json`. Read:
   and last version, with its `role`, the `baseline` and `final` versions and
   the net `change`. Text changes list each added and removed line once, and
   `line_counts` gives lines found at both ends whose count changed.
+- `values` in each of those files: what the change added, changed and
+  removed, `before` and `after`, at the pointer a check names it by, with
+  `refers_to` naming the element a key such as `category="44"` stands for.
+  Skip entries noted `by_position` or as noise.
 - `task`: a draft whose `checks` are suggestions from the net change of the
   documents the user worked on, or of the app's own state when no document
   changed.
+- `guards`: optional checks that like siblings kept their seed values; add
+  one or two to show the rest is untouched.
+- `notes`: why `files` is empty, or why a file's suggestions are thin, such
+  as `by_position` when no attribute names the changed element.
 
 ### Write the prompt
 

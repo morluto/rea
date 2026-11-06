@@ -1,23 +1,70 @@
-import { changedStateFiles } from "./appTaskDraft.js";
+import { z } from "zod";
+
+import { changedStateFiles, type TaskDraftFile } from "./appTaskDraft.js";
+import { FILE_NOTE_CODES, type FileNote } from "./appTaskDraftFileNotes.js";
 import { STATE_PATH_INPUTS } from "./buildCapture.js";
 import type { DesktopStatePath, StateEnds } from "./desktopState.js";
 
 /** Why a task draft holds no files, one code per reason; a new reason adds its code. */
-export const DRAFT_NOTE_CODES = [
+const EMPTY_DRAFT_CODES = [
   "no_change",
   "unowned_changes",
   "no_document",
 ] as const;
 
+/** Why a draft is empty, or a file in it has few or no suggested checks: one code per reason. */
+export const DRAFT_NOTE_CODES = [
+  ...EMPTY_DRAFT_CODES,
+  ...FILE_NOTE_CODES,
+] as const;
+
+/** A draft's note as the draft writes it. */
+export const draftNoteSchema = z.strictObject({
+  code: z.enum(DRAFT_NOTE_CODES),
+  message: z.string(),
+  file: z
+    .string()
+    .optional()
+    .describe(
+      "by_position, view_state_only, long_text, cut_view, unreadable_view: the drafted file the note is about.",
+    ),
+  files: z
+    .array(z.strictObject({ file: z.string(), role: z.string() }))
+    .optional()
+    .describe(
+      "unowned_changes: changed home paths outside the owned paths, up to 5.",
+    ),
+  more: z
+    .int()
+    .nonnegative()
+    .optional()
+    .describe("unowned_changes: how many more changed."),
+  elements: z
+    .array(z.string())
+    .optional()
+    .describe(
+      "by_position: tags of the elements no attribute names alone, up to 5.",
+    ),
+  pointers: z
+    .array(z.string())
+    .optional()
+    .describe(
+      "long_text: the elements whose text is too long to check whole; view_state_only: the noise checks kept. Up to 5.",
+    ),
+});
+
 /** One reason a task draft holds no files, with the facts it rests on. */
-export interface DraftNote {
-  readonly code: (typeof DRAFT_NOTE_CODES)[number];
+export interface EmptyDraftNote {
+  readonly code: (typeof EMPTY_DRAFT_CODES)[number];
   readonly message: string;
   /** `unowned_changes`: the changed home paths outside the owned paths, with their roles, up to five. */
   readonly files?: readonly { readonly file: string; readonly role: string }[];
   /** `unowned_changes`: how many more changed. */
   readonly more?: number;
 }
+
+/** Why a draft is empty, or why one of its files has thin suggestions. */
+export type DraftNote = EmptyDraftNote | FileNote;
 
 const MAX_NOTED_FILES = 5;
 /** Files a user may have made first, desktop services' last. */
@@ -32,21 +79,22 @@ const homeList = (paths: readonly string[]) =>
   paths.map((path) => `~/${path}`).join(", ");
 
 /**
- * Why a draft of `drafted` files has none: no file changed between the seed
- * and end checkpoints, or those that changed lie outside the owned paths;
- * and, either way, when no file has the document role. Empty for a draft
- * with files.
+ * Why a draft of `drafted` files is thin: for a draft with files, each file's
+ * own notes; for one with none, that no file changed between the seed and end
+ * checkpoints, or that those that changed lie outside the owned paths; and,
+ * either way, when no file has the document role.
  */
 export const draftNotes = (
   files: ReadonlyMap<string, DesktopStatePath>,
   facts: {
-    readonly drafted: number;
+    readonly drafted: readonly Pick<TaskDraftFile, "notes">[];
     readonly owned: readonly string[];
     readonly ends: StateEnds;
     readonly checkpoints: readonly string[];
   },
 ): readonly DraftNote[] => {
-  if (facts.drafted > 0) return [];
+  if (facts.drafted.length > 0)
+    return facts.drafted.flatMap(({ notes }) => notes);
   const seed = facts.checkpoints[facts.ends.seed] ?? "the seed";
   const end = facts.checkpoints[facts.ends.end] ?? "the end";
   const changed = changedStateFiles(files, facts.ends)
@@ -56,7 +104,7 @@ export const draftNotes = (
         ROLE_ORDER[left.role] - ROLE_ORDER[right.role] ||
         (left.file < right.file ? -1 : 1),
     );
-  const notes: DraftNote[] = [];
+  const notes: EmptyDraftNote[] = [];
   if (changed.length === 0)
     notes.push({
       code: "no_change",

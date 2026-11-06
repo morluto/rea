@@ -71,15 +71,22 @@ See [desktop builds](https://github.com/morluto/rea/blob/main/.agents/skills/rev
    result lists the checkpoints with their counts, the package and the
    sources the capture found, its limitations and the draft: each file under
    the paths the export owns that changed between `seed` and `end`, with its
-   net change, and suggested checks with a placeholder prompt. A draft with
-   no files says why in `notes`, each with a `code` and a `message`:
-   `no_change` when no file under the home changed between them;
+   net change and its `values`, the values the change added, changed and
+   removed with what each was and became, at the pointer a check names it by;
+   suggested checks with a placeholder prompt; and `guards`, optional checks
+   that like siblings kept their seed values. The draft's
+   [task section](desktop-application-tasks.md#describe-the-change) describes
+   each. `notes`, each with a `code` and a `message`, say why a draft has no
+   files: `no_change` when no file under the home changed between them;
    `unowned_changes` when files changed but none under the owned paths,
    listing up to five in `files` with their roles, desktop files last, and
    counting the rest in `more`; and `no_document` when no file has the
-   document role. The last two point at `state_paths`.
+   document role. The last two point at `state_paths`. They also say, for
+   a drafted `file`, why its suggestions are thin: `by_position`,
+   `view_state_only`, `long_text`, `cut_view` or `unreadable_view`.
 6. Write the task: its name, the prompt in the user's own words, and checks
-   that hold after the change and not on the seed.
+   that hold after the change and not on the seed, from the suggestions,
+   `values` and any `guards` worth keeping.
 7. `export_build_environment` with the task and a new or empty `directory`.
    The export runs inside the computer with `--seed-checkpoint seed
    --end-checkpoint end`, so it seeds what was saved at `seed`, scrubs the

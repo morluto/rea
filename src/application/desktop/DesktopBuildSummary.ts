@@ -6,7 +6,8 @@ import {
   SEED_CHECKPOINT,
 } from "../../domain/desktop/buildCapture.js";
 import { installsFromPackageFile } from "../../domain/desktop/appExportInstall.js";
-import { DRAFT_NOTE_CODES } from "../../domain/desktop/appTaskDraftNotes.js";
+import { draftNoteSchema } from "../../domain/desktop/appTaskDraftNotes.js";
+import { draftValueSchema } from "../../domain/desktop/appTaskDraftValues.js";
 import { desktopApplicationCaptureSchema } from "../../domain/desktop/desktopCapture.js";
 import {
   jsonObjectSchema,
@@ -30,6 +31,8 @@ const draftResultSchema = z.looseObject({
       file: z.string(),
       role: z.string(),
       change: jsonValueSchema,
+      values: z.array(draftValueSchema).default([]),
+      values_cut: z.boolean().default(false),
     }),
   ),
   task: z.looseObject({
@@ -37,18 +40,79 @@ const draftResultSchema = z.looseObject({
     prompt: z.string(),
     checks: z.array(jsonObjectSchema),
   }),
-  notes: z
-    .array(
-      z.looseObject({
-        code: z.enum(DRAFT_NOTE_CODES),
-        message: z.string(),
-        files: z
-          .array(z.looseObject({ file: z.string(), role: z.string() }))
-          .optional(),
-        more: z.int().nonnegative().optional(),
+  guards: z.array(jsonObjectSchema).default([]),
+  notes: z.array(draftNoteSchema).default([]),
+});
+
+/** A drafted file's value as the stop returns it. */
+type DraftValue = {
+  readonly pointer: string;
+  readonly kind: string;
+  readonly before: JsonValue;
+  readonly after: JsonValue;
+  readonly note?: string;
+  readonly refers_to?: {
+    readonly attribute?: string;
+    readonly value: string;
+    readonly element: string;
+  }[];
+};
+
+/** A draft's note as the stop returns it. */
+type DraftNote = {
+  readonly code: string;
+  readonly message: string;
+  readonly file?: string;
+  readonly files?: { readonly file: string; readonly role: string }[];
+  readonly more?: number;
+  readonly elements?: string[];
+  readonly pointers?: string[];
+};
+
+/** A value without the optional fields the draft left out. */
+const draftValue = ({
+  pointer,
+  kind,
+  before,
+  after,
+  note,
+  refers_to,
+}: z.infer<typeof draftValueSchema>): DraftValue => ({
+  pointer,
+  kind,
+  before,
+  after,
+  ...(note === undefined ? {} : { note }),
+  ...(refers_to === undefined
+    ? {}
+    : {
+        refers_to: refers_to.map(({ attribute, value, element }) => ({
+          ...(attribute === undefined ? {} : { attribute }),
+          value,
+          element,
+        })),
       }),
-    )
-    .default([]),
+});
+
+/** A note without the optional fields the draft left out. */
+const draftNote = ({
+  code,
+  message,
+  file,
+  files,
+  more,
+  elements,
+  pointers,
+}: z.infer<typeof draftNoteSchema>): DraftNote => ({
+  code,
+  message,
+  ...(file === undefined ? {} : { file }),
+  ...(files === undefined
+    ? {}
+    : { files: files.map(({ file: home, role }) => ({ file: home, role })) }),
+  ...(more === undefined ? {} : { more }),
+  ...(elements === undefined ? {} : { elements }),
+  ...(pointers === undefined ? {} : { pointers }),
 });
 
 /** A stopped capture: its checkpoints, what it found of the app and the draft between seed and end. */
@@ -74,19 +138,19 @@ export type StoppedCapture = {
       readonly file: string;
       readonly role: string;
       readonly change: JsonValue;
+      /** The values the change added, changed and removed, at the pointers a check names them by. */
+      readonly values: DraftValue[];
+      readonly values_cut: boolean;
     }[];
     readonly task: {
       readonly name: string;
       readonly prompt: string;
       readonly checks: Readonly<Record<string, JsonValue>>[];
     };
-    /** Why the draft has no files; empty when it has some. */
-    readonly notes: {
-      readonly code: string;
-      readonly message: string;
-      readonly files?: { readonly file: string; readonly role: string }[];
-      readonly more?: number;
-    }[];
+    /** Checks that like siblings stay as they were, outside the task until an author adds them. */
+    readonly guards: Readonly<Record<string, JsonValue>>[];
+    /** Why the draft has no files, or why a file's suggestions are thin. */
+    readonly notes: DraftNote[];
   } | null;
   readonly draft_refusal?: string;
 };
@@ -125,24 +189,20 @@ const draftTask = async (
     draft: {
       seed_checkpoint: SEED_CHECKPOINT,
       end_checkpoint: END_CHECKPOINT,
-      files: draft.files.map(({ file, role, change }) => ({
+      files: draft.files.map(({ file, role, change, values, values_cut }) => ({
         file,
         role,
         change,
+        values: values.map(draftValue),
+        values_cut,
       })),
       task: {
         name: draft.task.name,
         prompt: draft.task.prompt,
         checks: draft.task.checks,
       },
-      notes: draft.notes.map(({ code, message, files, more }) => ({
-        code,
-        message,
-        ...(files === undefined
-          ? {}
-          : { files: files.map(({ file, role }) => ({ file, role })) }),
-        ...(more === undefined ? {} : { more }),
-      })),
+      guards: draft.guards,
+      notes: draft.notes.map(draftNote),
     },
   };
 };

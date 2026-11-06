@@ -184,11 +184,12 @@ the first source that has the app:
 5. Make the change the task asks for, as a user would, and save it.
 6. Only once the change is saved, `mark_build_checkpoint` with name `end`.
 7. `stop_build_capture`. Read `draft.files` (each file that changed, with
-   its net change), `draft.task.checks` (suggested checks) and
-   `limitations`. When `draft` is null, read `draft_refusal` first: a
-   missing `seed` or `end` checkpoint means capturing again on a new build
-   computer, while a failed draft command names its own cause to fix.
-   When `draft.files` is empty, `draft.notes` says why:
+   its net change and its `values`), `draft.task.checks` (suggested
+   checks), `draft.guards`, `draft.notes` and `limitations`. When `draft`
+   is null, read `draft_refusal` first: a missing `seed` or `end`
+   checkpoint means capturing again on a new build computer, while a failed
+   draft command names its own cause to fix. When `draft.files` is empty,
+   `draft.notes` says why:
    - `no_change`: nothing was saved between `seed` and `end`. Capture again
      on a new build computer, and save before marking `end`.
    - `unowned_changes` with `no_document`: the app saved your document
@@ -196,6 +197,18 @@ the first source that has the app:
      with their roles; the document is among them. Close the computer and
      capture again on a new one with that path in `state_paths`; the export
      refuses a check on a file outside the owned paths.
+
+   A note with a `file` says why that file's suggestions are thin:
+   - `by_position`: only position names what changed; its `elements` lack
+     a naming attribute. Check an ancestor's text, or give the element a
+     name in the app, such as an id, and capture again.
+   - `view_state_only`: every change is view state, a renumbered id or a
+     time the app stamps, and its `pointers` are the checks kept. The edit
+     was likely not saved: capture again and save it before `end`.
+   - `long_text`: the element's text is too long to check whole; check a
+     phrase in it with `text_contains`.
+   - `cut_view` or `unreadable_view`: REA's view holds only part of the
+     file, or none a check can read, such as a compressed format (below).
 
 ## Write the task
 
@@ -211,15 +224,25 @@ Write `{"name", "prompt", "checks"}` from the draft and what you did.
   a file exists or changed. Start from the suggestions; keep those that say
   what the user did and drop what follows from how the app saves.
 - Compare exact values, so a typo or a wrong number fails.
+- Read each file's `values` before writing checks: every value the change
+  added, changed and removed, with `before` and `after` (a scalar, or an
+  element as compact XML, cut at 600 characters) at the pointer a check
+  names it by, so copy the pointer and the `after` value into a check.
+  `refers_to` says what a number stands for, such as `category="44"`
+  naming `<cat key="44" name="Groceries"/>`; use it for the prompt's words.
+  Skip entries whose `note` is `by_position` (no check can use that
+  pointer) or noise (`view_state`, `renumbered`, `volatile`,
+  `timestamp`). `values_cut` means a limit left some out.
 - Select elements by what they hold, never by position: SVG text by id,
   `/root/children/[name=g][@inkscape:label=Layer 1]/children/[name=text][@id=headline]/children/[name=tspan]/children/0`,
   or an ODF paragraph by style,
   `/entries/[name=content.xml]/view/root/children/[name=office:body]/children/[name=office:text]/children/[name=text:p][@text:style-name=Title]/children/0`.
   A selector must match exactly one element, so give the target a unique id
-  or style in the seed. The draft may suggest positional pointers, or
-  select by a coordinate or a generated id, such as Scribus's `XPOS` or
-  `ItemID`; rewrite them to a name-like attribute, such as Scribus's
-  `ANNAME`. Only an element's text is read by position, as `children/0`.
+  or style in the seed. The draft's pointers already do this: a name-like
+  attribute such as Scribus's `ANNAME` before a coordinate, and two
+  attributes together where one is not enough, as a spreadsheet cell's
+  `[@Col=3][@Row=2]`. Only an element's text is read by position, as
+  `children/0`.
 - When an app may split an element's text into runs, check it whole:
   `text_equals` (or `text_contains` for a value inside a sentence) on the
   element compares all its text, however it is split. Add
@@ -228,25 +251,23 @@ Write `{"name", "prompt", "checks"}` from the draft and what you did.
   `{"kind": "text_contains", "file": "Documents/memo.abw", "pointer": "/root/children/[name=section]/children/[name=p][@xid=6]", "value": "at 3:30 PM"}`.
   Point a text check at the paragraph or another element the edit keeps,
   never at a run such as AbiWord's `[name=c]`: a reopened document splits
-  the text into several runs. The draft lists only what changed; to name an
-  unchanged element, such as another paragraph's `xid`, use the app's usual
-  numbering and let the export confirm it, or read it in the exported
-  bundle's `envs/<env>/seed/`.
+  the text into several runs. The draft lists only what changed; an
+  unchanged element is in `draft.guards` when it is a like sibling of a
+  changed one, and otherwise use the app's usual numbering, such as another
+  paragraph's `xid`, and let the export confirm it.
 - Some apps keep text in an attribute, such as Scribus's `<ITEXT CH=...>`.
   `text_equals` cannot join it, so check the attribute with `value_equals`:
   `/root/children/[name=DOCUMENT]/children/[name=PAGEOBJECT][@ANNAME=Headline]/children/[name=StoryText]/children/[name=ITEXT]/attributes/CH`.
   A partial edit the app restyles splits the text into several runs and
   fails that check; list it in the report's limitations.
-- When the draft shows no values or no checks, read the file in an
-  exported bundle's `envs/<env>/seed/`, exporting a first draft of the task
-  to a scratch folder if you have none. An export refusal names the end
-  state's value: a `value_equals` failing there says what it found, such as
-  `is "44", not "1"`.
 - Where easy, add one check that the rest is untouched, such as another
-  text's value the edit must leave alone. It is the one unchanged value
-  worth checking; it passes on the seed too, which is fine, since the export
-  needs only one check to fail there.
-- Give `value_equals` a `tolerance` for a number the app writes as text.
+  text's value the edit must leave alone. `draft.guards` offers them: the
+  same field on the nearest like siblings at their seed values, which the
+  end holds too. Copy one or two into `checks`; they pass on the seed, which
+  is fine, since the export needs only one check to fail there.
+- The draft suggests a decimal the app writes as text, such as `146.83`,
+  as a number with `tolerance: 0.001`; keep the tolerance for any number
+  you check that way.
 - When the draft shows an XML document's changes as `lines`, REA read it
   as text, for example because its DOCTYPE declares entities. Selectors are
   impossible there, and `line_count` with `contains` only approximates a

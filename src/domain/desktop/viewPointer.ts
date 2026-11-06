@@ -1,5 +1,6 @@
 import type { JsonValue } from "../jsonValue.js";
 import { isTimestamp } from "./appTask.js";
+import { isIdentifyingAttribute, rankAttributes } from "./attributeRank.js";
 
 /** One condition of a selector: a member's string field, or with `@` one of its attributes, equal to a value. */
 interface Condition {
@@ -32,6 +33,10 @@ type Stepped =
   | { readonly kind: "unresolved"; readonly problem: string };
 
 const INDEX = /^(?:0|[1-9][0-9]*)$/u;
+
+/** A pointer segment for a key: `~` and `/` escaped as RFC 6901 writes them. */
+export const escapeToken = (token: string) =>
+  token.replaceAll("~", "~0").replaceAll("/", "~1");
 
 const isRecord = (
   value: JsonValue | null | undefined,
@@ -259,17 +264,45 @@ interface Candidates {
   readonly choosable: number;
 }
 
-/** An attribute that identifies its element: `name`, `id`, `xid`, or a prefixed `id` such as `xml:id`. */
-const identifying = (key: string) => /^(?:name|id|xid|.+:id)$/iu.test(key);
+/** Attributes, from the best ranked, that pair into two-attribute selectors. */
+const MAX_PAIRED = 6;
+
+type Attribute = { readonly key: string; readonly value: string };
+
+const condition = ({ key, value }: Attribute) => `[@${key}=${value}]`;
 
 /**
- * The selectors that could name a member, most general first: `[name=N]`, then
- * `[name=N][@A=V]` for each attribute, a `name` attribute before the others.
- * All are counted, so a selector several siblings match is never taken for one
- * naming a member alone; but an element with identifying attributes is keyed
- * by those alone, so one whose identifiers are new is another element,
- * whatever else it shares. The ids number the name among those seen, so a
- * name is spelled into a selector only once one is chosen, not per attribute.
+ * Two-attribute selectors from the best `MAX_PAIRED` attributes of tiers 0 to
+ * 2, the best ranked pairs first, each spelled with its keys in canonical
+ * order, so the order an app writes attributes in never splits a count.
+ */
+const pairsOf = (ranked: readonly (Attribute & { tier: number })[]) => {
+  const pairable = ranked.filter(({ tier }) => tier < 3).slice(0, MAX_PAIRED);
+  return pairable
+    .flatMap((first, index) =>
+      pairable.slice(index + 1).map((second) => ({
+        tier: first.tier + second.tier,
+        suffix: [first, second]
+          .toSorted((left, right) => (left.key < right.key ? -1 : 1))
+          .map(condition)
+          .join(""),
+      })),
+    )
+    .toSorted((left, right) => left.tier - right.tier)
+    .map(({ suffix }) => suffix);
+};
+
+/**
+ * The selectors that could name a member, most general first: `[name=N]`;
+ * then its identifiers, a `name` attribute first; then each other attribute
+ * by itself, a name-like key, a worded value or a small integer first; then
+ * two of those together; then a coordinate, a long number or a token by
+ * itself. All are counted over every sibling, so a selector several siblings
+ * match is never taken for one naming a member alone; but an element with
+ * identifying attributes is keyed by those alone, so one whose identifiers
+ * are new is another element, whatever else it shares. The ids number the
+ * name among those seen, so a name is spelled into a selector only once one
+ * is chosen, not per attribute.
  */
 const candidatesOf = (
   member: JsonValue,
@@ -286,15 +319,20 @@ const candidatesOf = (
       ? [{ key, value }]
       : [],
   );
-  const identities = usable.filter(({ key }) => identifying(key));
+  const identities = usable.filter(({ key }) => isIdentifyingAttribute(key));
   const named = (key: string) => key.toLowerCase() === "name";
+  const ranked = rankAttributes(
+    usable.filter(({ key }) => !isIdentifyingAttribute(key)),
+  );
   const suffixes = [
     "",
     ...[
       ...identities.filter(({ key }) => named(key)),
       ...identities.filter(({ key }) => !named(key)),
-      ...usable.filter(({ key }) => !identifying(key)),
-    ].map(({ key, value }) => `[@${key}=${value}]`),
+      ...ranked.filter(({ tier }) => tier < 3),
+    ].map(condition),
+    ...pairsOf(ranked),
+    ...ranked.filter(({ tier }) => tier === 3).map(condition),
   ];
   const number = names.get(name) ?? names.size;
   names.set(name, number);

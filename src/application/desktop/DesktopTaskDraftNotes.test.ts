@@ -6,6 +6,7 @@ import { draftDesktopApplicationTask } from "./DesktopTaskDraft.js";
 import {
   EDITED_NOTE,
   HOME,
+  NOTE,
   SAVED_NOTE,
   change,
   readers,
@@ -31,7 +32,7 @@ const draftSchema = z.looseObject({
 /** The draft's notes for a capture, between seed and end. */
 const notesOf = async (
   recorded: DesktopApplicationCapture,
-  extraContent: readonly string[] = [],
+  extraContent: readonly (string | Buffer)[] = [],
 ) => {
   const result = await draftDesktopApplicationTask(
     await writeCaptureFolder(recorded, undefined, [
@@ -71,6 +72,45 @@ describe("draftDesktopApplicationTask notes", () => {
 
     expect(draft.files).toHaveLength(1);
     expect(draft.notes).toEqual([]);
+  });
+
+  it("passes on a drafted file's own notes, such as a document REA reads as binary", async () => {
+    const [before, after] = [1, 2].map((version) =>
+      Buffer.from([0x1f, 0x8b, 0x08, 0x00, version]),
+    );
+    if (before === undefined || after === undefined) throw new Error("fixture");
+    const base = seedEndCapture();
+    const compressed: DesktopApplicationCapture = {
+      ...base,
+      state: {
+        ...base.state,
+        checkpoints: base.state.checkpoints.map((point) =>
+          point.name === "seed"
+            ? {
+                ...point,
+                changes: [change(NOTE, { after: before })],
+                retained: [retained(NOTE, before)],
+              }
+            : point.name === "end"
+              ? {
+                  ...point,
+                  changes: [change(NOTE, { before, after })],
+                  retained: [retained(NOTE, after)],
+                }
+              : point,
+        ),
+      },
+    };
+
+    const draft = await notesOf(compressed, [before, after]);
+
+    expect(draft.files).toHaveLength(1);
+    expect(draft.notes).toEqual([
+      expect.objectContaining({
+        code: "unreadable_view",
+        file: "Documents/today.txt",
+      }),
+    ]);
   });
 
   it("says no file changed between seed and end when none did", async () => {

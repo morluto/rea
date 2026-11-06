@@ -9,7 +9,8 @@ import {
   MAX_BUILD_STATE_PATHS,
   SEED_CHECKPOINT,
 } from "../domain/desktop/buildCapture.js";
-import { DRAFT_NOTE_CODES } from "../domain/desktop/appTaskDraftNotes.js";
+import { draftNoteSchema } from "../domain/desktop/appTaskDraftNotes.js";
+import { draftValueSchema } from "../domain/desktop/appTaskDraftValues.js";
 import { WITNESS_STAGES } from "../domain/desktop/buildWitness.js";
 import {
   COMPUTER_ACTIONS,
@@ -271,7 +272,7 @@ export const DESKTOP_BUILD_TOOL_CONTRACTS = [
     name: "stop_build_capture",
     ...toolContractMetadata("stop_build_capture"),
     kind: "application",
-    description: `Stop the capture: the app is closed and the capture finishes inside the computer. Returns its checkpoints, the package and sources it found, its limitations and, when ${SEED_CHECKPOINT} and ${END_CHECKPOINT} were marked, the task draft between them: the files that changed under the paths the bundle owns, with their net change, and suggested checks. A draft with no files says why in notes: nothing changed, the changes lie outside the owned paths (listed with their roles), or REA recognized no document; capture again with state_paths naming the file. Write the task from the draft, its prompt in the user's words, and give it to export_build_environment.`,
+    description: `Stop the capture: the app is closed and the capture finishes inside the computer. Returns its checkpoints, the package and sources it found, its limitations and, when ${SEED_CHECKPOINT} and ${END_CHECKPOINT} were marked, the task draft between them: the files that changed under the paths the bundle owns, each with its net change and the values it added, changed and removed (before and after, at the pointers a check names them by); suggested checks; and guards, optional checks that like siblings stay as they were. Notes say why a draft is empty (nothing changed, the changes lie outside the owned paths, listed with their roles, or REA recognized no document: capture again with state_paths naming the file) or why a file's suggestions are thin (only position names the change, it is all view state, its text is too long, or its view is cut or unreadable). Write the task from the draft, its prompt in the user's words, and give it to export_build_environment.`,
     inputSchema: z.strictObject({ computer_id: computerId }),
     outputSchema: z.strictObject({
       computer_id: z.uuid(),
@@ -300,6 +301,14 @@ export const DESKTOP_BUILD_TOOL_CONTRACTS = [
               file: z.string(),
               role: z.string(),
               change: jsonValueSchema,
+              values: z
+                .array(draftValueSchema)
+                .describe(
+                  "The values the change added, changed and removed, ready to copy into a check: what a check can name first, then what only position reaches, then noise; at most 20 entries and 8 KB a file and 24 KB a draft.",
+                ),
+              values_cut: z
+                .boolean()
+                .describe("Whether a limit left values out."),
             }),
           ),
           task: z.strictObject({
@@ -307,25 +316,16 @@ export const DESKTOP_BUILD_TOOL_CONTRACTS = [
             prompt: z.string(),
             checks: z.array(jsonObjectSchema),
           }),
+          guards: z
+            .array(jsonObjectSchema)
+            .describe(
+              "Optional checks that the same field on like siblings keeps its seed value, which the end holds too; add those worth keeping to the task's checks.",
+            ),
           notes: z
-            .array(
-              z.strictObject({
-                code: z.enum(DRAFT_NOTE_CODES),
-                message: z.string(),
-                files: z
-                  .array(z.strictObject({ file: z.string(), role: z.string() }))
-                  .optional()
-                  .describe(
-                    "unowned_changes: changed home paths outside the owned paths, up to 5.",
-                  ),
-                more: z
-                  .int()
-                  .nonnegative()
-                  .optional()
-                  .describe("unowned_changes: how many more changed."),
-              }),
-            )
-            .describe("Why the draft has no files; empty when it has some."),
+            .array(draftNoteSchema)
+            .describe(
+              "Why the draft has no files, or why a file's suggested checks are thin; empty when neither.",
+            ),
         })
         .nullable(),
       draft_refusal: z.string().optional(),

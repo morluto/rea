@@ -42,9 +42,9 @@ import { refuse } from "./DesktopExportInstall.js";
 
 const OPERATION = "export_desktop_application";
 const REWRITE = "Fix the task file and export again.";
-/** Where the change shows on either path: a capture inside a build computer cannot be described with the CLI. */
+/** Where the change shows on either path: a capture inside a build computer cannot be described with the CLI, so its draft comes from stop_build_capture. */
 const DRAFT =
-  "the task draft, from describe-desktop-application-task or a build computer's stop_build_capture, shows what changed";
+  "each changed file's values in the task draft (describe-desktop-application-task, or stop_build_capture on a build computer) show what it held at the seed and at the end, at the pointer a check names it by";
 
 /** What the export knows of the app: its name, owned paths, captured home, host identity, state files by home path and the checkpoints it reads. */
 type TaskTarget = Pick<

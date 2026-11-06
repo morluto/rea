@@ -26,9 +26,20 @@ const OPERATION = "describe_desktop_application_task";
 
 const DRAFT_LIMITATIONS = [
   "Files are those under the paths the export owns, whose state differs between the seed and end checkpoints, by default the capture's first and last; data/get serves nothing else.",
-  "Suggested checks and views cover documents, or the app's own state when no document changed; each check is derived from the net change and is a starting point, not a task.",
+  "Suggested checks, values, guards and views cover documents, or the app's own state when no document changed; each check is derived from the net change and is a starting point, not a task.",
+  "Values cover XML, archives, JSON and key files: at most 20 entries and 8 KB a file and 24 KB a draft, each value cut at 600 characters (values_cut says when any is left out).",
   "Views longer than 200 items or strings longer than 2,000 characters are cut here (view_cut); inspect-desktop-application-state shows every view whole.",
 ];
+
+/** Checks with ids `PREFIX-1`, `PREFIX-2` and on, in order. */
+const numbered = <Check extends object>(
+  prefix: string,
+  checks: readonly Check[],
+) =>
+  checks.map((check, index) => ({
+    id: `${prefix}-${String(index + 1)}`,
+    ...check,
+  }));
 
 const draft = async (
   folder: string,
@@ -55,7 +66,7 @@ const draft = async (
     ends,
   );
   const notes = draftNotes(files, {
-    drafted: drafted.length,
+    drafted,
     owned: paths,
     ends,
     checkpoints,
@@ -72,23 +83,29 @@ const draft = async (
       baseline: checkpoints[ends.seed],
       final: checkpoints[ends.end],
     },
-    files: drafted.map(({ file, role, baseline, final, change }) => ({
-      file,
-      role,
-      baseline,
-      final,
-      change,
-    })),
+    files: drafted.map(
+      ({ file, role, baseline, final, change, values, values_cut }) => ({
+        file,
+        role,
+        baseline,
+        final,
+        change,
+        values,
+        values_cut,
+      }),
+    ),
     task: {
       name: "change",
       prompt: DRAFT_PROMPT,
-      checks: drafted
-        .flatMap((file) => file.suggested)
-        .map((check, index) => ({
-          id: `check-${String(index + 1)}`,
-          ...check,
-        })),
+      checks: numbered(
+        "check",
+        drafted.flatMap((file) => file.suggested),
+      ),
     },
+    guards: numbered(
+      "guard",
+      drafted.flatMap((file) => file.guards),
+    ),
     notes,
   } as unknown as JsonValue;
   signal?.throwIfAborted();

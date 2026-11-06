@@ -238,3 +238,70 @@ describe("pairMembers", () => {
     ).toEqual(["[name=Save][@id=1]", "[name=Save][@id=2]"]);
   });
 });
+
+describe("pairMembers by ranked attributes", () => {
+  it("keys a member by two attributes together where no single one names it, spelled in canonical order whatever order the app wrote them in", () => {
+    const cell = (row: string, col: string) =>
+      element("Cell", { Row: row, Col: col, ValueType: "40" });
+    // The app writes Col before Row in the later save.
+    const later = (row: string, col: string) =>
+      element("Cell", { Col: col, Row: row, ValueType: "40" });
+
+    const pairing = pairMembers(
+      [later("2", "3"), later("2", "4"), later("3", "3"), later("3", "4")],
+      [cell("3", "4"), cell("2", "4"), cell("2", "3"), cell("3", "3")],
+    );
+
+    expect(pairing.newer).toEqual({
+      keys: [
+        "[name=Cell][@Col=3][@Row=2]",
+        "[name=Cell][@Col=4][@Row=2]",
+        "[name=Cell][@Col=3][@Row=3]",
+        "[name=Cell][@Col=4][@Row=3]",
+      ],
+      partners: [2, 1, 3, 0],
+    });
+  });
+
+  it("counts a pair over identified siblings too, while an identified member keeps its identity and a pair whose values changed pairs nothing", () => {
+    const cell = (row: string, col: string, id?: string) =>
+      element("Cell", {
+        ...(id === undefined ? {} : { id }),
+        Row: row,
+        Col: col,
+      });
+    const cells = [
+      cell("1", "1", "x"),
+      cell("1", "1"),
+      cell("1", "2"),
+      cell("2", "1"),
+      cell("2", "2"),
+    ];
+
+    expect(pairMembers(cells, cells).newer.keys).toEqual([
+      "[name=Cell][@id=x]",
+      // Its pair is the identified cell's too, so position keys it.
+      "1",
+      "[name=Cell][@Col=2][@Row=1]",
+      "[name=Cell][@Col=1][@Row=2]",
+      "[name=Cell][@Col=2][@Row=2]",
+    ]);
+    // The cell at row 2, column 2 moved to column 3: no longer the same pair.
+    const moved = pairMembers([...cells.slice(0, 4), cell("2", "3")], cells);
+    expect(moved.newer.partners[4]).toBeUndefined();
+    expect(moved.newer.keys[4]).toBe("[name=Cell][@Col=3]");
+  });
+
+  it("keys a member by a name-like attribute before a coordinate the app writes first", () => {
+    const frame = (x: string, name: string) =>
+      element("PAGEOBJECT", { XPOS: x, YPOS: "12.5", ANNAME: name });
+
+    expect(
+      pairMembers([frame("146.83", "Headline"), frame("20.5", "Details")], [])
+        .newer.keys,
+    ).toEqual([
+      "[name=PAGEOBJECT][@ANNAME=Headline]",
+      "[name=PAGEOBJECT][@ANNAME=Details]",
+    ]);
+  });
+});

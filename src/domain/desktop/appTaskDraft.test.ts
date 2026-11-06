@@ -1121,8 +1121,8 @@ describe("draftTaskFiles archive elements by identity", () => {
       {
         kind: "value_equals",
         file: "Documents/plate.zip",
-        pointer: `${objects}/[name=Object][@name=Hole001]/name`,
-        value: "Object",
+        pointer: `${objects}/[name=Object][@name=Hole001]/attributes/type`,
+        value: "Part::Cylinder",
       },
       {
         kind: "value_absent",
@@ -1358,8 +1358,8 @@ describe("draftTaskFiles archives", () => {
       {
         kind: "value_equals",
         file: "Documents/plate.FCStd",
-        pointer: `${objects}/[name=Object][@name=Hole]/name`,
-        value: "Object",
+        pointer: `${objects}/[name=Object][@name=Hole]/attributes/type`,
+        value: "Part::Cylinder",
       },
       {
         kind: "value_absent",
