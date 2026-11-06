@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   isApplicationDconfGroup,
+  namedInTitles,
   stateReasons,
   stateRole,
   type DesktopRoleFacts,
@@ -86,6 +87,34 @@ describe("stateReasons", () => {
     ]);
     expect(reasons("/home/ada/Documents/day.txt")).toEqual([]);
     expect(reasons("/home/ada/Documents/today.tx")).toEqual([]);
+  });
+
+  it("names a file by its whole name or path, never by a folder segment, a cache or a dconf database", () => {
+    // CherryTree shows the document's folder, whose path holds the segment "user".
+    const cherry = [
+      "home-notebook.ctd - /home/user/Documents - CherryTree 1.1.2",
+    ];
+    const named = (path: string, titles: readonly string[]) =>
+      namedInTitles(path, "/home/user", titles);
+
+    expect(named("/home/user/Documents/home-notebook.ctd", cherry)).toBe(true);
+    expect(named("/home/user/.cache/dconf/user", cherry)).toBe(false);
+    expect(named("/home/user/.config/dconf/user", cherry)).toBe(false);
+    expect(named("/home/user/Notes/Documents", cherry)).toBe(false);
+    expect(named("/home/user/.cache/app/home-notebook.ctd", cherry)).toBe(
+      false,
+    );
+    // A name without an extension still matches standing alone, or by its path.
+    expect(named("/home/user/src/Makefile", ["Makefile - Editor"])).toBe(true);
+    expect(named("/home/user/src/Makefile", ["~/src/Makefile - Editor"])).toBe(
+      true,
+    );
+    expect(named("/home/user/Makefile", ["/srv/Makefile - Editor"])).toBe(
+      false,
+    );
+    expect(
+      named("/home/user/Documents/plan.md", ["/home/user/Documents/plan.md"]),
+    ).toBe(true);
   });
 
   it("marks the desktop Trash, where a file the user deleted keeps its name", () => {

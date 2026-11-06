@@ -1298,15 +1298,17 @@ describe("exportDesktopApplication home paths", () => {
   });
 });
 
-/** Export the seed-then-end capture, or `recorded`, launched from a desktop entry with `exec`, seeded at `seed`. */
+/** Export the seed-then-end capture, or `recorded` with the retained `content` beside the note's, launched from a desktop entry with `exec`, seeded at `seed`. */
 const exportSeeded = async (
   exec: string | null,
   {
     recorded,
+    content = [],
     ...options
   }: {
     readonly syntheticSeed?: boolean;
     readonly recorded?: DesktopApplicationCapture;
+    readonly content?: readonly string[];
   } = {},
 ) => {
   const local = recorded ?? seedEndCapture();
@@ -1332,7 +1334,7 @@ const exportSeeded = async (
       },
     },
     undefined,
-    [EDITED_NOTE],
+    [EDITED_NOTE, ...content],
   );
   const directory = join(
     await createTestTempDirectory("desktop-export-"),
@@ -1401,6 +1403,58 @@ const linkedSettingsCapture = (target: string): DesktopApplicationCapture => {
     },
   };
 };
+
+describe("exportDesktopApplication launch document by a title", () => {
+  it("opens the one document when a title shows its folder's path, which names no dconf file", async () => {
+    // CherryTree's title shows the document's folder, whose path holds the segment "user".
+    const base = seedEndCapture();
+    const [baseline, seed, ...later] = base.state.checkpoints;
+    if (baseline === undefined || seed === undefined)
+      throw new Error("the fixture has a seed checkpoint");
+    const dconf = [
+      [`${HOME}/.cache/dconf/user`, "x\n"],
+      [`${HOME}/.config/dconf/user`, "GVariant notes"],
+    ] as const;
+    const recorded: DesktopApplicationCapture = {
+      ...base,
+      session: {
+        ...base.session,
+        windows: base.session.windows.map((window) => ({
+          ...window,
+          titles: ["today.txt - /home/user/Documents - Notes 1.1.2"],
+        })),
+      },
+      state: {
+        ...base.state,
+        checkpoints: [
+          baseline,
+          {
+            ...seed,
+            changes: [
+              ...seed.changes,
+              ...dconf.map(([path, text]) => change(path, { after: text })),
+            ],
+            retained: [
+              ...seed.retained,
+              ...dconf.map(([path, text]) => retained(path, text)),
+            ],
+          },
+          ...later,
+        ],
+      },
+    };
+
+    const { result, module } = await exportSeeded("notes %U", {
+      recorded,
+      content: dconf.map(([, text]) => text),
+    });
+
+    expect(module).toContain(
+      `exec 'notes' \\"$HOME\\"/'Documents/today.txt'"]`,
+    );
+    expect(launchLimitations(result.limitations)).toEqual([]);
+  });
+});
 
 describe("exportDesktopApplication launch document", () => {
   it("opens the seed's one document when the desktop entry takes files", async () => {

@@ -237,6 +237,20 @@ describe("checkpointTaken", () => {
     );
   });
 
+  it("does not lead with a dconf file whose name a title shows as a folder", () => {
+    const taken = checkpointTaken(
+      checkpoint([
+        change(`${HOME}/.cache/dconf/user`),
+        change(`${HOME}/Documents/home-notebook.ctd`),
+      ]),
+      HOME,
+      [],
+      ["home-notebook.ctd - /home/user/Documents - CherryTree 1.1.2"],
+    );
+
+    expect(taken.changed_files?.[0]).toBe("Documents/home-notebook.ctd");
+  });
+
   it("names ten changed files and counts the rest", () => {
     const taken = checkpointTaken(
       checkpoint(

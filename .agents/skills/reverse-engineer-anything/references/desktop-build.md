@@ -169,10 +169,26 @@ the first source that has the app:
   keeps for the seed; also set autosaves per hour to 0, and dismiss the
   development-version dialog with "Don't show again". `pulseaudio` as an
   extra package does not help.
+- CherryTree: its first-run autosave "Choose Storage Type" dialog swallows
+  keys, so save once early as `.ctd` and untick autosave.
+- Glade: a new widget's id is empty until you set it, and a second save
+  writes a `.glade~` backup.
+- VYM: the title never names the map, so pass `Documents/<map>.vym` in
+  `state_paths`. Its settings live in `.config/InSilmaril` and are written
+  only at a clean exit. It writes `<map>.vym.lock` while a map is open, so
+  close the map before `seed`. Press A only after clicking a branch on the
+  canvas: keys typed in the tree editor run other shortcuts.
+- Sigil unpacks the open book into
+  `.local/share/sigil-ebook/sigil/workspace/Sigil-XXXXXX/` and deletes it on
+  exit; naming the whole `sigil-ebook` folder seeds that stale copy, so name
+  only the book, and its settings files if needed.
 - What the app saved under the home before `seed`, such as a document in
   `~/Documents` or its settings, is part of the seed. A file you move to the
   Trash is left out, and the export lists it in `limitations`. Trash a stray
-  file rather than starting over.
+  file rather than starting over. JabRef 3.8 writes `<file>.bak` and
+  `<file>.sav` beside a `.bib` it saves; in the owned folder they are seeded
+  and show in the draft as noise, so trash them before `seed` if they should
+  not ship.
 - Dismiss first-run dialogs, such as a welcome screen, before `seed`. A
   choice the app saves only later, such as Inkscape's "show this every
   time", may not reach the seed, so expect the dialog in the witness too.
