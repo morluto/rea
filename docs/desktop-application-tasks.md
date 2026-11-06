@@ -81,7 +81,9 @@ operation `describe_desktop_application_task` and predicate type
   in `alternatives`, its pointer naming the element by each other identifier
   or name-like attribute it holds alone among its tag's members, up to
   three, as an Inkscape text's `[@inkscape:label=Headline]` beside its
-  `[@id=text12]`, for a check to name it by instead. What a check can
+  `[@id=text12]`, for a check to name it by instead; an element its tag
+  alone names inside the first one a condition names, as an EPUB chapter's
+  `h1`, by its `[@id=chapter-two]`. What a check can
   name comes first, text an edit changed before the rest, so no cut drops
   the edit, then what only position reaches, then noise. A file lists
   at most 20 values and 8 KB, the draft 24 KB, and `values_cut` says when a
@@ -128,8 +130,10 @@ operation `describe_desktop_application_task` and predicate type
     characters, never a time or a token or id a program generates. A pair
     counts every member holding both its values, whichever attributes that
     member ranks first. An element with identifiers is named by those alone;
-    an id the app generates, as Freeplane's `ID_329023692`, ranks last, after
-    a child's text, so a new node is named by its `TEXT`, while a member
+    an id the app generates, as Freeplane's `ID_329023692`, or a GUID in
+    any attribute, braced or not, as VYM's `uuid="{18eadb5d-…}"`, ranks
+    last, after a child's text, so a new node is named by its `TEXT` and a
+    new VYM branch by `[>heading=Sunset boat tour]`, while a member
     both versions hold pairs by such an id first, so records that keep their
     UUIDs and swap titles read as two title edits. A value that stands for
     none, as Grisbi's `Id="(null)"` on every transaction, names nothing, so a
@@ -244,7 +248,8 @@ operation `describe_desktop_application_task` and predicate type
     Tellico's `<entry id="4">` or Osmo's `<record>` by its first name, gets
     a `text_equals` for each field, at most five, each by its selector among
     the record's fields, as `[name=title]`, leaving out a field repeating the
-    record's identifier, the field its selector names it by, a value every
+    record's identifier, the field its selector names it by unless it is
+    the only one left, as a new VYM branch's `<heading>`, a value every
     like record holds in that field, as Osmo's `<group>None</group>`, noise,
     a field holding ids of its own, a date the app stamps in parts, and blank
     text or times; a field that lists records, as GnuCash's `<trn:splits>`,
@@ -276,7 +281,8 @@ operation `describe_desktop_application_task` and predicate type
     which passes wherever it is placed, and that list's `member_count`.
   - Noise leaves the suggestions when the file's change holds anything
     else, a change only position reaches included: view state, which a tag
-    or attribute on the way names (the cursor, a selection, the layer, frame,
+    or attribute on the way names (the cursor, a selection, as VYM's
+    `<select>`, the layer, frame,
     view or colour the app has current, as Pencil2D's `currentLayer`,
     scrolling, zoom, the viewport, windows, splitters, a list or tree view
     mirroring the document, as Umbrello's `listview`, Inkscape's `namedview`, view and
@@ -286,7 +292,9 @@ operation `describe_desktop_application_task` and predicate type
     Xournal++'s `<preview>`), or the value of a name-like attribute or `key` on
     the way, when it is one token of several words, as LibreOffice's
     `config:config-item[@config:name=CursorPositionX]` inside
-    `[@config:name=ooo:view-settings]`; an attribute ending in `ID` or `Id`,
+    `[@config:name=ooo:view-settings]`, or a settings path ending in how a
+    panel shows (`visible`, `hidden`, `expanded`, `geometry`, `size` and the
+    like), as VYM's `<setting key="/treeeditor/visible">`; an attribute ending in `ID` or `Id`,
     or an `rsid`, that the app renumbered, with everything else in its
     element, as Gnumeric empties a formula cell whose shared expression it
     renumbers, and an identifier the app numbers by position; volatile
@@ -305,7 +313,11 @@ operation `describe_desktop_application_task` and predicate type
     element with `type="guid"`, as GnuCash's `<trn:id>`, and text of control
     characters, as its unset options hold; `upkeep`, a change inside an
     app's `slots`, as GnuCash's `book:slots`, which it adds to and fills on
-    reopening a book, and attributes the elements of one archive entry only
+    reopening a book, a count an app keeps of its members, an attribute
+    whose key ends in `count` or an element whose tag names a count, whose
+    integer equals how many elements of one tag it, or the element holding
+    the text, holds, as VYM's root `branchCount`, KMyMoney's
+    `<TRANSACTIONS count="5">` or GnuCash's `<gnc:count-data>`, and attributes the elements of one archive entry only
     gained while another entry holds the edit, as LibreOffice fills in
     `styles.xml` on save, and, while a change outside them is the edit, any
     change in `styles.xml`, in a document's style containers or its master,
@@ -351,11 +363,12 @@ operation `describe_desktop_application_task` and predicate type
   members in order, as MyPaint's `src`; never through a sibling only
   position or a renumbered id pairs. A guard never selects its sibling by
   what it reads: a sibling its selector names by the attribute the guard
-  checks is named by another identifier or name-like attribute it holds
-  alone at both ends instead, as Tiled's objects by `[@id=2]` rather than
-  the `name` the guard reads, or else the guard reads another field, or
-  there is none; one a child's text names, whose whole text is that text,
-  gets none. A `text_equals` with `text_attribute`
+  checks, or by a value that is or holds the text it reads, as Glade's
+  `[>object=CancelTrueTrueTrue]` for a button's `Cancel` label, is named by
+  another identifier, name-like attribute or child's text it holds alone
+  at both ends instead, as Tiled's objects by `[@id=2]` rather than the
+  `name` the guard reads, or Glade's button by `[>packing=TrueTrue0]`, or
+  else the guard reads another field, or there is none. A `text_equals` with `text_attribute`
   reads its siblings the same way. Text that grew by lines gets a
   `text_contains` of each line it kept, of three or more characters, the
   four nearest the new text, so a correct edit that puts the line elsewhere
@@ -368,13 +381,17 @@ operation `describe_desktop_application_task` and predicate type
   tag such as `</node>`, nor a line that repeats; an item placed by its own position
   that an edit added, a `text_contains` of each of up to four kept items'
   text, nearest first. Where members were only edited, a
-  `member_count` of the outermost list an edit goes through by a member
-  with like siblings, of the edited member's tag and kind, at the seed's
-  number, as Dia's boxes in their layer or MyPaint's layers in their stack:
-  no member of the kind added or removed; never of runs in an element a
-  text check reads, and only where the end holds the same number. A guard
-  of a coordinate comes
-  after those of text. At most four a file. They pass on the seed, which
+  `member_count` of the innermost list holding the edited element that an
+  edit goes through by a member with like siblings, a record rather than a
+  field of one (a member named by a name-like attribute alone that the
+  record's like siblings hold too), of the edited member's tag and kind, at
+  the seed's number, as Dia's boxes in their layer, MyPaint's layers in
+  their stack or Glade's buttons in their button box: no member of the kind
+  added or removed; never of runs in an element a text check reads, and
+  only where the end holds the same number. A guard of a coordinate comes
+  after those of text. At most four a file besides the count guard, which
+  sits outside that cap, so kept-line and sibling guards never squeeze it
+  out. They pass on the seed, which
   the export allows, since one check failing there is enough.
 - `notes`: why `files` is empty, or why a file's suggestions are thin. Each
   note has a `code` and a `message`. For a draft with no files: `no_change`

@@ -588,3 +588,40 @@ describe("draftTaskFiles values' other pointers", () => {
     ).toBe("Jazz Festival");
   });
 });
+
+describe("draftTaskFiles values in an archive's entries", () => {
+  it("lists a chapter title's pointer by the id its h1 holds, though its tag alone names it", () => {
+    const chapter = (title: string) =>
+      `<html><body><h1 id="chapter-two">${title}</h1><p>The supply boat brought one letter.</p></body></html>`;
+    const epub = (title: string) => {
+      const entry = zipEntry(
+        {
+          name: "OEBPS/Text/Section0002.xhtml",
+          size: 1,
+          compressedSize: 1,
+          method: 8,
+          encrypted: false,
+        },
+        new TextEncoder().encode(chapter(title)),
+      );
+      return zipView([entry], 1);
+    };
+    const [file] = draftOf({
+      "Documents/book.epub": statePath(
+        "document",
+        "zip",
+        epub("A Letter from the Mainlnad"),
+        epub("A Letter from the Mainland"),
+      ),
+    });
+
+    const h1 =
+      "/entries/[name=OEBPS~1Text~1Section0002.xhtml]/view/root/children/[name=body]/children/[name=h1]";
+    expect(file?.values[0]).toMatchObject({
+      pointer: `${h1}/children/0`,
+      alternatives: [
+        "/entries/[name=OEBPS~1Text~1Section0002.xhtml]/view/root/children/[name=body]/children/[name=h1][@id=chapter-two]/children/0",
+      ],
+    });
+  });
+});

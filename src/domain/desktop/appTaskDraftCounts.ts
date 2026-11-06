@@ -1,6 +1,7 @@
 import type { JsonValue } from "../jsonValue.js";
 import type { DesktopTaskCheckInput } from "./appTask.js";
 import type { DesktopStateDifference } from "./stateChanges.js";
+import { listSteps, recordOfField } from "./appTaskDraftSteps.js";
 import { isXmlElement, resolvePointer } from "./viewPointer.js";
 import { spellCondition } from "./viewSelector.js";
 
@@ -119,21 +120,27 @@ const countAt = (
 const depth = ({ list }: Counted) => list.split("/").length;
 
 /**
- * The outermost list a pointer goes through by a member that has like
- * siblings at both ends, as Dia's boxes in their layer: what "nothing was
- * added or removed" counts for an edit inside one.
+ * The innermost list holding the edited element that a pointer goes through
+ * by a member with like siblings at both ends, a record rather than a field
+ * of one (`recordOfField`), as Dia's boxes in their layer, not the
+ * attributes of the box, or Glade's buttons in their button box, not the
+ * dialog's children above them: what "nothing was added or removed" counts
+ * for an edit inside one.
  */
 const editedList = (
   { ends }: CountContext,
   pointer: string,
 ): Counted | undefined => {
-  const segments = pointer.split("/");
-  for (let index = 2; index < segments.length; index += 1) {
-    if (segments[index - 1] !== "children") continue;
-    const list = segments.slice(0, index).join("/");
-    const at = segments.slice(0, index + 1).join("/");
+  const steps = listSteps(pointer, true);
+  for (const [index, step] of steps.entries()) {
+    const { list } = step;
+    const at = `${list}/${step.member}`;
     const member = resolvePointer(ends.final, at);
-    if (!isXmlElement(member)) return undefined;
+    if (
+      !isXmlElement(member) ||
+      recordOfField(ends.final, step, steps.slice(index + 1)) !== undefined
+    )
+      continue;
     const kind = kindOf(
       member,
       resolvePointer(ends.final, list) ?? null,
@@ -155,8 +162,8 @@ const editedList = (
  * added or removed, a check that the list holds the end's number of members
  * of their tag (`matchingOf`), which fails at the seed since that number
  * changed, at most two, the shallowest first. Where members were only
- * edited, a guard that the outermost list an edit goes through by a member
- * with like siblings holds as many as it did, which the end holds too. Never
+ * edited, a guard that the list holding the edited record (`editedList`)
+ * holds as many as it did, which the end holds too. Never
  * for noise, runs of a text check, an element in mixed content, or a list a
  * selector cannot name whole at both ends.
  */

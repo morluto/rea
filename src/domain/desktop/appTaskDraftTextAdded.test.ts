@@ -88,3 +88,39 @@ describe("draftTaskFiles for lines added to free text", () => {
     expect(file.guards).toEqual([]);
   });
 });
+
+describe("draftTaskFiles for a line added to a note among others, as CherryTree saves them", () => {
+  const notebook = (chores: string) =>
+    `<cherrytree><node unique_id="1" name="Weekend chores"><rich_text>${chores}</rich_text></node><node unique_id="2" name="Groceries"><rich_text>Oat milk</rich_text></node><node unique_id="3" name="Gift ideas"><rich_text>Puzzle book</rich_text></node></cherrytree>`;
+  const CHORES =
+    "Water the tomato plants\nSweep the back porch\nReplace the hallway bulb\nReturn the library books";
+
+  it("offers the count guard beside the four kept-line guards, outside their cap", () => {
+    const file = xmlDraft(
+      notebook(CHORES),
+      notebook(`${CHORES}\nClean the gutters`),
+    );
+
+    const chores = "/root/children/[name=node][@name=Weekend chores]";
+    expect(file.guards).toEqual([
+      ...[
+        "Water the tomato plants",
+        "Sweep the back porch",
+        "Replace the hallway bulb",
+        "Return the library books",
+      ].map((value) => ({
+        kind: "text_contains",
+        file: "Documents/doc.xml",
+        pointer: chores,
+        value,
+      })),
+      {
+        kind: "member_count",
+        file: "Documents/doc.xml",
+        pointer: "/root/children",
+        matching: "[name=node]",
+        equals: 3,
+      },
+    ]);
+  });
+});

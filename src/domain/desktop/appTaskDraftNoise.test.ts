@@ -430,3 +430,80 @@ describe("draftTaskFiles for an animation whose app keeps what is current", () =
     ]);
   });
 });
+
+describe("draftTaskFiles for a mind map, as VYM saves one", () => {
+  const branch = (uuid: string, heading: string) =>
+    `<branch hideLink="false" uuid="{${uuid}}"><heading textMode="plainText">${heading}</heading></branch>`;
+  /** A map: its branch count, branches each with a GUID VYM makes, a view setting, and the saved selection. */
+  const map = (count: string, added: string, selected: string) =>
+    `<vymmap version="2.6.11" branchCount="${count}"><mapcenter uuid="{4b6e7612-970d-4d72-8fae-8ebaf02511c9}"><heading>Team Offsite</heading>${branch("d1e07ab2-1ecd-4c39-aa93-e7b70576a029", "Venue")}<branch hideLink="false" uuid="{4cdcd61f-90fb-4965-91a1-849509829d26}"><heading>Agenda</heading>${branch("d47c1733-7117-42b7-b45b-9ac244bc3d67", "Kickoff talk")}${branch("8e689d15-a04a-4c60-81ad-6317a3b5874f", "Strategy workshop")}${added}</branch></mapcenter>${added === "" ? "" : '<setting key="/treeeditor/visible">false</setting>'}<select>${selected}</select></vymmap>`;
+  const SEED = map("4", "", "mc:0,bo:2");
+  const END = map(
+    "5",
+    branch("18eadb5d-04fc-4448-a0f9-1f9a3dedaff7", "Sunset boat tour"),
+    "mc:0,bo:1",
+  );
+  const AGENDA =
+    "/root/children/[name=mapcenter]/children/[name=branch][@uuid={4cdcd61f-90fb-4965-91a1-849509829d26}]/children";
+
+  it("names the new branch by its heading, not the GUID VYM made for it, and checks that heading and the branches' count", () => {
+    const file = xmlDraft(SEED, END);
+
+    expect(file.suggested).toEqual([
+      {
+        kind: "text_equals",
+        file: "Documents/doc.xml",
+        pointer: `${AGENDA}/[name=branch][>heading=Sunset boat tour]/children/[name=heading]`,
+        value: "Sunset boat tour",
+      },
+      {
+        kind: "member_count",
+        file: "Documents/doc.xml",
+        pointer: AGENDA,
+        matching: "[name=branch]",
+        equals: 3,
+      },
+    ]);
+  });
+
+  it("notes the saved selection and a tree editor setting as view state and the branch count as upkeep, the new heading first", () => {
+    const file = xmlDraft(SEED, END);
+
+    expect(
+      file.values.map(({ pointer, note }) => [
+        pointer.replace(AGENDA, "~"),
+        note ?? null,
+      ]),
+    ).toEqual([
+      [
+        "~/[name=branch][>heading=Sunset boat tour]/children/[name=heading]",
+        null,
+      ],
+      ["/root/children/[name=setting]", "view_state"],
+      ["/root/attributes/branchCount", "upkeep"],
+      ["/root/children/[name=select]/children/0", "view_state"],
+    ]);
+  });
+});
+
+describe("draftTaskFiles counts an app keeps of its records", () => {
+  it("notes a count in an element's text that equals its records, as GnuCash's count-data, as upkeep, never a check or a guard", () => {
+    const book = (count: string, added: string) =>
+      `<gnc:book xmlns:gnc="g" xmlns:cd="c"><gnc:count-data cd:type="account">2</gnc:count-data><gnc:count-data cd:type="transaction">${count}</gnc:count-data><gnc:account name="Groceries"/><gnc:account name="Checking"/><gnc:transaction description="Corner Grocer"/>${added}</gnc:book>`;
+
+    const file = xmlDraft(
+      book("1", ""),
+      book("2", '<gnc:transaction description="Greenleaf Market"/>'),
+    );
+
+    const count =
+      "/root/children/[name=gnc:count-data][@cd:type=transaction]/children/0";
+    expect(file.values.find(({ pointer }) => pointer === count)).toMatchObject({
+      note: "upkeep",
+    });
+    expect(file.suggested.map(pointerOf)).not.toContain(count);
+    expect(
+      file.guards.map(pointerOf).filter((at) => at?.includes("count-data")),
+    ).toEqual([]);
+  });
+});

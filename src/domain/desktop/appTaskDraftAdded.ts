@@ -313,10 +313,10 @@ const selectorFields = (pointer: string): ReadonlySet<string> =>
  * and `<pub_year>`: each child element a selector names among the record's
  * children, by its whole text as `wholeTextCheck` checks one, at most five;
  * leaving out a field repeating the record's identifier, the field its
- * selector names it by, a default a like sibling holds too, a date the app
- * stamps in parts, and text that is blank, a time, a volatile value or past
- * the limit. Empty for an element that `holdsFields` says is no record, or
- * that has no like sibling.
+ * selector names it by, unless no other is left, a default a like sibling
+ * holds too, a date the app stamps in parts, and text that is blank, a time,
+ * a volatile value or past the limit. Empty for an element that
+ * `holdsFields` says is no record, or that has no like sibling.
  */
 export const recordChecks = (
   context: AddedContext,
@@ -330,7 +330,13 @@ export const recordChecks = (
       likeCount(ends.baseline, pointer, element.name) === 0)
   )
     return [];
-  return fieldsOf(context, pointer, element, true).slice(0, MAX_FIELD_CHECKS);
+  const fields = fieldsOf(context, pointer, element, { nested: true });
+  // A record whose one field is the one its selector names it by, as a VYM branch its heading, is checked by that field.
+  return (
+    fields.length > 0
+      ? fields
+      : fieldsOf(context, pointer, element, { nested: true, selector: true })
+  ).slice(0, MAX_FIELD_CHECKS);
 };
 
 /** Whether an element holds an identifier of its own among its descendants, as GnuCash's `<trn:splits>` holds each split's `<split:id>`, so its whole text holds ids a later save makes anew. */
@@ -351,18 +357,18 @@ const recordList = (field: Element): boolean => {
   );
 };
 
-/** The checks of a record's fields, as `recordChecks` says; a field that lists records, with `nested`, gives its records' own instead. */
+/** The checks of a record's fields, as `recordChecks` says; a field that lists records, with `nested`, gives its records' own instead, and with `selector` the field its selector names it by is checked too. */
 const fieldsOf = (
   context: AddedContext,
   pointer: string,
   element: Element,
-  nested: boolean,
+  { nested, selector = false }: { nested: boolean; selector?: boolean },
 ): Suggestion[] => {
   const { ends, file } = context;
   const { keys } = pairMembers(element.children, []).newer;
   const skipped = new Set([
     ...sharedFields(context, pointer, element),
-    ...selectorFields(pointer),
+    ...(selector ? [] : selectorFields(pointer)),
   ]);
   return element.children.flatMap((field, index) => {
     const key = keys[index] ?? "";
@@ -387,7 +393,7 @@ const fieldsOf = (
               context,
               `${at}/children/${escapeToken(records[place] ?? "")}`,
               record,
-              false,
+              { nested: false },
             )
           : [],
       );

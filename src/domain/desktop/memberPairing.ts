@@ -2,6 +2,7 @@ import type { JsonValue } from "../jsonValue.js";
 import { isTimestamp } from "./appTask.js";
 import {
   isGeneratedId,
+  isGuid,
   isIdentifyingAttribute,
   isPlaceholder,
   isSaveNumberedId,
@@ -61,9 +62,10 @@ const pairsOf = (paired: readonly (Attribute & { tier: number })[]) =>
  * (`isSaveNumberedId`); then a child element's text, as Osmo's record
  * by `[>first_name=Delphine]` (`childConditions`), for an element no
  * identifier names; last, an id the app generates (`isGeneratedId`), as
- * Freeplane's `ID_329023692`. All are counted over every sibling, so a
- * selector several siblings match is never taken for one naming a member
- * alone; but an element with identifying attributes is keyed by those alone,
+ * Freeplane's `ID_329023692`, or a GUID in any attribute, as VYM's `uuid`.
+ * All are counted over every sibling, so a selector several siblings match
+ * is never taken for one naming a member alone; but an element with
+ * identifying attributes is keyed by those alone,
  * so one whose identifiers are new is another element, whatever else it
  * shares. An identifier the app numbers by position (`positional`) names no
  * member. The ids number the name among those seen, so a name is spelled
@@ -90,7 +92,8 @@ const candidatesOf = (
   );
   // An id the app generates names a kept member, but no new one another save would key alike, so it ranks last.
   const generated = usable.filter(
-    ({ key, value }) => isIdentifyingAttribute(key) && isGeneratedId(value),
+    ({ key, value }) =>
+      (isIdentifyingAttribute(key) && isGeneratedId(value)) || isGuid(value),
   );
   // An id the app numbers anew on each save names no member past it: it ranks with the tokens.
   const numbered = usable.filter(({ key, value }) =>
@@ -104,7 +107,12 @@ const candidatesOf = (
   );
   const named = (key: string) => key.toLowerCase() === "name";
   const ranked = [
-    ...rankAttributes(usable.filter(({ key }) => !isIdentifyingAttribute(key))),
+    ...rankAttributes(
+      usable.filter(
+        (field) =>
+          !isIdentifyingAttribute(field.key) && !generated.includes(field),
+      ),
+    ),
     ...numbered.map((field) => ({ ...field, tier: 3 as const })),
   ];
   const pairable = ranked.filter(({ tier }) => tier < 3);

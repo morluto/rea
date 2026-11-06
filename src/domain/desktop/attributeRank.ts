@@ -4,14 +4,14 @@ export const isIdentifyingAttribute = (key: string): boolean =>
 
 /**
  * Words in a name for how the app showed, printed or kept the document rather
- * than what it holds: its cursor, selection, the layer, frame, view or colour
- * it has current, scroll, zoom, windows, view and configuration settings, a
- * list or tree view mirroring the document, printer, a save's history, edit
- * time and count, generator and statistics, and the preview or thumbnail it
- * renders.
+ * than what it holds: its cursor, selection (VYM's `<select>`), the layer,
+ * frame, view or colour it has current, scroll, zoom, windows, view and
+ * configuration settings, a list or tree view mirroring the document,
+ * printer, a save's history, edit time and count, generator and statistics,
+ * and the preview or thumbnail it renders.
  */
 export const VIEW_STATE =
-  /cursor|selection|selected|current[-_]?(?:layer|frame|view|colou?r|page|tab|tool|index|item|row|column|cell|sheet|slide|object|scene|track)|scroll|zoom|viewport|window|splitter|toplevel|topleft|uidata|namedview|view-?settings|(?:list|tree)-?view|config(?:uration)?-?settings|printer|history|edit(?:ing)?-?(?:time|duration|cycles?)|last-?saved|generator|document-?statistic|preview|thumbnail/iu;
+  /cursor|^select$|selection|selected|current[-_]?(?:layer|frame|view|colou?r|page|tab|tool|index|item|row|column|cell|sheet|slide|object|scene|track)|scroll|zoom|viewport|window|splitter|toplevel|topleft|uidata|namedview|view-?settings|(?:list|tree)-?view|config(?:uration)?-?settings|printer|history|edit(?:ing)?-?(?:time|duration|cycles?)|last-?saved|generator|document-?statistic|preview|thumbnail/iu;
 
 /** Whether a tag or attribute name is about how the app showed the document rather than what it holds. */
 export const isViewStateName = (name: string): boolean => VIEW_STATE.test(name);
@@ -36,9 +36,16 @@ const isRandomCaseId = (value: string): boolean =>
   (/\d/u.test(value) ||
     (value.match(/\p{Ll}(?=\p{Lu})|\p{Lu}(?=\p{Ll})/gu)?.length ?? 0) >= 4);
 
-/** Whether a value is a word a program makes, a hex run, UUID, long token or an id of random case, rather than one a user typed. */
+/** Whether a value is a GUID, braced or not, as VYM's `uuid="{18eadb5d-04fc-4448-a0f9-1f9a3dedaff7}"` on each branch. */
+export const isGuid = (value: string): boolean =>
+  /^\{?[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\}?$/iu.test(value);
+
+/** Whether a value is a word a program makes, a hex run, GUID, long token or an id of random case, rather than one a user typed. */
 export const isGeneratedToken = (value: string): boolean =>
-  HEX_TOKEN.test(value) || LONG_TOKEN.test(value) || isRandomCaseId(value);
+  HEX_TOKEN.test(value) ||
+  isGuid(value) ||
+  LONG_TOKEN.test(value) ||
+  isRandomCaseId(value);
 
 /** Whether an identifier's value is one an app generates for a new element, as Freeplane's `ID_329023692` or a GUID, which another save of the same edit would not repeat. */
 export const isGeneratedId = (value: string): boolean =>

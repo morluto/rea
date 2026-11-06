@@ -274,8 +274,54 @@ const showsView = (element: Element) =>
   isViewStateName(element.name) ||
   Object.entries(isRecord(element.attributes) ? element.attributes : {}).some(
     ([key, value]) =>
-      typeof value === "string" && namesElement(key) && isViewStateValue(value),
+      typeof value === "string" &&
+      namesElement(key) &&
+      (isViewStateValue(value) || VIEW_SETTING.test(value)),
   );
+
+/** A settings path whose last part says how a panel shows, as VYM's `<setting key="/treeeditor/visible">`. */
+const VIEW_SETTING =
+  /^\/(?:[\w-]+\/)+(?:visible|hidden|shown?|expanded|collapsed|geometry|state|size|zoom)$/iu;
+
+/**
+ * Whether a value is a count an app keeps of an element's members, as VYM's
+ * root `branchCount`, KMyMoney's `<TRANSACTIONS count="5">` or GnuCash's
+ * `<gnc:count-data cd:type="transaction">2</gnc:count-data>` in its book:
+ * an attribute whose key ends in `count`, or the text of an element whose
+ * tag names a count, an integer equal to how many elements of one tag the
+ * element, or for text the element holding it, holds at any depth at the
+ * end.
+ */
+const isMemberCount = (
+  ends: Ends,
+  pointer: string,
+  key: string | undefined,
+) => {
+  const value = resolvePointer(ends.final, pointer);
+  const counter = pointer.replace(/\/children\/\d+$/u, "");
+  const holder = resolvePointer(ends.final, counter);
+  const scope =
+    key === undefined
+      ? counter !== pointer &&
+        isXmlElement(holder) &&
+        /count/iu.test(holder.name.split(":").at(-1) ?? holder.name)
+        ? counter.replace(/\/children\/[^/]+$/u, "")
+        : undefined
+      : /count$/iu.test(key.split(":").at(-1) ?? key)
+        ? ownerOfAttribute(pointer)
+        : undefined;
+  if (scope === undefined || typeof value !== "string" || !/^\d+$/u.test(value))
+    return false;
+  const tally = new Map<string, number>();
+  const owner = resolvePointer(ends.final, scope);
+  const pending = isXmlElement(owner) ? [...owner.children] : [];
+  for (let node = pending.pop(); node !== undefined; node = pending.pop())
+    if (isXmlElement(node)) {
+      tally.set(node.name, (tally.get(node.name) ?? 0) + 1);
+      pending.push(...node.children);
+    }
+  return [...tally.values()].includes(Number(value));
+};
 
 /** A file's views at its two ends. */
 interface Ends {
@@ -611,7 +657,7 @@ export const changeNoise = (
                 stampedAlong(elements) ||
                 stampedWhole(elements, value)
               ? "timestamp"
-              : elements.some(isSlots)
+              : elements.some(isSlots) || isMemberCount(ends, pointer, key)
                 ? "upkeep"
                 : undefined;
     known.set(pointer, reason);

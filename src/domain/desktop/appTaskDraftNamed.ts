@@ -124,7 +124,7 @@ export interface NamedDraft {
 
 /** Noise checks a document keeps when its change is nothing else, so an author still sees one. */
 const MAX_FLAGGED = 3;
-/** Guards a file's draft offers. */
+/** Guards a file's draft offers besides its count guard. */
 const MAX_GUARDS = 4;
 
 /** The draft's options: its limits, and whether the file is a document, which keeps fewer noise checks than the app's own state. */
@@ -531,21 +531,24 @@ export const namedDraft = (
     listed: tree.listed,
     noise,
   });
+  // The count guard sits outside the cap, so line and sibling guards never squeeze it out.
   const guards = edited
     ? [
-        ...texts.guards,
-        ...draftGuards(
-          {
-            file,
-            ends,
-            named,
-            noisy: (pointer) => noise(pointer) !== undefined,
-            chars: options.limit.chars,
-          },
-          suggested,
-        ),
+        ...[
+          ...texts.guards,
+          ...draftGuards(
+            {
+              file,
+              ends,
+              named,
+              noisy: (pointer) => noise(pointer) !== undefined,
+              chars: options.limit.chars,
+            },
+            suggested,
+          ),
+        ].slice(0, MAX_GUARDS),
         ...counts.guards,
-      ].slice(0, MAX_GUARDS)
+      ]
     : [];
   return {
     suggested,

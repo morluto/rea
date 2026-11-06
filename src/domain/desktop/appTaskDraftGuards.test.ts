@@ -321,3 +321,36 @@ describe("draftTaskFiles for components of a wiring diagram, as QElectroTech sav
     ]);
   });
 });
+
+describe("draftTaskFiles for a dialog's buttons, as Glade saves them", () => {
+  /** A button in a GtkBuilder child: its label and flags, then where it is packed. */
+  const button = (id: string, label: string, position: string) =>
+    `<child><object class="GtkButton" id="${id}"><property name="label">${label}</property><property name="visible">True</property><property name="can-focus">True</property></object><packing><property name="expand">True</property><property name="position">${position}</property></packing></child>`;
+  const dialog = (submit: string) =>
+    `<interface><object class="GtkDialog" id="feedback_dialog"><child internal-child="vbox"><object class="GtkBox"><child internal-child="action_area"><object class="GtkButtonBox">${button("cancel_button", "Cancel", "0")}${button("submit_button", submit, "1")}</object><packing><property name="position">0</property></packing></child><child><object class="GtkLabel" id="intro_label"><property name="label">Tell us what you think.</property></object><packing><property name="position">1</property></packing></child></object></child></object></interface>`;
+  const BUTTONS =
+    "/root/children/[name=object]/children/[name=child]/children/[name=object]/children/[name=child][@internal-child=action_area]/children/[name=object]/children";
+
+  it("selects the other button by where it is packed, not by the child text holding the label the guard reads, and counts the buttons, not the dialog's other children", () => {
+    const file = xmlDraft(dialog("Submit"), dialog("Send Feedback"));
+
+    expect(file.suggested.map(pointerOf)).toEqual([
+      `${BUTTONS}/[name=child][>packing=True1]/children/[name=object]/children/[name=property][@name=label]`,
+    ]);
+    expect(file.guards).toEqual([
+      {
+        kind: "text_equals",
+        file: FILE,
+        pointer: `${BUTTONS}/[name=child][>packing=True0]/children/[name=object]/children/[name=property][@name=label]`,
+        value: "Cancel",
+      },
+      {
+        kind: "member_count",
+        file: FILE,
+        pointer: BUTTONS,
+        matching: "[name=child]",
+        equals: 2,
+      },
+    ]);
+  });
+});

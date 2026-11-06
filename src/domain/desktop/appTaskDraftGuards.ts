@@ -15,6 +15,11 @@ import {
   rankAttributes,
 } from "./attributeRank.js";
 import { holdsTagOnly, pairMembers } from "./memberPairing.js";
+import {
+  listSteps,
+  recordOfField,
+  type ListStep,
+} from "./appTaskDraftSteps.js";
 import { numberedInOrder } from "./positionalKeys.js";
 import {
   elementText,
@@ -22,7 +27,8 @@ import {
   isXmlElement,
   resolvePointer,
 } from "./viewPointer.js";
-import { selectorOf, spellCondition } from "./viewSelector.js";
+import { selectorOf, spellCondition, type Condition } from "./viewSelector.js";
+import { childConditions } from "./selectorCandidates.js";
 
 type Suggestion = DesktopTaskCheckInput;
 
@@ -41,22 +47,6 @@ export interface GuardContext {
   readonly noisy: (pointer: string) => boolean;
   readonly chars: number;
 }
-
-/** Where a pointer steps into a list by selector, innermost first: the list, the member's segment and the rest of the pointer after it. */
-const listSteps = (pointer: string) => {
-  const segments = pointer.split("/");
-  const steps: { list: string; member: string; rest: string[] }[] = [];
-  for (let index = segments.length - 1; index >= 2; index -= 1) {
-    const member = segments[index] ?? "";
-    if (segments[index - 1] === "children" && !/^\d+$/u.test(member))
-      steps.push({
-        list: segments.slice(0, index).join("/"),
-        member,
-        rest: segments.slice(index + 1),
-      });
-  }
-  return steps;
-};
 
 /** The guard at a sibling's pointer, when it holds the same value at both ends, by name, and is no noise. */
 const guardAt = (
@@ -214,83 +204,94 @@ const attributeRead = (rest: readonly string[]) =>
     ? (rest[1] ?? "").replaceAll("~1", "/").replaceAll("~0", "~")
     : undefined;
 
-/** Whether a guard at a path into a sibling reads what the sibling is selected by: an attribute its segment names, or, for its whole text, a child's text it names. */
-const readsSelector = (
-  sibling: Sibling,
-  rest: readonly string[],
-  text: boolean,
-) => {
-  const read = attributeRead(rest);
-  return conditionsOf(sibling.member).some(({ prefix, key }) =>
-    text ? prefix === ">" : prefix === "@" && key === read,
+/** What a guard at a path into a sibling reads at the seed: an attribute's value, or an element's whole text, trimmed. */
+const readAt = (sibling: Sibling, rest: readonly string[]) => {
+  const value =
+    rest.length === 0
+      ? sibling.element
+      : resolvePointer(sibling.element, `/${rest.join("/")}`);
+  return (
+    isXmlElement(value)
+      ? elementText(value)
+      : typeof value === "string"
+        ? value
+        : ""
+  ).trim();
+};
+
+/**
+ * Whether a condition selects a sibling by what a guard reads, so the guard
+ * proves only that such a member exists: the attribute it reads, as Tiled's
+ * `[@name=Blacksmith Door]` for its `name`, or a value that is or holds the
+ * text it reads, as Glade's `[>object=CancelTrueTrueTrue]` for a button's
+ * `Cancel` label.
+ */
+const selectsByRead = (
+  condition: Condition,
+  read: string | undefined,
+  text: string,
+) =>
+  condition.prefix !== "" &&
+  ((condition.prefix === "@" && condition.key === read) ||
+    condition.value === text ||
+    (text.length >= 3 &&
+      /\p{L}/u.test(text) &&
+      condition.value.includes(text)));
+
+/** Whether a guard at a path into a sibling reads what the sibling is selected by (`selectsByRead`). */
+const readsSelector = (sibling: Sibling, rest: readonly string[]) => {
+  const [read, text] = [attributeRead(rest), readAt(sibling, rest)];
+  return conditionsOf(sibling.member).some((condition) =>
+    selectsByRead(condition, read, text),
   );
 };
 
-/** How many members of a tag in a list hold a value of an attribute. */
-const holding = (
-  list: JsonValue | undefined,
-  tag: string,
-  key: string,
-  value: string,
-) =>
-  (Array.isArray(list) ? list : []).filter(
-    (item) =>
-      isXmlElement(item) && item.name === tag && item.attributes[key] === value,
-  ).length;
-
 /**
- * The sibling selected by another identifier than the one a guard reads, so
- * the guard says more than that such a member exists, as Tiled's door by
- * `[@id=2]` rather than the `name` the guard checks: an identifier, then a
- * name-like attribute, whose value names the sibling alone among the like
- * members at both ends; undefined when none does.
+ * The sibling selected by another condition than what a guard reads
+ * (`selectsByRead`), as Tiled's door by `[@id=2]` rather than the `name` the
+ * guard checks, or Glade's Cancel button by `[>packing=TrueTrue0]` rather
+ * than the child holding its label: an identifier, a name-like attribute,
+ * then a child's text, naming the sibling alone at both ends; undefined
+ * when none does.
  */
 const rekeyed = (
   context: GuardContext,
-  step: ReturnType<typeof listSteps>[number],
+  step: ListStep,
   sibling: Sibling,
-  avoid: ReadonlySet<string>,
 ): Sibling | undefined => {
   const { element } = sibling;
   const tag = typeof element.name === "string" ? element.name : "";
-  const end = resolvePointer(
-    context.ends.final,
-    `${step.list}/${sibling.member}`,
-  );
-  const [newer, older] = [context.ends.final, context.ends.baseline].map(
-    (view) => resolvePointer(view, step.list),
-  );
-  const fields = Object.entries(attributesOf(element)).flatMap(
+  const [read, text] = [attributeRead(step.rest), readAt(sibling, step.rest)];
+  const attributes = Object.entries(attributesOf(element)).flatMap(
     ([key, value]) =>
       typeof value === "string" &&
-      !avoid.has(key) &&
+      (isIdentifyingAttribute(key) || isNameLikeKey(key)) &&
       !/[=[\]]/u.test(key) &&
       !value.includes("][") &&
       !isStamp(value) &&
       !isPlaceholder(value) &&
       !isRenumberedKey(key) &&
-      !isSaveNumberedId(key, value) &&
-      isXmlElement(end) &&
-      end.attributes[key] === value &&
-      holding(newer, tag, key, value) === 1 &&
-      holding(older, tag, key, value) === 1
-        ? [{ key, value }]
+      !isSaveNumberedId(key, value)
+        ? [{ prefix: "@" as const, key, value }]
         : [],
   );
-  const [best] = [
-    ...fields.filter(({ key }) => isIdentifyingAttribute(key)),
-    ...fields.filter(
-      ({ key }) => !isIdentifyingAttribute(key) && isNameLikeKey(key),
-    ),
-  ];
-  return best === undefined
-    ? undefined
-    : {
-        member: escapeToken(
-          `[name=${tag}]${spellCondition({ prefix: "@", ...best })}`,
-        ),
-        element,
-      };
+  const candidates = [
+    ...attributes.filter(({ key }) => isIdentifyingAttribute(key)),
+    ...attributes.filter(({ key }) => !isIdentifyingAttribute(key)),
+    ...childConditions(element).flatMap((spelled) => selectorOf(spelled) ?? []),
+  ].filter((condition) => !selectsByRead(condition, read, text));
+  const at = (member: string, view: JsonValue | null) =>
+    resolvePointer(view, `${step.list}/${member}`);
+  const end = at(sibling.member, context.ends.final);
+  for (const condition of candidates) {
+    const member = escapeToken(`[name=${tag}]${spellCondition(condition)}`);
+    if (
+      at(member, context.ends.baseline) === element &&
+      at(member, context.ends.final) === end
+    )
+      return { member, element };
+  }
+  return undefined;
 };
 
 /** Whether like members at the seed hold more than one value at a path into them, as Planner's `work` does and its shared `type="normal"` does not. */
@@ -316,7 +317,7 @@ const guardField = (
   all: readonly JsonValue[],
   rest: readonly string[],
 ) => {
-  const own = !readsSelector(sibling, rest, false);
+  const own = !readsSelector(sibling, rest);
   if (rest.length > 0 && varies(all, rest) && own) return rest;
   const selected = new Set(
     [...sibling.member.matchAll(/\[@(?<key>[^=\]]+)=/gu)].map(
@@ -351,85 +352,35 @@ const siblingGuard = (
   selected: Sibling,
 ): Suggestion | undefined => {
   const { step, all } = place;
-  const text = check.kind === "text_equals";
-  const sibling = readsSelector(selected, step.rest, text)
-    ? (rekeyed(
-        context,
-        step,
-        selected,
-        new Set(text ? [] : [attributeRead(step.rest) ?? ""]),
-      ) ?? selected)
+  const sibling = readsSelector(selected, step.rest)
+    ? (rekeyed(context, step, selected) ?? selected)
     : selected;
-  const field = text ? step.rest : guardField(sibling, all, step.rest);
-  const guard =
-    field === undefined
-      ? undefined
-      : guardAt(
-          context,
-          check,
-          [step.list, sibling.member, ...field].join("/"),
-        );
-  // Its whole text, when that is the child's text it is selected by, says no more than its selector.
-  return guard !== undefined &&
-    text &&
-    "value" in guard &&
-    conditionsOf(sibling.member).some(
-      ({ prefix, value }) => prefix === ">" && value === guard.value,
-    )
+  const field =
+    check.kind === "text_equals"
+      ? step.rest
+      : guardField(sibling, all, step.rest);
+  // A guard reading what its sibling is selected by says no more than that the member exists.
+  return field === undefined || readsSelector(sibling, field)
     ? undefined
-    : guard;
+    : guardAt(context, check, [step.list, sibling.member, ...field].join("/"));
 };
 
-type Step = ReturnType<typeof listSteps>[number];
-
-/** Whether a step's member is named as a field is, by a name-like attribute alone, as QElectroTech's `elementInformation[@name=label]`. */
-const namedAsField = (step: Step) => {
-  const [only, ...more] = conditionsOf(step.member).filter(
-    ({ prefix }) => prefix !== "",
-  );
-  return (
-    only !== undefined &&
-    more.length === 0 &&
-    only.prefix === "@" &&
-    isNameLikeKey(only.key)
-  );
-};
-
-/** Whether a like sibling of an outer step's member holds the field a step goes through, at the same path, as every component holds its `label`. */
-const sharedField = (context: GuardContext, step: Step, outer: Step) => {
-  const records = resolvePointer(context.ends.final, outer.list);
-  const record = resolvePointer(
-    context.ends.final,
-    `${outer.list}/${outer.member}`,
-  );
-  const inner = outer.rest.slice(0, outer.rest.length - step.rest.length);
-  return (
-    Array.isArray(records) &&
-    isXmlElement(record) &&
-    records.some(
-      (item) =>
-        item !== record &&
-        isXmlElement(item) &&
-        item.name === record.name &&
-        resolvePointer(item, `/${inner.join("/")}`) !== undefined,
-    )
-  );
-};
+type Step = ListStep;
 
 /**
  * A check's list steps in the order guards try them: innermost first, but
- * for a member named as a field (`namedAsField`), first the nearest record
- * out whose like siblings hold that field too (`sharedField`), so the other
- * components' labels guard a component's label rather than its other fields.
+ * for a field, first the record it is a field of (`recordOfField`), so the
+ * other components' labels guard a component's label rather than its other
+ * fields.
  */
 const guardSteps = (context: GuardContext, pointer: string): Step[] => {
   const steps = listSteps(pointer);
   return steps.flatMap((step, index) => {
-    const outer = namedAsField(step)
-      ? steps
-          .slice(index + 1)
-          .find((candidate) => sharedField(context, step, candidate))
-      : undefined;
+    const outer = recordOfField(
+      context.ends.final,
+      step,
+      steps.slice(index + 1),
+    );
     return outer === undefined ? [step] : [outer, step];
   });
 };
