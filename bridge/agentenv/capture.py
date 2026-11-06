@@ -106,7 +106,9 @@ def _wait(capture: str, offset: int, kinds: set, name, timeout: float) -> dict:
             return {"line": line}
         code = _exit_code(capture)
         if code is not None:
-            return {"exited": code, "progress": _tail(log), "output": _tail(os.path.join(capture, "capture.out"))}
+            # REA reads the capture's whole output, its Evidence or failure, from the file's size.
+            output = os.path.join(capture, "capture.out")
+            return {"exited": code, "progress": _tail(log), "output_bytes": os.path.getsize(output)}
         if time.monotonic() > deadline:
             return {"timed_out": True, "progress": _tail(log)}
         time.sleep(POLL_S)

@@ -45,9 +45,11 @@ From a request, REA renders a bundle in a private temporary folder: a computer
 app on the `ubuntu-24.04` base with the `reference` driver that installs the
 app, opens it on demand with `gtk-launch <desktop entry>` from the computer
 user's home, so its open and save dialogs start there rather than in the
-framework's folder for the app, and keeps no seed and no data hooks. The app is not open when the computer starts: agentenv lists it
-in the desktop's Applications menu under Other by the environment's name, such
-as `mousepad`, and that entry launches it through the app's server.
+framework's folder for the app, and keeps no seed and no data hooks. The app is not open when the computer starts:
+`start_build_capture` opens it under REA's capture. When no capture is under
+way, open it from the desktop's Applications menu, where agentenv lists it
+under Other by the environment's name, such as `mousepad`; that entry launches
+it through the app's server.
 
 ```json
 {
@@ -89,6 +91,10 @@ in the folder and its files stay as they were shared.
 REA runs the deploy with `run_bundle(keep=True, emulate=False)` on the local
 sandbox provider, so only the host's own architecture is built. The first start
 of a bundle builds its image and can take minutes; later starts reuse it.
+agentenv makes a start wait while another agentenv run on this host writes its
+bundle's ids, so starts at the same time wait for each other, several minutes
+when a few run together; the progress line then says it is waiting for another
+agent-env run to finish writing this bundle's ids.
 While it waits, REA sends an MCP progress notification every five seconds with
 agentenv's latest line, so a client that resets its request timeout on
 progress keeps waiting. REA then waits until the computer's readiness checks

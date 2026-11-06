@@ -13,6 +13,7 @@ import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import { AGENTENV_PROVIDER } from "../../desktop/AgentEnvComputerHelper.js";
 import type { ControlledComputer } from "../../desktop/BuildComputerController.js";
+import { notAnswered, startFailure } from "./DesktopBuildCaptureFailure.js";
 import {
   adapterError,
   controller,
@@ -48,16 +49,6 @@ type CheckpointTaken = Omit<
 /** The capture's progress event in a line the controller waited for. */
 const eventOf = (line: string): DesktopCaptureEvent | undefined =>
   desktopCaptureProgressSchema.parse(JSON.parse(line)).rea_progress.event;
-
-/** Why the capture is not answering, from what the controller saw instead of the event. */
-const notAnswered = (operation: string, answer: Answer): AnalysisError =>
-  adapterError(
-    operation,
-    answer.error ??
-      (answer.exited === undefined
-        ? `The capture did not answer in time. Its last progress: ${answer.progress ?? ""}`
-        : `The capture ended with exit status ${String(answer.exited)}. ${answer.output ?? ""} ${answer.progress ?? ""}`.trim()),
-  );
 
 /**
  * One capture in the computer. `unreleased` is a capture that may be
@@ -212,7 +203,10 @@ export class DesktopBuildCapture {
     }
     const event = answer.line === undefined ? undefined : eventOf(answer.line);
     if (event?.kind !== "window_open")
-      return err({ failure: notAnswered(START, answer), answer });
+      return err({
+        failure: await startFailure(this.computer, run.folder, answer, signal),
+        answer,
+      });
     return ok({
       desktop_entry: entry,
       package_lists: answer.apt?.lists ?? 0,

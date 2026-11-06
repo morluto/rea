@@ -2,7 +2,14 @@ import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { expect, it } from "vitest";
+import { z } from "zod";
 
+import { captureDesktopApplication } from "../../../src/application/desktop/DesktopApplicationCapture.js";
+import {
+  capture,
+  checkpoint,
+  writeCaptureFolder,
+} from "../../../src/application/desktop/desktopCapture.fixture.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { seedWording } from "../../../src/domain/desktop/appExport.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
@@ -223,4 +230,109 @@ it("refuses capture steps out of order and a capture of a bundle's computer", as
       })
     ).error.message,
   ).toContain("stopped capture");
+});
+
+it("leads with the app's exit code and the end of its stderr when the app exits before its window opens", async () => {
+  const recorded = capture();
+  const cause = "[error] notes: Unable to find an appropriate java runtime.";
+  // More stderr than a message keeps, so only its end can be quoted.
+  const stderr = `${"[warning] notes: probing a runtime\n".repeat(200)}${cause}\n`;
+  const exited = await writeCaptureFolder({
+    ...recorded,
+    session: {
+      ...recorded.session,
+      end_reason: "application_exited",
+      duration_ms: 1080,
+      exit: { code: 1, signal: null },
+      first_window_ms: null,
+      window_match: null,
+      windows: [],
+      stderr,
+    },
+    state: {
+      ...recorded.state,
+      checkpoints: [
+        checkpoint("baseline", "baseline", [], []),
+        checkpoint("exit", "exit", [], []),
+      ],
+    },
+    limitations: ["No application window was seen."],
+  });
+  const { client } = await fakes({ env: { FAKE_REA_APP_EXITS: exited } });
+  const id = await startBuildComputer(client, REQUEST);
+  const { error } = parseMcpToolError(
+    await client.callTool({
+      name: "start_build_capture",
+      arguments: { computer_id: id },
+    }),
+  );
+  expect(error.message.split(" ")[0]).toBe(recorded.application.argv[0]);
+  expect(error.message).toMatch(/\bcode 1\b/u);
+  expect(error.message).toContain("1080 ms");
+  expect(error.message).toContain(cause);
+  expect(error.message.length).toBeLessThan(1500);
+  expect(error.remediation.action).not.toContain(cause);
+  // The capture's own record stays structured beside the message.
+  expect(error.details?.diagnostics).toMatchObject({
+    application: { argv: recorded.application.argv },
+    session: {
+      end_reason: "application_exited",
+      exit: { code: 1, signal: null },
+      first_window_ms: null,
+      stderr,
+    },
+  });
+  // The capture ended with the app, so none is left running.
+  expect(
+    parseMcpToolError(
+      await client.callTool({
+        name: "stop_build_capture",
+        arguments: { computer_id: id },
+      }),
+    ).error.code,
+  ).toBe("invalid_request");
+});
+
+it("reports a capture that fails before the app's window opens with its own message and remediation", async () => {
+  // What the capture prints when it refuses its host, as the CLI does.
+  const refused = await captureDesktopApplication(
+    {
+      desktopEntry: "org.example.notes",
+      executable: undefined,
+      arguments: [],
+      output: join(await createTestTempDirectory("build-refused-"), "capture"),
+      statePaths: [],
+      excludes: [],
+      maxDurationSeconds: 60,
+      maxEntries: 10_000,
+      maxFileBytes: 1024 * 1024,
+      maxContentBytes: 8 * 1024 * 1024,
+      packageFile: undefined,
+    },
+    {
+      platform: "darwin",
+      environment: {},
+      callerDirectory: "/",
+      nextRequest: () => undefined,
+      report: async () => {},
+    },
+  );
+  const failure = z
+    .looseObject({
+      message: z.string(),
+      remediation: z.object({ action: z.string() }),
+    })
+    .parse(refused);
+  const { client } = await fakes({
+    env: { FAKE_REA_CAPTURE_FAILURE: JSON.stringify(refused, null, 2) },
+  });
+  const id = await startBuildComputer(client, REQUEST);
+  const { error } = parseMcpToolError(
+    await client.callTool({
+      name: "start_build_capture",
+      arguments: { computer_id: id },
+    }),
+  );
+  expect(error.message).toContain(failure.message);
+  expect(error.remediation.action).toBe(failure.remediation.action);
 });

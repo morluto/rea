@@ -72,6 +72,12 @@ the first source that has the app:
   `/usr/share/applications` without `.desktop`, such as
   `org.inkscape.Inkscape`. Add `window_class` when you know it; Inkscape's
   is `Inkscape`. AbiWord's entry is `abiword` and its class `Abiword`.
+- To find the entry, read the package's file list: its page on
+  packages.ubuntu.com, or `apt-get download PKG && dpkg -c PKG_*.deb` where
+  apt runs. The entry's `StartupWMClass` may not be the window's real
+  class, so do not take `window_class` from it: MuseScore 3's says
+  `mscore3`, its window's is `MuseScore3`. The export uses the class the
+  capture saw.
 
 ## Drive the app
 
@@ -97,16 +103,25 @@ the first source that has the app:
   environment's name.
 - Prefer shortcuts and typing to long pointer paths: `key` takes `keys`, an
   array holding one chord's keys, such as
-  `{"action": "key", "keys": ["ctrl", "s"]}`, and `type` turns `\n` into
+  `{"action": "key", "keys": ["Control", "s"]}`, and `type` turns `\n` into
   Enter.
 - Before `type`, check in a screenshot that a text cursor or a focused
   field is there. In apps with single-key shortcuts, such as Inkscape, text
   typed without one runs as commands.
-- Save As opens in the home: click Documents in its sidebar and type only
-  the file name. Answer the app's save questions, such as keeping the
-  format, then check the saved path in the title or status bar, or the
-  dialog's folder when the app shows only the name, and that it shows no
-  unsaved mark, before you mark a checkpoint or check.
+- Save As differs by app. Check the dialog's current folder first: most
+  open in the home, so click Documents in the sidebar, but Scribus opens in
+  `~/Documents` and its sidebar has no Documents entry. Type only the file
+  name. A dialog taller than the 1280×800 screen hides its buttons:
+  maximize it from its title bar, or confirm it with `key` Return, as when
+  HomeBank's Save button is off-screen.
+- Answer the app's save questions, such as keeping the format, then check
+  the saved path in the title or status bar, or the dialog's folder when
+  the app shows only the name, and that it shows no unsaved mark, before
+  you mark a checkpoint or check. Where the title never shows one, as in
+  HomeBank, a greyed Save or Revert, or the file reopened from recent
+  files, confirms the save.
+- Qt spin boxes change their value on scroll: move the pointer off them
+  before you scroll.
 - What the app saved under the home before `seed`, such as a document in
   `~/Documents` or its settings, is part of the seed. A file you move to the
   Trash is left out, and the export lists it in `limitations`. Trash a stray
@@ -126,12 +141,16 @@ the first source that has the app:
 
 1. `start_build_computer` with
    `{"source": {"kind": "request", "desktop_entry": ..., "install": ...}}`.
-   The first start of an app builds its image and can take minutes. A
-   failed start returns the build's error: fix the request, or stop when the
+   The first start of an app builds its image, and starts at the same time
+   on this host wait for each other; either can take minutes. A failed
+   start returns the build's error: fix the request, or stop when the
    install cannot work, and close any `computer_id` the error names.
 2. `start_build_capture`. It returns once the app's window is open. A
    `package_lists_error` may stop the capture finding the package's
-   sources; the export says when that matters.
+   sources; the export says when that matters. When the app exits before
+   its window opens, the error gives its exit code and the end of its
+   stderr, which may name what it lacks, such as a Java runtime: try
+   another install source, or stop as for an install this flow cannot do.
 3. Make the seed through the app and save it from the app under
    `~/Documents`: build the document in the app, or write its source where
    the app edits its format as text, then save it again from the app. Make
@@ -141,6 +160,17 @@ the first source that has the app:
    otherwise starts on its own screen. For a starting file of the requester's,
    read it here and rebuild it in the app with synthetic data in place of
    personal data; REA cannot copy a file into the computer.
+   - An app that keeps its own data and saves after every change, such as
+     Osmo's contacts in `~/.local/share/osmo/contacts_records.xml`, has no
+     document: that state is the seed. Build it in the app and mark `seed`
+     once the app has written. To see whether it has, mark a throwaway
+     checkpoint, such as `probe-1`, and read its `changes` and
+     `retained_files`.
+   - When the app's own format is compressed, such as Gnumeric's
+     `.gnumeric` (gzip XML), REA reads it as binary and no check can look
+     inside. Save in an uncompressed format the app offers, such as
+     Gnumeric XML, then reopen the file once and check that a plain Ctrl+S
+     keeps that format.
 4. Only once the seed is saved, `mark_build_checkpoint` with name `seed`.
 5. Make the change the task asks for, as a user would, and save it.
 6. Only once the change is saved, `mark_build_checkpoint` with name `end`.
@@ -158,7 +188,8 @@ Write `{"name", "prompt", "checks"}` from the draft and what you did.
 - `prompt`: what the requester wants, in their words and the app's terms,
   naming the document as a user would and ending with saving it: "Change the
   poster's headline in Documents/poster.svg to Summer Bake Sale and save
-  it." Never say how the file stores it, and never give the checks.
+  it." Leave saving out for an app that saves after every change, such as
+  Osmo. Never say how the file stores it, and never give the checks.
 - Checks are file-based: content checks that prove the edit, never only that
   a file exists or changed. Start from the suggestions; keep those that say
   what the user did and drop what follows from how the app saves.
@@ -168,8 +199,10 @@ Write `{"name", "prompt", "checks"}` from the draft and what you did.
   or an ODF paragraph by style,
   `/entries/[name=content.xml]/view/root/children/[name=office:body]/children/[name=office:text]/children/[name=text:p][@text:style-name=Title]/children/0`.
   A selector must match exactly one element, so give the target a unique id
-  or style in the seed. The draft may suggest positional pointers; rewrite
-  them. Only an element's text is read by position, as `children/0`.
+  or style in the seed. The draft may suggest positional pointers, or
+  select by a coordinate or a generated id, such as Scribus's `XPOS` or
+  `ItemID`; rewrite them to a name-like attribute, such as Scribus's
+  `ANNAME`. Only an element's text is read by position, as `children/0`.
 - When an app may split an element's text into runs, check it whole:
   `text_equals` (or `text_contains` for a value inside a sentence) on the
   element compares all its text, however it is split. Add
@@ -182,6 +215,16 @@ Write `{"name", "prompt", "checks"}` from the draft and what you did.
   unchanged element, such as another paragraph's `xid`, use the app's usual
   numbering and let the export confirm it, or read it in the exported
   bundle's `envs/<env>/seed/`.
+- Some apps keep text in an attribute, such as Scribus's `<ITEXT CH=...>`.
+  `text_equals` cannot join it, so check the attribute with `value_equals`:
+  `/root/children/[name=DOCUMENT]/children/[name=PAGEOBJECT][@ANNAME=Headline]/children/[name=StoryText]/children/[name=ITEXT]/attributes/CH`.
+  A partial edit the app restyles splits the text into several runs and
+  fails that check; list it in the report's limitations.
+- When the draft shows no values or no checks, read the file in an
+  exported bundle's `envs/<env>/seed/`, exporting a first draft of the task
+  to a scratch folder if you have none. An export refusal names the end
+  state's value: a `value_equals` failing there says what it found, such as
+  `is "44", not "1"`.
 - Where easy, add one check that the rest is untouched, such as another
   text's value the edit must leave alone. It is the one unchanged value
   worth checking; it passes on the seed too, which is fine, since the export

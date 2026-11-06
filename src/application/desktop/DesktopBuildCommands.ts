@@ -32,7 +32,6 @@ export const answerSchema = z.looseObject({
   exited: z.int().optional(),
   timed_out: z.boolean().optional(),
   progress: z.string().optional(),
-  output: z.string().optional(),
   exit_code: z.int().nullable().optional(),
   output_bytes: z.int().nonnegative().optional(),
   stdout_bytes: z.int().nonnegative().optional(),

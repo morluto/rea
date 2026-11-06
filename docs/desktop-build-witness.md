@@ -38,6 +38,12 @@ See [desktop builds](https://github.com/morluto/rea/blob/main/.agents/skills/rev
    from a `.deb` file, the build layer keeps that file at
    `/opt/rea/package.deb` and the capture records it with `--package-file`. Do not open the app from
    the menu first: the capture refuses an app whose window is already open.
+   When the capture ends before the window opens, REA reads its output. An app
+   that exits at launch, such as one missing a runtime, is reported with its
+   program, exit code, run time and the last lines of its stderr, at most 8
+   lines and 800 characters, and `details.diagnostics` keeps the capture's
+   record of the session. A capture that refused to start gives its own
+   message and remediation.
 3. Make the seed through the app with `act_on_build_computer`, saving it
    where the user keeps such files, such as `~/Documents`, then
    `mark_build_checkpoint` `seed`.
