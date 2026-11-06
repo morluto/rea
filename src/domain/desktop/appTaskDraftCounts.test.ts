@@ -134,3 +134,18 @@ describe("draftTaskFiles counts of a list's members", () => {
     );
   });
 });
+
+describe("draftTaskFiles count guards", () => {
+  it("guards no count of runs a text check reads, nor one the end does not hold", () => {
+    const before = "<doc><p><c>First</c><c>Second</c></p></doc>";
+    const after = "<doc><p><c>Changed</c><c>Second</c><c>Third</c></p></doc>";
+
+    const file = xmlDraft(before, after);
+
+    expect(file.suggested.map(({ kind }) => kind)).toEqual(["text_equals"]);
+    expect(file.guards.map(({ kind }) => kind)).not.toContain("member_count");
+    expect(
+      passing("Documents/doc.xml", xml(after), file.guards).every(Boolean),
+    ).toBe(true);
+  });
+});

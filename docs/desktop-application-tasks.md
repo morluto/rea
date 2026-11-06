@@ -107,8 +107,10 @@ operation `describe_desktop_application_task` and predicate type
     characters, never a time or a token or id a program generates. A pair
     counts every member holding both its values, whichever attributes that
     member ranks first. An element with identifiers is named by those alone;
-    an id the app generates, as Freeplane's `ID_329023692`, ranks with the
-    tokens, so a new node is named by its `TEXT`. The selector must name the
+    an id the app generates, as Freeplane's `ID_329023692`, ranks last, after
+    a child's text, so a new node is named by its `TEXT`. A child's text is
+    counted on every sibling, one an identifier names included, so a title
+    two records share names neither. The selector must name the
     member alone at both ends, with the same values; a child's text names a
     member that is in one version only when the list's length changed, so a
     row whose one cell an edit changed stays that row. An element whose one
@@ -166,7 +168,8 @@ operation `describe_desktop_application_task` and predicate type
     none inside another, two or more or one holding words with a space: an
     element's own attribute, as a Freeplane node's `TEXT` beside the nodes in
     it, or a lone value, as `<Bool value="false"/>`, is checked where it is.
-    A record added
+    The check covers that attribute and the runs holding it; another change
+    in the frame, as a run's `FONT`, keeps its own check. A record added
     or removed whole, an element holding only elements, its fields, such as
     Tellico's `<entry>` or a record of repeated `<field>` elements, never
     makes the list holding records of its kind a check, whose text would hold
@@ -273,7 +276,9 @@ operation `describe_desktop_application_task` and predicate type
   `member_count` of the outermost list an edit goes through by a member
   with like siblings, of the edited member's tag and kind, at the seed's
   number, as Dia's boxes in their layer or MyPaint's layers in their stack:
-  no member of the kind added or removed. A guard of a coordinate comes
+  no member of the kind added or removed; never of runs in an element a
+  text check reads, and only where the end holds the same number. A guard
+  of a coordinate comes
   after those of text. At most four a file. They pass on the seed, which
   the export allows, since one check failing there is enough.
 - `notes`: why `files` is empty, or why a file's suggestions are thin. Each

@@ -143,9 +143,9 @@ const editedList = (
  * of their tag (`matchingOf`), which fails at the seed since that number
  * changed, at most two, the shallowest first. Where members were only
  * edited, a guard that the outermost list an edit goes through by a member
- * with like siblings holds as many as it did. Never for noise, runs of a
- * text check, an element in mixed content, or a list a selector cannot name
- * whole at both ends.
+ * with like siblings holds as many as it did, which the end holds too. Never
+ * for noise, runs of a text check, an element in mixed content, or a list a
+ * selector cannot name whole at both ends.
  */
 export const draftCounts = (
   context: CountContext,
@@ -188,14 +188,21 @@ export const draftCounts = (
       : editedList(context, pointer);
     if (
       counted !== undefined &&
+      !context.covered(counted.list.slice(0, -"/children".length)) &&
       ![...changed.values()].some(
         ({ list, tag }) => list === counted.list && tag === counted.tag,
       )
     )
       edited.set(keyOf(counted), counted);
   }
+  // A guard holds at both ends: an edit that also added or removed such a member makes none.
   const guards = [...edited.values()]
     .toSorted((left, right) => depth(left) - depth(right))
+    .filter(
+      (counted) =>
+        membersOf(ends.baseline, counted).length ===
+        membersOf(ends.final, counted).length,
+    )
     .flatMap((counted) => countAt(context, counted, "baseline") ?? [])
     .slice(0, MAX_COUNT_GUARDS);
   return { checks, guards };

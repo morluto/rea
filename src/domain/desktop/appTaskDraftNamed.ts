@@ -6,7 +6,11 @@ import {
   recordChecks,
   type AddedContext,
 } from "./appTaskDraftAdded.js";
-import { attributeTextCheck } from "./appTaskDraftAttributeText.js";
+import {
+  attributeTextCheck,
+  readsText,
+  textAttributes,
+} from "./appTaskDraftAttributeText.js";
 import { draftCounts } from "./appTaskDraftCounts.js";
 import { draftGuards } from "./appTaskDraftGuards.js";
 import {
@@ -387,57 +391,42 @@ const collectChecks = (
   };
   const { ends, tree } = context;
   const runs = attributeTexts(collected, change);
-  for (const pointer of change.added.filter((at) => !runs(at))) {
+  for (const pointer of change.added.filter((at) => !runs(at, ends.final))) {
     const root = tree.root(ends.final, pointer);
     if (root !== undefined)
       addedChecks(collected, root, resolvePointer(ends.final, root));
   }
   for (const pointer of innermost(change.changed))
-    if (tree.root(ends.final, pointer) === pointer && !runs(pointer)) {
+    if (
+      tree.root(ends.final, pointer) === pointer &&
+      !runs(pointer, ends.final)
+    ) {
       equals(collected, pointer, resolvePointer(ends.final, pointer));
       // An id the app renumbered, or other noise, renamed nothing.
       if (context.noise(pointer) === undefined) renamedFrom(collected, pointer);
     }
-  for (const pointer of change.removed.filter((at) => !runs(at)))
+  for (const pointer of change.removed.filter((at) => !runs(at, ends.baseline)))
     removedCheck(collected, pointer);
   return collected;
 };
 
-/** The attributes an attribute-text check may read: each that changed, and each string attribute of an element added or removed, by the element's pointer. */
-const textAttributes = (
-  { context }: Collected,
-  change: DesktopStateDifference,
-) => {
-  const { ends, noise } = context;
-  const own = (view: JsonValue | null, pointer: string) => {
-    const element = resolvePointer(view, pointer);
-    return isXmlElement(element)
-      ? Object.keys(element.attributes).map((key) => ({ owner: pointer, key }))
-      : [];
-  };
-  return [
-    ...change.changed.flatMap((pointer) => {
-      const key = attributeKeyOf(pointer);
-      return key === undefined
-        ? []
-        : [{ owner: pointer.split("/").slice(0, -2).join("/"), key }];
-    }),
-    ...change.added.flatMap((pointer) => own(ends.final, pointer)),
-    ...change.removed.flatMap((pointer) => own(ends.baseline, pointer)),
-  ].filter(
-    ({ owner, key }) =>
-      noise(`${owner}/attributes/${escapeToken(key)}`) === undefined,
-  );
-};
-
-/** Take the `attributeTextCheck` of each attribute that may hold runs of text; whether a pointer is in an element one took, whose runs it covers. */
+/**
+ * Take the `attributeTextCheck` of each attribute that may hold runs of
+ * text; whether a change at a pointer is one a check took reads: the text
+ * attribute of an element in it, or a run holding that attribute added or
+ * removed in it, not another of its attributes or elements.
+ */
 const attributeTexts = (
   collected: Collected,
   change: DesktopStateDifference,
 ) => {
   const { file, ends, tree, limit } = collected.context;
-  const covered: string[] = [];
-  for (const { owner, key } of textAttributes(collected, change)) {
+  const covered: { element: string; key: string }[] = [];
+  for (const { owner, key } of textAttributes(
+    change,
+    ends,
+    collected.context.noise,
+  )) {
     const found =
       tree.root(ends.final, owner) === owner ||
       tree.root(ends.baseline, owner) === owner
@@ -452,13 +441,15 @@ const attributeTexts = (
             key,
           )
         : undefined;
-    if (found !== undefined && !covered.includes(found.element)) {
-      covered.push(found.element);
+    if (
+      found !== undefined &&
+      !covered.some(({ element }) => element === found.element)
+    ) {
+      covered.push({ element: found.element, key });
       take(collected, "elements", [found.check]);
     }
   }
-  return (pointer: string) =>
-    covered.some((element) => pointer.startsWith(`${element}/`));
+  return readsText(covered);
 };
 
 /**

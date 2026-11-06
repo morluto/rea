@@ -1,5 +1,5 @@
 import type { JsonValue } from "../jsonValue.js";
-import { collapseWhitespace, isTimestamp } from "./appTask.js";
+import { isTimestamp } from "./appTask.js";
 import {
   isGeneratedId,
   isIdentifyingAttribute,
@@ -46,26 +46,35 @@ export const pairSuffix = (first: Attribute, second: Attribute) =>
     ? `${condition(first)}${condition(second)}`
     : `${condition(second)}${condition(first)}`;
 
-/** The longest child text a selector names a member by, and the most nodes read to find it. */
+/** The longest child text a selector names a member by. */
 const MAX_CHILD_TEXT = 64;
-const MAX_CHILD_NODES = 64;
 
-/** An element's text with its whitespace collapsed, as `[>CHILD=VALUE]` reads it; undefined past the bounds. */
+/**
+ * An element's text with its whitespace collapsed as `collapseWhitespace`
+ * does, as `[>CHILD=VALUE]` reads it, whatever elements hold it, so every
+ * member a selector matches counts; collapsed as it is read, and undefined
+ * once longer than a selector names a member by.
+ */
 const shortText = (element: JsonValue): string | undefined => {
   let text = "";
-  let nodes = 0;
+  let space = false;
+  const append = (node: string) => {
+    for (const character of node)
+      if (" \t\r\n".includes(character)) space = text !== "";
+      else {
+        text += `${space ? " " : ""}${character}`;
+        space = false;
+      }
+  };
   const pending: JsonValue[] = [element];
   for (let node = pending.pop(); node !== undefined; node = pending.pop()) {
-    nodes += 1;
-    if (nodes > MAX_CHILD_NODES || text.length > 4 * MAX_CHILD_TEXT)
-      return undefined;
-    if (typeof node === "string") text += node;
+    if (typeof node === "string") append(node);
     else if (isRecord(node) && Array.isArray(node.children))
       for (let index = node.children.length - 1; index >= 0; index -= 1)
         pending.push(node.children[index] ?? null);
+    if (text.length > MAX_CHILD_TEXT) return undefined;
   }
-  const collapsed = collapseWhitespace(text);
-  return collapsed.length > MAX_CHILD_TEXT ? undefined : collapsed;
+  return text;
 };
 
 /**

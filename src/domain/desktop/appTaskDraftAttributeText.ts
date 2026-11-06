@@ -1,8 +1,18 @@
 import type { JsonValue } from "../jsonValue.js";
 import type { DesktopTaskCheckInput } from "./appTask.js";
-import { isStamp } from "./appTaskDraftNoise.js";
+import {
+  attributeKeyOf,
+  isStamp,
+  type NoiseReason,
+} from "./appTaskDraftNoise.js";
 import { isIdentifyingAttribute } from "./attributeRank.js";
-import { elementText, isXmlElement, resolvePointer } from "./viewPointer.js";
+import type { DesktopStateDifference } from "./stateChanges.js";
+import {
+  elementText,
+  escapeToken,
+  isXmlElement,
+  resolvePointer,
+} from "./viewPointer.js";
 
 /** How far a text check climbs from a run to the element an attribute names. */
 const MAX_CLIMB = 3;
@@ -134,3 +144,43 @@ export const attributeTextCheck = (
       }
     : undefined;
 };
+
+/** The attributes an attribute-text check may read, by the element holding them: each that changed, and each of an element added or removed; none that is noise. */
+export const textAttributes = (
+  change: Pick<DesktopStateDifference, "added" | "changed" | "removed">,
+  ends: AttributeTextContext["ends"],
+  noise: (pointer: string) => NoiseReason | undefined,
+) => {
+  const own = (view: JsonValue | null, pointer: string) => {
+    const element = resolvePointer(view, pointer);
+    return isXmlElement(element)
+      ? Object.keys(element.attributes).map((key) => ({ owner: pointer, key }))
+      : [];
+  };
+  return [
+    ...change.changed.flatMap((pointer) => {
+      const key = attributeKeyOf(pointer);
+      return key === undefined
+        ? []
+        : [{ owner: pointer.split("/").slice(0, -2).join("/"), key }];
+    }),
+    ...change.added.flatMap((pointer) => own(ends.final, pointer)),
+    ...change.removed.flatMap((pointer) => own(ends.baseline, pointer)),
+  ].filter(
+    ({ owner, key }) =>
+      noise(`${owner}/attributes/${escapeToken(key)}`) === undefined,
+  );
+};
+
+/** Whether a change at a pointer, read in a view, is one an attribute-text check reads: its attribute in the checked element, or a run holding it there; another attribute or element is no part of it. */
+export const readsText =
+  (checked: readonly { readonly element: string; readonly key: string }[]) =>
+  (pointer: string, view: JsonValue | null): boolean =>
+    checked.some(({ element, key }) => {
+      const run = resolvePointer(view, pointer);
+      return (
+        pointer.startsWith(`${element}/`) &&
+        (attributeKeyOf(pointer) === key ||
+          (isXmlElement(run) && typeof run.attributes[key] === "string"))
+      );
+    });

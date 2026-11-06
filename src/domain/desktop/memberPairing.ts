@@ -57,13 +57,14 @@ const pairsOf = (paired: readonly (Attribute & { tier: number })[]) =>
  * two of the best `MAX_PAIRED` of those together; then a coordinate, a long
  * number or a token by itself; then a child element's text, as Osmo's record
  * by `[>first_name=Delphine]` (`childConditions`), for an element no
- * identifier names. All are counted over every sibling, so a
+ * identifier names; last, an id the app generates (`isGeneratedId`), as
+ * Freeplane's `ID_329023692`. All are counted over every sibling, so a
  * selector several siblings match is never taken for one naming a member
  * alone; but an element with identifying attributes is keyed by those alone,
  * so one whose identifiers are new is another element, whatever else it
  * shares. An identifier the app numbers by position (`positional`) names no
- * member; one it generates (`isGeneratedId`) ranks with the tokens. The ids number the name among those seen, so a name is spelled into
- * a selector only once one is chosen, not per attribute.
+ * member. The ids number the name among those seen, so a name is spelled
+ * into a selector only once one is chosen, not per attribute.
  */
 const candidatesOf = (
   member: JsonValue,
@@ -84,12 +85,17 @@ const candidatesOf = (
       ? [{ key, value }]
       : [],
   );
-  // An id the app generates names a kept member, but no new one another save would key alike, so it ranks with tokens.
-  const identifies = ({ key, value }: Attribute) =>
-    isIdentifyingAttribute(key) && !isGeneratedId(value);
-  const identities = usable.filter(identifies);
+  // An id the app generates names a kept member, but no new one another save would key alike, so it ranks last.
+  const generated = usable.filter(
+    ({ key, value }) => isIdentifyingAttribute(key) && isGeneratedId(value),
+  );
+  const identities = usable.filter(
+    (field) => isIdentifyingAttribute(field.key) && !generated.includes(field),
+  );
   const named = (key: string) => key.toLowerCase() === "name";
-  const ranked = rankAttributes(usable.filter((field) => !identifies(field)));
+  const ranked = rankAttributes(
+    usable.filter(({ key }) => !isIdentifyingAttribute(key)),
+  );
   const pairable = ranked.filter(({ tier }) => tier < 3);
   const suffixes = [
     "",
@@ -101,8 +107,9 @@ const candidatesOf = (
     ...pairsOf(pairable.slice(0, MAX_PAIRED)),
     ...ranked.filter(({ tier }) => tier === 3).map(condition),
   ];
-  const children = identities.length > 0 ? [] : childConditions(member);
-  suffixes.push(...children);
+  // Counted on every member, one its identifiers key included, since the evaluator matches any member holding the child.
+  const children = childConditions(member);
+  suffixes.push(...children, ...generated.map(condition));
   const number = names.get(name) ?? names.size;
   names.set(name, number);
   // A suffix is empty or opens with `[`, so the number before it cannot run into it.
@@ -114,7 +121,7 @@ const candidatesOf = (
     number,
     ids,
     choosable,
-    byChild: suffixes.length - children.length,
+    byChild: suffixes.length - children.length - generated.length,
     pairable: pairable.map(({ key }) => key),
   };
 };

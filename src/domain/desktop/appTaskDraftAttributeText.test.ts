@@ -44,6 +44,32 @@ describe("draftTaskFiles for text an app keeps in an attribute", () => {
     ).toEqual([[false], [true], [true], [true], [false]]);
   });
 
+  it("keeps a check of a run's formatting the text check does not read, beside it", () => {
+    const styled = (first: string, font: string) =>
+      `<SCRIBUSUTF8NEW><DOCUMENT><PAGEOBJECT ANNAME="Headline"><StoryText><ITEXT FONT="Regular" CH="${first}"/><ITEXT FONT="${font}" CH="Fair"/></StoryText></PAGEOBJECT><PAGEOBJECT ANNAME="Details"/></DOCUMENT></SCRIBUSUTF8NEW>`;
+
+    const file = xmlDraft(
+      styled("Spring ", "Bold"),
+      styled("Summer ", "Italic"),
+    );
+
+    expect(file.suggested).toEqual([
+      {
+        kind: "text_equals",
+        file: FILE,
+        pointer: FRAME,
+        value: "Summer Fair",
+        text_attribute: "CH",
+      },
+      {
+        kind: "value_equals",
+        file: FILE,
+        pointer: `${FRAME}/children/[name=StoryText]/children/[name=ITEXT][@CH=Fair]/attributes/FONT`,
+        value: "Italic",
+      },
+    ]);
+  });
+
   it("checks a mind map's node by the TEXT it holds itself, not the TEXT of the nodes in it, and names a new node by its text rather than the id the app made", () => {
     const map = (packing: readonly (readonly string[])[]) =>
       `<map version="freeplane 1.7.0"><node TEXT="Weekend Trip" ID="ID_1360674148"><node TEXT="Packing" ID="ID_1965352635">${packing

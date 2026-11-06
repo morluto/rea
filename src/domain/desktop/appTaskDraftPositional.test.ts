@@ -315,3 +315,52 @@ describe("an element renamed", () => {
     });
   });
 });
+
+describe("members named by a child's text or a generated id", () => {
+  it("counts a child's text on every sibling, one an identifier names included, so a selector both match names neither", () => {
+    const records = (note: string) =>
+      `<records><record id="fixed"><title>Shared</title><note>kept</note></record><record><title>Shared</title><note>${note}</note></record></records>`;
+
+    const file = xmlDraft(records("before"), records("after"));
+
+    const pointers = [
+      ...file.suggested.flatMap((check) =>
+        "pointer" in check ? [check.pointer] : [],
+      ),
+      ...file.values.map(({ pointer }) => pointer),
+    ];
+    expect(
+      pointers.some((pointer) => pointer.includes("[>title=Shared]")),
+    ).toBe(false);
+    expect(file.values.map(({ after }) => after)).toEqual(["after"]);
+    expect(
+      passing(FILE, xml(records("after")), file.suggested).every(Boolean),
+    ).toBe(true);
+  });
+
+  it("names a new node by its text rather than the id the app generated, wherever the id sits among its attributes", () => {
+    const map = (...nodes: string[]) =>
+      `<map><node TEXT="Packing" ID="ID_1965352635">${nodes.join("")}</node></map>`;
+    const node = (id: string, text: string) =>
+      `<node ID="${id}" TEXT="${text}" CREATED="1793955120032"/>`;
+
+    const pairing = pairMembers(
+      membersAt(
+        map(
+          node("ID_1749680464", "Tent"),
+          node("ID_329023692", "Water filter"),
+        ),
+        "/root/children/0/children",
+      ),
+      membersAt(
+        map(node("ID_1749680464", "Tent")),
+        "/root/children/0/children",
+      ),
+    );
+
+    expect(pairing.newer.keys).toEqual([
+      "[name=node][@TEXT=Tent]",
+      "[name=node][@TEXT=Water filter]",
+    ]);
+  });
+});
