@@ -64,10 +64,11 @@ type WitnessSummary = {
   readonly record: WitnessRecord | null;
 };
 
-/** A task's results on the app's views, and whether its files had settled. */
+/** A task's results on the app's views, whether its files had settled, and whether the bound cut a read. */
 type Graded = {
   readonly results: TaskCheckOutcome[];
   readonly settled: boolean;
+  readonly read_cut: boolean;
 };
 
 /** One check of the task against the app's live state, and the witness stage it filed, if any. */
@@ -78,6 +79,8 @@ export type CheckedTask = {
   readonly results: TaskCheckOutcome[];
   /** Whether the app's files had held for the settle window when they were graded, rather than at its bound. */
   readonly settled: boolean;
+  /** Whether a read still in flight at the settle bound was cut, so the last completed read was graded. */
+  readonly read_cut: boolean;
   readonly witness: WitnessSummary | null;
 };
 
@@ -125,11 +128,7 @@ const summaryOf = (
 });
 
 /** The pass and fail counts of one set of results. */
-const counted = (
-  task: DesktopTask,
-  results: TaskCheckOutcome[],
-  settled: boolean,
-) => {
+const counted = (task: DesktopTask, { results, settled, read_cut }: Graded) => {
   const passed = results.filter((result) => result.passed).length;
   return {
     task: task.name,
@@ -137,6 +136,7 @@ const counted = (
     failed: results.length - passed,
     results,
     settled,
+    read_cut,
   };
 };
 
@@ -193,8 +193,7 @@ export class DesktopBuildWitness {
     if (admitted?.ok === false) return admitted;
     const graded = await this.#grade(task, signal, progress);
     if (!graded.ok) return graded;
-    const { results, settled } = graded.value;
-    const checked = counted(task, results, settled);
+    const checked = counted(task, graded.value);
     if (stage === undefined || admitted === undefined)
       return ok({ ...checked, witness: null });
     const filed = await this.#file(stage, admitted.value, graded.value, signal);
@@ -222,6 +221,7 @@ export class DesktopBuildWitness {
         ? ok({
             results: [...evaluateTaskChecks(task.checks, views.value)],
             settled: read.settled,
+            read_cut: read.readCut,
           })
         : err(
             refused(
@@ -249,7 +249,7 @@ export class DesktopBuildWitness {
   async #file(
     stage: WitnessStage,
     actionsBefore: number,
-    { results, settled }: Graded,
+    { results, settled, read_cut }: Graded,
     signal: AbortSignal,
   ): Promise<Result<WitnessSummary, AnalysisError>> {
     const witness = this.#witness;
@@ -274,6 +274,7 @@ export class DesktopBuildWitness {
       expectation: stageExpectation(stage),
       held,
       settled,
+      read_cut,
       results,
     };
     witness.stages.push(filed);
@@ -330,7 +331,7 @@ export class DesktopBuildWitness {
         ),
       );
     return ok({
-      ...counted(task, filed.results, filed.settled),
+      ...counted(task, filed),
       witness: summaryOf(filed, null, witness.record),
     });
   }
@@ -357,7 +358,7 @@ export class DesktopBuildWitness {
     const saved = await this.#save(witness, filed, signal);
     return saved.ok
       ? ok({
-          ...counted(task, filed.results, filed.settled),
+          ...counted(task, filed),
           witness: saved.value,
         })
       : saved;

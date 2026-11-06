@@ -174,18 +174,27 @@ const logLimitations = (
     : []),
 ];
 
-/** Which stages graded files the app was still changing at the settle bound. */
+/** Which stages graded files that had not settled by the bound, and which of them had a read cut there. */
 const unsettledLimitation = (
   stages: readonly WitnessStageRecord[],
 ): string[] => {
-  const unsettled = stages.flatMap(({ stage, settled }) =>
-    settled ? [] : [stage],
-  );
-  return unsettled.length === 0
-    ? []
-    : [
-        `The app's files were still changing at the settle bound when these stages were checked, so each graded its last read, with settled false: ${unsettled.join(", ")}.`,
-      ];
+  const named = (cut: boolean) =>
+    stages.flatMap(({ stage, settled, read_cut }) =>
+      settled || (cut && !read_cut) ? [] : [stage],
+    );
+  const [unsettled, cut] = [named(false), named(true)];
+  return [
+    ...(unsettled.length === 0
+      ? []
+      : [
+          `The app's files had not held for the settle window by its bound when these stages were checked, so each graded its last completed read, with settled false: ${unsettled.join(", ")}.`,
+        ]),
+    ...(cut.length === 0
+      ? []
+      : [
+          `A read still running at the settle bound was cut, with read_cut true, in: ${cut.join(", ")}.`,
+        ]),
+  ];
 };
 
 /**

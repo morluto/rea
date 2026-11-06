@@ -357,7 +357,8 @@ checks. Give every `check_build_task` the task exactly as exported.
    Each check waits until the app's files have held for 3 s, as the
    bundle's verifier does, so an app that saves on its own needs no wait of
    yours. A result with `settled: false` means the files were still
-   changing at the 15 s bound.
+   changing at the 15 s bound, and `read_cut: true` that a slow read was
+   still running there.
 4. Make a near miss on top of it: a plausible wrong edit, such as a typo or
    a wrong number, and save. `check_build_task` with `stage: "near_miss"`:
    a check must fail.

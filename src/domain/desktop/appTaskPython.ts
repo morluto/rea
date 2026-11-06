@@ -459,19 +459,32 @@ async def _read(url):
 
 
 async def _settled_views(url):
-    """The app's views once each file's bytes have held for SETTLE_WINDOW_S, counted from the first read or the last
-    change, read every SETTLE_INTERVAL_S; at SETTLE_BOUND_S, the last read's. And whether they had held."""
+    """The app's views once each file's bytes have held for SETTLE_WINDOW_S, counted from the read that returned them,
+    read every SETTLE_INTERVAL_S; else the last completed read's. No read starts SETTLE_BOUND_S or more after the first
+    began, and one still running then is cut. Also whether the files had held, and whether a read was cut."""
     start = time.monotonic()
+    # The first read is the one a grade needs, so only its own timeout bounds it.
     views, files = await _read(url)
-    # Offsets from the first read's start: a read on time starts on a whole interval.
-    at = since = 0.0
-    while at - since < SETTLE_WINDOW_S and at < SETTLE_BOUND_S:
-        await asyncio.sleep(max(0.0, at + SETTLE_INTERVAL_S - (time.monotonic() - start)))
-        at = max(at + SETTLE_INTERVAL_S, time.monotonic() - start)
-        views, latest = await _read(url)
+    # Offsets from the first read's start: when the last completed read began, and when a read first returned the
+    # bytes it holds.
+    began, since = 0.0, time.monotonic() - start
+    while began - since < SETTLE_WINDOW_S:
+        # Reads come an interval apart, and the one that can settle the files as soon as the window allows.
+        at = max(min(began + SETTLE_INTERVAL_S, since + SETTLE_WINDOW_S), time.monotonic() - start)
+        if at >= SETTLE_BOUND_S:
+            return views, False, False
+        await asyncio.sleep(max(0.0, at - (time.monotonic() - start)))
+        at = max(at, time.monotonic() - start)
+        if at >= SETTLE_BOUND_S:
+            return views, False, False
+        try:
+            latest_views, latest = await asyncio.wait_for(_read(url), SETTLE_BOUND_S - at)
+        except asyncio.TimeoutError:
+            return views, False, True
+        began, views = at, latest_views
         if latest != files:
-            since, files = at, latest
-    return views, at - since >= SETTLE_WINDOW_S
+            since, files = time.monotonic() - start, latest
+    return views, True, False
 `;
 
 /** The verifier artifact: read the app's state through its data/get once its files settle, then evaluate the task's checks. */
@@ -480,9 +493,9 @@ export const renderTaskVerifier = (task: DesktopTask, app: string): string =>
 
 It reads the app's data/get through the computer, takes the typed views of its files and evaluates each check: no
 model, no code from the task. It grades once the app's files settle, since an app can save a few seconds after the
-last change: each result's settled says whether they had held for SETTLE_WINDOW_S, or were still changing at
-SETTLE_BOUND_S and the last read was graded. A failure to reach the app raises, so the run fails rather than scoring
-the agent.
+last change: each result's settled says whether they had held for SETTLE_WINDOW_S, or had not by SETTLE_BOUND_S and
+the last completed read was graded, and read_cut whether a read still running at SETTLE_BOUND_S was cut. A failure to
+reach the app raises, so the run fails rather than scoring the agent.
 """
 import asyncio
 import hashlib
@@ -500,9 +513,10 @@ ${task.checks.map((check) => `    ${pythonLiteral(check as unknown as JsonValue)
 ]
 #: The app's data/get is read this often until its files settle.
 SETTLE_INTERVAL_S = ${pythonSeconds(SETTLE_TIMING.intervalMs)}
-#: How long each file's bytes must hold, from the first read or the last change, before the views are graded.
+#: How long each file's bytes must hold, from the read that returned them, before the views are graded.
 SETTLE_WINDOW_S = ${pythonSeconds(SETTLE_TIMING.windowMs)}
-#: When the last read is graded though the files are still changing.
+#: After the first read began: no read starts then or later, one still running is cut, and the last completed read is
+#: graded though the files are still changing.
 SETTLE_BOUND_S = ${pythonSeconds(SETTLE_TIMING.boundMs)}
 #: Where a data/get file part names its path in the home.
 DATA_OBJECTS = "urn:agentenv:data-objects/v1"
@@ -513,8 +527,8 @@ async def verify(mcp_url, env_url):
     child = protocol.find_child(card, APP)
     if child is None:
         raise RuntimeError(f"the computer at {env_url} lists no app named {APP}")
-    views, settled = await _settled_views(env_url + (child.get("url") or RPC_PATH).removesuffix(RPC_PATH))
-    return [{**result, "settled": settled} for result in evaluate(CHECKS, views)]
+    views, settled, read_cut = await _settled_views(env_url + (child.get("url") or RPC_PATH).removesuffix(RPC_PATH))
+    return [{**result, "settled": settled, "read_cut": read_cut} for result in evaluate(CHECKS, views)]
 `;
 
 /** The artifact folder of a task's verifier. */

@@ -40,6 +40,8 @@ export type WitnessStageRecord = {
   readonly held: boolean;
   /** Whether the app's files had held for the settle window when the stage was graded, rather than at its bound. */
   readonly settled: boolean;
+  /** Whether a read still in flight at the settle bound was cut, so the stage graded the last completed read. */
+  readonly read_cut: boolean;
   readonly results: TaskCheckOutcome[];
 };
 

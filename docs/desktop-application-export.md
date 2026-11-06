@@ -352,19 +352,26 @@ last change. Gnote saves a note 4 s after the last key, so a read taken as
 soon as the agent stops finds the text on screen but not yet in the file. The
 verifier reads the app's `data/get` every 0.5 s. It compares each file's bytes
 between reads by their SHA-256, as `data/get` returns them, and grades once
-every file has held for 3 s, counted from the first read or the last change it
-saw. If the files are still changing 15 s after the first read, it grades the
-last read. Each result records whether the files settled in `settled`.
+every file has held for 3 s. The 3 s count from when a read returned the
+current bytes, not when it began, so a slow read that brings a change late
+does not count its own run as quiet. 15 s after the first read began, the
+bound, the verifier grades the last completed read: no read starts at or
+after the bound, and a read still running then is cut. Each result records
+whether the files settled in `settled`, and whether the bound cut a read in
+`read_cut`.
 
 The window has a cost and a limit:
 
 - An app whose files do not change during the check, such as one that saved
-  at once, is graded 3 to 3.5 s after the first read.
-- A save that lands more than 3 s after the first read is still missed. An
-  app that saves 4 s after the last key is caught only when the agent stops
-  at least a second after that key.
+  at once, is graded 3 s after the first read returns.
+- A save that lands more than 3 s after the first read returns is still
+  missed. An app that saves 4 s after the last key is caught only when the
+  agent stops at least a second after that key.
 - Files the app rewrites more often than every 3 s, such as a log, never
-  settle, so every check waits the full 15 s.
+  settle, so every check waits until the bound.
+- The bound counts the reads too, so a slow `data/get` ends the check at
+  15 s. Only the first read, which every grade needs, runs to its own
+  timeout.
 
 The bound and window are `SETTLE_BOUND_S` and `SETTLE_WINDOW_S` in the
 verifier. `check_build_task` waits the same way before it grades each

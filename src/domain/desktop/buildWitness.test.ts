@@ -45,6 +45,7 @@ const staged = (
   expectation: stage === "after_edit" ? "all_pass" : "some_fail",
   held: true,
   settled: true,
+  read_cut: false,
   results: [],
 });
 

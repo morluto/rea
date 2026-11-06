@@ -59,7 +59,12 @@ const checkResult = z.strictObject({
 const settledField = z
   .boolean()
   .describe(
-    `Whether the app's files had held for ${String(SETTLE_TIMING.windowMs / 1000)} s when they were graded; false when they were still changing ${String(SETTLE_TIMING.boundMs / 1000)} s after the first read, and the last read was graded.`,
+    `Whether the app's files had held for ${String(SETTLE_TIMING.windowMs / 1000)} s, counted from the read that returned them, when they were graded; false when they were still changing ${String(SETTLE_TIMING.boundMs / 1000)} s after the first read began, and the last completed read was graded.`,
+  );
+const readCutField = z
+  .boolean()
+  .describe(
+    `Whether a read still in flight ${String(SETTLE_TIMING.boundMs / 1000)} s after the first read began was cut there, so the last completed read was graded.`,
   );
 const strings = z.array(z.string());
 const stageRecord = z.strictObject({
@@ -72,6 +77,7 @@ const stageRecord = z.strictObject({
   expectation: z.enum(["some_fail", "all_pass"]),
   held: z.boolean(),
   settled: settledField,
+  read_cut: readCutField,
   results: z.array(checkResult),
 });
 const loggedAction = z.strictObject({
@@ -399,7 +405,7 @@ export const DESKTOP_BUILD_TOOL_CONTRACTS = [
     name: "check_build_task",
     ...toolContractMetadata("check_build_task"),
     kind: "application",
-    description: `Grade a task's checks against the app's live state on a computer of an exported bundle: REA reads the app's data/get views and evaluates each check as the bundle's verifier does, one result per check, once the app's files settle: it reads data/get every ${String(SETTLE_TIMING.intervalMs / 1000)} s and grades once every file has held for ${String(SETTLE_TIMING.windowMs / 1000)} s, counted from the first read or the last change, so an app that saves a few seconds after the last key is graded on what it saved; files still changing ${String(SETTLE_TIMING.boundMs / 1000)} s after the first read are graded on the last read, with settled false. With stage, the check is part of the witness, in order: seed (give directory; REA begins recording) must fail a check; after_edit, after acting on the app from the task's prompt alone, must pass every check; near_miss, after a deliberately almost-right change, must fail one; after_reset, after act_on_build_computer action reset, must fail one. Only a check that fails on what the app's view shows counts as failing: one that fails because the view could not be read or is cut short is undecided, and a stage only undecided checks would settle files nothing and is refused, to be checked again. A stage that does not hold, or after_reset, ends the witness: REA ends the recording and writes witness.json, the record as Evidence, with the recording's segments into directory, and returns the record.`,
+    description: `Grade a task's checks against the app's live state on a computer of an exported bundle: REA reads the app's data/get views and evaluates each check as the bundle's verifier does, one result per check, once the app's files settle: it reads data/get every ${String(SETTLE_TIMING.intervalMs / 1000)} s and grades once every file has held for ${String(SETTLE_TIMING.windowMs / 1000)} s, counted from the read that returned its bytes, so an app that saves a few seconds after the last key is graded on what it saved; no read begins ${String(SETTLE_TIMING.boundMs / 1000)} s or more after the first one began, one still in flight then is cut (read_cut), and files still changing are graded on the last completed read, with settled false. With stage, the check is part of the witness, in order: seed (give directory; REA begins recording) must fail a check; after_edit, after acting on the app from the task's prompt alone, must pass every check; near_miss, after a deliberately almost-right change, must fail one; after_reset, after act_on_build_computer action reset, must fail one. Only a check that fails on what the app's view shows counts as failing: one that fails because the view could not be read or is cut short is undecided, and a stage only undecided checks would settle files nothing and is refused, to be checked again. A stage that does not hold, or after_reset, ends the witness: REA ends the recording and writes witness.json, the record as Evidence, with the recording's segments into directory, and returns the record.`,
     inputSchema: z.strictObject({
       computer_id: computerId,
       task: desktopTaskSchema,
@@ -422,6 +428,7 @@ export const DESKTOP_BUILD_TOOL_CONTRACTS = [
       failed: z.int().nonnegative(),
       results: z.array(checkResult),
       settled: settledField,
+      read_cut: readCutField,
       witness: z
         .strictObject({
           stage: z.enum(WITNESS_STAGES),

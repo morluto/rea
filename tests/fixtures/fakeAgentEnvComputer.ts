@@ -92,8 +92,11 @@ export interface FakeApp {
   readonly methods: string[];
   /** data/get calls still to answer with an error, as a busy app would. */
   failGets?: number;
-  /** Called as each data/get arrives, before its answer, as an app saving on its own timer changes its files. */
-  onGet?: () => void;
+  /**
+   * Called as each data/get arrives, before its answer, as an app saving on
+   * its own timer changes its files; the answer waits for a promise it returns.
+   */
+  onGet?: () => void | Promise<void>;
   /** Readiness polls answered not ready after each data/reset, as a slow relaunch would. */
   readonly unreadyAfterReset?: number;
   /** Readiness polls left before the relaunched app is ready. */
@@ -254,10 +257,13 @@ const runExec = (
 const LOST = Symbol("lost reply");
 
 /** One of the app's data methods. */
-const appRoute = (app: FakeApp, request: { id?: number; method?: string }) => {
+const appRoute = async (
+  app: FakeApp,
+  request: { id?: number; method?: string },
+) => {
   const method = request.method ?? "";
   app.methods.push(method);
-  if (method === "data/get") app.onGet?.();
+  if (method === "data/get") await app.onGet?.();
   if (method === "data/get" && (app.failGets ?? 0) > 0) {
     app.failGets = (app.failGets ?? 0) - 1;
     return {

@@ -186,11 +186,13 @@ export validates tasks with and the exported verifier mirrors, one result per
 check. Like the verifier, it grades only once the app's files settle, since an
 app such as Gnote saves a few seconds after the last key. It reads `data/get`
 every 0.5 s and grades once every file's bytes have held for 3 s, counted
-from the first read or the last change. If the files are still changing 15 s
-after the first read, it grades the last read. It sends progress
-notifications while it waits, and the result's `settled` says whether the
-files settled. Every check therefore costs at least 3 s, and a save that
-lands more than 3 s after the first read is still missed; see
+from the read that returned them. 15 s after the first read began, it grades
+the last completed read: no read starts then, and one still running is cut.
+It sends progress notifications while it waits. The result's `settled` says
+whether the files settled, and `read_cut` whether the bound cut a read; each
+stage in the record keeps both. Every check therefore costs at least 3 s,
+and a save that lands more than 3 s after the first read returns is still
+missed; see
 [grading once the app has saved](desktop-application-export.md#grading-once-the-app-has-saved).
 Without `stage` it only grades. The `seed` stage begins a recording
 of the display under REA's own request id, one per computer; a seed check

@@ -4,9 +4,9 @@ import { createHash } from "node:crypto";
 export interface SettleTiming {
   /** Between one read's start and the next. */
   readonly intervalMs: number;
-  /** How long the files must hold, from the first read or the last change, before they are graded. */
+  /** How long the files must hold, from the read that returned them, before they are graded. */
   readonly windowMs: number;
-  /** When the last read is graded whether or not the files held. */
+  /** After the first read begins: no read starts then, one in flight is cut, and the last completed read is graded. */
   readonly boundMs: number;
 }
 

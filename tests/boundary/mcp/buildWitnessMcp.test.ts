@@ -1,5 +1,6 @@
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 
 import type { CallToolResult } from "@modelcontextprotocol/server";
 import { expect, it, vi } from "vitest";
@@ -600,9 +601,13 @@ it("grades files still changing at the bound on the last read, and records that 
   };
   const started = performance.now();
   const plain = parsed(await check({}));
-  expect(performance.now() - started).toBeGreaterThanOrEqual(SETTLE.boundMs);
+  // The last read starts within an interval of the bound.
+  expect(performance.now() - started).toBeGreaterThanOrEqual(
+    SETTLE.boundMs - SETTLE.intervalMs,
+  );
   expect(plain).toMatchObject({
     settled: false,
+    read_cut: false,
     passed: gets % 2 === 0 ? 1 : 0,
   });
 
@@ -627,4 +632,52 @@ it("grades an app that saved before the check within the window plus one interva
   expect(plain).toMatchObject({ passed: 1, settled: true });
   const gets = app.methods.filter((method) => method === "data/get").length;
   expect(gets).toBeLessThanOrEqual(SETTLE.windowMs / SETTLE.intervalMs + 2);
+});
+
+it("counts a slow read's changed files as quiet only from when it returned them", async () => {
+  const { app, check } = await witnessed(0, {}, SETTLE);
+  let gets = 0;
+  app.onGet = async () => {
+    gets += 1;
+    // The second read starts early and returns a save late; another save lands four reads after it.
+    if (gets === 2) {
+      await delay(240);
+      app.state = lines("milk", "eggs");
+    }
+    if (gets === 6) app.state = lines("milk", "eggs", "flour");
+  };
+  const both = {
+    ...TASK,
+    checks: [
+      {
+        kind: "lines_present",
+        file: "Documents/today.txt",
+        lines: ["eggs", "flour"],
+      },
+    ],
+  };
+  expect(parsed(await check({ task: both }))).toMatchObject({
+    passed: 1,
+    settled: true,
+    read_cut: false,
+  });
+});
+
+it("ends reads slower than the bound at the bound, grading the last completed read", async () => {
+  const { app, check } = await witnessed(0, {}, SETTLE);
+  const slow = (SETTLE.boundMs * 2) / 3;
+  let gets = 0;
+  // Each read takes two thirds of the bound; only the first returns eggs.
+  app.onGet = async () => {
+    gets += 1;
+    const first = gets === 1;
+    await delay(slow);
+    app.state = first ? lines("milk", "eggs") : lines("milk");
+  };
+  const started = performance.now();
+  const plain = parsed(await check({}));
+  const elapsed = performance.now() - started;
+  expect(plain).toMatchObject({ passed: 1, settled: false, read_cut: true });
+  expect(elapsed).toBeGreaterThanOrEqual(SETTLE.boundMs);
+  expect(elapsed).toBeLessThan(2 * slow);
 });
