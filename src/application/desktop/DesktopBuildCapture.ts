@@ -68,10 +68,14 @@ export interface CaptureInput {
   readonly state_paths?: readonly string[] | undefined;
 }
 
+/** A taken checkpoint as the tool reports it: changed files null when the REA in the computer predates them. */
 type CheckpointTaken = Omit<
   Extract<DesktopCaptureEvent, { kind: "checkpoint" }>,
-  "kind"
->;
+  "kind" | "changed_files" | "more_changed_files"
+> & {
+  readonly changed_files: string[] | null;
+  readonly more_changed_files: number | null;
+};
 
 /** The capture's progress event in a line the controller waited for. */
 const eventOf = (line: string): DesktopCaptureEvent | undefined =>
@@ -237,7 +241,7 @@ export class DesktopBuildCapture {
         failure: refused(
           START,
           answer.refused,
-          "Name files or folders under the computer's home in state_paths, relative to it or absolute.",
+          "Name files or folders under the computer's home in state_paths, relative to it or absolute, with no link on the way leading out of it.",
         ),
         answer,
       });
@@ -314,8 +318,17 @@ export class DesktopBuildCapture {
           ),
         );
       run.checkpoints.add(name);
-      const { kind: _kind, ...taken } = event;
-      return ok(taken);
+      const {
+        kind: _kind,
+        changed_files: changed,
+        more_changed_files: more,
+        ...taken
+      } = event;
+      return ok({
+        ...taken,
+        changed_files: changed ?? null,
+        more_changed_files: more ?? null,
+      });
     } catch (cause: unknown) {
       return err(adapterError(MARK, errorText(cause), cause));
     }

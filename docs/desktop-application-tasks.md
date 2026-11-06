@@ -48,22 +48,25 @@ operation `describe_desktop_application_task` and predicate type
   members' order changed. Views appear only for the files the suggestions
   cover, with arrays past 200 items and strings past 2,000 characters cut
   (`view_cut`).
-- `values`, in each of those files: the values its change added, changed
-  and removed, each with the `pointer` a check names it by, its `kind`
-  (`added`, `changed` or `removed`), and `before` and `after`: the scalar, an
-  element as compact XML or a JSON value as compact JSON, cut at 600
-  characters, and null at the end that lacks it. A value only position
-  reaches has `note: "by_position"`, and its pointer cannot go into a check;
-  noise an app writes as it saves has `view_state`, `renumbered`,
-  `volatile`, `timestamp` or `upkeep` (see `task`). `refers_to` names up to three other
-  elements a value equals the `key` or `id` of, with the `attribute` holding
-  it, as HomeBank's `category="44"` names `<cat key="44" name="Groceries"/>`;
-  where several elements share that key, the one whose tag shares the
-  attribute's stem, as `payee` and `<pay>`. What a check can name comes first,
-  then what only position reaches, then noise. A file lists at most 20 values
-  and 8 KB, the draft 24 KB, and `values_cut` says when a limit left some
-  out. Values cover XML, archives, JSON and key files; a text or SQLite file's
-  change and suggestions already carry its lines and rows.
+- `values`, in each of those files: the values its change added, changed and
+  removed, each with the `pointer` a check names it by, its `kind` (`added`,
+  `changed` or `removed`), and `before` and `after`: the scalar, an element as
+  compact XML with the text the XML reader kept, spaces between runs included,
+  or a JSON value as compact JSON, cut at 600 characters, and null at the end
+  that lacks it. A file created or deleted lists what its one end holds,
+  `added` or `removed`: an archive's entries, an XML file's root element, a
+  JSON file's members or a key file's keys, each whole once. A value only
+  position reaches has `note: "by_position"`, and its pointer cannot go into a
+  check; noise an app writes as it saves has `view_state`, `renumbered`,
+  `volatile`, `timestamp` or `upkeep` (see `task`). `refers_to` names up to
+  three other elements a value equals the `key` or `id` of, with the
+  `attribute` holding it, as HomeBank's `category="44"` names
+  `<cat key="44" name="Groceries"/>`; where several elements share that key,
+  the one whose tag shares the attribute's stem, as `payee` and `<pay>`. What a check can
+  name comes first, then what only position reaches, then noise. A file lists
+  at most 20 values and 8 KB, the draft 24 KB, and `values_cut` says when a
+  limit left some out. Values cover XML, archives, JSON and key files; a text
+  or SQLite file's change and suggestions already carry its lines and rows.
 - `task`: a draft with the name `change`, a placeholder prompt the export
   refuses, and suggested checks derived from the net change of the files with
   role `document`, or of the app's own state files when no document changed.
@@ -83,42 +86,60 @@ operation `describe_desktop_application_task` and predicate type
     as Scribus's `ANNAME` or `inkscape:label`, a worded value or an integer of
     up to five digits first, then by two such attributes together, as
     Gnumeric's cells by `[@Col=3][@Row=2]`, and last by a coordinate, a long
-    number or a token, such as `XPOS` or `ItemID`. An element with
-    identifiers is named by those alone. The selector must name the member
-    alone at both ends, with the same values. An identifier the app numbers
-    by position names nothing: where the members of a tag hold it as 1..N
-    (or 0..N-1) in document order at both ends, and a member another
-    attribute names alone holds a different one at each, as Planner's task
-    `id` after a task is inserted, members are paired by their other
-    attributes, so an insertion reads as one task added.
-  - The text check names the paragraph rather than a run inside it: it goes
-    up from an element sitting in its parent's text, and from one named by
-    its tag or position alone to the nearest ancestor named by an attribute,
-    as AbiWord's `p` by its `xid`; where no attribute names one, to the
-    nearest ancestor within three levels its tag names with no step by
-    position, as MuseScore's `VBox` around untitled `<Text>` elements; and
-    where only position reaches the element, to the ancestor above the
-    outermost step by position, by an attribute of its own that names it
-    alone where one does, as an ODS sheet's `table:table[@table:name=Q1 Sales]`
-    above its rows. The text nodes and runs inside it get no other check. A
-    decimal that is an element's only text, such as a spreadsheet cell's, is
-    checked by its number instead. Text that grew by whole lines and kept the
-    rest, as a note gaining `olive oil` on a line of its own, gets a
-    `text_contains` of the added lines instead, so a correct edit with a
-    blank line after it or the line elsewhere still passes, and guards that
-    the kept text is still there; text replaced, or grown inside a line,
-    keeps `text_equals`.
-  - An element added to a list, where another element of its tag is at
-    either end, gets a `value_equals` for each of its attributes, best ranked
-    first, at most six, leaving out its selector's attributes, identifiers,
-    times, volatile values and view state, as HomeBank's new `<ope>` gets its
+    number or a token, such as `XPOS` or `ItemID`, or an attribute naming
+    view state, such as which layer is `selected`. A pair counts every
+    member holding both its values, whichever attributes that member ranks
+    first. An element with identifiers is named by those alone. The selector
+    must name the member alone at both ends, with the same values. An
+    element whose one identifier changed, at its place among its tag's
+    members, with every other attribute and its children alike, is that
+    element renamed, as a MyPaint layer renamed from `Untitled` to `Sun`: it
+    is named by its first other attribute naming it alone at both ends, as
+    `[@src=data/layer-00.png]`, so the rename reads as its `name` changed.
+    An identifier the app numbers by position names nothing: where the
+    members of a tag hold it as 1..N (or 0..N-1) in document order at both
+    ends, members were inserted or removed, and every member another
+    attribute names alone at both ends kept its number or moved it the way
+    the count did, one at least, as Planner's task `id` after a task is
+    inserted, members are paired by their other attributes, so an insertion
+    reads as one task added. A value two members swap, or an id appended at
+    the end, as Tellico's next `<entry id="4">`, leaves the ids identity.
+  - The text check names the paragraph rather than a run inside it: it goes up
+    from an element sitting in its parent's text, and from one named by its
+    tag or position alone to the nearest ancestor named by an attribute, as
+    AbiWord's `p` by its `xid`; where no attribute names one, to the nearest
+    ancestor within three levels its tag names with no step by position, as
+    MuseScore's `VBox` around untitled `<Text>` elements; and where only
+    position reaches the element, to the ancestor above the outermost step by
+    position, by an attribute of its own that names it alone where one does,
+    as an ODS sheet's `table:table[@table:name=Q1 Sales]` above its rows. The
+    text nodes and runs inside it get no other check. A decimal that is an
+    element's only text, such as a spreadsheet cell's, is checked by its
+    number instead. Text that grew by whole lines and kept the rest, as a note
+    gaining `olive oil` on a line of its own, gets a `text_contains` of the
+    added lines instead, so a correct edit with a blank line after it or the
+    line elsewhere still passes, and guards that the kept text is still there;
+    text replaced, or grown inside a line, keeps `text_equals`. A record added
+    or removed whole, an element holding fields of two or more tags such as
+    Tellico's `<entry>`, never makes the list holding records of its kind a
+    check, whose text would hold the records the edit left alone; nor does an
+    element holding a date the app stamps in parts take a text check.
+  - An element added to a list, where another element of its tag is at either
+    end, gets a `value_equals` for each of its attributes, best ranked first,
+    at most six, leaving out its selector's attributes, identifiers, times,
+    volatile values and view state, as HomeBank's new `<ope>` gets its
     `amount`, `category` and `payee`. An element whose other attributes, two
     or more, a like sibling holds every one of, as a new Planner task copies
     its neighbour's defaults, and any other element added whole, get a check
-    that it exists. A record only position names, such as Osmo's
-    `<record>` of fields, also gets a `text_contains` for each new field of
-    three or more characters, at most five, at the nearest ancestor a check
-    can name, each absent from that ancestor's text at the seed.
+    that it exists. A record added to a list that a selector names, as
+    Tellico's `<entry id="4">`, gets a `text_equals` for each field, at most
+    five, each by its selector among the record's fields, as `[name=title]`,
+    leaving out a field repeating the record's identifier, a date the app
+    stamps in parts, and blank text or times. A record only position names,
+    such as Osmo's `<record>` of fields, also gets a `text_contains` for each
+    new field of three or more characters, at most five, at the nearest
+    ancestor a check can name, each absent from that ancestor's text at the
+    seed.
   - A decimal written as text, such as `146.83`, is suggested as a number
     with `tolerance: 0.001`, unless the seed's value is that close too.
   - Noise leaves the suggestions when the file's change holds anything
@@ -135,9 +156,12 @@ operation `describe_desktop_application_task` and predicate type
     element, as Gnumeric empties a formula cell whose shared expression it
     renumbers, and an identifier the app numbers by position; volatile
     values, UUIDs and epoch times, and durations and counts under a
-    document's metadata; times the app stamps; and `upkeep`, attributes the
+    document's metadata; times the app stamps, also as a date written in
+    parts, as Tellico's `<cdate>` of `<year>`, `<month>` and `<day>`, which
+    no check ever reads; and `upkeep`, attributes the
     elements of one archive entry only gained while another entry holds the
-    edit, as LibreOffice fills in `styles.xml` on save. When the change holds
+    edit, as LibreOffice fills in `styles.xml` on save. However much noise
+    comes first, it never takes a check's place. When the change holds
     nothing else, the checks stay and a note flags them: up to three in a
     document, and as many as fit in the app's own state, where a view
     setting may be the task.
@@ -160,15 +184,22 @@ operation `describe_desktop_application_task` and predicate type
   them. At most four a file. They pass on the seed, which the export allows,
   since one check failing there is enough.
 - `notes`: why `files` is empty, or why a file's suggestions are thin. Each
-  note has a `code` and a `message`. For a draft with no files:
-  `no_change` when no file under the home changed between the two
-  checkpoints; `unowned_changes` when files changed but none under the owned
-  paths, with up to five of them in `files`, each with its home path and role
-  (desktop services' files last), and how many more in `more`; and
-  `no_document` when no file has the document role, as when no window title
-  shows the file's name. A capture again with `--state-path` naming the
-  file, or `state_paths` on a build computer's `start_build_capture`, makes
-  it the app's. For a drafted file, named in `file`: `by_position` when
+  note has a `code` and a `message`. For a draft with no files: `no_change`
+  when no file under the home changed between the two checkpoints and nor
+  did the application's dconf keys; `unowned_changes` when files changed but
+  none under the owned paths, with up to five of them in `files`, each with
+  its home path and role (desktop services' files last), and how many more
+  in `more`; `uncheckable_changes` when the application's keys in a dconf
+  database changed, with the database in `files`: no check reads dconf, and
+  the export only writes the keys as they were at the seed checkpoint, so
+  make the task's change one the app saves in a file; `unreadable_changes`
+  when a dconf database changed but REA could not read it, with the read
+  failure in `error` (install `dconf-cli` or set `REA_DCONF_COMMAND` when it
+  is missing), since whose keys changed is then unknown; and `no_document`
+  when no file has the document role, as when no window title shows the
+  file's name. A capture again with `--state-path` naming the file, or
+  `state_paths` on a build computer's `start_build_capture`, makes it the
+  app's. For a drafted file, named in `file`: `by_position` when
   changes reach their element only by position, the tags no attribute names
   alone in `elements`, or when only the elements' order changed;
   `view_state_only` when every change is noise, the checks kept in

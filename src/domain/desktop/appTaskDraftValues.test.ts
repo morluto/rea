@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 
 import { draftOf, statePath, xml, xmlDraft } from "./appTaskDraft.fixture.js";
+import { draftValues } from "./appTaskDraftValues.js";
 import { resolvePointer } from "./viewPointer.js";
+import { zipEntry, zipView } from "./zipView.js";
 
 /** A household book: accounts, payees and categories by key, and operations naming them. */
 const book = (operations: string, note = "Draft", tags = '<tag name="old"/>') =>
@@ -110,6 +112,86 @@ describe("draftTaskFiles values", () => {
   });
 });
 
+describe("draftTaskFiles values' text and references", () => {
+  it("keeps the spaces the XML reader kept as text in an element's compact XML, and leaves out its layout", () => {
+    const paragraph = "<p>Meet on <s>Sunday</s> <s>evening</s>.</p>";
+
+    const file = xmlDraft(
+      "<doc>\n  <title>Plans</title>\n</doc>",
+      `<doc>\n  <title>Plans</title>\n  ${paragraph}\n</doc>`,
+    );
+
+    expect(file.values).toEqual([
+      {
+        pointer: "/root/children/[name=p]",
+        kind: "added",
+        before: null,
+        after: paragraph,
+      },
+    ]);
+  });
+
+  it("resolves a key the records of many archive entries share in time that grows with the records, not with their square", () => {
+    // Copying the key's list of elements for each record took four seconds for 60,000 here.
+    const entry = (name: string, text: string) => {
+      const bytes = new TextEncoder().encode(text);
+      return zipEntry(
+        {
+          name,
+          size: bytes.length,
+          compressedSize: bytes.length,
+          method: 8,
+          encrypted: false,
+        },
+        bytes,
+      );
+    };
+    const records = Array.from({ length: 200 }, (_, index) =>
+      entry(
+        `records/${String(index)}.xml`,
+        `<records>${'<rec key="1"/>'.repeat(300)}</records>`,
+      ),
+    );
+    const archive = (category: string) =>
+      zipView(
+        [
+          entry(
+            "book.xml",
+            `<book><cat key="1" name="Rent"/><ope category="${category}"/></book>`,
+          ),
+          ...records,
+        ],
+        records.length + 1,
+      );
+    const ends = { baseline: archive("2"), final: archive("1") };
+    const pointer =
+      "/entries/[name=book.xml]/view/root/children/[name=ope]/attributes/category";
+
+    const started = performance.now();
+    const { values } = draftValues(
+      {
+        added: [],
+        changed: [pointer],
+        removed: [],
+        added_count: 0,
+        changed_count: 1,
+        removed_count: 0,
+      },
+      { ends, listed: () => true, noise: () => undefined },
+    );
+    const elapsed = performance.now() - started;
+
+    expect(values[0]?.refers_to).toEqual([
+      {
+        attribute: "category",
+        value: "1",
+        element: '<cat key="1" name="Rent"/>',
+      },
+    ]);
+    expect(elapsed).toBeLessThan(1000);
+  });
+});
+
 describe("draftTaskFiles change lists", () => {
   it("lists an XML file's change by the selectors naming its members, not their positions", () => {
     const file = xmlDraft(
@@ -135,5 +217,115 @@ describe("draftTaskFiles change lists", () => {
     });
     expect(file.suggested).toEqual([]);
     expect(file.notes.map(({ code }) => code)).toEqual(["by_position"]);
+  });
+});
+
+describe("draftTaskFiles values of a file created or deleted", () => {
+  it("lists what a created file holds as added and a deleted one's as removed, each member of its outermost container once", () => {
+    const doc = "<doc><title>Plans</title></doc>";
+    const text = new TextEncoder().encode(doc);
+    const archive = zipView(
+      [
+        zipEntry(
+          {
+            name: "content.xml",
+            size: text.length,
+            compressedSize: text.length,
+            method: 8,
+            encrypted: false,
+          },
+          text,
+        ),
+      ],
+      1,
+    );
+
+    const files = draftOf({
+      "Documents/new.xml": statePath("document", "xml", null, xml(doc)),
+      "Documents/gone.xml": statePath("document", "xml", xml(doc), null),
+      "Documents/new.json": statePath("document", "json", null, {
+        title: "Plans",
+        tags: ["a"],
+      }),
+      "Documents/gone.ini": statePath(
+        "document",
+        "keyfile",
+        { groups: { View: { zoom: "2" } } },
+        null,
+      ),
+      "Documents/new.zip": statePath("document", "zip", null, archive),
+    });
+
+    expect(
+      Object.fromEntries(
+        files.map(({ file, values, values_cut }) => [
+          file,
+          [
+            values_cut,
+            ...values.map(({ kind, pointer, before, after }) => [
+              kind,
+              pointer,
+              before,
+              after,
+            ]),
+          ],
+        ]),
+      ),
+    ).toEqual({
+      "Documents/gone.ini": [
+        false,
+        ["removed", "/groups/View/zoom", "2", null],
+      ],
+      "Documents/gone.xml": [false, ["removed", "/root", doc, null]],
+      "Documents/new.json": [
+        false,
+        ["added", "/title", null, "Plans"],
+        ["added", "/tags", null, '["a"]'],
+      ],
+      "Documents/new.xml": [false, ["added", "/root", null, doc]],
+      "Documents/new.zip": [
+        false,
+        [
+          "added",
+          "/entries/[name=content.xml]",
+          null,
+          JSON.stringify({
+            name: "content.xml",
+            format: "xml",
+            size: text.length,
+          }),
+        ],
+      ],
+    });
+    // The checks stay those of the file's presence.
+    expect(
+      files.map(({ suggested }) => suggested.map(({ kind }) => kind)),
+    ).toEqual([
+      ["file_absent"],
+      ["file_absent"],
+      ["file_present"],
+      ["file_present"],
+      ["file_present"],
+    ]);
+  });
+
+  it("keeps a created file's values within a file's limits, saying when it left any out", () => {
+    const view = Object.fromEntries(
+      Array.from({ length: 25 }, (_, index) => [
+        `k${String(index)}`,
+        "x".repeat(700),
+      ]),
+    );
+
+    const [file] = draftOf({
+      "Documents/new.json": statePath("document", "json", null, view),
+    });
+
+    expect(file?.values_cut).toBe(true);
+    expect(file?.values.length).toBeLessThanOrEqual(20);
+    expect(file?.values[0]?.after).toBe(`${"x".repeat(600)}…`);
+    expect(
+      new TextEncoder().encode(JSON.stringify(file?.values)).length,
+    ).toBeLessThanOrEqual(8 * 1024);
   });
 });

@@ -18,7 +18,6 @@ import {
 import { INSTALL_SCRIPT } from "../../domain/desktop/appExportInstall.js";
 import {
   heldOpenLimitation,
-  isLockFile,
   leftOutLocksLimitation,
   runtimeSeeds,
   runtimeSeedsLimitation,
@@ -199,16 +198,19 @@ const planExport = (
     request.extraPackages,
   );
   const electron = application.executable.electron_markers.length > 0;
-  const { homePath, files, collisions, paths } = exportedStateFiles(
-    capture,
-    state,
-  );
+  const { homePath, files, collisions, paths, isLeftOutLock } =
+    exportedStateFiles(capture, state);
   const { text: dconf, ...dconfScrub } = seedDconf(
     state,
     context.seed,
     context.identity,
   );
-  const { seeds, textSeeds, locks } = seedVersions(files, paths, context.seed);
+  const { seeds, textSeeds, locks } = seedVersions(
+    files,
+    paths,
+    context.seed,
+    isLeftOutLock,
+  );
   const unseeded = unseededFiles(capture, homePath, files, {
     paths,
     seed: context.seed,
@@ -241,9 +243,9 @@ const planExport = (
     syntheticSeed: request.syntheticSeed === true,
     seedFiles: [...seeds.keys()].sort(),
     textSeeds,
-    unseededFiles: unseeded.filter((file) => !isLockFile(file)),
+    unseededFiles: unseeded.filter((file) => !isLeftOutLock(file)),
     leftOutLocks: [
-      ...new Set([...locks, ...unseeded.filter(isLockFile)]),
+      ...new Set([...locks, ...unseeded.filter(isLeftOutLock)]),
     ].sort(),
     unownedFolders: unownedChangedFolders(files, paths),
     runtimeSeeds: runtimeSeeds([...seeds.keys()]),

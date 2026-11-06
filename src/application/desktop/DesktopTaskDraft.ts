@@ -59,7 +59,7 @@ const draft = async (
   );
   const { checkpoints } = state.capture;
   const ends = selectStateEnds(checkpoints, selection, OPERATION);
-  const { files, paths } = exportedStateFiles(capture, state);
+  const { files, dconf, paths } = exportedStateFiles(capture, state);
   const drafted = draftTaskFiles(
     files,
     (home) => isWithinAny(home, paths),
@@ -68,6 +68,7 @@ const draft = async (
   const notes = draftNotes(files, {
     drafted,
     owned: paths,
+    dconf,
     ends,
     checkpoints,
   });

@@ -6,12 +6,14 @@ import {
   ARCHIVE,
   innermost,
   namedDraft,
+  presenceValues,
   XML_FILE,
   type NamedFacts,
 } from "./appTaskDraftNamed.js";
 import { rowSuggestions } from "./appTaskDraftRows.js";
 import {
   draftValues,
+  oneEnd,
   withinDraftBudget,
   type DraftValue,
 } from "./appTaskDraftValues.js";
@@ -153,34 +155,63 @@ interface FileDraft {
 
 const NO_VALUES = { values: [], valuesCut: false, guards: [] } as const;
 
-/** The values a JSON or key file's change holds, at pointers into its view; a key file's diff names `group/key`. */
-const plainValues = (
+/** A JSON or key file's change at pointers into its view, an absent end's view null; a key file's diff names `group/key`. */
+const plainChange = (
   format: "json" | "keyfile",
   baseline: Version,
   final: Version,
 ) => {
-  const ends = versions(baseline, final);
-  const listed = () => true;
-  const noise = () => undefined;
-  if (format === "json")
-    return draftValues(diffNamedMembers(baseline.view, final.view), {
-      ends,
-      listed,
-      noise,
-    });
+  if (format === "json") return diffNamedMembers(baseline.view, final.view);
   const change = diffStateViews(format, baseline.view, final.view);
   const pointers = keyPointers([baseline.view, final.view]);
   const at = (entries: readonly string[]) =>
     entries.flatMap((entry) => pointers.get(entry) ?? []);
-  return draftValues(
-    {
-      ...change,
-      added: at(change.added),
-      changed: at(change.changed),
-      removed: at(change.removed),
-    },
-    { ends, listed, noise },
-  );
+  return {
+    ...change,
+    added: at(change.added),
+    changed: at(change.changed),
+    removed: at(change.removed),
+  };
+};
+
+/** The values a JSON or key file's change holds; every pointer is the document's, and none is noise. */
+const plainValues = (
+  change: ReturnType<typeof plainChange>,
+  baseline: Version,
+  final: Version,
+) =>
+  draftValues(change, {
+    ends: versions(baseline, final),
+    listed: () => true,
+    noise: () => undefined,
+  });
+
+/**
+ * The values of a file created or deleted, apart from the check of its
+ * presence: what its one end holds, added or removed, in an XML file,
+ * archive, JSON or key file, within the limits a changed file's have.
+ */
+const presenceOnly = (
+  baseline: Version,
+  final: Version,
+): Pick<FileDraft, "values" | "valuesCut"> => {
+  const created = !baseline.present;
+  const format = (created ? final : baseline).format;
+  const listed =
+    format === "zip" || format === "xml"
+      ? presenceValues(
+          versions(baseline, final),
+          format === "zip" ? ARCHIVE : XML_FILE,
+          created,
+        )
+      : format === "json" || format === "keyfile"
+        ? plainValues(
+            oneEnd(plainChange(format, baseline, final), created),
+            baseline,
+            final,
+          )
+        : { values: [], cut: false };
+  return { values: listed.values, valuesCut: listed.cut };
 };
 
 const valueSuggestions = (
@@ -224,7 +255,11 @@ const valueSuggestions = (
     if (at !== undefined && at !== "")
       suggestions.push({ kind: "value_absent", file, pointer: at });
   }
-  const { values, cut } = plainValues(format, baseline, final);
+  const { values, cut } = plainValues(
+    plainChange(format, baseline, final),
+    baseline,
+    final,
+  );
   return { suggested: suggestions, values, valuesCut: cut, guards: [] };
 };
 
@@ -236,7 +271,11 @@ const suggestedChecks = (
   document: boolean,
 ): FileDraft => {
   if (!final.present)
-    return { suggested: [{ kind: "file_absent", file }], ...NO_VALUES };
+    return {
+      suggested: [{ kind: "file_absent", file }],
+      ...NO_VALUES,
+      ...presenceOnly(baseline, final),
+    };
   const created: Suggestion[] = baseline.present
     ? []
     : [{ kind: "file_present", file }];
@@ -250,7 +289,7 @@ const suggestedChecks = (
             : [],
         }
       : !baseline.present
-        ? { suggested: [], ...NO_VALUES }
+        ? { suggested: [], ...NO_VALUES, ...presenceOnly(baseline, final) }
         : final.format === "sqlite"
           ? { suggested: rowSuggestions(file, baseline, final), ...NO_VALUES }
           : valueSuggestions(file, baseline, final, document);

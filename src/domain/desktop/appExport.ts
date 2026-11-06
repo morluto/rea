@@ -10,13 +10,17 @@ import {
   PYTHON_MODULE_NAMES,
   PYTHON_READY_CHECK,
 } from "./appExportPython.js";
-import { unownedReadmeNotes, type RuntimeSeeds } from "./appExportUnowned.js";
+import {
+  isLockFile,
+  unownedReadmeNotes,
+  type RuntimeSeeds,
+} from "./appExportUnowned.js";
 import type { DesktopApplicationCapture } from "./desktopCapture.js";
 import type { DesktopApplicationState } from "./desktopState.js";
 import { isWithinAny } from "./desktopStateDiff.js";
 import { SEED_HOME } from "./hostIdentity.js";
 import type { LaunchDocument } from "./seedDocument.js";
-import { stateDirectoryOf } from "./stateRoles.js";
+import { roleFacts, stateDirectoryOf } from "./stateRoles.js";
 
 /** agentenv-framework release the exported class was checked against. */
 export const DESKTOP_EXPORT_FRAMEWORK_VERSION = "0.9.1431";
@@ -188,50 +192,75 @@ export interface HomePathCollision {
   readonly dropped: string;
 }
 
-/** The state view's files by home path, dconf databases aside; of files sharing one, the first present before the capture is kept. */
+/**
+ * The state view's files by home path, and its dconf databases apart, which
+ * no file of the bundle holds; of files sharing one, the first present before
+ * the capture is kept.
+ */
 export const stateFilesByHomePath = (
   paths: readonly StatePath[],
   homePath: (path: string) => string | null,
 ): {
   readonly files: ReadonlyMap<string, StatePath>;
+  readonly dconf: ReadonlyMap<string, StatePath>;
   readonly collisions: readonly HomePathCollision[];
 } => {
   const absent = (path: StatePath) =>
     path.versions[0]?.present === true ? 0 : 1;
   const files = new Map<string, StatePath>();
+  const dconf = new Map<string, StatePath>();
   const collisions: HomePathCollision[] = [];
   for (const path of [...paths].sort(
     (left, right) => absent(left) - absent(right),
   )) {
     const home = homePath(path.path);
-    if (home === null || path.format === "dconf") continue;
+    if (home === null) continue;
+    if (path.format === "dconf") {
+      dconf.set(home, path);
+      continue;
+    }
     const kept = files.get(home);
     if (kept === undefined) files.set(home, path);
     else collisions.push({ home, kept: kept.path, dropped: path.path });
   }
-  return { files, collisions };
+  return { files, dconf, collisions };
 };
 
-/** The state view's files by home path and the paths the app owns, as the export decides them. */
+/**
+ * The state view's files and dconf databases by home path, the paths the app
+ * owns, and which home files the seed leaves out as locks the app holds, as
+ * the export decides them. A document or a path the caller selected is never
+ * left out, whatever its name.
+ */
 export const exportedStateFiles = (
   capture: DesktopApplicationCapture,
   state: DesktopApplicationState,
 ) => {
   const homePath = capturedHomePath(capture);
-  const { files, collisions } = stateFilesByHomePath(state.paths, homePath);
+  const homePaths = (paths: readonly string[]) =>
+    paths.map(homePath).filter((path): path is string => path !== null);
+  const { files, dconf, collisions } = stateFilesByHomePath(
+    state.paths,
+    homePath,
+  );
   const withRole = (role: string) =>
     [...files].filter(([, path]) => path.role === role).map(([home]) => home);
+  const stateDirectories = homePaths([
+    ...capture.application.state_directories.map((entry) => entry.path),
+    ...(capture.state.state_directories ?? []),
+  ]);
   const paths = ownedPaths(
     withRole("application_state"),
     withRole("document"),
-    [
-      ...capture.application.state_directories.map((entry) => entry.path),
-      ...(capture.state.state_directories ?? []),
-    ]
-      .map(homePath)
-      .filter((path): path is string => path !== null),
+    stateDirectories,
   );
-  return { homePath, files, collisions, paths };
+  const usersOwn = new Set([
+    ...withRole("document"),
+    ...homePaths(roleFacts(capture).selectedRoots),
+  ]);
+  const isLeftOutLock = (home: string) =>
+    !usersOwn.has(home) && isLockFile(home, stateDirectories);
+  return { homePath, files, dconf, collisions, paths, isLeftOutLock };
 };
 
 /** Text safe inside a Python triple-quoted docstring. */

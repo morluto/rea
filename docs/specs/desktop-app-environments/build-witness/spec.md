@@ -30,18 +30,22 @@ and the recording and writes the record as Evidence.
   output.
 - `start_build_capture` takes `state_paths`, at most 16 files or folders in
   the home, relative to it, after `~/` or absolute, without `..` and not the
-  home itself; the controller resolves each under the computer's home,
-  refuses one outside it or in `~/.rea-build` before launching anything, and
-  passes each to the capture as `--state-path`. A selected file is a
-  document, or the app's own state under a hidden folder of the home.
+  home itself; the controller resolves each under the computer's home, both
+  as named and with its links followed (a path not there yet through its
+  nearest existing folder), refuses one outside it or in `~/.rea-build`
+  either way before launching anything, and passes each as named to the
+  capture as `--state-path`. A selected file is a document, or the app's own
+  state under a hidden folder of the home as named, before links.
 - Acknowledgement: `capture-desktop-application` reports, beside each progress
   message, an `event`: `window_open`; `checkpoint` with its name, trigger,
   time, entries walked, changes and retained files and bytes, and up to ten
-  changed files, home-relative, those the app held open first, with a count
+  changed files, home-relative, those under a selected path first, then
+  those the app held open, caches and browser-engine storage last, with a count
   of the rest, once it is taken, the baseline, `stop` and `exit` included;
   and `checkpoint_refused` with the reason. `mark_build_checkpoint` writes
   `checkpoint <name>` and waits for the event naming it, returning its counts
-  and changed files. Names follow a narrow pattern, without the capture's own
+  and changed files, both `null` when the REA in the computer predates them
+  and its event leaves them out. Names follow a narrow pattern, without the capture's own
   names; a name already taken is refused.
 - `stop_build_capture` sends `stop`, waits for the exit status, reads the
   capture's Evidence and, when `seed` and `end` were acknowledged, runs
@@ -49,16 +53,22 @@ and the recording and writes the record as Evidence.
   end` and returns the changed files, their net change and suggested checks.
   A draft with no files carries `notes`, coded `no_change`,
   `unowned_changes` (up to five changed home paths with their roles, and a
-  count of the rest) and `no_document`.
+  count of the rest), `uncheckable_changes` (dconf databases whose app keys
+  were read and changed, which no check reads), `unreadable_changes` (dconf
+  databases that changed but could not be read, with the read `error`) and
+  `no_document`; a drafted file whose suggestions are thin carries one
+  naming its `file`, coded `by_position`, `view_state_only`, `long_text`,
+  `cut_view` or `unreadable_view`.
 - `export_build_environment` writes the agent's task under `~/.rea-build`,
   runs `export-desktop-application` with it and the same checkpoints into a
   new folder there, reports a refused task with the export's own reason,
   lists the bundle with sizes and SHA-256, fetches it through the driver's
   `data/get` in answers of at most 8 MiB, checks each file and writes the
   caller's new or empty folder through the safe output tree. The export
-  leaves lock files the app holds while it runs out of the seed, listing them
-  in its limitations and README; a start from a bundle whose computer never
-  gets ready names the lock files its seed holds.
+  leaves lock files the app holds while it runs out of the seed, but never a
+  document or selected path, listing them in its limitations and README; a
+  start from a bundle whose computer never gets ready names the files its
+  seed holds by a profile lock's name or as a document lock.
 - `check_build_task` reads the one app's `data/get` through the card's
   child URL, takes the state views beside its files and evaluates the task's
   checks with `evaluateTaskChecks`, one result per check. With `stage`, the

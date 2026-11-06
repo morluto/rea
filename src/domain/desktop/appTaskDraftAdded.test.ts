@@ -41,7 +41,7 @@ describe("draftTaskFiles for elements no attribute names", () => {
   const DELPHINE =
     "<first_name>Delphine</first_name><last_name>Moreau</last_name><cell_phone_1>555-0163</cell_phone_1><email_1>delphine.moreau@example.com</email_1>";
 
-  it("checks each new field of a record added whole, each absent from the list's text at the seed, beside the list's whole text", () => {
+  it("checks each new field of a record added whole, each absent from the list's text at the seed, and never the list's whole text", () => {
     const before = contacts(HANNAH);
     const after = contacts(HANNAH, DELPHINE);
 
@@ -57,7 +57,6 @@ describe("draftTaskFiles for elements no attribute names", () => {
         "pointer" in check ? check.pointer : undefined,
       ]),
     ).toEqual([
-      ["text_equals", list],
       ["text_contains", list],
       ["text_contains", list],
       ["text_contains", list],
@@ -76,7 +75,6 @@ describe("draftTaskFiles for elements no attribute names", () => {
     ]);
     const file_ = ".local/share/osmo/contacts.xml";
     expect(passing(file_, xml(before), file.suggested)).toEqual([
-      false,
       false,
       false,
       false,
@@ -173,6 +171,102 @@ describe("draftTaskFiles for decimals", () => {
         pointer: `${logo}/attributes/size`,
         value: "14",
       },
+    ]);
+  });
+});
+
+describe("draftTaskFiles for records in a list, as Tellico keeps books", () => {
+  /** A book collection: field definitions, then entries by id, each stamped with the day it was made and changed, in parts. */
+  const books = (...entries: string[]) =>
+    `<tellico><collection title="My Books"><fields><field name="title" title="Title"/></fields>${entries.join("")}</collection></tellico>`;
+  const stamp = (tag: string, day: string) =>
+    `<${tag} calendar="gregorian"><year>2026</year><month>11</month><day>${day}</day></${tag}>`;
+  const book = (
+    id: string,
+    [title, author, publisher, year]: readonly string[],
+    [made, changed]: readonly [string, string] = ["06", "06"],
+  ) =>
+    `<entry id="${id}"><title>${title ?? ""}</title><authors><author>${author ?? ""}</author></authors><publisher>${publisher ?? ""}</publisher><pub_year>${year ?? ""}</pub_year><id>${id}</id>${stamp("cdate", made)}${stamp("mdate", changed)}</entry>`;
+  const LANTERN = ["The Lantern Keeper", "Mira Okonkwo", "Quill Books", "2019"];
+  const SALT = ["Salt Roads", "Tomas Lindqvist", "Northwind House", "2015"];
+  const ORCHARD = [
+    "The Glass Orchard",
+    "Aurelio Benn",
+    "Northwind House",
+    "2022",
+  ];
+  const entry = (id: string) =>
+    `/root/children/[name=collection]/children/[name=entry][@id=${id}]`;
+
+  it("checks each field of a record appended to the list by the id it was given, never the list's whole text or the dates the app stamps", () => {
+    const before = books(book("1", LANTERN), book("2", SALT));
+    const after = books(
+      book("1", LANTERN),
+      book("2", SALT),
+      book("3", ORCHARD),
+    );
+
+    const file = xmlDraft(before, after);
+
+    expect(file.values.map(({ pointer }) => pointer)).toEqual([entry("3")]);
+    expect(file.suggested).toEqual(
+      ["title", "authors", "publisher", "pub_year"].map((field, index) => ({
+        kind: "text_equals",
+        file: FILE,
+        pointer: `${entry("3")}/children/[name=${field}]`,
+        value: ORCHARD[index],
+      })),
+    );
+    // The same edit saved on another day passes too.
+    const later = books(
+      book("1", LANTERN),
+      book("2", SALT),
+      book("3", ORCHARD, ["09", "09"]),
+    );
+    expect(
+      [before, after, later].map((text) =>
+        passing(FILE, xml(text), file.suggested),
+      ),
+    ).toEqual([
+      [false, false, false, false],
+      [true, true, true, true],
+      [true, true, true, true],
+    ]);
+  });
+
+  it("notes a date stamped in parts as a timestamp, never a check, and checks an edit beside it by the field it changed", () => {
+    const before = books(book("1", LANTERN), book("2", SALT));
+    const renamed = ["Salt Road", ...SALT.slice(1)];
+
+    const edited = xmlDraft(
+      before,
+      books(book("1", LANTERN), book("2", renamed, ["06", "07"])),
+    );
+    const restamped = xmlDraft(
+      before,
+      books(book("1", LANTERN), book("2", SALT, ["06", "07"])),
+    );
+
+    expect(edited.suggested).toEqual([
+      {
+        kind: "value_equals",
+        file: FILE,
+        pointer: `${entry("2")}/children/[name=title]/children/0`,
+        value: "Salt Road",
+      },
+    ]);
+    expect(
+      edited.values.map(({ pointer, note }) => [pointer, note ?? null]),
+    ).toEqual([
+      [`${entry("2")}/children/[name=title]/children/0`, null],
+      [
+        `${entry("2")}/children/[name=mdate]/children/[name=day]/children/0`,
+        "timestamp",
+      ],
+    ]);
+    expect(restamped.suggested).toEqual([]);
+    expect(restamped.notes.map(({ code }) => code)).toEqual([
+      "view_state_only",
     ]);
   });
 });
