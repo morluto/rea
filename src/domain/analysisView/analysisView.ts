@@ -94,6 +94,7 @@ import { projectAndroidSymbolSummary } from "./androidSymbolView.js";
 import { projectAndroidJniView } from "./androidJniView.js";
 import { projectDartAotView } from "./dartAotView.js";
 import { projectIl2cppMetadataView } from "./il2cppMetadataView.js";
+import { projectUnrealPakView } from "./unrealPakView.js";
 
 import type { AnalysisViewParent } from "./analysisViewParent.js";
 import type { GroupingViewKind } from "./analysisViewShape.js";
@@ -151,6 +152,7 @@ import {
   modelArtifactSummaryViewResultSchema,
   modelArtifactPageViewResultSchema,
   il2cppMetadataSummaryViewResultSchema,
+  unrealPakSummaryViewResultSchema,
   nativeInventorySummaryViewResultSchema,
   nativeFeatureTraceSummaryViewResultSchema,
   nativeLoadImageSummaryViewResultSchema,
@@ -227,6 +229,7 @@ export {
   modelArtifactSummaryViewResultSchema,
   modelArtifactPageViewResultSchema,
   il2cppMetadataSummaryViewResultSchema,
+  unrealPakSummaryViewResultSchema,
   nativeInventorySummaryViewResultSchema,
   nativeLoadImageSummaryViewResultSchema,
   nativeFunctionMatchingSummaryViewResultSchema,
@@ -363,6 +366,7 @@ const retainedViewProjectors = new Map<string, RetainedViewProjector>([
   retain("inspect_il2cpp_metadata", projectIl2cppMetadataView),
   retain("inspect_apk_signature", projectApkSignatureView),
   retain("inspect_model_artifact", projectModelArtifactView),
+  retain("inspect_unreal_pak", projectUnrealPakView),
   retain("inspect_gpu_code_objects", projectGpuCodeObjectsView),
   retain("match_native_functions", projectNativeFunctionMatchingView),
   retain("compare_source_to_bundle", projectSourceToBundleView),
