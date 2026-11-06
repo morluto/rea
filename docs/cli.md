@@ -796,7 +796,8 @@ from the bundle for every supported view kind. Bundles exported from MCP work
 for these commands. Its inline source form cannot also select a bundle.
 A missing ID is refused with `details.reason: "missing"`;
 supplying a bundle does not make incompatible Evidence valid for a workflow.
-`compare-managed-members` keeps its two assembly paths, and
+`compare-managed-members` keeps its two assembly paths and an optional
+repeatable `--type` selection applied to both sides, and
 `compare-process-captures` keeps its two capture Evidence JSON paths. The bundle
 option above selects an input; producer options that write a new bundle, such
 as `inspect-managed-members --evidence-bundle`, retain their existing meaning.
