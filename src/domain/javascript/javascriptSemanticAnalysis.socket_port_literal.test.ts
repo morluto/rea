@@ -221,3 +221,76 @@ it.each([
 ] as const)("keeps the socket acquisition for %s", (_name, call, method) => {
   expect(socketAcquisitionsFor(call)).toEqual([{ kind: "acquire", method }]);
 });
+/**
+ * Which later argument `tls` merges, and signed spellings judged by value.
+ *
+ * Measured on Node 24.22.1:
+ *
+ *   tls.connect({port:80},{port:80},{port:-1})   -> socket (argument 1 decides)
+ *   tls.connect({port:80},{port:-1},{port:80})   -> THREW
+ *   tls.connect({port:80},null,{port:-1})        -> THREW  (argument 2 decides)
+ *   tls.connect({port:80},0,{port:-1})           -> THREW  (argument 2 decides)
+ *   tls.connect({port:80},'x',{port:-1})         -> THREW  (argument 2 decides)
+ *   tls.connect({port:80},() => {},{port:-1})    -> THREW  (argument 2 decides)
+ *   tls.connect({port:80},{port:80},{port:80},{port:-1}) -> socket (argument 3 ignored)
+ *   net.connect({port:-0}) / {port:+0} / {port:+80} / {port:+65535} -> socket
+ *   net.connect({port:+65536}) / {port:-65536} / {port:-80} / {port:+1.5} -> THREW
+ */
+it.each([
+  [
+    "a tls port overridden by argument 1",
+    `tls.connect({port: 80}, {port: -1}, {port: 80})`,
+  ],
+  [
+    "a tls port beside a null argument 1",
+    `tls.connect({port: 80}, null, {port: -1})`,
+  ],
+  [
+    "a tls port beside an undefined argument 1",
+    `tls.connect({port: 80}, undefined, {port: -1})`,
+  ],
+  [
+    "a tls port beside a number argument 1",
+    `tls.connect({port: 80}, 0, {port: -1})`,
+  ],
+  [
+    "a tls port beside a string argument 1",
+    `tls.connect({port: 80}, "x", {port: -1})`,
+  ],
+  [
+    "a tls port beside a callback argument 1",
+    `tls.connect({port: 80}, () => {}, {port: -1})`,
+  ],
+  ["a positive out-of-range signed port", `net.connect({port: +65536})`],
+  ["a negative out-of-range signed port", `net.connect({port: -65536})`],
+  ["a negative signed port", `net.connect({port: -80})`],
+  ["a positive fractional signed port", `net.connect({port: +1.5})`],
+  ["a negative fractional signed port", `net.connect({port: -1.5})`],
+] as const)("emits no socket acquisition for %s", (_name, call) => {
+  expect(socketAcquisitionsFor(call)).toEqual([]);
+});
+
+it.each([
+  [
+    "a tls port decided by argument 1 over a bad argument 2",
+    `tls.connect({port: 80}, {port: 80}, {port: -1})`,
+  ],
+  [
+    "a tls port decided by argument 1 over a bad first port",
+    `tls.connect({port: -1}, {port: 80}, {port: 80})`,
+  ],
+  [
+    "a tls port when argument 3 is ignored",
+    `tls.connect({port: 80}, {port: 80}, {port: 80}, {port: -1})`,
+  ],
+  ["a negative zero port", `net.connect({port: -0})`],
+  ["a negative zero float port", `net.connect({port: -0.0})`],
+  ["a positive zero port", `net.connect({port: +0})`],
+  ["a positive signed port", `net.connect({port: +80})`],
+  ["the highest positive signed port", `net.connect({port: +65535})`],
+  ["a hex port", `net.connect({port: 0x10})`],
+] as const)("keeps the socket acquisition for %s", (_name, call) => {
+  expect(socketAcquisitionsFor(call)).toEqual([
+    { kind: "acquire", method: "connect" },
+  ]);
+});
