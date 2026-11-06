@@ -769,6 +769,7 @@ const TOOL_EFFECT_AUDIT: Readonly<Record<string, EffectAudit>> = {
   trace_application_feature: evidence,
   trace_javascript_semantics: evidence,
   compare_application_versions: evidence,
+  compare_static_and_observed_endpoints: evidence,
   search_guidance: effects(),
   read_guidance_section: effects(),
   guided_workflows: effects(),
