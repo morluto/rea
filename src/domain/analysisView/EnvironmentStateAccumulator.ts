@@ -1,6 +1,5 @@
 import { z } from "zod";
 import type { AnalysisError } from "../analysisErrorBase.js";
-import { parseExactJson } from "../exactJsonNumber.js";
 import { MAX_JSON_DEPTH, type JsonValue } from "../jsonValue.js";
 import {
   compareOffsetDateTimeInstants,
@@ -16,6 +15,11 @@ import { isJsonLike, mediaTypeEssence } from "./recordedMediaType.js";
 import { readRecordedRequestBody } from "./recordedExchangeBody.js";
 import { EnvironmentStateExtraction } from "./EnvironmentStateExtraction.js";
 import type { TemplateRule } from "./environmentManifestRules.js";
+import {
+  hasXssiGuardPrefix,
+  isXssiEligibleMediaType,
+  parseXssiOrExactJson,
+} from "./rpcOperationSelector.js";
 import {
   deeperThan,
   isStateWrite,
@@ -46,21 +50,24 @@ import {
  */
 const STATE_NESTING_DEPTH = 16;
 
-/** A recorded response body as state JSON: a JSON-like media type, complete UTF-8 text within the state body limit, exact numbers; otherwise undefined. */
+/** A recorded response body as state JSON: a JSON-like or XSSI-guarded JSON response, complete UTF-8 text within the state body limit, exact numbers; otherwise undefined. */
 export const stateBodyJson = (
   contentType: string | null,
   body: RecordedResponseBody,
 ): JsonValue | undefined => {
+  const essence = contentType === null ? null : mediaTypeEssence(contentType);
   if (
-    contentType === null ||
-    !isJsonLike(mediaTypeEssence(contentType)) ||
     body.bodyText === null ||
     body.bodyEncoding === "base64" ||
     body.bodyCut === true ||
+    !(
+      (contentType !== null && isJsonLike(essence)) ||
+      (isXssiEligibleMediaType(essence) && hasXssiGuardPrefix(body.bodyText))
+    ) ||
     Buffer.byteLength(body.bodyText, "utf8") > STATE_BODY_LIMIT_BYTES
   )
     return undefined;
-  const value = parseExactJson(body.bodyText);
+  const value = parseXssiOrExactJson(body.bodyText);
   return value === undefined ||
     deeperThan(value, MAX_JSON_DEPTH - STATE_NESTING_DEPTH)
     ? undefined
@@ -241,12 +248,31 @@ export class EnvironmentStateAccumulator extends EnvironmentManifestAccumulator 
   #body(ordinal: number): ParsedBody | null {
     this.#bodyReleases.push(this.temporaryCheckpoint());
     const entry = this.#entries.get(ordinal);
-    // A body that is not JSON-like is refused before its decoding is charged.
-    if (entry === undefined || !isJsonLike(mediaTypeEssence(entry.contentType)))
+    const essence =
+      entry === undefined
+        ? null
+        : entry.contentType === ""
+          ? null
+          : mediaTypeEssence(entry.contentType);
+    // A body whose media type cannot carry JSON or XSSI JSON is refused before its decoding is charged.
+    if (entry === undefined || !isXssiEligibleMediaType(essence))
       return { kind: "unusable" };
     const declaration = readRecordedResponseDeclaration(entry.record.reported);
     const content = declaration?.content;
     if (typeof content?.text !== "string") return { kind: "unusable" };
+    if (
+      !isJsonLike(essence) &&
+      !(content.encoding === undefined
+        ? hasXssiGuardPrefix(content.text)
+        : content.encoding === "base64" &&
+          entry.record.binary_fields.some(
+            (field) =>
+              field.pointer === "/response/content/text" &&
+              field.state === "retained" &&
+              field.content_base64?.startsWith("KV19J") === true,
+          ))
+    )
+      return { kind: "unusable" };
     // Larger bodies are never parsed; within the limit, decoding copies at most the retained text and the tree is linear in it.
     const length = content.text.length;
     if (length > base64PrefixChars(STATE_BODY_LIMIT_BYTES))
@@ -254,7 +280,7 @@ export class EnvironmentStateAccumulator extends EnvironmentManifestAccumulator 
     if (!this.temporary(RECORD_SCRATCH_BYTES + textBytes(length) * 4))
       return null;
     const value = stateBodyJson(
-      entry.contentType,
+      entry.contentType === "" ? null : entry.contentType,
       readRecordedResponseBody(
         entry.record,
         STATE_BODY_LIMIT_BYTES,

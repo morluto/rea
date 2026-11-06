@@ -18,6 +18,7 @@ import {
   type RecordedExchange,
 } from "./environmentSource.js";
 import {
+  matchReplayTool,
   replayEnvironmentTool,
   selectReplayExchange,
 } from "./environmentReplay.js";
@@ -571,5 +572,208 @@ describe("replayEnvironmentTool reply metadata", () => {
     expect(
       replay("get_users_by_id", { id: "2" }).replay.recorded_line_truncated,
     ).toBe(false);
+  });
+});
+
+const postRpcExchange = (spec: {
+  readonly path: string;
+  readonly requestText: string;
+  readonly responseText: string;
+  readonly requestMime?: string;
+  readonly responseMime?: string;
+  readonly status?: number;
+}) => ({
+  request: {
+    method: "POST",
+    url: `http://grafana.example${spec.path}`,
+    postData: {
+      mimeType: spec.requestMime ?? "application/json",
+      text: spec.requestText,
+    },
+  },
+  response: {
+    status: spec.status ?? 200,
+    content: {
+      mimeType: spec.responseMime ?? "application/json",
+      text: spec.responseText,
+    },
+  },
+});
+
+const multiplexedRpcSource = async (): Promise<EnvironmentSource> => {
+  const batchexecuteChunk = JSON.stringify([
+    [["wrb.fr", "GetItems", '[{"id":"x1"}]', null, null, null, "generic"]],
+  ]);
+  const capture = environmentManifestCaptureFixture([
+    postRpcExchange({
+      path: "/graphql",
+      requestText: JSON.stringify({
+        operationName: "GetViewer",
+        query: "query GetViewer { viewer { login } }",
+      }),
+      responseText: JSON.stringify({ data: { viewer: { login: "ada" } } }),
+    }),
+    postRpcExchange({
+      path: "/graphql",
+      requestText: JSON.stringify({
+        operationName: "UpdateViewer",
+        query: "mutation UpdateViewer { updateViewer { login } }",
+      }),
+      responseText: JSON.stringify({
+        data: { updateViewer: { login: "grace" } },
+      }),
+    }),
+    postRpcExchange({
+      path: "/rpc",
+      requestText: JSON.stringify({
+        jsonrpc: "2.0",
+        method: "tools/list",
+        id: 1,
+      }),
+      responseText: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        result: ["search"],
+      }),
+    }),
+    postRpcExchange({
+      path: "/rpc",
+      requestText: JSON.stringify({
+        jsonrpc: "2.0",
+        method: "tools/call",
+        id: 2,
+      }),
+      responseText: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 2,
+        result: { ran: true },
+      }),
+    }),
+    postRpcExchange({
+      path: "/_/DashUi/data/batchexecute?rpcids=GetItems",
+      requestMime: "application/x-www-form-urlencoded",
+      requestText: new URLSearchParams({
+        "f.req": JSON.stringify([[["GetItems", "[]", null, "generic"]]]),
+      }).toString(),
+      responseMime: "application/x-javascript; charset=utf-8",
+      responseText: `)]}'\n\n${String(batchexecuteChunk.length + 1)}\n${batchexecuteChunk}\n`,
+    }),
+    postRpcExchange({
+      path: "/api/items",
+      requestText: JSON.stringify({ title: "ordinary" }),
+      status: 201,
+      responseText: JSON.stringify({ id: 9, title: "ordinary" }),
+    }),
+  ]);
+  const evidence = analysisViewCaptureEvidence(capture);
+  const manifest = await inspectAnalysisView({
+    source: { kind: "inline", evidence },
+    view: { kind: "environment-manifest" },
+  });
+  if (!manifest.ok) throw manifest.error;
+  return environmentServeSource({
+    manifest: manifest.value,
+    capture: evidence,
+  });
+};
+
+describe("multiplexed POST RPC tool matching and XSSI replay", () => {
+  it("dispatches GraphQL operations independently and refuses unrecorded operation names", async () => {
+    const rpcSource = await multiplexedRpcSource();
+    const viewerMatch = matchReplayTool(rpcSource.manifest, {
+      method: "POST",
+      path: "/graphql",
+      body: { operationName: "GetViewer", query: "{ viewer { login } }" },
+    });
+    expect(viewerMatch?.tool.name).toBe("post_graphql_get_viewer");
+    expect(replay(viewerMatch!.tool.name, {}, rpcSource)).toMatchObject({
+      status: 200,
+      body: { data: { viewer: { login: "ada" } } },
+    });
+
+    const mutationMatch = matchReplayTool(rpcSource.manifest, {
+      method: "POST",
+      path: "/graphql",
+      body: {
+        operationName: "UpdateViewer",
+        query: "mutation UpdateViewer { updateViewer { login } }",
+      },
+    });
+    expect(mutationMatch?.tool.name).toBe("post_graphql_update_viewer");
+    expect(replay(mutationMatch!.tool.name, {}, rpcSource)).toMatchObject({
+      status: 200,
+      body: { data: { updateViewer: { login: "grace" } } },
+    });
+
+    expect(
+      matchReplayTool(rpcSource.manifest, {
+        method: "POST",
+        path: "/graphql",
+        body: {
+          operationName: "DeleteViewer",
+          query: "mutation DeleteViewer { ok }",
+        },
+      }),
+    ).toBeUndefined();
+    expect(
+      matchReplayTool(rpcSource.manifest, {
+        method: "POST",
+        path: "/graphql",
+        body: { query: "{ __typename }" },
+      }),
+    ).toBeUndefined();
+  });
+
+  it("dispatches JSON-RPC 2.0, batchexecute XSSI replies, and ordinary REST POST routes", async () => {
+    const rpcSource = await multiplexedRpcSource();
+    const listToolsMatch = matchReplayTool(rpcSource.manifest, {
+      method: "POST",
+      path: "/rpc",
+      body: { jsonrpc: "2.0", method: "tools/list", id: 99 },
+    });
+    expect(listToolsMatch?.tool.name).toBe("post_rpc_tools_list");
+    expect(replay(listToolsMatch!.tool.name, {}, rpcSource)).toMatchObject({
+      body: { jsonrpc: "2.0", id: 1, result: ["search"] },
+    });
+
+    const callToolMatch = matchReplayTool(rpcSource.manifest, {
+      method: "POST",
+      path: "/rpc",
+      body: { jsonrpc: "2.0", method: "tools/call", id: 100 },
+    });
+    expect(callToolMatch?.tool.name).toBe("post_rpc_tools_call");
+    expect(replay(callToolMatch!.tool.name, {}, rpcSource)).toMatchObject({
+      body: { jsonrpc: "2.0", id: 2, result: { ran: true } },
+    });
+
+    const batchexecuteMatch = matchReplayTool(rpcSource.manifest, {
+      method: "POST",
+      path: "/_/DashUi/data/batchexecute",
+      query: "?rpcids=GetItems",
+      contentType: "application/x-www-form-urlencoded",
+      body: new URLSearchParams({
+        "f.req": JSON.stringify([[["GetItems", "[]", null, "generic"]]]),
+      }).toString(),
+    });
+    expect(batchexecuteMatch?.tool.name).toBe(
+      "post_dashui_data_batchexecute_get_items",
+    );
+    expect(replay(batchexecuteMatch!.tool.name, {}, rpcSource)).toMatchObject({
+      status: 200,
+      body: [
+        [["wrb.fr", "GetItems", '[{"id":"x1"}]', null, null, null, "generic"]],
+      ],
+    });
+
+    const restMatch = matchReplayTool(rpcSource.manifest, {
+      method: "POST",
+      path: "/api/items",
+      body: { title: "another" },
+    });
+    expect(restMatch?.tool.name).toBe("post_items");
+    expect(replay(restMatch!.tool.name, {}, rpcSource)).toMatchObject({
+      status: 201,
+      body: { id: 9, title: "ordinary" },
+    });
   });
 });

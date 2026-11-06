@@ -4,6 +4,7 @@ import {
   spellingSummary,
   type SpellingSummary,
 } from "./environmentManifestSpelling.js";
+import type { RpcOperation } from "./rpcOperationSelector.js";
 import type { RouteRule } from "./webNetworkRouteTemplates.js";
 
 /** Opt-in template rules applied after the four exact format rules. */
@@ -63,6 +64,7 @@ export interface ToolGroup {
   readonly contentTypes: ReadonlySet<string>;
   readonly queryNames: ReadonlySet<string>;
   readonly bodyShape: BodyShape | null;
+  readonly rpcOperation?: RpcOperation;
 }
 
 const OPAQUE_TOKEN = /^(?=.*\d)(?=.*[a-z])[a-z0-9]{12,}$/u;
@@ -149,6 +151,9 @@ const mergeGroups = (
     contentTypes: new Set(groups.flatMap((group) => [...group.contentTypes])),
     queryNames: new Set(groups.flatMap((group) => [...group.queryNames])),
     bodyShape: primary.bodyShape,
+    ...(primary.rpcOperation === undefined
+      ? {}
+      : { rpcOperation: primary.rpcOperation }),
   };
 };
 
@@ -162,6 +167,8 @@ const rebucket = (
     const key = compositeKey([
       group.method,
       group.origin,
+      group.rpcOperation?.kind ?? null,
+      group.rpcOperation?.name ?? null,
       ...group.parts.map(keyOf),
     ]);
     const bucket = buckets.get(key);
@@ -290,6 +297,8 @@ const mergeSiblingVariance = (groups: readonly ToolGroup[]): ToolGroup[] => {
       const key = compositeKey([
         group.method,
         group.origin,
+        group.rpcOperation?.kind ?? null,
+        group.rpcOperation?.name ?? null,
         group.parts.length,
         ...group.parts.map((part, index) =>
           index === position ? null : partKey(part),
@@ -384,6 +393,8 @@ const mergeSiblingPairs = (groups: readonly ToolGroup[]): ToolGroup[] => {
       const key = compositeKey([
         group.method,
         group.origin,
+        group.rpcOperation?.kind ?? null,
+        group.rpcOperation?.name ?? null,
         group.parts.length,
         ...group.parts.map((part, index) =>
           index === position || index === position + 1 ? null : partKey(part),

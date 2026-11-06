@@ -1060,3 +1060,141 @@ describe("what a probe did not observe", () => {
   registerProbeCoverageCases();
   registerProbeOrderingAndCaptureCases();
 });
+
+describe("multiplexed POST RPC probe comparison", () => {
+  it("routes multiplexed GraphQL, JSON-RPC 2.0, and XSSI batchexecute probes to their discriminated state-served tools", async () => {
+    const { inspectAnalysisView } =
+      await import("../analysisView/AnalysisViewService.js");
+    const makeCapture = () => {
+      const entries = [
+        {
+          startedDateTime: "2026-10-20T09:00:00.000Z",
+          time: 10,
+          request: {
+            method: "POST",
+            url: "http://grafana.example/graphql",
+            postData: {
+              mimeType: "application/json",
+              text: JSON.stringify({
+                operationName: "GetViewer",
+                query: "query GetViewer { viewer { id } }",
+              }),
+            },
+          },
+          response: {
+            status: 200,
+            content: {
+              mimeType: "application/json",
+              text: JSON.stringify({ data: { viewer: { id: "u1" } } }),
+            },
+          },
+        },
+        {
+          startedDateTime: "2026-10-20T09:00:01.000Z",
+          time: 10,
+          request: {
+            method: "POST",
+            url: "http://grafana.example/graphql",
+            postData: {
+              mimeType: "application/json",
+              text: JSON.stringify({
+                operationName: "ListProjects",
+                query: "query ListProjects { projects { slug } }",
+              }),
+            },
+          },
+          response: {
+            status: 200,
+            content: {
+              mimeType: "application/json",
+              text: JSON.stringify({
+                data: { projects: [{ slug: "alpha" }] },
+              }),
+            },
+          },
+        },
+        {
+          startedDateTime: "2026-10-20T09:00:02.000Z",
+          time: 10,
+          request: {
+            method: "POST",
+            url: "http://grafana.example/rpc",
+            postData: {
+              mimeType: "application/json",
+              text: JSON.stringify({
+                jsonrpc: "2.0",
+                method: "tools/list",
+                id: 1,
+              }),
+            },
+          },
+          response: {
+            status: 200,
+            content: {
+              mimeType: "application/json",
+              text: JSON.stringify({
+                jsonrpc: "2.0",
+                id: 1,
+                result: { tools: ["ping"] },
+              }),
+            },
+          },
+        },
+        {
+          startedDateTime: "2026-10-20T09:00:03.000Z",
+          time: 10,
+          request: {
+            method: "POST",
+            url: "http://grafana.example/_/AppUi/data/batchexecute?rpcids=GetNotes",
+            postData: {
+              mimeType: "application/x-www-form-urlencoded",
+              text: new URLSearchParams({
+                "f.req": JSON.stringify([
+                  [["GetNotes", "[]", null, "generic"]],
+                ]),
+              }).toString(),
+            },
+          },
+          response: {
+            status: 200,
+            content: {
+              mimeType: "application/x-javascript",
+              text: ')]}\'\n[[["wrb.fr","GetNotes","[{\\"id\\":7}]",null,null,null,"generic"]]]',
+            },
+          },
+        },
+      ];
+      return analysisViewCaptureEvidence(
+        environmentManifestCaptureFixture(entries),
+      );
+    };
+    const recorded = makeCapture();
+    const manifest = await inspectAnalysisView({
+      source: { kind: "inline", evidence: recorded },
+      view: { kind: "environment-manifest" },
+    });
+    if (!manifest.ok) throw manifest.error;
+    const rpcSource = environmentServeSource({
+      manifest: manifest.value,
+      capture: recorded,
+    });
+    const report = compareEnvironment({
+      source: rpcSource,
+      captureValue: recorded,
+      probes: [{ label: "rpc-probe", value: makeCapture() }],
+      operation: "environment-compare",
+    });
+    if (!report.ok) throw report.error;
+    expect(report.value.summary).toMatchObject({
+      steps: 4,
+      equal: 4,
+      agreement: 1,
+    });
+    expect(report.value.probes[0]?.results.map((step) => step.tool)).toEqual([
+      "post_graphql_get_viewer",
+      "post_graphql_list_projects",
+      "post_rpc_tools_list",
+      "post_appui_data_batchexecute_get_notes",
+    ]);
+  });
+});

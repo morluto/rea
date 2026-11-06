@@ -33,7 +33,7 @@ export const REPLAY_CATALOG_INSTRUCTIONS =
 /** JSON Schema advertised for one tool argument. */
 export interface EnvironmentToolProperty extends EnvironmentToolSchema {
   readonly oneOf?: readonly (
-    | { readonly type: "string" | "number" | "boolean" }
+    | { readonly type: "string" | "number" | "boolean" | "object" }
     | { readonly type: "array"; readonly items: { readonly type: "string" } }
   )[];
   readonly description: string;
@@ -227,8 +227,13 @@ const toolDescription = (
   tool: EnvironmentManifestTool,
   describe: EnvironmentCatalogOptions["describe"],
   answers: string,
-): string =>
-  `${REPLAY_CATALOG_INSTRUCTIONS} ${describeText(tool.method, "method")} ${describeText(tool.path_template, "path")}; ${describeResponses(tool, source.exchanges)}; ${describe?.(tool) ?? answers} [${describeList(tool.record_ordinals, tool.record_ordinals.length)}]; evidence ${source.evidenceId}`;
+): string => {
+  const rpcOperation =
+    tool.rpc_operation === undefined
+      ? ""
+      : ` (${tool.rpc_operation.kind} ${describeText(tool.rpc_operation.name, "operation", "manifest Evidence", JSON.stringify)})`;
+  return `${REPLAY_CATALOG_INSTRUCTIONS} ${describeText(tool.method, "method")} ${describeText(tool.path_template, "path")}${rpcOperation}; ${describeResponses(tool, source.exchanges)}; ${describe?.(tool) ?? answers} [${describeList(tool.record_ordinals, tool.record_ordinals.length)}]; evidence ${source.evidenceId}`;
+};
 
 /** Captured argument names longer than this are advertised under a short alias; the manifest keeps the name. */
 export const MAX_ARGUMENT_NAME_CHARS = 64;
@@ -328,6 +333,16 @@ export const withQueryText = (
   return spelled ?? args;
 };
 
+const defaultBodyProperty = (
+  tool: EnvironmentManifestTool,
+): EnvironmentToolProperty =>
+  tool.rpc_operation?.kind === "batchexecute"
+    ? {
+        oneOf: [{ type: "string" }, { type: "object" }],
+        description: bodyDescription(tool),
+      }
+    : { type: "object", description: bodyDescription(tool) };
+
 /** Lazily render properties so admission precedes retaining a whole schema. */
 function* environmentToolProperties(
   tool: EnvironmentManifestTool,
@@ -369,11 +384,7 @@ function* environmentToolProperties(
     ];
   }
   if (args.body !== undefined)
-    yield [
-      args.body,
-      served.body ?? { type: "object", description: bodyDescription(tool) },
-      false,
-    ];
+    yield [args.body, served.body ?? defaultBodyProperty(tool), false];
 }
 
 /** Serialization reservation calibrated with 1500 fields and eight concurrent SDK discovery requests. */
@@ -419,10 +430,7 @@ const catalogBody = (
   readonly property: EnvironmentToolProperty | undefined;
   readonly withBody: boolean;
 } => {
-  const property = body?.(tool, {
-    type: "object",
-    description: bodyDescription(tool),
-  });
+  const property = body?.(tool, defaultBodyProperty(tool));
   return {
     property,
     withBody: WRITE_METHODS.has(tool.method) || property !== undefined,

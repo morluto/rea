@@ -6,6 +6,13 @@ import {
   mediaTypeEssence,
 } from "../../domain/analysisView/recordedMediaType.js";
 import {
+  hasXssiGuardPrefix,
+  isXssiEligibleMediaType,
+  parseXssiOrExactJson,
+  RPC_REQUEST_BODY_LIMIT_BYTES,
+} from "../../domain/analysisView/rpcOperationSelector.js";
+import { readRecordedResponseBody } from "../../domain/analysisView/recordedResponseBody.js";
+import {
   primaryOrigin,
   type OriginStats,
 } from "../../domain/analysisView/environmentManifestOrigin.js";
@@ -98,16 +105,47 @@ const liveAnswer = (
   return { status, body };
 };
 
+const requestContentType = (
+  record: WebNetworkCaptureRecord,
+): string | undefined => {
+  const facts = readRecordedRequestBody(record.reported);
+  return facts.kind === "request" && facts.postData.kind === "object"
+    ? facts.postData.mimeType
+    : undefined;
+};
+
+const isProbeJsonLike = (
+  record: WebNetworkCaptureRecord,
+  rawMime: string,
+): boolean => {
+  const essence = mediaTypeEssence(rawMime);
+  if (isJsonLike(essence)) return true;
+  if (!isXssiEligibleMediaType(essence)) return false;
+  const decoded = readRecordedResponseBody(
+    record,
+    RPC_REQUEST_BODY_LIMIT_BYTES,
+  );
+  return (
+    decoded.bodyText !== null &&
+    decoded.bodyEncoding !== "base64" &&
+    decoded.bodyCut !== true &&
+    hasXssiGuardPrefix(decoded.bodyText) &&
+    parseXssiOrExactJson(decoded.bodyText) !== undefined
+  );
+};
+
 /** The origin a probe calls the application at, chosen as the manifest chooses its own. */
 const probeOrigin = (
+  records: readonly WebNetworkCaptureRecord[],
   lines: ReadonlyMap<number, RecordedRequestLine | null>,
 ): string | null => {
   const origins = new Map<string, OriginStats>();
-  for (const line of lines.values()) {
+  for (const record of records) {
+    const line = lines.get(record.ordinal);
     if (line?.kind !== "line") continue;
     const stats = origins.get(line.origin) ?? { records: 0, jsonLike: 0 };
     stats.records += 1;
-    if (isJsonLike(mediaTypeEssence(line.rawMime))) stats.jsonLike += 1;
+    if (isProbeJsonLike(record, line.rawMime)) stats.jsonLike += 1;
     origins.set(line.origin, stats);
   }
   return primaryOrigin(origins);
@@ -140,7 +178,7 @@ export const probeRequests = (
     ]),
   );
   // Another origin's request goes to some other server, so it neither calls nor changes the environment.
-  const origin = probeOrigin(lines);
+  const origin = probeOrigin(records, lines);
   for (const record of ordered) {
     const line = lines.get(record.ordinal);
     const { ordinal } = record;
@@ -153,11 +191,13 @@ export const probeRequests = (
       });
     else {
       const exchange = recordedExchange(record, line);
+      const contentType = requestContentType(record);
       const request = {
         method: line.method,
         path: exchange.path,
         query: exchange.query,
         body: requestBody(record),
+        ...(contentType === undefined ? {} : { contentType }),
       };
       // A request whose answer was lost may still have changed the application, so it is made but not compared.
       if (exchange.status === null) {

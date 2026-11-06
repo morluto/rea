@@ -1,7 +1,8 @@
-import { expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import { environmentManifestCaptureFixture } from "../../../tests/fixtures/analysisView.js";
 import type { WebNetworkCaptureRecord } from "../webNetworkCapture.js";
 import { EnvironmentManifestAccumulator } from "./EnvironmentManifestAccumulator.js";
+import { EnvironmentStateAccumulator } from "./EnvironmentStateAccumulator.js";
 
 const sample = (
   ordinal: number,
@@ -119,4 +120,292 @@ it("charges the group key before building it so an oversized request method fail
     error: { _tag: "AnalysisResourceConstraintError", resource: "memory" },
   });
   expect(finished(accumulator).tools).toHaveLength(0);
+});
+
+interface RpcExchangeSpec {
+  readonly ordinal: number;
+  readonly path: string;
+  readonly requestMime?: string;
+  readonly postText?: string;
+  readonly responseMime?: string;
+  readonly responseText?: string;
+}
+
+const rpcRecord = (spec: RpcExchangeSpec): WebNetworkCaptureRecord => ({
+  ...environmentManifestCaptureFixture().records[0]!,
+  ordinal: spec.ordinal,
+  limitations: [],
+  reported: {
+    startedDateTime: new Date(
+      1_700_000_000_000 + spec.ordinal * 100,
+    ).toISOString(),
+    time: 10,
+    request: {
+      method: "POST",
+      url: `https://manifest.test${spec.path}`,
+      ...(spec.postText === undefined
+        ? {}
+        : {
+            postData: {
+              mimeType: spec.requestMime ?? "application/json",
+              text: spec.postText,
+            },
+          }),
+    },
+    response: {
+      status: 200,
+      content: {
+        mimeType: spec.responseMime ?? "application/json",
+        ...(spec.responseText === undefined ? {} : { text: spec.responseText }),
+      },
+    },
+  },
+});
+
+const multiplexedManifestRecords = (): readonly WebNetworkCaptureRecord[] => [
+  rpcRecord({
+    ordinal: 0,
+    path: "/api/orgs/org-1/graphql",
+    postText: JSON.stringify({
+      operationName: "GetViewer",
+      query: "query GetViewer { viewer { id } }",
+    }),
+  }),
+  rpcRecord({
+    ordinal: 1,
+    path: "/api/orgs/org-2/graphql",
+    postText: JSON.stringify({
+      operationName: "GetViewer",
+      query: "query GetViewer { viewer { id } }",
+    }),
+  }),
+  rpcRecord({
+    ordinal: 2,
+    path: "/api/orgs/org-1/graphql",
+    postText: JSON.stringify({
+      operationName: "UpdateProfile",
+      query:
+        "mutation UpdateProfile($name: String!) { updateProfile(name: $name) { id } }",
+      variables: { name: "Ada" },
+    }),
+  }),
+  rpcRecord({
+    ordinal: 3,
+    path: "/api/orgs/org-1/graphql",
+    postText: JSON.stringify({ query: "{ __typename }" }),
+  }),
+  rpcRecord({
+    ordinal: 4,
+    path: "/rpc",
+    postText: JSON.stringify({
+      jsonrpc: "2.0",
+      method: "tools/list",
+      id: 1,
+    }),
+  }),
+  rpcRecord({
+    ordinal: 5,
+    path: "/rpc",
+    postText: JSON.stringify({
+      jsonrpc: "2.0",
+      method: "tools/call",
+      id: 2,
+    }),
+  }),
+  rpcRecord({
+    ordinal: 6,
+    path: "/_/AppUi/data/batchexecute?rpcids=GetItems",
+    requestMime: "application/x-www-form-urlencoded;charset=UTF-8",
+    postText: new URLSearchParams({
+      "f.req": JSON.stringify([[["GetItems", "[]", null, "generic"]]]),
+    }).toString(),
+    responseMime: "application/x-javascript; charset=utf-8",
+    responseText:
+      ')]}\'\n[[["wrb.fr","GetItems","[{\\"id\\":1}]",null,null,null,"generic"]]]',
+  }),
+  rpcRecord({
+    ordinal: 7,
+    path: "/_/AppUi/data/batchexecute?rpcids=SaveItem",
+    requestMime: "application/x-www-form-urlencoded;charset=UTF-8",
+    postText: new URLSearchParams({
+      "f.req": JSON.stringify([[["SaveItem", '[{"id":1}]', null, "generic"]]]),
+    }).toString(),
+    responseMime: "text/plain; charset=utf-8",
+    responseText:
+      ')]}\'\n[[["wrb.fr","SaveItem","{\\"ok\\":true}",null,null,null,"generic"]]]',
+  }),
+  rpcRecord({
+    ordinal: 8,
+    path: "/api/items",
+    postText: JSON.stringify({ name: "plain-rest" }),
+  }),
+];
+
+describe("multiplexed POST RPC manifest grouping", () => {
+  it("splits GraphQL, JSON-RPC 2.0, and batchexecute operations into distinct manifest tools and preserves template rules", () => {
+    const accumulator = new EnvironmentManifestAccumulator(1024 * 1024, true, [
+      "sibling-variance",
+    ]);
+    for (const record of multiplexedManifestRecords()) {
+      expect(accumulator.add(record).ok).toBe(true);
+    }
+    const manifest = finished(accumulator);
+    expect(manifest.excluded).toEqual([]);
+    expect(
+      manifest.tools.map((tool) => ({
+        name: tool.name,
+        path_template: tool.path_template,
+        rpc_operation: tool.rpc_operation,
+        record_ordinals: tool.record_ordinals,
+      })),
+    ).toEqual([
+      {
+        name: "post_appui_data_batchexecute_get_items",
+        path_template: "/_/AppUi/data/batchexecute",
+        rpc_operation: { kind: "batchexecute", name: "GetItems" },
+        record_ordinals: [6],
+      },
+      {
+        name: "post_appui_data_batchexecute_save_item",
+        path_template: "/_/AppUi/data/batchexecute",
+        rpc_operation: { kind: "batchexecute", name: "SaveItem" },
+        record_ordinals: [7],
+      },
+      {
+        name: "post_items",
+        path_template: "/api/items",
+        rpc_operation: undefined,
+        record_ordinals: [8],
+      },
+      {
+        name: "post_orgs_org_1_graphql",
+        path_template: "/api/orgs/org-1/graphql",
+        rpc_operation: undefined,
+        record_ordinals: [3],
+      },
+      {
+        name: "post_orgs_org_1_graphql_update_profile",
+        path_template: "/api/orgs/org-1/graphql",
+        rpc_operation: { kind: "graphql", name: "UpdateProfile" },
+        record_ordinals: [2],
+      },
+      {
+        name: "post_orgs_graphql_get_viewer_by_org_id",
+        path_template: "/api/orgs/{org_id}/graphql",
+        rpc_operation: { kind: "graphql", name: "GetViewer" },
+        record_ordinals: [0, 1],
+      },
+      {
+        name: "post_rpc_tools_call",
+        path_template: "/rpc",
+        rpc_operation: { kind: "json-rpc", name: "tools/call" },
+        record_ordinals: [5],
+      },
+      {
+        name: "post_rpc_tools_list",
+        path_template: "/rpc",
+        rpc_operation: { kind: "json-rpc", name: "tools/list" },
+        record_ordinals: [4],
+      },
+    ]);
+  });
+});
+
+describe("multiplexed POST RPC state partitioning", () => {
+  it("partitions read and write RPC operations into separate state buckets in EnvironmentStateAccumulator", () => {
+    const stateAccumulator = new EnvironmentStateAccumulator(1024 * 1024);
+    const sharedDocument = [
+      "query GetViewer { viewer { id name } }",
+      "mutation UpdateProfile($name: String!) { updateProfile(name: $name) { id name } }",
+    ].join("\n");
+    const records: readonly WebNetworkCaptureRecord[] = [
+      rpcRecord({
+        ordinal: 0,
+        path: "/graphql",
+        postText: JSON.stringify({
+          operationName: "GetViewer",
+          query: sharedDocument,
+        }),
+        responseText: JSON.stringify({
+          data: { viewer: { id: "u1", name: "Ada" } },
+        }),
+      }),
+      rpcRecord({
+        ordinal: 1,
+        path: "/graphql",
+        postText: JSON.stringify({
+          operationName: "UpdateProfile",
+          query: sharedDocument,
+          variables: { name: "Grace" },
+        }),
+        responseText: JSON.stringify({
+          data: { updateProfile: { id: "u1", name: "Grace" } },
+        }),
+      }),
+      rpcRecord({
+        ordinal: 2,
+        path: "/rpc",
+        postText: JSON.stringify({
+          jsonrpc: "2.0",
+          method: "tools/list",
+          id: 1,
+        }),
+        responseText: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          result: { tools: [] },
+        }),
+      }),
+      rpcRecord({
+        ordinal: 3,
+        path: "/rpc",
+        postText: JSON.stringify({
+          jsonrpc: "2.0",
+          method: "tools/call",
+          id: 2,
+        }),
+        responseText: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 2,
+          result: { ok: true },
+        }),
+      }),
+      rpcRecord({
+        ordinal: 4,
+        path: "/_/AppUi/data/batchexecute?rpcids=GetItems",
+        requestMime: "application/x-www-form-urlencoded",
+        postText: new URLSearchParams({
+          "f.req": JSON.stringify([[["GetItems", "[]", null, "generic"]]]),
+        }).toString(),
+        responseMime: "application/x-javascript",
+        responseText:
+          ')]}\'\n[[["wrb.fr","GetItems","[1,2]",null,null,null,"generic"]]]',
+      }),
+    ];
+    for (const record of records)
+      expect(stateAccumulator.add(record).ok).toBe(true);
+    const state = stateAccumulator.finishState();
+    if (!state.ok) throw state.error;
+    expect(state.value.views).toEqual([
+      {
+        tool: "post_appui_data_batchexecute_get_items",
+        shape: "recorded",
+        reason: "query-body",
+      },
+      {
+        tool: "post_graphql_get_viewer",
+        shape: "recorded",
+        reason: "query-body",
+      },
+      {
+        tool: "post_rpc_tools_list",
+        shape: "recorded",
+        reason: "query-body",
+      },
+    ]);
+    expect(state.value.writes.map((plan) => plan.tool)).toEqual([
+      "post_graphql_update_profile",
+      "post_rpc_tools_call",
+    ]);
+  });
 });

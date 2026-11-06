@@ -1,9 +1,12 @@
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
 import {
+  decodedSegment,
   ownMember,
   pathSegmentMatches,
 } from "../../domain/analysisView/environmentStateRules.js";
+import { selectRpcOperationFromValue } from "../../domain/analysisView/rpcOperationSelector.js";
+import { segmentRule } from "../../domain/analysisView/webNetworkRouteTemplates.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
 import {
   iterateUrlQueryParameters,
@@ -15,10 +18,109 @@ import {
   REPLAY_BODY_LIMIT_BYTES,
   ENVIRONMENT_SERVE_OPERATION,
   replayedBody,
+  type EnvironmentManifest,
   type EnvironmentManifestTool,
   type EnvironmentSource,
   type RecordedExchange,
 } from "./environmentSource.js";
+
+const FORMAT_RULES: ReadonlySet<string> = new Set([
+  "numeric",
+  "uuid",
+  "hex",
+  "iso-date",
+]);
+
+/** Incoming HTTP request facts used to select a manifest tool for replay. */
+export interface ReplayHttpRequest {
+  readonly method: string;
+  readonly path: string;
+  readonly query?: string | null | undefined;
+  readonly body?: JsonValue | undefined;
+  readonly contentType?: string | null | undefined;
+}
+
+/** A manifest tool matched to an incoming HTTP request, with its split path segments and literal specificity. */
+export interface MatchedReplayTool {
+  readonly tool: EnvironmentManifestTool;
+  readonly segments: readonly string[];
+  readonly literals: number;
+}
+
+const fitOf = (
+  tool: EnvironmentManifestTool,
+  segments: readonly string[],
+): number | undefined => {
+  const template = tool.path_template.slice(1).split("/");
+  if (template.length !== segments.length) return undefined;
+  const params = new Map(tool.params.map((param) => [param.index, param]));
+  let literals = 0;
+  for (const [index, part] of template.entries()) {
+    const segment = segments[index]!;
+    const param = params.get(index);
+    if (param === undefined) {
+      if (part !== segment && part !== decodedSegment(segment))
+        return undefined;
+      literals += 1;
+    } else if (
+      FORMAT_RULES.has(param.rule) &&
+      segmentRule(decodedSegment(segment)) !== param.rule
+    )
+      return undefined;
+    else if (segment === "") return undefined;
+  }
+  return literals;
+};
+
+/**
+ * Select the manifest tool matching an incoming HTTP request by method, path template and optional POST RPC
+ * operation discriminator; non-RPC routes preserve exact literal-count specificity and manifest tie order.
+ */
+export const matchReplayTool = (
+  manifest: EnvironmentManifest,
+  request: ReplayHttpRequest,
+): MatchedReplayTool | undefined => {
+  const segments = request.path.slice(1).split("/");
+  const fits: MatchedReplayTool[] = [];
+  for (const tool of manifest.tools) {
+    if (tool.method !== request.method) continue;
+    const literals = fitOf(tool, segments);
+    if (literals !== undefined) fits.push({ tool, segments, literals });
+  }
+  if (fits.length === 0) return undefined;
+  const pickBest = (
+    candidates: readonly MatchedReplayTool[],
+  ): MatchedReplayTool | undefined => {
+    let best: MatchedReplayTool | undefined;
+    for (const candidate of candidates)
+      if (best === undefined || candidate.literals > best.literals)
+        best = candidate;
+    return best;
+  };
+  const rpc =
+    request.method === "POST"
+      ? selectRpcOperationFromValue({
+          method: request.method,
+          path: request.path,
+          query: request.query,
+          mimeType: request.contentType,
+          body: request.body,
+        })
+      : undefined;
+  if (rpc !== undefined) {
+    const exact = pickBest(
+      fits.filter(
+        ({ tool }) =>
+          tool.rpc_operation?.kind === rpc.kind &&
+          tool.rpc_operation.name === rpc.name,
+      ),
+    );
+    if (exact !== undefined) return exact;
+    if (fits.some(({ tool }) => tool.rpc_operation !== undefined))
+      return undefined;
+  }
+  return pickBest(fits.filter(({ tool }) => tool.rpc_operation === undefined));
+};
 
 /** Caller arguments as the MCP tool receives them. */
 export type ReplayArguments = Readonly<Record<string, unknown>>;
