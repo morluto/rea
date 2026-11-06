@@ -17,7 +17,10 @@ import {
 
 import { projectHarmonyApplicationEvidence } from "../../../../src/application/harmony/HarmonyApplicationService.js";
 import { createDirectAnalysis } from "../../../../src/composition/directAnalysis.js";
-import { harmonyApplicationProjectionResultSchema } from "../../../../src/domain/harmony/harmonyApplication.js";
+import {
+  harmonyApplicationProjectionResultSchema,
+  type HarmonyApplicationProjectionResult,
+} from "../../../../src/domain/harmony/harmonyApplication.js";
 import { artifactInventoryResultSchema } from "../../../../src/domain/artifactGraph.js";
 import { createEvidence } from "../../../../src/domain/evidence.js";
 import { parseBinaryTarget } from "../../../../src/application/BinaryTargetResolver.js";
@@ -39,58 +42,58 @@ const stageHapEntries = [
   { path: "META-INF/FIXTURE.p7b", content: "opaque signing" },
 ] as const;
 
-const PKG_CONTEXT_NOT_READ_LIMITATION =
-  "pkgContextInfo.json is inventoried but not read, so bridge_candidates are not narrowed by its isSO declarations; narrowing requires parsed file content that this projection does not receive.";
+const PKG_CONTEXT_NAME = "pkgContextInfo.json";
+
+const unreadDeclarationLimitations = (
+  limitations: readonly string[],
+): string[] => limitations.filter((text) => text.includes(PKG_CONTEXT_NAME));
+
+const projectStageHap = async (
+  label: string,
+  entries: readonly { path: string; content: string | Uint8Array }[],
+): Promise<HarmonyApplicationProjectionResult> => {
+  const path = await writeApplicationZip(label, "Fixture.hap", entries);
+  return requireDeterministicProjection(
+    projectHarmonyApplicationEvidence,
+    await inventoryApplicationPackage(path),
+    harmonyApplicationProjectionResultSchema,
+  );
+};
+
+const stageHapWithDeclaration = stageHapEntries.map(({ path, content }) => ({
+  path,
+  content,
+}));
 
 describe("HarmonyOS N-API declaration disclosure", () => {
-  it("states that an inventoried pkgContextInfo.json was not consulted", async () => {
-    const path = await writeApplicationZip(
-      "rea-harmony-pkg-context-",
-      "Fixture.hap",
-      [
-        ...stageHapEntries.map(({ path, content }) => ({ path, content })),
-        {
-          path: "pkgContextInfo.json",
-          content: '{"libentry.so":{"isSO":true}}',
-        },
-      ],
+  it("discloses the unread declaration by its names, not its wording", async () => {
+    const projection = await projectStageHap("rea-harmony-pkg-context-", [
+      ...stageHapWithDeclaration,
+      {
+        path: PKG_CONTEXT_NAME,
+        content: '{"libentry.so":{"isSO":true}}',
+      },
+    ]);
+    const control = await projectStageHap(
+      "rea-harmony-pkg-context-control-",
+      stageHapWithDeclaration,
     );
-    const projection = requireDeterministicProjection(
-      projectHarmonyApplicationEvidence,
-      await inventoryApplicationPackage(path),
-      harmonyApplicationProjectionResultSchema,
-    );
-    expect(projection.limitations).toContain(PKG_CONTEXT_NOT_READ_LIMITATION);
-    const withoutDeclaration = requireDeterministicProjection(
-      projectHarmonyApplicationEvidence,
-      await inventoryApplicationPackage(
-        await writeApplicationZip(
-          "rea-harmony-pkg-context-control-",
-          "Fixture.hap",
-          stageHapEntries.map(({ path, content }) => ({ path, content })),
-        ),
-      ),
-      harmonyApplicationProjectionResultSchema,
-    );
-    expect(projection.bridge_candidates).toEqual(
-      withoutDeclaration.bridge_candidates,
-    );
+
+    const disclosed = unreadDeclarationLimitations(projection.limitations);
+    expect(disclosed).toHaveLength(1);
+    expect(disclosed[0]).toContain("bridge_candidates");
+    expect(disclosed[0]).toMatch(/\bisSO\b/);
+    expect(disclosed[0]).toMatch(/not read|not narrowed/iu);
+    expect(projection.bridge_candidates).toEqual(control.bridge_candidates);
+    expect(unreadDeclarationLimitations(control.limitations)).toEqual([]);
   });
 
-  it("stays silent when the package declares nothing", async () => {
-    const path = await writeApplicationZip(
+  it("does not disclose a declaration the package does not carry", async () => {
+    const projection = await projectStageHap(
       "rea-harmony-no-pkg-context-",
-      "Fixture.hap",
-      stageHapEntries.map(({ path, content }) => ({ path, content })),
+      stageHapWithDeclaration,
     );
-    const projection = requireDeterministicProjection(
-      projectHarmonyApplicationEvidence,
-      await inventoryApplicationPackage(path),
-      harmonyApplicationProjectionResultSchema,
-    );
-    expect(projection.limitations).not.toContain(
-      PKG_CONTEXT_NOT_READ_LIMITATION,
-    );
+    expect(unreadDeclarationLimitations(projection.limitations)).toEqual([]);
   });
 });
 
