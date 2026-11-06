@@ -1196,6 +1196,7 @@
 * **ci:** allow more time for Windows CLI subprocesses ([d82ba11](https://github.com/morluto/rea/commit/d82ba11ce2902ef7b8ad4970e6167a7737bdaa78))
 * **ci:** avoid pinning skip warning wording ([ec3f84b](https://github.com/morluto/rea/commit/ec3f84b6266846f938b0dc400f4fa7e5841e7260))
 * **ci:** require provider checks and reduce test startup ([#8145](https://github.com/morluto/rea/issues/8145)) ([77b0931](https://github.com/morluto/rea/commit/77b09314ffcb36a96eecc2b139f37a2ebe184f5f))
+* **ci:** restore client registration and doctor checks ([#9128](https://github.com/morluto/rea/issues/9128)) ([fe27f96](https://github.com/morluto/rea/commit/fe27f96720856cd07b5f1c9daf70ddd5b0d865ff))
 * **cli:** cover Frida argument admission and spawn ordering ([#3356](https://github.com/morluto/rea/issues/3356)) ([c7fce66](https://github.com/morluto/rea/commit/c7fce66035a4eba490157b4ec3f43b1a7515aa99))
 * **cli:** cover literal Markdown heading output ([#7866](https://github.com/morluto/rea/issues/7866)) ([c2cc7e6](https://github.com/morluto/rea/commit/c2cc7e6eb0979303ae78c7146b2705b7181e8dd6))
 * **cli:** cover production doctor output option ordering ([#6683](https://github.com/morluto/rea/issues/6683)) ([1d4e9f3](https://github.com/morluto/rea/commit/1d4e9f31c344d9dde1fdbfed0fbae61a3d48a3ca))
