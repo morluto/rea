@@ -1907,7 +1907,13 @@ The default, `full`, retains the complete upfront advertisement. Restart the
 server to change profiles. See [client configuration](client-configuration.md#hotcold-catalogs).
 
 Hot/cold initially advertises `binary_session`, `open_binary`, `close_binary`,
-`get_evidence_bundle`, `inspect_analysis_view`, and the adapter's `discover_tools`.
+`get_evidence_bundle`, and the adapter's `discover_tools`.
+`inspect_analysis_view` is loaded on demand like other analysis tools. When a
+follow-up needs retained facts, include it in `discover_tools.names`; if the
+producer and follow-up are known together, load both in one batch. Producers
+that accept `view` can answer a selected first question without loading the
+cross-domain view contract. Complete output schemas and canonical result
+validation are preserved when each tool loads.
 An explicit tool-family scope can remove any of those domain tools.
 `discover_tools` searches canonical names and descriptions using case-insensitive
 words, or accepts exact `names`. It loads the matching page and returns names
