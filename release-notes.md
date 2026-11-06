@@ -1151,6 +1151,7 @@
 * include Kuna in native provider guidance ([#7929](https://github.com/morluto/rea/issues/7929)) ([1631dcb](https://github.com/morluto/rea/commit/1631dcb09a34380f36b34e217efe4e98d96b203f))
 * **installation:** list every engine accepted by doctor --provider ([#4767](https://github.com/morluto/rea/issues/4767)) ([578e4bb](https://github.com/morluto/rea/commit/578e4bb71ae8ff66fdbc7f3ade62638fb965528d))
 * **limits:** say setup forwards the selected MCP response budget ([#8342](https://github.com/morluto/rea/issues/8342)) ([67552d5](https://github.com/morluto/rea/commit/67552d56cce45a4fedffa544f9f6e3bbcc418fcd)), closes [#7420](https://github.com/morluto/rea/issues/7420)
+* **mcp:** document verified FastMCP catalog recovery ([#9113](https://github.com/morluto/rea/issues/9113)) ([39827ec](https://github.com/morluto/rea/commit/39827ec7171a311cd5258ffb1ef953068aa84051))
 * **mcp:** explain PowerShell launch environment scope ([#8961](https://github.com/morluto/rea/issues/8961)) ([347dc9a](https://github.com/morluto/rea/commit/347dc9a32cb038c4a82cfe64d4109ad9d8e27da9))
 * **mcp:** list every tool that omits the untrusted-content marker ([#8837](https://github.com/morluto/rea/issues/8837)) ([52ff312](https://github.com/morluto/rea/commit/52ff3123cbe07afbbadb3c5d24955cbba2d1835d))
 * **native:** clarify memory and file byte sources ([#8829](https://github.com/morluto/rea/issues/8829)) ([78d7bf3](https://github.com/morluto/rea/commit/78d7bf3ea082f41a0388669e8623192db2913996))
