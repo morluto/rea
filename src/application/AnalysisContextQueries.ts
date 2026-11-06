@@ -6,6 +6,7 @@ import type {
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   AnalysisCancelledError,
+  AnalysisCapabilityUnavailableError,
   AnalysisInputError,
   AnalysisOutputError,
 } from "../domain/analysisErrorCore.js";
@@ -30,6 +31,15 @@ type Facet =
       readonly remediation: string;
       readonly error?: AnalysisErrorProjection;
     };
+
+/** Facets inspected after an explicit or provider-resolved document is known. */
+export const ADDRESS_CONTEXT_FACET_OPERATIONS = [
+  "address_name",
+  "resolve_containing_procedure",
+  "comment",
+  "inline_comment",
+  "list_bookmarks",
+] as const satisfies readonly AnalysisOperation[];
 
 const parameters = (
   document: string | undefined,
@@ -102,13 +112,7 @@ export const inspectAddressContext = async (
   );
   if (!document.ok) return document;
   const args = parameters(document.value, input.address);
-  const operations = [
-    "address_name",
-    "resolve_containing_procedure",
-    "comment",
-    "inline_comment",
-    "list_bookmarks",
-  ] as const satisfies readonly AnalysisOperation[];
+  const operations = ADDRESS_CONTEXT_FACET_OPERATIONS;
   const completed: Result<AnalysisExecution, AnalysisError>[] = [];
   if (signal?.aborted === true)
     return err(
@@ -150,8 +154,12 @@ export const inspectAddressContext = async (
   const procedure: Facet = resolution?.ok
     ? { state: "available", value: resolution.value }
     : unavailableFacet(resolution?.error, operations[1]);
-  const comment = facet(results[2], operations[2]);
-  const inlineComment = facet(results[3], operations[3]);
+  const entry =
+    resolution?.ok && resolution.value.found
+      ? resolution.value.procedure.address
+      : undefined;
+  const comment = commentFacet(results[2], operations[2], entry);
+  const inlineComment = commentFacet(results[3], operations[3], entry);
   const bookmarks = facet(results[4], operations[4]);
   return ok({
     address: input.address,
@@ -170,6 +178,28 @@ export const inspectAddressContext = async (
   });
 };
 
+const commentFacet = (
+  result: Result<AnalysisExecution, AnalysisError> | undefined,
+  operation: "comment" | "inline_comment",
+  entry: string | undefined,
+): Facet => {
+  if (
+    result?.ok === false &&
+    result.error instanceof AnalysisCapabilityUnavailableError &&
+    !result.error.retryable &&
+    result.error.remediationAction === undefined &&
+    result.error.continuingCallerGuidance?.remediationAction === undefined &&
+    entry !== undefined
+  ) {
+    return {
+      state: "unavailable",
+      reason: result.error.message,
+      remediation: `If analyze_function is available for this same document, call it with ${JSON.stringify({ procedure: entry })}; use its summary's parent_evidence_id with inspect_analysis_view's native comments facet. Check facet availability, pagination, and the exact requested address; an omitted comment does not establish absence.`,
+    };
+  }
+  return facet(result, operation);
+};
+
 const facet = (
   result: Result<AnalysisExecution, AnalysisError> | undefined,
   operation: AnalysisOperation,
@@ -182,6 +212,19 @@ const unavailableFacet = (
   error: AnalysisError | undefined,
   operation: AnalysisOperation,
 ): Facet => {
+  if (error instanceof AnalysisCapabilityUnavailableError) {
+    const projected = projectAnalysisError(error);
+    return {
+      state: "unavailable",
+      reason: error.userMessage ?? error.message,
+      remediation:
+        error.retryable ||
+        error.remediationAction !== undefined ||
+        error.continuingCallerGuidance?.remediationAction !== undefined
+          ? projected.remediation.action
+          : "Review provider availability in binary_session with detail complete and select another supported provider if appropriate. After switching, if a name is known and search_procedures is available, use it to find candidates and verify their identity and coordinates.",
+    };
+  }
   if (error instanceof AnalysisInputError) {
     const projected = projectAnalysisError(error);
     if (projected.code === "invalid_request")

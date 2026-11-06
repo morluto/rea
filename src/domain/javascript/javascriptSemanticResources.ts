@@ -26,7 +26,7 @@ import {
   traverseDataEffects,
   type DataEffectTraversalContext,
 } from "./javascriptSemanticDataEffectHelpers.js";
-import { range } from "./javascriptStaticAnalysisHelpers.js";
+import { FS_OPEN_FLAGS, range } from "./javascriptStaticAnalysisHelpers.js";
 import { SEMANTIC_EXPRESSION_DEPTH_LIMIT } from "./javascriptSemanticResourceLimits.js";
 
 const RELEASE_METHODS = ["close", "destroy", "end"] as const;
@@ -76,6 +76,253 @@ export const collectJavaScriptSemanticResources = (
   ];
 };
 
+/**
+ * `fs.open`/`fs.openSync` validate the flag before touching the filesystem, so
+ * a flag Node rejects at the call site throws synchronously and no descriptor
+ * exists. Node accepts only a known flag string, a nullish value (which defaults
+ * to `"r"`), or a bitmask integer; everything else throws. A computed value may
+ * still be valid, so only an exactly readable literal is decided.
+ */
+const rejectsOpenFlagLiteral = (
+  node: t.CallExpression | t.OptionalCallExpression,
+  context: DataEffectTraversalContext,
+): boolean => {
+  // A spread before the flag slot shifts the runtime position, so argument 1 is
+  // not provably the flag. `openSync(...args, "0600")` with
+  // `args = [path, "w"]` opens with mode `"0600"`, not with an invalid flag.
+  if (t.isSpreadElement(node.arguments[0])) return false;
+  const flag = node.arguments[1];
+  if (flag === undefined || t.isSpreadElement(flag)) return false;
+  const value = unwrapJavaScriptExpression(flag).node;
+  // A no-expression template literal is exactly readable, so it is the same flag
+  // string Node receives.
+  const flagText = t.isStringLiteral(value)
+    ? value.value
+    : t.isTemplateLiteral(value) && value.expressions.length === 0
+      ? value.quasis[0]?.value.cooked
+      : undefined;
+  if (flagText !== undefined && flagText !== null)
+    return !FS_OPEN_FLAGS.has(flagText);
+  // A non-integer or out-of-int32 value is not a usable bitmask. The sign alone
+  // does not decide: Node accepts some signed bitmasks such as `-2147483648` and
+  // rejects others such as `-1`, so an in-range negative is left undecided.
+  const bits = staticFlagBits(value, context);
+  if (bits !== undefined)
+    return (
+      bits !== null &&
+      (!Number.isInteger(bits) || bits > 2_147_483_647 || bits < -2_147_483_648)
+    );
+  // `NaN` and `Infinity` are unshadowed globals, and neither is a bitmask; a unary
+  // operator over one is the same non-finite number.
+  if (isNonFiniteNumber(value, context)) return true;
+  // BigInt, boolean, object and array literals all fail Node's flag check. A
+  // unary operator over a BigInt literal is a BigInt too.
+  return (
+    t.isBigIntLiteral(value) ||
+    t.isBooleanLiteral(value) ||
+    t.isRegExpLiteral(value) ||
+    t.isObjectExpression(value) ||
+    t.isArrayExpression(value) ||
+    (t.isUnaryExpression(value) &&
+      t.isBigIntLiteral(unwrapJavaScriptExpression(value.argument).node))
+  );
+};
+
+/**
+ * The number a literal flag argument evaluates to, or `null` when it evaluates to
+ * `undefined`. Returns `undefined` when the value is not exactly readable.
+ *
+ * `void <expr>` is `undefined`, which Node accepts as the default read flag, so
+ * it must never be judged by its operand. `!`, `typeof` and `delete` yield a
+ * boolean or a string rather than a bitmask.
+ */
+const staticFlagBits = (
+  value: t.Node,
+  context: DataEffectTraversalContext,
+  depth = 0,
+): number | null | undefined => {
+  if (t.isNumericLiteral(value)) return value.value;
+  if (!t.isUnaryExpression(value)) return undefined;
+  if (value.operator === "void") return null;
+  // `!` yields a boolean and `typeof` a string. Neither is a bitmask, so a caller
+  // that reads the flag or mode rejects it. This arm is only reachable from the
+  // top-level entry: `unaryOperandNumber` never returns one of these as a number.
+  if (
+    value.operator === "!" ||
+    value.operator === "typeof" ||
+    value.operator === "delete"
+  )
+    return Number.NaN;
+  // A unary chain resolves through its innermost readable operand, so `~-1` is `0`
+  // and `-(-1.5)` is `1.5`. The depth bound keeps a pathological chain from
+  // recursing without limit.
+  if (depth > 8) return undefined;
+  const operand = unwrapJavaScriptExpression(value.argument).node;
+  const number = unaryOperandNumber(operand, context, depth + 1);
+  if (number === undefined) return undefined;
+  if (value.operator === "-") return -number;
+  if (value.operator === "+") return number;
+  if (value.operator === "~") return ~number;
+  return undefined;
+};
+
+/**
+ * The number an operand of a unary operator evaluates to, or `undefined` when it is
+ * not exactly readable.
+ *
+ * This is separate from `staticFlagBits` because that function answers two different
+ * questions: a numeric bitmask, and "this is a boolean or a string rather than a
+ * bitmask". The second answer has no number, and a real `NaN` is a number, so they
+ * cannot share a return slot. A nested `!`, `typeof` or `delete` therefore stays
+ * undecided here: `+!0` is `1` at runtime, but deciding it needs the operand's
+ * truthiness rather than a bitmask reading.
+ */
+const unaryOperandNumber = (
+  value: t.Node,
+  context: DataEffectTraversalContext,
+  depth: number,
+): number | undefined => {
+  if (depth > 8) return undefined;
+  if (t.isNumericLiteral(value)) return value.value;
+  if (t.isUnaryExpression(value)) {
+    if (
+      value.operator === "!" ||
+      value.operator === "typeof" ||
+      value.operator === "delete" ||
+      value.operator === "void"
+    )
+      return undefined;
+    const inner = unaryOperandNumber(
+      unwrapJavaScriptExpression(value.argument).node,
+      context,
+      depth + 1,
+    );
+    if (inner === undefined) return undefined;
+    if (value.operator === "-") return -inner;
+    if (value.operator === "+") return inner;
+    if (value.operator === "~") return ~inner;
+    return undefined;
+  }
+  return primitiveToNumber(value) ?? nonFiniteGlobalNumber(value, context);
+};
+
+/**
+ * The number an unshadowed `NaN` or `Infinity` evaluates to, or `undefined` when the
+ * operand names neither. A `~` over one is a finite int32, which is why the bitwise
+ * result must be computed rather than treated as non-finite.
+ */
+const nonFiniteGlobalNumber = (
+  value: t.Node,
+  context: DataEffectTraversalContext,
+): number | undefined => {
+  if (
+    !t.isIdentifier(value) ||
+    (value.name !== "NaN" && value.name !== "Infinity") ||
+    !isUnmodifiedGlobalReference(value, context.state, value.name)
+  )
+    return undefined;
+  return value.name === "NaN" ? Number.NaN : Number.POSITIVE_INFINITY;
+};
+
+/**
+ * The number JavaScript's unary coercion produces for an exactly readable
+ * non-numeric primitive, or `undefined` when the operand is not one. `-true` is
+ * `-1` and `+"bad"` is `NaN`, so neither is a socket port or an fs flag.
+ */
+const primitiveToNumber = (value: t.Node): number | undefined => {
+  if (t.isStringLiteral(value)) return Number(value.value);
+  if (t.isBooleanLiteral(value)) return Number(value.value);
+  if (t.isNullLiteral(value)) return 0;
+  if (t.isTemplateLiteral(value) && value.expressions.length === 0) {
+    const cooked = value.quasis[0]?.value.cooked;
+    return cooked === undefined || cooked === null ? undefined : Number(cooked);
+  }
+  return undefined;
+};
+
+/**
+ * Whether an exactly readable expression is a non-finite number: an unshadowed
+ * `NaN` or `Infinity`, or a unary operator applied to one. `void` is excluded
+ * because it yields `undefined`, which both slots accept as the default.
+ */
+const isNonFiniteNumber = (
+  value: t.Node,
+  context: DataEffectTraversalContext,
+): boolean => {
+  const unshadowed = (node: t.Node): boolean =>
+    t.isIdentifier(node) &&
+    (node.name === "NaN" || node.name === "Infinity") &&
+    isUnmodifiedGlobalReference(node, context.state, node.name);
+  if (unshadowed(value)) return true;
+  return (
+    t.isUnaryExpression(value) &&
+    value.operator !== "void" &&
+    unshadowed(unwrapJavaScriptExpression(value.argument).node)
+  );
+};
+
+/** `fs.open`, `fs.openSync` and `fs/promises.open` take the mode in slot 2. */
+const rejectsOpenModeLiteral = (
+  node: t.CallExpression | t.OptionalCallExpression,
+  context: DataEffectTraversalContext,
+): boolean => {
+  // A spread before the mode slot shifts the runtime position.
+  if (
+    t.isSpreadElement(node.arguments[0]) ||
+    t.isSpreadElement(node.arguments[1])
+  )
+    return false;
+  const mode = node.arguments[2];
+  if (mode === undefined || t.isSpreadElement(mode)) return false;
+  const value = unwrapJavaScriptExpression(mode).node;
+  // `null`, `undefined` and `void <expr>` all default the mode.
+  if (t.isNullLiteral(value)) return false;
+  // A no-expression template literal is exactly readable, so it is the same
+  // string Node would receive.
+  const octal = t.isStringLiteral(value)
+    ? value.value
+    : t.isTemplateLiteral(value) && value.expressions.length === 0
+      ? value.quasis[0]?.value.cooked
+      : undefined;
+  if (octal !== undefined && octal !== null) {
+    if (!/^[0-7]+$/u.test(octal)) return true;
+    // Leading zeros pad the text without changing the value, so the bound reads the
+    // significant digits. Eleven octal digits cover the whole uint32 range, so a
+    // longer significant run cannot fit and an eleven-digit one is exact.
+    const digits = octal.replace(/^0+/u, "");
+    return digits.length > 11 || Number.parseInt(digits, 8) > 4_294_967_295;
+  }
+  // A numeric mode is validated as an unsigned 32-bit integer.
+  const bits = staticFlagBits(value, context);
+  if (bits !== undefined) {
+    if (bits === null) return false;
+    // Values in `[2^31, 2^32-1]` abort the process rather than throwing, so
+    // they stay undecided instead of being claimed as a synchronous throw.
+    return !Number.isInteger(bits) || bits < 0 || bits > 4_294_967_295;
+  }
+  // `NaN` and `Infinity` are unshadowed globals, and neither is a mode; a unary
+  // operator over one is the same non-finite number.
+  if (isNonFiniteNumber(value, context)) return true;
+  // BigInt, boolean, object and array literals all fail Node's mode check. A
+  // unary operator over a BigInt literal is a BigInt too, and the range helpers
+  // above only price numeric operands.
+  return (
+    t.isBigIntLiteral(value) ||
+    t.isBooleanLiteral(value) ||
+    t.isRegExpLiteral(value) ||
+    t.isObjectExpression(value) ||
+    t.isArrayExpression(value) ||
+    (t.isUnaryExpression(value) &&
+      t.isBigIntLiteral(unwrapJavaScriptExpression(value.argument).node))
+  );
+};
+
+/** `fs.open`, `fs.openSync` and `fs/promises.open` take the flag in slot 1. */
+const openFlagInFirstArgument = (reference: AcquisitionReference): boolean =>
+  reference.method === "open" || reference.method === "openSync"
+    ? reference.specifier === "fs" || reference.specifier === "fs/promises"
+    : false;
+
 const collectAcquisitions = (
   program: t.Program,
   context: DataEffectTraversalContext,
@@ -85,6 +332,10 @@ const collectAcquisitions = (
     if (!t.isCallExpression(node) && !t.isOptionalCallExpression(node)) return;
     const reference = acquisitionMethod(node.callee, context.state);
     if (reference === null) return;
+    if (openFlagInFirstArgument(reference)) {
+      if (rejectsOpenFlagLiteral(node, context)) return;
+      if (rejectsOpenModeLiteral(node, context)) return;
+    }
     output.push({
       node,
       specifier: reference.specifier,

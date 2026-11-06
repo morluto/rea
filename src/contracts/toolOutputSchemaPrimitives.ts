@@ -2,6 +2,7 @@ import { procedureInfoSchema } from "../domain/native/procedureInfo.js";
 import { z } from "zod";
 import { investigationStatisticsSchema } from "../domain/investigationLifecycle.js";
 import { utcDateTimeSchema } from "../domain/offsetDateTime.js";
+import { analysisCleanupRetrySchema } from "../domain/analysisErrorRecovery.js";
 
 import { functionDossierSchema } from "../domain/native/functionDossier.js";
 import { analysisProfileSchema } from "../domain/analysisProfile.js";
@@ -79,6 +80,7 @@ export const providerCapability = z.discriminatedUnion("available", [
     reason: z.string().nullable(),
     availability_code: z.enum(PROVIDER_REJECTION_CODES).nullable(),
     remediation: providerRemediation.exactOptional(),
+    runtime_unavailable: z.literal(true).exactOptional(),
   }),
 ]);
 export type ProviderCapability = z.output<typeof providerCapability>;
@@ -113,6 +115,7 @@ const providerCapabilityGroup = z.discriminatedUnion("available", [
     reason: z.string().nullable(),
     availability_code: z.enum(PROVIDER_REJECTION_CODES).nullable(),
     remediation: providerRemediation.exactOptional(),
+    runtime_unavailable: z.literal(true).exactOptional(),
   }),
 ]);
 
@@ -140,6 +143,10 @@ export const expandProviderCapabilities = (
           availability_code: group.availability_code,
           ...("remediation" in group && group.remediation !== undefined
             ? { remediation: group.remediation }
+            : {}),
+          ...("runtime_unavailable" in group &&
+          group.runtime_unavailable === true
+            ? { runtime_unavailable: true }
             : {}),
           effects: Object.fromEntries(
             PROVIDER_EFFECT_NAMES.map((name) => [
@@ -544,6 +551,7 @@ export const sessionProviderFacts = z
   .object({
     investigation: investigationStatisticsSchema,
     cleanup_pending: z.boolean(),
+    cleanup_retry: analysisCleanupRetrySchema.optional(),
     capabilities: z.array(providerCapabilitySet),
     analysis_run: analysisRun,
     analysis_activity: analysisActivity,

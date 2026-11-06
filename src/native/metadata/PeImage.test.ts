@@ -208,6 +208,17 @@ it.each([0x014c, 0x8664] as const)(
   },
 );
 
+it("reads DllCharacteristics from the optional header", () => {
+  const bytes = pe(0x8664);
+  const peOffset = bytes.readUInt32LE(60);
+  bytes.writeUInt16LE(0x4160, peOffset + 24 + 70);
+  expect(readPeImage(bytes)).toMatchObject({
+    dll_characteristics: 0x4160,
+    pe_optional_header_file_offset: peOffset + 24,
+    dll_characteristics_file_offset: peOffset + 24 + 70,
+  });
+});
+
 it.each([0xffff, 0x8664 ^ 0x7b79])(
   "retains raw unknown machine %s without managed override proof",
   (machine) => {

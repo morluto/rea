@@ -15,6 +15,21 @@ typecheck selections; its real-provider assertions skip when Rizin 0.7.4 is
 unavailable. Run the focused command above on a host with that provider for the
 explicit real-provider verification gate.
 
+The decoder and map inputs of `execute_rizin_command` have their own
+real-provider gate. Run
+`npm run test:focused -- tests/boundary/providers/RizinDecoderInputs.test.ts`.
+It calls the tool through MCP with the Rizin on `PATH` and checks the effect of
+`-a`, `-b`, `-e asm.cpu=` and `-n -m` on raw images with Rizin's own `e asm.*`
+and `omlj` output, and that `asm_cpu` changes how an M-profile instruction
+decodes. It also reads bytes below the base address, at it, at the end of the
+image and past it, and checks a call with only `base_address`. Two of the images are ones that Rizin's AVR and
+BIOS loaders claim without `-n`. It also selects an arch that no host uses by
+default, an arch plugin that Rizin does not have, and a bits value that the
+arch lacks. The test names the Rizin version it ran. It skips when no Rizin is
+on `PATH`; to check another build, put its directory first on `PATH`. It has
+passed with Rizin 0.9.1 (Homebrew, macOS arm64) and Rizin 0.7.4 (official static
+build, Linux x86_64).
+
 Each real-toolchain command must require only the host tools needed to prove
 its stated claim. Use a host-native fixture for host/provider acceptance, and
 place optional cross-target formats or platform-specific runners in separate
@@ -269,8 +284,8 @@ APK for the negative check. No engine or external tool is involved. Record:
 Flutter Gallery 2.9.2 (112 MB, arm64-v8a / armeabi-v7a / x86_64) — every
 ABI reports the same agreeing snapshot hash
 (`65817c30a78bb44c3dc3771876b6010a`, two sections each) read 20 bytes after
-the Dart snapshot magic, per-ABI engine GNU build-ids, no labeled Dart
-version string (expected for a release engine build), and the Android
+the Dart snapshot magic, per-ABI engine GNU build-ids, an unlabeled
+Dart-shaped version candidate, and the Android
 clang/LLVM toolchain line; the AOT inspection locates all four snapshot
 symbols through the dynamic symbol table on both ELF64 and ELF32 images,
 validates the data-section headers, agrees with the identification hash,
@@ -284,7 +299,7 @@ prefixes, with no private local-file dependency. The verifier now compares
 compiled CLI and stdio MCP Evidence on every ABI, including data-header kind
 and declared lengths. Add
 `--expectations scripts/fixtures/flutter-gallery-expectations.json` for the
-documented Gallery APK to assert its pinned digest, hash, exact engine labels
+documented Gallery APK to assert its pinned digest, hash, exact engine strings
 and per-ABI URI counts. The verifier requires complete structural snapshot
 coverage, reports bounded pool coverage as partial/unverified, and reports
 exact labels/counts on other APKs unverified without an expectations file.
@@ -421,7 +436,10 @@ the first cold pseudocode answer comes from a single-function run or an export
 that already finished, assembly waits for and serves from that export, and
 pseudocode and both dossier facets match their recorded file spans and digests,
 a fresh server reuses the export without rebuilding it, staging is empty after
-a completed export, and no owned process survives. Pass
+a completed export, and no owned process survives. A separate forced 1 ms
+project deadline checks that a timed-out inventory recommends raising the
+project deadline without changing jobs; a fresh server retries with 60 seconds
+and the same two-worker setting. Pass
 `--targets DIR --functions a,b` to add caller-built binaries laid out as
 `DIR/<flavor>/<name>` beside `<name>.stripped`; addresses come from the
 symbol-bearing build. `--compare-ghidra` with `GHIDRA_INSTALL_DIR` runs those
@@ -451,16 +469,27 @@ Mach-O fixture and caller-built symbol-bearing and stripped x86-64 ELF fixtures.
 Linux and other hosts have not been verified with 1.988; this is not a repeat
 of the larger 1.833 matrix.
 
+Kuna 1.989 passed the real-provider lane on macOS arm64 with the generated
+symbol-bearing and stripped Mach-O fixtures, including cold and warm reads,
+references, and cleanup. Linux, other hosts, and the larger 1.833 target matrix
+were not verified with 1.989.
+
+Kuna 1.990 passed the real-provider lane on macOS arm64 with the generated
+symbol-bearing and stripped Mach-O fixtures, including cold and warm reads,
+references, timeout recovery, and cleanup. Linux, other hosts, and the larger
+1.833 target matrix were not verified with 1.990.
+
 ## DOS Ghidra analysis
 
 `npm run verify:ghidra:dos` requires the supported Ghidra and JDK installation
-on Linux x64 or macOS x64/arm64. It generates a source-owned MZ fixture without
+on Linux x64, macOS x64/arm64, or Windows x64 P0. It generates a source-owned MZ fixture without
 a DOS emulator or compiler, then checks real 16-bit decoding, segment
 relocation, near/far calls, decompilation, disjoint function body ranges,
 stable CLI/MCP observations, unchanged source bytes, and owned process/project
 cleanup. Raw p-code address-space selector tokens are reported separately from
-the stable observation comparison. Linux x64 and macOS arm64 are verified;
-macOS x64 remains unverified. This lane is separate from host-native and optional cross-format
+the stable observation comparison. Linux x64, macOS arm64 and Windows x64 are
+verified; macOS x64 remains unverified. On Windows P0 the lane checks that
+annotation edits are refused instead of exercising them. This lane is separate from host-native and optional cross-format
 verification. See [DOS analysis](ghidra-dos.md).
 
 `npm run verify:ghidra:com` uses a generated headerless fixture with no compiler,
@@ -498,8 +527,9 @@ has been run on macOS; Linux has not been exercised.
 through the compiled CLI and stdio MCP server. With the same Ghidra/JDK
 prerequisites, it checks preparation and bridge startup, verified load mappings,
 instruction and byte readback, canonical-entry session reuse, replacement when
-the entry changes without `provider_id`, unchanged source bytes, and owned
-cleanup. Six-byte x86 and x86_64 controls also verify supported compiler
+the entry changes without `provider_id`, preservation of a session annotation
+and the target/provider receipt after a rejected open, unchanged source bytes,
+and owned cleanup. Six-byte x86 and x86_64 controls also verify supported compiler
 specifications, independent mappings, unchanged bytes, and decompilation of a
 known return value. AArch64 remains covered by deterministic tests rather than
 this real-provider lane. See [raw binary analysis](raw-binary.md).
@@ -1103,13 +1133,13 @@ coverage limits.
 ### Offline binary layout
 
 `npm run verify:binary:layout` requires Linux x64, GCC/binutils, the
-`i686-linux-gnu`, `arm-linux-gnueabi`, `mips-linux-gnu` and `mipsel-linux-gnu`
-cross `gcc`/`readelf` toolchains, absolute
+`aarch64-linux-gnu`, `i686-linux-gnu`, `arm-linux-gnueabi`, `mips-linux-gnu` and
+`mipsel-linux-gnu` cross `gcc`/`readelf` toolchains, absolute
 `REA_PWNTOOLS_PYTHON` with pwntools 4.15.0/pyelftools 0.33/Unicorn 2.1.2 and
 absolute `REA_VERIFY_STRACE_COMMAND`. It compiles ephemeral source-owned ELF
 fixtures and checks public CLI/MCP, lossless addresses/names, file ranges,
 mitigation inferences, malformed/unsupported input, original file hashes and
-released process ownership. Cross-compiled ELF32 executables and relocatable
+released process ownership. Cross-compiled ELF64 AArch64 and ELF32 executables and relocatable
 objects check the reported class, machine and byte order, and every section
 name, address, offset and size against GNU `readelf`. Exec syscall tracing must identify only the declared
 Node/Python launchers; no target binary is executed. Core/debugger claims need
@@ -1158,9 +1188,10 @@ installed package entrypoint as the script's first argument for package coverage
 
 `npm run verify:agentenv:environment` is the `real-agentenv` lane. It requires
 the host's Docker CLI named by absolute `REA_DOCKER_COMMAND`, Python 3.12 with
-`agentenv-framework==0.9.1334` installed in a virtual environment whose
+`agentenv-framework==0.9.1431` installed in a virtual environment whose
 `agent-env` binary is named by absolute `REA_AGENT_ENV_COMMAND`, and outbound
-network for `pip` on the runner and for `npm` inside the image build. Both
+network for `pip` on the runner, for the framework's image pulls from `ghcr.io`
+and for `npm` inside the image build. Both
 variables are required; neither upstream executable is resolved from `PATH`,
 and the verifier installs nothing. Packing uses the shared npm helper, honoring
 `npm_execpath` from the caller's selected npm. Direct Node invocations without
@@ -1172,11 +1203,12 @@ storage, exports both paths and uses the runner's own Docker; no developer host
 configuration changes. `agent-env run` attempts share one 22-minute budget
 inside the 30-minute job (the first attempt at most 15 minutes), so a hung or
 retried run ends with the verifier's failed receipt rather than the runner's
-kill. The framework builds its gateway and service-db
-images from `public.ecr.aws` on every fresh runner, and hosted runners share
-that registry's anonymous pull quota, so the lane first pulls the base images
-the pinned framework's Dockerfiles name from `mirror.gcr.io`, which serves the
-same Docker official images under the same digests, and names them as those
+kill. The pinned framework pulls its gateway and service-db images from
+`ghcr.io/scaleapi` by the digests its release records and builds one only when
+its pull fails. Those builds start from `public.ecr.aws` base images, and hosted
+runners share that registry's anonymous pull quota, so the lane first pulls the
+base images the gateway and service-db Dockerfiles name from `mirror.gcr.io`,
+which serves the same Docker official images under the same digests, and names them as those
 Dockerfiles do (on Docker's containerd image store, so digest-pinned names
 resolve), as the framework's own CI does. The quota handling below covers
 anything still pulled from that registry. The receipt's `agent_env_run` records the
@@ -1204,13 +1236,19 @@ that served tool count, and that no container exists
 after the run that did not exist before; the container inventory runs even when
 the run fails or times out, so a failed receipt still lists what it left. The one exception is the framework's
 own image-store helper, `agentenv-registry` (or `agentenv-registry-<port>`),
-a `registry:2` container the local provider starts on first use and keeps
-running across runs; a first run on a fresh host creates it, so the receipt
-lists it under `image_store_helpers` instead of counting it as a leak. Images
+a `registry:2` container the local provider starts when it first stores an image
+it built and keeps running across runs. The pinned framework registers its
+published infra images, and a deploy that cannot pull one builds it into the
+host's Docker, so a fresh run does not normally create the helper; if one does,
+the receipt lists it under `image_store_helpers` instead of counting it as a leak. Images
 built by the run remain and are counted in the receipt. Pass an installed
 package entrypoint as the script's first argument for package coverage.
 
 ## Agent evaluation and conformance records
+
+For catalog-loading measurements, use the real Codex
+[MCP catalog evaluation](mcp-catalog-evaluation.md). It separates observed usage
+from advertisement bytes and from completed-task correctness.
 
 `npm run verify:agent` evaluates investigation scenarios through a real local
 Codex CLI. The lane runs sequentially; select scenarios with

@@ -14,7 +14,10 @@ import {
   AnalysisCapabilityUnavailableError,
   AnalysisResourceConstraintError,
 } from "../../src/domain/analysisErrorCore.js";
-import { ReverseEngineeringService as CoreReverseEngineeringService } from "../../src/application/reverse/ReverseEngineeringService.js";
+import {
+  ReverseEngineeringService as CoreReverseEngineeringService,
+  REVERSE_COMMAND_OUTPUT_LIMITATION,
+} from "../../src/application/reverse/ReverseEngineeringService.js";
 import { createReverseEngineeringCommandPort } from "../../src/composition/reverseEngineering.js";
 import { objdumpCommand } from "../../src/objdump/ObjdumpCommand.js";
 import {
@@ -28,6 +31,63 @@ import { withVerifierCleanup } from "../../scripts/lib/verifier-cleanup.mjs";
 
 registerSharedReverseEngineeringEdgeCaseTests();
 registerOwnedRizinCommandEvidenceTests({ sweepTokenOwnedProcesses: true });
+
+it.each(["objdump", "rizin"] as const)(
+  "retains %s output-limit Evidence when owned cleanup remains incomplete",
+  async (provider) => {
+    const { directory, path } = await createArtifact();
+    const service = new ReverseEngineeringService({
+      runOwned: async (_spawn, limits) => {
+        expect(limits.diagnosticBytes).toBe(16 * 1024 * 1024);
+        throw new OwnedCommandFailure(
+          "output-limit",
+          "diagnostic output exceeded its budget",
+          providerSnapshot({
+            exitCode: null,
+            signal: "SIGTERM",
+            diagnosticTruncated: true,
+          }),
+          "owned descendant remains",
+          undefined,
+          ["run-id", "pid:42"],
+        );
+      },
+    });
+    try {
+      const result =
+        provider === "objdump"
+          ? await service.inspectWithObjdump({ path, operation: "symbols" })
+          : await service.executeRizinCommand({ path, command: "iI" });
+      expect(result).toMatchObject({
+        ok: false,
+        error: {
+          _tag: "AnalysisOutputError",
+          cleanupIncomplete: true,
+          cleanup: {
+            reason: "owned descendant remains",
+            resources: ["run-id", "pid:42"],
+          },
+          partialObservation: {
+            raw_result: {
+              stdout: "captured owned output",
+              exit_code: null,
+              signal: "SIGTERM",
+              output_truncated: true,
+              completion_status: "unknown",
+              artifact_sha256_after: null,
+              artifact_changed: null,
+            },
+            limitations: expect.arrayContaining([
+              REVERSE_COMMAND_OUTPUT_LIMITATION,
+            ]),
+          },
+        },
+      });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);
 
 it("records pathless objdump architecture support as provider capability evidence", async () => {
   const { directory, path } = await createArtifact();
