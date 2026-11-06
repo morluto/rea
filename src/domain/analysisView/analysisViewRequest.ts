@@ -1,3 +1,4 @@
+import { playwrightTraceViewRequestSchema } from "../playwrightTrace/playwrightTraceQuery.js";
 import { apiContractViewRequestSchema } from "../apiContract/apiContractQuery.js";
 import {
   nativeObservationViewRequestSchema,
@@ -76,6 +77,7 @@ export const analysisViewRequestSchema = z.discriminatedUnion("kind", [
   sourceToBundleViewRequestSchema,
   endpointComparisonViewRequestSchema,
   apiContractViewRequestSchema,
+  playwrightTraceViewRequestSchema,
   featureTraceViewRequestSchema,
   nativeFeatureTraceViewRequestSchema,
   batchDecompileViewRequestSchema,

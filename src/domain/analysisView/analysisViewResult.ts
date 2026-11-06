@@ -1,3 +1,8 @@
+import { playwrightTraceViewRequestSchema } from "../playwrightTrace/playwrightTraceQuery.js";
+import {
+  playwrightTraceViewContextSchema,
+  playwrightTraceViewItemsSchema,
+} from "./playwrightTraceView.js";
 import { apiContractViewRequestSchema } from "../apiContract/apiContractQuery.js";
 import { apiContractArtifactSchema } from "../apiContract/apiContract.js";
 import {
@@ -1028,6 +1033,19 @@ export const sourceToBundleSummaryViewResultSchema = z.strictObject({
   parent_operation: z.literal("compare_source_to_bundle"),
   summary: sourceToBundleViewContextSchema,
 });
+export const playwrightTraceSummaryViewResultSchema = z.strictObject({
+  ...summaryViewResultBase,
+  parent_operation: z.literal("inspect_playwright_trace"),
+  summary: playwrightTraceViewContextSchema,
+});
+export const playwrightTracePageViewResultSchema = z.strictObject({
+  ...viewResultBase,
+  ...playwrightTraceViewContextSchema.shape,
+  kind: z.literal("playwright-trace"),
+  parent_operation: z.literal("inspect_playwright_trace"),
+  view: playwrightTraceViewRequestSchema,
+  items: playwrightTraceViewItemsSchema,
+});
 export const apiContractSummaryViewResultSchema = z.strictObject({
   ...summaryViewResultBase,
   parent_operation: z.literal("inspect_api_contract"),
@@ -1169,6 +1187,7 @@ const machoPageViewResultSchema = z
 
 /** Projected facts for one selected view of retained analysis Evidence. */
 export const analysisViewResultSchema = z.discriminatedUnion("kind", [
+  playwrightTracePageViewResultSchema,
   z.strictObject({
     ...viewResultBase,
     ...nativeViewSourceContext,
@@ -1285,6 +1304,7 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     sourceToBundleSummaryViewResultSchema,
     endpointComparisonSummaryViewResultSchema,
     apiContractSummaryViewResultSchema,
+    playwrightTraceSummaryViewResultSchema,
     featureTraceSummaryViewResultSchema,
     batchDecompileSummaryViewResultSchema,
     webBundleSummaryViewResultSchema,
