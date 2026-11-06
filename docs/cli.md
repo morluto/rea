@@ -473,7 +473,8 @@ applicable. gzip, xz, and zstd containers are unsupported and name
 utility, then inspect the decompressed file. See
 [Linux kernel modules](kernel-modules.md).
 
-Inspect a CPython 3.7–3.13 `.pyc` header and nested marshal code objects
+Inspect a CPython 3.7–3.13 `.pyc` header and nested marshal code objects (3.14 and
+3.15 headers are qualified but their marshal layout is not pinned)
 without executing bytecode or installing Python:
 
 ```bash
@@ -493,6 +494,15 @@ rea inspect-erlang-beam /absolute/path/to/app.beam --json
 The workflow reports IFF chunk names, atom tables, exports, imports, lambdas,
 and the Code chunk header. Missing optional tables stay null. See
 [Erlang BEAM files](erlang-beam.md).
+
+Complete `rea decompile --json` Evidence can be saved and inspected through
+`inspect-analysis-view` with an inline source and
+`view: {kind: "native", facet: "pseudocode", offset: 0, limit: 20000}`.
+The projection reads that saved observation without starting a provider;
+offsets/limits count UTF-16 code units. A summary view preserves the original
+selector and distinguishes null from empty text. The MCP tool additionally
+supports `detail: "summary"` on its first call to retain the complete source
+without returning the body inline; see [native investigation](native-investigation.md).
 
 Configure [Hopper or Ghidra](installation.md#hopper), the
 [IDA adapter](ida-provider.md), or [Kuna](kuna-provider.md) before analyzing a
@@ -734,10 +744,12 @@ not read artifact contents: the inventories of two builds are unresolved
 records, or one opaque change when you pair them. Use `compare-artifacts`,
 described at the end of this section, to compare their contents.
 
-`--record_pairs` supplies an explicit JSON array of observation pairs, matching
-MCP `compare_bundles.record_pairs`. Pair IDs must exist on their named sides and
-be one-to-one. Without pairs, one-sided membership remains unknown; REA does
-not infer correspondence from position or display names.
+`--record_pairs` accepts an inline JSON array or the path to a local JSON
+file containing that array, matching MCP `compare_bundles.record_pairs`. For a
+file, use `rea compare left.json right.json --record_pairs pairs.json --json`.
+Pair IDs must exist on their named sides and be one-to-one. Without pairs,
+one-sided membership remains unknown; REA does not infer correspondence from
+position or display names.
 
 Exports preserve an existing destination unless `--overwrite` is explicit.
 
@@ -968,6 +980,10 @@ Choose the guide for the target and intended interaction:
 - [Electron fuses](electron-fuses.md): read packaged fuse bytes before expecting `--inspect` to reach an Electron main process.
 - [Node/Electron Inspector](javascript-runtime-observation.md): record script locations and execution contexts.
 - [Process capture](process-capture.md): run an executable and compare terminal, exit and filesystem observations.
+- [Desktop application capture](desktop-application-capture.md): launch a Linux desktop application and record its windows and home-directory state at checkpoints while it is used.
+- [Desktop application state](desktop-application-state.md): read a capture folder into the application's state files, typed views of each version and kinds of change.
+- [Desktop application export](desktop-application-export.md): write a capture folder as an agentenv computer app bundle with its class, skill and seed.
+- [Desktop application tasks](desktop-application-tasks.md): describe how a capture's files changed, then validate an agent-written task against the capture and export it with its verifier.
 
 Runtime requests name the target and actions. Launched targets run with your
 user permissions; consult the chosen guide for host requirements and effects.
@@ -1319,7 +1335,9 @@ the command's signal handling. Commands routed through the shared
 `withCommandCancellation` handler in the CLI set status `130` for SIGINT or
 `143` for SIGTERM after their operation settles. Current source registrations
 use that handler for process capture and comparison (`capture-process`,
-`compare-process-captures`), JavaScript application analysis (`analyze` when it
+`compare-process-captures`), desktop application capture and state
+(`capture-desktop-application`, `inspect-desktop-application-state`,
+`export-desktop-application`, `describe-desktop-application-task`), JavaScript application analysis (`analyze` when it
 selects the JavaScript lane, and `analyze-javascript-application`), selected
 browser, web and Electron commands (including `analyze-web-bundle`,
 `observe-web-execution`, `capture-browser-scenario` and
@@ -1409,6 +1427,16 @@ rea inspect-pe-load-config /absolute/path/to/application.exe --json
 Reports TLS callbacks and size-covered load-config fields without execution.
 Use `--max-callbacks` and `--max-file-bytes` to set read budgets. See
 [PE TLS and load configuration](pe-load-config.md).
+
+### Binary hardening
+
+```sh
+rea inspect-binary-hardening /absolute/path/to/program --json
+```
+
+Reports ELF, PE, and Mach-O hardening rows without execution. A missing import
+is `unknown`, not `disabled`. Use `--max-file-bytes` to set the read budget. See
+[binary hardening](binary-hardening.md).
 
 Bun standalone executables use the existing `inspect-artifact` and
 `extract-artifact` commands to inventory and materialize embedded source,

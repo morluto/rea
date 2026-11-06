@@ -1,3 +1,9 @@
+import { apiContractViewRequestSchema } from "../apiContract/apiContractQuery.js";
+import { apiContractArtifactSchema } from "../apiContract/apiContract.js";
+import {
+  apiContractViewContextSchema,
+  apiContractViewItemsSchema,
+} from "./apiContractView.js";
 import {
   analysisViewCoverageSchema,
   nullableCollectionViewCoverageSchema,
@@ -54,6 +60,7 @@ import {
   nativeExportsViewItemsSchema,
   nativeExportsSummarySchema,
 } from "./nativeExportsView.js";
+import { procedurePseudocodeSummarySchema } from "./procedurePseudocodeSchemas.js";
 import { byteEntropySummarySchema } from "./byteEntropyView.js";
 import {
   javaScriptRoutesViewRequestSchema,
@@ -72,6 +79,11 @@ import {
   sourceToBundleViewItemsSchema,
   sourceToBundleViewContextSchema,
 } from "./sourceToBundleView.js";
+import {
+  endpointComparisonViewContextSchema,
+  endpointComparisonViewItemsSchema,
+  endpointComparisonViewRequestSchema,
+} from "./endpointComparisonView.js";
 import {
   featureTraceSummarySchema,
   featureTraceViewCollections,
@@ -342,6 +354,7 @@ const viewResultBase = {
     "analyze_javascript_application",
     "analyze_web_bundle",
     "analyze_function",
+    "procedure_pseudo_code",
     "inspect_artifact",
     "inventory_artifact",
     "inspect_wasm_artifact",
@@ -378,6 +391,13 @@ const summaryViewResultBase = {
   view: summaryViewSchema,
   ...viewResultBase,
 } as const;
+
+/** Original selector and text availability without the complete decompiled text. */
+export const procedurePseudocodeSummaryViewResultSchema = z.strictObject({
+  ...summaryViewResultBase,
+  parent_operation: z.literal("procedure_pseudo_code"),
+  summary: procedurePseudocodeSummarySchema,
+});
 
 const nativeObservationSummaryFor = <
   Operation extends NativeObservationOperation,
@@ -1008,6 +1028,35 @@ export const sourceToBundleSummaryViewResultSchema = z.strictObject({
   parent_operation: z.literal("compare_source_to_bundle"),
   summary: sourceToBundleViewContextSchema,
 });
+export const apiContractSummaryViewResultSchema = z.strictObject({
+  ...summaryViewResultBase,
+  parent_operation: z.literal("inspect_api_contract"),
+  summary: apiContractViewContextSchema,
+});
+export const apiContractPageViewResultSchema = z.strictObject({
+  ...viewResultBase,
+  ...apiContractViewContextSchema.shape,
+  kind: z.literal("api-contract"),
+  artifact: apiContractArtifactSchema,
+  parent_operation: z.literal("inspect_api_contract"),
+  view: apiContractViewRequestSchema,
+  items: apiContractViewItemsSchema,
+});
+export const endpointComparisonSummaryViewResultSchema = z.strictObject({
+  ...summaryViewResultBase,
+  artifact: z.null(),
+  parent_operation: z.literal("compare_static_and_observed_endpoints"),
+  summary: endpointComparisonViewContextSchema,
+});
+export const endpointComparisonPageViewResultSchema = z.strictObject({
+  ...viewResultBase,
+  ...endpointComparisonViewContextSchema.shape,
+  kind: z.literal("endpoint-comparison"),
+  artifact: z.null(),
+  parent_operation: z.literal("compare_static_and_observed_endpoints"),
+  view: endpointComparisonViewRequestSchema,
+  items: endpointComparisonViewItemsSchema,
+});
 export const sourceToBundlePageViewResultSchema = z.strictObject({
   ...viewResultBase,
   ...sourceToBundleViewContextSchema.shape,
@@ -1137,6 +1186,8 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
   javaScriptRoutesViewResultSchema,
   webBundlePageViewResultSchema,
   sourceToBundlePageViewResultSchema,
+  endpointComparisonPageViewResultSchema,
+  apiContractPageViewResultSchema,
   featureTraceViewResultSchema,
   batchDecompileViewResultSchema,
   z.strictObject({
@@ -1191,6 +1242,7 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     view: environmentCoverageViewRequestSchema,
   }),
   z.discriminatedUnion("parent_operation", [
+    procedurePseudocodeSummaryViewResultSchema,
     nativeObservationSummaryViewResultSchema,
     nativeValueTraceSummaryViewResultSchema,
     erlangBeamSummaryViewResultSchema,
@@ -1231,6 +1283,8 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     nativeFunctionMatchingSummaryViewResultSchema,
     nativeFunctionSummaryViewResultSchema,
     sourceToBundleSummaryViewResultSchema,
+    endpointComparisonSummaryViewResultSchema,
+    apiContractSummaryViewResultSchema,
     featureTraceSummaryViewResultSchema,
     batchDecompileSummaryViewResultSchema,
     webBundleSummaryViewResultSchema,
