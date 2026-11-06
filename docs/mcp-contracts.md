@@ -920,7 +920,13 @@ invalid, and keeps live-server state `unknown` unless the active connection
 supplies identity.
 
 By default, `tools/list` returns the complete canonical tool inventory, including tools that
-are currently unavailable. Opening or closing a target or observing a provider
+are currently unavailable. When the serialized listing would exceed one SSE
+event under the strictest known client limit, the server pages it per the MCP
+cursor contract instead: each page carries a `nextCursor` until the last page,
+and following the cursors returns the complete inventory. Catalogs that fit are
+returned in one response, exactly as before. A cursor is bound to the catalog
+snapshot it started from; if the catalog changes mid-listing, the server
+rejects the cursor and the client restarts without one. Opening or closing a target or observing a provider
 health transition leaves that catalog unchanged and does not emit
 `notifications/tools/list_changed`.
 
@@ -2038,6 +2044,9 @@ server-side result validation, and both still return complete
 For the 1 MiB FastMCP SSE limit reported by Unsloth in
 [#9093](https://github.com/morluto/rea/issues/9093), see the
 [tested catalog configuration](client-configuration.md#fastmcp-and-unsloth-sse-catalog-limits).
+The default catalog now pages itself when it exceeds one event, so a client
+that follows `nextCursor` loads the complete inventory without those settings;
+the settings remain the way to reduce the context the catalog costs.
 Hot/cold selection alone does not bound later catalog refreshes.
 
 `compact` keeps the complete validation structure when it fits the budget.
