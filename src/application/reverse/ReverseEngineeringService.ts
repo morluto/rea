@@ -46,6 +46,7 @@ import {
   OwnedCommandFailure,
   runOwnedCommand,
 } from "../../process/OwnedCommand.js";
+import { LinuxOwnedProcessPrerequisiteError } from "../../process/ProcessOwnershipObservation.js";
 import type { ProviderProcessSupervisor } from "../../process/ProviderProcess.js";
 import { absoluteCallerPath } from "../../filesystem/callerPath.js";
 import { parseAnalysisInput } from "../AnalysisInput.js";
@@ -565,7 +566,13 @@ export class ReverseEngineeringService {
           },
         );
       const capture = execFileOutputFailure(cause);
-      const code = capture?.code ?? commandFailureCode(cause);
+      const code =
+        capture?.code ??
+        commandFailureCode(cause) ??
+        (cause instanceof LinuxOwnedProcessPrerequisiteError
+          ? (execFileOutputFailure(cause.cause)?.code ??
+            commandFailureCode(cause.cause))
+          : undefined);
       if (earlyFailure === undefined && code === "E2BIG")
         earlyFailure = new AnalysisResourceConstraintError(
           operation,
@@ -608,6 +615,12 @@ export class ReverseEngineeringService {
             ...ownedCleanupOptions(cause),
           },
         );
+      }
+      if (
+        earlyFailure === undefined &&
+        cause instanceof LinuxOwnedProcessPrerequisiteError
+      ) {
+        earlyFailure = cause;
       }
       if (
         earlyFailure === undefined &&

@@ -19,7 +19,12 @@ import { AnalysisCapabilityUnavailableError } from "../domain/analysisErrorCore.
 
 import { launcherIdentityFailure } from "./ProcessOwnershipIdentity.js";
 import { descendantsOf, liveProcesses } from "./ProcessOwnershipProcessTree.js";
-import { execFileOutput } from "./ExecFileOutput.js";
+import {
+  execFileOutput,
+  execFileOutputFailure,
+  HOST_SPAWN_CAPACITY_CODES,
+  spawnCapacityExhausted,
+} from "./ExecFileOutput.js";
 import {
   createDarwinProcessRunTokenReader,
   type DarwinProcessReaderCompiler,
@@ -1481,6 +1486,17 @@ export const createSystemProcessOwnershipHost = (
             throw new ProcessAdmissionError("current_process_unreported");
         } catch (cause: unknown) {
           if (isExpectedAbort(cause, signal)) throw cause;
+          const failure = execFileOutputFailure(cause);
+          if (
+            spawnCapacityExhausted(failure) ||
+            (typeof cause === "object" &&
+              cause !== null &&
+              typeof Reflect.get(cause, "code") === "string" &&
+              HOST_SPAWN_CAPACITY_CODES.has(
+                Reflect.get(cause, "code") as string,
+              ))
+          )
+            throw cause;
           throw new LinuxOwnedProcessPrerequisiteError(cause);
         }
       }

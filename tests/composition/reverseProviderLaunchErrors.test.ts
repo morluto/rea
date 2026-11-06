@@ -1,7 +1,11 @@
 import { rm } from "node:fs/promises";
 import { resolve } from "node:path";
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import { OwnedCommandFailure } from "../../src/process/OwnedCommand.js";
+import {
+  LinuxOwnedProcessPrerequisiteError,
+  systemProcessOwnershipHost,
+} from "../../src/process/ProcessOwnershipObservation.js";
 import { projectAnalysisError } from "../../src/domain/analysisErrorProjection.js";
 import {
   createArtifact,
@@ -178,6 +182,139 @@ it.each(["EAGAIN", "EMFILE", "ENFILE", "ENOMEM"] as const)(
     }
   },
 );
+
+it.each(["EAGAIN", "EMFILE", "ENFILE", "ENOMEM"] as const)(
+  "treats host capacity failure during ownership preparation (%s) as retryable resource constraint without recording launch failure",
+  async (code) => {
+    const { directory } = await createArtifact();
+    const command = resolve(directory, "configured-objdump");
+    const hostFailure = Object.assign(
+      new Error("controlled ps host capacity rejection"),
+      { code },
+    );
+    const prepareSpy = vi
+      .spyOn(systemProcessOwnershipHost, "prepare")
+      .mockRejectedValue(hostFailure);
+    const service = new TestReverseEngineeringService({
+      environment: { REA_OBJDUMP_COMMAND: command },
+    });
+    try {
+      const result = await service.inspectWithObjdump({
+        operation: "architectures",
+      });
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        const projected = projectAnalysisError(result.error);
+        expect(projected).toMatchObject({
+          code: "resource_constraint",
+          retryable: true,
+          details: {
+            resource: "capacity",
+            diagnostics: {
+              boundary: "host-capacity",
+              system_code: code,
+            },
+          },
+          remediation: {
+            action: expect.stringContaining(
+              "REA_OBJDUMP_COMMAND does not need to change",
+            ),
+          },
+        });
+        expect(projected.message).toContain(code);
+        expect(projected.remediation.action).toContain(code);
+      }
+      expect(service.observedLaunchFailures()).toEqual({});
+    } finally {
+      prepareSpy.mockRestore();
+      await service.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);
+
+it.each(["EAGAIN", "EMFILE", "ENFILE", "ENOMEM"] as const)(
+  "preserves host capacity when wrapped in LinuxOwnedProcessPrerequisiteError (%s) without recording launch failure",
+  async (code) => {
+    const { directory } = await createArtifact();
+    const command = resolve(directory, "configured-objdump");
+    const hostFailure = Object.assign(
+      new Error("controlled ps host capacity rejection"),
+      { code },
+    );
+    const prepareSpy = vi
+      .spyOn(systemProcessOwnershipHost, "prepare")
+      .mockRejectedValue(new LinuxOwnedProcessPrerequisiteError(hostFailure));
+    const service = new TestReverseEngineeringService({
+      environment: { REA_OBJDUMP_COMMAND: command },
+    });
+    try {
+      const result = await service.inspectWithObjdump({
+        operation: "architectures",
+      });
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        const projected = projectAnalysisError(result.error);
+        expect(projected).toMatchObject({
+          code: "resource_constraint",
+          retryable: true,
+          details: {
+            resource: "capacity",
+            diagnostics: {
+              boundary: "host-capacity",
+              system_code: code,
+            },
+          },
+          remediation: {
+            action: expect.stringContaining(
+              "REA_OBJDUMP_COMMAND does not need to change",
+            ),
+          },
+        });
+      }
+      expect(service.observedLaunchFailures()).toEqual({});
+    } finally {
+      prepareSpy.mockRestore();
+      await service.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);
+
+it("preserves missing Linux ps prerequisite error without blaming configured command", async () => {
+  const { directory } = await createArtifact();
+  const command = resolve(directory, "configured-objdump");
+  const psMissing = Object.assign(new Error("spawn ps ENOENT"), {
+    code: "ENOENT",
+  });
+  const prepareSpy = vi
+    .spyOn(systemProcessOwnershipHost, "prepare")
+    .mockRejectedValue(new LinuxOwnedProcessPrerequisiteError(psMissing));
+  const service = new TestReverseEngineeringService({
+    environment: { REA_OBJDUMP_COMMAND: command },
+  });
+  try {
+    const result = await service.inspectWithObjdump({
+      operation: "architectures",
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      const projected = projectAnalysisError(result.error);
+      expect(projected.code).toBe("capability_unavailable");
+      expect(projected.details).toMatchObject({
+        provider_id: "process-ownership",
+      });
+      expect(projected.message).toContain("procps-compatible ps");
+      expect(projected.remediation.action).toContain("procps");
+      expect(projected.remediation.action).not.toContain("REA_OBJDUMP_COMMAND");
+    }
+    expect(service.observedLaunchFailures()).toEqual({});
+  } finally {
+    prepareSpy.mockRestore();
+    await service.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
 
 it("preserves target-read permission diagnostics before provider launch", async () => {
   let launches = 0;
