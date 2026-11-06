@@ -104,15 +104,20 @@ operation `describe_desktop_application_task` and predicate type
   fail, or a `volatile_lines` note when no text comes before it; JSON and key files gain
   `value_equals` and `value_absent` by pointer, a JSON array's records named
   by an id field each holds alone at both ends (`id`, `uid`, `uuid`, `guid`,
-  `key` or a name ending in `_id` or `Id`), as TreeLine's
-  `/nodes/[uid=7584d494d9f511f1a873edd4f1920549]`, whatever order the app
-  saves them in; a record only one end holds whose id the app generated is
-  named by its kind field and its first name-like string field (a key
-  ending in `name`, `title`, `label` or `caption`), nearest first and up to
-  three keys deep, that names it alone at its end and nothing at the other,
-  as TreeLine's new book by
+  `key` or a name ending in `_id` or `Id`), as `/lists/[id=chores]`,
+  whatever order the app saves them in; where the app generated that id, a
+  record both ends hold is named by its kind field and its first name-like
+  string field (a key ending in `name`, `title`, `label` or `caption`),
+  nearest first and up to three keys deep, that holds the same string at
+  both ends and names it alone at each, as TreeLine's category by
+  `/nodes/[format=CATEGORY][>data~1NAME=Science]`, and by its id where none
+  does, as `/nodes/[uid=7584d494d9f511f1a873edd4f1920549]` once its name
+  changed; and a record only one end holds is named by such a field that
+  names it alone at its end and nothing at the other, as TreeLine's new book by
   `/nodes/[format=BOOK][>data~1Title=The Silk Roads]`, its other fields
-  checked through that selector and the fields the selector reads not; and
+  checked through that selector and the fields the selector reads not, nor
+  a field holding what every like record (one of its kind) at the end holds
+  there, as the empty `children` of every book; and
   by position only where nothing names a record, as a new book whose title
   another book holds, with a `by_position` note listing those checks;
   never a value that is a uid the app generates (a
@@ -401,7 +406,12 @@ operation `describe_desktop_application_task` and predicate type
     ancestor's whole text a check.
 - `guards`: checks an author may add to show the edit left the rest alone,
   kept out of `task.checks`, with ids `guard-1` and on: for each suggested
-  `value_equals` or `text_equals` on a member of a list, a field on up to
+  `value_equals` or `text_equals` on a member of an XML list, or a
+  `value_equals` through a JSON record added whole, as TreeLine's new book's
+  `data/Author` gives
+  `/nodes/[format=BOOK][>data~1Title=Small Engines of Life]/data/Author`
+  (its like records are those of its kind, named as both ends pair them,
+  and it reads only the check's own field), a field on up to
   two like siblings, those sharing most of the attributes its selector
   names it by and its type, as a cell's `Row` or `Col` and `ValueType`,
   then the nearest first, at its seed value, which the end holds

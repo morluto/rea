@@ -33,10 +33,10 @@ import { childConditions } from "./selectorCandidates.js";
 type Suggestion = DesktopTaskCheckInput;
 
 /** Guards a file's draft offers, and how many one suggested check takes. */
-const MAX_GUARDS = 4;
-const MAX_GUARDS_PER_CHECK = 2;
+export const MAX_GUARDS = 4;
+export const MAX_GUARDS_PER_CHECK = 2;
 /** Like siblings a guard is sought on per list, nearest first, so a long list costs no more than a short one. */
-const MAX_SIBLINGS_READ = 16;
+export const MAX_SIBLINGS_READ = 16;
 
 /** What guards read: a file's two ends, whether a check there is decided by name, and noise. */
 export interface GuardContext {

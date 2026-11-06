@@ -23,7 +23,10 @@ const outline = (
     history,
     ...books.map(([uid, name]) => ({
       children: [],
-      data: { Title: name === "Guns" ? title : name, Year: "2015" },
+      data: {
+        Title: name === "Guns" ? title : name,
+        Year: name === "Guns" ? "1962" : "2015",
+      },
       format: "BOOK",
       uid,
     })),
@@ -46,6 +49,27 @@ const passing = (view: JsonValue, checks: readonly DesktopTaskCheckInput[]) =>
   ).map(({ passed }) => passed);
 
 describe("draftTaskFiles for records in a JSON array, as TreeLine saves its nodes", () => {
+  it("names kept records by name fields of at most 64 kinds, each a pass over the records, and those past them by their uid", () => {
+    /** Seventy records with a generated uid, each with a name field of its own key and `done` as `edited` says. */
+    const items = (edited: (index: number) => boolean) =>
+      ({
+        items: Array.from({ length: 70 }, (_, index) => ({
+          [`n${String(index)}name`]: `Item ${String(index)}`,
+          done: edited(index),
+          uid: `${String(index).padStart(8, "0")}da2511f1a0ba3971baf6a808`,
+        })),
+      }) as unknown as JsonValue;
+    const file = drafted(
+      items(() => false),
+      items((index) => index === 0 || index === 69),
+    );
+
+    expect(file.suggested.map(pointerOf)).toEqual([
+      "/items/[n0name=Item 0]/done",
+      "/items/[uid=00000069da2511f1a0ba3971baf6a808]/done",
+    ]);
+  });
+
   it("names a kept record by its uid, so the edit's check holds in whatever order the app saves the records, and guards their count", () => {
     const file = drafted(
       outline([GUNS, SPQR]),
@@ -82,12 +106,6 @@ describe("draftTaskFiles for records in a JSON array, as TreeLine saves its node
       {
         kind: "value_equals",
         file: FILE,
-        pointer: `${silk}/children`,
-        value: [],
-      },
-      {
-        kind: "value_equals",
-        file: FILE,
         pointer: `${silk}/data/Year`,
         value: "2015",
       },
@@ -101,7 +119,7 @@ describe("draftTaskFiles for records in a JSON array, as TreeLine saves its node
       {
         kind: "member_count",
         file: FILE,
-        pointer: "/nodes/[uid=7584d494d9f511f1a873edd4f1920549]/children",
+        pointer: "/nodes/[format=CATEGORY][>data~1NAME=History]/children",
         equals: 3,
       },
     ]);
@@ -112,8 +130,8 @@ describe("draftTaskFiles for records in a JSON array, as TreeLine saves its node
       SPQR,
       ["0a11808dd9f511f181b7edd4f1920549", "The Silk Roads"],
     ]);
-    expect(passing(seed, file.suggested)).toEqual([false, false, false, false]);
-    expect(passing(rerun, file.suggested)).toEqual([true, true, true, true]);
+    expect(passing(seed, file.suggested)).toEqual([false, false, false]);
+    expect(passing(rerun, file.suggested)).toEqual([true, true, true]);
   });
 
   it("checks a removed record with a generated uid is gone by its kind and title, and keeps position and its note where a title another record shares names nothing", () => {
@@ -162,6 +180,245 @@ describe("draftTaskFiles for records in a JSON array, as TreeLine saves its node
         .map(pointerOf)
         .filter((pointer) => pointer?.startsWith("/nodes/2")),
     ).toEqual([]);
+  });
+});
+
+type Book = readonly [
+  uid: string,
+  title: string,
+  author: string,
+  copyright: string,
+  plot?: string,
+];
+/** The seed's categories and books, as the run's `reading-list.trln` held them. */
+const SEED: readonly (readonly [uid: string, name: string, books: Book[]])[] = [
+  [
+    "0b7bfb76959211e7a8357054d2175f18",
+    "Fiction",
+    [
+      [
+        "2d4390ceda2511f195a23971baf6a808",
+        "The Cartographer's Daughter",
+        "Lena Whitcombe",
+        "2016",
+        "A mapmaker's heir follows her mother's unfinished charts north.",
+      ],
+      [
+        "4eb3fbd2da2511f188893971baf6a808",
+        "Winter at Marrow Bay",
+        "Joel Ashby",
+        "2012",
+        "A lighthouse keeper spends a last season on a fading island.",
+      ],
+    ],
+  ],
+  [
+    "53f0d9c3da2511f1a8913971baf6a808",
+    "History",
+    [
+      [
+        "60e26394da2511f198393971baf6a808",
+        "The Salt Caravans",
+        "Mira Okonkwo",
+        "2014",
+        "How desert trade routes carried salt, gold and news across centuries.",
+      ],
+      [
+        "668660d1da2511f1b0ee3971baf6a808",
+        "Lanterns of the Old Port",
+        "Tomas Reyes",
+        "2009",
+        "A harbor town told through its lamplighters and their ledgers.",
+      ],
+    ],
+  ],
+  [
+    "75201b5ada2511f1a0ba3971baf6a808",
+    "Science",
+    [
+      [
+        "76cbaf8fda2511f1b9343971baf6a808",
+        "The Quiet Glacier",
+        "Ines Halvorsen",
+        "2018",
+        "A field season spent measuring a retreating ice sheet.",
+      ],
+      [
+        "7be27d14da2511f1afb93971baf6a808",
+        "Small Engines of Life",
+        "Dev Ramanathan",
+        "2021",
+        "A tour of the molecular machines inside every cell.",
+      ],
+    ],
+  ],
+];
+/** The book the agent added under Science, with no plot. */
+const CLOCKWORK: Book = [
+  "ae23424ada2511f1bbd43971baf6a808",
+  "The Clockwork Ocean",
+  "Priya Lindqvist",
+  "2020",
+];
+/** The outline's nodes sorted by uid, as TreeLine saves them, with `added` under Science and `rename` naming categories anew. */
+const outlineOf = (
+  added: readonly Book[] = [],
+  rename: Readonly<Record<string, string>> = {},
+) => {
+  const categories = SEED.map(([uid, name, books]) => ({
+    uid,
+    name: rename[name] ?? name,
+    books: name === "Science" ? [...books, ...added] : books,
+  }));
+  const nodes = [
+    ...categories.map(({ uid, name, books }) => ({
+      children: books.map(([id]) => id),
+      data: { NAME: name },
+      format: "CATEGORY",
+      uid,
+    })),
+    ...categories.flatMap(({ books }) =>
+      books.map(([uid, title, author, copyright, plot]) => ({
+        children: [],
+        data: {
+          Author: author,
+          Copyright: copyright,
+          ...(plot === undefined ? {} : { Plot: plot }),
+          Title: title,
+        },
+        format: "BOOK",
+        uid,
+      })),
+    ),
+  ].toSorted((left, right) => (left.uid < right.uid ? -1 : 1));
+  return { nodes } as unknown as JsonValue;
+};
+const book = (title: string) => `/nodes/[format=BOOK][>data~1Title=${title}]`;
+
+describe("draftTaskFiles for a book added under a category, as TreeLine saved one on a real run", () => {
+  it("checks the new book's author and copyright, not the empty children every book holds, guards the nearest books' same fields named by their titles, and names Science by its name", () => {
+    const seed = outlineOf();
+    const end = outlineOf([CLOCKWORK]);
+    const file = drafted(seed, end);
+
+    expect(file.suggested).toEqual([
+      {
+        kind: "value_equals",
+        file: FILE,
+        pointer: `${book("The Clockwork Ocean")}/data/Author`,
+        value: "Priya Lindqvist",
+      },
+      {
+        kind: "value_equals",
+        file: FILE,
+        pointer: `${book("The Clockwork Ocean")}/data/Copyright`,
+        value: "2020",
+      },
+      {
+        kind: "member_count",
+        file: FILE,
+        pointer: "/nodes",
+        matching: "[format=BOOK]",
+        equals: 7,
+      },
+      {
+        kind: "member_count",
+        file: FILE,
+        pointer: "/nodes/[format=CATEGORY][>data~1NAME=Science]/children",
+        equals: 3,
+      },
+    ]);
+    expect(file.guards).toEqual([
+      {
+        kind: "value_equals",
+        file: FILE,
+        pointer: `${book("Small Engines of Life")}/data/Author`,
+        value: "Dev Ramanathan",
+      },
+      {
+        kind: "value_equals",
+        file: FILE,
+        pointer: `${book("The Quiet Glacier")}/data/Author`,
+        value: "Ines Halvorsen",
+      },
+      {
+        kind: "value_equals",
+        file: FILE,
+        pointer: `${book("Small Engines of Life")}/data/Copyright`,
+        value: "2021",
+      },
+      {
+        kind: "value_equals",
+        file: FILE,
+        pointer: `${book("The Quiet Glacier")}/data/Copyright`,
+        value: "2018",
+      },
+    ]);
+    expect(passing(seed, file.suggested)).toEqual([false, false, false, false]);
+    expect(passing(end, file.suggested)).toEqual([true, true, true, true]);
+    expect(passing(seed, file.guards)).toEqual([true, true, true, true]);
+    expect(passing(end, file.guards)).toEqual([true, true, true, true]);
+  });
+
+  it("names a kept category by its uid where its name changed or another category holds it", () => {
+    const children = (file: ReturnType<typeof drafted>) =>
+      file.suggested
+        .map(pointerOf)
+        .filter((pointer) => pointer?.endsWith("/children"));
+    const renamed = drafted(
+      outlineOf(),
+      outlineOf([CLOCKWORK], { Science: "Natural Science" }),
+    );
+    const shared = drafted(
+      outlineOf([], { Science: "History" }),
+      outlineOf([CLOCKWORK], { Science: "History" }),
+    );
+
+    for (const file of [renamed, shared])
+      expect(children(file)).toEqual([
+        "/nodes/[uid=75201b5ada2511f1a0ba3971baf6a808]/children",
+      ]);
+  });
+
+  it("reads at most the 16 nearest like books for a guard, so none further out guards the new one", () => {
+    /** Forty books in uid order, each authored as `author` says, and the new one after them. */
+    const shelf = (author: (index: number) => string, added: boolean) =>
+      ({
+        nodes: [
+          ...Array.from({ length: 40 }, (_, index) => ({
+            data: { Author: author(index), Title: `Volume ${String(index)}` },
+            format: "BOOK",
+            uid: `${String(index).padStart(8, "0")}da2511f1a0ba3971baf6a808`,
+          })),
+          ...(added
+            ? [
+                {
+                  data: { Author: CLOCKWORK[2], Title: CLOCKWORK[1] },
+                  format: "BOOK",
+                  uid: CLOCKWORK[0],
+                },
+              ]
+            : []),
+        ],
+      }) as unknown as JsonValue;
+    const author = (index: number) => `Author ${String(index)}`;
+    // The 15 nearest books were re-authored: the 16th nearest, Volume 24, guards, and Volume 23, past the 16, does not.
+    const file = drafted(
+      shelf(author, false),
+      shelf(
+        (index) => `${author(index)}${index > 24 ? ", revised" : ""}`,
+        true,
+      ),
+    );
+
+    expect(file.guards).toEqual([
+      {
+        kind: "value_equals",
+        file: FILE,
+        pointer: `${book("Volume 24")}/data/Author`,
+        value: "Author 24",
+      },
+    ]);
   });
 });
 

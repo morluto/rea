@@ -177,7 +177,8 @@ the first source that has the app:
 - CherryTree: its first-run autosave "Choose Storage Type" dialog swallows
   keys, so save once early as `.ctd` and untick autosave.
 - Glade: a new widget's id is empty until you set it, and a second save
-  writes a `.glade~` backup. The draft names a button's `<child>` by the id
+  writes a `.glade~` backup, which shows in the draft as an unrelated
+  change and is never seeded. The draft names a button's `<child>` by the id
   its widget carries, `[name=child][>object@id=submit_button]`, which moving
   the button keeps; give the widget an id before `seed` so it can.
 - VYM: the title never names the map, so pass `Documents/<map>.vym` in
@@ -222,9 +223,13 @@ the first source that has the app:
 - An app whose state folder is named after it, such as
   `~/.local/share/gnote`, or after it and its version, such as TreeLine's
   `~/.treeline-3.1`, is found without `state_paths`.
-- TreeLine: Ctrl+A adds a child node even while a field has focus. Clicking
-  a node already selected starts an inline rename, so Ctrl+X then cuts its
-  text: cut a node from its context menu. It saves nodes sorted by their
+- TreeLine: File → New opens a template window. Book List's CATEGORY makes
+  AUTHOR children by default; change it under Data → Configure Data Types →
+  Default Child Type. A new child opens an inline rename showing "", so
+  press Escape and fill its fields in the Data Edit tab. Ctrl+A adds a child
+  node even while a field has focus. Clicking a node already selected starts
+  an inline rename, so Ctrl+X then cuts its text: cut a node from its
+  context menu. It saves nodes sorted by their
   generated uid1, so their order changes from run to run. The draft names a
   new node by its format and a field of its `data`,
   `/nodes/[format=BOOK][>data~1Title=The Silk Roads]`, and checks its other

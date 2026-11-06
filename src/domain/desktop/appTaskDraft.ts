@@ -4,10 +4,12 @@ import { leftOutFiles } from "./appExportUnowned.js";
 import { isGeneratedUid } from "./attributeRank.js";
 import {
   decisive,
+  isLikeDefault,
   jsonCounts,
   outermost,
   positionalNotes,
   readsOwnName,
+  recordGuards,
 } from "./appTaskDraftJson.js";
 import {
   fileNotes,
@@ -267,6 +269,9 @@ const valueSuggestions = (
   const wholes = (entries: readonly string[]) =>
     format === "keyfile" ? entries : outermost(entries);
   const listed: Suggestion[] = [];
+  const ends = versions(baseline, final);
+  // A key file's entries hold no array, so no record of one is added whole.
+  const added = new Set(change.added);
   for (const entry of leaves([...change.added, ...change.changed])) {
     const at = pointer(entry);
     const value = at === undefined ? undefined : resolvePointer(final.view, at);
@@ -277,7 +282,8 @@ const valueSuggestions = (
       value !== undefined &&
       !isTimestamp(value) &&
       !(typeof value === "string" && isGeneratedUid(value)) &&
-      !readsOwnName(at)
+      !readsOwnName(at) &&
+      !isLikeDefault(ends, added, at, value)
     )
       listed.push({ kind: "value_equals", file, pointer: at, value });
   }
@@ -286,7 +292,7 @@ const valueSuggestions = (
     if (at !== undefined && at !== "")
       listed.push({ kind: "value_absent", file, pointer: at });
   }
-  const suggestions = decisive(listed, versions(baseline, final));
+  const suggestions = decisive(listed, ends);
   const { values, cut } = plainValues(
     plainChange(format, baseline, final),
     baseline,
@@ -294,13 +300,17 @@ const valueSuggestions = (
   );
   if (format === "keyfile")
     return { suggested: suggestions, values, valuesCut: cut, guards: [] };
-  const counts = jsonCounts(file, change, versions(baseline, final));
+  const counts = jsonCounts(file, change, ends);
   const suggested = [...suggestions, ...counts.checks];
   return {
     suggested,
     values,
     valuesCut: cut,
-    guards: counts.guards,
+    // The count guard sits outside the cap, as for XML.
+    guards: [
+      ...recordGuards(file, suggested.slice(0, MAX_SUGGESTIONS), ends, added),
+      ...counts.guards,
+    ],
     notes: positionalNotes(file, suggested, final.view),
   };
 };
