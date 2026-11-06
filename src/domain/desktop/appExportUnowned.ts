@@ -295,10 +295,18 @@ export const trashedFiles = (
     .map(([home]) => home)
     .sort();
 
+/** A LevelDB table's write-ahead log, which holds saved writes rather than messages. */
+const LEVELDB_LOG = /^\d+\.log$/u;
+/** The files that mark a folder as a LevelDB database. */
+const LEVELDB_MARKER = /^(?:CURRENT|MANIFEST-\d+)$/u;
+
 /**
  * Which home files the seed leaves out: the app's logs in its own state
  * (application state, or under one of its state directories), and lock
- * files; never one of `kept`, such as a document or a selected path.
+ * files; never one of `kept`, such as a document or a selected path. A
+ * `*.log` in browser storage, under a `leveldb` folder, or numbered beside a
+ * LevelDB database's `CURRENT` or `MANIFEST-*` is the database's own journal
+ * of saved writes, so it is seeded.
  */
 export const leftOutFiles = (
   files: ReadonlyMap<string, DesktopStatePath>,
@@ -306,9 +314,20 @@ export const leftOutFiles = (
   kept: ReadonlySet<string>,
 ) => {
   const recorded = new Set(files.keys());
+  const nameOf = (home: string) => home.split("/").at(-1) ?? "";
+  const levelDbFolders = new Set(
+    [...recorded]
+      .filter((home) => LEVELDB_MARKER.test(nameOf(home)))
+      .map(folderOf),
+  );
+  const isJournal = (home: string) =>
+    runtimeFile(home)?.kind === "web_storage" ||
+    ancestorsOf(home).some((folder) => /(?:^|\/)leveldb$/iu.test(folder)) ||
+    (LEVELDB_LOG.test(nameOf(home)) && levelDbFolders.has(folderOf(home)));
   const isLeftOutLog = (home: string) =>
     !kept.has(home) &&
     isAppLog(home) &&
+    !isJournal(home) &&
     (files.get(home)?.role === "application_state" ||
       stateDirectoryOf(home, stateDirectories) !== undefined);
   const isLeftOut = (home: string) =>
