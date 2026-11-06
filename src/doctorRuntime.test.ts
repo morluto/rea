@@ -5,7 +5,10 @@ import { expect, it as test, vi } from "vitest";
 import { withVerifierCleanup } from "../scripts/lib/verifier-cleanup.mjs";
 import { awaitAcknowledgement } from "../tests/fixtures/lifecycleAcknowledgement.js";
 
-import { createSystemDoctorHost, selectedProviderSettings } from "./doctorRuntime.js";
+import {
+  createSystemDoctorHost,
+  selectedProviderSettings,
+} from "./doctorRuntime.js";
 import { DOCTOR_PROVIDER_IDS } from "./application/DoctorProviderIds.js";
 import { providerRegistrationEnvironment } from "./application/SetupRegistrationEnvironment.js";
 import { createTestTempDirectory } from "../tests/fixtures/temporaryDirectory.js";
