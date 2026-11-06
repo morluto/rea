@@ -7,6 +7,7 @@ import type {
 } from "./otlpTrace.js";
 import {
   OTLP_TRACE_MAX_ATTRIBUTES_PER_SPAN,
+  OTLP_TRACE_MAX_DIAGNOSTICS,
   OTLP_TRACE_MAX_SPANS,
 } from "./otlpTrace.js";
 
@@ -260,8 +261,11 @@ const parseSpan = (
       message: `Span at ${pointer} exceeds the ${OTLP_TRACE_MAX_SPANS}-span allowance and was not inventoried.`,
     });
   const parentSpanId = readHexId(record.parentSpanId, 8);
+  // An empty parentSpanId is the OTLP zero value, which declares no parent.
   const parentRecorded =
-    record.parentSpanId !== undefined && record.parentSpanId !== null;
+    record.parentSpanId !== undefined &&
+    record.parentSpanId !== null &&
+    record.parentSpanId !== "";
   if (parentRecorded && parentSpanId === null)
     problems.push({
       code: "invalid-record",
@@ -406,12 +410,15 @@ const walkResourceSpans = (
     const { attributes: resourceFacts, dropped: resourceDropped } =
       resourceAttributes(resourceSpans.resource);
     if (resourceDropped > 0) walked.resourceAttributesTruncated = true;
+    // OTLP omits an empty repeated field, so a missing scopeSpans is an empty
+    // collection rather than damage; only a present non-array value is.
+    if (resourceSpans.scopeSpans === undefined) continue;
     if (!Array.isArray(resourceSpans.scopeSpans)) {
       walked.droppedRecords += 1;
       walked.problems.push({
         code: "invalid-record",
         pointer: `/resourceSpans/${resourceIndex}/scopeSpans`,
-        message: `Resource group at /resourceSpans/${resourceIndex} has no scopeSpans array; its spans were not inventoried.`,
+        message: `Resource group at /resourceSpans/${resourceIndex} carries a scopeSpans value that is not an array; its spans were not inventoried.`,
       });
       continue;
     }
@@ -433,12 +440,13 @@ const walkResourceSpans = (
         version:
           typeof scopeRecord?.version === "string" ? scopeRecord.version : null,
       };
+      if (scopeSpans.spans === undefined) continue;
       if (!Array.isArray(scopeSpans.spans)) {
         walked.droppedRecords += 1;
         walked.problems.push({
           code: "invalid-record",
           pointer: `/resourceSpans/${resourceIndex}/scopeSpans/${scopeIndex}/spans`,
-          message: `Scope at /resourceSpans/${resourceIndex}/scopeSpans/${scopeIndex} has no spans array; its spans were not inventoried.`,
+          message: `Scope at /resourceSpans/${resourceIndex}/scopeSpans/${scopeIndex} carries a spans value that is not an array; its spans were not inventoried.`,
         });
         continue;
       }
@@ -577,12 +585,14 @@ export const parseOtlpTrace = (
   const cycles = new Set<string>();
   const state = new Map<string, 1 | 2>();
   for (const start of walked.spans) {
-    const key = spanKey(start.trace_id, start.span_id);
-    if (state.has(key)) continue;
+    if (state.has(start.source_pointer)) continue;
     const path: string[] = [];
     let cursor: OtlpSpan | undefined = start;
     while (cursor !== undefined) {
-      const cursorKey = spanKey(cursor.trace_id, cursor.span_id);
+      // Identity is the record, not the trace/span id: duplicate records that
+      // disagree about their parents must each be walked, or a cycle spanning
+      // two of them would be missed once the first record finished.
+      const cursorKey = cursor.source_pointer;
       const seenState = state.get(cursorKey);
       if (seenState === 1) {
         cycles.add(cursor.span_id);
@@ -609,6 +619,13 @@ export const parseOtlpTrace = (
         `Span ${id} participates in a parent cycle; the recorded links are preserved and no ordering is derived from them.`,
       ),
     );
+  const diagnosticsTruncated = diagnostics.length > OTLP_TRACE_MAX_DIAGNOSTICS;
+  diagnostics.sort((left, right) =>
+    left.diagnostic_id.localeCompare(right.diagnostic_id),
+  );
+  const boundedDiagnostics = diagnosticsTruncated
+    ? diagnostics.slice(0, OTLP_TRACE_MAX_DIAGNOSTICS)
+    : diagnostics;
   return {
     ok: true,
     value: {
@@ -621,7 +638,9 @@ export const parseOtlpTrace = (
       spans: walked.spans,
       orphan_span_ids: [...orphanParents.values()].sort(),
       roots,
-      diagnostics,
+      // A file of malformed groups reaches here with no spans at all, so the
+      // span allowance cannot bound it; cap the diagnostics and say so.
+      diagnostics: boundedDiagnostics,
       summary: {
         spans: walked.spans.length,
         roots: roots.length,
@@ -642,7 +661,7 @@ export const parseOtlpTrace = (
             .filter((name): name is string => name !== null),
         ).size,
         redacted_attributes: walked.redactedAttributes,
-        diagnostics: diagnostics.length,
+        diagnostics: boundedDiagnostics.length,
       },
       source_coverage: {
         scope: "single-caller-supplied-export",
@@ -662,6 +681,11 @@ export const parseOtlpTrace = (
         ...(walked.attributesTruncated
           ? [
               `Some spans carry more attributes than the ${OTLP_TRACE_MAX_ATTRIBUTES_PER_SPAN}-attribute per-span allowance; the dropped count is reported per span.`,
+            ]
+          : []),
+        ...(diagnosticsTruncated
+          ? [
+              `The export produced more than ${OTLP_TRACE_MAX_DIAGNOSTICS} diagnostics; only the first ${OTLP_TRACE_MAX_DIAGNOSTICS} by diagnostic id are reported and the rest are dropped.`,
             ]
           : []),
         ...(walked.resourceAttributesTruncated

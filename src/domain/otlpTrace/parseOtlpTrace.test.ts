@@ -480,6 +480,55 @@ describe("parseOtlpTrace unreadable groups", () => {
     expect(diagnostic?.source_pointer).toBe(
       "/resourceSpans/0/scopeSpans/0/spans",
     );
-    expect(diagnostic?.message).toContain("no spans array");
+    expect(diagnostic?.message).toContain("not an array");
+  });
+});
+
+describe("parseOtlpTrace OTLP empty defaults", () => {
+  it("reads omitted repeated fields and an empty parentSpanId as absent", () => {
+    const report = parse({
+      resourceSpans: [
+        { resource: {}, scopeSpans: [{ scope: {} }] },
+        {
+          resource: {},
+          scopeSpans: [
+            {
+              scope: { name: "lib" },
+              spans: [span({ spanId: "0".repeat(15) + "1", parentSpanId: "" })],
+            },
+          ],
+        },
+      ],
+    });
+    expect(report.summary.spans).toBe(1);
+    expect(report.summary.roots).toBe(1);
+    expect(report.diagnostics).toEqual([]);
+  });
+
+  it("finds a cycle that spans two disagreeing duplicate records", () => {
+    const trace = "a".repeat(32);
+    const idA = "0".repeat(15) + "a";
+    const idB = "0".repeat(15) + "b";
+    const report = parse(
+      envelope([
+        span({ traceId: trace, spanId: idA }),
+        span({ traceId: trace, spanId: idA, parentSpanId: idB }),
+        span({ traceId: trace, spanId: idB, parentSpanId: idA }),
+      ]),
+    );
+    expect(report.diagnostics.map((entry) => entry.code)).toContain("cycle");
+  });
+});
+
+describe("parseOtlpTrace diagnostic bound", () => {
+  it("caps diagnostics from malformed groups and says it dropped the rest", () => {
+    const report = parse({
+      resourceSpans: Array.from({ length: 1_200 }, () => null),
+    });
+    expect(report.diagnostics).toHaveLength(1_000);
+    expect(report.summary.diagnostics).toBe(1_000);
+    expect(report.limitations.join(" ")).toContain(
+      "only the first 1000 by diagnostic id are reported",
+    );
   });
 });

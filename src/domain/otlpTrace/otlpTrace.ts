@@ -5,6 +5,10 @@ import { localPathStringSchema } from "../localPath.js";
 /** Resource allowances, not OTLP format limits. */
 export const OTLP_TRACE_MAX_FILE_BYTES = 32 * 1024 * 1024;
 export const OTLP_TRACE_MAX_SPANS = 50_000;
+
+/** Bounded so a file of malformed groups cannot turn into an unbounded result. */
+export const OTLP_TRACE_MAX_DIAGNOSTICS = 1_000;
+
 /** Per-span attribute allowance; a span never loses attributes silently. */
 export const OTLP_TRACE_MAX_ATTRIBUTES_PER_SPAN = 128;
 export const OTLP_TRACE_OPERATION = "inspect_otlp_trace" as const;
