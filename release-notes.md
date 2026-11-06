@@ -100,6 +100,7 @@
 * **guidance:** search installed workflow sections ([#6996](https://github.com/morluto/rea/issues/6996)) ([c88e1b0](https://github.com/morluto/rea/commit/c88e1b0b4355a29ef6ab5c88d393a3bfbcfc1d22))
 * **harmony:** disclose unclassified inventory files ([#4968](https://github.com/morluto/rea/issues/4968)) ([848f165](https://github.com/morluto/rea/commit/848f16541746d11cf0ebd507f992b1c570128afb))
 * **investigation:** retain records across engine cleanup ([#8361](https://github.com/morluto/rea/issues/8361)) ([f72638f](https://github.com/morluto/rea/commit/f72638f6b1f1a41851bf321472569c3265556961))
+* **javascript:** compare static endpoints with HAR captures ([#9090](https://github.com/morluto/rea/issues/9090)) ([3708538](https://github.com/morluto/rea/commit/3708538e85775f1c5566ff54b9c9affe125a8875))
 * **javascript:** discover semantic call literals in feature traces ([#7840](https://github.com/morluto/rea/issues/7840)) ([f9e7571](https://github.com/morluto/rea/commit/f9e7571a3d33ef654e396601e2f0e76dbc184ba8))
 * **javascript:** page retained feature traces through analysis views ([#8522](https://github.com/morluto/rea/issues/8522)) ([423059a](https://github.com/morluto/rea/commit/423059a4de9669afa44d81942803083e82149dc4))
 * **kuna:** verify release 1.986 and guide version selection ([#8187](https://github.com/morluto/rea/issues/8187)) ([245a581](https://github.com/morluto/rea/commit/245a581818ab13694fa438a06e39898ce03ab206))
