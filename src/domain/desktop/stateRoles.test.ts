@@ -58,6 +58,31 @@ describe("stateReasons", () => {
   });
 });
 
+describe("stateReasons for state directories", () => {
+  it("counts a folder beside a state directory whose name differs only in letter case, as GIMP's ~/.config/GIMP does", () => {
+    const facts: DesktopRoleFacts = {
+      home: "/home/ada",
+      stateDirectories: ["/data/ada/.config/gimp"],
+      stateTails: [".config/gimp"],
+      selectedRoots: [],
+      titles: [],
+      openedFiles: new Set(),
+    };
+    const reasons = (path: string) => stateReasons(facts, path, [], false);
+
+    expect(reasons("/data/ada/.config/GIMP/2.10/sessionrc")).toEqual([
+      "state_directory",
+    ]);
+    expect(reasons("/home/ada/.config/GIMP/2.10/sessionrc")).toEqual([
+      "state_directory",
+    ]);
+    expect(reasons("/home/ada/.config/gimp")).toEqual(["state_directory"]);
+    expect(reasons("/home/ada/.config/GIMPshop/sessionrc")).toEqual([]);
+    expect(reasons("/home/ada/.config/other/GIMP/sessionrc")).toEqual([]);
+    expect(reasons("/home/ada/.Config/gimp/sessionrc")).toEqual([]);
+  });
+});
+
 describe("isApplicationDconfGroup", () => {
   it("matches a whole path segment, not a substring", () => {
     const names = new Set(["mousepad"]);
