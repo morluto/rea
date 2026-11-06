@@ -1,5 +1,8 @@
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
+import {
+  AnalysisCancelledError,
+  AnalysisInputError,
+} from "../../domain/analysisErrorCore.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import type { StoppedCapture } from "./DesktopBuildSummary.js";
@@ -62,10 +65,16 @@ export class DesktopBuildSteps {
         turn,
       );
       if (!started.ok) return started;
-      // A failed screenshot only leaves it out; the turn reports a close or abort meanwhile as cancelled.
+      // A failed screenshot only leaves it out, but a close or abort meanwhile cancels the start: it saved nothing to report.
       const shot = await steps.computer
         .callTool("computer_screenshot", {}, turn)
         .catch(() => undefined);
+      if (turn.aborted)
+        return err(
+          new AnalysisCancelledError("start_build_capture", {
+            cause: turn.reason,
+          }),
+        );
       return ok({
         value: {
           computer_id: input.computer_id,

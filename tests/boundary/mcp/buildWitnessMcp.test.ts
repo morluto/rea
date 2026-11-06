@@ -20,6 +20,7 @@ import {
   type FakeComputerOptions,
 } from "../../fixtures/fakeAgentEnvComputer.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
+import { cancelDuringCommit } from "../../fixtures/outputTreeCommit.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const TASK = {
@@ -411,9 +412,59 @@ it("saves a witness record again after a failed save, without checking again", a
   });
   expect(saved.witness?.record?.stages).toHaveLength(4);
   expect(app.methods.length).toBe(gets);
+  // Saved, the same check returns the record again without checking or writing; any other is refused.
+  expect(parsed(await check({ stage: "after_reset" })).witness).toEqual(
+    saved.witness,
+  );
+  expect(app.methods.length).toBe(gets);
   expect(
-    parseMcpToolError(await check({ stage: "after_reset" })).error.message,
+    parseMcpToolError(await check({ stage: "near_miss" })).error.message,
   ).toContain("ended");
+});
+
+it("returns the record a witness saved when the computer closes while the save commits", async () => {
+  const witness = await witnessed();
+  const { client, id, check, directory } = witness;
+  await throughNearMiss(witness);
+  await witness.act("reset");
+  let closed: Promise<unknown> = Promise.resolve();
+  cancelDuringCommit(() => {
+    closed = client.callTool({
+      name: "close_build_computer",
+      arguments: { computer_id: id },
+    });
+  });
+  const saved = parsed(await check({ stage: "after_reset" }));
+  expect(saved.witness?.record).toMatchObject({
+    path: join(directory, "witness.json"),
+    verdict: "held",
+  });
+  await closed;
+});
+
+it("returns a record saved as its check was cancelled when that check is asked again", async () => {
+  const witness = await witnessed();
+  const { client, id, directory } = witness;
+  await throughNearMiss(witness);
+  await witness.act("reset");
+  const caller = new AbortController();
+  cancelDuringCommit(() => {
+    caller.abort();
+  });
+  await expect(
+    client.callTool(
+      {
+        name: "check_build_task",
+        arguments: { computer_id: id, task: TASK, stage: "after_reset" },
+      },
+      { signal: caller.signal },
+    ),
+  ).rejects.toThrow();
+  const again = parsed(await witness.check({ stage: "after_reset" }));
+  expect(again.witness?.record).toMatchObject({
+    path: join(directory, "witness.json"),
+    verdict: "held",
+  });
 });
 
 it("files one after_edit when two checks of it arrive together, so the record cannot hold without a near miss", async () => {

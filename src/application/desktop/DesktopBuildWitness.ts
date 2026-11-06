@@ -85,10 +85,12 @@ const usableFolder = async (directory: string): Promise<boolean> =>
 /**
  * A witness from its seed on: `open` while stages are checked, `saving`
  * once a stage ended it and until its record is written, which a repeat of
- * that stage's check retries, and `saved` after.
+ * that stage's check retries, and `saved` after, with the record a repeat
+ * returns again.
  */
 interface OpenWitness extends EndedWitness {
   state: "open" | "saving" | "saved";
+  record?: WitnessRecord;
 }
 
 /** What the witness says of one filed stage. */
@@ -150,6 +152,9 @@ export class DesktopBuildWitness {
     const { stage } = input;
     if (stage !== undefined && this.#witness?.state === "saving")
       return this.#resave(this.#witness, task, stage, signal);
+    const saved =
+      stage === undefined ? undefined : this.#savedAgain(task, stage);
+    if (saved !== undefined) return ok(saved);
     const admitted =
       stage === undefined
         ? undefined
@@ -251,7 +256,28 @@ export class DesktopBuildWitness {
     );
     if (!record.ok) return record;
     witness.state = "saved";
+    witness.record = record.value;
     return ok(summaryOf(filed, null, record.value));
+  }
+
+  /**
+   * The saved witness again, for a repeat of the check that ended it with the
+   * same task, such as after a cancelled call whose record was saved anyway;
+   * undefined for any other check.
+   */
+  #savedAgain(task: DesktopTask, stage: WitnessStage): CheckedTask | undefined {
+    const witness = this.#witness;
+    const filed = witness?.stages.at(-1);
+    if (
+      witness?.record === undefined ||
+      filed?.stage !== stage ||
+      taskDigest(task) !== witness.digest
+    )
+      return undefined;
+    return {
+      ...counted(task, filed.results),
+      witness: summaryOf(filed, null, witness.record),
+    };
   }
 
   /** Repeat the check of the stage that ended the witness to retry writing its record, without checking again. */

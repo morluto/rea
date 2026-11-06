@@ -224,17 +224,26 @@ reviewed head, with only the tests and fixtures added, and pass now.
 - `desktopTaskPython.test.ts`: the exported verifier fails the same cut-view
   cases with the same descriptions, as it did before.
 
-## Close during a capture's start
+## Cancellation after a step
 
-Run on macOS; the VM was not used. A turn that its close or caller aborted
-now ends cancelled even when its step returns success after the abort, as a
-capture's start does when its screenshot of the opened app fails.
+Run on macOS; the VM was not used. A step returns what it saved even when
+its call is cancelled or the computer closes as the save finishes; only
+`start_build_capture`, which saves nothing, checks after its last await, the
+screenshot of the opened app, and ends cancelled. Each test below except the
+first failed on the head that cancelled every aborted turn, with only the
+tests added, and passes now.
 
 - `buildCaptureRetryMcp.test.ts`: a close while `start_build_capture` waits
-  for that screenshot makes it return `cancelled`. Before, it returned
-  success for the computer being removed.
-- `DesktopBuildTurns.test.ts`: a running call that hides the close's abort
-  and succeeds ends cancelled. Before, its success was returned.
+  for that screenshot makes it return `cancelled`. Before the start's own
+  check, it returned success for the computer being removed. A close while
+  an export's bundle commits still returns the bundle; before, `cancelled`.
+- `buildWitnessMcp.test.ts`: a close while the witness record commits still
+  returns the record, and a check cancelled while it commits gets the saved
+  record when asked again; a saved witness's repeated final check returns the
+  same record without checking or writing. Before, `cancelled`, and the
+  repeat was refused as ended.
+- `DesktopBuildTurns.test.ts`: a running call that finishes after a close
+  keeps its result.
 
 ## Limits of this verification
 

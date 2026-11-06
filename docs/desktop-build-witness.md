@@ -77,6 +77,10 @@ Each step can be asked again after its answer was lost:
 - A stop whose summary or draft was not read finishes when stop is asked
   again, and a finished stop repeats its result. The draft and the export
   trust the checkpoints the capture's own Evidence records.
+- A step that saved something, such as an export's bundle or the witness's
+  record, returns it even when its call is cancelled or the computer closes
+  as the save finishes. `start_build_capture` saves nothing, so a close or
+  cancellation during its screenshot of the opened app cancels it.
 
 The capture, the draft and the export run as the computer's user in its home,
 without any `AGENTENV_*` variable, so neither REA nor the app holds the
@@ -158,8 +162,9 @@ action of each kind, which it keeps for the whole session, so they hold
 however many entries it dropped. The result returns the same record. When writing it fails, such as for a
 folder something else wrote into, the witness keeps its stages: check the
 stage that ended it again, with the same task, and REA writes the record
-without checking again. A computer is witnessed once; witness again from a
-fresh computer.
+without checking again. Once it is saved, the same check returns the saved
+record again, so a record saved as its call was cancelled is not lost. A
+computer is witnessed once; witness again from a fresh computer.
 
 See the [specification](specs/desktop-app-environments/build-witness/spec.md)
 for scope and verification.

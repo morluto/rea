@@ -16,6 +16,7 @@ import {
 } from "../../fixtures/buildCaptureFakes.js";
 import { callOk, startBuildComputer } from "../../fixtures/buildComputerMcp.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
+import { cancelDuringCommit } from "../../fixtures/outputTreeCommit.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const call = (client: Client, name: string, args: Record<string, unknown>) =>
@@ -139,6 +140,30 @@ it("cancels a capture's start when the computer closes while it waits for the op
   await vi.waitFor(() => expect(screenshots()).toBe(2), { timeout: 30_000 });
   await callOk(client, "close_build_computer", { computer_id: id });
   expect(parseMcpToolError(await started).error.code).toBe("cancelled");
+}, 60_000);
+
+it("returns the bundle an export saved when the computer closes while it commits", async () => {
+  const { client } = await fakes();
+  const id = await startBuildComputer(client, BUILD_REQUEST);
+  await captureSeedAndEnd(client, id);
+  await callOk(client, "stop_build_capture", { computer_id: id });
+  const directory = join(await createTestTempDirectory("build-out-"), "bundle");
+  let closed: Promise<unknown> = Promise.resolve();
+  cancelDuringCommit(() => {
+    closed = call(client, "close_build_computer", { computer_id: id });
+  });
+  const exported = await call(client, "export_build_environment", {
+    computer_id: id,
+    task: BUILD_TASK,
+    directory,
+  });
+  expect(exported.isError, JSON.stringify(exported)).not.toBe(true);
+  expect(exported.structuredContent).toMatchObject({
+    computer_id: id,
+    directory,
+  });
+  expect((await readdir(directory)).length).toBeGreaterThan(0);
+  await closed;
 }, 60_000);
 
 /** Capture and export an app the request installs from a .deb at `url`; the stand-in's argv for capture and export. */
