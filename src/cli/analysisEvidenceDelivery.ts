@@ -338,12 +338,27 @@ const withUndeliveredSourceClosure = (
     : { ...failure, details: { ...details, source_closure: closure } };
 };
 
+const isPublishablePartialFailure = (
+  failure: JsonValue,
+  signal: AbortSignal,
+): boolean => {
+  if (signal.aborted) return false;
+  if (!isObject(failure)) return false;
+  const code = failure.code;
+  if (code === "cancelled" || code === "cleanup_incomplete") return false;
+  return true;
+};
+
 const publishPartialCliAnalysisEvidence = async (
   failure: JsonValue,
   input: CliEvidenceDelivery,
 ): Promise<JsonValue> => {
   const { operation, signal, detail, evidenceOutput } = input;
-  if (evidenceOutput === undefined) return failure;
+  if (
+    evidenceOutput === undefined ||
+    !isPublishablePartialFailure(failure, signal)
+  )
+    return withUndeliveredSourceClosure(failure, input);
   const extracted = extractPartialEvidence(failure);
   if (extracted === undefined)
     return withUndeliveredSourceClosure(failure, input);
