@@ -95,8 +95,12 @@ const XML_ENTITIES: Readonly<Record<string, string>> = {
 const referenced = (whole: string, point: number): string =>
   point <= 0x10ffff ? String.fromCodePoint(point) : whole;
 
-const decodeXml = (text: string): string =>
-  text.replace(
+const decodeXml = (text: string, quote?: string): string => {
+  const normalized =
+    quote !== undefined
+      ? text.replace(/\r\n|[\r\n\t]/gu, " ")
+      : text.replace(/\r\n|\r/gu, "\n");
+  return normalized.replace(
     XML_REFERENCE,
     (whole, hex?: string, decimal?: string, name?: string) =>
       hex !== undefined
@@ -105,6 +109,7 @@ const decodeXml = (text: string): string =>
           ? referenced(whole, Number(decimal))
           : (XML_ENTITIES[name ?? ""] ?? whole),
   );
+};
 
 /** Character data, or an attribute value in the given quote, escaped so XML reads it back as written. */
 const encodeXml = (text: string, quote: string | undefined): string =>
@@ -127,7 +132,7 @@ const encodeXml = (text: string, quote: string | undefined): string =>
  */
 const scrubXml = (text: string, identity: HostIdentity): TextScrub => {
   const data = (raw: string, quote?: string) => {
-    const value = decodeXml(raw);
+    const value = decodeXml(raw, quote);
     const clean = scrubHostIdentity(value, identity);
     return clean === value ? raw : encodeXml(clean, quote);
   };

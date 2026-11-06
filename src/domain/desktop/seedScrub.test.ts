@@ -210,6 +210,44 @@ describe("scrubSeed on JSON and XML", () => {
   });
 });
 
+describe("scrubSeed XML whitespace normalization", () => {
+  it("normalizes literal whitespace in rewritten XML attributes without inventing character references", () => {
+    const xml = '<root path="/home/ada/a\n b" other="/home/ada/a\t b"/>';
+    const outcome = scrubbed(xml, "xml");
+
+    expect(outcome.text).toBe(
+      `<root path="${SEED_HOME}/a  b" other="${SEED_HOME}/a  b"/>`,
+    );
+    expect(outcome.holdsIdentity).toBe(false);
+  });
+
+  it("normalizes literal line endings in rewritten XML character data without inventing CR references", () => {
+    const crlf = `<root>/home/ada/a\r\n b</root>`;
+    const cr = `<root>/home/ada/a\r b</root>`;
+
+    expect(scrubbed(crlf, "xml").text).toBe(`<root>${SEED_HOME}/a\n b</root>`);
+    expect(scrubbed(cr, "xml").text).toBe(`<root>${SEED_HOME}/a\n b</root>`);
+  });
+
+  it("preserves explicit character references in XML attributes and character data", () => {
+    const xml = `<root path="/home/ada/a&#10; b" tab="/home/ada/a&#9; b">/home/ada/a&#13; b</root>`;
+    const outcome = scrubbed(xml, "xml");
+
+    expect(outcome.text).toBe(
+      `<root path="${SEED_HOME}/a&#10; b" tab="${SEED_HOME}/a&#9; b">${SEED_HOME}/a&#13; b</root>`,
+    );
+    expect(outcome.holdsIdentity).toBe(false);
+  });
+
+  it("leaves XML with literal line endings or whitespace byte-for-byte unchanged when no identity matches", () => {
+    const xml = '<root path="/unmatched/path/a\n b">\r\nclean\r\n</root>';
+    const outcome = scrubSeed(Buffer.from(xml), seed("xml"), GEANY);
+
+    expect(outcome.bytes).toBeUndefined();
+    expect(outcome.holdsIdentity).toBe(false);
+  });
+});
+
 describe("scrubSeed on bytes it does not rewrite", () => {
   it("reports a seed whose shipped bytes still hold the host name or the captured home", () => {
     const database = Buffer.concat([
