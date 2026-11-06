@@ -332,6 +332,12 @@ REA chalne ke liye tayyar environment aur aik bunyadi test export karta hai jo u
 [Environment reference](../agent-environments.md) ·
 [X par demo dekhein](https://x.com/reatools/status/2112574822584918075?s=20)
 
+### Desktop app environments
+
+REA Linux desktop app ka environment bhi bana sakta hai, jise agent screenshots, mouse aur keyboard se istemal karta hai. Aik line ki request se, jaise "Mere liye Gnote environment banao jis mein agent shopping list note mein olive oil shamil kare", aap ka agent app ko local build computer par install karta hai, task likhta hai, environment export karta hai aur naye computer par task check karta hai. Ise banane wali machine ko amd64 ya arm64 par Linux, Docker aur guide mein muqarrar agentenv framework version chahiye.
+
+[Desktop app environments setup karein](../desktop-build-computer.md)
+
 ## FAQ
 
 <details>
