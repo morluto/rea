@@ -1458,7 +1458,7 @@ const parseImports = (
   dynsym: LocatedTable | null,
   versym: LocatedTable | null,
   dynstr: DynamicStrings,
-  symbolCount: number | null,
+  declaredCount: number | null,
   entrySize: number,
   versionNames: ReadonlyMap<
     number,
@@ -1467,7 +1467,17 @@ const parseImports = (
   maxImports: number,
   issues: ElfDependencyIssue[],
 ): ElfDependencyImport[] => {
-  if (dynsym === null || symbolCount === null) return [];
+  if (dynsym === null || declaredCount === null) return [];
+  // The count can come from a hash table while the located table is a shorter
+  // section; bytes past the table belong to its neighbors, not to .dynsym.
+  const tableCount = Math.floor(dynsym.size / entrySize);
+  const symbolCount = Math.min(declaredCount, tableCount);
+  if (symbolCount < declaredCount)
+    issues.push({
+      code: "malformed_entry",
+      location: hex(dynsym.offset),
+      message: `The dynamic symbol count ${String(declaredCount)} exceeds the ${String(dynsym.size)}-byte located table; only its first ${String(symbolCount)} symbols were read`,
+    });
   if (symbolCount > MAX_INSPECT_ELF_DEPENDENCY_IMPORTS)
     throw ceilingFailure("Dynamic symbols", MAX_INSPECT_ELF_DEPENDENCY_IMPORTS);
   const imports: ElfDependencyImport[] = [];

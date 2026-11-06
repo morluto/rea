@@ -112,6 +112,8 @@ export interface ElfDependencyFixtureOptions {
   readonly displacedSection?: string;
   /** Keeps the .hash section but leaves DT_HASH out of the dynamic table. */
   readonly omitHashTag?: boolean;
+  /** Overrides the size these section headers declare, by section name. */
+  readonly sectionSizes?: Readonly<Record<string, number>>;
 }
 
 const defaultNeeded = (): string[] => [
@@ -394,6 +396,7 @@ interface FixtureConfig {
   readonly oversizedSection: string | undefined;
   readonly displacedSection: string | undefined;
   readonly omitHashTag: boolean;
+  readonly sectionSizes: Readonly<Record<string, number>>;
 }
 
 interface DependencyTables {
@@ -486,6 +489,7 @@ const fixtureConfig = (options: ElfDependencyFixtureOptions): FixtureConfig => {
     oversizedSection: options.oversizedSection,
     displacedSection: options.displacedSection,
     omitHashTag: options.omitHashTag === true,
+    sectionSizes: options.sectionSizes ?? {},
   };
 };
 
@@ -923,7 +927,9 @@ const writeDependencySections = (
       row[3],
       row[0] === config.displacedSection ? layout.fileSize * 2 : row[4],
       // A multiple of both symbol entry sizes, so the size stays a plausible count.
-      row[0] === config.oversizedSection ? layout.fileSize * 48 : row[5],
+      row[0] === config.oversizedSection
+        ? layout.fileSize * 48
+        : (config.sectionSizes[row[0]] ?? row[5]),
       row[6],
       row[7],
       row[8],

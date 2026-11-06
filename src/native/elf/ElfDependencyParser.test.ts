@@ -619,6 +619,29 @@ it("takes the symbol count from GNU hash when .hash is past the file end", () =>
   );
 });
 
+it.each([32, 64] as const)(
+  "keeps ELF%i imports inside a .dynsym section shorter than the hash count",
+  (bits) => {
+    // Three whole symbols and one stray byte: the size is not a multiple of
+    // the entry size, so the count falls back to the hash table's six symbols.
+    const sectionBytes = 3 * (bits === 64 ? 24 : 16) + 1;
+    const report = parse(
+      elfDependencyFixture({ bits, sectionSizes: { ".dynsym": sectionBytes } }),
+    );
+    expect(report.coverage.status).toBe("partial");
+    expect(report.imports.map((row) => row.name)).toEqual(["printf", "memcpy"]);
+    expect(report.imports).toEqual(
+      parse(elfDependencyFixture({ bits })).imports.slice(0, 2),
+    );
+    expect(report.issues).toContainEqual(
+      expect.objectContaining({
+        code: "malformed_entry",
+        message: expect.stringContaining("dynamic symbol count"),
+      }),
+    );
+  },
+);
+
 it("keeps readable names and marks truncated dynstr coverage partial", () => {
   const report = parse(elfDependencyFixture({ truncateDynstr: true }));
   expect(report.coverage.status).toBe("partial");

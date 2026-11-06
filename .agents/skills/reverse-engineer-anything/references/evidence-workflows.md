@@ -178,8 +178,10 @@ complete bundle for later `inspect-analysis-view --evidence-bundle PATH` request
 For an ELF load-time dependency question, `inspect_elf_dependencies` accepts
 `detail: "summary"` and retains the complete inventory. Query
 `inspect_analysis_view` with `view: {kind: "elf-dependencies", collection:
-"needed" | "versions" | "imports" | "issues", names: ["selected_name"],
-fields: ["name"], offset: 0, limit: 32}` and the reported parent Evidence ID.
+"needed" | "versions" | "definitions" | "maxima" | "imports", names:
+["selected_name"], fields: ["name"], offset: 0, limit: 32}` and the reported
+parent Evidence ID. Collection `"issues"` takes only `indices`, `offset`, and
+`limit`.
 Duplicate `DT_NEEDED` names survive; use `source_index` with the parent ID for
 stable identity. Page coverage describes selected retained rows;
 `summary.coverage` or `dependencies.coverage` still describes the source

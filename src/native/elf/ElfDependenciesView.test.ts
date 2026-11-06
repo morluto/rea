@@ -173,3 +173,30 @@ it("pages version definitions and derived maxima instead of repeating them", () 
   });
   expect(maxima).not.toHaveProperty("dependencies.derived_version_maxima");
 });
+
+it("pages issues by original index and refuses name or field selection", () => {
+  const report = parseElfDependencies(
+    elfDependencyFixture({
+      truncateDynstr: true,
+      sectionSizes: { ".dynsym": 3 * 24 + 1 },
+    }),
+    artifact,
+    {
+      path: artifact.path,
+      max_file_bytes: 67108864,
+      max_needed: 1024,
+      max_versions: 4096,
+      max_imports: 65536,
+    },
+  );
+  expect(report.issues.length).toBeGreaterThan(1);
+  const view = { kind: "elf-dependencies", collection: "issues" };
+  expect(project(report, { ...view, indices: [1], limit: 1 })).toMatchObject({
+    items: [{ ...report.issues[1], source_index: 1 }],
+    coverage: { total: 1 },
+  });
+  for (const extra of [{ fields: ["code"] }, { names: ["name_unreadable"] }])
+    expect(
+      analysisViewRequestSchema.safeParse({ ...view, ...extra }).success,
+    ).toBe(false);
+});

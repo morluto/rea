@@ -80,7 +80,10 @@ unsupported ELF extended numbering return no complete inventory.
 Each dynamic string and `PT_INTERP` path is scanned for its terminator across at
 most 65536 bytes. Unreadable dynamic strings, `PT_INTERP` paths that are
 unterminated or end past that limit, and tables that cannot be located from
-section headers or `DT_*` tags are reported as partial coverage with `issues`. A GNU version chain whose links and declared count
+section headers or `DT_*` tags are reported as partial coverage with `issues`.
+When the symbol count from `DT_HASH` or `DT_GNU_HASH` exceeds the located
+`.dynsym` table, only the symbols inside that table are read and coverage is
+partial. A GNU version chain whose links and declared count
 disagree keeps the records read before the conflict, marks that table
 `unreadable`, and reports partial coverage. `$ORIGIN`, `$LIB`, and `$PLATFORM` remain unexpanded.
 Derived version maxima do not establish ABI compatibility.
@@ -88,9 +91,10 @@ Derived version maxima do not establish ABI compatibility.
 Omitted or `complete` detail returns the inventory inline. `detail: "summary"`
 retains the complete Evidence and returns identity, counts, and source
 coverage. Query `inspect_analysis_view` with `kind: "elf-dependencies"` and
-collection `needed`, `versions`, `definitions`, `maxima`, `imports`, or
-`issues`, using exact names (namespaces for `maxima`) or original indices,
-selected fields, and matching-row pagination. Summaries and pages report
+collection `needed`, `versions`, `definitions`, `maxima`, or `imports`, using
+exact names (namespaces for `maxima`) or original indices, selected fields, and
+matching-row pagination. Collection `issues` accepts original indices and
+pagination only; its rows are returned whole and have no name filter. Summaries and pages report
 version-definition and derived-maximum counts; those rows are paged through
 their own collections. CLI summary
 requires `--evidence_output`.
