@@ -1775,6 +1775,9 @@ it("reads only item totals and next-page markers as signs of a partial list", ()
   expect(membership({ total: "50", items: [{ id: 1 }] })).toEqual([
     ["recorded", []],
   ]);
+  expect(membership({ total: "9007199254740992", items: [{ id: 1 }] })).toEqual(
+    [["recorded", []]],
+  );
 });
 
 it("reads a sparse list once per candidate field when inferring identity", () => {
