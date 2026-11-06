@@ -375,10 +375,13 @@ const describePath = async (
     ),
   ];
   const home = capture.host.home;
+  const homePath = path.startsWith(`${home}/`)
+    ? path.slice(home.length + 1)
+    : null;
   return {
     path,
-    home_path: path.startsWith(`${home}/`) ? path.slice(home.length + 1) : null,
-    role: stateRole(reasons),
+    home_path: homePath,
+    role: stateRole(reasons, homePath),
     reasons,
     format:
       versions.findLast((version) => version.format !== null)?.format ?? null,

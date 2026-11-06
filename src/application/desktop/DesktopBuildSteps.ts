@@ -41,6 +41,7 @@ export class DesktopBuildSteps {
     input: {
       readonly computer_id: string;
       readonly arguments?: readonly string[] | undefined;
+      readonly state_paths?: readonly string[] | undefined;
     },
     signal: AbortSignal,
   ): Promise<
@@ -60,10 +61,8 @@ export class DesktopBuildSteps {
     if (steps === undefined) return err(unknownComputer("start_build_capture"));
     // The screenshot of the opened app takes the same turn as the start.
     return steps.turns.run("start_build_capture", signal, async (turn) => {
-      const started = await steps.capture.start(
-        input.arguments === undefined ? {} : { arguments: input.arguments },
-        turn,
-      );
+      const { computer_id: _id, ...launch } = input;
+      const started = await steps.capture.start(launch, turn);
       if (!started.ok) return started;
       // A failed screenshot only leaves it out, but a close or abort meanwhile cancels the start: it saved nothing to report.
       const shot = await steps.computer

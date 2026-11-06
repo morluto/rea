@@ -39,6 +39,8 @@ const plan: DesktopAppExportPlan = {
   seedFiles: ["Documents/todo.txt"],
   textSeeds: ["Documents/todo.txt"],
   unseededFiles: [],
+  unownedFolders: [],
+  runtimeSeeds: [],
   dconf: "",
   captureEvidenceId: "ev_1",
 };

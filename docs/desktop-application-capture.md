@@ -355,7 +355,7 @@ retained are listed with the reason: too large, over the content budget,
 changed since the walk, changed during the read, or unreadable.
 Directories the application held files open in, but whose starting content was
 not retained, are listed so a second capture can pass them with
-`--state-path`.
+`--state-path`, or `state_paths` on a build computer's `start_build_capture`.
 
 **Limitations.** What the capture could not establish, such as a truncated
 walk or a missing window.

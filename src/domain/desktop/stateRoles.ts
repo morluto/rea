@@ -215,10 +215,12 @@ export const stateReasons = (
  * The role that follows from a path's reasons, strongest first. A file in the
  * desktop Trash is shared whatever else names it, since the user deleted it.
  * A file the application holds open is a document when a title or the caller
- * names it.
+ * names it. A file the caller selects under a hidden folder of the home, such
+ * as `~/.config/app`, or a dotfile there, is the application's own state.
  */
 export const stateRole = (
   reasons: readonly DesktopStateReason[],
+  homePath: string | null = null,
 ): DesktopStateRole => {
   if (reasons.includes("desktop_trash")) return "shared_desktop";
   const shared = reasons.includes("desktop_service");
@@ -227,11 +229,11 @@ export const stateRole = (
     (reasons.includes("state_directory") && !shared)
   )
     return "application_state";
-  if (
-    reasons.includes("named_in_window_title") ||
-    reasons.includes("selected_path")
-  )
-    return "document";
+  if (reasons.includes("named_in_window_title")) return "document";
+  if (reasons.includes("selected_path"))
+    return homePath?.startsWith(".") === true
+      ? "application_state"
+      : "document";
   if (reasons.includes("opened_by_application") && !shared)
     return "application_state";
   if (shared) return "shared_desktop";

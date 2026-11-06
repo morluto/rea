@@ -59,6 +59,12 @@ const NOT_RUNNING = [
   "Start one with start_build_capture.",
 ] as const;
 
+/** What the agent asks of a capture's launch: arguments for the app, and files or folders in the home that are its state. */
+export interface CaptureInput {
+  readonly arguments?: readonly string[] | undefined;
+  readonly state_paths?: readonly string[] | undefined;
+}
+
 type CheckpointTaken = Omit<
   Extract<DesktopCaptureEvent, { kind: "checkpoint" }>,
   "kind"
@@ -128,7 +134,7 @@ export class DesktopBuildCapture {
   }
 
   async start(
-    input: { readonly arguments?: readonly string[] },
+    input: CaptureInput,
     signal: AbortSignal,
   ): Promise<
     Result<
@@ -186,7 +192,7 @@ export class DesktopBuildCapture {
   async #launch(
     run: CaptureRun,
     entry: string,
-    input: { readonly arguments?: readonly string[] },
+    input: CaptureInput,
     signal: AbortSignal,
   ): Promise<
     Result<
@@ -208,6 +214,7 @@ export class DesktopBuildCapture {
           capture: run.folder,
           desktop_entry: entry,
           arguments: [...(input.arguments ?? [])],
+          state_paths: [...(input.state_paths ?? [])],
           ...(this.#packageFile === undefined
             ? {}
             : { package_file: BUILD_PACKAGE_FILE }),
@@ -219,6 +226,15 @@ export class DesktopBuildCapture {
     } catch (cause: unknown) {
       return err({ failure: adapterError(START, errorText(cause), cause) });
     }
+    if (answer.refused !== undefined)
+      return err({
+        failure: refused(
+          START,
+          answer.refused,
+          "Name files or folders under the computer's home in state_paths, relative to it or absolute.",
+        ),
+        answer,
+      });
     const event = answer.line === undefined ? undefined : eventOf(answer.line);
     if (event?.kind !== "window_open")
       return err({

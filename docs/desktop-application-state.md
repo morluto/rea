@@ -40,7 +40,9 @@ The role follows from the reasons, in this order: `shared_desktop` for a file
 in the desktop Trash, which the user deleted, whatever else names it;
 `application_state` for application keys in dconf, or a state directory outside shared desktop
 locations; `document` for a file named in a window title or selected by the
-caller, even if the application holds it open; `application_state` for another
+caller, even if the application holds it open, except that a selected file
+under a hidden folder of the home, such as `~/.config/MuseScore`, or a
+dotfile there is `application_state`; `application_state` for another
 open file outside shared locations; `shared_desktop` for other files in shared
 locations; `unrelated` otherwise. A window title names a file only when no
 other file name character adjoins the name, so `day.txt` does not match

@@ -280,6 +280,32 @@ taken 18, 23 and 21 turns for $0.70, $1.55 and $0.51 ($0.92). Cache reads
 fell from 585-714K tokens to 181-225K; the cost is mostly cache writes,
 which varied from 17K to 189K tokens whatever the turns.
 
+## Naming the app's state
+
+Run on macOS with source tests and gates; no build computer was started.
+Each test below failed on the head before this change, with only the tests
+and their fixtures added, and passes now.
+
+- `buildCaptureStatePathsMcp.test.ts`: `start_build_capture` with
+  `state_paths` passes the note's path to the capture as `--state-path`, the
+  draft covers it as a document with no notes, and an export with a check on
+  it is accepted; without it the draft is empty with `unowned_changes`
+  (the note, `unrelated`) and `no_document`, and the export's refusal names
+  `state_paths`. A path through `..`, the home itself and 17 paths are
+  refused by the schema, `/etc/hosts` by the computer, and none starts a
+  capture. Before, `state_paths` was an unknown argument.
+- `DesktopTaskDraftNotes.test.ts`: a draft with files has no notes; one with
+  no change between seed and end has only `no_change`; one whose changes lie
+  outside the owned paths lists five with their roles, desktop files last,
+  and counts two more, beside `no_document`.
+- `stateRoles.test.ts`: a selected file under a hidden folder of the home is
+  application state, elsewhere a document.
+- `DesktopApplicationExport.test.ts`, `appExportUnowned.test.ts`: the export's
+  limitations and README name folders the capture saw change outside the
+  owned paths, collapsed to their top folder and without desktop caches, up
+  to eight and a count, and the seeded lock file, WebKit storage and cache
+  folders.
+
 ## Limits of this verification
 
 - The witness acts were scripted by this agent from the task's prompt; no

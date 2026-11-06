@@ -16,6 +16,12 @@ import {
   type SeedScrubReport,
 } from "../../domain/desktop/appExport.js";
 import { INSTALL_SCRIPT } from "../../domain/desktop/appExportInstall.js";
+import {
+  runtimeSeeds,
+  runtimeSeedsLimitation,
+  unownedChangedFolders,
+  unownedFoldersLimitation,
+} from "../../domain/desktop/appExportUnowned.js";
 import { installLimitations } from "../../domain/desktop/appExportInstallLimitations.js";
 import type { DesktopApplicationCapture } from "../../domain/desktop/desktopCapture.js";
 import {
@@ -226,6 +232,8 @@ const planExport = (
       paths,
       seed: context.seed,
     }),
+    unownedFolders: unownedChangedFolders(files, paths),
+    runtimeSeeds: runtimeSeeds([...seeds.keys()]),
     dconf,
     captureEvidenceId: context.evidenceId,
   };
@@ -303,6 +311,8 @@ const exportLimitations = (
 ): string[] => {
   const opened = capture.state.unretained_opened_directories;
   const opens = launchDocumentLimitation(plan.opens);
+  const unowned = unownedFoldersLimitation(plan.unownedFolders);
+  const runtime = runtimeSeedsLimitation(plan.runtimeSeeds);
   return [
     seedLimitation(plan.syntheticSeed),
     SCRUB_LIMITATION,
@@ -313,6 +323,8 @@ const exportLimitations = (
       : [
           `${String(plan.unseededFiles.length)} file(s) under the owned paths existed at the seed but were not retained, so they are not seeded.`,
         ]),
+    ...(unowned === undefined ? [] : [unowned]),
+    ...(runtime === undefined ? [] : [runtime]),
     ...(facts.trashed.length === 0
       ? []
       : [

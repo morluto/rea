@@ -4,9 +4,12 @@ import { buildSourceSchema } from "../domain/desktop/appBuild.js";
 import { desktopTaskSchema } from "../domain/desktop/appTask.js";
 import {
   buildCheckpointNameSchema,
+  buildStatePathSchema,
   END_CHECKPOINT,
+  MAX_BUILD_STATE_PATHS,
   SEED_CHECKPOINT,
 } from "../domain/desktop/buildCapture.js";
+import { DRAFT_NOTE_CODES } from "../domain/desktop/appTaskDraftNotes.js";
 import { WITNESS_STAGES } from "../domain/desktop/buildWitness.js";
 import {
   COMPUTER_ACTIONS,
@@ -189,7 +192,7 @@ export const DESKTOP_BUILD_TOOL_CONTRACTS = [
     name: "start_build_capture",
     ...toolContractMetadata("start_build_capture"),
     kind: "application",
-    description: `Begin REA's capture of the app on a build computer started from a request, inside the computer: REA downloads the package lists as the computer's user so the capture finds the app's sources, launches the app from its desktop entry under capture (do not open it from the menu first) and returns once its window is open, with a screenshot. When the app exits before its window opens, the error gives its exit code and the end of its stderr, with the capture's record of the session in its details. Then make the seed through the app and save it, mark_build_checkpoint ${SEED_CHECKPOINT}, make the change the task asks for and save it, mark_build_checkpoint ${END_CHECKPOINT}, and stop_build_capture.`,
+    description: `Begin REA's capture of the app on a build computer started from a request, inside the computer: REA downloads the package lists as the computer's user so the capture finds the app's sources, launches the app from its desktop entry under capture (do not open it from the menu first) and returns once its window is open, with a screenshot. When the app exits before its window opens, the error gives its exit code and the end of its stderr, with the capture's record of the session in its details. REA counts a file as the app's document when an app window's title shows its name or ~/ path; name the file the app will save in state_paths when its title shows something else, such as a score's title. Then make the seed through the app and save it, mark_build_checkpoint ${SEED_CHECKPOINT}, make the change the task asks for and save it, mark_build_checkpoint ${END_CHECKPOINT}, and stop_build_capture.`,
     inputSchema: z.strictObject({
       computer_id: computerId,
       arguments: z
@@ -198,6 +201,13 @@ export const DESKTOP_BUILD_TOOL_CONTRACTS = [
         .optional()
         .describe(
           "Arguments appended to the app's launch command, such as a file to open.",
+        ),
+      state_paths: z
+        .array(buildStatePathSchema)
+        .max(MAX_BUILD_STATE_PATHS)
+        .optional()
+        .describe(
+          "Files or folders in the computer's home that hold the app's state, relative to the home (Documents/Scores/song.mscz), after ~/ or absolute under it; they need not exist yet. The capture retains them from its start and counts their files as the app's: a document, which the bundle owns, seeds and opens at launch when it is the seed's only one, or the app's own state under a hidden folder such as .config/MuseScore. An absolute path outside the home is refused.",
         ),
     }),
     outputSchema: z.strictObject({
@@ -219,6 +229,13 @@ export const DESKTOP_BUILD_TOOL_CONTRACTS = [
       {
         title: "Capture the requested app",
         input: { computer_id: EXAMPLE_ID },
+      },
+      {
+        title: "Capture an app whose title shows a score's title, not its file",
+        input: {
+          computer_id: EXAMPLE_ID,
+          state_paths: ["Documents/MuseScore3/Scores/Morning_Song.mscz"],
+        },
       },
     ],
   },
@@ -254,7 +271,7 @@ export const DESKTOP_BUILD_TOOL_CONTRACTS = [
     name: "stop_build_capture",
     ...toolContractMetadata("stop_build_capture"),
     kind: "application",
-    description: `Stop the capture: the app is closed and the capture finishes inside the computer. Returns its checkpoints, the package and sources it found, its limitations and, when ${SEED_CHECKPOINT} and ${END_CHECKPOINT} were marked, the task draft between them: the files that changed, with their net change, and suggested checks. Write the task from the draft, its prompt in the user's words, and give it to export_build_environment.`,
+    description: `Stop the capture: the app is closed and the capture finishes inside the computer. Returns its checkpoints, the package and sources it found, its limitations and, when ${SEED_CHECKPOINT} and ${END_CHECKPOINT} were marked, the task draft between them: the files that changed under the paths the bundle owns, with their net change, and suggested checks. A draft with no files says why in notes: nothing changed, the changes lie outside the owned paths (listed with their roles), or REA recognized no document; capture again with state_paths naming the file. Write the task from the draft, its prompt in the user's words, and give it to export_build_environment.`,
     inputSchema: z.strictObject({ computer_id: computerId }),
     outputSchema: z.strictObject({
       computer_id: z.uuid(),
@@ -290,6 +307,25 @@ export const DESKTOP_BUILD_TOOL_CONTRACTS = [
             prompt: z.string(),
             checks: z.array(jsonObjectSchema),
           }),
+          notes: z
+            .array(
+              z.strictObject({
+                code: z.enum(DRAFT_NOTE_CODES),
+                message: z.string(),
+                files: z
+                  .array(z.strictObject({ file: z.string(), role: z.string() }))
+                  .optional()
+                  .describe(
+                    "unowned_changes: changed home paths outside the owned paths, up to 5.",
+                  ),
+                more: z
+                  .int()
+                  .nonnegative()
+                  .optional()
+                  .describe("unowned_changes: how many more changed."),
+              }),
+            )
+            .describe("Why the draft has no files; empty when it has some."),
         })
         .nullable(),
       draft_refusal: z.string().optional(),

@@ -119,11 +119,30 @@ def _wait(capture: str, offset: int, kinds: set, name, timeout: float) -> dict:
         time.sleep(POLL_S)
 
 
+def _state_paths(values: list, work: str):
+    """Each state path as an absolute path strictly under the home and outside REA's work folder, or the refusal of the first that is not."""
+    home = os.path.normpath(os.path.expanduser("~"))
+    spellings = {home, os.path.realpath(home)}
+    paths = []
+    for value in values:
+        relative = value[2:] if value.startswith("~/") else value
+        path = os.path.normpath(os.path.join(home, relative))
+        if ".." in relative.split("/") or not any(path.startswith(spelling + os.sep) for spelling in spellings):
+            return None, f"The state path {value} is not under the computer's home, {home}."
+        if path == work or path.startswith(work + os.sep):
+            return None, f"The state path {value} is in REA's work folder {work}, which every capture leaves out."
+        paths.append(path)
+    return paths, None
+
+
 def start(arguments: dict) -> int:
     work, capture = os.path.abspath(arguments["work"]), os.path.abspath(arguments["capture"])
     rea = shutil.which("rea")
     if rea is None:
         return _say({"error": "REA is not installed in this computer; start the computer from a request, which installs it."})
+    state_paths, refusal = _state_paths(arguments.get("state_paths", []), work)
+    if refusal is not None:
+        return _say({"refused": refusal})
     if os.path.exists(capture):
         return _say({"error": f"the capture folder {capture} is already used"})
     apt = _apt(work, arguments.get("apt_timeout_s", 600))
@@ -137,6 +156,8 @@ def start(arguments: dict) -> int:
             "--output", os.path.join(capture, "capture"), "--exclude", work, "--json"]
     for value in arguments.get("arguments", []):
         argv += ["--argument", value]
+    for path in state_paths:
+        argv += ["--state-path", path]
     if arguments.get("package_file"):
         argv += ["--package-file", arguments["package_file"]]
     # Reading and writing, so the capture never reads the end of its input between requests.

@@ -6,6 +6,7 @@ import {
   projectAnalysisError,
   type AnalysisErrorProjection,
 } from "../../domain/analysisErrorProjection.js";
+import { STATE_PATH_INPUTS } from "../../domain/desktop/buildCapture.js";
 import {
   checkpointTaken,
   type DesktopApplicationCapture,
@@ -158,7 +159,7 @@ const limitationsFor = (
   );
   add(
     facts.unretained.length > 0,
-    "The application held files open in directories whose starting content was not retained; pass them with --state-path to retain it.",
+    `The application held files open in directories whose starting content was not retained; name them with ${STATE_PATH_INPUTS} to retain it.`,
   );
   return limitations;
 };

@@ -151,6 +151,15 @@ the first source that has the app:
    its window opens, the error gives its exit code and the end of its
    stderr, which may name what it lacks, such as a Java runtime: try
    another install source, or stop as for an install this flow cannot do.
+   - REA counts a file as the app's document only when the app's window
+     title shows its file name or `~/` path. When the title shows something
+     else, such as MuseScore's score title, pass the path you will save the
+     document at in `state_paths`, relative to the home:
+     `{"computer_id": ..., "state_paths": ["Documents/MuseScore3/Scores/Morning_Song.mscz"]}`.
+     It need not exist yet. Add the app's settings folder when its name
+     differs from the app's, such as `.config/MuseScore`, so the seed keeps
+     the dismissed first-run dialogs. Do not pass the document as a launch
+     argument to make REA see it: `state_paths` is the way.
 3. Make the seed through the app and save it from the app under
    `~/Documents`: build the document in the app, or write its source where
    the app edits its format as text, then save it again from the app. Make
@@ -179,6 +188,14 @@ the first source that has the app:
    `limitations`. When `draft` is null, read `draft_refusal` first: a
    missing `seed` or `end` checkpoint means capturing again on a new build
    computer, while a failed draft command names its own cause to fix.
+   When `draft.files` is empty, `draft.notes` says why:
+   - `no_change`: nothing was saved between `seed` and `end`. Capture again
+     on a new build computer, and save before marking `end`.
+   - `unowned_changes` with `no_document`: the app saved your document
+     where REA did not count it as the app's. Its `files` list what changed,
+     with their roles; the document is among them. Close the computer and
+     capture again on a new one with that path in `state_paths`; the export
+     refuses a check on a file outside the owned paths.
 
 ## Write the task
 
@@ -257,6 +274,14 @@ a refusal, fix the task and export again, into another folder if that one
 is no longer empty. Keep
 `seed_files`, `scrubbed_files`, `unscrubbed_files` and `limitations` for the
 report.
+
+The limitations name the folders the app wrote that the bundle neither owns
+nor seeds, such as `~/.config/MuseScore`, so the app starts without them:
+expect its first-run wizard, a tour or a "restore session?" question at every
+boot. If the witness shows one, capture again on a new build computer with
+those folders in `state_paths`, and dismiss the dialogs before `seed`. They
+also name seeded lock files, WebKit or Chromium storage and caches; when the
+witness's boot is clean, list them in the report.
 
 Keep the build computer open until the witness holds: a task fix exports
 again from it.

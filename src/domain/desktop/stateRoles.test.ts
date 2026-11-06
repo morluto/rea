@@ -34,6 +34,25 @@ describe("stateRole", () => {
     );
   });
 
+  it("makes a selected file a document, or the application's state under a hidden folder of the home", () => {
+    expect(
+      stateRole(["selected_path"], "Documents/Scores/Morning_Song.mscz"),
+    ).toBe("document");
+    expect(
+      stateRole(["selected_path"], ".config/MuseScore/MuseScore3.ini"),
+    ).toBe("application_state");
+    expect(stateRole(["selected_path"], ".museScorerc")).toBe(
+      "application_state",
+    );
+    expect(stateRole(["selected_path"], null)).toBe("document");
+    expect(
+      stateRole(
+        ["selected_path", "named_in_window_title"],
+        ".local/share/app/notes.txt",
+      ),
+    ).toBe("document");
+  });
+
   it("keeps a file in the desktop Trash shared, whatever else names it", () => {
     expect(
       stateRole([

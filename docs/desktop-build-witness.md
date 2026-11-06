@@ -48,6 +48,20 @@ See [desktop builds](https://github.com/morluto/rea/blob/main/.agents/skills/rev
    and, when its cleanup is incomplete, the run tokens and paths it left in
    `details.resources`. A checkpoint or stop that finds the capture ended
    reads its output the same way.
+
+   `state_paths` names files or folders in the computer's home that hold the
+   app's state, relative to the home, after `~/` or absolute under it, at
+   most 16; each becomes a `--state-path` of the capture, so it is retained
+   from the start and its files count as the app's even before they exist.
+   REA counts a file as a document only when an app window's title shows its
+   name or `~/` path, so name the file the app will save when its title shows
+   something else, as MuseScore's shows a score's title: a file outside
+   hidden folders becomes a document, which the bundle owns, seeds and opens
+   at launch, and one under a hidden folder such as `~/.config/MuseScore` the
+   app's own state. A path with `..`, or naming the home itself, is refused
+   before the computer is asked; the computer refuses an absolute path
+   outside its home, or in `~/.rea-build`, and starts nothing.
+
 3. Make the seed through the app with `act_on_build_computer`, saving it
    where the user keeps such files, such as `~/Documents`, then
    `mark_build_checkpoint` `seed`.
@@ -55,9 +69,15 @@ See [desktop builds](https://github.com/morluto/rea/blob/main/.agents/skills/rev
    `mark_build_checkpoint` `end`.
 5. `stop_build_capture`. The app is closed and the capture finishes. The
    result lists the checkpoints with their counts, the package and the
-   sources the capture found, its limitations and the draft: each file that
-   changed between `seed` and `end` with its net change, and suggested
-   checks with a placeholder prompt.
+   sources the capture found, its limitations and the draft: each file under
+   the paths the export owns that changed between `seed` and `end`, with its
+   net change, and suggested checks with a placeholder prompt. A draft with
+   no files says why in `notes`, each with a `code` and a `message`:
+   `no_change` when no file under the home changed between them;
+   `unowned_changes` when files changed but none under the owned paths,
+   listing up to five in `files` with their roles, desktop files last, and
+   counting the rest in `more`; and `no_document` when no file has the
+   document role. The last two point at `state_paths`.
 6. Write the task: its name, the prompt in the user's own words, and checks
    that hold after the change and not on the seed.
 7. `export_build_environment` with the task and a new or empty `directory`.
@@ -69,7 +89,13 @@ See [desktop builds](https://github.com/morluto/rea/blob/main/.agents/skills/rev
    data. When the seed holds exactly one document and the app's desktop entry
    takes files, the bundle's app opens that document at launch. A file moved
    to the desktop Trash is not seeded, and the export's limitations name what
-   the Trash held at `seed`. For a
+   the Trash held at `seed`. The limitations and the README also name the
+   folders where files changed during the capture that the bundle neither
+   owns nor seeds, such as settings that keep a first-run wizard away, up to
+   eight collapsed to their top folder, such as `~/.config/MuseScore`, and a
+   count of the rest; capture again with them in `state_paths` to own them.
+   They name seeded lock files, WebKit or Chromium storage and caches too,
+   which the app keeps for its own running. For a
    `.deb` app that no apt source the capture found offers, the export takes
    the request's URL with `--package-url`; one apt offers installs from apt. REA lists the bundle's files with their sizes
    and SHA-256 in the computer, into a file beside the bundle that it reads

@@ -2,6 +2,7 @@ import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { exportedStateFiles } from "../../domain/desktop/appExport.js";
 import { DRAFT_PROMPT } from "../../domain/desktop/appTask.js";
 import { draftTaskFiles } from "../../domain/desktop/appTaskDraft.js";
+import { draftNotes } from "../../domain/desktop/appTaskDraftNotes.js";
 import { desktopApplicationStateSchema } from "../../domain/desktop/desktopState.js";
 import { isWithinAny } from "../../domain/desktop/desktopStateDiff.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
@@ -53,6 +54,12 @@ const draft = async (
     (home) => isWithinAny(home, paths),
     ends,
   );
+  const notes = draftNotes(files, {
+    drafted: drafted.length,
+    owned: paths,
+    ends,
+    checkpoints,
+  });
   const environment = exportEnvironmentName(capture, undefined);
   const result = {
     application: {
@@ -82,6 +89,7 @@ const draft = async (
           ...check,
         })),
     },
+    notes,
   } as unknown as JsonValue;
   signal?.throwIfAborted();
   return createEvidence(undefined, DESKTOP_PROVIDER, {

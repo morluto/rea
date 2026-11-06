@@ -31,6 +31,8 @@ export const ENDS = [
 /** What REA's build controller answers a command with. */
 export const answerSchema = z.looseObject({
   error: z.string().optional(),
+  /** Why the controller refused a request before acting on it, such as a state path outside the home. */
+  refused: z.string().optional(),
   absent: z.boolean().optional(),
   line: z.string().optional(),
   exited: z.int().optional(),

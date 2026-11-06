@@ -17,6 +17,7 @@ import {
   taskVerifierArtifact,
 } from "../../domain/desktop/appTaskPython.js";
 import type { DesktopAppExportPlan } from "../../domain/desktop/appExport.js";
+import { STATE_PATH_INPUTS } from "../../domain/desktop/buildCapture.js";
 import {
   versionAt,
   type DesktopStatePath,
@@ -141,7 +142,7 @@ const targetProblem = (
   views: TaskViews,
 ): string | undefined => {
   if (!isWithinAny(check.file, target.paths))
-    return `names ${check.file}, which is not under the app's owned paths (${target.paths.join(", ") || "none"}); data/get serves only those`;
+    return `names ${check.file}, which is not under the app's owned paths (${target.paths.join(", ") || "none"}); data/get serves only those. For the bundle to own it, capture again naming it with ${STATE_PATH_INPUTS}`;
   // What the check compares and names; its field names, kind and id label it.
   const { id: _id, kind: _kind, ...fields } = check;
   for (const value of Object.values(fields).flatMap(valueStrings)) {

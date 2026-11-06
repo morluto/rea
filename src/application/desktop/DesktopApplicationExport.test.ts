@@ -312,6 +312,103 @@ describe("exportDesktopApplication and the desktop Trash", () => {
   });
 });
 
+describe("exportDesktopApplication of state it does not own or keeps for itself", () => {
+  it("names the folders the app wrote that the bundle neither owns nor seeds, and the lock files, web storage and caches it seeds", async () => {
+    const local = capture();
+    const [baseline, edited] = local.state.checkpoints;
+    if (baseline === undefined || edited === undefined)
+      throw new Error("the fixture has two checkpoints");
+    const text = "x\n";
+    // In the state directories from the start, so seeded.
+    const kept = [
+      `${HOME}/.config/notes/lockfile`,
+      `${HOME}/.local/share/notes/storage/salt`,
+      `${HOME}/.local/share/notes/hsts-storage.sqlite`,
+      `${HOME}/.config/notes/GPUCache/data_0`,
+    ];
+    // Written during the capture outside them; the font cache is the desktop's.
+    const written = [
+      `${HOME}/.config/MuseScore/MuseScore3.ini`,
+      `${HOME}/.local/share/MuseScore/MuseScore3/session`,
+      `${HOME}/.cache/fontconfig/cache-1`,
+    ];
+    const folder = await writeCaptureFolder(
+      {
+        ...local,
+        state: {
+          ...local.state,
+          checkpoints: [
+            {
+              ...baseline,
+              retained: [
+                ...baseline.retained,
+                ...kept.map((path) => retained(path, text)),
+              ],
+            },
+            {
+              ...edited,
+              changes: [
+                ...edited.changes,
+                ...written.map((path) => change(path, { after: text })),
+              ],
+              retained: [
+                ...edited.retained,
+                ...written.map((path) => retained(path, text)),
+              ],
+            },
+          ],
+        },
+      },
+      undefined,
+      [text],
+    );
+    const directory = join(
+      await createTestTempDirectory("desktop-export-"),
+      "bundle",
+    );
+
+    const result = await exportDesktopApplication(
+      { capture: folder, directory, name: undefined, tasks: [] },
+      readers,
+    );
+
+    if (result instanceof Error) throw result;
+    expect(result.normalized_result).toMatchObject({
+      seed_files: expect.arrayContaining(
+        kept.map((path) => path.slice(HOME.length + 1)),
+      ),
+    });
+    const unowned = result.limitations.find((limitation) =>
+      limitation.includes("~/.config/MuseScore"),
+    );
+    expect(unowned).toContain("~/.local/share/MuseScore");
+    expect(unowned).toContain("state_paths");
+    const runtime = result.limitations.find((limitation) =>
+      limitation.includes("~/.config/notes/lockfile"),
+    );
+    for (const path of [
+      "~/.local/share/notes/storage",
+      "~/.local/share/notes/hsts-storage.sqlite",
+      "~/.config/notes/GPUCache",
+    ])
+      expect(runtime).toContain(path);
+    // Desktop caches are left out, and paths collapse to the folder that holds them.
+    const listed = result.limitations.join("\n");
+    for (const path of ["fontconfig", "MuseScore3/session", "storage/salt"])
+      expect(listed).not.toContain(path);
+    const readme = await readFile(join(directory, "README.md"), "utf8");
+    for (const path of [
+      "~/.config/MuseScore",
+      "~/.local/share/MuseScore",
+      "~/.config/notes/lockfile",
+      "~/.local/share/notes/storage",
+      "~/.config/notes/GPUCache",
+    ])
+      expect(readme).toContain(`\`${path}\``);
+    expect(readme).toContain("`state_paths`");
+  });
+});
+
 const TYPORA_SOURCE = "https://downloads.typora.io/linux ./ Packages";
 const TYPORA_KEY = "typora public keyring\n";
 const VERIFIED_KEY: AptRepository["signing_key"] = {

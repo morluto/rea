@@ -13,8 +13,11 @@ import { createTestTempDirectory } from "./temporaryDirectory.js";
  * `FAKE_REA_APP_EXITS` names the folder it publishes at once, as when the
  * app exits before its window opens. `describe-...` and
  * `export-...` print outputs the real CLI wrote for that folder, and the
- * export copies the bundle it wrote. Each call notes its arguments, its
- * working folder and which AGENTENV_ variables and APT_CONFIG it saw.
+ * export copies the bundle it wrote. A capture given exactly the
+ * `--state-path` `FAKE_REA_STATE_PATH` publishes `FAKE_REA_SELECTED_CAPTURE`
+ * instead, and the draft and export of its folder print the outputs the real
+ * CLI wrote for that capture. Each call notes its arguments, its working
+ * folder and which AGENTENV_ variables and APT_CONFIG it saw.
  */
 const FAKE_REA = String.raw`
 import json
@@ -40,6 +43,19 @@ def progress(message, event=None):
 
 def option(args, name):
     return args[args.index(name) + 1] if name in args else None
+
+
+def options(args, name):
+    return [args[index + 1] for index, value in enumerate(args[:-1]) if value == name]
+
+
+SELECTED = ".fake-selected"
+
+
+def output(capture, name):
+    """The real CLI's output for the capture folder REA names: of the selected capture, or the prepared one."""
+    selected = os.path.exists(os.path.join(capture, SELECTED))
+    return os.environ[f"FAKE_REA_SELECTED_{name}" if selected else f"FAKE_REA_{name}"]
 
 
 command, args = sys.argv[1], sys.argv[2:]
@@ -87,22 +103,25 @@ if command == "capture-desktop-application":
                                                    "retained_files": 1, "retained_bytes": 5})
     note("stopped.jsonl", {"pid": os.getpid()})
     out = option(args, "--output")
-    shutil.copytree(os.environ["FAKE_REA_CAPTURE"], out)
+    named = os.environ.get("FAKE_REA_STATE_PATH")
+    selected = named is not None and options(args, "--state-path") == [named]
+    shutil.copytree(os.environ["FAKE_REA_SELECTED_CAPTURE" if selected else "FAKE_REA_CAPTURE"], out)
+    if selected:
+        open(os.path.join(out, SELECTED), "w").close()
     with open(os.path.join(out, "capture.json")) as handle:
         sys.stdout.write(handle.read())
 elif command == "describe-desktop-application-task":
-    with open(os.environ["FAKE_REA_DRAFT"]) as handle:
+    with open(output(args[0], "DRAFT")) as handle:
         sys.stdout.write(handle.read())
 elif command == "export-desktop-application":
     with open(option(args, "--task")) as handle:
         note("tasks.jsonl", json.load(handle))
-    exported = os.environ["FAKE_REA_EXPORT"]
-    with open(exported) as handle:
-        output = handle.read()
-    if "code" not in json.loads(output):
-        shutil.copytree(os.environ["FAKE_REA_BUNDLE"], args[1])
-    sys.stdout.write(output)
-    sys.exit(0 if "code" not in json.loads(output) else 1)
+    with open(output(args[0], "EXPORT")) as handle:
+        printed = handle.read()
+    if "code" not in json.loads(printed):
+        shutil.copytree(output(args[0], "BUNDLE"), args[1])
+    sys.stdout.write(printed)
+    sys.exit(0 if "code" not in json.loads(printed) else 1)
 else:
     sys.exit(f"unexpected command {command}")
 `;

@@ -10,6 +10,7 @@ import {
   PYTHON_MODULE_NAMES,
   PYTHON_READY_CHECK,
 } from "./appExportPython.js";
+import { unownedReadmeNotes, type RuntimeSeeds } from "./appExportUnowned.js";
 import type { DesktopApplicationCapture } from "./desktopCapture.js";
 import type { DesktopApplicationState } from "./desktopState.js";
 import { isWithinAny } from "./desktopStateDiff.js";
@@ -59,6 +60,10 @@ export interface DesktopAppExportPlan {
   readonly textSeeds: readonly string[];
   /** Files under the owned paths that existed before the capture but whose bytes were not retained. */
   readonly unseededFiles: readonly string[];
+  /** Folders under the home where files changed during the capture that the bundle neither owns nor seeds. */
+  readonly unownedFolders: readonly string[];
+  /** Seed files the app keeps for its own running: lock files, web engine storage and caches. */
+  readonly runtimeSeeds: readonly RuntimeSeeds[];
   /** `dconf dump` key file of the application's groups at the seed, or empty. */
   readonly dconf: string;
   readonly captureEvidenceId: string;
@@ -546,7 +551,7 @@ ${DESKTOP_EXPORT_FRAMEWORK_VERSION}.
       : `
 - Not seeded, because the capture did not retain their bytes at the seed: ${homeList(plan.unseededFiles)}.
   Capture again with \`--state-path\` naming them, or a larger \`--max-file-bytes\`, to include them.`
-  }
+  }${unownedReadmeNotes(plan.unownedFolders, plan.runtimeSeeds)}
 - \`tasks/smoke.json\` deploys the app.
 
 ${taskSection.length === 0 ? "Run it with `agent-env run <this folder>`." : "Run the task with `agent-env run <this folder>`, or only the deploy with `--task smoke`."}

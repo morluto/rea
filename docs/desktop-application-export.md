@@ -172,6 +172,21 @@ desktop Trash, `~/.local/share/Trash`, is never the application's, so a file
 the user moved there is neither owned nor seeded, even when a window title
 names it; a limitation lists the files the Trash held at the seed.
 
+Files that changed during the capture outside the owned paths are neither
+owned nor seeded, so the app starts without what it saved there: MuseScore
+keeps its settings in `~/.config/MuseScore`, which its name rules miss, and
+showed its first-run wizard on every boot. A limitation and the README name
+those folders, leaving out desktop services' files, each collapsed to its
+folder in `~/.config`, `~/.local/share`, `~/.local/state` or `~/.local`, the
+hidden folder of the home it lies in, or else its own folder, up to eight and
+a count of the rest. Capture again naming them with `--state-path`, or
+`state_paths` on a build computer, to own them. Seed files the app keeps for
+its own running are named too, collapsed to the folder that holds them: lock
+files (`lockfile`, `lock`, `*.lock`, `*.lck`, `SingletonLock`), WebKit or
+Chromium storage (such as `hsts-storage.sqlite`, `storage/`, `mediakeys/`,
+`Local Storage/`, `IndexedDB/`, `Cookies`) and caches (a folder whose name
+ends in `cache`); a stale one can change how the app starts.
+
 The application's dconf keys at the seed, if any, are written once when the
 app first starts, also for an application that owns no files, and the class adds
 `dconf-cli` to its apt packages for that. The server starts before the

@@ -28,6 +28,12 @@ and the recording and writes the record as Evidence.
   out of every walk. A start returns once the capture reports the window
   open; a refused or early-ended start stops the capture and reports its
   output.
+- `start_build_capture` takes `state_paths`, at most 16 files or folders in
+  the home, relative to it, after `~/` or absolute, without `..` and not the
+  home itself; the controller resolves each under the computer's home,
+  refuses one outside it or in `~/.rea-build` before launching anything, and
+  passes each to the capture as `--state-path`. A selected file is a
+  document, or the app's own state under a hidden folder of the home.
 - Acknowledgement: `capture-desktop-application` reports, beside each progress
   message, an `event`: `window_open`; `checkpoint` with its name, trigger,
   time, entries walked, changes and retained files and bytes, once it is
@@ -39,6 +45,9 @@ and the recording and writes the record as Evidence.
   capture's Evidence and, when `seed` and `end` were acknowledged, runs
   `describe-desktop-application-task --seed-checkpoint seed --end-checkpoint
   end` and returns the changed files, their net change and suggested checks.
+  A draft with no files carries `notes`, coded `no_change`,
+  `unowned_changes` (up to five changed home paths with their roles, and a
+  count of the rest) and `no_document`.
 - `export_build_environment` writes the agent's task under `~/.rea-build`,
   runs `export-desktop-application` with it and the same checkpoints into a
   new folder there, reports a refused task with the export's own reason,

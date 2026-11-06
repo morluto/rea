@@ -66,6 +66,15 @@ operation `describe_desktop_application_task` and predicate type
   check. Whitespace an app lays out between elements is not checked, and
   values that look like a time the app stamps, in ISO 8601 or as C's
   `asctime` writes it (`Thu Nov  5 09:20:31 2026`), are left out.
+- `notes`: why `files` is empty, or nothing when it is not. Each note has a
+  `code` and a `message`: `no_change` when no file under the home changed
+  between the two checkpoints; `unowned_changes` when files changed but none
+  under the owned paths, with up to five of them in `files`, each with its
+  home path and role (desktop services' files last), and how many more in
+  `more`; and `no_document` when no file has the document role, as when no
+  window title shows the file's name. A capture again with `--state-path`
+  naming the file, or `state_paths` on a build computer's
+  `start_build_capture`, makes it the app's.
 
 The suggestions are a starting point. Keep the ones that say what the user
 did; drop the ones that only follow from how the app saves its file. A LibreCAD
