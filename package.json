@@ -70,6 +70,7 @@
     "bridge/ghidra/ReaGhidraPrepareDol.java",
     "bridge/android/ReaJadxBridge.java",
     "bridge/mitmproxy/capture.py",
+    "bridge/agentenv/computer.py",
     "scripts/rea.mjs",
     "scripts/lib/cli-process-environment.mjs",
     "scripts/rea-android-workspace-guardian.mjs",
