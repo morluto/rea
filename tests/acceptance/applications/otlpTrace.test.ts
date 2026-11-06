@@ -123,3 +123,56 @@ cliTest(
     expect(result.exitCode).not.toBe(0);
   },
 );
+
+cliTest(
+  "reports every span that participates in a parent cycle",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-otlp-cycle-");
+    const path = join(root, "traces.json");
+    const span = (id: string, parent: string): unknown => ({
+      traceId: "1".repeat(32),
+      spanId: id.repeat(16),
+      parentSpanId: parent.repeat(16),
+      name: `span-${id}`,
+      startTimeUnixNano: "1000",
+      endTimeUnixNano: "2000",
+    });
+    await writeFile(
+      path,
+      JSON.stringify({
+        resourceSpans: [
+          {
+            resource: { attributes: [] },
+            scopeSpans: [
+              {
+                scope: { name: "cycle" },
+                spans: [span("2", "3"), span("3", "4"), span("4", "2")],
+              },
+            ],
+          },
+        ],
+      }),
+    );
+    const { call } = await connectLocalToolsMcp({
+      REA_MCP_TOOL_FAMILIES: "application,session",
+    });
+    const parent = parseEvidence(
+      (await call("inspect_otlp_trace", { path })).structuredContent,
+    );
+    const report = otlpTraceSchema.parse(parent.normalized_result);
+    const cycleDiagnostics = report.diagnostics.filter(
+      (entry) => entry.code === "cycle",
+    );
+    expect(cycleDiagnostics).toHaveLength(3);
+    for (const id of ["2", "3", "4"]) {
+      expect(
+        cycleDiagnostics.some((entry) => entry.message.includes(id.repeat(16))),
+      ).toBe(true);
+    }
+    const run = cli.sharedCliRun?.bind(cli) ?? cli.run.bind(cli);
+    const result = await run({
+      arguments: ["inspect-otlp-trace", path, "--json"],
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+  },
+);

@@ -588,6 +588,7 @@ export const parseOtlpTrace = (
   for (const start of walked.spans) {
     if (state.has(start.source_pointer)) continue;
     const path: string[] = [];
+    const pathSpans: OtlpSpan[] = [];
     let cursor: OtlpSpan | undefined = start;
     while (cursor !== undefined) {
       // Identity is the record, not the trace/span id: duplicate records that
@@ -596,12 +597,16 @@ export const parseOtlpTrace = (
       const cursorKey = cursor.source_pointer;
       const seenState = state.get(cursorKey);
       if (seenState === 1) {
-        cycles.add(cursor.span_id);
+        // The cycle is the portion of the path from the revisited record
+        // onward; report every member, not only the one that closed it.
+        for (const member of pathSpans.slice(path.indexOf(cursorKey)))
+          cycles.add(member.span_id);
         break;
       }
       if (seenState === 2) break;
       state.set(cursorKey, 1);
       path.push(cursorKey);
+      pathSpans.push(cursor);
       const parent = cursor.parent_span_id;
       if (parent === null || parent === "0000000000000000") break;
       if (parent === cursor.span_id) {
