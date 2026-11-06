@@ -71,10 +71,11 @@ See [desktop builds](https://github.com/morluto/rea/blob/main/.agents/skills/rev
    result lists the checkpoints with their counts, the package and the
    sources the capture found, its limitations and the draft: each file under
    the paths the export owns that changed between `seed` and `end`, with its
-   net change and its `values`, the values the change added, changed and
-   removed with what each was and became, at the pointer a check names it by;
-   suggested checks with a placeholder prompt; and `guards`, optional checks
-   that like siblings kept their seed values. The draft's
+   net change and, for XML files, archives, JSON and key files, its `values`,
+   the values the change added, changed and removed with what each was and
+   became, at the pointer a check names it by; suggested checks with a
+   placeholder prompt; and `guards`, optional checks that the rest kept its
+   seed values. The draft's
    [task section](desktop-application-tasks.md#describe-the-change) describes
    each. `notes`, each with a `code` and a `message`, say why a draft has no
    files: `no_change` when no file under the home changed between them;

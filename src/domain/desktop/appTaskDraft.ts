@@ -1,6 +1,7 @@
 import type { JsonValue } from "../jsonValue.js";
 import { isTimestamp, type DesktopTaskCheckInput } from "./appTask.js";
 import { fileNotes, type FileNote } from "./appTaskDraftFileNotes.js";
+import { lineGuards } from "./appTaskDraftLineGuards.js";
 import {
   ARCHIVE,
   innermost,
@@ -241,7 +242,13 @@ const suggestedChecks = (
     : [{ kind: "file_present", file }];
   const content: FileDraft =
     final.format === "text"
-      ? { suggested: textSuggestions(file, baseline, final), ...NO_VALUES }
+      ? {
+          ...NO_VALUES,
+          suggested: textSuggestions(file, baseline, final),
+          guards: baseline.present
+            ? lineGuards(file, linesOf(baseline), linesOf(final))
+            : [],
+        }
       : !baseline.present
         ? { suggested: [], ...NO_VALUES }
         : final.format === "sqlite"
@@ -312,7 +319,7 @@ export interface TaskDraftFile {
   readonly values: readonly DraftValue[];
   /** Whether a limit left values out. */
   readonly values_cut: boolean;
-  /** Checks that like siblings stay as they were, for an author to add by choice. */
+  /** Checks that the rest stays as it was, for an author to add by choice. */
   readonly guards: readonly Suggestion[];
   /** Why the file's suggestions are thin, when they are. */
   readonly notes: readonly FileNote[];

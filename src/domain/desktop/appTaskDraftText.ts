@@ -1,7 +1,9 @@
 import type { JsonValue } from "../jsonValue.js";
-import { isTimestamp, type DesktopTaskCheckInput } from "./appTask.js";
+import type { DesktopTaskCheckInput } from "./appTask.js";
 import { elementText, isXmlElement } from "./appTaskChecks.js";
+import { isStamp } from "./appTaskDraftNoise.js";
 import { valueEqualsCheck } from "./appTaskDraftScalars.js";
+import { addedTextChecks } from "./appTaskDraftTextAdded.js";
 import { rankAttributes } from "./attributeRank.js";
 import type { DesktopStateDifference } from "./stateChanges.js";
 import { resolvePointer } from "./viewPointer.js";
@@ -22,11 +24,15 @@ export interface TextPlacement {
   /** The pointer a check names an element by, or undefined when the final view cannot decide a check there. */
   readonly name: (pointer: string) => string | undefined;
   readonly limit: { readonly suggestions: number; readonly chars: number };
+  /** Whether a change at a pointer is noise, which never makes an ancestor's whole text a check. */
+  readonly noise: (pointer: string) => boolean;
 }
 
 /** Text checks for the elements whose text changed, and the pointers those checks make redundant: text and whole runs in them, or an element added whole checked itself, not an attribute or name of an element both ends hold. */
 export interface WholeTextSuggestions {
   readonly suggestions: readonly DesktopTaskCheckInput[];
+  /** Checks that text an addition kept is still there, for an author to add by choice. */
+  readonly guards: readonly DesktopTaskCheckInput[];
   /** Elements whose text changed that no check took, because every place for one held more text than the limit. */
   readonly long: readonly string[];
   readonly covers: (pointer: string) => boolean;
@@ -136,7 +142,7 @@ const byOwnAttribute = (element: string, ends: Ends): Candidate | undefined => {
       attributesOf(before)[key] !== value ||
       /[=[\]]/u.test(key) ||
       value.includes("][") ||
-      isTimestamp(value)
+      isStamp(value)
     )
       continue;
     const selector = `[name=${after.name}][@${key}=${value}]`;
@@ -200,6 +206,30 @@ const outsideRuns = (pointer: string, ends: Ends): readonly Candidate[] => {
 };
 
 /**
+ * Where a text check goes for an element only position reaches, as a
+ * spreadsheet cell in a row no attribute names: the ancestor above the
+ * outermost step by position, as the table holding the rows, by an attribute
+ * of its own that names it alone, as `[@table:name=Q1 Sales]`, and otherwise
+ * as the diff names it; none when there is no such step or that ancestor is
+ * the document's root.
+ */
+const abovePosition = (pointer: string, ends: Ends): readonly Candidate[] => {
+  const segments = pointer.split("/");
+  const step = segments.findIndex(
+    (segment, index) =>
+      segments[index - 1] === "children" && /^\d+$/u.test(segment),
+  );
+  if (step < 0) return [];
+  const element = segments.slice(0, step - 1).join("/");
+  if (parentOf(element) === undefined) return [];
+  const own = byOwnAttribute(element, ends);
+  return [
+    ...(own === undefined ? [] : [own]),
+    { element, pointer: element, identifier: false },
+  ];
+};
+
+/**
  * The nearest ancestor both ends hold of an element added or removed whole,
  * where its text is checked; none when that is the document's root holding no
  * text of its own, whose whole text a check would read instead.
@@ -214,10 +244,11 @@ const keptAncestor = (pointer: string, ends: Ends): string | undefined => {
     : parent;
 };
 
-/** A text check, and the element it reads as the diff names it. */
+/** A text check, the element it reads as the diff names it, and guards of the text it kept. */
 interface Placed {
   readonly element: string;
   readonly check: DesktopTaskCheckInput;
+  readonly guards: readonly DesktopTaskCheckInput[];
 }
 
 /** What text checks read: the file, its two ends, and where checks go. */
@@ -230,7 +261,8 @@ interface TextContext {
 /**
  * The check of an element's whole text: a decimal held as the element's one
  * text node, as a spreadsheet keeps a cell's number, by its value within a
- * tolerance, so another spelling of the number still passes; any other text
+ * tolerance, so another spelling of the number still passes; text that grew
+ * by whole lines by those lines, with guards of what it kept; any other text
  * whole.
  */
 const wholeTextCheck = (
@@ -238,14 +270,21 @@ const wholeTextCheck = (
   pointer: string,
   now: { readonly value: string; readonly children: readonly JsonValue[] },
   before: string | undefined,
-): DesktopTaskCheckInput => {
+): Pick<Placed, "check" | "guards"> => {
   const { value, children } = now;
   const [only] = children;
   if (children.length === 1 && typeof only === "string") {
     const check = valueEqualsCheck(file, `${pointer}/children/0`, only, before);
-    if ("tolerance" in check) return check;
+    if ("tolerance" in check) return { check, guards: [] };
   }
-  return { kind: "text_equals", file, pointer, value };
+  return (
+    (before === undefined
+      ? undefined
+      : addedTextChecks(file, pointer, before, value)) ?? {
+      check: { kind: "text_equals", file, pointer, value },
+      guards: [],
+    }
+  );
 };
 
 /** The element a candidate names in the final view, whole, at the pointer `name` gives it. */
@@ -281,10 +320,10 @@ const textCheck = (
   const old = isXmlElement(before) ? elementText(before) : undefined;
   return value !== old &&
     value.length <= context.place.limit.chars &&
-    !isTimestamp(value)
+    !isStamp(value)
     ? {
         element: candidate.element,
-        check: wholeTextCheck(
+        ...wholeTextCheck(
           context.file,
           pointer,
           { value, children: now.children },
@@ -325,12 +364,13 @@ export const wholeTextSuggestions = (
   const note = (pointer: string, view: JsonValue | null, whole = false) => {
     const value = resolvePointer(view, pointer);
     const parent = parentOf(pointer);
+    // Noise, such as a time the app stamps, never makes its ancestor's whole text a check.
+    if (place.noise(pointer)) return;
     if (typeof value === "string") {
-      // A time the app stamps never makes its ancestor's whole text a check.
       if (
         parent !== undefined &&
         !isWhitespace(value) &&
-        !isTimestamp(value) &&
+        !isStamp(value) &&
         place.inTree(parent)
       )
         holders.add(parent);
@@ -363,7 +403,10 @@ export const wholeTextSuggestions = (
   const long = new Set<string>();
   const climb = (holder: string) => {
     if (!climbs.has(holder)) {
-      const candidates = outsideRuns(holder, ends);
+      const candidates = [
+        ...outsideRuns(holder, ends),
+        ...abovePosition(holder, ends),
+      ];
       const found = candidates.find(
         (candidate) => check(candidate) !== undefined,
       );
@@ -398,6 +441,7 @@ export const wholeTextSuggestions = (
     .slice(0, place.limit.suggestions);
   return {
     suggestions: suggested.map(({ check }) => check),
+    guards: suggested.flatMap(({ guards }) => guards),
     long: [...long],
     covers: (pointer) => {
       if (

@@ -53,7 +53,7 @@ export const draftValueSchema = z.strictObject({
     .enum(VALUE_NOTES)
     .optional()
     .describe(
-      "by_position: no selector names it, so no check can use the pointer; view_state, renumbered, volatile or timestamp: noise the app writes, left out of the suggested checks.",
+      "by_position: no selector names it, so no check can use the pointer; view_state, renumbered, volatile, timestamp or upkeep: noise the app writes, left out of the suggested checks.",
     ),
   refers_to: z
     .array(

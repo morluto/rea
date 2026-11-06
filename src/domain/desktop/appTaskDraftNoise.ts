@@ -1,7 +1,8 @@
 import type { JsonValue } from "../jsonValue.js";
 import { isTimestamp } from "./appTask.js";
 import { isXmlElement } from "./appTaskChecks.js";
-import { isIdentifyingAttribute } from "./attributeRank.js";
+import { isIdentifyingAttribute, isNameLikeKey } from "./attributeRank.js";
+import { isPositionalKey, positionalKeys } from "./positionalKeys.js";
 import type { DesktopStateDifference } from "./stateChanges.js";
 import { resolvePointer } from "./viewPointer.js";
 
@@ -11,15 +12,35 @@ export const NOISE_REASONS = [
   "renumbered",
   "volatile",
   "timestamp",
+  "upkeep",
 ] as const;
 export type NoiseReason = (typeof NOISE_REASONS)[number];
 
-/** Words in a tag or attribute name for how the app was showing the document: its cursor, selection, scroll, zoom, windows, or a save's history. */
+/**
+ * Words in a name for how the app showed, printed or kept the document rather
+ * than what it holds: its cursor, selection, scroll, zoom, windows, view and
+ * configuration settings, printer, and a save's history, edit time and count,
+ * generator and statistics.
+ */
 const VIEW_STATE =
-  /cursor|selection|selected|scroll|zoom|viewport|window|splitter|toplevel|topleft|uidata|namedview|history|edit-?time|last-?saved/iu;
+  /cursor|selection|selected|scroll|zoom|viewport|window|splitter|toplevel|topleft|uidata|namedview|view-?settings|config(?:uration)?-?settings|printer|history|edit(?:ing)?-?(?:time|duration|cycles?)|last-?saved|generator|document-?statistic/iu;
 
 /** Whether a tag or attribute name is about how the app showed the document rather than what it holds. */
 export const isViewStateName = (name: string): boolean => VIEW_STATE.test(name);
+
+/**
+ * Whether a name-like attribute's value names view state: one token of two or
+ * more words, as LibreOffice's `CursorPositionX` or `ooo:view-settings`, never
+ * a phrase a user wrote, such as a task called `Window cleaning`.
+ */
+const isViewStateValue = (value: string): boolean =>
+  /^[\p{L}\d]+(?:[-_:.][\p{L}\d]+)*$/u.test(value) &&
+  (/[-_:.]/u.test(value) || /\p{Ll}\p{Lu}/u.test(value)) &&
+  VIEW_STATE.test(value);
+
+/** An attribute that says what its element is called, whose value may name view state: name-like, or a `key`. */
+const namesElement = (key: string) =>
+  isNameLikeKey(key) || /^(?:[^:]*:)?key$/iu.test(key);
 
 /** An attribute an app renumbers as it saves: a generated id such as Gnumeric's `ExprID` or Scribus's `ItemID`, or LibreOffice's `rsid`. */
 export const isRenumberedKey = (key: string): boolean => {
@@ -42,6 +63,22 @@ export const isVolatileValue = (value: string): boolean => {
   return seconds > EPOCH_RANGE[0] && seconds < EPOCH_RANGE[1];
 };
 
+/** A time of day to the second, as LibreOffice stamps a header's `text:time-value` with `05:16:21.675302540`. */
+const TIME_OF_DAY = /^\d{2}:\d{2}:\d{2}(?:[.,]\d+)?(?:Z|[+-]\d{2}:?\d{2})?$/u;
+
+/** Whether a value is a time an app stamps: a date and time `isTimestamp` reads, or a time of day to the second. */
+export const isStamp = (value: JsonValue): boolean =>
+  isTimestamp(value) ||
+  (typeof value === "string" && TIME_OF_DAY.test(value.trim()));
+
+/** An ISO 8601 duration, as ODF's `meta:editing-duration` `PT2M2S`. */
+const DURATION =
+  /^P(?=\d|T\d)(?:\d+Y)?(?:\d+M)?(?:\d+W)?(?:\d+D)?(?:T(?=\d)(?:\d+H)?(?:\d+M)?(?:\d+(?:[.,]\d+)?S)?)?$/u;
+/** A document's metadata element, as ODF's `office:meta` or AbiWord's `metadata`. */
+const META = /^(?:[^:]*:)?meta(?:data)?$/iu;
+/** A name for a count the app keeps, as `meta:editing-cycles` or `meta:cell-count`. */
+const COUNTER = /count|cycles?|revision/iu;
+
 /** The key a pointer names an attribute by, unescaped; undefined when it names no attribute. */
 export const attributeKeyOf = (pointer: string): string | undefined => {
   const segments = pointer.split("/");
@@ -54,20 +91,38 @@ export const attributeKeyOf = (pointer: string): string | undefined => {
 const ownerOfAttribute = (pointer: string) =>
   pointer.split("/").slice(0, -2).join("/");
 
-/** The tag names of the elements a pointer steps into through `children`, read from the view. */
-const tagsAlong = (view: JsonValue | null, pointer: string): string[] => {
+type Element = Record<string, JsonValue> & {
+  name: string;
+  children: JsonValue[];
+};
+
+const isRecord = (
+  value: JsonValue | undefined,
+): value is Record<string, JsonValue> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+/** The elements a pointer steps into through `children`, read from the view, outermost first. */
+const elementsAlong = (view: JsonValue | null, pointer: string): Element[] => {
   const segments = pointer.split("/");
-  const tags: string[] = [];
+  const elements: Element[] = [];
   for (let index = 2; index < segments.length; index += 1) {
     if (segments[index - 1] !== "children") continue;
     const element = resolvePointer(
       view,
       segments.slice(0, index + 1).join("/"),
     );
-    if (isXmlElement(element)) tags.push(element.name);
+    if (isXmlElement(element)) elements.push(element);
   }
-  return tags;
+  return elements;
 };
+
+/** Whether an element is view state by its tag, or by a name-like attribute naming view state, as `[@config:name=CursorPositionX]`. */
+const showsView = (element: Element) =>
+  isViewStateName(element.name) ||
+  Object.entries(isRecord(element.attributes) ? element.attributes : {}).some(
+    ([key, value]) =>
+      typeof value === "string" && namesElement(key) && isViewStateValue(value),
+  );
 
 /** A file's views at its two ends. */
 interface Ends {
@@ -75,15 +130,100 @@ interface Ends {
   readonly final: JsonValue | null;
 }
 
+/** Whether a duration or a count under a document's metadata, which the app keeps as it saves. */
+const metadataCount = (
+  elements: readonly Element[],
+  key: string | undefined,
+  value: JsonValue | undefined,
+) => {
+  if (
+    typeof value !== "string" ||
+    !elements.some(({ name }) => META.test(name))
+  )
+    return false;
+  if (DURATION.test(value.trim())) return true;
+  const own = key ?? elements.at(-1)?.name ?? "";
+  return /^\d+$/u.test(value.trim()) && COUNTER.test(own);
+};
+
+/** Whether an identifier change is one the app made by numbering a list by position, as Planner's task ids shift after an insertion. */
+const positionalRenumbering = (ends: Ends) => {
+  const lists = new Map<string, ReadonlySet<string>>();
+  return (pointer: string, key: string) => {
+    const owner = ownerOfAttribute(pointer);
+    const list = owner.split("/").slice(0, -1).join("/");
+    const element =
+      resolvePointer(ends.final, owner) ?? resolvePointer(ends.baseline, owner);
+    if (!list.endsWith("/children") || !isXmlElement(element)) return false;
+    let keys = lists.get(list);
+    if (keys === undefined) {
+      const newer = resolvePointer(ends.final, list);
+      const older = resolvePointer(ends.baseline, list);
+      keys =
+        Array.isArray(newer) && Array.isArray(older)
+          ? positionalKeys(newer, older)
+          : new Set();
+      lists.set(list, keys);
+    }
+    return isPositionalKey(keys, element.name, key);
+  };
+};
+
+/** A pointer into an archive entry's view: the entry's part of it, as `/entries/[name=styles.xml]/view/`. */
+const ENTRY_VIEW = /^\/entries\/[^/]+\/view\//u;
+
 /**
- * Why each pointer into a document is noise, or undefined when it is not: a
- * tag or attribute on its way named for view state; an attribute an app
- * renumbers, or anything inside an element both ends hold whose renumbered
- * attribute changed, as Gnumeric empties a formula cell whose shared
- * expression it renumbers; a UUID or epoch time; a timestamp.
+ * Attributes an archive entry's elements only gained, as LibreOffice fills in
+ * `loext:tab-stop-distance` across `styles.xml` on save, while another entry
+ * holds the edit: whether each pointer is one.
+ */
+const upkeepOf = (
+  change: Pick<DesktopStateDifference, "added" | "changed" | "removed">,
+  ends: Ends,
+  noise: (pointer: string) => NoiseReason | undefined,
+) => {
+  const added = new Set(change.added);
+  const gained = (pointer: string) =>
+    added.has(pointer) &&
+    attributeKeyOf(pointer) !== undefined &&
+    [ends.baseline, ends.final].every((view) =>
+      isXmlElement(resolvePointer(view, ownerOfAttribute(pointer))),
+    );
+  const edited = new Set<string>();
+  const filled = new Set<string>();
+  for (const pointer of [
+    ...change.added,
+    ...change.changed,
+    ...change.removed,
+  ]) {
+    const [entry] = ENTRY_VIEW.exec(pointer) ?? [];
+    if (entry !== undefined && noise(pointer) === undefined)
+      (gained(pointer) ? filled : edited).add(entry);
+  }
+  return (pointer: string) => {
+    const [entry] = ENTRY_VIEW.exec(pointer) ?? [];
+    return (
+      edited.size > 0 &&
+      entry !== undefined &&
+      filled.has(entry) &&
+      !edited.has(entry) &&
+      gained(pointer)
+    );
+  };
+};
+
+/**
+ * Why each pointer into a file is noise, or undefined when it is not: a tag,
+ * attribute or name-like attribute value on its way naming view state, as
+ * `[@config:name=CursorPositionX]`; an attribute an app renumbers, an
+ * identifier it numbers by position, or anything inside an element both ends
+ * hold whose renumbered attribute changed, as Gnumeric empties a formula cell
+ * whose shared expression it renumbers; a UUID or epoch time, or a duration or
+ * count under the document's metadata; a time the app stamps; an attribute an
+ * archive entry only gained while another entry holds the edit.
  */
 export const changeNoise = (
-  change: Pick<DesktopStateDifference, "changed">,
+  change: Pick<DesktopStateDifference, "added" | "changed" | "removed">,
   ends: Ends,
 ): ((pointer: string) => NoiseReason | undefined) => {
   const renumbered = change.changed.flatMap((pointer) => {
@@ -92,26 +232,37 @@ export const changeNoise = (
       ? [ownerOfAttribute(pointer)]
       : [];
   });
-  return (pointer) => {
+  const byPosition = positionalRenumbering(ends);
+  const known = new Map<string, NoiseReason | undefined>();
+  const base = (pointer: string): NoiseReason | undefined => {
+    if (known.has(pointer)) return known.get(pointer);
     const view =
       resolvePointer(ends.final, pointer) === undefined
         ? ends.baseline
         : ends.final;
     const key = attributeKeyOf(pointer);
-    if (
-      tagsAlong(view, pointer).some(isViewStateName) ||
-      (key !== undefined && isViewStateName(key))
-    )
-      return "view_state";
-    if (
-      (key !== undefined && isRenumberedKey(key)) ||
-      renumbered.some(
-        (element) => pointer === element || pointer.startsWith(`${element}/`),
-      )
-    )
-      return "renumbered";
+    const elements = elementsAlong(view, pointer);
     const value = resolvePointer(view, pointer);
-    if (typeof value === "string" && isVolatileValue(value)) return "volatile";
-    return isTimestamp(value ?? null) ? "timestamp" : undefined;
+    const reason: NoiseReason | undefined =
+      elements.some(showsView) || (key !== undefined && isViewStateName(key))
+        ? "view_state"
+        : (key !== undefined &&
+              (isRenumberedKey(key) ||
+                (isIdentifyingAttribute(key) && byPosition(pointer, key)))) ||
+            renumbered.some(
+              (element) =>
+                pointer === element || pointer.startsWith(`${element}/`),
+            )
+          ? "renumbered"
+          : (typeof value === "string" && isVolatileValue(value)) ||
+              metadataCount(elements, key, value)
+            ? "volatile"
+            : isStamp(value ?? null)
+              ? "timestamp"
+              : undefined;
+    known.set(pointer, reason);
+    return reason;
   };
+  const upkeep = upkeepOf(change, ends, base);
+  return (pointer) => base(pointer) ?? (upkeep(pointer) ? "upkeep" : undefined);
 };

@@ -1,5 +1,5 @@
 import type { JsonValue } from "../jsonValue.js";
-import { isTimestamp, type DesktopTaskCheckInput } from "./appTask.js";
+import type { DesktopTaskCheckInput } from "./appTask.js";
 import { isXmlElement } from "./appTaskChecks.js";
 import {
   attributeChecks,
@@ -7,7 +7,7 @@ import {
   type AddedContext,
 } from "./appTaskDraftAdded.js";
 import { draftGuards } from "./appTaskDraftGuards.js";
-import { changeNoise, type NoiseReason } from "./appTaskDraftNoise.js";
+import { changeNoise, isStamp, type NoiseReason } from "./appTaskDraftNoise.js";
 import { valueEqualsCheck } from "./appTaskDraftScalars.js";
 import {
   wholeTextSuggestions,
@@ -190,30 +190,37 @@ export interface NamedDraft {
   readonly facts: NamedFacts;
 }
 
-/** Noise checks kept when a file's change is nothing else, so an author still sees one. */
+/** Noise checks a document keeps when its change is nothing else, so an author still sees one. */
 const MAX_FLAGGED = 3;
+/** Guards a file's draft offers. */
+const MAX_GUARDS = 4;
 
-/** The draft's options: its limits, and whether noise is demoted, as it is in a document. */
+/** The draft's options: its limits, and whether the file is a document, which keeps fewer noise checks than the app's own state. */
 export interface NamedOptions {
   readonly limit: { readonly suggestions: number; readonly chars: number };
   readonly document: boolean;
 }
 
-/** What one pass over the named diff reads: the file, its ends, where checks go, the limits and the text checks already placed. */
+/** What one pass over the named diff reads: the file, its ends, where checks go, the limits, the text checks already placed and noise. */
 interface CollectContext {
   readonly file: string;
   readonly ends: AddedContext["ends"];
   readonly tree: CheckTree;
   readonly limit: NamedOptions["limit"];
   readonly texts: WholeTextSuggestions;
+  readonly noise: (pointer: string) => NoiseReason | undefined;
 }
 
-/** The checks a pass gathers, elements' apart from values', and the changes it left to position. */
+/** The checks a pass gathers, elements' apart from values', and the changes it left to position, `real` those that are no noise. */
 interface Collected {
   readonly context: CollectContext;
   readonly elements: Suggestion[];
   readonly values: Suggestion[];
-  readonly positional: { count: number; readonly tags: Set<string> };
+  readonly positional: {
+    count: number;
+    real: number;
+    readonly tags: Set<string>;
+  };
 }
 
 const named = (
@@ -234,6 +241,8 @@ const unnamed = (
   )
     return;
   collected.positional.count += 1;
+  if (collected.context.noise(pointer) === undefined)
+    collected.positional.real += 1;
   for (const tag of positionalTags(view, pointer))
     collected.positional.tags.add(tag);
 };
@@ -259,7 +268,7 @@ const equals = (
     texts.covers(pointer) ||
     value === undefined ||
     (isRecord(value) && Object.keys(value).length > 0) ||
-    isTimestamp(value) ||
+    isStamp(value) ||
     isLayoutText(tree, ends.final, pointer, value)
   )
     return;
@@ -375,7 +384,7 @@ const collectChecks = (
     context,
     elements: [],
     values: [],
-    positional: { count: 0, tags: new Set() },
+    positional: { count: 0, real: 0, tags: new Set() },
   };
   const { ends, tree } = context;
   for (const pointer of change.added) {
@@ -397,11 +406,13 @@ const collectChecks = (
  * removed. An element added to a list is checked by its own attributes, a
  * record only position names by its new fields, a decimal by its number. A
  * JSON value or an entry added whole is checked through its members. Nothing
- * goes through an object or array by position. In a document, noise (view
- * state, renumbered ids, volatile values) leaves the suggestions when anything
- * else is there, and up to three stay, flagged, when it is all there is.
- * Beside them: the values the change added, changed and removed, and guards
- * that like siblings stay as they were.
+ * goes through an object or array by position. Noise (view state, renumbered
+ * ids, volatile values, times, upkeep) leaves the suggestions when anything
+ * else changed, a change only position reaches included; when noise is all
+ * there is, it stays, flagged: up to three in a document, as many as fit in
+ * the app's own state, where a view setting may be the task. Beside them: the
+ * values the change added, changed and removed, and guards that the rest
+ * stays as it was.
  */
 export const namedDraft = (
   file: string,
@@ -410,29 +421,28 @@ export const namedDraft = (
   options: NamedOptions,
 ): NamedDraft => {
   const change = diffNamedMembers(ends.baseline, ends.final);
-  const noise: (pointer: string) => NoiseReason | undefined = options.document
-    ? changeNoise(change, ends)
-    : () => undefined;
+  const noise = changeNoise(change, ends);
+  const named = (view: JsonValue | null, pointer: string) =>
+    byName(view, pointer, tree) && !tree.leavesOut(view, pointer);
   const texts = wholeTextSuggestions(file, change, ends, {
     limit: options.limit,
     inTree: (pointer) =>
       tree.xml(ends.final, pointer) &&
       tree.root(ends.final, pointer) === pointer,
-    name: (pointer) =>
-      byName(ends.final, pointer, tree) && !tree.leavesOut(ends.final, pointer)
-        ? pointer
-        : undefined,
+    name: (pointer) => (named(ends.final, pointer) ? pointer : undefined),
+    noise: (pointer) => noise(pointer) !== undefined,
   });
   const checks = collectChecks(
-    { file, ends, tree, limit: options.limit, texts },
+    { file, ends, tree, limit: options.limit, texts, noise },
     change,
   );
   const all = [...texts.suggestions, ...checks.elements, ...checks.values];
   const noisy = (check: Suggestion) =>
     "pointer" in check && noise(check.pointer) !== undefined;
   const clean = all.filter((check) => !noisy(check));
+  const edited = clean.length > 0 || checks.positional.real > 0;
   const suggested = (
-    clean.length > 0 ? clean : all.slice(0, MAX_FLAGGED)
+    edited ? clean : options.document ? all.slice(0, MAX_FLAGGED) : all
   ).slice(0, options.limit.suggestions);
   const listed = [...change.added, ...change.changed, ...change.removed];
   const { values, cut } = draftValues(change, {
@@ -440,36 +450,37 @@ export const namedDraft = (
     listed: tree.listed,
     noise,
   });
+  const guards = edited
+    ? [
+        ...texts.guards,
+        ...draftGuards(
+          {
+            file,
+            ends,
+            named,
+            noisy: (pointer) => noise(pointer) !== undefined,
+            chars: options.limit.chars,
+          },
+          suggested,
+        ),
+      ].slice(0, MAX_GUARDS)
+    : [];
   return {
     suggested,
     values,
     valuesCut: cut,
-    guards:
-      clean.length === 0
-        ? []
-        : draftGuards(
-            {
-              file,
-              ends,
-              named: (view, pointer) =>
-                byName(view, pointer, tree) && !tree.leavesOut(view, pointer),
-              noisy: (pointer) => noise(pointer) !== undefined,
-              chars: options.limit.chars,
-            },
-            suggested,
-          ),
+    guards,
     facts: {
       positional: checks.positional.count,
       positionalTags: [...checks.positional.tags],
       long: texts.long,
       changes: listed.length,
       noise: listed.filter((pointer) => noise(pointer) !== undefined).length,
-      flagged:
-        clean.length > 0
-          ? []
-          : suggested.flatMap((check) =>
-              "pointer" in check ? [check.pointer] : [],
-            ),
+      flagged: edited
+        ? []
+        : suggested.flatMap((check) =>
+            "pointer" in check ? [check.pointer] : [],
+          ),
     },
   };
 };
