@@ -13,7 +13,11 @@ import {
   runOwnedCommand,
   prepareOwnedCommand,
 } from "../process/OwnedCommand.js";
-import type { ProviderProcessSnapshot } from "../process/ProviderProcess.js";
+import {
+  prepareOwnedProviderProcess,
+  type OwnedProviderProcessSpawnOptions,
+  type ProviderProcessSnapshot,
+} from "../process/ProviderProcess.js";
 import { boundedUtf8Text } from "../process/boundedUtf8Text.js";
 import { constants, accessSync, statSync } from "node:fs";
 import { posix, win32 } from "node:path";
@@ -150,23 +154,36 @@ const observeGhidraJava = async (
     | Result<GhidraJavaObservation, GhidraJavaProbeFailure>
     | undefined;
   try {
-    await prepareOwnedCommand(options.signal);
+    const runId = randomUUID();
+    const spawn: OwnedProviderProcessSpawnOptions = {
+      command,
+      arguments: [
+        "-Dstdout.encoding=UTF-8",
+        "-Dstderr.encoding=UTF-8",
+        "-Dsun.stdout.encoding=UTF-8",
+        "-Dsun.stderr.encoding=UTF-8",
+        "-XX:-UsePerfData",
+        "-XshowSettings:properties",
+        "-version",
+      ],
+      runId,
+      expectedCommand: null,
+      hostEnvironment: environment,
+      sweepTokenOwnedProcesses: true,
+    };
+    const preparedOwnership =
+      options.launcher === undefined
+        ? await prepareOwnedProviderProcess({
+            ...spawn,
+            ...(options.signal === undefined ? {} : { signal: options.signal }),
+          })
+        : undefined;
+    if (options.launcher !== undefined)
+      await prepareOwnedCommand(options.signal);
     await runOwnedCommand(
       {
-        command,
-        arguments: [
-          "-Dstdout.encoding=UTF-8",
-          "-Dstderr.encoding=UTF-8",
-          "-Dsun.stdout.encoding=UTF-8",
-          "-Dsun.stderr.encoding=UTF-8",
-          "-XX:-UsePerfData",
-          "-XshowSettings:properties",
-          "-version",
-        ],
-        runId: randomUUID(),
-        expectedCommand: null,
-        hostEnvironment: environment,
-        sweepTokenOwnedProcesses: true,
+        ...spawn,
+        ...(preparedOwnership === undefined ? {} : { preparedOwnership }),
       },
       {
         timeoutMs: options.timeoutMs ?? 5000,

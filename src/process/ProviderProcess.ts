@@ -52,6 +52,16 @@ export interface OwnedProviderProcessSpawnOptions {
   readonly sweepTokenOwnedProcesses?: boolean;
   /** Cancels native ownership preparation before provider process creation. */
   readonly signal?: AbortSignal;
+  /** Native ownership state prepared before a short command deadline begins. */
+  readonly preparedOwnership?: PreparedOwnedProviderProcess;
+}
+
+/** Native ownership state captured before provider execution is timed. */
+export interface PreparedOwnedProviderProcess {
+  readonly runId: string;
+  readonly platform: NodeJS.Platform;
+  readonly sweepTokenOwnedProcesses: boolean;
+  readonly captureBaseline?: ProcessOwnershipBaseline;
 }
 
 /** Spawned process paired with the identity proof required for group cleanup. */
@@ -244,14 +254,15 @@ const incompleteCleanup = (
 });
 
 /**
- * Spawn a provider in an owned Windows job or dedicated POSIX process group.
+ * Prepare native ownership state before a short provider command deadline.
  *
- * The caller remains responsible for persisting any ownership manifest and for
- * selecting provider-specific command arguments or environment values.
+ * The helper compiler and the prelaunch identity baseline are bounded by their
+ * own caller cancellation and helper limits; the provider execution deadline
+ * begins only after this state is attached to the launch.
  */
-export const spawnOwnedProviderProcess = async (
+export const prepareOwnedProviderProcess = async (
   options: OwnedProviderProcessSpawnOptions,
-): Promise<SpawnedOwnedProviderProcess> => {
+): Promise<PreparedOwnedProviderProcess> => {
   options.signal?.throwIfAborted();
   await prepareProcessOwnershipInspection(options.signal);
   options.signal?.throwIfAborted();
@@ -265,6 +276,52 @@ export const spawnOwnedProviderProcess = async (
       throw new Error("Process ownership baseline is unavailable on this host");
     captureBaseline = await capture(options.signal);
     options.signal?.throwIfAborted();
+  }
+  return {
+    runId: options.runId,
+    platform,
+    sweepTokenOwnedProcesses,
+    ...(captureBaseline === undefined ? {} : { captureBaseline }),
+  };
+};
+
+/**
+ * Spawn a provider in an owned Windows job or dedicated POSIX process group.
+ *
+ * The caller remains responsible for persisting any ownership manifest and for
+ * selecting provider-specific command arguments or environment values.
+ */
+export const spawnOwnedProviderProcess = async (
+  options: OwnedProviderProcessSpawnOptions,
+): Promise<SpawnedOwnedProviderProcess> => {
+  options.signal?.throwIfAborted();
+  const platform = options.platform ?? process.platform;
+  const sweepTokenOwnedProcesses =
+    options.sweepTokenOwnedProcesses === true && platform !== "win32";
+  let captureBaseline: ProcessOwnershipBaseline | undefined;
+  const prepared = options.preparedOwnership;
+  if (prepared !== undefined) {
+    if (
+      prepared.runId !== options.runId ||
+      prepared.platform !== platform ||
+      prepared.sweepTokenOwnedProcesses !== sweepTokenOwnedProcesses
+    )
+      throw new Error(
+        "Prepared process ownership state does not match the launch",
+      );
+    captureBaseline = prepared.captureBaseline;
+  } else {
+    await prepareProcessOwnershipInspection(options.signal);
+    options.signal?.throwIfAborted();
+    if (sweepTokenOwnedProcesses) {
+      const capture = systemProcessOwnershipHost.captureBaseline;
+      if (capture === undefined)
+        throw new Error(
+          "Process ownership baseline is unavailable on this host",
+        );
+      captureBaseline = await capture(options.signal);
+      options.signal?.throwIfAborted();
+    }
   }
   const hostEnvironment = options.hostEnvironment ?? process.env;
   const environment = {

@@ -11,6 +11,10 @@ import {
   prepareProcessOwnershipInspection,
   systemProcessOwnershipHost,
 } from "./ProcessOwnershipObservation.js";
+import {
+  prepareOwnedProviderProcess,
+  type OwnedProviderProcessSpawnOptions,
+} from "./ProviderProcess.js";
 
 const platform = Object.getOwnPropertyDescriptor(
   systemProcessOwnershipHost,
@@ -259,4 +263,35 @@ it("cancels no-deadline preparation with the caller's exact opaque reason", asyn
   await started.promise;
   controller.abort(reason);
   await expected;
+});
+
+it("allows baseline preparation to finish before a short command deadline", async () => {
+  hostPlatform("darwin");
+  vi.spyOn(systemProcessOwnershipHost, "prepare").mockResolvedValue();
+  const baseline = [{ pid: 101, identity: "darwin-start:before" }];
+  vi.spyOn(systemProcessOwnershipHost, "captureBaseline").mockImplementation(
+    async () => {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      return baseline;
+    },
+  );
+  const spawn: OwnedProviderProcessSpawnOptions = {
+    command: "not-launched",
+    arguments: [],
+    runId: "authored-prepared-baseline",
+    sweepTokenOwnedProcesses: true,
+  };
+  const prepared = await prepareOwnedProviderProcess(spawn);
+  expect(prepared.captureBaseline).toEqual(baseline);
+  const pending = runOwnedCommand(
+    { ...spawn, preparedOwnership: prepared },
+    { timeoutMs: 10, diagnosticBytes: 1024 },
+    {
+      launcher: async (input) => {
+        expect(input.preparedOwnership).toBe(prepared);
+        throw new Error("after prepared baseline");
+      },
+    },
+  );
+  await expect(pending).rejects.toThrow("after prepared baseline");
 });
