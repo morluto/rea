@@ -467,6 +467,7 @@ export const readMachoCommandNames = async (
       };
     }
     let linkerOptions: Uint8Array[] | undefined;
+    let linkerOptionsFullyDecoded = false;
     if (frame.command === 0x2d) {
       if (frame.size < 12)
         throw new MachoBinaryFormatError(
@@ -524,6 +525,14 @@ export const readMachoCommandNames = async (
         throw new MachoBinaryFormatError(
           "Mach-O linker option is unterminated",
         );
+      // Bytes after the last option terminator are not modeled fields.
+      linkerOptionsFullyDecoded =
+        frame.size ===
+        12 +
+          linkerOptions.reduce(
+            (size, option) => size + option.byteLength + 1,
+            0,
+          );
     }
     let legacyBuild: MachoCommandNames["commands"][number]["legacyBuild"];
     if ([0x24, 0x25, 0x2f, 0x30].includes(frame.command)) {
@@ -555,6 +564,7 @@ export const readMachoCommandNames = async (
       };
     }
     let fileset: MachoCommandNames["commands"][number]["fileset"];
+    let filesetFullyDecoded = false;
     if (frame.command === 0x80000035) {
       if (frame.size < 32)
         throw new MachoBinaryFormatError("Mach-O fileset command is truncated");
@@ -581,6 +591,8 @@ export const readMachoCommandNames = async (
         entryId: retain(value.subarray(0, end)),
         reserved: view.getUint32(20, table.littleEndian),
       };
+      // Do not claim coverage of a gap before the string or trailing bytes.
+      filesetFullyDecoded = offset === 32 && frame.size === offset + end + 1;
     }
     let uuid: Uint8Array | undefined;
     if (frame.command === 0x1b) {
@@ -656,7 +668,10 @@ export const readMachoCommandNames = async (
         frame.size ===
           (segmentWide ? 72 : 56) +
             sections.length * (segmentWide ? 80 : 68)) ||
-      (build !== undefined && frame.size === 24 + build.tools.length * 8);
+      (build !== undefined && frame.size === 24 + build.tools.length * 8) ||
+      linkerOptionsFullyDecoded ||
+      (note !== undefined && frame.size === 40) ||
+      filesetFullyDecoded;
     let rawSha256: string | null = null;
     if (!fullyDecoded && frame.size <= maximumStringBytes) {
       const digest = createHash("sha256");

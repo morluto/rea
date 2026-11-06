@@ -392,6 +392,75 @@ it("distinguishes exact fixed command extents from unmodeled trailing bytes", as
   ]);
 });
 
+it("distinguishes exact variable command extents from trailing bytes", async () => {
+  const command = (code: number, size: number) => {
+    const bytes = Buffer.alloc(size);
+    bytes.writeUInt32LE(code, 0);
+    bytes.writeUInt32LE(size, 4);
+    return bytes;
+  };
+  const linkerOption = (size: number) => {
+    const bytes = command(0x2d, size);
+    bytes.writeUInt32LE(1, 8);
+    bytes.write("-lz", 12, "ascii");
+    return bytes;
+  };
+  const note = (size: number) => {
+    const bytes = command(0x31, size);
+    bytes.write("fixture", 8, "ascii");
+    bytes.writeBigUInt64LE(128n, 24);
+    bytes.writeBigUInt64LE(16n, 32);
+    return bytes;
+  };
+  const fileset = (size: number) => {
+    const bytes = command(0x80000035, size);
+    bytes.writeUInt32LE(32, 24);
+    bytes.write("entry01", 32, "ascii");
+    return bytes;
+  };
+  const image = machoImage({
+    commands: [
+      linkerOption(16),
+      linkerOption(24),
+      note(40),
+      note(48),
+      fileset(40),
+      fileset(48),
+    ],
+  });
+  const binary = await readMachoCommandNames(
+    readerOf(image),
+    image.length,
+    1024,
+    16,
+  );
+  expect(binary.commands.map((row) => row.fullyDecoded)).toEqual([
+    true,
+    false,
+    true,
+    false,
+    true,
+    false,
+  ]);
+  const projection = projectMachoBinary(binary);
+  for (const [index, row] of binary.commands.entries()) {
+    if (index % 2 === 0) {
+      expect(row.rawSha256).toBeNull();
+      expect(projection.commands[index]?.fields).not.toHaveProperty(
+        "command_sha256",
+      );
+    } else {
+      expect(row.rawSha256).toMatch(/^[a-f0-9]{64}$/u);
+      expect(projection.commands[index]?.fields.command_sha256).toBe(
+        row.rawSha256,
+      );
+    }
+  }
+  expect(projection.commandLimitations).toEqual([
+    expect.stringContaining("payload fields are not decoded"),
+  ]);
+});
+
 it("preserves leading UTF-8 BOM characters in names and dependency paths", () => {
   const marker = "\uFEFF";
   const commands = multilineBinary.commands.map((row) => ({
