@@ -133,6 +133,7 @@
 
 * **adb:** admit completed path probes after daemon startup ([#8858](https://github.com/morluto/rea/issues/8858)) ([33e0bf1](https://github.com/morluto/rea/commit/33e0bf101ab2afddc35da6dba985ab308dc504c9))
 * **adb:** align CLI selector schemas with canonical inputs ([#7722](https://github.com/morluto/rea/issues/7722)) ([3142f7b](https://github.com/morluto/rea/commit/3142f7b0dd91a07c7fe7989a4295cfe5d929682a))
+* **adb:** list devices adb reports with bare no-permissions text ([#8905](https://github.com/morluto/rea/issues/8905)) ([b28b1e0](https://github.com/morluto/rea/commit/b28b1e0ae21706dfa51ca6286479cd524af38d25))
 * **adb:** preserve process names and pin fixture interpreters ([ab44487](https://github.com/morluto/rea/commit/ab44487ff86d064e924fd2c44b02f5a5430f57f3))
 * **adb:** preserve selected environment through provider execution ([b7e76a5](https://github.com/morluto/rea/commit/b7e76a57cd29853e796b05a770cb14a0c435f35c))
 * **adb:** report local filesystem admission failures ([#7885](https://github.com/morluto/rea/issues/7885)) ([a001231](https://github.com/morluto/rea/commit/a0012312564a5b96c7e12d70c554c3b5029faefc))
