@@ -4,7 +4,7 @@ import { isExactJsonNumber } from "../exactJsonNumber.js";
 import { MAX_JSON_DEPTH, type JsonValue } from "../jsonValue.js";
 import { err, ok, type Result } from "../result.js";
 import { safeParseJson } from "../safeJson.js";
-import { parseXmlDocument } from "../xmlDocument.js";
+import { isWellFormedXml, parseXmlDocument } from "../xmlDocument.js";
 
 /** Formats the state view reads into JSON. */
 export type DesktopStateFormat =
@@ -205,6 +205,30 @@ export const isJsonText = (text: string): boolean => {
   return scan.expect === "after" && scan.depth === 0;
 };
 
+/** Whether a file's name or leading text marks it as JSON, which it is if it parses. */
+const namedJson = (path: string, trimmed: string): boolean =>
+  path.endsWith(".json") || /^[[{]/u.test(trimmed);
+
+/** Whether a file's name or XML declaration marks it as XML, which it is if it parses. */
+const namedXml = (path: string, trimmed: string): boolean =>
+  XML_EXTENSIONS.test(path) || trimmed.startsWith("<?xml");
+
+/**
+ * Whether decoded text is JSON or XML as `detectStateFormat` reads it, told
+ * by syntax alone so no value or document is built: JSON a token at a time
+ * and XML by its well-formedness pass, each holding only what is open.
+ */
+export const textSyntaxFormat = (
+  path: string,
+  text: string,
+): "json" | "xml" | "text" => {
+  const trimmed = text.trimStart();
+  if (namedJson(path, trimmed) && isJsonText(text)) return "json";
+  if (namedXml(path, trimmed) && isWellFormedXml(text, { doctype: "reject" }))
+    return "xml";
+  return "text";
+};
+
 /** Pick the reader for one retained file from its leading bytes and name. */
 export const detectStateFormat = (
   path: string,
@@ -218,14 +242,14 @@ export const detectStateFormat = (
   if (text === undefined) return "binary";
   const trimmed = text.trimStart();
   if (
-    (path.endsWith(".json") || /^[[{]/u.test(trimmed)) &&
+    namedJson(path, trimmed) &&
     // JSON too large for a view is told apart without building its value.
     (bytes.length > MAX_PARSED_VIEW_BYTES
       ? isJsonText(text)
       : safeParseJson(text).ok)
   )
     return "json";
-  if (XML_EXTENSIONS.test(path) || trimmed.startsWith("<?xml"))
+  if (namedXml(path, trimmed))
     return parseXmlDocument(text, {
       doctype: "reject",
       lineEndings: "normalize",

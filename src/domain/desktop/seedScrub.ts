@@ -5,7 +5,7 @@ import {
   scrubHostIdentity,
   type HostIdentity,
 } from "./hostIdentity.js";
-import { detectStateFormat, isTextualFormat } from "./stateFormats.js";
+import { isTextualFormat, textSyntaxFormat } from "./stateFormats.js";
 
 /** What the export ships for one seed. */
 export interface SeedScrub {
@@ -121,7 +121,9 @@ const encodeXml = (text: string, quote: string | undefined): string =>
 /**
  * XML with character data, attribute values, comments and CDATA scrubbed,
  * character data and attribute values as their decoded text and rewritten
- * only when that changed; names and processing instructions are kept.
+ * only when that changed; names and processing instructions are kept. Only
+ * changed spans are copied out, so however many elements the document has,
+ * the scrub holds no more than its changes.
  */
 const scrubXml = (text: string, identity: HostIdentity): TextScrub => {
   const data = (raw: string, quote?: string) => {
@@ -129,27 +131,47 @@ const scrubXml = (text: string, identity: HostIdentity): TextScrub => {
     const clean = scrubHostIdentity(value, identity);
     return clean === value ? raw : encodeXml(clean, quote);
   };
-  let scrubbed = "";
+  const parts: string[] = [];
+  let copied = 0;
+  /** Replace the span at `start` written `raw` with `clean` when they differ. */
+  const replace = (start: number, raw: string, clean: string) => {
+    if (clean === raw) return;
+    parts.push(text.slice(copied, start), clean);
+    copied = start + raw.length;
+  };
   let end = 0;
   for (const match of text.matchAll(XML_MARKUP)) {
     const [markup, comment, cdata] = match;
-    scrubbed += data(text.slice(end, match.index));
+    const characters = text.slice(end, match.index);
+    replace(end, characters, data(characters));
     end = match.index + markup.length;
     if (comment !== undefined)
-      scrubbed += `<!--${scrubHostIdentity(comment, identity)}-->`;
+      replace(
+        match.index,
+        markup,
+        `<!--${scrubHostIdentity(comment, identity)}-->`,
+      );
     else if (cdata !== undefined)
-      scrubbed += `<![CDATA[${scrubHostIdentity(cdata, identity)}]]>`;
-    else if (markup.startsWith("<?")) scrubbed += markup;
-    else
-      scrubbed += markup.replace(
-        XML_VALUE,
-        (_value, double?: string, single?: string) =>
+      replace(
+        match.index,
+        markup,
+        `<![CDATA[${scrubHostIdentity(cdata, identity)}]]>`,
+      );
+    else if (!markup.startsWith("<?"))
+      replace(
+        match.index,
+        markup,
+        markup.replace(XML_VALUE, (_value, double?: string, single?: string) =>
           double === undefined
             ? `'${data(single ?? "", "'")}'`
             : `"${data(double, '"')}"`,
+        ),
       );
   }
-  scrubbed += data(text.slice(end));
+  const rest = text.slice(end);
+  replace(end, rest, data(rest));
+  parts.push(text.slice(copied));
+  const scrubbed = parts.join("");
   return { text: scrubbed, decoded: decodeXml(scrubbed) };
 };
 
@@ -325,8 +347,8 @@ interface Seed {
 
 /**
  * The seed's text, the format it is scrubbed as, and how to encode it again:
- * UTF-8 for a text format, or UTF-16 after a byte-order mark, whose format is
- * the one its text would have in UTF-8.
+ * UTF-8 for a text format, or UTF-16 after a byte-order mark, JSON or XML as
+ * its text would be in UTF-8, told by syntax alone so no view is built.
  */
 const seedText = (bytes: Buffer, { home, format }: Seed) => {
   if (bytes.length > MAX_SCRUBBED_BYTES) return undefined;
@@ -334,7 +356,7 @@ const seedText = (bytes: Buffer, { home, format }: Seed) => {
     const utf16 = utf16Text(bytes);
     return utf16 === undefined
       ? undefined
-      : { ...utf16, format: detectStateFormat(home, Buffer.from(utf16.text)) };
+      : { ...utf16, format: textSyntaxFormat(home, utf16.text) };
   }
   try {
     return {

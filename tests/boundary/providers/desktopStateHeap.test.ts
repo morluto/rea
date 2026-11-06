@@ -94,6 +94,30 @@ console.log(JSON.stringify([
   ]);
 }, 180_000);
 
+it("scrubs UTF-16 XML and JSON seeds of a million elements in a small heap, telling their format without building them", async () => {
+  // Building the XML document to choose the scrubber needed more than 768 MiB here, and parsing the JSON more than 64 MiB; the syntax checks and copying only changes run in 24 MiB.
+  const outcomes = await inSmallHeap(
+    "seedScrub.ts",
+    "scrubSeed",
+    `const scrub = (home, text, tail, clean) => {
+  const seed = Buffer.from("\\uFEFF" + text + tail, "utf16le");
+  const scrubbed = scrubSeed(seed, { home, format: "binary" }, { home: "/home/ada", hostname: "e81232be457d", user: "ada" });
+  const expected = Buffer.concat([seed.subarray(0, -2 * tail.length), Buffer.from(clean, "utf16le")]);
+  return { exact: scrubbed.bytes?.equals(expected), holdsIdentity: scrubbed.holdsIdentity };
+};
+console.log(JSON.stringify([
+  scrub(".config/wide.xml", "<?xml version=\\"1.0\\" encoding=\\"UTF-16\\"?>\\n<r>" + "<e/>".repeat(1_000_000), "<m>ada@e81232be457d</m></r>", "<m>user@localhost</m></r>"),
+  scrub(".config/wide.json", "[{}" + ",{}".repeat(1_000_000), ',"ada@e81232be457d"]', ',"user@localhost"]'),
+]));
+`,
+  );
+
+  expect(outcomes).toEqual([
+    { exact: true, holdsIdentity: false },
+    { exact: true, holdsIdentity: false },
+  ]);
+}, 180_000);
+
 it("compares objects of selector keys with arrays in a small heap, however many field sets or spellings they use", async () => {
   // An index per field set or spelling needed more than 48 MiB for either comparison here.
   const removed = await inSmallHeap(

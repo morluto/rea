@@ -164,6 +164,17 @@ passes now; `src/domain/desktop`, `src/application/desktop` and
   scrubbed by the format their text would have in UTF-8, in their own byte
   order.
 
+## UTF-16 format detection
+
+- A decoded UTF-16 seed's scrubber is chosen by a syntax pass that builds
+  no value or document (`textSyntaxFormat`: the JSON token scan, and the
+  XML parser's events with only the open elements kept), and the XML
+  scrubber copies out only changed spans. A UTF-16 XML seed of a million
+  elements is scrubbed in a 24 MiB heap, where the previous code needed
+  more than 768 MiB; `desktopStateHeap.test.ts` runs it in 32 MiB and failed
+  on the previous code. On 200,000 random XML-like inputs and 80 UTF-16
+  cases the output is byte-identical to the previous code's.
+
 ## Limits of this verification
 
 - The bundle was not run in an agentenv computer, and REA was not run inside
