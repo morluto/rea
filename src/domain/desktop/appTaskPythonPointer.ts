@@ -66,7 +66,11 @@ def _selects(member, conditions) -> bool:
 def _step(items: list, token: str, last: bool):
     """One step into an array, by index or by a selector that must match one member, or none when it is the last."""
     if INDEX.fullmatch(token):
-        return ("member", items[int(token)]) if int(token) < len(items) else ("none", None)
+        # A canonical decimal longer than the array length cannot name a member.
+        if len(token) > len(str(len(items))):
+            return "none", None
+        index = int(token)
+        return ("member", items[index]) if index < len(items) else ("none", None)
     conditions = _selector(token)
     if conditions is None:
         return ("unresolved", f"{token} is not a selector of the form [KEY=VALUE]") if _bracketed(token) else (

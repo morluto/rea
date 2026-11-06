@@ -13,6 +13,19 @@ On Linux, Binwalk and Unblob run as REA-owned processes and require a
 procps-compatible `ps` on REA's `PATH`; see the shared
 [Linux process prerequisite](installation.md#linux-owned-process-prerequisite).
 
+## Compare stored firmware components
+
+For supported FIT and legacy uImage containers, use the built-in
+`inspect-artifact` / `inspect_artifact` inventory and shared
+`compare-artifacts` / `compare_artifacts` workflow. This route needs no Binwalk,
+Unblob or extraction: exact logical paths, stored-byte hashes and declared
+metadata establish component changes, with source Evidence and explicit unknowns.
+The outer container at `.` is separate from its children. See the
+[FIT version comparison recipe](fit-images.md#comparison) for CLI,
+MCP, summary delivery and selected supporting facts. Its real-data verification
+covers a pair of OpenWrt FIT releases; it does not establish comparison of
+decoded root filesystems or arbitrary firmware formats.
+
 ## Caller-supplied tools
 
 Provide existing tools using absolute executable paths, scoped to your shell:
