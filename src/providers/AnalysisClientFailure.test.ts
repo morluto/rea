@@ -1,4 +1,5 @@
 import { expect, it } from "vitest";
+import { AnalysisCapabilityUnavailableError } from "../domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import type { FileOffsetPartialObservation } from "../domain/native/fileOffsetPartialObservation.js";
 import { analysisClientFailureForOperation } from "./AnalysisClientFailure.js";
@@ -90,4 +91,41 @@ it("keeps a regex deadline's continuing-session guidance when attributing it to 
     scope: "rea-invocation",
     environment: "REA_REGEX_MATCHING_DEADLINE_MS",
   });
+});
+
+it("preserves sibling operations, sibling reasons, and remediation action when rebuilding capability unavailable errors", () => {
+  const source = new AnalysisCapabilityUnavailableError(
+    "kuna",
+    "procedure_assembly",
+    "Kuna project export failed",
+    {
+      userMessage: "Export failed",
+      remediationAction: "Retry without project requirement",
+      siblingOperations: ["procedure_assembly", "analyze_function"],
+      siblingReasons: {
+        analyze_function: "analyze_function export failed",
+      },
+      retryable: true,
+    },
+  );
+  const attributed = analysisClientFailureForOperation(
+    source,
+    "kuna",
+    "procedure_assembly",
+  );
+  expect(attributed).toBeInstanceOf(AnalysisCapabilityUnavailableError);
+  if (!(attributed instanceof AnalysisCapabilityUnavailableError))
+    throw new Error("Expected AnalysisCapabilityUnavailableError");
+  expect(attributed.siblingOperations).toEqual([
+    "procedure_assembly",
+    "analyze_function",
+  ]);
+  expect(attributed.siblingReasons).toEqual({
+    analyze_function: "analyze_function export failed",
+  });
+  expect(attributed.remediationAction).toBe(
+    "Retry without project requirement",
+  );
+  expect(attributed.userMessage).toBe("Export failed");
+  expect(attributed.retryable).toBe(true);
 });

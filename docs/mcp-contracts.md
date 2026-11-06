@@ -2013,14 +2013,19 @@ profile and the advertised form that profile produces. `full`, `compact`, and
 bounded schemas clients receive; `off` keeps the canonical output contracts in
 the digest while advertising nothing.
 
-Some stdio hosts reject a complete `tools/list` frame before they load any
-tools. The opt-in `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` setting bounds every
-advertised output schema to 4,096 bytes; `off` omits `outputSchema` entirely
+Some clients reject a complete `tools/list` frame or HTTP SSE event before
+they load any tools. The opt-in `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact`
+setting bounds every advertised output schema to 4,096 bytes; `off` omits `outputSchema` entirely
 (the measured pi-web-ui failure and catalog breakdown are in
 [#2512](https://github.com/morluto/rea/issues/2512)). The default `full` profile
 is unchanged. Both settings keep the same named canonical tool contract for
 server-side result validation, and both still return complete
 `structuredContent` and text results.
+
+For the 1 MiB FastMCP SSE limit reported by Unsloth in
+[#9093](https://github.com/morluto/rea/issues/9093), see the
+[tested catalog configuration](client-configuration.md#fastmcp-and-unsloth-sse-catalog-limits).
+Hot/cold selection alone does not bound later catalog refreshes.
 
 `compact` keeps the complete validation structure when it fits the budget.
 Otherwise it advertises the root property shape, first-level reference-resolved
@@ -2133,3 +2138,12 @@ skill and portable conformance projections in the `generated-docs` artifact.
 These outputs describe the exact source revision being built; they are not
 checked-in snapshots. For a running server, `binary_session` remains the
 authoritative source of catalog identity and tool availability.
+
+## Offline Playwright traces
+
+`inspect_playwright_trace` reads a local v10 trace ZIP and defaults to a retained
+summary. `playwright-trace` views select source-located action boundaries, console
+and network facts, resource references and diagnostics; long text has bounded
+previews and character pages. Import does not contact recorded URLs or use a
+browser. See [offline Playwright traces](./playwright-traces.md) for coverage,
+resource policies and the shared CLI workflow.
