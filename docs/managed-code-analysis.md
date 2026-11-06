@@ -280,6 +280,21 @@ inspects its two selected paths sequentially, retaining each inspection rather
 than both full byte snapshots. The limit therefore remains a per-file resource
 admission rule, not an aggregate comparison limit. Comparison Evidence keeps
 the caller-selected paths as its parameters and artifact locations.
+When either side's member inspection exceeds its representation budget, the
+comparison limitations name that side and its `resource-limit` diagnostic; its
+empty member collections do not establish added or removed members. Each side's
+`resource_limits` preserves the reported diagnostic's code, scope, detail and
+nullable offset. An empty array means no resource limit was reported; historical
+comparisons omit this field, leaving those diagnostics unrecorded. Always read
+the comparison coverage alongside member counts. To compare
+a smaller selection, pass the same repeatable `--type` full names that
+`inspect-managed-members --type` accepts to `compare-managed-members`, which
+applies them to both sides and records them as `type_names`; over MCP, compare
+two `inspect_managed_members` Evidence records selected with the same
+`type_names`. A single selected type can still exceed the budget.
+The two-record MCP workflow keeps full source Evidence available for
+`inspect_analysis_view` field selection and paging; path-based CLI comparison
+records the selected paths, type names and per-side diagnostics.
 
 Input overflow returns a resource constraint. Decode or projection overflow
 reports `resource-limit` with unavailable or partial coverage; omitted facts do
