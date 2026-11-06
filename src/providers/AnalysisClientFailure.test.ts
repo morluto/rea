@@ -1,7 +1,10 @@
 import { expect, it } from "vitest";
+import { AnalysisCapabilityUnavailableError } from "../domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import type { FileOffsetPartialObservation } from "../domain/native/fileOffsetPartialObservation.js";
 import { analysisClientFailureForOperation } from "./AnalysisClientFailure.js";
+import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import { regexMatchingDeadlineError } from "../process/RegexMatcher.js";
 
 const observation: FileOffsetPartialObservation = {
   operation: "address_to_file_offset",
@@ -61,4 +64,68 @@ it("does not promote ordinary partial evidence into a completed result", () => {
     throw new Error("Expected the cleanup subtype");
   expect(attributed.partialObservation).toBe(observation);
   expect(attributed.completedObservation).toBeUndefined();
+});
+
+it("keeps a regex deadline's continuing-session guidance when attributing it to a provider operation", () => {
+  const source = regexMatchingDeadlineError("search_procedures");
+  const attributed = analysisClientFailureForOperation(
+    source,
+    "hopper",
+    "search_procedures",
+  );
+  for (const lifetime of ["continuing", "invocation"] as const) {
+    const delivered = projectAnalysisError(attributed, lifetime);
+    const owned = projectAnalysisError(source, lifetime);
+    expect(delivered.message).toBe(owned.message);
+    expect(delivered.remediation).toEqual(owned.remediation);
+    expect(delivered.details?.limit).toEqual(owned.details?.limit);
+  }
+  // The two lifetimes receive different guidance from the same owner.
+  expect(projectAnalysisError(attributed).remediation).not.toEqual(
+    projectAnalysisError(attributed, "invocation").remediation,
+  );
+  expect(
+    projectAnalysisError(attributed, "invocation").details?.limit,
+  ).toMatchObject({
+    setting: "regex.matching_deadline_ms",
+    scope: "rea-invocation",
+    environment: "REA_REGEX_MATCHING_DEADLINE_MS",
+  });
+});
+
+it("preserves sibling operations, sibling reasons, and remediation action when rebuilding capability unavailable errors", () => {
+  const source = new AnalysisCapabilityUnavailableError(
+    "kuna",
+    "procedure_assembly",
+    "Kuna project export failed",
+    {
+      userMessage: "Export failed",
+      remediationAction: "Retry without project requirement",
+      siblingOperations: ["procedure_assembly", "analyze_function"],
+      siblingReasons: {
+        analyze_function: "analyze_function export failed",
+      },
+      retryable: true,
+    },
+  );
+  const attributed = analysisClientFailureForOperation(
+    source,
+    "kuna",
+    "procedure_assembly",
+  );
+  expect(attributed).toBeInstanceOf(AnalysisCapabilityUnavailableError);
+  if (!(attributed instanceof AnalysisCapabilityUnavailableError))
+    throw new Error("Expected AnalysisCapabilityUnavailableError");
+  expect(attributed.siblingOperations).toEqual([
+    "procedure_assembly",
+    "analyze_function",
+  ]);
+  expect(attributed.siblingReasons).toEqual({
+    analyze_function: "analyze_function export failed",
+  });
+  expect(attributed.remediationAction).toBe(
+    "Retry without project requirement",
+  );
+  expect(attributed.userMessage).toBe("Export failed");
+  expect(attributed.retryable).toBe(true);
 });

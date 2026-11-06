@@ -25,6 +25,14 @@ export const DEFAULT_IDA_REQUEST_TIMEOUT_MS = 300_000;
 const MIN_IDA_REQUEST_TIMEOUT_MS = 1;
 /** Node timer ceiling. Larger registration values would be clamped instead of honored. */
 export const MAX_IDA_REQUEST_TIMEOUT_MS = 2_147_483_647;
+/** Loopback names plus the Docker and Podman gateway names for the container's host. */
+const LOCAL_IDA_HTTP_HOSTS: ReadonlySet<string> = new Set([
+  "localhost",
+  "127.0.0.1",
+  "[::1]",
+  "host.docker.internal",
+  "host.containers.internal",
+]);
 
 const common = {
   sensitive: z
@@ -64,7 +72,7 @@ const registrationSchema = z
           const url = new URL(value);
           return (
             ["http:", "https:"].includes(url.protocol) &&
-            ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname) &&
+            LOCAL_IDA_HTTP_HOSTS.has(url.hostname) &&
             url.username === "" &&
             url.password === ""
           );

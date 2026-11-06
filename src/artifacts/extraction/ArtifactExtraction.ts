@@ -1,12 +1,19 @@
+import { selectArtifactExtractionOccurrences } from "./ArtifactExtractionSelection.js";
 import { assertAdmittedRootDigest } from "../inventory/classify.js";
 import { assertArtifactFileSelectedSource } from "../ArtifactFileSource.js";
 import {
   assertArtifactSelectedSource,
   resolveArtifactSourcePath,
 } from "../ArtifactSelectedSource.js";
-import { hashStableRootArtifactHandle } from "../inventory/hashStableRootArtifact.js";
+import { InesArtifactReader } from "../InesArtifactReader.js";
+import {
+  openRootArtifact,
+  hashStableRootArtifactHandle,
+} from "../inventory/hashStableRootArtifact.js";
 import { absoluteCallerPath } from "../../filesystem/callerPath.js";
 import type { AsarHeaderAdmission } from "../../config/asarHeaderAdmission.js";
+import type { EspFlashSelection } from "../../domain/firmware/espFlashLocation.js";
+import { artifactFormatDescriptor } from "../artifactFormats.js";
 import { createArtifactReader } from "../createArtifactReader.js";
 import { resolveAsarHeaderAdmission } from "../AsarHeader.js";
 import {
@@ -40,7 +47,6 @@ import { ArtifactTraversalObservation } from "../ArtifactTraversalObservation.js
 import { abortIfNeeded } from "../ArtifactHash.js";
 import { SafeOutputTree } from "../SafeOutputTree.js";
 import { SafeOutputTreeCreationFailure } from "../SafeOutputTreeCreationFailure.js";
-import { isZipPackageFormat } from "../../domain/zipPackageFormat.js";
 import {
   artifactExtractionResultSchema,
   type ArtifactExtractionResult,
@@ -59,18 +65,21 @@ import type { ArtifactIntegrityPolicyName } from "../../domain/artifactIntegrity
 /** Local extraction input with the output root chosen by the adapter. */
 export interface ArtifactExtractionInput {
   readonly asarHeaderAdmission?: AsarHeaderAdmission;
+  /** Caller inputs when the target was explicitly selected as an ESP flash image. */
+  readonly espFlashSelection?: EspFlashSelection | undefined;
   readonly inputPath: string;
   readonly expectedRootSha256?: string | undefined;
   /** Selected artifact spelling; packed I/O remains on inputPath. */
   readonly selectedPath?: string | undefined;
   readonly inputFormat: BinaryTarget["format"];
   readonly outputRoot: string;
+  readonly occurrenceIds?: readonly string[];
   readonly environment: Readonly<NodeJS.ProcessEnv>;
   readonly integrityPolicy: ArtifactIntegrityPolicyName;
   readonly resourceScope: ArtifactResourceScope;
 }
 
-/** Extract every regular inventory occurrence into an exclusively owned absent root. */
+/** Extract selected regular inventory occurrences into an exclusively owned absent root. */
 export const extractArtifact = async (
   input: ArtifactExtractionInput,
   signal?: AbortSignal,
@@ -99,6 +108,7 @@ const extractArtifactInScope = async (
         asarHeaderAdmission:
           input.asarHeaderAdmission ??
           resolveAsarHeaderAdmission(input.environment),
+        espFlashSelection: input.espFlashSelection,
         integrity: input.integrityPolicy,
       },
       probeFacts,
@@ -161,7 +171,19 @@ export const materializeArtifactInventoryInScope = async (
   // A directory source must never acquire its own output as a new member on
   // the verification traversal. Resolve the selected parent before any write.
   if (transferredSource === undefined) {
-    const canonicalSource = await realpath(sourcePath);
+    let canonicalSource: string;
+    try {
+      canonicalSource = await realpath(sourcePath);
+    } catch (cause: unknown) {
+      abortIfNeeded(signal);
+      if (inventorySourceChanged(cause))
+        throw new ArtifactReaderFailure(
+          "integrity",
+          `Inventoried source changed: ${sourcePath}`,
+          { cause },
+        );
+      throw cause;
+    }
     if ((await lstat(canonicalSource)).isDirectory()) {
       const { canonicalOutput } = await SafeOutputTree.resolveDestination(
         input.outputRoot,
@@ -195,33 +217,20 @@ export const materializeArtifactInventoryInScope = async (
       input.selectedPath ?? input.inputPath,
       `UnityFS directory is ${containerMetadata.directory_status}; its complete contents cannot be extracted`,
     );
-  const selectedOccurrences = snapshot.occurrences.filter(
-    (occurrence) =>
-      (occurrence.entry_kind === "file" || occurrence.entry_kind === "slice") &&
-      occurrence.logical_path !== ".",
-  );
-  const regularPaths = new Set(
-    selectedOccurrences.map(({ logical_path: path }) => path),
-  );
-  const directoryPaths = new Set(
-    snapshot.occurrences
-      .filter(({ entry_kind }) => entry_kind === "directory")
-      .map(({ logical_path }) => logical_path),
-  );
-  const activeOccurrences = selectedOccurrences.filter(({ logical_path }) => {
-    // Nested members remain represented by their containing regular file;
-    // only entries exposed by the active reader are materialized.
-    let path = logical_path;
-    for (
-      let slash = path.lastIndexOf("/");
-      slash >= 0;
-      slash = path.lastIndexOf("/")
-    ) {
-      path = path.slice(0, slash);
-      if (regularPaths.has(path) && !directoryPaths.has(path)) return false;
-    }
-    return true;
-  });
+  if (
+    containerMetadata?.kind === "wxapkg" &&
+    containerMetadata.directory_status !== "available"
+  )
+    throw new AnalysisUnsupportedTargetError(
+      "extract_artifact",
+      input.selectedPath ?? input.inputPath,
+      `wxapkg directory is ${containerMetadata.directory_status}; its complete contents cannot be extracted`,
+    );
+  const { available, selected: activeOccurrences } =
+    selectArtifactExtractionOccurrences(
+      snapshot.occurrences,
+      input.occurrenceIds,
+    );
   const neededNodes = new Set(
     activeOccurrences.map(({ artifact_id: id }) => id),
   );
@@ -279,6 +288,7 @@ export const materializeArtifactInventoryInScope = async (
     sourcePath,
     inventory: snapshot,
     selected,
+    available,
     signal,
     transferredSource,
   });
@@ -302,6 +312,7 @@ const materializeSelection = async ({
   sourcePath,
   inventory,
   selected,
+  available,
   signal,
   transferredSource,
 }: {
@@ -309,6 +320,7 @@ const materializeSelection = async ({
   readonly sourcePath: string;
   readonly inventory: ArtifactInventorySnapshot;
   readonly selected: readonly SelectedOccurrence[];
+  readonly available: readonly ArtifactOccurrence[];
   readonly signal: AbortSignal | undefined;
   readonly transferredSource: ActiveArtifactInventorySource | undefined;
 }): Promise<ArtifactExtractionResult> => {
@@ -328,11 +340,12 @@ const materializeSelection = async ({
       transferredSource.admission.source,
       "Artifact extraction",
     );
-  const reader = createReader(
+  const reader = await createReader(
     sourcePath,
     input,
-    inventory.manifest.root_format,
+    inventory.manifest,
     transferredSource,
+    signal,
   );
   const readerOwner: ArtifactResourceOwner = {
     kind: "reader" as const,
@@ -359,7 +372,10 @@ const materializeSelection = async ({
     await writeSelectedEntries({
       reader,
       output,
-      byPath,
+      selected: new Map(
+        selected.map((item) => [item.occurrence.occurrence_id, item]),
+      ),
+      available,
       extracted,
       traversal,
       signal,
@@ -393,6 +409,7 @@ const materializeSelection = async ({
       extracted,
       traversal.snapshot(),
       reader.provenance(),
+      output.outputRoot,
     );
     if (input.expectedRootSha256 !== undefined)
       await assertArtifactSelectedSource(sourcePath, input.selectedPath);
@@ -423,32 +440,60 @@ const materializeSelection = async ({
 const writeSelectedEntries = async ({
   reader,
   output,
-  byPath,
+  selected,
+  available,
   extracted,
   traversal,
   signal,
 }: {
   readonly reader: ArtifactReader;
   readonly output: SafeOutputTree;
-  readonly byPath: Map<string, SelectedOccurrence>;
+  readonly selected: Map<string, SelectedOccurrence>;
+  readonly available: readonly ArtifactOccurrence[];
   readonly extracted: ExtractedOccurrence[];
   readonly traversal: ArtifactTraversalObservation;
   readonly signal: AbortSignal | undefined;
 }): Promise<void> => {
+  // Inventory sorting is stable within each path. Preserve that reader order:
+  // a path can name several independently selectable ZIP/TOC occurrences.
+  const expected = new Map<
+    string,
+    { occurrences: ArtifactOccurrence[]; next: number }
+  >();
+  for (const occurrence of available) {
+    const queue = expected.get(occurrence.logical_path);
+    if (queue === undefined)
+      expected.set(occurrence.logical_path, {
+        occurrences: [occurrence],
+        next: 0,
+      });
+    else queue.occurrences.push(occurrence);
+  }
   const registry = new ArtifactPathRegistry();
   for await (const entry of reader.entries(signal, traversal)) {
     const path = normalizeArtifactPath(entry.path);
-    registry.add(path, entry.kind);
     // Logical declarations may share a query path with a real file. They do
     // not consume that file's selection or participate in materialization.
     if (entry.kind !== "file" && entry.kind !== "slice") continue;
-    const selectedItem = byPath.get(path);
-    if (selectedItem === undefined) {
+    const queue = expected.get(path);
+    const occurrence = queue?.occurrences[queue.next];
+    if (
+      queue === undefined ||
+      occurrence === undefined ||
+      occurrence.entry_kind !== entry.kind
+    ) {
       throw new ArtifactReaderFailure(
         "integrity",
         `Regular artifact entry is missing from inventory: ${path}`,
       );
     }
+    queue.next += 1;
+    if (queue.next === queue.occurrences.length) expected.delete(path);
+    const selectedItem = selected.get(occurrence.occurrence_id);
+    if (selectedItem === undefined) continue;
+    // Validate the full reader inventory above, but only selected regular
+    // entries claim destination paths. Excluded declarations may collide.
+    registry.add(path, entry.kind);
     preflight(entry);
     const stream = await reader.open(entry, signal);
     const written = await output.write(
@@ -467,12 +512,12 @@ const writeSelectedEntries = async ({
       bytes_written: written.bytesWritten,
       created: true,
     });
-    byPath.delete(path);
+    selected.delete(occurrence.occurrence_id);
   }
-  if (byPath.size > 0)
+  if (expected.size > 0)
     throw new ArtifactReaderFailure(
       "integrity",
-      `Inventoried regular artifact entries were not materialized: ${[...byPath.keys()].sort(compareUnicodeCodePoints).join(", ")}`,
+      `Inventoried regular artifact entries were not materialized: ${[...expected.keys()].sort(compareUnicodeCodePoints).join(", ")}`,
     );
 };
 
@@ -509,13 +554,23 @@ const createExtractionResult = (
   extracted: readonly ExtractedOccurrence[],
   traversal: ArtifactReaderTraversal,
   materializationProvenance: readonly ArtifactCommand[],
+  outputRoot: string,
 ): ArtifactExtractionResult => {
   const selectedIds = new Set(
     selected.map(({ occurrence }) => occurrence.occurrence_id),
   );
-  const integrityContradictions = inventory.integrity_contradictions.filter(
-    ({ occurrence_id: id }) => selectedIds.has(id),
+  // A root contradiction covers the container bytes every extracted file came from.
+  const rootId = inventory.occurrences.find(
+    (row) => row.logical_path === ".",
+  )?.occurrence_id;
+  const rootContradicted = inventory.integrity_contradictions.some(
+    ({ occurrence_id: id }) => id === rootId,
   );
+  const integrityContradictions = inventory.integrity_contradictions.filter(
+    ({ occurrence_id: id }) => selectedIds.has(id) || id === rootId,
+  );
+  const extractedContradictions =
+    integrityContradictions.length - (rootContradicted ? 1 : 0);
   const extractionSemantic = {
     source_manifest_id: inventory.manifest.manifest_id,
     selected_occurrence_ids: selected
@@ -530,7 +585,7 @@ const createExtractionResult = (
       ...extractionSemantic,
       extraction_id: `aex_${digestCanonicalValue(extractionSemantic, "Artifact")}`,
     },
-    output_root: input.outputRoot,
+    output_root: outputRoot,
     artifacts: extracted,
     containment_verified: true,
     cleanup: { attempted: false, verified: true, residual_paths: [] },
@@ -547,15 +602,22 @@ const createExtractionResult = (
           (limitation) => `${occurrence.logical_path}: ${limitation}`,
         ),
       ),
-      traversal.status === "complete"
-        ? "All regular files exposed by the active artifact reader were materialized."
-        : "All inventoried regular files exposed by the active reader were materialized; source traversal coverage is unknown, so the output is not established as a complete source copy.",
+      input.occurrenceIds !== undefined
+        ? "Only caller-selected regular occurrences exposed by the active artifact reader were materialized; unselected entries and nested archive members were not extracted. Inventory integrity checks still cover the full input."
+        : traversal.status === "complete"
+          ? "All regular files exposed by the active artifact reader were materialized."
+          : "All inventoried regular files exposed by the active reader were materialized; source traversal coverage is unknown, so the output is not established as a complete source copy.",
       "Publication verifies the selected inventoried regular files; it does not establish complete content decoding.",
-      ...(integrityContradictions.length === 0
+      ...(extractedContradictions === 0
         ? []
         : [
-            `${String(integrityContradictions.length)} extracted file(s) contradict declared integrity metadata; their bytes are observed-untrusted.`,
+            `${String(extractedContradictions)} extracted file(s) contradict declared integrity metadata; their bytes are observed-untrusted.`,
           ]),
+      ...(rootContradicted
+        ? [
+            "The container contradicts its declared integrity metadata; every extracted file is observed-untrusted.",
+          ]
+        : []),
     ],
   });
 };
@@ -582,19 +644,7 @@ const requireExtractableFormat = async (
   // A thin Mach-O has no child entries of its own: inventory lists only its
   // root unless it carries an embedded pack, so it takes the same pack probe
   // as ELF and PE while only the universal container has a slice reader.
-  if (
-    !directory &&
-    format !== "asar" &&
-    format !== "godot-pck" &&
-    format !== "unityfs" &&
-    format !== "uimage" &&
-    format !== "intel-hex" &&
-    format !== "srec" &&
-    format !== "esp-image" &&
-    format !== "fit" &&
-    format !== "mach-o-universal" &&
-    !isZipPackageFormat(format)
-  ) {
+  if (!directory && artifactFormatDescriptor(format)?.extractable !== true) {
     const detected = await withArtifactRegularFile(
       path,
       input.resourceScope,
@@ -636,15 +686,61 @@ const requireExtractableFormat = async (
 };
 
 /** Reader selection belongs to inventory classification, not the adapter hint. */
-const createReader = (
+const createReader = async (
   path: string,
   input: Pick<
     ArtifactExtractionInput,
-    "inputPath" | "selectedPath" | "environment" | "asarHeaderAdmission"
+    | "inputPath"
+    | "selectedPath"
+    | "environment"
+    | "asarHeaderAdmission"
+    | "resourceScope"
+    | "espFlashSelection"
   >,
-  containerFormat: ArtifactGraphManifest["root_format"],
+  manifest: ArtifactGraphManifest,
   transferredSource?: ActiveArtifactInventorySource,
-): ArtifactReader => {
+  signal?: AbortSignal,
+): Promise<ArtifactReader> => {
+  const containerFormat = manifest.root_format;
+  if (containerFormat === "ines" && transferredSource === undefined) {
+    let source: Awaited<ReturnType<typeof openRootArtifact>>;
+    try {
+      source = await openRootArtifact(path, input.resourceScope, signal);
+    } catch (cause: unknown) {
+      abortIfNeeded(signal);
+      if (
+        inventorySourceChanged(cause) ||
+        (cause instanceof ArtifactReaderFailure && cause.reason === "format")
+      )
+        throw new ArtifactReaderFailure(
+          "integrity",
+          `Inventoried source changed: ${path}`,
+          { cause },
+        );
+      throw cause;
+    }
+    try {
+      const digest = await hashStableRootArtifactHandle(
+        path,
+        source.handle,
+        source.initial,
+        signal,
+      );
+      assertAdmittedRootDigest(path, manifest.root_sha256, digest.sha256);
+      return new InesArtifactReader(path, source, source.owner);
+    } catch (cause: unknown) {
+      const attempt = await input.resourceScope.release({
+        kind: "file-handle",
+        handle: source.owner,
+        resource: `iNES source ${path}`,
+      });
+      if (attempt.kind === "failed")
+        throw input.resourceScope.cleanupFailure({ kind: "failed", cause }, [
+          attempt,
+        ]);
+      throw cause;
+    }
+  }
   // DMG inventory may mount read-only, but extraction has no DMG authority.
   const reader =
     containerFormat === "dmg"
@@ -659,6 +755,7 @@ const createReader = (
             input.selectedPath ?? input.inputPath,
           ),
           admission: transferredSource?.admission,
+          espFlashSelection: input.espFlashSelection,
           asarHeaderAdmission:
             containerFormat === "asar"
               ? (input.asarHeaderAdmission ??
@@ -681,3 +778,10 @@ const preflight = (entry: ArtifactEntry): void => {
       `Selected artifact entry cannot be read: ${entry.path}`,
     );
 };
+
+const inventorySourceChanged = (cause: unknown): boolean =>
+  cause instanceof Error &&
+  "code" in cause &&
+  ["ENOENT", "ENOTDIR", "EISDIR", "ENOTFILE", "ESTALE", "ELOOP"].includes(
+    String(cause.code),
+  );

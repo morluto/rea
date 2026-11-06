@@ -40,6 +40,38 @@ inspection is needed; see [selected member inspection](#selected-member-inspecti
 Compare separate builds with [member comparison](#member-comparison), preserving
 their paths, digests, and selection scope.
 
+### Field constant defaults
+
+`inspect_managed_members` reads field-owned values from the ECMA-335 `Constant`
+table without loading the assembly. Each selected field's `constant` contains
+the declaration's row offset, element-type code, blob index and exact `raw_hex`,
+plus its decoded `element_type` and `value`. For example, an `i4` declaration
+with bytes `865d0000` returns `23942`.
+
+Boolean, character, signed/unsigned integers, floating-point, UTF-16 strings
+and class-null declarations are supported. `i8` and `u8` values are decimal
+strings to avoid JSON integer precision loss. Floating-point negative zero,
+NaN and infinities are the strings `-0`, `NaN`, `Infinity` or `-Infinity`;
+`raw_hex` preserves their original bits. UTF-16 code units, including embedded
+NULs and unpaired surrogates, are preserved.
+
+`constant: null` means neither a Constant declaration nor `HasDefault` was
+observed. Historical Evidence can omit the field entirely; omission does not
+prove that the artifact has no default. Missing or duplicate declarations,
+inconsistent flags, malformed values and unsupported element types return
+`state: "unavailable"`, a limitation and partial coverage while retaining other
+member facts. This decoding shares the existing metadata representation budget
+and only decodes blobs for the selected fields.
+
+Retained `managed-members` field pages can select `fields: ["constant"]` while
+keeping original field identity and source offsets. These values are metadata
+declarations, including enum members' encoded underlying constants, not observed
+runtime state or inferred enum-name mappings. Parameter/property defaults are
+not exposed by this field-focused reader. Member comparison still covers field
+names, flags and signatures; it does not compare constant defaults.
+
+The encoding follows [ECMA-335, Partition II, sections 22.9 and 23.1.16](https://ecma-international.org/publications-and-standards/standards/ecma-335/).
+
 ### Metadata overview and retained rows
 
 The existing CLI and omitted/complete MCP detail return complete metadata
@@ -248,6 +280,21 @@ inspects its two selected paths sequentially, retaining each inspection rather
 than both full byte snapshots. The limit therefore remains a per-file resource
 admission rule, not an aggregate comparison limit. Comparison Evidence keeps
 the caller-selected paths as its parameters and artifact locations.
+When either side's member inspection exceeds its representation budget, the
+comparison limitations name that side and its `resource-limit` diagnostic; its
+empty member collections do not establish added or removed members. Each side's
+`resource_limits` preserves the reported diagnostic's code, scope, detail and
+nullable offset. An empty array means no resource limit was reported; historical
+comparisons omit this field, leaving those diagnostics unrecorded. Always read
+the comparison coverage alongside member counts. To compare
+a smaller selection, pass the same repeatable `--type` full names that
+`inspect-managed-members --type` accepts to `compare-managed-members`, which
+applies them to both sides and records them as `type_names`; over MCP, compare
+two `inspect_managed_members` Evidence records selected with the same
+`type_names`. A single selected type can still exceed the budget.
+The two-record MCP workflow keeps full source Evidence available for
+`inspect_analysis_view` field selection and paging; path-based CLI comparison
+records the selected paths, type names and per-side diagnostics.
 
 Input overflow returns a resource constraint. Decode or projection overflow
 reports `resource-limit` with unavailable or partial coverage; omitted facts do

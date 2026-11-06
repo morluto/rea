@@ -131,6 +131,14 @@ const sideCoverageStatus = (
       ? "complete"
       : "partial";
 
+/** Copy the source's typed capacity facts without retaining unrelated issue inventories. */
+const resourceLimits = (
+  result: ManagedMemberInspection,
+): NonNullable<ManagedMemberComparisonResult["left"]["resource_limits"]> =>
+  result.coverage.issues.flatMap(({ code, scope, detail, offset }) =>
+    code === "resource-limit" ? [{ code, scope, detail, offset }] : [],
+  );
+
 export const sideManifest = (
   side: ManagedMemberComparisonSide,
 ): ManagedMemberComparisonResult["left"] => ({
@@ -141,6 +149,7 @@ export const sideManifest = (
   metadata_status: side.result.metadata.status,
   methods_total: side.result.methods.length,
   fields_total: side.result.fields.length,
+  resource_limits: resourceLimits(side.result),
 });
 
 export const buildComparisonSummary = (
@@ -180,6 +189,27 @@ export const buildComparisonMatching = (
   ).length,
 });
 
+/** Carry each side's representation-budget diagnostic and its recovery. */
+const capacityLimitations = (
+  left: ManagedMemberInspection,
+  right: ManagedMemberInspection,
+): string[] => {
+  const exceeded = new Set(
+    (["left", "right"] as const).flatMap((side) =>
+      resourceLimits(side === "left" ? left : right).map(
+        ({ scope, detail }) =>
+          `The ${side} managed member observation exceeded capacity at ${scope}: ${detail}. Its member collections are not examined to completion, so empty or missing members do not establish absence, addition or removal.`,
+      ),
+    ),
+  );
+  return exceeded.size === 0
+    ? []
+    : [
+        ...exceeded,
+        "Compare a smaller selection by inspecting both sides with the same type_names, or by passing --type to CLI compare-managed-members; a single selected type can still exceed capacity.",
+      ];
+};
+
 export const comparisonLimitations = (
   left: ManagedMemberInspection,
   right: ManagedMemberInspection,
@@ -191,6 +221,14 @@ export const comparisonLimitations = (
     "Methods pair within one declared type and name by exact CIL/signature, then signature, then structural shape; only then may exact CIL/signature or structural shape alone remap across declared types or names, never taking a member whose own declared type and name remain unpaired on the other side or whose declaring type is unresolved. Names alone are never a matching basis.",
     "Fields pair by declared type, name, and signature, then remap by exact decoded signature alone under the same rule; an undecoded signature is compared only for an exact signature match, and an unmatched member with one stays unknown.",
   ];
+  if (
+    [left, right].some((report) =>
+      report.fields.some((field) => field.constant != null),
+    )
+  )
+    limitations.push(
+      "Field Constant-table defaults are not compared; field matching and change detection cover names, flags and signatures only.",
+    );
   const namesTypes = (result: ManagedMemberInspection) =>
     result.methods.some(
       ({ signature }) =>
@@ -212,6 +250,7 @@ export const comparisonLimitations = (
     );
   if (left.coverage.state !== "complete" || right.coverage.state !== "complete")
     limitations.push("At least one managed member observation is partial.");
+  limitations.push(...capacityLimitations(left, right));
   if (selectionAgreement === "different")
     limitations.push(
       "The observations select different declaring types; a member outside the other side's selection is unknown, not added or removed.",
