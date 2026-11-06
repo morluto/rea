@@ -2,7 +2,6 @@ import { randomUUID } from "node:crypto";
 
 import {
   extraPackagesOf,
-  type BuildRequest,
   type BuildSource,
 } from "../../domain/desktop/appBuild.js";
 import { counted } from "../../domain/desktop/appExportUnowned.js";
@@ -173,7 +172,7 @@ const reset = async (
 const liveComputer = (
   computer: AgentEnvComputer,
   workspace: PrivateRuntimeRoot | undefined,
-  request: BuildRequest | undefined,
+  source: BuildSource,
   settle: BuildSettle,
 ): HeldComputer => {
   const actions = new BuildComputerActionLog();
@@ -185,8 +184,16 @@ const liveComputer = (
     actions,
     steps: {
       computer,
-      capture: new DesktopBuildCapture(computer, request),
-      witness: new DesktopBuildWitness(computer, actions, settle),
+      capture: new DesktopBuildCapture(
+        computer,
+        source.kind === "request" ? source : undefined,
+      ),
+      witness: new DesktopBuildWitness(
+        computer,
+        actions,
+        settle,
+        source.kind === "bundle" ? source.path : undefined,
+      ),
       turns,
     },
     turns,
@@ -374,12 +381,7 @@ export class DesktopBuildComputers {
             );
       this.#computers.set(
         id,
-        liveComputer(
-          computer,
-          target.workspace,
-          source.kind === "request" ? source : undefined,
-          this.settle,
-        ),
+        liveComputer(computer, target.workspace, source, this.settle),
       );
       return ok({
         value: {
