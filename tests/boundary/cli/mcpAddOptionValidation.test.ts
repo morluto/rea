@@ -137,6 +137,10 @@ cliTest(
     for (const arguments_ of [
       ["mcp", "add", "--agent", "amp"],
       ["mcp", "add", "--agent=amp"],
+      // The value of `--command` is whatever follows, even when it looks like
+      // a flag: the equals form expands to `--command --help`, which the
+      // stray-argument pass used to read as a stray word.
+      ["mcp", "add", "--agent=amp", "--command=--help"],
     ] as const) {
       await mkdir(join(home, ".config", "amp"), { recursive: true });
       const registered = await run(arguments_);

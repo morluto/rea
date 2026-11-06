@@ -224,11 +224,11 @@ export const unexpectedMcpAddArguments = (
   for (let index = from; index < command.length; index += 1) {
     const token = command[index]!;
     if (token === "--agent" || token === "--command" || token === "-c") {
-      // Its value follows, or the missing-value guard reports both the flag and
-      // the value position it swallowed.
-      const value = command[index + 1];
-      if (value === undefined || value.startsWith("-")) continue;
-      index += 1;
+      // Its value follows whatever it looks like: `--command=--help` expands
+      // to a value that starts with `-`, and reading that as a stray word
+      // rejects a registration the caller explicitly asked for. An absent
+      // value is the missing-value guard's finding.
+      if (command[index + 1] !== undefined) index += 1;
       continue;
     }
     // An empty `--flag=` form is the empty-value guard's finding, not a stray
