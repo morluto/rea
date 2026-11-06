@@ -261,3 +261,63 @@ describe("draftTaskFiles guards of siblings named by the field they check", () =
     ]);
   });
 });
+
+describe("draftTaskFiles for components of a wiring diagram, as QElectroTech saves them", () => {
+  /** A component: its informations by name, and the texts it shows, one showing its label beside the name of that information. */
+  const component = (
+    uuid: string,
+    [label, shown, fn]: readonly [string, string, string],
+    user = "",
+  ) =>
+    `<element uuid="{${uuid}}" prefix="X" x="470"><elementInformations><elementInformation name="function" show="1">${fn}</elementInformation><elementInformation name="label" show="1">${label}</elementInformation></elementInformations><dynamic_texts>${user}<dynamic_elmt_text uuid="{${uuid}-text}" text_from="ElementInfo" x="25"><text>${shown}</text><info_name>label</info_name></dynamic_elmt_text></dynamic_texts></element>`;
+  const TERMINALS =
+    '<dynamic_elmt_text uuid="{a1}" text_from="UserText" x="2"><text>A1</text></dynamic_elmt_text><dynamic_elmt_text uuid="{a2}" text_from="UserText" x="2"><text>A2</text></dynamic_elmt_text>';
+  const diagram = (coil: readonly [string, string, string]) =>
+    `<project><diagram><elements>${component("3524", ["H1", "H1", "Pump running"])}${component("1b6b", coil, TERMINALS)}${component("af99", ["S1", "S1", "Start pump"])}</elements></diagram></project>`;
+  const ELEMENTS =
+    "/root/children/[name=diagram]/children/[name=elements]/children";
+  const label = (uuid: string) =>
+    `${ELEMENTS}/[name=element][@uuid={${uuid}}]/children/[name=elementInformations]/children/[name=elementInformation][@name=label]`;
+
+  it("checks the coil's label, never the text that shows it, and guards the other components' labels rather than the coil's other fields", () => {
+    const file = xmlDraft(
+      diagram(["K1", "K1", "Pump contactor"]),
+      diagram(["KM1", "KM1", "Pump contactor"]),
+    );
+
+    expect(file.suggested).toEqual([
+      { kind: "text_equals", file: FILE, pointer: label("1b6b"), value: "KM1" },
+    ]);
+    expect(file.values.map(({ note }) => note ?? null)).toEqual([
+      null,
+      "upkeep",
+    ]);
+    expect(file.guards).toEqual([
+      { kind: "text_equals", file: FILE, pointer: label("3524"), value: "H1" },
+      { kind: "text_equals", file: FILE, pointer: label("af99"), value: "S1" },
+      {
+        kind: "member_count",
+        file: FILE,
+        pointer: ELEMENTS,
+        matching: "[name=element]",
+        equals: 3,
+      },
+    ]);
+  });
+
+  it("checks a field of a record of fields itself, not the record's text that joins its other fields in", () => {
+    const file = xmlDraft(
+      diagram(["K1", "K1", "Pump contactor"]),
+      diagram(["K1", "KM1", "Pump contactor"]),
+    );
+
+    expect(file.suggested).toEqual([
+      {
+        kind: "text_equals",
+        file: FILE,
+        pointer: `${ELEMENTS}/[name=element][@uuid={1b6b}]/children/[name=dynamic_texts]/children/[name=dynamic_elmt_text][@uuid={1b6b-text}]/children/[name=text]`,
+        value: "KM1",
+      },
+    ]);
+  });
+});

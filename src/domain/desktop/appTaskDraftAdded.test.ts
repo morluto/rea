@@ -595,11 +595,12 @@ describe("draftTaskFiles for records in a list, as Tellico keeps books", () => {
       books(book("1", LANTERN), book("2", SALT, ["06", "07"])),
     );
 
+    // The field itself, not the record whose text would join its other fields.
     expect(edited.suggested).toEqual([
       {
-        kind: "value_equals",
+        kind: "text_equals",
         file: FILE,
-        pointer: `${entry("2")}/children/[name=title]/children/0`,
+        pointer: `${entry("2")}/children/[name=title]`,
         value: "Salt Road",
       },
     ]);

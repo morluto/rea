@@ -97,6 +97,22 @@ const copiesSibling = (
     );
   });
 
+/** The values of the `id`, `xmi:id` and `key` attributes of the elements in a view, outside a view the app keeps of it: what another element's attribute may refer to. */
+const idsIn = (view: JsonValue | null): ReadonlySet<string> => {
+  const ids = new Set<string>();
+  const pending: JsonValue[] = [view];
+  for (let node = pending.pop(); node !== undefined; node = pending.pop()) {
+    if (isXmlElement(node)) {
+      if (isViewStateName(node.name)) continue;
+      for (const [key, value] of Object.entries(node.attributes))
+        if (typeof value === "string" && /^(?:[^:]*:)?(?:id|key)$/iu.test(key))
+          ids.add(value);
+      pending.push(...node.children);
+    } else if (isRecord(node)) pending.push(...Object.values(node));
+  }
+  return ids;
+};
+
 /** The attribute keys the last segment of a pointer selects by. */
 const selectorKeys = (pointer: string): ReadonlySet<string> => {
   const segment = (pointer.split("/").at(-1) ?? "")
@@ -116,7 +132,9 @@ const selectorKeys = (pointer: string): ReadonlySet<string> => {
  * values and view state are left out. Empty for an element with no like
  * sibling at either end, or whose other attributes a like sibling holds
  * every one of, as a new Planner task copies its neighbour's defaults; such
- * an element keeps the check that it is there.
+ * an element keeps the check that it is there. An attribute naming an
+ * element the seed holds by an id other than a plain number, as an Umbrello
+ * attribute's `type` its data type, is a choice, never a default copied.
  */
 export const attributeChecks = (
   context: AddedContext,
@@ -139,9 +157,17 @@ export const attributeChecks = (
       ? [{ key, value }]
       : [],
   );
-  if (copiesSibling(context, pointer, element, own)) return [];
+  // Copied from a sibling, only a reference to an element the seed holds by an id, not a plain number, is the user's.
+  let fields = own;
+  if (copiesSibling(context, pointer, element, own)) {
+    const ids = idsIn(ends.baseline);
+    fields = own.filter(
+      ({ value }) => ids.has(value) && !/^-?\d+$/u.test(value),
+    );
+    if (fields.length === 0) return [];
+  }
   // A record's data is in its fields; an attribute every like record holds alike, as GnuCash's `version`, is its format's.
-  const fields = element.children.some(isXmlElement);
+  const nested = element.children.some(isXmlElement);
   const list = resolvePointer(ends.final, listOf(pointer));
   const likes = (Array.isArray(list) ? list : []).filter(
     (item) =>
@@ -155,9 +181,9 @@ export const attributeChecks = (
   const usual = (key: string, value: string) =>
     likes.length > 1 && everywhere(key, value) ? 1 : 0;
   return rankAttributes(
-    own.filter(
+    fields.filter(
       ({ key, value }) =>
-        !(fields && everywhere(key, value)) &&
+        !(nested && everywhere(key, value)) &&
         !isPlaceholder(value) &&
         !isStamp(value) &&
         !isVolatileValue(value) &&

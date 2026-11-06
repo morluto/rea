@@ -380,10 +380,64 @@ const siblingGuard = (
     : guard;
 };
 
-/** Up to two guards for one check: a field on like siblings of the innermost list it goes through that has any, preferring one that varies among them. */
+type Step = ReturnType<typeof listSteps>[number];
+
+/** Whether a step's member is named as a field is, by a name-like attribute alone, as QElectroTech's `elementInformation[@name=label]`. */
+const namedAsField = (step: Step) => {
+  const [only, ...more] = conditionsOf(step.member).filter(
+    ({ prefix }) => prefix !== "",
+  );
+  return (
+    only !== undefined &&
+    more.length === 0 &&
+    only.prefix === "@" &&
+    isNameLikeKey(only.key)
+  );
+};
+
+/** Whether a like sibling of an outer step's member holds the field a step goes through, at the same path, as every component holds its `label`. */
+const sharedField = (context: GuardContext, step: Step, outer: Step) => {
+  const records = resolvePointer(context.ends.final, outer.list);
+  const record = resolvePointer(
+    context.ends.final,
+    `${outer.list}/${outer.member}`,
+  );
+  const inner = outer.rest.slice(0, outer.rest.length - step.rest.length);
+  return (
+    Array.isArray(records) &&
+    isXmlElement(record) &&
+    records.some(
+      (item) =>
+        item !== record &&
+        isXmlElement(item) &&
+        item.name === record.name &&
+        resolvePointer(item, `/${inner.join("/")}`) !== undefined,
+    )
+  );
+};
+
+/**
+ * A check's list steps in the order guards try them: innermost first, but
+ * for a member named as a field (`namedAsField`), first the nearest record
+ * out whose like siblings hold that field too (`sharedField`), so the other
+ * components' labels guard a component's label rather than its other fields.
+ */
+const guardSteps = (context: GuardContext, pointer: string): Step[] => {
+  const steps = listSteps(pointer);
+  return steps.flatMap((step, index) => {
+    const outer = namedAsField(step)
+      ? steps
+          .slice(index + 1)
+          .find((candidate) => sharedField(context, step, candidate))
+      : undefined;
+    return outer === undefined ? [step] : [outer, step];
+  });
+};
+
+/** Up to two guards for one check: a field on like siblings of the innermost list it goes through that has any, a record's before its other fields (`guardSteps`), preferring one that varies among them. */
 const guardsFor = (context: GuardContext, check: Suggestion): Suggestion[] => {
   if (check.kind !== "value_equals" && check.kind !== "text_equals") return [];
-  for (const step of listSteps(check.pointer)) {
+  for (const step of guardSteps(context, check.pointer)) {
     const { siblings, all } = siblingsOf(context, step);
     const guards: Suggestion[] = [];
     for (const sibling of siblings) {

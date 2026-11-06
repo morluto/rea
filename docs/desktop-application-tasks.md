@@ -63,7 +63,9 @@ operation `describe_desktop_application_task` and predicate type
   `<gnc:transaction>`, is listed field by field, and a field that lists
   records, as its `<trn:splits>`, record by record, so the cut never hides
   one. `refers_to` names up to
-  five other elements a value equals the `key` or `id` of, with the
+  five other elements a value equals the `key` or `id` (`xmi:id` among them)
+  of, outside a view the app keeps of the document, as Umbrello's
+  `listview` mirroring its model by id, with the
   `attribute` holding it, as HomeBank's `category="44"` names
   `<cat key="44" name="Groceries"/>`, or the id a child element holds, as a
   GnuCash split's `<split:account>` names the account whose `<act:id>` it
@@ -112,7 +114,8 @@ operation `describe_desktop_application_task` and predicate type
     number, a length with its unit, as `svg:height="2.629cm"`, an `xml:id`
     or `draw:id` of the form `id2` that LibreOffice numbers anew as it saves,
     so a Draw shape is named by its `draw:name`, or a token,
-    such as `XPOS` or `ItemID`, an automatic style name an app numbers as it
+    such as `XPOS` or `ItemID`, or an id of random case, as Umbrello's
+    `ubcgF2AWfBmHh` (`u` and twelve letters and digits), an automatic style name an app numbers as it
     saves and renumbers on reload, as LibreOffice's
     `presentation:style-name="pr1"` (`P1`, `T1`, `MT1`, `L2` on a
     `*:style-name`), so a slide's frames are named by `presentation:class`,
@@ -172,7 +175,10 @@ operation `describe_desktop_application_task` and predicate type
   - The text check names the paragraph rather than a run inside it: it goes up
     from an element sitting in its parent's text, and from one named by its
     tag or position alone to the nearest ancestor named by an attribute, as
-    AbiWord's `p` by its `xid`; where no attribute names one, to the nearest
+    AbiWord's `p` by its `xid`, unless it is a field its tag names in a
+    record of two or more fields holding text, as QElectroTech's `<text>`
+    beside `<info_name>` in a `<dynamic_elmt_text>`, which is checked itself
+    rather than the record whose text joins its fields; where no attribute names one, to the nearest
     ancestor within three levels its tag names with no step by position, as
     MuseScore's `VBox` around untitled `<Text>` elements; and where only
     position reaches the element, to the ancestor above the outermost step by
@@ -190,7 +196,10 @@ operation `describe_desktop_application_task` and predicate type
     with `text_attribute` on the nearest ancestor an attribute names, as
     `[name=PAGEOBJECT][@ANNAME=Headline]` with `"text_attribute": "CH"`, where
     that ancestor holds no text nodes and the attribute's holders are runs,
-    none inside another, two or more or one holding words with a space: an
+    none inside another and none carrying an identifier or a name-like
+    attribute beside it, as Umbrello's `<ownedAttribute xmi:id="…"
+    name="email" visibility="private"/>`, a record whose attributes are
+    checked one by one, two or more or one holding words with a space: an
     element's own attribute, as a Freeplane node's `TEXT` beside the nodes in
     it, or a lone value, as `<Bool value="false"/>`, is checked where it is.
     The check covers that attribute and the runs holding it; another change
@@ -229,7 +238,9 @@ operation `describe_desktop_application_task` and predicate type
     an amount, as `[name=SPLIT][@account=A000001]`. An element whose other attributes, two
     or more, a like sibling holds every one of, as a new Planner task copies
     its neighbour's defaults, and any other element added whole, get a check
-    that it exists. A record added to a list that a selector names, as
+    that it exists; of those copied, an attribute naming an element the seed
+    holds by an id that is no plain number, as an Umbrello attribute's
+    `type` its data type, is the user's choice and keeps its check. A record added to a list that a selector names, as
     Tellico's `<entry id="4">` or Osmo's `<record>` by its first name, gets
     a `text_equals` for each field, at most five, each by its selector among
     the record's fields, as `[name=title]`, leaving out a field repeating the
@@ -265,8 +276,10 @@ operation `describe_desktop_application_task` and predicate type
     which passes wherever it is placed, and that list's `member_count`.
   - Noise leaves the suggestions when the file's change holds anything
     else, a change only position reaches included: view state, which a tag
-    or attribute on the way names (the cursor, a selection, scrolling, zoom,
-    the viewport, windows, splitters, Inkscape's `namedview`, view and
+    or attribute on the way names (the cursor, a selection, the layer, frame,
+    view or colour the app has current, as Pencil2D's `currentLayer`,
+    scrolling, zoom, the viewport, windows, splitters, a list or tree view
+    mirroring the document, as Umbrello's `listview`, Inkscape's `namedview`, view and
     configuration settings, the printer, a save's history, edit time,
     editing duration and cycles, last-saved time, the generator and
     document statistics, and a preview or thumbnail the app renders, as
@@ -279,7 +292,9 @@ operation `describe_desktop_application_task` and predicate type
     renumbers, and an identifier the app numbers by position; volatile
     values, UUIDs and epoch times, binary data encoded as base64 (a PNG's
     `iVBORw0KGgo`, or 256 or more base64 characters mixing cases and
-    digits), and durations and counts under a document's metadata; times the app stamps, also as a date written in
+    digits), an id counter (`uniqueid`, `nextobjectid`), a value equal to an
+    id the change gave a new element, as Umbrello's id counter holds the new
+    attribute's `xmi:id`, and durations and counts under a document's metadata; times the app stamps, also as a date written in
     parts whose tag, or one it sits in, names when the app made, changed or
     saved something, as Tellico's `<cdate>` of `<year>`, `<month>` and
     `<day>` (`cdate`, `mdate`, `created`, `modified`, `saved`, `updated`,
@@ -296,14 +311,20 @@ operation `describe_desktop_application_task` and predicate type
     change in `styles.xml`, in a document's style containers or its master,
     handout and notes pages, or to an attribute naming a style, as Impress
     after a reload wraps its master pages' fields in a new `MT1` style and
-    rewrites list style `L2`; and `layout`, attributes holding a list of
+    rewrites list style `L2`, and a text showing another field that changed
+    alike, its element beside a field naming that one's key, as
+    QElectroTech's `<dynamic_elmt_text>` shows a component's label in its
+    `<text>` beside `<info_name>label</info_name>`; and `layout`, attributes holding a list of
     numbers, as Dia's `obj_bb` `6.3225,6.15;12.5775,8.15`, or a number a
     name on its way calls layout (a position, point, box, corner, width,
     height, side or offset, as `elem_width`), that changed in an element up
     to three levels below one whose text changed, below the root's own
     children, while their own element's text did not, as Dia moves and
-    resizes a box around its new text; an order's `<amount value="12"/>`
-    beside its new description is content. Geometry that changed with
+    resizes a box around its new text, or below an element whose tag names a
+    diagram, widget, canvas or scene while the model change is elsewhere, as
+    Umbrello grows a class's `classwidget` `height` when an attribute is
+    added; an order's `<amount value="12"/>` beside its new description is
+    content. Geometry that changed with
     no text beside it, as a CAD sketch's, is content. However much noise
     comes first, it never takes a check's place. When the change holds
     nothing else, the checks stay and a note flags them: up to three in a
@@ -320,7 +341,11 @@ operation `describe_desktop_application_task` and predicate type
   two like siblings, those sharing most of the attributes its selector
   names it by and its type, as a cell's `Row` or `Col` and `ValueType`,
   then the nearest first, at its seed value, which the end holds
-  too: the check's own field where like siblings hold different values in
+  too; for a member named as a field, by a name-like attribute alone, as
+  QElectroTech's `elementInformation[@name=label]`, the like siblings of
+  the nearest record out that hold that field too come first, so the other
+  components' labels guard a component's label rather than its other
+  fields: the check's own field where like siblings hold different values in
   it, and otherwise one that varies among them, as Planner's `work` rather
   than the `type="normal"` every task shares, but not one numbering the
   members in order, as MyPaint's `src`; never through a sibling only

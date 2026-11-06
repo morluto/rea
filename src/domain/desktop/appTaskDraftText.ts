@@ -156,6 +156,34 @@ const byOwnAttribute = (element: string, ends: Ends): Candidate | undefined => {
   return undefined;
 };
 
+/**
+ * Whether the element at a pointer is a field its tag names in a record of
+ * two or more fields holding text, at both ends, as QElectroTech's `<text>`
+ * beside `<info_name>` in a `<dynamic_elmt_text>`: a check reads it, not the
+ * record's text, which would join its fields; a Draw shape's one paragraph
+ * beside its geometry is the shape's text.
+ */
+const isField = (pointer: string, ends: Ends) => {
+  const parent = parentOf(pointer);
+  const tag = /^\[name=(?<tag>[^\]]+)\]$/u.exec(pointer.split("/").at(-1) ?? "")
+    ?.groups?.tag;
+  return (
+    parent !== undefined &&
+    tag !== undefined &&
+    [ends.baseline, ends.final].every((view) => {
+      const record = resolvePointer(view, parent);
+      const fields = isXmlElement(record)
+        ? record.children.filter(isXmlElement)
+        : [];
+      return (
+        holdsFields(record) &&
+        fields.filter((field) => elementText(field).trim() !== "").length > 1 &&
+        fields.filter(({ name }) => name === tag).length === 1
+      );
+    })
+  );
+};
+
 /** How far a text check climbs from an element no attribute names to an ancestor its tag names. */
 const MAX_TAG_CLIMB = 3;
 
@@ -163,7 +191,8 @@ const MAX_TAG_CLIMB = 3;
  * Where a text check goes for an element whose text changed, best first, so
  * the check names the paragraph, which a later save keeps, rather than a run
  * it may split or merge: up from an element in mixed content (its parent
- * holds text beside it, at either end) to the nearest that is not, then, from
+ * holds text beside it, at either end) to the nearest that is not, which a
+ * field its tag names in a record of fields (`isField`) stays; then, from
  * one named by tag or position alone, to the nearest ancestor named by an
  * attribute, as AbiWord's `p` by its `xid`, where one is below the document's
  * root. An element passed on the way that an identifier of its own names, the
@@ -182,6 +211,8 @@ const outsideRuns = (pointer: string, ends: Ends): readonly Candidate[] => {
     parent = parentOf(current)
   )
     current = parent;
+  if (isField(current, ends))
+    return [{ element: current, pointer: current, identifier: false }];
   const passed: string[] = [];
   let named = current;
   while (!namedByAttribute(named)) {

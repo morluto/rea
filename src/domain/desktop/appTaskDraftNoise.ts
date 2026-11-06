@@ -6,6 +6,7 @@ import {
   isViewStateName,
   VIEW_STATE,
 } from "./attributeRank.js";
+import { mirrorsOf } from "./appTaskDraftMirrors.js";
 import { isPositionalKey, positionalKeys } from "./positionalKeys.js";
 import type { DesktopStateDifference } from "./stateChanges.js";
 import { elementText, isXmlElement, resolvePointer } from "./viewPointer.js";
@@ -195,16 +196,49 @@ const isGarbled = (value: string) =>
     );
   });
 
-/** Whether a value is one a program makes: a UUID, an epoch time or garbled text, a count under the metadata, or in or at an id the app assigns. */
+/** An attribute counting the ids an app hands out, as Umbrello's `uniqueid` or Tiled's `nextobjectid`. */
+const ID_COUNTER = /^(?:next|unique|last)[-_]?(?:[\p{L}_-]*)id$/iu;
+
+/** Whether a value is one a program makes: a UUID, an epoch time or garbled text, a count under the metadata, an id counter, an id the change gave a new element (`fresh`), or in or at an id the app assigns. */
 const volatileAt = (
   elements: readonly Element[],
   key: string | undefined,
   value: JsonValue | undefined,
+  fresh: ReadonlySet<string>,
 ) =>
-  (typeof value === "string" && (isVolatileValue(value) || isGarbled(value))) ||
+  (typeof value === "string" &&
+    (isVolatileValue(value) || isGarbled(value) || fresh.has(value))) ||
+  (key !== undefined && ID_COUNTER.test(key.split(":").at(-1) ?? key)) ||
   metadataCount(elements, key, value) ||
   elements.some(assignedId) ||
   (isXmlElement(value) && assignedId(value));
+
+/**
+ * The ids of the elements a change added (`id`, `xid`, `uuid`, `guid`, as
+ * Umbrello's new attribute's `xmi:id="ubcgF2AWfBmHh"`), which another save
+ * of the same edit would not repeat, so a value equal to one, as its id
+ * counter's, is the app's: those of four or more characters, not a plain
+ * number.
+ */
+const freshIds = (
+  change: Pick<DesktopStateDifference, "added">,
+  ends: Ends,
+): ReadonlySet<string> =>
+  new Set(
+    change.added.flatMap((pointer) => {
+      const element = resolvePointer(ends.final, pointer);
+      return isXmlElement(element)
+        ? Object.entries(element.attributes).flatMap(([key, value]) =>
+            /^(?:[^:]*:)?(?:x|uu|g)?id$/iu.test(key) &&
+            typeof value === "string" &&
+            value.length >= 4 &&
+            !/^\d+$/u.test(value)
+              ? [value]
+              : [],
+          )
+        : [];
+    }),
+  );
 
 /** A container of an app's own bookkeeping slots, as GnuCash's `book:slots`, which it adds to and fills on reopening a book. */
 const isSlots = (element: Element) => /^(?:[^:]*:)?slots$/u.test(element.name);
@@ -288,6 +322,9 @@ const positionalRenumbering = (ends: Ends) => {
   };
 };
 
+/** A pointer to an archive entry's own size or digest, which change with any edit to it. */
+const ENTRY_META = /^\/entries\/[^/]+\/(?!view(?:\/|$))/u;
+
 /** A pointer into an archive entry's view: the entry's part of it, as `/entries/[name=styles.xml]/view/`. */
 const ENTRY_VIEW = /^\/entries\/[^/]+\/view\//u;
 
@@ -344,8 +381,7 @@ const upkeepOf = (
     (pointer) =>
       noise(pointer) === undefined &&
       !styled(pointer) &&
-      // An archive entry's own size and digest change with any edit to it.
-      !/^\/entries\/[^/]+\/(?!view(?:\/|$))/u.test(pointer),
+      !ENTRY_META.test(pointer),
   );
   return (pointer: string) => {
     const [entry] = ENTRY_VIEW.exec(pointer) ?? [];
@@ -433,6 +469,53 @@ const derivedLayout = (
   return (pointer: string) => layout.has(pointer);
 };
 
+/** A tag naming a drawing of a model rather than the model, as Umbrello's `diagrams`, `diagram`, `widgets` and `classwidget`. */
+const DRAWING = /(?:diagram|widget|canvas|scene)s?$/iu;
+
+/**
+ * Coordinates in a drawing of the model, while the model change is
+ * elsewhere, as Umbrello grows a class's box (`classwidget` `height` 52 to
+ * 67) in its diagram when an attribute is added to the class: an attribute
+ * holding a list of numbers, or a number a name on its way calls layout,
+ * below an element whose tag names a diagram, widget, canvas or scene, while
+ * a change no other rule calls noise lies outside every such element.
+ */
+const drawingLayout = (
+  change: Pick<DesktopStateDifference, "added" | "changed" | "removed">,
+  ends: Ends,
+  noise: (pointer: string) => NoiseReason | undefined,
+) => {
+  const viewOf = (pointer: string) =>
+    resolvePointer(ends.final, pointer) === undefined
+      ? ends.baseline
+      : ends.final;
+  const drawn = (pointer: string) =>
+    elementsAlong(viewOf(pointer), pointer).some(({ name }) =>
+      DRAWING.test(name.split(":").at(-1) ?? name),
+    );
+  const elsewhere = [
+    ...change.added,
+    ...change.changed,
+    ...change.removed,
+  ].some(
+    (pointer) =>
+      noise(pointer) === undefined &&
+      !ENTRY_META.test(pointer) &&
+      !drawn(pointer),
+  );
+  return (pointer: string) => {
+    const value = resolvePointer(viewOf(pointer), pointer);
+    return (
+      elsewhere &&
+      attributeKeyOf(pointer) !== undefined &&
+      isCoordinates(value) &&
+      drawn(pointer) &&
+      (/[,;]/u.test(String(value)) ||
+        namesLayout(viewOf(pointer), pointer, [ownerOfAttribute(pointer)]))
+    );
+  };
+};
+
 /** A word in a name for where or how large something is drawn: a position, a point, a box, a corner, a width or height, an offset or a side. */
 const LAYOUT_WORD =
   /^(?:pos|position|x|y|z|point|bb|bbox|bounds|rect|rectangle|corner|width|height|w|h|left|top|right|bottom|offset|origin|coords?)$/u;
@@ -478,13 +561,16 @@ const namesLayout = (
  * `[@config:name=CursorPositionX]`; an attribute an app renumbers, an
  * identifier it numbers by position, or anything inside an element both ends
  * hold whose renumbered attribute changed, as Gnumeric empties a formula cell
- * whose shared expression it renumbers; a UUID or epoch time, or a duration or
+ * whose shared expression it renumbers; a UUID or epoch time, an id
+ * counter, an id the change gave a new element (`freshIds`), or a duration or
  * count under the document's metadata; a time the app stamps, whole or in
  * parts (`inSplitDate`), or a date under a tag naming bookkeeping; an id
  * the app assigns (`type="guid"`), or text of control characters; upkeep, a
- * change inside an app's `slots` or an attribute an archive entry only
- * gained while another entry holds the edit; layout an edit's text derived
- * (`derivedLayout`).
+ * change inside an app's `slots`, an attribute an archive entry only
+ * gained while another entry holds the edit, or a text showing another
+ * field that changed alike (`mirrorsOf`); layout an edit's text derived
+ * (`derivedLayout`), or a drawing of the model holds while the model change
+ * is elsewhere (`drawingLayout`).
  */
 export const changeNoise = (
   change: Pick<DesktopStateDifference, "added" | "changed" | "removed">,
@@ -497,6 +583,7 @@ export const changeNoise = (
       : [];
   });
   const byPosition = positionalRenumbering(ends);
+  const fresh = freshIds(change, ends);
   const known = new Map<string, NoiseReason | undefined>();
   const base = (pointer: string): NoiseReason | undefined => {
     if (known.has(pointer)) return known.get(pointer);
@@ -518,7 +605,7 @@ export const changeNoise = (
                 pointer === element || pointer.startsWith(`${element}/`),
             )
           ? "renumbered"
-          : volatileAt(elements, key, value)
+          : volatileAt(elements, key, value, fresh)
             ? "volatile"
             : isStamp(value ?? null) ||
                 stampedAlong(elements) ||
@@ -532,7 +619,13 @@ export const changeNoise = (
   };
   const upkeep = upkeepOf(change, ends, base);
   const layout = derivedLayout(change, ends);
+  const drawing = drawingLayout(change, ends, base);
+  const mirror = mirrorsOf(change, ends);
   return (pointer) =>
     base(pointer) ??
-    (upkeep(pointer) ? "upkeep" : layout(pointer) ? "layout" : undefined);
+    (upkeep(pointer) || mirror(pointer)
+      ? "upkeep"
+      : layout(pointer) || drawing(pointer)
+        ? "layout"
+        : undefined);
 };

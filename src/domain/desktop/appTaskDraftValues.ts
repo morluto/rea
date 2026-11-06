@@ -6,7 +6,7 @@ import {
   NOISE_REASONS,
   type NoiseReason,
 } from "./appTaskDraftNoise.js";
-import { isIdentifyingAttribute } from "./attributeRank.js";
+import { isIdentifyingAttribute, isViewStateName } from "./attributeRank.js";
 import type { DesktopStateDifference } from "./stateChanges.js";
 import { alternativePointers } from "./appTaskDraftAlternatives.js";
 import { recordListsOf } from "./appTaskDraftNested.js";
@@ -132,14 +132,17 @@ const indexUnder = (
 };
 
 /**
- * XML elements by the value of their `key` or `id` attribute, across a view,
- * and by tag: at most `PER_TAG` of a tag in document order, so a key that
- * records or archive entries repeat costs no more than that.
+ * XML elements by the value of their `key` or `id` attribute, `xmi:id`
+ * among them, across a view, and by tag: at most `PER_TAG` of a tag in
+ * document order, so a key that records or archive entries repeat costs no
+ * more than that. A view the app keeps of the document, as Umbrello's
+ * `listview` mirroring its model by id, names nothing.
  */
 const referenceIndex = (view: JsonValue | null) => {
   const index = new Map<string, Map<string, JsonValue[]>>();
   const pending: JsonValue[] = [view];
   for (let node = pending.pop(); node !== undefined; node = pending.pop()) {
+    if (isXmlElement(node) && isViewStateName(node.name)) continue;
     if (isXmlElement(node)) {
       for (const [key, value] of Object.entries(attributesOf(node)))
         if (

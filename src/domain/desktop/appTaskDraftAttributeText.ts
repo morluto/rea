@@ -5,7 +5,7 @@ import {
   isStamp,
   type NoiseReason,
 } from "./appTaskDraftNoise.js";
-import { isIdentifyingAttribute } from "./attributeRank.js";
+import { isIdentifyingAttribute, isNameLikeKey } from "./attributeRank.js";
 import type { DesktopStateDifference } from "./stateChanges.js";
 import {
   elementText,
@@ -35,10 +35,19 @@ const textAt = (
   return isXmlElement(element) ? elementText(element, attribute) : undefined;
 };
 
+/** Whether an element holding an attribute is a record rather than a run of text: it carries an identifier or a name, as Umbrello's `<ownedAttribute xmi:id="…" name="email" visibility="private"/>`, beside it. */
+const isNamedRecord = (node: JsonValue, key: string) =>
+  isXmlElement(node) &&
+  Object.keys(node.attributes).some(
+    (other) =>
+      other !== key && (isIdentifyingAttribute(other) || isNameLikeKey(other)),
+  );
+
 /**
  * The elements below the element at a pointer that hold an attribute, as
- * runs do: none holding another, and the element itself holding none; a
- * Freeplane node and the nodes in it, each holding `TEXT`, are no runs.
+ * runs do: none holding another, none carrying an identifier or a name
+ * (`isNamedRecord`), and the element itself holding none; a Freeplane node
+ * and the nodes in it, each holding `TEXT`, are no runs.
  */
 const runsOf = (view: JsonValue | null, pointer: string, key: string) => {
   const element = resolvePointer(view, pointer);
@@ -51,7 +60,8 @@ const runsOf = (view: JsonValue | null, pointer: string, key: string) => {
   for (let next = pending.pop(); next !== undefined; next = pending.pop()) {
     const { node, inside } = next;
     if (!isXmlElement(node)) continue;
-    if (holds(node) && (inside || node === element)) return undefined;
+    if (holds(node) && (inside || node === element || isNamedRecord(node, key)))
+      return undefined;
     runs += holds(node) ? 1 : 0;
     for (const child of node.children)
       pending.push({ node: child, inside: inside || holds(node) });

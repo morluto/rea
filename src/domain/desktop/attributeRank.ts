@@ -4,12 +4,14 @@ export const isIdentifyingAttribute = (key: string): boolean =>
 
 /**
  * Words in a name for how the app showed, printed or kept the document rather
- * than what it holds: its cursor, selection, scroll, zoom, windows, view and
- * configuration settings, printer, a save's history, edit time and count,
- * generator and statistics, and the preview or thumbnail it renders.
+ * than what it holds: its cursor, selection, the layer, frame, view or colour
+ * it has current, scroll, zoom, windows, view and configuration settings, a
+ * list or tree view mirroring the document, printer, a save's history, edit
+ * time and count, generator and statistics, and the preview or thumbnail it
+ * renders.
  */
 export const VIEW_STATE =
-  /cursor|selection|selected|scroll|zoom|viewport|window|splitter|toplevel|topleft|uidata|namedview|view-?settings|config(?:uration)?-?settings|printer|history|edit(?:ing)?-?(?:time|duration|cycles?)|last-?saved|generator|document-?statistic|preview|thumbnail/iu;
+  /cursor|selection|selected|current[-_]?(?:layer|frame|view|colou?r|page|tab|tool|index|item|row|column|cell|sheet|slide|object|scene|track)|scroll|zoom|viewport|window|splitter|toplevel|topleft|uidata|namedview|view-?settings|(?:list|tree)-?view|config(?:uration)?-?settings|printer|history|edit(?:ing)?-?(?:time|duration|cycles?)|last-?saved|generator|document-?statistic|preview|thumbnail/iu;
 
 /** Whether a tag or attribute name is about how the app showed the document rather than what it holds. */
 export const isViewStateName = (name: string): boolean => VIEW_STATE.test(name);
@@ -28,9 +30,15 @@ const LONG_TOKEN = /^(?=.*\d)[A-Za-z0-9+/=_-]{16,}$/u;
 export const isPlaceholder = (value: string): boolean =>
   /^\(?(?:null|nil|none|undefined)\)?$/iu.test(value.trim());
 
-/** Whether a value is a word a program makes, a hex run, UUID or long token, rather than one a user typed. */
+/** Umbrello's ids: `u` and twelve letters and digits mixing cases at random, as `ubcgF2AWfBmHh`, with a digit or four or more changes of case. */
+const isRandomCaseId = (value: string): boolean =>
+  /^u(?=[^]*[A-Z])(?=[^]*[a-z])[A-Za-z\d]{12}$/u.test(value) &&
+  (/\d/u.test(value) ||
+    (value.match(/\p{Ll}(?=\p{Lu})|\p{Lu}(?=\p{Ll})/gu)?.length ?? 0) >= 4);
+
+/** Whether a value is a word a program makes, a hex run, UUID, long token or an id of random case, rather than one a user typed. */
 export const isGeneratedToken = (value: string): boolean =>
-  HEX_TOKEN.test(value) || LONG_TOKEN.test(value);
+  HEX_TOKEN.test(value) || LONG_TOKEN.test(value) || isRandomCaseId(value);
 
 /** Whether an identifier's value is one an app generates for a new element, as Freeplane's `ID_329023692` or a GUID, which another save of the same edit would not repeat. */
 export const isGeneratedId = (value: string): boolean =>

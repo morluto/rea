@@ -403,3 +403,30 @@ describe("draftTaskFiles for a presentation whose save after a reload rewrote it
     expect(rest.every(({ note }) => note === "upkeep")).toBe(true);
   });
 });
+
+describe("draftTaskFiles for an animation whose app keeps what is current", () => {
+  /** A Pencil2D project: the frame, colour, layer and view the app has current, and its layers. */
+  const project = (current: string, bitmap: string) =>
+    `<document><projectdata><currentFrame value="1"/><currentColor r="0" b="0" g="0" a="255"/><currentLayer value="${current}"/><currentView m11="1" dx="0"/><fps value="12"/></projectdata><object><layer id="1" name="Camera Layer" type="5"/><layer id="2" name="Vector Layer" type="2"/><layer id="3" name="${bitmap}" type="1"/><layer id="4" name="Ground" type="1"/></object></document>`;
+
+  it("notes the layer the app has current as view state, never a check, beside the layer the user renamed", () => {
+    const file = xmlDraft(project("3", "Bitmap Layer"), project("2", "Ball"));
+
+    expect(file.suggested.map(pointerOf)).toEqual([
+      "/root/children/[name=object]/children/[name=layer][@id=3]/attributes/name",
+      "/root/children/[name=object]/children/[name=layer][@name=Bitmap Layer]",
+    ]);
+    expect(
+      file.values.map(({ pointer, note }) => [pointer, note ?? null]),
+    ).toEqual([
+      [
+        "/root/children/[name=object]/children/[name=layer][@id=3]/attributes/name",
+        null,
+      ],
+      [
+        "/root/children/[name=projectdata]/children/[name=currentLayer]/attributes/value",
+        "view_state",
+      ],
+    ]);
+  });
+});
