@@ -1207,9 +1207,9 @@ describe("draftTaskFiles archive elements beside identified ones", () => {
 
     expect(itemChecks([id, body("old")], [id, body("new")])).toEqual([
       {
-        kind: "value_equals",
+        kind: "text_equals",
         file: "Documents/list.zip",
-        pointer: `${ITEMS}/[name=item][@role=body]/children/0`,
+        pointer: `${ITEMS}/[name=item][@role=body]`,
         value: "new",
       },
     ]);
