@@ -61,11 +61,11 @@ cliTest.skipIf(process.platform !== "darwin")(
       expect(apktoolGroup).toMatchObject({
         available: false,
         reason: "provider_unavailable",
-        remediation: expect.stringContaining(
-          "macOS process ownership helper compilation failed",
-        ),
       });
-      expect(apktoolGroup?.remediation).toContain("missing-developer");
+      // Discovery carries the prerequisite owner's repair, not its failure text.
+      expect(apktoolGroup?.remediation).toBe(
+        "Check the selected Xcode or Command Line Tools and Swift compiler configuration, then restart REA and retry.",
+      );
     } finally {
       await client.close();
       await transport.close();
