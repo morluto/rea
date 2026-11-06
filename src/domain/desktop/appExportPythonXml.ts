@@ -3,6 +3,8 @@ export const PYTHON_XML_READER = String.raw`#: XML's whitespace, which alone can
 XML_WHITESPACE = " \t\r\n"
 PREDEFINED_ENTITIES = ("amp", "lt", "gt", "apos", "quot")
 ENTITY_REFERENCE = re.compile(r"&([^#;][^;]*);")
+#: A line ending as XML normalizes it before parsing; expat leaves a DOCTYPE's system literal as written.
+XML_LINE_ENDING = re.compile(r"\r\n?")
 
 
 def _expat(namespaces: bool, doctype=None):
@@ -17,6 +19,8 @@ def _expat(namespaces: bool, doctype=None):
         if internal_subset:
             raise ValueError("the document's DOCTYPE has an internal subset")
         if doctype is not None:
+            if system_id is not None:
+                system_id = XML_LINE_ENDING.sub("\n", system_id)
             doctype({"name": name, "public_id": public_id, "system_id": system_id})
 
     def undeclared(name: str, _parameter: bool) -> None:
