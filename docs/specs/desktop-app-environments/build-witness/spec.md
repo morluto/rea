@@ -195,6 +195,14 @@ and the recording and writes the record as Evidence.
   its bundle opened none; the state role and the checkpoint ranking share
   the fix. VYM's `<map>.vym.lock` beside the map is a lock too, while a
   project's `Gemfile.lock` beside its `Gemfile` stays seeded.
+- Gaps of the eighth batch (Poedit): a `*.lock` or `*.lck` directly in the
+  home and Lucene's `write.lock` anywhere are locks; a lock or log never
+  becomes an owned path, is never named among the unowned paths, and makes
+  no folder count as held open, so neither the capture nor the export points
+  `state_paths` at the home. A seed file keeps its permission bits at the
+  seed where the capture recorded them, through the module's `SEED_MODES`,
+  so a `0600` file an app checks boots `0600`; a file the capture never saw
+  change has no recorded mode.
 - The witness reads the build computer's bounded action log: its stage rules
   use the log's count and the last applied action of each kind, and the
   record holds the entries the log keeps, `actions_dropped`, and a

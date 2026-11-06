@@ -522,6 +522,23 @@ title rule and passes now.
   `notes.txt.lock`, and `Gemfile.lock` and `Cargo.lock` beside `Gemfile` and
   `Cargo.toml`, are not.
 
+## Poedit's locks and seed modes
+
+Run on macOS with source tests and gates. Each test below failed before the
+change and passes now.
+
+- `appExportUnowned.test.ts`: `poedit.lock`, `app.LCK` in the home and
+  `TranslationMemory/write.lock` are locks, while `Projects/*/Cargo.lock`
+  stays a project's; the held-open folders leave out the home for
+  `~/poedit.lock` and Lucene's folder, and keep `~/Documents` and
+  `/usr/lib/python3.12`.
+- `DesktopApplicationExport.test.ts`: with Poedit's shapes the export seeds
+  the index segments but neither lock, does not own `poedit.lock`, lists
+  `write.lock` as left out, and names `~/poedit.lock` in no limitation; a
+  `0600` and a `0755` seed are listed in `SEED_MODES`, a `0644` one is not.
+- `desktopExportPython.test.ts`: `_seed_home` gives each file in
+  `SEED_MODES` its mode.
+
 ## Limits of this verification
 
 - The witness acts were scripted by this agent from the task's prompt; no

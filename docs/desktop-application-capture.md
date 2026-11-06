@@ -374,7 +374,10 @@ changed since the walk, changed during the read, or unreadable.
 Directories the application held files open in, but whose starting content was
 not retained, are listed so a second capture can pass them with
 `--state-path`, or `state_paths` on a build computer's `start_build_capture`,
-and a limitation names them, spelled from `~/` under the home.
+and a limitation names them, spelled from `~/` under the home. A lock file
+the application held open, such as Poedit's `~/poedit.lock` or Lucene's
+`write.lock`, makes no folder such a directory, since it holds nothing to
+retain.
 
 **Limitations.** What the capture could not establish, such as a truncated
 walk or a missing window.

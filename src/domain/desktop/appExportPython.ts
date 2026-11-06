@@ -118,6 +118,9 @@ def _seed_home(home: Path) -> None:
         else:
             data = _respelled_utf16(data, home)
         target.write_bytes(data)
+        mode = SEED_MODES.get(relative)
+        if mode is not None:
+            target.chmod(mode)
 
 
 def _dconf(arguments: list, environment: dict) -> str:
@@ -459,6 +462,7 @@ const PYTHON_CONSTANTS = [
   "PATHS",
   "DCONF",
   "TEXT_SEEDS",
+  "SEED_MODES",
   "WINDOW_CLASS",
 ] as const;
 
