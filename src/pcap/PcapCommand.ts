@@ -21,6 +21,7 @@ import {
   WindowsBatchCommandError,
 } from "../process/WindowsBatchCommand.js";
 import { pcapToolUnavailable } from "./PcapConfiguration.js";
+import { resolveWindowsOwnedCommand } from "../process/resolveWindowsOwnedCommand.js";
 
 export type PcapCommandLauncher = NonNullable<
   Parameters<typeof runOwnedCommand>[2]
@@ -87,16 +88,29 @@ export const runPcapCommand = async (options: {
           arguments: options.arguments,
         })
       : { command, arguments: options.arguments };
+    const ownedInvocation =
+      process.platform === "win32"
+        ? resolveWindowsOwnedCommand(
+            invocation.command,
+            invocation.arguments,
+            hostEnvironment,
+          )
+        : {
+            command: invocation.command,
+            arguments: invocation.arguments,
+            windowsVerbatimArguments: false,
+          };
     const boundedInvocation =
       options.nativeBound?.limiter === undefined
-        ? invocation
+        ? ownedInvocation
         : {
             command: options.nativeBound.limiter.command,
             arguments: [
               ...options.nativeBound.limiter.arguments,
-              invocation.command,
-              ...invocation.arguments,
+              ownedInvocation.command,
+              ...ownedInvocation.arguments,
             ],
+            windowsVerbatimArguments: false,
           };
     // Native ownership preparation has its own bounded compiler lifecycle;
     // do not spend the tool's execution deadline rebuilding a cold SDK cache.
@@ -106,7 +120,8 @@ export const runPcapCommand = async (options: {
         ...boundedInvocation,
         runId: randomUUID(),
         hostEnvironment,
-        windowsVerbatimArguments: batch,
+        windowsVerbatimArguments:
+          boundedInvocation.windowsVerbatimArguments || batch,
         expectedCommand: null,
         ...(options.nativeBound?.memoryLimitBytes === undefined
           ? {}

@@ -1136,6 +1136,23 @@ export class BinarySession
       const execution = { ...result.value, subject: null };
       return ok(execution);
     }
+    if (this.#active === undefined) {
+      const capability = this.#providerRouter
+        .initialRoute()
+        .capabilities.get(name);
+      if (
+        capability?.available === false &&
+        capability.availabilityCode === "unsupported_host"
+      )
+        return err(
+          new AnalysisCapabilityUnavailableError(
+            capability.provider.id,
+            name,
+            capability.reason,
+            { userMessage: capability.reason },
+          ),
+        );
+    }
     const prepared = prepareSessionExecution({
       active: this.#active,
       operation: name,

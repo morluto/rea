@@ -18,6 +18,8 @@ import {
   AnalysisCapabilityUnavailableError,
   AnalysisOutputError,
 } from "../domain/analysisErrorCore.js";
+import { NoBinaryOpenError } from "../domain/configurationErrors.js";
+import { NATIVE_MACOS_PROVIDER_IDENTITY } from "../native/NativeMacOSProviderMetadata.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
@@ -103,6 +105,19 @@ const firstAnalysisCancellation = <Value>(
     if (!result.ok && isAnalysisCancellation(result.error)) return result.error;
   return undefined;
 };
+
+const macosUtilityRefusal = (
+  operation: string,
+  error: AnalysisError,
+): AnalysisError =>
+  process.platform !== "darwin" && error instanceof NoBinaryOpenError
+    ? new AnalysisCapabilityUnavailableError(
+        NATIVE_MACOS_PROVIDER_IDENTITY.id,
+        operation,
+        "Native macOS utilities require macOS.",
+        { userMessage: "Native macOS utilities require macOS." },
+      )
+    : error;
 
 /**
  * Composes direct provider operations into bounded reverse-engineering tools.
@@ -304,7 +319,8 @@ export class EnhancedTools {
 
   async #objcClasses(pattern: string, signal?: AbortSignal): EnhancedResult {
     const namesExecution = await this.#observe("list_names", {}, signal);
-    if (!namesExecution.ok) return namesExecution;
+    if (!namesExecution.ok)
+      return err(macosUtilityRefusal("get_objc_classes", namesExecution.error));
     const names = this.#parseAddressed(
       "list_names",
       namesExecution.value.result,
@@ -423,7 +439,9 @@ export class EnhancedTools {
 
   async #objcProtocols(signal?: AbortSignal): EnhancedResult {
     const names = await this.#allAddressed("list_names", signal);
-    return names.ok ? ok(discoverObjcProtocols(names.value)) : names;
+    if (!names.ok)
+      return err(macosUtilityRefusal("get_objc_protocols", names.error));
+    return ok(discoverObjcProtocols(names.value));
   }
 
   async #batchDecompile(
@@ -686,7 +704,8 @@ export class EnhancedTools {
     signal?: AbortSignal,
   ): EnhancedResult {
     const procedures = await this.#allAddressed("list_procedures", signal);
-    if (!procedures.ok) return procedures;
+    if (!procedures.ok)
+      return err(macosUtilityRefusal("analyze_swift_types", procedures.error));
     const symbols = await this.#allAddressed("list_names", signal);
     if (
       !symbols.ok &&

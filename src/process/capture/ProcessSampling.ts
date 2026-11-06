@@ -5,6 +5,10 @@ import type {
 } from "../../domain/process/processCapture.js";
 import { execFileOutput } from "../ExecFileOutput.js";
 import { readProcessRunId } from "../ProcessOwnership.js";
+import {
+  readWindowsProcessRunId,
+  readWindowsProcessTable,
+} from "./WindowsProcessTable.js";
 import { monotonicProcessCaptureClock } from "./ProcessCaptureClock.js";
 import {
   inspectLinuxProcess,
@@ -230,12 +234,41 @@ const sampleLinuxFallback = async (
   );
 };
 
+const windowsIdentity = (
+  row: Awaited<ReturnType<typeof readWindowsProcessTable>>[number],
+): ProcessRow => ({
+  pid: row.pid,
+  parent_pid: row.parentPid,
+  process_group_id: row.pid,
+  session_id: null,
+  command: row.command,
+  startTime: row.startTime,
+});
+
+const readWindowsRows = async (
+  signal: AbortSignal,
+): Promise<SamplingObservation<readonly ProcessRow[]>> => {
+  const observed = samplingReadObservation(
+    await readSamplingSource("Windows process table", signal, async () =>
+      (await readWindowsProcessTable(signal)).map(windowsIdentity),
+    ),
+  );
+  return samplingObservation(observed.value ?? [], observed.diagnostics);
+};
+
 const readRootIdentity = async (
   rootPid: number,
   signal: AbortSignal,
 ): Promise<SamplingObservation<ProcessRow | undefined>> => {
   if (process.platform === "linux")
     return readLinuxProcessStat(rootPid, signal);
+  if (process.platform === "win32") {
+    const rows = await readWindowsRows(signal);
+    return samplingObservation(
+      rows.value?.find(({ pid }) => pid === rootPid),
+      rows.diagnostics,
+    );
+  }
   const rows = await readPsRows(signal);
   return samplingObservation(
     rows.value?.find(({ pid }) => pid === rootPid),
@@ -264,13 +297,21 @@ const inspectInitializedPtyRoot = async (
           signal,
           () => readProcessRunId(rootPid, undefined, signal),
         )
-      : samplingReadObservation(
-          await readSamplingSource(
-            `run token for PID ${String(rootPid)}`,
-            signal,
-            () => readProcessRunId(rootPid, undefined, signal),
-          ),
-        );
+      : process.platform === "win32"
+        ? samplingReadObservation(
+            await readSamplingSource(
+              `run token for PID ${String(rootPid)}`,
+              signal,
+              () => readWindowsProcessRunId(rootPid, signal),
+            ),
+          )
+        : samplingReadObservation(
+            await readSamplingSource(
+              `run token for PID ${String(rootPid)}`,
+              signal,
+              () => readProcessRunId(rootPid, undefined, signal),
+            ),
+          );
   const after = await readRootIdentity(rootPid, signal);
   const diagnostics = mergeSamplingDiagnostics(
     before.diagnostics,
@@ -331,16 +372,51 @@ const samplePs = async (
   return samplingObservation(result, observed.diagnostics);
 };
 
+const sampleWindows = async (
+  context: SampleProcessContext,
+): Promise<SamplingObservation<readonly ProcessRow[]>> => {
+  const { rootPid, limit, signal } = context;
+  if (limit <= 0) return samplingObservation([]);
+  const observed = await readWindowsRows(signal);
+  const rows = observed.value ?? [];
+  const rowByPid = new Map(rows.map((row) => [row.pid, row]));
+  const childrenByParent = new Map<number, ProcessRow[]>();
+  for (const row of rows) {
+    const siblings = childrenByParent.get(row.parent_pid) ?? [];
+    siblings.push(row);
+    childrenByParent.set(row.parent_pid, siblings);
+  }
+  const result: ProcessRow[] = [];
+  const visited = new Set<number>();
+  const queue: number[] = [rootPid];
+  let index = 0;
+  while (index < queue.length && result.length < limit) {
+    const pid = queue[index];
+    if (pid === undefined) break;
+    index += 1;
+    if (visited.has(pid)) continue;
+    visited.add(pid);
+    const row = rowByPid.get(pid);
+    if (row !== undefined) result.push(row);
+    if (result.length >= limit) break;
+    for (const child of childrenByParent.get(pid) ?? []) {
+      if (!visited.has(child.pid)) queue.push(child.pid);
+    }
+  }
+  return samplingObservation(result, observed.diagnostics);
+};
+
 const sampleProcesses = async (
   context: SampleProcessContext,
 ): Promise<SamplingObservation<readonly ProcessSample[]>> => {
-  if (process.platform === "win32" || context.limit <= 0)
-    return samplingObservation([]);
+  if (context.limit <= 0) return samplingObservation([]);
 
   const rows =
     process.platform === "linux"
       ? await sampleLinux(context)
-      : await samplePs(context);
+      : process.platform === "win32"
+        ? await sampleWindows(context)
+        : await samplePs(context);
 
   const { elapsedMs, identities } = context;
   const samples: ProcessSample[] = [];
