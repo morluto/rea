@@ -4,6 +4,7 @@ import {
   detectStateFormat,
   jsonView,
   keyfileView,
+  textSyntaxFormat,
   textView,
   xmlView,
 } from "./stateFormats.js";
@@ -100,7 +101,7 @@ describe("views", () => {
     });
   });
 
-  it("reads XML into an element tree and refuses a DOCTYPE", () => {
+  it("reads XML into an element tree and refuses a DOCTYPE with an internal subset", () => {
     expect(xmlView('<a x="1"><b>text</b></a>')).toEqual({
       root: {
         name: "a",
@@ -110,7 +111,63 @@ describe("views", () => {
       truncated: false,
     });
     expect(xmlView('<!DOCTYPE a [<!ENTITY e "x">]><a>&e;</a>')).toBeUndefined();
+    expect(xmlView('<!DOCTYPE a [<!ENTITY e "x">]><a/>')).toBeUndefined();
+    expect(xmlView("<!DOCTYPE a []><a/>")).toBeUndefined();
   });
+
+  it("reads a document whose DOCTYPE only names its DTD as the same tree, recording the declaration", () => {
+    const tree = '<a x="1"><b>text &amp; more</b></a>';
+    const declared = `<?xml version="1.0"?>\n<!DOCTYPE a PUBLIC "-//X//DTD A 1.0//EN" "http://example.test/a.dtd">\n${tree}`;
+
+    expect(xmlView(declared)).toEqual({
+      doctype: {
+        name: "a",
+        public_id: "-//X//DTD A 1.0//EN",
+        system_id: "http://example.test/a.dtd",
+      },
+      ...(xmlView(tree) as object),
+    });
+    expect(xmlView(`<!DOCTYPE a>${tree}`)).toMatchObject({
+      doctype: { name: "a", public_id: null, system_id: null },
+    });
+  });
+
+  it("refuses a reference to an entity the document cannot declare, even with an external DTD", () => {
+    expect(xmlView('<!DOCTYPE a SYSTEM "a.dtd"><a>&e;</a>')).toBeUndefined();
+    expect(xmlView('<!DOCTYPE a SYSTEM "a.dtd"><a b="&e;"/>')).toBeUndefined();
+  });
+});
+
+describe("detectStateFormat with a DOCTYPE", () => {
+  it("reads an AbiWord document, which names its DTD, as XML, and one declaring entities as text", () => {
+    const abiword = (subset: string) =>
+      bytes(
+        `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE abiword PUBLIC "-//ABISOURCE//DTD AWML 1.0 Strict//EN" "http://www.abisource.com/awml.dtd"${subset}>\n<abiword xml:space="preserve"><section><p>Hello</p></section></abiword>\n`,
+      );
+
+    expect(detectStateFormat("/h/Documents/note.abw", abiword(""))).toBe("xml");
+    expect(
+      detectStateFormat(
+        "/h/Documents/note.abw",
+        abiword(' [<!ENTITY lol "lol">]'),
+      ),
+    ).toBe("text");
+  });
+
+  it.each([
+    '<!DOCTYPE abiword PUBLIC "-//ABISOURCE//DTD AWML 1.0 Strict//EN" "http://www.abisource.com/awml.dtd"><abiword/>',
+    '<!DOCTYPE abiword [<!ENTITY lol "lol">]><abiword>&lol;</abiword>',
+    '<!DOCTYPE abiword SYSTEM "awml.dtd"><abiword>&lol;</abiword>',
+    '<!DOCTYPE abiword PUBLIC "{bad}" "awml.dtd"><abiword/>',
+  ])(
+    "tells XML by syntax alone as it does when it builds the document: %j",
+    (body) => {
+      const text = `<?xml version="1.0"?>\n${body}\n`;
+      expect(textSyntaxFormat("/h/Documents/note.abw", text)).toBe(
+        detectStateFormat("/h/Documents/note.abw", bytes(text)),
+      );
+    },
+  );
 });
 
 describe("captured data safety and fidelity", () => {
@@ -138,6 +195,53 @@ describe("captured data safety and fidelity", () => {
             children: ["  "],
           },
           { name: "d", attributes: {}, children: ["\n  "] },
+        ],
+      },
+      truncated: false,
+    });
+  });
+
+  it("keeps whitespace between the runs of mixed content, which holds text of its own", () => {
+    expect(
+      xmlView("<p>Meet on <s>Sunday</s> <s>evening</s>.<q>\n  <s/>\n</q></p>"),
+    ).toEqual({
+      root: {
+        name: "p",
+        attributes: {},
+        children: [
+          "Meet on ",
+          { name: "s", attributes: {}, children: ["Sunday"] },
+          " ",
+          { name: "s", attributes: {}, children: ["evening"] },
+          ".",
+          {
+            name: "q",
+            attributes: {},
+            children: [{ name: "s", attributes: {}, children: [] }],
+          },
+        ],
+      },
+      truncated: false,
+    });
+  });
+
+  it("drops only XML whitespace as formatting: a no-break space between elements is text", () => {
+    const b = { name: "b", attributes: {}, children: [] };
+    const between = (text: string) => `<a><b/>${text}<b/></a>`;
+
+    expect(
+      xmlView(`<r>${[" ", "\u0085", "﻿", "\t\r\n "].map(between).join("")}</r>`),
+    ).toEqual({
+      root: {
+        name: "r",
+        attributes: {},
+        children: [
+          ...[" ", "\u0085", "﻿"].map((text) => ({
+            name: "a",
+            attributes: {},
+            children: [b, text, b],
+          })),
+          { name: "a", attributes: {}, children: [b, b] },
         ],
       },
       truncated: false,

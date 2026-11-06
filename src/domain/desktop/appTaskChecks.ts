@@ -1,10 +1,16 @@
 import type { JsonValue } from "../jsonValue.js";
-import { countComparison, type DesktopTaskCheck } from "./appTask.js";
+import {
+  collapseWhitespace,
+  countComparison,
+  type DesktopTaskCheck,
+  type PointerCheck,
+} from "./appTask.js";
 import type { DesktopStatePath } from "./desktopState.js";
 import { locatePointer, type Located } from "./viewPointer.js";
 import {
   viewlessEntryAt,
   zipArrayLeavesOut,
+  zipEntryAt,
   zipLeavesOutAt,
 } from "./zipView.js";
 
@@ -210,12 +216,12 @@ const nearVerdict = (
 };
 
 /**
- * Why a value check cannot be decided on what the view holds: the entry whose
+ * Why a pointer check cannot be decided on what the view holds: the entry whose
  * view its pointer goes into has none, or a selector searched an array the view
  * may hold only part of. Undefined when it can be.
  */
 const unreadOrPartial = (
-  check: Check<"value_equals" | "value_absent">,
+  check: PointerCheck,
   format: string | null | undefined,
   read: { readonly view: JsonValue | null; readonly truncated: boolean },
   located: Located,
@@ -232,16 +238,29 @@ const unreadOrPartial = (
   return located.searched.some(partial) ? undecided(check.file) : undefined;
 };
 
+const NOTHING: Located = { kind: "none", searched: [], byPosition: [] };
+
+/** Why a pointer names no value, undecided when its view is cut, since the value may lie past what the view kept. */
+const noValue = (
+  at: string,
+  located: Located & { kind: "none" },
+  cut: boolean,
+): Verdict =>
+  notFound(
+    located.reason === undefined
+      ? `${at} has no value`
+      : `${at}: ${located.reason}`,
+    cut,
+  );
+
 const valueVerdict = (
   check: Check<"value_equals" | "value_absent">,
   entry: TaskFileView | undefined,
 ): Verdict => {
   const read = viewOf(check, entry, undefined);
   if ("passed" in read) return read;
-  const located: Located =
-    entry === undefined
-      ? { kind: "none", searched: [], byPosition: [] }
-      : locatePointer(read.view, check.pointer);
+  const located =
+    entry === undefined ? NOTHING : locatePointer(read.view, check.pointer);
   const at = `${check.file} at ${check.pointer}`;
   const unknown = unreadOrPartial(check, entry?.format, read, located);
   if (unknown !== undefined) return unknown;
@@ -258,13 +277,7 @@ const valueVerdict = (
     check.value !== null;
   if (whole && truncated) return undecided(check.file);
   if (check.kind === "value_equals") {
-    if (located.kind === "none")
-      return notFound(
-        located.reason === undefined
-          ? `${at} has no value`
-          : `${at}: ${located.reason}`,
-        truncated,
-      );
+    if (located.kind === "none") return noValue(at, located, truncated);
     if (check.tolerance !== undefined && typeof check.value === "number")
       return nearVerdict(at, located.value, check.value, check.tolerance);
     return sameJson(located.value, check.value)
@@ -275,6 +288,120 @@ const valueVerdict = (
   return located.kind === "none"
     ? pass(`${at} has no value`)
     : fail(`${at} is ${shown(located.value)}`);
+};
+
+/** An element of REA's XML view: its tag name, attributes and children. */
+export const isXmlElement = (
+  value: JsonValue | null | undefined,
+): value is Record<string, JsonValue> & {
+  name: string;
+  children: JsonValue[];
+} =>
+  isRecord(value) &&
+  typeof value.name === "string" &&
+  isRecord(value.attributes) &&
+  Array.isArray(value.children);
+
+/**
+ * An element's text as XPath's `string()` reads it from what the view keeps:
+ * every text node among its children and its descendants', in document order.
+ */
+export const elementText = (element: JsonValue): string => {
+  const parts: string[] = [];
+  const pending: JsonValue[] = [element];
+  for (let node = pending.pop(); node !== undefined; node = pending.pop())
+    if (typeof node === "string") parts.push(node);
+    else if (isXmlElement(node))
+      for (let index = node.children.length - 1; index >= 0; index -= 1)
+        pending.push(node.children[index] ?? null);
+  return parts.join("");
+};
+
+/**
+ * Whether a string a pointer reaches is text of the document: a member of an
+ * element's `children` (a text node) or `attributes` (an attribute's value),
+ * rather than an element's name or a field of the DOCTYPE.
+ */
+const isTextAt = (view: JsonValue | null, pointer: string): boolean => {
+  const segments = pointer.split("/");
+  const field = segments.at(-2);
+  if (field !== "children" && field !== "attributes") return false;
+  const owner = locatePointer(view, segments.slice(0, -2).join("/"));
+  return owner.kind === "value" && isXmlElement(owner.value);
+};
+
+/** Why a text check's pointer into an archive goes into no XML entry's view, or undefined when it does or names an entry not listed. */
+const notXmlEntry = (
+  check: Check<"text_equals" | "text_contains">,
+  view: JsonValue | null,
+): string | undefined => {
+  if (check.pointer.split("/")[3] !== "view")
+    return `${check.file} at ${check.pointer} does not point into an entry's view`;
+  const entry = zipEntryAt(view, check.pointer);
+  if (typeof entry !== "object" || entry.format === "xml") return undefined;
+  // An entry without a view failed before this, so its format is one with a view.
+  const text = (value: JsonValue | undefined) =>
+    typeof value === "string" ? value : "";
+  return `${check.file} entry ${text(entry.name)} is read as ${text(entry.format)}, not xml`;
+};
+
+/** A text found at `at` compared with the check's value or searched for it, both collapsed when it asks. */
+const comparedText = (
+  check: Check<"text_equals" | "text_contains">,
+  at: string,
+  found: string,
+): Verdict => {
+  const collapse = check.normalize_whitespace === true;
+  const text = collapse ? collapseWhitespace(found) : found;
+  const value = collapse ? collapseWhitespace(check.value) : check.value;
+  const how = collapse ? " with whitespace collapsed" : "";
+  if (check.kind === "text_equals")
+    return text === value
+      ? pass(`${at} has the text ${shown(value)}${how}`)
+      : fail(`${at} has the text ${shown(text)}${how}, not ${shown(value)}`);
+  return text.includes(value)
+    ? pass(`${at} has text containing ${shown(value)}${how}`)
+    : fail(`${at} has the text ${shown(text)}${how}, without ${shown(value)}`);
+};
+
+/** An element's whole text, or a text node's, compared with `value` or searched for it. */
+const textVerdict = (
+  check: Check<"text_equals" | "text_contains">,
+  entry: TaskFileView | undefined,
+): Verdict => {
+  const read = viewOf(check, entry, undefined);
+  if ("passed" in read) return read;
+  const at = `${check.file} at ${check.pointer}`;
+  if (entry === undefined) return fail(`${at} has no value`);
+  const zip = entry.format === "zip";
+  if (!zip && entry.format !== "xml")
+    return fail(`${check.file} is read as ${String(entry.format)}, not xml`);
+  const located = locatePointer(read.view, check.pointer);
+  const unknown = unreadOrPartial(check, entry.format, read, located);
+  if (unknown !== undefined) return unknown;
+  const problem = zip ? notXmlEntry(check, read.view) : undefined;
+  if (problem !== undefined) return fail(problem);
+  if (located.kind === "unresolved") return fail(`${at}: ${located.problem}`);
+  // A zip view's truncation that matters is the entry the pointer goes into.
+  const truncated = zip
+    ? zipLeavesOutAt(read.view, check.pointer)
+    : read.truncated;
+  if (located.kind === "none") return noValue(at, located, truncated);
+  const found = located.value;
+  if (
+    typeof found === "string"
+      ? !isTextAt(read.view, check.pointer)
+      : !isXmlElement(found)
+  )
+    return fail(
+      `${at} is ${shown(found)}, not an element, a text node or an attribute value`,
+    );
+  // A text node is whole. An element's text in a cut view may run on past the
+  // cut, so it equals no value there, and a value it lacks may lie in the cut.
+  const cut = typeof found !== "string" && truncated;
+  if (cut && check.kind === "text_equals") return undecided(check.file);
+  const verdict = comparedText(check, at, elementText(found));
+  return verdict.passed ? verdict : notFound(verdict.description, cut);
 };
 
 /** A table's columns and rows; a table the view lacks has none, unless the view left tables out. */
@@ -359,6 +486,9 @@ const verdict = (
     case "value_equals":
     case "value_absent":
       return valueVerdict(check, entry);
+    case "text_equals":
+    case "text_contains":
+      return textVerdict(check, entry);
     case "row_present":
     case "row_absent":
     case "row_count":

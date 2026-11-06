@@ -124,6 +124,32 @@ const REFUSALS: readonly (readonly [Record<string, unknown>, string])[] = [
     {
       checks: [
         {
+          kind: "text_equals",
+          file: "a",
+          pointer: "/m",
+          value: "Thu Nov  5 22:03:14 2026\n",
+        },
+      ],
+    },
+    "looks like a time the app stamps",
+  ],
+  [
+    {
+      checks: [
+        {
+          kind: "row_present",
+          file: "a",
+          table: "t",
+          where: { saved: "Mon Jan 12 07:00:00 2026" },
+        },
+      ],
+    },
+    "looks like a time the app stamps",
+  ],
+  [
+    {
+      checks: [
+        {
           kind: "row_present",
           file: "a",
           table: "t",
@@ -164,6 +190,63 @@ const REFUSALS: readonly (readonly [Record<string, unknown>, string])[] = [
       ],
     },
     "at checks.0.tolerance",
+  ],
+  [
+    { checks: [{ kind: "text_equals", file: "a", pointer: "", value: "x" }] },
+    "the empty pointer names the whole file",
+  ],
+  [
+    {
+      checks: [{ kind: "text_contains", file: "a", pointer: "p", value: "x" }],
+    },
+    "must start with /",
+  ],
+  [
+    {
+      checks: [{ kind: "text_contains", file: "a", pointer: "/p", value: "" }],
+    },
+    "at checks.0.value",
+  ],
+  [
+    {
+      checks: [
+        {
+          kind: "text_contains",
+          file: "a",
+          pointer: "/p",
+          value: " \n",
+          normalize_whitespace: true,
+        },
+      ],
+    },
+    "text_contains",
+  ],
+  [
+    {
+      checks: [
+        {
+          kind: "text_equals",
+          file: "a",
+          pointer: "/p",
+          value: "2026-11-04T10:12:00Z",
+        },
+      ],
+    },
+    "looks like a time the app stamps",
+  ],
+  [
+    {
+      checks: [
+        {
+          kind: "text_equals",
+          file: "a",
+          pointer: "/p",
+          value: "x",
+          normalize_whitespace: "yes",
+        },
+      ],
+    },
+    "at checks.0.normalize_whitespace",
   ],
 ];
 
@@ -361,6 +444,60 @@ describe("evaluateTaskChecks on cut views", () => {
   });
 });
 
+describe("evaluateTaskChecks text on a cut view", () => {
+  const views = new Map<string, TaskFileView>([
+    [
+      "page.xml",
+      {
+        format: "xml",
+        view: {
+          root: { name: "doc", attributes: {}, children: ["kept"] },
+          truncated: true,
+        },
+      },
+    ],
+  ]);
+
+  it("leaves a text check undecided where it fails on an element a cut view holds or names nothing there, and decided where it finds its text", () => {
+    const text = (kind: string, pointer: string, value: string) =>
+      evaluateTaskChecks(
+        [{ id: "c", kind, file: "page.xml", pointer, value } as never],
+        views,
+      )[0];
+
+    expect(text("text_contains", "/root", "kept")).toEqual({
+      id: "c",
+      passed: true,
+      description: 'page.xml at /root has text containing "kept"',
+    });
+    expect(text("text_contains", "/root", "gone")).toEqual({
+      id: "c",
+      passed: false,
+      description: 'page.xml at /root has the text "kept", without "gone"',
+      undecided: true,
+    });
+    expect(text("text_equals", "/root", "kept")).toEqual({
+      id: "c",
+      passed: false,
+      description:
+        "the view of page.xml is truncated, so what it leaves out is unknown",
+      undecided: true,
+    });
+    expect(text("text_equals", "/root/children/1", "kept")).toEqual({
+      id: "c",
+      passed: false,
+      description: "page.xml at /root/children/1 has no value",
+      undecided: true,
+    });
+    expect(text("text_equals", "/root/children/0", "gone")).toEqual({
+      id: "c",
+      passed: false,
+      description:
+        'page.xml at /root/children/0 has the text "kept", not "gone"',
+    });
+  });
+});
+
 describe("evaluateTaskChecks selectors and tolerance", () => {
   const plate = "Documents/plate.FCStd";
   const objects = "/entries/[name=Document.xml]/view/root/children";
@@ -483,6 +620,134 @@ describe("evaluateTaskChecks selectors and tolerance", () => {
         tolerance: 1,
       })?.description,
     ).toMatch(/is "Part::Cylinder", not a number$/u);
+  });
+});
+
+describe("evaluateTaskChecks whole text", () => {
+  const outcome = (check: Record<string, unknown>) =>
+    evaluateTaskChecks(
+      [{ id: "c", ...check } as never],
+      new Map(Object.entries(CHECK_VIEWS)),
+    )[0];
+  const meeting = "Documents/meeting.xml";
+  const plate = "Documents/plate.FCStd";
+  const time = "/root/children/[name=p][@id=time]";
+  /** A value as a description shows it: caller data and what the view holds, as JSON. */
+  const quoted = (value: unknown) => JSON.stringify(value);
+  const expectFacts = (
+    found: { passed: boolean; description: string } | undefined,
+    passed: boolean,
+    facts: readonly string[],
+  ) => {
+    expect(found?.passed).toBe(passed);
+    for (const fact of facts) expect(found?.description).toContain(fact);
+  };
+
+  it("reports the text an element has, its runs joined, beside the value it was compared with", () => {
+    expectFacts(
+      outcome({
+        kind: "text_equals",
+        file: meeting,
+        pointer: time,
+        value: "Starts at 3:45 today.",
+      }),
+      false,
+      [
+        meeting,
+        time,
+        quoted("Starts at 3:30 today."),
+        quoted("Starts at 3:45 today."),
+      ],
+    );
+    expectFacts(
+      outcome({
+        kind: "text_contains",
+        file: meeting,
+        pointer: time,
+        value: "3:45",
+      }),
+      false,
+      [quoted("Starts at 3:30 today."), quoted("3:45")],
+    );
+    const collapsed = outcome({
+      kind: "text_contains",
+      file: meeting,
+      pointer: "/root/children/[name=p][@id=spaced]",
+      value: "Doors  open",
+      normalize_whitespace: true,
+    });
+    expectFacts(collapsed, true, [quoted("Doors open")]);
+    expect(collapsed?.description).not.toContain(quoted("Doors  open"));
+  });
+
+  it("reads only an XML element, a text node or an attribute value, and names what it reached instead", () => {
+    const refused: readonly (readonly [Record<string, unknown>, string[]])[] = [
+      [
+        { file: ".config/notes/settings.json", pointer: "/tags/0", value: "a" },
+        [".config/notes/settings.json", "json"],
+      ],
+      [
+        { file: meeting, pointer: "/root/attributes", value: "en" },
+        ["/root/attributes", quoted({ lang: "en" })],
+      ],
+      [
+        { file: meeting, pointer: "/root/name", value: "doc" },
+        ["/root/name", quoted("doc")],
+      ],
+      [
+        { file: meeting, pointer: "/doctype/system_id", value: "meeting.dtd" },
+        ["/doctype/system_id", quoted("meeting.dtd")],
+      ],
+      [
+        {
+          file: plate,
+          pointer: "/entries/[name=empty.json]/view/x",
+          value: "x",
+        },
+        ["empty.json", "json"],
+      ],
+      [
+        { file: plate, pointer: "/entries/0/name", value: "Document.xml" },
+        ["/entries/0/name"],
+      ],
+    ];
+
+    for (const [check, facts] of refused)
+      expectFacts(outcome({ kind: "text_equals", ...check }), false, facts);
+  });
+
+  it("leaves an element of a truncated view undecided as a value check is, while a text node there is decided", () => {
+    const cut = "Documents/cut.xml";
+
+    expect(
+      outcome({
+        kind: "text_equals",
+        file: cut,
+        pointer: "/root/children/0",
+        value: "",
+      }),
+    ).toEqual(
+      outcome({
+        kind: "value_absent",
+        file: cut,
+        pointer: "/root/attributes/x",
+      }),
+    );
+    expect(
+      outcome({
+        kind: "value_absent",
+        file: cut,
+        pointer: "/root/attributes/x",
+      })?.passed,
+    ).toBe(false);
+    expect(
+      outcome({
+        kind: "text_equals",
+        file: cut,
+        pointer: "/root/children/1",
+        value: "kept",
+      })?.passed,
+    ).toBe(true);
   });
 });
 
