@@ -1,4 +1,5 @@
 import { registerPlaywrightTraceCommand } from "./playwrightTraceCommand.js";
+import { registerOtlpTraceCommand } from "./otlpTraceCommand.js";
 import { registerApiContractCommand } from "./apiContractCommand.js";
 import { Cli, z } from "incur";
 
@@ -78,6 +79,7 @@ export const registerApplicationCommands = (
   registerStaticObservedEndpointsCommand(cli, logger);
   registerApiContractCommand(cli, logger);
   registerPlaywrightTraceCommand(cli, logger);
+  registerOtlpTraceCommand(cli, logger);
   registerEvidenceJsonCommand({
     cli,
     logger,

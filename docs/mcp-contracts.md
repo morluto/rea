@@ -2160,3 +2160,13 @@ and network facts, resource references and diagnostics; long text has bounded
 previews and character pages. Import does not contact recorded URLs or use a
 browser. See [offline Playwright traces](./playwright-traces.md) for coverage,
 resource policies and the shared CLI workflow.
+
+## Offline OTLP traces
+
+`inspect_otlp_trace` reads one caller-supplied OTLP JSON trace export and retains
+span identity, parent links, timestamps, status, service and scope facts. Import
+does not contact a collector or observability backend, fetch linked resources or
+run the recorded application; protobuf exports are not supported. A parent the
+export does not contain is reported as an orphan rather than inferred, and
+credential-carrying attribute values are redacted by default. See
+[offline OTLP traces](./otlp-traces.md) for coverage and resource policies.
