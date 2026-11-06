@@ -24,11 +24,28 @@ import {
 
 const countSchema = z.int().min(0);
 
+/**
+ * Caller choice when a JavaScript source reaches its per-source `analysis_timeout_ms` deadline.
+ *
+ * `stop` interrupts the remaining sources and returns partial Evidence;
+ * `record-and-continue` records the timed-out source as an explicit processing
+ * gap and continues analyzing remaining sources with a fresh worker.
+ */
+export const javaScriptTimeoutPolicySchema = z
+  .enum(["stop", "record-and-continue"])
+  .default("stop");
+
+/** Parsed per-source JavaScript timeout policy. */
+export type JavaScriptTimeoutPolicyName = z.infer<
+  typeof javaScriptTimeoutPolicySchema
+>;
+
 /** Public target-free request for static JavaScript application analysis. */
 export const analyzeJavaScriptApplicationInputSchema = z.strictObject({
   input_path: localPathStringSchema,
-  format: z.enum(["auto", "asar", "directory"]).default("auto"),
+  format: z.enum(["auto", "asar", "directory", "file"]).default("auto"),
   integrity_policy: artifactIntegrityPolicySchema,
+  timeout_policy: javaScriptTimeoutPolicySchema,
   source_paths: javaScriptSourcePathsSchema.optional(),
   ...javaScriptAnalysisResourceControlsSchema.shape,
 });
@@ -89,7 +106,7 @@ const reconstructionStatisticsSchema = z.strictObject({
 
 const applicationAnalysisResultShape = z.strictObject({
   input_path: z.string().min(1),
-  format: z.enum(["asar", "directory"]),
+  format: z.enum(["asar", "directory", "file"]),
   root_artifact_sha256: digestSchema,
   inventory_manifest_id: prefixedDigestSchema("agm"),
   inventory_graph_sha256: digestSchema,

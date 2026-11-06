@@ -12,7 +12,8 @@ when an operation is interrupted.
 
 ## Public workflow
 
-The tool reads the caller-selected local directory or ASAR path directly:
+The tool reads the caller-selected local directory, ASAR, or JavaScript/TypeScript
+source file path directly:
 
 ```bash
 rea analyze /absolute/path/to/apps/app.asar --json
@@ -47,9 +48,12 @@ The equivalent MCP input is:
 }
 ```
 
-`input_path` must be absolute. `format` accepts `auto`, `asar`, or `directory`.
+`input_path` must be absolute. `format` accepts `auto`, `asar`, `directory`, or
+`file` (a single JavaScript/TypeScript source file).
 `integrity_policy` accepts `fail` or `record-and-continue`; both CLI routes and
-the MCP tool default to `fail`.
+the MCP tool default to `fail`. `timeout_policy` (`--timeout-policy` on
+`analyze-javascript-application`) accepts `stop` or `record-and-continue` and
+defaults to `stop`.
 Evidence parameters retain the caller-selected `input_path`, including a
 symlink alias. Both CLI routes anchor relative inputs to their working
 directory without resolving symlinks. The subject and normalized result use
@@ -288,7 +292,12 @@ source deadlines, and semantic capacity separately.
 ## Recover partial analysis
 
 A source timeout stops the remaining analysis and returns completed facts as
-partial Evidence. Cancellation after source analysis begins can also retain
+partial Evidence by default (`timeout_policy: "stop"`). Selecting
+`timeout_policy: "record-and-continue"` (`--timeout-policy record-and-continue`
+on `analyze-javascript-application`) records the timed-out source as an
+interrupted processing gap with `javascript_analysis_worker_timeout_ms`, starts
+a fresh worker, and continues analyzing remaining sources into a partial-coverage
+Evidence result. Cancellation after source analysis begins can also retain
 completed facts, including when interrupted during cleanup, graph construction,
 or Evidence sealing. Unexamined relationships remain unknown.
 

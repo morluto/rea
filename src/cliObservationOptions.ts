@@ -2,6 +2,7 @@ import { javascriptRouteDeliveryOptions } from "./cli/javascriptRouteDelivery.js
 import { z } from "incur";
 import { webRuntimeCommandTimeoutSchema } from "./domain/browserDeadline.js";
 import { javaScriptAnalysisResourceControlsSchema } from "./domain/javascript/javascriptAnalysisResourceControls.js";
+import { javaScriptTimeoutPolicySchema } from "./domain/javascript/javascriptApplicationAnalysis.js";
 import { javaScriptSourcePathsSchema } from "./domain/javascript/javascriptSourceSelection.js";
 
 /** Accept an agent-selected browser observation duration without an artificial ceiling. */
@@ -114,11 +115,14 @@ export const javascriptApplicationOptions = z.object({
   analysisTimeoutMs:
     javaScriptAnalysisResourceControlsSchema.shape.analysis_timeout_ms,
   artifactFormat: z
-    .enum(["auto", "asar", "directory"])
+    .enum(["auto", "asar", "directory", "file"])
     .default("auto")
     .describe("Application artifact format"),
   integrityPolicy: z
     .enum(["fail", "record-and-continue"])
     .default("fail")
     .describe("Behavior when declared application integrity does not match"),
+  timeoutPolicy: javaScriptTimeoutPolicySchema.describe(
+    "Behavior when a JavaScript source reaches analysis_timeout_ms",
+  ),
 });

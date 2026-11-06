@@ -92,6 +92,7 @@ const parameters = (
   input_path: input.input_path,
   format: input.format,
   integrity_policy: input.integrity_policy,
+  timeout_policy: input.timeout_policy,
   ...(input.max_semantic_nodes === undefined
     ? {}
     : { max_semantic_nodes: input.max_semantic_nodes }),

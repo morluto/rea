@@ -1367,11 +1367,11 @@ Evidence bundles, snapshots, and extraction use the paths and output behavior
 declared by their tools. Artifact extraction materializes the selected regular
 files into a fresh REA-chosen temporary directory and reports its path.
 
-`analyze_javascript_application` reads the supplied local directory or ASAR path
-and returns its result and Evidence inline. Its owned analysis worker and private
-temporary source files are declared as `launchesProcess` and `writesFilesystem`,
-including for a single JavaScript source. This internal analysis does not execute
-the supplied application code.
+`analyze_javascript_application` reads the supplied local directory, ASAR, or
+JavaScript source file path and returns its result and Evidence inline. Its owned
+analysis worker and private temporary source files are declared as
+`launchesProcess` and `writesFilesystem`, including for a single JavaScript
+source. This internal analysis does not execute the supplied application code.
 
 `analyze_web_bundle` also declares `launchesProcess` and `writesFilesystem`:
 analysis of captured sources starts an owned worker and transfers source through
