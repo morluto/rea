@@ -7,8 +7,8 @@ import type { ComputerAction } from "./computerActions.js";
 
 /**
  * The witness of an exported task, in order: the seed must fail a check, the
- * edit pass every one, a near miss fail one again, and so must the seed that
- * `data/reset` restores.
+ * edit pass every one, a near miss fail one again, and the seed that
+ * `data/reset` restores must give each check its seed result.
  */
 export const WITNESS_STAGES = [
   "seed",
@@ -39,6 +39,8 @@ export type WitnessStageRecord = {
   readonly expectation: WitnessExpectation;
   readonly held: boolean;
   readonly results: TaskCheckOutcome[];
+  /** Why a stage did not hold when its results alone do not say, and what to do. */
+  readonly remediation?: string;
 };
 
 const EXPECTATIONS: Readonly<Record<WitnessStage, WitnessExpectation>> = {
@@ -57,16 +59,39 @@ export const stageExpectation = (stage: WitnessStage): WitnessExpectation =>
 /** What a stage's results show of it: that it held, that it did not, or, when only undecided checks could tell, nothing. */
 export type StageVerdict = "held" | "not_held" | "undecided";
 
+/** The checks whose result after a reset differs from the filed seed's; a reset that restores the seed leaves none. */
+export const unrestoredChecks = <
+  Outcome extends Pick<TaskCheckOutcome, "id" | "passed">,
+>(
+  stages: readonly WitnessStageRecord[],
+  results: readonly Outcome[],
+): Outcome[] => {
+  const seed = new Map(
+    stages
+      .find((filed) => filed.stage === "seed")
+      ?.results.map((result): [string, boolean] => [result.id, result.passed]),
+  );
+  return results.filter((result) => seed.get(result.id) !== result.passed);
+};
+
 /**
- * Whether a stage's results show what the witness needs of it. Only a check
- * that failed on what its view shows counts as a failure; one that failed for
- * want of a readable or whole view leaves the stage undecided when no such
- * failure settles it.
+ * Whether a stage's results show what the witness needs of it, given the
+ * stages filed before it. Only a check that failed on what its view shows
+ * counts as a failure; one that failed for want of a readable or whole view
+ * leaves the stage undecided when no such failure settles it. After a reset,
+ * each check must also come out as it did on the seed.
  */
 export const stageVerdict = (
   stage: WitnessStage,
-  results: readonly Pick<TaskCheckOutcome, "passed" | "undecided">[],
+  results: readonly Pick<TaskCheckOutcome, "id" | "passed" | "undecided">[],
+  stages: readonly WitnessStageRecord[] = [],
 ): StageVerdict => {
+  if (stage === "after_reset") {
+    const unrestored = unrestoredChecks(stages, results);
+    if (unrestored.some((result) => result.undecided !== true))
+      return "not_held";
+    if (unrestored.length > 0) return "undecided";
+  }
   const failed = results.filter((result) => !result.passed);
   const shown = failed.some((result) => result.undecided !== true);
   if (EXPECTATIONS[stage] === "some_fail")
