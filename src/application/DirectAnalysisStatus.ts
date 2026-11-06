@@ -8,6 +8,7 @@ import { providerCapabilitySets } from "./binary/BinarySessionStatus.js";
 import { sqliteDatabaseCapability } from "./sqlite/SqliteDatabaseCapability.js";
 import { CURRENT_ENTRYPOINT_PATH } from "../process/CurrentEntrypointPath.js";
 import { catalogIdentityForToolFamilies } from "../catalogIdentity.js";
+import { progressiveCatalogIdentity } from "../catalogDiscovery.js";
 import { compactPresentationForMcpInputSchemaProfile } from "../config/mcpInputSchemaProfile.js";
 import {
   directAnalysisCleanupFailure,
@@ -31,6 +32,15 @@ export const runSessionStatus = async (
     session,
     async () => {
       const status = jsonObjectSchema.parse(await session.status());
+      const catalog = catalogIdentityForToolFamilies(
+        compactPresentationForMcpInputSchemaProfile(
+          config.value.mcpInputSchemaProfile,
+        ),
+        config.value.mcpOutputSchemaProfile ?? "full",
+        config.value.mcpToolFamilies === undefined
+          ? undefined
+          : new Set(config.value.mcpToolFamilies),
+      );
       return {
         ...status,
         capabilities: [
@@ -42,15 +52,10 @@ export const runSessionStatus = async (
         server_identity: createServerIdentity({
           startedAt: new Date().toISOString(),
           commandPath: CURRENT_ENTRYPOINT_PATH,
-          catalog: catalogIdentityForToolFamilies(
-            compactPresentationForMcpInputSchemaProfile(
-              config.value.mcpInputSchemaProfile,
-            ),
-            config.value.mcpOutputSchemaProfile ?? "full",
-            config.value.mcpToolFamilies === undefined
-              ? undefined
-              : new Set(config.value.mcpToolFamilies),
-          ),
+          catalog:
+            config.value.mcpToolCatalogProfile === "hot-cold"
+              ? progressiveCatalogIdentity(catalog)
+              : catalog,
         }),
       };
     },
