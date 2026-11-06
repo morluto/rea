@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  escapeDesktopEntryValue,
   expandDesktopExec,
+  formatDesktopExec,
   parseDesktopEntry,
+  replaceDesktopExec,
   tokenizeDesktopExec,
   unwrapDesktopCommand,
 } from "./desktopEntry.js";
@@ -78,6 +81,53 @@ describe("tokenizeDesktopExec", () => {
       ok: false,
       error: "empty_command",
     });
+  });
+});
+
+describe("formatDesktopExec", () => {
+  it("round-trips arguments that contain spaces and quotes", () => {
+    const exec = '"/opt/My App/run" --title "say \\"hi\\"" %F';
+    const tokens = tokenizeDesktopExec(exec);
+    if (!tokens.ok) throw new Error(tokens.error);
+    expect(tokenizeDesktopExec(formatDesktopExec(tokens.value))).toEqual(
+      tokens,
+    );
+  });
+
+  it("escapes the desktop-entry value so a trailing backslash survives a second parse", () => {
+    const program = "/opt/app\\dir\\";
+    const quoted = 'say "hi"\\';
+    const argv = [program, "--title", quoted, "%U"];
+    // Command quoting doubles each backslash; the value layer doubles them
+    // again, which is the form gio accepts. One fewer level leaves a trailing
+    // backslash that escapes the closing quote.
+    const escaped = String.raw`Exec="/opt/app\\\\dir\\\\" --title "say \\"hi\\"\\\\" %U`;
+    const text = `[Desktop Entry]\nType=Application\nName=App\n${escaped}\n`;
+
+    const parsed = parseDesktopEntry(text);
+    if (!parsed.ok) throw new Error(parsed.error);
+    expect(tokenizeDesktopExec(parsed.value.exec ?? "")).toEqual({
+      ok: true,
+      value: argv,
+    });
+    expect(escapeDesktopEntryValue(formatDesktopExec(argv))).toBe(
+      escaped.slice("Exec=".length),
+    );
+
+    const rewritten = replaceDesktopExec(
+      text,
+      formatDesktopExec([program, "--no-sandbox", "--title", quoted, "%U"]),
+    );
+    if (!rewritten.ok) throw new Error(rewritten.error);
+    const again = parseDesktopEntry(rewritten.value);
+    if (!again.ok) throw new Error(again.error);
+    expect(tokenizeDesktopExec(again.value.exec ?? "")).toEqual({
+      ok: true,
+      value: [program, "--no-sandbox", "--title", quoted, "%U"],
+    });
+    expect(rewritten.value).toContain(
+      String.raw`Exec="/opt/app\\\\dir\\\\" --no-sandbox --title "say \\"hi\\"\\\\" %U`,
+    );
   });
 });
 

@@ -88,6 +88,9 @@ element that holds elements is dropped unless `xml:space="preserve"` applies.
 The view keeps up to 5,000 nodes, comments and processing instructions
 counted, nested up to 64 levels, and sets `truncated` when it leaves some out.
 
+Exported XML views use REA's same formatting-whitespace classification, so
+retained XML text and the task checks that address it stay aligned.
+
 SQLite databases are read through REA's SQLite worker from a private copy,
 with any retained `-wal` or `-journal` file staged beside it; the worker
 accepts an inactive rollback journal and refuses a hot one. A version is not
