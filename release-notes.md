@@ -1156,6 +1156,7 @@
 * **environments:** lead with agent prompts ([a0ddb83](https://github.com/morluto/rea/commit/a0ddb83e453aab10163dea75f514d3cc7a1c95d5))
 * **errors:** align byte entropy recovery catalog ([#7884](https://github.com/morluto/rea/issues/7884)) ([2f3c71f](https://github.com/morluto/rea/commit/2f3c71f39e5db7db5ea03a42e6a6eb89db8a91be))
 * **errors:** align MCP validation status and verification columns ([#7708](https://github.com/morluto/rea/issues/7708)) ([ad7d4c1](https://github.com/morluto/rea/commit/ad7d4c1f4dd9cbd93229ee330e66c7a522e723e6))
+* **firmware:** qualify component comparison workflows ([#9143](https://github.com/morluto/rea/issues/9143)) ([1480a7c](https://github.com/morluto/rea/commit/1480a7c72e601f4444e21ecd50118c1afa774209))
 * **ghidra:** clarify Objective-C Message Analyzer libobjc log ([#7249](https://github.com/morluto/rea/issues/7249)) ([b9d1a61](https://github.com/morluto/rea/commit/b9d1a61dd5829e3f2f16be6e1ee32d9c1f57c103))
 * **ghidra:** count 27 read-only operations in current guides ([#7794](https://github.com/morluto/rea/issues/7794)) ([b4923f8](https://github.com/morluto/rea/commit/b4923f85c5dcfef80fe18483a0511f6c1ba59ef4)), closes [#7611](https://github.com/morluto/rea/issues/7611)
 * **ghidra:** fix DOL guide PowerPC link ([#7857](https://github.com/morluto/rea/issues/7857)) ([46c457f](https://github.com/morluto/rea/commit/46c457f74c474b224dd540d6eae6bc23080cd95f))
