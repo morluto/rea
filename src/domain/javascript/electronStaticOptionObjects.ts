@@ -1,9 +1,6 @@
 import * as t from "@babel/types";
 import { unwrapJavaScriptExpression } from "./javascriptAstValues.js";
-import {
-  semanticBindingAtRead,
-  semanticProgramConstInitializerPrecedesFunctionRead,
-} from "./javascriptSemanticMutationInitializers.js";
+import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
 import {
   semanticStableInitializer,
   type JavaScriptBindingIndex,
@@ -34,7 +31,10 @@ const isExportedBinding = (
     while (node !== undefined) {
       const parent = index.bindings.parentsByNode.get(node);
       if (parent === undefined) break;
-      if (t.isExportNamedDeclaration(parent) || t.isExportDefaultDeclaration(parent))
+      if (
+        t.isExportNamedDeclaration(parent) ||
+        t.isExportDefaultDeclaration(parent)
+      )
         return true;
       if (t.isFunction(parent) || t.isProgram(parent)) break;
       node = parent;
@@ -79,15 +79,15 @@ const optionObjectCandidate = (
     if (binding === undefined) return undefined;
     const initializer = semanticStableInitializer(binding, index.bindings);
     // Timing for a program const read inside a function is owned by the
-    // semantic module (see
-    // semanticProgramConstInitializerPrecedesFunctionRead): a read that
-    // completes inside a function can only do so after the declaration
-    // executed, since an earlier read would throw for the temporal dead
-    // zone, not yield a stale value. This consumer keeps only the
-    // Electron-specific policy on top of that fact: a read in the program
-    // body itself keeps the original order check, so a window before the
-    // declaration, or an alias declared after its use, still stays
-    // dynamic. Mutation and escape safety is not decided here;
+    // semantic module (see semanticBindingAtRead, as reworked by main's
+    // #8960): it tracks actual function activation timing, so a read only
+    // counts as definite when the function is shown to run after the
+    // declaration. This consumer keeps only the Electron-specific policy
+    // on top of that fact: exported bindings stay unknown, since another
+    // module may mutate them through the object, and a read in the
+    // program body itself keeps the original order check, so a window
+    // before the declaration, or an alias declared after its use, still
+    // stays dynamic. Mutation and escape safety is not decided here;
     // resolveElectronOptionObject still rejects the candidate when
     // referenceMayHaveChangedAt reports a write or escape that may affect
     // the call site.
@@ -98,13 +98,8 @@ const optionObjectCandidate = (
       initializer === undefined ||
       initializer.projection.length !== 0 ||
       isExportedBinding(binding, initializer.node, index) ||
-      (!semanticProgramConstInitializerPrecedesFunctionRead(
-        binding,
-        node,
-        index.bindings,
-      ) &&
-        !semanticBindingAtRead(binding, node, index.bindings.parentsByNode)
-          .hasDefiniteInitializer)
+      !semanticBindingAtRead(binding, node, index.bindings)
+        .hasDefiniteInitializer
     )
       return undefined;
     references.push(node);
