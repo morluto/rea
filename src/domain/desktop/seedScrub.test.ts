@@ -57,6 +57,21 @@ describe("scrubSeed on text", () => {
     },
   );
 
+  it.each(["le", "be"] as const)(
+    "keeps a UTF-16 %s seed's own leading U+FEFF past the byte-order mark",
+    (order) => {
+      const outcome = scrubSeed(
+        utf16("﻿mail=ada@e81232be457d\n", order),
+        seed("binary"),
+        GEANY,
+      );
+
+      expect(outcome.bytes?.toString("hex")).toBe(
+        utf16("﻿mail=user@localhost\n", order).toString("hex"),
+      );
+    },
+  );
+
   it("replaces the captured user@localhost of a host named localhost and finds it in bytes it cannot rewrite", () => {
     const local = { ...GEANY, hostname: "localhost" };
 

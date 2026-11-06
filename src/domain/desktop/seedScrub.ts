@@ -327,7 +327,12 @@ const utf16Text = (bytes: Buffer) => {
   if (order.swap && little.length % 2 === 0) little.swap16();
   try {
     return {
-      text: new TextDecoder("utf-16le", { fatal: true }).decode(little),
+      // The byte-order mark was taken above, so a U+FEFF that follows it is
+      // the seed's own first character, not another mark to consume.
+      text: new TextDecoder("utf-16le", {
+        fatal: true,
+        ignoreBOM: true,
+      }).decode(little),
       encode: (scrubbed: string) => {
         const encoded = Buffer.from(scrubbed, "utf16le");
         if (order.swap) encoded.swap16();
