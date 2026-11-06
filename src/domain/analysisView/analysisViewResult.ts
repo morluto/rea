@@ -74,6 +74,11 @@ import {
   sourceToBundleViewContextSchema,
 } from "./sourceToBundleView.js";
 import {
+  endpointComparisonViewContextSchema,
+  endpointComparisonViewItemsSchema,
+  endpointComparisonViewRequestSchema,
+} from "./endpointComparisonView.js";
+import {
   featureTraceSummarySchema,
   featureTraceViewCollections,
   featureTraceViewContextSchema,
@@ -1017,6 +1022,21 @@ export const sourceToBundleSummaryViewResultSchema = z.strictObject({
   parent_operation: z.literal("compare_source_to_bundle"),
   summary: sourceToBundleViewContextSchema,
 });
+export const endpointComparisonSummaryViewResultSchema = z.strictObject({
+  ...summaryViewResultBase,
+  artifact: z.null(),
+  parent_operation: z.literal("compare_static_and_observed_endpoints"),
+  summary: endpointComparisonViewContextSchema,
+});
+export const endpointComparisonPageViewResultSchema = z.strictObject({
+  ...viewResultBase,
+  ...endpointComparisonViewContextSchema.shape,
+  kind: z.literal("endpoint-comparison"),
+  artifact: z.null(),
+  parent_operation: z.literal("compare_static_and_observed_endpoints"),
+  view: endpointComparisonViewRequestSchema,
+  items: endpointComparisonViewItemsSchema,
+});
 export const sourceToBundlePageViewResultSchema = z.strictObject({
   ...viewResultBase,
   ...sourceToBundleViewContextSchema.shape,
@@ -1146,6 +1166,7 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
   javaScriptRoutesViewResultSchema,
   webBundlePageViewResultSchema,
   sourceToBundlePageViewResultSchema,
+  endpointComparisonPageViewResultSchema,
   featureTraceViewResultSchema,
   batchDecompileViewResultSchema,
   z.strictObject({
@@ -1241,6 +1262,7 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     nativeFunctionMatchingSummaryViewResultSchema,
     nativeFunctionSummaryViewResultSchema,
     sourceToBundleSummaryViewResultSchema,
+    endpointComparisonSummaryViewResultSchema,
     featureTraceSummaryViewResultSchema,
     batchDecompileSummaryViewResultSchema,
     webBundleSummaryViewResultSchema,

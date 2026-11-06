@@ -179,6 +179,7 @@ export const CLI_COMMANDS = Object.freeze({
   traceApplicationFeature: "trace-application-feature",
   traceJavaScriptSemantics: "trace-javascript-semantics",
   compareApplicationVersions: "compare-application-versions",
+  compareStaticAndObservedEndpoints: "compare-static-and-observed-endpoints",
   compareSourceToBundle: "compare-source-to-bundle",
   compareJavaScriptExportShapes: "compare-javascript-export-shapes",
   buildReconstructionObligationLedger: "build-reconstruction-obligation-ledger",
