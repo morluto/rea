@@ -1427,6 +1427,12 @@ not needed for the make step, only for the Ghidra provider. If your toolchain
 rejects the inherited `-mmacosx-version-min=10.6` flag, retry the make with
 `ADDITIONAL_FLAGS="-w"`.
 
+If the host has no C++ toolchain and installing one is not an option, a
+prebuilt arm64 pair built from the same `Ghidra_12.1.4_build` tag is published
+at <https://github.com/qsnbdwdx/ghidra-macos-arm64>. It is third-party and not
+maintained by this project: the same `rea doctor --json` check above is the
+acceptance test, and that repository publishes SHA256 sums for both binaries.
+
 ### Reuse an existing Ghidra project
 
 For repeated investigations, select an expanded local project marker with
