@@ -19,6 +19,7 @@ import {
 import { projectJavaScriptRoutesView } from "./javascriptRoutesView.js";
 import { projectWebBundleView } from "./webBundleView.js";
 import { projectSourceToBundleView } from "./sourceToBundleView.js";
+import { projectEndpointComparisonView } from "./endpointComparisonView.js";
 import { projectFeatureTraceView } from "./featureTraceView.js";
 import { projectNativeFeatureTraceView } from "./nativeFeatureTraceView.js";
 import { projectBatchDecompileView } from "./batchDecompileView.js";
@@ -155,6 +156,8 @@ import {
   nativeFunctionSummaryViewResultSchema,
   sourceToBundleSummaryViewResultSchema,
   sourceToBundlePageViewResultSchema,
+  endpointComparisonSummaryViewResultSchema,
+  endpointComparisonPageViewResultSchema,
   featureTraceSummaryViewResultSchema,
   batchDecompileSummaryViewResultSchema,
   featureTraceViewResultSchema,
@@ -224,6 +227,8 @@ export {
   nativeFunctionSummaryViewResultSchema,
   sourceToBundleSummaryViewResultSchema,
   sourceToBundlePageViewResultSchema,
+  endpointComparisonSummaryViewResultSchema,
+  endpointComparisonPageViewResultSchema,
   featureTraceSummaryViewResultSchema,
   batchDecompileSummaryViewResultSchema,
   featureTraceViewResultSchema,
@@ -351,6 +356,10 @@ const retainedViewProjectors = new Map<string, RetainedViewProjector>([
   retain("inspect_gpu_code_objects", projectGpuCodeObjectsView),
   retain("match_native_functions", projectNativeFunctionMatchingView),
   retain("compare_source_to_bundle", projectSourceToBundleView),
+  retain(
+    "compare_static_and_observed_endpoints",
+    projectEndpointComparisonView,
+  ),
   retain("trace_application_feature", projectFeatureTraceView),
   retain("batch_decompile", projectBatchDecompileView),
   retain("inspect_artifact", projectArtifactInventoryView),
