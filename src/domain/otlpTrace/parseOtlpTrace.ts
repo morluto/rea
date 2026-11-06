@@ -541,20 +541,34 @@ export const parseOtlpTrace = (
     .map((span) => span.span_id);
   // A captured subtree can be reachable through its recorded root and still not
   // prove the export is complete: an unrecorded ancestor may still exist.
+  // Walk every edge once instead of replaying each span's whole ancestor chain,
+  // which is quadratic on a deep trace. State 1 means "on the current path".
   const cycles = new Set<string>();
-  for (const span of walked.spans) {
-    const seen = new Set<string>();
-    let cursor: OtlpSpan | undefined = span;
-    while (cursor !== undefined && cursor.parent_span_id !== null) {
-      const parent = cursor.parent_span_id;
-      if (parent === "0000000000000000") break;
-      if (seen.has(parent) || parent === span.span_id) {
-        cycles.add(parent);
+  const state = new Map<string, 1 | 2>();
+  for (const start of walked.spans) {
+    const key = spanKey(start.trace_id, start.span_id);
+    if (state.has(key)) continue;
+    const path: string[] = [];
+    let cursor: OtlpSpan | undefined = start;
+    while (cursor !== undefined) {
+      const cursorKey = spanKey(cursor.trace_id, cursor.span_id);
+      const seenState = state.get(cursorKey);
+      if (seenState === 1) {
+        cycles.add(cursor.span_id);
         break;
       }
-      seen.add(parent);
+      if (seenState === 2) break;
+      state.set(cursorKey, 1);
+      path.push(cursorKey);
+      const parent = cursor.parent_span_id;
+      if (parent === null || parent === "0000000000000000") break;
+      if (parent === cursor.span_id) {
+        cycles.add(cursor.span_id);
+        break;
+      }
       cursor = byId.get(spanKey(cursor.trace_id, parent));
     }
+    for (const visited of path) state.set(visited, 2);
   }
   for (const id of cycles)
     diagnostics.push(

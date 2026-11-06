@@ -406,3 +406,30 @@ describe("parseOtlpTrace parent links", () => {
     );
   });
 });
+
+describe("parseOtlpTrace deep cycles", () => {
+  it("detects a cycle longer than two spans without chasing the chain per span", () => {
+    const id = (n: number) => "0".repeat(15) + String(n);
+    const report = parse(
+      envelope([
+        span({ spanId: id(1), parentSpanId: id(2) }),
+        span({ spanId: id(2), parentSpanId: id(3) }),
+        span({ spanId: id(3), parentSpanId: id(1) }),
+      ]),
+    );
+    expect(report.diagnostics.map((entry) => entry.code)).toContain("cycle");
+    expect(report.summary.roots).toBe(0);
+  });
+
+  it("does not report a cycle for a long acyclic chain", () => {
+    const id = (n: number) => n.toString(16).padStart(16, "0");
+    const spans = Array.from({ length: 500 }, (_, n) =>
+      span({ spanId: id(n + 1), parentSpanId: n === 0 ? undefined : id(n) }),
+    );
+    const report = parse(envelope(spans));
+    expect(report.diagnostics.map((entry) => entry.code)).not.toContain(
+      "cycle",
+    );
+    expect(report.summary.roots).toBe(1);
+  });
+});
