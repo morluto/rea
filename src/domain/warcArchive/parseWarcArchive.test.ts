@@ -213,6 +213,23 @@ describe("malformed and bounded archives", () => {
     expect(archive.summary.malformed_headers).toBe(1);
   });
 
+  it("accepts a repeatable field repeated many times without reporting it", () => {
+    const repeats = 20_000;
+    const archive = parsed(
+      "WARC/1.1\r\nWARC-Type: resource\r\n" +
+        Array.from(
+          { length: repeats },
+          (_, i) => `WARC-Protocol: p${i}\r\n`,
+        ).join("") +
+        "Content-Length: 0\r\n\r\n",
+    );
+    // A repeatable field is valid however often it appears; only non-repeatable
+    // ones are defects. The first value stays authoritative.
+    expect(archive.records[0]?.malformed_header_lines).toEqual([]);
+    expect(archive.summary.malformed_headers).toBe(0);
+    expect(archive.records[0]?.record_type).toBe("resource");
+  });
+
   it("reports header lines that are not fields", () => {
     const archive = parsed(
       "WARC/1.1\r\nWARC-Type: resource\r\nnot a header\r\nContent-Length: 0\r\n\r\n",

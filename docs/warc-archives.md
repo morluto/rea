@@ -34,8 +34,10 @@ record or a malformed header makes it `partial` and each cause appears in
 ## Compression
 
 Identity WARC and gzip-compressed WARC are supported. A WARC.gz file that
-concatenates several gzip members is decoded as one stream. Any other
-compression, an undecodable gzip member, or a stream that would exceed
+concatenates several gzip members is decoded as one stream. Compression
+detection is gzip magic, so any other format (a ZIP, for instance) is read as
+identity bytes and reports `not-a-warc-stream` — an undecodable gzip member
+likewise reports `unsupported-compression`. A stream that would exceed
 `max_decoded_bytes` produces a `compression: "unsupported"` inventory with one
 diagnostic and no records, rather than a silent empty result.
 

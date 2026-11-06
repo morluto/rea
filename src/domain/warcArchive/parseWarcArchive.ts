@@ -39,10 +39,12 @@ interface HeaderBlock {
   readonly version: string;
   readonly fields: ReadonlyMap<string, string>;
   /**
-   * Every value of a field WARC permits to repeat, in document order. The
-   * single-value map above keeps the first occurrence.
+   * Fields WARC permits to repeat are accepted and the first occurrence is
+   * kept above. Their further values are not collected: nothing read them, and
+   * copying every value on each repeat made a header block with many
+   * `WARC-Protocol` lines cost quadratic time in array entries, which neither
+   * the per-line ceiling nor `max_records` bounds.
    */
-  readonly repeatedFields: ReadonlyMap<string, readonly string[]>;
   readonly malformed: readonly string[];
   readonly bytes: number;
 }
@@ -93,7 +95,6 @@ const readHeaderBlock = (data: Buffer, start: number): HeaderBlockResult => {
   const version = data.toString("utf8", start, versionLine.contentEnd);
   if (!version.startsWith("WARC/")) return { block: null, lineLimitHit: false };
   const fields = new Map<string, string>();
-  const repeatedFields = new Map<string, string[]>();
   const malformed: string[] = [];
   let cursor = versionLine.end;
   for (;;) {
@@ -107,7 +108,6 @@ const readHeaderBlock = (data: Buffer, start: number): HeaderBlockResult => {
         block: {
           version: version.slice(5),
           fields,
-          repeatedFields,
           malformed,
           bytes: line.end - start,
         },
@@ -129,9 +129,7 @@ const readHeaderBlock = (data: Buffer, start: number): HeaderBlockResult => {
       // authoritative either way.
       const first = fields.get(name);
       if (first === undefined) fields.set(name, value);
-      else if (REPEATABLE_FIELDS.has(name))
-        repeatedFields.set(name, [...(repeatedFields.get(name) ?? []), value]);
-      else malformed.push(text);
+      else if (!REPEATABLE_FIELDS.has(name)) malformed.push(text);
     }
     cursor = line.end;
   }
