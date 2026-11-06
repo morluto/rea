@@ -157,14 +157,29 @@ describe("exportDesktopApplication with a task", () => {
     expect(await readFile(join(directory, "evals/notes.toml"), "utf8")).toBe(
       'tasks = ["note-milk"]\n',
     );
-    expect(
-      await readFile(
-        join(directory, "artifacts/note-milk-check/verify.py"),
-        "utf8",
-      ),
-    ).toContain(
-      '{"id": "milk", "kind": "lines_present", "file": "Documents/today.txt", "lines": ["milk"]},',
+    const verifier = await readFile(
+      join(directory, "artifacts/note-milk-check/verify.py"),
+      "utf8",
     );
+    const serialized = /^CHECKS = json.loads\((.+)\)$/mu.exec(verifier)?.[1];
+    expect(serialized).toBeDefined();
+    expect(JSON.parse(JSON.parse(serialized ?? '"\"') as string)).toEqual([
+      { id: "milk", kind: "lines_present", file: NOTE, lines: ["milk"] },
+      {
+        id: "check-2",
+        kind: "row_present",
+        file: DATABASE,
+        table: "notes",
+        where: { id: 2, body: "b" },
+      },
+      {
+        id: "check-3",
+        kind: "value_equals",
+        file: ".config/notes/settings.ini",
+        pointer: "/groups/ui/wrap",
+        value: "true",
+      },
+    ]);
     const readme = await readFile(join(directory, "README.md"), "utf8");
     expect(readme).toContain("## Task `note-milk`");
     expect(readme).toContain("> Write down that I need milk");

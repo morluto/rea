@@ -1,4 +1,3 @@
-import type { JsonValue } from "../jsonValue.js";
 import type { DesktopTask } from "./appTask.js";
 
 /** The verifier's evaluator: the checks' semantics, kept equal to `evaluateTaskChecks`. */
@@ -16,17 +15,30 @@ def _shown(value) -> str:
 
 def _same(actual, expected) -> bool:
     """JSON equality: numbers by value but never a boolean for a number, objects by their keys, arrays in order."""
-    if isinstance(expected, list):
-        return (isinstance(actual, list) and len(actual) == len(expected)
-                and all(_same(item, wanted) for item, wanted in zip(actual, expected)))
-    if isinstance(expected, dict):
-        return (isinstance(actual, dict) and len(actual) == len(expected)
-                and all(key in actual and _same(actual[key], value) for key, value in expected.items()))
-    if isinstance(expected, bool) or isinstance(actual, bool):
-        return isinstance(expected, bool) and isinstance(actual, bool) and actual == expected
-    if isinstance(expected, (int, float)):
-        return isinstance(actual, (int, float)) and actual == expected
-    return type(actual) is type(expected) and actual == expected
+    levels = [iter(((actual, expected),))]
+    while levels:
+        pair = next(levels[-1], MISSING)
+        if pair is MISSING:
+            levels.pop()
+            continue
+        actual, expected = pair
+        if isinstance(expected, list):
+            if not isinstance(actual, list) or len(actual) != len(expected):
+                return False
+            levels.append(zip(actual, expected))
+        elif isinstance(expected, dict):
+            if not isinstance(actual, dict) or actual.keys() != expected.keys():
+                return False
+            levels.append(zip(actual.values(), map(expected.__getitem__, actual)))
+        elif isinstance(expected, bool) or isinstance(actual, bool):
+            if not isinstance(expected, bool) or not isinstance(actual, bool) or actual != expected:
+                return False
+        elif isinstance(expected, (int, float)):
+            if not isinstance(actual, (int, float)) or actual != expected:
+                return False
+        elif type(actual) is not type(expected) or actual != expected:
+            return False
+    return True
 
 
 def _bracketed(token: str) -> bool:
@@ -318,18 +330,6 @@ def evaluate(checks: list, views: dict) -> list:
     return results
 `;
 
-/** A JSON value as a Python literal. */
-export const pythonLiteral = (value: JsonValue): string => {
-  if (value === null) return "None";
-  if (typeof value === "boolean") return value ? "True" : "False";
-  if (typeof value !== "object") return JSON.stringify(value);
-  if (Array.isArray(value)) return `[${value.map(pythonLiteral).join(", ")}]`;
-  return `{${Object.entries(value)
-    .filter(([, item]) => item !== undefined)
-    .map(([key, item]) => `${JSON.stringify(key)}: ${pythonLiteral(item)}`)
-    .join(", ")}}`;
-};
-
 /** The verifier artifact: read the app's state through its data/get, then evaluate the task's checks. */
 export const renderTaskVerifier = (task: DesktopTask, app: string): string =>
   `"""Checks of the task ${task.name} against the ${app} app's state, exported by REA from a desktop application capture.
@@ -345,9 +345,7 @@ from agentenv_protocol import client as protocol
 from agentenv_protocol.types import RPC_PATH
 
 APP = ${JSON.stringify(app)}
-CHECKS = [
-${task.checks.map((check) => `    ${pythonLiteral(check as unknown as JsonValue)},`).join("\n")}
-]
+CHECKS = json.loads(${JSON.stringify(JSON.stringify(task.checks))})
 ${PYTHON_TASK_EVALUATOR}
 
 async def verify(mcp_url, env_url):

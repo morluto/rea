@@ -111,7 +111,9 @@ The rules both evaluators follow:
   every check but `file_present` and `file_absent`. Line checks need a text
   view and row checks a SQLite view; another format fails.
 - Equality is JSON equality: numbers by value, never a boolean for a number,
-  objects by their keys whatever their order, arrays in order.
+  objects by their keys whatever their order, arrays in order. Exported checks
+  keep expected values as JSON data and compare them without recursion, so a
+  value within the JSON view's 500-level limit also works in the verifier.
 - Pointers follow RFC 6901 (`~1` for `/`, `~0` for `~`) and must start with
   `/`; on an array a segment may be a selector, below. Key files read as
   `{"groups": {"GROUP": {"KEY": "VALUE"}}}`, so a setting is
