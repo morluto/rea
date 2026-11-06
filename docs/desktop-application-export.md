@@ -91,9 +91,11 @@ The class declares:
 - For a vendor repository, `sources=[AptSource(apt=..., suite=...,
   components=[...], key="apt-keys/<name>.gpg")]`, with the retained key copied
   to that path (`.asc` when it is armored, which agentenv tells by its
-  content). apt takes one key per URI and suite, so sources that share them,
-  such as one repository listed for two architectures, are declared once, with
-  their components merged; one with a different key is left out. A repository
+  content). A PPA added with `add-apt-repository`, whose sources entry holds its
+  key in `Signed-By`, exports that key as `apt-keys/<name>.asc`. apt takes one
+  key per URI and suite, so sources that share them, such as one repository
+  listed for two architectures, are declared once, with their components
+  merged; one with a different key is left out. A repository
   whose key the capture did not verify, an Ubuntu Pro (ESM) repository, one
   whose sources entry's URI held a user name or password (which the capture
   did not record and the export never writes; the reason names neither them
