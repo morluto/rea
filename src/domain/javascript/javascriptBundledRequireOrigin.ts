@@ -6,6 +6,7 @@ import { proveJavaScriptBootstrapIntegrity } from "./javascriptBootstrapIntegrit
 import {
   semanticMemberChain,
   semanticStaticPropertyKey,
+  readExactJavaScriptLiteral,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import { collectJavaScriptIdentityWritesSteps } from "./javascriptElectronMemberWrites.js";
@@ -159,32 +160,42 @@ const canonicalWebpackInteropBindings = (
   // The shared identity-write owner covers assignment, delete, destructuring,
   // and Object/Reflect mutators; any write that may select `n` counts.
   const writes = new Set<t.Node>();
+  const interop = createSemanticModuleInterop(state);
+  const excludesLoader = (node: t.Node): boolean =>
+    interop.isFreshObject(node) || readExactJavaScriptLiteral(node).found;
   const loaderMayOwnReference = (root: t.Node): boolean => {
-    const pending = [root];
-    const seen = new Set<t.Node>();
+    const first = unwrapJavaScriptExpression(root).node;
+    if (!t.isIdentifier(first)) return !excludesLoader(first);
+    // Only proven separate values are terminals. An unsupported expression
+    // might return the loader, so preserve that uncertainty instead of dropping it.
+    const pending = [first];
+    const seen = new Set<t.Identifier>();
     while (pending.length > 0) {
-      const reference = pending.pop();
-      if (reference === undefined || seen.has(reference)) continue;
-      seen.add(reference);
+      const node = pending.pop();
+      if (node === undefined || seen.has(node)) continue;
+      seen.add(node);
       if (seen.size > SEMANTIC_ALIAS_SELECTION_LIMIT) {
         state.valueResourceLimits.add("alias-selections");
         return true;
       }
-      const node = unwrapJavaScriptExpression(reference).node;
-      if (!t.isIdentifier(node)) continue;
       const binding = resolveSemanticBindingState(state, node, node.name);
-      if (binding === undefined) continue;
+      if (binding === undefined) return true;
       if (loaderBindingIds.has(binding.bindingId)) return true;
       const selected = semanticBindingAtRead(binding, node, state).binding;
-      for (const source of [
-        ...selected.initializers,
-        ...selected.referenceInitializers,
+      for (const initializers of [
+        selected.initializers,
+        selected.referenceInitializers,
       ])
-        if (source.projection.length === 0) pending.push(source.node);
+        for (const source of initializers) {
+          // A fresh container does not establish the selected property's value.
+          if (source.projection.length !== 0) return true;
+          const next = unwrapJavaScriptExpression(source.node).node;
+          if (t.isIdentifier(next)) pending.push(next);
+          else if (!excludesLoader(next)) return true;
+        }
     }
     return false;
   };
-  const interop = createSemanticModuleInterop(state);
   completeSemanticSteps(
     collectJavaScriptIdentityWritesSteps(
       state.program,

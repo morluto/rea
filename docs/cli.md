@@ -473,7 +473,8 @@ applicable. gzip, xz, and zstd containers are unsupported and name
 utility, then inspect the decompressed file. See
 [Linux kernel modules](kernel-modules.md).
 
-Inspect a CPython 3.7–3.13 `.pyc` header and nested marshal code objects
+Inspect a CPython 3.7–3.13 `.pyc` header and nested marshal code objects (3.14 and
+3.15 headers are qualified but their marshal layout is not pinned)
 without executing bytecode or installing Python:
 
 ```bash
@@ -743,10 +744,12 @@ not read artifact contents: the inventories of two builds are unresolved
 records, or one opaque change when you pair them. Use `compare-artifacts`,
 described at the end of this section, to compare their contents.
 
-`--record_pairs` supplies an explicit JSON array of observation pairs, matching
-MCP `compare_bundles.record_pairs`. Pair IDs must exist on their named sides and
-be one-to-one. Without pairs, one-sided membership remains unknown; REA does
-not infer correspondence from position or display names.
+`--record_pairs` accepts an inline JSON array or the path to a local JSON
+file containing that array, matching MCP `compare_bundles.record_pairs`. For a
+file, use `rea compare left.json right.json --record_pairs pairs.json --json`.
+Pair IDs must exist on their named sides and be one-to-one. Without pairs,
+one-sided membership remains unknown; REA does not infer correspondence from
+position or display names.
 
 Exports preserve an existing destination unless `--overwrite` is explicit.
 

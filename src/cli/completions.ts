@@ -142,6 +142,7 @@ export const createCliCompletions = (
       const before = splitIncurBuiltinArguments(
         normalizeCliArguments(words.slice(1, index)),
       ).command;
+      if (before.includes("--")) return true;
       const input = [cli.name, ...before, words[index] ?? ""];
       const doctor = before[0] === "mcp" && before[1] === "doctor";
       const candidates = Completions.complete(

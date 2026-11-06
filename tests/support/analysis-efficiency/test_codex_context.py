@@ -681,9 +681,12 @@ class ContextCaptureTests(unittest.TestCase):
         spec = importlib.util.spec_from_file_location('agent_trial', Path(__file__).with_name('agent-trial.py'))
         agent = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(agent)
-        for control, drift, mode in [(False, False, 'direct'), (True, False, 'direct'),
-                                     (False, True, 'direct'), (False, False, 'client-code')]:
-            with self.subTest(control=control, drift=drift, mode=mode), tempfile.TemporaryDirectory() as directory:
+        for control, drift, mode, account_tools in [
+            (False, False, 'direct', False), (True, False, 'direct', False),
+            (False, True, 'direct', False), (False, False, 'client-code', False),
+            (False, False, 'client-code', True), (True, False, 'client-code', True),
+        ]:
+            with self.subTest(control=control, drift=drift, mode=mode, account_tools=account_tools), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
                 runtime = root / 'runtime'
                 (runtime / 'scripts').mkdir(parents=True)
@@ -696,7 +699,8 @@ class ContextCaptureTests(unittest.TestCase):
                 output = runtime / '.cache/trial'
                 arguments = ['agent-trial.py', '--runtime-root', str(runtime), '--revision', 'fixture',
                              '--prompt', str(question), '--output', str(output), '--catalog-load', '--mode', mode,
-                             *(['--no-mcp'] if control else [])]
+                             *(['--no-mcp'] if control else []),
+                             *(['--include-account-tools'] if account_tools else [])]
                 observed = {}
 
                 def launch(_invocation, **options):
@@ -723,6 +727,12 @@ class ContextCaptureTests(unittest.TestCase):
                 self.assertEqual('required = true' in observed['config'], not control)
                 self.assertNotIn('Use the registered REA MCP server', observed['config'])
                 self.assertIn('code_mode_host = ' + ('true' if mode == 'client-code' else 'false'), observed['config'])
+                settings = json.loads((output / 'trial-settings.json').read_text())
+                for feature in ['apps', 'plugins']:
+                    self.assertIn(feature + ' = ' + str(account_tools).lower(), observed['config'])
+                    self.assertIs(settings['features'][feature], account_tools)
+                for feature, enabled in settings['features'].items():
+                    self.assertIn(feature + ' = ' + str(enabled).lower(), observed['config'])
                 self.assertNotIn('code_mode =', observed['config'])
                 self.assertNotIn('code_mode_only =', observed['config'])
                 self.assertTrue(json.loads((output / 'trial-settings.json').read_text())['workspace_isolated_from_runtime'])
