@@ -161,5 +161,18 @@ describe.skipIf(process.platform === "win32")(
       expect(Buffer.byteLength(stderr)).toBeLessThanOrEqual(8 * 1024);
       expect(stderr_truncated).toBe(true);
     }, 30_000);
+
+    it("launches the app with glibc's fatal errors sent to its stderr, not its terminal", async () => {
+      const root = await createTestTempDirectory("desktop-session-libc-");
+
+      const outcome = await runDesktopSession(
+        shellPlan(
+          root,
+          'echo "LIBC_FATAL_STDERR_=$LIBC_FATAL_STDERR_" >&2; exit 1',
+        ),
+      );
+
+      expect(outcome.session.stderr).toContain("LIBC_FATAL_STDERR_=1");
+    }, 30_000);
   },
 );

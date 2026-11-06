@@ -58,6 +58,26 @@ describe("names", () => {
     expect(className("true")).toBe("TrueApp");
   });
 
+  it("names the app by a reverse-DNS id's last part, and by any other id without its trailing version", () => {
+    const names = [
+      "org.gnumeric.gnumeric",
+      "com.github.xournalpp.xournalpp",
+      "glabels-3.0",
+      "gimp-2.10",
+      "display-im6.q16",
+      "mousepad",
+    ].map((id) => environmentName(id, notNumeric));
+
+    expect(names).toEqual([
+      "gnumeric",
+      "xournalpp",
+      "glabels",
+      "gimp",
+      "display-im6-q16",
+      "mousepad",
+    ]);
+  });
+
   it("ends a shortened name without a hyphen and prefixes one the name check refuses", () => {
     expect(
       environmentName(`${"a".repeat(47)}-b`, notNumeric).endsWith("-"),

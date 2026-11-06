@@ -122,7 +122,9 @@ the first source that has the app:
   `~/Documents` and its sidebar has no Documents entry. Type only the file
   name. A dialog taller than the 1280×800 screen hides its buttons:
   maximize it from its title bar, or confirm it with `key` Return, as when
-  HomeBank's Save button is off-screen.
+  HomeBank's Save button is off-screen. When a GTK Save dialog ignores
+  clicks or runs off the screen, type `~/Documents/<name>` in its Name field
+  and press Return.
 - Answer the app's save questions, such as keeping the format, then check
   the saved path in the title or status bar, or the dialog's folder when
   the app shows only the name, and that it shows no unsaved mark, before
@@ -131,6 +133,10 @@ the first source that has the app:
   files, confirms the save.
 - Qt spin boxes change their value on scroll: move the pointer off them
   before you scroll.
+- gLabels edits an object's text in Object properties → Text, not on the
+  canvas.
+- In Grisbi's transaction form Return moves to the next field; only Return
+  in the last field, Notes, records the transaction.
 - What the app saved under the home before `seed`, such as a document in
   `~/Documents` or its settings, is part of the seed. A file you move to the
   Trash is left out, and the export lists it in `limitations`. Trash a stray
@@ -170,7 +176,9 @@ the first source that has the app:
      It need not exist yet. Add the app's settings folder when its name
      differs from the app's, such as `.config/MuseScore`, so the seed keeps
      the dismissed first-run dialogs. Do not pass the document as a launch
-     argument to make REA see it: `state_paths` is the way.
+     argument to make REA see it: `state_paths` is the way. gLabels' title
+     leaves out the file's extension and Grisbi's shows the entity's name,
+     so both need it.
    - An app whose document is a folder of pages, such as a Zim notebook
      (`Notebooks/Notes`, a `.txt` file per page), never shows a file in its
      title: pass the folder in `state_paths`. Every page in it is then a
@@ -343,9 +351,15 @@ expect its first-run wizard, a tour or a "restore session?" question at every
 boot. If the witness shows one, capture again on a new build computer with
 those folders in `state_paths`, and dismiss the dialogs before `seed`. Lock
 files the app holds while it runs, such as LibreOffice's `.lock` and
-`.~lock.<name>#` or GnuCash's `<book>.LCK`, are left out of the seed and
-listed after "Left out of the seed", so you need not close the document or
-delete them before `seed`. A limitation naming `~/.config/dconf/user` as
+`.~lock.<name>#`, GnuCash's `<book>.LCK` or Grisbi's `.<file>.lock`, are
+left out of the seed and listed after "Left out of the seed". An app can
+still start fine yet refuse every save when a lock was seeded, so close the
+document before `seed` where the app lets you, and treat "file is locked"
+on a save in the witness as a seeded lock: delete it from the bundle's seed
+and witness again in a new computer. In LibreOffice, close the document
+before `seed`, then reopen it from Recent Documents to make the change: the
+export also leaves out the recovery list LibreOffice writes while a document
+is open, which would start the bundle into document recovery. A limitation naming `~/.config/dconf/user` as
 unread means the app's dconf settings, such as a first-run tip you turned
 off, are not seeded: capture again on a new build computer. The
 limitations also name seeded WebKit or Chromium storage and caches; when the

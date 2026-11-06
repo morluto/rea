@@ -285,7 +285,7 @@ export const DESKTOP_BUILD_TOOL_CONTRACTS = [
           .max(MAX_ACKNOWLEDGED_FILES)
           .nullable()
           .describe(
-            "Files, not folders, changed since the checkpoint before, relative to the home: those under state_paths, those the app held open, those in its state directories, the rest, then caches and browser-engine storage, each by path. null when the REA in the computer is older and does not report them, so which files changed is unknown; the checkpoint was still taken.",
+            "Files, not folders, changed since the checkpoint before, relative to the home: those under state_paths, those the app held open, those in its state directories, the rest, then caches and browser-engine storage, under state_paths too unless named themselves, each by path. null when the REA in the computer is older and does not report them, so which files changed is unknown; the checkpoint was still taken.",
           ),
         more_changed_files: z
           .int()

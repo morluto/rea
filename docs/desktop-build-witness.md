@@ -111,9 +111,10 @@ See [desktop builds](https://github.com/morluto/rea/blob/main/.agents/skills/rev
    eight collapsed to their top folder, such as `~/.config/MuseScore`, and a
    count of the rest; capture again with them in `state_paths` to own them.
    Lock files the app holds while it runs, such as LibreOffice's profile
-   `.lock` and its document lock `.~lock.<name>#`, or GnuCash's
-   `<book>.LCK` beside its book, are left out of the seed,
-   since a copied one can keep the app from starting, and the limitations
+   `.lock` and its document lock `.~lock.<name>#`, GnuCash's
+   `<book>.LCK` or Grisbi's `.<file>.lock` beside its file, are left out of
+   the seed, since a copied one can keep the app from starting or saving,
+   and the limitations
    and the README list them after "Left out of the seed"; a project's
    `Cargo.lock` or `yarn.lock`, a document or a path in `state_paths` is
    seeded. They name seeded
@@ -145,8 +146,9 @@ since the checkpoint before, `retained_files` and `retained_bytes`, and up to
 ten `changed_files`, home-relative, with `more_changed_files` counting the
 rest. Folders are left out; files under `state_paths` come first, then
 those the app held open, then those in its state directories, then the rest,
-and caches and WebKit or Chromium storage last, each by path, so a save's
-document leads the list. When the computer's REA is older than these lists,
+and caches and WebKit or Chromium storage last, even under a selected
+folder such as `.config/libreoffice` with its icon cache, unless named
+themselves, each by path, so a save's document leads the list. When the computer's REA is older than these lists,
 as when `REA_BUILD_COMPUTER_REA_ARCHIVE` still names an earlier build, the
 checkpoint is still taken and both are `null`: which files changed is
 unknown. Pack the current REA into the archive to get them back.

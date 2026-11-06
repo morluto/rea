@@ -77,16 +77,23 @@ export interface DesktopAppExportPlan {
   readonly captureEvidenceId: string;
 }
 
-/** A lowercase environment name from a desktop entry id or program, prefixed `app-` when the name check refuses it. */
+/** A reverse-DNS id, such as `org.xfce.mousepad`, whose last part names the app. */
+const REVERSE_DNS = /^[a-z][\w-]*(?:\.[a-z][\w-]*)+\.([^.]+)$/iu;
+/** A version at the end of another id, such as `-3.0` in `glabels-3.0`. */
+const TRAILING_VERSION = /(?<=.)[-_]\d+(?:\.\d+)*$/u;
+
+/**
+ * A lowercase environment name from a desktop entry id or program: a
+ * reverse-DNS id's last part, or else the whole id without a trailing
+ * version; prefixed `app-` when the name check refuses it.
+ */
 export const environmentName = (
   source: string,
   accepted: (name: string) => boolean,
 ): string => {
   const name =
-    source
-      .split(".")
-      .at(-1)
-      ?.toLowerCase()
+    (REVERSE_DNS.exec(source)?.[1] ?? source.replace(TRAILING_VERSION, ""))
+      .toLowerCase()
       .replace(/[^a-z0-9]+/gu, "-")
       .replace(/^-+/u, "")
       .slice(0, 48)
@@ -546,6 +553,8 @@ export const launchDocumentNote = ({
 export interface SeedScrubReport {
   readonly scrubbed: readonly string[];
   readonly unscrubbed: readonly string[];
+  /** Seeds whose LibreOffice recovery list was left out, as `~/<path>`. */
+  readonly recovered?: readonly string[];
 }
 
 const homeList = (paths: readonly string[]) =>
@@ -554,11 +563,21 @@ const homeList = (paths: readonly string[]) =>
 const bundleList = (paths: readonly string[]) =>
   paths.map((path) => `\`${path}\``).join(", ");
 
-const scrubNotes = ({ scrubbed, unscrubbed }: SeedScrubReport): string =>
+const scrubNotes = ({
+  scrubbed,
+  unscrubbed,
+  recovered = [],
+}: SeedScrubReport): string =>
   [
     ...(scrubbed.length === 0
       ? []
       : [`\n  Rewritten: ${bundleList(scrubbed)}.`]),
+    ...(recovered.length === 0
+      ? []
+      : [
+          `\n- LibreOffice's list of the documents it had open, which would start it into document recovery instead of
+  its window, is left out of ${bundleList(recovered)}.`,
+        ]),
     ...(unscrubbed.length === 0
       ? []
       : [

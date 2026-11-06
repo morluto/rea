@@ -600,16 +600,20 @@ describe("exportDesktopApplication of lock files and folders the app held files 
 });
 
 describe("exportDesktopApplication of a lock named for the file beside it", () => {
-  it("leaves out a lock named for the file beside it, as GnuCash's <book>.LCK, and seeds a lone *.lck", async () => {
+  it("leaves out a lock named for the file beside it, as GnuCash's <book>.LCK and Grisbi's .<file>.lock, and seeds lone ones", async () => {
     const locked = lockedCapture();
     const [baseline, edited] = locked.state.checkpoints;
     if (baseline === undefined || edited === undefined)
       throw new Error("the fixture has two checkpoints");
-    const book = `${HOME}/Documents/household.gnucash`;
+    const documents = `${HOME}/Documents`;
     const written = [
-      [book, "<gnc-v2/>\n"],
-      [`${book}.LCK`, "x\n"],
-      [`${HOME}/Documents/notes.lck`, "x\n"],
+      [`${documents}/household.gnucash`, "<gnc-v2/>\n"],
+      [`${documents}/household.gnucash.LCK`, "x\n"],
+      [`${documents}/household.gsb`, "<Grisbi/>\n"],
+      // Grisbi's lock is empty.
+      [`${documents}/.household.gsb.lock`, ""],
+      [`${documents}/notes.lck`, "x\n"],
+      [`${documents}/.notes.lock`, "x\n"],
     ] as const;
     const recorded: DesktopApplicationCapture = {
       ...locked,
@@ -634,6 +638,8 @@ describe("exportDesktopApplication of a lock named for the file beside it", () =
 
     const { result, directory } = await exportLocked(recorded, [
       "<gnc-v2/>\n",
+      "<Grisbi/>\n",
+      "",
       "x\n",
     ]);
 
@@ -643,20 +649,97 @@ describe("exportDesktopApplication of a lock named for the file beside it", () =
     expect(seedFiles).toEqual(
       expect.arrayContaining([
         "Documents/household.gnucash",
+        "Documents/household.gsb",
         "Documents/notes.lck",
+        "Documents/.notes.lock",
       ]),
     );
-    expect(seedFiles).not.toContain("Documents/household.gnucash.LCK");
-    expect(
-      await exists(
-        join(directory, "envs/notes/seed/Documents/household.gnucash.LCK"),
+    const locks = [
+      "Documents/household.gnucash.LCK",
+      "Documents/.household.gsb.lock",
+    ];
+    const module = await readFile(
+      join(directory, "envs/notes/notes_app.py"),
+      "utf8",
+    );
+    const leftOut = result.limitations.find((limitation) =>
+      limitation.startsWith("Left out of the seed:"),
+    );
+    for (const lock of locks) {
+      expect(seedFiles).not.toContain(lock);
+      expect(await exists(join(directory, "envs/notes/seed", lock))).toBe(
+        false,
+      );
+      // The text seeds the app respells at boot do not name it either.
+      expect(module).not.toContain(lock);
+      expect(leftOut).toContain(`~/${lock}`);
+    }
+  });
+});
+
+describe("exportDesktopApplication of LibreOffice's recovery list", () => {
+  it("leaves the documents to recover out of a seeded registrymodifications.xcu, and says so", async () => {
+    // LibreOffice lists the documents it has open while it runs; seeded, it starts into recovery instead of its window.
+    const registry = `${HOME}/.config/notes/registrymodifications.xcu`;
+    const kept =
+      '<item oor:path="/org.openoffice.Office.Common/Misc"><prop oor:name="FirstRun" oor:op="fuse"><value>false</value></prop></item>';
+    const text = [
+      '<?xml version="1.0" encoding="UTF-8"?>',
+      '<oor:items xmlns:oor="http://openoffice.org/2001/registry">',
+      kept,
+      `<item oor:path="/org.openoffice.Office.Recovery/RecoveryList"><node oor:name="recovery_item_1" oor:op="replace"><prop oor:name="OriginalURL" oor:op="fuse"><value>file://${HOME}/Documents/talk.odp</value></prop></node></item>`,
+      "</oor:items>",
+      "",
+    ].join("\n");
+    const local = capture();
+    const [baseline, ...later] = local.state.checkpoints;
+    if (baseline === undefined) throw new Error("the fixture has a baseline");
+    const folder = await writeCaptureFolder(
+      {
+        ...local,
+        state: {
+          ...local.state,
+          checkpoints: [
+            {
+              ...baseline,
+              retained: [...baseline.retained, retained(registry, text)],
+            },
+            ...later,
+          ],
+        },
+      },
+      undefined,
+      [text],
+    );
+    const directory = join(
+      await createTestTempDirectory("desktop-export-"),
+      "bundle",
+    );
+
+    const result = await exportDesktopApplication(
+      { capture: folder, directory, name: undefined, tasks: [] },
+      readers,
+    );
+
+    if (result instanceof Error) throw result;
+    const seeded = await readFile(
+      join(
+        directory,
+        "envs/notes/seed/.config/notes/registrymodifications.xcu",
       ),
-    ).toBe(false);
+      "utf8",
+    );
+    expect(seeded).not.toContain("RecoveryList");
+    expect(seeded).toContain(kept);
+    const named = "~/.config/notes/registrymodifications.xcu";
     expect(
-      result.limitations.find((limitation) =>
-        limitation.startsWith("Left out of the seed:"),
-      ),
-    ).toContain("~/Documents/household.gnucash.LCK");
+      result.limitations.filter((limitation) => limitation.includes(named)),
+    ).toHaveLength(1);
+    expect(await readFile(join(directory, "README.md"), "utf8")).toContain(
+      `\`${named}\``,
+    );
+    // The recovery item held the home; with it gone nothing was rewritten for the identity.
+    expect(result.normalized_result).toMatchObject({ scrubbed_files: [] });
   });
 });
 
@@ -1308,6 +1391,30 @@ describe("exportDesktopApplication launch document", () => {
     ).toContain(
       `command=["sh", "-c", "cd \\"$HOME\\" 2>/dev/null; exec 'notes'"]`,
     );
+  });
+
+  it("names the environment for a desktop entry id ending in a version by the id without it", async () => {
+    const local = capture();
+    const { result } = await exportCapture({
+      ...local,
+      application: {
+        ...local.application,
+        desktop_entry: {
+          id: "glabels-3.0",
+          path: "/usr/share/applications/glabels-3.0.desktop",
+          name: "gLabels Label Designer",
+          exec: "glabels-3 %F",
+          icon: null,
+          startup_wm_class: null,
+          categories: [],
+          mime_types: [],
+          terminal: false,
+        },
+      },
+    });
+
+    if (result instanceof Error) throw result;
+    expect(result.normalized_result).toMatchObject({ environment: "glabels" });
   });
 
   it("says a seed made for the task was made for it, and a captured one is the user's own", async () => {

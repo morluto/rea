@@ -108,7 +108,8 @@ export type DesktopCaptureProgress = z.infer<
  * changed files relative to the home. Files under a path the caller selected
  * come first, then those the app held open, then those in its state
  * directories, then the rest; caches and WebKit or Chromium storage come
- * last unless selected, since an app may rewrite many of them on any save.
+ * last, under a selected folder too, unless selected themselves, since an
+ * app may rewrite many of them on any save.
  */
 export const checkpointTaken = (
   checkpoint: DesktopCheckpoint,
@@ -118,17 +119,17 @@ export const checkpointTaken = (
   const relative = (path: string) =>
     path.startsWith(`${home}/`) ? path.slice(home.length + 1) : path;
   const rank = (change: DesktopStateChange) =>
-    selectedPaths.some(
-      (root) => change.path === root || change.path.startsWith(`${root}/`),
-    )
+    selectedPaths.includes(change.path)
       ? 0
       : runtimeFile(relative(change.path)) !== undefined
         ? 4
-        : change.opened_by_application
-          ? 1
-          : change.in_state_directory
-            ? 2
-            : 3;
+        : selectedPaths.some((root) => change.path.startsWith(`${root}/`))
+          ? 0
+          : change.opened_by_application
+            ? 1
+            : change.in_state_directory
+              ? 2
+              : 3;
   const files = checkpoint.changes
     .filter((change) => (change.after ?? change.before)?.type !== "directory")
     .map((change) => ({ path: change.path, rank: rank(change) }))

@@ -56,6 +56,9 @@ environment, and reads commands from stdin, one per line. The application gets
 REA's environment without the `AGENTENV_*` variables an agent environment sets,
 such as its control token: an app the exported computer launches never has
 them, and an app captured inside a computer must not hold a credential to it.
+It also gets `LIBC_FATAL_STDERR_=1`, so glibc writes a fatal error, such as
+an abort's reason, to the app's stderr rather than its terminal, and an app
+that exits at launch reports it.
 
 | Line                                        | Effect                                                      |
 | ------------------------------------------- | ----------------------------------------------------------- |

@@ -49,7 +49,9 @@ framework's folder for the app, and keeps no seed and no data hooks. The app is 
 `start_build_capture` opens it under REA's capture. When no capture is under
 way, open it from the desktop's Applications menu, where agentenv lists it
 under Other by the environment's name, such as `mousepad`; that entry launches
-it through the app's server.
+it through the app's server. The name is the desktop entry's last part when it
+is reverse-DNS (`com.github.xournalpp.xournalpp` gives `xournalpp`), or else
+the whole entry without a trailing version (`glabels-3.0` gives `glabels`).
 
 ```json
 {

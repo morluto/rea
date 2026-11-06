@@ -15,7 +15,9 @@ agent-env run ./mousepad-bundle --dry-run
 
 The export reads the capture and its [state view](desktop-application-state.md);
 it does not run the application. `--name` sets the environment name; otherwise
-it comes from the desktop entry id or the program, with an `app-` prefix when
+it comes from the desktop entry id or the program: a reverse-DNS id's last
+part (`org.xfce.mousepad` gives `mousepad`), or else the whole id without a
+trailing version (`glabels-3.0` gives `glabels`), with an `app-` prefix when
 that name would not be a portable bundle name (for example all digits). The
 output directory must be new or empty. `--task` adds a task an agent wrote for
 the capture, once REA has validated it against the capture; see
@@ -201,10 +203,11 @@ makes the app find its profile or document in use, and a LibreOffice Calc
 bundle whose seed held its profile's `.lock` showed no window at boot. They
 are `lockfile`, `lock`, `.lock`, `.parentlock`, `parent.lock` and
 `SingletonLock` anywhere, LibreOffice's document lock `.~lock.<name>#`, a
-`<file>.lck` or `<file>.LCK` beside a file the capture recorded in the same
-folder, such as GnuCash's `household.gnucash.LCK` beside its book, and
+`<file>.lck`, `.<file>.lock` or `.<file>.lck` beside a file the capture
+recorded in the same folder, such as GnuCash's `household.gnucash.LCK` and
+Grisbi's empty `.household.gsb.lock`, which made it refuse every save, and
 `*.lock` or `*.lck` directly in one of the application's state directories;
-a lone `notes.lck` elsewhere is seeded.
+a lone `notes.lck` or `.notes.lock` elsewhere is seeded.
 Elsewhere such a file may be a project's own, such as `Cargo.lock` or
 `yarn.lock`, which pin dependencies, and is seeded, even under a folder whose
 name starts with a dot. A file the state view makes a document, or one named
@@ -217,7 +220,11 @@ running are seeded as captured and named, collapsed to the folder that holds
 them: WebKit or Chromium storage (such as `hsts-storage.sqlite`, `storage/`,
 `mediakeys/`, `Local Storage/`, `IndexedDB/`, `Cookies`), which may hold the
 app's own data, and caches (a folder whose name ends in `cache`); a stale one
-can change how the app starts.
+can change how the app starts. A seeded LibreOffice profile's
+`registrymodifications.xcu` ships without its `RecoveryList` items, which
+LibreOffice writes for the documents it has open and which would start the
+bundle into document recovery instead of its window; a limitation and the
+README name the file.
 
 The application's dconf keys at the seed, if any, are written once when the
 app first starts, also for an application that owns no files, and the class adds

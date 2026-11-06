@@ -183,6 +183,36 @@ it("renders a build bundle from a request with REA's payload and starts it", asy
   ]);
 });
 
+it.each([
+  ["glabels-3.0", "glabels"],
+  ["com.github.xournalpp.xournalpp", "xournalpp"],
+  ["mousepad", "mousepad"],
+])(
+  "names the environment of desktop entry %s %s",
+  async (entry, environment) => {
+    const { runner } = await fakes();
+    const payload = join(runner.state, "rea-prod.tar.xz");
+    await writeFile(payload, "a packed REA build");
+    const client = await connect({
+      ...runner.environment,
+      REA_BUILD_COMPUTER_REA_ARCHIVE: payload,
+    });
+
+    const started = await callOk(client, "start_build_computer", {
+      source: {
+        kind: "request",
+        desktop_entry: entry,
+        install: { kind: "archive", package: environment },
+      },
+    });
+
+    expect(started.structuredContent).toMatchObject({ environment });
+    expect(await readdir(join(runner.state, "bundle", "envs"))).toEqual([
+      environment,
+    ]);
+  },
+);
+
 it("names what a request needs when REA's payload is not configured", async () => {
   const { runner } = await fakes();
   const client = await connect(runner.environment);

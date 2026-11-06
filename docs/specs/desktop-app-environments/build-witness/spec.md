@@ -153,6 +153,18 @@ and the recording and writes the record as Evidence.
   `<file>.lck` or `<file>.LCK` beside a file the capture recorded in the
   same folder, as GnuCash's `household.gnucash.LCK`, is a lock left out of
   the seed; a lone `notes.lck` is seeded.
+- Gaps of the fourth batch: a desktop entry that is not reverse-DNS names
+  the environment whole, without a trailing version, so `glabels-3.0` gives
+  `glabels` rather than `0`, in the build computer and the export alike. The
+  capture launches the app with `LIBC_FATAL_STDERR_=1`, so a glibc abort's
+  reason reaches the app-exit error. A `.<file>.lock` or `.<file>.lck` beside
+  its file, as Grisbi's `.household.gsb.lock`, is a lock too, left out of the
+  seed and its text seeds; a lone `.notes.lock` is seeded. A seeded
+  LibreOffice `registrymodifications.xcu` ships without its `RecoveryList`
+  items, which started an Impress bundle into document recovery, and a
+  limitation and the README name the file. A checkpoint ranks caches and
+  browser-engine storage last under a selected folder too, unless named
+  themselves, so LibreOffice's icon cache no longer fills `changed_files`.
 - The witness reads the build computer's bounded action log: its stage rules
   use the log's count and the last applied action of each kind, and the
   record holds the entries the log keeps, `actions_dropped`, and a

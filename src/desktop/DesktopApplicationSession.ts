@@ -279,15 +279,19 @@ const unreleased = (
  * The caller's environment without the agent environment's own variables,
  * such as its control token: agentenv launches the exported app without
  * them, and the app must not hold a credential to the computer it runs on.
+ * glibc writes a fatal error, such as an abort's reason, to stderr rather
+ * than the terminal, so a failed launch reports it.
  */
 const applicationEnvironment = (
   environment: NodeJS.ProcessEnv,
-): NodeJS.ProcessEnv =>
-  Object.fromEntries(
+): NodeJS.ProcessEnv => ({
+  ...Object.fromEntries(
     Object.entries(environment).filter(
       ([name]) => !name.startsWith("AGENTENV_"),
     ),
-  );
+  ),
+  LIBC_FATAL_STDERR_: "1",
+});
 
 const launch = async (
   plan: DesktopSessionPlan,

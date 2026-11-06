@@ -150,20 +150,32 @@ describe("isLockFile", () => {
     expect(others.filter(isLock)).toEqual([]);
   });
 
-  it("knows a <file>.lck beside a file the capture recorded, as GnuCash's book lock, but not a lone one", () => {
+  it("knows a <file>.lck or .<file>.lock beside a file the capture recorded, as GnuCash's and Grisbi's, but not a lone one", () => {
     const recorded = new Set([
       "Documents/household.gnucash",
       "Documents/household.gnucash.LCK",
+      "Documents/household.gsb",
       "Documents/notes.lck",
+      "Documents/.notes.lock",
     ]);
+    const isLock = (file: string) => isLockFile(file, [], recorded);
 
-    expect(isLockFile("Documents/household.gnucash.LCK", [], recorded)).toBe(
-      true,
-    );
-    expect(isLockFile("Documents/household.gnucash.lck", [], recorded)).toBe(
-      true,
-    );
-    expect(isLockFile("Documents/notes.lck", [], recorded)).toBe(false);
+    expect(
+      [
+        "Documents/household.gnucash.LCK",
+        "Documents/household.gnucash.lck",
+        // Grisbi's hidden lock beside its file.
+        "Documents/.household.gsb.lock",
+        "Documents/.household.gsb.lck",
+      ].filter(isLock),
+    ).toHaveLength(4);
+    expect(
+      [
+        "Documents/notes.lck",
+        "Documents/.notes.lock",
+        "Documents/household.gsb.lock",
+      ].filter(isLock),
+    ).toEqual([]);
     // The file it locks lies in its own folder.
     expect(
       isLockFile(

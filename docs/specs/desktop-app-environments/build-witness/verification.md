@@ -419,6 +419,37 @@ Each test below failed before the change and passes now.
 - `buildComputerMcp.test.ts`: a bundle start that never got ready names a
   seeded `q1.ods.LCK` beside `q1.ods`, and not a lone `notes.lck`.
 
+## Version-dotted entries, glibc's fatal errors and Grisbi's lock
+
+Run on macOS with source tests and gates; no build computer was started.
+Each test below failed before the change and passes now.
+
+- `appExport.test.ts`: `org.gnumeric.gnumeric`, `com.github.xournalpp.xournalpp`,
+  `glabels-3.0`, `gimp-2.10`, `display-im6.q16` and `mousepad` name
+  `gnumeric`, `xournalpp`, `glabels`, `gimp`, `display-im6-q16` and
+  `mousepad`; before, `glabels-3.0` gave `app-0`.
+- `buildComputerMcp.test.ts`: `start_build_computer` with `glabels-3.0`
+  returns `environment: "glabels"` and renders `envs/glabels`; the
+  reverse-DNS and plain entries keep their names.
+- `DesktopApplicationExport.test.ts`: a capture whose desktop entry is
+  `glabels-3.0` exports as `glabels`, not `app-0`. With Grisbi's empty
+  `.household.gsb.lock` beside `household.gsb`, the lock is neither seeded,
+  in the bundle, nor named in the class module's text seeds, and is listed
+  after "Left out of the seed"; a lone `.notes.lock` is seeded.
+- `appExportUnowned.test.ts`: `.household.gsb.lock` and `.household.gsb.lck`
+  beside `household.gsb` are locks; `.notes.lock` and `household.gsb.lock`
+  are not.
+- `DesktopApplicationSession.test.ts`: the launched app's environment holds
+  `LIBC_FATAL_STDERR_=1`, read back from its stderr; this test runs on macOS
+  too. A real glibc abort was not reproduced.
+- `DesktopApplicationExport.test.ts`: a seeded `registrymodifications.xcu`
+  ships without its `RecoveryList` item and keeps its other items; one
+  limitation and the README name it, and with the item's home path gone the
+  file is not listed as scrubbed.
+- `desktopCapture.test.ts`: with `.config/libreoffice` selected, a file
+  there and a document the app held open precede twelve icons under its
+  `cache` folder, while a cache file selected itself still comes first.
+
 ## Limits of this verification
 
 - The witness acts were scripted by this agent from the task's prompt; no

@@ -34,6 +34,7 @@ import {
 } from "../../domain/desktop/desktopState.js";
 import { isWithinAny } from "../../domain/desktop/desktopStateDiff.js";
 import type { HostIdentity } from "../../domain/desktop/hostIdentity.js";
+import { recoveryListLimitation } from "../../domain/desktop/seedRecoveryList.js";
 import { scrubDconf } from "../../domain/desktop/seedScrub.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
@@ -323,6 +324,7 @@ const exportLimitations = (
     readonly collisions: readonly HomePathCollision[];
     readonly identity: HostIdentity;
     readonly trashed: readonly string[];
+    readonly recovered: readonly string[];
   },
 ): string[] => {
   const opened = heldOpenLimitation(
@@ -334,6 +336,7 @@ const exportLimitations = (
   const unowned = unownedFoldersLimitation(plan.unownedFolders);
   const runtime = runtimeSeedsLimitation(plan.runtimeSeeds);
   const locks = leftOutLocksLimitation(plan.leftOutLocks);
+  const recovered = recoveryListLimitation(facts.recovered);
   return [
     seedLimitation(plan.syntheticSeed),
     SCRUB_LIMITATION,
@@ -345,6 +348,7 @@ const exportLimitations = (
           `${String(plan.unseededFiles.length)} file(s) under the owned paths existed at the seed but were not retained, so they are not seeded.`,
         ]),
     ...(locks === undefined ? [] : [locks]),
+    ...(recovered === undefined ? [] : [recovered]),
     ...(unowned === undefined ? [] : [unowned]),
     ...(runtime === undefined ? [] : [runtime]),
     ...(facts.trashed.length === 0
@@ -433,6 +437,7 @@ const runExport = async (
     collisions,
     identity,
     trashed,
+    recovered: scrub.recovered ?? [],
   });
   const result: DesktopExportResult = {
     directory: request.directory,
