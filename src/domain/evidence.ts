@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from "node:util";
 import { basename } from "node:path";
 import { z } from "zod";
 
@@ -31,6 +32,9 @@ import {
   relationshipCoverageSchema,
   type RelationshipCoverage,
 } from "./relationshipCoverage.js";
+
+/** Predicate shared by ordinary provider analysis observations. */
+export const ANALYSIS_EVIDENCE_PREDICATE = "rea.analysis";
 
 /** Provider identity schema shared by evidence-bearing persistence formats. */
 export const providerSchema = z.strictObject({
@@ -80,6 +84,10 @@ const executionEnvironmentSchema = z.strictObject({
   architecture: z.string().min(1),
   isolation: z.enum(["none", "process", "container", "virtual-machine"]),
 });
+const callerInputPathsSchema = z.record(
+  nulFreeStringSchema,
+  nulFreeStringSchema,
+);
 
 const evidenceBaseSchema = z
   .object({
@@ -94,6 +102,11 @@ const evidenceBaseSchema = z
     caller_input_path: nulFreeStringSchema
       .exactOptional()
       .describe("Verbatim direct-request path; not part of semantic identity."),
+    caller_input_paths: callerInputPathsSchema
+      .exactOptional()
+      .describe(
+        "Verbatim auxiliary input paths keyed by argument name; caller assertions outside semantic identity.",
+      ),
     raw_result: jsonValueSchema.nullable(),
     normalized_result: jsonValueSchema,
     confidence: z.enum(["observed", "derived", "inferred"]),
@@ -274,6 +287,16 @@ export const parseEvidence = (input: unknown): Evidence => {
   return authenticatedEvidenceSchema.parse(input);
 };
 
+/** Evidence owns all presentation metadata excluded from its semantic identity. */
+export const evidenceDisplayMetadataAgree = (
+  left: Evidence,
+  right: Evidence,
+): boolean =>
+  left.subject?.name === right.subject?.name &&
+  left.subject?.local_path === right.subject?.local_path &&
+  left.caller_input_path === right.caller_input_path &&
+  isDeepStrictEqual(left.caller_input_paths, right.caller_input_paths);
+
 /** Recognize authenticated Evidence in a union of partial observations. */
 export const tryParseEvidence = (input: unknown): Evidence | undefined => {
   if (typeof input !== "object" || input === null || !("evidence_id" in input))
@@ -329,15 +352,23 @@ export const rebindEvidenceToTargetPath = (
 export const withEvidenceCallerInputPath = (
   evidence: Evidence,
   rawPath: string,
+  additionalPaths?: Readonly<Record<string, string>>,
 ): Evidence => {
   const callerInputPath = nulFreeStringSchema.parse(rawPath);
   const owned = immutableEvidence(evidence);
-  if (owned.caller_input_path === callerInputPath) return owned;
+  const paths =
+    additionalPaths === undefined
+      ? undefined
+      : callerInputPathsSchema.parse(additionalPaths);
+  const samePaths =
+    paths === undefined || isDeepStrictEqual(owned.caller_input_paths, paths);
+  if (owned.caller_input_path === callerInputPath && samePaths) return owned;
   // The authenticated source owns its immutable payloads. Only this small
   // envelope changes, so replay does not copy a document-sized result.
   const rebound = {
     ...owned,
     caller_input_path: callerInputPath,
+    ...(paths === undefined ? {} : { caller_input_paths: paths }),
   };
   return rememberReboundEvidence(owned, rebound);
 };
@@ -453,7 +484,7 @@ const normalizeEvidenceObservation = (
       version: provider.version,
     },
     analysis_profile: observation.analysisProfile ?? null,
-    predicate_type: observation.predicateType ?? "rea.analysis",
+    predicate_type: observation.predicateType ?? ANALYSIS_EVIDENCE_PREDICATE,
     operation: observation.operation,
     parameters: observation.parameters,
     raw_result: observation.rawResult ?? null,

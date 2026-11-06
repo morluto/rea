@@ -1,3 +1,4 @@
+import { GDB_PROVIDER_IDENTITY } from "./GdbProviderIdentity.js";
 import { persistentDebuggerHostSupported } from "../process/PersistentDebuggerHost.js";
 import { ABORTED, waitForAbortable } from "../process/AbortablePromise.js";
 import { snapshotGdbCommandRecords } from "./GdbCommandRecords.js";
@@ -114,12 +115,6 @@ const cancelledWithCallerReason = (
     cancellation.bindCleanupDependencies([previous]);
   return cancellation;
 };
-
-export const GDB_PROVIDER_IDENTITY = {
-  id: "gnu.gdb",
-  name: "GNU GDB",
-  version: null,
-} as const;
 
 interface PendingCommand {
   readonly token: number;
@@ -525,6 +520,7 @@ interface GdbSession {
   bufferTail: Buffer | undefined;
   bufferTailBytes: number;
   bufferBytes: number;
+  discardingOversizedStreamRecord: boolean;
   invalidUtf8Observed: boolean;
   promptTail: string;
   ready: boolean;
@@ -886,6 +882,7 @@ export class GdbSessionManager {
       bufferTail: undefined,
       bufferTailBytes: 0,
       bufferBytes: 0,
+      discardingOversizedStreamRecord: false,
       invalidUtf8Observed: false,
       promptTail: "",
       ready: false,
@@ -1668,6 +1665,13 @@ export class GdbSessionManager {
       [];
     let offset = 0;
     while (offset < data.byteLength) {
+      if (session.discardingOversizedStreamRecord) {
+        const newline = data.indexOf(0x0a, offset);
+        if (newline < 0) break;
+        session.discardingOversizedStreamRecord = false;
+        offset = newline + 1;
+        continue;
+      }
       const newline = data.indexOf(0x0a, offset);
       const piece = data.subarray(
         offset,
@@ -1677,6 +1681,25 @@ export class GdbSessionManager {
       const lineBytes =
         session.bufferBytes - (newline >= 0 && piece.at(-1) === 0x0d ? 1 : 0);
       if (lineBytes > MAX_MI_LINE_BYTES) {
+        const firstByte =
+          session.bufferChunks[0]?.at(0) ??
+          session.bufferTail?.at(0) ??
+          piece.at(0);
+        if (firstByte === 0x7e || firstByte === 0x40 || firstByte === 0x26) {
+          session.bufferChunks.length = 0;
+          session.bufferTail = undefined;
+          session.bufferTailBytes = 0;
+          session.bufferBytes = 0;
+          for (const pending of session.pending.values())
+            pending.outputTruncated = true;
+          session.recentRecordsTruncated = true;
+          if (newline < 0) {
+            session.discardingOversizedStreamRecord = true;
+            break;
+          }
+          offset = newline + 1;
+          continue;
+        }
         this.#failProtocol(
           session,
           `GDB emitted an MI line exceeding the ${String(MAX_MI_LINE_BYTES)} byte (16 MiB) protocol limit. This release has no runtime override.`,
@@ -2169,6 +2192,8 @@ export class GdbSessionManager {
           );
         });
       }, this.#commandTimeoutMs);
+      // Cleanup bounds its own wait, so a late reply must not hold the host open.
+      if (session.cleanupStarted) timer.unref();
       pending = {
         token,
         command,
@@ -2404,9 +2429,15 @@ export const gdbOneShotCommandMayInvalidateDetachProof = (
 
 /** @internal Classify commands that can invalidate the configured output sink. */
 export const commandMayChangeInferiorOutput = (command: string): boolean => {
-  // These complete built-in inspections cannot change output routing. Keep
-  // compound commands and abbreviations under the conservative rules below.
-  if (/^[ \t]*(?:show|help)[ \t]+inferior-tty[ \t]*$/iu.test(command))
+  // These exact read-only TTY inspections ("show inferior-tty", "help
+  // inferior-tty", MI "-inferior-tty-show") cannot reconfigure the output
+  // sink, so they must not revoke the startup verification. Keep compound
+  // commands and abbreviations under the conservative rules below
+  // (fail-closed).
+  if (
+    /^[ \t]*(?:show|help)[ \t]+inferior-tty[ \t]*$/iu.test(command) ||
+    /^[ \t]*-inferior-tty-show[ \t]*$/iu.test(command)
+  )
     return false;
   const setting = /^\s*(?:set|with)\s+(\S+)/iu.exec(command)?.[1];
   const maySetInferiorTty =

@@ -16,7 +16,7 @@ export const projectCliAnalysisResult = <Value>(
   return projectInputFields(result.error, inputBinding);
 };
 
-const isObject = (
+export const isObject = (
   value: JsonValue | undefined,
 ): value is Record<string, JsonValue> =>
   value !== null && typeof value === "object" && !Array.isArray(value);

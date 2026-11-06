@@ -16,7 +16,7 @@ import { expect } from "vitest";
 import { TextReader, Uint8ArrayWriter, ZipWriter } from "@zip.js/zip.js";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { cliTest } from "../../support/cli/cliFixture.js";
+import { cliTest, runFileCli } from "../../support/cli/cliFixture.js";
 
 import {
   analysisViewLayoutEvidence,
@@ -45,6 +45,116 @@ import {
   parseEvidenceBundle,
 } from "../../../src/domain/evidenceBundle.js";
 import { inspectEvidenceBundle } from "../../../src/application/investigation/InspectEvidenceBundle.js";
+
+cliTest(
+  "reads a saved scalar pseudocode observation without starting an analysis engine",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-pseudocode-view-cli-");
+    const parent = createEvidence(
+      { path: "/fixtures/program", format: "elf", sha256: "a".repeat(64) },
+      { id: "fixture", name: "Fixture", version: "1" },
+      {
+        operation: "procedure_pseudo_code",
+        parameters: { procedure: "file-offset:0x10" },
+        result: "A😀\r\n尾\n",
+        locations: [
+          { kind: "artifact-path", path: "/fixtures/program" },
+          { kind: "file-offset", offset: 0x10 },
+          { kind: "address", address: "0x401010" },
+          { kind: "address", address: "0x401000" },
+        ],
+      },
+    );
+    const request = join(root, "request.json");
+    await writeFile(
+      request,
+      JSON.stringify({
+        source: { kind: "inline", evidence: parent },
+        view: { kind: "native", facet: "pseudocode", offset: 1, limit: 2 },
+      }),
+    );
+    const response = await cli.run({
+      arguments: ["inspect-analysis-view", request, "--json"],
+    });
+    expect(response.exitCode).toBe(0);
+    const result = parseEvidence(response.json);
+    expect(result.subject).toEqual(parent.subject);
+    expect(result.evidence_links).toEqual([parent.evidence_id]);
+    expect(result.locations).toEqual(parent.locations);
+    expect(result.normalized_result).toMatchObject({
+      parent_operation: "procedure_pseudo_code",
+      procedure_address: null,
+      item: { text: "😀" },
+      coverage: { next_offset: 3 },
+    });
+  },
+);
+
+cliTest(
+  "reads selected batch rows and one body from a saved bundle without a provider",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-batch-view-cli-");
+    const path = join(root, "bundle.json");
+    const body = "int main(void) { return 0; }";
+    const parent = createEvidence(
+      undefined,
+      { id: "fixture", name: "Fixture", version: "1" },
+      {
+        operation: "batch_decompile",
+        parameters: { addresses: ["main", "main"] },
+        result: {
+          items: ["main", "main"].map((address) => ({
+            address,
+            procedure: { status: "resolved", address: "0x1", name: "main" },
+            status: "ok",
+            pseudocode: body,
+          })),
+          total: 2,
+          succeeded: 2,
+          failed: 0,
+        },
+        confidence: "derived",
+        authority: "shipped-artifact",
+      },
+    );
+    await writeFile(path, JSON.stringify(createEvidenceBundle([parent])));
+    const inspect = async (view: JsonValue) => {
+      const result = await cli.run({
+        arguments: [
+          "inspect-analysis-view",
+          JSON.stringify({
+            source: {
+              kind: "retained-evidence",
+              evidence_id: parent.evidence_id,
+            },
+            view,
+          }),
+          "--evidence-bundle",
+          path,
+          "--json",
+        ],
+      });
+      expect(result.exitCode).toBe(0);
+      return parseEvidence(result.json).normalized_result;
+    };
+    expect(
+      await inspect({ kind: "batch-decompile", collection: "items" }),
+    ).toMatchObject({
+      batch: { total: 2 },
+      items: [
+        { index: 0, pseudocode_code_units: body.length },
+        { index: 1, pseudocode_code_units: body.length },
+      ],
+    });
+    expect(
+      await inspect({
+        kind: "batch-decompile",
+        collection: "pseudocode",
+        index: 1,
+      }),
+    ).toMatchObject({ item: { index: 1, text: body } });
+  },
+);
 
 cliTest(
   "authenticates an exact portable parent for non-managed views and rejects ambiguous or altered sources",
@@ -97,7 +207,7 @@ cliTest(
         "evidence_integrity_mismatch",
       ],
     ] as const) {
-      const rejected = await cli.run({
+      const invocation = {
         arguments: [
           "inspect-analysis-view",
           JSON.stringify({ source, view }),
@@ -105,14 +215,18 @@ cliTest(
           path,
           "--json",
         ],
-      });
+      };
+      const rejected =
+        source.kind === "inline"
+          ? await cli.run(invocation)
+          : await runFileCli(cli, invocation);
       expect(rejected.exitCode).toBe(1);
       expect(rejected.json).toMatchObject({ code: expectedCode });
       expect(rejected.json).not.toHaveProperty("evidence_id");
     }
-    for (const [contents, expectedCode] of [
-      [JSON.stringify(parent), "invalid_request"],
-      ["{invalid JSON", "evidence_integrity_mismatch"],
+    for (const [contents, expectedCode, freshProcess] of [
+      [JSON.stringify(parent), "invalid_request", false],
+      ["{invalid JSON", "evidence_integrity_mismatch", false],
       [
         JSON.stringify({
           ...bundle,
@@ -122,10 +236,11 @@ cliTest(
           })),
         }),
         "evidence_integrity_mismatch",
+        true,
       ],
     ] as const) {
       await writeFile(path, contents);
-      const rejected = await cli.run({
+      const invocation = {
         arguments: [
           "inspect-analysis-view",
           JSON.stringify(request),
@@ -133,7 +248,12 @@ cliTest(
           path,
           "--json",
         ],
-      });
+      };
+      // Keep a fresh-process integrity check for the altered bundle while the
+      // worker must reread the same path for the other invalid inputs.
+      const rejected = freshProcess
+        ? await cli.run(invocation)
+        : await runFileCli(cli, invocation);
       expect(rejected.exitCode).toBe(1);
       expect(rejected.json).toMatchObject({ code: expectedCode });
       expect(rejected.json).not.toHaveProperty("evidence_id");
@@ -416,9 +536,15 @@ cliTest(
         };
         const application = await inspectAnalysisView(request);
         await writeFile(path, JSON.stringify(request));
-        const reply = await cli.run({
+        const invocation = {
           arguments: ["inspect-analysis-view", path, "--json"],
-        });
+        };
+        // Exercise a valid and a malformed parent in fresh processes as well
+        // as the shared worker's repeated reads of the rewritten input path.
+        const reply =
+          group === "manifest" && variant !== "missing"
+            ? await cli.run(invocation)
+            : await runFileCli(cli, invocation);
         expect(reply.stderr).toBe("");
         if (variant === "valid") {
           expect(application.ok).toBe(true);
@@ -606,6 +732,24 @@ cliTest(
     const expected = inspectEvidenceBundle(bundle, options);
     if (!expected.ok) throw expected.error;
     expect(result.json).toEqual(expected.value);
+    // The same shared owner selects the complete record from the portable file.
+    const records = await cli.run({
+      arguments: [
+        "inspect-evidence-bundle",
+        JSON.stringify({ path, ...options, detail: "records", limit: 1 }),
+        "--json",
+      ],
+      environment: { HOME: root, XDG_CONFIG_HOME: root, XDG_CACHE_HOME: root },
+    });
+    expect(records.exitCode).toBe(0);
+    expect(records.json).toMatchObject({
+      kind: "evidence-record-selection",
+      matching_records: 1,
+      limit: 1,
+      next_offset: null,
+      records: [parent],
+      missing_evidence_links: [],
+    });
     const complete = await cli.run({
       arguments: [
         "inspect-evidence-bundle",
@@ -616,6 +760,54 @@ cliTest(
     });
     expect(complete.exitCode).toBe(0);
     expect(complete.json).toEqual(bundle);
+  },
+);
+
+cliTest(
+  "reads link membership from a deliberately partial portable bundle",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-evidence-links-cli-");
+    const path = join(root, "partial.json");
+    const absent = analysisViewLayoutEvidence();
+    const linked = createEvidence(
+      undefined,
+      { id: "fixture", name: "Fixture", version: "1" },
+      {
+        operation: "trace_feature",
+        parameters: {},
+        result: {},
+        evidenceLinks: [absent.evidence_id],
+      },
+    );
+    const bundle = createEvidenceBundle([linked]);
+    await writeFile(path, JSON.stringify(bundle));
+    const options = {
+      detail: "links",
+      traversal: "retained-closure",
+    } as const;
+    const result = await cli.run({
+      arguments: [
+        "inspect-evidence-bundle",
+        JSON.stringify({ path, ...options }),
+        "--json",
+      ],
+      environment: { HOME: root, XDG_CONFIG_HOME: root, XDG_CACHE_HOME: root },
+    });
+    expect(result.exitCode).toBe(0);
+    const expected = inspectEvidenceBundle(bundle, options);
+    if (!expected.ok) throw expected.error;
+    expect(result.json).toEqual(expected.value);
+    expect(result.json).toMatchObject({
+      kind: "evidence-link-inspection",
+      retained_closure: "incomplete",
+      rows: [
+        {
+          evidence_id: linked.evidence_id,
+          linked_evidence_id: absent.evidence_id,
+          status: "missing",
+        },
+      ],
+    });
   },
 );
 

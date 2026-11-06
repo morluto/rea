@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 const offset = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
-const uint32 = z.number().int().min(0).max(0xffff_ffff);
+export const uint32 = z.number().int().min(0).max(0xffff_ffff);
 
 /** Parsed source fields owned by the PCK adapter, independent of content hashes. */
 export const godotPckMetadataSchema = z.strictObject({
@@ -61,6 +61,24 @@ export const unityFsEntryMetadataSchema = z.strictObject({
   source_path: z.string(),
   declared_offset: offset,
   flags: uint32,
+});
+
+/** Parsed source fields owned by the wxapkg adapter, independent of member bytes. */
+export const wxapkgMetadataSchema = z.strictObject({
+  kind: z.literal("wxapkg"),
+  info: uint32.nullable(),
+  index_length: uint32.nullable(),
+  data_length: uint32.nullable(),
+  file_count: uint32.nullable(),
+  directory_status: z.enum(["available", "encrypted"]),
+});
+export type WxapkgMetadata = z.infer<typeof wxapkgMetadataSchema>;
+
+export const wxapkgEntryMetadataSchema = z.strictObject({
+  kind: z.literal("wxapkg-entry"),
+  index: uint32,
+  source_path: z.string(),
+  declared_offset: offset,
 });
 
 /** Source cookie fields and derived directory counts without Python execution. */
@@ -161,6 +179,78 @@ export const nodeSeaEntryMetadataSchema = z.strictObject({
   role: z.enum(["main-script", "snapshot", "code-cache", "asset"]),
   source_path: z.string(),
   index: uint32,
+});
+
+/**
+ * UF2 facts derived from every 512-byte block. Regions hold only valid
+ * main-flash payloads; block numbering is grouped by familyID and block count.
+ */
+export const uf2MetadataSchema = z.strictObject({
+  kind: z.literal("uf2"),
+  block_count: offset,
+  trailing_bytes: offset,
+  invalid_block_count: offset,
+  flash_block_count: offset,
+  not_main_flash_block_count: offset,
+  file_container_block_count: offset,
+  md5_block_count: offset,
+  extension_tag_block_count: offset,
+  family_count: offset,
+  /** The registry revision REA's region `family_name` values come from. */
+  family_name_registry: z.string(),
+  numbering_group_count: offset,
+  missing_block_count: offset,
+  ambiguous_numbering_group_count: offset,
+  repeated_block_count: offset,
+  out_of_order_block_count: offset,
+  block_number_out_of_range_count: offset,
+  region_count: offset,
+  data_bytes: offset,
+  duplicate_bytes: offset,
+});
+export type Uf2Metadata = z.infer<typeof uf2MetadataSchema>;
+
+/** One family's address-contiguous region; file blocks are zero-based positions. */
+export const uf2RegionMetadataSchema = z.strictObject({
+  kind: z.literal("uf2-region"),
+  family_id: uint32.nullable(),
+  /** REA's label for `family_id`, from `family_name_registry`; not file content. */
+  family_name: z.string().nullable(),
+  start_address: uint32,
+  end_address: uint32,
+  length: offset,
+  block_count: offset,
+  first_file_block: offset,
+  last_file_block: offset,
+});
+
+/** DfuSe prefix and DFU suffix facts; both CRCs use the suffix's stored form. */
+export const dfuSeMetadataSchema = z.strictObject({
+  kind: z.literal("dfuse"),
+  image_size: uint32,
+  target_count: uint32,
+  element_count: offset,
+  empty_element_count: offset,
+  overlapping_element_count: offset,
+  data_bytes: offset,
+  device_version: uint32,
+  product_id: uint32,
+  vendor_id: uint32,
+  suffix_crc: uint32,
+  computed_crc: uint32,
+});
+export type DfuSeMetadata = z.infer<typeof dfuSeMetadataSchema>;
+
+/** One DfuSe element with its target's alternate setting and name. */
+export const dfuSeElementMetadataSchema = z.strictObject({
+  kind: z.literal("dfuse-element"),
+  target_index: uint32,
+  alternate_setting: uint32,
+  target_name: z.string().nullable(),
+  element_index: uint32,
+  start_address: uint32,
+  end_address: uint32,
+  length: offset,
 });
 
 /**
@@ -279,34 +369,24 @@ export const fitImageMetadataSchema = z.strictObject({
   signature_algorithms: z.array(z.string()),
 });
 export type FitImageMetadata = z.infer<typeof fitImageMetadataSchema>;
-/** Payload interpretation and sharing declarations, independent of FIT placement. */
-export const fitImageDeclaration = (metadata: FitImageMetadata) => ({
-  type: metadata.type,
-  arch: metadata.arch,
-  os: metadata.os,
-  compression: metadata.compression,
-  load: metadata.load,
-  entry: metadata.entry,
-  image_data: metadata.image_data,
-  cipher_present: metadata.cipher_present,
-  cipher_algo: metadata.cipher_algo,
-});
 
-/** Runtime member identity, independent of blob layout and directory order. */
-export const nodeSeaEntryDeclaration = (
-  metadata: z.infer<typeof nodeSeaEntryMetadataSchema>,
-) => ({ role: metadata.role, source_path: metadata.source_path });
-
-const uint8 = z.number().int().min(0).max(0xff);
+export const uint8 = z.number().int().min(0).max(0xff);
 const uint16 = z.number().int().min(0).max(0xffff);
 const sha256Hex = z.string().regex(/^[0-9a-f]{64}$/u);
 const byteRange = z.strictObject({ offset, length: offset });
+
+/** Derived from `chip_id` through the cited table. */
+const espChipFactsSchema = z.strictObject({
+  target: z.string(),
+  isa: z.enum(["xtensa", "riscv"]),
+  source: z.string(),
+});
 
 /**
  * `esp_app_desc_t` fields, as ESP-IDF names them; strings stop at NUL. A field
  * the file cuts off is null; `observed_length` says where the descriptor ends.
  */
-const espAppDescriptorSchema = z.strictObject({
+export const espAppDescriptorSchema = z.strictObject({
   kind: z.literal("app"),
   offset,
   /** Descriptor bytes the file holds, at most the 256 of `esp_app_desc_t`. */
@@ -333,7 +413,7 @@ const espAppDescriptorSchema = z.strictObject({
 });
 
 /** `esp_bootloader_desc_t` fields, as ESP-IDF names them. */
-const espBootloaderDescriptorSchema = z.strictObject({
+export const espBootloaderDescriptorSchema = z.strictObject({
   kind: z.literal("bootloader"),
   offset,
   secure_version: uint8,
@@ -366,13 +446,7 @@ export const espImageMetadataSchema = z.strictObject({
     hash_appended: z.boolean(),
   }),
   /** Derived from `chip_id` through the cited table; null for unknown IDs. */
-  chip: z
-    .strictObject({
-      target: z.string(),
-      isa: z.enum(["xtensa", "riscv"]),
-      source: z.string(),
-    })
-    .nullable(),
+  chip: espChipFactsSchema.nullable(),
   checksum: z.strictObject({
     offset: offset.nullable(),
     stored: uint8.nullable(),
@@ -398,6 +472,19 @@ export const espImageMetadataSchema = z.strictObject({
       espBootloaderDescriptorSchema,
     ])
     .nullable(),
+  /**
+   * Set when the file is a flash dump read from a later flash address: this
+   * image is not an app, its chip's ROM loads the bootloader from
+   * `flash_offset`, and a partition table sits at `table_file_offset`, where
+   * that origin puts the default `0x8000`. Reopen the file as
+   * `esp-flash-image` with that `flash_offset`. Null otherwise, and in the
+   * nested facts of a flash layout. Absent from Evidence recorded before REA
+   * reported it; its graph digest covers the record without the field.
+   */
+  flash_dump: z
+    .strictObject({ flash_offset: uint32, table_file_offset: offset })
+    .nullable()
+    .exactOptional(),
 });
 export type EspImageMetadata = z.infer<typeof espImageMetadataSchema>;
 
@@ -414,14 +501,6 @@ export const espImageSegmentMetadataSchema = z.strictObject({
 export type EspImageSegmentMetadata = z.infer<
   typeof espImageSegmentMetadataSchema
 >;
-
-/**
- * What a segment header declares: where its bytes load and how many there
- * are. Header offsets are layout, and the classification is derived.
- */
-export const espImageSegmentDeclaration = (
-  metadata: EspImageSegmentMetadata,
-) => ({ load_addr: metadata.load_addr, data_len: metadata.data_len });
 
 /** One Secure Boot v2 block with its 0xE7 magic and a matching CRC32. */
 export const espImageSignatureBlockMetadataSchema = z.strictObject({
@@ -449,15 +528,162 @@ export type EspImageSignatureBlockMetadata = z.infer<
   typeof espImageSignatureBlockMetadataSchema
 >;
 
-/** Declaration identity that is stable across archive layout changes. */
-export const pyInstallerEntryDeclaration = (
-  metadata: PyInstallerEntryMetadata,
-) => ({
-  container: metadata.container,
-  container_name: metadata.container_name,
-  source_name: metadata.source_name,
-  type_code: metadata.type_code,
+/** One partition table entry as declared, with ESP-IDF's type names. */
+export const espFlashPartitionMetadataSchema = z.strictObject({
+  kind: z.literal("esp-flash-partition"),
+  /** Position among the table's partition entries. */
+  index: uint8,
+  /** The label up to its first NUL; null when it is not UTF-8. */
+  label: z.string().nullable(),
+  /** The label's bytes up to its first NUL in hex, when it is not UTF-8. */
+  label_hex: z
+    .string()
+    .regex(/^(?:[0-9a-f]{2}){1,16}$/u)
+    .nullable(),
+  type: uint8,
+  subtype: uint8,
+  /** `gen_esp32part.py` names; null for values it does not name. */
+  type_name: z.string().nullable(),
+  subtype_name: z.string().nullable(),
+  flash_address: uint32,
+  size: uint32,
+  encrypted: z.boolean(),
+  readonly: z.boolean(),
+  /** Flag bits other than `encrypted` and `readonly`, which ESP-IDF ignores. */
+  unknown_flags: uint32,
+  /**
+   * Observed in the bytes the dump holds, from the partition's start: the
+   * first byte that is not 0xFF and just past the last, null when every byte
+   * is erased, and how many bytes are not 0xFF. All null for a partition the
+   * dump holds none of.
+   */
+  written_offset: uint32.nullable(),
+  written_end: uint32.nullable(),
+  written_bytes: uint32.nullable(),
 });
+
+/** ESP image facts for a region of a dump; offsets are relative to the region. */
+export const espFlashImageFactsSchema = z.strictObject({
+  /** An ESP image, erased flash, or bytes that are not one, such as ciphertext. */
+  status: z.enum(["esp-image", "erased", "unrecognized"]),
+  image: espImageMetadataSchema.nullable(),
+  segments: z.array(espImageSegmentMetadataSchema),
+  signature_blocks: z.array(espImageSignatureBlockMetadataSchema),
+  coverage: z.enum(["complete", "unknown"]).nullable(),
+  limitations: z.array(z.string()),
+});
+
+const espOtaRecordSchema = z.strictObject({
+  index: z.union([z.literal(0), z.literal(1)]),
+  ota_seq: uint32,
+  seq_label: z.string().regex(/^[0-9a-f]{40}$/u),
+  ota_state: uint32,
+  state_name: z
+    .enum(["new", "pending-verify", "valid", "invalid", "aborted", "undefined"])
+    .nullable(),
+  crc: uint32,
+  /** CRC-32 of `ota_seq` seeded with 0xFFFFFFFF, as the bootloader checks it. */
+  crc_matches: z.boolean(),
+  valid: z.boolean(),
+});
+
+/**
+ * An ESP flash dump: where it sits in flash, its bootloader, partition table,
+ * partitions and OTA data. Entries are the table's partitions; app and
+ * bootloader regions carry their ESP image facts here.
+ */
+export const espFlashImageMetadataSchema = z.strictObject({
+  kind: z.literal("esp-flash-image"),
+  /** Flash address of the file's first byte: 0 unless the caller gave one. */
+  flash_offset: z.strictObject({
+    value: uint32,
+    source: z.enum(["default", "caller"]),
+  }),
+  /** From the bootloader's `chip_id`; null without a located bootloader. */
+  chip: espChipFactsSchema.nullable(),
+  /**
+   * The image at its chip's ROM offset, through the partition table; `path`
+   * is its entry.
+   */
+  bootloader: z
+    .strictObject({
+      path: z.string(),
+      flash_address: uint32,
+      region_size: offset,
+      facts: espFlashImageFactsSchema,
+    })
+    .nullable(),
+  partition_table: z.strictObject({
+    flash_address: uint32,
+    /** 0x8000, the caller's offset, or a scan for a verified MD5 (derived). */
+    method: z.enum(["default", "caller", "scan"]),
+    partition_count: uint8,
+    md5: z.strictObject({
+      status: z.enum(["valid", "invalid", "absent"]),
+      stored: z
+        .string()
+        .regex(/^[0-9a-f]{32}$/u)
+        .nullable(),
+      computed: z
+        .string()
+        .regex(/^[0-9a-f]{32}$/u)
+        .nullable(),
+    }),
+  }),
+  /**
+   * Declared partitions that begin before the dump's first byte, which have
+   * no entry. A partition past the dump's end is an entry with no bytes.
+   */
+  partitions_outside_dump: z.array(espFlashPartitionMetadataSchema),
+  /** ESP image facts for each app partition the dump holds, by its entry. */
+  apps: z.array(
+    z.strictObject({
+      path: z.string(),
+      partition_index: uint8,
+      facts: espFlashImageFactsSchema,
+    }),
+  ),
+  /** The otadata partition the bootloader uses: the last one declared. */
+  otadata: z
+    .strictObject({
+      partition_index: uint8,
+      /** The records the dump holds, at most one per sector. */
+      records: z.array(espOtaRecordSchema).max(2),
+    })
+    .nullable(),
+  /**
+   * The app the bootloader would select, derived for every table under the
+   * stated assumptions. `basis` names the branch: `otadata`,
+   * `factory-fallback` and `ota_0-fallback` from the otadata records,
+   * `no-otadata` for a table without otadata (the factory index), `none`
+   * for the bootloader's INVALID_INDEX, after which it resets, and
+   * `unknown` when the dump lacks a record the bootloader reads.
+   * `partition_index` is null when the table declares no partition for the
+   * selected slot or fallback.
+   */
+  boot_selection: z.strictObject({
+    basis: z.enum([
+      "otadata",
+      "factory-fallback",
+      "ota_0-fallback",
+      "no-otadata",
+      "none",
+      "unknown",
+    ]),
+    active_record: z.union([z.literal(0), z.literal(1)]).nullable(),
+    slot: uint8.nullable(),
+    partition_index: uint8.nullable(),
+    assumptions: z.array(z.string()),
+    /** Rollback, anti-rollback and load fallback decide it at boot. */
+    running_partition: z.literal("unknown"),
+  }),
+  /**
+   * Ranges outside every described region, each from a byte that is not
+   * erased flash to the end of its gap.
+   */
+  undescribed: z.array(byteRange),
+});
+export type EspFlashImageMetadata = z.infer<typeof espFlashImageMetadataSchema>;
 
 /**
  * U-Boot legacy uImage header facts. Declared addresses are facts from the
@@ -557,6 +783,8 @@ export const artifactFormatMetadataSchema = z.discriminatedUnion("kind", [
   godotPckEntryMetadataSchema,
   unityFsMetadataSchema,
   unityFsEntryMetadataSchema,
+  wxapkgMetadataSchema,
+  wxapkgEntryMetadataSchema,
   pyInstallerMetadataSchema,
   pyInstallerEntryMetadataSchema,
   dotnetBundleEntryMetadataSchema,
@@ -571,9 +799,236 @@ export const artifactFormatMetadataSchema = z.discriminatedUnion("kind", [
   espImageMetadataSchema,
   espImageSegmentMetadataSchema,
   espImageSignatureBlockMetadataSchema,
+  uf2MetadataSchema,
+  uf2RegionMetadataSchema,
+  dfuSeMetadataSchema,
+  dfuSeElementMetadataSchema,
+  espFlashImageMetadataSchema,
+  espFlashPartitionMetadataSchema,
   fitMetadataSchema,
   fitImageMetadataSchema,
 ]);
 export type ArtifactFormatMetadata = z.infer<
   typeof artifactFormatMetadataSchema
 >;
+
+type FormatMetadataByKind = {
+  readonly [Metadata in ArtifactFormatMetadata as Metadata["kind"]]: Metadata;
+};
+type FormatMetadataKind = keyof FormatMetadataByKind;
+
+/**
+ * What each kind declares beyond its own bytes, which artifact comparison
+ * compares, or why comparison uses none of its facts. Every kind needs an
+ * entry, so a new kind does not compile without this decision; a new field
+ * of an existing kind still needs a review of its projection. For a node-less
+ * metadata record, the projection is all of its format metadata that
+ * comparison checks.
+ */
+const declarationsByKind: {
+  readonly [Kind in FormatMetadataKind]:
+    | {
+        readonly declaration: (
+          metadata: FormatMetadataByKind[Kind],
+        ) => FormatMetadataDeclaration["facts"];
+        /** Projected fields the producer could not interpret. */
+        readonly unreadable?: (
+          metadata: FormatMetadataByKind[Kind],
+        ) => FormatMetadataDeclaration["unreadable"];
+      }
+    | { readonly notCompared: string };
+} = {
+  "godot-pck": {
+    notCompared:
+      "Its fields come from the pack's own bytes, which content comparison covers.",
+  },
+  "godot-pck-entry": {
+    notCompared:
+      "index and declared_offset are layout; flags and md5_status repeat occurrence facts; source_path spells Godot's lookup path in a version-dependent way. docs/godot-pck.md gives the evidence.",
+  },
+  unityfs: {
+    notCompared:
+      "Its fields come from the bundle's own bytes, which content comparison covers.",
+  },
+  /** What the directory declares for a member: its source path and raw node flags. Index and offset are layout. */
+  "unityfs-entry": {
+    declaration: (metadata) => ({
+      source_path: metadata.source_path,
+      flags: metadata.flags,
+    }),
+  },
+  wxapkg: {
+    notCompared:
+      "Its fields come from the package's own bytes, which content comparison covers.",
+  },
+  "wxapkg-entry": {
+    notCompared:
+      "index is layout. source_path keeps the declared name, including a producer root prefix the occurrence path strips.",
+  },
+  pyinstaller: {
+    notCompared:
+      "Its fields come from the archive's own bytes, which content comparison covers.",
+  },
+  /** Declaration identity that is stable across archive layout changes. */
+  "pyinstaller-entry": {
+    declaration: (metadata) => ({
+      container: metadata.container,
+      container_name: metadata.container_name,
+      source_name: metadata.source_name,
+      type_code: metadata.type_code,
+    }),
+  },
+  "dotnet-bundle-entry": {
+    notCompared:
+      "Its fields come from the host's bundle manifest, whose bytes the host's content comparison covers.",
+  },
+  "bun-standalone": {
+    notCompared:
+      "Its fields come from the carrier's own bytes, which content comparison covers.",
+  },
+  "bun-standalone-entry": {
+    notCompared:
+      "Its fields come from the carrier's module graph, whose bytes the carrier's content comparison covers.",
+  },
+  "node-sea": {
+    notCompared:
+      "Its fields come from the carrier's own bytes, which content comparison covers.",
+  },
+  /** Runtime member identity, independent of blob layout and directory order. */
+  "node-sea-entry": {
+    declaration: (metadata) => ({
+      role: metadata.role,
+      source_path: metadata.source_path,
+    }),
+  },
+  "hex-records": {
+    notCompared:
+      "Its fields come from the file's own records, which content comparison covers.",
+  },
+  "hex-record-region": {
+    notCompared:
+      "start_address and end_address restate the region's path, and length follows from them; record and line counts are layout.",
+  },
+  uimage: {
+    notCompared:
+      "Its header facts come from the image's own bytes, which content comparison covers.",
+  },
+  "uimage-entry": {
+    notCompared:
+      "role and index restate the entry's path; its stored bytes are compared by content.",
+  },
+  "esp-image": {
+    notCompared:
+      "Its fields come from the image's own bytes, which content comparison covers.",
+  },
+  /**
+   * What a segment header declares: where its bytes load and how many there
+   * are. Header offsets are layout, and the classification is derived.
+   */
+  "esp-image-segment": {
+    declaration: (metadata) => ({
+      load_addr: metadata.load_addr,
+      data_len: metadata.data_len,
+    }),
+  },
+  "esp-image-signature-block": {
+    notCompared:
+      "Its fields come from the block's own bytes, which content comparison covers, and image_digest_matches follows the image's content.",
+  },
+  uf2: {
+    notCompared:
+      "Its counts come from the file's own blocks, which content comparison covers, and family_name_registry names REA's label registry.",
+  },
+  "uf2-region": {
+    notCompared:
+      "Its familyID and addresses are in its path, family_name is REA's label for the familyID, and its block counts and positions are layout; content comparison covers its bytes.",
+  },
+  dfuse: {
+    notCompared:
+      "Its fields come from the file's own prefix, target headers and suffix, which content comparison covers.",
+  },
+  /** The device memory an element targets, which its path and bytes do not show. */
+  "dfuse-element": {
+    declaration: (metadata) => ({
+      alternate_setting: metadata.alternate_setting,
+      target_name: metadata.target_name,
+    }),
+  },
+  "esp-flash-image": {
+    notCompared:
+      "Its fields come from the dump's bytes and from the caller's flash_offset and partition_table_offset, which are target identity; each partition's range, compared by content, reflects them.",
+  },
+  /**
+   * What a partition entry declares; its index is layout, and the written
+   * fields are observed from its bytes, which content comparison covers.
+   */
+  "esp-flash-partition": {
+    declaration: (metadata) => ({
+      label: metadata.label,
+      label_hex: metadata.label_hex,
+      type: metadata.type,
+      subtype: metadata.subtype,
+      flash_address: metadata.flash_address,
+      size: metadata.size,
+      encrypted: metadata.encrypted,
+      readonly: metadata.readonly,
+      unknown_flags: metadata.unknown_flags,
+    }),
+  },
+  fit: {
+    notCompared:
+      "Its fields come from the FIT's own bytes, which content comparison covers.",
+  },
+  /**
+   * Payload interpretation and sharing declarations, independent of FIT
+   * placement: the image's name, index and data position are layout.
+   */
+  "fit-image": {
+    declaration: (metadata) => ({
+      type: metadata.type,
+      arch: metadata.arch,
+      os: metadata.os,
+      compression: metadata.compression,
+      load: metadata.load,
+      entry: metadata.entry,
+      image_data: metadata.image_data,
+      cipher_present: metadata.cipher_present,
+      cipher_algo: metadata.cipher_algo,
+    }),
+    unreadable: (metadata) => metadata.unreadable_fields,
+  },
+};
+
+/** Kinds whose declarations artifact comparison compares, in table order. */
+export const COMPARED_FORMAT_METADATA_KINDS = Object.entries(
+  declarationsByKind,
+).flatMap(([kind, entry]) => ("declaration" in entry ? [kind] : []));
+
+/** A declaration that artifact comparison compares within its kind. */
+export interface FormatMetadataDeclaration {
+  readonly kind: FormatMetadataKind;
+  readonly facts: Readonly<Record<string, unknown>>;
+  /** Facts whose value is unknown, which compare as neither equal nor changed. */
+  readonly unreadable: readonly string[];
+}
+
+// Generic in the kind, so each projection receives its own metadata type.
+const declarationOf = <Kind extends FormatMetadataKind>(
+  kind: Kind,
+  metadata: FormatMetadataByKind[Kind],
+): FormatMetadataDeclaration | undefined => {
+  const entry = declarationsByKind[kind];
+  return "declaration" in entry
+    ? {
+        kind,
+        facts: entry.declaration(metadata),
+        unreadable: entry.unreadable?.(metadata) ?? [],
+      }
+    : undefined;
+};
+
+/** The compared declaration, or undefined when comparison uses none. */
+export const formatMetadataDeclaration = (
+  metadata: ArtifactFormatMetadata | undefined,
+): FormatMetadataDeclaration | undefined =>
+  metadata === undefined ? undefined : declarationOf(metadata.kind, metadata);

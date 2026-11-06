@@ -9,7 +9,10 @@ liveness deadlines. `INPUT_JSON` may be inline JSON or a JSON file path.
 
 The minimal request contains only browser launch/connect selection, `start_url`,
 and at least one `actions` entry. Launch `headless` defaults to `true` and can
-be set to `false` where the host supports a visible browser. Navigations follow
+be set to `false` where the host supports a visible browser. Launched Chromium
+keeps its sandbox; on hosts that cannot provide one, such as root in a
+container, set `REA_BROWSER_NO_SANDBOX=true` for the REA process. Termux on
+Android always launches without it. Navigations follow
 the destinations named by the scenario and the page's ordinary browser requests,
 and [request steps](#request-steps) send only to the start URL's origin;
 there is no separate origin allowlist. Request steps use a temporary dispatch

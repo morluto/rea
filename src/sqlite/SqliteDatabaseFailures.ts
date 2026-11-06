@@ -1,4 +1,5 @@
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import { stableArtifactInputRecovery } from "../artifacts/StableArtifactFailure.js";
 import {
   ArtifactFileCleanupFailure,
   bindArtifactFileCleanup,
@@ -30,10 +31,10 @@ import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { OwnedCommandFailure } from "../process/OwnedCommand.js";
 import type { ProviderProcessSnapshot } from "../process/ProviderProcess.js";
 import {
-  SQLITE_PROVIDER_IDENTITY,
   DEFAULT_SQLITE_WORKER_TIMEOUT_MS,
   MAX_SQLITE_WORKER_TIMEOUT_MS,
 } from "../domain/sqlite/sqliteDatabase.js";
+import { SQLITE_PROVIDER_IDENTITY } from "../domain/sqlite/SqliteProviderIdentity.js";
 import { SQLITE_DATABASE_LIMITS } from "./SqliteDatabaseLimits.js";
 import { SqliteSnapshotAcquisitionFailure } from "./SqliteDatabaseSnapshot.js";
 
@@ -172,13 +173,17 @@ export const sqliteDatabaseFailure = (
       return new AnalysisCancelledError(operation, {
         cause: artifactFileCancellationCause(cause),
       });
-    return new AnalysisInputError(operation, { cause }, [
-      {
-        path: ["path"],
-        reason: "invalid_format",
-        message: cause.message,
-      },
-    ]);
+    return new AnalysisInputError(
+      operation,
+      { cause, ...stableArtifactInputRecovery(cause) },
+      [
+        {
+          path: ["path"],
+          reason: "invalid_format",
+          message: cause.message,
+        },
+      ],
+    );
   }
   if (cause instanceof Error && cause.name === "AbortError")
     return new AnalysisCancelledError(operation, {

@@ -17,7 +17,8 @@ additional permission flag or degraded mode is required.
 - Node.js 22.x (>=22.23.4), 24.x (>=24.22.1), or 26.12.1+;
 - an operator-installed Ghidra 12.x (>=12.1) distribution (verified with 12.1.4);
 - a 64-bit full JDK inside that installation's declared Java range (JDK 21 or newer, with no maximum, for current 12.1 releases);
-- an explicit native, non-managed x86, x86-64, ARMNT (Thumb-2) or ARM64 PE application/DLL, or a
+- an explicit native, non-managed x86, x86-64, ARMNT (Thumb-2) or ARM64 PE application/DLL, a
+  [DOS MZ executable](ghidra-dos.md), or a
   [raw NMOS 6502 image](raw-binary.md#nmos-6502) with a caller-supplied entry; and
 - the 27 read-only Ghidra inventory, memory, and function-analysis operations.
 
@@ -26,8 +27,8 @@ PE load-image inspection returns an explicit unsupported attestation status.
 Independent verification covers admitted DOS MZ, explicit COM, explicit
 [raw-binary imports](raw-binary.md), and explicit
 [GameCube DOL images](ghidra-dol.md) on their supported hosts, including the
-admitted raw NMOS 6502 mapping on Windows. Windows P0 admission remains limited
-to native PE and raw NMOS 6502 images. For x64 PE
+admitted DOS MZ and raw NMOS 6502 mappings on Windows. Windows P0 admission remains limited
+to native PE, DOS MZ, and raw NMOS 6502 images; explicit COM is not admitted. For x64 PE
 NativeAOT RTR 9.1, the read-only snapshot parser can report metadata through
 `inspect_native_load_image` and `inspect_native_data_type` without a JAR or
 database mutation: MethodTable relationships, virtual slots and frozen strings.
@@ -87,7 +88,8 @@ example under Smart App Control or an App Control policy, reports failure stage
 invocation or invalid inspection uses `runtime_unavailable` and doctor
 classification `runtime_failure`; it does not
 mean Windows x64 itself is unsupported. Provider diagnostics retain the failure
-stage under `windows_native_failure`, together with the corresponding remediation.
+stage under `windows_native_failure`; the availability's `remediation` carries
+the corresponding repair.
 Self-test failures preserve the native operation and OS error text. Check the
 process's writable local NTFS temporary directory and the reported filesystem,
 DACL, Job Object or cleanup constraint, then rerun doctor after resolving it.
@@ -222,6 +224,33 @@ expansion disabled, and quoted tokens. Command-interpreter metacharacters in
 launch paths are unsupported. JVM home and temporary properties use quoted
 `JDK_JAVA_OPTIONS`, preserving spaces. `APPDATA` and `LOCALAPPDATA` point into
 the private runtime, isolating Ghidra preferences, logs, and caches.
+
+### Restricted hosts
+
+Each session's private runtime root is created under the Ghidra session root:
+`os.tmpdir()`, which follows `TMP`/`TEMP` on Windows, or, when that path has a
+dot-prefixed element that Ghidra rejects, its nearest ancestor without one. Some
+sandboxed agent hosts deny writes by child processes such as the JVM outside an
+allowed tree even when REA itself can write there. Ghidra's LaunchSupport then
+cannot create `java_home.save` and the provider exits at startup with
+`java.io.FileNotFoundException: ...\java_home.save (Access is denied)`.
+
+When startup output names `java_home.save` with that denial, REA reports the
+path, Win32 error 5, and this remediation without attributing the denial to
+antivirus or REA's directory ACL: set `TMP` and `TEMP` to a directory inside the
+host's allowed tree, with no dot-prefixed path element, in the environment that
+starts REA (your shell or the MCP client's registration), restart REA, and
+retry. Creating `java_home.save` in advance does not help because LaunchSupport
+rewrites it.
+
+On Windows, `rea doctor` also reports a `temp_directory` check under the Ghidra
+provider. It creates and deletes one file under that same session root from the
+REA process and fails the provider when either step fails. If the file cannot
+be removed, doctor reports its path and retries removal when it finishes. A
+passing result does not test writes by Ghidra's child JVM, so a host that
+restricts only child processes can still pass doctor and fail at startup with
+the message above.
+The startup-output match is limited to the English `Access is denied` text.
 
 Process creation assigns a suspended child atomically to an owned Job Object.
 Membership and kill-on-owner-close policy are verified before resume.

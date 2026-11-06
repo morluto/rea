@@ -2,8 +2,14 @@ import { artifactFormatDescriptor } from "../artifactFormats.js";
 import { hasGodotPckHeader } from "../../domain/godotPckFormat.js";
 import { hasUImageMagic } from "../../domain/uimageFormat.js";
 import { hasUnityFsHeader } from "../../domain/unityfsFormat.js";
+import {
+  hasWxapkgEncryptedMagic,
+  hasWxapkgHeader,
+} from "../../domain/wxapkgFormat.js";
 import { detectHexRecordEncoding } from "../../domain/firmware/hexRecords.js";
 import { recognizeEspImage } from "../../domain/firmware/espImage.js";
+import { hasUf2Block } from "../../domain/firmware/uf2.js";
+import { isDfuSeFile } from "../../domain/firmware/dfuse.js";
 import { hasFitImagesNode } from "../../domain/firmware/fitImage.js";
 import type { ArtifactClassificationEvidence } from "../ArtifactClassificationProbe.js";
 import { asarHeaderAdmissionFailure } from "../AsarHeader.js";
@@ -39,6 +45,10 @@ import {
   readFatContainerHeader,
   readMachoHeaderPrefixFacts,
 } from "../../domain/apple/machoContainer.js";
+import {
+  nesContainerFormat,
+  parseInesLayout,
+} from "../../domain/inesContainer.js";
 
 /** Mutable internal occurrence used until root-bound IDs are known. */
 export interface MutableOccurrence {
@@ -290,7 +300,8 @@ export const rootOccurrenceFor = (
   executable: metadata.executable,
   encrypted:
     (metadata.formatMetadata?.kind === "godot-pck" ||
-      metadata.formatMetadata?.kind === "unityfs") &&
+      metadata.formatMetadata?.kind === "unityfs" ||
+      metadata.formatMetadata?.kind === "wxapkg") &&
     metadata.formatMetadata.directory_status === "encrypted",
   hash_status: "verified",
   source_location: null,
@@ -551,7 +562,10 @@ export const classifyArtifactContent = (
     asarHeader.state !== "rejected"
   ) {
     if (asarHeader.state === "limit")
-      throw asarHeaderAdmissionFailure(asarHeader.admission);
+      throw asarHeaderAdmissionFailure(
+        asarHeader.admission,
+        asarHeader.extents?.headerBytes,
+      );
     if (asarHeader.state === "matched")
       role = { kind: "container", format: "asar" };
     else role = artifactRoleForFormat(path, contentFormat);
@@ -587,13 +601,25 @@ export const classifyArtifactBytes = (
   evidence: ArtifactClassificationEvidence,
   fileSize = evidence.prefix.length,
 ): ArtifactNode["format"] => {
-  const { prefix, mzWindowsHeaderSignature } = evidence;
+  const { prefix, suffix, mzWindowsHeaderSignature } = evidence;
+  // A header-only region has the signature but not the declared cartridge
+  // extent. Keep it as a file instead of inventing another container.
+  if (
+    nesContainerFormat(prefix) === "ines" &&
+    parseInesLayout(prefix, fileSize).ok
+  )
+    return "ines";
   if (hasZipSignature(prefix)) return "zip";
   if (hasGodotPckHeader(prefix)) return "godot-pck";
   if (hasUnityFsHeader(prefix)) return "unityfs";
+  if (hasWxapkgEncryptedMagic(prefix) || hasWxapkgHeader(prefix))
+    return "wxapkg";
   if (hasUImageMagic(prefix)) return "uimage";
   const hexRecords = detectHexRecordEncoding(prefix);
   if (hexRecords !== undefined) return hexRecords;
+  if (hasUf2Block(prefix)) return "uf2";
+  if (suffix !== undefined && isDfuSeFile(prefix, suffix, fileSize))
+    return "dfuse";
   if (recognizeEspImage(prefix, fileSize) === "esp-image") return "esp-image";
   if (hasFitImagesNode(prefix)) return "fit";
   if (hasBinaryPlistSignature(prefix)) return "plist";

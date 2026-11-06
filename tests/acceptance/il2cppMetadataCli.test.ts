@@ -57,6 +57,73 @@ const parseMetadataSummary = (value: unknown) =>
   );
 
 cliTest(
+  "rejects out-of-range module image references through CLI and MCP",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-il2cpp-module-image-");
+    const path = join(root, "global-metadata.dat");
+    const binaryPath = join(root, "GameAssembly.dylib");
+    await writeFile(
+      path,
+      createLinkedIl2cppMetadataFixture({ version: 39 }).bytes,
+    );
+    await writeFile(binaryPath, createIl2cppBinaryFixture());
+    const produced = await runFileCli(cli, {
+      arguments: [
+        "inspect-il2cpp-metadata",
+        path,
+        "--binary",
+        binaryPath,
+        "--detail",
+        "complete",
+        "--json",
+      ],
+    });
+    expect(produced.exitCode, produced.stderr).toBe(0);
+    const original = parseCliMetadata(produced.json);
+    expect(original.binary!.code_gen_modules.length).toBeGreaterThan(0);
+    const { call } = await connectLocalToolsMcp();
+    for (const image of [
+      0,
+      original.images.length - 1,
+      -1,
+      original.images.length,
+      99,
+    ]) {
+      const report = structuredClone(original);
+      report.binary!.code_gen_modules[0]!.image = image;
+      const evidence = createEvidence(
+        { path, format: "file", sha256: report.artifact.sha256 },
+        { id: "il2cpp-metadata", name: "IL2CPP", version: "1" },
+        {
+          operation: "inspect_il2cpp_metadata",
+          parameters: { path },
+          result: report,
+        },
+      );
+      const request = {
+        source: { kind: "inline", evidence },
+        view: { kind: "il2cpp-metadata", collection: "code_gen_modules" },
+      };
+      const query = join(root, `image-${image}.json`);
+      await writeFile(query, JSON.stringify(request));
+      const result = await runFileCli(cli, {
+        arguments: ["inspect-analysis-view", query, "--json"],
+      });
+      const mcp = await call("inspect_analysis_view", request);
+      if (image >= 0 && image < original.images.length) {
+        expect(result.exitCode, result.stderr).toBe(0);
+        expect(mcp.isError, JSON.stringify(mcp)).not.toBe(true);
+      } else {
+        expect(result.exitCode, `image ${image}`).toBe(1);
+        expect(result.json).toMatchObject({ code: "invalid_request" });
+        expect(parseMcpToolError(mcp).error.code).toBe("invalid_request");
+      }
+    }
+  },
+  30000,
+);
+
+cliTest(
   "rejects impossible imported metadata owners through CLI and MCP",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-il2cpp-owner-view-");
@@ -751,7 +818,9 @@ cliTest(
     const evidence = saved.value.records[0];
     if (evidence === undefined)
       throw new Error("Missing exported source Evidence");
-    expect(JSON.stringify(overwrite.json)).toContain(evidence.evidence_id);
+    expect(overwrite.json).toMatchObject({
+      details: { partial_observation: { evidence_id: evidence.evidence_id } },
+    });
     expect(
       il2cppMetadataSchema.parse(evidence.normalized_result).methods,
     ).toEqual(FIXTURE_METHODS);
