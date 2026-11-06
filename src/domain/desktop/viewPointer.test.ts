@@ -330,6 +330,41 @@ describe("pairMembers by ranked attributes", () => {
     expect(moved.newer.keys[4]).toBe("[name=Cell][@Col=3]");
   });
 
+  it("counts a pair over every sibling holding both values, though one ranks six other attributes before them", () => {
+    // Six worded attributes rank before Row and Col, so this cell never takes their pair itself.
+    const styled = element("Cell", {
+      Row: "1",
+      Col: "1",
+      Font: "Sans",
+      Style: "bold",
+      Align: "left",
+      Wrap: "word",
+      Color: "red",
+      Border: "thin",
+    });
+    const plain = element("Cell", { Row: "1", Col: "1", X: "12.75" });
+    const cells = [plain, styled];
+
+    const { newer } = pairMembers(cells, cells);
+    expect(newer).toEqual({
+      keys: ["[name=Cell][@X=12.75]", "[name=Cell][@Font=Sans]"],
+      partners: [0, 1],
+    });
+    for (const [index, key] of newer.keys.entries())
+      expect(locatePointer(cells, `/${key}`)).toMatchObject({
+        kind: "value",
+        value: cells[index],
+      });
+    // Nor does the pair key a member as new when a member of the other version holds both values.
+    const others = [
+      element("Cell", { Row: "1", Col: "2" }),
+      element("Cell", { Row: "2", Col: "1" }),
+    ];
+    expect(
+      pairMembers([plain, ...others], [styled, ...others]).newer.keys[0],
+    ).toBe("[name=Cell][@X=12.75]");
+  });
+
   it("keys a member by a name-like attribute before a coordinate the app writes first", () => {
     const frame = (x: string, name: string) =>
       element("PAGEOBJECT", { XPOS: x, YPOS: "12.5", ANNAME: name });

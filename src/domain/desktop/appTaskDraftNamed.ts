@@ -3,16 +3,25 @@ import type { DesktopTaskCheckInput } from "./appTask.js";
 import {
   attributeChecks,
   fieldChecks,
+  recordChecks,
   type AddedContext,
 } from "./appTaskDraftAdded.js";
 import { draftGuards } from "./appTaskDraftGuards.js";
-import { changeNoise, isStamp, type NoiseReason } from "./appTaskDraftNoise.js";
+import {
+  attributeKeyOf,
+  changeNoise,
+  inSplitDate,
+  isSplitDate,
+  isStamp,
+  type NoiseReason,
+} from "./appTaskDraftNoise.js";
 import { valueEqualsCheck } from "./appTaskDraftScalars.js";
+import { isIdentifyingAttribute } from "./attributeRank.js";
 import {
   wholeTextSuggestions,
   type WholeTextSuggestions,
 } from "./appTaskDraftText.js";
-import { draftValues, type DraftValue } from "./appTaskDraftValues.js";
+import { draftValues, oneEnd, type DraftValue } from "./appTaskDraftValues.js";
 import {
   diffNamedMembers,
   type DesktopStateDifference,
@@ -29,6 +38,7 @@ import {
   zipArrayLeavesOut,
   zipEntryAt,
   zipLeavesOutAt,
+  zipView,
 } from "./zipView.js";
 
 type Suggestion = DesktopTaskCheckInput;
@@ -87,7 +97,8 @@ const checkRoot = (
  * where the evaluators do not read alike; `xml` whether a pointer goes into an
  * XML view; `leavesOut` whether the view may lack part of what a pointer
  * reaches, and `arrayLeavesOut` members of the array a pointer names;
- * `listed` whether a pointer is a value of the document a values list shows.
+ * `listed` whether a pointer is a value of the document a values list shows;
+ * `empty` the view of a file that holds nothing.
  */
 interface CheckTree {
   readonly root: (
@@ -98,6 +109,7 @@ interface CheckTree {
   readonly leavesOut: (view: JsonValue | null, pointer: string) => boolean;
   readonly arrayLeavesOut: (view: JsonValue | null, array: string) => boolean;
   readonly listed: (view: JsonValue | null, pointer: string) => boolean;
+  readonly empty: JsonValue | null;
 }
 
 export const ARCHIVE: CheckTree = {
@@ -109,6 +121,8 @@ export const ARCHIVE: CheckTree = {
   listed: (view, pointer) =>
     /^\/entries\/[^/]+$/u.test(pointer) ||
     checkRoot(view, pointer) !== undefined,
+  // An archive with no entries, so each entry of one created or deleted is listed by its name.
+  empty: zipView([], 0),
 };
 
 /** An XML file's view leaves out what its `truncated` says, anywhere in the tree. */
@@ -124,6 +138,7 @@ export const XML_FILE: CheckTree = {
   leavesOut: truncatedXml,
   arrayLeavesOut: truncatedXml,
   listed: (_view, pointer) => inXmlRoot(pointer),
+  empty: null,
 };
 
 /** Whether a check at a pointer is decided by name: no object or array reached by position, no array searched that the view may cut. */
@@ -140,7 +155,11 @@ const byName = (view: JsonValue | null, pointer: string, tree: CheckTree) => {
 const elementName = (value: JsonValue | undefined): string | undefined =>
   isXmlElement(value) ? value.name : undefined;
 
-/** A text node of an XML view holding only whitespace, which an app writes as it lays out the file. */
+/**
+ * A text node of an XML view holding only whitespace: what the XML reader
+ * keeps of it is text, such as the space between two runs, but a check of it
+ * alone would tie the edit to where the runs fall, so it gets none.
+ */
 const isLayoutText = (
   tree: CheckTree,
   view: JsonValue | null,
@@ -211,11 +230,23 @@ interface CollectContext {
   readonly noise: (pointer: string) => NoiseReason | undefined;
 }
 
-/** The checks a pass gathers, elements' apart from values', and the changes it left to position, `real` those that are no noise. */
+/** Whether a check reads a pointer that is noise. */
+const isNoisy = (noise: CollectContext["noise"], check: Suggestion): boolean =>
+  "pointer" in check && noise(check.pointer) !== undefined;
+
+/**
+ * The checks a pass gathers, elements' apart from values', those that are
+ * noise apart from the rest, each list at most the limit; and the changes it
+ * left to position, `real` those that are no noise.
+ */
 interface Collected {
   readonly context: CollectContext;
   readonly elements: Suggestion[];
   readonly values: Suggestion[];
+  readonly noise: {
+    readonly elements: Suggestion[];
+    readonly values: Suggestion[];
+  };
   readonly positional: {
     count: number;
     real: number;
@@ -250,11 +281,19 @@ const unnamed = (
 const room = ({ context }: Collected, list: readonly Suggestion[]) =>
   list.length < context.limit.suggestions;
 
+/** Add checks to the elements' or values' list while it has room, those that are noise to their own list, so noise never takes the place of a check that is not. */
 const take = (
-  { context }: Collected,
-  list: Suggestion[],
+  collected: Collected,
+  kind: "elements" | "values",
   checks: readonly Suggestion[],
-) => list.push(...checks.slice(0, context.limit.suggestions - list.length));
+) => {
+  for (const check of checks) {
+    const list = isNoisy(collected.context.noise, check)
+      ? collected.noise[kind]
+      : collected[kind];
+    if (room(collected, list)) list.push(check);
+  }
+};
 
 /** A check that a scalar, or an empty container, holds its final value. */
 const equals = (
@@ -262,25 +301,28 @@ const equals = (
   pointer: string,
   value: JsonValue | undefined,
 ) => {
-  const { file, ends, tree, texts } = collected.context;
+  const { file, ends, tree, texts, noise } = collected.context;
+  const list =
+    noise(pointer) === undefined ? collected.values : collected.noise.values;
   if (
-    !room(collected, collected.values) ||
+    !room(collected, list) ||
     texts.covers(pointer) ||
     value === undefined ||
     (isRecord(value) && Object.keys(value).length > 0) ||
     isStamp(value) ||
+    inSplitDate(ends.final, pointer) ||
     isLayoutText(tree, ends.final, pointer, value)
   )
     return;
   if (named(collected, ends.final, pointer))
-    collected.values.push(
+    take(collected, "values", [
       valueEqualsCheck(
         file,
         pointer,
         value,
         resolvePointer(ends.baseline, pointer),
       ),
-    );
+    ]);
   else unnamed(collected, ends.final, pointer);
 };
 
@@ -294,23 +336,31 @@ const elementChecks = (
   pointer: string,
   value: JsonValue,
 ): void => {
-  if (!isXmlElement(value)) return;
+  // A date the app stamps in parts is never a check.
+  if (!isXmlElement(value) || isSplitDate(value)) return;
   const { file, ends, texts } = collected.context;
   const added = {
     file,
     ends,
     named: (view: JsonValue | null, at: string) => named(collected, view, at),
+    chars: collected.context.limit.chars,
   };
   if (!named(collected, ends.final, `${pointer}/name`)) {
-    take(collected, collected.values, fieldChecks(added, pointer, value));
-    if (!texts.covers(pointer)) unnamed(collected, ends.final, pointer);
+    const fields = fieldChecks(added, pointer, value);
+    take(collected, "values", fields);
+    // Its new fields, checked at an ancestor, name it as well as text does.
+    if (fields.length === 0 && !texts.covers(pointer))
+      unnamed(collected, ends.final, pointer);
     return;
   }
   if (texts.covers(pointer) || !room(collected, collected.elements)) return;
-  const own = attributeChecks(added, pointer, value);
+  const own = [
+    ...attributeChecks(added, pointer, value),
+    ...recordChecks(added, pointer, value),
+  ];
   take(
     collected,
-    collected.elements,
+    "elements",
     own.length > 0
       ? own
       : [
@@ -368,11 +418,47 @@ const removedCheck = (collected: Collected, pointer: string) => {
     named(collected, ends.baseline, pointer) &&
     named(collected, ends.final, pointer)
   )
-    (elementName(before) === undefined
-      ? collected.values
-      : collected.elements
-    ).push({ kind: "value_absent", file, pointer });
+    take(collected, elementName(before) === undefined ? "values" : "elements", [
+      { kind: "value_absent", file, pointer },
+    ]);
   else unnamed(collected, ends.baseline, pointer);
+};
+
+/**
+ * A check that the identifier an element was renamed from names nothing at
+ * the end, as a layer renamed from `Untitled` that its `src` names: its tag
+ * and old value, where that named the element alone at the seed. An element
+ * its tag alone names gets none; the check of its identifier says as much.
+ */
+const renamedFrom = (collected: Collected, pointer: string) => {
+  const { file, ends, tree } = collected.context;
+  const key = attributeKeyOf(pointer);
+  const owner = pointer.split("/").slice(0, -2).join("/");
+  const list = /^(?<list>.+\/children)\/[^/]+$/u.exec(owner)?.groups?.list;
+  const before = resolvePointer(ends.baseline, owner);
+  const old = resolvePointer(ends.baseline, pointer);
+  if (
+    key === undefined ||
+    list === undefined ||
+    !(owner.split("/").at(-1) ?? "").includes("][@") ||
+    !isIdentifyingAttribute(key) ||
+    /[=[\]]/u.test(key) ||
+    !isXmlElement(before) ||
+    typeof old !== "string" ||
+    old.includes("][")
+  )
+    return;
+  const at = `${list}/${escapeToken(`[name=${before.name}][@${key}=${old}]`)}`;
+  const seed = locatePointer(ends.baseline, at);
+  if (
+    seed.kind === "value" &&
+    seed.value === before &&
+    locatePointer(ends.final, at).kind === "none" &&
+    tree.root(ends.final, at) === at &&
+    named(collected, ends.baseline, at) &&
+    named(collected, ends.final, at)
+  )
+    take(collected, "values", [{ kind: "value_absent", file, pointer: at }]);
 };
 
 /** The checks one pass over the named diff suggests, with what it left out by position. */
@@ -384,6 +470,7 @@ const collectChecks = (
     context,
     elements: [],
     values: [],
+    noise: { elements: [], values: [] },
     positional: { count: 0, real: 0, tags: new Set() },
   };
   const { ends, tree } = context;
@@ -393,8 +480,10 @@ const collectChecks = (
       addedChecks(collected, root, resolvePointer(ends.final, root));
   }
   for (const pointer of innermost(change.changed))
-    if (tree.root(ends.final, pointer) === pointer)
+    if (tree.root(ends.final, pointer) === pointer) {
       equals(collected, pointer, resolvePointer(ends.final, pointer));
+      renamedFrom(collected, pointer);
+    }
   for (const pointer of change.removed) removedCheck(collected, pointer);
   return collected;
 };
@@ -436,13 +525,24 @@ export const namedDraft = (
     { file, ends, tree, limit: options.limit, texts, noise },
     change,
   );
-  const all = [...texts.suggestions, ...checks.elements, ...checks.values];
-  const noisy = (check: Suggestion) =>
-    "pointer" in check && noise(check.pointer) !== undefined;
-  const clean = all.filter((check) => !noisy(check));
+  const noisy = (check: Suggestion) => isNoisy(noise, check);
+  const clean = [
+    ...texts.suggestions.filter((check) => !noisy(check)),
+    ...checks.elements,
+    ...checks.values,
+  ];
+  const flaggable = [
+    ...texts.suggestions.filter(noisy),
+    ...checks.noise.elements,
+    ...checks.noise.values,
+  ];
   const edited = clean.length > 0 || checks.positional.real > 0;
   const suggested = (
-    edited ? clean : options.document ? all.slice(0, MAX_FLAGGED) : all
+    edited
+      ? clean
+      : options.document
+        ? flaggable.slice(0, MAX_FLAGGED)
+        : flaggable
   ).slice(0, options.limit.suggestions);
   const listed = [...change.added, ...change.changed, ...change.removed];
   const { values, cut } = draftValues(change, {
@@ -483,4 +583,25 @@ export const namedDraft = (
           ),
     },
   };
+};
+
+/**
+ * The values of an archive or XML file created or deleted: what its one end
+ * holds against `tree.empty`, each entry, or the root element, whole once, as
+ * one added to a file that changed is listed, within the same limits.
+ */
+export const presenceValues = (
+  ends: AddedContext["ends"],
+  tree: CheckTree,
+  created: boolean,
+): { readonly values: DraftValue[]; readonly cut: boolean } => {
+  const from = created
+    ? { baseline: tree.empty, final: ends.final }
+    : { baseline: ends.baseline, final: tree.empty };
+  const change = oneEnd(diffNamedMembers(from.baseline, from.final), created);
+  return draftValues(change, {
+    ends: from,
+    listed: tree.listed,
+    noise: changeNoise(change, from),
+  });
 };

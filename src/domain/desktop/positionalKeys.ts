@@ -39,46 +39,72 @@ const sequenceKeys = (members: readonly Record<string, string>[]) => {
   );
 };
 
-/** Whether an attribute other than `key` names one member alone at both ends, and that member's `key` differs between them. */
+/** Each member another attribute's value names alone among `members`, by that attribute and value. */
+const aloneBy = (members: readonly Record<string, string>[], other: string) => {
+  const counts = new Map<string, number>();
+  for (const member of members) {
+    const value = member[other];
+    if (value !== undefined) counts.set(value, (counts.get(value) ?? 0) + 1);
+  }
+  return new Map(
+    members.flatMap((member, index) => {
+      const value = member[other];
+      return value !== undefined && counts.get(value) === 1
+        ? [[value, index] as const]
+        : [];
+    }),
+  );
+};
+
+/**
+ * Whether `key` shifted as inserting or removing members shifts a numbering
+ * by position: the count of members changed, and every member an attribute
+ * other than `key` names alone at both ends kept its number or moved it the
+ * way the count did, by no more than the count did and no less than a member
+ * before it moved; and one moved. A value that only moved between members,
+ * as two items swapping colours, is an edit, not a shift; so is one that
+ * pairs a member with two others.
+ */
 const shifted = (
   newer: readonly Record<string, string>[],
   older: readonly Record<string, string>[],
   key: string,
 ) => {
-  const alone = (members: readonly Record<string, string>[], other: string) => {
-    const counts = new Map<string, number>();
-    for (const member of members) {
-      const value = member[other];
-      if (value !== undefined) counts.set(value, (counts.get(value) ?? 0) + 1);
-    }
-    return new Map(
-      members.flatMap((member) => {
-        const value = member[other];
-        return value !== undefined && counts.get(value) === 1
-          ? [[value, member] as const]
-          : [];
-      }),
-    );
-  };
+  const change = newer.length - older.length;
+  if (change === 0) return false;
   const others = new Set(
     [...newer, ...older].flatMap((member) => Object.keys(member)),
   );
   others.delete(key);
-  return [...others].some((other) => {
-    const before = alone(older, other);
-    return [...alone(newer, other)].some(([value, member]) => {
+  const moves = new Map<number, number>();
+  for (const other of others) {
+    const before = aloneBy(older, other);
+    for (const [value, index] of aloneBy(newer, other)) {
       const old = before.get(value);
-      return old !== undefined && old[key] !== member[key];
-    });
-  });
+      if (old === undefined) continue;
+      const move = Number(newer[index]?.[key]) - Number(older[old]?.[key]);
+      // Two attributes pairing one member with two others is no shift.
+      if ((moves.get(old) ?? move) !== move) return false;
+      moves.set(old, move);
+    }
+  }
+  let reached = 0;
+  for (const [, move] of [...moves].toSorted(
+    ([left], [right]) => left - right,
+  )) {
+    const size = Math.sign(change) * move;
+    if (size < reached || size > Math.abs(change)) return false;
+    reached = size;
+  }
+  return reached > 0;
 };
 
 /**
  * Identifiers an app numbers by position, as Planner numbers its tasks 1..N
  * on every save: at both ends the members with a tag hold it as 1..N or
- * 0..N-1 in document order, and a member another attribute names alone at
- * both ends holds a different one at each, so inserting a member shifted the
- * rest. Such an identifier says where a member is, not which one it is.
+ * 0..N-1 in document order, and inserting or removing members `shifted` the
+ * numbers of those after them. Such an identifier says where a member is, not
+ * which one it is.
  */
 export const positionalKeys = (
   newer: readonly JsonValue[],

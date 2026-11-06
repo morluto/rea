@@ -92,10 +92,34 @@ describe("unownedChangedFolders", () => {
     expect(limitation).toContain("2 more");
     expect(unownedFoldersLimitation([])).toBeUndefined();
   });
+
+  it("collapses tens of thousands of separate folders in time that grows with their number, not its square", () => {
+    const count = 20_000;
+    const files = new Map<string, DesktopStatePath>();
+    for (let n = 0; n < count; n += 1)
+      files.set(`Projects/p${String(n)}/notes.txt`, file("unrelated"));
+    // One folder nested in another collapses into it; one beside it whose name it starts does not.
+    files.set("Projects/p1/sub/deep.txt", file("unrelated"));
+    files.set("Projects/p1-old/notes.txt", file("unrelated"));
+    files.set("Owned/a.txt", file("document"));
+
+    const started = performance.now();
+    const folders = unownedChangedFolders(files, ["Owned/b"]);
+    const elapsedMs = performance.now() - started;
+
+    expect(folders).toHaveLength(count + 2);
+    expect(folders).toEqual(
+      expect.arrayContaining(["Projects/p1", "Projects/p1-old", "Owned/a.txt"]),
+    );
+    expect(folders).not.toContain("Projects/p1/sub");
+    // Comparing each folder with every other took tens of seconds at this count.
+    expect(elapsedMs).toBeLessThan(2_000);
+  });
 });
 
 describe("isLockFile", () => {
-  it("knows profile and document locks, and a *.lock or *.lck file only where an app keeps its own files", () => {
+  it("knows profile and document locks anywhere, and a *.lock or *.lck file only directly in the app's state directory", () => {
+    const stateDirectories = [".config/app", ".local/share/app"];
     const locks = [
       ".config/libreoffice/4/.lock",
       "Documents/.~lock.q1-sales.ods#",
@@ -105,18 +129,25 @@ describe("isLockFile", () => {
       ".mozilla/firefox/ab12.default/parent.lock",
       ".config/app/db.lock",
       ".local/share/app/prefs.lck",
-      "Documents/.notes.lock",
     ];
     const others = [
       "Projects/tool/Cargo.lock",
       "Projects/web/yarn.lock",
+      // A folder whose name starts with a dot does not make a project's lock file an app's.
+      "Projects/.repo/Cargo.lock",
+      ".dotfiles/web/yarn.lock",
+      ".cargo/registry/Cargo.lock",
+      "Documents/.notes.lock",
+      ".config/app/plugins/db.lock",
+      ".config/other/db.lock",
       "Documents/locksmith.txt",
       "Documents/~lock.ods",
       ".config/app/lock.json",
     ];
+    const isLock = (file: string) => isLockFile(file, stateDirectories);
 
-    expect(locks.filter(isLockFile)).toEqual(locks);
-    expect(others.filter(isLockFile)).toEqual([]);
+    expect(locks.filter(isLock)).toEqual(locks);
+    expect(others.filter(isLock)).toEqual([]);
   });
 });
 

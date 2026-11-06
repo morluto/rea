@@ -8,6 +8,10 @@ export interface Condition {
   readonly value: string;
 }
 
+/** A condition as a selector spells it, such as `[@Col=3]`. */
+export const spellCondition = ({ prefix, key, value }: Condition) =>
+  `[${prefix}${key}=${value}]`;
+
 export const bracketed = (segment: string) =>
   segment.length >= 2 && segment.startsWith("[") && segment.endsWith("]");
 

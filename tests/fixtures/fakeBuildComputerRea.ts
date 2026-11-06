@@ -16,8 +16,10 @@ import { createTestTempDirectory } from "./temporaryDirectory.js";
  * export copies the bundle it wrote. A capture given exactly the
  * `--state-path` `FAKE_REA_STATE_PATH` publishes `FAKE_REA_SELECTED_CAPTURE`
  * instead, and the draft and export of its folder print the outputs the real
- * CLI wrote for that capture. Each call notes its arguments, its working
- * folder and which AGENTENV_ variables and APT_CONFIG it saw.
+ * CLI wrote for that capture. With `FAKE_REA_UNLISTED_CHANGES` set, it
+ * acknowledges checkpoints without their changed files, as a REA before
+ * them did. Each call notes its arguments, its working folder and which
+ * AGENTENV_ variables and APT_CONFIG it saw.
  */
 const FAKE_REA = String.raw`
 import json
@@ -99,10 +101,11 @@ if command == "capture-desktop-application":
                                  "reason": f"A checkpoint named {name} was already recorded."})
             continue
         taken.add(name)
-        progress(f"Recorded checkpoint {name}.", {"kind": "checkpoint", "name": name, "trigger": "request",
-                                                   "at_ms": 1000 * len(taken), "entries": 5, "changes": 1,
-                                                   "retained_files": 1, "retained_bytes": 5,
-                                                   "changed_files": ["Documents/today.txt"], "more_changed_files": 0})
+        event = {"kind": "checkpoint", "name": name, "trigger": "request", "at_ms": 1000 * len(taken),
+                 "entries": 5, "changes": 1, "retained_files": 1, "retained_bytes": 5}
+        if os.environ.get("FAKE_REA_UNLISTED_CHANGES") is None:
+            event.update({"changed_files": ["Documents/today.txt"], "more_changed_files": 0})
+        progress(f"Recorded checkpoint {name}.", event)
     note("stopped.jsonl", {"pid": os.getpid()})
     out = option(args, "--output")
     named = os.environ.get("FAKE_REA_STATE_PATH")

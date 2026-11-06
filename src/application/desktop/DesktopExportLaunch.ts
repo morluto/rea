@@ -3,7 +3,6 @@ import {
   type DesktopAppExportPlan,
 } from "../../domain/desktop/appExport.js";
 import { electronLaunchArguments } from "../../domain/desktop/appExportInstall.js";
-import { isLockFile } from "../../domain/desktop/appExportUnowned.js";
 import type { DesktopApplicationCapture } from "../../domain/desktop/desktopCapture.js";
 import {
   versionAt,
@@ -18,14 +17,15 @@ type StatePath = DesktopApplicationState["paths"][number];
 
 /**
  * The owned files present at the seed with their digests, and those read as
- * uncompressed text, which boot respells as UTF-8, but for lock files the app
- * holds while it runs: a copied one makes the app find its profile or
- * document in use, so those are left out.
+ * uncompressed text, which boot respells as UTF-8, but for the lock files
+ * `isLeftOutLock` names, which the app holds while it runs: a copied one makes
+ * the app find its profile or document in use, so those are left out.
  */
 export const seedVersions = (
   files: ReadonlyMap<string, StatePath>,
   paths: readonly string[],
   seed: number,
+  isLeftOutLock: (home: string) => boolean,
 ): {
   readonly seeds: ReadonlyMap<string, SeedVersion>;
   readonly textSeeds: readonly string[];
@@ -37,7 +37,7 @@ export const seedVersions = (
   for (const [home, path] of files) {
     const version = versionAt(path, seed);
     if (!isWithinAny(home, paths) || version?.present !== true) continue;
-    if (isLockFile(home)) locks.push(home);
+    if (isLeftOutLock(home)) locks.push(home);
     else if (version.sha256 !== null) {
       seeds.set(home, { sha256: version.sha256, format: version.format });
       if (isTextualFormat(version.format) && version.compression === undefined)

@@ -1,6 +1,6 @@
 import type { JsonValue } from "../jsonValue.js";
 import type { DesktopTaskCheckInput } from "./appTask.js";
-import { isStamp } from "./appTaskDraftNoise.js";
+import { isSplitDate, isStamp } from "./appTaskDraftNoise.js";
 import { valueEqualsCheck } from "./appTaskDraftScalars.js";
 import { addedTextChecks } from "./appTaskDraftTextAdded.js";
 import { rankAttributes } from "./attributeRank.js";
@@ -228,6 +228,61 @@ const abovePosition = (pointer: string, ends: Ends): readonly Candidate[] => {
   ];
 };
 
+/** Whether an element is, or holds, a date an app stamps in parts, whose text no check compares. */
+const holdsSplitDate = (value: JsonValue): boolean =>
+  isSplitDate(value) ||
+  (isXmlElement(value) && value.children.some(holdsSplitDate));
+
+/** Whether an element holds only elements, as a record holds its fields, layout whitespace aside. */
+export const recordLike = (value: JsonValue | undefined): boolean =>
+  isXmlElement(value) &&
+  value.children.some((child) => isXmlElement(child)) &&
+  value.children.every(
+    (child) =>
+      isXmlElement(child) || (typeof child === "string" && isWhitespace(child)),
+  );
+
+/**
+ * Whether an element holds fields: only elements, layout whitespace aside, of
+ * two tags or more, as Tellico's `<entry>` holds `<title>` and `<publisher>`,
+ * unlike a paragraph made of runs.
+ */
+export const holdsFields = (value: JsonValue | undefined): boolean =>
+  recordLike(value) &&
+  isXmlElement(value) &&
+  new Set(
+    value.children.flatMap((child) =>
+      isXmlElement(child) ? [child.name] : [],
+    ),
+  ).size > 1;
+
+/**
+ * Whether the kept ancestor of a record added or removed whole is a list of
+ * its kind, whose whole text would fold in records the edit left alone: it
+ * holds no text of its own, and another element of that tag with text that
+ * both ends hold alike, as Tellico's `<collection>` holds the other entries.
+ */
+const listOf = (holder: string, element: JsonValue, ends: Ends) => {
+  if (!isXmlElement(element) || !holdsFields(element) || mixedAt(holder, ends))
+    return false;
+  const like = (view: JsonValue | null) => {
+    const list = resolvePointer(view, holder);
+    return isXmlElement(list)
+      ? list.children.flatMap((child) =>
+          isXmlElement(child) &&
+          child !== element &&
+          child.name === element.name
+            ? [elementText(child)]
+            : [],
+        )
+      : [];
+  };
+  const before = new Set(like(ends.baseline));
+  return like(ends.final).some(
+    (text) => !isWhitespace(text) && before.has(text),
+  );
+};
+
 /**
  * The nearest ancestor both ends hold of an element added or removed whole,
  * where its text is checked; none when that is the document's root holding no
@@ -241,6 +296,17 @@ const keptAncestor = (pointer: string, ends: Ends): string | undefined => {
     (parentOf(parent) === undefined && !mixedAt(parent, ends))
     ? undefined
     : parent;
+};
+
+/**
+ * Where the text of an element added or removed whole is checked: its
+ * `keptAncestor`, but never a list of its kind, whose whole text would fold
+ * in the records the edit left alone; and whether that is why it has none.
+ */
+const textHolder = (pointer: string, element: JsonValue, ends: Ends) => {
+  const kept = keptAncestor(pointer, ends);
+  const listed = kept !== undefined && listOf(kept, element, ends);
+  return { holder: listed ? undefined : kept, listed };
 };
 
 /** A text check, the element it reads as the diff names it, and guards of the text it kept. */
@@ -264,7 +330,7 @@ interface TextContext {
  * by whole lines by those lines, with guards of what it kept; any other text
  * whole.
  */
-const wholeTextCheck = (
+export const wholeTextCheck = (
   file: string,
   pointer: string,
   now: { readonly value: string; readonly children: readonly JsonValue[] },
@@ -301,9 +367,9 @@ const candidateAt = (
 
 /**
  * The text check a candidate takes: an element the final view holds whole at
- * the pointer `name` gives it, its text at most the limit and no timestamp,
- * and changed from the baseline's or, for an element `added` whole, absent
- * there.
+ * the pointer `name` gives it, its text at most the limit, no timestamp and
+ * holding no date stamped in parts, and changed from the baseline's or, for
+ * an element `added` whole, absent there.
  */
 const textCheck = (
   context: TextContext,
@@ -319,7 +385,8 @@ const textCheck = (
   const old = isXmlElement(before) ? elementText(before) : undefined;
   return value !== old &&
     value.length <= context.place.limit.chars &&
-    !isStamp(value)
+    !isStamp(value) &&
+    !holdsSplitDate(now)
     ? {
         element: candidate.element,
         ...wholeTextCheck(
@@ -348,8 +415,10 @@ const tooLong = (context: TextContext, candidate: Candidate) => {
  * changed value, and the nearest ancestor both ends hold of each element it
  * lists whole holding such text, taken out of the runs it sits in, the
  * outermost where one holds another, an element at both ends at the pointer
- * `name` gives it, whose text changed and that the final view holds whole. An
- * element added whole whose ancestors cannot take the check takes it itself.
+ * `name` gives it, whose text changed and that the final view holds whole;
+ * never, for a record, a list of its kind, whose text holds records the edit
+ * left alone. An element added whole whose ancestors cannot take the check
+ * takes it itself, but a record in a list, which its fields check instead.
  */
 export const wholeTextSuggestions = (
   file: string,
@@ -378,9 +447,10 @@ export const wholeTextSuggestions = (
       !isWhitespace(elementText(value)) &&
       place.inTree(pointer)
     ) {
-      const holder = keptAncestor(pointer, ends);
+      const { holder, listed } = textHolder(pointer, value, ends);
       if (holder !== undefined) holders.add(holder);
-      if (whole) added.set(pointer, holder);
+      // A record in a list is checked by its fields, not its whole text.
+      if (whole && !listed) added.set(pointer, holder);
     }
   };
   // A value that changed may be text at one end only, as text an app wraps in a run.

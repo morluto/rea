@@ -83,6 +83,28 @@ describe("draftTaskFiles noise", () => {
     expect(file.notes).toEqual([]);
   });
 
+  it("keeps an edit that follows more noise than a file has room for checks", () => {
+    const cursors = (value: string) =>
+      Array.from(
+        { length: 12 },
+        (_, index) => `cursor${String(index)}="${value}"`,
+      ).join(" ");
+    const shape = (cursor: string, width: string) =>
+      `<doc><view ${cursors(cursor)}/><shape name="box" width="${width}"/></doc>`;
+
+    const file = xmlDraft(shape("1", "10"), shape("2", "12"));
+
+    expect(file.suggested).toEqual([
+      {
+        kind: "value_equals",
+        file: "Documents/doc.xml",
+        pointer: "/root/children/[name=shape]/attributes/width",
+        value: "12",
+      },
+    ]);
+    expect(file.notes).toEqual([]);
+  });
+
   it("keeps up to three noise checks, flagged in a note, when noise is all a document's change holds", () => {
     const file = xmlDraft(workbook(SEED), workbook({ ...SEED, cursor: "3" }));
 
