@@ -315,7 +315,7 @@ export const diffStateViews = (
   options: { readonly named?: boolean } = {},
 ): DesktopStateDifference => {
   const difference =
-    format === "xml" && options.named === true
+    (format === "xml" || format === "json") && options.named === true
       ? namedOrPositional(before, after)
       : compareViews(format, before, after);
   // Only REA's own readers write coverage flags; JSON and key files are data.

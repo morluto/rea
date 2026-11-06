@@ -1,5 +1,5 @@
 import type { JsonValue } from "../jsonValue.js";
-import type { DesktopTaskCheckInput } from "./appTask.js";
+import { collapseWhitespace, type DesktopTaskCheckInput } from "./appTask.js";
 import { holdsSplitDate, isStamp } from "./appTaskDraftNoise.js";
 import { valueEqualsCheck } from "./appTaskDraftScalars.js";
 import { isPlacedItem, placedItemCheck } from "./appTaskDraftItems.js";
@@ -297,8 +297,9 @@ const isInline = (name: string) =>
  * repeated `<field>` elements, whatever they are called; unless it is text
  * made of runs: its tag names a paragraph or other text (`TEXT_TAG`), its
  * elements are all inline formatting (`INLINE_TAG`), or a child's text opens
- * or closes with whitespace, as a sentence splits into runs, `Meet ` and a
- * linked `Monday`, where a field holds a value whole.
+ * or closes with a space, as a sentence splits into runs, `Meet ` and a
+ * linked `Monday`, where a field holds a value whole; a line break and
+ * indentation the app lays out after a field's text, as KmPlot's, is none.
  */
 export const holdsFields = (value: JsonValue | undefined): boolean =>
   recordLike(value) &&
@@ -309,7 +310,8 @@ export const holdsFields = (value: JsonValue | undefined): boolean =>
   ) &&
   !value.children.some((child) => {
     const text = isXmlElement(child) ? elementText(child) : "";
-    return text.trim() !== "" && text.trim() !== text;
+    // A space, not a line break the app lays out, at either edge splits a sentence.
+    return /^[ \t]+\S|\S[ \t]+$/u.test(text);
   });
 
 /** Whether an element at a pointer sits in a paragraph or other text, an ancestor's tag naming one (`TEXT_TAG`), as Word's `<w:r>` run in its `<w:p>`. */
@@ -441,11 +443,16 @@ export const wholeTextCheck = (
     const check = valueEqualsCheck(file, `${pointer}/children/0`, only, before);
     if ("tolerance" in check) return { check, guards: [] };
   }
+  // One line the app lays out between line breaks, as KmPlot's formula before its next element, compares with its whitespace collapsed.
+  const laidOut =
+    /[\r\n]/u.test(value) && !/[\r\n]/u.test(value.trim())
+      ? { value: collapseWhitespace(value), normalize_whitespace: true }
+      : { value };
   return (
     (before === undefined
       ? undefined
       : addedTextChecks(file, pointer, before, value)) ?? {
-      check: { kind: "text_equals", file, pointer, value },
+      check: { kind: "text_equals", file, pointer, ...laidOut },
       guards: [],
     }
   );

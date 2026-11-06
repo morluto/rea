@@ -40,6 +40,10 @@ const isRandomCaseId = (value: string): boolean =>
 export const isGuid = (value: string): boolean =>
   /^\{?[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\}?$/iu.test(value);
 
+/** Whether a value is a uid an app generates: a GUID, or 32 hex digits without dashes, as TreeLine's uuid1 `fc11808dd9f511f181b7edd4f1920549`. */
+export const isGeneratedUid = (value: string): boolean =>
+  isGuid(value) || /^(?=[^]*[a-f])[0-9a-f]{32}$/iu.test(value);
+
 /** Whether a value is a word a program makes, a hex run, GUID, long token or an id of random case, rather than one a user typed. */
 export const isGeneratedToken = (value: string): boolean =>
   HEX_TOKEN.test(value) ||

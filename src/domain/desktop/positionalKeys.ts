@@ -122,6 +122,34 @@ export const positionalKeys = (
   return keys;
 };
 
+/**
+ * Identifiers numbering a list's members of a tag 0..N-1 in document order at
+ * both ends, where members came or went, as Parley numbers its entries by
+ * where they are saved: a place among the members as much as a name, which a
+ * member with a child's text to name it by ranks after that text.
+ */
+export const savePositionKeys = (
+  newer: readonly JsonValue[],
+  older: readonly JsonValue[],
+): ReadonlySet<string> => {
+  const before = attributesByTag(older);
+  const fromZero = (members: readonly Record<string, string>[]) =>
+    Object.keys(members[0] ?? {}).filter(
+      (key) =>
+        isIdentifyingAttribute(key) &&
+        members.every((member, index) => member[key] === String(index)),
+    );
+  const keys = new Set<string>();
+  for (const [tag, members] of attributesByTag(newer)) {
+    const old = before.get(tag) ?? [];
+    if (old.length === members.length) continue;
+    const numbered = new Set(fromZero(old));
+    for (const key of fromZero(members))
+      if (numbered.has(key)) keys.add(tagKey(tag, key));
+  }
+  return keys;
+};
+
 /** Whether `positionalKeys` holds an identifier of members with a tag. */
 export const isPositionalKey = (
   keys: ReadonlySet<string>,

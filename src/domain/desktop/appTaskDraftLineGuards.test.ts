@@ -140,3 +140,122 @@ describe("draftTaskFiles guards of a document of commands and text, as LyX saves
     ]);
   });
 });
+
+describe("draftTaskFiles guards of lines with no text of their own", () => {
+  it("guards a text file's nearest lines with words, never a key alone, as a RedNotebook day's `24:`, nor a tag alone, as `<fonts>`", () => {
+    const journal = (twentieth: string) =>
+      [
+        "20:",
+        "  text: Repotted the basil and the rosemary on the balcony. The rosemary roots had",
+        `    circled the whole pot.${twentieth}`,
+        "24:",
+        "  text: Cycled to the farmers market with Priya.",
+        "<fonts>",
+        "</fonts>",
+      ].join("\n");
+    const file = ".rednotebook/data/2026-10.txt";
+    const [drafted] = draftOf({
+      [file]: statePath(
+        "application_state",
+        "text",
+        textView(journal("")),
+        textView(journal(" Moved the rosemary to the sunny corner.")),
+      ),
+    });
+
+    expect(drafted?.guards).toEqual([
+      {
+        kind: "lines_present",
+        file,
+        lines: [
+          "  text: Repotted the basil and the rosemary on the balcony. The rosemary roots had",
+          "  text: Cycled to the farmers market with Priya.",
+        ],
+      },
+    ]);
+  });
+});
+
+describe("draftTaskFiles for the app's log beside its journal", () => {
+  it("drafts no check or guard on a log the export leaves out of the seed, and notes a text file that opens like XML but is not", () => {
+    const lines = (...text: string[]) => textView(text.join("\n"));
+    const files = draftOf({
+      ".rednotebook/data/2026-10.txt": statePath(
+        "application_state",
+        "text",
+        lines("20:", "  text: Repotted the basil."),
+        lines("20:", "  text: Repotted the basil. Moved the rosemary."),
+      ),
+      ".rednotebook/rednotebook.log": statePath(
+        "application_state",
+        "text",
+        lines("2026-11-06 15:11:21,847 DEBUG    Cloud updated"),
+        lines(
+          "2026-11-06 15:11:21,847 DEBUG    Cloud updated",
+          "2026-11-06 15:11:50,559 INFO     Wrote file /home/user/.rednotebook/data/2026-10.txt",
+        ),
+      ),
+      ".config/app/state.xml": statePath(
+        "application_state",
+        "text",
+        lines("<!DOCTYPE state [<!ENTITY e 'x'>]>", "<state>&e;</state>"),
+        lines("<!DOCTYPE state [<!ENTITY e 'x'>]>", "<state>&e;!</state>"),
+      ),
+    });
+
+    const byFile = new Map(files.map((file) => [file.file, file]));
+    expect(byFile.get(".rednotebook/rednotebook.log")).toMatchObject({
+      suggested: [],
+      guards: [],
+    });
+    expect(byFile.get(".rednotebook/data/2026-10.txt")?.suggested).not.toEqual(
+      [],
+    );
+    expect(
+      byFile.get(".config/app/state.xml")?.notes.map(({ code }) => code),
+    ).toEqual(["read_as_text"]);
+  });
+});
+
+describe("draftTaskFiles guards of a line-keyed catalogue, as Poedit saves one", () => {
+  it("guards the other records' lines of the changed line's keyword, never its own record's source reference or msgid", () => {
+    const entry = (line: number, msgid: string, msgstr: string) => [
+      `#: argparse.py:${String(line)}`,
+      `msgid "${msgid}"`,
+      `msgstr "${msgstr}"`,
+      "",
+    ];
+    const catalogue = (fixed: string) =>
+      [
+        ...entry(1811, "positional arguments", "arguments positionnels"),
+        ...entry(1858, "cannot have multiple subparser arguments", ""),
+        ...entry(2249, "expected one argument", fixed),
+        ...entry(
+          2250,
+          "expected at most one argument",
+          "au plus un argument attendu",
+        ),
+        ...entry(2312, "ambiguous option", ""),
+      ].join("\n");
+    const file = "Documents/fr.po";
+    const [drafted] = draftOf({
+      [file]: statePath(
+        "document",
+        "text",
+        textView(catalogue("un argument inattendu")),
+        textView(catalogue("un argument attendu")),
+      ),
+    });
+
+    expect(drafted?.guards).toEqual([
+      {
+        kind: "lines_present",
+        file,
+        lines: [
+          'msgstr "arguments positionnels"',
+          'msgstr "au plus un argument attendu"',
+        ],
+      },
+    ]);
+  });
+});

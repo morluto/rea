@@ -13,19 +13,31 @@ const markerOf = (line: string): string | undefined =>
 /** Whether a line is a command, as LyX's `\begin_layout Section` or `\end_layout`. */
 const isCommand = (line: string) => /^\s*\\[\p{L}_]+\b/u.test(line);
 
-/** Whether a line is only markup: a command, or a lone closing tag, as `</node>`. */
+/** Whether a line is only markup: a command, tags with no text between them, as KmPlot's `<fonts>` or `</node>`, or a key alone, as a RedNotebook day's `24:`. */
 const isMarkup = (line: string) =>
-  isCommand(line) || /^\s*<\/[^>]*>\s*$/u.test(line);
+  isCommand(line) ||
+  !/[\p{L}\d]/u.test(
+    line.replaceAll(/<[^>]*>/gu, "").replace(/^\s*[^\s:]+:\s*$/u, ""),
+  );
 
-/** What kind of line a line is, for its like siblings: a list item's marker, or the command opening it, as `\begin_layout Section` opens a LyX heading. */
+/** The keyword a line of a line-keyed format opens with, as a gettext catalogue's `msgstr "…"`, or its `key:` or `key =`. */
+const keywordOf = (line: string): string | undefined =>
+  /^\s*(?<keyword>[A-Za-z_][\w.-]*)(?:\s*[:=]|\s+")/u.exec(line)?.groups
+    ?.keyword;
+
+/** What kind of line a line is, for its like siblings: a list item's marker, the command opening it, as `\begin_layout Section` opens a LyX heading, or its keyword (`keywordOf`), as Poedit's other `msgstr` lines. */
 const kindOf = (lines: readonly string[], index: number) => {
-  const marker = markerOf(lines[index] ?? "");
+  const line = lines[index] ?? "";
+  const marker = markerOf(line);
   const opener = lines[index - 1];
-  return marker === undefined
-    ? opener !== undefined && isCommand(opener)
+  const keyword = keywordOf(line);
+  return marker !== undefined
+    ? `marker\u0000${marker}`
+    : opener !== undefined && isCommand(opener)
       ? `opens\u0000${opener.trim()}`
-      : undefined
-    : `marker\u0000${marker}`;
+      : keyword === undefined
+        ? undefined
+        : `keyword\u0000${keyword}`;
 };
 
 /** How many times each line occurs. */
@@ -38,11 +50,14 @@ const tally = (lines: readonly string[]) => {
 /**
  * A `lines_present` guard of a text file's unchanged lines beside the first
  * line an edit added, for an author to add by choice: the nearest lines of
- * its kind (`kindOf`), as the other `[ ]` action items around a new one or
- * the other headings a LyX command opens, kept in file order; or, when it
- * has no such sibling, the nearest lines with words in them. Each is text
- * the seed and the end both hold once: never a line of markup alone, nor one
- * that repeats, as LyX's `\end_layout`. None when nothing was added.
+ * its kind (`kindOf`), as the other `[ ]` action items around a new one,
+ * the other headings a LyX command opens or a gettext catalogue's other
+ * `msgstr` lines, never its own record's `msgid`, kept in file order; or,
+ * when it has no such sibling, the nearest lines with words in them. Each
+ * is text
+ * the seed and the end both hold once: never a line of markup alone, as
+ * LyX's `\end_layout`, a tag or a key with no text, nor one that repeats.
+ * None when nothing was added.
  */
 export const lineGuards = (
   file: string,

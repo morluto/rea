@@ -9,6 +9,7 @@ import {
 import { isIdentifyingAttribute, isViewStateName } from "./attributeRank.js";
 import type { DesktopStateDifference } from "./stateChanges.js";
 import { alternativePointers } from "./appTaskDraftAlternatives.js";
+import { isIdReference } from "./appTaskDraftMirrors.js";
 import { recordListsOf } from "./appTaskDraftNested.js";
 import { holdsFields, isRecordAt } from "./appTaskDraftText.js";
 import {
@@ -296,7 +297,7 @@ const byteLength = (value: unknown) =>
 /** Records of attributes an element nests whose references a value lists, as the splits of a transaction. */
 const MAX_NESTED_RECORDS = 10;
 
-/** The references in an element's attributes other than its own identifiers. */
+/** The references in an element's attributes other than its own identifiers; of one holding nothing but an identifier, as Parley's `<entry id="6"/>`, that identifier's. */
 const attributeReferences = (
   resolve: ReturnType<typeof referencesFrom>,
   element: JsonValue,
@@ -304,8 +305,8 @@ const attributeReferences = (
   Object.entries(isXmlElement(element) ? element.attributes : {}).flatMap(
     ([key, item]) =>
       typeof item === "string" &&
-      !isIdentifyingAttribute(key) &&
-      !/^key$/iu.test(key)
+      ((!isIdentifyingAttribute(key) && !/^key$/iu.test(key)) ||
+        isIdReference(element))
         ? (resolve(item, key, element) ?? [])
         : [],
   );

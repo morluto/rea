@@ -93,8 +93,10 @@ A gzip file is read as the document inside it; see
 [compressed documents](#compressed-documents).
 
 Text that opens with an element, such as a Freeplane map's
-`<map version="freeplane 1.7.0">` with no declaration, is XML when the whole
-text is well formed, whatever the file is called, a `.txt` file included;
+`<map version="freeplane 1.7.0">` with no declaration, or with a DOCTYPE that
+has no internal subset and then an element, such as a KmPlot plot's
+`<!DOCTYPE kmpdoc>` before `<kmpdoc version="4">`, is XML when the whole text
+is well formed, whatever the file is called, a `.txt` file included;
 otherwise it stays text. The exported verifier makes the same choice.
 
 A JSON value holding a number JavaScript would round, such as an integer above

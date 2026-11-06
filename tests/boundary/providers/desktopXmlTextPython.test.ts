@@ -163,6 +163,27 @@ describe("XML with a DOCTYPE in the exported module", () => {
     expect(formats).toEqual(["xml", "text", "xml"]);
   });
 
+  it("reads text that opens with a DOCTYPE naming no internal subset and then an element as XML, as KmPlot's plots, alike in both", async () => {
+    const saved = (name: string, text: string) => ({
+      name,
+      bytes: new TextEncoder().encode(text),
+    });
+    const files = [
+      saved(
+        "lesson_plots.fkt",
+        '<!DOCTYPE kmpdoc>\n<kmpdoc version="4">\n    <function type="cartesian"><equation-0 step="0.05">h(x) = 2x + 1</equation-0></function>\n</kmpdoc>\n',
+      ),
+      saved("entities.fkt", '<!DOCTYPE a [<!ENTITY e "boom">]>\n<a>&e;</a>\n'),
+      saved("broken.fkt", "<!DOCTYPE a>\n<a><b></a>\n"),
+    ];
+    await expectSameFileViews(files);
+
+    const formats = await Promise.all(
+      files.map(async (file) => (await typescriptFileView(file)).format),
+    );
+    expect(formats).toEqual(["xml", "text", "text"]);
+  });
+
   it("never reads the DTD a DOCTYPE names: neither its entities nor its default attributes apply", async () => {
     const folder = await createTestTempDirectory("desktop-xml-dtd-");
     const dtd = join(folder, "a.dtd");

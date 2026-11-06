@@ -301,7 +301,10 @@ dot-folder named after the package, the executable, the desktop entry's full
 id and its last part, and the entry's name, with whether each existed at the
 start. A folder in those places whose name is one of these in another letter
 case joins them, such as GIMP's `~/.config/GIMP` for the `gimp` package; only
-the whole name is compared, so `~/.config/GIMPshop` does not. Dotfiles in the
+the whole name is compared, so `~/.config/GIMPshop` does not. A file under a
+folder the application creates during the capture beside one of them, with
+the same name in another letter case or with a version added (`-3.1` or
+`3`), as TreeLine's `~/.treeline-3.1`, is its state too. Dotfiles in the
 home named after the application (`.<name>rc`, or
 `.<name>` followed by `-`, `.` or `_`, for a name of three or more characters)
 that exist at the start join them, since an application may only read such a

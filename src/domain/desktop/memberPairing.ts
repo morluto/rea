@@ -12,6 +12,7 @@ import {
   isPositionalKey,
   numberedInOrder,
   positionalKeys,
+  savePositionKeys,
 } from "./positionalKeys.js";
 import {
   childConditions,
@@ -23,6 +24,7 @@ import {
   type Attribute,
   type Candidates,
 } from "./selectorCandidates.js";
+import { pairRecordsById } from "./jsonRecordPairing.js";
 import { resolvePointer } from "./viewPointer.js";
 import { selectorOf } from "./viewSelector.js";
 
@@ -62,7 +64,10 @@ const pairsOf = (paired: readonly (Attribute & { tier: number })[]) =>
  * (`isSaveNumberedId`); then a child element's text, as Osmo's record
  * by `[>first_name=Delphine]` (`childConditions`), for an element no
  * identifier names; last, an id the app generates (`isGeneratedId`), as
- * Freeplane's `ID_329023692`, or a GUID in any attribute, as VYM's `uuid`.
+ * Freeplane's `ID_329023692`, or a GUID in any attribute, as VYM's `uuid`,
+ * after an identifier numbering the members by save position
+ * (`savePositionKeys`), as Parley's `<entry id="6">`, where a child's text
+ * names the member.
  * All are counted over every sibling, so a selector several siblings match
  * is never taken for one naming a member alone; but an element with
  * identifying attributes is keyed by those alone,
@@ -75,6 +80,7 @@ const candidatesOf = (
   member: JsonValue,
   names: Map<string, number>,
   positional: ReadonlySet<string>,
+  saved: ReadonlySet<string>,
 ): Candidates | undefined => {
   if (!isRecord(member)) return undefined;
   const name = own(member, "name");
@@ -91,9 +97,20 @@ const candidatesOf = (
       : [],
   );
   // An id the app generates names a kept member, but no new one another save would key alike, so it ranks last.
+  const children = childConditions(member);
+  // An id numbering the members by save position names one after a child's text does.
+  const placed =
+    children.length === 0
+      ? []
+      : usable.filter(
+          ({ key }) =>
+            isIdentifyingAttribute(key) && isPositionalKey(saved, name, key),
+        );
   const generated = usable.filter(
-    ({ key, value }) =>
-      (isIdentifyingAttribute(key) && isGeneratedId(value)) || isGuid(value),
+    (field) =>
+      !placed.includes(field) &&
+      ((isIdentifyingAttribute(field.key) && isGeneratedId(field.value)) ||
+        isGuid(field.value)),
   );
   // An id the app numbers anew on each save names no member past it: it ranks with the tokens.
   const numbered = usable.filter(({ key, value }) =>
@@ -103,7 +120,8 @@ const candidatesOf = (
     (field) =>
       isIdentifyingAttribute(field.key) &&
       !generated.includes(field) &&
-      !numbered.includes(field),
+      !numbered.includes(field) &&
+      !placed.includes(field),
   );
   const named = (key: string) => key.toLowerCase() === "name";
   const ranked = [
@@ -127,8 +145,11 @@ const candidatesOf = (
     ...ranked.filter(({ tier }) => tier === 3).map(condition),
   ];
   // Counted on every member, one its identifiers key included, since the evaluator matches any member holding the child.
-  const children = childConditions(member);
-  suffixes.push(...children, ...generated.map(condition));
+  suffixes.push(
+    ...children,
+    ...placed.map(condition),
+    ...generated.map(condition),
+  );
   const number = names.get(name) ?? names.size;
   names.set(name, number);
   // A suffix is empty or opens with `[`, so the number before it cannot run into it.
@@ -140,7 +161,8 @@ const candidatesOf = (
     number,
     ids,
     choosable,
-    byChild: suffixes.length - children.length - generated.length,
+    byChild:
+      suffixes.length - children.length - placed.length - generated.length,
     identified: identities.length + 1,
     generated: generated.length,
     pairable: pairable.map(({ key }) => key),
@@ -399,18 +421,19 @@ interface PairedSide {
  * the list's `place`, a pair its tag alone names also gets a
  * `holdingCondition` (`holdTagOnly`).
  */
-export const pairMembers = (
+const pairElements = (
   newer: readonly JsonValue[],
   older: readonly JsonValue[],
   place?: ListPlace,
 ): { readonly newer: PairedSide; readonly older: PairedSide } => {
   const names = new Map<string, number>();
   const positional = positionalKeys(newer, older);
+  const saved = savePositionKeys(newer, older);
   const newCandidates = newer.map((member) =>
-    candidatesOf(member, names, positional),
+    candidatesOf(member, names, positional, saved),
   );
   const oldCandidates = older.map((member) =>
-    candidatesOf(member, names, positional),
+    candidatesOf(member, names, positional, saved),
   );
   const newCounts = countIds(newCandidates);
   const oldCounts = countIds(oldCandidates);
@@ -502,6 +525,14 @@ export const pairMembers = (
     older: side(oldKeys, oldPartners),
   };
 };
+
+/** Pair the members of two versions of an array one to one: JSON records by an id field each holds (`pairRecordsById`), others by selector (`pairElements`). */
+export const pairMembers = (
+  newer: readonly JsonValue[],
+  older: readonly JsonValue[],
+  place?: ListPlace,
+): { readonly newer: PairedSide; readonly older: PairedSide } =>
+  pairRecordsById(newer, older) ?? pairElements(newer, older, place);
 
 /**
  * The member a pointer names at the end, as its seed version: the other

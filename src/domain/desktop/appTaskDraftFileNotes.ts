@@ -8,6 +8,7 @@ export const FILE_NOTE_CODES = [
   "cut_view",
   "unreadable_view",
   "volatile_lines",
+  "read_as_text",
 ] as const;
 
 /** One reason a drafted file's suggestions are thin, with the facts it rests on. */
@@ -103,3 +104,36 @@ export const fileNotes = (
   ...viewNotes(file, change),
   ...(facts === undefined ? [] : factNotes(file, facts)),
 ];
+
+/** The text a check of whether a file opens like XML reads, enough for a declaration and a DOCTYPE. */
+const OPENING_CHARS = 2048;
+
+/**
+ * A note on a text file that opens like XML, with a declaration, a DOCTYPE
+ * or an element, and so reads as text only because it is not XML REA reads:
+ * its DOCTYPE has an internal subset, which can declare entities, or it is
+ * not well formed. Its checks compare lines, which hold attributes in the
+ * order the app wrote them.
+ */
+export const readAsTextNotes = (
+  file: string,
+  lines: readonly string[],
+): FileNote[] => {
+  let opening = "";
+  for (const line of lines) {
+    opening += `${line}\n`;
+    if (opening.length > OPENING_CHARS) break;
+  }
+  opening = opening.trimStart();
+  if (!/^<(?:\?xml|!DOCTYPE|[A-Za-z_:])/u.test(opening)) return [];
+  const why = /^(?:<\?xml[^>]*>\s*)?<!DOCTYPE[^>[]*\[/u.test(opening)
+    ? "its DOCTYPE has an internal subset, which can declare entities"
+    : "it is not well-formed XML";
+  return [
+    {
+      code: "read_as_text",
+      file,
+      message: `~/${file} opens like XML but reads as text, since ${why}, so its checks compare lines, each holding its attributes in the order the app wrote them.`,
+    },
+  ];
+};

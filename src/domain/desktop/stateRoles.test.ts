@@ -180,3 +180,27 @@ describe("isApplicationDconfGroup", () => {
     expect(isApplicationDconfGroup("org/mousepadx", names)).toBe(false);
   });
 });
+
+describe("stateReasons for a state directory the app names with its version", () => {
+  it("counts TreeLine's ~/.treeline-3.1 beside ~/.treeline, and a numbered folder alike, never another app's longer name", () => {
+    const facts: DesktopRoleFacts = {
+      home: "/home/ada",
+      stateDirectories: ["/home/ada/.treeline"],
+      stateTails: [".treeline"],
+      selectedRoots: [],
+      selections: [],
+      titles: [],
+      openedFiles: new Set(),
+    };
+    const reasons = (path: string) => stateReasons(facts, path, [], false);
+
+    expect(reasons("/home/ada/.treeline-3.1/settings.ini")).toEqual([
+      "state_directory",
+    ]);
+    expect(reasons("/home/ada/.treeline3/settings.ini")).toEqual([
+      "state_directory",
+    ]);
+    expect(reasons("/home/ada/.treelines/settings.ini")).toEqual([]);
+    expect(reasons("/home/ada/.treeline-beta/settings.ini")).toEqual([]);
+  });
+});

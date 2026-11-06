@@ -88,7 +88,12 @@ const hiddenTail = (path: string): string | null => {
   return index < 0 ? null : path.slice(index + 1);
 };
 
-/** The state directory a path lies in, or the folder beside one whose name differs only in letter case that the application may create during the capture, as the path spells it. */
+/**
+ * The state directory a path lies in, or the folder beside one that the
+ * application may create during the capture, as the path spells it: one
+ * whose name differs only in letter case, or that adds a version, as
+ * TreeLine's `~/.treeline-3.1` beside `~/.treeline`.
+ */
 export const stateDirectoryOf = (
   path: string,
   directories: readonly string[],
@@ -97,9 +102,13 @@ export const stateDirectoryOf = (
     const parent = directory.slice(0, directory.lastIndexOf("/") + 1);
     if (!path.startsWith(parent)) continue;
     const folder = path.slice(parent.length).split("/")[0] ?? "";
+    const name = directory.slice(parent.length).toLowerCase();
+    const own = folder.toLowerCase();
     if (
       folder.length > 0 &&
-      folder.toLowerCase() === directory.slice(parent.length).toLowerCase()
+      (own === name ||
+        (own.startsWith(name) &&
+          /^-?\d+(?:\.\d+)*$/u.test(own.slice(name.length))))
     )
       return `${parent}${folder}`;
   }

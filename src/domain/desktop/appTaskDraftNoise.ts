@@ -6,7 +6,7 @@ import {
   isViewStateName,
   VIEW_STATE,
 } from "./attributeRank.js";
-import { mirrorsOf } from "./appTaskDraftMirrors.js";
+import { idReferencesOf, mirrorsOf } from "./appTaskDraftMirrors.js";
 import { isPositionalKey, positionalKeys } from "./positionalKeys.js";
 import type { DesktopStateDifference } from "./stateChanges.js";
 import { elementText, isXmlElement, resolvePointer } from "./viewPointer.js";
@@ -613,10 +613,11 @@ const namesLayout = (
  * parts (`inSplitDate`), or a date under a tag naming bookkeeping; an id
  * the app assigns (`type="guid"`), or text of control characters; upkeep, a
  * change inside an app's `slots`, an attribute an archive entry only
- * gained while another entry holds the edit, or a text showing another
- * field that changed alike (`mirrorsOf`); layout an edit's text derived
- * (`derivedLayout`), or a drawing of the model holds while the model change
- * is elsewhere (`drawingLayout`).
+ * gained while another entry holds the edit, a text showing another field
+ * that changed alike (`mirrorsOf`), or an element holding nothing but the id
+ * of a record the change added (`idReferencesOf`); layout an edit's text
+ * derived (`derivedLayout`), or a drawing of the model holds while the
+ * model change is elsewhere (`drawingLayout`).
  */
 export const changeNoise = (
   change: Pick<DesktopStateDifference, "added" | "changed" | "removed">,
@@ -667,9 +668,10 @@ export const changeNoise = (
   const layout = derivedLayout(change, ends);
   const drawing = drawingLayout(change, ends, base);
   const mirror = mirrorsOf(change, ends);
+  const reference = idReferencesOf(change, ends);
   return (pointer) =>
     base(pointer) ??
-    (upkeep(pointer) || mirror(pointer)
+    (upkeep(pointer) || mirror(pointer) || reference(pointer)
       ? "upkeep"
       : layout(pointer) || drawing(pointer)
         ? "layout"

@@ -187,7 +187,7 @@ describe("draftTaskFiles for structured views", () => {
       {
         kind: "value_equals",
         file: ".config/app/state.json",
-        pointer: "/recent/0/name",
+        pointer: "/recent/[name=a.txt]/name",
         value: "a.txt",
       },
       {

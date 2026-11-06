@@ -1,5 +1,5 @@
 import type { JsonValue } from "../jsonValue.js";
-import type { DesktopTaskCheckInput } from "./appTask.js";
+import { collapseWhitespace, type DesktopTaskCheckInput } from "./appTask.js";
 import { sameJson } from "./appTaskChecks.js";
 import {
   isCoordinates,
@@ -67,9 +67,15 @@ const guardAt = (
   if (check.kind === "text_equals") {
     if (!isXmlElement(before) || !isXmlElement(after)) return undefined;
     const attribute = check.text_attribute;
-    const value = elementText(before, attribute);
+    // A check comparing collapsed whitespace has guards that do too.
+    const collapsed = check.normalize_whitespace === true;
+    const read = (element: JsonValue) => {
+      const text = elementText(element, attribute);
+      return collapsed ? collapseWhitespace(text) : text;
+    };
+    const value = read(before);
     return value.trim() !== "" &&
-      value === elementText(after, attribute) &&
+      value === read(after) &&
       value.length <= context.chars &&
       !isStamp(value)
       ? {
@@ -78,6 +84,7 @@ const guardAt = (
           pointer,
           value,
           ...(attribute === undefined ? {} : { text_attribute: attribute }),
+          ...(collapsed ? { normalize_whitespace: true } : {}),
         }
       : undefined;
   }

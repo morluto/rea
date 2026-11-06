@@ -91,7 +91,9 @@ operation `describe_desktop_application_task` and predicate type
   or SQLite file's change and suggestions already carry its lines and rows.
 - `task`: a draft with the name `change`, a placeholder prompt the export
   refuses, and suggested checks derived from the net change of the files with
-  role `document`, or of the app's own state files when no document changed.
+  role `document`, or of the app's own state files when no document changed,
+  never the app's logs the export leaves out of the seed (`*.log`, `log.<n>`
+  and files under a `logs` folder).
   A text file gains `lines_present` for its new lines and `lines_absent` for
   lines it lost (when either is at most ten), and `line_count` for each line
   holding a letter whose count changed; a new line holding a value the app
@@ -100,7 +102,18 @@ operation `describe_desktop_application_task` and predicate type
   `<node TEXT="Water filter" ID="`, at the end's number, where both views
   hold the whole file, instead of a `lines_present` another save would
   fail, or a `volatile_lines` note when no text comes before it; JSON and key files gain
-  `value_equals` and `value_absent` by pointer; SQLite tables gain rows added,
+  `value_equals` and `value_absent` by pointer, a JSON array's records named
+  by an id field each holds alone at both ends (`id`, `uid`, `uuid`, `guid`,
+  `key` or a name ending in `_id` or `Id`), as TreeLine's
+  `/nodes/[uid=7584d494d9f511f1a873edd4f1920549]`, whatever order the app
+  saves them in, and by position only where nothing names a record, as a
+  new record whose only id the app generated, with a `by_position` note
+  listing those checks; never a value that is a uid the app generates (a
+  GUID, or 32 hex digits as TreeLine's uuid1); `member_count` checks of the
+  arrays whose members were added or removed, of the members' kind where
+  records share a `type`, `kind`, `format` or `category` field, as `/nodes`
+  matching `[format=BOOK]`, and a count guard of the innermost array an edit
+  went through, as for XML; SQLite tables gain rows added,
   changed and removed, by primary key, and their new row count. An XML file,
   and the JSON, key file and XML views of a zip archive's entries, gain checks
   by [selectors](#pointers-and-selectors) and never through an element by
@@ -175,14 +188,26 @@ operation `describe_desktop_application_task` and predicate type
     the count did, one at least, as Planner's task `id` after a task is
     inserted, members are paired by their other attributes, so an insertion
     reads as one task added. A value two members swap, or an id appended at
-    the end, as Tellico's next `<entry id="4">`, leaves the ids identity.
+    the end, as Tellico's next `<entry id="4">`, leaves the ids identity. An
+    identifier numbering the members 0..N-1 in document order at both ends,
+    where members came or went, as Parley numbers its `<entry id="6">` by
+    where it saves it, ranks after a child's text where a member has one, so
+    a new entry is `[>translation=library]` and its kept neighbours are named
+    alike; Tellico's ids, which count from 1, Tiled's and Rosegarden's,
+    whose members hold no text, stay identity. An element a change added that
+    holds nothing but the id of a record it added elsewhere, as Parley's
+    lesson membership `<entry id="6"/>`, is `upkeep`, listed with `refers_to`
+    on that record, never a check or a count.
   - The text check names the paragraph rather than a run inside it: it goes up
     from an element sitting in its parent's text, and from one named by its
     tag or position alone to the nearest ancestor named by an attribute, as
     AbiWord's `p` by its `xid`, unless it is a field its tag names in a
     record of two or more fields holding text, as QElectroTech's `<text>`
-    beside `<info_name>` in a `<dynamic_elmt_text>`, which is checked itself
-    rather than the record whose text joins its fields; where no attribute names one, to the nearest
+    beside `<info_name>` in a `<dynamic_elmt_text>`, or KmPlot's
+    `<equation-0>` beside `<arg-min>`, which is checked itself rather than
+    the record whose text joins its fields; one line of text the app lays
+    out between line breaks, as KmPlot's formula before the next element, is
+    checked, and its siblings guarded, with `normalize_whitespace: true`; where no attribute names one, to the nearest
     ancestor within three levels its tag names with no step by position, as
     MuseScore's `VBox` around untitled `<Text>` elements; and where only
     position reaches the element, to the ancestor above the outermost step by
@@ -375,10 +400,13 @@ operation `describe_desktop_application_task` and predicate type
   among them passes; a text file a `lines_present` of the nearest two
   unchanged lines of its first new line's kind, list items with the same
   marker, as Zim's other `[ ]` action items, or lines the same command
-  opens, as the other headings after LyX's `\begin_layout Section`, or else
+  opens, as the other headings after LyX's `\begin_layout Section`, or lines
+  of the same keyword or `key:` in other records, as a gettext catalogue's
+  other `msgstr` lines rather than the edited entry's own `msgid`, or else
   its nearest lines with words in them; each text both ends hold once, never
-  a line of markup alone, a command such as `\end_layout` or a lone closing
-  tag such as `</node>`, nor a line that repeats; an item placed by its own position
+  a line with no text of its own, a command such as `\end_layout`, tags
+  alone such as `<fonts>` or `</node>`, or a key alone such as a RedNotebook
+  day's `24:`, nor a line that repeats; an item placed by its own position
   that an edit added, a `text_contains` of each of up to four kept items'
   text, nearest first. Where members were only edited, a
   `member_count` of the innermost list holding the edited element that an
@@ -416,9 +444,13 @@ operation `describe_desktop_application_task` and predicate type
   `pointers`; `long_text` when an element's text changed past the 2,000
   characters a text check compares, the elements in `pointers`; `cut_view`
   when the views hold only part of the file; `unreadable_view` when no
-  check can read it, as a document REA reads as binary; and
+  check can read it, as a document REA reads as binary;
   `volatile_lines` when a text file gained lines holding a value the app
-  generates with no text before it to count them by.
+  generates with no text before it to count them by; and `read_as_text`
+  when a text file opens like XML, with a declaration, a DOCTYPE or an
+  element, but reads as text because its DOCTYPE has an internal subset or
+  it is not well formed, so its checks compare lines that hold attributes in
+  the order the app wrote them.
 
 The suggestions are a starting point. Keep the ones that say what the user
 did; drop the ones that only follow from how the app saves its file. Read

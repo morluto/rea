@@ -158,7 +158,8 @@ The class declares:
   README and the result's limitations say the sandbox is off.
 - `paths`: the state directories holding the application's state files and the
   folders holding its documents, nested folders collapsed. A folder beside a
-  state directory whose name differs from it only in letter case is owned
+  state directory whose name differs from it only in letter case, or that
+  adds a version, as TreeLine's `~/.treeline-3.1` beside `~/.treeline`, is owned
   whole in the files' spelling, so a `~/.config/GIMP` profile GIMP created
   during the capture beside the candidate `~/.config/gimp` is owned as
   `.config/GIMP`, not as the folder of its first file. The home itself and

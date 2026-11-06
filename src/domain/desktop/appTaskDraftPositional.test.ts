@@ -470,3 +470,52 @@ describe("shapes an ODF app numbers on every save", () => {
     expect(file.values[0]?.alternatives).toBeUndefined();
   });
 });
+
+describe("entries an app numbers by where it saves them", () => {
+  /** A Parley collection: entries numbered 0.. by save position, each two translations by language, and a lesson listing them by id. */
+  const entry = (id: number, english: string, spanish: string) =>
+    `<entry id="${String(id)}"><translation id="0"><text>${english}</text></translation><translation id="1"><text>${spanish}</text></translation></entry>`;
+  const collection = (pairs: readonly (readonly [string, string])[]) =>
+    `<kvtml><entries>${pairs.map(([english, spanish], id) => entry(id, english, spanish)).join("")}</entries><lessons><container><name>Lesson 1</name>${pairs.map((_, id) => `<entry id="${String(id)}"/>`).join("")}</container></lessons></kvtml>`;
+  const DOG = ["dog", "perro"] as const;
+  const BOOK = ["book", "libro"] as const;
+  const APPLE = ["apple", "manzana"] as const;
+  const LIBRARY = ["library", "biblioteca"] as const;
+  const SEED = [DOG, BOOK, APPLE];
+  const ENTRIES = "/root/children/[name=entries]/children";
+
+  it("names the new entry and the kept ones by their translations, not the id that numbers them by save position, so a save inserting the entry elsewhere keeps the checks", () => {
+    const file = xmlDraft(collection(SEED), collection([...SEED, LIBRARY]));
+
+    expect(file.suggested.map(pointerOf)).toEqual([
+      `${ENTRIES}/[name=entry][>translation=library]/children/[name=translation][@id=1]`,
+      ENTRIES,
+    ]);
+    expect(file.guards.map(pointerOf)).toEqual([
+      `${ENTRIES}/[name=entry][>translation=apple]/children/[name=translation][@id=1]`,
+      `${ENTRIES}/[name=entry][>translation=book]/children/[name=translation][@id=1]`,
+    ]);
+    const inserted = xml(collection([DOG, BOOK, LIBRARY, APPLE]));
+    expect(passing(FILE, inserted, file.suggested)).toEqual([true, true]);
+    expect(passing(FILE, inserted, file.guards)).toEqual([true, true]);
+  });
+
+  it("notes the lesson's entry holding nothing but the new entry's id as upkeep naming that entry, never a check or a count", () => {
+    const file = xmlDraft(collection(SEED), collection([...SEED, LIBRARY]));
+
+    const lesson =
+      "/root/children/[name=lessons]/children/[name=container]/children";
+    expect(
+      file.values.find(({ pointer }) => pointer.startsWith(lesson)),
+    ).toMatchObject({
+      pointer: `${lesson}/[name=entry][@id=3]`,
+      note: "upkeep",
+      refers_to: [{ attribute: "id", value: "3" }],
+    });
+    expect(
+      [...file.suggested, ...file.guards].some((check) =>
+        pointerOf(check)?.startsWith(lesson),
+      ),
+    ).toBe(false);
+  });
+});

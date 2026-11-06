@@ -1,5 +1,5 @@
 import type { JsonValue } from "../jsonValue.js";
-import { isNameLikeKey } from "./attributeRank.js";
+import { isIdentifyingAttribute, isNameLikeKey } from "./attributeRank.js";
 import type { DesktopStateDifference } from "./stateChanges.js";
 import { elementText, isXmlElement, resolvePointer } from "./viewPointer.js";
 import { selectorOf } from "./viewSelector.js";
@@ -73,4 +73,50 @@ export const mirrorsOf = (
     }),
   );
   return (pointer: string) => mirrored.has(pointer);
+};
+
+/** Whether an element holds nothing but one identifier, as Parley's lesson membership `<entry id="6"/>`. */
+export const isIdReference = (element: JsonValue | undefined): boolean => {
+  if (!isXmlElement(element)) return false;
+  const [key, ...more] = Object.keys(element.attributes);
+  return (
+    key !== undefined &&
+    more.length === 0 &&
+    isIdentifyingAttribute(key) &&
+    element.children.every(
+      (child) => typeof child === "string" && child.trim() === "",
+    )
+  );
+};
+
+/**
+ * Elements a change added that hold nothing but an identifier of a record it
+ * added elsewhere in the file (`isIdReference`), as Parley lists a new entry
+ * in its lesson by `<entry id="6"/>`: a mirror of that record, never a check
+ * or a count of its own.
+ */
+export const idReferencesOf = (
+  change: Pick<DesktopStateDifference, "added">,
+  ends: Ends,
+) => {
+  const added = change.added.flatMap((pointer) => {
+    const element = resolvePointer(ends.final, pointer);
+    return isXmlElement(element) ? [{ pointer, element }] : [];
+  });
+  const mirrors = added.flatMap(({ pointer, element }) => {
+    const [key = ""] = Object.keys(element.attributes);
+    return isIdReference(element) &&
+      added.some(
+        (record) =>
+          record.element !== element &&
+          !isIdReference(record.element) &&
+          record.element.attributes[key] === element.attributes[key],
+      )
+      ? [pointer]
+      : [];
+  });
+  return (pointer: string) =>
+    mirrors.some(
+      (mirror) => pointer === mirror || pointer.startsWith(`${mirror}/`),
+    );
 };

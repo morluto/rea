@@ -178,6 +178,19 @@ the first source that has the app:
   only at a clean exit. It writes `<map>.vym.lock` while a map is open, so
   close the map before `seed`. Press A only after clicking a branch on the
   canvas: keys typed in the tree editor run other shortcuts.
+- KmPlot: Create → Cartesian Plot, then edit the formula in the Function
+  tab and press Return. It stores minus as U+2212 (`−`). Its file:// title
+  still names the file.
+- RedNotebook keeps each month in `~/.rednotebook/data/YYYY-MM.txt`, YAML
+  read as text, folded at about column 80: pick check phrases the fold keeps
+  on one line.
+- Qt5 apps saving with QDom, such as KmPlot, write attributes in a random
+  order in each process, so check their XML by element, never by whole line.
+- Parley's title shows the collection's title, so name the file in
+  `state_paths`. A new collection starts with 15 blank entries. While a
+  document is open KDE keeps an autosave and its `.lock` in
+  `~/.local/share/stalefiles/parley/`, and there is no File → Close: before
+  `seed`, use File → New, then reopen the collection from Open Recent.
 - Sigil unpacks the open book into
   `.local/share/sigil-ebook/sigil/workspace/Sigil-XXXXXX/` and deletes it on
   exit; naming the whole `sigil-ebook` folder seeds that stale copy, so name
@@ -200,7 +213,12 @@ the first source that has the app:
 - Before `seed`, click into the document to clear any selection the app
   would save: Gnote saves its cursor and selection with the note.
 - An app whose state folder is named after it, such as
-  `~/.local/share/gnote`, is found without `state_paths`.
+  `~/.local/share/gnote`, or after it and its version, such as TreeLine's
+  `~/.treeline-3.1`, is found without `state_paths`.
+- TreeLine: Ctrl+A adds a child node even while a field has focus. Clicking
+  a node already selected starts an inline rename, so Ctrl+X then cuts its
+  text: cut a node from its context menu. It saves nodes sorted by their
+  generated uid1, so their order changes from run to run.
 - After an app crashes, capture again on a fresh computer, so the seed
   carries no crash-recovery state, such as MyPaint's "Recover interrupted
   work?".

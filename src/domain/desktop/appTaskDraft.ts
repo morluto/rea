@@ -1,6 +1,13 @@
 import type { JsonValue } from "../jsonValue.js";
 import { isTimestamp, type DesktopTaskCheckInput } from "./appTask.js";
-import { fileNotes, type FileNote } from "./appTaskDraftFileNotes.js";
+import { leftOutFiles } from "./appExportUnowned.js";
+import { isGeneratedUid } from "./attributeRank.js";
+import { jsonCounts, positionalNotes } from "./appTaskDraftJson.js";
+import {
+  fileNotes,
+  readAsTextNotes,
+  type FileNote,
+} from "./appTaskDraftFileNotes.js";
 import { addedLineChecks, lineGuards } from "./appTaskDraftLineGuards.js";
 import { innermost, namedDraft, type NamedFacts } from "./appTaskDraftNamed.js";
 import { ARCHIVE, presenceValues, XML_FILE } from "./appTaskDraftTree.js";
@@ -121,7 +128,10 @@ const textSuggestions = (
         )
       : { checks: [], notes: [] };
   suggestions.push(...gained.checks);
-  const result = { suggestions, notes: gained.notes };
+  const result = {
+    suggestions,
+    notes: [...gained.notes, ...readAsTextNotes(file, linesOf(final))],
+  };
   if (truncated) return result;
   if (gone.length > 0 && gone.length <= MAX_SUGGESTIONS)
     suggestions.push({ kind: "lines_absent", file, lines: gone });
@@ -238,7 +248,10 @@ const valueSuggestions = (
   }
   if (format !== "json" && format !== "keyfile")
     return { suggested: [], ...NO_VALUES };
-  const change = diffStateViews(format, baseline.view, final.view);
+  // JSON records are named by an id field each holds, not their place.
+  const change = diffStateViews(format, baseline.view, final.view, {
+    named: true,
+  });
   const pointers = keyPointers([baseline.view, final.view]);
   const pointer = (entry: string) =>
     format === "keyfile" ? pointers.get(entry) : entry;
@@ -249,11 +262,13 @@ const valueSuggestions = (
   for (const entry of leaves([...change.added, ...change.changed])) {
     const at = pointer(entry);
     const value = at === undefined ? undefined : resolvePointer(final.view, at);
+    // An id the app generates, as TreeLine's uuid1 `uid`, holds nothing another save repeats.
     if (
       at !== undefined &&
       at !== "" &&
       value !== undefined &&
-      !isTimestamp(value)
+      !isTimestamp(value) &&
+      !(typeof value === "string" && isGeneratedUid(value))
     )
       suggestions.push({ kind: "value_equals", file, pointer: at, value });
   }
@@ -267,7 +282,17 @@ const valueSuggestions = (
     baseline,
     final,
   );
-  return { suggested: suggestions, values, valuesCut: cut, guards: [] };
+  if (format === "keyfile")
+    return { suggested: suggestions, values, valuesCut: cut, guards: [] };
+  const counts = jsonCounts(file, change, versions(baseline, final));
+  const suggested = [...suggestions, ...counts.checks];
+  return {
+    suggested,
+    values,
+    valuesCut: cut,
+    guards: counts.guards,
+    notes: positionalNotes(file, suggested, final.view),
+  };
 };
 
 /** Checks that express how a file changed from its baseline to its final version, with the values, guards and facts beside them. */
@@ -410,7 +435,8 @@ const changeShape = (change: TaskDraftFile["change"], final: Version) => ({
  * Each file under the owned paths whose state differs between its versions at
  * the seed and end checkpoints, with suggested checks, values, guards and
  * notes for the files the user worked on: documents, or the app's own state
- * when no document changed. Values stay within the draft's byte budget, in
+ * when no document changed, never the app's logs the export leaves out of
+ * the seed (`leftOutFiles`). Values stay within the draft's byte budget, in
  * file order.
  */
 export const draftTaskFiles = (
@@ -422,9 +448,11 @@ export const draftTaskFiles = (
   const role = changed.some(({ path }) => path.role === "document")
     ? "document"
     : "application_state";
+  // The app's logs, which the export leaves out of the seed, never hold a check.
+  const { isLeftOutLog } = leftOutFiles(files, [], new Set());
   return withinDraftBudget(
     changed.map(({ home, path, baseline, final, change }) => {
-      const drafted = path.role === role;
+      const drafted = path.role === role && !isLeftOutLog(home);
       const draft: FileDraft = drafted
         ? suggestedChecks(home, baseline, final, role === "document")
         : { suggested: [], ...NO_VALUES };

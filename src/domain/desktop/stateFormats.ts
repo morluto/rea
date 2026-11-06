@@ -219,9 +219,15 @@ const namedJson = (path: string, trimmed: string): boolean =>
 const namedXml = (path: string, trimmed: string): boolean =>
   XML_EXTENSIONS.test(path) || trimmed.startsWith("<?xml");
 
-/** Whether text opens with an element, as a Freeplane map's `<map version=…>` without a declaration, so it is XML if it is well formed, whatever the file is called. */
+/**
+ * Whether text opens with an element, as a Freeplane map's `<map version=…>`
+ * without a declaration, or with a DOCTYPE that has no internal subset and
+ * then an element, as KmPlot's `<!DOCTYPE kmpdoc><kmpdoc …>`, so it is XML
+ * if it is well formed, whatever the file is called. A DOCTYPE with an
+ * internal subset, which may declare entities, never opens one.
+ */
 const opensElement = (trimmed: string): boolean =>
-  /^<[A-Za-z_:]/u.test(trimmed);
+  /^(?:<!DOCTYPE[ \t\r\n][^[>]*>[ \t\r\n]*)?<[A-Za-z_:]/u.test(trimmed);
 
 /**
  * Whether decoded text is JSON or XML as `detectStateFormat` reads it, told

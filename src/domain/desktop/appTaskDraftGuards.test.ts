@@ -354,3 +354,41 @@ describe("draftTaskFiles for a dialog's buttons, as Glade saves them", () => {
     ]);
   });
 });
+
+describe("draftTaskFiles for a plot's functions, as KmPlot saves them", () => {
+  /** A function: its colours, then its formula with a differential after it, laid out on lines of their own. */
+  const fn = (color: string, formula: string, flipped = false) => {
+    const attributes = [
+      `f0-color="${color}"`,
+      'type="cartesian"',
+      'f0-visible="1"',
+    ];
+    return `<function ${(flipped ? attributes.toReversed() : attributes).join(" ")}>\n        <equation-0 step="0.05">${formula}<differential x="0" y="1"/>\n        </equation-0>\n        <arg-min use="0">0</arg-min>\n        <arg-max use="0">2π</arg-max>\n    </function>`;
+  };
+  const plot = (h: string, flipped = false) =>
+    `<kmpdoc version="4">\n    ${fn("#191970", "f(x) = x^2 − 4", flipped)}\n    ${fn("#006400", "g(x) = 2sin(x)", flipped)}\n    ${fn("#ff4500", h, flipped)}\n</kmpdoc>`;
+  const equation = (color: string) =>
+    `/root/children/[name=function][@f0-color=${color}]/children/[name=equation-0]`;
+
+  it("checks the formula by its element with the whitespace the app lays out collapsed, and guards the others, which a save writing attributes in another order passes", () => {
+    const file = xmlDraft(plot("h(x) = 0.5x + 1"), plot("h(x) = 2x + 1"));
+
+    expect(file.suggested).toEqual([
+      {
+        kind: "text_equals",
+        file: FILE,
+        pointer: equation("#ff4500"),
+        value: "h(x) = 2x + 1",
+        normalize_whitespace: true,
+      },
+    ]);
+    expect(file.guards.map(pointerOf)).toEqual([
+      equation("#006400"),
+      equation("#191970"),
+      "/root/children",
+    ]);
+    const fresh = xml(plot("h(x) = 2x + 1", true));
+    expect(passing(FILE, fresh, file.suggested)).toEqual([true]);
+    expect(passing(FILE, fresh, file.guards)).toEqual([true, true, true]);
+  });
+});
