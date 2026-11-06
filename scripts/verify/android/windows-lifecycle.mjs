@@ -271,12 +271,7 @@ function observeJava(ownerPid) {
       "v1.0",
       "powershell.exe",
     ),
-    [
-      "-NoProfile",
-      "-NonInteractive",
-      "-EncodedCommand",
-      Buffer.from(source, "utf16le").toString("base64"),
-    ],
+    ["-NoProfile", "-NonInteractive", "-Command", source],
     { stdio: ["pipe", "pipe", "pipe"], windowsHide: true },
   );
   let stdout = "";
