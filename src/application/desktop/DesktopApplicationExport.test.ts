@@ -14,7 +14,15 @@ import type {
   AptRepository,
   DesktopApplicationCapture,
 } from "../../domain/desktop/desktopCapture.js";
-import { exportDesktopApplication } from "./DesktopApplicationExport.js";
+import {
+  NO_LAUNCH_DOCUMENT,
+  launchDocumentNote,
+  seedWording,
+} from "../../domain/desktop/appExport.js";
+import {
+  exportDesktopApplication,
+  seedLimitation,
+} from "./DesktopApplicationExport.js";
 import {
   EDITED_NOTE,
   HOME,
@@ -714,6 +722,10 @@ const exportSeeded = async (
   };
 };
 
+/** The limitations on what the launch opens, found by the lead their formatter gives them. */
+const launchLimitations = (limitations: readonly string[]) =>
+  limitations.filter((line) => line.includes(NO_LAUNCH_DOCUMENT));
+
 describe("exportDesktopApplication launch document", () => {
   it("opens the seed's one document when the desktop entry takes files", async () => {
     const { result, module, readme } = await exportSeeded("notes %U");
@@ -722,28 +734,29 @@ describe("exportDesktopApplication launch document", () => {
       `command=["sh", "-c", "cd \\"$HOME\\" 2>/dev/null; exec 'notes' \\"$HOME\\"/'Documents/today.txt'"]`,
     );
     expect(readme).toContain(
-      "At launch the app opens `~/Documents/today.txt`, the seed's one document.",
+      launchDocumentNote({
+        opens: { kind: "seed", document: "Documents/today.txt" },
+      }),
     );
-    expect(result.limitations.join("\n")).not.toContain("document at launch");
+    expect(readme).toContain("`~/Documents/today.txt`");
+    expect(launchLimitations(result.limitations)).toEqual([]);
   });
 
-  it.each([
-    ["notes", "its desktop entry's Exec takes no file"],
-    [null, "the capture launched the program without a desktop entry"],
-  ])(
-    "launches as captured, and says so, when Exec is %j",
-    async (exec, reason) => {
+  it.each(["notes", null])(
+    "launches as captured, and says why in the README and limitations, when Exec is %j",
+    async (exec) => {
+      const opened = await exportSeeded("notes %U");
       const { result, module, readme } = await exportSeeded(exec);
+      const launch = launchLimitations(result.limitations);
 
       expect(module).toContain(
         `command=["sh", "-c", "cd \\"$HOME\\" 2>/dev/null; exec 'notes'"]`,
       );
-      expect(result.limitations.join("\n")).toContain(
-        `The app opens no document at launch, since ${reason}`,
-      );
-      expect(readme).toContain(
-        `The app opens no document at launch, since ${reason}`,
-      );
+      expect(launch).toHaveLength(1);
+      expect(
+        result.limitations.filter((line) => !launch.includes(line)),
+      ).toEqual(opened.result.limitations);
+      for (const line of launch) expect(readme).toContain(line);
     },
   );
 
@@ -768,9 +781,7 @@ describe("exportDesktopApplication launch document", () => {
     });
 
     if (result instanceof Error) throw result;
-    expect(
-      result.limitations.filter((line) => line.includes("document at launch")),
-    ).toEqual([]);
+    expect(launchLimitations(result.limitations)).toEqual([]);
     expect(
       await readFile(join(directory, "envs/notes/notes_app.py"), "utf8"),
     ).toContain(
@@ -781,23 +792,25 @@ describe("exportDesktopApplication launch document", () => {
   it("says a seed made for the task was made for it, and a captured one is the user's own", async () => {
     const made = await exportSeeded("notes %U", { syntheticSeed: true });
     const captured = await exportSeeded("notes %U");
+    const notice = (syntheticSeed: boolean) =>
+      seedWording({ name: "notes", seedCheckpoint: "seed", syntheticSeed })
+        .notice;
 
-    expect(made.result.limitations).toContain(
-      "The seed was made for the task, not taken from a user's own data; read it before publishing the bundle.",
-    );
-    expect(made.readme).toContain(
-      "The seed was made for this task, not taken from a user's own data",
-    );
-    expect(made.readme).not.toContain("real data");
     expect(made.result.parameters).toMatchObject({ synthetic_seed: true });
-    expect(made.result.limitations.join("\n")).not.toContain("real state");
-    expect(captured.result.limitations).toContain(
-      "The seed is the user's real state at the seed checkpoint; keep the bundle local.",
-    );
-    expect(captured.readme).toContain(
-      "The seed is the user's real data. Keep this bundle local; do not publish it.",
-    );
     expect(captured.result.parameters).toMatchObject({ synthetic_seed: false });
+    for (const [exported, synthetic] of [
+      [made, true],
+      [captured, false],
+    ] as const) {
+      expect(exported.result.limitations).toContain(seedLimitation(synthetic));
+      expect(exported.result.limitations).not.toContain(
+        seedLimitation(!synthetic),
+      );
+      expect(exported.readme).toContain(notice(synthetic));
+      expect(exported.readme).not.toContain(notice(!synthetic));
+    }
+    expect(made.readme).toContain("`envs/notes/seed/`");
+    expect(captured.readme).not.toContain("`envs/notes/seed/`");
   });
 });
 

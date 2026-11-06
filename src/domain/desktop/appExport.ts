@@ -360,13 +360,32 @@ export const renderInstallScript = (file: ExportPackageFile): string =>
     "",
   ].join("\n");
 
+/** How the class and README say where the seed came from: made for the task, or the user's own data, kept local. */
+export const seedWording = ({
+  name,
+  seedCheckpoint,
+  syntheticSeed,
+}: Pick<DesktopAppExportPlan, "name" | "seedCheckpoint" | "syntheticSeed">) =>
+  syntheticSeed
+    ? {
+        docstring: `The seed was made for the task, as saved at checkpoint ${docText(seedCheckpoint)}.`,
+        origin: `made for the task, as saved at checkpoint \`${seedCheckpoint}\``,
+        notice: `The seed was made for this task, not taken from a user's own data; read \`envs/${name}/seed/\` before publishing the bundle.`,
+      }
+    : {
+        docstring: `The seed is the user's state at checkpoint ${docText(seedCheckpoint)}: keep this bundle local.`,
+        origin: `from the user's home at checkpoint \`${seedCheckpoint}\``,
+        notice:
+          "The seed is the user's real data. Keep this bundle local; do not publish it.",
+      };
+
 /** The computer app class: install, launch, owned paths, seed and data hooks. */
 export const renderAppClass = (plan: DesktopAppExportPlan): string => {
   const hooks = classBody(plan);
   return `"""${docText(plan.title)} as an agentenv computer app, exported by REA from a desktop application capture.
 
 Package: ${plan.aptPackage}${plan.packageVersion === null ? "" : ` (captured at ${plan.packageVersion})`}. Capture Evidence: ${plan.captureEvidenceId}.
-${plan.syntheticSeed ? `The seed was made for the task, as saved at checkpoint ${docText(plan.seedCheckpoint)}.` : `The seed is the user's state at checkpoint ${docText(plan.seedCheckpoint)}: keep this bundle local.`}
+${seedWording(plan).docstring}
 """
 
 ${PYTHON_IMPORTS}
@@ -456,16 +475,21 @@ const installNotes = (plan: DesktopAppExportPlan): string =>
     .map((line) => `\n${line}`)
     .join("");
 
+/** The start of the limitation of a launch that opens no document; its reason follows. */
+export const NO_LAUNCH_DOCUMENT = "The app opens no document at launch";
+
 /** The limitation of a launch that opens no document; none when it opens one. */
 export const launchDocumentLimitation = (
   opens: LaunchDocument,
 ): string | undefined =>
   opens.kind === "none"
-    ? `The app opens no document at launch, since ${opens.reason}.`
+    ? `${NO_LAUNCH_DOCUMENT}, since ${opens.reason}.`
     : undefined;
 
 /** The README line on what the launch opens; none when the captured command names its own file. */
-const launchDocumentNote = ({ opens }: DesktopAppExportPlan): string =>
+export const launchDocumentNote = ({
+  opens,
+}: Pick<DesktopAppExportPlan, "opens">): string =>
   opens.kind === "seed"
     ? `\n- At launch the app opens \`~/${opens.document}\`, the seed's one document.`
     : opens.kind === "none"
@@ -514,7 +538,7 @@ ${DESKTOP_EXPORT_FRAMEWORK_VERSION}.
   when a window of class \`${plan.windowClass}\` appears.${installNotes(plan)}${launchDocumentNote(plan)}
 - Owned paths: ${plan.paths.length === 0 ? "none" : plan.paths.map((path) => `\`~/${path}\``).join(", ")}.
   \`data/get\` returns their files and a typed JSON view of each; \`data/reset\` restores the seed.
-- Seed: ${plan.seedFiles.length} file(s) ${plan.syntheticSeed ? "made for the task, as saved" : "from the user's home"} at checkpoint \`${plan.seedCheckpoint}\`${plan.dconf.length === 0 ? "" : ", and the application's dconf keys"}.
+- Seed: ${plan.seedFiles.length} file(s) ${seedWording(plan).origin}${plan.dconf.length === 0 ? "" : ", and the application's dconf keys"}.
   Text files and dconf keys spell the capture host's name as \`localhost\`, \`user@host\` as \`user@localhost\`
   and the home as \`${SEED_HOME}\`, which the computer respells to its own at boot.${scrubNotes(scrub)}${
     plan.unseededFiles.length === 0
@@ -527,7 +551,7 @@ ${DESKTOP_EXPORT_FRAMEWORK_VERSION}.
 
 ${taskSection.length === 0 ? "Run it with `agent-env run <this folder>`." : "Run the task with `agent-env run <this folder>`, or only the deploy with `--task smoke`."}
 
-${plan.syntheticSeed ? `The seed was made for this task, not taken from a user's own data; read \`envs/${plan.name}/seed/\` before publishing the bundle.` : "The seed is the user's real data. Keep this bundle local; do not publish it."}
+${seedWording(plan).notice}
 ${plan.dconf.length === 0 ? "" : "dconf keys are compiled into the user's dconf database, with `dconf-cli`, once when the app first starts; `data/reset` does not restore them.\n"}${taskSection}`;
 
 /** A smoke task that deploys the app. */

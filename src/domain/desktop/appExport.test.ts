@@ -5,13 +5,17 @@ import {
   className,
   environmentName,
   launchCommand,
+  launchDocumentLimitation,
+  launchDocumentNote,
   ownedPaths,
   renderAppClass,
   renderEnvToml,
   renderInstallScript,
   renderReadme,
+  seedWording,
   type DesktopAppExportPlan,
 } from "./appExport.js";
+import type { LaunchDocument } from "./seedDocument.js";
 
 const plan: DesktopAppExportPlan = {
   name: "mousepad",
@@ -313,60 +317,70 @@ describe("renderers", () => {
 });
 
 describe("README and class wording", () => {
-  it("says what the launch opens, and keeps the bundle local unless the seed was made for the task", () => {
-    const opened = renderReadme({
-      ...plan,
-      command: launchCommand(
-        ["mousepad", "/home/ada/Documents/todo.txt"],
-        "/home/ada",
-        "/home/ada",
-      ),
-      opens: { kind: "seed", document: "Documents/todo.txt" },
-    });
-    expect(opened).toContain(
-      `launches \`sh -c cd "$HOME" 2>/dev/null; exec 'mousepad' "$HOME"/'Documents/todo.txt'\` at boot`,
+  it("adds one README line on what the launch opens: the seed's document, or why it opens none", () => {
+    const command = launchCommand(
+      ["mousepad", "/home/ada/Documents/todo.txt"],
+      "/home/ada",
+      "/home/ada",
     );
-    expect(opened).toContain(
-      "- At launch the app opens `~/Documents/todo.txt`, the seed's one document.",
-    );
-    expect(
-      renderReadme({
-        ...plan,
-        opens: {
-          kind: "none",
-          reason: "its desktop entry's Exec takes no file",
-        },
-      }),
-    ).toContain(
-      "- The app opens no document at launch, since its desktop entry's Exec takes no file.",
-    );
-    for (const opens of [{ kind: "captured" }, { kind: "empty" }] as const)
-      expect(renderReadme({ ...plan, opens })).not.toContain(
-        "document at launch",
-      );
+    const readme = (opens: LaunchDocument) =>
+      renderReadme({ ...plan, command, opens });
+    const bare = readme({ kind: "empty" });
+    const seed = { kind: "seed", document: "Documents/todo.txt" } as const;
+    const none = {
+      kind: "none",
+      reason: "the test gives this reason",
+    } as const;
 
-    const captured = renderReadme(plan);
-    expect(captured).toContain(
-      "- Seed: 1 file(s) from the user's home at checkpoint `baseline`",
-    );
-    expect(captured).toContain(
-      "The seed is the user's real data. Keep this bundle local; do not publish it.",
-    );
-    expect(renderAppClass(plan)).toContain(
-      "The seed is the user's state at checkpoint baseline: keep this bundle local.",
-    );
-    const made = { ...plan, syntheticSeed: true, seedCheckpoint: "seed" };
-    const synthetic = renderReadme(made);
-    expect(synthetic).toContain(
-      "- Seed: 1 file(s) made for the task, as saved at checkpoint `seed`",
-    );
-    expect(synthetic).toContain(
-      "The seed was made for this task, not taken from a user's own data; read `envs/mousepad/seed/` before publishing the bundle.",
-    );
-    expect(synthetic).not.toContain("real data");
-    expect(renderAppClass(made)).toContain(
-      "The seed was made for the task, as saved at checkpoint seed.",
-    );
-    expect(renderAppClass(made)).not.toContain("keep this bundle local");
+    expect(command.join(" ")).toContain(`"$HOME"/'Documents/todo.txt'`);
+    expect(bare).toContain(`\`${command.join(" ")}\``);
+    for (const opens of [seed, none]) {
+      const note = launchDocumentNote({ opens });
+      expect(note).not.toBe("");
+      expect(readme(opens).replace(note, "")).toBe(bare);
+    }
+    expect(readme(seed)).toContain("`~/Documents/todo.txt`");
+    expect(bare).not.toContain("~/Documents/todo.txt");
+    const limitation = launchDocumentLimitation(none);
+    expect(limitation).toContain(none.reason);
+    expect(launchDocumentNote({ opens: none })).toContain(limitation);
+    expect(readme({ kind: "captured" })).toBe(bare);
+    for (const opens of [
+      seed,
+      { kind: "captured" },
+      { kind: "empty" },
+    ] as const)
+      expect(launchDocumentLimitation(opens)).toBeUndefined();
+  });
+
+  it("says the seed is the user's own data to keep local, unless it was made for the task", () => {
+    const own = { ...plan, seedCheckpoint: "drafted" };
+    const made = { ...own, syntheticSeed: true };
+    const wording = { own: seedWording(own), made: seedWording(made) };
+    // The README's seed line and closing notice, and the class's docstring.
+    const renderedIn = {
+      origin: renderReadme,
+      notice: renderReadme,
+      docstring: renderAppClass,
+    } satisfies Record<
+      keyof typeof wording.own,
+      (from: DesktopAppExportPlan) => string
+    >;
+
+    for (const [from, kept, other] of [
+      [own, wording.own, wording.made],
+      [made, wording.made, wording.own],
+    ] as const)
+      for (const key of ["origin", "notice", "docstring"] as const) {
+        const rendered = renderedIn[key](from);
+        expect(rendered).toContain(kept[key]);
+        expect(rendered).not.toContain(other[key]);
+      }
+    for (const { origin, docstring } of [wording.own, wording.made]) {
+      expect(origin).toContain("`drafted`");
+      expect(docstring).toContain("drafted");
+    }
+    expect(renderReadme(made)).toContain("`envs/mousepad/seed/`");
+    expect(renderReadme(own)).not.toContain("`envs/mousepad/seed/`");
   });
 });

@@ -12,6 +12,14 @@ const AT_HOME = {
   isDocument: (path: string) => path.startsWith("Documents/"),
 };
 
+/** The reason given for a launch that opens no document, which must not be blank. */
+const reasonOf = ({ opens }: ReturnType<typeof openSeedDocument>): string => {
+  if (opens.kind !== "none")
+    throw new Error(`the launch opens ${opens.kind}, not none`);
+  expect(opens.reason.trim()).not.toBe("");
+  return opens.reason;
+};
+
 describe("openSeedDocument", () => {
   it("appends the seed's one document when Exec takes files, respelled under $HOME by the launch", () => {
     const opened = openSeedDocument(["inkscape"], {
@@ -41,20 +49,17 @@ describe("openSeedDocument", () => {
     },
   );
 
-  it("keeps the launch and says why when the seed holds several documents or none", () => {
+  it("keeps the launch and says why when the seed holds several documents, and opens none when it holds none", () => {
+    const documents = ["Documents/a.svg", "Documents/b.svg"];
     const several = openSeedDocument(["inkscape"], {
       ...AT_HOME,
       exec: "inkscape %F",
-      documents: ["Documents/a.svg", "Documents/b.svg"],
+      documents,
     });
-    expect(several).toEqual({
-      argv: ["inkscape"],
-      opens: {
-        kind: "none",
-        reason:
-          "the seed holds 2 documents (~/Documents/a.svg, ~/Documents/b.svg) and the app opens one only when it holds exactly one",
-      },
-    });
+
+    expect(several.argv).toEqual(["inkscape"]);
+    const reason = reasonOf(several);
+    for (const document of documents) expect(reason).toContain(`~/${document}`);
     expect(
       openSeedDocument(["inkscape"], {
         ...AT_HOME,
@@ -67,25 +72,31 @@ describe("openSeedDocument", () => {
     });
   });
 
-  it("keeps the launch when Exec takes no file or there is no desktop entry", () => {
-    for (const exec of ["xcalc", "app %i %c"])
-      expect(
-        openSeedDocument(["app"], { ...AT_HOME, exec, documents: poster }),
-      ).toEqual({
-        argv: ["app"],
-        opens: {
-          kind: "none",
-          reason:
-            "its desktop entry's Exec takes no file (no %f, %F, %u or %U field code)",
-        },
+  it("keeps the launch and says why when Exec takes no file or there is no desktop entry", () => {
+    const reasons = ["xcalc", "app %i %c", null].map((exec) => {
+      const opened = openSeedDocument(["app"], {
+        ...AT_HOME,
+        exec,
+        documents: poster,
       });
-    expect(
-      openSeedDocument(["app"], { ...AT_HOME, exec: null, documents: poster })
-        .opens,
-    ).toMatchObject({
-      kind: "none",
-      reason: expect.stringContaining("without a desktop entry"),
+      expect(opened.argv).toEqual(["app"]);
+      return reasonOf(opened);
     });
+
+    // Both Execs that take no file have the same cause.
+    expect(reasons[1]).toBe(reasons[0]);
+  });
+
+  it("gives each cause of opening no document its own reason", () => {
+    const reasons = [
+      { exec: "app %F", documents: ["Documents/a.svg", "Documents/b.svg"] },
+      { exec: "xcalc", documents: poster },
+      { exec: null, documents: poster },
+    ].map((facts) =>
+      reasonOf(openSeedDocument(["app"], { ...AT_HOME, ...facts })),
+    );
+
+    expect(new Set(reasons).size).toBe(reasons.length);
   });
 
   it("leaves a command that already names a document alone, absolute or from its working directory", () => {

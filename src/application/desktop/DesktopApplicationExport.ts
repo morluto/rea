@@ -273,6 +273,12 @@ const planExport = (
   };
 };
 
+/** The limitation on where the seed came from: made for the task, or the user's real state, kept local. */
+export const seedLimitation = (syntheticSeed: boolean): string =>
+  syntheticSeed
+    ? "The seed was made for the task, not taken from a user's own data; read it before publishing the bundle."
+    : "The seed is the user's real state at the seed checkpoint; keep the bundle local.";
+
 const SCRUB_LIMITATION =
   "Binary state files are seeded as captured; only text files, UTF-8 or UTF-16 with a byte-order mark, have the capture host's name, user@host and home path replaced.";
 
@@ -326,9 +332,7 @@ const exportLimitations = (
   const opened = capture.state.unretained_opened_directories;
   const opens = launchDocumentLimitation(plan.opens);
   return [
-    plan.syntheticSeed
-      ? "The seed was made for the task, not taken from a user's own data; read it before publishing the bundle."
-      : "The seed is the user's real state at the seed checkpoint; keep the bundle local.",
+    seedLimitation(plan.syntheticSeed),
     SCRUB_LIMITATION,
     ...(opens === undefined ? [] : [opens]),
     ...facts.install,
