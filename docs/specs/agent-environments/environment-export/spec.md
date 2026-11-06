@@ -69,7 +69,7 @@ previous increment.
 - Add the `agentenv` CI scope, the reusable `real-agentenv.yml` workflow
   (`workflow_dispatch` and `workflow_call` with `build_cache_artifact`,
   `ubuntu-24.04`, SHA-pinned actions, `setup-python` 3.12, a virtual
-  environment with `agentenv-framework==0.9.1334`, the runner's Docker, 30
+  environment with `agentenv-framework==0.9.1431`, the runner's Docker, 30
   minutes), the `verify:agentenv:environment` script and
   `scripts/verify-agentenv-environment.mjs`, which requires absolute
   `REA_AGENT_ENV_COMMAND` and `REA_DOCKER_COMMAND` like every other lane

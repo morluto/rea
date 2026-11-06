@@ -5,6 +5,9 @@ import {
   mkdir,
   readFile,
   realpath,
+  rename,
+  rm,
+  symlink,
   writeFile,
 } from "node:fs/promises";
 import { join } from "node:path";
@@ -553,6 +556,8 @@ describe.skipIf(process.platform === "win32")("library packages", () => {
           signing_key: expect.objectContaining({
             fingerprint: VENDOR_A.fingerprint,
           }),
+          // libnss3 comes from the archive, which does not depend on the repository.
+          supplies: ["libnspr4"],
         },
       ],
       library_packages: ["libnspr4", "libnss3"],
@@ -607,6 +612,304 @@ describe.skipIf(process.platform === "win32")(
       expect(failure.cleanupLeases?.every((lease) => lease.released)).toBe(
         true,
       );
+    });
+  },
+);
+
+const WRITER_VERSION = "4:24.2.7-0ubuntu0.24.04.4";
+
+/** LibreOffice Writer from the Ubuntu archive: libreoffice-writer owns the entry, libreoffice-common the `libreoffice` it runs. */
+const writerFixture = async () => {
+  const root = await createTestTempDirectory("desktop-entry-package-");
+  for (const folder of [
+    "home/.local/share/applications",
+    "bin",
+    "share/applications",
+    "lists",
+  ])
+    await mkdir(join(root, folder), { recursive: true });
+  await writeFile(join(root, "bin/libreoffice"), "#!/bin/sh\nexit 0\n");
+  await chmod(join(root, "bin/libreoffice"), 0o755);
+  const entry =
+    "[Desktop Entry]\nType=Application\nName=LibreOffice Writer\nExec=libreoffice --writer %U\n";
+  await writeFile(
+    join(root, "share/applications/libreoffice-writer.desktop"),
+    entry,
+  );
+  // A copy the user made, which no package owns.
+  await writeFile(
+    join(root, "home/.local/share/applications/my-writer.desktop"),
+    entry,
+  );
+  await writeFile(join(root, "lists/noble_main_binary-arm64_Packages"), "");
+  const runQuery: QueryRunner = async (command, argv) => {
+    const reply = (stdout: string, exitCode = 0): QueryOutcome => ({
+      stdout,
+      exitCode,
+    });
+    if (command === "apt-cache")
+      return reply(
+        argv.length === 1
+          ? `Package files:\n 500 ${NOBLE}\n     release v=24.04,o=Ubuntu,a=noble,n=noble,l=Ubuntu,c=main,b=arm64\nPinned packages:\n`
+          : `${argv[1]}:\n  Version table:\n *** ${WRITER_VERSION} 500\n        500 ${NOBLE}\n        100 /var/lib/dpkg/status\n`,
+      );
+    if (command === "dpkg-deb")
+      return reply(
+        `Package: libreoffice-writer\nVersion: ${WRITER_VERSION}\nArchitecture: arm64\nDepends: libreoffice-core\n`,
+      );
+    if (command !== "dpkg-query") return "missing";
+    if (argv[0] === "-W")
+      return reply(`${argv.at(-1)}\t${WRITER_VERSION}\tarm64\tinstalled\n`);
+    const path = argv[1] ?? "";
+    const owner = path.endsWith("/bin/libreoffice")
+      ? "libreoffice-common"
+      : path.endsWith("/share/applications/libreoffice-writer.desktop")
+        ? "libreoffice-writer"
+        : undefined;
+    return owner === undefined ? reply("", 1) : reply(`${owner}: ${path}`);
+  };
+  const inspect = async (
+    launch: { desktopEntry: string } | { executable: string },
+    options: { packageFile?: string; run?: QueryRunner } = {},
+  ) => {
+    const result = await inspectLinuxApplication(
+      {
+        desktopEntry: undefined,
+        executable: undefined,
+        ...launch,
+        arguments: [],
+        environment: {
+          PATH: join(root, "bin"),
+          XDG_DATA_HOME: join(root, "home/.local/share"),
+          XDG_DATA_DIRS: join(root, "share"),
+        },
+        home: join(root, "home"),
+        callerDirectory: join(root, "home"),
+        packageFile: options.packageFile,
+      },
+      undefined,
+      {
+        runQuery: options.run ?? runQuery,
+        apt: {
+          trustedParts: join(root, "apt/trusted.gpg.d"),
+          trusted: join(root, "apt/trusted.gpg"),
+          lists: join(root, "lists"),
+        },
+      },
+    );
+    if (!result.ok) throw new Error(result.error.reason);
+    return {
+      installed: result.value.inventory.package,
+      limitations: result.value.limitations,
+    };
+  };
+  return { root, runQuery, inspect };
+};
+
+describe.skipIf(process.platform === "win32")("desktop entry package", () => {
+  it("records the package that owns the launched entry, and the program's when it differs", async () => {
+    const { inspect } = await writerFixture();
+
+    const { installed } = await inspect({ desktopEntry: "libreoffice-writer" });
+
+    expect(installed).toMatchObject({
+      kind: "deb",
+      name: "libreoffice-writer",
+      executable_package: "libreoffice-common",
+      version: WRITER_VERSION,
+      architecture: "arm64",
+      sources: [NOBLE],
+      source_origins: ["Ubuntu"],
+      package_lists_present: true,
+    });
+    expect(installed).not.toHaveProperty("executable_package_reason");
+  });
+
+  it("finds apt's package lists in the folder apt-config names, or the default when it cannot say", async () => {
+    const { root, runQuery, inspect } = await writerFixture();
+    // A user-space apt-get update under APT_CONFIG keeps its lists elsewhere.
+    const userLists = join(root, "user's lists");
+    await rename(join(root, "lists"), userLists);
+    await mkdir(join(root, "lists"));
+    const answering =
+      (outcome: QueryOutcome): QueryRunner =>
+      async (command, argv, signal) =>
+        command === "apt-config" ? outcome : runQuery(command, argv, signal);
+    const quoted = `LISTS='${userLists.replaceAll("'", "'\\''")}/'\n`;
+
+    const present = await Promise.all(
+      [
+        { stdout: quoted, exitCode: 0 },
+        { stdout: "", exitCode: 100 },
+        "missing" as const,
+      ].map(async (outcome) => {
+        const { installed } = await inspect(
+          { desktopEntry: "libreoffice-writer" },
+          { run: answering(outcome) },
+        );
+        return installed.package_lists_present;
+      }),
+    );
+
+    expect(present).toEqual([true, false, false]);
+  });
+
+  it("records why the computer cannot install the program's package when no source it can use offers it", async () => {
+    const { runQuery, inspect } = await writerFixture();
+    const local: QueryRunner = async (command, argv, signal) =>
+      command === "apt-cache" && argv[1] === "libreoffice-common"
+        ? {
+            stdout: `libreoffice-common:\n  Version table:\n *** ${WRITER_VERSION} 100\n        100 /var/lib/dpkg/status\n`,
+            exitCode: 0,
+          }
+        : runQuery(command, argv, signal);
+    const unasked: QueryRunner = async (command, argv, signal) =>
+      command === "apt-cache" && argv[1] === "libreoffice-common"
+        ? "failed"
+        : runQuery(command, argv, signal);
+
+    const fromLocal = await inspect(
+      { desktopEntry: "libreoffice-writer" },
+      { run: local },
+    );
+    const fromUnasked = await inspect(
+      { desktopEntry: "libreoffice-writer" },
+      { run: unasked },
+    );
+
+    expect(fromLocal.installed).toMatchObject({
+      name: "libreoffice-writer",
+      executable_package: "libreoffice-common",
+      executable_package_reason:
+        "neither the Ubuntu 24.04 archive nor a vendor repository the export declares offers libreoffice-common",
+    });
+    expect(fromUnasked.installed).toMatchObject({
+      executable_package: "libreoffice-common",
+      executable_package_reason:
+        "apt-cache policy did not say where libreoffice-common comes from",
+    });
+  });
+
+  it.each([
+    ["the desktop entry", "libreoffice-writer.desktop"],
+    ["the executable", "/bin/libreoffice"],
+  ])(
+    "leaves the package unknown when dpkg-query cannot say which package owns %s",
+    async (owned, suffix) => {
+      const { runQuery, inspect } = await writerFixture();
+      const failing =
+        (outcome: QueryOutcome): QueryRunner =>
+        async (command, argv, signal) =>
+          command === "dpkg-query" && argv[1]?.endsWith(suffix) === true
+            ? outcome
+            : runQuery(command, argv, signal);
+
+      for (const outcome of ["failed", { stdout: "", exitCode: 2 }] as const) {
+        const { installed, limitations } = await inspect(
+          { desktopEntry: "libreoffice-writer" },
+          { run: failing(outcome) },
+        );
+
+        expect(installed).toMatchObject({ kind: "unknown", name: null });
+        expect(limitations.join("\n")).toMatch(
+          /^dpkg-query could not say which package owns \//mu,
+        );
+        expect(limitations.join("\n")).toContain(
+          `${suffix}, so the package that owns ${owned}`,
+        );
+      }
+    },
+  );
+
+  it("keeps the program's package for an executable launch and an entry no package owns", async () => {
+    const { inspect } = await writerFixture();
+
+    for (const launch of [
+      { executable: "libreoffice" },
+      { desktopEntry: "my-writer" },
+    ]) {
+      const { installed } = await inspect(launch);
+      expect(installed).toMatchObject({
+        kind: "deb",
+        name: "libreoffice-common",
+      });
+      expect(installed).not.toHaveProperty("executable_package");
+    }
+  });
+
+  it("matches a package file against the entry's package", async () => {
+    const { root, inspect } = await writerFixture();
+    const deb = join(root, "libreoffice-writer.deb");
+    await writeFile(deb, "package bytes");
+
+    const { installed } = await inspect(
+      { desktopEntry: "libreoffice-writer" },
+      { packageFile: deb },
+    );
+
+    expect(installed).not.toHaveProperty("package_file_reason");
+    expect(installed.package_file).toMatchObject({
+      package: "libreoffice-writer",
+      version: WRITER_VERSION,
+      depends: ["libreoffice-core"],
+    });
+  });
+});
+
+describe.skipIf(process.platform === "win32")(
+  "desktop entry program ownership",
+  () => {
+    it("keeps the entry's package and records that no package owns the program it runs", async () => {
+      const { runQuery, inspect } = await writerFixture();
+      // A program of the user's own, such as ~/.local/bin/libreoffice, found first on PATH.
+      const unpackaged: QueryRunner = async (command, argv, signal) =>
+        command === "dpkg-query" &&
+        argv[1]?.endsWith("/bin/libreoffice") === true
+          ? { stdout: "", exitCode: 1 }
+          : runQuery(command, argv, signal);
+
+      const { installed } = await inspect(
+        { desktopEntry: "libreoffice-writer" },
+        { run: unpackaged },
+      );
+
+      expect(installed).toMatchObject({
+        kind: "deb",
+        name: "libreoffice-writer",
+        executable_package_reason: expect.stringMatching(
+          /^no package owns \/\S+\/bin\/libreoffice$/u,
+        ),
+      });
+      expect(installed).not.toHaveProperty("executable_package");
+    });
+
+    it("counts the program as owned when dpkg owns the file its path resolves to, as for an alternatives link", async () => {
+      const { root, runQuery, inspect } = await writerFixture();
+      const soffice = join(root, "lib/libreoffice/program/soffice");
+      await mkdir(join(root, "lib/libreoffice/program"), { recursive: true });
+      await writeFile(soffice, "#!/bin/sh\nexit 0\n");
+      await chmod(soffice, 0o755);
+      await rm(join(root, "bin/libreoffice"));
+      await symlink(soffice, join(root, "bin/libreoffice"));
+      const resolvedOnly: QueryRunner = async (command, argv, signal) => {
+        const path = argv[1] ?? "";
+        if (command === "dpkg-query" && path.endsWith("/bin/libreoffice"))
+          return { stdout: "", exitCode: 1 };
+        if (command === "dpkg-query" && path.endsWith("/program/soffice"))
+          return { stdout: `libreoffice-common: ${path}`, exitCode: 0 };
+        return runQuery(command, argv, signal);
+      };
+
+      const { installed } = await inspect(
+        { desktopEntry: "libreoffice-writer" },
+        { run: resolvedOnly },
+      );
+
+      expect(installed).toMatchObject({
+        name: "libreoffice-writer",
+        executable_package: "libreoffice-common",
+      });
+      expect(installed).not.toHaveProperty("executable_package_reason");
     });
   },
 );
