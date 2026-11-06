@@ -149,18 +149,27 @@ it("renders a build bundle from a request with REA's payload and starts it", asy
       source: {
         kind: "request",
         desktop_entry: "org.xfce.mousepad",
-        install: { kind: "archive", package: "mousepad" },
+        install: {
+          kind: "archive",
+          package: "mousepad",
+          extra_packages: ["librsvg2-common"],
+        },
       },
     },
   });
   expect(started.isError, JSON.stringify(started)).not.toBe(true);
-  expect(started.structuredContent).toMatchObject({ environment: "mousepad" });
+  expect(started.structuredContent).toMatchObject({
+    environment: "mousepad",
+    extra_packages: ["librsvg2-common"],
+  });
   const env = join(runner.state, "bundle", "envs", "mousepad");
   expect(await readFile(join(env, "rea-payload.tar"), "utf8")).toBe(
     "a packed REA build",
   );
-  expect(await readFile(join(env, "mousepad_app.py"), "utf8")).toContain(
-    'Launch(at="demand"',
+  const module = await readFile(join(env, "mousepad_app.py"), "utf8");
+  expect(module).toContain('Launch(at="demand"');
+  expect(module).toContain(
+    'packages=Packages(apt=["mousepad", "librsvg2-common", "libgtk-3-bin"])',
   );
   const { computer_id: computerId } = toolContract(
     "start_build_computer",
@@ -192,6 +201,51 @@ it("names what a request needs when REA's payload is not configured", async () =
   );
   expect(await runner.notes("runs.jsonl")).toEqual([]);
 });
+
+it.each([
+  [
+    ["Java17"],
+    {
+      path: ["source", "install", "extra_packages", 0],
+      reason: "invalid_format",
+    },
+  ],
+  [
+    Array.from({ length: 17 }, (_, index) => `lib${String(index)}`),
+    {
+      path: ["source", "install", "extra_packages"],
+      reason: "out_of_range",
+      maximum: 16,
+    },
+  ],
+])(
+  "refuses extra packages %j before rendering a bundle",
+  async (extra, issue) => {
+    const { runner } = await fakes();
+    const client = await connect(runner.environment);
+    const refused = parseMcpToolError(
+      await client.callTool({
+        name: "start_build_computer",
+        arguments: {
+          source: {
+            kind: "request",
+            desktop_entry: "freeplane",
+            install: {
+              kind: "archive",
+              package: "freeplane",
+              extra_packages: extra,
+            },
+          },
+        },
+      }),
+    );
+    expect(refused.error.code).toBe("invalid_request");
+    expect(refused.error.details?.issues).toEqual([
+      expect.objectContaining(issue),
+    ]);
+    expect(await runner.notes("runs.jsonl")).toEqual([]);
+  },
+);
 
 it("reports the runner's failure with its output and leaves no helper behind", async () => {
   const { runner } = await fakes();

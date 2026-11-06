@@ -146,6 +146,11 @@ export const DESKTOP_BUILD_TOOL_CONTRACTS = [
       environment: z
         .string()
         .describe("The rendered environment's name, or the bundle folder."),
+      extra_packages: z
+        .array(z.string())
+        .describe(
+          "The packages the request named beside the app, which the export installs beside it too: an archive install's extra_packages or a package file's dependencies; empty otherwise.",
+        ),
       screenshot: driverResult,
     }),
     examples: [

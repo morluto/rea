@@ -25,7 +25,7 @@ const text = (files: readonly BuildBundleFile[], path: string): string => {
 describe("build bundle renderer", () => {
   it("installs an archive package, opens it on demand and adds REA in a build-only layer", () => {
     const bundle = renderBuildBundle(
-      request({ kind: "archive", package: "mousepad" }),
+      request({ kind: "archive", package: "mousepad", extra_packages: [] }),
       localPayload,
     );
     expect(bundle.name).toBe("mousepad");
@@ -107,6 +107,20 @@ describe("build bundle install sources", () => {
       (file) => file.path === "envs/geany/apt-keys/geany.asc",
     )?.content;
     expect(copied instanceof Uint8Array && key.equals(copied)).toBe(true);
+  });
+
+  it("installs an archive package's extra packages beside it", () => {
+    const bundle = renderBuildBundle(
+      request({
+        kind: "archive",
+        package: "freeplane",
+        extra_packages: ["openjdk-17-jre"],
+      }),
+      localPayload,
+    );
+    expect(text(bundle.files, "envs/mousepad/mousepad_app.py")).toContain(
+      'packages=Packages(apt=["freeplane", "openjdk-17-jre", "libgtk-3-bin"])',
+    );
   });
 
   it("downloads a .deb for its architecture and installs it after its dependencies", () => {

@@ -61,9 +61,17 @@ the first source that has the app:
   `suite` `noble`, `components` `["main"]`. `key_file` is the repository's
   signing key saved on this host; for a PPA, fetch it from
   keyserver.ubuntu.com by the fingerprint its Launchpad page shows.
-- For a `.deb`, ask the requester for its URL and SHA-256; do not fetch a
-  vendor's download page yourself. List its `Depends` as `dependencies`:
-  it installs with the network off.
+- When the app exits at launch for want of a runtime piece its package does
+  not install, start a new build computer with that package in
+  `extra_packages`, up to 16 archive names; the export installs them too.
+  MyPaint needs
+  `{"kind": "archive", "package": "mypaint", "extra_packages": ["librsvg2-common"]}`
+  for its SVG icons, and Freeplane `["openjdk-17-jre"]`, since its launcher
+  refuses noble's Java 21.
+- Take the `.deb` path only when the app is not in the archive at all, not
+  to add a package. Ask the requester for its URL and SHA-256; do not fetch
+  a vendor's download page yourself. List its `Depends` as `dependencies`,
+  with any runtime piece it lacks: it installs with the network off.
 - Flatpak, AppImage and snaps are not supported yet: say so and stop. An
   archive package that only installs a snap, such as noble's `firefox`,
   counts as a snap. A package with no build for this host's architecture
@@ -150,8 +158,10 @@ the first source that has the app:
    `package_lists_error` may stop the capture finding the package's
    sources; the export says when that matters. When the app exits before
    its window opens, the error gives its exit code and the end of its
-   stderr, which may name what it lacks, such as a Java runtime: try
-   another install source, or stop as for an install this flow cannot do.
+   stderr, which may name what it lacks, such as an icon loader or a Java
+   runtime: close the computer and start a new one with that package in
+   `extra_packages` (see Choose the install), or stop as for an install
+   this flow cannot do.
    - REA counts a file as the app's document only when the app's window
      title shows its file name or `~/` path. When the title shows something
      else, such as MuseScore's score title, pass the path you will save the

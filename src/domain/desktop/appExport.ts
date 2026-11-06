@@ -41,6 +41,8 @@ export interface DesktopAppExportPlan {
   readonly packageFile: ExportPackageFile | null;
   /** The package of the program the desktop entry runs, installed by name after the app's; absent when the app's package owns it. */
   readonly executablePackage?: string;
+  /** Packages installed beside the app because the export was asked for them; absent when none. */
+  readonly extraPackages?: readonly string[];
   /** Whether the app is Electron, whose launch then runs without Chromium's sandbox. */
   readonly electron: boolean;
   readonly command: readonly string[];
@@ -328,10 +330,11 @@ const installName = (plan: DesktopAppExportPlan): string =>
     ? plan.aptPackage
     : `${plan.aptPackage}/${plan.aptRelease}`;
 
-/** The app's package, or a package file's dependencies, then its program's package, its library packages and dconf-cli when settings are loaded. */
+/** The app's package, or a package file's dependencies, then the extra packages, its program's package, its library packages and dconf-cli when settings are loaded. */
 const aptPackages = (plan: DesktopAppExportPlan): readonly string[] => [
   ...new Set([
     ...(plan.packageFile?.dependencies ?? [installName(plan)]),
+    ...(plan.extraPackages ?? []),
     ...(plan.executablePackage === undefined ? [] : [plan.executablePackage]),
     ...plan.libraryPackages,
     ...(plan.dconf.length === 0 ? [] : ["dconf-cli"]),
@@ -462,6 +465,12 @@ const packageFileNotes = ({ packageFile: file }: DesktopAppExportPlan) =>
 const installNotes = (plan: DesktopAppExportPlan): string =>
   [
     ...packageFileNotes(plan),
+    ...(plan.extraPackages === undefined
+      ? []
+      : [
+          `- Installed beside the app because the export was asked for them with \`--extra-package\`, as a build computer asks
+  for the packages its request named: ${plan.extraPackages.map((name) => `\`${name}\``).join(", ")}.`,
+        ]),
     ...(plan.executablePackage === undefined
       ? []
       : [

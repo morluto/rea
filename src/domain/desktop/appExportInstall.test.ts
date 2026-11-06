@@ -6,6 +6,7 @@ import {
   fromUbuntuNobleArchive,
   installsFromPackageFile,
   repositoryRefusal,
+  withExtraPackages,
 } from "./appExportInstall.js";
 import { installLimitations } from "./appExportInstallLimitations.js";
 import {
@@ -729,6 +730,52 @@ describe("installsFromPackageFile", () => {
     expect(exportInstall(varicad(), "varicad", "x64", VARICAD_URL).ok).toBe(
       true,
     );
+  });
+});
+
+describe("withExtraPackages", () => {
+  const archive = varicad({
+    sources: ["http://archive.ubuntu.com/ubuntu noble/universe amd64 Packages"],
+    source_origins: ["Ubuntu"],
+  });
+  const extra = (
+    installed: DesktopPackage,
+    packageUrl: string | undefined,
+    names: readonly string[],
+  ) => {
+    const install = exportInstall(installed, "varicad", "x64", packageUrl);
+    if (!install.ok) throw new Error(install.error.reason);
+    return withExtraPackages(install.value, installed, names);
+  };
+
+  it("installs them beside a package apt offers, leaving out the package and what its captured file depends on", () => {
+    // As MyPaint's build request named librsvg2-common beside the archive's own .deb.
+    const install = extra(archive, undefined, [
+      "librsvg2-common",
+      "libgl1",
+      "varicad2026-en",
+      "librsvg2-common",
+    ]);
+
+    if (!install.ok) throw new Error(install.error.reason);
+    expect(install.value.packageFile).toBeNull();
+    expect(install.value.extraPackages).toEqual(["librsvg2-common"]);
+  });
+
+  it("installs them beside a package file", () => {
+    const install = extra(varicad(), VARICAD_URL, ["libgl1", "openjdk-17-jre"]);
+
+    if (!install.ok) throw new Error(install.error.reason);
+    expect(install.value.packageFile?.dependencies).toContain("libgl1");
+    expect(install.value.extraPackages).toEqual(["openjdk-17-jre"]);
+  });
+
+  it("refuses a name that is not a Debian package's", () => {
+    const install = extra(archive, undefined, ["librsvg2-common", "Java17"]);
+
+    if (install.ok) throw new Error("expected a refusal");
+    expect(install.error.field).toBe("extra_package");
+    expect(install.error.reason).toContain("Java17");
   });
 });
 

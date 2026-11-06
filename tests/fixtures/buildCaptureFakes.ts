@@ -33,10 +33,11 @@ export const BUILD_REQUEST = {
 };
 const ENDS = ["--seed-checkpoint", "seed", "--end-checkpoint", "end"];
 
-/** The app's package as the capture records it, and the URL the export downloads its file from, if it needs one. */
+/** The app's package as the capture records it, the URL the export downloads its file from, if it needs one, and the packages it installs beside the app. */
 export interface CapturedInstall {
-  readonly package: DesktopPackage;
+  readonly package?: DesktopPackage;
   readonly packageUrl?: string;
+  readonly extraPackages?: readonly string[];
 }
 
 /**
@@ -53,7 +54,7 @@ const realCliOutputs = async (
   }: { exportRefused?: boolean; content?: readonly string[] } = {},
 ) => {
   const capture = await writeCaptureFolder(
-    install === undefined
+    install?.package === undefined
       ? recorded
       : {
           ...recorded,
@@ -83,6 +84,10 @@ const realCliOutputs = async (
     ...(install?.packageUrl === undefined
       ? []
       : ["--package-url", install.packageUrl]),
+    ...(install?.extraPackages ?? []).flatMap((name) => [
+      "--extra-package",
+      name,
+    ]),
     "--json",
   ]);
   // A refusal prints its error; the exit code alone does not tell them apart.
@@ -105,7 +110,8 @@ const realCliOutputs = async (
  * against a REA stand-in printing the real CLI's outputs. `dropReplies`
  * names controller commands, in order, whose reply is lost after they run;
  * `env` adds to the stand-in's environment; `install` replaces the captured
- * package, the archive's `notes`; `screenshotDelaysMs` delays the computer's
+ * package, the archive's `notes`, and names the packages the real export
+ * installs beside it; `screenshotDelaysMs` delays the computer's
  * screenshots in order. `recorded` replaces what the capture records, with
  * `exportRefused` when its export refuses BUILD_TASK and `content` the files
  * it retained beyond the note's; `selected` is what it records when given

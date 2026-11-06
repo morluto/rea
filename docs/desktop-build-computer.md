@@ -66,12 +66,21 @@ it through the app's server.
 
 | `kind`           | Installs                                                                                                   |
 | ---------------- | ---------------------------------------------------------------------------------------------------------- |
-| `archive`        | `package` from the Ubuntu 24.04 archive, on amd64 and arm64                                                |
+| `archive`        | `package` from the Ubuntu 24.04 archive, on amd64 and arm64, with its optional `extra_packages` beside it  |
 | `apt_repository` | `package` from the repository at `uri` with `suite` and `components`, trusting the key file `key_file`     |
 | `package_file`   | The `.deb` at `url`, checked against `sha256`, for one `architecture`, after its apt `dependencies` are in |
 
 Build steps run with the network off, so a `.deb`'s dependencies must be
-listed. The bundle adds REA in a build-only layer: Node.js
+listed. `extra_packages` names up to 16 more archive packages, by the same
+name rules as `package`, for a runtime piece the app needs that its package
+does not install: apt here skips Recommends, so MyPaint 2.0.1 exits at launch
+without `librsvg2-common`, GTK's SVG icon loader, and Freeplane 1.7.10 needs
+`openjdk-17-jre`, since its launcher refuses noble's default Java 21. The
+export installs them beside the app too, as it does a `.deb`'s
+`dependencies` when apt offers the `.deb`'s package; see
+[build and witness](desktop-build-witness.md).
+
+The bundle adds REA in a build-only layer: Node.js
 24.22.1, downloaded per architecture and checked against its release checksum,
 and REA from `REA_BUILD_COMPUTER_REA_ARCHIVE`, both unpacked into `/opt/rea` by
 a root build step, with `node` and `rea` on `PATH`. An exported bundle carries
@@ -106,7 +115,10 @@ progress notifications continue meanwhile. Given `screenshot` with a
 `region`, `format` or `quality`, REA then takes one with them, a `region`
 cropping that frame. The result holds
 `computer_id`, agentenv's `sandbox_id`, the environment name or bundle folder,
-and the screenshot's frame as structured content beside its image.
+`extra_packages`, what the request named beside the app for the export to
+install too (an archive install's `extra_packages` or a `.deb`'s
+`dependencies`, empty otherwise), and the screenshot's frame as structured
+content beside its image.
 
 A failed start returns the last 16 KiB of the helper's stderr, where a failing
 build prints its error, and its exit status; a cancelled one stops the helper,

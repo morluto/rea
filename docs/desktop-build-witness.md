@@ -111,13 +111,18 @@ See [desktop builds](https://github.com/morluto/rea/blob/main/.agents/skills/rev
    starting content the capture did not retain, a limitation names the
    folder and the seed files in it. For a
    `.deb` app that no apt source the capture found offers, the export takes
-   the request's URL with `--package-url`; one apt offers installs from apt. REA lists the bundle's files with their sizes
-   and SHA-256 in the computer, into a file beside the bundle that it reads
-   through `data/get`, since a large bundle's list outgrows a command's
-   output; it then brings the files back through the driver's
-   `data/get` in answers of at most 8 MiB, and checks and writes each answer
-   into the folder before asking for the next, so one answer at a time is
-   held; a failure leaves no partial folder.
+   the request's URL with `--package-url`; one apt offers installs from apt.
+   Either way the request's `dependencies` reach the export as
+   `--extra-package`, as an archive request's `extra_packages` do, so a
+   runtime piece the agent named, such as MyPaint's `librsvg2-common`, is
+   installed beside the app; the limitations and the README list those the
+   app's `.deb` does not already depend on. REA lists the bundle's files
+   with their sizes and SHA-256 in the computer, into a file beside the
+   bundle that it reads through `data/get`, since a large bundle's list
+   outgrows a command's output; it then brings the files back through the
+   driver's `data/get` in answers of at most 8 MiB, and checks and writes
+   each answer into the folder before asking for the next, so one answer at
+   a time is held; a failure leaves no partial folder.
 8. `close_build_computer`.
 
 A checkpoint name is lowercase letters, digits, dot, dash and underscore; the

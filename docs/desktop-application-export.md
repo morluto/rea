@@ -22,6 +22,13 @@ the capture, once REA has validated it against the capture; see
 [desktop application tasks](desktop-application-tasks.md). `--package-url`
 says where the computer downloads the package of an application installed from
 a `.deb` file; see [Applications from a .deb file](#applications-from-a-deb-file).
+`--extra-package NAME`, repeatable, installs another Ubuntu 24.04 archive
+package beside the application, such as a runtime piece its package does not
+install; a [build computer](desktop-build-witness.md) passes its request's
+`extra_packages`, or a `.deb` request's `dependencies`, this way. A name that
+is not a Debian package name is refused (`extra_package`); the application's
+own package and what its captured `.deb` depends on are left to apt, and the
+rest are listed in the limitations and the README.
 `--seed-checkpoint` names the checkpoint whose state seeds the bundle, the
 baseline by default, and `--end-checkpoint` the one a task must pass on, the
 capture's last by default; see [The seed checkpoint](#the-seed-checkpoint).
@@ -62,9 +69,10 @@ an `App` suffix.
 
 The class declares:
 
-- `Packages(apt=[...])` with the package the capture found. A vendor package
-  is named `<package>/<release>`, its repository's release (the Suite apt
-  reports as `a=`, or else its Codename), so apt takes it from that repository
+- `Packages(apt=[...])` with the package the capture found, then the
+  `--extra-package` names. A vendor package is named `<package>/<release>`,
+  its repository's release (the Suite apt reports as `a=`, or else its
+  Codename), so apt takes it from that repository
   even when the Ubuntu archive offers a higher version or epoch, as noble's
   transitional `firefox` does over packages.mozilla.org's; it is named alone
   when the release names neither, or when the capture was written before

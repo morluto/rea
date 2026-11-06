@@ -119,6 +119,18 @@ and the recording and writes the record as Evidence.
   fails on what the seed's view shows. The controller writes a folder's file
   list to a file that REA reads through `data/get`, so a large bundle's list
   is not cut at the 1 MiB of a command's output.
+- Gaps of the build batches: an archive request takes up to 16
+  `extra_packages`, archive package names validated as its `package` is,
+  installed beside the app and listed in `start_build_computer`'s result
+  (a `.deb` request's `dependencies` are listed there too), for a runtime
+  piece the app needs that its package does not install (MyPaint's SVG icon
+  loader `librsvg2-common`, which GTK only recommends; a Java 17 for
+  Freeplane, whose launcher refuses noble's Java 21). The export takes them
+  as repeatable `--extra-package` and installs them beside the app, and the
+  build export passes them, and a `.deb` request's `dependencies` too, so a
+  `.deb` apt also offers no longer loses them when it is installed by name.
+  The limitations and the README name them, leaving out the app's own
+  package and what its captured `.deb` depends on.
 - The witness reads the build computer's bounded action log: its stage rules
   use the log's count and the last applied action of each kind, and the
   record holds the entries the log keeps, `actions_dropped`, and a

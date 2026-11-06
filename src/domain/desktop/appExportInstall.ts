@@ -1,6 +1,9 @@
 import { err, ok, type Result } from "../result.js";
 import { withoutCredentials, withoutCredentialsIn } from "./aptRepositories.js";
-import { dependencyPackages } from "./debianPackageFile.js";
+import {
+  DEBIAN_PACKAGE_NAME,
+  dependencyPackages,
+} from "./debianPackageFile.js";
 import type { AptRepository, DesktopPackage } from "./desktopCapture.js";
 import { unwrapDesktopCommand } from "./desktopEntry.js";
 
@@ -73,11 +76,13 @@ export interface ExportInstall {
   readonly executablePackage?: string;
   /** Packages the capture found only in repositories the export leaves out, which the computer cannot install. */
   readonly strandedPackages?: readonly string[];
+  /** Packages installed beside the app because the export was asked for them, other than the app's and its package file's dependencies; absent when none. */
+  readonly extraPackages?: readonly string[];
 }
 
 /** Why the computer cannot install the captured package: the input to change, and how. */
 export interface InstallRefusal {
-  readonly field: "capture" | "package_url";
+  readonly field: "capture" | "package_url" | "extra_package";
   readonly reason: string;
   readonly remediation: string;
 }
@@ -494,6 +499,39 @@ export const exportInstall = (
           `The desktop entry belongs to ${install.value.aptPackage}, but the program it runs belongs to ${program}, which the computer cannot install: ${reason}.`,
         ),
       );
+};
+
+/**
+ * The install with the extra packages the export was asked for beside the
+ * app, once each, leaving to apt the app's own package and what its captured
+ * package file depends on; or why one is not a package name.
+ */
+export const withExtraPackages = (
+  install: ExportInstall,
+  installed: DesktopPackage,
+  extraPackages: readonly string[],
+): Result<ExportInstall, InstallRefusal> => {
+  const unnamed = extraPackages.find((name) => !DEBIAN_PACKAGE_NAME.test(name));
+  if (unnamed !== undefined)
+    return err(
+      refusal(
+        `--extra-package ${JSON.stringify(unnamed)} is not a Debian package name.`,
+        "extra_package",
+        "Pass --extra-package with a package name of the Ubuntu 24.04 archive: lowercase letters, digits, +, - and ., at least two long.",
+      ),
+    );
+  const declared = new Set([
+    install.aptPackage,
+    ...(installed.package_file === undefined
+      ? []
+      : dependencyPackages(installed.package_file).names),
+  ]);
+  const extra = [...new Set(extraPackages)].filter(
+    (name) => !declared.has(name),
+  );
+  return ok(
+    extra.length === 0 ? install : { ...install, extraPackages: extra },
+  );
 };
 
 /** Chromium's sandbox needs user namespaces a container does not grant, so an Electron launch runs with `--no-sandbox` right after the program. */

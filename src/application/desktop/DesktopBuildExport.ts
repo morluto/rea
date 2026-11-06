@@ -116,6 +116,8 @@ export const exportBuild = async (
     readonly attempt: number;
     /** The URL a computer downloads the app's `.deb` from, when the capture says apt does not install it. */
     readonly packageUrl?: string;
+    /** The packages the request named beside the app, which the bundle installs beside it too. */
+    readonly extraPackages: readonly string[];
   },
   request: BuildExportRequest,
   signal: AbortSignal,
@@ -141,6 +143,7 @@ export const exportBuild = async (
         ...(capture.packageUrl === undefined
           ? []
           : ["--package-url", capture.packageUrl]),
+        ...capture.extraPackages.flatMap((name) => ["--extra-package", name]),
         "--json",
       ],
       {

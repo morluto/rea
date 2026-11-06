@@ -78,6 +78,8 @@ export interface DesktopExportRequest {
   readonly tasks: readonly string[];
   /** Where the computer downloads the captured package file from, for an application installed from one. */
   readonly packageUrl?: string | undefined;
+  /** Packages installed beside the application, such as a runtime piece a build request named. */
+  readonly extraPackages?: readonly string[] | undefined;
   /** The checkpoint the seed is taken at; the baseline when omitted. */
   readonly seedCheckpoint?: string | undefined;
   /** The checkpoint a task's end state is read at; the last when omitted. */
@@ -194,6 +196,7 @@ const planExport = (
     capture,
     source,
     request.packageUrl,
+    request.extraPackages,
   );
   const electron = application.executable.electron_markers.length > 0;
   const { homePath, files, collisions, paths } = exportedStateFiles(
@@ -225,6 +228,9 @@ const planExport = (
     ...(install.executablePackage === undefined
       ? {}
       : { executablePackage: install.executablePackage }),
+    ...(install.extraPackages === undefined
+      ? {}
+      : { extraPackages: install.extraPackages }),
     electron,
     command: launch.command,
     opens: launch.opens,
@@ -470,6 +476,7 @@ export const exportDesktopApplication = async (
         named: request.name !== undefined,
         tasks: request.tasks.length,
         package_url: request.packageUrl !== undefined,
+        extra_packages: [...(request.extraPackages ?? [])],
         seed_checkpoint: request.seedCheckpoint ?? null,
         end_checkpoint: request.endCheckpoint ?? null,
         synthetic_seed: request.syntheticSeed === true,

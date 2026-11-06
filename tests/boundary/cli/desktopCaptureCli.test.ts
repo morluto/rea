@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { expect, it } from "vitest";
@@ -54,6 +55,47 @@ it("exports and drafts between the checkpoints the command names", async () => {
       operation: "describe_desktop_application_task",
       issues: [{ path: ["end_checkpoint"] }],
     },
+  });
+});
+
+it("installs the packages each --extra-package names beside the app, and refuses a name that is not a package's", async () => {
+  const capture = await writeCaptureFolder(seedEndCapture(), undefined, [
+    EDITED_NOTE,
+  ]);
+  const root = await createTestTempDirectory("desktop-cli-");
+  const extra = (bundle: string, ...names: string[]) =>
+    serve([
+      "export-desktop-application",
+      capture,
+      join(root, bundle),
+      ...names.flatMap((name) => ["--extra-package", name]),
+      "--json",
+    ]);
+
+  const exported = parseEvidence(
+    JSON.parse(
+      (await extra("bundle", "librsvg2-common", "openjdk-17-jre")).stdout,
+    ),
+  );
+  const refused = await extra("refused", "librsvg2-common", "Java 17");
+
+  expect(exported.parameters).toMatchObject({
+    extra_packages: ["librsvg2-common", "openjdk-17-jre"],
+  });
+  expect(
+    await readFile(join(root, "bundle/envs/notes/notes_app.py"), "utf8"),
+  ).toContain(
+    'packages=Packages(apt=["notes", "librsvg2-common", "openjdk-17-jre"])',
+  );
+  const named = (text: string) =>
+    text.includes("librsvg2-common") && text.includes("openjdk-17-jre");
+  expect(exported.limitations.filter(named)).toHaveLength(1);
+  expect(named(await readFile(join(root, "bundle/README.md"), "utf8"))).toBe(
+    true,
+  );
+  expect(JSON.parse(refused.stdout)).toMatchObject({
+    code: "invalid_request",
+    details: { issues: [{ path: ["extra_package"] }] },
   });
 });
 
