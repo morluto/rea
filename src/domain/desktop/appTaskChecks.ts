@@ -93,7 +93,7 @@ export const sameJson = (
 const NUMERAL = /^[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?$/u;
 
 /** A number, or a numeral string read as one; undefined for anything else or a numeral past the doubles. */
-const numberOf = (value: JsonValue): number | undefined => {
+export const numberOf = (value: JsonValue): number | undefined => {
   if (typeof value === "number") return value;
   if (typeof value !== "string" || !NUMERAL.test(value)) return undefined;
   const number = Number(value);

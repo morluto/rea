@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 
+import type { DesktopTaskCheckInput } from "./appTask.js";
+import { evaluateTaskChecks } from "./appTaskChecks.js";
 import { passing, xml, xmlDraft } from "./appTaskDraft.fixture.js";
 
 const FILE = "Documents/doc.xml";
@@ -147,6 +149,41 @@ describe("draftTaskFiles for records whatever their fields are called", () => {
       [false, false],
       [true, true],
     ]);
+  });
+
+  it("suggests no check a cut view leaves undecided for a record only position names, added before the cut", () => {
+    const book = (...people: string[]) =>
+      `<book><contacts>${people
+        .map(
+          (name) =>
+            `<record><field>${name}</field><field>Okafor</field></record>`,
+        )
+        .join(
+          "",
+        )}</contacts><log>${"<entry>x</entry>".repeat(2600)}</log></book>`;
+    const before = book("Hannah", "Bo");
+    const after = book("Hannah", "Bo", "Delphine");
+    const outcomes = (text: string, checks: readonly DesktopTaskCheckInput[]) =>
+      evaluateTaskChecks(
+        checks.map((check, index) => ({ ...check, id: `c${String(index)}` })),
+        new Map([[FILE, { format: "xml" as const, view: xml(text) }]]),
+      ).map(({ passed, undecided }) => [passed, undecided === true]);
+
+    const file = xmlDraft(before, after);
+
+    expect(xml(after)).toMatchObject({ truncated: true });
+    // The record is reported as only position reaching it, not dropped.
+    expect(file.notes.map(({ code }) => code)).toEqual([
+      "cut_view",
+      "by_position",
+    ]);
+    // Each suggestion decides at both ends: failing at the seed, passing at the end.
+    expect(outcomes(before, file.suggested)).toEqual(
+      file.suggested.map(() => [false, false]),
+    );
+    expect(outcomes(after, file.suggested)).toEqual(
+      file.suggested.map(() => [true, false]),
+    );
   });
 
   it("checks a <link> field of a record a selector names, beside its other fields, though the record holds a save date", () => {
@@ -307,6 +344,20 @@ describe("draftTaskFiles for decimals", () => {
         value: "14",
       },
     ]);
+  });
+
+  it("checks a decimal so it fails at a seed whose integer is within the tolerance of it", () => {
+    const sheet = (rate: string) =>
+      `<Cells><Cell Row="2" Col="3">${rate}</Cell><Cell Row="3" Col="3">5</Cell></Cells>`;
+    const before = sheet("0");
+    const after = sheet("0.0005");
+
+    const file = xmlDraft(before, after);
+
+    expect(file.suggested).toHaveLength(1);
+    expect(
+      [before, after].map((text) => passing(FILE, xml(text), file.suggested)),
+    ).toEqual([[false], [true]]);
   });
 });
 

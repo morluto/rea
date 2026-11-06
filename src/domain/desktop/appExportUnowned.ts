@@ -4,7 +4,11 @@ import {
 } from "./buildCapture.js";
 import { versionAt, type DesktopStatePath } from "./desktopState.js";
 import { isWithinAny } from "./desktopStateDiff.js";
-import { runtimeFile, type RuntimeFileKind } from "./runtimeFiles.js";
+import {
+  isLockName,
+  runtimeFile,
+  type RuntimeFileKind,
+} from "./runtimeFiles.js";
 import { stateDirectoryOf } from "./stateRoles.js";
 
 /** The most paths a limitation or README line names before counting the rest. */
@@ -97,19 +101,6 @@ export interface RuntimeSeeds {
   readonly paths: readonly string[];
 }
 
-/** Names of lock files an app holds while it runs, lowercase, wherever they lie. */
-const LOCK_NAMES = new Set([
-  "lockfile",
-  "lock",
-  ".lock",
-  ".parentlock",
-  "parent.lock",
-  "singletonlock",
-  // Lucene's index lock, as Poedit's translation memory holds.
-  "write.lock",
-]);
-/** LibreOffice's lock beside a document it has open: `.~lock.<name>#`. */
-const DOCUMENT_LOCK = /^\.~lock\..+#$/u;
 /**
  * Locks named for the file beside them, by the name they lock: GnuCash's
  * `<file>.LCK`, Grisbi's `.<file>.lock`, and VYM's `<file>.<ext>.lock`, whose
@@ -135,9 +126,8 @@ export const isLockFile = (
   stateDirectories: readonly string[],
   recorded: ReadonlySet<string> = new Set(),
 ): boolean => {
+  if (isLockName(file)) return true;
   const name = file.split("/").at(-1) ?? "";
-  if (LOCK_NAMES.has(name.toLowerCase()) || DOCUMENT_LOCK.test(name))
-    return true;
   const folder = folderOf(file);
   const besideItsFile = SIBLING_LOCKS.some((lock) => {
     const locked = lock.exec(name)?.[1];
