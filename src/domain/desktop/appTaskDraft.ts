@@ -2,7 +2,12 @@ import type { JsonValue } from "../jsonValue.js";
 import { isTimestamp, type DesktopTaskCheckInput } from "./appTask.js";
 import { leftOutFiles } from "./appExportUnowned.js";
 import { isGeneratedUid } from "./attributeRank.js";
-import { jsonCounts, positionalNotes } from "./appTaskDraftJson.js";
+import {
+  decisive,
+  jsonCounts,
+  outermost,
+  positionalNotes,
+} from "./appTaskDraftJson.js";
 import {
   fileNotes,
   readAsTextNotes,
@@ -258,7 +263,9 @@ const valueSuggestions = (
   // Key file entries are flat; a group may hold `/`, so prefixes mean nothing there.
   const leaves = (entries: readonly string[]) =>
     format === "keyfile" ? entries : innermost(entries);
-  const suggestions: Suggestion[] = [];
+  const wholes = (entries: readonly string[]) =>
+    format === "keyfile" ? entries : outermost(entries);
+  const listed: Suggestion[] = [];
   for (const entry of leaves([...change.added, ...change.changed])) {
     const at = pointer(entry);
     const value = at === undefined ? undefined : resolvePointer(final.view, at);
@@ -270,13 +277,14 @@ const valueSuggestions = (
       !isTimestamp(value) &&
       !(typeof value === "string" && isGeneratedUid(value))
     )
-      suggestions.push({ kind: "value_equals", file, pointer: at, value });
+      listed.push({ kind: "value_equals", file, pointer: at, value });
   }
-  for (const entry of leaves(change.removed)) {
+  for (const entry of wholes(change.removed)) {
     const at = pointer(entry);
     if (at !== undefined && at !== "")
-      suggestions.push({ kind: "value_absent", file, pointer: at });
+      listed.push({ kind: "value_absent", file, pointer: at });
   }
+  const suggestions = decisive(listed, versions(baseline, final));
   const { values, cut } = plainValues(
     plainChange(format, baseline, final),
     baseline,

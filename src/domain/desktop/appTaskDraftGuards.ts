@@ -35,6 +35,8 @@ type Suggestion = DesktopTaskCheckInput;
 /** Guards a file's draft offers, and how many one suggested check takes. */
 const MAX_GUARDS = 4;
 const MAX_GUARDS_PER_CHECK = 2;
+/** Like siblings one list step tries for a check's guards, nearest first, so a guard costs the same among thousands. */
+const MAX_SIBLINGS_TRIED = 8;
 
 /** What guards read: a file's two ends, whether a check there is decided by name, and noise. */
 export interface GuardContext {
@@ -392,13 +394,13 @@ const guardSteps = (context: GuardContext, pointer: string): Step[] => {
   });
 };
 
-/** Up to two guards for one check: a field on like siblings of the innermost list it goes through that has any, a record's before its other fields (`guardSteps`), preferring one that varies among them. */
+/** Up to two guards for one check: a field on like siblings of the innermost list it goes through that has any, a record's before its other fields (`guardSteps`), preferring one that varies among them, trying the first `MAX_SIBLINGS_TRIED` siblings and stopping once it has two. */
 const guardsFor = (context: GuardContext, check: Suggestion): Suggestion[] => {
   if (check.kind !== "value_equals" && check.kind !== "text_equals") return [];
   for (const step of guardSteps(context, check.pointer)) {
     const { siblings, all } = siblingsOf(context, step);
     const guards: Suggestion[] = [];
-    for (const sibling of siblings) {
+    for (const sibling of siblings.slice(0, MAX_SIBLINGS_TRIED)) {
       const guard = siblingGuard(context, check, { step, all }, sibling);
       if (guard !== undefined) guards.push(guard);
       if (guards.length === MAX_GUARDS_PER_CHECK) break;

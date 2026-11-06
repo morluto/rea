@@ -424,6 +424,10 @@ interface TextContext {
   readonly place: TextPlacement;
 }
 
+/** Whether text is one line the app lays out between line breaks. */
+const isLaidOutLine = (value: string) =>
+  /[\r\n]/u.test(value) && !/[\r\n]/u.test(value.trim());
+
 /**
  * The check of an element's whole text: a decimal held as the element's one
  * text node, as a spreadsheet keeps a cell's number, by its value within a
@@ -444,10 +448,9 @@ export const wholeTextCheck = (
     if ("tolerance" in check) return { check, guards: [] };
   }
   // One line the app lays out between line breaks, as KmPlot's formula before its next element, compares with its whitespace collapsed.
-  const laidOut =
-    /[\r\n]/u.test(value) && !/[\r\n]/u.test(value.trim())
-      ? { value: collapseWhitespace(value), normalize_whitespace: true }
-      : { value };
+  const laidOut = isLaidOutLine(value)
+    ? { value: collapseWhitespace(value), normalize_whitespace: true }
+    : { value };
   return (
     (before === undefined
       ? undefined
@@ -475,7 +478,8 @@ const candidateAt = (
  * The text check a candidate takes: an element the final view holds whole at
  * the pointer `name` gives it, its text at most the limit, no timestamp and
  * holding no date stamped in parts, and changed from the baseline's or, for
- * an element `added` whole, absent there.
+ * an element `added` whole, absent there; never a line the app only laid
+ * out anew, which a check comparing collapsed whitespace finds at the seed.
  */
 const textCheck = (
   context: TextContext,
@@ -489,7 +493,12 @@ const textCheck = (
   if (!added && !isXmlElement(before)) return undefined;
   const value = elementText(now);
   const old = isXmlElement(before) ? elementText(before) : undefined;
+  const relaidOut =
+    old !== undefined &&
+    isLaidOutLine(value) &&
+    collapseWhitespace(old) === collapseWhitespace(value);
   return value !== old &&
+    !relaidOut &&
     value.length <= context.place.limit.chars &&
     !isStamp(value) &&
     !holdsSplitDate(context.ends.final, pointer)

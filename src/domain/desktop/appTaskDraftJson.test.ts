@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { JsonValue } from "../jsonValue.js";
 import { draftOf, pointerOf, statePath } from "./appTaskDraft.fixture.js";
 import { evaluateTaskChecks } from "./appTaskChecks.js";
+import { jsonCounts } from "./appTaskDraftJson.js";
 import type { DesktopTaskCheckInput } from "./appTask.js";
 
 const FILE = "Documents/reading-list.trln";
@@ -104,5 +105,88 @@ describe("draftTaskFiles for records in a JSON array, as TreeLine saves its node
     expect(file.notes).toMatchObject([
       { code: "by_position", pointers: expect.arrayContaining(positional) },
     ]);
+  });
+
+  it("checks nothing the seed already holds, nor a removed record's place another record takes, when position alone reaches the records", () => {
+    const seed = outline([GUNS, SPQR]);
+    // A uid sorting between the others puts the new book where SPQR was.
+    const middle = ["830000aad9f511f19fc4edd4f1920549", "Silk"] as const;
+    const added = drafted(seed, outline([GUNS, middle, SPQR]));
+    const removed = drafted(outline([GUNS, middle, SPQR]), seed);
+
+    for (const [file, before, after] of [
+      [added, seed, outline([GUNS, middle, SPQR])],
+      [removed, outline([GUNS, middle, SPQR]), seed],
+    ] as const) {
+      expect(file.suggested.length).toBeGreaterThan(0);
+      expect(passing(before, file.suggested).filter(Boolean)).toEqual([]);
+      expect(passing(after, file.suggested).every(Boolean)).toBe(true);
+    }
+    expect(added.suggested.map(pointerOf)).not.toContain("/nodes/2/format");
+    expect(
+      removed.suggested
+        .map(pointerOf)
+        .filter((pointer) => pointer?.startsWith("/nodes/2")),
+    ).toEqual([]);
+  });
+});
+
+describe("draftTaskFiles for records a JSON array names by a field", () => {
+  const board = (lists: readonly string[]) =>
+    ({
+      lists: lists.map((id) => ({
+        id,
+        title: `${id[0]?.toUpperCase() ?? ""}${id.slice(1)}`,
+        done: false,
+      })),
+    }) as unknown as JsonValue;
+
+  it("checks a removed record is gone by its own selector, which the end resolves to nothing, never its fields through it", () => {
+    const seed = board(["groceries", "chores", "work"]);
+    const end = board(["groceries", "work"]);
+    const file = drafted(seed, end);
+
+    expect(file.suggested).toEqual([
+      { kind: "value_absent", file: FILE, pointer: "/lists/[id=chores]" },
+      { kind: "member_count", file: FILE, pointer: "/lists", equals: 2 },
+    ]);
+    expect(passing(seed, file.suggested)).toEqual([false, false]);
+    expect(passing(end, file.suggested)).toEqual([true, true]);
+  });
+});
+
+describe("jsonCounts over many edited records", () => {
+  it("reads the edits only until one gives the count guard, not every edited record", () => {
+    const rows = (bump: number) =>
+      ({
+        rows: Array.from({ length: 1000 }, (_, index) => ({
+          name: `r${String(index)}`,
+          n: index + bump,
+        })),
+      }) as unknown as JsonValue;
+    let read = 0;
+    const changed = new Proxy(
+      Array.from(
+        { length: 1000 },
+        (_, index) => `/rows/[name=r${String(index)}]/n`,
+      ),
+      {
+        get: (target, key, receiver) => {
+          if (typeof key === "string" && /^\d+$/u.test(key)) read += 1;
+          return Reflect.get(target, key, receiver) as unknown;
+        },
+      },
+    );
+
+    const { guards } = jsonCounts(
+      FILE,
+      { added: [], changed, removed: [] },
+      { baseline: rows(0), final: rows(1) },
+    );
+
+    expect(guards).toEqual([
+      { kind: "member_count", file: FILE, pointer: "/rows", equals: 1000 },
+    ]);
+    expect(read).toBe(1);
   });
 });

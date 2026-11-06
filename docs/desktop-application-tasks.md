@@ -109,7 +109,12 @@ operation `describe_desktop_application_task` and predicate type
   saves them in, and by position only where nothing names a record, as a
   new record whose only id the app generated, with a `by_position` note
   listing those checks; never a value that is a uid the app generates (a
-  GUID, or 32 hex digits as TreeLine's uuid1); `member_count` checks of the
+  GUID, or 32 hex digits as TreeLine's uuid1), nor a check the seed already
+  passes, as a new record's `format` where another record of that kind held
+  its place; a removed record is checked gone by its own pointer, as
+  `/lists/[id=chores]`, and only where the end holds nothing there, so a
+  record only position reached, whose place another took, is left to the
+  count; `member_count` checks of the
   arrays whose members were added or removed, of the members' kind where
   records share a `type`, `kind`, `format` or `category` field, as `/nodes`
   matching `[format=BOOK]`, and a count guard of the innermost array an edit
@@ -207,7 +212,9 @@ operation `describe_desktop_application_task` and predicate type
     `<equation-0>` beside `<arg-min>`, which is checked itself rather than
     the record whose text joins its fields; one line of text the app lays
     out between line breaks, as KmPlot's formula before the next element, is
-    checked, and its siblings guarded, with `normalize_whitespace: true`; where no attribute names one, to the nearest
+    checked, and its siblings guarded, with `normalize_whitespace: true`,
+    and text whose whitespace alone changed, as a formula the app moved to
+    an indented line of its own, gets no check; where no attribute names one, to the nearest
     ancestor within three levels its tag names with no step by position, as
     MuseScore's `VBox` around untitled `<Text>` elements; and where only
     position reaches the element, to the ancestor above the outermost step by
@@ -326,8 +333,10 @@ operation `describe_desktop_application_task` and predicate type
     values, UUIDs and epoch times, binary data encoded as base64 (a PNG's
     `iVBORw0KGgo`, or 256 or more base64 characters mixing cases and
     digits), an id counter (`uniqueid`, `nextobjectid`), a value equal to an
-    id the change gave a new element, as Umbrello's id counter holds the new
-    attribute's `xmi:id`, and durations and counts under a document's metadata; times the app stamps, also as a date written in
+    id the change gave a new element where a counter or that element holds
+    it, as Umbrello's `lastobject` holds the new attribute's `xmi:id`, but
+    never a reference on an element both ends hold, as a KMyMoney split
+    moved to a new account, and durations and counts under a document's metadata; times the app stamps, also as a date written in
     parts whose tag, or one it sits in, names when the app made, changed or
     saved something, as Tellico's `<cdate>` of `<year>`, `<month>` and
     `<day>` (`cdate`, `mdate`, `created`, `modified`, `saved`, `updated`,
@@ -340,14 +349,18 @@ operation `describe_desktop_application_task` and predicate type
     app's `slots`, as GnuCash's `book:slots`, which it adds to and fills on
     reopening a book, a count an app keeps of its members, an attribute
     whose key ends in `count` or an element whose tag names a count, whose
-    integer equals how many elements of one tag it, or the element holding
-    the text, holds, as VYM's root `branchCount`, KMyMoney's
-    `<TRANSACTIONS count="5">` or GnuCash's `<gnc:count-data>`, and attributes the elements of one archive entry only
+    integer changed and at each end equals how many elements of one tag it,
+    or the element holding the text, holds there, the counter left out, as
+    VYM's root `branchCount`, KMyMoney's `<TRANSACTIONS count="5">` or
+    GnuCash's `<gnc:count-data>`, or, for a counter the change added, how
+    many of one tag, more than one, it holds as children, as FreeCAD's
+    `<ObjectDeps Count="2">`, while a count a user enters, as an item's
+    `<count>`, is an edit, and attributes the elements of one archive entry only
     gained while another entry holds the edit, as LibreOffice fills in
     `styles.xml` on save, and, while a change outside them is the edit, any
     change in `styles.xml`, in a document's style containers or its master,
-    handout and notes pages, or to an attribute naming a style, as Impress
-    after a reload wraps its master pages' fields in a new `MT1` style and
+    handout and notes pages, or to an attribute naming an automatic style
+    (`P1`, `MT1`) at both ends, as Impress after a reload wraps its master pages' fields in a new `MT1` style and
     rewrites list style `L2`, and a text showing another field that changed
     alike, its element beside a field naming that one's key, as
     QElectroTech's `<dynamic_elmt_text>` shows a component's label in its
@@ -378,7 +391,8 @@ operation `describe_desktop_application_task` and predicate type
   two like siblings, those sharing most of the attributes its selector
   names it by and its type, as a cell's `Row` or `Col` and `ValueType`,
   then the nearest first, at its seed value, which the end holds
-  too; for a member named as a field, by a name-like attribute alone, as
+  too, trying at most eight of them, so a guard costs the same among
+  thousands of siblings; for a member named as a field, by a name-like attribute alone, as
   QElectroTech's `elementInformation[@name=label]`, the like siblings of
   the nearest record out that hold that field too come first, so the other
   components' labels guard a component's label rather than its other

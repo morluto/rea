@@ -1,11 +1,13 @@
 import type { JsonValue } from "../jsonValue.js";
 import { isTimestamp } from "./appTask.js";
 import {
+  isAutomaticStyle,
   isIdentifyingAttribute,
   isNameLikeKey,
   isViewStateName,
   VIEW_STATE,
 } from "./attributeRank.js";
+import { isMemberCount } from "./appTaskDraftMemberCount.js";
 import { idReferencesOf, mirrorsOf } from "./appTaskDraftMirrors.js";
 import { isPositionalKey, positionalKeys } from "./positionalKeys.js";
 import type { DesktopStateDifference } from "./stateChanges.js";
@@ -199,15 +201,18 @@ const isGarbled = (value: string) =>
 /** An attribute counting the ids an app hands out, as Umbrello's `uniqueid` or Tiled's `nextobjectid`. */
 const ID_COUNTER = /^(?:next|unique|last)[-_]?(?:[\p{L}_-]*)id$/iu;
 
-/** Whether a value is one a program makes: a UUID, an epoch time or garbled text, a count under the metadata, an id counter, an id the change gave a new element (`fresh`), or in or at an id the app assigns. */
+/** A key keeping the last or next id an app hands out, as Umbrello's `lastobject`, which holds the id its new element took. */
+const COUNTER_KEY = /^(?:next|unique|last)[-_]?[\p{L}_-]*$/iu;
+
+/** Whether a value is one a program makes: a UUID, an epoch time or garbled text, a count under the metadata, an id counter, an id the change gave a new element where a counter or that element holds it (`fresh`), or in or at an id the app assigns. */
 const volatileAt = (
   elements: readonly Element[],
   key: string | undefined,
   value: JsonValue | undefined,
-  fresh: ReadonlySet<string>,
+  fresh: boolean,
 ) =>
   (typeof value === "string" &&
-    (isVolatileValue(value) || isGarbled(value) || fresh.has(value))) ||
+    (isVolatileValue(value) || isGarbled(value) || fresh)) ||
   (key !== undefined && ID_COUNTER.test(key.split(":").at(-1) ?? key)) ||
   metadataCount(elements, key, value) ||
   elements.some(assignedId) ||
@@ -216,9 +221,9 @@ const volatileAt = (
 /**
  * The ids of the elements a change added (`id`, `xid`, `uuid`, `guid`, as
  * Umbrello's new attribute's `xmi:id="ubcgF2AWfBmHh"`), which another save
- * of the same edit would not repeat, so a value equal to one, as its id
- * counter's, is the app's: those of four or more characters, not a plain
- * number.
+ * of the same edit would not repeat, so a value equal to one in an id
+ * counter or in that element is the app's: those of four or more
+ * characters, not a plain number.
  */
 const freshIds = (
   change: Pick<DesktopStateDifference, "added">,
@@ -283,46 +288,6 @@ const showsView = (element: Element) =>
 const VIEW_SETTING =
   /^\/(?:[\w-]+\/)+(?:visible|hidden|shown?|expanded|collapsed|geometry|state|size|zoom)$/iu;
 
-/**
- * Whether a value is a count an app keeps of an element's members, as VYM's
- * root `branchCount`, KMyMoney's `<TRANSACTIONS count="5">` or GnuCash's
- * `<gnc:count-data cd:type="transaction">2</gnc:count-data>` in its book:
- * an attribute whose key ends in `count`, or the text of an element whose
- * tag names a count, an integer equal to how many elements of one tag the
- * element, or for text the element holding it, holds at any depth at the
- * end.
- */
-const isMemberCount = (
-  ends: Ends,
-  pointer: string,
-  key: string | undefined,
-) => {
-  const value = resolvePointer(ends.final, pointer);
-  const counter = pointer.replace(/\/children\/\d+$/u, "");
-  const holder = resolvePointer(ends.final, counter);
-  const scope =
-    key === undefined
-      ? counter !== pointer &&
-        isXmlElement(holder) &&
-        /count/iu.test(holder.name.split(":").at(-1) ?? holder.name)
-        ? counter.replace(/\/children\/[^/]+$/u, "")
-        : undefined
-      : /count$/iu.test(key.split(":").at(-1) ?? key)
-        ? ownerOfAttribute(pointer)
-        : undefined;
-  if (scope === undefined || typeof value !== "string" || !/^\d+$/u.test(value))
-    return false;
-  const tally = new Map<string, number>();
-  const owner = resolvePointer(ends.final, scope);
-  const pending = isXmlElement(owner) ? [...owner.children] : [];
-  for (let node = pending.pop(); node !== undefined; node = pending.pop())
-    if (isXmlElement(node)) {
-      tally.set(node.name, (tally.get(node.name) ?? 0) + 1);
-      pending.push(...node.children);
-    }
-  return [...tally.values()].includes(Number(value));
-};
-
 /** A file's views at its two ends. */
 interface Ends {
   readonly baseline: JsonValue | null;
@@ -380,8 +345,9 @@ const ENTRY_VIEW = /^\/entries\/[^/]+\/view\//u;
  * `loext:tab-stop-distance` across `styles.xml`, while another entry holds
  * the edit; and, while a change outside them is the edit, any change to a
  * document's styles, `styles.xml` or its style containers and master,
- * handout and notes pages, or to an attribute naming a style, as Impress
- * wraps its master pages' fields in a new `MT1` style after a reload.
+ * handout and notes pages, or to an attribute naming an automatic style
+ * at both ends (`isAutomaticStyle`), as Impress wraps its master pages'
+ * fields in a new `MT1` style after a reload.
  */
 const upkeepOf = (
   change: Pick<DesktopStateDifference, "added" | "changed" | "removed">,
@@ -406,6 +372,15 @@ const upkeepOf = (
     if (entry !== undefined && noise(pointer) === undefined)
       (gained(pointer) ? filled : edited).add(entry);
   }
+  // A style a user names, as "Quotations" given to a paragraph, is an edit; one the app numbers, as `P1`, its upkeep.
+  const automatic = (pointer: string, key: string) =>
+    [ends.baseline, ends.final].every((view) => {
+      const value = resolvePointer(view, pointer);
+      return (
+        value === undefined ||
+        (typeof value === "string" && isAutomaticStyle(key, value))
+      );
+    });
   const styled = (pointer: string) => {
     const key = attributeKeyOf(pointer);
     const view =
@@ -414,7 +389,9 @@ const upkeepOf = (
         : ends.final;
     return (
       ENTRY_VIEW.exec(pointer)?.[0] === "/entries/[name=styles.xml]/view/" ||
-      (key !== undefined && /style-name$/iu.test(key)) ||
+      (key !== undefined &&
+        /style-name$/iu.test(key) &&
+        automatic(pointer, key)) ||
       elementsAlong(view, pointer).some(({ name }) => STYLE_AREA.test(name))
     );
   };
@@ -631,6 +608,21 @@ export const changeNoise = (
   });
   const byPosition = positionalRenumbering(ends);
   const fresh = freshIds(change, ends);
+  const added = new Set(change.added);
+  // A reference on an element both ends hold, as a split moved to the new account, is the user's.
+  const freshAt = (
+    pointer: string,
+    key: string | undefined,
+    value: JsonValue | undefined,
+  ) =>
+    typeof value === "string" &&
+    fresh.has(value) &&
+    ((key !== undefined && COUNTER_KEY.test(key.split(":").at(-1) ?? key)) ||
+      pointer
+        .split("/")
+        .some((_, index, segments) =>
+          added.has(segments.slice(0, index + 1).join("/")),
+        ));
   const known = new Map<string, NoiseReason | undefined>();
   const base = (pointer: string): NoiseReason | undefined => {
     if (known.has(pointer)) return known.get(pointer);
@@ -652,7 +644,7 @@ export const changeNoise = (
                 pointer === element || pointer.startsWith(`${element}/`),
             )
           ? "renumbered"
-          : volatileAt(elements, key, value, fresh)
+          : volatileAt(elements, key, value, freshAt(pointer, key, value))
             ? "volatile"
             : isStamp(value ?? null) ||
                 stampedAlong(elements) ||

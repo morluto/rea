@@ -1,6 +1,7 @@
 import type { JsonValue } from "../jsonValue.js";
 import type { DesktopTaskCheckInput } from "./appTask.js";
 import type { FileNote } from "./appTaskDraftFileNotes.js";
+import { sameJson } from "./appTaskChecks.js";
 import type { DesktopStateDifference } from "./stateChanges.js";
 import { locatePointer, resolvePointer } from "./viewPointer.js";
 import { spellCondition } from "./viewSelector.js";
@@ -120,28 +121,54 @@ export const jsonCounts = (
     })
     .map((counted) => countOf(file, counted, ends.final))
     .slice(0, MAX_COUNTS);
-  const guards = change.changed
-    .flatMap((pointer) => {
-      const segments = pointer.split("/");
-      for (let index = segments.length - 1; index > 1; index -= 1) {
-        const list = segments.slice(0, index).join("/");
-        const counted = { list };
-        if (
-          Array.isArray(resolvePointer(ends.final, list)) &&
-          !lists.has(JSON.stringify(counted)) &&
-          named(list, ends.baseline) &&
-          named(list, ends.final) &&
-          membersOf(ends.baseline, counted).length > 1 &&
-          membersOf(ends.baseline, counted).length ===
-            membersOf(ends.final, counted).length
-        )
-          return [countOf(file, counted, ends.baseline)];
+  // Edits stop at the first guard, and each list is read once, however many records they touch.
+  const guards: Suggestion[] = [];
+  const tried = new Set<string>();
+  for (const pointer of change.changed) {
+    const segments = pointer.split("/");
+    for (let index = segments.length - 1; index > 1; index -= 1) {
+      const list = segments.slice(0, index).join("/");
+      const counted = { list };
+      if (tried.has(list)) continue;
+      tried.add(list);
+      if (
+        Array.isArray(resolvePointer(ends.final, list)) &&
+        !lists.has(JSON.stringify(counted)) &&
+        named(list, ends.baseline) &&
+        named(list, ends.final) &&
+        membersOf(ends.baseline, counted).length > 1 &&
+        membersOf(ends.baseline, counted).length ===
+          membersOf(ends.final, counted).length
+      ) {
+        guards.push(countOf(file, counted, ends.baseline));
+        break;
       }
-      return [];
-    })
-    .slice(0, MAX_COUNT_GUARDS);
+    }
+    if (guards.length === MAX_COUNT_GUARDS) break;
+  }
   return { checks, guards };
 };
+
+/** Pointers without a listed ancestor: a record removed whole is checked gone by its own pointer. */
+export const outermost = (pointers: readonly string[]): readonly string[] =>
+  pointers.filter(
+    (pointer) => !pointers.some((other) => pointer.startsWith(`${other}/`)),
+  );
+
+/** The checks that tell a file's ends apart: none the seed already passes, nor an absence the end fills, as a place by position another record took. */
+export const decisive = (
+  suggestions: readonly Suggestion[],
+  ends: {
+    readonly baseline: JsonValue | null;
+    readonly final: JsonValue | null;
+  },
+): Suggestion[] =>
+  suggestions.filter((check) =>
+    check.kind === "value_equals"
+      ? !sameJson(resolvePointer(ends.baseline, check.pointer), check.value)
+      : check.kind !== "value_absent" ||
+        locatePointer(ends.final, check.pointer).kind === "none",
+  );
 
 /** A `by_position` note on a JSON file's suggestions that reach their value only by position, as a record nothing names: another save may order the array otherwise. */
 export const positionalNotes = (

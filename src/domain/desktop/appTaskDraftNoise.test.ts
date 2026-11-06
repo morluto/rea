@@ -3,12 +3,14 @@ import { describe, expect, it } from "vitest";
 import type { JsonValue } from "../jsonValue.js";
 import {
   draftOf,
+  passing,
   pointerOf,
   statePath,
   xml,
   xmlDraft,
 } from "./appTaskDraft.fixture.js";
 
+const FILE = "Documents/doc.xml";
 const CELLS =
   "/root/children/[name=Sheet]/children/[name=Cells]/children/[name=Cell]";
 const SELECTIONS = "/root/children/[name=Sheet]/children/[name=Selections]";
@@ -505,5 +507,68 @@ describe("draftTaskFiles counts an app keeps of its records", () => {
     expect(
       file.guards.map(pointerOf).filter((at) => at?.includes("count-data")),
     ).toEqual([]);
+  });
+
+  it("checks a count the user entered, which tallies no tag at both ends, though it equals how many of a tag its record holds", () => {
+    const stock = (widgets: string) =>
+      `<inventory><item><name>Widget</name><count>${widgets}</count></item><item><name>Gadget</name><count>5</count></item></inventory>`;
+
+    const file = xmlDraft(stock("3"), stock("1"));
+
+    const count = file.values.find(({ after }) => after === "1");
+    expect(count).toBeDefined();
+    expect(count?.note).toBeUndefined();
+    expect(passing(FILE, xml(stock("3")), file.suggested)).toEqual([false]);
+    expect(passing(FILE, xml(stock("1")), file.suggested)).toEqual([true]);
+  });
+
+  it("suggests no check of the count a new element keeps of its members, as FreeCAD's ObjectDeps of its Deps", () => {
+    /** Objects as FreeCAD saves them: each one's dependencies, by name, then the objects. */
+    const model = (count: string, deps: string, objects: string) =>
+      `<Document><Objects Count="${count}" Dependencies="1"><ObjectDeps Name="Plate" Count="0"/>${deps}<Object type="Part::Box" name="Plate" id="1324"/>${objects}</Objects></Document>`;
+
+    const file = xmlDraft(
+      model("1", "", ""),
+      model(
+        "3",
+        '<ObjectDeps Name="Hole" Count="0"/><ObjectDeps Name="PlateWithHole" Count="2"><Dep Name="Plate"/><Dep Name="Hole"/></ObjectDeps>',
+        '<Object type="Part::Cylinder" name="Hole" id="1325"/><Object type="Part::Cut" name="PlateWithHole" id="1326"/>',
+      ),
+    );
+
+    // Count="2" counts the two Deps it holds; Count="0" another object's none, which no tag tallies.
+    expect(file.suggested.map(pointerOf)).not.toContain(
+      "/root/children/[name=Objects]/children/[name=ObjectDeps][@Name=PlateWithHole]/attributes/Count",
+    );
+  });
+});
+
+describe("draftTaskFiles styles a user applies", () => {
+  const NS = 'xmlns:office="o" xmlns:text="t" xmlns:style="s"';
+  /** A Writer document: its automatic styles, and named sections each holding a paragraph in a named style. */
+  const minutes = (quote: string, next: string) =>
+    `<office:document-content ${NS}><office:automatic-styles><style:style style:name="P1" style:family="paragraph"/></office:automatic-styles><office:body><office:text><text:h text:style-name="Heading_20_1">Minutes</text:h><text:section text:name="Quote"><text:p text:style-name="${quote}">Ship it, said Ana.</text:p></text:section><text:section text:name="Next"><text:p text:style-name="Standard">${next}</text:p></text:section></office:text></office:body></office:document-content>`;
+
+  it("checks a named style the user gave a paragraph beside another edit, never upkeep, as it would an automatic one the app renumbers", () => {
+    const seed = minutes("Standard", "Next meeting Friday.");
+    const end = minutes("Quotations", "Next meeting Monday.");
+    const file = xmlDraft(seed, end);
+
+    const style = file.values.find(({ after }) => after === "Quotations");
+    expect(style).toBeDefined();
+    expect(style?.note).toBeUndefined();
+    expect(
+      file.suggested.some(
+        (check) => "value" in check && check.value === "Quotations",
+      ),
+    ).toBe(true);
+    // A solve that edits the date alone fails.
+    expect(
+      passing(
+        FILE,
+        xml(minutes("Standard", "Next meeting Monday.")),
+        file.suggested,
+      ),
+    ).toContain(false);
   });
 });

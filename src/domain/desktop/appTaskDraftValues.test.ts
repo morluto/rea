@@ -561,6 +561,38 @@ describe("draftTaskFiles for a transaction added to a book, as KMyMoney saves on
     expect(count).toMatchObject({ before: "2", after: "3" });
     expect(count?.refers_to).toBeUndefined();
   });
+
+  it("checks a split moved to a new account, though its value equals the id the new account took, so a solve that never moves it fails", () => {
+    const opened = (seed: string) =>
+      seed
+        .replace(
+          '<SUBACCOUNT id="A000011"/>',
+          '<SUBACCOUNT id="A000011"/><SUBACCOUNT id="A000012"/>',
+        )
+        .replace(
+          '<ACCOUNT id="A000011" name="Utilities"/>',
+          '<ACCOUNT id="A000011" name="Utilities"/><ACCOUNT id="A000012" name="Water"/>',
+        );
+    const moved = opened(SEED).replace(
+      'account="A000011" price="1/1" id="S0002" payee="P000002"',
+      'account="A000012" price="1/1" id="S0002" payee="P000002"',
+    );
+    const file = xmlDraft(SEED, moved);
+
+    const account = file.values.find(
+      ({ pointer, after }) =>
+        pointer.endsWith("/attributes/account") && after === "A000012",
+    );
+    expect(account).toBeDefined();
+    expect(account?.note).toBeUndefined();
+    expect(
+      passing("Documents/doc.xml", xml(moved), file.suggested),
+    ).not.toContain(false);
+    // Opening the account alone leaves the water bill where it was.
+    expect(
+      passing("Documents/doc.xml", xml(opened(SEED)), file.suggested),
+    ).toContain(false);
+  });
 });
 
 describe("draftTaskFiles values' other pointers", () => {

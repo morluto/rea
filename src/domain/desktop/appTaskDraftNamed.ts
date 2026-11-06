@@ -1,5 +1,5 @@
 import type { JsonValue } from "../jsonValue.js";
-import type { DesktopTaskCheckInput } from "./appTask.js";
+import { collapseWhitespace, type DesktopTaskCheckInput } from "./appTask.js";
 import {
   attributeChecks,
   fieldChecks,
@@ -217,6 +217,14 @@ const equals = (
   const { file, ends, tree, texts, noise } = collected.context;
   const list =
     noise(pointer) === undefined ? collected.values : collected.noise.values;
+  const before = resolvePointer(ends.baseline, pointer);
+  // Text whose whitespace alone changed, as a formula moved to a line of its own, holds what the seed did.
+  const relaid =
+    typeof value === "string" &&
+    typeof before === "string" &&
+    collapseWhitespace(value) === collapseWhitespace(before) &&
+    /\/children\/[^/]+$/u.test(pointer) &&
+    tree.xml(ends.final, pointer);
   if (
     !room(collected, list) ||
     texts.covers(pointer) ||
@@ -224,10 +232,10 @@ const equals = (
     (isRecord(value) && Object.keys(value).length > 0) ||
     isStamp(value) ||
     inSplitDate(ends.final, pointer) ||
-    isLayoutText(tree, ends.final, pointer, value)
+    isLayoutText(tree, ends.final, pointer, value) ||
+    relaid
   )
     return;
-  const before = resolvePointer(ends.baseline, pointer);
   const check = valueEqualsCheck(file, pointer, value, before);
   // A check that already passes at the seed tells nothing.
   if (!named(collected, ends.final, pointer))

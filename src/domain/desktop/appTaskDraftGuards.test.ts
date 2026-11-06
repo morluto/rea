@@ -8,6 +8,7 @@ import {
   xml,
   xmlDraft,
 } from "./appTaskDraft.fixture.js";
+import { draftGuards } from "./appTaskDraftGuards.js";
 
 const FILE = "Documents/doc.xml";
 
@@ -390,5 +391,68 @@ describe("draftTaskFiles for a plot's functions, as KmPlot saves them", () => {
     const fresh = xml(plot("h(x) = 2x + 1", true));
     expect(passing(FILE, fresh, file.suggested)).toEqual([true]);
     expect(passing(FILE, fresh, file.guards)).toEqual([true, true, true]);
+  });
+
+  it("checks no formula the app only moved to an indented line of its own, whose collapsed text the seed holds, beside one the user changed", () => {
+    const seed = plot("h(x) = 2x + 1");
+    const end = plot("h(x) = 2x + 1")
+      .replace("g(x) = 2sin(x)", "g(x) = 3sin(x)")
+      .replace(
+        '<equation-0 step="0.05">h(x)',
+        '<equation-0 step="0.05">\n            h(x)',
+      );
+    const file = xmlDraft(seed, end);
+
+    expect(file.suggested.map(pointerOf)).toEqual([equation("#006400")]);
+    expect(passing(FILE, xml(seed), file.suggested)).toEqual([false]);
+  });
+});
+
+describe("draftGuards over many like siblings", () => {
+  /** A HomeBank-sized ledger: many operations, each named by its own wording. */
+  const ledger = (count: number, amount: string) =>
+    xml(
+      `<homebank>${Array.from(
+        { length: count },
+        (_, index) =>
+          `<ope date="${String(739_000 + index)}" amount="${index === 7 ? amount : String(index)}" wording="Payment ${String(index)}"/>`,
+      ).join("")}</homebank>`,
+    );
+  const CHECK = {
+    kind: "value_equals",
+    file: FILE,
+    pointer: "/root/children/[name=ope][@wording=Payment 7]/attributes/amount",
+    value: "-42",
+  } as const;
+  /** The guards for the check, and how many siblings they examined, each once as a guard is tried on it. */
+  const guarded = (noisy: boolean) => {
+    let examined = 0;
+    const guards = draftGuards(
+      {
+        file: FILE,
+        ends: { baseline: ledger(1000, "7"), final: ledger(1000, "-42") },
+        named: () => true,
+        noisy: () => {
+          examined += 1;
+          return noisy;
+        },
+        chars: 600,
+      },
+      [CHECK],
+    );
+    return { guards, examined };
+  };
+
+  it("examines only the siblings it keeps when they qualify, and a few when none does, never all of them", () => {
+    expect(guarded(false)).toMatchObject({
+      guards: [
+        { pointer: expect.stringContaining("[@wording=Payment 6]") },
+        { pointer: expect.stringContaining("[@wording=Payment 8]") },
+      ],
+      examined: 2,
+    });
+    const refused = guarded(true);
+    expect(refused.guards).toEqual([]);
+    expect(refused.examined).toBeLessThanOrEqual(8);
   });
 });
