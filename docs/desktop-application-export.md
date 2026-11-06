@@ -22,10 +22,16 @@ the capture, once REA has validated it against the capture; see
 [desktop application tasks](desktop-application-tasks.md). `--package-url`
 says where the computer downloads the package of an application installed from
 a `.deb` file; see [Applications from a .deb file](#applications-from-a-deb-file).
+`--seed-checkpoint` names the checkpoint whose state seeds the bundle, the
+baseline by default, and `--end-checkpoint` the one a task must pass on, the
+capture's last by default; see [The seed checkpoint](#the-seed-checkpoint).
 
 The command returns Evidence with operation `export_desktop_application` and
 predicate type `rea.desktop-application-export`, listing the environment name,
-owned paths, seed files and written files. A failed export, cancellation
+the seed and end `checkpoints`, owned paths, seed files, the seeds it
+rewrote to remove the capture host's name and user (`scrubbed_files`), the
+bundle files that still hold them (`unscrubbed_files`), and written files,
+the last three by their path in the bundle. A failed export, cancellation
 included, removes the bundle it had not yet published, so no partial copy of the
 user's data remains. If the bundle was published but its output handles could
 not be closed, the command reports a cleanup error that carries the export
@@ -38,7 +44,7 @@ Evidence; the bundle itself is complete.
 | `envs/<name>/env.toml`           | `type = "computer_app"`, the module and class, `computer = "ubuntu-24.04"`, `driver = "reference"` |
 | `envs/<name>/<file>.py`          | The `ComputerAppEnvironment` class                                                                 |
 | `envs/<name>/SKILL.md`           | What the app is, its window class and where its files live                                         |
-| `envs/<name>/seed/`              | The application's files from before the capture, by home-relative path                             |
+| `envs/<name>/seed/`              | The application's files at the seed checkpoint, by home-relative path                              |
 | `envs/<name>/apt-keys/`          | The signing key of each vendor apt repository the app installs from                                |
 | `envs/<name>/install-package.sh` | With `--package-url`: the run script that installs the downloaded package with dpkg                |
 | `tasks/smoke.json`               | A task that deploys the app                                                                        |
@@ -63,8 +69,18 @@ The class declares:
   leaves out dependencies on the libraries it loads, as Typora's Electron
   package does, still starts; library packages the capture found neither the
   Ubuntu 24.04 archive nor a declared repository offers are left out, with a
-  limitation. An archive package's declared dependencies are trusted as they
-  are. The package must come from the Ubuntu 24.04 archive or a mirror of it,
+  limitation, and so are those only repositories the export leaves out supply
+  (a repository's `supplies`), such as one whose key the capture could not
+  retain. An archive package's declared dependencies are trusted as they
+  are. When the desktop entry's package is not the one that owns the program
+  it runs, as `vim-common`'s entry runs `vim`'s program, the program's package
+  (`executable_package`) follows the app's by name, since the entry's package
+  need not depend on it; a capture that found no archive or declared
+  repository offering it records why, and the export refuses it with that
+  reason, as it does when only repositories it leaves out supply it, or when
+  no package owns the program at all (`executable_package_reason` without
+  `executable_package`). The package must come from the Ubuntu 24.04 archive
+  or a mirror of it,
   or from a vendor apt repository whose signing key the capture verified and
   retained. A source counts as the archive when apt reports its origin as
   `Ubuntu` for a noble suite; a capture made before origins were recorded
@@ -111,7 +127,11 @@ The class declares:
   computer's container does not grant, and Electron exits without them. The
   README and the result's limitations say the sandbox is off.
 - `paths`: the state directories holding the application's state files and the
-  folders holding its documents, nested folders collapsed. The home itself and
+  folders holding its documents, nested folders collapsed. A folder beside a
+  state directory whose name differs from it only in letter case is owned
+  whole in the files' spelling, so a `~/.config/GIMP` profile GIMP created
+  during the capture beside the candidate `~/.config/gimp` is owned as
+  `.config/GIMP`, not as the folder of its first file. The home itself and
   the shared `.config`, `.local`, `.local/share`, `.local/state` and `.cache`
   folders are never owned whole: a file directly in one is owned as itself.
   Files the capture recorded under a symlinked state directory's physical
@@ -127,18 +147,14 @@ The class declares:
   with a typed JSON view of each, read in a worker thread. An application with
   no observed state declares no paths and no hooks.
 
-Seeded text files (text, JSON, key files and XML in the state view) have the
-captured home path respelled to the computer's home wherever it is followed by
-`/`, the end of the text, or a character that cannot continue a file name. A
-UTF-16 file that starts with a byte-order mark and holds the captured home is
-respelled the same way, keeping its mark; other files are copied as captured. A file under the owned paths whose starting
-bytes the capture did not retain is not seeded: one in the state view without
-retained baseline content, or one the capture omitted (for example too large
-or past the content budget). The result lists them in `unseeded_files` and the
-README names them. When the application held files open in folders whose
-starting content the capture did not retain, a limitation names those folders.
+A file under the owned paths whose bytes at the seed the capture did not
+retain is not seeded: one in the state view without retained content at that
+checkpoint, or one the capture omitted (for example too large or past the
+content budget). The result lists them in `unseeded_files` and the README
+names them. When the application held files open in folders whose starting
+content the capture did not retain, a limitation names those folders.
 
-The application's dconf keys at the baseline, if any, are written once when the
+The application's dconf keys at the seed, if any, are written once when the
 app first starts, also for an application that owns no files, and the class adds
 `dconf-cli` to its apt packages for that. The server starts before the
 desktop's D-Bus session, so the class does not use `dconf load`: it dumps any
@@ -147,6 +163,85 @@ on that dump and the captured keys, in that name order so the captured keys
 win, and replaces `~/.config/dconf/user`. If that fails, the server prints a
 one-line warning and the app starts without the captured keys. `data/reset` does
 not restore them.
+
+## The seed checkpoint
+
+By default the seed is the state before the capture, its `baseline`, and a
+task's end state is the capture's last checkpoint. `--seed-checkpoint` and
+`--end-checkpoint` name others, so one capture can make a seed and then a
+change: the user creates and saves a document and takes `checkpoint seed`,
+then edits and saves it and takes `checkpoint end`. Exported with
+`--seed-checkpoint seed --end-checkpoint end`, the bundle seeds the document
+as it was saved at `seed`, owned paths, dconf keys and unseeded files
+included, and a task must fail on that seed and pass on the state at `end`.
+A file's state at a checkpoint is its last version recorded at or before it.
+The export refuses a name the capture does not hold exactly once, and an end
+checkpoint taken before the seed checkpoint; `inspect-desktop-application-state`
+lists the names in `capture.checkpoints`.
+
+## Host name and user
+
+A seed can hold the capture host's name and the user's: Geany saved its mail
+template as `pref_template_mail=ada@e81232be457d`, the user `ada` on a
+container named `e81232be457d`, and many files hold the home path
+`/home/ada`. The capture records `host.hostname` and `host.user`, and the
+export removes them from what the bundle ships:
+
+- In seeded text files (text, JSON, key files and XML in the state view), in
+  UTF-16 files that start with a byte-order mark (keeping the mark and byte
+  order), and in the dconf keys, `user@host` becomes `user@localhost`, the
+  host name standing alone becomes `localhost`, and the captured home becomes
+  `/home/user` wherever it is followed by `/`, the end of the text, or a
+  character that cannot continue a file name. The host name counts only as a
+  whole name: not inside a longer word, before a `-`, or as a label of a
+  domain such as `e81232be457d.local`, so a host named `ubuntu` leaves
+  `ports.ubuntu.com/ubuntu-ports` alone. A host named `localhost` is left
+  alone, but its `user@localhost` still takes the computer's user. The user
+  name alone is never replaced, since a short one such as `ada` or `user` is
+  also ordinary text. A rewritten seed is written with its own SHA-256, and
+  `scrubbed_files` and the README list it.
+- JSON and XML keep their syntax. In JSON only string values change, each
+  read as its decoded value, so `\u0065` escapes cannot hide the host, and is
+  written back as JSON only when it changed; numbers and `true`, `false` and
+  `null` stay as they are even for a host named `true`. Member names are never
+  rewritten, since `{"ubuntu": 1, "localhost": 2}` on a host named `ubuntu`
+  would get two `localhost` keys and lose a setting; a file whose names hold
+  the host is listed in `unscrubbed_files` instead. In XML only character
+  data, attribute values, comments and CDATA change, character references
+  decoded the same way; element and attribute names and processing
+  instructions stay. A UTF-16 file is scrubbed by the format its text would
+  have in UTF-8, so JSON or XML in UTF-16 follows these rules too.
+- In the dconf keys only GVariant strings change, each read as its decoded
+  value and written back in its own quotes only when it changed. Group names,
+  keys, dictionary keys, bytestrings and everything outside quotes stay, so a
+  host named `true` leaves `wrap=true` alone. A value whose string does not
+  parse, or that holds an object path or signature, ships as captured.
+- `SEED_HOME` in the class is `/home/user`, the home the seed spells, which
+  the class respells to the computer's own home when it seeds the home at
+  boot, as it did the captured home before. The replacements read as the
+  computer's own: its user is `user`, with its home in `/home/user`, and
+  `localhost` is the name every host has for itself.
+- Binary files, SQLite databases among them, and text files over 256 MiB are
+  copied as captured. Then every file the bundle ships, the class module with
+  its dconf keys and the README included, is searched by a looser rule than
+  the replacement's: the host name and `user@host` anywhere, as in
+  `e81232be457d.local` or a seed named `e81232be457d-notes.txt`, and the
+  captured home as a whole path, in its path and its content, JSON and dconf
+  strings and XML references decoded and the replacements themselves set
+  aside. Each one found is listed in `unscrubbed_files`, and in the README
+  unless it is the README, to check before sharing the bundle. Bytes that are not text are
+  searched as they are, so a binary file that holds the host in another
+  encoding is not listed.
+- A task check whose values name `user@host` or the host name anywhere, by
+  that rule, is refused, as one naming the captured home is: the bundle does
+  not hold them. Its field names, kind and id are not values, so a host named
+  `file` or `kind` refuses no check. A task's checks must fail on the seed as
+  the bundle ships it, scrubbed, so a check the scrub itself satisfies, such
+  as a mail setting the user changed from `ada@e81232be457d` to
+  `user@localhost`, does not count as failing there.
+
+A capture written before the host's name and user were recorded has only its
+home removed, with a limitation saying so; capture again to remove the rest.
 
 ## Applications from a .deb file
 
@@ -199,24 +294,35 @@ shapes: SQLite tables (at most 64 ordinary tables, `tables_truncated` past
 that, and per table `columns`, `primary_key`, at most 500 `rows` and
 `truncated`, with blobs, unsafe integers and text that is not UTF-8 tagged as
 REA tags them), JSON, XML as `{root, truncated}` with DOCTYPEs refused and REA's
-node, depth and whitespace rules, key file groups, and text as
-`{lines, line_count, truncated}` split on `\n` and `\r\n`. A JSON file
+node, depth and whitespace rules, key file groups, text as
+`{lines, line_count, truncated}` split on `\n` and `\r\n`, and zip archives
+as their entries, read with Python's `zipfile` from the file in place, with
+REA's entry, size, compression ratio and archive limits and its wording for an
+entry it does not read. The module reads the central directory itself, as REA
+does, and shows `zipfile` only the records it lists, reading each entry in
+bounded chunks no further than a byte past its declared size. A JSON file
 holding a number JavaScript cannot read exactly, such as an integer above 2^53,
-gets an `error` instead of a view, as in REA, while text that is not one JSON
+or nested more than 500 levels deep, gets an `error` instead of a view, as in
+REA, while text that is not one JSON
 document, such as JSON Lines, stays text. Format detection follows REA's
 rules. Files larger than 64 MiB get an `error` instead of a view
-and are not read. Known differences remain:
+and are not read. XML is read with Python's `expat` twice: with namespace
+processing, which refuses what REA's parser refuses, such as an undeclared
+prefix, then without it, so element and attribute names keep the prefixes the
+document spells and namespace declarations stay attributes, as in REA's view;
+text splits into nodes where REA's splits it, at CDATA sections, comments and
+processing instructions. Known differences remain:
 
-- XML names: element and attribute names are Python's `{namespace}local`
-  spelling rather than REA's prefixed names, namespace declarations are not
-  listed as attributes, and CDATA sections merge with the text around them, so
-  they count as one node.
-- dconf databases are reported as binary, since REA reads them with `dconf`.
+- dconf databases are reported as binary, since REA reads them with `dconf`;
+  inside an archive, one is `dconf` with an error, as in REA.
+- Zip entry names: a name in an Info-ZIP Unicode Path extra field is used only
+  where Python's `zipfile` reads it (3.12 and later), and an entry whose local
+  header names it differently from the central directory is damaged rather
+  than read.
 - SQLite databases are read in place, read-only, rather than from a staged copy;
   a write lock the running app holds is waited out for a quarter of a second
   and then gives the file an `error`, and so does a table or column name that
   is not UTF-8.
-- JSON nested deeper than Python's recursion limit gives the file an `error`.
 
 The seed is the user's real data. Keep the bundle local and do not publish it.
 The class was checked against agentenv-framework 0.9.1431 with

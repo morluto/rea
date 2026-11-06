@@ -4,6 +4,9 @@ import type { DesktopTask } from "./appTask.js";
 /** The verifier's evaluator: the checks' semantics, kept equal to `evaluateTaskChecks`. */
 export const PYTHON_TASK_EVALUATOR = String.raw`
 MISSING = object()
+INDEX = re.compile(r"0|[1-9][0-9]*")
+VIEW_FORMATS = ("text", "json", "keyfile", "xml")
+NUMERAL = re.compile(r"[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?")
 
 
 def _shown(value) -> str:
@@ -26,19 +29,130 @@ def _same(actual, expected) -> bool:
     return type(actual) is type(expected) and actual == expected
 
 
-def _resolve(view, pointer: str):
-    current = view
-    for raw in pointer[1:].split("/"):
-        token = raw.replace("~1", "/").replace("~0", "~")
+def _bracketed(token: str) -> bool:
+    return len(token) >= 2 and token.startswith("[") and token.endswith("]")
+
+
+def _selector(token: str):
+    """A selector's conditions, [KEY=VALUE] or [@KEY=VALUE] one or more times, or None when the token is not one."""
+    if not _bracketed(token):
+        return None
+    conditions = []
+    for part in token[1:-1].split("]["):
+        key, equals, value = part.partition("=")
+        name = key[1:] if key.startswith("@") else key
+        if not equals or not name:
+            return None
+        conditions.append((key.startswith("@"), name, value))
+    return conditions
+
+
+def _selects(member, conditions) -> bool:
+    """Whether an array member meets every condition; selectors compare strings only."""
+    if not isinstance(member, dict):
+        return False
+    for attribute, key, value in conditions:
+        fields = member.get("attributes") if attribute else member
+        if not isinstance(fields, dict) or not isinstance(fields.get(key), str) or fields[key] != value:
+            return False
+    return True
+
+
+def _step(items: list, token: str, last: bool):
+    """One step into an array, by index or by a selector that must match one member, or none when it is the last."""
+    if INDEX.fullmatch(token):
+        return ("member", items[int(token)]) if int(token) < len(items) else ("none", None)
+    conditions = _selector(token)
+    if conditions is None:
+        return ("unresolved", f"{token} is not a selector of the form [KEY=VALUE]") if _bracketed(token) else (
+            "none", None)
+    matched = [item for item in items if _selects(item, conditions)]
+    if len(matched) == 1:
+        return "member", matched[0]
+    if len(matched) > 1:
+        return "unresolved", f"{token} matches {len(matched)} members, not one"
+    return ("none" if last else "unresolved"), f"{token} matches no member"
+
+
+def _locate(view, pointer: str):
+    """Where a pointer leads: ("value", value), ("none", why or None) or ("unresolved", problem), with the pointers
+    to the arrays a selector searched on the way."""
+    current, searched = view, []
+    segments = pointer[1:].split("/")
+    for position, segment in enumerate(segments):
+        token = segment.replace("~1", "/").replace("~0", "~")
         if isinstance(current, list):
-            if not re.fullmatch(r"0|[1-9][0-9]*", token) or int(token) >= len(current):
-                return MISSING
-            current = current[int(token)]
+            if not INDEX.fullmatch(token) and _selector(token) is not None:
+                searched.append("".join("/" + part for part in segments[:position]))
+            kind, found = _step(current, token, position == len(segments) - 1)
+            if kind != "member":
+                return kind, found, searched
+            current = found
         elif isinstance(current, dict) and token in current:
             current = current[token]
         else:
-            return MISSING
-    return current
+            return "none", None, searched
+    return "value", current, searched
+
+
+def _number(value):
+    """A number, or a numeral string read as one; None for anything else, a boolean, or a numeral past the doubles."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return value
+    if not isinstance(value, str) or not NUMERAL.fullmatch(value):
+        return None
+    number = float(value)
+    return number if math.isfinite(number) else None
+
+
+def _entry_leaves_out(entry) -> bool:
+    return isinstance(entry, dict) and (isinstance(entry.get("view_error"), str) or (
+        entry.get("format") in ("text", "xml") and isinstance(entry.get("view"), dict)
+        and entry["view"].get("truncated") is True))
+
+
+def _viewless_entry(view, pointer: str):
+    """The name of the entry whose view a pointer goes into when it has none, so its null is no JSON value, and
+    why: binary, unread, or of a format without a view; None when it has one."""
+    parts = pointer[1:].split("/")
+    if len(parts) < 3 or parts[0] != "entries" or parts[2] != "view":
+        return None
+    kind, item, _ = _locate(view, "/entries/" + parts[1])
+    if kind != "value" or not isinstance(item, dict):
+        return None
+    if isinstance(item.get("view_error"), str):
+        reason = f"has no view: {item['view_error']}"
+    elif item.get("format") == "binary":
+        reason = "is binary and has no view"
+    elif item.get("format") not in VIEW_FORMATS:
+        reason = "has no view"
+    else:
+        return None
+    return (item["name"] if isinstance(item.get("name"), str) else ""), reason
+
+
+def _array_leaves_out(form, view, array: str) -> bool:
+    """Whether an array a selector searched may lack members: in a zip the listing or its entry's view, else the
+    view's own truncation."""
+    if form != "zip":
+        return _truncated(form, view)
+    if array == "/entries":
+        return isinstance(view, dict) and view.get("truncated") is True
+    return _zip_leaves_out(view, array)
+
+
+def _zip_leaves_out(view, pointer: str) -> bool:
+    """Whether a zip view leaves out what a pointer reaches: for a pointer into one listed entry, only that entry."""
+    if not isinstance(view, dict):
+        return False
+    parts = pointer[1:].split("/")
+    if parts[0] == "entries" and len(parts) > 1:
+        kind, entry, _ = _locate(view, "/entries/" + parts[1])
+        return _entry_leaves_out(entry) if kind == "value" else view.get("truncated") is True
+    entries = view.get("entries") if isinstance(view.get("entries"), list) else []
+    return view.get("truncated") is True or any(_entry_leaves_out(entry) for entry in entries)
 
 
 def _truncated(form, view) -> bool:
@@ -102,21 +216,47 @@ def _lines(check, entry):
     return _compared(check, n, f"line(s) of {file} match {_shown(check['exact'])}")
 
 
+def _near(at: str, found, expected, tolerance):
+    """A value compared within a tolerance: numbers, and numeral strings, by their difference."""
+    number = _number(found)
+    within = f"within {_shown(tolerance)} of {_shown(expected)}"
+    if number is None:
+        return False, f"{at} is {_shown(found)}, not a number"
+    if abs(number - expected) <= tolerance:
+        return True, f"{at} is {_shown(found)}, {within}"
+    return False, f"{at} is {_shown(found)}, not {within}"
+
+
 def _value(check, entry):
     view, truncated, problem = _view_of(check, entry, None)
     if problem is not None:
         return False, problem
-    found = MISSING if entry is None else _resolve(view, check["pointer"])
+    kind, found, searched = ("none", None, []) if entry is None else _locate(view, check["pointer"])
     at = f"{check['file']} at {check['pointer']}"
+    viewless = _viewless_entry(view, check["pointer"]) if entry is not None and entry.get("format") == "zip" else None
+    if viewless is not None:
+        return False, f"{check['file']} entry {viewless[0]} {viewless[1]}"
+    # A selector tells one member from several only in an array the view holds whole.
+    if any(_array_leaves_out(entry.get("format"), view, array) for array in searched):
+        return _undecided(check)
+    if kind == "unresolved":
+        return False, f"{at}: {found}"
+    if entry is not None and entry.get("format") == "zip":
+        truncated = _zip_leaves_out(view, check["pointer"])
     if check["kind"] == "value_equals" and isinstance(check["value"], (dict, list)) and truncated:
         return _undecided(check)
     if check["kind"] == "value_equals":
-        if found is not MISSING and _same(found, check["value"]):
+        if kind == "none":
+            return False, f"{at} has no value" if found is None else f"{at}: {found}"
+        expected = check["value"]
+        if check.get("tolerance") is not None and isinstance(expected, (int, float)) and not isinstance(expected, bool):
+            return _near(at, found, expected, check["tolerance"])
+        if _same(found, check["value"]):
             return True, f"{at} is {_shown(check['value'])}"
-        return False, f"{at} has no value" if found is MISSING else f"{at} is {_shown(found)}, not {_shown(check['value'])}"
+        return False, f"{at} is {_shown(found)}, not {_shown(check['value'])}"
     if truncated:
         return _undecided(check)
-    return (True, f"{at} has no value") if found is MISSING else (False, f"{at} is {_shown(found)}")
+    return (True, f"{at} has no value") if kind == "none" else (False, f"{at} is {_shown(found)}")
 
 
 def _rows(check, entry):
@@ -194,6 +334,7 @@ It reads the app's data/get through the computer, takes the typed views of its f
 model, no code from the task. A failure to reach the app raises, so the run fails rather than scoring the agent.
 """
 import json
+import math
 import re
 
 from agentenv_protocol import client as protocol
