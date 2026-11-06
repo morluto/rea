@@ -214,7 +214,7 @@ const mcp = async (cliDossier) => {
       ["list_procedures", {}],
       ["list_strings", {}],
       ["list_documents", {}],
-      ["procedure_address", { procedure: dossier.procedure.name }],
+      ["procedure_address", { procedure: dossier.procedure.address }],
       ["procedure_assembly", { procedure: dossier.procedure.address }],
       ["procedure_callers", { procedure: dossier.procedure.address }],
       ["procedure_callees", { procedure: dossier.procedure.address }],

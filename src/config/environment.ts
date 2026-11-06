@@ -26,6 +26,7 @@ import {
 } from "../domain/analysisResourceLimits.js";
 import { mcpInputSchemaProfileSchema } from "./mcpInputSchemaProfile.js";
 import { mcpOutputSchemaProfileSchema } from "./mcpOutputSchemaProfile.js";
+import { mcpToolCatalogProfileSchema } from "./mcpToolCatalogProfile.js";
 import { mcpResponseBudgetSchema } from "./mcpResponseBudget.js";
 import { asarMaxHeaderBytesSchema } from "./asarHeaderAdmission.js";
 import { bridgeMaxRequestBytesSchema } from "./bridgeMaxRequestBytes.js";
@@ -33,6 +34,11 @@ import { captureDecoderOldGenerationMiBSchema } from "./captureDecoderHeap.js";
 import { debuggerSessionLimitEnvironmentShape } from "./debuggerSessionLimits.js";
 import { regexMatchingDeadlineMsSchema } from "./regexMatchingDeadline.js";
 import { regexWorkerHeapRequestMiBSchema } from "./regexWorkerHeapRequest.js";
+import {
+  windowsChangeTimeDriftMsSchema,
+  windowsChangeTimeSettleMaxPollsSchema,
+  windowsChangeTimeSettlePollMsSchema,
+} from "./windowsChangeTimeSettle.js";
 import {
   mcpDoctorDeadlineMsSchema,
   mcpFirstCatalogBudgetMsSchema,
@@ -55,6 +61,11 @@ const environmentSchema = z.object({
     captureDecoderOldGenerationMiBSchema.optional(),
   REA_REGEX_MATCHING_DEADLINE_MS: regexMatchingDeadlineMsSchema.optional(),
   REA_REGEX_WORKER_HEAP_REQUEST_MIB: regexWorkerHeapRequestMiBSchema.optional(),
+  REA_WINDOWS_CHANGE_TIME_DRIFT_MS: windowsChangeTimeDriftMsSchema.optional(),
+  REA_WINDOWS_CHANGE_TIME_SETTLE_POLL_MS:
+    windowsChangeTimeSettlePollMsSchema.optional(),
+  REA_WINDOWS_CHANGE_TIME_SETTLE_MAX_POLLS:
+    windowsChangeTimeSettleMaxPollsSchema.optional(),
   REA_MCP_INITIALIZE_BUDGET_MS: mcpInitializeBudgetMsSchema.optional(),
   REA_MCP_TOOLS_LIST_BUDGET_MS: mcpToolsListBudgetMsSchema.optional(),
   REA_MCP_FIRST_CATALOG_BUDGET_MS: mcpFirstCatalogBudgetMsSchema.optional(),
@@ -62,6 +73,7 @@ const environmentSchema = z.object({
   REA_MCP_INPUT_SCHEMA_PROFILE: mcpInputSchemaProfileSchema.optional(),
   REA_MCP_TOOL_FAMILIES: mcpToolFamiliesSchema.optional(),
   REA_MCP_OUTPUT_SCHEMA_PROFILE: mcpOutputSchemaProfileSchema.optional(),
+  REA_MCP_TOOL_CATALOG_PROFILE: mcpToolCatalogProfileSchema.optional(),
   REA_IDA_MCP_CONFIG: z
     .string()
     .min(1)
