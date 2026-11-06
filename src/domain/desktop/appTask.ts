@@ -3,6 +3,7 @@ import { z } from "zod";
 import { jsonValueSchema, type JsonValue } from "../jsonValue.js";
 import { err, ok, type Result } from "../result.js";
 import { describeValidationFailure } from "../validationFailure.js";
+import { selectorOf } from "./viewSelector.js";
 
 /** The prompt a drafted task carries until its author replaces it. */
 export const DRAFT_PROMPT =
@@ -25,6 +26,22 @@ const comparison = {
   at_most: count.optional(),
 };
 const table = z.string().min(1);
+const wholeText = {
+  pointer: z.string(),
+  value: z.string(),
+  normalize_whitespace: z.boolean().optional(),
+  text_attribute: z
+    .string()
+    .min(1)
+    .optional()
+    .describe(
+      "Read the element's text from this attribute's values on it and its descendants, in document order, instead of from its text nodes.",
+    ),
+};
+
+/** Text with each run of XML whitespace (space, tab, CR, LF) made one space and none at either end, as XPath's normalize-space(). */
+export const collapseWhitespace = (text: string): string =>
+  text.replace(/[ \t\r\n]+/gu, " ").replace(/^ | $/gu, "");
 
 /** One kind of check: its id, kind and file, then its own fields. */
 const kind = <Kind extends string, Shape extends z.ZodRawShape>(
@@ -54,9 +71,21 @@ const checkSchema = z.discriminatedUnion("kind", [
     tolerance: z.number().min(0).optional(),
   }),
   kind("value_absent", { pointer: z.string() }),
+  kind("text_equals", wholeText),
+  kind("text_contains", { ...wholeText, value: z.string().min(1) }),
   kind("row_present", { table, where }),
   kind("row_absent", { table, where }),
   kind("row_count", { table, where: where.optional(), ...comparison }),
+  kind("member_count", {
+    pointer: z.string(),
+    matching: z
+      .string()
+      .optional()
+      .describe(
+        "A selector of one or more [KEY=VALUE], [@KEY=VALUE] or [>CHILD=VALUE] conditions that a member must meet to count; every member counts without it, text nodes of an XML element's children included.",
+      ),
+    ...comparison,
+  }),
 ]);
 
 /** A task file as an agent writes it: a portable name, a prompt and declarative checks. */
@@ -78,9 +107,15 @@ export interface DesktopTask {
   readonly checks: readonly DesktopTaskCheck[];
 }
 
+/** Checks that count lines, rows or the members of an array. */
+export type CountCheck = Extract<
+  DesktopTaskCheck,
+  { kind: "line_count" | "row_count" | "member_count" }
+>;
+
 /** A count comparison: exactly one of equals, at_least and at_most. */
 export const countComparison = (
-  check: Extract<DesktopTaskCheck, { kind: "line_count" | "row_count" }>,
+  check: CountCheck,
 ):
   | { readonly operator: "equals" | "at_least" | "at_most"; readonly n: number }
   | undefined => {
@@ -91,23 +126,54 @@ export const countComparison = (
   return given.length === 1 ? given[0] : undefined;
 };
 
+/** Checks that read a view at a JSON pointer. */
+export type PointerCheck = Extract<
+  DesktopTaskCheck,
+  {
+    kind:
+      | "value_equals"
+      | "value_absent"
+      | "text_equals"
+      | "text_contains"
+      | "member_count";
+  }
+>;
+
+export const isPointerCheck = (
+  check: DesktopTaskCheck,
+): check is PointerCheck =>
+  check.kind === "value_equals" ||
+  check.kind === "value_absent" ||
+  check.kind === "text_equals" ||
+  check.kind === "text_contains" ||
+  check.kind === "member_count";
+
 /** A home-relative path in its one spelling: no leading slash, empty, `.` or `..` segment. */
 const isHomePath = (path: string): boolean =>
   path
     .split("/")
     .every((segment) => segment !== "" && segment !== "." && segment !== "..");
 
-/** Whether a value looks like an ISO 8601 date and time, which the app stamps rather than the user writes. */
-export const isTimestamp = (value: JsonValue): boolean =>
-  typeof value === "string" &&
-  /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2}(?:[.,]\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?$/u.test(
-    value.trim(),
-  );
+/** An ISO 8601 date and time. */
+const ISO_TIMESTAMP =
+  /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2}(?:[.,]\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?$/u;
+/** C's `asctime` and `ctime` form, `Www Mmm dd hh:mm:ss yyyy`, the day padded with a space, as AbiWord stamps a save. */
+const ASCTIME_TIMESTAMP =
+  /^(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun) (?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) [ 0-3]?\d \d{2}:\d{2}:\d{2} \d{4}$/u;
+
+/** Whether a value looks like a date and time the app stamps rather than the user writes: ISO 8601, or `asctime`'s form. */
+export const isTimestamp = (value: JsonValue): boolean => {
+  if (typeof value !== "string") return false;
+  const trimmed = value.trim();
+  return ISO_TIMESTAMP.test(trimmed) || ASCTIME_TIMESTAMP.test(trimmed);
+};
 
 /** Expected values a check compares, for the timestamp guard. */
 const expectedValues = (check: DesktopTaskCheck): readonly JsonValue[] => {
   switch (check.kind) {
     case "value_equals":
+    case "text_equals":
+    case "text_contains":
       return [check.value];
     case "row_present":
     case "row_absent":
@@ -116,6 +182,22 @@ const expectedValues = (check: DesktopTaskCheck): readonly JsonValue[] => {
     default:
       return [];
   }
+};
+
+/** What is wrong with a pointer check's pointer, or with what a text check searches for, or undefined. */
+const pointerProblem = (check: PointerCheck): string | undefined => {
+  // A count may take a whole file, as a JSON file whose top level is an array.
+  if (check.pointer === "")
+    return check.kind === "member_count"
+      ? undefined
+      : "the empty pointer names the whole file; point at the value that changed";
+  if (!check.pointer.startsWith("/"))
+    return `pointer ${JSON.stringify(check.pointer)} must start with /`;
+  return check.kind === "text_contains" &&
+    check.normalize_whitespace === true &&
+    collapseWhitespace(check.value) === ""
+    ? "text_contains needs a value with more than whitespace in it"
+    : undefined;
 };
 
 /** What is wrong with one check beyond its shape, or undefined. */
@@ -128,20 +210,20 @@ const checkProblem = (check: DesktopTaskCheck): string | undefined => {
   )
     return "line_count takes exactly one of exact and contains";
   if (
-    (check.kind === "line_count" || check.kind === "row_count") &&
+    (check.kind === "line_count" ||
+      check.kind === "row_count" ||
+      check.kind === "member_count") &&
     countComparison(check) === undefined
   )
     return `${check.kind} takes exactly one of equals, at_least and at_most`;
+  const pointed = isPointerCheck(check) ? pointerProblem(check) : undefined;
+  if (pointed !== undefined) return pointed;
   if (
-    (check.kind === "value_equals" || check.kind === "value_absent") &&
-    check.pointer === ""
+    check.kind === "member_count" &&
+    check.matching !== undefined &&
+    selectorOf(check.matching) === undefined
   )
-    return "the empty pointer names the whole file; point at the value that changed";
-  if (
-    (check.kind === "value_equals" || check.kind === "value_absent") &&
-    !check.pointer.startsWith("/")
-  )
-    return `pointer ${JSON.stringify(check.pointer)} must start with /`;
+    return `matching ${JSON.stringify(check.matching)} is not a selector of one or more [KEY=VALUE], [@KEY=VALUE] or [>CHILD=VALUE]`;
   if (
     (check.kind === "lines_present" || check.kind === "lines_absent") &&
     new Set(check.lines).size !== check.lines.length
