@@ -3,6 +3,7 @@ import { join } from "node:path";
 
 import { describe, expect } from "vitest";
 
+import { peImportImage } from "../../fixtures/binaryDiagnostics/peImports.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import {
   cliTest,
@@ -292,6 +293,87 @@ describe("pyc and BEAM limit options", () => {
     expect(JSON.parse(result.stdout)).toMatchObject({
       code: "invalid_request",
       details: { issues: [expect.objectContaining({ path: ["path"] })] },
+    });
+  });
+});
+
+describe("binary diagnostic limit options", () => {
+  // Each spelling is one that numeric coercion admits within the field's
+  // bounds, so only the decimal guard can refuse it.
+  cliTest.for([
+    ["inspect-elf-notes", "--max-file-bytes", "maxFileBytes", "0x100"],
+    ["inspect-elf-notes", "--max-entries", "maxEntries", "0x10"],
+    ["inspect-apple-ips", "--max-file-bytes", "maxFileBytes", "0x100"],
+    ["inspect-apple-ips", "--max-threads", "maxThreads", "1e1"],
+    ["inspect-apple-ips", "--max-frames", "maxFrames", "0x10"],
+    ["inspect-apple-ips", "--max-images", "maxImages", "1e1"],
+    ["inspect-apple-ips", "--max-registers", "maxRegisters", "0x10"],
+    [
+      "inspect-apple-ips",
+      "--max-integer-text-bytes",
+      "maxIntegerTextBytes",
+      "1e3",
+    ],
+    ["inspect-kernel-module", "--max-file-bytes", "maxFileBytes", "0x100"],
+    ["inspect-kernel-module", "--max-entries", "maxEntries", "1e1"],
+    ["inspect-pe-load-config", "--max-file-bytes", "maxFileBytes", "1e3"],
+    ["inspect-pe-load-config", "--max-callbacks", "maxCallbacks", "0x10"],
+    ["inspect-binary-hardening", "--max-file-bytes", "maxFileBytes", "0x100"],
+    ["inspect-pe-certificates", "--max-file-bytes", "maxFileBytes", "0x100"],
+    ["inspect-pe-certificates", "--max-entries", "maxEntries", "0x10"],
+    ["inspect-pe-imports", "--max-file-bytes", "maxFileBytes", "1e3"],
+    ["inspect-pe-imports", "--max-dlls", "maxDlls", "0x10"],
+    ["inspect-pe-imports", "--max-functions", "maxFunctions", "1e1"],
+    ["inspect-pe-resources", "--max-file-bytes", "maxFileBytes", "0x100"],
+    ["inspect-pe-resources", "--max-entries", "maxEntries", "0x10"],
+    ["inspect-devicetree", "--max-file-bytes", "maxFileBytes", "0x100"],
+    ["inspect-devicetree", "--max-nodes", "maxNodes", "1e1"],
+    ["inspect-devicetree", "--max-properties", "maxProperties", "0x10"],
+    ["inspect-devicetree", "--max-depth", "maxDepth", "1e1"],
+    ["inspect-native-exports", "--max-file-bytes", "maxFileBytes", "0x100"],
+    [
+      "inspect-binary-layout",
+      "--pwntools-timeout-ms",
+      "pwntoolsTimeoutMs",
+      "0x10",
+    ],
+    [
+      "inspect-recorded-crash",
+      "--pwntools-timeout-ms",
+      "pwntoolsTimeoutMs",
+      "1e3",
+    ],
+  ] as const)(
+    "rejects %s %s=%s",
+    async ([command, flag, field, value], { cli }) => {
+      const result = await runFileCli(cli, {
+        arguments: [
+          command,
+          "/nonexistent/missing-artifact",
+          `${flag}=${value}`,
+          "--json",
+        ],
+      });
+
+      expectCliValidationError(result, field);
+    },
+  );
+
+  cliTest("keeps a decimal PE import function limit", async ({ cli }) => {
+    const path = join(
+      await createTestTempDirectory("rea-pe-import-limit-"),
+      "image.exe",
+    );
+    // The default fixture imports two functions from one DLL.
+    await writeFile(path, peImportImage());
+    const result = await runFileCli(cli, {
+      arguments: ["inspect-pe-imports", path, "--max-functions=01", "--json"],
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      code: "resource_constraint",
+      remediation: { action: expect.stringContaining("max_functions above 1") },
     });
   });
 });
