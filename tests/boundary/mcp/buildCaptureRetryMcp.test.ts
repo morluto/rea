@@ -129,6 +129,24 @@ it("reports a failed package list download with apt's own message", async () => 
   await callOk(client, "stop_build_capture", { computer_id: id });
 });
 
+it("downloads the package lists again on the next start after an update that fetched some and failed", async () => {
+  const { client } = await fakes({
+    env: { FAKE_APT_EXIT: "100", FAKE_APT_PARTIAL: "1" },
+  });
+  const id = await startBuildComputer(client, BUILD_REQUEST);
+  for (const attempt of [1, 2]) {
+    const value = toolContract("start_build_capture").outputSchema.parse(
+      (await callOk(client, "start_build_capture", { computer_id: id }))
+        .structuredContent,
+    );
+    expect(value.package_lists, `start ${String(attempt)}`).toBe(1);
+    expect(value.package_lists_error, `start ${String(attempt)}`).toContain(
+      "exited 100",
+    );
+    await callOk(client, "stop_build_capture", { computer_id: id });
+  }
+});
+
 it("cancels a capture's start when the computer closes while it waits for the opened app's screenshot", async () => {
   // The start's own screenshot answers at once; the capture's waits until its request is cancelled.
   const { computer, client } = await fakes({ screenshotDelaysMs: [0, 60_000] });
