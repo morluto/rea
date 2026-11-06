@@ -54,6 +54,7 @@ export type ReverseEngineeringOperation =
   | "execute_rizin_command";
 
 const MAX_COMBINED_OUTPUT_BYTES = 16 * 1024 * 1024;
+export const REVERSE_COMMAND_OUTPUT_LIMITATION = `REA stopped collecting output at its ${String(MAX_COMBINED_OUTPUT_BYTES)}-byte cap and requested termination of the provider process; the captured stdout and stderr are a prefix and command completion is unknown. Narrow the command or page its output.`;
 // Eight concurrent captures bound retained provider output to 128 MiB.
 const MAX_CONCURRENT_REVERSE_ENGINEERING_OPERATIONS = 8;
 
@@ -453,6 +454,7 @@ export class ReverseEngineeringService {
     let cleanupIncomplete = false;
     let cleanupOnlyFailure = false;
     let completionStatus: "complete" | "unknown" = "complete";
+    let outputLimitReached = false;
     let failure: AnalysisError | undefined;
     let cleanupOwner: ProviderProcessSupervisor | undefined;
     let earlyFailure: AnalysisError | undefined;
@@ -507,6 +509,8 @@ export class ReverseEngineeringService {
         );
       const capture = execFileOutputFailure(cause);
       const code = capture?.code ?? commandFailureCode(cause);
+      if (code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER")
+        outputLimitReached = true;
       if (earlyFailure === undefined && code === "E2BIG")
         earlyFailure = new AnalysisResourceConstraintError(
           operation,
@@ -732,6 +736,7 @@ export class ReverseEngineeringService {
             "Rizin commands and retained plugins may read files or access network resources outside the selected artifact; those external inputs are not bound to Evidence.",
           ]
         : []),
+      ...(profile.limitations ?? []),
       ...(stdoutInvalidUtf8 || stderrInvalidUtf8
         ? [
             `Captured ${[
@@ -742,12 +747,14 @@ export class ReverseEngineeringService {
             )} bytes contain invalid or incomplete UTF-8; replacement characters in the text capture do not preserve the original bytes.`,
           ]
         : []),
-      ...(outputTruncated
-        ? [
-            "Captured provider output is partial because bytes were omitted; process completion is reported separately.",
-          ]
-        : []),
-      ...(signalName === null
+      ...(outputLimitReached
+        ? [REVERSE_COMMAND_OUTPUT_LIMITATION]
+        : outputTruncated
+          ? [
+              "Captured provider output is partial because bytes were omitted; process completion is reported separately.",
+            ]
+          : []),
+      ...(signalName === null || outputLimitReached
         ? []
         : [
             `The provider process terminated by signal ${signalName}; captured output may be partial and command completion is unknown.`,

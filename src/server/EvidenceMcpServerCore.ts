@@ -194,7 +194,11 @@ const partitionSdkDiagnostic = (
       );
     } else {
       for (const issue of group) mapped.push(issue);
-      remaining.push(diagnostic.slice(start, offset));
+      const explainedByIssues =
+        raw.code === "unrecognized_keys" &&
+        group.length > 0 &&
+        group.every((item) => item.message !== undefined);
+      if (!explainedByIssues) remaining.push(diagnostic.slice(start, offset));
     }
   }
   if (offset !== diagnostic.length) return undefined;
@@ -1048,6 +1052,7 @@ class ErrorEvidenceTransport implements Transport {
             validation.issues,
             validation.input,
             this.delivery.resultBudgetBytes,
+            tool,
           );
     const projectionLimited = validation !== undefined && groups === undefined;
     const summary = `The arguments for MCP tool ${tool} do not match its advertised input schema.`;
