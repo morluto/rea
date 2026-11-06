@@ -53,7 +53,10 @@ export const inspectApiContractInputSchema = z.strictObject({
     .int()
     .positive()
     .max(API_CONTRACT_MAX_FILE_BYTES)
-    .default(API_CONTRACT_MAX_FILE_BYTES),
+    .default(API_CONTRACT_MAX_FILE_BYTES)
+    .describe(
+      "Maximum input document bytes (up to 32 MiB); reply paging does not increase parser allowances",
+    ),
   detail: z.enum(["summary", "complete"]).default("summary"),
   view: apiContractViewRequestSchema
     .optional()
