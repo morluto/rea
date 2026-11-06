@@ -146,8 +146,10 @@ arguments for `computer_<action>`, which REA passes through:
 `reset` is not a driver tool: REA calls the app's `data/reset`, which restores
 the bundle's seed and relaunches the app, then waits until the computer's
 readiness checks pass again, sending an MCP progress notification every five
-seconds while it waits. A computer started from a request has no data
-operations, so it refuses a reset.
+seconds while it waits. With `screenshot: true` it then takes a screenshot; if
+that fails, the reset still counts as applied and its result has no `frame`
+but a `screenshot_error` with the computer's message. A computer started from
+a request has no data operations, so it refuses a reset.
 
 Pointer actions also take `frame_id`, `space` and `norm_scale`, and every
 action but `screenshot` takes `screenshot: true` for an image afterwards. That

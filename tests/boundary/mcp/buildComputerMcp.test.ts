@@ -556,6 +556,50 @@ const slowApp = (polls: number): FakeApp => ({
   unreadyAfterReset: polls,
 });
 
+it.each([
+  {
+    failure: "refuses",
+    fail: (computer: FakeComputer) =>
+      computer.refuseNext("computer_screenshot", "no display to capture"),
+    message: "no display to capture",
+  },
+  {
+    failure: "loses the reply to",
+    fail: (computer: FakeComputer) => computer.loseNext("computer_screenshot"),
+    message: expect.stringMatching(/\S/),
+  },
+])(
+  "keeps a reset applied when the computer $failure the screenshot after it",
+  async ({ fail, message }) => {
+    const app = slowApp(0);
+    const { computer, runner } = await fakes({ app });
+    const client = await connect(runner.environment);
+    const id = await startBuildComputer(client, {
+      kind: "bundle",
+      path: await bundleFolder(),
+    });
+    fail(computer);
+    const reset = await callOk(client, "act_on_build_computer", {
+      computer_id: id,
+      action: "reset",
+      screenshot: true,
+    });
+    const { result } = toolContract("act_on_build_computer").outputSchema.parse(
+      reset.structuredContent,
+    );
+    expect(result).toEqual({
+      reset: true,
+      ready_ms: expect.any(Number),
+      screenshot_error: message,
+    });
+    expect(images(reset)).toEqual([]);
+    expect(app.methods).toEqual(["data/reset"]);
+    expect(computer.calls.map(({ name }) => name).at(-1)).toBe(
+      "computer_screenshot",
+    );
+  },
+);
+
 it("runs one computer's calls in the order they arrive and another computer's beside them", async () => {
   const app = slowApp(4);
   const { runner } = await fakes({ app });

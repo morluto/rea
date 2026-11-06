@@ -119,6 +119,77 @@ describe("draftTaskFiles for a record only position names, removed whole", () =>
   });
 });
 
+describe("draftTaskFiles for records whatever their fields are called", () => {
+  it("checks each new field of a record of repeated <field> children only position names, in a list at the root", () => {
+    const records = (...people: [string, string][]) =>
+      `<records>${people
+        .map(
+          ([first, last]) =>
+            `<record><field>${first}</field><field>${last}</field></record>`,
+        )
+        .join("")}</records>`;
+    const before = records(["Hannah", "Okafor"]);
+    const after = records(["Hannah", "Okafor"], ["Delphine", "Moreau"]);
+
+    const file = xmlDraft(before, after);
+
+    expect(file.suggested).toEqual(
+      ["Delphine", "Moreau"].map((value) => ({
+        kind: "text_contains",
+        file: FILE,
+        pointer: "/root",
+        value,
+      })),
+    );
+    expect(
+      [before, after].map((text) => passing(FILE, xml(text), file.suggested)),
+    ).toEqual([
+      [false, false],
+      [true, true],
+    ]);
+  });
+
+  it("checks a <link> field of a record a selector names, beside its other fields, though the record holds a save date", () => {
+    const stamp = `<mdate><year>2026</year><month>11</month><day>06</day></mdate>`;
+    const bookmarks = (...entries: [string, string, string][]) =>
+      `<bookmarks>${entries
+        .map(
+          ([id, title, link]) =>
+            `<bookmark id="${id}"><title>${title}</title><link>${link}</link>${stamp}</bookmark>`,
+        )
+        .join("")}</bookmarks>`;
+    const docs: [string, string, string] = [
+      "1",
+      "Docs",
+      "https://example.com/docs",
+    ];
+    const before = bookmarks(docs);
+    const after = bookmarks(docs, [
+      "2",
+      "Release notes",
+      "https://example.com/notes",
+    ]);
+
+    const file = xmlDraft(before, after);
+
+    const bookmark = "/root/children/[name=bookmark][@id=2]";
+    expect(file.suggested).toEqual([
+      {
+        kind: "text_equals",
+        file: FILE,
+        pointer: `${bookmark}/children/[name=title]`,
+        value: "Release notes",
+      },
+      {
+        kind: "text_equals",
+        file: FILE,
+        pointer: `${bookmark}/children/[name=link]`,
+        value: "https://example.com/notes",
+      },
+    ]);
+  });
+});
+
 describe("draftTaskFiles for a paragraph made of runs", () => {
   /** A Writer document's body: a paragraph, and any added after it. */
   const body = (added: string) =>
