@@ -350,10 +350,7 @@ const rejectsSocketPortLiteral = (
     t.isBooleanLiteral(value)
   )
     return true;
-  if (t.isNumericLiteral(value))
-    return (
-      !Number.isInteger(value.value) || value.value < 0 || value.value > 65535
-    );
+  if (t.isNumericLiteral(value)) return !isUsablePortNumber(value.value);
   // `NaN` and `Infinity` are unshadowed globals, and neither is a port.
   if (
     t.isIdentifier(value) &&
@@ -427,13 +424,20 @@ const isExactlyNonObjectExpression = (value: t.Node): boolean => {
  * `net.connect(80, { port: -1 })` still connects and its options `port` is never
  * validated.
  *
- * `tls.connect` merges every later options object over the earlier ones, so
- * `tls.connect({ port: -1 }, { port: 80 })` connects while
- * `tls.connect({ port: 80 }, { port: -1 })` throws. `net` does not merge: it reads
- * only the first argument, so `net.connect({ port: -1 }, { port: 80 })` still
- * throws. A callback or a primitive argument is not an override.
+ * `net` reads argument 0 alone: `net.connect({ port: -1 }, { port: 80 })` still
+ * throws. `tls` merges exactly one later argument, and which one is decided by
+ * position rather than by content. Measured on Node 24.22.1:
  *
- * Returns undefined when a later argument could hold an object that is not an
+ *   tls.connect({port:80},{port:80},{port:-1})  -> socket (argument 1 wins)
+ *   tls.connect({port:80},{port:-1},{port:80})  -> THREW  (argument 1 wins)
+ *   tls.connect({port:80}, null, {port:-1})     -> THREW  (argument 2 used)
+ *   tls.connect({port:80}, undefined, {port:-1})-> THREW  (argument 2 used)
+ *   tls.connect({port:80}, 0, {port:-1})        -> THREW  (argument 2 used)
+ *
+ * So a non-null object in slot 1 is the only override, and anything else in slot 1
+ * makes slot 2 the override. Later arguments are never merged.
+ *
+ * Returns undefined when the deciding argument could hold an object that is not an
  * exactly readable literal, because the effective port is then undecided.
  */
 const socketOptionsObjects = (
@@ -444,21 +448,21 @@ const socketOptionsObjects = (
   if (first === undefined || t.isSpreadElement(first)) return undefined;
   const value = unwrapJavaScriptExpression(first).node;
   if (!t.isObjectExpression(value)) return undefined;
-  const objects = [value];
-  if (specifier !== "tls") return objects;
-  for (let index = 1; index < node.arguments.length; index += 1) {
-    const argument = node.arguments[index];
-    if (argument === undefined) continue;
-    if (t.isSpreadElement(argument)) return undefined;
-    const later = unwrapJavaScriptExpression(argument).node;
-    if (t.isObjectExpression(later)) {
-      objects.push(later);
-      continue;
-    }
-    if (isExactlyNonObjectExpression(later)) continue;
-    return undefined;
-  }
-  return objects;
+  if (specifier !== "tls") return [value];
+  // `tls` merges one later argument. A non-null object in slot 1 is that argument;
+  // any other slot-1 value defers the merge to slot 2, and slot 3 onward is ignored.
+  const slot = node.arguments[1];
+  if (slot === undefined || t.isSpreadElement(slot)) return [value];
+  const candidate = unwrapJavaScriptExpression(slot).node;
+  if (t.isObjectExpression(candidate)) return [value, candidate];
+  if (!isExactlyNonObjectExpression(candidate)) return undefined;
+  // Slot 1 cannot be an override, so slot 2 becomes the deciding argument.
+  const next = node.arguments[2];
+  if (next === undefined) return [value];
+  if (t.isSpreadElement(next)) return undefined;
+  const second = unwrapJavaScriptExpression(next).node;
+  if (t.isObjectExpression(second)) return [value, second];
+  return isExactlyNonObjectExpression(second) ? [value] : undefined;
 };
 
 /** The effective member across merged options objects; later ones win. */
@@ -515,6 +519,10 @@ const rejectsOptionsPortLiteral = (
   );
 };
 
+/** Whether a number is a TCP port Node accepts. */
+const isUsablePortNumber = (value: number): boolean =>
+  Number.isInteger(value) && value >= 0 && value <= 65535;
+
 /**
  * Whether a `port` member's exactly readable value is one Node rejects.
  *
@@ -538,10 +546,7 @@ const rejectsOptionsPortValue = (
     isUnmodifiedGlobalReference(value, context.state, value.name)
   )
     return true;
-  if (t.isNumericLiteral(value))
-    return (
-      !Number.isInteger(value.value) || value.value < 0 || value.value > 65535
-    );
+  if (t.isNumericLiteral(value)) return !isUsablePortNumber(value.value);
   // A sign over one is the same non-finite number, but `void` is `undefined`: it
   // is not a sign, so only `+` and `-` are decided here.
   if (
@@ -554,10 +559,12 @@ const rejectsOptionsPortValue = (
       (operand.name === "NaN" || operand.name === "Infinity")
     )
       return isUnmodifiedGlobalReference(operand, context.state, operand.name);
-    return (
-      t.isNumericLiteral(operand) &&
-      (value.operator === "-" || !Number.isInteger(operand.value))
-    );
+    if (!t.isNumericLiteral(operand)) return false;
+    // Compute the signed value and apply the whole check. The sign alone does not
+    // decide: `-0` is port zero, which connects, while `+65536` is out of range and
+    // throws. Both are signed spellings Node judges by value.
+    const signed = value.operator === "-" ? -operand.value : operand.value;
+    return !isUsablePortNumber(signed);
   }
   const literal = readExactJavaScriptLiteral(value);
   if (!literal.found) return false;
