@@ -111,6 +111,17 @@ named tools through `discover_tools`. Setup preserves this explicit setting.
 See the [discovery contract](mcp-contracts.md#hotcold-catalog-discovery) for
 pagination, identity and family-scope semantics.
 
+Analysis tools, including `inspect_analysis_view`, load on demand. For example,
+load `inspect_api_contract` and supply its `view` to answer an initial OpenAPI
+or GraphQL question directly. When later questions need retained facts, load
+`inspect_analysis_view` and use the complete `parent_evidence_id`; source files
+need not be reopened. If both tools are needed from the start, request both
+names in one `discover_tools` batch to avoid another catalog refresh. The same
+pattern applies to selected Playwright trace and endpoint-comparison results.
+This defers unused schema delivery and client validator preparation; it does
+not reduce parsing work, alter Evidence or shorten requested facts. Clients
+without catalog refresh should keep the default `full` profile.
+
 Codex CLI 0.165.0 requires its experimental `mcp_tool_list_changed` feature for
 this workflow. Merge these entries into the existing `~/.codex/config.toml`
 without replacing other feature or REA settings:
