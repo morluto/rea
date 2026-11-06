@@ -4,6 +4,8 @@ import {
 } from "./buildCapture.js";
 import type { DesktopStatePath } from "./desktopState.js";
 import { isWithinAny } from "./desktopStateDiff.js";
+import { runtimeFile, type RuntimeFileKind } from "./runtimeFiles.js";
+import { stateDirectoryOf } from "./stateRoles.js";
 
 /** The most paths a limitation or README line names before counting the rest. */
 const MAX_LISTED = 8;
@@ -18,6 +20,14 @@ const SHARED_PARENTS = [
 ];
 
 const folderOf = (path: string) => path.split("/").slice(0, -1).join("/");
+
+/** The folders a home path lies in, outermost first: `a` and `a/b` for `a/b/c`. */
+const ancestorsOf = (path: string): readonly string[] => {
+  const ancestors: string[] = [];
+  for (let at = path.indexOf("/"); at >= 0; at = path.indexOf("/", at + 1))
+    ancestors.push(path.slice(0, at));
+  return ancestors;
+};
 
 /**
  * A home file's top state folder: its folder in a shared folder, such as
@@ -39,37 +49,45 @@ const topFolder = (file: string): string => {
  * The folders under the home where files changed during the capture that the
  * bundle neither owns nor seeds, each collapsed to its top state folder, or
  * to the file's own folder or the file when that holds an owned path, nested
- * ones into the outermost. Desktop services' files are left out.
+ * ones into the outermost. Desktop services' files are left out. A path is
+ * looked up by the folders it lies in, so the work grows with the number of
+ * files and their depth rather than with the folders compared pairwise.
  */
 export const unownedChangedFolders = (
   files: ReadonlyMap<string, DesktopStatePath>,
   owned: readonly string[],
 ): readonly string[] => {
-  const holdsOwned = (folder: string) =>
-    owned.some((path) => isWithinAny(path, [folder]));
+  const ownedPaths = new Set(owned);
+  // The owned paths and every folder holding one.
+  const holdingOwned = new Set(
+    owned.flatMap((path) => [path, ...ancestorsOf(path)]),
+  );
+  const isOwned = (home: string) =>
+    ownedPaths.has(home) ||
+    ancestorsOf(home).some((folder) => ownedPaths.has(folder));
   const folders = new Set<string>();
   for (const [home, path] of files) {
     if (
       path.changes.length === 0 ||
       path.role === "shared_desktop" ||
-      isWithinAny(home, owned)
+      isOwned(home)
     )
       continue;
     folders.add(
       [topFolder(home), folderOf(home)].find(
-        (folder) => folder.length > 0 && !holdsOwned(folder),
+        (folder) => folder.length > 0 && !holdingOwned.has(folder),
       ) ?? home,
     );
   }
-  const sorted = [...folders].sort();
-  return sorted.filter(
-    (folder) =>
-      !sorted.some((other) => other !== folder && isWithinAny(folder, [other])),
-  );
+  return [...folders]
+    .filter(
+      (folder) => !ancestorsOf(folder).some((other) => folders.has(other)),
+    )
+    .sort();
 };
 
 /** What a seed file the app keeps for its own running, seeded as captured, is. */
-export type RuntimeSeedKind = "web_storage" | "cache";
+export type RuntimeSeedKind = RuntimeFileKind;
 
 /** Seed files of one kind, each collapsed to the folder that holds that kind, or itself. */
 export interface RuntimeSeeds {
@@ -90,67 +108,25 @@ const LOCK_NAMES = new Set([
 const DOCUMENT_LOCK = /^\.~lock\..+#$/u;
 
 /**
- * Whether a home file is a lock an app holds while it runs: a lock name
- * anywhere, LibreOffice's document lock, or a `*.lock` or `*.lck` file in a
- * hidden folder of the home or itself hidden; elsewhere such a file may be a
- * project's own, such as `Cargo.lock`.
+ * Whether a home file is a lock an app holds while it runs: a profile lock's
+ * name anywhere, LibreOffice's document lock, or a `*.lock` or `*.lck` file
+ * directly in one of the app's state directories, home-relative. Elsewhere
+ * such a file may be a project's own, such as `Cargo.lock`, which pins
+ * dependencies rather than marking a profile in use.
  */
-export const isLockFile = (file: string): boolean => {
-  const segments = file.split("/");
-  const name = segments.at(-1) ?? "";
+export const isLockFile = (
+  file: string,
+  stateDirectories: readonly string[],
+): boolean => {
+  const name = file.split("/").at(-1) ?? "";
   if (LOCK_NAMES.has(name.toLowerCase()) || DOCUMENT_LOCK.test(name))
     return true;
+  const folder = folderOf(file);
   return (
     /\.(?:lock|lck)$/iu.test(name) &&
-    segments.some((segment) => segment.startsWith("."))
+    folder.length > 0 &&
+    stateDirectoryOf(file, stateDirectories) === folder
   );
-};
-
-/** Folders WebKit and Chromium keep pages' storage in, lowercase. */
-const WEB_STORAGE_FOLDERS = new Set([
-  "local storage",
-  "session storage",
-  "indexeddb",
-  "service worker",
-  "blob_storage",
-  "localstorage",
-  "mediakeys",
-  "deviceidhashsalts",
-  "cachestorage",
-  "shared dictionary",
-  "shared_proto_db",
-  "webstorage",
-]);
-/** Files WebKit and Chromium keep sites' state in, lowercase. */
-const WEB_STORAGE_FILES = new Set([
-  "hsts-storage.sqlite",
-  "cookies",
-  "cookies-journal",
-  "network persistent state",
-  "transportsecurity",
-  "trust tokens",
-  "trust tokens-journal",
-]);
-
-const runtimeSeed = (
-  file: string,
-): { readonly kind: RuntimeSeedKind; readonly path: string } | undefined => {
-  const segments = file.split("/");
-  const name = (segments.at(-1) ?? "").toLowerCase();
-  if (WEB_STORAGE_FILES.has(name)) return { kind: "web_storage", path: file };
-  const folders = segments.slice(0, -1);
-  const upTo = (index: number) => segments.slice(0, index + 1).join("/");
-  // WebKit keeps each origin's storage under storage/, beside a salt.
-  const storage = folders.findIndex(
-    (folder) =>
-      WEB_STORAGE_FOLDERS.has(folder.toLowerCase()) ||
-      (folder === "storage" && (name === "salt" || name === "origin")),
-  );
-  if (storage >= 0) return { kind: "web_storage", path: upTo(storage) };
-  const cache = folders.findIndex((folder) =>
-    /(?:cache|^caches)$/iu.test(folder),
-  );
-  return cache < 0 ? undefined : { kind: "cache", path: upTo(cache) };
 };
 
 const KINDS: readonly RuntimeSeedKind[] = ["web_storage", "cache"];
@@ -165,7 +141,7 @@ export const runtimeSeeds = (
 ): readonly RuntimeSeeds[] => {
   const byKind = new Map<RuntimeSeedKind, Set<string>>();
   for (const file of seedFiles) {
-    const found = runtimeSeed(file);
+    const found = runtimeFile(file);
     if (found === undefined) continue;
     const paths = byKind.get(found.kind) ?? new Set();
     paths.add(found.path);

@@ -67,6 +67,7 @@ type DraftNote = {
   readonly more?: number;
   readonly elements?: string[];
   readonly pointers?: string[];
+  readonly error?: string;
 };
 
 /** A value without the optional fields the draft left out. */
@@ -103,6 +104,7 @@ const draftNote = ({
   more,
   elements,
   pointers,
+  error,
 }: z.infer<typeof draftNoteSchema>): DraftNote => ({
   code,
   message,
@@ -113,6 +115,7 @@ const draftNote = ({
   ...(more === undefined ? {} : { more }),
   ...(elements === undefined ? {} : { elements }),
   ...(pointers === undefined ? {} : { pointers }),
+  ...(error === undefined ? {} : { error }),
 });
 
 /** A stopped capture: its checkpoints, what it found of the app and the draft between seed and end. */

@@ -58,9 +58,12 @@ See [desktop builds](https://github.com/morluto/rea/blob/main/.agents/skills/rev
    something else, as MuseScore's shows a score's title: a file outside
    hidden folders becomes a document, which the bundle owns, seeds and opens
    at launch, and one under a hidden folder such as `~/.config/MuseScore` the
-   app's own state. A path with `..`, or naming the home itself, is refused
-   before the computer is asked; the computer refuses an absolute path
-   outside its home, or in `~/.rea-build`, and starts nothing.
+   app's own state, also when that folder is a link elsewhere in the home. A
+   path with `..`, or naming the home itself, is refused before the computer
+   is asked; the computer refuses an absolute path outside its home, one in
+   `~/.rea-build`, and one a link leads out of the home or into
+   `~/.rea-build`, resolving a path that does not exist yet through its
+   nearest existing folder, and starts nothing.
 
 3. Make the seed through the app with `act_on_build_computer`, saving it
    where the user keeps such files, such as `~/Documents`, then
@@ -78,12 +81,17 @@ See [desktop builds](https://github.com/morluto/rea/blob/main/.agents/skills/rev
    seed values. The draft's
    [task section](desktop-application-tasks.md#describe-the-change) describes
    each. `notes`, each with a `code` and a `message`, say why a draft has no
-   files: `no_change` when no file under the home changed between them;
-   `unowned_changes` when files changed but none under the owned paths,
-   listing up to five in `files` with their roles, desktop files last, and
-   counting the rest in `more`; and `no_document` when no file has the
-   document role. The last two point at `state_paths`. They also say, for
-   a drafted `file`, why its suggestions are thin: `by_position`,
+   files: `no_change` when no file under the home changed between them and
+   nor did the app's dconf keys; `unowned_changes` when files changed but
+   none under the owned paths, listing up to five in `files` with their
+   roles, desktop files last, and counting the rest in `more`;
+   `uncheckable_changes` when the app's keys in dconf were read and changed,
+   listing the database in `files`, since no check reads dconf;
+   `unreadable_changes` when a dconf database changed but REA could not read
+   it, such as without `dconf-cli`, with the read `error`, so whose keys
+   changed is unknown; and `no_document` when no file has the document role.
+   `unowned_changes` and `no_document` point at `state_paths`. They also say,
+   for a drafted `file`, why its suggestions are thin: `by_position`,
    `view_state_only`, `long_text`, `cut_view` or `unreadable_view`.
 6. Write the task: its name, the prompt in the user's own words, and checks
    that hold after the change and not on the seed, from the suggestions,
@@ -105,7 +113,9 @@ See [desktop builds](https://github.com/morluto/rea/blob/main/.agents/skills/rev
    Lock files the app holds while it runs, such as LibreOffice's profile
    `.lock` and its document lock `.~lock.<name>#`, are left out of the seed,
    since a copied one can keep the app from starting, and the limitations
-   and the README list them after "Left out of the seed". They name seeded
+   and the README list them after "Left out of the seed"; a project's
+   `Cargo.lock` or `yarn.lock`, a document or a path in `state_paths` is
+   seeded. They name seeded
    WebKit or Chromium storage and caches too, which the app keeps for its
    own running. When the application held files open in a folder whose
    starting content the capture did not retain, a limitation names the
@@ -126,9 +136,13 @@ is a name already taken. The acknowledgement comes from the capture after it
 has walked the home and retained what changed: `entries` walked, `changes`
 since the checkpoint before, `retained_files` and `retained_bytes`, and up to
 ten `changed_files`, home-relative, with `more_changed_files` counting the
-rest. Folders are left out, and files the app held open come first, then
-those in its state directories, then the rest, each by path, so a save's
-document leads the list.
+rest. Folders are left out; files under `state_paths` come first, then
+those the app held open, then those in its state directories, then the rest,
+and caches and WebKit or Chromium storage last, each by path, so a save's
+document leads the list. When the computer's REA is older than these lists,
+as when `REA_BUILD_COMPUTER_REA_ARCHIVE` still names an earlier build, the
+checkpoint is still taken and both are `null`: which files changed is
+unknown. Pack the current REA into the archive to get them back.
 
 Each step can be asked again after its answer was lost:
 
@@ -171,6 +185,8 @@ and `{"kind": "bundle", "path": ...}`; agentenv boots the app with the seed,
 on the seed's document when the export opens one. When the computer never
 gets ready and the bundle's seed holds lock files, the start's error names
 them: delete them from the bundle, or export again, which leaves them out.
+A bundle records no state directories, so the error names only files by a
+profile lock's name and LibreOffice's document locks.
 Then, with the task exactly as exported:
 
 | `stage`       | Before it                                                         | Its checks must          |

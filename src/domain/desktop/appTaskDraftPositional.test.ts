@@ -107,6 +107,41 @@ describe("identifiers an app numbers by position", () => {
     ]);
   });
 
+  it("keeps ids as identity when two items only swap a colour, so the swap reads as two colour edits", () => {
+    const list = (first: string, second: string) =>
+      `<list><item id="1" color="${first}"/><item id="2" color="${second}"/></list>`;
+    const [before, after] = [list("red", "blue"), list("blue", "red")];
+
+    expect(
+      pairMembers(
+        membersAt(after, "/root/children"),
+        membersAt(before, "/root/children"),
+      ),
+    ).toEqual({
+      newer: {
+        keys: ["[name=item][@id=1]", "[name=item][@id=2]"],
+        partners: [0, 1],
+      },
+      older: {
+        keys: ["[name=item][@id=1]", "[name=item][@id=2]"],
+        partners: [0, 1],
+      },
+    });
+    const file = xmlDraft(before, after);
+    const items = "/root/children/[name=item]";
+    expect(
+      file.values.map(({ pointer, note }) => [pointer, note ?? null]),
+    ).toEqual([
+      [`${items}[@id=1]/attributes/color`, null],
+      [`${items}[@id=2]/attributes/color`, null],
+    ]);
+    expect(file.suggested.map(({ kind }) => kind)).toEqual([
+      "value_equals",
+      "value_equals",
+    ]);
+    expect(file.notes).toEqual([]);
+  });
+
   it("keeps ids that did not shift as identity, so a deletion leaves the rest paired by id", () => {
     const stable = (...ids: number[]) =>
       `<list>${ids.map((id) => `<item id="${String(id)}" color="red"/>`).join("")}</list>`;
@@ -115,5 +150,65 @@ describe("identifiers an app numbers by position", () => {
     expect(
       pairMembers(items(stable(1, 3)), items(stable(1, 2, 3))).newer.keys,
     ).toEqual(["[name=item][@id=1]", "[name=item][@id=3]"]);
+  });
+});
+
+describe("an element renamed", () => {
+  /** A painting's layer stack as MyPaint saves it: each layer by name, its pixels in `src`, the one selected flagged. */
+  const stack = (top: string) =>
+    `<image w="800" h="600"><stack>${[
+      [top, "00", "576", "true"],
+      ["Sky", "01", "0", "false"],
+      ["Background", "02", "0", "false"],
+    ]
+      .map(
+        ([name, layer, x, selected]) =>
+          `<layer composite-op="svg:src-over" name="${name ?? ""}" opacity="1.0" selected="${selected ?? ""}" src="data/layer-${layer ?? ""}.png" visibility="visible" x="${x ?? ""}" y="0"/>`,
+      )
+      .join("")}</stack></image>`;
+  const LAYER = "/root/children/[name=stack]/children/[name=layer]";
+
+  it("pairs a layer whose name alone changed, at its place among the layers, by another attribute naming it alone rather than the one selected", () => {
+    const layers = (top: string) =>
+      membersAt(stack(top), "/root/children/0/children");
+
+    const pairing = pairMembers(layers("Sun"), layers("Untitled"));
+
+    const keys = [
+      "[name=layer][@src=data/layer-00.png]",
+      "[name=layer][@name=Sky]",
+      "[name=layer][@name=Background]",
+    ];
+    expect(pairing).toEqual({
+      newer: { keys, partners: [0, 1, 2] },
+      older: { keys, partners: [0, 1, 2] },
+    });
+  });
+
+  it("checks the renamed layer's new name by the attribute that names it, and that the old name names nothing", () => {
+    const file = xmlDraft(stack("Untitled"), stack("Sun"));
+
+    expect(file.suggested).toEqual([
+      {
+        kind: "value_equals",
+        file: FILE,
+        pointer: `${LAYER}[@src=data~1layer-00.png]/attributes/name`,
+        value: "Sun",
+      },
+      {
+        kind: "value_absent",
+        file: FILE,
+        pointer: `${LAYER}[@name=Untitled]`,
+      },
+    ]);
+    expect(
+      [stack("Untitled"), stack("Sun"), stack("Moon")].map((text) =>
+        passing(FILE, xml(text), file.suggested),
+      ),
+    ).toEqual([
+      [false, false],
+      [true, true],
+      [false, true],
+    ]);
   });
 });

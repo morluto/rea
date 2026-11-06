@@ -190,8 +190,12 @@ makes the app find its profile or document in use, and a LibreOffice Calc
 bundle whose seed held its profile's `.lock` showed no window at boot. They
 are `lockfile`, `lock`, `.lock`, `.parentlock`, `parent.lock` and
 `SingletonLock` anywhere, LibreOffice's document lock `.~lock.<name>#`, and
-`*.lock` or `*.lck` in a hidden folder of the home or itself hidden; elsewhere
-such a file may be a project's own, such as `Cargo.lock`, and is seeded. A limitation and the README list them, up to
+`*.lock` or `*.lck` directly in one of the application's state directories.
+Elsewhere such a file may be a project's own, such as `Cargo.lock` or
+`yarn.lock`, which pin dependencies, and is seeded, even under a folder whose
+name starts with a dot. A file the state view makes a document, or one named
+itself by `--state-path` or an absolute `--argument`, is never left out,
+whatever its name. A limitation and the README list them, up to
 eight and a count, after "Left out of the seed". They stay under the owned
 paths, so `data/get` returns the lock the running app holds, and `data/reset`
 restores the seed without them. Other seed files the app keeps for its own
@@ -209,7 +213,11 @@ existing user database through a `file-db:` profile, then runs `dconf compile`
 on that dump and the captured keys, in that name order so the captured keys
 win, and replaces `~/.config/dconf/user`. If that fails, the server prints a
 one-line warning and the app starts without the captured keys. `data/reset` does
-not restore them.
+not restore them. No file of the bundle holds them, so `data/get` does not
+return them and no task check reads them; a draft whose only change between
+its checkpoints is to the application's dconf keys says so with
+`uncheckable_changes`, and one whose dconf database changed but could not be
+read says so with `unreadable_changes`.
 
 ## The seed checkpoint
 

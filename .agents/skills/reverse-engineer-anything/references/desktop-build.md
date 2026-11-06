@@ -180,8 +180,9 @@ the first source that has the app:
      document: that state is the seed. Build it in the app and mark `seed`
      once the app has written. To see whether it has, mark a throwaway
      checkpoint, such as `probe-1`, and read its `changed_files`: up to ten
-     files that changed since the checkpoint before, those the app held
-     open first, with `more_changed_files` counting the rest.
+     files that changed since the checkpoint before, those under
+     `state_paths` first, then those the app held open, caches last, with
+     `more_changed_files` counting the rest.
    - When the app's own format is compressed, such as Gnumeric's
      `.gnumeric` (gzip XML), REA reads it as binary and no check can look
      inside. Save in an uncompressed format the app offers, such as
@@ -204,6 +205,13 @@ the first source that has the app:
      with their roles; the document is among them. Close the computer and
      capture again on a new one with that path in `state_paths`; the export
      refuses a check on a file outside the owned paths.
+   - `uncheckable_changes`: the app saved the change in dconf, as gedit does
+     its preferences, and no check reads dconf. Saving again does not help:
+     choose a change the app saves in a file, and capture again on a new
+     build computer.
+   - `unreadable_changes`: a dconf database changed but REA could not read
+     it; `error` says why. This is not evidence the app saved there: report
+     the error rather than changing the task.
 
    A note with a `file` says why that file's suggestions are thin:
    - `by_position`: only position names what changed; its `elements` lack

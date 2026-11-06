@@ -27,6 +27,7 @@ import {
 import {
   EDITED_NOTE,
   HOME,
+  NOTE,
   capture,
   change,
   checkpoint,
@@ -407,68 +408,72 @@ describe("exportDesktopApplication of state it does not own or keeps for itself"
   });
 });
 
+/** The fixture with a profile lock and a document lock written by `edited`, and its notes folder held open. */
+const lockedCapture = (): DesktopApplicationCapture => {
+  const local = capture();
+  const [baseline, edited] = local.state.checkpoints;
+  if (baseline === undefined || edited === undefined)
+    throw new Error("the fixture has two checkpoints");
+  const locks = [
+    [PROFILE_LOCK, PROFILE_LOCK_TEXT],
+    [DOCUMENT_LOCK, DOCUMENT_LOCK_TEXT],
+  ] as const;
+  return {
+    ...local,
+    state: {
+      ...local.state,
+      checkpoints: [
+        baseline,
+        {
+          ...edited,
+          changes: [
+            ...edited.changes,
+            ...locks.map(([path, text]) => change(path, { after: text })),
+          ],
+          retained: [
+            ...edited.retained,
+            ...locks.map(([path, text]) => retained(path, text)),
+          ],
+        },
+      ],
+      unretained_opened_directories: [`${HOME}/Documents`],
+    },
+  };
+};
+const PROFILE_LOCK = `${HOME}/.config/notes/.lock`;
+const PROFILE_LOCK_TEXT = "[Lockdata]\nUser=ada\nHost=localhost\n";
+const DOCUMENT_LOCK = `${HOME}/Documents/.~lock.today.txt#`;
+const DOCUMENT_LOCK_TEXT =
+  ",ada,localhost,04.11.2026 00:00,file:///home/ada/.config/notes;\n";
+
+const exportLocked = async (
+  recorded = lockedCapture(),
+  extraContent: readonly string[] = [],
+) => {
+  const folder = await writeCaptureFolder(recorded, undefined, [
+    PROFILE_LOCK_TEXT,
+    DOCUMENT_LOCK_TEXT,
+    ...extraContent,
+  ]);
+  const directory = join(
+    await createTestTempDirectory("desktop-export-"),
+    "bundle",
+  );
+  const result = await exportDesktopApplication(
+    {
+      capture: folder,
+      directory,
+      name: undefined,
+      tasks: [],
+      seedCheckpoint: "edited",
+    },
+    readers,
+  );
+  if (result instanceof Error) throw result;
+  return { result, directory };
+};
+
 describe("exportDesktopApplication of lock files and folders the app held files open in", () => {
-  /** The fixture with a profile lock and a document lock written by `edited`, and its notes folder held open. */
-  const lockedCapture = (): DesktopApplicationCapture => {
-    const local = capture();
-    const [baseline, edited] = local.state.checkpoints;
-    if (baseline === undefined || edited === undefined)
-      throw new Error("the fixture has two checkpoints");
-    const locks = [
-      [PROFILE_LOCK, PROFILE_LOCK_TEXT],
-      [DOCUMENT_LOCK, DOCUMENT_LOCK_TEXT],
-    ] as const;
-    return {
-      ...local,
-      state: {
-        ...local.state,
-        checkpoints: [
-          baseline,
-          {
-            ...edited,
-            changes: [
-              ...edited.changes,
-              ...locks.map(([path, text]) => change(path, { after: text })),
-            ],
-            retained: [
-              ...edited.retained,
-              ...locks.map(([path, text]) => retained(path, text)),
-            ],
-          },
-        ],
-        unretained_opened_directories: [`${HOME}/Documents`],
-      },
-    };
-  };
-  const PROFILE_LOCK = `${HOME}/.config/notes/.lock`;
-  const PROFILE_LOCK_TEXT = "[Lockdata]\nUser=ada\nHost=localhost\n";
-  const DOCUMENT_LOCK = `${HOME}/Documents/.~lock.today.txt#`;
-  const DOCUMENT_LOCK_TEXT =
-    ",ada,localhost,04.11.2026 00:00,file:///home/ada/.config/notes;\n";
-
-  const exportLocked = async () => {
-    const folder = await writeCaptureFolder(lockedCapture(), undefined, [
-      PROFILE_LOCK_TEXT,
-      DOCUMENT_LOCK_TEXT,
-    ]);
-    const directory = join(
-      await createTestTempDirectory("desktop-export-"),
-      "bundle",
-    );
-    const result = await exportDesktopApplication(
-      {
-        capture: folder,
-        directory,
-        name: undefined,
-        tasks: [],
-        seedCheckpoint: "edited",
-      },
-      readers,
-    );
-    if (result instanceof Error) throw result;
-    return { result, directory };
-  };
-
   it("leaves the profile lock and the document lock out of the seed and lists them as left out", async () => {
     const { result, directory } = await exportLocked();
 
@@ -502,6 +507,80 @@ describe("exportDesktopApplication of lock files and folders the app held files 
     expect(readme).toContain("- Left out of the seed:");
     expect(readme).toContain(
       "`~/.config/notes/.lock`, `~/Documents/.~lock.today.txt#`",
+    );
+  });
+
+  it("seeds project lock files the capture recognized as documents and a lock-named file the caller selected, and leaves out a *.lock file directly in a state directory", async () => {
+    const locked = lockedCapture();
+    const [baseline, edited] = locked.state.checkpoints;
+    if (baseline === undefined || edited === undefined)
+      throw new Error("the fixture has two checkpoints");
+    const text = "x\n";
+    // Under folders whose names start with a dot, which made them look like an app's locks.
+    const projects = [
+      `${HOME}/Projects/.repo/Cargo.lock`,
+      `${HOME}/.dotfiles/web/yarn.lock`,
+    ];
+    const selected = `${HOME}/.config/notes/notes.lock`;
+    const stateLock = `${HOME}/.config/notes/db.lock`;
+    const written = [...projects, selected, stateLock];
+    const recorded: DesktopApplicationCapture = {
+      ...locked,
+      session: {
+        ...locked.session,
+        windows: locked.session.windows.map((window) => ({
+          ...window,
+          titles: [...window.titles, "Cargo.lock - Notes", "yarn.lock - Notes"],
+        })),
+      },
+      state: {
+        ...locked.state,
+        content_roots: [...locked.state.content_roots, selected],
+        checkpoints: [
+          baseline,
+          {
+            ...edited,
+            changes: [
+              ...edited.changes,
+              ...written.map((path) => change(path, { after: text })),
+            ],
+            retained: [
+              ...edited.retained,
+              ...written.map((path) => retained(path, text)),
+            ],
+          },
+        ],
+      },
+    };
+
+    const { result, directory } = await exportLocked(recorded, [text]);
+
+    const seedFiles = z
+      .object({ seed_files: z.array(z.string()) })
+      .parse(result.normalized_result).seed_files;
+    expect(seedFiles).toEqual(
+      expect.arrayContaining([
+        "Projects/.repo/Cargo.lock",
+        ".dotfiles/web/yarn.lock",
+        ".config/notes/notes.lock",
+      ]),
+    );
+    for (const project of [
+      "Projects/.repo/Cargo.lock",
+      ".dotfiles/web/yarn.lock",
+    ])
+      expect(
+        await exists(join(directory, "envs/notes/seed", project)),
+        project,
+      ).toBe(true);
+    expect(seedFiles).not.toContain(".config/notes/db.lock");
+    expect(seedFiles).not.toContain(".config/notes/.lock");
+    const leftOut = result.limitations.filter((limitation) =>
+      limitation.startsWith("Left out of the seed:"),
+    );
+    expect(leftOut).toHaveLength(1);
+    expect(leftOut[0]).toContain(
+      "~/.config/notes/.lock, ~/.config/notes/db.lock, ~/Documents/.~lock.today.txt#.",
     );
   });
 
@@ -796,6 +875,68 @@ describe("exportDesktopApplication home paths", () => {
   const seed = (directory: string, path: string) =>
     readFile(join(directory, "envs/notes/seed", path), "utf8");
 
+  it("owns and seeds KDE's ~/.config/<name>rc, which the app first wrote during the capture", async () => {
+    const local = capture();
+    const [baseline, edited] = local.state.checkpoints;
+    if (baseline === undefined || edited === undefined)
+      throw new Error("the fixture has two checkpoints");
+    const rc = `${HOME}/.config/notesrc`;
+    const text = "[General]\nShowTipOfDay=false\n";
+    // The inventory names it before it exists, as it names the app's folders.
+    const folder = await writeCaptureFolder(
+      {
+        ...local,
+        application: {
+          ...local.application,
+          state_directories: [
+            ...local.application.state_directories,
+            { path: rc, exists_at_start: false },
+          ],
+        },
+        state: {
+          ...local.state,
+          content_roots: [...local.state.content_roots, rc],
+          state_directories: [...(local.state.state_directories ?? []), rc],
+          checkpoints: [
+            baseline,
+            {
+              ...edited,
+              changes: [
+                ...edited.changes,
+                change(rc, { after: text }, { state: true }),
+              ],
+              retained: [...edited.retained, retained(rc, text)],
+            },
+          ],
+        },
+      },
+      undefined,
+      [text],
+    );
+    const directory = join(
+      await createTestTempDirectory("desktop-export-"),
+      "bundle",
+    );
+
+    const result = await exportDesktopApplication(
+      {
+        capture: folder,
+        directory,
+        name: undefined,
+        tasks: [],
+        seedCheckpoint: "edited",
+      },
+      readers,
+    );
+
+    if (result instanceof Error) throw result;
+    expect(result.normalized_result).toMatchObject({
+      paths: expect.arrayContaining([".config/notesrc"]),
+      seed_files: expect.arrayContaining([".config/notesrc"]),
+    });
+    expect(await seed(directory, ".config/notesrc")).toBe(text);
+  });
+
   it("keeps a file under a symlinked home at its path under the walked home", async () => {
     const home = "/data/ada";
     const { result, directory } = await exportWalked({
@@ -874,12 +1015,18 @@ describe("exportDesktopApplication home paths", () => {
   });
 });
 
-/** Export the seed-then-end capture, launched from a desktop entry with `exec`, seeded at `seed`. */
+/** Export the seed-then-end capture, or `recorded`, launched from a desktop entry with `exec`, seeded at `seed`. */
 const exportSeeded = async (
   exec: string | null,
-  options: { readonly syntheticSeed?: boolean } = {},
+  {
+    recorded,
+    ...options
+  }: {
+    readonly syntheticSeed?: boolean;
+    readonly recorded?: DesktopApplicationCapture;
+  } = {},
 ) => {
-  const local = seedEndCapture();
+  const local = recorded ?? seedEndCapture();
   const folder = await writeCaptureFolder(
     {
       ...local,
@@ -933,6 +1080,45 @@ const exportSeeded = async (
 const launchLimitations = (limitations: readonly string[]) =>
   limitations.filter((line) => line.includes(NO_LAUNCH_DOCUMENT));
 
+/**
+ * The seed-then-end capture of an app whose titles name no file, given the
+ * note and `~/.config/MuseScore`, a link to `target`, as state paths, with
+ * MuseScore's settings there from the start.
+ */
+const linkedSettingsCapture = (target: string): DesktopApplicationCapture => {
+  const base = seedEndCapture();
+  const [baseline, ...later] = base.state.checkpoints;
+  if (baseline === undefined) throw new Error("the fixture has a baseline");
+  return {
+    ...base,
+    session: {
+      ...base.session,
+      windows: base.session.windows.map((window) => ({
+        ...window,
+        titles: ["Untitled - Notes"],
+      })),
+    },
+    state: {
+      ...base.state,
+      content_roots: [...base.state.content_roots, target, NOTE],
+      selected_paths: [
+        { path: `${HOME}/.config/MuseScore`, physical: target },
+        { path: NOTE, physical: NOTE },
+      ],
+      checkpoints: [
+        {
+          ...baseline,
+          retained: [
+            ...baseline.retained,
+            retained(`${target}/MuseScore3.ini`, "[ui]\nwrap=false\n"),
+          ],
+        },
+        ...later,
+      ],
+    },
+  };
+};
+
 describe("exportDesktopApplication launch document", () => {
   it("opens the seed's one document when the desktop entry takes files", async () => {
     const { result, module, readme } = await exportSeeded("notes %U");
@@ -948,6 +1134,33 @@ describe("exportDesktopApplication launch document", () => {
     expect(readme).toContain("`~/Documents/today.txt`");
     expect(launchLimitations(result.limitations)).toEqual([]);
   });
+
+  it.each([
+    ["elsewhere in the home", "settings/MuseScore"],
+    [
+      "to the note's own folder, where the note's deeper selection decides",
+      "Documents",
+    ],
+  ])(
+    "opens the selected note when a selected settings link leads %s",
+    async (_, target) => {
+      const { result, module } = await exportSeeded("notes %U", {
+        recorded: linkedSettingsCapture(`${HOME}/${target}`),
+      });
+
+      // The settings keep the link's meaning, so the note is the one document.
+      expect(result.normalized_result).toMatchObject({
+        seed_files: expect.arrayContaining([
+          "Documents/today.txt",
+          `${target}/MuseScore3.ini`,
+        ]),
+      });
+      expect(module).toContain(
+        `exec 'notes' \\"$HOME\\"/'Documents/today.txt'"]`,
+      );
+      expect(launchLimitations(result.limitations)).toEqual([]);
+    },
+  );
 
   it.each(["notes", null])(
     "launches as captured, and says why in the README and limitations, when Exec is %j",
