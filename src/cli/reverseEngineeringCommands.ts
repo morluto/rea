@@ -17,6 +17,7 @@ import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import {
   OBJDUMP_ARTIFACT_OPERATIONS,
   reverseCommandTimeoutSchema,
+  rizinInputSchema,
 } from "../domain/reverseEngineering.js";
 import { logCliCommand } from "../cliLogging.js";
 import type { CliInstance } from "./types.js";
@@ -309,6 +310,10 @@ export const registerReverseEngineeringCommands = (
       command: z.string().min(1).describe("One caller-selected Rizin command."),
     }),
     options: z.object({
+      asmArch: rizinInputSchema.shape.asm_arch,
+      asmBits: rizinInputSchema.shape.asm_bits,
+      asmCpu: rizinInputSchema.shape.asm_cpu,
+      baseAddress: rizinInputSchema.shape.base_address,
       commandTimeoutMs: reverseCommandTimeoutSchema,
     }),
     run: ({ args, options }) =>
@@ -318,6 +323,18 @@ export const registerReverseEngineeringCommands = (
             service.executeRizinCommand(
               {
                 ...args,
+                ...(options.asmArch === undefined
+                  ? {}
+                  : { asm_arch: options.asmArch }),
+                ...(options.asmBits === undefined
+                  ? {}
+                  : { asm_bits: options.asmBits }),
+                ...(options.asmCpu === undefined
+                  ? {}
+                  : { asm_cpu: options.asmCpu }),
+                ...(options.baseAddress === undefined
+                  ? {}
+                  : { base_address: options.baseAddress }),
                 ...(options.commandTimeoutMs === undefined
                   ? {}
                   : { command_timeout_ms: options.commandTimeoutMs }),
@@ -422,7 +439,9 @@ export const registerReverseEngineeringCommands = (
       inferiorTty: z
         .string()
         .min(1)
-        .describe("Caller-selected Linux TTY for inferior stdout and stderr."),
+        .describe(
+          "Caller-selected Linux TTY for inferior stdin, stdout and stderr.",
+        ),
       backend: z
         .string()
         .min(1)

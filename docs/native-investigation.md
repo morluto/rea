@@ -43,6 +43,17 @@ focused tools such as `list_procedures` and `analyze_function` on the same sessi
 | What did the declared runtime scenario observe?              | [Desktop](#native-desktop-observation) or [call observation](#native-call-observation) |
 | What can this provider and host establish?                   | [Provider boundaries](#provider-and-verification-boundaries)                           |
 
+For large pseudocode, request `procedure_pseudo_code` with `detail: "summary"`
+on the first MCP call. It retains the complete observation and returns the
+original selection, text availability and length without the body. Use
+`normalized_result.parent_evidence_id` with `inspect_analysis_view` and
+`view: {kind: "native", facet: "pseudocode", offset: 0, limit: 20000}`;
+follow `coverage.next_offset` for later pages. Offsets and limits count UTF-16
+code units, not lines or tokens. Pages reuse the same observation without
+repeating decompilation. Null and empty text remain distinct. Omitted or
+`complete` detail preserves full inline delivery. Summary delivery requires a
+retaining session and does not reduce the work or memory of decompilation.
+
 ## Exact CLI selectors
 
 `function`, `instructions` and `decompile` accept `--procedure=<name-or-address>`;
@@ -236,6 +247,11 @@ the index retains the complete selected names, addresses, provider facts and
 caveats. Failure details retain at most 32 rows within 2,048 JSON-encoded
 UTF-8 bytes; names may be omitted to keep complete addresses and reasons. The
 index retains every failure and its complete observed name.
+The manifest reports the procedure-inventory limitations of the current call in
+`inventory_limitations`. `decompile-index.json`'s `latest_run` records that
+call's filters, selected and excluded counts, and inventory limitations; older
+runs remain represented only by their retained function records, so a later
+inventory warning is not presented as the history of every file.
 Each function's `decompile-index.json` record, whatever its status, keeps the
 complete limitations of the observations it used.
 When available, `provider_source` records the source of that attempt's
@@ -911,6 +927,13 @@ complete observation.
   section lengths and unsupported non-PowerPC big-endian CPU declarations return
   `unsupported_target` with the selected path and precise reason. Recovery
   selects a well-formed or supported artifact and reopens that target.
+  An unreadable adopted-protocol sublist leaves its class, category or
+  `objc_protocol_records` entry available with partial decode status and
+  `protocol_list_unreadable`. Independently decoded metadata and any readable
+  protocol-name prefix remain available; an empty partial list does not
+  establish that its owner adopts no protocols. Existing list and record
+  limits remain in effect. Reader v3 uses a new analysis profile; snapshots
+  bound to reader v2 are incompatible and must be regenerated for this recovery.
   The byte reader holds the whole selected file in memory, so it admits files up
   to 64 MiB / 67108864 bytes by default. Select a larger budget with
   `max_input_bytes` (CLI `--max-input-bytes`), at most 1 GiB / 1073741824
@@ -1195,7 +1218,8 @@ is present. A denied trace reports the `debugger-attach-denied` reason.
 Install a Ghidra 12.x (>=12.1) release and the 64-bit full JDK it declares, then configure REA to
 use them. Ghidra analysis supports Linux x64/arm64 and macOS x64/arm64; each installation requires
 the matching native decompiler. Experimental Windows x64 P0 admits native
-x86, x86-64, ARMNT (Thumb-2) and ARM64 PE applications and DLLs, plus explicitly selected
+x86, x86-64, ARMNT (Thumb-2) and ARM64 PE applications and DLLs, [DOS MZ
+executables](ghidra-dos.md), plus explicitly selected
 [raw NMOS 6502 images](raw-binary.md#nmos-6502) with a caller-supplied load address,
 on fixed local NTFS volumes. Other raw CPU families remain unsupported on Windows.
 The boundary uses bundled Job Object ownership, protected runtime DACLs, and

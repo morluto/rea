@@ -1,4 +1,4 @@
-import { realpath, symlink, writeFile } from "node:fs/promises";
+import { realpath, symlink, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 import { inspectPythonPycInputSchema } from "../../src/domain/python/pythonPyc.js";
@@ -18,6 +18,8 @@ import { inspectWebNetworkCaptureInputSchema } from "../../src/domain/webNetwork
 import { evmInterfaceFailure } from "../../src/evm/EvmoleFailures.js";
 import { sqliteDatabaseFailure } from "../../src/sqlite/SqliteDatabaseFailures.js";
 import { captureSqliteDatabaseSnapshot } from "../../src/sqlite/SqliteDatabaseSnapshot.js";
+import { readApiContract } from "../../src/application/apiContract/ApiContractRead.js";
+import { traceFailure } from "../../src/browser/history/playwrightTrace/TraceFailure.js";
 import { wabtFailure } from "../../src/wasm/WabtFailures.js";
 
 const selectedSymlink = async (prefix: string) => {
@@ -179,5 +181,39 @@ it.skipIf(process.platform === "win32")(
     await resources.close();
     if (result.ok) throw new Error("expected the symlink to be refused");
     await expectResolvedTargetRemediation(result.error, selected, target);
+  },
+);
+
+it.skipIf(process.platform === "win32").each(["regular", "dangling"] as const)(
+  "keeps producer-owned recovery in API documents and Playwright traces for %s symlink targets",
+  async (kind) => {
+    const { selected, target } = await selectedSymlink(
+      "rea-new-readers-symlink-",
+    );
+    if (kind === "dangling") {
+      await unlink(target);
+    }
+    const refusal = await readerRefusal(selected);
+    expect(refusal).toBeInstanceOf(ArtifactReaderFailure);
+    const recovery = (refusal as ArtifactReaderFailure).userMessage;
+    expect(recovery).toBeDefined();
+    const resources = new ArtifactResourceScope();
+    try {
+      const result = await readApiContract(
+        { path: selected, max_file_bytes: 1024 },
+        resources,
+      );
+      if (result.ok) throw new Error("expected the symlink to be refused");
+      for (const error of [result.error, traceFailure(refusal, selected)]) {
+        expect(error).toBeInstanceOf(AnalysisInputError);
+        const inputError = error as AnalysisInputError;
+        expect(projectAnalysisError(inputError).remediation.action).toBe(
+          recovery,
+        );
+        expect(inputError.conformsToInputContract).toBe(kind === "regular");
+      }
+    } finally {
+      await resources.close();
+    }
   },
 );

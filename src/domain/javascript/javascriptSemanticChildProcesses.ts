@@ -340,11 +340,7 @@ const resolveChildCandidates = (
     // An alias captures its source at its initializer read, not at the later
     // interaction. The shared selector retains all sources across uncertain
     // control flow, loops and writes in other activations.
-    const snapshot = semanticBindingAtRead(
-      binding,
-      current,
-      state.parentsByNode,
-    );
+    const snapshot = semanticBindingAtRead(binding, current, state);
     const selected = snapshot.binding;
     const initializers = [
       ...selected.initializers,

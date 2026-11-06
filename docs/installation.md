@@ -636,6 +636,7 @@ hosted connector; see [its configuration](client-configuration.md#other-client-s
 | Claude Desktop     | `claude_desktop` |
 | Codex              | `codex`          |
 | Cursor             | `cursor`         |
+| CodeBuddy          | `codebuddy`      |
 | Gemini CLI         | `gemini_cli`     |
 | Windsurf           | `windsurf`       |
 | Devin              | `devin`          |
@@ -720,6 +721,11 @@ and status when publisher verification cannot download the current package.
 Hopper metadata and package downloads require HTTPS throughout the redirect
 chain; a redirect to HTTP or to a URL carrying credentials is refused before
 that destination is requested, and those credentials are not reported.
+A package download fails when no bytes arrive for 30 seconds or when it has not
+finished within 15 minutes, so a slow connection that keeps delivering bytes can
+complete. Release metadata and the publisher key keep a 10-second limit. A
+`timeout` failure reports the `limit` it reached (`stalled` or `deadline`), its
+`timeoutMs` and the `receivedBytes` before it stopped.
 
 On macOS, approved setup downloads the official DMG, checks its published size
 and digest, validates the application bundle, and atomically installs it to
@@ -1137,7 +1143,8 @@ and `set_addresses_names` name a function entry or any other mapped address
 session metadata edits leave executable bytes unchanged and are discarded on close. GUI controls
 require Hopper; Windows P0 remains read-only.
 
-Windows P0 admits native x86, x86-64, ARMNT (Thumb-2) and ARM64 PE applications and DLLs, plus explicitly
+Windows P0 admits native x86, x86-64, ARMNT (Thumb-2) and ARM64 PE applications and DLLs,
+[DOS MZ executables](ghidra-dos.md), plus explicitly
 selected [raw NMOS 6502 images](raw-binary.md#nmos-6502) with a caller-supplied
 entry at file offset 0, on fixed local NTFS volumes. Other raw CPU families remain
 unsupported on Windows.
