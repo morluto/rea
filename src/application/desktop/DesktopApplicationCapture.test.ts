@@ -436,7 +436,7 @@ describe.skipIf(process.platform !== "linux")(
         evidence.normalized_result,
       );
       const seed = capture.state.checkpoints[1];
-      // The acknowledgement comes after the checkpoint is taken and carries its counts.
+      // The acknowledgement comes after the checkpoint is taken and carries its counts and the file the app wrote.
       expect(parsed[2]).toEqual({
         kind: "checkpoint",
         name: "seed",
@@ -446,6 +446,8 @@ describe.skipIf(process.platform !== "linux")(
         changes: seed?.changes.length,
         retained_files: 1,
         retained_bytes: 8,
+        changed_files: [".config/fakeapp/state.ini"],
+        more_changed_files: 0,
       });
       expect(parsed[3]).toEqual({
         kind: "checkpoint_refused",

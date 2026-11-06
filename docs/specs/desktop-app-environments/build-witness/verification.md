@@ -306,6 +306,37 @@ and their fixtures added, and passes now.
   to eight and a count, and the seeded lock file, WebKit storage and cache
   folders.
 
+## Lock files, changed files and held-open folders
+
+Run on macOS with source tests and gates; no build computer was started. A
+hold-out LibreOffice Calc bundle seeded `~/.config/libreoffice/4/.lock` and
+showed no window at boot; its export also said nothing in `~/Documents` was
+seeded while `seed_files` held `Documents/q1-sales.ods`. Each test below
+failed on the head before this change, with only the tests and their
+fixtures added, and passes now.
+
+- `DesktopApplicationExport.test.ts`: a capture whose seed holds a profile
+  `.lock` and a document lock `.~lock.today.txt#` exports without either in
+  `seed_files` or the bundle, and lists both after "Left out of the seed" in
+  one limitation and the README; with `~/Documents` held open, its
+  limitation names `~/Documents/today.txt` as seeded from there.
+- `appExportUnowned.test.ts`: profile, browser and document locks are lock
+  files, and `*.lock` or `*.lck` only in a hidden folder, so `Cargo.lock`
+  and `yarn.lock` in a project are not; the capture's limitation names the
+  held-open folders from `~/`, and the export's names the seed files there
+  or says there are none.
+- `desktopCapture.test.ts`: a checkpoint's acknowledgement names its changed
+  files home-relative, the held-open document first, then state, then the
+  rest, without folders, and names ten of thirteen with three more.
+- `buildCaptureMcp.test.ts`: `mark_build_checkpoint` returns the changed
+  files the capture acknowledged.
+- `buildComputerMcp.test.ts`: a bundle's start that never got ready names
+  the lock files its seed holds; one without locks, or failing otherwise,
+  names none.
+
+The Linux-only capture test's acknowledgement now expects the changed state
+file; it is skipped on macOS and was not run.
+
 ## Limits of this verification
 
 - The witness acts were scripted by this agent from the task's prompt; no

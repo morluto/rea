@@ -17,6 +17,9 @@ import {
 } from "../../domain/desktop/appExport.js";
 import { INSTALL_SCRIPT } from "../../domain/desktop/appExportInstall.js";
 import {
+  heldOpenLimitation,
+  isLockFile,
+  leftOutLocksLimitation,
   runtimeSeeds,
   runtimeSeedsLimitation,
   unownedChangedFolders,
@@ -202,7 +205,11 @@ const planExport = (
     context.seed,
     context.identity,
   );
-  const { seeds, textSeeds } = seedVersions(files, paths, context.seed);
+  const { seeds, textSeeds, locks } = seedVersions(files, paths, context.seed);
+  const unseeded = unseededFiles(capture, homePath, files, {
+    paths,
+    seed: context.seed,
+  });
   const launch = planLaunch(capture, electron, seeds, files);
   const plan: DesktopAppExportPlan = {
     name: source,
@@ -228,10 +235,10 @@ const planExport = (
     syntheticSeed: request.syntheticSeed === true,
     seedFiles: [...seeds.keys()].sort(),
     textSeeds,
-    unseededFiles: unseededFiles(capture, homePath, files, {
-      paths,
-      seed: context.seed,
-    }),
+    unseededFiles: unseeded.filter((file) => !isLockFile(file)),
+    leftOutLocks: [
+      ...new Set([...locks, ...unseeded.filter(isLockFile)]),
+    ].sort(),
     unownedFolders: unownedChangedFolders(files, paths),
     runtimeSeeds: runtimeSeeds([...seeds.keys()]),
     dconf,
@@ -309,10 +316,15 @@ const exportLimitations = (
     readonly trashed: readonly string[];
   },
 ): string[] => {
-  const opened = capture.state.unretained_opened_directories;
+  const opened = heldOpenLimitation(
+    capture.state.unretained_opened_directories,
+    capture.host.home,
+    plan.seedFiles,
+  );
   const opens = launchDocumentLimitation(plan.opens);
   const unowned = unownedFoldersLimitation(plan.unownedFolders);
   const runtime = runtimeSeedsLimitation(plan.runtimeSeeds);
+  const locks = leftOutLocksLimitation(plan.leftOutLocks);
   return [
     seedLimitation(plan.syntheticSeed),
     SCRUB_LIMITATION,
@@ -323,6 +335,7 @@ const exportLimitations = (
       : [
           `${String(plan.unseededFiles.length)} file(s) under the owned paths existed at the seed but were not retained, so they are not seeded.`,
         ]),
+    ...(locks === undefined ? [] : [locks]),
     ...(unowned === undefined ? [] : [unowned]),
     ...(runtime === undefined ? [] : [runtime]),
     ...(facts.trashed.length === 0
@@ -335,11 +348,7 @@ const exportLimitations = (
           "The capture does not record the host's name and user, so only the captured home is removed from the seed; capture again to remove them too.",
         ]
       : []),
-    ...(opened.length === 0
-      ? []
-      : [
-          `The application held files open in ${opened.join(", ")}, whose starting content the capture did not retain, so nothing there is seeded.`,
-        ]),
+    ...(opened === undefined ? [] : [opened]),
     ...facts.collisions.map(
       ({ home, kept, dropped }) =>
         `${dropped} and ${kept} both map to ~/${home}; the export uses ${kept} and leaves out ${dropped}.`,

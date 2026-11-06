@@ -60,9 +60,11 @@ export interface DesktopAppExportPlan {
   readonly textSeeds: readonly string[];
   /** Files under the owned paths that existed before the capture but whose bytes were not retained. */
   readonly unseededFiles: readonly string[];
+  /** Lock files under the owned paths at the seed, left out of it so a stale one cannot keep the app from starting. */
+  readonly leftOutLocks: readonly string[];
   /** Folders under the home where files changed during the capture that the bundle neither owns nor seeds. */
   readonly unownedFolders: readonly string[];
-  /** Seed files the app keeps for its own running: lock files, web engine storage and caches. */
+  /** Seed files the app keeps for its own running: web engine storage and caches. */
   readonly runtimeSeeds: readonly RuntimeSeeds[];
   /** `dconf dump` key file of the application's groups at the seed, or empty. */
   readonly dconf: string;
@@ -551,7 +553,7 @@ ${DESKTOP_EXPORT_FRAMEWORK_VERSION}.
       : `
 - Not seeded, because the capture did not retain their bytes at the seed: ${homeList(plan.unseededFiles)}.
   Capture again with \`--state-path\` naming them, or a larger \`--max-file-bytes\`, to include them.`
-  }${unownedReadmeNotes(plan.unownedFolders, plan.runtimeSeeds)}
+  }${unownedReadmeNotes(plan.unownedFolders, plan.runtimeSeeds, plan.leftOutLocks)}
 - \`tasks/smoke.json\` deploys the app.
 
 ${taskSection.length === 0 ? "Run it with `agent-env run <this folder>`." : "Run the task with `agent-env run <this folder>`, or only the deploy with `--task smoke`."}

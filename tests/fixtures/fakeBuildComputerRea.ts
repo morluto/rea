@@ -69,13 +69,14 @@ if command == "capture-desktop-application":
         sys.exit(1)
     progress("Recorded checkpoint baseline.", {"kind": "checkpoint", "name": "baseline", "trigger": "baseline",
                                                 "at_ms": 0, "entries": 4, "changes": 0, "retained_files": 1,
-                                                "retained_bytes": 17})
+                                                "retained_bytes": 17, "changed_files": [], "more_changed_files": 0})
     exited = os.environ.get("FAKE_REA_APP_EXITS")
     if exited is not None:
         # The app exits before its window opens, so the capture ends on its own and publishes what it saw.
         progress("Launching notes.")
         progress("Recorded checkpoint exit.", {"kind": "checkpoint", "name": "exit", "trigger": "exit", "at_ms": 1080,
-                                               "entries": 4, "changes": 0, "retained_files": 0, "retained_bytes": 0})
+                                               "entries": 4, "changes": 0, "retained_files": 0, "retained_bytes": 0,
+                                               "changed_files": [], "more_changed_files": 0})
         out = option(args, "--output")
         shutil.copytree(exited, out)
         with open(os.path.join(out, "capture.json")) as handle:
@@ -100,7 +101,8 @@ if command == "capture-desktop-application":
         taken.add(name)
         progress(f"Recorded checkpoint {name}.", {"kind": "checkpoint", "name": name, "trigger": "request",
                                                    "at_ms": 1000 * len(taken), "entries": 5, "changes": 1,
-                                                   "retained_files": 1, "retained_bytes": 5})
+                                                   "retained_files": 1, "retained_bytes": 5,
+                                                   "changed_files": ["Documents/today.txt"], "more_changed_files": 0})
     note("stopped.jsonl", {"pid": os.getpid()})
     out = option(args, "--output")
     named = os.environ.get("FAKE_REA_STATE_PATH")

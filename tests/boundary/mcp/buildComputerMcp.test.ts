@@ -211,6 +211,42 @@ it("reports the runner's failure with its output and leaves no helper behind", a
   expect(JSON.stringify(error)).toContain("agentenv writing to stdout");
 });
 
+it("points a bundle's start that never got ready at the lock files its seed holds", async () => {
+  const { runner } = await fakes();
+  const start = async (failure: string, bundle: string) =>
+    parseMcpToolError(
+      await (
+        await connect({ ...runner.environment, FAKE_FAIL: failure })
+      ).callTool({
+        name: "start_build_computer",
+        arguments: { source: { kind: "bundle", path: bundle } },
+      }),
+    ).error.message;
+  const bundle = await bundleFolder();
+  const seed = join(bundle, "envs", "calc", "seed");
+  await mkdir(join(seed, ".config", "libreoffice", "4"), { recursive: true });
+  await mkdir(join(seed, "Documents"));
+  await writeFile(join(seed, ".config/libreoffice/4/.lock"), "[Lockdata]\n");
+  await writeFile(join(seed, "Documents/.~lock.q1.ods#"), ",user,localhost;\n");
+  await writeFile(join(seed, "Documents/q1.ods"), "PK");
+  const notReady =
+    "envs/calc: container/amd64: failed at probe: it didn't boot: the computer wasn't ready within 180 s (not ready: app calc: no window with class 'libreoffice-calc')";
+
+  const pointed = await start(notReady, bundle);
+  const unlocked = await start(notReady, await bundleFolder());
+  const otherFailure = await start(
+    "compose failed: no space left on device",
+    bundle,
+  );
+
+  expect(pointed).toContain(notReady);
+  expect(pointed).toContain(
+    "seed holds lock files, which can keep the app from starting when it finds its profile or document in use: envs/calc/seed/.config/libreoffice/4/.lock, envs/calc/seed/Documents/.~lock.q1.ods#.",
+  );
+  for (const message of [unlocked, otherFailure])
+    expect(message).not.toContain("lock files");
+});
+
 it("keeps the end of a long build's output, where its failure is", async () => {
   const { runner } = await fakes();
   const client = await connect({
