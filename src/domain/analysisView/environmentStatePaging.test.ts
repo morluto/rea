@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { startsAtBeginning } from "./environmentStatePaging.js";
+import { pageBound, startsAtBeginning } from "./environmentStatePaging.js";
 
 it("requires every recorded position to establish the beginning, including repeated names", () => {
   expect(startsAtBeginning(undefined)).toBe(true);
@@ -15,4 +15,13 @@ it("requires every recorded position to establish the beginning, including repea
     "?name=Alpha",
   ])
     expect(startsAtBeginning(query), query).toBe(false);
+});
+
+it("does not infer a page bound from unsafe numeric query values", () => {
+  for (const query of [
+    "?_start=999999999999999999999999&_end=100",
+    "?limit=9007199254740992",
+    "?_start=9007199254740993&_end=9007199254740995",
+  ])
+    expect(pageBound(query, 5), query).toBeUndefined();
 });

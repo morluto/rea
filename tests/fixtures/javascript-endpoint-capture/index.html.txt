@@ -1,0 +1,1 @@
+<script>window.dynamicTarget="/observed-only"</script><script src="/app.js"></script>

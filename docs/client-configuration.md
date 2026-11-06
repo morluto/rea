@@ -111,6 +111,17 @@ named tools through `discover_tools`. Setup preserves this explicit setting.
 See the [discovery contract](mcp-contracts.md#hotcold-catalog-discovery) for
 pagination, identity and family-scope semantics.
 
+Analysis tools, including `inspect_analysis_view`, load on demand. For example,
+load `inspect_api_contract` and supply its `view` to answer an initial OpenAPI
+or GraphQL question directly. When later questions need retained facts, load
+`inspect_analysis_view` and use the complete `parent_evidence_id`; source files
+need not be reopened. If both tools are needed from the start, request both
+names in one `discover_tools` batch to avoid another catalog refresh. The same
+pattern applies to selected Playwright trace and endpoint-comparison results.
+This defers unused schema delivery and client validator preparation; it does
+not reduce parsing work, alter Evidence or shorten requested facts. Clients
+without catalog refresh should keep the default `full` profile.
+
 Codex CLI 0.165.0 requires its experimental `mcp_tool_list_changed` feature for
 this workflow. Merge these entries into the existing `~/.codex/config.toml`
 without replacing other feature or REA settings:
@@ -126,8 +137,43 @@ REA_MCP_TOOL_CATALOG_PROFILE = "hot-cold"
 The server setting alone does not enable client refresh. If a successful
 discovery call is followed by a missing tool, check the client's refresh feature
 and tool allow/deny lists. Clients without refresh should use the default
-`REA_MCP_TOOL_CATALOG_PROFILE=full`; reconnect after changing it. Other clients'
-hot/cold behavior has not been verified.
+`REA_MCP_TOOL_CATALOG_PROFILE=full`; reconnect after changing it. The
+[FastMCP HTTP trial](#fastmcp-and-unsloth-sse-catalog-limits) below covers
+explicit refreshes; other clients' automatic refresh remains unverified.
+
+## FastMCP and Unsloth SSE catalog limits
+
+If an HTTP client reports `Server-sent event exceeded the 1048576 byte limit`
+during `tools/list`, merge these settings into the **REA server process's**
+environment, then reconnect:
+
+```text
+REA_MCP_INPUT_SCHEMA_PROFILE=compact
+REA_MCP_OUTPUT_SCHEMA_PROFILE=compact
+REA_MCP_TOOL_CATALOG_PROFILE=full
+```
+
+This advertises all tools without requiring catalog refresh. Compact output
+schemas widen client-side validation; REA still validates complete results
+against the canonical contracts. See [output schemas](mcp-contracts.md#output-schemas).
+
+On main `3e0599a94`, a real FastMCP 4.1.6 / Python MCP 2.3.0 HTTP client with
+the default 1 MiB SSE event limit rejected the 4,108,975-byte full catalog.
+The settings above delivered all 240 tools in 611,305 bytes and a
+`binary_session` call succeeded. These are measured SSE response sizes for
+that catalog, not a size guarantee for future catalogs or other profiles.
+
+For a client that refreshes tools, combine `hot-cold` with the compact schema
+settings to reduce initial context further: the same trial delivered six
+initial tools in 33,903 bytes, then explicitly refreshed through 34 loaded
+tools. Hot/cold alone later exceeded the SSE limit during refresh. Follow
+the [refresh requirements](#hotcold-catalogs).
+
+The Unsloth report [#9093](https://github.com/morluto/rea/issues/9093) fails at
+catalog delivery; the Unsloth application itself was not exercised in this
+trial. Schema compaction does not bound analysis results. Continue to use
+summary/detail selection and tool-specific paging for larger results; client
+receive limits and full Evidence access still apply.
 
 ## Fiddler Everywhere alongside REA
 
@@ -662,6 +708,18 @@ installs its skill copy there.
 The user-level MCP paths follow the editor's VS Code layout. Trae's official
 documentation describes the raw JSON editor without specifying those paths;
 loading this registration in Trae remains unverified.
+
+## CodeBuddy
+
+For CodeBuddy, setup writes `mcpServers.rea` into the global
+`~/.codebuddy/mcp.json` (a standard `mcpServers` JSON file at the user home
+root on every platform). Entries carry `command`, `args`, and `env`; stdio is
+the default transport. CodeBuddy discovers personal skills from
+`~/.codebuddy/skills`, so setup installs its skill copy there.
+
+The global MCP path is a plain JSON file; setup preserves every other server
+and top-level key when it upserts `rea`. Loading this registration, the
+bundled skill, and real REA tool calls through CodeBuddy are verified.
 
 ## WorkBuddy
 
