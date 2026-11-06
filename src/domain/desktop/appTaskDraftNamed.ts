@@ -335,13 +335,15 @@ const elementChecks = (
   pointer: string,
   value: JsonValue,
 ): void => {
-  const { file, ends, texts } = collected.context;
+  const { file, ends, texts, tree } = collected.context;
   // A date the app stamps in parts is never a check.
   if (!isXmlElement(value) || inSplitDate(ends.final, pointer)) return;
   const added = {
     file,
     ends,
-    named: (view: JsonValue | null, at: string) => named(collected, view, at),
+    // Its checks read an element's text, which a cut view may lack.
+    named: (view: JsonValue | null, at: string) =>
+      named(collected, view, at) && !tree.leavesOut(view, at),
     chars: collected.context.limit.chars,
   };
   if (!named(collected, ends.final, `${pointer}/name`)) {

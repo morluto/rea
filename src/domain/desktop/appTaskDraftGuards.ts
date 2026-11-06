@@ -11,6 +11,8 @@ type Suggestion = DesktopTaskCheckInput;
 /** Guards a file's draft offers, and how many one suggested check takes. */
 const MAX_GUARDS = 4;
 const MAX_GUARDS_PER_CHECK = 2;
+/** Like siblings a guard is sought on per list, nearest first, so a long list costs no more than a short one. */
+const MAX_SIBLINGS_READ = 16;
 
 /** What guards read: a file's two ends, whether a check there is decided by name, and noise. */
 export interface GuardContext {
@@ -140,13 +142,22 @@ const attributesOf = ({ attributes }: Record<string, JsonValue>) =>
     ? attributes
     : {};
 
-/** Whether like members at the seed hold more than one value at a path into them, as Planner's `work` does and its shared `type="normal"` does not. */
-const varies = (all: readonly JsonValue[], rest: readonly string[]) =>
-  new Set(
-    all.map((item) =>
-      JSON.stringify(resolvePointer(item, `/${rest.join("/")}`) ?? null),
-    ),
-  ).size > 1;
+/** Whether like members at the seed hold more than one value at a path into them, as Planner's `work` does and its shared `type="normal"` does not; each path read once. */
+const variesAmong = (all: readonly JsonValue[]) => {
+  const known = new Map<string, boolean>();
+  return (rest: readonly string[]): boolean => {
+    const pointer = `/${rest.join("/")}`;
+    const varied =
+      known.get(pointer) ??
+      new Set(
+        all.map((item) =>
+          JSON.stringify(resolvePointer(item, pointer) ?? null),
+        ),
+      ).size > 1;
+    known.set(pointer, varied);
+    return varied;
+  };
+};
 
 /**
  * The path into a sibling a guard reads: the check's own field where like
@@ -156,10 +167,10 @@ const varies = (all: readonly JsonValue[], rest: readonly string[]) =>
  */
 const guardField = (
   sibling: Sibling,
-  all: readonly JsonValue[],
+  varies: (rest: readonly string[]) => boolean,
   rest: readonly string[],
 ) => {
-  if (rest.length > 0 && varies(all, rest)) return rest;
+  if (rest.length > 0 && varies(rest)) return rest;
   const selected = new Set(
     [...sibling.member.matchAll(/\[@(?<key>[^=\]]+)=/gu)].map(
       ({ groups }) => groups?.key ?? "",
@@ -172,7 +183,7 @@ const guardField = (
       !isIdentifyingAttribute(key) &&
       !isRenumberedKey(key) &&
       !isStamp(value) &&
-      varies(all, ["attributes", escapeToken(key)])
+      varies(["attributes", escapeToken(key)])
         ? [{ key, value }]
         : [],
     ),
@@ -180,22 +191,23 @@ const guardField = (
   return best === undefined ? rest : ["attributes", escapeToken(best.key)];
 };
 
-/** Up to two guards for one check: a field on like siblings of the innermost list it goes through that has any, preferring one that varies among them. */
+/** Up to two guards for one check: a field on the 16 nearest like siblings of the innermost list it goes through that has any, preferring one that varies among them. */
 const guardsFor = (context: GuardContext, check: Suggestion): Suggestion[] => {
   if (check.kind !== "value_equals" && check.kind !== "text_equals") return [];
   for (const step of listSteps(check.pointer)) {
     const { siblings, all } = siblingsOf(context, step);
-    if (siblings.length === 0) continue;
-    const guards = siblings
-      .flatMap((sibling) => {
-        const field =
-          check.kind === "value_equals"
-            ? guardField(sibling, all, step.rest)
-            : step.rest;
-        const pointer = [step.list, sibling.member, ...field].join("/");
-        return guardAt(context, check, pointer) ?? [];
-      })
-      .slice(0, MAX_GUARDS_PER_CHECK);
+    const varies = variesAmong(all);
+    const guards: Suggestion[] = [];
+    for (const sibling of siblings.slice(0, MAX_SIBLINGS_READ)) {
+      if (guards.length === MAX_GUARDS_PER_CHECK) break;
+      const field =
+        check.kind === "value_equals"
+          ? guardField(sibling, varies, step.rest)
+          : step.rest;
+      const pointer = [step.list, sibling.member, ...field].join("/");
+      const guard = guardAt(context, check, pointer);
+      if (guard !== undefined) guards.push(guard);
+    }
     if (guards.length > 0) return guards;
   }
   return [];
@@ -204,7 +216,8 @@ const guardsFor = (context: GuardContext, check: Suggestion): Suggestion[] => {
 /**
  * Checks that the rest stays as it was, for an author to add by choice: a
  * field on up to two like siblings of the innermost list each suggested check
- * goes through, nearest first, at its seed value, which the end holds too: the
+ * goes through, nearest first among the `MAX_SIBLINGS_READ` nearest, at its
+ * seed value, which the end holds too: the
  * field the check reads where it varies among them, otherwise one that does;
  * never through a sibling paired by position or a renumbered id; at most
  * `MAX_GUARDS` a file, none at a suggested pointer.
@@ -217,7 +230,8 @@ export const draftGuards = (
     suggested.flatMap((check) => ("pointer" in check ? [check.pointer] : [])),
   );
   const guards: Suggestion[] = [];
-  for (const check of suggested)
+  for (const check of suggested) {
+    if (guards.length === MAX_GUARDS) break;
     for (const guard of guardsFor(context, check))
       if (
         guards.length < MAX_GUARDS &&
@@ -227,5 +241,6 @@ export const draftGuards = (
         taken.add(guard.pointer);
         guards.push(guard);
       }
+  }
   return guards;
 };

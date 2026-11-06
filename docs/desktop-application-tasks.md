@@ -115,7 +115,9 @@ operation `describe_desktop_application_task` and predicate type
     position reaches the element, to the ancestor above the outermost step by
     position, by an attribute of its own that names it alone where one does,
     as an ODS sheet's `table:table[@table:name=Q1 Sales]` above its rows. The
-    text nodes and runs inside it get no other check. A decimal that is an
+    text nodes and runs inside it get no other check, but an element holding
+    no text that is added or removed there, such as an image or a line break,
+    keeps its own, since the text check never reads it. A decimal that is an
     element's only text, such as a spreadsheet cell's, is checked by its
     number instead. Text that grew by whole lines and kept the rest, as a note
     gaining `olive oil` on a line of its own, gets a `text_contains` of the
