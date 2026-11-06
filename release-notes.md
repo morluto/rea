@@ -375,6 +375,7 @@
 * **desktop:** charge retained rows at their measured representation ([#8105](https://github.com/morluto/rea/issues/8105)) ([0ce76e7](https://github.com/morluto/rea/commit/0ce76e70f4b9f9b33a9527239cf58002490d08dd))
 * **desktop:** launch spaced REA archives and Electron apps ([#9085](https://github.com/morluto/rea/issues/9085)) ([8580f14](https://github.com/morluto/rea/commit/8580f1430c76ad62e8e3c5a368e5d7ef26d50ffd))
 * **desktop:** normalize XML attribute whitespace and line endings during seed scrubbing ([#9099](https://github.com/morluto/rea/issues/9099)) ([15fad0e](https://github.com/morluto/rea/commit/15fad0efa3ad51db7933a1bd091d7f425cbe500e))
+* **desktop:** preserve exported SQLite text encoding ([#9123](https://github.com/morluto/rea/issues/9123)) ([f3d6f45](https://github.com/morluto/rea/commit/f3d6f45315b854406a9066cf9ce3ccfdf1ad390d))
 * **desktop:** preserve nullable SQLite row identity ([#8999](https://github.com/morluto/rea/issues/8999)) ([aefd903](https://github.com/morluto/rea/commit/aefd903adb96bd2967388a73f79a66f03bd35c87))
 * **desktop:** preserve significant keyfile value whitespace ([#9077](https://github.com/morluto/rea/issues/9077)) ([c92cbca](https://github.com/morluto/rea/commit/c92cbcaf281bea28e16146c3555d58a2d62edf03))
 * **desktop:** read bounded MZ signature evidence ([df0e2f7](https://github.com/morluto/rea/commit/df0e2f7b3e9f3af0ae0f9065936a341b37c6ec98))
