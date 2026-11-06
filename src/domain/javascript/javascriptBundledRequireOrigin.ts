@@ -160,27 +160,33 @@ const canonicalWebpackInteropBindings = (
   // and Object/Reflect mutators; any write that may select `n` counts.
   const writes = new Set<t.Node>();
   const loaderMayOwnReference = (root: t.Node): boolean => {
-    const pending = [root];
-    const seen = new Set<t.Node>();
+    const first = unwrapJavaScriptExpression(root).node;
+    if (!t.isIdentifier(first)) return false;
+    // Only identifiers extend this alias graph. Terminal expressions cannot
+    // select the loader, so do not enqueue or charge them as selector states.
+    const pending = [first];
+    const seen = new Set<t.Identifier>();
     while (pending.length > 0) {
-      const reference = pending.pop();
-      if (reference === undefined || seen.has(reference)) continue;
-      seen.add(reference);
+      const node = pending.pop();
+      if (node === undefined || seen.has(node)) continue;
+      seen.add(node);
       if (seen.size > SEMANTIC_ALIAS_SELECTION_LIMIT) {
         state.valueResourceLimits.add("alias-selections");
         return true;
       }
-      const node = unwrapJavaScriptExpression(reference).node;
-      if (!t.isIdentifier(node)) continue;
       const binding = resolveSemanticBindingState(state, node, node.name);
       if (binding === undefined) continue;
       if (loaderBindingIds.has(binding.bindingId)) return true;
       const selected = semanticBindingAtRead(binding, node, state).binding;
-      for (const source of [
-        ...selected.initializers,
-        ...selected.referenceInitializers,
+      for (const initializers of [
+        selected.initializers,
+        selected.referenceInitializers,
       ])
-        if (source.projection.length === 0) pending.push(source.node);
+        for (const source of initializers) {
+          if (source.projection.length !== 0) continue;
+          const next = unwrapJavaScriptExpression(source.node).node;
+          if (t.isIdentifier(next)) pending.push(next);
+        }
     }
     return false;
   };

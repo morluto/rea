@@ -181,6 +181,57 @@ describe("Electron identity through Webpack externals", () => {
   });
 });
 
+describe("Webpack loader alias bounds", () => {
+  it.each([false, true])(
+    "preserves only proven Electron identity beside a large object union (loader=%s)",
+    (includesLoader) => {
+      const assignments = Array.from(
+        { length: 520 },
+        () => "if(flag)box={};",
+      ).join("");
+      const source = bootstrap(
+        EXTERNAL,
+        'const s=n.n(n(45840));new(s().BrowserWindow)({});s().ipcMain.handle("ready",()=>{});',
+        `let box={};${assignments}${includesLoader ? "if(flag)box=n;" : ""}box.n=()=>0;n(100);`,
+      );
+      const analysis = analyzeJavaScriptStaticSource(source);
+      expect(analysis.parse_error_count).toBe(0);
+      expect(analysis.electron.browser_windows).toHaveLength(
+        includesLoader ? 0 : 1,
+      );
+      expect(analysis.electron.ipc).toHaveLength(includesLoader ? 0 : 1);
+      if (!includesLoader)
+        expect(analysis.analysis_coverage).toMatchObject({
+          examination: {
+            semantic_resource_limits: expect.not.arrayContaining([
+              "alias-selections",
+            ]),
+          },
+        });
+    },
+  );
+
+  it("keeps a limited loader-alias walk unknown", () => {
+    const aliases = Array.from(
+      { length: 520 },
+      (_, index) => `const box${index + 1}=box${index};`,
+    ).join("");
+    const analysis = analyzeJavaScriptStaticSource(
+      bootstrap(
+        EXTERNAL,
+        "const s=n.n(n(45840));new(s().BrowserWindow)({});",
+        `const box0={};${aliases}box520.n=()=>0;n(100);`,
+      ),
+    );
+    expect(analysis.electron.browser_windows).toEqual([]);
+    expect(analysis.analysis_coverage).toMatchObject({
+      examination: {
+        semantic_resource_limits: expect.arrayContaining(["alias-selections"]),
+      },
+    });
+  });
+});
+
 describe("Webpack externals with a tampered runtime", () => {
   it.each([
     [
