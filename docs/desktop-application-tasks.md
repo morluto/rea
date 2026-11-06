@@ -122,13 +122,16 @@ operation `describe_desktop_application_task` and predicate type
     added lines instead, so a correct edit with a blank line after it or the
     line elsewhere still passes, and guards that the kept text is still there;
     text replaced, or grown inside a line, keeps `text_equals`. A record added
-    or removed whole, an element holding fields of two or more tags such as
-    Tellico's `<entry>`, none a run of text such as Writer's `<text:span>` or
-    `<text:a>`, never makes the list holding records of its kind a check,
-    whose text would hold the records the edit left alone, except a record
-    removed whole that only position names, whose absence only the list's
-    text shows; nor does an element holding a date the app stamps in parts
-    take a text check.
+    or removed whole, an element holding only elements, its fields, such as
+    Tellico's `<entry>` or a record of repeated `<field>` elements, never
+    makes the list holding records of its kind a check, whose text would hold
+    the records the edit left alone, except a record removed whole that only
+    position names, whose absence only the list's text shows. Text made of
+    runs is no record: an element whose tag names a paragraph or a piece of
+    text (`p`, Writer's `text:p` and `text:h`, `h1` to `h6`, `li`, `para`,
+    SVG's `text` and `tspan`, a `span` or an `a`), or whose runs split a
+    sentence at a space, as `Meet ` and a linked `Monday`. Nor does an
+    element holding a date the app stamps in parts take a text check.
   - An element added to a list, where another element of its tag is at either
     end, gets a `value_equals` for each of its attributes, best ranked first,
     at most six, leaving out its selector's attributes, identifiers, times,
