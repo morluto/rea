@@ -253,8 +253,9 @@ container named `e81232be457d`, and many files hold the home path
 export removes them from what the bundle ships:
 
 - In seeded text files (text, JSON, key files and XML in the state view), in
-  UTF-16 files that start with a byte-order mark (keeping the mark and byte
-  order), and in the dconf keys, `user@host` becomes `user@localhost`, the
+  UTF-16 files that start with a byte-order mark (keeping the mark, byte order
+  and a following U+FEFF content character), and in the dconf keys,
+  `user@host` becomes `user@localhost`, the
   host name standing alone becomes `localhost`, and the captured home becomes
   `/home/user` wherever it is followed by `/`, the end of the text, or a
   character that cannot continue a file name. The host name counts only as a

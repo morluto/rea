@@ -8,7 +8,11 @@ import type {
   DesktopCheckpoint,
 } from "../../domain/desktop/desktopCapture.js";
 import { desktopApplicationStateSchema } from "../../domain/desktop/desktopState.js";
-import { inspectDesktopApplicationState } from "./DesktopApplicationState.js";
+import {
+  inspectDesktopApplicationState,
+  type DesktopStateReaders,
+} from "./DesktopApplicationState.js";
+import { draftDesktopApplicationTask } from "./DesktopTaskDraft.js";
 import {
   DATABASE,
   HOME,
@@ -211,6 +215,82 @@ describe("inspectDesktopApplicationState", () => {
     expect(byPath.get(".config/notes/log.db")?.versions[1]).toMatchObject({
       view: null,
       view_error: "the database's write-ahead log was not retained",
+    });
+  });
+});
+
+describe("nullable SQLite row identity through desktop capture consumers", () => {
+  it("carries the changed row into the task draft without losing its check", async () => {
+    const source = capture();
+    const folder = await writeCaptureFolder({
+      ...source,
+      state: {
+        ...source.state,
+        checkpoints: source.state.checkpoints.map((entry) => ({
+          ...entry,
+          changes: entry.changes.filter((change) => change.path === DATABASE),
+          retained: entry.retained.filter((file) => file.path === DATABASE),
+        })),
+      },
+    });
+    const sqlite: DesktopStateReaders["sqlite"] = async (database) => ({
+      ok: true,
+      view: {
+        tables: {
+          items: {
+            columns: ["id", "body"],
+            primary_key: ["id"],
+            rows: (await readFile(database, "latin1")).endsWith("v1")
+              ? [
+                  [null, "alpha"],
+                  [null, "beta"],
+                ]
+              : [
+                  [null, "gamma"],
+                  [null, "beta"],
+                ],
+            truncated: false,
+          },
+        },
+        tables_truncated: false,
+      },
+    });
+    const using = { ...readers, sqlite };
+    const state = await inspectDesktopApplicationState(folder, using);
+    if (!("normalized_result" in state)) throw state;
+    expect(
+      desktopApplicationStateSchema.parse(state.normalized_result).paths,
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          home_path: ".local/share/notes/notes.db",
+          changes: [
+            expect.objectContaining({
+              kind: "rows",
+              added_count: 1,
+              removed_count: 1,
+            }),
+          ],
+        }),
+      ]),
+    );
+    const task = await draftDesktopApplicationTask(folder, using);
+    if (!("normalized_result" in task)) throw task;
+    expect(task.normalized_result).toMatchObject({
+      task: {
+        checks: [
+          {
+            kind: "row_present",
+            table: "items",
+            where: { id: null, body: "gamma" },
+          },
+          {
+            kind: "row_absent",
+            table: "items",
+            where: { id: null, body: "alpha" },
+          },
+        ],
+      },
     });
   });
 });

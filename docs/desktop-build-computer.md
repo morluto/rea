@@ -51,6 +51,13 @@ way, open it from the desktop's Applications menu, where agentenv lists it
 under Other by the environment's name, such as `mousepad`; that entry launches
 it through the app's server.
 
+When the app is Electron, set `electron` to true. The install rewrites that
+desktop entry's command with the same policy an export uses: `--no-sandbox`
+immediately after the program, unless the command already has it. The
+computer's container does not grant the user namespaces Chromium's sandbox
+needs, and Electron exits without the flag. With the rewritten command, the
+Applications menu entry can open the app.
+
 ```json
 {
   "source": {
