@@ -3,6 +3,7 @@ import { gunzipSync } from "node:zlib";
 import { ok, type Result } from "../result.js";
 import {
   WARC_ARCHIVE_HEADER_LINE_BYTES,
+  WARC_ARCHIVE_MAX_DIAGNOSTICS,
   type WarcArchive,
   type WarcArchiveArtifact,
   type WarcRecord,
@@ -37,9 +38,30 @@ const isGzip = (bytes: Buffer) =>
 interface HeaderBlock {
   readonly version: string;
   readonly fields: ReadonlyMap<string, string>;
+  /**
+   * Every value of a field WARC permits to repeat, in document order. The
+   * single-value map above keeps the first occurrence.
+   */
+  readonly repeatedFields: ReadonlyMap<string, readonly string[]>;
   readonly malformed: readonly string[];
   readonly bytes: number;
 }
+
+/**
+ * Fields WARC allows to appear more than once in one header block. Repeating
+ * any other field is a defect worth reporting; treating these as defects too
+ * turned valid archives into `partial` ones.
+ */
+const REPEATABLE_FIELDS = new Set([
+  "warc-concurrent-to",
+  "warc-protocol",
+  "warc-refers-to",
+  "warc-refers-to-target-uri",
+  "warc-refers-to-date",
+]);
+
+/** RFC 2616 token: the only shape WARC allows for a field name. */
+const FIELD_NAME = /^[!#$%&'*+\-.^_`|~0-9a-z]+$/;
 
 const findLineEnd = (data: Buffer, from: number) => {
   const lf = data.indexOf(0x0a, from);
@@ -50,50 +72,66 @@ const findLineEnd = (data: Buffer, from: number) => {
   };
 };
 
+interface HeaderBlockResult {
+  readonly block: HeaderBlock | null;
+  /** True when the reader gave up on a line's length, not on the record. */
+  readonly lineLimitHit: boolean;
+}
+
 /**
  * Read the version line plus header fields up to the blank line. A header that
- * runs past the line allowance or the buffer returns null so the caller can
- * report a truncated record rather than inventing fields.
+ * ends without a blank line returns null so the caller can report a truncated
+ * record rather than inventing fields.
  */
-const readHeaderBlock = (data: Buffer, start: number): HeaderBlock | null => {
+const readHeaderBlock = (data: Buffer, start: number): HeaderBlockResult => {
   const versionLine = findLineEnd(data, start);
-  if (
-    versionLine === null ||
-    versionLine.contentEnd - start > WARC_ARCHIVE_HEADER_LINE_BYTES
-  )
-    return null;
+  if (versionLine === null) return { block: null, lineLimitHit: false };
+  // A version line past the allowance is a reader ceiling, not damage: the
+  // caller names the ceiling so nobody hunts for a bad archive that is intact.
+  if (versionLine.contentEnd - start > WARC_ARCHIVE_HEADER_LINE_BYTES)
+    return { block: null, lineLimitHit: true };
   const version = data.toString("utf8", start, versionLine.contentEnd);
-  if (!version.startsWith("WARC/")) return null;
+  if (!version.startsWith("WARC/")) return { block: null, lineLimitHit: false };
   const fields = new Map<string, string>();
+  const repeatedFields = new Map<string, string[]>();
   const malformed: string[] = [];
   let cursor = versionLine.end;
   for (;;) {
-    if (cursor >= data.length) return null;
+    if (cursor >= data.length) return { block: null, lineLimitHit: false };
     const line = findLineEnd(data, cursor);
-    if (
-      line === null ||
-      line.contentEnd - cursor > WARC_ARCHIVE_HEADER_LINE_BYTES
-    )
-      return null;
+    if (line === null) return { block: null, lineLimitHit: false };
+    if (line.contentEnd - cursor > WARC_ARCHIVE_HEADER_LINE_BYTES)
+      return { block: null, lineLimitHit: true };
     if (line.contentEnd === cursor) {
       return {
-        version: version.slice(5),
-        fields,
-        malformed,
-        bytes: line.end - start,
+        block: {
+          version: version.slice(5),
+          fields,
+          repeatedFields,
+          malformed,
+          bytes: line.end - start,
+        },
+        lineLimitHit: false,
       };
     }
     const text = data.toString("utf8", cursor, line.contentEnd);
     const colon = text.indexOf(":");
-    if (colon <= 0) {
+    const name = colon > 0 ? text.slice(0, colon).trim().toLowerCase() : "";
+    // A colon was the only check before, so "Bad Name: value" passed and the
+    // field was dropped without a diagnostic. Spaces are not allowed in a
+    // WARC field name, and an unreported drop is a silent loss.
+    if (colon <= 0 || !FIELD_NAME.test(name)) {
       malformed.push(text);
     } else {
-      const name = text.slice(0, colon).trim().toLowerCase();
       const value = text.slice(colon + 1).trim();
-      // RFC 2616 folding and repeated fields are both malformed for WARC; the
-      // first occurrence stays authoritative and the repeat is reported.
-      if (fields.has(name)) malformed.push(text);
-      else fields.set(name, value);
+      // RFC 2616 folding is malformed for WARC, and so is a repeated field
+      // unless WARC defines it as repeatable. The first occurrence stays
+      // authoritative either way.
+      const first = fields.get(name);
+      if (first === undefined) fields.set(name, value);
+      else if (REPEATABLE_FIELDS.has(name))
+        repeatedFields.set(name, [...(repeatedFields.get(name) ?? []), value]);
+      else malformed.push(text);
     }
     cursor = line.end;
   }
@@ -137,6 +175,16 @@ const digestOf = (prefix: string, ...parts: readonly (string | number)[]) => {
   return `${prefix}_${hash.digest("hex")}`;
 };
 
+const skipRecordSeparator = (data: Buffer, from: number): number => {
+  let cursor = from;
+  while (cursor < data.length) {
+    const byte = data[cursor];
+    if (byte !== 0x0d && byte !== 0x0a) break;
+    cursor += 1;
+  }
+  return cursor;
+};
+
 interface ParsedStream {
   readonly records: WarcRecord[];
   readonly diagnostics: WarcArchive["diagnostics"];
@@ -153,7 +201,26 @@ const parseDecodedStream = (data: Buffer, maxRecords: number): ParsedStream => {
   const records: WarcRecord[] = [];
   const diagnostics: WarcArchive["diagnostics"] = [];
   let stoppedAtLimit = false;
-  const diagnostic: DiagnosticSink = (ordinal, code, message) =>
+  const diagnostic: DiagnosticSink = (ordinal, code, message) => {
+    // One record can carry millions of short malformed header lines; each used
+    // to allocate its own diagnostic, which `max_records` does not bound and
+    // which grows the reply past every advertised allowance. Past the ceiling
+    // the remaining lines are summarised once instead.
+    if (diagnostics.length >= WARC_ARCHIVE_MAX_DIAGNOSTICS) {
+      if (diagnostics.length === WARC_ARCHIVE_MAX_DIAGNOSTICS)
+        diagnostics.push({
+          diagnostic_id: digestOf(
+            "warc_diagnostic",
+            "archive",
+            "diagnostic-limit-reached",
+            `Stopped at ${WARC_ARCHIVE_MAX_DIAGNOSTICS} diagnostics.`,
+          ),
+          ordinal: null,
+          code: "diagnostic-limit-reached",
+          message: `Stopped recording diagnostics at ${WARC_ARCHIVE_MAX_DIAGNOSTICS}; further findings in this archive are not listed.`,
+        });
+      return;
+    }
     diagnostics.push({
       diagnostic_id: digestOf(
         "warc_diagnostic",
@@ -165,6 +232,7 @@ const parseDecodedStream = (data: Buffer, maxRecords: number): ParsedStream => {
       code,
       message,
     });
+  };
 
   if (!data.subarray(0, 5).toString("latin1").startsWith("WARC/")) {
     diagnostic(
@@ -178,29 +246,44 @@ const parseDecodedStream = (data: Buffer, maxRecords: number): ParsedStream => {
   let cursor = 0;
   let ordinal = 0;
   while (cursor < data.length) {
-    // Records are separated by CRLF pairs or blank padding; keep offsets at `WARC/`.
-    const nextVersion = data.indexOf("WARC/", cursor, "latin1");
+    // Records are separated by CRLF pairs or blank padding. Skip the separator
+    // before searching: from a separator the next `WARC/` prefix also matches
+    // this record's own `WARC-Type` line, which invented a second record at the
+    // wrong offset and reported the record's own separator as stray bytes.
+    const searchFrom = skipRecordSeparator(data, cursor);
+    const nextVersion = data.indexOf("WARC/", searchFrom, "latin1");
     if (nextVersion === -1) {
-      diagnostic(
-        ordinal === 0 ? null : ordinal - 1,
-        "trailing-bytes",
-        `${data.length - cursor} byte(s) after the last record are not a WARC record.`,
-      );
+      if (searchFrom < data.length)
+        diagnostic(
+          ordinal === 0 ? null : ordinal - 1,
+          "trailing-bytes",
+          `${data.length - searchFrom} byte(s) after the last record are not a WARC record.`,
+        );
       break;
     }
-    if (nextVersion !== cursor)
+    if (nextVersion !== searchFrom)
       diagnostic(
         ordinal === 0 ? null : ordinal - 1,
         "trailing-bytes",
-        `${nextVersion - cursor} unexpected byte(s) between records.`,
+        `${nextVersion - searchFrom} unexpected byte(s) between records.`,
       );
-    const block = readHeaderBlock(data, nextVersion);
+    const { block, lineLimitHit } = readHeaderBlock(data, nextVersion);
     if (block === null) {
-      diagnostic(
-        ordinal,
-        "truncated-record",
-        `The record starting at decoded offset ${nextVersion} has an incomplete version line or header block.`,
-      );
+      // Name the ceiling when the reader stopped on one: a long but intact
+      // header is not archive damage, and reporting it as truncation sends the
+      // operator looking for a defect that is not there.
+      if (lineLimitHit)
+        diagnostic(
+          ordinal,
+          "header-line-limit-reached",
+          `The record starting at decoded offset ${nextVersion} has a version or header line longer than ${WARC_ARCHIVE_HEADER_LINE_BYTES} bytes; later records were not read.`,
+        );
+      else
+        diagnostic(
+          ordinal,
+          "truncated-record",
+          `The record starting at decoded offset ${nextVersion} has an incomplete version line or header block.`,
+        );
       break;
     }
     if (records.length >= maxRecords) {
@@ -347,7 +430,20 @@ const decompress = (
     message: string;
   }
 > => {
-  if (!isGzip(bytes)) return ok({ decoded: bytes, compression: "identity" });
+  if (!isGzip(bytes)) {
+    // The allowance used to be enforced only on the gunzip path, so an
+    // uncompressed archive larger than `max_decoded_bytes` was scanned in full
+    // and could report complete coverage above the caller's own ceiling.
+    if (bytes.length > maxDecodedBytes)
+      return {
+        ok: false,
+        error: {
+          code: "decoded-size-limit-reached",
+          message: `The archive is ${bytes.length} byte(s), above max_decoded_bytes=${maxDecodedBytes}.`,
+        },
+      };
+    return ok({ decoded: bytes, compression: "identity" });
+  }
   // Identity input that merely starts with the gzip magic is not a WARC stream;
   // gunzip then reports it, and that stays an explicit compression failure.
   try {

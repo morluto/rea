@@ -262,4 +262,117 @@ describe("malformed and bounded archives", () => {
     expect(archive.records[0]?.http).toBeNull();
     expect(archive.source_coverage.related_records).toBe("not-linked");
   });
+
+  it("does not report a record's own CRLF separator as trailing bytes", () => {
+    // Two records joined by the CRLF pair one record already ends with. Searching
+    // from the separator matched the next record's `WARC/` only after the gap,
+    // and the separator itself was then reported as stray bytes, so an intact
+    // archive came back `partial`.
+    const archive = parsed(
+      record("response", [
+        ["WARC-Record-ID", "<urn:1>"],
+        ["WARC-Target-URI", "http://example.test/WARC/1.1"],
+      ]) +
+        "\r\n" +
+        record("response", [["WARC-Record-ID", "<urn:2>"]]),
+    );
+    expect(archive.diagnostics).toEqual([]);
+    expect(archive.records).toHaveLength(2);
+    expect(archive.source_coverage.status).toBe("complete-within-scope");
+  });
+
+  it("still reports bytes after the separator as trailing", () => {
+    const archive = parsed(
+      record("response", [["WARC-Record-ID", "<urn:1>"]]) + "junk",
+    );
+    expect(archive.diagnostics.map((d) => d.code)).toEqual(["trailing-bytes"]);
+    expect(archive.source_coverage.status).toBe("partial");
+  });
+
+  it("accepts a field WARC defines as repeatable", () => {
+    // WARC permits these to repeat; rejecting every repeat put valid archives
+    // into `partial` with invalid-header-line diagnostics.
+    const archive = parsed(
+      record("response", [
+        ["WARC-Record-ID", "<urn:1>"],
+        ["WARC-Concurrent-To", "<urn:2>"],
+        ["WARC-Concurrent-To", "<urn:3>"],
+        ["WARC-Protocol", "http/1.1"],
+        ["WARC-Protocol", "ipfs"],
+      ]),
+    );
+    expect(
+      archive.diagnostics.filter((d) => d.code === "invalid-header-line"),
+    ).toEqual([]);
+    expect(archive.source_coverage.status).toBe("complete-within-scope");
+  });
+
+  it("reports a repeated single-value field as malformed", () => {
+    const archive = parsed(
+      record("response", [
+        ["WARC-Type", "response"],
+        ["Content-Type", "application/http"],
+      ]),
+    );
+    expect(archive.diagnostics.map((d) => d.code)).toContain(
+      "invalid-header-line",
+    );
+  });
+
+  it("reports a field name that is not a header token", () => {
+    // "Bad Name: value" passed the old colon-only check, so the field was
+    // dropped without any diagnostic reaching the report.
+    const archive = parsed(
+      "WARC/1.1\r\nWARC-Type: response\r\nBad Name: value\r\nContent-Length: 0\r\n\r\n\r\n",
+    );
+    expect(archive.diagnostics.map((d) => d.code)).toContain(
+      "invalid-header-line",
+    );
+    expect(archive.summary.malformed_headers).toBeGreaterThan(0);
+  });
+
+  it("names the line ceiling rather than calling a long line truncated", () => {
+    const longUri = `http://example.test/${"a".repeat(9000)}`;
+    const archive = parsed(
+      record("response", [
+        ["WARC-Record-ID", "<urn:1>"],
+        ["WARC-Target-URI", longUri],
+      ]),
+    );
+    const codes = archive.diagnostics.map((d) => d.code);
+    expect(codes).toContain("header-line-limit-reached");
+    expect(codes).not.toContain("truncated-record");
+    expect(
+      archive.diagnostics.find((d) => d.code === "header-line-limit-reached")
+        ?.message,
+    ).toContain("8192");
+  });
+
+  it("enforces max_decoded_bytes on an uncompressed archive", () => {
+    // The allowance was only applied on the gunzip path, so identity input was
+    // scanned in full and could report complete coverage above the ceiling.
+    const text = record("response", [["WARC-Record-ID", "<urn:1>"]]);
+    const archive = parsed(text, { maxDecodedBytes: 10 });
+    expect(archive.records).toEqual([]);
+    expect(archive.diagnostics.map((d) => d.code)).toEqual([
+      "decoded-size-limit-reached",
+    ]);
+    expect(archive.source_coverage.status).toBe("partial");
+  });
+
+  it("stops allocating diagnostics past the diagnostic ceiling", () => {
+    // One record may carry millions of short malformed lines; `max_records`
+    // does not bound that growth, and the reply-size check ran afterwards.
+    const lines = Array.from(
+      { length: 12_000 },
+      (_, index) => `Bad Line ${index}`,
+    ).join("\r\n");
+    const archive = parsed(
+      `WARC/1.1\r\nWARC-Type: response\r\n${lines}\r\nContent-Length: 0\r\n\r\n\r\n`,
+    );
+    expect(archive.diagnostics.length).toBeLessThanOrEqual(10_001);
+    expect(archive.diagnostics.map((d) => d.code)).toContain(
+      "diagnostic-limit-reached",
+    );
+  });
 });

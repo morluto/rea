@@ -8,8 +8,8 @@ request, executes archived content or reads a file outside the selection.
 
 Records are reported in archive order. For each record the inventory keeps the
 version line, `WARC-Type`, `WARC-Date`, `WARC-Record-ID`, `WARC-Target-URI`,
-`Content-Type`, the declared `Content-Length`, `WARC-Block-Digest`
-(or its legacy `WARC-Payload-Meta` alias), `WARC-IP-Address`, `WARC-Profile`,
+`Content-Type`, the declared `Content-Length`, `WARC-Block-Digest`,
+`WARC-Payload-Digest`, `WARC-IP-Address`, `WARC-Profile`,
 `WARC-Segment-Number` and the byte extent the record actually occupies.
 `response` records also carry the embedded HTTP status line.
 
