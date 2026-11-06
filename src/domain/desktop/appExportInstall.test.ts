@@ -7,6 +7,7 @@ import {
   fromUbuntuNobleArchive,
   repositoryRefusal,
 } from "./appExportInstall.js";
+import { parseDesktopEntry, tokenizeDesktopExec } from "./desktopEntry.js";
 import { installLimitations } from "./appExportInstallLimitations.js";
 import {
   VARICAD_FILE,
@@ -591,6 +592,25 @@ describe("adjustInstalledDesktopText", () => {
       ok: true,
       value: entry('"/opt/REA App/typora" --no-sandbox %U'),
     });
+  });
+
+  it("keeps a quoted trailing backslash when the launch policy rewrites Exec", () => {
+    const text = String.raw`[Desktop Entry]
+Type=Application
+Name=App
+Exec=/usr/bin/true "foo\\\\"
+`;
+    const rewritten = adjustInstalledDesktopText(text, true);
+    if (!rewritten.ok) throw new Error(rewritten.error);
+    const parsed = parseDesktopEntry(rewritten.value);
+    if (!parsed.ok) throw new Error(parsed.error);
+    expect(tokenizeDesktopExec(parsed.value.exec ?? "")).toEqual({
+      ok: true,
+      value: ["/usr/bin/true", "--no-sandbox", "foo\\"],
+    });
+    expect(rewritten.value).toContain(
+      String.raw`Exec=/usr/bin/true --no-sandbox "foo\\\\"`,
+    );
   });
 
   it("leaves a command that already passes the flag, and reports an unusable Exec", () => {

@@ -32,6 +32,43 @@ const unescapeValue = (value: string): string =>
     (match, next: string) => VALUE_ESCAPES[next] ?? match,
   );
 
+/**
+ * Escape a string for a desktop-entry value. This is the inverse of the
+ * escapes `parseDesktopEntry` removes, and the same rules GLib uses when it
+ * writes a string: `\\`, `\n`, `\r`, a leading `\s` or `\t`. A backslash that
+ * is only command-quoted would otherwise be eaten before `Exec` is tokenized,
+ * and `gio launch` rejects the resulting entry.
+ */
+export const escapeDesktopEntryValue = (value: string): string => {
+  let escaped = "";
+  let leading = true;
+  for (const character of value) {
+    switch (character) {
+      case " ":
+        escaped += leading ? "\\s" : " ";
+        break;
+      case "\t":
+        escaped += leading ? "\\t" : "\t";
+        break;
+      case "\n":
+        escaped += "\\n";
+        break;
+      case "\r":
+        escaped += "\\r";
+        break;
+      case "\\":
+        escaped += "\\\\";
+        leading = false;
+        break;
+      default:
+        escaped += character;
+        leading = false;
+        break;
+    }
+  }
+  return escaped;
+};
+
 const listValue = (value: string | undefined): readonly string[] =>
   value === undefined
     ? []
@@ -112,7 +149,11 @@ export const tokenizeDesktopExec = (
 /** Reserved characters an unquoted `Exec` argument must not contain. */
 const EXEC_RESERVED = /[\t\n\r "'\\><~|&;$*?#()`]/u;
 
-/** Quote `Exec` arguments so `tokenizeDesktopExec` reads them back. */
+/**
+ * Quote `Exec` arguments so `tokenizeDesktopExec` reads them back. The
+ * desktop-entry value escapes around that command are applied when the line
+ * is written.
+ */
 export const formatDesktopExec = (argv: readonly string[]): string =>
   argv
     .map((argument) =>
@@ -124,7 +165,11 @@ export const formatDesktopExec = (argv: readonly string[]): string =>
 
 const EXEC_LINE = /^Exec\s*=/u;
 
-/** Replace the first `Exec` line of the main group, leaving other groups alone. */
+/**
+ * Replace the first `Exec` line of the main group, leaving other groups
+ * alone. `exec` is the command `tokenizeDesktopExec` reads; it is escaped for
+ * the desktop-entry value layer before it is written.
+ */
 export const replaceDesktopExec = (
   text: string,
   exec: string,
@@ -148,7 +193,7 @@ export const replaceDesktopExec = (
     )
       return line;
     replaced = true;
-    return `Exec=${exec}`;
+    return `Exec=${escapeDesktopEntryValue(exec)}`;
   });
   return replaced ? ok(lines.join(newline)) : err("missing_exec_line");
 };
