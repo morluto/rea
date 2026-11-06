@@ -286,6 +286,19 @@ const redactFailure = (
         ...(error.userMessage === undefined
           ? {}
           : { userMessage: text(error.userMessage) }),
+        ...(error.siblingOperations === undefined
+          ? {}
+          : { siblingOperations: error.siblingOperations }),
+        ...(error.siblingReasons === undefined
+          ? {}
+          : {
+              siblingReasons: Object.fromEntries(
+                Object.entries(error.siblingReasons).map(([op, msg]) => [
+                  op,
+                  text(msg),
+                ]),
+              ),
+            }),
         ...(error.retryable ? { retryable: true } : {}),
       },
     );
