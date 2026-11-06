@@ -14,8 +14,7 @@ const ID_FIELD = /^(?:_?id|uid|uuid|guid|key)$|[_-]id$|[a-z]Id$/u;
 /** A field naming what kind of record a member is, as TreeLine's `format="BOOK"`. */
 export const KIND_FIELD = /^(?:type|kind|format|category)$/iu;
 
-/** The most name-like fields a record is tried by, and the longest value one names it by. */
-const MAX_NAMES = 3;
+/** The longest value a field names a record by. */
 const MAX_NAME = 64;
 /** The most kind fields and paths a version's records are counted by, each a pass over them, so odd records cost no more. */
 const MAX_TALLIES = 64;
@@ -59,9 +58,11 @@ const isName = (value: string) =>
   !isGeneratedId(value) &&
   !isPlaceholder(value);
 
-/** The paths of a record's name-like string fields, nearest first, up to `MAX_INSIDE_STEPS` keys deep, as TreeLine's `data/Title`. */
-const namePaths = (record: Record<string, JsonValue>) => {
-  const found: string[][] = [];
+/** The first path, nearest first and up to `MAX_INSIDE_STEPS` keys deep, of a record's name-like string fields that `names` accepts, as TreeLine's `data/Title`. */
+const namePath = (
+  record: Record<string, JsonValue>,
+  names: (path: readonly string[]) => boolean,
+): readonly string[] | undefined => {
   let level = [{ path: [] as string[], fields: record }];
   for (let depth = 0; depth < MAX_INSIDE_STEPS; depth += 1) {
     const next: typeof level = [];
@@ -73,13 +74,13 @@ const namePaths = (record: Record<string, JsonValue>) => {
         else if (
           typeof value === "string" &&
           isNameLikeKey(key) &&
-          isName(value)
+          isName(value) &&
+          names([...path, key])
         )
-          found.push([...path, key]);
-    if (found.length >= MAX_NAMES) break;
+          return [...path, key];
     level = next;
   }
-  return found.slice(0, MAX_NAMES);
+  return undefined;
 };
 
 /** The field a record's kind is kept in, as `format`, when it holds a string a selector can carry. */
@@ -155,7 +156,8 @@ type Tally = ReturnType<typeof tally>;
 const nameOf = (record: JsonValue, here: Tally, there: Tally) => {
   if (!isRecord(record)) return undefined;
   const kind = kindOf(record);
-  const path = namePaths(record).find(
+  const path = namePath(
+    record,
     (at) => here(kind, at, record) === 1 && there(kind, at, record) === 0,
   );
   return path === undefined ? undefined : spellName(record, kind, path);
@@ -176,7 +178,8 @@ const keptNameOf = (
   const kind = kindOf(newer);
   const same = (path: readonly string[]) =>
     stringAt(newer, path) === stringAt(older, path);
-  const path = namePaths(newer).find(
+  const path = namePath(
+    newer,
     (at) =>
       (kind === undefined || same([kind])) &&
       same(at) &&

@@ -24,16 +24,17 @@ const MAX_COUNT_GUARDS = 1;
 const MAX_LISTED = 5;
 
 /**
- * Whether a pointer reads a field its record's selector names it by, where
- * that selector reads a path inside the record, as the `data/Title` and
- * `format` of `/nodes/[format=BOOK][>data~1Title=The Silk Roads]`, which
- * the selector already decides.
+ * The record a pointer reads a field of that the record's selector names it
+ * by, where that selector reads a path inside the record, as
+ * `/nodes/[format=BOOK][>data~1Title=The Silk Roads]` for its `data/Title`
+ * and `format`, which the selector already decides; undefined when it reads none.
  */
-export const readsOwnName = (pointer: string): boolean => {
-  const segments = pointer
-    .split("/")
-    .map((segment) => segment.replaceAll("~1", "/").replaceAll("~0", "~"));
-  return segments.some((segment, index) => {
+const ownNameRecord = (pointer: string): string | undefined => {
+  const spelled = pointer.split("/");
+  const segments = spelled.map((segment) =>
+    segment.replaceAll("~1", "/").replaceAll("~0", "~"),
+  );
+  const at = segments.findIndex((segment, index) => {
     const conditions = selectorOf(segment) ?? [];
     const rest = segments.slice(index + 1).join("/");
     return (
@@ -41,12 +42,50 @@ export const readsOwnName = (pointer: string): boolean => {
       conditions.some(({ prefix, key }) => prefix !== "@" && key === rest)
     );
   });
+  return at === -1 ? undefined : spelled.slice(0, at + 1).join("/");
+};
+
+/**
+ * The checks without those of a field its record's selector names it by
+ * (`ownNameRecord`), but for the first of a record no other check reads, as
+ * a new record holding only a generated uid and its title, so its addition
+ * is still checked.
+ */
+export const ownNamesUnreadOtherwise = (
+  checks: readonly Suggestion[],
+): Suggestion[] => {
+  const records = checks.map((check) =>
+    "pointer" in check ? ownNameRecord(check.pointer) : undefined,
+  );
+  const read = new Set<string>();
+  const reads = (pointer: string) => {
+    const parts = pointer.split("/");
+    for (let end = 1; end < parts.length; end += 1)
+      read.add(parts.slice(0, end).join("/"));
+  };
+  const kept = checks.filter((check, index) => {
+    if (records[index] !== undefined) return false;
+    if ("pointer" in check) reads(check.pointer);
+    return true;
+  });
+  checks.forEach((check, index) => {
+    const record = records[index];
+    if (record === undefined || read.has(record) || !("pointer" in check))
+      return;
+    reads(check.pointer);
+    kept.push(check);
+  });
+  return kept;
 };
 
 const isRecord = (
   value: JsonValue | undefined,
 ): value is Record<string, JsonValue> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
+
+/** The value at a list's pointer, where an empty one is the whole view, as for a file whose top level is the array. */
+const listAt = (view: JsonValue | null, list: string) =>
+  list === "" ? view : resolvePointer(view, list);
 
 /** The array a member pointer sits in, when its parent is one in a view. */
 const arrayOf = (view: JsonValue | null, pointer: string) => {
@@ -204,7 +243,7 @@ const addedRecordOf = (
   const segments = pointer.split("/");
   for (let index = segments.length - 1; index >= 1; index -= 1) {
     const list = segments.slice(0, index).join("/");
-    const items = resolvePointer(ends.final, list);
+    const items = listAt(ends.final, list);
     const member = segments[index] ?? "";
     const record = resolvePointer(ends.final, `${list}/${member}`);
     if (!Array.isArray(items) || !isRecord(record)) continue;
@@ -214,7 +253,7 @@ const addedRecordOf = (
       item !== record &&
       isRecord(item) &&
       (kind === undefined || item[kind.key] === kind.value);
-    const older = resolvePointer(ends.baseline, list);
+    const older = listAt(ends.baseline, list);
     return {
       list,
       member,
@@ -307,7 +346,7 @@ export const recordGuards = (
     const known = pairings.get(list);
     if (known !== undefined) return known;
     const [newer = [], older = []] = [ends.final, ends.baseline].map((view) => {
-      const items = resolvePointer(view, list);
+      const items = listAt(view, list);
       return Array.isArray(items) ? items : [];
     });
     const pairing = pairMembers(newer, older);

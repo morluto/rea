@@ -183,6 +183,67 @@ describe("draftTaskFiles for records in a JSON array, as TreeLine saves its node
   });
 });
 
+describe("draftTaskFiles for a new JSON record named by a field inside it", () => {
+  it("checks a new record by the field that names it when nothing else reads it, so a wrong title fails however many records the list holds", () => {
+    const note = (uid: string, title: string) => ({
+      data: { Title: title },
+      uid,
+    });
+    const NEW = note("fc11808dd9f511f181b7edd4f1920549", "New");
+    const OLD = note("812403bed9f511f19fc4edd4f1920549", "Old");
+    const nodes = (...members: unknown[]) =>
+      ({ nodes: members }) as unknown as JsonValue;
+    const titled = {
+      kind: "value_equals",
+      file: FILE,
+      pointer: "/nodes/[>data~1Title=New]/data/Title",
+      value: "New",
+    };
+    const first = drafted(nodes(), nodes(NEW));
+    const joined = drafted(nodes(OLD), nodes(OLD, NEW));
+
+    expect(first.suggested).toEqual([titled]);
+    expect(joined.suggested).toEqual([
+      titled,
+      { kind: "member_count", file: FILE, pointer: "/nodes", equals: 2 },
+    ]);
+    // Another run gives the record another uid; a wrong title fails.
+    const rerun = note("0a11808dd9f511f181b7edd4f1920549", "New");
+    expect(passing(nodes(rerun), first.suggested)).toEqual([true]);
+    expect(passing(nodes(OLD, note(NEW.uid, "Nwe")), joined.suggested)).toEqual(
+      [false, true],
+    );
+  });
+
+  it("names a new record by a later name-like field when the first three name another record too", () => {
+    const item = (uid: string, last: string, done: boolean) => ({
+      aname: "Shared",
+      bname: "Shared",
+      cname: "Shared",
+      dname: last,
+      done,
+      uid,
+    });
+    const FIRST = "00000001da2511f1a0ba3971baf6a808";
+    const items = (...members: unknown[]) =>
+      ({ items: members }) as unknown as JsonValue;
+    const file = drafted(
+      items(item(FIRST, "First", false)),
+      items(
+        item(FIRST, "First", false),
+        item("00000002da2511f1a0ba3971baf6a808", "Second", true),
+      ),
+    );
+
+    expect(file.suggested.map(pointerOf)).toEqual([
+      "/items/[dname=Second]/dname",
+      "/items/[dname=Second]/done",
+      "/items",
+    ]);
+    expect(file.notes).toEqual([]);
+  });
+});
+
 type Book = readonly [
   uid: string,
   title: string,
@@ -356,6 +417,26 @@ describe("draftTaskFiles for a book added under a category, as TreeLine saved on
     ]);
     expect(passing(seed, file.suggested)).toEqual([false, false, false, false]);
     expect(passing(end, file.suggested)).toEqual([true, true, true, true]);
+    expect(passing(seed, file.guards)).toEqual([true, true, true, true]);
+    expect(passing(end, file.guards)).toEqual([true, true, true, true]);
+  });
+
+  it("guards the nearest books and skips the children every book holds where the nodes are the file's top level", () => {
+    const top = (view: JsonValue) => (view as { nodes: JsonValue }).nodes;
+    const at = (title: string) => book(title).replace(/^\/nodes/u, "");
+    const seed = top(outlineOf());
+    const end = top(outlineOf([CLOCKWORK]));
+    const file = drafted(seed, end);
+
+    expect(file.suggested.map(pointerOf)).not.toContain(
+      `${at("The Clockwork Ocean")}/children`,
+    );
+    expect(file.guards.map(pointerOf)).toEqual([
+      `${at("Small Engines of Life")}/data/Author`,
+      `${at("The Quiet Glacier")}/data/Author`,
+      `${at("Small Engines of Life")}/data/Copyright`,
+      `${at("The Quiet Glacier")}/data/Copyright`,
+    ]);
     expect(passing(seed, file.guards)).toEqual([true, true, true, true]);
     expect(passing(end, file.guards)).toEqual([true, true, true, true]);
   });

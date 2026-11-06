@@ -178,7 +178,8 @@ the first source that has the app:
   keys, so save once early as `.ctd` and untick autosave.
 - Glade: a new widget's id is empty until you set it, and a second save
   writes a `.glade~` backup, which shows in the draft as an unrelated
-  change and is never seeded. The draft names a button's `<child>` by the id
+  change. A backup present at `seed` is seeded with the document, so trash
+  it before `seed`. The draft names a button's `<child>` by the id
   its widget carries, `[name=child][>object@id=submit_button]`, which moving
   the button keeps; give the widget an id before `seed` so it can.
 - VYM: the title never names the map, so pass `Documents/<map>.vym` in

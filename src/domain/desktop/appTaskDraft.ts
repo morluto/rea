@@ -7,8 +7,8 @@ import {
   isLikeDefault,
   jsonCounts,
   outermost,
+  ownNamesUnreadOtherwise,
   positionalNotes,
-  readsOwnName,
   recordGuards,
 } from "./appTaskDraftJson.js";
 import {
@@ -268,7 +268,7 @@ const valueSuggestions = (
     format === "keyfile" ? entries : innermost(entries);
   const wholes = (entries: readonly string[]) =>
     format === "keyfile" ? entries : outermost(entries);
-  const listed: Suggestion[] = [];
+  const edits: Suggestion[] = [];
   const ends = versions(baseline, final);
   // A key file's entries hold no array, so no record of one is added whole.
   const added = new Set(change.added);
@@ -282,11 +282,11 @@ const valueSuggestions = (
       value !== undefined &&
       !isTimestamp(value) &&
       !(typeof value === "string" && isGeneratedUid(value)) &&
-      !readsOwnName(at) &&
       !isLikeDefault(ends, added, at, value)
     )
-      listed.push({ kind: "value_equals", file, pointer: at, value });
+      edits.push({ kind: "value_equals", file, pointer: at, value });
   }
+  const listed = ownNamesUnreadOtherwise(edits);
   for (const entry of wholes(change.removed)) {
     const at = pointer(entry);
     if (at !== undefined && at !== "")
