@@ -107,6 +107,18 @@ describe("identifiers an app numbers by position", () => {
     ]);
   });
 
+  it("checks a deleted task is gone by its name, and never that the id its neighbour was renumbered from is", () => {
+    const file = xmlDraft(
+      plan(...SEED),
+      plan(...SEED.filter(([name]) => name !== "Design")),
+    );
+
+    const tasks = "/root/children/[name=tasks]/children/[name=task]";
+    expect(file.suggested).toEqual([
+      { kind: "value_absent", file: FILE, pointer: `${tasks}[@name=Design]` },
+    ]);
+  });
+
   it("keeps ids as identity when two items only swap a colour, so the swap reads as two colour edits", () => {
     const list = (first: string, second: string) =>
       `<list><item id="1" color="${first}"/><item id="2" color="${second}"/></list>`;
