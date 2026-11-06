@@ -4,6 +4,7 @@ import {
   heldOpenLimitation,
   isAppLog,
   isLockFile,
+  leftOutFiles,
   runtimeSeeds,
   unownedChangedFolders,
   unownedFoldersLimitation,
@@ -255,6 +256,31 @@ describe("isAppLog", () => {
 
     expect(logs.filter(isAppLog)).toEqual(logs);
     expect(others.filter(isAppLog)).toEqual([]);
+  });
+
+  it("leaves out the app's logs in its state, but not a database's write-ahead log, which holds saved writes", () => {
+    const left = [
+      ".config/freeplane/1.7.x/logs/log.0",
+      ".qet/20261106.log",
+      // A numbered log with no LevelDB beside it is a log like any other.
+      ".config/app/sync2/000009.log",
+    ];
+    const files = new Map(
+      [
+        ...left,
+        ".config/app/Local Storage/leveldb/000003.log",
+        ".config/app/store/leveldb/000007.log",
+        ".config/app/sync/000005.log",
+        ".config/app/sync/CURRENT",
+        ".config/app/sync/MANIFEST-000004",
+        ".config/app/journal/000011.log",
+        ".config/app/journal/MANIFEST-000010",
+      ].map((home) => [home, file("application_state")] as const),
+    );
+
+    const { isLeftOut } = leftOutFiles(files, [".config/app"], new Set());
+
+    expect([...files.keys()].filter(isLeftOut)).toEqual(left);
   });
 });
 

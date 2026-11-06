@@ -696,6 +696,14 @@ describe("exportDesktopApplication of the app's logs", () => {
       [`${qet}/qelectrotech.conf`, "[ui]\n", "opened"],
       [selected, logLine, "state"],
       [document, logLine, "neither"],
+      // LevelDB's write-ahead logs hold saved writes, in browser storage or not.
+      [
+        `${HOME}/.config/notes/Local Storage/leveldb/000003.log`,
+        logLine,
+        "state",
+      ],
+      [`${HOME}/.config/notes/sync/000005.log`, logLine, "state"],
+      [`${HOME}/.config/notes/sync/CURRENT`, "MANIFEST-000004\n", "state"],
     ] as const;
     const recorded: DesktopApplicationCapture = {
       ...locked,
@@ -733,6 +741,7 @@ describe("exportDesktopApplication of the app's logs", () => {
       logLine,
       "",
       "[ui]\n",
+      "MANIFEST-000004\n",
     ]);
 
     const seedFiles = z
@@ -743,6 +752,8 @@ describe("exportDesktopApplication of the app's logs", () => {
         ".qet/qelectrotech.conf",
         ".config/notes/notes.log",
         "Documents/build.log",
+        ".config/notes/Local Storage/leveldb/000003.log",
+        ".config/notes/sync/000005.log",
       ]),
     );
     const logs = [
