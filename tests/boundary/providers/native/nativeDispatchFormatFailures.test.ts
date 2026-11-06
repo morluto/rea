@@ -10,7 +10,10 @@ import {
   NativeFixtureRunner,
   nativeMachoTargetForFile,
 } from "../../../fixtures/nativeCommands.js";
-import { objcRecordBudgetMacho } from "../../../fixtures/objcRecordBudgetMacho.js";
+import {
+  objcAdoptedProtocolCountMacho,
+  objcRecordBudgetMacho,
+} from "../../../fixtures/objcRecordBudgetMacho.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 
 const sectionCases = [
@@ -107,10 +110,7 @@ it("continues decoding the well-formed eight-byte class-list control", async () 
 it.each([1n, 20001n])(
   "retains class facts and source identity through provider delivery for protocol count %s",
   async (count) => {
-    const bytes = objcRecordBudgetMacho("class");
-    // Attach the class to the fixture's existing protocol pointer at 0x6c0.
-    bytes.writeBigUInt64LE(0x1000006b8n, 0x328);
-    bytes.writeBigUInt64LE(count, 0x6b8);
+    const bytes = objcAdoptedProtocolCountMacho(count);
     const { result } = await inspect(bytes);
     expect(result.ok).toBe(true);
     if (!result.ok) throw result.error;
