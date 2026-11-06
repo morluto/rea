@@ -5,6 +5,7 @@ import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import type { CallToolResult } from "@modelcontextprotocol/server";
 import { expect, onTestFinished } from "vitest";
 
+import type { BuildSettle } from "../../src/application/desktop/DesktopBuildSettle.js";
 import { toolContract } from "../../src/contracts/toolContracts.js";
 import type { SettleTiming } from "../../src/domain/desktop/appSettle.js";
 import { createServer } from "../../src/server/createServer.js";
@@ -40,7 +41,7 @@ export const FIRST_READ: SettleTiming = {
 /** An MCP client of a REA server whose build computers reach the fakes through `environment` and read apps with `settle`. */
 export const connectBuildServer = async (
   environment: Readonly<Record<string, string>>,
-  settle: SettleTiming = FIRST_READ,
+  settle: BuildSettle = FIRST_READ,
 ): Promise<Client> => {
   const session = createTestBinarySession(() => {
     throw new Error("build computers must not start a deep provider");

@@ -111,7 +111,7 @@ import type { PcapAnalysisPort } from "../application/pcap/PcapAnalysisPort.js";
 import type { FlutterBuildAnalysisPort } from "../application/flutter/FlutterBuildAnalysisPort.js";
 import type { JebAnalysisPort } from "../application/jeb/JebAnalysisPort.js";
 import type { AdbDeviceAnalysisPort } from "../application/adb/AdbDeviceAnalysisPort.js";
-import type { SettleTiming } from "../domain/desktop/appSettle.js";
+import type { BuildSettle } from "../application/desktop/DesktopBuildSettle.js";
 
 /** Typed injection inputs shared by a capability host, independent of transport. */
 export interface CapabilityServiceOptions {
@@ -149,8 +149,8 @@ export interface CapabilityServiceOptions {
   readonly electronActiveObservation?: ElectronActiveObservationPort;
   readonly javascriptRuntimeObservation?: JavaScriptRuntimeObservationPort;
   readonly fridaInstrumentation?: FridaInstrumentationPort;
-  /** How build computers read an app until its files settle; the shipped timing unless a test shortens it. */
-  readonly desktopBuildSettle?: SettleTiming;
+  /** How build computers read an app until its files settle; the shipped timing on real time unless a test shortens or clocks it. */
+  readonly desktopBuildSettle?: BuildSettle;
 }
 
 const tsharkLocatable = (environment: Readonly<NodeJS.ProcessEnv>): boolean => {

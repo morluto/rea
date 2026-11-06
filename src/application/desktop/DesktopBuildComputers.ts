@@ -6,10 +6,7 @@ import {
   type BuildSource,
 } from "../../domain/desktop/appBuild.js";
 import { counted } from "../../domain/desktop/appExportUnowned.js";
-import {
-  SETTLE_TIMING,
-  type SettleTiming,
-} from "../../domain/desktop/appSettle.js";
+import { SETTLE_TIMING } from "../../domain/desktop/appSettle.js";
 import {
   driverCall,
   type ComputerAction,
@@ -46,6 +43,7 @@ import {
 } from "./DesktopBuildActionLog.js";
 import { seededLockFiles, writeRequestBundle } from "./DesktopBuildBundle.js";
 import { DesktopBuildCapture } from "./DesktopBuildCapture.js";
+import type { BuildSettle } from "./DesktopBuildSettle.js";
 import { DesktopBuildTurns } from "./DesktopBuildTurns.js";
 import { DesktopBuildWitness } from "./DesktopBuildWitness.js";
 
@@ -176,7 +174,7 @@ const liveComputer = (
   computer: AgentEnvComputer,
   workspace: PrivateRuntimeRoot | undefined,
   request: BuildRequest | undefined,
-  settle: SettleTiming,
+  settle: BuildSettle,
 ): HeldComputer => {
   const actions = new BuildComputerActionLog();
   const turns = new DesktopBuildTurns();
@@ -279,7 +277,7 @@ export class DesktopBuildComputers {
 
   constructor(
     private readonly environment: Readonly<NodeJS.ProcessEnv>,
-    private readonly settle: SettleTiming = SETTLE_TIMING,
+    private readonly settle: BuildSettle = SETTLE_TIMING,
   ) {}
 
   async start(
