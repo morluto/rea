@@ -47,7 +47,8 @@ export const assertWiresharkExecutableIdentity = (
 export const TSHARK_COMMAND_ENV = "REA_TSHARK_COMMAND";
 export const CAPINFOS_COMMAND_ENV = "REA_CAPINFOS_COMMAND";
 
-const TOOL_REMEDIATION = `Supply Wireshark 4.x tshark and capinfos on PATH or through absolute ${TSHARK_COMMAND_ENV} and ${CAPINFOS_COMMAND_ENV}; REA does not install them.`;
+/** Repair for any unusable caller-selected Wireshark tool; shared by readiness and execution. */
+export const PCAP_TOOL_REMEDIATION = `Supply Wireshark 4.x tshark and capinfos on PATH or through absolute ${TSHARK_COMMAND_ENV} and ${CAPINFOS_COMMAND_ENV}; REA does not install them.`;
 
 /**
  * Host-tool refusals concern the caller's Wireshark installation, not the
@@ -61,7 +62,7 @@ export const pcapToolUnavailable = (
 ): AnalysisCapabilityUnavailableError =>
   new AnalysisCapabilityUnavailableError("pcap", operation, reason, {
     ...options,
-    userMessage: `${/[.!?]$/u.test(reason) ? reason : `${reason}.`} ${TOOL_REMEDIATION}`,
+    userMessage: `${/[.!?]$/u.test(reason) ? reason : `${reason}.`} ${PCAP_TOOL_REMEDIATION}`,
   });
 
 /** How one caller-supplied Wireshark tool was selected. */
@@ -246,5 +247,6 @@ export const pcapConfigurationAvailability = (
   status: "unavailable",
   code: rejectionCodeOf(cause.code),
   reason: cause.message,
+  remediation: PCAP_TOOL_REMEDIATION,
   diagnostics: { ...cause.diagnostics },
 });

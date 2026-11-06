@@ -21,6 +21,7 @@ import type {
   ElectronIpcFinding,
   ElectronNativeAddonBindingFinding,
   ElectronSenderValidationFinding,
+  ElectronProtocolFinding,
   ElectronUtilityProcessFinding,
 } from "./electronStaticAnalysisTypes.js";
 import { JavaScriptModuleRangeIndex } from "./javascriptStaticAnalysisFindings.js";
@@ -89,6 +90,7 @@ export interface JavaScriptAnalysisAccumulator {
     | t.VariableDeclarator
     | t.AssignmentExpression
   )[];
+  readonly protocols: LocatedJavaScriptFinding<ElectronProtocolFinding>[];
   readonly moduleRangeIndex: JavaScriptModuleRangeIndex;
   /** Binding identities proven as third-parameter loaders of recovered factories. */
   readonly factoryRequireBindingIds: Set<string>;
@@ -136,6 +138,7 @@ export interface JavaScriptReferenceInput {
   readonly kind: JavaScriptStaticReference["kind"];
   readonly specifier: string | undefined;
   readonly resolutionBasePath?: string;
+  readonly loader?: JavaScriptStaticReference["loader"];
 }
 
 /** Candidate route or network endpoint literal. */
@@ -182,6 +185,7 @@ export const createJavaScriptAnalysisAccumulator = (
   utilityProcesses: [],
   nativeAddonBindings: [],
   pendingNativeAddonBindings: [],
+  protocols: [],
   moduleRangeIndex: new JavaScriptModuleRangeIndex(sourceLength),
   factoryRequireBindingIds: new Set(),
   seen: new Set(),

@@ -124,6 +124,8 @@ describe("bounded Ghidra PowerPC admission", () => {
     );
     if (!left.ok) throw left.error;
     if (!right.ok) throw right.error;
+    expect(left.value.profile?.digest).toEqual(expect.any(String));
+    expect(right.value.profile?.digest).toEqual(expect.any(String));
     expect(left.value.profile?.digest).not.toBe(right.value.profile?.digest);
   });
 

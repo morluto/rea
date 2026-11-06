@@ -145,7 +145,7 @@ export const registerAdbCommands = (
     description: "Pull one device file to a local copy with a SHA-256 digest",
     args: z.object({
       serial,
-      "device-path": z.string().min(1).describe("Absolute device path to pull"),
+      "device-path": adbInputSchemas.pull_adb_file.shape.device_path,
     }),
     options: z.object({
       "output-directory": z
@@ -166,7 +166,7 @@ export const registerAdbCommands = (
     args: z.object({
       serial,
       "local-path": z.string().min(1).describe("Existing local file"),
-      "device-path": z.string().min(1).describe("Absolute device destination"),
+      "device-path": adbInputSchemas.push_adb_file.shape.device_path,
     }),
     options: z.object({
       overwrite: z
@@ -207,10 +207,7 @@ export const registerAdbCommands = (
     description: "List one device directory with kinds, permissions, and sizes",
     args: z.object({
       serial,
-      "device-path": z
-        .string()
-        .min(1)
-        .describe("Absolute device directory path to list"),
+      "device-path": adbInputSchemas.list_adb_directory.shape.device_path,
     }),
     run: ({ args }) =>
       execute(CLI_COMMANDS.listAdbDirectory, "list_adb_directory", {
@@ -275,15 +272,9 @@ export const registerAdbCommands = (
   });
   cli.command(CLI_COMMANDS.resolveAdbPackages, {
     description: "Find installed packages by case-insensitive name substring",
-    args: z.object({
-      serial,
-      query: z.string().min(2).describe("Package-name substring to find"),
-    }),
+    args: adbInputSchemas.resolve_adb_packages,
     run: ({ args }) =>
-      execute(CLI_COMMANDS.resolveAdbPackages, "resolve_adb_packages", {
-        serial: args.serial,
-        query: args.query,
-      }),
+      execute(CLI_COMMANDS.resolveAdbPackages, "resolve_adb_packages", args),
   });
   cli.command(CLI_COMMANDS.installAdbPackage, {
     description:
