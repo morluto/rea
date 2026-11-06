@@ -5,7 +5,13 @@ import {
   dependencyPackages,
 } from "./debianPackageFile.js";
 import type { AptRepository, DesktopPackage } from "./desktopCapture.js";
-import { unwrapDesktopCommand } from "./desktopEntry.js";
+import {
+  formatDesktopExec,
+  parseDesktopEntry,
+  replaceDesktopExec,
+  tokenizeDesktopExec,
+  unwrapDesktopCommand,
+} from "./desktopEntry.js";
 
 const NOBLE_SUITE =
   / noble(?:-updates|-security|-backports)?\/(?:main|restricted|universe|multiverse) /u;
@@ -542,4 +548,32 @@ export const electronLaunchArguments = (
   const wrapper = unwrapDesktopCommand(argv);
   const at = wrapper.kind === "direct" ? wrapper.index + 1 : 1;
   return [...argv.slice(0, at), "--no-sandbox", ...argv.slice(at)];
+};
+
+/**
+ * The desktop entry after its main `Exec` command has been prepared with
+ * `electronLaunchArguments`. A non-Electron entry, and an Electron command
+ * that already passes `--no-sandbox`, keep their original text.
+ */
+export const adjustInstalledDesktopText = (
+  text: string,
+  electron: boolean,
+): Result<
+  string,
+  | "missing_desktop_entry_group"
+  | "missing_exec"
+  | "missing_exec_line"
+  | "unterminated_quote"
+  | "empty_command"
+> => {
+  if (!electron) return ok(text);
+  const parsed = parseDesktopEntry(text);
+  if (!parsed.ok) return parsed;
+  const exec = parsed.value.exec;
+  if (exec === null) return err("missing_exec");
+  const tokens = tokenizeDesktopExec(exec);
+  if (!tokens.ok) return tokens;
+  const adjusted = electronLaunchArguments(tokens.value, true);
+  if (adjusted === tokens.value) return ok(text);
+  return replaceDesktopExec(text, formatDesktopExec(adjusted));
 };
