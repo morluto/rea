@@ -327,7 +327,11 @@ const utf16Text = (bytes: Buffer) => {
   if (order.swap && little.length % 2 === 0) little.swap16();
   try {
     return {
-      text: new TextDecoder("utf-16le", { fatal: true }).decode(little),
+      // The signature is already removed; a leading U+FEFF here is content.
+      text: new TextDecoder("utf-16le", {
+        fatal: true,
+        ignoreBOM: true,
+      }).decode(little),
       encode: (scrubbed: string) => {
         const encoded = Buffer.from(scrubbed, "utf16le");
         if (order.swap) encoded.swap16();

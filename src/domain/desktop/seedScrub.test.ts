@@ -28,6 +28,25 @@ const scrubbed = (text: string, format: string, identity = GEANY) => {
 };
 
 describe("scrubSeed on text", () => {
+  it.each(["le", "be"] as const)(
+    "keeps a leading content U+FEFF after the UTF-16 %s signature",
+    (order) => {
+      const input = utf16("\uFEFFtitle\n/home/ada/file\n", order);
+      const outcome = scrubSeed(input, seed("binary"), GEANY);
+      expect(
+        outcome.bytes?.equals(utf16(`\uFEFFtitle\n${SEED_HOME}/file\n`, order)),
+      ).toBe(true);
+      expect(outcome.holdsIdentity).toBe(false);
+      expect(
+        scrubSeed(
+          utf16("\uFEFFtitle\n/different/home/file\n", order),
+          seed("binary"),
+          GEANY,
+        ),
+      ).toEqual({ bytes: undefined, holdsIdentity: false });
+    },
+  );
+
   it("rewrites a UTF-8 text seed, keeping its byte-order mark, and leaves a clean one as it is", () => {
     expect(scrubbed("\uFEFFmail=ada@e81232be457d\n", "keyfile")).toEqual({
       text: "\uFEFFmail=user@localhost\n",
