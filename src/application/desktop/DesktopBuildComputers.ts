@@ -119,6 +119,12 @@ const failure = (
   });
 };
 
+/** The text of a driver's answer, such as a refusal's message. */
+const driverMessage = (content: DriverResult["content"]): string =>
+  content
+    .flatMap((block) => (typeof block.text === "string" ? [block.text] : []))
+    .join(" ");
+
 /**
  * Restore the app's data to its seed with `data/reset`, which relaunches the
  * app, and wait until the computer reports ready again; a screenshot after,
@@ -135,9 +141,25 @@ const reset = async (
   const ready = { reset: true, ready_ms: Date.now() - startedAt };
   if (fields.screenshot !== true)
     return { isError: false, content: [], structured: ready };
-  const shot = await computer.callTool("computer_screenshot", {}, signal);
+  // The reset has happened: a screenshot that fails after it is reported beside it, and only an abort propagates.
+  const shot = await computer
+    .callTool("computer_screenshot", {}, signal)
+    .catch((cause: unknown) => {
+      if (signal.aborted) throw cause;
+      return cause instanceof Error ? cause.message : String(cause);
+    });
+  if (typeof shot === "string" || shot.isError)
+    return {
+      isError: false,
+      content: [],
+      structured: {
+        ...ready,
+        screenshot_error:
+          typeof shot === "string" ? shot : driverMessage(shot.content),
+      },
+    };
   return {
-    isError: shot.isError,
+    isError: false,
     content: shot.content,
     structured: { ...ready, frame: shot.structured },
   };
@@ -412,11 +434,7 @@ export class DesktopBuildComputers {
     if (result.isError)
       return err(
         new AnalysisInputError(ACT, {
-          userMessage: `The computer refused the ${action}: ${result.content
-            .flatMap((block) =>
-              typeof block.text === "string" ? [block.text] : [],
-            )
-            .join(" ")}`,
+          userMessage: `The computer refused the ${action}: ${driverMessage(result.content)}`,
           remediationAction:
             "Follow the computer's message; actions on frame coordinates need a screenshot first.",
           conformsToInputContract: true,
