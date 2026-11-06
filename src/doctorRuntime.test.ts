@@ -19,6 +19,7 @@ import { createDoctorHostFixture } from "./application/Doctor.fixture.js";
 import { runDoctorOwned } from "./application/Doctor.js";
 import { waitForAbortable } from "./process/AbortablePromise.js";
 import { AnalysisCleanupLease } from "./artifacts/AnalysisCleanupLease.js";
+import { CURRENT_ENTRYPOINT_PATH } from "./process/CurrentEntrypointPath.js";
 
 const readyDisplay = {
   ok: true,
@@ -443,7 +444,7 @@ it("carries a validated REA_JADX_MCP_JAR into the provider registration environm
     REA_JADX_MCP_JAR: jar,
     JAVA_HOME: javaHome,
   });
-  const inspections = await host.providerInspections?.();
+  const inspections = await host.providerInspections?.([]);
   expect(inspections?.map(({ id }) => id)).toContain("jadx");
 
   const environment = providerRegistrationEnvironment(inspections ?? []);
@@ -454,7 +455,7 @@ it("carries a validated REA_JADX_MCP_JAR into the provider registration environm
 
 it("omits REA_JADX_MCP_JAR from the provider registration environment when it is not configured", async () => {
   const host = createSystemDoctorHost({});
-  const inspections = await host.providerInspections?.();
+  const inspections = await host.providerInspections?.([]);
 
   const environment = providerRegistrationEnvironment(inspections ?? []);
   expect(environment).not.toHaveProperty("REA_JADX_MCP_JAR");
@@ -475,7 +476,7 @@ it("shares one parsed IDA registration between timeout-budget and doctor project
       }),
     ).toEqual(ok(3210));
     await writeFile(registration, "not JSON anymore");
-    const inspections = await host.providerInspections?.();
+    const inspections = await host.providerInspections?.([]);
     expect(inspections?.find(({ id }) => id === "ida")).toMatchObject({
       configured: true,
       available: true,
@@ -495,7 +496,7 @@ it("carries a validated REA_KUNA_COMMAND into the provider registration environm
   const inspections = await createSystemDoctorHost({
     REA_KUNA_COMMAND: kuna,
     REA_KUNA_CACHE_DIR: join(root, "cache"),
-  }).providerInspections?.();
+  }).providerInspections?.([]);
 
   expect(inspections?.find(({ id }) => id === "kuna")).toMatchObject({
     available: true,
@@ -519,3 +520,57 @@ const createFakeJdk = async (root: string): Promise<string> => {
   await chmod(java, 0o700);
   return javaHome;
 };
+
+const opencodeRegistration = (
+  home: string,
+  environment: Readonly<Record<string, string>>,
+): Promise<void> => {
+  const directory = join(home, ".config/opencode");
+  return mkdir(directory, { recursive: true }).then(() =>
+    writeFile(
+      join(directory, "opencode.json"),
+      JSON.stringify({
+        mcp: {
+          rea: {
+            type: "local",
+            command: [process.execPath, CURRENT_ENTRYPOINT_PATH, "mcp"],
+            enabled: true,
+            environment,
+          },
+        },
+      }),
+    ),
+  );
+};
+
+test("probes the selected client's registration environment instead of the terminal's", async () => {
+  const home = await createTestTempDirectory("rea-opencode-doctor-env-");
+  await opencodeRegistration(home, {
+    GHIDRA_INSTALL_DIR: "/opt/ghidra",
+    REA_JADX_MCP_JAR: "/opt/jadx.jar",
+  });
+  const host = createSystemDoctorHost({ HOME: home });
+  try {
+    const inspections = await host.providerInspections?.(["opencode"]);
+    expect(inspections?.find(({ id }) => id === "ghidra")?.configured).toBe(
+      true,
+    );
+    expect(inspections?.find(({ id }) => id === "jadx")?.configured).toBe(true);
+  } finally {
+    await host.close?.();
+  }
+});
+
+test("keeps reading this terminal when no client is selected", async () => {
+  const home = await createTestTempDirectory("rea-opencode-doctor-ambient-");
+  await opencodeRegistration(home, { GHIDRA_INSTALL_DIR: "/opt/ghidra" });
+  const host = createSystemDoctorHost({ HOME: home });
+  try {
+    const inspections = await host.providerInspections?.([]);
+    expect(inspections?.find(({ id }) => id === "ghidra")?.configured).toBe(
+      false,
+    );
+  } finally {
+    await host.close?.();
+  }
+});

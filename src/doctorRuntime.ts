@@ -2,6 +2,7 @@ import {
   systemDoctorHost,
   type DoctorCheck,
   type DoctorHost,
+  type DoctorProviderInspection,
 } from "./application/Doctor.js";
 import { fileURLToPath } from "node:url";
 import { inspectJadxProvider } from "./android/JadxDoctor.js";
@@ -15,10 +16,79 @@ import { AnalysisCancelledError } from "./domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "./domain/providerCleanupError.js";
 import { AnalysisCleanupLeaseGroup } from "./artifacts/AnalysisCleanupLease.js";
 import type { RetainedResourceScope } from "./application/AnalysisProvider.js";
+import { readEffectiveClientRegistrationConfiguration } from "./application/ClientConfigurationFiles.js";
+import { clientRegistrationEnvironment } from "./application/ClientRegistrationEnvironment.js";
+import { supportedClients } from "./application/SupportedClients.js";
+import type { ClientConfigurationDocument } from "./application/ClientConfigurationDocument.js";
+import { homeDirectoryFromEnvironment } from "./config/homeDirectory.js";
 import {
   inspectLinuxHopperPythonRuntime,
   linuxHopperPythonUnavailable,
 } from "./application/LinuxHopperPython.js";
+
+/**
+ * A selected client's own environment, when its registration records one.
+ * Provider checks read the terminal by default; a caller that asked about one
+ * client wants the values that client passes to the server it starts.
+ */
+interface SelectedRegistrationEnvironment {
+  readonly environment: Readonly<Record<string, string>>;
+  /** The registration could not be read at all. */
+  readonly unreadable: boolean;
+}
+
+const selectedRegistrationEnvironment = async (
+  clients: readonly string[],
+  processEnvironment: Readonly<NodeJS.ProcessEnv>,
+  signal: AbortSignal,
+): Promise<SelectedRegistrationEnvironment | undefined> => {
+  const [selected] = clients;
+  // Only an unambiguous selection can stand for the terminal's environment.
+  if (selected === undefined || clients.length !== 1) return undefined;
+  signal.throwIfAborted();
+  const home = homeDirectoryFromEnvironment(
+    processEnvironment,
+    process.platform,
+  );
+  const client = supportedClients(
+    home,
+    process.platform,
+    processEnvironment,
+  ).find(({ name }) => name === selected);
+  if (client === undefined || client.format === "unsupported") return undefined;
+  // Reading the file is all this needs; provider checks own their own cleanup.
+  const configuration = await readEffectiveClientRegistrationConfiguration(
+    client,
+    undefined,
+    process.platform,
+  );
+  if (!configuration.ok) return { environment: {}, unreadable: true };
+  const document: ClientConfigurationDocument | undefined =
+    configuration.value.document;
+  const environment = clientRegistrationEnvironment(
+    document,
+    {},
+    "effective",
+    process.platform,
+  );
+  return environment.ok
+    ? { environment: environment.value, unreadable: false }
+    : { environment: {}, unreadable: false };
+};
+
+/** Terminal variables a browser or bridge provider resolves outside config. */
+const TERMINAL_SETTINGS = new Set(["PATH", "SYSTEMROOT", "SystemRoot"]);
+
+const selectedProviderSettings = (
+  selected: SelectedRegistrationEnvironment | undefined,
+  terminal: Readonly<NodeJS.ProcessEnv>,
+): Readonly<NodeJS.ProcessEnv> => {
+  if (selected === undefined) return terminal;
+  const inherited = Object.fromEntries(
+    Object.entries(terminal).filter(([name]) => TERMINAL_SETTINGS.has(name)),
+  );
+  return { ...inherited, ...selected.environment };
+};
 
 /** Compose provider diagnostics at the outer CLI adapter boundary. */
 export const createSystemDoctorHost = (
@@ -73,30 +143,53 @@ export const createSystemDoctorHost = (
       // parser-owned error when IDA itself was explicitly selected.
       return analysisProvider === "ida" ? registration : ok(undefined);
     },
-    providerInspections: async (resourceScope, inspectionSignal) => [
-      await inspectSystemGhidraProvider(
+    providerInspections: async (
+      resourceScope: RetainedResourceScope,
+      inspectionSignal: AbortSignal,
+      clients: readonly string[],
+    ) => {
+      const selected = await selectedRegistrationEnvironment(
+        clients,
         environment,
-        resourceScope,
         inspectionSignal,
-      ),
-      await inspectIdaRegistration(
-        environment.REA_IDA_MCP_CONFIG,
-        resourceScope,
-        inspectionSignal,
-        environment.REA_IDA_MCP_CONFIG === undefined
-          ? undefined
-          : readRegistration(
-              environment.REA_IDA_MCP_CONFIG,
-              resourceScope,
-              inspectionSignal,
-            ),
-      ),
-      await inspectJadxProvider(environment, resourceScope, inspectionSignal),
-      await inspectKunaProvider(environment, process.platform, {
-        resourceScope,
-        signal: inspectionSignal,
-      }),
-    ],
+      );
+      // A registration REA cannot read is reported by its own registration
+      // check; probing providers with values it does not carry would repeat
+      // the wrong answer.
+      if (selected?.unreadable === true) return [];
+      const inspectionEnvironment = selectedProviderSettings(
+        selected,
+        environment,
+      );
+      return [
+        await inspectSystemGhidraProvider(
+          inspectionEnvironment,
+          resourceScope,
+          inspectionSignal,
+        ),
+        await inspectIdaRegistration(
+          inspectionEnvironment.REA_IDA_MCP_CONFIG,
+          resourceScope,
+          inspectionSignal,
+          inspectionEnvironment.REA_IDA_MCP_CONFIG === undefined
+            ? undefined
+            : readRegistration(
+                inspectionEnvironment.REA_IDA_MCP_CONFIG,
+                resourceScope,
+                inspectionSignal,
+              ),
+        ),
+        await inspectJadxProvider(
+          inspectionEnvironment,
+          resourceScope,
+          inspectionSignal,
+        ),
+        await inspectKunaProvider(inspectionEnvironment, process.platform, {
+          resourceScope,
+          signal: inspectionSignal,
+        }),
+      ] satisfies readonly DoctorProviderInspection[];
+    },
     linuxDemoRuntimeCheck: (resourceScope, inspectionSignal) =>
       inspectLinuxHopperDemoRuntime(
         environment,

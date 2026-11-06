@@ -136,7 +136,9 @@ export interface DoctorHost {
   brewHopperPath(): Promise<string | undefined>;
   /** Renamed `Hopper*.app` launchers; consulted only where macOS bundles are probed. */
   manualHopperPaths(): Promise<readonly string[]>;
-  providerInspections?(): Promise<readonly DoctorProviderInspection[]>;
+  providerInspections?(
+    clients: readonly string[],
+  ): Promise<readonly DoctorProviderInspection[]>;
   /** Resolve a parsed upstream request budget from the effective client environment. */
   resolveProviderRequestBudget?: ProviderRequestBudgetResolver;
   installationPaths?(): Promise<readonly string[]>;
@@ -277,7 +279,7 @@ const inspectDoctor = async (
     checks: diagnosticChecks,
     hopperPath,
     providerInspections,
-  } = await collectDoctorDiagnostics(target, host);
+  } = await collectDoctorDiagnostics(target, host, scope.clients);
   const hopperAvailable =
     hopperPath !== undefined &&
     diagnosticChecks
@@ -610,6 +612,7 @@ export interface SystemDoctorHostOptions {
   readonly providerInspections?: (
     resourceScope: RetainedResourceScope,
     signal: AbortSignal,
+    clients: readonly string[],
   ) => Promise<readonly DoctorProviderInspection[]>;
   readonly resolveProviderRequestBudget?: (
     provider: Parameters<ProviderRequestBudgetResolver>[0],
@@ -809,9 +812,13 @@ export const systemDoctorHost = (
     ...(options.providerInspections === undefined
       ? {}
       : {
-          providerInspections: () =>
+          providerInspections: (clients) =>
             resources.run(() =>
-              options.providerInspections!(resourceScope, inspectionSignal),
+              options.providerInspections!(
+                resourceScope,
+                inspectionSignal,
+                clients,
+              ),
             ),
         }),
     ...(resolveProviderRequestBudget === undefined
