@@ -2,12 +2,13 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 import type { createCatalogIdentity } from "./catalogIdentity.js";
 
+// Retained views are loaded like producers: their full cross-domain output
+// contract is unnecessary until a task actually queries retained analysis.
 export const HOT_TOOL_NAMES: ReadonlySet<string> = new Set([
   "binary_session",
   "open_binary",
   "close_binary",
   "get_evidence_bundle",
-  "inspect_analysis_view",
 ]);
 
 // One page activates at most 20 schemas: callers can page a broad search instead
