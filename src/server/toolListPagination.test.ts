@@ -55,6 +55,12 @@ type ToolsListReply = JSONRPCMessage & {
   result: { tools: { name: string }[]; nextCursor?: string };
 };
 
+const catalogNames = (count: number, start = 0): string[] =>
+  Array.from(
+    { length: count },
+    (_, index) => `pagination_tool_${String(start + index).padStart(3, "0")}`,
+  );
+
 const isToolsListReply = (message: JSONRPCMessage): message is ToolsListReply =>
   isJSONRPCResultResponse(message) &&
   typeof message.result === "object" &&
@@ -140,7 +146,9 @@ describe("tools/list pagination", () => {
     try {
       await expect(
         client.listTools({ cursor: "rea-tools-list:unknown" }),
-      ).rejects.toThrow(/cursor/i);
+      ).rejects.toMatchObject({ code: -32602 });
+      const listed = await client.listTools();
+      expect(listed.tools.map((tool) => tool.name)).toEqual(catalogNames(80));
     } finally {
       await close();
     }
@@ -155,8 +163,12 @@ describe("tools/list pagination", () => {
       const cursor = firstPage?.result.nextCursor;
       expect(typeof cursor).toBe("string");
       registered[0]?.disable();
-      await expect(client.listTools({ cursor })).rejects.toThrow(
-        /catalog changed|restart/i,
+      await expect(client.listTools({ cursor })).rejects.toMatchObject({
+        code: -32602,
+      });
+      const listed = await client.listTools();
+      expect(listed.tools.map((tool) => tool.name)).toEqual(
+        catalogNames(79, 1),
       );
     } finally {
       await close();

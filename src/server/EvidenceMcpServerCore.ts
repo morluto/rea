@@ -280,14 +280,12 @@ const presentOutputSchemasForToolsList = (
 /** Release every transport-owned reference for a cancelled/completed request. */
 export const forgetPendingMcpRequest = (
   pendingTools: Map<RequestId, string>,
-  pendingToolLists: Set<RequestId>,
+  pendingToolListCursors: Map<RequestId, string | undefined>,
   pendingCompletions: Map<RequestId, AbortController>,
   id: RequestId,
-  pendingToolListCursors?: Map<RequestId, string | undefined>,
 ): void => {
   pendingTools.delete(id);
-  pendingToolLists.delete(id);
-  pendingToolListCursors?.delete(id);
+  pendingToolListCursors.delete(id);
   pendingCompletions.get(id)?.abort();
   pendingCompletions.delete(id);
 };
@@ -545,7 +543,7 @@ class ErrorEvidenceTransport implements Transport {
   readonly hasPerRequestStream?: boolean;
   private readonly pendingTools = new Map<RequestId, string>();
   private readonly pendingValidation = new Map<RequestId, McpToolRequest>();
-  private readonly pendingToolLists = new Set<RequestId>();
+  /** tools/list requests, including those with no cursor (`undefined`). */
   private readonly pendingToolListCursors = new Map<
     RequestId,
     string | undefined
@@ -613,7 +611,6 @@ class ErrorEvidenceTransport implements Transport {
         this.pendingValidation.set(message.id, validation);
       }
       if (isJSONRPCRequest(message) && message.method === "tools/list") {
-        this.pendingToolLists.add(message.id);
         const params = message.params;
         this.pendingToolListCursors.set(
           message.id,
@@ -636,10 +633,9 @@ class ErrorEvidenceTransport implements Transport {
           this.pendingValidation.delete(id);
           forgetPendingMcpRequest(
             this.pendingTools,
-            this.pendingToolLists,
+            this.pendingToolListCursors,
             this.pendingCompletions,
             id,
-            this.pendingToolListCursors,
           );
         }
       }
@@ -661,7 +657,6 @@ class ErrorEvidenceTransport implements Transport {
       for (const validation of this.pendingValidation.values())
         validation.cancel();
       this.pendingValidation.clear();
-      this.pendingToolLists.clear();
       this.pendingToolListCursors.clear();
       for (const completion of this.pendingCompletions.values())
         completion.abort();
@@ -689,7 +684,6 @@ class ErrorEvidenceTransport implements Transport {
       for (const validation of this.pendingValidation.values())
         validation.cancel();
       this.pendingValidation.clear();
-      this.pendingToolLists.clear();
       this.pendingToolListCursors.clear();
       for (const completion of this.pendingCompletions.values())
         completion.abort();
@@ -725,7 +719,7 @@ class ErrorEvidenceTransport implements Transport {
     const rewritesOutputSchemas =
       this.outputSchemaProfile !== "full" &&
       id !== undefined &&
-      this.pendingToolLists.has(id);
+      this.pendingToolListCursors.has(id);
     try {
       const publish = async (): Promise<void> => {
         const recovered = this.recoverProtocolError(message, tool);
@@ -778,10 +772,9 @@ class ErrorEvidenceTransport implements Transport {
         this.pendingValidation.delete(id);
         forgetPendingMcpRequest(
           this.pendingTools,
-          this.pendingToolLists,
+          this.pendingToolListCursors,
           this.pendingCompletions,
           id,
-          this.pendingToolListCursors,
         );
       }
     }
@@ -801,7 +794,7 @@ class ErrorEvidenceTransport implements Transport {
     const paged =
       isJSONRPCResultResponse(message) &&
       message.id !== undefined &&
-      this.pendingToolLists.has(message.id)
+      this.pendingToolListCursors.has(message.id)
         ? paginateToolsList(
             message,
             this.pendingToolListCursors.get(message.id),

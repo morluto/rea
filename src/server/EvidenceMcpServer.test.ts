@@ -100,18 +100,20 @@ describe("MCP request bookkeeping", () => {
   it("releases list, tool, and completion state when cancellation arrives", () => {
     const completion = new AbortController();
     const pendingTools = new Map([[7, "inspect_artifact"]]);
-    const pendingToolLists = new Set([7]);
+    const pendingToolListCursors = new Map<number, string | undefined>([
+      [7, undefined],
+    ]);
     const pendingCompletions = new Map([[7, completion]]);
 
     forgetPendingMcpRequest(
       pendingTools,
-      pendingToolLists,
+      pendingToolListCursors,
       pendingCompletions,
       7,
     );
 
     expect(pendingTools.has(7)).toBe(false);
-    expect(pendingToolLists.has(7)).toBe(false);
+    expect(pendingToolListCursors.has(7)).toBe(false);
     expect(completion.signal.aborted).toBe(true);
     expect(pendingCompletions.has(7)).toBe(false);
   });
