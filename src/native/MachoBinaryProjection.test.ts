@@ -399,10 +399,14 @@ it("distinguishes exact variable command extents from trailing bytes", async () 
     bytes.writeUInt32LE(size, 4);
     return bytes;
   };
-  const linkerOption = (size: number) => {
+  const linkerOption = (size: number, options = ["-lz"]) => {
     const bytes = command(0x2d, size);
-    bytes.writeUInt32LE(1, 8);
-    bytes.write("-lz", 12, "ascii");
+    bytes.writeUInt32LE(options.length, 8);
+    let offset = 12;
+    for (const option of options) {
+      bytes.write(option, offset, "ascii");
+      offset += Buffer.byteLength(option) + 1;
+    }
     return bytes;
   };
   const note = (size: number) => {
@@ -414,20 +418,22 @@ it("distinguishes exact variable command extents from trailing bytes", async () 
     bytes.writeBigUInt64LE(16n, 32);
     return bytes;
   };
-  const fileset = (size: number) => {
+  const fileset = (size: number, entryIdOffset = 32) => {
     const bytes = command(0x80000035, size);
-    bytes.writeUInt32LE(32, 24);
-    bytes.write("entry01", 32, "ascii");
+    bytes.writeUInt32LE(entryIdOffset, 24);
+    bytes.write("entry01", entryIdOffset, "ascii");
     return bytes;
   };
   const image = machoImage({
     commands: [
       linkerOption(16),
       linkerOption(24),
+      linkerOption(24, ["-lz", "-lmxxxx"]),
       note(40),
       note(48),
       fileset(40),
       fileset(48),
+      fileset(48, 40),
     ],
   });
   const binary = await readMachoCommandNames(
@@ -440,17 +446,19 @@ it("distinguishes exact variable command extents from trailing bytes", async () 
     true,
     false,
     true,
+    true,
     false,
     true,
     false,
+    false,
   ]);
   const projection = projectMachoBinary(binary);
-  expect(projection.commands[2]?.fields).toMatchObject({
+  expect(projection.commands[3]?.fields).toMatchObject({
     data_owner: "fixture",
     data_owner_storage_hex: "66697874757265" + "00".repeat(8) + "a5",
   });
   for (const [index, row] of binary.commands.entries()) {
-    if (index % 2 === 0) {
+    if ([0, 2, 3, 5].includes(index)) {
       expect(row.rawSha256).toBeNull();
       expect(projection.commands[index]?.fields).not.toHaveProperty(
         "command_sha256",
