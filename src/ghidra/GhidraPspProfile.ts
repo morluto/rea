@@ -1,4 +1,5 @@
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
+import { ghidraLoongArchUnsupportedReason } from "./GhidraLoongArchProfile.js";
 import {
   ghidraMipsGnuAttributesUnsupportedReason,
   ghidraMipsIncompleteDeclarationsReason,
@@ -26,6 +27,8 @@ export const ghidraProcessorUnsupportedReason = (
     return ghidraPowerPcUnsupportedReason(target);
   if (target.kind === "executable" && target.architecture === "riscv")
     return ghidraRiscvUnsupportedReason(target);
+  if (target.kind === "executable" && target.architecture === "loongarch")
+    return ghidraLoongArchUnsupportedReason(target);
   if (
     target.kind !== "executable" ||
     target.architecture !== "mips" ||

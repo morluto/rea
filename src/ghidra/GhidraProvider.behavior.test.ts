@@ -607,6 +607,7 @@ describe("Ghidra Mach-O slice support", () => {
         "hexagon",
         "6502",
         "m68k",
+        "loongarch",
       ]),
     );
   });
