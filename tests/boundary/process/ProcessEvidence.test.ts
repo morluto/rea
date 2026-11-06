@@ -1,6 +1,9 @@
 import { expect, it } from "vitest";
 
-import { createProcessCaptureEvidence } from "../../../src/application/process/ProcessEvidence.js";
+import {
+  createProcessCaptureEvidence,
+  createProcessScenarioPlanEvidence,
+} from "../../../src/application/process/ProcessEvidence.js";
 import {
   createRunManifest,
   observeLaunchedExecutable,
@@ -14,6 +17,7 @@ import { compareProcessCaptures } from "../../../src/domain/process/processCompa
 import { parseProcessCapture } from "../../../src/domain/process/processCaptureParsing.js";
 import {
   digestProcessCommitment,
+  processScenarioPlanSchema,
   processScenarioSchema,
   processComparisonContract,
   processScenarioCommitment,
@@ -110,6 +114,25 @@ it("does not persist sensitive scripted input in process capture Evidence", () =
   expect(JSON.stringify(manifest)).not.toContain(secret);
   expect(JSON.stringify(evidence.parameters)).not.toContain(secret);
   expect(serialized).not.toContain(secret);
+});
+
+it("does not persist sensitive scripted input in planned Evidence", () => {
+  const secret = "top-secret-planned-input";
+  const scenario = processScenarioSchema.parse({
+    executable: "/bin/echo",
+    working_directory: "/tmp",
+    events: [{ type: "input", at_ms: 0, data: secret, sensitive: true }],
+  });
+  const evidence = createProcessScenarioPlanEvidence(scenario, "darwin");
+
+  expect(JSON.stringify(evidence)).not.toContain(secret);
+  const plan = processScenarioPlanSchema.parse(evidence.normalized_result);
+  expect(plan.scenario.events[0]).toMatchObject({
+    type: "input",
+    data: "",
+    sensitive: true,
+    input_bytes: Buffer.byteLength(secret),
+  });
 });
 
 it("does not treat captures with different redacted inputs as equivalent", () => {
