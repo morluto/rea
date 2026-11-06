@@ -384,6 +384,10 @@ and their fixtures added, and passes now.
 - `DesktopTaskDraftNotes.test.ts`: a dconf database that changed but could
   not be read gives `unreadable_changes` with the reader's error, not
   `uncheckable_changes`.
+- `buildCaptureMcp.test.ts`: `stop_build_capture` on a capture whose only
+  change between `seed` and `end` is a dconf database the draft cannot read
+  (no `dconf` on its `PATH`) returns the `unreadable_changes` note with its
+  `error`; before, the build tool dropped the field.
 - `LinuxApplicationInventory.test.ts`: the inventory lists KDE's
   `~/.config/<name>rc` before it exists, so a Tellico capture owns
   `~/.config/tellicorc`, whose absence brought back Tip of the Day at boot;

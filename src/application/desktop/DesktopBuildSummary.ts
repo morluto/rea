@@ -87,6 +87,7 @@ export type StoppedCapture = {
       readonly message: string;
       readonly files?: { readonly file: string; readonly role: string }[];
       readonly more?: number;
+      readonly error?: string;
     }[];
   } | null;
   readonly draft_refusal?: string;
@@ -136,13 +137,14 @@ const draftTask = async (
         prompt: draft.task.prompt,
         checks: draft.task.checks,
       },
-      notes: draft.notes.map(({ code, message, files, more }) => ({
+      notes: draft.notes.map(({ code, message, files, more, error }) => ({
         code,
         message,
         ...(files === undefined
           ? {}
           : { files: files.map(({ file, role }) => ({ file, role })) }),
         ...(more === undefined ? {} : { more }),
+        ...(error === undefined ? {} : { error }),
       })),
     },
   };
