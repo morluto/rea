@@ -8,7 +8,9 @@ confirmed. The workflow records the application once with
 again if a hint names a gap, then writes the bundle with
 `export_environment_bundle`. For a HAR the user already has, skip to
 [export](#export-and-hand-off) through `inspect_web_network_capture`, or use
-`rea environment-build <capture.har> <dir>`.
+`rea environment-build <capture.har> <dir>`. For a task in a desktop
+application's exported environment, read
+[its section](#tasks-for-a-desktop-application-environment).
 
 ## Before recording
 
@@ -124,9 +126,11 @@ shape, with the application's own locators, paths and headers:
 }
 ```
 
-Give every step a `timeout_ms`. A step without one waits until the scenario
-is cancelled, so a locator that never matches hangs the capture, and the
-client with it. Match `wait_for` locators to exactly one element.
+Give each step that accepts `timeout_ms` a deadline. Without one, a step waits
+until it completes or the scenario is cancelled, so a locator that never
+matches hangs the capture and the client with it. The `wait_for_timeout` pause
+instead uses `duration_ms` and does not accept `timeout_ms`. Match `wait_for`
+locators to exactly one element.
 
 1. Sign in through the UI: `fill` the user and password fields (the password
    as a secret reference), submit, then `wait_for` an element only a signed-in
@@ -153,13 +157,17 @@ client with it. Match `wait_for` locators to exactly one element.
    with varied free text. After each write, and before the next one, read the
    object back by id and then its list: create 1, read 1, list, create 2,
    read 2, list; never several writes before their reads.
-4. Leave more than a second between a create and its first edit
-   (`wait_for_timeout` with `duration_ms: 1100`).
+4. Leave more than a second between two creates and between a create and its
+   first edit (`wait_for_timeout` with `duration_ms: 1100`), so lists sorted
+   by creation time show them in order.
 5. Update both objects and read each back, changing the fields a person
    would change (a name, an email address, a status, a due date) rather than
    only a description: a served update accepts only the members a recorded
-   update stored. Delete both and read each back (expect 404, or the object
-   marked deleted) and the list.
+   update stored. Run an action that turns something on or off (star,
+   bookmark, archive) twice in a row on one object, reading it back after
+   each: the second call shows whether it sets or flips the field, and the
+   environment serves the action only once a call has shown it. Delete both
+   and read each back (expect 404, or the object marked deleted) and the list.
 6. Vary what the two creates send, however you write them: the first every
    field the application takes, the second only what a person must give (its
    title or name), with the other fields left out or empty. A served create
@@ -279,3 +287,83 @@ See
 [agent environments](https://github.com/morluto/rea/blob/main/docs/agent-environments.md)
 for what the state, replay and the bundle establish, and
 [evidence workflows](evidence-workflows.md) for the manifest and state views.
+
+## Tasks for a desktop application environment
+
+Use this when the user has a folder from `rea capture-desktop-application` and
+wants a task for the environment `rea export-desktop-application` makes from
+it: a prompt for a computer-use agent and checks that grade what the agent
+left in the app's files. You write the prompt and the checks; REA validates
+the task against the capture and exports it. These commands are CLI only.
+
+### Describe the change
+
+Run `rea describe-desktop-application-task CAPTURE --format json`. Read:
+
+- `owned_paths`: the only paths whose files the app serves, so the only files
+  a check can read.
+- `files`: each file there whose state differs between the capture's first
+  and last version, with its `role`, the `baseline` and `final` versions and
+  the net `change`. Text changes list each added and removed line once, and
+  `line_counts` gives lines found at both ends whose count changed.
+- `task`: a draft whose `checks` are suggestions from the net change of the
+  documents the user worked on, or of the app's own state when no document
+  changed.
+
+### Write the prompt
+
+Say what the user wants done, in their words and the app's terms: "Add buy
+milk to my to-do list and save it". Never say how the file stores it: no
+paths the user would not name, line formats, XML, keys or SQL, and never the
+checks. Replace the draft's placeholder; the export refuses it.
+
+### Pick the checks
+
+Checks must express only the observed change:
+
+- Keep a suggestion only if it says what the user did. Drop those that follow
+  from how the app saves: a format rewrite, renumbered lines, counters. A
+  LibreCAD drawing gaining four holes was rewritten from DXF R12 to 2007, and
+  the draft suggests counts of `SECTION`, `ENDSEC` and `CIRCLE`; only
+  `CIRCLE` equals 9 is the user's change.
+- Never check unchanged content, whole files, or values the app stamps:
+  times, ids it assigns, window sizes. REA refuses ISO 8601 date-times; the
+  rest is your judgment.
+- Prefer a few robust checks: whole lines over positions, rows by meaningful
+  columns over generated ids, `at_least` when the user may add more.
+
+Kinds: `file_present` and `file_absent`; `lines_present` and `lines_absent`
+(`lines`); `line_count` (`exact` or `contains`, and `equals`, `at_least` or
+`at_most`); `value_equals` and `value_absent` (a JSON `pointer` into the view,
+such as `/groups/GROUP/KEY` for a key file); `row_present` and `row_absent`
+(`table`, `where` by column) and `row_count`. Each names its `file` as a path
+under the home. A document saved as a zip archive, such as FreeCAD's
+`.FCStd`, reads as its entries: point into an entry's view, and name array
+members by selector rather than position, as
+`/entries/[name=Document.xml]/view/root/children/[name=Object][@name=Hole]`,
+so the check survives an app version that writes them in another order. Give
+`value_equals` a `tolerance` to compare a number the app writes as text, such
+as `"5.0000000000000000"`, with a number. The
+[desktop application tasks](https://github.com/morluto/rea/blob/main/docs/desktop-application-tasks.md)
+guide has the exact rules.
+
+### Export the task
+
+Write the task as JSON with a `name`, the `prompt` and the `checks`, then run
+`rea export-desktop-application CAPTURE DIRECTORY --task TASK.json`. REA keeps
+the task only when its checks fail on the seed and all pass on the captured
+end state. A refusal names the check: one that fails on the end state does not
+match what the user left; "every check already passes on the seed" means no
+check captures the change.
+
+When the export refuses an application that no apt repository installs, ask
+the user for the `.deb` file they installed it from and capture with
+`--package-file`, then ask where the computer may download that file and pass
+it as `--package-url`. Never fetch a vendor's download page yourself: such
+sites often refuse automated downloads, and the copy and its licence are the
+user's to choose.
+
+Tell the user the task's name, prompt and checks, and how to measure a solve
+rate: run `agent-env run DIRECTORY --task NAME --agent claude-code` with
+`--model MODEL` three times and count the runs reported `passed`. Do not run
+agents unless asked. The bundle's seed is the user's real data: keep it local.

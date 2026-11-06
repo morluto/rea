@@ -98,10 +98,14 @@ function* buildJavaScriptArtifactGraphInputSteps(
   const applicationOwnershipUnknownContainers = new Set<string>();
   const applicationModuleGapSources = new Map<string, Set<string>>();
   const applicationModuleReferencesRetained = new Set<string>();
+  let ipcSourceGap = false;
   const recordModuleGap = (file: {
     path: string;
     container_sha256: string;
+    kind?: string;
   }) => {
+    if (file.kind === "javascript" || file.kind === undefined)
+      ipcSourceGap = true;
     const container = applicationContainerIdentity(fileSet, file);
     const sources =
       applicationModuleGapSources.get(container) ?? new Set<string>();
@@ -123,11 +127,24 @@ function* buildJavaScriptArtifactGraphInputSteps(
         (!("text" in file) || !file.text.included)
       )
         recordModuleGap(file);
+      // Unread HTML can conceal inline scripts with Electron IPC calls.
+      if (file.kind === "html" && (!("text" in file) || !file.text.included))
+        ipcSourceGap = true;
     }
   }
   // Omitted module relationships can hide another launch owner. Do not expand
   // retained facts beyond the projection guard merely to recover ownership.
   for (const analyzed of analysis.files) {
+    if (
+      analyzed.file.kind === "javascript" &&
+      (analyzed.javascript === null ||
+        analyzed.javascript.analysis_coverage === undefined ||
+        analyzed.javascript.analysis_coverage.examination
+          .electron_call_paths_limited ||
+        analyzed.javascript.analysis_coverage.examination
+          .semantic_resource_limits.length > 0)
+    )
+      ipcSourceGap = true;
     if (
       analyzed.application_projection_failure !== undefined ||
       analyzed.analysis_failure !== undefined ||
@@ -198,8 +215,19 @@ function* buildJavaScriptArtifactGraphInputSteps(
     yield* addJavaScriptModuleRelationshipsSteps(projectionContext);
   const findingLimitations =
     yield* addJavaScriptStaticFindingsSteps(projectionContext);
-  const ipc = createElectronIpcContext(analysis, (file) =>
-    applicationRootPath(projectionContext, file),
+  const coverage = graphCoverage(context);
+  // Graph-wide partial coverage can describe unrelated dynamic values or
+  // source maps. Qualify IPC pairing by omitted JavaScript sources instead:
+  // their hidden handlers could compete with an observed match.
+  const ipc = createElectronIpcContext(
+    projectionContext.analysis,
+    (file) => applicationRootPath(projectionContext, file),
+    snapshot.coverage.status === "complete" &&
+      !ipcSourceGap &&
+      analysis.html_inline_scripts.length === 0 &&
+      !fileSet.unavailable_relevant_files.some(
+        ({ kind }) => kind === undefined,
+      ),
   );
   addElectronBoundaries(projectionContext, ipc);
   yield;
@@ -207,10 +235,9 @@ function* buildJavaScriptArtifactGraphInputSteps(
   yield;
   addJavaScriptSourceMapOriginals(projectionContext);
   yield;
-  const coverage = graphCoverage(context);
   return {
     electronSummary: summarizeElectronBoundaries(
-      analysis,
+      projectionContext.analysis,
       ipc,
       context.directoryPaths,
     ),
@@ -339,7 +366,8 @@ const graphLimitations = (
           javascript.electron.ipc.length +
           javascript.electron.sender_validations.length +
           javascript.electron.utility_processes.length +
-          javascript.electron.native_addon_bindings.length),
+          javascript.electron.native_addon_bindings.length +
+          javascript.electron.protocols.length),
     0,
   );
   return [

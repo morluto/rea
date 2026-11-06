@@ -24,8 +24,8 @@ the registration uses them. Clearing either makes startup fail without resolving
 another package from the client's project. Restore the same installation before
 repairing it; an unidentified registration remains untouched. See
 [installation and recovery](installation.md#package-runners-and-global-installation).
-Setup does not copy your ambient environment into client
-settings. To refresh an older registration, preview
+Setup forwards supported, explicitly selected REA settings into client
+configuration, but does not copy unrelated ambient environment values. To refresh an older registration, preview
 `rea setup --client <client-id> --skill=false --dry-run`, then run the same command
 without `--dry-run` and approve the displayed changes. Setup preserves unrelated
 settings, backs up changed configuration and leaves an aligned registration
@@ -44,6 +44,35 @@ executable and environment of the terminal running doctor. It does not launch
 the client's configured command or reproduce the client's environment. If doctor
 passes but the client disconnects, inspect the client's startup error and registered
 launcher; see [verification scope](client-verification.md#launch-environment-verification).
+
+`rea doctor` has the same limit for provider checks, and reports a provider setting
+the registration's file does not carry as a
+[non-blocking unknown](installation.md#check-readiness-for-your-task).
+
+## Setting launch variables in PowerShell
+
+Shell examples that prefix a command with `REA_MCP_INPUT_SCHEMA_PROFILE=compact`
+use POSIX shell syntax. In PowerShell, set the process environment before
+launching REA:
+
+```powershell
+$env:REA_MCP_INPUT_SCHEMA_PROFILE = "compact"
+rea mcp doctor --json
+```
+
+The assignment applies to the current PowerShell process and commands it launches.
+Restore the previous value when finished, or use
+`Remove-Item Env:REA_MCP_INPUT_SCHEMA_PROFILE` if it was previously unset. It does
+not update an already running MCP server or desktop client.
+
+To select this profile for an agent, set `REA_MCP_INPUT_SCHEMA_PROFILE` in that
+client's existing REA registration `env` object (`environment` for OpenCode) and
+restart the client, preserving its other settings. A successful terminal doctor run does not verify the client's
+launch environment. See [launch-environment verification](client-verification.md#launch-environment-verification)
+and the client-specific instructions below. REA setup forwards supported selections,
+including `REA_MCP_INPUT_SCHEMA_PROFILE`, from its environment into the registration;
+it does not copy unrelated environment values. Restoring the shell's previous
+value does not undo a selection already saved by setup.
 
 ## Runtime settings and client deadlines
 
@@ -72,6 +101,33 @@ tool names and approval rules before selecting a permission scope. REA setup
 does not repair a client's naming behavior or infer permission drift from an
 unfamiliar prefix. The unavailable fork reported in
 [#5512](https://github.com/morluto/rea/issues/5512) has not been reverified.
+
+## Hot/cold catalogs
+
+For a client that supports MCP catalog refresh, set
+`REA_MCP_TOOL_CATALOG_PROFILE=hot-cold` in REA's server environment and restart
+the connection. REA then advertises a small initial catalog and loads other
+named tools through `discover_tools`. Setup preserves this explicit setting.
+See the [discovery contract](mcp-contracts.md#hotcold-catalog-discovery) for
+pagination, identity and family-scope semantics.
+
+Codex CLI 0.165.0 requires its experimental `mcp_tool_list_changed` feature for
+this workflow. Merge these entries into the existing `~/.codex/config.toml`
+without replacing other feature or REA settings:
+
+```toml
+[features]
+mcp_tool_list_changed = true
+
+[mcp_servers.rea.env]
+REA_MCP_TOOL_CATALOG_PROFILE = "hot-cold"
+```
+
+The server setting alone does not enable client refresh. If a successful
+discovery call is followed by a missing tool, check the client's refresh feature
+and tool allow/deny lists. Clients without refresh should use the default
+`REA_MCP_TOOL_CATALOG_PROFILE=full`; reconnect after changing it. Other clients'
+hot/cold behavior has not been verified.
 
 ## Fiddler Everywhere alongside REA
 
@@ -126,7 +182,7 @@ in the file the installed app reads:
 
 - Without Claude Desktop's MSIX package storage, setup uses
   `%APPDATA%\Claude\claude_desktop_config.json`.
-- The MSIX build (package family `Claude_pzs8sxrjxfjjc`, installed under
+- The legacy MSIX storage layout (package family `Claude_pzs8sxrjxfjjc`, installed under
   `C:\Program Files\WindowsApps\Claude_<version>_x64__pzs8sxrjxfjjc`)
   virtualizes AppData writes. Once it has saved its configuration, it reads
   the package-private copy
@@ -135,6 +191,11 @@ in the file the installed app reads:
   private copy when it exists. Before the package has saved one, they use the
   `%APPDATA%` file it still reads; with neither file, setup creates the
   private copy.
+- If `%LOCALAPPDATA%\Claude-Data\claude_pzs8sxrjxfjjc` exists, setup, doctor
+  and uninstall report an unresolved location. Migrated MSIX installations
+  have been observed reading `claude_desktop_config.json` in this directory.
+  Quit Claude Desktop and verify its active configuration before registering
+  manually. See [#8968](https://github.com/morluto/rea/issues/8968).
 - If `%LOCALAPPDATA%\Packages` holds a `Claude_<publisher ID>` package from
   another publisher, an `AnthropicPBC.Claude_<publisher ID>` package, or cannot
   be read, REA cannot establish which file Claude
@@ -273,7 +334,7 @@ This headroom is a practical default, not a guarantee for every analysis
 duration. Setup preserves positive timeout values already in the `rea` entry.
 
 Setup also forwards explicitly selected input/output schema profiles,
-`REA_MCP_MAX_RESPONSE_BYTES`, provider paths and supported Ghidra, JADX and Kuna
+`REA_MCP_MAX_RESPONSE_BYTES`, `REA_MCP_MAX_INPUT_ELEMENTS`, the Windows ChangeTime settle settings `REA_WINDOWS_CHANGE_TIME_DRIFT_MS`, `REA_WINDOWS_CHANGE_TIME_SETTLE_POLL_MS`, and `REA_WINDOWS_CHANGE_TIME_SETTLE_MAX_POLLS`, provider paths and supported Ghidra, JADX and Kuna
 settings. It also forwards explicit executable and resource selections for ADB,
 apktool, packet capture, GDB/Rizin/objdump, Cutter, WABT, Wakaru, firmware and
 signal tools, browser inspection, and pwntools/pwndbg. This includes their
@@ -283,8 +344,9 @@ patterns. A provider being unavailable does not discard its selected paths;
 doctor reports its readiness separately. Explicit selections override discovered
 defaults, including when setup runs again with a changed selection. Unrelated
 environment variables, process ownership tokens and one-shot target paths are not
-copied. Existing client environment overrides remain intact unless setup supplies
-the same key.
+copied. For an explicitly configured startup target, see the
+[initial-target settings](mcp-contracts.md#initial-target-at-startup). Existing
+client environment overrides remain intact unless setup supplies the same key.
 You can edit `startupTimeoutMs` and `toolTimeoutMs` there; doctor keeps positive
 caller-selected values aligned and reports a non-blocking advisory when a tool
 timeout is shorter than the known provider allowance.
@@ -304,6 +366,22 @@ Kimi Code also discovers personal skills in `~/.agents/skills` and project-local
 `.agents/skills`, so no separate skill root is required; setup still installs
 and verifies the matching skill files through the normal shared-skill flow.
 Start a new Kimi Code session to pick up MCP and skill changes.
+
+## LM Studio
+
+For [LM Studio](https://lmstudio.ai/docs/app/mcp), setup writes `mcpServers.rea`
+into `mcp.json` in the LM Studio home directory. Setup finds that directory as
+LM Studio does: the path stored in `~/.lmstudio-home-pointer`, otherwise
+`~/.cache/lm-studio` when it exists, otherwise `~/.lmstudio`. Setup only reads
+the pointer file. LM Studio parses `mcp.json` as strict JSON, so setup rejects
+a file with comments, trailing commas, or a byte order mark without a backup
+or a write. The entry carries `command`, `args`, and `env`, and setup keeps
+every other server. Local models often have small context windows, so setup
+selects `REA_MCP_INPUT_SCHEMA_PROFILE=compact` unless the stored entry or the
+setup environment selects a profile explicitly. Doctor reports an entry with no
+explicit profile as stale, as for Kimi Code. LM Studio 0.4.26 on macOS loaded
+this registration, and a local model called an REA tool through it. Linux and
+Windows remain unverified.
 
 ## Pi
 
@@ -627,21 +705,20 @@ writing a registration ZCode cannot load.
 
 ## FreeBuff
 
-For FreeBuff, the proposed integration writes `mcpServers.rea` into the user-scope
-`~/.agents/mcp.json` shared-agent file. Entries carry `command`, `args`, and
-`env`; stdio is the default transport. The proposed personal skill location is
-`~/.agents/skills`, so setup installs its skill copy there. Because the same
+For FreeBuff, `rea setup --client freebuff` writes `mcpServers.rea` into the
+user-scope `~/.agents/mcp.json` shared-agent file. Entries carry `command`,
+`args`, and `env`; stdio is the default transport. The personal skill location
+is `~/.agents/skills`, so setup installs its skill copy there. Because the same
 file doubles as ZCode's user-scope fallback (see above), a `freebuff`
-registration is also in the file ZCode uses until ZCode defines its own native server.
-Setup and doctor detect FreeBuff from its own profile directory
-(`~/.config/freebuff-desktop`), not from the shared `.agents` folder that
-REA's skill installs create for every client.
+registration is also in the file ZCode uses until ZCode defines its own native
+server. Setup and doctor detect FreeBuff from its own profile directory
+(`~/.config/freebuff-desktop`), not from the shared `.agents` folder that REA's
+skill installs create for every client.
 
-The configuration write and personal skill locations are proposed integration
-boundaries. FreeBuff MCP loading and skill discovery have not been verified
-with an installed native FreeBuff client/version; filesystem tests cover REA's
-editing, discovery, and ownership behavior only. Automatic applicability
-requires the FreeBuff profile directory even when the shared MCP file exists.
+FreeBuff MCP loading and skill discovery have not been verified with an
+installed native FreeBuff client/version; filesystem tests cover REA's editing,
+discovery, and ownership behavior only. Automatic applicability requires the
+FreeBuff profile directory even when the shared MCP file exists.
 When uninstall cannot establish FreeBuff or another shared-storage reader from
 product discovery, a malformed or unreadable shared MCP file is retained
 unchanged and does not stop other REA removals, including `--purge-data`. When
@@ -649,8 +726,9 @@ FreeBuff or ZCode product applicability is established or unresolved, the same
 malformed shared file stops uninstall before removals. See
 [Diagnose, update, and remove](installation.md#diagnose-update-and-remove).
 
-FreeBuff setup support requires `rea-agents@6.8.0` or later. Older versions
-reject `rea setup --client freebuff` as an unsupported client. See the
+FreeBuff setup support requires `rea-agents@6.8.0` or later (including the
+current npm `latest` release). Older versions reject
+`rea setup --client freebuff` as an unsupported client. See the
 [installation guide](installation.md#supported-agents) for client availability.
 
 ## DeepSeek Harness

@@ -1,8 +1,10 @@
 import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import { inspectDevicetreeInputSchema } from "../domain/firmware/devicetree.js";
 import { inspectPeLoadConfigInputSchema } from "../domain/native/peLoadConfig.js";
+import { inspectBinaryHardeningInputSchema } from "../domain/native/binaryHardening.js";
 import { inspectByteEntropyInputSchema } from "../domain/native/byteEntropy.js";
 import { z } from "incur";
+import { cliDecimalField } from "./options.js";
 import {
   createByteEntropyService,
   createRecordedCrashService,
@@ -12,6 +14,7 @@ import {
   createDevicetreeService,
   createKernelModuleService,
   createPeLoadConfigService,
+  createBinaryHardeningService,
   createPeResourcesService,
   createPeCertificatesService,
   createPeImportsService,
@@ -87,7 +90,7 @@ export const registerBinaryDiagnosticsCommands = (
     description:
       "Inspect an Apple .ips crash report without executing a target",
     args: z.object({
-      path: z.string().describe("Local Apple .ips crash report"),
+      path: localPathStringSchema.describe("Local Apple .ips crash report"),
     }),
     options: z.object({
       maxFileBytes: inspectAppleIpsInputSchema.shape.max_file_bytes,
@@ -202,21 +205,59 @@ export const registerBinaryDiagnosticsCommands = (
         );
       }),
   });
+  cli.command(CLI_COMMANDS.inspectBinaryHardening, {
+    description:
+      "Inspect ELF, PE, and Mach-O hardening without executing the image",
+    args: z.object({
+      path: localPathStringSchema.describe("Local ELF, PE, or Mach-O image"),
+    }),
+    options: z.object({
+      maxFileBytes: inspectBinaryHardeningInputSchema.shape.max_file_bytes,
+    }),
+    run: ({ args, options }) =>
+      withCommandCancellation(async (signal) => {
+        const hardening = createBinaryHardeningService();
+        return await logCliCommand(
+          logger,
+          CLI_COMMANDS.inspectBinaryHardening,
+          async () =>
+            finishCliEvidenceCommand(
+              args.path,
+              () =>
+                hardening.inspect(
+                  {
+                    path: absoluteCallerPath(args.path),
+                    max_file_bytes: options.maxFileBytes,
+                  },
+                  { signal },
+                ),
+              hardening,
+              "rea-binary-hardening",
+              "inspect_binary_hardening",
+              signal,
+            ).then(projectCliAnalysisResult),
+        );
+      }),
+  });
   const entropy = createByteEntropyService();
   cli.command(CLI_COMMANDS.inspectByteEntropy, {
     description:
       "Inspect file-wide and block byte entropy without executing the file",
     args: z.object({ path: localPathStringSchema.describe("Local file") }),
     options: z.object({
-      blockSize: inspectByteEntropyInputSchema.shape.block_size.describe(
+      // Decimal tokens only: numeric coercion would read "" as 0 and accept
+      // "0x10" or "1e2".
+      blockSize: cliDecimalField(
+        inspectByteEntropyInputSchema.shape.block_size,
+      ).describe(
         "Power-of-two block size from 256 to 65536 bytes (default 4096)",
       ),
-      offset: inspectByteEntropyInputSchema.shape.offset.describe(
-        "Window start as a decimal file byte offset (default 0)",
-      ),
-      length: inspectByteEntropyInputSchema.shape.length.describe(
-        "Window length in bytes; omit to extend through EOF",
-      ),
+      offset: cliDecimalField(
+        inspectByteEntropyInputSchema.shape.offset,
+      ).describe("Window start as a decimal file byte offset (default 0)"),
+      length: cliDecimalField(
+        inspectByteEntropyInputSchema.shape.length,
+      ).describe("Window length in bytes; omit to extend through EOF"),
     }),
     run: ({ args, options }) =>
       withCommandCancellation((signal) =>
@@ -280,7 +321,9 @@ export const registerBinaryDiagnosticsCommands = (
   cli.command(CLI_COMMANDS.inspectPeImports, {
     description:
       "Inspect PE import and delay-load table identities without executing the image",
-    args: z.object({ path: z.string().describe("Local PE32/PE32+ image") }),
+    args: z.object({
+      path: localPathStringSchema.describe("Local PE32/PE32+ image"),
+    }),
     options: z.object({
       maxFileBytes: inspectPeImportsInputSchema.shape.max_file_bytes,
       maxDlls: inspectPeImportsInputSchema.shape.max_dlls,

@@ -1,3 +1,4 @@
+import { createOwnedArtifactClient } from "../../../support/artifactClientScope.js";
 import { createHash } from "node:crypto";
 import {
   access,
@@ -13,7 +14,6 @@ import { createPackage, createPackageWithOptions } from "@electron/asar";
 import { expect, it, onTestFinished, vi } from "vitest";
 
 import { parseBinaryTarget } from "../../../../src/application/BinaryTargetResolver.js";
-import { ArtifactProvider } from "../../../../src/artifacts/ArtifactProvider.js";
 import {
   materializeArtifactInventory,
   scanArtifactInventory,
@@ -429,7 +429,7 @@ const extractDirectory = async (source: string, output: string) => {
 const extractArchive = async (source: string, output: string) => {
   const target = await parseBinaryTarget(source);
   if (!target.ok) throw target.error;
-  return new ArtifactProvider(process.env)
-    .createClient(target.value)
-    .execute("extract_artifact", { output_root: output });
+  return createOwnedArtifactClient(target.value).execute("extract_artifact", {
+    output_root: output,
+  });
 };

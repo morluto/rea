@@ -101,14 +101,6 @@ it.each([
 );
 
 describe("managed compressed integer framing", () => {
-  it.each([[0x80], [0xc0], [0xc0, 1], [0xc0, 1, 2]])(
-    "keeps an incomplete width %j distinct from a reserved prefix",
-    (...value) => {
-      expect(() => readCompressed(Buffer.from(value), 0)).toThrow(
-        "truncated compressed integer",
-      );
-    },
-  );
   it("preserves complete widths and rejects reserved leading bits", () => {
     expect(readCompressed(Buffer.from([0x80, 1]), 0)).toEqual({
       value: 1,
@@ -2418,6 +2410,9 @@ it.each([
 it.each([
   [[], "truncated compressed integer"],
   [[0x80], "truncated compressed integer"],
+  [[0xc0], "truncated compressed integer"],
+  [[0xc0, 1], "truncated compressed integer"],
+  [[0xc0, 1, 2], "truncated compressed integer"],
   [[0xc0, 0, 0], "truncated compressed integer"],
   [[0xe0], "reserved compressed integer"],
 ] as const)(
@@ -2504,12 +2499,12 @@ it("decodes generic instantiation member signatures as complete coverage", () =>
   expect(result.methods[0]?.signature).toMatchObject({
     parse_status: "decoded",
     return_type: "void",
-    parameter_types: ["class:9<string>"],
+    parameter_types: ["class:9 (System.Func`1)<string>"],
     issue: null,
   });
   expect(result.fields[0]?.signature).toMatchObject({
     parse_status: "decoded",
-    field_type: "valuetype:13<var:0,mvar:1>",
+    field_type: "valuetype:13 (System.ValueTuple`2)<var:0,mvar:1>",
   });
   expect(result.coverage).toMatchObject({ state: "complete", issues: [] });
 });

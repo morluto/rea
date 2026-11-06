@@ -8,6 +8,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { join } from "node:path";
+import { getHeapStatistics } from "node:v8";
 
 import { describe, expect, it, vi } from "vitest";
 
@@ -47,11 +48,22 @@ import {
   parseEvidenceBundle,
   serializeEvidenceBundle,
   DuplicateEvidenceRecordError,
+  isImmutableEvidenceBundle,
 } from "../../../src/domain/evidenceBundle.js";
 import { analysisViewLayoutEvidence } from "../../fixtures/analysisView.js";
 import { publishCliAnalysisEvidence } from "../../../src/cli/analysisEvidenceDelivery.js";
 import { EMPTY_PROCESS_CAPTURE_EXAMPLE } from "../../../src/domain/process/processCaptureExample.js";
 import { PROCESS_PROVIDER } from "../../../src/domain/process/processEvidenceProvider.js";
+import * as processCaptureParsing from "../../../src/domain/process/processCaptureParsing.js";
+import type { JsonValue } from "../../../src/domain/jsonValue.js";
+
+vi.mock("node:v8", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:v8")>();
+  return {
+    ...actual,
+    getHeapStatistics: vi.fn(actual.getHeapStatistics),
+  };
+});
 
 const bundle = (result = true) =>
   createEvidenceBundle([
@@ -61,6 +73,131 @@ const bundle = (result = true) =>
       { operation: "health", parameters: {}, result },
     ),
   ]);
+
+it.each(["cycle", "accessor"] as const)(
+  "rejects an unowned bundle containing a %s before estimating or publishing it",
+  async (malformation) => {
+    const root = await createTestTempDirectory("rea-malformed-checkpoint-");
+    const path = join(root, "caller-selected.json");
+    const original = Buffer.from(
+      "The caller's previous checkpoint remains intact.\n",
+    );
+    await writeFile(path, original);
+    const value = bundle();
+    const record = value.records[0];
+    if (record === undefined) throw new Error("Expected the fixture record");
+    const getter = vi.fn(() => {
+      throw new Error("Malformed bundle accessors must never be invoked");
+    });
+    if (malformation === "cycle") {
+      const cycle: Record<string, JsonValue> = {};
+      cycle.self = cycle;
+      record.normalized_result = cycle;
+    } else {
+      Object.defineProperty(record, "normalized_result", {
+        get: getter,
+        enumerable: true,
+        configurable: true,
+      });
+    }
+    expect(await writeBundle(value, path, true)).toMatchObject({
+      ok: false,
+      error: { _tag: "EvidenceIntegrityError" },
+    });
+    expect(getter).not.toHaveBeenCalled();
+    expect((await readFile(path)).equals(original)).toBe(true);
+    expect(await readdir(root)).toEqual(["caller-selected.json"]);
+  },
+);
+
+it("admits the live process-payload validation working set before writing an owned checkpoint", async () => {
+  const root = await createTestTempDirectory(
+    "rea-owned-process-checkpoint-memory-",
+  );
+  const path = join(root, "caller-selected.json");
+  const original = Buffer.from(
+    "The caller's previous checkpoint remains intact.\n",
+  );
+  await writeFile(path, original);
+  // This minimal authored process fixture proves the format boundary. It does
+  // not claim a real process/provider capture or an actual heap exhaustion.
+  const capture = createEvidence(
+    undefined,
+    PROCESS_PROVIDER,
+    {
+      predicateType: "rea.process-capture",
+      operation: "capture_process_scenario",
+      parameters: {},
+      result: EMPTY_PROCESS_CAPTURE_EXAMPLE,
+      confidence: "observed",
+      authority: "controlled-replay",
+    },
+    { immutable: true },
+  );
+  // Construct the owner before mocking current headroom; its initial retention
+  // policy must not be confused with this later payload-validation allowance.
+  const ledger = new EvidenceLedger();
+  expect(ledger.record(capture).ok).toBe(true);
+  const owned = ledger.immutableBundle();
+  expect(isImmutableEvidenceBundle(owned)).toBe(true);
+  const retained = ledger.forAnalysis(capture.evidence_id);
+  const statistics = ledger.statistics();
+  const heap = getHeapStatistics();
+  const parser = vi.spyOn(processCaptureParsing, "safeParseProcessCapture");
+  const publication = vi.spyOn(
+    OwnedStagedOutput.prototype,
+    "assertReadyForPublication",
+  );
+  vi.mocked(getHeapStatistics).mockReturnValue({
+    ...heap,
+    total_available_size: 0,
+  });
+  try {
+    const refused = await withArtifactResourceScope((resources) =>
+      writeEvidenceBundle(
+        owned,
+        path,
+        true,
+        resources,
+        undefined,
+        "reset_investigation",
+      ),
+    );
+    expect(refused).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "AnalysisResourceConstraintError",
+        operation: "reset_investigation",
+        resource: "memory",
+        reportedLimits: { input_path: path, available_heap_bytes: 0 },
+      },
+    });
+    expect(parser).not.toHaveBeenCalled();
+    expect(publication).not.toHaveBeenCalled();
+    expect((await readFile(path)).equals(original)).toBe(true);
+    expect(await readdir(root)).toEqual(["caller-selected.json"]);
+    expect(ledger.statistics()).toEqual(statistics);
+    expect(ledger.forAnalysis(capture.evidence_id)).toBe(retained);
+  } finally {
+    vi.mocked(getHeapStatistics).mockReset();
+    parser.mockRestore();
+    publication.mockRestore();
+  }
+
+  const published = await withArtifactResourceScope((resources) =>
+    writeEvidenceBundle(
+      owned,
+      path,
+      true,
+      resources,
+      undefined,
+      "reset_investigation",
+    ),
+  );
+  expect(published).toMatchObject({ ok: true, value: { path } });
+  expect(await readEvidenceBundle(path)).toEqual({ ok: true, value: owned });
+  expect(ledger.statistics()).toEqual(statistics);
+});
 
 it("preserves tagged refusal JSON without interpreting Evidence-shaped fields", async () => {
   const root = await createTestTempDirectory("rea-refused-delivery-");

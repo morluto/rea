@@ -26,6 +26,9 @@ REA does not install these tools, their dependencies or system packages. It
 checks the tool's `--version` banner when executing a request. Binwalk must
 print `binwalk <version>` and Unblob must print the version alone. Inspection and
 extraction have independent prerequisites; one does not require the other.
+Capability discovery recommends `REA_BINWALK_COMMAND` for missing inspection
+and `REA_UNBLOB_COMMAND` for missing extraction. Configuring the other engine
+does not enable the unavailable operation.
 Both require util-linux `prlimit`, normally `/usr/bin/prlimit`; override its
 absolute path with `REA_FIRMWARE_PRLIMIT_COMMAND` if needed. `rea doctor` does
 not currently inspect firmware readiness. Engine selection/version checks run
@@ -82,6 +85,11 @@ Published file `relative_path` preserves producer spelling for lineage; `path`
 uses the writer's actual normalized filename. An extracted filename that cannot
 be represented losslessly as UTF-8 fails publication explicitly with its raw
 name bytes in hexadecimal instead of silently omitting the entry.
+Unpublished symlinks retain the extracted tree's target bytes in lowercase
+`link_target_hex`; `link_target` is null when those bytes are not valid UTF-8.
+Older retained Evidence may omit the hexadecimal field. Unblob may have rewritten
+the target before REA observed it, so these bytes are not necessarily those stored
+in the firmware image.
 
 ## CLI and MCP
 
@@ -237,9 +245,12 @@ tree semantics, vulnerability scanning, emulation or hardware runtime capture.
   3, allowed range 1–10.
 
 Staging budgets are polled and rechecked after exit; short-lived overshoot is
-possible. The per-file process limit is the larger of the selected payload budget
-and the fixed report/diagnostic file allowances, so a small payload selection
-still permits the mandatory report. A tighter inherited host limit still applies.
+possible. The per-file process limit is one byte above the larger of the selected
+payload budget and the fixed report/diagnostic file allowances, so a small payload
+selection still permits the mandatory report, and a staged file the kernel stops
+at the limit exceeds its budget instead of passing as complete. A tighter
+inherited host limit still applies and can remove that byte, so a staged file
+that reaches the installed limit is rejected as possibly truncated.
 The inherited file-size limit bounds each file, not total storage;
 address-space limits are per process, not an aggregate memory quota. Worker
 count is not CPU affinity for every external extractor. These limits do not
@@ -295,6 +306,17 @@ v2 signature blocks. `extract-artifact` / `extract_artifact` writes one file
 per segment and signature block. Reading is portable and needs no external
 tool. See [ESP images](esp-image.md).
 
+## Inspect ESP flash dumps
+
+Use the same tools on a whole-flash dump, such as `esptool read-flash 0 ALL`
+output. The inventory reports the bootloader, the partition table and how it
+was found, each partition with its declared type, flags and digest, ESP image
+facts for the bootloader and each app partition, and the OTA records with a
+derived selection; the running partition stays unknown. Extraction writes
+each partition, `nvs_keys` included, as an ordinary file. For a dump that
+does not start at flash address 0, select `esp-flash-image` with
+`flash_offset`. See [ESP flash images](esp-flash-image.md).
+
 ## Inspect extracted devicetrees
 
 Use [`inspect_devicetree`](devicetree.md) / `rea inspect-devicetree` on an
@@ -323,3 +345,20 @@ addresses are facts from the header, not proven entry points, and compressed
 payloads stay as stored. Intel HEX/S-record and FIT images are separate
 readers and are not covered here. See [U-Boot legacy uImage](uimage.md) for
 component padding, preserved names, resource policies and verification scope.
+
+## Inspect UF2 and DfuSe images
+
+Use `inspect-artifact` / `inspect_artifact` on a UF2 file for each familyID's
+address regions and its block numbering, or on a DfuSe file for its targets,
+elements and DFU suffix, then `extract-artifact` / `extract_artifact` for one
+raw file per region or element. A DfuSe suffix CRC mismatch follows
+`integrity_policy`. Decoding is portable and requires no external tool. See
+[UF2 and DfuSe images](uf2-dfuse.md).
+
+## Inspect U-Boot FIT images
+
+Use `inspect-artifact` / `inspect_artifact` on a U-Boot FIT (`.itb`) for its
+images, declared load and entry addresses, configurations and verified hashes,
+then `extract-artifact` / `extract_artifact` for one raw file per image.
+Decoding is portable and requires no external tool. See
+[U-Boot FIT images](fit-images.md).

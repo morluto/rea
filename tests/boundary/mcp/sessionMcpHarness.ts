@@ -34,6 +34,7 @@ const HOST_TOOLS_NOT_CONFIGURED: ProviderAvailability = {
   status: "unavailable",
   code: "not_configured",
   reason: "The target-free MCP fixture does not probe host tools.",
+  remediation: "Repair the fixture provider.",
   diagnostics: { source: "test_fixture" },
 };
 
@@ -74,6 +75,8 @@ export const createSessionMcpHarness = async (
   root: string,
   provider: (closed: string[]) => AnalysisProvider,
   resources: Array<{ close(): Promise<unknown> }>,
+  maximumInputElements?: number,
+  outputSchemaProfile?: "off",
 ): Promise<SessionMcpHarness> => {
   const first = join(root, "first.hop");
   const second = join(root, "second.hop");
@@ -90,6 +93,20 @@ export const createSessionMcpHarness = async (
       adbDeviceAnalysis,
       apktoolAnalysis,
       logger: silentLogger,
+      ...(maximumInputElements === undefined &&
+      outputSchemaProfile === undefined
+        ? {}
+        : {
+            environment: {
+              ...process.env,
+              ...(maximumInputElements === undefined
+                ? {}
+                : { REA_MCP_MAX_INPUT_ELEMENTS: String(maximumInputElements) }),
+              ...(outputSchemaProfile === undefined
+                ? {}
+                : { REA_MCP_OUTPUT_SCHEMA_PROFILE: outputSchemaProfile }),
+            },
+          }),
     },
   );
   const mcp = new Client({ name: "session-test", version: "1.0.0" });

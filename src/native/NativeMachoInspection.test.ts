@@ -16,11 +16,17 @@ import {
 import { err, ok } from "../domain/result.js";
 import { parseMachoLayout, selectMachoSlice } from "./AppleMachoSelection.js";
 import type { NativeCommandCapture } from "./CommandRunner.js";
-import { inspectNativeMacho } from "./NativeMachoInspection.js";
+import type { MachoSliceEncryption } from "../domain/apple/machoEncryption.js";
+import { inspectMachoSchema } from "../domain/native/nativeInspection.js";
+import {
+  inspectNativeMacho,
+  type MachoEncryptionRead,
+} from "./NativeMachoInspection.js";
 import { readMachoCommandNames } from "./MachoCommandNames.js";
 import {
   inspectionImage,
   inspectionReader,
+  unreadEncryption,
 } from "./NativeMachoInspection.fixture.js";
 import {
   NativeFixtureRunner,
@@ -65,6 +71,7 @@ const inspect = async (lipo: string, architecture: "x86" | "arm64") => {
     invocation: () => {
       throw new Error("invocation is not reached");
     },
+    readEncryption: unreadEncryption,
   });
   return { result, commands };
 };
@@ -123,6 +130,7 @@ describe("Mach-O tool architecture selection", () => {
     const result = await inspectNativeMacho({
       target: nativeMachoTarget("/fixture/app"),
       run: (tool, args) => runner.run(tool, args),
+      readEncryption: unreadEncryption,
       readCommandNames: (offset, size) => {
         readOffsets.push(offset);
         const image = fat.subarray(
@@ -229,6 +237,7 @@ describe("Mach-O inspection container format", () => {
         stdout_bytes: capture.stdoutBytes,
         stderr_bytes: capture.stderrBytes,
       }),
+      readEncryption: unreadEncryption,
     });
   };
 
@@ -287,6 +296,7 @@ describe("Mach-O inspection container format", () => {
       ),
       target: nativeMachoTarget("/fixture/app"),
       run: (tool, args) => runner.run(tool, args),
+      readEncryption: unreadEncryption,
       invocation: (captured) => ({
         tool: captured.tool,
         command: [captured.executable, ...captured.arguments],
@@ -335,6 +345,7 @@ describe("Mach-O UUID reconciliation", () => {
       ),
       target: nativeMachoTarget(targetPath),
       run: (tool, args) => runner.run(tool, args),
+      readEncryption: unreadEncryption,
       invocation: (capture) => ({
         tool: capture.tool,
         command: [capture.executable, ...capture.arguments],
@@ -452,6 +463,7 @@ describe("Mach-O slice command scheduling", () => {
       readCommandNames: inspectionReader(),
       target: nativeMachoTarget("/fixture/app"),
       run,
+      readEncryption: unreadEncryption,
       invocation: (capture) => ({
         tool: capture.tool,
         command: [capture.executable, ...capture.arguments],
@@ -485,6 +497,139 @@ describe("Mach-O slice command scheduling", () => {
   });
 });
 
+describe("Mach-O encryption reporting", () => {
+  const slice = (
+    overrides: Partial<MachoSliceEncryption> = {},
+  ): MachoSliceEncryption => ({
+    architecture: null,
+    cpu_type: 16777228,
+    cpu_subtype: 0,
+    container_file_offset: 32768,
+    size: 8192,
+    status: "absent",
+    reason: null,
+    commands: [],
+    range: null,
+    ...overrides,
+  });
+  const encrypted = (start: number, end: number) =>
+    slice({
+      status: "encrypted",
+      commands: [
+        {
+          kind: "LC_ENCRYPTION_INFO_64",
+          index: 1,
+          cmdsize: 24,
+          cryptoff: start,
+          cryptsize: end - start,
+          cryptid: 1,
+          pad: 0,
+        },
+      ],
+      range: {
+        content: "ciphertext",
+        slice_start: start,
+        slice_end: end,
+        container_start: 32768 + start,
+        container_end: 32768 + end,
+        mapping: { status: "mapped", fragments: [], sections: [] },
+      },
+    });
+  const inspectEncryption = async (encryption: MachoEncryptionRead) => {
+    const runner = new NativeFixtureRunner();
+    const result = await inspectNativeMacho({
+      readCommandNames: inspectionReader(),
+      target: nativeMachoTarget("/fixture/app"),
+      run: (tool, args) => runner.run(tool, args),
+      readEncryption: () => Promise.resolve(encryption),
+      invocation: (capture) => ({
+        tool: capture.tool,
+        command: [capture.executable, ...capture.arguments],
+        tool_version: capture.toolVersion,
+        version_reason: capture.versionReason,
+        executable_sha256: capture.executableSha256,
+        exit: { code: capture.exitCode, signal: capture.signal },
+        stdout_bytes: capture.stdoutBytes,
+        stderr_bytes: capture.stderrBytes,
+      }),
+    });
+    if (!result.ok) throw result.error;
+    return {
+      encryption: inspectMachoSchema.parse(result.value.result).encryption,
+      limitations: result.value.limitations,
+    };
+  };
+
+  it("labels every slice with the lipo record at its offset and names ciphertext bytes", async () => {
+    const x86 = slice({
+      cpu_type: 16777223,
+      cpu_subtype: 3,
+      container_file_offset: 16384,
+      size: 4096,
+    });
+    const { encryption, limitations } = await inspectEncryption({
+      status: "parsed",
+      slices: [x86, encrypted(4096, 6144)],
+    });
+    expect(encryption).toMatchObject({ total: 2, exhaustive: true });
+    expect(encryption.items.map(({ architecture }) => architecture)).toEqual([
+      "x86_64",
+      "arm64",
+    ]);
+    expect(limitations).toContain(
+      "Bytes 36864-38912 (input file offsets, end exclusive) of the arm64 slice are ciphertext (cryptid 1); disassembly, decompilation, strings and references derived from them do not describe program code.",
+    );
+  });
+
+  it("leaves a slice lipo did not describe unlabeled", async () => {
+    const { encryption, limitations } = await inspectEncryption({
+      status: "parsed",
+      slices: [
+        slice({
+          container_file_offset: 49152,
+          status: "malformed",
+          reason: "load commands is truncated",
+        }),
+      ],
+    });
+    expect(encryption.items[0]?.architecture).toBeNull();
+    expect(limitations).toContain(
+      "Encryption status of the slice at offset 49152 is malformed: load commands is truncated.",
+    );
+  });
+
+  it("does not mark bytes as ciphertext for an empty encrypted range", async () => {
+    const { limitations } = await inspectEncryption({
+      status: "parsed",
+      slices: [encrypted(4096, 4096)],
+    });
+    expect(limitations).toContain(
+      "The arm64 slice declares encryption (cryptid 1) over an empty range; no bytes are marked as ciphertext.",
+    );
+    expect(limitations.some((line) => line.includes("are ciphertext"))).toBe(
+      false,
+    );
+  });
+
+  it("keeps encryption unknown when the bytes were not read", async () => {
+    const { encryption, limitations } = await inspectEncryption({
+      status: "unread",
+      reason: "the target could not be opened for reading (ENOENT)",
+    });
+    expect(encryption).toEqual({
+      items: [],
+      total: null,
+      exhaustive: false,
+      limitations: [
+        "Encryption load commands were not read: the target could not be opened for reading (ENOENT)",
+      ],
+    });
+    expect(limitations).toContain(
+      "Encryption load commands were not read: the target could not be opened for reading (ENOENT)",
+    );
+  });
+});
+
 it.each(["10", "DSYM", "2"])(
   "classifies the unbacked-text dyld refusal using observed file type %s",
   async (fileType) => {
@@ -510,6 +655,7 @@ it.each(["10", "DSYM", "2"])(
           new AnalysisOutputError("inspect_macho", "unaccepted native failure"),
         );
       },
+      readEncryption: unreadEncryption,
       invocation: () => {
         throw new Error(
           "Refused target does not produce inspection provenance",
@@ -596,6 +742,7 @@ describe("dSYM diagnostic admission", () => {
     const result = await inspectNativeMacho({
       readCommandNames: inspectionReader(inspectionImage({ fileType: 10 })),
       target: nativeMachoTarget("/fixture/debug-companion"),
+      readEncryption: unreadEncryption,
       run: async (tool, args, _signal, acceptNonZeroIf) => {
         const captured = await runner.run(tool, args);
         if (!captured.ok || tool !== "dyld_info") return captured;

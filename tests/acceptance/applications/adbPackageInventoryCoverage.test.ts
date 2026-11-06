@@ -1,15 +1,54 @@
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
+import { Ajv2020 } from "ajv/dist/2020.js";
 import { expect } from "vitest";
 
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { cliTest } from "../../support/cli/cliFixture.js";
+import { cliTest, runFileCli } from "../../support/cli/cliFixture.js";
 
 const PACKAGE_LINE = "package:/data/app/example/base.apk=com.example.app";
+
+cliTest.for([
+  {
+    command: "list-adb-directory",
+    field: "device-path",
+    valid: "/sdcard",
+    invalid: "sdcard",
+    constraint: { expected: "regex" },
+  },
+  {
+    command: "resolve-adb-packages",
+    field: "query",
+    valid: "a".repeat(256),
+    invalid: "a".repeat(257),
+    constraint: { maximum: 256 },
+  },
+])(
+  "publishes the enforced ADB selector constraint for $command",
+  async ({ command, field, valid, invalid, constraint }, { cli }) => {
+    const schema = await cli.run({
+      arguments: [command, "--schema", "--json"],
+    });
+    expect(schema.exitCode, schema.stderr).toBe(0);
+    const output = schema.json as { args: Parameters<Ajv2020["compile"]>[0] };
+    const validate = new Ajv2020({ strict: false }).compile(output.args);
+    const serial = "emulator-5554";
+    expect(validate({ serial, [field]: valid })).toBe(true);
+    expect(validate({ serial, [field]: invalid })).toBe(false);
+    const result = await cli.run({
+      arguments: [command, serial, invalid, "--json"],
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.json).toMatchObject({
+      code: "VALIDATION_ERROR",
+      fieldErrors: [expect.objectContaining({ path: field, ...constraint })],
+    });
+  },
+);
 const unrecognized = (count: number) =>
   Array.from(
     { length: count },
@@ -60,10 +99,13 @@ process.exit(91);
         ["resolve-adb-packages", "resolve_adb_packages", ["example"]],
         ["list-adb-packages", "list_adb_packages", []],
       ] as const) {
-        const output = await cli.run({
+        const invocation = {
           arguments: [command, "emulator-5554", ...tail, "--json"],
           environment,
-        });
+        };
+        const output = await (count === 0
+          ? cli.run(invocation)
+          : runFileCli(cli, invocation));
         expect(output.exitCode, output.stderr).toBe(0);
         const evidence = parseEvidence(output.json);
         expect(
@@ -76,20 +118,21 @@ process.exit(91);
             expect.stringContaining("unparsed_lines"),
           );
 
-        if (operation !== "resolve_adb_packages") continue;
-        expect(evidence.normalized_result).toMatchObject({
-          matches: [
-            {
-              package_name: "com.example.app",
-              base_apk_device_path: "/data/app/example/base.apk",
-            },
-          ],
-          exact_match: false,
-        });
-        const reply = await call(operation, {
-          serial: "emulator-5554",
-          query: "example",
-        });
+        const installedPackage = {
+          package_name: "com.example.app",
+          base_apk_device_path: "/data/app/example/base.apk",
+        };
+        expect(evidence.normalized_result).toMatchObject(
+          operation === "resolve_adb_packages"
+            ? { matches: [installedPackage], exact_match: false }
+            : { packages: [installedPackage], scope: "all" },
+        );
+        const reply = await call(
+          operation,
+          operation === "resolve_adb_packages"
+            ? { serial: "emulator-5554", query: "example" }
+            : { serial: "emulator-5554" },
+        );
         expect(reply.isError).not.toBe(true);
         const structured = toolContract(operation).outputSchema.parse(
           reply.structuredContent,

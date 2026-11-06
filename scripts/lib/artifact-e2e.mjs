@@ -5,10 +5,23 @@ import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { withVerifierCleanup } from "./verifier-cleanup.mjs";
+import { INLINE_EVIDENCE_MCP_ENVIRONMENT } from "./mcp-verification-environment.mjs";
 
-// REA registers process-static tool contracts. Bind their parsed definitions to
-// the SDK's negotiated connection identity, including when a Client reconnects.
+// Bind parsed definitions to this connection. Hot/cold catalogs may add tools;
+// refresh a missing name once without throwing away already validated bindings.
 const toolBindings = new WeakMap();
+const readDefinitions = (client) =>
+  client.listTools().then(({ tools }) => {
+    const definitions = new Map();
+    for (const tool of tools) {
+      assert.ok(
+        !definitions.has(tool.name),
+        `Duplicate MCP tool: ${tool.name}`,
+      );
+      definitions.set(tool.name, tool);
+    }
+    return definitions;
+  });
 
 const advertisedTool = async (client, name) => {
   const connection = client.getServerVersion();
@@ -17,23 +30,19 @@ const advertisedTool = async (client, name) => {
   if (binding?.connection !== connection) {
     binding = {
       connection,
-      definitions: client.listTools().then(({ tools }) => {
-        const definitions = new Map();
-        for (const tool of tools) {
-          assert.ok(
-            !definitions.has(tool.name),
-            `Duplicate MCP tool: ${tool.name}`,
-          );
-          definitions.set(tool.name, tool);
-        }
-        return definitions;
-      }),
+      definitions: readDefinitions(client),
     };
     toolBindings.set(client, binding);
   }
   let definitions;
+  const snapshot = binding.definitions;
   try {
-    definitions = await binding.definitions;
+    definitions = await snapshot;
+    if (!definitions.has(name)) {
+      if (binding.definitions === snapshot)
+        binding.definitions = readDefinitions(client);
+      definitions = await binding.definitions;
+    }
     assert.equal(
       client.getServerVersion(),
       connection,
@@ -123,7 +132,7 @@ const withOpenedArtifactMcp = async (target, openTool, verify) => {
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [fileURLToPath(new URL("../rea.mjs", import.meta.url)), "mcp"],
-    env: environment(),
+    env: { ...environment(), ...INLINE_EVIDENCE_MCP_ENVIRONMENT },
     stderr: "pipe",
   });
   const client = new Client({ name: "artifact-real-e2e", version: "1" });

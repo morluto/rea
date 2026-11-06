@@ -43,21 +43,27 @@ export const isManagedSkillManifest = (content: string): boolean =>
 export const readSkillFile = (
   path: string,
   resources?: ArtifactResourceScope,
+  maxBytes = Number.MAX_SAFE_INTEGER,
 ): Promise<string> =>
-  readSkillFileSnapshot(path, resources).then(({ bytes }) =>
+  readSkillFileSnapshot(path, resources, maxBytes).then(({ bytes }) =>
     bytes.toString("utf8"),
   );
 
 const readSkillFileSnapshot = async (
   path: string,
   resources?: ArtifactResourceScope,
+  maxBytes = Number.MAX_SAFE_INTEGER,
 ): Promise<SkillFileSnapshot> =>
   withRegularFile(
     path,
     async (handle, stats) => {
-      const bytes = await readBoundedFileBytes(handle, stats.size, {
-        expectedSize: stats.size,
-      });
+      const bytes = await readBoundedFileBytes(
+        handle,
+        Math.min(stats.size, maxBytes),
+        {
+          expectedSize: stats.size,
+        },
+      );
       if (bytes === undefined || bytes.length !== stats.size)
         throw new RegularFileChangedError(path);
       return { bytes, mode: stats.mode & 0o7777, state: stats };

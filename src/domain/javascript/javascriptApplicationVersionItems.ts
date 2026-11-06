@@ -6,6 +6,7 @@ import type {
   ApplicationEdge,
   ApplicationNode,
 } from "./javascriptApplicationGraphSchemas.js";
+import { IPC_COVERAGE_LIMITED_PAIRING_BASIS } from "./javascriptApplicationGraphSchemas.js";
 import type { JavaScriptApplicationGraph } from "./javascriptApplicationGraph.js";
 import { javaScriptFileOccurrenceSchema } from "./javascriptArtifactFiles.js";
 import { applicationEndpointCorrespondence } from "./javascriptApplicationEndpointCorrespondence.js";
@@ -54,6 +55,7 @@ interface IndexedRelationship {
   readonly direction: "in" | "out";
   readonly relation: ApplicationEdge["relation"];
   readonly neighborId: string;
+  readonly coverageLimited: boolean;
 }
 
 interface RelationshipIndex {
@@ -180,6 +182,7 @@ const matchedItem = (
         ? "changed"
         : complete &&
             !relationships.unresolved &&
+            !relationships.coverageLimited &&
             !endpointTargetUncertain &&
             !sourceAnalysisUncertain
           ? "unchanged"
@@ -216,6 +219,11 @@ const matchedItem = (
       ...(relationships.unresolved
         ? [
             "Relationship target identity remains unresolved; equal node kinds do not establish cross-version alignment.",
+          ]
+        : []),
+      ...(relationships.coverageLimited
+        ? [
+            "Incomplete source coverage leaves some candidate relationships unconfirmed.",
           ]
         : []),
     ],
@@ -608,16 +616,20 @@ const indexRelationships = (
     else existing.push(relationship);
   };
   for (const edge of graph.edges) {
+    const coverageLimited =
+      edge.properties.pairing_basis === IPC_COVERAGE_LIMITED_PAIRING_BASIS;
     add(edge.source_node_id, {
       direction: "out",
       relation: edge.relation,
       neighborId: edge.target_node_id,
+      coverageLimited,
     });
     if (edge.target_node_id !== edge.source_node_id)
       add(edge.target_node_id, {
         direction: "in",
         relation: edge.relation,
         neighborId: edge.source_node_id,
+        coverageLimited,
       });
   }
   return {
@@ -630,6 +642,7 @@ const indexRelationships = (
 interface RelationshipComparison {
   readonly different: boolean;
   readonly unresolved: boolean;
+  readonly coverageLimited: boolean;
 }
 
 const compareRelationships = (
@@ -640,10 +653,48 @@ const compareRelationships = (
   const right = relationshipFacts(pair.right, "right", context);
   return {
     different:
-      left.paired !== right.paired ||
-      left.unpairedShape !== right.unpairedShape,
+      unexplainedRelationshipDifference(
+        left.paired,
+        right.paired,
+        left.possiblePaired,
+        right.possiblePaired,
+      ) ||
+      unexplainedRelationshipDifference(
+        left.unpairedShape,
+        right.unpairedShape,
+        left.possibleUnpairedShape,
+        right.possibleUnpairedShape,
+      ),
     unresolved: left.unresolved || right.unresolved,
+    coverageLimited: left.coverageLimited || right.coverageLimited,
   };
+};
+
+/** A candidate can explain a missing counterpart but cannot prove a change. */
+const unexplainedRelationshipDifference = (
+  left: readonly string[],
+  right: readonly string[],
+  leftPossible: readonly string[],
+  rightPossible: readonly string[],
+): boolean => {
+  const counts = (values: readonly string[]) => {
+    const result = new Map<string, number>();
+    for (const value of values) result.set(value, (result.get(value) ?? 0) + 1);
+    return result;
+  };
+  const leftCounts = counts(left);
+  const rightCounts = counts(right);
+  const leftCandidateCounts = counts(leftPossible);
+  const rightCandidateCounts = counts(rightPossible);
+  for (const key of new Set([...leftCounts.keys(), ...rightCounts.keys()])) {
+    const difference = (leftCounts.get(key) ?? 0) - (rightCounts.get(key) ?? 0);
+    if (
+      difference > (rightCandidateCounts.get(key) ?? 0) ||
+      -difference > (leftCandidateCounts.get(key) ?? 0)
+    )
+      return true;
+  }
+  return false;
 };
 
 const relationshipFacts = (
@@ -651,30 +702,46 @@ const relationshipFacts = (
   side: "left" | "right",
   context: ItemContext,
 ): {
-  readonly paired: string;
-  readonly unpairedShape: string;
+  readonly paired: readonly string[];
+  readonly unpairedShape: readonly string[];
+  readonly possiblePaired: readonly string[];
+  readonly possibleUnpairedShape: readonly string[];
   readonly unresolved: boolean;
+  readonly coverageLimited: boolean;
 } => {
   const { nodeById, adjacency } =
     side === "left" ? context.leftRelationships : context.rightRelationships;
   const paired = side === "left" ? context.pairByLeft : context.pairByRight;
   const matched: string[] = [];
   const unpaired: string[] = [];
-  for (const { direction, relation, neighborId } of adjacency.get(
-    node.node_id,
-  ) ?? []) {
+  const possibleMatched: string[] = [];
+  const possibleUnpaired: string[] = [];
+  let coverageLimited = false;
+  for (const {
+    direction,
+    relation,
+    neighborId,
+    coverageLimited: candidate,
+  } of adjacency.get(node.node_id) ?? []) {
     const mapped = paired.get(neighborId);
-    if (mapped !== undefined)
-      matched.push(`${direction}\0${relation}\0${mapped}`);
-    else
-      unpaired.push(
+    if (candidate) coverageLimited = true;
+    if (mapped !== undefined) {
+      (candidate ? possibleMatched : matched).push(
+        `${direction}\0${relation}\0${mapped}`,
+      );
+    } else {
+      (candidate ? possibleUnpaired : unpaired).push(
         `${direction}\0${relation}\0${nodeById.get(neighborId)?.kind ?? "unknown"}`,
       );
+    }
   }
   return {
-    paired: canonicalJson(matched.sort(compareUnicodeCodePoints)),
-    unpairedShape: canonicalJson(unpaired.sort(compareUnicodeCodePoints)),
-    unresolved: unpaired.length > 0,
+    paired: matched,
+    unpairedShape: unpaired,
+    possiblePaired: possibleMatched,
+    possibleUnpairedShape: possibleUnpaired,
+    unresolved: unpaired.length > 0 || possibleUnpaired.length > 0,
+    coverageLimited,
   };
 };
 

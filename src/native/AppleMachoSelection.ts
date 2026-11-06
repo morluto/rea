@@ -183,7 +183,10 @@ export const parseMachoLayout = (
   }
   if (table.wide && !table.littleEndian) {
     if (cpuType !== 0x01000012)
-      throw new TypeError("Unsupported big-endian Mach-O CPU type");
+      throw new BinaryFormatFailure(
+        "unsupported",
+        "Unsupported big-endian Mach-O CPU type",
+      );
     throw new UnsupportedMachoMetadataFormatError(
       "Unsupported big-endian 64-bit PowerPC Mach-O metadata",
     );
@@ -198,9 +201,8 @@ export const parseMachoLayout = (
     throw new UnsupportedMachoMetadataFormatError(
       `Unsupported 32-bit Mach-O metadata for requested CPU type ${architecture}`,
     );
-  const commands = table.commandCount;
   const commandEnd = slice + table.headerSize + table.commandBytes;
-  if (commands > 4096 || commandEnd > sliceEnd)
+  if (commandEnd > sliceEnd)
     throw new RangeError("Malformed Mach-O command bounds");
   const state: LayoutState = {
     slice,
