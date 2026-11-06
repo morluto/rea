@@ -67,12 +67,23 @@ export const isStamp = (value: JsonValue): boolean =>
 const DATE_PART = /^(?:year|month|day|hour|minute|second)$/u;
 
 /**
- * Whether a value is a date an app writes in parts, as Tellico stamps an
- * entry's `<cdate>` with `<year>`, `<month>` and `<day>`: an element whose
- * children are such parts, year, month and day among them, each holding
- * only digits.
+ * A tag naming when an app made, changed or saved something, as Tellico's
+ * `cdate` and `mdate`, or `created`, `modified`, `saved` or `updated`.
  */
-export const isSplitDate = (value: JsonValue | undefined): boolean => {
+const BOOKKEEPING =
+  /^[cm]date$|creat(?:ed|ion)|modif(?:ied|ication)|updated|saved|changed|accessed|timestamp/u;
+
+const isBookkeeping = (element: Element) =>
+  BOOKKEEPING.test(
+    (element.name.split(":").at(-1) ?? element.name).toLowerCase(),
+  );
+
+/**
+ * Whether a value is a date written in parts, as Tellico writes an entry's
+ * `<cdate>` with `<year>`, `<month>` and `<day>`: an element whose children
+ * are such parts, year, month and day among them, each holding only digits.
+ */
+const isDateInParts = (value: JsonValue | undefined): boolean => {
   if (!isXmlElement(value)) return false;
   const parts = new Set<string>();
   for (const child of value.children) {
@@ -132,9 +143,44 @@ const elementsAlong = (view: JsonValue | null, pointer: string): Element[] => {
   return elements;
 };
 
-/** Whether a pointer is a date an app writes in parts, or inside one. */
+/**
+ * Whether elements along a pointer, outermost first, reach a date the app
+ * stamps in parts: one written in parts that it, or an element it sits in,
+ * names bookkeeping. A date a user enters in parts, as a birthday, is none.
+ */
+const stampedAlong = (elements: readonly Element[]) => {
+  let named = false;
+  return elements.some((element) => {
+    named ||= isBookkeeping(element);
+    return named && isDateInParts(element);
+  });
+};
+
+/** Whether a pointer is a date the app stamps in parts, or inside one. */
 export const inSplitDate = (view: JsonValue | null, pointer: string): boolean =>
-  elementsAlong(view, pointer).some(isSplitDate);
+  stampedAlong(elementsAlong(view, pointer));
+
+/** Whether an element holds a date the app stamps in parts, `named` when a tag it sits in names bookkeeping. */
+const holdsStamped = (value: JsonValue, named: boolean): boolean =>
+  isXmlElement(value) &&
+  value.children.some((child) => {
+    if (!isXmlElement(child)) return false;
+    const inside = named || isBookkeeping(child);
+    return (inside && isDateInParts(child)) || holdsStamped(child, inside);
+  });
+
+/** Whether the element at a pointer is, sits in or holds a date the app stamps in parts, whose text no check compares. */
+export const holdsSplitDate = (
+  view: JsonValue | null,
+  pointer: string,
+): boolean => {
+  const along = elementsAlong(view, pointer);
+  const value = resolvePointer(view, pointer);
+  return (
+    stampedAlong(along) ||
+    (value !== undefined && holdsStamped(value, along.some(isBookkeeping)))
+  );
+};
 
 /** Whether an element is view state by its tag, or by a name-like attribute naming view state, as `[@config:name=CursorPositionX]`. */
 const showsView = (element: Element) =>
@@ -240,7 +286,7 @@ const upkeepOf = (
  * hold whose renumbered attribute changed, as Gnumeric empties a formula cell
  * whose shared expression it renumbers; a UUID or epoch time, or a duration or
  * count under the document's metadata; a time the app stamps, whole or in
- * parts (`isSplitDate`); an attribute an archive entry only gained while
+ * parts (`inSplitDate`); an attribute an archive entry only gained while
  * another entry holds the edit.
  */
 export const changeNoise = (
@@ -278,7 +324,7 @@ export const changeNoise = (
           : (typeof value === "string" && isVolatileValue(value)) ||
               metadataCount(elements, key, value)
             ? "volatile"
-            : isStamp(value ?? null) || elements.some(isSplitDate)
+            : isStamp(value ?? null) || stampedAlong(elements)
               ? "timestamp"
               : undefined;
     known.set(pointer, reason);

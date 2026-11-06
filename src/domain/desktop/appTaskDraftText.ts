@@ -1,6 +1,6 @@
 import type { JsonValue } from "../jsonValue.js";
 import type { DesktopTaskCheckInput } from "./appTask.js";
-import { isSplitDate, isStamp } from "./appTaskDraftNoise.js";
+import { holdsSplitDate, isStamp } from "./appTaskDraftNoise.js";
 import { valueEqualsCheck } from "./appTaskDraftScalars.js";
 import { addedTextChecks } from "./appTaskDraftTextAdded.js";
 import { rankAttributes } from "./attributeRank.js";
@@ -228,13 +228,8 @@ const abovePosition = (pointer: string, ends: Ends): readonly Candidate[] => {
   ];
 };
 
-/** Whether an element is, or holds, a date an app stamps in parts, whose text no check compares. */
-const holdsSplitDate = (value: JsonValue): boolean =>
-  isSplitDate(value) ||
-  (isXmlElement(value) && value.children.some(holdsSplitDate));
-
 /** Whether an element holds only elements, as a record holds its fields, layout whitespace aside. */
-export const recordLike = (value: JsonValue | undefined): boolean =>
+const recordLike = (value: JsonValue | undefined): boolean =>
   isXmlElement(value) &&
   value.children.some((child) => isXmlElement(child)) &&
   value.children.every(
@@ -243,18 +238,29 @@ export const recordLike = (value: JsonValue | undefined): boolean =>
   );
 
 /**
- * Whether an element holds fields: only elements, layout whitespace aside, of
- * two tags or more, as Tellico's `<entry>` holds `<title>` and `<publisher>`,
- * unlike a paragraph made of runs.
+ * A tag an app writes a run of formatted text in, inside a paragraph: ODF's
+ * `text:span`, `text:a` and `text:s`, AbiWord's `c`, SVG's `tspan`, HTML's
+ * `b` or `em`, Word's `w:r` and `w:t`.
  */
-export const holdsFields = (value: JsonValue | undefined): boolean =>
-  recordLike(value) &&
-  isXmlElement(value) &&
-  new Set(
-    value.children.flatMap((child) =>
-      isXmlElement(child) ? [child.name] : [],
-    ),
-  ).size > 1;
+const RUN_TAG =
+  /^(?:span|a|s|c|tspan|tab|line-break|soft-page-break|br|b|i|u|em|strong|sub|sup|small|font|mark|code|q|r|t|run|hyperlink|link)$/u;
+
+const isRunTag = (tag: string) =>
+  RUN_TAG.test((tag.split(":").at(-1) ?? tag).toLowerCase());
+
+/**
+ * Whether an element holds fields: only elements, layout whitespace aside, of
+ * two tags or more, none a run of text, as Tellico's `<entry>` holds
+ * `<title>` and `<publisher>`, unlike a paragraph made of runs such as
+ * Writer's `<text:span>` and `<text:a>`, whose text is one text.
+ */
+export const holdsFields = (value: JsonValue | undefined): boolean => {
+  if (!recordLike(value) || !isXmlElement(value)) return false;
+  const tags = value.children.flatMap((child) =>
+    isXmlElement(child) ? [child.name] : [],
+  );
+  return new Set(tags).size > 1 && !tags.some(isRunTag);
+};
 
 /**
  * Whether the kept ancestor of a record added or removed whole is a list of
@@ -301,11 +307,19 @@ const keptAncestor = (pointer: string, ends: Ends): string | undefined => {
 /**
  * Where the text of an element added or removed whole is checked: its
  * `keptAncestor`, but never a list of its kind, whose whole text would fold
- * in the records the edit left alone; and whether that is why it has none.
+ * in the records the edit left alone, unless the element is a record
+ * `removed` whole that only position names, whose absence no other check can
+ * show; and whether a list is why it has none.
  */
-const textHolder = (pointer: string, element: JsonValue, ends: Ends) => {
+const textHolder = (
+  pointer: string,
+  element: JsonValue,
+  ends: Ends,
+  removed: boolean,
+) => {
   const kept = keptAncestor(pointer, ends);
-  const listed = kept !== undefined && listOf(kept, element, ends);
+  const unnamed = removed && /^\d+$/u.test(pointer.split("/").at(-1) ?? "");
+  const listed = kept !== undefined && !unnamed && listOf(kept, element, ends);
   return { holder: listed ? undefined : kept, listed };
 };
 
@@ -386,7 +400,7 @@ const textCheck = (
   return value !== old &&
     value.length <= context.place.limit.chars &&
     !isStamp(value) &&
-    !holdsSplitDate(now)
+    !holdsSplitDate(context.ends.final, pointer)
     ? {
         element: candidate.element,
         ...wholeTextCheck(
@@ -409,27 +423,20 @@ const tooLong = (context: TextContext, candidate: Candidate) => {
 };
 
 /**
- * Checks of an element's whole text where an edit changed it, for an app that
- * splits a paragraph into runs as it saves: the element holding each text node
- * the diff lists with more than whitespace in it, in either version of a
- * changed value, and the nearest ancestor both ends hold of each element it
- * lists whole holding such text, taken out of the runs it sits in, the
- * outermost where one holds another, an element at both ends at the pointer
- * `name` gives it, whose text changed and that the final view holds whole;
- * never, for a record, a list of its kind, whose text holds records the edit
- * left alone. An element added whole whose ancestors cannot take the check
- * takes it itself, but a record in a list, which its fields check instead.
+ * The elements whose text a change may make a check: each holding a text
+ * node the diff lists with more than whitespace in it, in either version of
+ * a changed value, and the `textHolder` of each element it lists whole
+ * holding such text; and the elements added whole, each with its holder.
  */
-export const wholeTextSuggestions = (
-  file: string,
-  change: Listed,
-  ends: Ends,
-  place: TextPlacement,
-): WholeTextSuggestions => {
+const textHolders = (change: Listed, ends: Ends, place: TextPlacement) => {
   const holders = new Set<string>();
   /** Elements added whole holding text, each with the ancestor checked for it, if any. */
   const added = new Map<string, string | undefined>();
-  const note = (pointer: string, view: JsonValue | null, whole = false) => {
+  const note = (
+    pointer: string,
+    view: JsonValue | null,
+    how: "changed" | "added" | "removed",
+  ) => {
     const value = resolvePointer(view, pointer);
     const parent = parentOf(pointer);
     // Noise, such as a time the app stamps, never makes its ancestor's whole text a check.
@@ -447,19 +454,46 @@ export const wholeTextSuggestions = (
       !isWhitespace(elementText(value)) &&
       place.inTree(pointer)
     ) {
-      const { holder, listed } = textHolder(pointer, value, ends);
+      const { holder, listed } = textHolder(
+        pointer,
+        value,
+        ends,
+        how === "removed",
+      );
       if (holder !== undefined) holders.add(holder);
       // A record in a list is checked by its fields, not its whole text.
-      if (whole && !listed) added.set(pointer, holder);
+      if (how === "added" && !listed) added.set(pointer, holder);
     }
   };
   // A value that changed may be text at one end only, as text an app wraps in a run.
   for (const pointer of change.changed) {
-    note(pointer, ends.final);
-    note(pointer, ends.baseline);
+    note(pointer, ends.final, "changed");
+    note(pointer, ends.baseline, "changed");
   }
-  for (const pointer of change.added) note(pointer, ends.final, true);
-  for (const pointer of change.removed) note(pointer, ends.baseline);
+  for (const pointer of change.added) note(pointer, ends.final, "added");
+  for (const pointer of change.removed) note(pointer, ends.baseline, "removed");
+  return { holders, added };
+};
+
+/**
+ * Checks of an element's whole text where an edit changed it, for an app that
+ * splits a paragraph into runs as it saves: the element holding each text node
+ * the diff lists with more than whitespace in it, in either version of a
+ * changed value, and the nearest ancestor both ends hold of each element it
+ * lists whole holding such text, taken out of the runs it sits in, the
+ * outermost where one holds another, an element at both ends at the pointer
+ * `name` gives it, whose text changed and that the final view holds whole;
+ * never, for a record, a list of its kind, whose text holds records the edit
+ * left alone. An element added whole whose ancestors cannot take the check
+ * takes it itself, but a record in a list, which its fields check instead.
+ */
+export const wholeTextSuggestions = (
+  file: string,
+  change: Listed,
+  ends: Ends,
+  place: TextPlacement,
+): WholeTextSuggestions => {
+  const { holders, added } = textHolders(change, ends, place);
   const context = { file, ends, place };
   const checks = new Map<string, Placed | undefined>();
   const check = (candidate: Candidate) => {

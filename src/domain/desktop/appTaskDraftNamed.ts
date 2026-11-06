@@ -11,7 +11,6 @@ import {
   attributeKeyOf,
   changeNoise,
   inSplitDate,
-  isSplitDate,
   isStamp,
   type NoiseReason,
 } from "./appTaskDraftNoise.js";
@@ -336,9 +335,9 @@ const elementChecks = (
   pointer: string,
   value: JsonValue,
 ): void => {
-  // A date the app stamps in parts is never a check.
-  if (!isXmlElement(value) || isSplitDate(value)) return;
   const { file, ends, texts } = collected.context;
+  // A date the app stamps in parts is never a check.
+  if (!isXmlElement(value) || inSplitDate(ends.final, pointer)) return;
   const added = {
     file,
     ends,
@@ -482,7 +481,8 @@ const collectChecks = (
   for (const pointer of innermost(change.changed))
     if (tree.root(ends.final, pointer) === pointer) {
       equals(collected, pointer, resolvePointer(ends.final, pointer));
-      renamedFrom(collected, pointer);
+      // An id the app renumbered, or other noise, renamed nothing.
+      if (context.noise(pointer) === undefined) renamedFrom(collected, pointer);
     }
   for (const pointer of change.removed) removedCheck(collected, pointer);
   return collected;

@@ -95,7 +95,9 @@ operation `describe_desktop_application_task` and predicate type
     members, with every other attribute and its children alike, is that
     element renamed, as a MyPaint layer renamed from `Untitled` to `Sun`: it
     is named by its first other attribute naming it alone at both ends, as
-    `[@src=data/layer-00.png]`, so the rename reads as its `name` changed.
+    `[@src=data/layer-00.png]`, so the rename reads as its `name` changed,
+    and the old name gets a check that it names nothing, unless its change
+    is noise, as an id the app renumbered.
     An identifier the app numbers by position names nothing: where the
     members of a tag hold it as 1..N (or 0..N-1) in document order at both
     ends, members were inserted or removed, and every member another
@@ -121,9 +123,12 @@ operation `describe_desktop_application_task` and predicate type
     line elsewhere still passes, and guards that the kept text is still there;
     text replaced, or grown inside a line, keeps `text_equals`. A record added
     or removed whole, an element holding fields of two or more tags such as
-    Tellico's `<entry>`, never makes the list holding records of its kind a
-    check, whose text would hold the records the edit left alone; nor does an
-    element holding a date the app stamps in parts take a text check.
+    Tellico's `<entry>`, none a run of text such as Writer's `<text:span>` or
+    `<text:a>`, never makes the list holding records of its kind a check,
+    whose text would hold the records the edit left alone, except a record
+    removed whole that only position names, whose absence only the list's
+    text shows; nor does an element holding a date the app stamps in parts
+    take a text check.
   - An element added to a list, where another element of its tag is at either
     end, gets a `value_equals` for each of its attributes, best ranked first,
     at most six, leaving out its selector's attributes, identifiers, times,
@@ -157,8 +162,11 @@ operation `describe_desktop_application_task` and predicate type
     renumbers, and an identifier the app numbers by position; volatile
     values, UUIDs and epoch times, and durations and counts under a
     document's metadata; times the app stamps, also as a date written in
-    parts, as Tellico's `<cdate>` of `<year>`, `<month>` and `<day>`, which
-    no check ever reads; and `upkeep`, attributes the
+    parts whose tag, or one it sits in, names when the app made, changed or
+    saved something, as Tellico's `<cdate>` of `<year>`, `<month>` and
+    `<day>` (`cdate`, `mdate`, `created`, `modified`, `saved`, `updated`),
+    which no check ever reads, while a date a user enters in parts, as a
+    birthday, is an edit like any other; and `upkeep`, attributes the
     elements of one archive entry only gained while another entry holds the
     edit, as LibreOffice fills in `styles.xml` on save. However much noise
     comes first, it never takes a check's place. When the change holds

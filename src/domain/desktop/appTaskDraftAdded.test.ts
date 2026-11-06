@@ -86,6 +86,70 @@ describe("draftTaskFiles for elements no attribute names", () => {
   });
 });
 
+describe("draftTaskFiles for a record only position names, removed whole", () => {
+  const contacts = (...names: string[]) =>
+    `<osmo_contacts><contacts_records>${names
+      .map(
+        (name) =>
+          `<record><group>None</group><first_name>${name}</first_name><birthday_date>0</birthday_date></record>`,
+      )
+      .join("")}</contacts_records></osmo_contacts>`;
+
+  it("checks the list's text, the one check that can tell the record is gone", () => {
+    const before = contacts("Hannah", "Delphine");
+    const after = contacts("Hannah");
+
+    const file = xmlDraft(before, after, {
+      role: "application_state",
+      file: ".local/share/osmo/contacts.xml",
+    });
+
+    expect(file.suggested).toMatchObject([
+      {
+        kind: "text_equals",
+        pointer: "/root/children/[name=contacts_records]",
+      },
+    ]);
+    const home = ".local/share/osmo/contacts.xml";
+    expect(
+      [before, after, contacts("Delphine")].map((text) =>
+        passing(home, xml(text), file.suggested),
+      ),
+    ).toEqual([[false], [true], [false]]);
+  });
+});
+
+describe("draftTaskFiles for a paragraph made of runs", () => {
+  /** A Writer document's body: a paragraph, and any added after it. */
+  const body = (added: string) =>
+    `<office:document-content xmlns:office="urn:office" xmlns:text="urn:text" xmlns:xlink="urn:xlink"><office:body><office:text><text:p>Plan for Monday</text:p>${added}</office:text></office:body></office:document-content>`;
+  const meeting = (day: string) =>
+    `<text:p><text:span>Meet </text:span><text:a xlink:href="#${day}">${day}</text:a></text:p>`;
+
+  it("checks a new paragraph of runs of different tags by its text, as text rather than a record of fields", () => {
+    const before = body("");
+    const after = body(meeting("Monday"));
+
+    const file = xmlDraft(before, after);
+
+    // The text the paragraph sits in, whole: no word of it by itself.
+    expect(file.suggested).toEqual([
+      {
+        kind: "text_equals",
+        file: FILE,
+        pointer:
+          "/root/children/[name=office:body]/children/[name=office:text]",
+        value: "Plan for MondayMeet Monday",
+      },
+    ]);
+    // The seed's text already holds Monday, so a paragraph naming another day must fail a check.
+    expect(
+      passing(FILE, xml(body(meeting("Tuesday"))), file.suggested),
+    ).toContain(false);
+    expect(passing(FILE, xml(after), file.suggested).every(Boolean)).toBe(true);
+  });
+});
+
 describe("draftTaskFiles for an element added to a list", () => {
   const ledger = (operations: string) =>
     `<homebank><settings theme="light"/>${operations}</homebank>`;
@@ -232,6 +296,33 @@ describe("draftTaskFiles for records in a list, as Tellico keeps books", () => {
       [true, true, true, true],
       [true, true, true, true],
     ]);
+  });
+
+  it("checks a date a user enters in parts, as a birthday, as any other edit, since no tag names it bookkeeping", () => {
+    const people = (day: string) =>
+      `<people><person id="1"><name>Ada</name><birthday><year>1990</year><month>05</month><day>${day}</day></birthday></person><person id="2"><name>Bo</name><birthday><year>1985</year><month>01</month><day>02</day></birthday></person></people>`;
+    const before = people("12");
+    const after = people("14");
+
+    const file = xmlDraft(before, after);
+
+    expect(file.values).toEqual([
+      {
+        pointer:
+          "/root/children/[name=person][@id=1]/children/[name=birthday]/children/[name=day]/children/0",
+        kind: "changed",
+        before: "12",
+        after: "14",
+      },
+    ]);
+    expect(file.suggested).not.toEqual([]);
+    expect(
+      [before, after].map((text) => passing(FILE, xml(text), file.suggested)),
+    ).toEqual([
+      file.suggested.map(() => false),
+      file.suggested.map(() => true),
+    ]);
+    expect(file.notes).toEqual([]);
   });
 
   it("notes a date stamped in parts as a timestamp, never a check, and checks an edit beside it by the field it changed", () => {

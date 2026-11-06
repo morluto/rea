@@ -2,12 +2,12 @@ import type { JsonValue } from "../jsonValue.js";
 import type { DesktopTaskCheckInput } from "./appTask.js";
 import {
   isRenumberedKey,
-  isSplitDate,
+  inSplitDate,
   isStamp,
   isVolatileValue,
 } from "./appTaskDraftNoise.js";
 import { valueEqualsCheck } from "./appTaskDraftScalars.js";
-import { holdsFields, recordLike, wholeTextCheck } from "./appTaskDraftText.js";
+import { holdsFields, wholeTextCheck } from "./appTaskDraftText.js";
 import {
   isIdentifyingAttribute,
   isViewStateName,
@@ -185,8 +185,9 @@ const leafTexts = (value: JsonValue): string[] =>
  * names, as Osmo adds a `<record>` of `<first_name>` and `<email_1>` among
  * others, at the nearest ancestor both ends hold that a check can name: up to
  * five fields of three or more characters, each absent from that ancestor's
- * text at the seed, so each fails there. Empty for an element that is no
- * record or has no like sibling.
+ * text at the seed, so each fails there. Empty for an element that
+ * `holdsFields` says is no record, as a paragraph of runs, or that has no
+ * like sibling.
  */
 export const fieldChecks = (
   context: AddedContext,
@@ -194,7 +195,7 @@ export const fieldChecks = (
   element: Element,
 ): Suggestion[] => {
   const { ends, file } = context;
-  if (!recordLike(element) || likeCount(ends.final, pointer, element.name) < 2)
+  if (!holdsFields(element) || likeCount(ends.final, pointer, element.name) < 2)
     return [];
   const at = keptNamedAncestor(context, pointer);
   if (at === undefined) return [];
@@ -243,7 +244,7 @@ export const recordChecks = (
         !isXmlElement(field) ||
         !key.startsWith("[") ||
         ID_FIELD.test(field.name) ||
-        isSplitDate(field) ||
+        inSplitDate(ends.final, at) ||
         !context.named(ends.final, at)
       )
         return [];
