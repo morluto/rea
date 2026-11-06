@@ -180,6 +180,7 @@ interface Answer {
   readonly referenceSource?: JsonValue;
   readonly stringSource?: JsonValue;
   readonly relationshipCoverage?: RelationshipCoverage;
+  readonly siblingUnavailability?: AnalysisCapabilityUnavailableError;
 }
 
 /**
@@ -243,6 +244,23 @@ const FAILED_PROJECT_RECORDS_GUIDANCE =
   "REA does not expose per-function records from a failed project export.";
 
 /**
+ * Operations that unconditionally require Kuna's shared project export and
+ * cannot answer from the quick function inventory, reference walk, or a
+ * standalone single-function decompile run.
+ */
+const KUNA_PROJECT_DEPENDENT_OPERATIONS = Object.freeze([
+  "procedure_assembly",
+  "analyze_function",
+] as const satisfies readonly string[]);
+
+const exportUnavailableMessage = (
+  operation: string,
+  reason: string,
+  next: string,
+): string =>
+  `Kuna's project export failed, so ${operation} is unavailable in this session: ${reason.replace(/\.?$/u, ".")} ${FAILED_PROJECT_RECORDS_GUIDANCE} Inspect any captured diagnostics. ${next}`;
+
+/**
  * How a request that needs the export reports the export's failure. A session
  * never rebuilds a failed export, so repeating the request cannot succeed; the
  * error says what to change before reopening the target. Kuna settings are read
@@ -267,12 +285,24 @@ const exportUnavailable = (
         ? // A fixed buffer (`memory`) is no setting, so a restart cannot help.
           `${failure.remediationAction.replace(/\.?$/u, ".")}${failure.resource === "memory" ? "" : ` ${restart}`}`
         : "To retry, resolve the reported failure, then reopen the target.";
+  const userMessage = exportUnavailableMessage(operation, reason, next);
+  const siblingReasons = Object.freeze(
+    Object.fromEntries(
+      KUNA_PROJECT_DEPENDENT_OPERATIONS.map((sibling) => [
+        sibling,
+        exportUnavailableMessage(sibling, reason, next),
+      ]),
+    ),
+  );
   return new AnalysisCapabilityUnavailableError(
     KUNA_PROVIDER_ID,
     operation,
     reason,
     {
       cause: failure,
+      siblingOperations: KUNA_PROJECT_DEPENDENT_OPERATIONS,
+      siblingReasons,
+      remediationAction: next,
       // Callers see only the top-level projection, so the export failure's
       // own projected code and details (its limits, target path, captured
       // output and diagnostics) travel whole rather than field by field.
@@ -284,7 +314,7 @@ const exportUnavailable = (
           ? {}
           : { export_details: exported.details }),
       },
-      userMessage: `Kuna's project export failed, so ${operation} is unavailable in this session: ${reason.replace(/\.?$/u, ".")} ${FAILED_PROJECT_RECORDS_GUIDANCE} Inspect any captured diagnostics. ${next}`,
+      userMessage,
     },
   );
 };
@@ -695,6 +725,9 @@ export class KunaSessionClient implements AnalysisClient {
         ...(answer.relationshipCoverage === undefined
           ? {}
           : { relationshipCoverage: answer.relationshipCoverage }),
+        ...(answer.siblingUnavailability === undefined
+          ? {}
+          : { siblingUnavailability: answer.siblingUnavailability }),
         locations: [
           { kind: "artifact-path", path: this.#target.path },
           ...answer.locations,
@@ -1270,19 +1303,22 @@ export class KunaSessionClient implements AnalysisClient {
           );
         return outcome;
       }
-      const exportFailure = await this.#settledExportFailure();
+      const exportUnavailable = await this.#settledExportUnavailable(operation);
       return ok({
         result: outcome.value,
         source: { kind: "single-function" },
         limitations: [
           KUNA_SINGLE_FUNCTION_LIMITATION,
-          ...(exportFailure === undefined
+          ...(exportUnavailable === undefined
             ? []
             : [
-                `The project export failed, so later requests also use single-function runs: ${exportFailure}`,
+                `The project export failed, so later requests also use single-function runs: ${exportUnavailable.reason}`,
                 FAILED_PROJECT_RECORDS_GUIDANCE,
               ]),
         ],
+        ...(exportUnavailable === undefined
+          ? {}
+          : { siblingUnavailability: exportUnavailable }),
       });
     }
   }
@@ -2058,8 +2094,14 @@ export class KunaSessionClient implements AnalysisClient {
     return error;
   }
 
-  /** The export's failure once it has settled; undefined while it builds or after success. */
-  async #settledExportFailure(): Promise<string | undefined> {
+  /**
+   * The export's structured unavailability once it has settled as failed;
+   * undefined while it builds, after success, or when the failure was
+   * cancellation or incomplete cleanup.
+   */
+  async #settledExportUnavailable(
+    operation: string,
+  ): Promise<AnalysisCapabilityUnavailableError | undefined> {
     const settled = await Promise.race([
       this.#project,
       Promise.resolve(undefined),
@@ -2070,7 +2112,10 @@ export class KunaSessionClient implements AnalysisClient {
       settled.error instanceof KunaPublishedProjectCleanupError
     )
       return undefined;
-    return settled.error.userMessage ?? settled.error.message;
+    const unavailable = exportUnavailable(operation, settled.error);
+    return unavailable instanceof AnalysisCapabilityUnavailableError
+      ? unavailable
+      : undefined;
   }
 
   /** Wait for the export, reporting progress, without cancelling it for other callers. */
