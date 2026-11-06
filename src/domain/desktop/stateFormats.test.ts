@@ -12,6 +12,16 @@ import {
 const bytes = (text: string) => new TextEncoder().encode(text);
 
 describe("detectStateFormat", () => {
+  it("recognises JSON scalars with mixed-case suffixes and still validates their syntax", () => {
+    for (const text of ["42", "true", "null", '"value"']) {
+      expect(detectStateFormat("/h/a.JsOn", bytes(text))).toBe("json");
+      expect(textSyntaxFormat("/h/a.JSON", text)).toBe("json");
+      expect(detectStateFormat("/h/a.txt", bytes(text))).toBe("text");
+    }
+    expect(detectStateFormat("/h/a.JSON", bytes("42 trailing"))).toBe("text");
+    expect(textSyntaxFormat("/h/a.JSON", "42 trailing")).toBe("text");
+  });
+
   it("recognises SQLite and dconf headers before decoding text", () => {
     expect(detectStateFormat("/h/a.db", bytes("SQLite format 3\0rest"))).toBe(
       "sqlite",
