@@ -33,8 +33,10 @@ The command returns Evidence with operation `export_desktop_application` and
 predicate type `rea.desktop-application-export`, listing the environment name,
 the seed and end `checkpoints`, owned paths, seed files, the seeds it
 rewrote to remove the capture host's name and user (`scrubbed_files`), the
-bundle files that still hold them (`unscrubbed_files`), and written files,
-the last three by their path in the bundle. A failed export, cancellation
+gzip seeds it compressed again only to clear their headers
+(`recompressed_files`), the bundle files that still hold them
+(`unscrubbed_files`), and written files, the last four by their path in the
+bundle. A failed export, cancellation
 included, removes the bundle it had not yet published, so no partial copy of the
 user's data remains. If the bundle was published but its output handles could
 not be closed, the command reports a cleanup error that carries the export
@@ -294,7 +296,10 @@ export removes them from what the bundle ships:
   document gives the same bytes on every host. It is deflated at the fastest
   level, or stored when deflating would make it expand more than the 100 times
   a view reads, so a seed that read still reads. It is listed in
-  `scrubbed_files` unless it was already in that form. The class copies it at
+  `scrubbed_files` when its document changed, and otherwise in
+  `recompressed_files`, which the README counts rather than lists, so the
+  example and template files an app copies on first run do not bury the
+  document scrubbed; one already in that form ships as captured. The class copies it at
   boot as it is, so the home it holds stays `/home/user`. One that does not
   decompress ships as captured, its bytes searched, and one the state view did
   not read is only searched.

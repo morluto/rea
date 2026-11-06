@@ -132,8 +132,10 @@ export const shippedSeedViews = async (
 /**
  * Write the generated files, then each retained file as it is read, so one at
  * a time is in memory: a seed whose text names the capture host becomes a
- * generated file with its own digest. The README follows, listing them. Every
- * file is listed as unscrubbed whose path or content still holds the identity.
+ * generated file with its own digest, and a gzip seed whose document did not
+ * change is listed apart as recompressed. The README follows, listing them.
+ * Every file is listed as unscrubbed whose path or content still holds the
+ * identity.
  */
 export const writeFiles = async (
   tree: SafeOutputTree,
@@ -142,6 +144,7 @@ export const writeFiles = async (
   signal: AbortSignal | undefined,
 ): Promise<SeedScrubReport> => {
   const scrubbed: string[] = [];
+  const recompressed: string[] = [];
   const unscrubbed: string[] = [];
   const write = async (
     path: string,
@@ -182,10 +185,12 @@ export const writeFiles = async (
     if (scrub?.bytes === undefined)
       await write(copy.path, bytes, { sha256: copy.digest, holdsIdentity });
     else {
-      scrubbed.push(copy.path);
+      (scrub.recompressed === true ? recompressed : scrubbed).push(copy.path);
       await write(copy.path, scrub.bytes, { holdsIdentity });
     }
   }
-  await generated(bundle.readme({ scrubbed, unscrubbed: [...unscrubbed] }));
-  return { scrubbed, unscrubbed };
+  await generated(
+    bundle.readme({ scrubbed, recompressed, unscrubbed: [...unscrubbed] }),
+  );
+  return { scrubbed, recompressed, unscrubbed };
 };

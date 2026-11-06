@@ -450,7 +450,9 @@ Report:
   `witness.json` and the recording;
 - the seed's contents: `seed_files` and what each holds;
 - `scrubbed_files` and `unscrubbed_files`; an unscrubbed file still names
-  the host or user, so it needs review before sharing;
+  the host or user, so it needs review before sharing. `recompressed_files`
+  are gzip seeds whose headers were cleared, their content unchanged: give
+  their count;
 - limitations: the capture's, the export's and anything you could not do;
 - solver runs, if any: the model, the runs and the passes;
 - the build time and the questions you asked.
