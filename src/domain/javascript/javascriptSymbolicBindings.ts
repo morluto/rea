@@ -12,6 +12,7 @@ import {
 } from "./javascriptAstValues.js";
 import { createSemanticExpressionShapeResolver } from "./javascriptSemanticExpressionShapes.js";
 import { createGlobalReferenceReader } from "./javascriptSemanticAmbientWrites.js";
+import { semanticCallableResultExpressions } from "./javascriptSemanticCallableResults.js";
 import { javascriptBootstrapAt } from "./javascriptBootstrap.js";
 import { ELECTRON_MODULE } from "./javascriptElectronMemberWrites.js";
 import {
@@ -108,12 +109,34 @@ const literalPrototypeOwner = (
   return undefined;
 };
 
+const isFreshConstruction = (node: t.Node): boolean => {
+  if (!t.isNewExpression(node)) return false;
+  const constructor = unwrapJavaScriptExpression(node.callee).node;
+  if (
+    !t.isClass(constructor) ||
+    constructor.superClass !== null ||
+    constructor.decorators?.length
+  )
+    return false;
+  const method = constructor.body.body.find(
+    (member): member is t.ClassMethod =>
+      t.isClassMethod(member) && member.kind === "constructor",
+  );
+  return (
+    method === undefined ||
+    semanticCallableResultExpressions(method).every(
+      ({ node: result }) => result === null,
+    )
+  );
+};
+
 const isFreshObject = (node: t.Node): boolean =>
   t.isObjectExpression(node) ||
   t.isArrayExpression(node) ||
   t.isFunction(node) ||
   (t.isClass(node) && !node.decorators?.length) ||
-  t.isRegExpLiteral(node);
+  t.isRegExpLiteral(node) ||
+  isFreshConstruction(node);
 
 /** Demand-driven substitutions for local bindings, closures and literal module tables. */
 export class JavaScriptSymbolicBindings {
