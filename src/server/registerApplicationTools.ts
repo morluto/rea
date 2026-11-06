@@ -1,3 +1,4 @@
+import { registerApiContractTool } from "./registerApplicationTools/apiContract.js";
 import type { EvidenceMcpServer } from "./EvidenceMcpServer.js";
 
 import { registerTraceFeatureTool } from "./registerApplicationTools/traceFeature.js";
@@ -25,6 +26,7 @@ export const registerApplicationTools = (
   registerTraceJavaScriptSemanticsTool(server, options);
   registerCompareApplicationVersionsTool(server, options);
   registerCompareEndpointsTool(server, options);
+  registerApiContractTool(server, options);
   registerCompareSourceToBundleTool(server, options);
   registerCompareJavaScriptExportShapesTool(server, options);
   registerReconstructionObligationLedgerTool(server, options);

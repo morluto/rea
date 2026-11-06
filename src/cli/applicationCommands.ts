@@ -1,3 +1,4 @@
+import { registerApiContractCommand } from "./apiContractCommand.js";
 import { Cli, z } from "incur";
 
 import { CLI_COMMANDS } from "../cliCommandNames.js";
@@ -74,6 +75,7 @@ export const registerApplicationCommands = (
   });
   registerSourceToBundleCommand(cli, logger);
   registerStaticObservedEndpointsCommand(cli, logger);
+  registerApiContractCommand(cli, logger);
   registerEvidenceJsonCommand({
     cli,
     logger,

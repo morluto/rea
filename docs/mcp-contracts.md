@@ -572,6 +572,18 @@ that the response budget accounts for. It does not alter `content` or
 such as requiring approval for process-launching or device-mutating tools
 after target content was read.
 
+## Offline API contract declarations
+
+`inspect_api_contract` reads a local OpenAPI 3.0/3.1/3.2 JSON document without
+an active target or any requests to declared servers or references. Default
+summary delivery retains complete declaration Evidence; an optional
+`api-contract` view selects operations, unresolved Path Items or diagnostics in
+this call. Exact filters, field selection and paging share the retained
+`inspect_analysis_view` projector. Coverage describes inline paths only and
+never establishes runtime implementation or full specification conformance.
+See [offline API contracts](api-contracts.md) for identities, source pointers,
+resource bounds and CLI publication.
+
 ## Retained application Evidence inputs
 
 `analyze_javascript_application`, `inspect_binary_layout`, `inspect_artifact`,
