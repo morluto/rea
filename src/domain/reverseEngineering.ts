@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { commandEvidenceDetailSchema } from "./commandObservation.js";
 import { localPathStringSchema } from "./localPath.js";
+import { RAW_BINARY_ENTRY_POINT } from "./rawBinary.js";
 
 /** Omitted one-shot objdump/rizin wall clock. Preflight shares it; the command gets it again. */
 export const DEFAULT_REVERSE_COMMAND_TIMEOUT_MS = 120_000;
@@ -72,6 +73,15 @@ export const objdumpInputSchema = z.discriminatedUnion("operation", [
   }),
 ]);
 
+// Rizin owns its arch and CPU vocabulary, and the plugins differ between
+// builds, so REA checks only the spelling. Rizin sets no length limit.
+const rizinNameSchema = z
+  .string()
+  .regex(
+    /^[A-Za-z0-9][A-Za-z0-9_.+\-]*$/u,
+    "must be a Rizin name: letters, digits, '_', '.', '+' or '-', starting with a letter or digit",
+  );
+
 /** Caller-selected Rizin command against one local artifact. */
 export const rizinInputSchema = z
   .object({
@@ -82,6 +92,35 @@ export const rizinInputSchema = z
       .refine(
         (value) => !/[\r\n\u0000]/u.test(value),
         "A single command line is required",
+      ),
+    asm_arch: rizinNameSchema
+      .exactOptional()
+      .describe(
+        "Rizin arch plugin, passed as -a, such as arm. Plugins differ between builds; e asm.arch=? lists them.",
+      ),
+    // Rizin's widest decoders are 64-bit.
+    asm_bits: z
+      .number()
+      .int()
+      .min(1)
+      .max(64)
+      .exactOptional()
+      .describe(
+        "Rizin asm.bits, passed as -b, such as 16 for Thumb. Omitted, Rizin's default applies.",
+      ),
+    asm_cpu: rizinNameSchema
+      .exactOptional()
+      .describe(
+        "Rizin asm.cpu, passed as -e asm.cpu=, such as cortexm; e asm.cpu=? lists those of the selected arch.",
+      ),
+    base_address: z
+      .string()
+      .regex(RAW_BINARY_ENTRY_POINT, {
+        message: "base_address must be a hexadecimal address of the form 0x…",
+      })
+      .exactOptional()
+      .describe(
+        "Address of file offset 0. REA passes -n and -m, so Rizin maps the file there as a raw image, reads no format headers, and keeps its default decoder unless asm_arch and asm_bits select one.",
       ),
     ...commandTimeoutMsField,
   })

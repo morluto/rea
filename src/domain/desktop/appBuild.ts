@@ -39,6 +39,7 @@ const LAUNCHER_PACKAGE = "libgtk-3-bin";
 const REA_INSTALL_SCRIPT = "install-rea.sh";
 /** Where the build layer keeps a `.deb` the app came from, for the capture's `--package-file`. */
 export const BUILD_PACKAGE_FILE = "/opt/rea/package.deb";
+const ELECTRON_LAUNCH_SCRIPT = "prepare-electron-launch.sh";
 const REA_PAYLOAD = "rea-payload.tar";
 
 /** A URL agentenv downloads from: http or https in lowercase, without a user name or password. */
@@ -98,6 +99,12 @@ export const buildSourceSchema = z.discriminatedUnion("kind", [
       .max(255)
       .describe(
         "The desktop entry id the package installs, such as org.xfce.mousepad; the menu opens it with gtk-launch.",
+      ),
+    electron: z
+      .boolean()
+      .optional()
+      .describe(
+        "True when the app is Electron. The install rewrites its desktop entry's command with the same launch policy an export uses, adding --no-sandbox right after the program unless the command already has it. The computer's container does not grant the user namespaces Chromium needs, and Electron exits without that flag.",
       ),
     window_class: z
       .string()
@@ -170,7 +177,10 @@ if [ "$#" -ne 1 ] || [ ! -f "$1" ]; then
     exit 1
 fi
 ln -sf /opt/rea/node-v${BUILD_NODE_VERSION}-linux-*/bin/node /usr/local/bin/node
-printf '#!/bin/sh\\nexec /usr/local/bin/node %s "$@"\\n' "$1" > /usr/local/bin/rea
+# The archive's top folder is caller-chosen and may contain spaces. The launcher
+# runs a fixed path so the shell does not split that folder before Node opens it.
+ln -sfn "$1" /opt/rea/rea.mjs
+printf '#!/bin/sh\\nexec /usr/local/bin/node /opt/rea/rea.mjs "$@"\\n' > /usr/local/bin/rea
 chmod 755 /usr/local/bin/rea
 rm -f node-*.tar.xz ${REA_PAYLOAD}
 `;
@@ -252,9 +262,58 @@ const buildInstall = (
     scripts: [
       REA_INSTALL_SCRIPT,
       ...(packageFile === null ? [] : [INSTALL_SCRIPT]),
+      ...(request.electron === true ? [ELECTRON_LAUNCH_SCRIPT] : []),
     ],
   };
 };
+
+/**
+ * The build step that rewrites an Electron app's installed desktop command
+ * with REA's launch policy. It runs after Node.js and the REA payload are
+ * unpacked, and before the Applications menu opens the entry with gtk-launch.
+ */
+const renderElectronLaunchScript = (entry: string): string => `#!/bin/sh
+# Applications menu -> gtk-launch of this entry. Chromium's sandbox needs user
+# namespaces the container does not grant, so adjust the installed command first.
+set -eu
+entry='${entry}'
+desktop=
+ifs=$IFS
+IFS=:
+for dir in \${XDG_DATA_DIRS:-/usr/local/share:/usr/share}; do
+  if [ -n "$dir" ] && [ -f "$dir/applications/$entry.desktop" ]; then
+    desktop="$dir/applications/$entry.desktop"
+    break
+  fi
+done
+IFS=$ifs
+if [ -z "$desktop" ]; then
+  echo "No installed desktop entry $entry.desktop was found, so its command cannot be adjusted for Electron." >&2
+  exit 1
+fi
+set -- /opt/rea/payload/*/dist/domain/desktop/appExportInstall.js
+if [ "$#" -ne 1 ] || [ ! -f "$1" ]; then
+  echo "The REA archive must include dist/domain/desktop/appExportInstall.js so an Electron app can use REA's launch policy." >&2
+  exit 1
+fi
+/usr/local/bin/node --input-type=module - "$1" "$desktop" <<'JS'
+import { readFileSync, writeFileSync } from "node:fs";
+import { pathToFileURL } from "node:url";
+
+const policy = await import(pathToFileURL(process.argv[2]).href);
+if (typeof policy.adjustInstalledDesktopText !== "function") {
+  console.error("REA's desktop launch policy did not load from the archive.");
+  process.exit(1);
+}
+const desktop = process.argv[3];
+const adjusted = policy.adjustInstalledDesktopText(readFileSync(desktop, "utf8"), true);
+if (!adjusted.ok) {
+  console.error(\`The desktop entry \${desktop} could not be adjusted for Electron: \${adjusted.error}.\`);
+  process.exit(1);
+}
+writeFileSync(desktop, adjusted.value);
+JS
+`;
 
 /** The class module: the decorators that install and launch the app, and a class with no hooks. */
 const renderBuildModule = (
@@ -324,6 +383,9 @@ export const renderBuildBundle = (
         REA_INSTALL_SCRIPT,
         renderReaInstallScript(install.packageFile?.path ?? undefined),
       ),
+      ...(request.electron === true
+        ? [file(ELECTRON_LAUNCH_SCRIPT, renderElectronLaunchScript(entry))]
+        : []),
       ...(install.packageFile === null
         ? []
         : [file(INSTALL_SCRIPT, renderInstallScript(install.packageFile))]),

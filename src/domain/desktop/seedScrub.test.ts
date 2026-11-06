@@ -28,6 +28,25 @@ const scrubbed = (text: string, format: string, identity = GEANY) => {
 };
 
 describe("scrubSeed on text", () => {
+  it.each(["le", "be"] as const)(
+    "keeps a leading content U+FEFF after the UTF-16 %s signature",
+    (order) => {
+      const input = utf16("\uFEFFtitle\n/home/ada/file\n", order);
+      const outcome = scrubSeed(input, seed("binary"), GEANY);
+      expect(
+        outcome.bytes?.equals(utf16(`\uFEFFtitle\n${SEED_HOME}/file\n`, order)),
+      ).toBe(true);
+      expect(outcome.holdsIdentity).toBe(false);
+      expect(
+        scrubSeed(
+          utf16("\uFEFFtitle\n/different/home/file\n", order),
+          seed("binary"),
+          GEANY,
+        ),
+      ).toEqual({ bytes: undefined, holdsIdentity: false });
+    },
+  );
+
   it("rewrites a UTF-8 text seed, keeping its byte-order mark, and leaves a clean one as it is", () => {
     expect(scrubbed("\uFEFFmail=ada@e81232be457d\n", "keyfile")).toEqual({
       text: "\uFEFFmail=user@localhost\n",
@@ -207,6 +226,44 @@ describe("scrubSeed on JSON and XML", () => {
     expect(outcome.holdsIdentity).toBe(false);
     expect(outcome.text).toContain("user@localhost");
     expect(outcome.text).not.toContain("e81232be457d");
+  });
+});
+
+describe("scrubSeed XML whitespace normalization", () => {
+  it("normalizes literal whitespace in rewritten XML attributes without inventing character references", () => {
+    const xml = '<root path="/home/ada/a\n b" other="/home/ada/a\t b"/>';
+    const outcome = scrubbed(xml, "xml");
+
+    expect(outcome.text).toBe(
+      `<root path="${SEED_HOME}/a  b" other="${SEED_HOME}/a  b"/>`,
+    );
+    expect(outcome.holdsIdentity).toBe(false);
+  });
+
+  it("normalizes literal line endings in rewritten XML character data without inventing CR references", () => {
+    const crlf = `<root>/home/ada/a\r\n b</root>`;
+    const cr = `<root>/home/ada/a\r b</root>`;
+
+    expect(scrubbed(crlf, "xml").text).toBe(`<root>${SEED_HOME}/a\n b</root>`);
+    expect(scrubbed(cr, "xml").text).toBe(`<root>${SEED_HOME}/a\n b</root>`);
+  });
+
+  it("preserves explicit character references in XML attributes and character data", () => {
+    const xml = `<root path="/home/ada/a&#10; b" tab="/home/ada/a&#9; b">/home/ada/a&#13; b</root>`;
+    const outcome = scrubbed(xml, "xml");
+
+    expect(outcome.text).toBe(
+      `<root path="${SEED_HOME}/a&#10; b" tab="${SEED_HOME}/a&#9; b">${SEED_HOME}/a&#13; b</root>`,
+    );
+    expect(outcome.holdsIdentity).toBe(false);
+  });
+
+  it("leaves XML with literal line endings or whitespace byte-for-byte unchanged when no identity matches", () => {
+    const xml = '<root path="/unmatched/path/a\n b">\r\nclean\r\n</root>';
+    const outcome = scrubSeed(Buffer.from(xml), seed("xml"), GEANY);
+
+    expect(outcome.bytes).toBeUndefined();
+    expect(outcome.holdsIdentity).toBe(false);
   });
 });
 

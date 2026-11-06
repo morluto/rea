@@ -374,6 +374,7 @@
     "cross-spawn": "7.0.6",
     "diff": "9.0.0",
     "evmole": "0.9.3",
+    "graphql": "17.1.0",
     "har-schema": "2.0.0",
     "ignore": "7.0.6",
     "incur": "0.6.1",

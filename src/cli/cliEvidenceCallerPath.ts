@@ -13,19 +13,25 @@ export const bindCliEvidenceCallerPath =
   (
     callerPath: string,
     run: () => Promise<Result<Evidence, AnalysisError>>,
+    additionalPaths?: Readonly<Record<string, string>>,
   ): (() => Promise<Result<Evidence, AnalysisError>>) =>
   async () => {
     const result = await run();
     if (result.ok)
       return {
         ok: true,
-        value: withEvidenceCallerInputPath(result.value, callerPath),
+        value: withEvidenceCallerInputPath(
+          result.value,
+          callerPath,
+          additionalPaths,
+        ),
       };
     if (result.error.partialObservation !== undefined) {
       try {
         result.error.partialObservation = withEvidenceCallerInputPath(
           parseEvidence(result.error.partialObservation),
           callerPath,
+          additionalPaths,
         );
       } catch (cause) {
         // Raw or invalid partial observations must retain their original form.

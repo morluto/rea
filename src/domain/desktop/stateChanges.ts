@@ -245,6 +245,24 @@ const unreadTables = (view: JsonValue): string[] =>
     .filter(([, table]) => isRecord(table) && typeof table.error === "string")
     .map(([name]) => name);
 
+/** A nullable SQLite primary key cannot identify a row on its own. */
+export const sqliteRowIdentity = (
+  columns: readonly JsonValue[],
+  key: readonly JsonValue[],
+  row: readonly JsonValue[],
+): { value: string; keyed: boolean } => {
+  const indexes = key.map((column) => columns.indexOf(column));
+  const keyed =
+    indexes.length > 0 &&
+    indexes.every(
+      (index) => index >= 0 && row[index] !== null && row[index] !== undefined,
+    );
+  return {
+    value: JSON.stringify(keyed ? indexes.map((index) => row[index]) : row),
+    keyed,
+  };
+};
+
 /**
  * `table:key` → row for SQLite views, keyed by primary key when there is one.
  * Tables unread in either version are skipped, so their rows are not misreported.
@@ -258,18 +276,13 @@ const rowEntries = (
     if (skipped.has(name) || !isRecord(table) || !Array.isArray(table.rows))
       continue;
     const columns = Array.isArray(table.columns) ? table.columns : [];
-    const keyColumns = (
-      Array.isArray(table.primary_key) ? table.primary_key : []
-    )
-      .map((column) => columns.indexOf(column))
-      .filter((index) => index >= 0);
+    const keyColumns = Array.isArray(table.primary_key)
+      ? table.primary_key
+      : [];
     const seen = new Map<string, number>();
     for (const row of table.rows) {
       if (!Array.isArray(row)) continue;
-      const identity =
-        keyColumns.length > 0
-          ? JSON.stringify(keyColumns.map((index) => row[index] ?? null))
-          : JSON.stringify(row);
+      const identity = sqliteRowIdentity(columns, keyColumns, row).value;
       // Rows without a key are compared as a multiset of whole rows.
       const occurrence = seen.get(identity) ?? 0;
       seen.set(identity, occurrence + 1);
