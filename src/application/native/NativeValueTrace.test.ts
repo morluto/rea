@@ -1481,6 +1481,46 @@ describe("native value trace thunk targets", () => {
     expect(attempted).toEqual([["analyze_function", { procedure: "0xc000" }]]);
   });
 
+  it("reports an internal thunk target whose only operation is not admitted", async () => {
+    const targetUnknown = {
+      ...externalTargetUnknown,
+      related_procedure: "0x2b8",
+      reason:
+        "Thunk target 0x2b8 is not represented in this thunk's value-flow model and was not traced",
+    };
+    for (const block_membership of ["detached", "unavailable"]) {
+      const { port } = thunkPort(
+        thunkDossier("0x2b8", [
+          { ...node("copy", "0x2b8", "COPY"), block_membership },
+          node("return", "0x2bc", "RETURN"),
+        ]),
+      );
+      const result = await traceNativeValues(port, { procedure: "0xc000" });
+      if (!result.ok) throw result.error;
+      expect(nativeValueTraceSchema.parse(result.value)).toMatchObject({
+        traversal: { status: "complete" },
+        unknowns: [targetUnknown],
+      });
+    }
+    const { port } = thunkPort(
+      thunkDossier("0x2b8", [
+        node("return", "0x2bc", "RETURN"),
+        node("copy", "0x2b8", "COPY"),
+      ]),
+    );
+    const limited = await traceNativeValues(port, {
+      procedure: "0xc000",
+      max_nodes: 1,
+    });
+    if (!limited.ok) throw limited.error;
+    const trace = nativeValueTraceSchema.parse(limited.value);
+    expect(trace.traversal).toEqual({
+      status: "truncated",
+      reasons: ["max_nodes"],
+    });
+    expect(trace.unknowns).toContainEqual(targetUnknown);
+  });
+
   it("keeps a thunk whose resolved call reaches its target and traverses it", async () => {
     const graph = staticValueGraph(
       { "0x2000": { operations: [node("return", "0x2000", "RETURN")] } },

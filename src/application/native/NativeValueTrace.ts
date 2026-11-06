@@ -420,12 +420,16 @@ export const traceNativeValues = async (
       }
     }
     // An internal thunk's model borrows its target's operations; an external
-    // import's model holds only a synthetic return and names no target.
+    // import's model holds only a synthetic return and names no target. Only
+    // admitted operations represent the target: a detached, dead or
+    // budget-rejected one leaves no node in this trace.
     const thunkTarget = unexaminedThunkTarget(
       dossier,
       (target) =>
         retainedCalls.has(target) ||
-        flow.operations.some((operation) => operation.address === target),
+        flow.operations.some(
+          (operation) => ids.has(operation.id) && operation.address === target,
+        ),
     );
     if (thunkTarget !== null)
       thunkTargets.push({ procedure: address, target: thunkTarget });
