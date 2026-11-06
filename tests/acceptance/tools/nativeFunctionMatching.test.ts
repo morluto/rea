@@ -1,7 +1,11 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
-import { cliTest, type TestCli } from "../../support/cli/cliFixture.js";
+import {
+  cliTest,
+  runFileCli,
+  type TestCli,
+} from "../../support/cli/cliFixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
@@ -470,6 +474,9 @@ cliTest(
       "left_observations",
       "right_observations",
     ] as const) {
+      // Keep fresh-process coverage for both source-admission routes on left.
+      const run =
+        field === "left" ? cli.run.bind(cli) : runFileCli.bind(undefined, cli);
       const observation = field.endsWith("observations");
       const request = {
         left,
@@ -494,7 +501,7 @@ cliTest(
       const requestPath = join(root, "request.json");
       await writeFile(requestPath, JSON.stringify(request));
       for (const sourceArguments of [[], ["--source_bundle", bundlePath]]) {
-        const rejected = await cli.run({
+        const rejected = await run({
           arguments: [
             "match-native-functions",
             requestPath,
@@ -571,7 +578,7 @@ cliTest(
 
     const corruptRequest = { left: badCoordinate, right, detail: "complete" };
     await writeFile(requestPath, JSON.stringify(corruptRequest));
-    const corruptInline = await cli.run({
+    const corruptInline = await runFileCli(cli, {
       arguments: ["match-native-functions", requestPath, "--json"],
     });
     const corruptPortableRequest = {
@@ -583,7 +590,7 @@ cliTest(
       detail: "complete",
     };
     await writeFile(requestPath, JSON.stringify(corruptPortableRequest));
-    const corruptPortable = await cli.run({
+    const corruptPortable = await runFileCli(cli, {
       arguments: [
         "match-native-functions",
         requestPath,
@@ -601,7 +608,7 @@ cliTest(
 
     const malformedBundlePath = join(root, "malformed-outer-frame.json");
     await writeFile(malformedBundlePath, JSON.stringify({ records: [left] }));
-    const malformedBundle = await cli.run({
+    const malformedBundle = await runFileCli(cli, {
       arguments: [
         "match-native-functions",
         requestPath,

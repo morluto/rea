@@ -880,6 +880,36 @@ cliTest(
   },
 );
 
+cliTest(
+  "publishes and enforces the lowercase --expected_sha256 digest",
+  async ({ cli }) => {
+    const schema = await cli.run({
+      arguments: ["inspect-gpu-code-objects", "--schema", "--json"],
+    });
+    expect(schema.exitCode, schema.stderr).toBe(0);
+    expect(schema.json).toMatchObject({
+      options: {
+        properties: { expected_sha256: { pattern: "^[a-f0-9]{64}$" } },
+      },
+    });
+    // PowerShell's Get-FileHash prints the digest in upper case.
+    const response = await runFileCli(cli, {
+      arguments: [
+        "inspect-gpu-code-objects",
+        "/not-opened-for-invalid-selectors",
+        "--expected_sha256",
+        "AB".repeat(32),
+        "--json",
+      ],
+    });
+    expect(response.exitCode).toBe(1);
+    expect(response.json).toMatchObject({
+      code: "VALIDATION_ERROR",
+      fieldErrors: [expect.objectContaining({ path: "expected_sha256" })],
+    });
+  },
+);
+
 it("preserves incomplete decoder coverage through MCP target and object pages", async () => {
   const root = await createTestTempDirectory("rea-gpu-partial-"),
     { call } = await connectLocalToolsMcp();

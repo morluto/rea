@@ -41,8 +41,11 @@ it for building, or from an existing bundle folder.
 - Build bundle from a request: the app from the Ubuntu archive, with up to 16
   extra archive packages beside it, an apt repository with its key file, or a
   `.deb` URL with its SHA-256, dependencies and architecture, rendered with
-  the export's install shapes and Python helpers; `Launch(at="demand")` through `gtk-launch`; no seed and no data
-  hooks; REA in a build-only layer, with Node.js 24.22.1 downloaded per
+  the export's install shapes and Python helpers; `Launch(at="demand")` through
+  `gtk-launch`; no seed and no data hooks. When the request sets `electron`, the
+  install rewrites that desktop entry's command with the export's launch policy
+  (`--no-sandbox` right after the program, unless the command already has it)
+  before `gtk-launch`; REA in a build-only layer, with Node.js 24.22.1 downloaded per
   architecture and checked, and REA's payload a parameter: a local archive
   shipped in the environment folder (`REA_BUILD_COMPUTER_REA_ARCHIVE`) or,
   later, a released download.
