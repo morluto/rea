@@ -90,6 +90,8 @@ const EXECUTION_WORDING_EXCEPTIONS: Readonly<Record<string, string>> = {
   inspect_adb_client:
     "inspects the operator-selected adb client; never starts its server",
   list_adb_devices: "may start the local adb server, which REA does not own",
+  inspect_api_contract:
+    "states there is no target execution during offline contract parsing",
   inspect_firmware_regions: "states there is no target execution",
   inspect_gpu_code_objects:
     "reads static declarations without executing GPU code",
@@ -178,6 +180,7 @@ describe("tool effects", () => {
       ({ effects }) => effects.executesForeignCode || effects.mutatesDevice,
     );
     expect(destructive.map(({ name }) => name).sort()).toEqual([
+      "act_on_build_computer",
       "capture_browser_scenario",
       "capture_electron_scenario",
       "capture_native_ui_scenario",
@@ -197,6 +200,7 @@ describe("tool effects", () => {
       "rizin_debug_command",
       "start_adb_activity",
       "start_adb_app",
+      "start_build_computer",
       "start_rizin_debug_session",
       "stop_adb_app",
       "uninstall_adb_package",
