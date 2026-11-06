@@ -21,6 +21,15 @@ describe("detectStateFormat", () => {
     expect(detectStateFormat("/h/blob", Uint8Array.of(1, 0, 2))).toBe("binary");
   });
 
+  it("recognises a zip archive by its local file header, whatever its name", () => {
+    const header = Uint8Array.of(0x50, 0x4b, 3, 4, 20, 0, 0, 0);
+    expect(detectStateFormat("/h/plate.FCStd", header)).toBe("zip");
+    expect(detectStateFormat("/h/plate.20261105.FCBak", header)).toBe("zip");
+    expect(
+      detectStateFormat("/h/empty.odt", Uint8Array.of(0x50, 0x4b, 5, 6, 0, 0)),
+    ).toBe("binary");
+  });
+
   it("tells JSON, XML, key files and plain text apart", () => {
     expect(detectStateFormat("/h/a.json", bytes('{"a":1}'))).toBe("json");
     expect(detectStateFormat("/h/notes", bytes("{not json"))).toBe("text");

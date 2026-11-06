@@ -30,6 +30,11 @@ changed later. Each path records the evidence the capture holds about it:
 | `dconf_application_keys` | It is a dconf database holding groups whose path names the application    |
 | `desktop_service`        | It lies where desktop services and toolkits keep shared files, or caches  |
 
+A folder beside a state directory whose name differs from it only in letter
+case counts as that state directory, so a profile the application first
+creates during the capture, such as GIMP's `~/.config/GIMP` beside the
+candidate `~/.config/gimp`, is its state too.
+
 The role follows from the reasons, in this order: `application_state` for
 application keys in dconf, or a state directory outside shared desktop
 locations; `document` for a file named in a window title or selected by the
@@ -48,13 +53,20 @@ would claim other applications' groups.
 
 Each path lists its versions: the baseline, then its state after each
 checkpoint where it, or a database's `-wal` or `-journal` file, changed. A
-checkpoint that leaves an absent file absent adds no version. A version records
+checkpoint that leaves an absent file absent adds no version. A file's state
+at any checkpoint is its last version recorded at or before it, which is how
+the [export](desktop-application-export.md#the-seed-checkpoint) and the
+[task draft](desktop-application-tasks.md) read it at the seed and end
+checkpoints they are given; `capture.checkpoints` lists the names in order.
+Views hold the captured bytes as they are, the capture host's name and user
+included; the export removes those from the bundle. A version records
 whether the file was present, the SHA-256 of its retained bytes, and a view:
 
 | Format    | Detected by                                                            | View                                                                                    |
 | --------- | ---------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
 | `sqlite`  | The `SQLite format 3` header                                           | Every ordinary table's columns, primary key and up to 500 rows                          |
 | `dconf`   | The `GVariant` header                                                  | Groups whose path names the application, plus the names of the other groups             |
+| `zip`     | A zip local file header, `PK\x03\x04`, whatever the name               | Its file entries in archive order, each with its own format and view                    |
 | `json`    | A `.json` name or a leading `{` or `[` that parses                     | The parsed value, from files up to 4 MiB nested up to 500 levels                        |
 | `xml`     | An XML name or declaration that parses                                 | An element tree (`name`, `attributes`, `children`); text kept exactly, DOCTYPEs refused |
 | `keyfile` | Only `[group]`, `key=value` and comment lines, with at least one group | Groups of `key` → string value, from files up to 4 MiB                                  |
@@ -63,6 +75,16 @@ whether the file was present, the SHA-256 of its retained bytes, and a view:
 
 A JSON value holding a number JavaScript would round, such as an integer above
 2^53, is not read rather than shown rounded.
+
+An XML view names elements and attributes as the document spells them, prefix
+included: a saved Inkscape drawing's root is `svg`, in its default namespace,
+with `sodipodi:docname` and the declarations `xmlns` and `xmlns:sodipodi`
+among its attributes, and a Writer paragraph is `text:p`. An element's
+`children` hold its elements and text in order, text split where a CDATA
+section, comment or processing instruction falls; whitespace-only text in an
+element that holds elements is dropped unless `xml:space="preserve"` applies.
+The view keeps up to 5,000 nodes, comments and processing instructions
+counted, nested up to 64 levels, and sets `truncated` when it leaves some out.
 
 Exported XML views use REA's same formatting-whitespace classification, so
 retained XML text and the task checks that address it stay aligned.
@@ -87,6 +109,52 @@ A version has a `view_error` when its bytes were not retained, are over the 64
 MiB read limit, are missing or no longer match their digest, exceed a format's
 limit above, or its reader failed.
 
+## Archives
+
+Many applications save a document as a zip archive of XML and other files:
+FreeCAD's `.FCStd` and `.FCBak`, OpenDocument (`.odt`, `.ods`, whose
+`content.xml` is the document), Office Open XML, EPUB and JAR. Such a file is
+`zip`, and its view lists its file entries in archive order, leaving out
+directories: an entry whose name ends in `/`, or whose attributes mark a Unix
+directory or, from an MS-DOS host, the directory attribute:
+
+```json
+{
+  "entries": [
+    {
+      "name": "Document.xml",
+      "size": 11923,
+      "sha256": "…",
+      "format": "xml",
+      "view": {
+        "root": { "name": "Document", "attributes": {}, "children": [] },
+        "truncated": false
+      },
+      "view_error": null
+    }
+  ],
+  "entry_count": 15,
+  "truncated": false
+}
+```
+
+Each entry's bytes are read from the archive's verified bytes in memory,
+checked against its CRC-32 and declared size, and given a `format` and `view`
+by the rules and limits above, with the entry's name in place of a file name.
+Nothing is extracted to disk. An entry has a `view_error`, with `sha256`,
+`format` and `view` null, when it is encrypted, compressed other than stored or
+deflated, larger than 16 MiB, more than 100 times its compressed size, past the
+64 MiB read from one archive, or its data is damaged. A SQLite or dconf
+database, or an archive, inside an archive keeps its format and `sha256` and
+has a `view_error` instead of a view: it is not read. The view lists at most
+1,000 entries; `entry_count` counts them all, and `truncated` is true when some
+are not listed. REA reads the central directory itself, a record at a time,
+through the Zip64 end record whenever a Zip64 locator precedes the end record,
+as Python's `zipfile` does, and hands the zip reader only the records it lists,
+so an archive of hundreds of thousands of entries costs no more to read
+than one of a thousand. An archive whose central directory cannot be read has a
+`view_error` of its own.
+
 ## Kinds of change
 
 Between consecutive versions a change is `created`, `deleted`, or a
@@ -97,6 +165,13 @@ each, with counts):
 - `values` for JSON and XML: JSON pointers to values, containers included, so
   an array that becomes an object with the same members is changed. A pointer
   longer than 4096 characters is counted but not listed.
+- `values` for zip archives too, with array members named by
+  [selectors](desktop-application-tasks.md#pointers-and-selectors) rather than
+  positions wherever a selector names one member in both versions: entries by
+  name, as `/entries/[name=Document.xml]`, and XML elements by tag and an
+  attribute, as `/view/root/children/[name=Object][@name=Hole]`, so an object
+  inserted before another does not shift it. A comparison is incomplete when
+  either view leaves out entries, or an entry's view is missing or truncated.
 - `keys` for key files and dconf: `group/key`, with `~` and `/` in the key
   written `~0` and `~1` as in a JSON pointer, so `[a/b]` `c` and `[a]` `b/c`
   stay apart.
