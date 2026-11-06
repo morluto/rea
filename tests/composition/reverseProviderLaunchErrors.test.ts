@@ -8,6 +8,7 @@ import {
 } from "../../src/process/DarwinProcessRunTokenReader.js";
 import {
   LinuxOwnedProcessPrerequisiteError,
+  processOwnershipAdmissionRecovery,
   systemProcessOwnershipHost,
 } from "../../src/process/ProcessOwnershipObservation.js";
 import { ProcessAdmissionError } from "../../src/process/ProcessAdmissionError.js";
@@ -562,7 +563,10 @@ it("uses platform-aware recovery without /proc when Darwin baseline capture reje
         provider_id: "process-ownership",
       });
       expect(projected.remediation.action).toContain(
-        "ensure REA has permission to inspect process identities",
+        processOwnershipAdmissionRecovery(
+          "identity_snapshot_unavailable",
+          "darwin",
+        ),
       );
       expect(projected.remediation.action).not.toContain("/proc");
       expect(projected.remediation.action).toContain(
@@ -578,9 +582,12 @@ it("uses platform-aware recovery without /proc when Darwin baseline capture reje
   }
 });
 
-it("preserves pre-spawn ps missing error during baseline capture without blaming configured command", async () => {
+it("preserves Darwin baseline_unavailable admission failure without blaming configured command", async () => {
   const { directory } = await createArtifact();
   const command = resolve(directory, "configured-objdump");
+  const platformSpy = vi
+    .spyOn(systemProcessOwnershipHost, "platform", "get")
+    .mockReturnValue("darwin");
   const psMissing = Object.assign(new Error("spawn ps ENOENT"), {
     code: "ENOENT",
     path: "ps",
@@ -588,7 +595,11 @@ it("preserves pre-spawn ps missing error during baseline capture without blaming
   });
   const captureSpy = vi
     .spyOn(systemProcessOwnershipHost, "captureBaseline")
-    .mockRejectedValue(psMissing);
+    .mockRejectedValue(
+      new ProcessAdmissionError("baseline_unavailable", undefined, {
+        cause: psMissing,
+      }),
+    );
   const service = new TestReverseEngineeringService({
     environment: { REA_OBJDUMP_COMMAND: command },
   });
@@ -604,8 +615,9 @@ it("preserves pre-spawn ps missing error during baseline capture without blaming
         provider_id: "process-ownership",
       });
       expect(projected.remediation.action).toContain(
-        "standard ps executable is available on PATH",
+        processOwnershipAdmissionRecovery("baseline_unavailable", "darwin"),
       );
+      expect(projected.remediation.action).not.toContain("/proc");
       expect(projected.remediation.action).toContain(
         "REA_OBJDUMP_COMMAND does not need to change",
       );
@@ -613,6 +625,45 @@ it("preserves pre-spawn ps missing error during baseline capture without blaming
     expect(service.observedLaunchFailures()).toEqual({});
   } finally {
     captureSpy.mockRestore();
+    platformSpy.mockRestore();
+    await service.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+it("preserves provider-launch ENOENT when configured command path contains ps substring", async () => {
+  const { directory } = await createArtifact();
+  const command = resolve(directory, "apps", "objdump");
+  const service = new TestReverseEngineeringService({
+    environment: { REA_OBJDUMP_COMMAND: command },
+  });
+  try {
+    const result = await service.inspectWithObjdump({
+      operation: "architectures",
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      const projected = projectAnalysisError(result.error);
+      expect(projected.code).toBe("capability_unavailable");
+      expect(projected.details).toMatchObject({
+        provider_id: "objdump.command",
+        diagnostics: {
+          boundary: "provider-launch",
+          command,
+          system_code: "ENOENT",
+        },
+      });
+      expect(projected.remediation.action).toContain(
+        "Set REA_OBJDUMP_COMMAND to an installed executable GNU objdump command",
+      );
+    }
+    expect(service.observedLaunchFailures()).toMatchObject({
+      inspect_with_objdump: {
+        reason: expect.stringContaining(command),
+        remediation: expect.stringContaining("REA_OBJDUMP_COMMAND"),
+      },
+    });
+  } finally {
     await service.close();
     await rm(directory, { recursive: true, force: true });
   }
