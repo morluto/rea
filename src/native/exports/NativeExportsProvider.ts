@@ -1,3 +1,5 @@
+import { setImmediate } from "node:timers/promises";
+
 import {
   projectStableArtifactFailure,
   stableArtifactInputRecovery,
@@ -36,7 +38,7 @@ import {
   BinaryFormatFailure,
   BinaryResourceFailure,
 } from "../metadata/BinaryContainer.js";
-import { parseNativeExports } from "./NativeExportParser.js";
+import { parseNativeExportsSteps } from "./NativeExportParser.js";
 
 const OPERATION = "inspect_native_exports";
 
@@ -68,13 +70,20 @@ export class NativeExportsProvider implements NativeExportsPort {
           this.#resources,
         );
         assertArtifactReadActive(options?.signal);
-        const report = parseNativeExports(snapshot.bytes, {
+        const steps = parseNativeExportsSteps(snapshot.bytes, {
           path: input.path,
           sha256: snapshot.sha256,
           bytes: snapshot.bytes.length,
         });
+        let step = steps.next();
+        while (!step.done) {
+          // Dispatch queued CLI/MCP cancellation between bounded parser batches.
+          await setImmediate();
+          assertArtifactReadActive(options?.signal);
+          step = steps.next();
+        }
         assertArtifactReadActive(options?.signal);
-        return ok(report);
+        return ok(step.value);
       });
     } catch (cause) {
       return err(nativeExportsFailure(cause, input));
