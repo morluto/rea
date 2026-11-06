@@ -33,14 +33,22 @@ export const registerCargoManifestTool = (
               }),
           );
           if (!result.ok)
-            return server.delivery.toCallToolResult(result, contract);
+            return server.delivery.toPartialErrorToolResult(
+              result.error,
+              contract.returnsTargetContent,
+              options.recordEvidence,
+            );
+          // A cancellation after the read and inventory completes must not discard
+          // the observed manifest; deliver it instead of a bare cancellation.
           return deliverApplicationEvidence(
             server,
             options,
             contract,
-            { evidence: result.value, sources: [] },
+            { evidence: result.value.evidence, sources: [] },
             undefined,
             context.mcpReq.signal,
+            undefined,
+            result.value.observation,
           );
         },
       ),

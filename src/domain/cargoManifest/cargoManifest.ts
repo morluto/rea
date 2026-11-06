@@ -51,7 +51,6 @@ export const cargoDiagnosticSchema = z.strictObject({
     "invalid-dependency-declaration",
     "duplicate-package-name",
     "invalid-feature-table",
-    "workspace-inheritance-without-workspace",
   ]),
   message: z.string(),
 });
@@ -69,9 +68,9 @@ export const cargoManifestSchema = z.strictObject({
     z.strictObject({
       package_id: prefixedDigestSchema("cargo_package"),
       name: z.string(),
-      version: z.string().nullable(),
-      edition: z.string().nullable(),
-      rust_version: z.string().nullable(),
+      version: z.union([z.string(), z.literal("inherited")]).nullable(),
+      edition: z.union([z.string(), z.literal("inherited")]).nullable(),
+      rust_version: z.union([z.string(), z.literal("inherited")]).nullable(),
       source_pointer: z.string(),
       is_workspace_root: z.boolean(),
     }),

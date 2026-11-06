@@ -103,8 +103,20 @@ cliTest(
       REA_MCP_TOOL_FAMILIES: "application",
     });
     const response = await call("inspect_cargo_manifest", { path });
-    expect(response.isError).toBe(true);
     const failure = parseMcpToolError(response);
-    expect(failure.error.message.length).toBeGreaterThan(0);
+    // A generic I/O error also has a nonempty message; pin the typed shape instead.
+    expect(failure.error).toMatchObject({
+      code: "invalid_request",
+      category: "invalid_input",
+      retryable: false,
+      details: {
+        issues: [
+          {
+            path: ["path"],
+            reason: "invalid_format",
+          },
+        ],
+      },
+    });
   },
 );

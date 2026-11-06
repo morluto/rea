@@ -4,6 +4,7 @@ import {
   AnalysisResourceConstraintError,
 } from "../analysisErrorCore.js";
 import { digestCanonicalValue } from "../canonicalDigest.js";
+import { parseRecordedTransportUrl } from "../recordedTransportUrl.js";
 import { err, ok, type Result } from "../result.js";
 import {
   CARGO_MANIFEST_FACT_BYTES,
@@ -13,6 +14,7 @@ import {
 } from "./cargoManifest.js";
 
 type CargoManifestArtifact = CargoManifest["artifact"];
+type DiagnosticCode = CargoManifest["diagnostics"][number]["code"];
 
 const record = (value: unknown): Record<string, unknown> | undefined =>
   typeof value === "object" && value !== null && !Array.isArray(value)
@@ -28,10 +30,13 @@ const stringArray = (value: unknown): string[] | undefined =>
     ? (value as string[])
     : undefined;
 
+/** Cargo's current and pre-2024 spellings of the same dependency tables. */
 const DEPENDENCY_TABLES = [
   "dependencies",
   "dev-dependencies",
+  "dev_dependencies",
   "build-dependencies",
+  "build_dependencies",
 ] as const;
 
 /** Every dependency table a single manifest can declare, with the target it is scoped to. */
@@ -42,44 +47,33 @@ interface DependencyTable {
   readonly entries: Record<string, unknown>;
 }
 
-const dependencyTables = (document: Record<string, unknown>) => {
-  const tables: DependencyTable[] = [];
-  for (const name of DEPENDENCY_TABLES) {
-    const entries = record(document[name]);
-    if (entries !== undefined)
-      tables.push({
-        pointer: `/${name}`,
-        target: null,
-        declaredBy: "package",
-        entries,
-      });
+/** Report a present but unusable field instead of letting it look absent. */
+const tableFailure = (
+  value: unknown,
+): "absent" | "malformed" | Record<string, unknown> => {
+  // An absent field is omission; a present non-table is an explicit unknown.
+  if (value === undefined) return "absent";
+  const entries = record(value);
+  if (entries === undefined) return "malformed";
+  return entries;
+};
+
+/** One retained string, charged at its expanded UTF-16 length before it is kept. */
+const expandedBytes = (value: string): number => value.length * 2;
+
+/** Strip transport userinfo so recorded evidence never carries credentials. */
+const credentialFree = (value: string): string => {
+  const { credentials } = parseRecordedTransportUrl(value);
+  if (credentials === "ambiguous") {
+    const parsed = URL.parse(value);
+    if (parsed === null) return value;
+    parsed.username = "";
+    parsed.password = "";
+    return parsed.href;
   }
-  const target = record(document.target);
-  if (target !== undefined)
-    for (const [condition, value] of Object.entries(target)) {
-      const container = record(value);
-      if (container === undefined) continue;
-      for (const name of DEPENDENCY_TABLES) {
-        const entries = record(container[name]);
-        if (entries !== undefined)
-          tables.push({
-            pointer: `/target/${pointerPart(condition)}/${name}`,
-            target: condition,
-            declaredBy: "package",
-            entries,
-          });
-      }
-    }
-  const workspace = record(document.workspace);
-  const inherited = record(workspace?.dependencies);
-  if (inherited !== undefined)
-    tables.push({
-      pointer: "/workspace/dependencies",
-      target: null,
-      declaredBy: "workspace",
-      entries: inherited,
-    });
-  return tables;
+  return credentials === null
+    ? value
+    : `${value.slice(0, credentials.start)}${value.slice(credentials.end)}`;
 };
 
 /** Classify one declaration by the source keys Cargo itself understands. */
@@ -92,11 +86,17 @@ const classify = (
       readonly requirement: string | null;
     }
   | undefined => {
+  const version =
+    typeof declaration.version === "string" ? declaration.version : null;
   if (declaration.workspace === true)
-    return { source: "workspace", sourceDetail: null, requirement: null };
+    return { source: "workspace", sourceDetail: null, requirement: version };
   const path = declaration.path;
   if (typeof path === "string")
-    return { source: "path", sourceDetail: path, requirement: null };
+    return {
+      source: "path",
+      sourceDetail: credentialFree(path),
+      requirement: version,
+    };
   const git = declaration.git;
   if (typeof git === "string") {
     const revision = ["rev", "tag", "branch"].flatMap((key) => {
@@ -105,19 +105,62 @@ const classify = (
     });
     return {
       source: "git",
-      sourceDetail: [git, ...revision].join(" "),
-      requirement:
-        typeof declaration.version === "string" ? declaration.version : null,
+      sourceDetail: [credentialFree(git), ...revision].join(" "),
+      requirement: version,
     };
   }
-  if (typeof declaration.version === "string")
+  if (version !== null)
     return {
       source: "registry",
       sourceDetail:
-        typeof declaration.registry === "string" ? declaration.registry : null,
-      requirement: declaration.version,
+        typeof declaration.registry === "string"
+          ? credentialFree(declaration.registry)
+          : null,
+      requirement: version,
     };
   return undefined;
+};
+
+/** Field-level problems that would otherwise be flattened into plausible facts. */
+const declarationProblems = (
+  declaration: Record<string, unknown>,
+): readonly string[] => {
+  const problems: string[] = [];
+  if (
+    declaration.optional !== undefined &&
+    typeof declaration.optional !== "boolean"
+  )
+    problems.push("optional is not a boolean");
+  if (
+    declaration["default-features"] !== undefined &&
+    typeof declaration["default-features"] !== "boolean"
+  )
+    problems.push("default-features is not a boolean");
+  if (
+    declaration.features !== undefined &&
+    stringArray(declaration.features) === undefined
+  )
+    problems.push("features is not an array of strings");
+  if (
+    declaration.package !== undefined &&
+    typeof declaration.package !== "string"
+  )
+    problems.push("package is not a string");
+  if (
+    declaration.registry !== undefined &&
+    typeof declaration.registry !== "string"
+  )
+    problems.push("registry is not a string");
+  for (const key of ["rev", "tag", "branch"]) {
+    if (declaration[key] !== undefined && typeof declaration[key] !== "string")
+      problems.push(`${key} is not a string`);
+  }
+  if (
+    typeof declaration.path === "string" &&
+    typeof declaration.git === "string"
+  )
+    problems.push("path and git are both declared");
+  return problems;
 };
 
 /** Own declaration inventory and account for retained facts before allocation. */
@@ -130,7 +173,16 @@ class CargoInventory {
 
   constructor(readonly artifact: CargoManifestArtifact) {}
 
-  reserve(bytes: number): Result<void, AnalysisError> {
+  /** Charge retained values by their expanded representation, not by their count. */
+  retain(
+    ...values: readonly (string | readonly string[])[]
+  ): Result<void, AnalysisError> {
+    let bytes = 0;
+    for (const value of values)
+      bytes +=
+        typeof value === "string"
+          ? expandedBytes(value)
+          : value.reduce((total, item) => total + expandedBytes(item), 0);
     this.#retainedBytes += bytes;
     return this.#retainedBytes <= CARGO_MANIFEST_FACT_BYTES
       ? ok(undefined)
@@ -150,11 +202,11 @@ class CargoInventory {
   }
 
   diagnostic(
-    code: CargoManifest["diagnostics"][number]["code"],
+    code: DiagnosticCode,
     pointer: string,
     message: string,
   ): Result<void, AnalysisError> {
-    const admitted = this.reserve(1024 + pointer.length * 12);
+    const admitted = this.retain(message, pointer);
     if (!admitted.ok) return admitted;
     this.diagnostics.push({
       diagnostic_id: identity("cargo_diagnostic", [
@@ -175,12 +227,12 @@ class CargoInventory {
     table: DependencyTable,
     pointer: string,
   ): Result<void, AnalysisError> {
-    const admitted = this.reserve(2048 + pointer.length * 24);
-    if (!admitted.ok) return admitted;
     const declaredBy = table.declaredBy;
     const declaration =
       typeof value === "string" ? { version: value } : record(value);
     if (declaration === undefined) {
+      const admitted = this.retain(key, pointer);
+      if (!admitted.ok) return admitted;
       this.dependencies.push({
         dependency_id: identity("cargo_dependency", [
           this.artifact.sha256,
@@ -214,6 +266,18 @@ class CargoInventory {
         `Dependency "${key}" declares no version, path, git or workspace source.`,
       );
     const packageName = declaration.package;
+    const alias = typeof packageName === "string" ? key : null;
+    const name = typeof packageName === "string" ? packageName : key;
+    const features = stringArray(declaration.features) ?? [];
+    const admitted = this.retain(
+      key,
+      pointer,
+      name,
+      classified.sourceDetail ?? "",
+      classified.requirement ?? "",
+      ...features,
+    );
+    if (!admitted.ok) return admitted;
     this.dependencies.push({
       dependency_id: identity("cargo_dependency", [
         this.artifact.sha256,
@@ -221,19 +285,26 @@ class CargoInventory {
         key,
       ]),
       dependency_key: identity("cargo_dependency_key", [key, table.pointer]),
-      name: typeof packageName === "string" ? packageName : key,
-      alias: typeof packageName === "string" ? key : null,
+      name,
+      alias,
       requirement: classified.requirement,
       source: classified.source,
       source_detail: classified.sourceDetail,
       declared_by: declaredBy,
       optional: declaration.optional === true,
       default_features: declaration["default-features"] !== false,
-      features: stringArray(declaration.features) ?? [],
+      features,
       target: table.target,
       source_pointer: pointer,
     });
-    return ok(undefined);
+    const problems = declarationProblems(declaration);
+    return problems.length === 0
+      ? ok(undefined)
+      : this.diagnostic(
+          "invalid-dependency-declaration",
+          pointer,
+          `Dependency "${key}" declares ${problems.join("; ")}.`,
+        );
   }
 }
 
@@ -244,7 +315,14 @@ const rootFailure = (message: string) =>
     ]),
   );
 
-/** Inventory declarations in one already-parsed manifest; nothing is resolved or executed. */
+/**
+ * Inventory declarations in one already-parsed manifest; nothing is resolved or
+ * executed.
+ */
+// The body walks the manifest's independent optional sections (workspace,
+// package, dependency tables, target tables, features); each section delegates
+// its own semantics, so the length is structural rather than accumulated logic.
+// eslint-disable-next-line max-lines-per-function, complexity
 export const parseCargoManifest = (
   document: unknown,
   artifact: CargoManifestArtifact,
@@ -257,80 +335,157 @@ export const parseCargoManifest = (
   const workspace = record(table.workspace);
   const packageTable = record(table.package);
 
+  if (table.workspace !== undefined && workspace === undefined)
+    return rootFailure("[workspace] is present but is not a table.");
+  if (table.package !== undefined && packageTable === undefined)
+    return rootFailure("[package] is present but is not a table.");
+
   if (packageTable === undefined && workspace === undefined)
     return rootFailure(
       "Manifest declares neither a [package] nor a [workspace] table.",
     );
 
-  const members = stringArray(workspace?.members);
-  const excludes = stringArray(workspace?.excludes);
-  if (workspace !== undefined && members === undefined) {
+  // Members and exclusions are optional in Cargo; only a present wrong type is a
+  // diagnostic. The shipping field is workspace.exclude, singular.
+  const members = stringArray(workspace?.members) ?? [];
+  const excludes = stringArray(workspace?.exclude) ?? [];
+  for (const [field, present] of [
+    ["members", workspace?.members],
+    ["exclude", workspace?.exclude],
+  ] as const)
+    if (present !== undefined && stringArray(present) === undefined) {
+      const recorded = inventory.diagnostic(
+        "invalid-manifest-form",
+        `/workspace/${field}`,
+        `workspace.${field} is not an array of strings.`,
+      );
+      if (!recorded.ok) return recorded;
+    }
+  const workspaceAdmitted = inventory.retain(members, excludes);
+  if (!workspaceAdmitted.ok) return workspaceAdmitted;
+
+  const dependencyTables: DependencyTable[] = [];
+  const collectTables = (
+    container: Record<string, unknown>,
+    prefix: string,
+    target: string | null,
+  ): Result<void, AnalysisError> => {
+    for (const name of DEPENDENCY_TABLES) {
+      const entries = tableFailure(container[name]);
+      if (entries === "absent") continue;
+      if (entries === "malformed")
+        return inventory.diagnostic(
+          "invalid-dependency-table",
+          `${prefix}${name}`,
+          `[${prefix.slice(1)}${name}] is present but is not a table.`,
+        );
+      dependencyTables.push({
+        pointer: `${prefix}${name}`,
+        target,
+        declaredBy: "package",
+        entries,
+      });
+    }
+    return ok(undefined);
+  };
+
+  const rootTables = collectTables(table, "/", null);
+  if (!rootTables.ok) return rootTables;
+
+  const targetField = tableFailure(table.target);
+  if (targetField === "malformed") {
     const recorded = inventory.diagnostic(
-      "invalid-manifest-form",
-      "/workspace/members",
-      "workspace.members is absent or is not an array of strings.",
+      "invalid-dependency-table",
+      "/target",
+      "[target] is present but is not a table.",
     );
     if (!recorded.ok) return recorded;
   }
-  if (
-    workspace !== undefined &&
-    workspace.dependencies !== undefined &&
-    record(workspace.dependencies) === undefined
-  ) {
-    const recorded = inventory.diagnostic(
-      "invalid-dependency-table",
-      "/workspace/dependencies",
-      "workspace.dependencies is not a table.",
-    );
-    if (!recorded.ok) return recorded;
+  if (targetField !== "absent")
+    for (const [condition, value] of Object.entries(targetField)) {
+      const container = record(value);
+      const pointer = `/target/${pointerPart(condition)}/`;
+      if (container === undefined) {
+        const recorded = inventory.diagnostic(
+          "invalid-dependency-table",
+          `/target/${pointerPart(condition)}`,
+          `Target "${condition}" is not a table.`,
+        );
+        if (!recorded.ok) return recorded;
+        continue;
+      }
+      const collected = collectTables(container, pointer, condition);
+      if (!collected.ok) return collected;
+    }
+
+  if (workspace !== undefined) {
+    const inherited = tableFailure(workspace.dependencies);
+    if (inherited === "malformed") {
+      const recorded = inventory.diagnostic(
+        "invalid-dependency-table",
+        "/workspace/dependencies",
+        "workspace.dependencies is not a table.",
+      );
+      if (!recorded.ok) return recorded;
+    } else if (inherited !== "absent")
+      dependencyTables.push({
+        pointer: "/workspace/dependencies",
+        target: null,
+        declaredBy: "workspace",
+        entries: inherited,
+      });
   }
 
   if (packageTable !== undefined) {
     const name = packageTable.name;
     if (typeof name !== "string")
       return rootFailure("[package].name is absent or is not a string.");
-    const admitted = inventory.reserve(2048 + name.length * 24);
+    // `version.workspace = true` and siblings inherit from a parent manifest that
+    // this parser deliberately does not read; carry the intent instead of null.
+    const inheritedSetting = (value: unknown): "inherited" | string | null => {
+      if (typeof value === "string") return value;
+      const nested = record(value);
+      return nested?.workspace === true ? "inherited" : null;
+    };
+    const version = inheritedSetting(packageTable.version);
+    const edition = inheritedSetting(packageTable.edition);
+    const rustVersion = inheritedSetting(packageTable["rust-version"]);
+    const admitted = inventory.retain(
+      name,
+      typeof version === "string" ? version : "",
+      typeof edition === "string" ? edition : "",
+      typeof rustVersion === "string" ? rustVersion : "",
+    );
     if (!admitted.ok) return admitted;
     inventory.packages.push({
       package_id: identity("cargo_package", [artifact.sha256, name]),
       name,
-      version:
-        typeof packageTable.version === "string" ? packageTable.version : null,
-      edition:
-        typeof packageTable.edition === "string" ? packageTable.edition : null,
-      rust_version:
-        typeof packageTable["rust-version"] === "string"
-          ? packageTable["rust-version"]
-          : null,
+      version,
+      edition,
+      rust_version: rustVersion,
       source_pointer: "/package",
       is_workspace_root: workspace !== undefined,
     });
   }
 
-  for (const dependencyTable of dependencyTables(table)) {
+  for (const dependencyTable of dependencyTables)
     for (const [key, value] of Object.entries(dependencyTable.entries)) {
       const pointer = `${dependencyTable.pointer}/${pointerPart(key)}`;
-      const declaration = typeof value === "string" ? undefined : record(value);
-      if (
-        dependencyTable.declaredBy === "package" &&
-        declaration?.workspace === true &&
-        workspace === undefined
-      ) {
-        const recorded = inventory.diagnostic(
-          "workspace-inheritance-without-workspace",
-          pointer,
-          `Dependency "${key}" inherits from a workspace this manifest does not declare.`,
-        );
-        if (!recorded.ok) return recorded;
-      }
       const added = inventory.dependency(key, value, dependencyTable, pointer);
       if (!added.ok) return added;
     }
-  }
 
-  const features = record(table.features);
-  if (features !== undefined)
-    for (const [name, value] of Object.entries(features)) {
+  const featuresField = tableFailure(table.features);
+  if (featuresField === "malformed") {
+    const recorded = inventory.diagnostic(
+      "invalid-feature-table",
+      "/features",
+      "[features] is present but is not a table.",
+    );
+    if (!recorded.ok) return recorded;
+  }
+  if (featuresField !== "absent")
+    for (const [name, value] of Object.entries(featuresField)) {
       const enables = stringArray(value);
       if (enables === undefined) {
         const recorded = inventory.diagnostic(
@@ -341,7 +496,7 @@ export const parseCargoManifest = (
         if (!recorded.ok) return recorded;
         continue;
       }
-      const admitted = inventory.reserve(1024 + name.length * 12);
+      const admitted = inventory.retain(name, enables);
       if (!admitted.ok) return admitted;
       inventory.features.push({
         name,
@@ -358,8 +513,8 @@ export const parseCargoManifest = (
     format: "cargo-toml",
     artifact,
     workspace: {
-      members: members ?? [],
-      excludes: excludes ?? [],
+      members,
+      excludes,
       resolver:
         typeof workspace?.resolver === "string"
           ? workspace.resolver
@@ -402,6 +557,7 @@ export const parseCargoManifest = (
       "Declared requirements are inventoried as written and never resolved against a registry.",
       "Target conditions are recorded as declared and are not evaluated for this host.",
       "Dependency aliases keep the manifest key and the package name apart; neither is verified.",
+      "A `workspace = true` declaration records inheritance without reading the parent workspace.",
     ],
   });
 };

@@ -165,7 +165,9 @@ tokio = { version = "1", package = "tokio-full" }
     });
   });
 
-  it("reports an inheritance declaration that has no workspace to inherit from", () => {
+  it("records an inherited dependency without claiming the workspace is missing", () => {
+    // A workspace member never declares its own [workspace]; the parent manifest is
+    // out of scope, so inheritance is recorded rather than diagnosed as an error.
     const value = required(
       parse(`
 [package]
@@ -176,10 +178,13 @@ version = "0.1.0"
 serde = { workspace = true }
 `),
     );
-    expect(value.diagnostics.map((entry) => entry.code)).toEqual([
-      "workspace-inheritance-without-workspace",
-    ]);
-    expect(value.source_coverage.status).toBe("partial");
+    expect(value.diagnostics).toEqual([]);
+    expect(value.dependencies[0]).toMatchObject({
+      name: "serde",
+      source: "workspace",
+      requirement: null,
+    });
+    expect(value.source_coverage.status).toBe("complete-within-scope");
   });
 
   it("reports a dependency that declares no source instead of inventing one", () => {
@@ -225,6 +230,146 @@ full = ["std", "dep:serde"]
         source_pointer: "/features/full",
       },
     ]);
+  });
+
+  it("keeps a path dependency's version requirement", () => {
+    const value = required(
+      parse(`
+[package]
+name = "demo"
+
+[dependencies]
+helper = { path = "../helper", version = "1.2" }
+`),
+    );
+    expect(value.dependencies[0]).toMatchObject({
+      source: "path",
+      source_detail: "../helper",
+      requirement: "1.2",
+    });
+  });
+});
+
+describe("parseCargoManifest field validation", () => {
+  it("reads the singular workspace.exclude field", () => {
+    const value = required(
+      parse(`
+[package]
+name = "demo"
+
+[dependencies]
+private = { git = "https://user:token@example.test/repo" }
+`),
+    );
+    expect(value.dependencies[0]?.source_detail).toBe(
+      "https://example.test/repo",
+    );
+  });
+
+  it("reads the singular workspace.exclude field", () => {
+    const value = required(
+      parse(`
+[workspace]
+members = ["crates/*"]
+exclude = ["vendor/legacy"]
+`),
+    );
+    expect(value.workspace).toMatchObject({
+      members: ["crates/*"],
+      excludes: ["vendor/legacy"],
+    });
+  });
+
+  it("accepts a workspace that omits members", () => {
+    const value = required(
+      parse(`
+[package]
+name = "demo"
+
+[workspace]
+`),
+    );
+    expect(value.workspace.members).toEqual([]);
+    expect(value.diagnostics).toEqual([]);
+  });
+
+  it("reports a present but malformed dependency table", () => {
+    const value = required(
+      parse(`
+dependencies = ["serde"]
+
+[package]
+name = "demo"
+`),
+    );
+    expect(value.dependencies).toEqual([]);
+    expect(value.diagnostics).toMatchObject([
+      { code: "invalid-dependency-table", source_pointer: "/dependencies" },
+    ]);
+    expect(value.source_coverage.status).toBe("partial");
+  });
+
+  it("reports a malformed dependency field instead of applying a default", () => {
+    const value = required(
+      parse(`
+[package]
+name = "demo"
+
+[dependencies]
+serde = { version = "1", optional = "yes", features = 7 }
+`),
+    );
+    expect(value.dependencies[0]).toMatchObject({
+      name: "serde",
+      optional: false,
+      features: [],
+    });
+    expect(value.diagnostics.map((entry) => entry.code)).toEqual([
+      "invalid-dependency-declaration",
+    ]);
+  });
+
+  it("records inherited package settings instead of dropping them", () => {
+    const value = required(
+      parse(`
+[package]
+name = "demo"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+`),
+    );
+    expect(value.packages[0]).toMatchObject({
+      version: "inherited",
+      edition: "inherited",
+      rust_version: "inherited",
+    });
+  });
+
+  it("reads the pre-2024 dev_dependencies spelling", () => {
+    const value = required(
+      parse(`
+[package]
+name = "demo"
+
+[dev_dependencies]
+criterion = "0.5"
+`),
+    );
+    expect(value.dependencies[0]).toMatchObject({
+      name: "criterion",
+      source_pointer: "/dev_dependencies/criterion",
+    });
+  });
+
+  it("charges retained array contents against the fact allowance", () => {
+    // 2 bytes per retained character: 170 members of 100k characters exceeds 32 MiB.
+    const members = Array.from({ length: 170 }, () => "x".repeat(100_000));
+    const result = parse(`
+[workspace]
+members = [${members.map((m) => `"${m}"`).join(", ")}]
+`);
+    expect(result.ok).toBe(false);
   });
 
   it("rejects a document that is neither a package nor a workspace", () => {
