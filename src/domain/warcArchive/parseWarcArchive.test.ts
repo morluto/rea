@@ -335,7 +335,9 @@ describe("malformed and bounded archives", () => {
       "invalid-header-line",
     );
   });
+});
 
+describe("field validation", () => {
   it("reports a field name that is not a header token", () => {
     // "Bad Name: value" passed the old colon-only check, so the field was
     // dropped without any diagnostic reaching the report.
@@ -347,7 +349,9 @@ describe("malformed and bounded archives", () => {
     );
     expect(archive.summary.malformed_headers).toBeGreaterThan(0);
   });
+});
 
+describe("bounded archives", () => {
   it("names the line ceiling rather than calling a long line truncated", () => {
     const longUri = `http://example.test/${"a".repeat(9000)}`;
     const archive = parsed(
