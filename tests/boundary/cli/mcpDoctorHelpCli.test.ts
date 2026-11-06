@@ -157,6 +157,9 @@ describe("MCP doctor help boundary", () => {
     CLI_INTEGRATION_TIMEOUT_MS,
   );
 
+});
+
+describe("MCP doctor timing boundary", () => {
   workspaceCliTest(
     "reports doctor timing on stderr while preserving JSON output",
     async ({ cli }) => {
