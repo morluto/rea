@@ -421,7 +421,9 @@ const scrubDocument = (
 /**
  * Scrub a seed as `scrubDocument` does; a gzip file's document is scrubbed as
  * the format the state view read it as, then compressed again alike on every
- * host. One that does not decompress within the size decoded ships as captured.
+ * host whether or not it changed, so no file name, comment or time in the
+ * captured header ships. One already so ships as captured, as does one that
+ * does not decompress within the size decoded.
  */
 export const scrubSeed = (
   bytes: Buffer,
@@ -433,7 +435,9 @@ export const scrubSeed = (
   if (!document.ok)
     return { bytes: undefined, holdsIdentity: holdsIdentity(bytes, identity) };
   const scrub = scrubDocument(document.value, seed, identity);
-  return scrub.bytes === undefined
-    ? scrub
-    : { ...scrub, bytes: gzipDeterministic(scrub.bytes) };
+  const shipped = gzipDeterministic(scrub.bytes ?? document.value);
+  return {
+    bytes: shipped.equals(bytes) ? undefined : shipped,
+    holdsIdentity: scrub.holdsIdentity,
+  };
 };

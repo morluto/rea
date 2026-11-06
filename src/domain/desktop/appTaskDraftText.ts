@@ -238,29 +238,30 @@ const recordLike = (value: JsonValue | undefined): boolean =>
   );
 
 /**
- * A tag an app writes a run of formatted text in, inside a paragraph: ODF's
- * `text:span`, `text:a` and `text:s`, AbiWord's `c`, SVG's `tspan`, HTML's
- * `b` or `em`, Word's `w:r` and `w:t`.
+ * A tag naming a paragraph or other piece of text, whose element children are
+ * runs of it: AbiWord's, HTML's and Word's `p` (`w:p`), ODF's `text:p` and
+ * `text:h`, HTML's `h1` to `h6` and `li`, DocBook's `para`, and SVG's `text`
+ * and `tspan`, or a span or link holding further runs. Compared as written,
+ * so MuseScore's `Text`, a record of `<style>` and `<text>`, is none.
  */
-const RUN_TAG =
-  /^(?:span|a|s|c|tspan|tab|line-break|soft-page-break|br|b|i|u|em|strong|sub|sup|small|font|mark|code|q|r|t|run|hyperlink|link)$/u;
-
-const isRunTag = (tag: string) =>
-  RUN_TAG.test((tag.split(":").at(-1) ?? tag).toLowerCase());
+const TEXT_TAG = /^(?:p|h|h[1-6]|para|simpara|li|text|tspan|span|a)$/u;
 
 /**
- * Whether an element holds fields: only elements, layout whitespace aside, of
- * two tags or more, none a run of text, as Tellico's `<entry>` holds
- * `<title>` and `<publisher>`, unlike a paragraph made of runs such as
- * Writer's `<text:span>` and `<text:a>`, whose text is one text.
+ * Whether an element holds fields: only elements, layout whitespace aside, as
+ * Tellico's `<entry>` holds `<title>` and `<publisher>`, or a record holds
+ * repeated `<field>` elements, whatever they are called; unless it is text
+ * made of runs: its tag names a paragraph or other text (`TEXT_TAG`), or a
+ * child's text opens or closes with whitespace, as a sentence splits into
+ * runs, `Meet ` and a linked `Monday`, where a field holds a value whole.
  */
-export const holdsFields = (value: JsonValue | undefined): boolean => {
-  if (!recordLike(value) || !isXmlElement(value)) return false;
-  const tags = value.children.flatMap((child) =>
-    isXmlElement(child) ? [child.name] : [],
-  );
-  return new Set(tags).size > 1 && !tags.some(isRunTag);
-};
+export const holdsFields = (value: JsonValue | undefined): boolean =>
+  recordLike(value) &&
+  isXmlElement(value) &&
+  !TEXT_TAG.test(value.name.split(":").at(-1) ?? value.name) &&
+  !value.children.some((child) => {
+    const text = isXmlElement(child) ? elementText(child) : "";
+    return text.trim() !== "" && text.trim() !== text;
+  });
 
 /**
  * Whether the kept ancestor of a record added or removed whole is a list of

@@ -10,6 +10,8 @@ MAX_ZIP_ENTRY_BYTES = 16 * 1024 * 1024
 MAX_ZIP_BYTES = 64 * 1024 * 1024
 MAX_ZIP_RATIO = 100
 ZIP_READ_CHUNK = 64 * 1024
+#: Small, since the end of each gzip member copies what is left of the piece it was read from.
+GZIP_READ_CHUNK = 4 * 1024
 ZIP_END = b"PK\x05\x06"
 ZIP_CENTRAL = b"PK\x01\x02"
 ZIP64_LOCATOR = b"PK\x06\x07"
@@ -232,19 +234,27 @@ def _zip(file, size: int) -> dict:
 
 def _gunzip(data: bytes, limit: int):
     """A gzip stream's document, its members joined as REA joins them, or None once it passes limit bytes, where
-    decompressing stops: data after a member that starts with a zero byte is padding and ends the stream. Raises
-    zlib.error or EOFError when the stream is damaged or cut short."""
-    document, rest = bytearray(), data
+    decompressing stops: data after a member that starts with a zero byte is padding and ends the stream. It is read
+    a piece at a time, so a member's end carries over only the rest of its piece. Raises zlib.error or EOFError when
+    the stream is damaged or cut short."""
+    document, member, rest, at = bytearray(), zlib.decompressobj(16 + zlib.MAX_WBITS), b"", 0
     while True:
-        member = zlib.decompressobj(16 + zlib.MAX_WBITS)
+        if not rest:
+            if at >= len(data):
+                raise EOFError("the gzip stream is cut short")
+            rest, at = data[at:at + GZIP_READ_CHUNK], at + GZIP_READ_CHUNK
         document += member.decompress(rest, limit + 1 - len(document))
         if len(document) > limit:
             return None
         if not member.eof:
-            raise EOFError("the gzip stream is cut short")
+            rest = member.unconsumed_tail
+            continue
         rest = member.unused_data
+        if not rest and at < len(data):
+            rest, at = data[at:at + GZIP_READ_CHUNK], at + GZIP_READ_CHUNK
         if not rest or rest[0] == 0:
             return bytes(document)
+        member = zlib.decompressobj(16 + zlib.MAX_WBITS)
 
 
 def _gzip(name: str, data: bytes) -> dict:

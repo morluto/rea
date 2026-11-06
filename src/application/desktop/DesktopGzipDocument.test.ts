@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import type { DesktopApplicationCapture } from "../../domain/desktop/desktopCapture.js";
 import { desktopApplicationStateSchema } from "../../domain/desktop/desktopState.js";
+import { openStateDocument } from "../../domain/desktop/gzipDocument.js";
 import { exportDesktopApplication } from "./DesktopApplicationExport.js";
 import { inspectDesktopApplicationState } from "./DesktopApplicationState.js";
 import { draftDesktopApplicationTask } from "./DesktopTaskDraft.js";
@@ -25,13 +26,15 @@ const SEED = "envs/notes/seed/Documents/Budget.gnumeric";
 const CELLS =
   "/root/children/[name=gnm:Sheets]/children/[name=gnm:Sheet]/children/[name=gnm:Cells]/children";
 
-/** A Gnumeric workbook's XML with its rent and author as given. */
+/** A Gnumeric workbook's XML with its rent, author and any comment as given. */
 const workbook = (
   rent: string,
   author: string,
+  comment = "",
 ) => `<?xml version="1.0" encoding="UTF-8"?>
 <gnm:Workbook xmlns:gnm="http://www.gnumeric.org/v10.dtd">
   <gnm:Summary><gnm:Item><gnm:name>author</gnm:name><gnm:val-string>${author}</gnm:val-string></gnm:Item></gnm:Summary>
+  <gnm:Comment>${comment}</gnm:Comment>
   <gnm:Sheets><gnm:Sheet><gnm:Name>Budget</gnm:Name><gnm:Cells>
     <gnm:Cell Row="0" Col="0" ValueType="60">Rent</gnm:Cell>
     <gnm:Cell Row="0" Col="1" ValueType="40">${rent}</gnm:Cell>
@@ -44,9 +47,9 @@ const workbook = (
  * saved before and after the user changed the rent and set the author to the
  * value the scrub writes, each save made by `save`.
  */
-const budgetCapture = (save: (text: string) => Buffer) => {
-  const before = save(workbook("1200", `ada@${HOSTNAME}`));
-  const after = save(workbook("1350", "user@localhost"));
+const budgetCapture = (save: (text: string) => Buffer, comment = "") => {
+  const before = save(workbook("1200", `ada@${HOSTNAME}`, comment));
+  const after = save(workbook("1350", "user@localhost", comment));
   const base = capture();
   const [first, second] = base.state.checkpoints;
   if (first === undefined || second === undefined) throw new Error("fixture");
@@ -94,6 +97,43 @@ const draftOf = async (folder: string) => {
   return drafted.normalized_result;
 };
 
+/** Export the capture with a task that checks the rent and the author the scrub writes. */
+const exportBudget = async (folder: string) => {
+  const scratch = await createTestTempDirectory("desktop-gzip-task-");
+  const task = join(scratch, "task.json");
+  const directory = join(scratch, "bundle");
+  await writeFile(
+    task,
+    JSON.stringify({
+      name: "rent",
+      prompt: "Set the rent to 1350 in my budget and save it.",
+      checks: [
+        {
+          id: "rent",
+          kind: "value_equals",
+          file: BUDGET,
+          pointer: `${CELLS}/[name=gnm:Cell][@Row=0][@Col=1]/children/0`,
+          value: "1350",
+        },
+        {
+          id: "author",
+          kind: "text_equals",
+          file: BUDGET,
+          pointer:
+            "/root/children/[name=gnm:Summary]/children/[name=gnm:Item]/children/[name=gnm:val-string]",
+          value: "user@localhost",
+        },
+      ],
+    }),
+  );
+
+  const result = await exportDesktopApplication(
+    { capture: folder, directory, name: undefined, tasks: [task] },
+    readers,
+  );
+  return { result, directory };
+};
+
 describe("documents saved gzip-compressed", () => {
   it("reads each version as the XML inside, the view the same workbook has uncompressed, and records the compression", async () => {
     const compressed = await budgetState(await budgetCapture(gzipped));
@@ -131,42 +171,8 @@ describe("documents saved gzip-compressed", () => {
   });
 
   it("ships the seed scrubbed inside and still gzip, copied as it is at boot, and checks the seed as shipped", async () => {
-    const scratch = await createTestTempDirectory("desktop-gzip-task-");
-    const task = join(scratch, "task.json");
-    const directory = join(scratch, "bundle");
-    await writeFile(
-      task,
-      JSON.stringify({
-        name: "rent",
-        prompt: "Set the rent to 1350 in my budget and save it.",
-        checks: [
-          {
-            id: "rent",
-            kind: "value_equals",
-            file: BUDGET,
-            pointer: `${CELLS}/[name=gnm:Cell][@Row=0][@Col=1]/children/0`,
-            value: "1350",
-          },
-          {
-            id: "author",
-            kind: "text_equals",
-            file: BUDGET,
-            pointer:
-              "/root/children/[name=gnm:Summary]/children/[name=gnm:Item]/children/[name=gnm:val-string]",
-            value: "user@localhost",
-          },
-        ],
-      }),
-    );
-
-    const result = await exportDesktopApplication(
-      {
-        capture: await budgetCapture(gzipped),
-        directory,
-        name: undefined,
-        tasks: [task],
-      },
-      readers,
+    const { result, directory } = await exportBudget(
+      await budgetCapture(gzipped),
     );
 
     if (result instanceof Error) throw result;
@@ -188,5 +194,25 @@ describe("documents saved gzip-compressed", () => {
     expect(module).toContain(
       'TEXT_SEEDS = frozenset([".config/notes/settings.ini"])',
     );
+  });
+
+  it("keeps a seed the app stored uncompressed readable once scrubbed, where deflating it would pass the 100 times a view reads", async () => {
+    const stored = (text: string) => gzipSync(text, { level: 0 });
+    const comment = "x".repeat(60_000);
+
+    const { result, directory } = await exportBudget(
+      await budgetCapture(stored, comment),
+    );
+
+    if (result instanceof Error) throw result;
+    expect(result.normalized_result).toMatchObject({
+      task: { failing_on_seed: ["rent"] },
+    });
+    const shipped = await readFile(join(directory, SEED));
+    expect(openStateDocument(BUDGET, shipped)).toMatchObject({
+      format: "xml",
+      compression: "gzip",
+    });
+    expect(openStateDocument(BUDGET, shipped)).not.toHaveProperty("error");
   });
 });

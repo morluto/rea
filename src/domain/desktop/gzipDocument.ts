@@ -43,11 +43,28 @@ export const gunzip = (
   }
 };
 
-/** Bytes gzip-compressed alike on every host: no file name, modification time 0 and the operating system unknown. */
-export const gzipDeterministic = (bytes: Uint8Array): Buffer => {
-  const compressed = gzipSync(bytes);
+/** The most a gzip file of `size` bytes may expand to for its view to read it: an archive entry's size and ratio limits. */
+const readLimit = (size: number): number =>
+  Math.min(MAX_ZIP_ENTRY_BYTES, MAX_ZIP_RATIO * size);
+
+/** Bytes gzip-compressed at `level` alike on every host: no file name, comment or extra field, modification time 0 and the operating system unknown. */
+const gzipAt = (bytes: Uint8Array, level: number): Buffer => {
+  const compressed = gzipSync(bytes, { level });
   compressed[9] = UNKNOWN_OS;
   return compressed;
+};
+
+/**
+ * A document gzip-compressed alike on every host, at the fastest level, or
+ * stored when deflating would make it expand past the ratio a view reads, so
+ * a document within an entry's size still reads.
+ */
+export const gzipDeterministic = (document: Uint8Array): Buffer => {
+  const deflated = gzipAt(document, 1);
+  return document.length > readLimit(deflated.length) &&
+    document.length <= MAX_ZIP_ENTRY_BYTES
+    ? gzipAt(document, 0)
+    : deflated;
 };
 
 /** A file's document, its format detected, and the compression undone to read it; or why a gzip file's is not read. */
@@ -79,10 +96,7 @@ export const openStateDocument = (
   bytes: Uint8Array,
 ): StateDocument => {
   if (!isGzip(bytes)) return { format: detectStateFormat(path, bytes), bytes };
-  const inner = gunzip(
-    bytes,
-    Math.min(MAX_ZIP_ENTRY_BYTES, MAX_ZIP_RATIO * bytes.length),
-  );
+  const inner = gunzip(bytes, readLimit(bytes.length));
   if (!inner.ok)
     return {
       format: null,

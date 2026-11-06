@@ -288,10 +288,15 @@ export removes them from what the bundle ships:
   `localhost` is the name every host has for itself.
 - A gzip-compressed seed, such as a Gnumeric workbook, is decompressed, up to
   256 MiB, scrubbed as the format the state view read its document as, and
-  compressed again with no file name, modification time 0 and the operating
-  system unknown, so the same seed gives the same bytes on every host. The
-  class copies it at boot as it is, so the home it holds stays `/home/user`.
-  One that does not decompress ships as captured, and one the state view did
+  compressed again whether or not its document changed, so no file name,
+  comment or time its header held ships: with no file name, comment or extra
+  field, modification time 0 and the operating system unknown, so the same
+  document gives the same bytes on every host. It is deflated at the fastest
+  level, or stored when deflating would make it expand more than the 100 times
+  a view reads, so a seed that read still reads. It is listed in
+  `scrubbed_files` unless it was already in that form. The class copies it at
+  boot as it is, so the home it holds stays `/home/user`. One that does not
+  decompress ships as captured, its bytes searched, and one the state view did
   not read is only searched.
 - Binary files, SQLite databases among them, and text files over 256 MiB are
   copied as captured. Then every file the bundle ships, the class module with
