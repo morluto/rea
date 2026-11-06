@@ -3,25 +3,32 @@ import type { DesktopTaskCheckInput } from "./appTask.js";
 import { elementText, isXmlElement } from "./appTaskChecks.js";
 import {
   isRenumberedKey,
+  isSplitDate,
   isStamp,
-  isViewStateName,
   isVolatileValue,
 } from "./appTaskDraftNoise.js";
 import { valueEqualsCheck } from "./appTaskDraftScalars.js";
-import { isIdentifyingAttribute, rankAttributes } from "./attributeRank.js";
-import { escapeToken, resolvePointer } from "./viewPointer.js";
+import { holdsFields, recordLike, wholeTextCheck } from "./appTaskDraftText.js";
+import {
+  isIdentifyingAttribute,
+  isViewStateName,
+  rankAttributes,
+} from "./attributeRank.js";
+import { escapeToken, pairMembers, resolvePointer } from "./viewPointer.js";
 
 type Suggestion = DesktopTaskCheckInput;
 
 /** Attributes of an added element checked one by one, and new fields of an added record. */
 const MAX_ATTRIBUTE_CHECKS = 6;
 const MAX_FIELD_CHECKS = 5;
+/** A field that repeats its record's identifier, as Tellico's `<id>`, which the app numbers. */
+const ID_FIELD = /^(?:[^:]*:)?x?id$/iu;
 /** The fewest attributes a sibling must share for an added element to count as its copy: one alone may match by chance. */
 const MIN_COPIED = 2;
 /** The shortest field text checked: shorter text is too likely to be found elsewhere. */
 const MIN_FIELD_CHARS = 3;
 
-/** What checks of an element added whole read: the file, its two ends, and whether a check is decided by name there. */
+/** What checks of an element added whole read: the file, its two ends, whether a check is decided by name there, and the longest text a check compares. */
 export interface AddedContext {
   readonly file: string;
   readonly ends: {
@@ -29,6 +36,7 @@ export interface AddedContext {
     readonly final: JsonValue | null;
   };
   readonly named: (view: JsonValue | null, pointer: string) => boolean;
+  readonly chars: number;
 }
 
 type Element = Extract<JsonValue, Record<string, JsonValue>> & {
@@ -142,15 +150,6 @@ export const attributeChecks = (
     );
 };
 
-/** Whether an element holds only elements, as a record holds its fields, layout whitespace aside. */
-const recordLike = (element: Element) =>
-  element.children.some((child) => isXmlElement(child)) &&
-  element.children.every(
-    (child) =>
-      isXmlElement(child) ||
-      (typeof child === "string" && /^[ \t\r\n]*$/u.test(child)),
-  );
-
 /** The nearest ancestor both ends hold that a check names without a step by position. */
 const keptNamedAncestor = (context: AddedContext, pointer: string) => {
   const { ends } = context;
@@ -206,4 +205,57 @@ export const fieldChecks = (
     )
     .slice(0, MAX_FIELD_CHECKS)
     .map((value) => ({ kind: "text_contains", file, pointer: at, value }));
+};
+
+/**
+ * A check per field of a record added whole to a list that a selector names,
+ * as Tellico adds an `<entry id="4">` of `<title>`, `<authors>`, `<publisher>`
+ * and `<pub_year>`: each child element a selector names among the record's
+ * children, by its whole text as `wholeTextCheck` checks one, at most five;
+ * leaving out a field repeating the record's identifier, a date the app
+ * stamps in parts, and text that is blank, a time, a volatile value or past
+ * the limit. Empty for an element that `holdsFields` says is no record, or
+ * that has no like sibling.
+ */
+export const recordChecks = (
+  context: AddedContext,
+  pointer: string,
+  element: Element,
+): Suggestion[] => {
+  const { ends, file } = context;
+  if (
+    !holdsFields(element) ||
+    (likeCount(ends.final, pointer, element.name) < 2 &&
+      likeCount(ends.baseline, pointer, element.name) === 0)
+  )
+    return [];
+  const { keys } = pairMembers(element.children, []).newer;
+  return element.children
+    .flatMap((field, index) => {
+      const key = keys[index] ?? "";
+      const at = `${pointer}/children/${escapeToken(key)}`;
+      if (
+        !isXmlElement(field) ||
+        !key.startsWith("[") ||
+        ID_FIELD.test(field.name) ||
+        isSplitDate(field) ||
+        !context.named(ends.final, at)
+      )
+        return [];
+      const value = elementText(field);
+      return value.trim() === "" ||
+        value.length > context.chars ||
+        isStamp(value) ||
+        isVolatileValue(value)
+        ? []
+        : [
+            wholeTextCheck(
+              file,
+              at,
+              { value, children: field.children },
+              undefined,
+            ).check,
+          ];
+    })
+    .slice(0, MAX_FIELD_CHECKS);
 };

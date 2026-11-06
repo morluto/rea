@@ -109,9 +109,11 @@ const isArchiveEntry = (value: JsonValue): value is Record<string, JsonValue> =>
 
 /**
  * A value as an author reads it: a scalar as it is, cut past `max`
- * characters; an element as compact XML without layout whitespace; an archive
- * entry as its name, format and size; anything else as JSON. Writing stops
- * once past `max`, so a large subtree costs no more than the cut.
+ * characters; an element as compact XML, with every text node the XML reader
+ * kept, which already leaves out the whitespace an app lays out between
+ * elements; an archive entry as its name, format and size; anything else as
+ * JSON. Writing stops once past `max`, so a large subtree costs no more than
+ * the cut.
  */
 export const compactValue = (
   value: JsonValue | undefined,
@@ -134,9 +136,7 @@ export const compactValue = (
       return (
         push(`${start}>`) &&
         node.children.every((child) =>
-          typeof child === "string"
-            ? /^[ \t\r\n]*$/u.test(child) || push(escapeText(child))
-            : write(child),
+          typeof child === "string" ? push(escapeText(child)) : write(child),
         ) &&
         push(`</${node.name}>`)
       );
@@ -174,18 +174,49 @@ export const compactValue = (
   return cut(parts.join(""), max);
 };
 
-/** XML elements by the value of their `key` or `id` attribute, across a view. */
+/** The longest value a reference is resolved from. */
+const MAX_REFERENCE_CHARS = 64;
+
+/** Whether a value is one a reference is resolved from: not blank, and no longer than `MAX_REFERENCE_CHARS`. */
+const referable = (value: string) =>
+  value.trim() !== "" && value.length <= MAX_REFERENCE_CHARS;
+
+/**
+ * Elements of a tag a value's list keeps: enough to tell one other element
+ * from several when the element reading the value is among them.
+ */
+const PER_TAG = 3;
+
+/** Add an element to a value's list under its tag, while that holds fewer than `PER_TAG`. */
+const indexUnder = (
+  index: Map<string, Map<string, JsonValue[]>>,
+  value: string,
+  node: JsonValue & { readonly name: string },
+) => {
+  const byTag = index.get(value) ?? new Map<string, JsonValue[]>();
+  index.set(value, byTag);
+  const tagged = byTag.get(node.name) ?? [];
+  byTag.set(node.name, tagged);
+  if (tagged.length < PER_TAG && !tagged.includes(node)) tagged.push(node);
+};
+
+/**
+ * XML elements by the value of their `key` or `id` attribute, across a view,
+ * and by tag: at most `PER_TAG` of a tag in document order, so a key that
+ * records or archive entries repeat costs no more than that.
+ */
 const referenceIndex = (view: JsonValue | null) => {
-  const index = new Map<string, JsonValue[]>();
+  const index = new Map<string, Map<string, JsonValue[]>>();
   const pending: JsonValue[] = [view];
   for (let node = pending.pop(); node !== undefined; node = pending.pop()) {
     if (isXmlElement(node))
       for (const [key, value] of Object.entries(attributesOf(node)))
         if (
           typeof value === "string" &&
+          referable(value) &&
           /^(?:key|id)$/iu.test(key.split(":").at(-1) ?? key)
         )
-          index.set(value, [...(index.get(value) ?? []), node]);
+          indexUnder(index, value, node);
     const children = isXmlElement(node)
       ? node.children
       : Array.isArray(node)
@@ -212,14 +243,18 @@ const stemOf = (attribute: string, tag: string) => {
 };
 
 /** What a value a pointer reads names: the one other element whose `key` or `id` it equals, or, among several, the one whose tag shares the attribute's stem. */
-const referencesFrom = (index: ReadonlyMap<string, JsonValue[]>) => {
+const referencesFrom = (
+  index: ReadonlyMap<string, ReadonlyMap<string, readonly JsonValue[]>>,
+) => {
   const resolve = (
     value: string,
     attribute: string | undefined,
     self: JsonValue | undefined,
   ): ValueReference | undefined => {
-    if (value.trim() === "" || value.length > 64) return undefined;
-    const found = (index.get(value) ?? []).filter((node) => node !== self);
+    if (!referable(value)) return undefined;
+    const found = [...(index.get(value)?.values() ?? [])]
+      .flat()
+      .filter((node) => node !== self);
     const hinted =
       found.length === 1 || attribute === undefined
         ? found
@@ -378,6 +413,34 @@ export const draftValues = (
     change.removed.length === change.removed_count;
   return { values, cut: values.length < entries.length || !listedAll };
 };
+
+/**
+ * A change from nothing to a file created, or from a file deleted to nothing,
+ * as only what its one end holds: added or removed. Against nothing, a
+ * container's own entry changing says no more than that.
+ */
+export const oneEnd = <
+  Change extends Pick<
+    DesktopStateDifference,
+    | "added"
+    | "changed"
+    | "removed"
+    | "added_count"
+    | "changed_count"
+    | "removed_count"
+  >,
+>(
+  change: Change,
+  created: boolean,
+): Change => ({
+  ...change,
+  added: created ? change.added : [],
+  added_count: created ? change.added_count : 0,
+  removed: created ? [] : change.removed,
+  removed_count: created ? 0 : change.removed_count,
+  changed: [],
+  changed_count: 0,
+});
 
 /** Values of files in order, kept while the draft's whole list stays within `VALUE_LIMITS.draftBytes`. */
 export const withinDraftBudget = <
