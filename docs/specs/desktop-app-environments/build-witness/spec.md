@@ -180,7 +180,13 @@ and the recording and writes the record as Evidence.
   `log.<n>` and files under a `logs` folder with their `.lck` or `.lock`,
   are left out of the seed and listed apart from the lock files, since
   Freeplane's and QElectroTech's recorded the capture host's kernel, CPU,
-  memory and disk sizes; a document or a path selected itself is seeded.
+  memory and disk sizes; a document or a path selected itself is seeded,
+  and so is a database's journal of saved writes: a `*.log` in browser
+  storage, under a `leveldb` folder, or numbered beside a LevelDB
+  database's `CURRENT` or `MANIFEST-*`. LibreOffice's recovery list items
+  are found with the shared XML parser and cut by their source ranges, so
+  quoting, spacing, comments and CDATA cannot fool the match, and a
+  registry that is not well-formed ships unchanged.
 - The witness reads the build computer's bounded action log: its stage rules
   use the log's count and the last applied action of each kind, and the
   record holds the entries the log keeps, `actions_dropped`, and a

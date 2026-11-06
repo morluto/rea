@@ -227,8 +227,12 @@ disk sizes, and no app needs its old log to start. A log is a file named
 `.lock` beside such a file, that is in the app's own state: application state
 in the state view, or under one of its state directories. A document or a path
 named itself by `--state-path` is seeded even when it ends in `.log`, since a
-user's own log may be the document. A limitation and the README list them
-apart from the lock files, after "Left out of the seed".
+user's own log may be the document, and so is a database's journal of saved
+writes: a `*.log` in WebKit or Chromium storage (such as
+`Local Storage/leveldb/000003.log`), under a `leveldb` folder, or numbered
+(`000005.log`) beside a LevelDB database's `CURRENT` or `MANIFEST-*`. A
+limitation and the README list the logs left out apart from the lock files,
+after "Left out of the seed".
 
 Other seed files the app keeps for its own
 running are seeded as captured and named, collapsed to the folder that holds
@@ -240,7 +244,11 @@ can change how the app starts. A seeded LibreOffice profile's
 `registrymodifications.xcu` ships without its `RecoveryList` items, which
 LibreOffice writes for the documents it has open and which would start the
 bundle into document recovery instead of its window; a limitation and the
-README name the file.
+README name the file. REA finds the items with its XML parser, as `item`
+elements whose `oor:path` is `/org.openoffice.Office.Recovery/RecoveryList`
+however the tags are spelled, and cuts exactly those elements, so text in a
+comment or CDATA and every other byte stay as captured. A registry that is
+not well-formed XML ships unchanged.
 
 The application's dconf keys at the seed, if any, are written once when the
 app first starts, also for an application that owns no files, and the class adds

@@ -1,10 +1,18 @@
+import { xmlElementRanges } from "../xmlDocument.js";
+
 /** LibreOffice's profile registry, where it lists the documents it has open while it runs. */
 const REGISTRY = "registrymodifications.xcu";
-/** One recovery list item: seeded, it starts LibreOffice into document recovery instead of its window. */
-const RECOVERY_ITEM =
-  /<item oor:path="\/org\.openoffice\.Office\.Recovery\/RecoveryList">[\s\S]*?<\/item>\n?/gu;
+/** The namespace of the registry's `oor:` attributes. */
+const REGISTRY_NAMESPACE = "http://openoffice.org/2001/registry";
+/** The path of a recovery list item: seeded, it starts LibreOffice into document recovery instead of its window. */
+const RECOVERY_LIST = "/org.openoffice.Office.Recovery/RecoveryList";
 
-/** A seed's bytes without LibreOffice's recovery list items, or undefined when it holds none. */
+/**
+ * A seed's bytes without LibreOffice's recovery list items, each `item`
+ * element whose `oor:path` is the recovery list, found by the XML parser and
+ * cut from the source with every other byte kept; undefined when it holds
+ * none, or when it is not well-formed XML, which ships as captured.
+ */
 export const withoutRecoveryList = (
   home: string,
   bytes: Buffer,
@@ -18,8 +26,22 @@ export const withoutRecoveryList = (
   } catch {
     return undefined;
   }
-  const kept = text.replace(RECOVERY_ITEM, "");
-  return kept === text ? undefined : Buffer.from(kept, "utf8");
+  const items = xmlElementRanges(
+    text,
+    (element) =>
+      element.uri === "" &&
+      element.local === "item" &&
+      element.attribute(REGISTRY_NAMESPACE, "path") === RECOVERY_LIST,
+    { doctype: "reject" },
+  );
+  if (!items.ok || items.value.length === 0) return undefined;
+  let kept = "";
+  let from = 0;
+  for (const { start, end } of items.value) {
+    kept += text.slice(from, start);
+    from = end;
+  }
+  return Buffer.from(kept + text.slice(from), "utf8");
 };
 
 /** The limitation naming seeds whose recovery list the export left out, as `~/<path>`; none when there are none. */

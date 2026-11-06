@@ -485,6 +485,25 @@ change and passes now.
   and the README list them apart from the lock files; a selected `notes.log`
   in the state directory and a document `build.log` are seeded.
 
+## Database journals and the recovery list's XML
+
+Run on macOS with source tests and gates. Each test below failed before the
+change and passes now, except the parser's own range test, which is new
+with the function.
+
+- `appExportUnowned.test.ts`, `DesktopApplicationExport.test.ts`:
+  `Local Storage/leveldb/000003.log`, a `000007.log` under a `leveldb`
+  folder and a `000005.log` beside `CURRENT` or `MANIFEST-*` are seeded;
+  Freeplane's and QElectroTech's logs and a numbered log with no LevelDB
+  beside it are still left out.
+- `seedRecoveryList.test.ts`: recovery list items with single quotes, extra
+  whitespace and another prefix for the registry's namespace are cut, with
+  every other byte kept; the same text in a comment or CDATA is kept; a
+  registry that is not well-formed ships unchanged.
+- `xmlDocument.test.ts`: element ranges run from the start tag's `<` to the
+  element's last `>` through CRLF and astral characters, the outermost
+  picked element only, and a malformed source is refused.
+
 ## Limits of this verification
 
 - The witness acts were scripted by this agent from the task's prompt; no
