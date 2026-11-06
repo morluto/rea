@@ -63,7 +63,9 @@ operation `describe_desktop_application_task` and predicate type
   goes up from an element sitting in its parent's text, and from one named by
   its tag or position alone to the nearest ancestor named by an attribute, as
   AbiWord's `p` by its `xid`; the text nodes and runs inside it get no other
-  check. Whitespace an app lays out between elements is not checked, and
+  check, but an element holding no text that is added or removed there, such
+  as an image or a line break, keeps its own, since the text check never
+  reads it. Whitespace an app lays out between elements is not checked, and
   values that look like a time the app stamps, in ISO 8601 or as C's
   `asctime` writes it (`Thu Nov  5 09:20:31 2026`), are left out.
 - `notes`: why `files` is empty, or nothing when it is not. Each note has a
