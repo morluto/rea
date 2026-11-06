@@ -8,8 +8,10 @@ import { zipArchive } from "../../../src/domain/desktop/zipArchive.fixture.js";
 import {
   expectSameCheckResults,
   expectSameFileViews,
+  exportedPython,
   savedEnds,
   typescriptFileView,
+  writeFiles,
 } from "../../support/desktopExportPython.js";
 
 const MIB = 1024 * 1024;
@@ -112,6 +114,30 @@ describe("gzip files in the exported module", () => {
       [null, "larger than the 16 MiB a compressed document's view reads"],
     ]);
     expect(views.every(({ compression }) => compression === "gzip")).toBe(true);
+  });
+
+  it("reads a stream of many members a piece at a time, so the end of each copies no more than that piece", async () => {
+    // 80,000 empty members: no output, so neither limit stops the read.
+    const empty = gzipSync(Buffer.alloc(0));
+    const file = {
+      name: "notes",
+      bytes: Buffer.concat(Array.from({ length: 80_000 }, () => empty)),
+    };
+    await expectSameFileViews([file]);
+
+    const { size, peak } = JSON.parse(
+      exportedPython(
+        `import tracemalloc
+data = Path(json.load(sys.stdin)[0]).read_bytes()
+tracemalloc.start()
+size = len(_gunzip(data, MAX_ZIP_ENTRY_BYTES))
+print(json.dumps({"size": size, "peak": tracemalloc.get_traced_memory()[1]}))`,
+        await writeFiles([file]),
+      ),
+    ) as { size: number; peak: number };
+
+    expect(size).toBe(0);
+    expect(peak).toBeLessThan(256 * 1024);
   });
 
   it("fails a check into a gzip file it did not read, undecided in REA, alike in both", async () => {

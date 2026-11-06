@@ -2,6 +2,7 @@ import { gunzipSync, gzipSync } from "node:zlib";
 
 import { describe, expect, it } from "vitest";
 
+import { openStateDocument } from "./gzipDocument.js";
 import { SEED_HOME, type HostIdentity } from "./hostIdentity.js";
 import { scrubDconf, scrubSeed } from "./seedScrub.js";
 import { detectStateFormat } from "./stateFormats.js";
@@ -335,15 +336,20 @@ url='http://\u006581232be457d.local/'
 });
 
 describe("scrubSeed on gzip files", () => {
+  const XML = (author: string) =>
+    `<?xml version="1.0" encoding="UTF-8"?>\n<gnm:Workbook xmlns:gnm="http://www.gnumeric.org/v10.dtd"><gnm:Summary><gnm:Item><gnm:name>author</gnm:name><gnm:val-string>${author}</gnm:val-string></gnm:Item></gnm:Summary></gnm:Workbook>\n`;
   /** A Gnumeric workbook gzip-compressed with a file name and modification time in its header, as gzip(1) writes one. */
-  const workbook = (author: string) =>
+  const workbook = (author: string, name = "Budget.gnumeric") =>
     Buffer.concat([
       Buffer.from([0x1f, 0x8b, 8, 8, 0x10, 0x20, 0x30, 0x40, 0, 3]),
-      Buffer.from("Budget.gnumeric\0"),
-      gzipSync(
-        `<?xml version="1.0" encoding="UTF-8"?>\n<gnm:Workbook xmlns:gnm="http://www.gnumeric.org/v10.dtd"><gnm:Summary><gnm:Item><gnm:name>author</gnm:name><gnm:val-string>${author}</gnm:val-string></gnm:Item></gnm:Summary></gnm:Workbook>\n`,
-      ).subarray(10),
+      Buffer.from(`${name}\0`),
+      gzipSync(XML(author)).subarray(10),
     ]);
+  /** A gzip header's magic, method, flags and modification time, and its operating system. */
+  const header = (bytes: Buffer | undefined) =>
+    bytes === undefined ? undefined : [...bytes.subarray(0, 8), bytes[9]];
+  /** Deflate, no flags (so no file name, comment or extra field), modification time 0 and the operating system unknown. */
+  const DETERMINISTIC = [0x1f, 0x8b, 8, 0, 0, 0, 0, 0, 0xff];
 
   it("scrubs the document inside as its format and compresses it again with no name or time", () => {
     const outcome = scrubSeed(
@@ -352,39 +358,66 @@ describe("scrubSeed on gzip files", () => {
       GEANY,
     );
 
-    const bytes = outcome.bytes ?? Buffer.alloc(0);
     expect(outcome.holdsIdentity).toBe(false);
-    // Magic and deflate, no flags (so no file name), mtime 0, any extra flags, and the operating system unknown.
-    expect([...bytes.subarray(0, 8), bytes[9]]).toEqual([
-      0x1f, 0x8b, 8, 0, 0, 0, 0, 0, 0xff,
-    ]);
-    expect(gunzipSync(bytes).toString("utf8")).toContain(
-      `<gnm:val-string>user@localhost in ${SEED_HOME}/Documents</gnm:val-string>`,
+    expect(header(outcome.bytes)).toEqual(DETERMINISTIC);
+    expect(gunzipSync(outcome.bytes ?? Buffer.alloc(0)).toString("utf8")).toBe(
+      XML(`user@localhost in ${SEED_HOME}/Documents`),
     );
   });
 
-  it("reports the identity in the document inside where the scrub leaves it, and ships a clean one as captured", () => {
+  it("compresses again a seed whose document needs no edit, so the host name its header holds does not ship, and ships one already so as captured", () => {
+    const outcome = scrubSeed(
+      workbook("x", "e81232be457d-budget.gnumeric"),
+      seed("xml"),
+      GEANY,
+    );
+
+    expect(outcome.holdsIdentity).toBe(false);
+    expect(header(outcome.bytes)).toEqual(DETERMINISTIC);
+    expect(outcome.bytes?.toString("latin1")).not.toContain("e81232be457d");
+    expect(gunzipSync(outcome.bytes ?? Buffer.alloc(0)).toString("utf8")).toBe(
+      XML("x"),
+    );
+    expect(
+      scrubSeed(outcome.bytes ?? Buffer.alloc(0), seed("xml"), GEANY),
+    ).toEqual({ bytes: undefined, holdsIdentity: false });
+  });
+
+  it("stores a document that deflating would make expand past the 100 times a view reads, so the seed stays readable", () => {
+    // An app that stores its document uncompressed, so the captured file reads.
+    const stored = gzipSync(XML(`ada@e81232be457d ${"x".repeat(60_000)}`), {
+      level: 0,
+    });
+    expect(openStateDocument("Budget.gnumeric", stored)).not.toHaveProperty(
+      "error",
+    );
+
+    const shipped = scrubSeed(stored, seed("xml"), GEANY).bytes;
+
+    expect(
+      openStateDocument("Budget.gnumeric", shipped ?? Buffer.alloc(0)),
+    ).toMatchObject({ format: "xml", compression: "gzip" });
+    expect(
+      openStateDocument("Budget.gnumeric", shipped ?? Buffer.alloc(0)),
+    ).not.toHaveProperty("error");
+  });
+
+  it("reports the identity in the document inside where the scrub leaves it", () => {
     // XML names are never rewritten.
     const named = { ...GEANY, hostname: "Workbook" };
 
-    expect(scrubSeed(workbook("x"), seed("xml"), named)).toEqual({
-      bytes: undefined,
-      holdsIdentity: true,
-    });
-    expect(scrubSeed(workbook("x"), seed("xml"), GEANY)).toEqual({
-      bytes: undefined,
-      holdsIdentity: false,
-    });
+    expect(scrubSeed(workbook("x"), seed("xml"), named).holdsIdentity).toBe(
+      true,
+    );
   });
 
   it("searches the document inside one the state view did not read, and ships a damaged one as captured, searched as its bytes", () => {
     const damaged = workbook("ada@e81232be457d").subarray(0, 40);
     const unread = { home: "seed", format: null };
 
-    expect(scrubSeed(workbook("ada@e81232be457d"), unread, GEANY)).toEqual({
-      bytes: undefined,
-      holdsIdentity: true,
-    });
+    expect(
+      scrubSeed(workbook("ada@e81232be457d"), unread, GEANY).holdsIdentity,
+    ).toBe(true);
     expect(scrubSeed(Buffer.from(damaged), seed("xml"), GEANY)).toEqual({
       bytes: undefined,
       holdsIdentity: false,
