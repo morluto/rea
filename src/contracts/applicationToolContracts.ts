@@ -5,7 +5,11 @@ import {
   featureTraceViewResultSchema,
   sourceToBundleSummaryViewResultSchema,
   sourceToBundlePageViewResultSchema,
+  endpointComparisonSummaryViewResultSchema,
+  endpointComparisonPageViewResultSchema,
 } from "../domain/analysisView/analysisView.js";
+import { staticObservedEndpointComparisonSchema } from "../domain/javascript/staticObservedEndpointSchemas.js";
+import { STATIC_OBSERVED_ENDPOINT_COMPARISON_EXAMPLE } from "./javascript/staticObservedEndpointExample.js";
 import { applicationVersionComparisonResultSchema } from "../domain/javascript/javascriptApplicationVersionComparisonSchemas.js";
 import { applicationFeatureTraceResultSchema } from "../domain/javascript/javascriptFeatureTraceSchemas.js";
 import { javaScriptSemanticTraceResultSchema } from "../domain/javascript/javascriptSemanticTraceSchemas.js";
@@ -13,6 +17,7 @@ import { javaScriptExportShapeComparisonResultSchema } from "../domain/javascrip
 import { sourceToBundleComparisonResultSchema } from "../domain/javascript/sourceToBundleComparisonSchemas.js";
 import {
   compareApplicationVersionsRequestSchema,
+  compareStaticObservedEndpointsRequestSchema,
   compareJavaScriptExportShapesRequestSchema,
   compareSourceToBundleRequestSchema,
   traceApplicationFeatureToolRequestSchema,
@@ -204,6 +209,27 @@ export const APPLICATION_TOOL_CONTRACTS = [
             JAVASCRIPT_APPLICATION_VERSION_COMPARISON_EXAMPLE.right.evidence_id,
           ),
         },
+      },
+    ],
+  },
+  {
+    name: "compare_static_and_observed_endpoints",
+    ...toolContractMetadata("compare_static_and_observed_endpoints"),
+    description:
+      "Compare authenticated analyze_javascript_application and HAR Evidence, inline or by exact retained reference. No files, targets or URLs are acquired. Default summary retains the full comparison; optional view returns an endpoint-comparison page in this call (takes precedence over detail). inspect_analysis_view kind endpoint-comparison pages static-endpoints, observed-groups or matches with filters and fields. detail complete returns all facts. Pairings identify exact or inferred template-compatible basis; candidate/partial targets and ambiguous methods remain unknown. Root-relative targets need a caller-declared origin. Not-observed requires an exercised origin, every parent record retained and no excluded records; it never means hidden, unused or inaccessible. Copies no query strings, fragments, headers or bodies. Sensitive-declaration parents are refused; the shared 96 MiB representation budget includes source admission and derived state.",
+    kind: "application",
+    inputSchema: compareStaticObservedEndpointsRequestSchema,
+    outputSchema: evidenceResultOf(
+      z.union([
+        staticObservedEndpointComparisonSchema,
+        endpointComparisonSummaryViewResultSchema,
+        endpointComparisonPageViewResultSchema,
+      ]),
+    ),
+    examples: [
+      {
+        title: "Compare retained static endpoints with an offline HAR",
+        input: STATIC_OBSERVED_ENDPOINT_COMPARISON_EXAMPLE,
       },
     ],
   },
