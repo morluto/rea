@@ -15,6 +15,21 @@ typecheck selections; its real-provider assertions skip when Rizin 0.7.4 is
 unavailable. Run the focused command above on a host with that provider for the
 explicit real-provider verification gate.
 
+The decoder and map inputs of `execute_rizin_command` have their own
+real-provider gate. Run
+`npm run test:focused -- tests/boundary/providers/RizinDecoderInputs.test.ts`.
+It calls the tool through MCP with the Rizin on `PATH` and checks the effect of
+`-a`, `-b`, `-e asm.cpu=` and `-n -m` on raw images with Rizin's own `e asm.*`
+and `omlj` output, and that `asm_cpu` changes how an M-profile instruction
+decodes. It also reads bytes below the base address, at it, at the end of the
+image and past it, and checks a call with only `base_address`. Two of the images are ones that Rizin's AVR and
+BIOS loaders claim without `-n`. It also selects an arch that no host uses by
+default, an arch plugin that Rizin does not have, and a bits value that the
+arch lacks. The test names the Rizin version it ran. It skips when no Rizin is
+on `PATH`; to check another build, put its directory first on `PATH`. It has
+passed with Rizin 0.9.1 (Homebrew, macOS arm64) and Rizin 0.7.4 (official static
+build, Linux x86_64).
+
 Each real-toolchain command must require only the host tools needed to prove
 its stated claim. Use a host-native fixture for host/provider acceptance, and
 place optional cross-target formats or platform-specific runners in separate
