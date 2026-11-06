@@ -62,6 +62,9 @@ cliTest.skipIf(process.platform !== "darwin")(
     await good("record_unknown", { ...unknown, severity: "high" });
     await good("close_binary", { snapshot_path: conflicting, overwrite: true });
     await good("open_binary", { path: first });
+    // close_binary retains investigation records. Clear them explicitly so the
+    // same residual question can be recorded again as a divergent revision 1,
+    // which is what the conflicting-snapshot refusal still keys on.
     await good("reset_investigation", {});
     const original = parseEvidence(
       (await good("inspect_native_dispatch_metadata", { max_records: 100 }))
