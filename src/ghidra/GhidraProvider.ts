@@ -1,6 +1,7 @@
 import {
   existingGhidraAnalysisProfile,
   ghidraPinnedLanguage,
+  ghidraTargetDebugCompanion,
   resolveGhidraAnalysisProfile,
 } from "./GhidraAnalysisProfile.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
@@ -421,16 +422,21 @@ export class GhidraProvider implements AnalysisProviderCandidate {
       target.kind === "executable" &&
       installation.status === "available"
     ) {
-      if (
+      const unsupportedExistingProject =
         installation.platform === "win32" ||
         ghidraPinnedLanguage(target) !== undefined ||
         !(
           target.format === "elf" ||
           target.format === "pe" ||
           isMachOFormat(target.format)
-        )
-      )
-        return err(existingProjectUnsupported());
+        );
+      const debugCompanion = ghidraTargetDebugCompanion(target) !== undefined;
+      if (unsupportedExistingProject || debugCompanion)
+        return err(
+          existingProjectUnsupported(
+            !unsupportedExistingProject && debugCompanion,
+          ),
+        );
       const project = await resolveGhidraProject(
         this.config.ghidraExistingProject,
         target,
@@ -676,11 +682,20 @@ export class GhidraProvider implements AnalysisProviderCandidate {
 }
 
 /** The selected project, not the target or provider, is what this host cannot serve. */
-const existingProjectUnsupported = (): ConfigurationError => {
-  const constraint =
-    "Existing-project mode supports native ELF/PE/Mach-O programs on POSIX without fresh-import loader preparation or pinned language overrides; unset REA_GHIDRA_PROJECT_PATH to use fresh import for this target/host.";
+const existingProjectUnsupported = (
+  debugCompanion = false,
+): ConfigurationError => {
+  const constraint = debugCompanion
+    ? "Existing-project mode opens a saved Ghidra program with -process -noanalysis and does not import or analyze a dsym_path companion"
+    : "Existing-project mode supports native ELF/PE/Mach-O programs on POSIX without fresh-import loader preparation or pinned language overrides; unset REA_GHIDRA_PROJECT_PATH to use fresh import for this target/host.";
   return new ConfigurationError(constraint, {
     settings: [{ setting: "REA_GHIDRA_PROJECT_PATH", constraint }],
+    ...(debugCompanion
+      ? {
+          remediationAction:
+            "Unset REA_GHIDRA_PROJECT_PATH (and REA_GHIDRA_PROGRAM_NAME if set) to run a fresh Ghidra import with dsym_path (--dsym-path on the CLI), or omit dsym_path to inspect the saved Ghidra project as-is.",
+        }
+      : {}),
   });
 };
 

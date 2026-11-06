@@ -57,6 +57,7 @@ import {
   GHIDRA_PROCESS_DIAGNOSTIC_BYTES,
   type GhidraDiagnosticsScope,
 } from "./GhidraDiagnostics.js";
+import { GhidraAdmissionError } from "./GhidraAdmissionError.js";
 import { GhidraLaunchError, type GhidraLaunch } from "./GhidraLauncher.js";
 import { GhidraResponseRouter } from "./GhidraResponseRouter.js";
 import { GhidraRequestQueue } from "./GhidraRequestQueue.js";
@@ -87,6 +88,7 @@ import {
   withArtifactRegularFile,
 } from "../artifacts/ArtifactFileOperation.js";
 import { readArtifactFileChunks } from "../artifacts/readArtifactFileChunks.js";
+import { stageGhidraDebugCompanion } from "./GhidraDebugCompanion.js";
 import { readBoundedFileBytes } from "../process/BoundedFileBytes.js";
 import {
   assertRegularFileActive,
@@ -913,6 +915,17 @@ export class GhidraClient {
   async #startWithin(
     deadline: ProviderStartupDeadline,
   ): Promise<GhidraStartResult> {
+    if (
+      this.#options.existingProject === true &&
+      this.#options.debugCompanion !== undefined
+    )
+      return err(
+        this.#failure(
+          "admission",
+          "Existing Ghidra project sessions cannot stage a dSYM debug companion",
+          new GhidraAdmissionError("existing_project_debug_companion"),
+        ),
+      );
     try {
       this.#runtimeRoot = await PrivateRuntimeRoot.create({
         parent: SESSION_ROOT,
@@ -971,6 +984,38 @@ export class GhidraClient {
       // Snapshot finalization has settled and no launcher exists yet. Preserve
       // its producer outcome rather than reclassifying from a later deadline.
       return this.#startupFailure(failure);
+    }
+    if (this.#options.debugCompanion !== undefined) {
+      try {
+        const staged = await stageGhidraDebugCompanion(
+          this.#options.debugCompanion,
+          this.#runtimeRoot.path,
+          this.#snapshotPath,
+          { signal: deadline.signal, resourceScope: this.#fileResources },
+        );
+        this.#targetAdmission =
+          this.#targetAdmission === undefined
+            ? staged
+            : {
+                ...(this.#targetAdmission as Record<string, JsonValue>),
+                ...(staged as Record<string, JsonValue>),
+              };
+      } catch (cause: unknown) {
+        // Classify the producer's outcome before any later deadline state, so
+        // a real staging failure is never hidden by an unrelated abort.
+        const failure =
+          cause instanceof ArtifactReaderFailure && cause.reason === "cancelled"
+            ? this.#interruptionFailure(
+                deadline,
+                artifactFileCancellationCause(cause),
+              )
+            : this.#failure(
+                "start",
+                "Ghidra debug companion staging failed",
+                cause,
+              );
+        return this.#startupFailure(failure);
+      }
     }
     if (deadline.signal.aborted) return this.#startupInterrupted(deadline);
     this.#token = randomBytes(32).toString("hex");

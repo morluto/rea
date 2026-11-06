@@ -1,0 +1,901 @@
+import { createHash } from "node:crypto";
+import type { Dir, Stats } from "node:fs";
+import { opendir, stat, type FileHandle } from "node:fs/promises";
+import { isAbsolute } from "node:path";
+import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
+import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import {
+  readFatContainerHeader,
+  validateFatSlice,
+} from "../domain/apple/machoContainer.js";
+import { machoCpuSubtypeBase } from "../domain/apple/machoCpuIdentity.js";
+import {
+  AnalysisArtifactChangedError,
+  AnalysisCancelledError,
+} from "../domain/analysisErrorCore.js";
+import type {
+  BinaryArchitecture,
+  MachODebugCompanion,
+  UniversalMachOSlice,
+} from "../domain/binaryTargetTypes.js";
+import { BinaryTargetError } from "../domain/configurationErrors.js";
+import type { JsonValue } from "../domain/jsonValue.js";
+import {
+  debugCompanionMatches,
+  machoUuidReads,
+  usableMachOUuid,
+  type MachOImageUuid,
+} from "../domain/machoDebugCompanion.js";
+import { err, ok, type Result } from "../domain/result.js";
+import { OwnedDirectoryHandle } from "../filesystem/OwnedDirectoryHandle.js";
+import {
+  OwnedRegularFileOperationFailure,
+  RegularFileCleanupFailure,
+  regularFileCancellation,
+} from "../filesystem/OwnedRegularFile.js";
+import {
+  NonRegularFileReadError,
+  RegularFileChangedError,
+  RegularFileOperationCancelled,
+  sameRegularFileState,
+} from "../filesystem/RegularFile.js";
+import { appendCallerPath } from "../filesystem/callerPath.js";
+import { MACHO_ARCHITECTURE_POLICIES } from "../native/MachoArchitectureSelection.js";
+import {
+  RetainedRegularFileCleanupFailure,
+  retryRegularFileCleanup,
+  withRegularFile,
+} from "./RegularFileRead.js";
+
+const DSYM_DWARF_DIRECTORY = "Contents/Resources/DWARF";
+const HEADER_READ_LIMIT = 64 * 1024;
+const MEMBER_COUNT_LIMIT = 16;
+const MEMBER_SIZE_LIMIT_BYTES = 1024 * 1024 * 1024;
+const TRAVERSAL_BUDGET_BYTES = 64 * 1024 * 1024;
+const FIXED_LIMIT_NOTICE =
+  "This release has no runtime override; host memory and NODE_OPTIONS do not raise this limit.";
+const COMPANION_IO_CODES = new Set([
+  "EMFILE",
+  "ENFILE",
+  "EIO",
+  "ENOSPC",
+  "EROFS",
+  "ETIMEDOUT",
+  "ECONNRESET",
+]);
+
+/** Per-slice UUID observation with its declaring CPU type and base subtype. */
+export interface SliceUuidEntry {
+  readonly cpuType: number;
+  readonly cpuSubtypeBase: number;
+  readonly uuid: string | null;
+}
+
+/** Admitted identity of a caller-selected dSYM companion. */
+export type DebugCompanionAdmission = Result<
+  MachODebugCompanion,
+  DebugCompanionRejection
+>;
+
+/** Why a caller-selected debug companion was refused, in caller-facing words. */
+export interface DebugCompanionRejection {
+  readonly reason: string;
+  readonly remediationAction?: string;
+  readonly diagnostics?: Readonly<Record<string, JsonValue>>;
+}
+
+interface MachOUuidReadFailure extends DebugCompanionRejection {
+  readonly kind: "resource-limit" | "invalid-image";
+}
+
+interface TraversalLedger {
+  spent: number;
+}
+
+interface TraversalContext {
+  readonly ledger: TraversalLedger;
+  readonly signal: AbortSignal | undefined;
+}
+
+interface SelectedSliceUuid {
+  readonly cpuType: number;
+  readonly cpuSubtypeBase: number;
+  readonly uuid: string;
+}
+
+interface AdmissionState extends TraversalContext {
+  readonly dsymPath: string;
+  readonly targetPath: string;
+  readonly resources: ArtifactResourceScope | undefined;
+  readonly digestedIdentities: Map<string, string>;
+  digestBudgetBytes: number;
+}
+
+/** Convert a structured companion rejection into the public target error. */
+export const debugCompanionRejectedError = (
+  targetPath: string,
+  rejection: DebugCompanionRejection,
+): BinaryTargetError =>
+  new BinaryTargetError(targetPath, rejection.reason, {
+    constraint: "debug_companion_rejected",
+    ...(rejection.remediationAction === undefined
+      ? {}
+      : { remediationAction: rejection.remediationAction }),
+    ...(rejection.diagnostics === undefined
+      ? {}
+      : { diagnostics: rejection.diagnostics }),
+  });
+
+const traversalLimit = (): MachOUuidReadFailure => ({
+  kind: "resource-limit",
+  reason: `the Mach-O UUID traversal exceeds its aggregate read budget of ${String(TRAVERSAL_BUDGET_BYTES >> 20)} MiB (${String(TRAVERSAL_BUDGET_BYTES)} bytes) across the target and dSYM members; the budget is fixed and cannot be raised at runtime`,
+  remediationAction: `Select a target and .dSYM bundle whose Mach-O header and load-command reads stay within the ${String(TRAVERSAL_BUDGET_BYTES >> 20)} MiB (${String(TRAVERSAL_BUDGET_BYTES)} bytes) UUID traversal budget, or omit dsym_path (--dsym-path on the CLI) to analyze without debug types. ${FIXED_LIMIT_NOTICE}`,
+  diagnostics: {
+    limit: "dsym_uuid_traversal_bytes",
+    maximum_bytes: TRAVERSAL_BUDGET_BYTES,
+    runtime_override: false,
+  },
+});
+
+const directoryEntryLimit = (): DebugCompanionRejection => ({
+  reason: `dsym_path contains more than ${String(MEMBER_COUNT_LIMIT)} DWARF directory entries; the limit is fixed and cannot be raised at runtime`,
+  remediationAction: `Select a .dSYM bundle whose Contents/Resources/DWARF directory contains at most ${String(MEMBER_COUNT_LIMIT)} entries, or omit dsym_path (--dsym-path on the CLI) to analyze without debug types. ${FIXED_LIMIT_NOTICE}`,
+  diagnostics: {
+    limit: "dsym_dwarf_directory_entries",
+    maximum_entries: MEMBER_COUNT_LIMIT,
+    runtime_override: false,
+  },
+});
+
+const memberSizeLimit = (
+  memberPath: string,
+  observedBytes: number,
+): DebugCompanionRejection => ({
+  reason: `dsym DWARF member exceeds the supported size of ${String(MEMBER_SIZE_LIMIT_BYTES >> 30)} GiB (${String(MEMBER_SIZE_LIMIT_BYTES)} bytes; the limit is fixed and cannot be raised at runtime): ${memberPath}`,
+  remediationAction: `Select a .dSYM bundle whose matching DWARF member is at most ${String(MEMBER_SIZE_LIMIT_BYTES >> 30)} GiB (${String(MEMBER_SIZE_LIMIT_BYTES)} bytes), or omit dsym_path (--dsym-path on the CLI) to analyze without debug types. ${FIXED_LIMIT_NOTICE}`,
+  diagnostics: {
+    limit: "dsym_member_size_bytes",
+    maximum_bytes: MEMBER_SIZE_LIMIT_BYTES,
+    observed_bytes: observedBytes,
+    member_path: memberPath,
+    runtime_override: false,
+  },
+});
+
+const aggregateDigestLimit = (): DebugCompanionRejection => ({
+  reason: `the matching dSYM DWARF members exceed the aggregate digest budget of ${String(MEMBER_SIZE_LIMIT_BYTES >> 30)} GiB (${String(MEMBER_SIZE_LIMIT_BYTES)} bytes); the budget is fixed and cannot be raised at runtime`,
+  remediationAction: `Remove duplicate or extra matching DWARF members so the distinct matching members in Contents/Resources/DWARF total at most ${String(MEMBER_SIZE_LIMIT_BYTES >> 30)} GiB (${String(MEMBER_SIZE_LIMIT_BYTES)} bytes), or omit dsym_path (--dsym-path on the CLI) to analyze without debug types. ${FIXED_LIMIT_NOTICE}`,
+  diagnostics: {
+    limit: "dsym_aggregate_digest_bytes",
+    maximum_bytes: MEMBER_SIZE_LIMIT_BYTES,
+    runtime_override: false,
+  },
+});
+
+const invalidImage = (reason: string): MachOUuidReadFailure => ({
+  kind: "invalid-image",
+  reason,
+});
+
+const isExpectedAdmissionPathFailure = (cause: unknown): boolean =>
+  cause instanceof Error &&
+  "code" in cause &&
+  ["ENOENT", "ENOTDIR", "EACCES", "EPERM", "ELOOP"].includes(
+    String(cause.code),
+  );
+
+const companionIoFailure = (
+  resourcePath: string,
+  description: string,
+  cause: unknown,
+): BinaryTargetError | undefined => {
+  if (!(cause instanceof Error) || !("code" in cause)) return undefined;
+  const code = String(cause.code);
+  return COMPANION_IO_CODES.has(code)
+    ? new BinaryTargetError(
+        resourcePath,
+        `${description} failed with ${code}`,
+        { cause },
+      )
+    : undefined;
+};
+
+const throwIfCancelled = (signal: AbortSignal | undefined): void => {
+  if (signal?.aborted === true)
+    throw new AnalysisCancelledError("resolve_binary_target", {
+      cause: signal.reason,
+    });
+};
+
+const readUuidWindow = async (
+  handle: FileHandle,
+  offset: number,
+  length: number,
+  context: TraversalContext,
+): Promise<Result<Buffer, MachOUuidReadFailure>> => {
+  const { ledger, signal } = context;
+  throwIfCancelled(signal);
+  if (length > TRAVERSAL_BUDGET_BYTES - ledger.spent)
+    return err(traversalLimit());
+  const bytes = Buffer.alloc(length);
+  let filled = 0;
+  while (filled < length) {
+    throwIfCancelled(signal);
+    const observed = await handle.read(
+      bytes,
+      filled,
+      length - filled,
+      offset + filled,
+    );
+    throwIfCancelled(signal);
+    ledger.spent += observed.bytesRead;
+    if (ledger.spent > TRAVERSAL_BUDGET_BYTES) return err(traversalLimit());
+    if (observed.bytesRead === 0) break;
+    filled += observed.bytesRead;
+  }
+  return ok(bytes.subarray(0, filled));
+};
+
+const readThinUuidEntry = async (
+  handle: FileHandle,
+  range: { readonly offset: number; readonly length: number },
+  context: TraversalContext,
+  prefix?: Buffer,
+): Promise<Result<MachOImageUuid, MachOUuidReadFailure>> => {
+  const decoder = machoUuidReads(range.length);
+  let step = decoder.next();
+  let windowOffset = 0;
+  let window = prefix ?? Buffer.alloc(0);
+  while (!step.done) {
+    throwIfCancelled(context.signal);
+    const req = step.value;
+    const neededEnd = Math.min(range.length, req.offset + req.length);
+    if (
+      req.offset < range.length &&
+      (req.offset < windowOffset || neededEnd > windowOffset + window.length)
+    ) {
+      const bufferedPrefix =
+        req.offset >= windowOffset && req.offset < windowOffset + window.length
+          ? window.subarray(req.offset - windowOffset)
+          : Buffer.alloc(0);
+      const unreadOffset = req.offset + bufferedPrefix.length;
+      const neededUnread = neededEnd - unreadOffset;
+      const remainingRange = range.length - unreadOffset;
+      const desiredLength = Math.min(HEADER_READ_LIMIT, remainingRange);
+      const remainingBudget = TRAVERSAL_BUDGET_BYTES - context.ledger.spent;
+      if (remainingBudget < neededUnread) return err(traversalLimit());
+      const read = await readUuidWindow(
+        handle,
+        range.offset + unreadOffset,
+        Math.min(desiredLength, remainingBudget),
+        context,
+      );
+      if (!read.ok) return read;
+      windowOffset = req.offset;
+      window =
+        bufferedPrefix.length === 0
+          ? read.value
+          : Buffer.concat([bufferedPrefix, read.value]);
+    }
+    const slice =
+      req.offset >= range.length
+        ? Buffer.alloc(0)
+        : window.subarray(
+            req.offset - windowOffset,
+            Math.min(window.length, neededEnd - windowOffset),
+          );
+    step = decoder.next(slice);
+  }
+  return step.value.ok ? step.value : err(invalidImage(step.value.error));
+};
+
+/**
+ * Read every LC_UUID of a Mach-O file with its declaring CPU identity: a thin
+ * image from its start, or each slice of a universal container from its table.
+ */
+export const readMachoFileUuidEntries = async (
+  handle: FileHandle,
+  fileSize: number,
+  options: {
+    readonly signal?: AbortSignal;
+    readonly ledger?: TraversalLedger;
+  } = {},
+): Promise<Result<SliceUuidEntry[], MachOUuidReadFailure>> => {
+  const context: TraversalContext = {
+    ledger: options.ledger ?? { spent: 0 },
+    signal: options.signal,
+  };
+  const remainingBudget = Math.max(
+    0,
+    TRAVERSAL_BUDGET_BYTES - context.ledger.spent,
+  );
+  const prefixLength = Math.min(fileSize, HEADER_READ_LIMIT, remainingBudget);
+  const prefix = await readUuidWindow(handle, 0, prefixLength, context);
+  if (!prefix.ok) return prefix;
+  const container = readFatContainerHeader(prefix.value, fileSize);
+  if (container.state === "not-fat") {
+    const read = await readThinUuidEntry(
+      handle,
+      { offset: 0, length: fileSize },
+      context,
+      prefix.value,
+    );
+    return read.ok
+      ? ok([
+          {
+            cpuType: read.value.cpuType,
+            cpuSubtypeBase: machoCpuSubtypeBase(read.value.cpuSubtype),
+            uuid: read.value.uuid,
+          },
+        ])
+      : read;
+  }
+  if (container.state === "needs-data")
+    return err(
+      prefixLength < container.requiredBytes
+        ? traversalLimit()
+        : invalidImage("the universal Mach-O container table is truncated"),
+    );
+  if (container.state === "malformed")
+    return err(invalidImage(container.reason));
+  const entries: SliceUuidEntry[] = [];
+  for (const slice of container.slices) {
+    throwIfCancelled(context.signal);
+    const rangeIssue = validateFatSlice(slice, fileSize, container.tableEnd);
+    if (rangeIssue !== null) return err(invalidImage(rangeIssue));
+    const read = await readThinUuidEntry(
+      handle,
+      { offset: slice.offset, length: slice.size },
+      context,
+    );
+    if (!read.ok) return read;
+    const idIssue = validateFatSlice(
+      slice,
+      fileSize,
+      container.tableEnd,
+      read.value,
+    );
+    if (idIssue !== null) return err(invalidImage(idIssue));
+    entries.push({
+      cpuType: slice.cpuType,
+      cpuSubtypeBase: machoCpuSubtypeBase(slice.cpuSubtype),
+      uuid: read.value.uuid,
+    });
+  }
+  return ok(entries);
+};
+
+const digestOpenHandle = async (
+  handle: FileHandle,
+  initial: Stats,
+  signal: AbortSignal | undefined,
+): Promise<Result<string, string>> => {
+  const hash = createHash("sha256");
+  const chunk = Buffer.allocUnsafe(64 * 1024);
+  let position = 0;
+  while (position < initial.size) {
+    throwIfCancelled(signal);
+    const observed = await handle.read(chunk, 0, chunk.length, position);
+    throwIfCancelled(signal);
+    if (observed.bytesRead === 0) break;
+    hash.update(chunk.subarray(0, observed.bytesRead));
+    position += observed.bytesRead;
+  }
+  const opened = await handle.stat();
+  throwIfCancelled(signal);
+  return sameRegularFileState(initial, opened)
+    ? ok(hash.digest("hex"))
+    : err("the dSYM DWARF member changed while being read");
+};
+
+const closeDwarfDirectory = async (
+  state: AdmissionState,
+  directoryOwner: OwnedDirectoryHandle,
+  dwarfDirectory: string,
+  outcome: {
+    readonly failure: unknown;
+    readonly rejection: DebugCompanionRejection | undefined;
+  },
+): Promise<void> => {
+  const { failure, rejection } = outcome;
+  const primary =
+    failure !== undefined
+      ? failure instanceof AnalysisCancelledError ||
+        failure instanceof BinaryTargetError
+        ? failure
+        : new BinaryTargetError(
+            dwarfDirectory,
+            "Reading the dSYM DWARF directory failed before directory cleanup",
+            { cause: failure },
+          )
+      : state.signal?.aborted === true
+        ? new AnalysisCancelledError("resolve_binary_target", {
+            cause: state.signal.reason,
+          })
+        : rejection !== undefined
+          ? debugCompanionRejectedError(state.targetPath, rejection)
+          : undefined;
+  if (state.resources !== undefined) {
+    const cleanup = await state.resources.release({
+      kind: "directory-handle",
+      handle: directoryOwner,
+      resource: dwarfDirectory,
+    });
+    if (cleanup.kind === "failed")
+      throw state.resources.cleanupFailure(
+        primary === undefined
+          ? { kind: "completed" }
+          : { kind: "failed", cause: primary },
+        [cleanup],
+      );
+    return;
+  }
+  const lease = AnalysisCleanupLease.forCloseOwner(
+    directoryOwner,
+    dwarfDirectory,
+  );
+  try {
+    await lease.release();
+  } catch (cause: unknown) {
+    throw ArtifactReaderFailure.withCleanup(
+      primary ?? cause,
+      ArtifactReaderFailure.cleanupObservation(cause, dwarfDirectory),
+      undefined,
+      [lease],
+    );
+  }
+};
+
+const readDwarfDirectoryEntries = async (
+  directory: Dir,
+  dwarfDirectory: string,
+  signal: AbortSignal | undefined,
+): Promise<Result<string[], DebugCompanionRejection>> => {
+  const memberPaths: string[] = [];
+  let examinedEntries = 0;
+  for (;;) {
+    throwIfCancelled(signal);
+    const entry = await directory.read();
+    throwIfCancelled(signal);
+    if (entry === null) return ok(memberPaths);
+    examinedEntries += 1;
+    if (examinedEntries > MEMBER_COUNT_LIMIT) return err(directoryEntryLimit());
+    const memberPath = appendCallerPath(dwarfDirectory, entry.name);
+    try {
+      if ((await stat(memberPath)).isFile()) memberPaths.push(memberPath);
+    } catch (cause: unknown) {
+      if (isExpectedAdmissionPathFailure(cause)) continue;
+      throw (
+        companionIoFailure(
+          memberPath,
+          "reading the dSYM DWARF member",
+          cause,
+        ) ?? cause
+      );
+    }
+  }
+};
+
+const enumerateDwarfMembers = async (
+  state: AdmissionState,
+): Promise<Result<string[], DebugCompanionRejection>> => {
+  const dwarfDirectory = appendCallerPath(state.dsymPath, DSYM_DWARF_DIRECTORY);
+  let directory: Dir;
+  try {
+    directory = await opendir(dwarfDirectory, {
+      bufferSize: MEMBER_COUNT_LIMIT + 1,
+    });
+  } catch (cause: unknown) {
+    if (!isExpectedAdmissionPathFailure(cause))
+      throw (
+        companionIoFailure(
+          dwarfDirectory,
+          "reading the dSYM DWARF directory",
+          cause,
+        ) ?? cause
+      );
+    throwIfCancelled(state.signal);
+    return err({
+      reason: `dsym_path has no Contents/Resources/DWARF member directory: ${state.dsymPath}`,
+    });
+  }
+  const directoryOwner = new OwnedDirectoryHandle(directory);
+  let memberPaths: string[] = [];
+  let rejection: DebugCompanionRejection | undefined;
+  let failure: unknown;
+  try {
+    const listed = await readDwarfDirectoryEntries(
+      directory,
+      dwarfDirectory,
+      state.signal,
+    );
+    if (listed.ok) memberPaths = listed.value;
+    else rejection = listed.error;
+  } catch (cause: unknown) {
+    failure =
+      state.signal?.aborted === true && cause === state.signal.reason
+        ? new AnalysisCancelledError("resolve_binary_target", { cause })
+        : (companionIoFailure(
+            dwarfDirectory,
+            "reading the dSYM DWARF directory",
+            cause,
+          ) ?? cause);
+  }
+  if (
+    failure === undefined &&
+    rejection === undefined &&
+    state.signal?.aborted !== true &&
+    memberPaths.length === 0
+  )
+    rejection = {
+      reason: `dsym_path contains no DWARF member file: ${state.dsymPath}`,
+    };
+  await closeDwarfDirectory(state, directoryOwner, dwarfDirectory, {
+    failure,
+    rejection,
+  });
+  if (failure !== undefined) throw failure;
+  throwIfCancelled(state.signal);
+  return rejection !== undefined ? err(rejection) : ok(memberPaths.sort());
+};
+
+const selectTargetSliceUuid = async (
+  input: {
+    readonly targetHandle: FileHandle;
+    readonly targetSize: number;
+    readonly architecture: BinaryArchitecture;
+    readonly targetSlice?: UniversalMachOSlice;
+  },
+  state: AdmissionState,
+): Promise<Result<SelectedSliceUuid, DebugCompanionRejection>> => {
+  const targetEntries =
+    input.targetSlice === undefined
+      ? await readMachoFileUuidEntries(input.targetHandle, input.targetSize, {
+          ledger: state.ledger,
+          ...(state.signal === undefined ? {} : { signal: state.signal }),
+        })
+      : await readThinUuidEntry(
+          input.targetHandle,
+          { offset: input.targetSlice.offset, length: input.targetSlice.size },
+          state,
+        ).then((selected) =>
+          selected.ok
+            ? ok([
+                {
+                  cpuType: selected.value.cpuType,
+                  cpuSubtypeBase: machoCpuSubtypeBase(
+                    selected.value.cpuSubtype,
+                  ),
+                  uuid: selected.value.uuid,
+                },
+              ])
+            : selected,
+        );
+  if (!targetEntries.ok) return err(targetEntries.error);
+  const policy = MACHO_ARCHITECTURE_POLICIES[input.architecture];
+  for (const { cpuType, cpuSubtypeBase, uuid } of targetEntries.value) {
+    if (policy === undefined || cpuType !== policy.cpuType) continue;
+    if (!usableMachOUuid(uuid)) break;
+    return ok({ cpuType, cpuSubtypeBase, uuid });
+  }
+  return err({
+    reason: `the target image declares no usable LC_UUID for the selected ${input.architecture} slice`,
+    diagnostics: {
+      dsym_path: state.dsymPath,
+      architecture: input.architecture,
+      rejection: "target_uuid_absent",
+    },
+  });
+};
+
+const normalizeMemberCleanupFailure = (
+  failure: RegularFileCleanupFailure,
+  memberPath: string,
+  state: AdmissionState,
+): RegularFileCleanupFailure<undefined> => {
+  const rawOutcome = failure.outcome;
+  let primary: unknown;
+  if (rawOutcome.kind === "completed") {
+    const result = rawOutcome.value as Result<
+      MachODebugCompanion | null,
+      DebugCompanionRejection
+    >;
+    if (!result.ok)
+      primary = debugCompanionRejectedError(state.targetPath, result.error);
+  } else {
+    const rawCause =
+      rawOutcome.cause instanceof OwnedRegularFileOperationFailure
+        ? rawOutcome.cause.operationCause
+        : rawOutcome.cause;
+    if (
+      rawCause instanceof AnalysisCancelledError ||
+      rawCause instanceof AnalysisArtifactChangedError ||
+      rawCause instanceof BinaryTargetError ||
+      rawCause instanceof RegularFileOperationCancelled
+    )
+      primary = rawCause;
+    else if (rawCause instanceof RegularFileChangedError)
+      primary = new AnalysisArtifactChangedError(
+        "open_binary",
+        memberPath,
+        "the dSYM DWARF member changed while being read",
+        { cause: rawCause },
+      );
+    else {
+      const ioFailure = companionIoFailure(
+        memberPath,
+        "reading the dSYM DWARF member",
+        rawCause,
+      );
+      if (ioFailure !== undefined) primary = ioFailure;
+      else if (
+        !(rawCause instanceof NonRegularFileReadError) &&
+        !isExpectedAdmissionPathFailure(rawCause)
+      )
+        primary = rawCause;
+      else if (state.signal?.aborted === true)
+        primary = new AnalysisCancelledError("resolve_binary_target", {
+          cause: state.signal.reason,
+        });
+    }
+  }
+  return new RegularFileCleanupFailure({
+    path: failure.path,
+    owner: failure.owner,
+    cleanupCause: failure.cleanupCause,
+    outcome:
+      primary === undefined
+        ? { kind: "completed", value: undefined }
+        : { kind: "failed", cause: primary },
+    ...(failure.operationFailure === undefined
+      ? {}
+      : { operationFailure: failure.operationFailure }),
+  });
+};
+
+const readMemberWithBorrowedResources = async (
+  memberPath: string,
+  state: AdmissionState,
+  read: (
+    handle: FileHandle,
+    initial: Stats,
+  ) => Promise<Result<MachODebugCompanion | null, DebugCompanionRejection>>,
+): Promise<Result<MachODebugCompanion | null, DebugCompanionRejection>> => {
+  try {
+    return await withRegularFile(memberPath, read, {
+      symlinks: "follow",
+      ...(state.signal === undefined ? {} : { signal: state.signal }),
+    });
+  } catch (cause: unknown) {
+    if (!(cause instanceof RegularFileCleanupFailure)) throw cause;
+    const normalized = normalizeMemberCleanupFailure(cause, memberPath, state);
+    if (state.resources === undefined)
+      throw new RetainedRegularFileCleanupFailure(normalized);
+    const retried = await retryRegularFileCleanup(
+      normalized,
+      state.resources,
+      state.signal,
+    );
+    if (retried.failure !== undefined) throw retried.failure;
+    if (cause.outcome.kind === "failed") {
+      const cancellation =
+        cause.operationFailure === undefined
+          ? (regularFileCancellation(cause.outcome.cause) ??
+            regularFileCancellation(cause))
+          : undefined;
+      if (cancellation !== undefined)
+        throw new AnalysisCancelledError("resolve_binary_target", {
+          cause: cancellation.reason,
+        });
+      throw cause.outcome.cause;
+    }
+    const cancellation = regularFileCancellation(cause);
+    if (cancellation !== undefined)
+      throw new AnalysisCancelledError("resolve_binary_target", {
+        cause: cancellation.reason,
+      });
+    throwIfCancelled(state.signal);
+    return cause.outcome.value as Result<
+      MachODebugCompanion | null,
+      DebugCompanionRejection
+    >;
+  }
+};
+
+const inspectMemberHandle = async (
+  memberPath: string,
+  member: { readonly handle: FileHandle; readonly initial: Stats },
+  selected: SelectedSliceUuid,
+  state: AdmissionState,
+): Promise<Result<MachODebugCompanion | null, DebugCompanionRejection>> => {
+  const { handle: memberHandle, initial } = member;
+  const memberEntries = await readMachoFileUuidEntries(
+    memberHandle,
+    initial.size,
+    {
+      ledger: state.ledger,
+      ...(state.signal === undefined ? {} : { signal: state.signal }),
+    },
+  );
+  if (!memberEntries.ok)
+    return memberEntries.error.kind === "resource-limit"
+      ? err(memberEntries.error)
+      : ok(null);
+  const matched = debugCompanionMatches({
+    executableUuids: [selected.uuid],
+    companionUuids: memberEntries.value
+      .filter(
+        ({ cpuType, cpuSubtypeBase }) =>
+          cpuType === selected.cpuType &&
+          cpuSubtypeBase === selected.cpuSubtypeBase,
+      )
+      .map(({ uuid }) => uuid)
+      .filter((uuid): uuid is string => uuid !== null),
+  });
+  if (!matched.ok) return ok(null);
+  if (initial.size > MEMBER_SIZE_LIMIT_BYTES)
+    return err(memberSizeLimit(memberPath, initial.size));
+  const identityKey = `${String(initial.dev)}:${String(initial.ino)}:${String(initial.size)}`;
+  let memberSha256Value = state.digestedIdentities.get(identityKey);
+  if (memberSha256Value === undefined) {
+    if (initial.size > state.digestBudgetBytes)
+      return err(aggregateDigestLimit());
+    const memberSha256 = await digestOpenHandle(
+      memberHandle,
+      initial,
+      state.signal,
+    );
+    if (!memberSha256.ok)
+      throw new AnalysisArtifactChangedError(
+        "open_binary",
+        memberPath,
+        memberSha256.error,
+      );
+    state.digestBudgetBytes -= initial.size;
+    state.digestedIdentities.set(identityKey, memberSha256.value);
+    memberSha256Value = memberSha256.value;
+  }
+  return ok({
+    sourcePath: state.dsymPath,
+    memberPath,
+    memberSha256: memberSha256Value,
+    memberSizeBytes: initial.size,
+    uuid: matched.value.uuid,
+  });
+};
+
+const validateDsymBundleDirectory = async (
+  dsymPath: string,
+  signal: AbortSignal | undefined,
+): Promise<Result<null, DebugCompanionRejection>> => {
+  throwIfCancelled(signal);
+  if (!isAbsolute(dsymPath))
+    return err({
+      reason:
+        "dsym_path must be an absolute local filesystem path to a .dSYM bundle",
+    });
+  let bundle: Stats;
+  try {
+    bundle = await stat(dsymPath);
+  } catch (cause: unknown) {
+    if (!isExpectedAdmissionPathFailure(cause))
+      throw companionIoFailure(dsymPath, "reading dsym_path", cause) ?? cause;
+    throwIfCancelled(signal);
+    return err({ reason: `dsym_path is not readable: ${dsymPath}` });
+  }
+  throwIfCancelled(signal);
+  return bundle.isDirectory()
+    ? ok(null)
+    : err({ reason: `dsym_path is not a .dSYM bundle directory: ${dsymPath}` });
+};
+
+/**
+ * Admit a caller-selected dSYM bundle for a detected Mach-O target: the
+ * bundle must contain a DWARF member whose LC_UUID matches the UUID of the
+ * target image slice REA selected for the requested architecture.
+ */
+export const admitDebugCompanion = async (input: {
+  readonly dsymPath: string;
+  readonly targetPath?: string;
+  readonly targetHandle: FileHandle;
+  readonly targetSize: number;
+  readonly architecture: BinaryArchitecture;
+  readonly targetSlice?: UniversalMachOSlice;
+  readonly resources?: ArtifactResourceScope;
+  readonly signal?: AbortSignal;
+}): Promise<DebugCompanionAdmission> => {
+  const state: AdmissionState = {
+    dsymPath: input.dsymPath,
+    targetPath: input.targetPath ?? input.dsymPath,
+    resources: input.resources,
+    signal: input.signal,
+    ledger: { spent: 0 },
+    digestedIdentities: new Map<string, string>(),
+    digestBudgetBytes: MEMBER_SIZE_LIMIT_BYTES,
+  };
+  const validBundle = await validateDsymBundleDirectory(
+    state.dsymPath,
+    state.signal,
+  );
+  if (!validBundle.ok) return validBundle;
+  const memberPaths = await enumerateDwarfMembers(state);
+  if (!memberPaths.ok) return memberPaths;
+  const selected = await selectTargetSliceUuid(input, state);
+  if (!selected.ok) return selected;
+  let admitted: MachODebugCompanion | undefined;
+  for (const memberPath of memberPaths.value) {
+    throwIfCancelled(state.signal);
+    try {
+      const candidate = await readMemberWithBorrowedResources(
+        memberPath,
+        state,
+        (handle, initial) =>
+          inspectMemberHandle(
+            memberPath,
+            { handle, initial },
+            selected.value,
+            state,
+          ),
+      );
+      if (!candidate.ok) return candidate;
+      if (candidate.value !== null) {
+        if (
+          admitted !== undefined &&
+          (admitted.memberSha256 !== candidate.value.memberSha256 ||
+            admitted.memberSizeBytes !== candidate.value.memberSizeBytes)
+        )
+          return err({
+            reason:
+              "dsym_path contains conflicting DWARF members for the selected target UUID",
+            diagnostics: {
+              dsym_path: state.dsymPath,
+              architecture: input.architecture,
+              target_uuid: selected.value.uuid,
+              rejection: "conflicting_matching_members",
+            },
+          });
+        admitted ??= candidate.value;
+      }
+    } catch (cause: unknown) {
+      if (
+        cause instanceof RegularFileCleanupFailure ||
+        cause instanceof AnalysisArtifactChangedError
+      )
+        throw cause;
+      if (cause instanceof RegularFileChangedError)
+        throw new AnalysisArtifactChangedError(
+          "open_binary",
+          memberPath,
+          "the dSYM DWARF member changed while being read",
+          { cause },
+        );
+      const ioFailure = companionIoFailure(
+        memberPath,
+        "reading the dSYM DWARF member",
+        cause,
+      );
+      if (ioFailure !== undefined) throw ioFailure;
+      if (
+        cause instanceof NonRegularFileReadError ||
+        isExpectedAdmissionPathFailure(cause)
+      ) {
+        throwIfCancelled(state.signal);
+        continue;
+      }
+      throw cause;
+    }
+  }
+  return admitted !== undefined
+    ? ok(admitted)
+    : err({
+        reason:
+          "dsym_path contains no Mach-O DWARF member whose LC_UUID matches the selected target slice",
+        diagnostics: {
+          dsym_path: state.dsymPath,
+          architecture: input.architecture,
+          target_uuid: selected.value.uuid,
+          rejection: "uuid_mismatch",
+        },
+      });
+};

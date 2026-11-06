@@ -260,6 +260,7 @@ const routesToJavaScriptAnalysis = async (
     readonly "target-format"?: ExecutableFormatHint | undefined;
     readonly architecture?: string | undefined;
     readonly "entry-point"?: string | undefined;
+    readonly "dsym-path"?: string | undefined;
     readonly provider?: string | undefined;
   },
 ): Promise<boolean> =>
@@ -268,6 +269,7 @@ const routesToJavaScriptAnalysis = async (
   options["target-format"] === undefined &&
   options.architecture === undefined &&
   options["entry-point"] === undefined &&
+  options["dsym-path"] === undefined &&
   (await isJavaScriptApplicationPath(path));
 
 const isJavaScriptApplicationPath = async (path: string): Promise<boolean> => {

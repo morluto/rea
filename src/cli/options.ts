@@ -5,6 +5,7 @@ import {
   type ExecutableFormatHint,
 } from "../domain/dosCom.js";
 import type { BinaryArchitecture } from "../domain/binaryTargetTypes.js";
+import { absoluteLocalPathStringSchema } from "../domain/localPath.js";
 import {
   binaryArchitectureSchema,
   rawBinaryEntryPointSchema,
@@ -79,11 +80,19 @@ export const entryPointSelectionOption = rawBinaryEntryPointSchema
     "Caller-supplied load and entry address (0xhex); required with --target-format raw-binary, optional with gamecube-dol (must equal the DOL header entry)",
   );
 
+/** Caller-selected dSYM bundle; Mach-O targets only, UUID-matched at admission. */
+export const dsymPathSelectionOption = absoluteLocalPathStringSchema
+  .optional()
+  .describe(
+    "Absolute path to a .dSYM bundle whose DWARF member carries the Mach-O target's LC_UUID; omission analyzes without debug types",
+  );
+
 /** Shared CLI flags that bind a native target interpretation. */
 export const nativeOpenOptionFields = {
   "target-format": formatSelectionOption,
   architecture: architectureSelectionOption,
   "entry-point": entryPointSelectionOption,
+  "dsym-path": dsymPathSelectionOption,
   provider: providerSelectionOption,
 };
 
@@ -94,6 +103,7 @@ export interface NativeOpenCliFlags {
   readonly "target-format"?: ExecutableFormatHint | undefined;
   readonly architecture?: BinaryArchitecture | undefined;
   readonly "entry-point"?: string | undefined;
+  readonly "dsym-path"?: string | undefined;
 }
 
 /** Map native CLI flags onto the shared one-shot analysis options. */
@@ -112,5 +122,8 @@ export const directAnalysisOptionsFromCli = (
   ...(options["entry-point"] === undefined
     ? {}
     : { entryPoint: options["entry-point"] }),
+  ...(options["dsym-path"] === undefined
+    ? {}
+    : { dsymPath: options["dsym-path"] }),
   ...(options.provider === undefined ? {} : { providerId: options.provider }),
 });
