@@ -20,12 +20,14 @@ export const PLAYWRIGHT_TRACE_LIMITS = {
 
 export const traceMemberSchema = z.strictObject({
   member_id: prefixedDigestSchema("trace_member"),
-  path: z.string(),
+  path: z.string().describe("Original ZIP member name reported by the reader"),
+  logical_path: z.string().describe("Separate reader-normalized logical path"),
   kind: z.enum(["file", "directory", "symlink", "slice", "metadata"]),
   declared_bytes: z.int().nonnegative().nullable(),
   declared_compressed_bytes: z.int().nonnegative().nullable(),
   encrypted: z.boolean(),
   decoded: z.boolean(),
+  limitations: z.array(z.string()),
 });
 export const traceSourceSchema = z.strictObject({
   member_id: prefixedDigestSchema("trace_member"),

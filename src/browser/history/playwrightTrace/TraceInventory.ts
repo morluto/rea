@@ -40,18 +40,27 @@ export class TraceInventory {
     this.reserve(512 + Buffer.byteLength(JSON.stringify(value)) * 4);
   }
   member(entry: ArtifactEntry): TraceMember {
-    this.reserve(1024 + entry.path.length * 12);
+    const path = entry.sourcePath ?? entry.path;
+    this.reserve(
+      1024 +
+        (path.length +
+          entry.path.length +
+          entry.limitations.reduce((sum, value) => sum + value.length, 0)) *
+          12,
+    );
     const row: TraceMember = {
       member_id: traceIdentity("trace_member", [
         this.artifact.sha256,
         entry.adapterKey,
       ]),
-      path: entry.path,
+      path,
+      logical_path: entry.path,
       kind: entry.kind,
       declared_bytes: entry.declaredSize,
       declared_compressed_bytes: entry.compressedSize,
       encrypted: entry.encrypted,
       decoded: false,
+      limitations: [...entry.limitations],
     };
     this.members.push(row);
     const matches = this.#paths.get(row.path) ?? [];
@@ -145,6 +154,7 @@ export class TraceInventory {
         interpretation:
           incomplete ||
           this.diagnostics.length > 0 ||
+          this.members.some((member) => member.limitations.length > 0) ||
           unavailable > 0 ||
           this.streams.some((row) => row.state !== "supported")
             ? "partial"

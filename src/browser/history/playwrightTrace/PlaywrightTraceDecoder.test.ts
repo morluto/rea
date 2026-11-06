@@ -4,7 +4,10 @@ import { expect, it } from "vitest";
 import { ArtifactResourceScope } from "../../../artifacts/ArtifactResourceScope.js";
 import { PlaywrightTraceDecoder } from "./PlaywrightTraceDecoder.js";
 import { playwrightTraceSchema } from "../../../domain/playwrightTrace/playwrightTrace.js";
-import { playwrightTraceFixture } from "../../../../tests/fixtures/playwrightTrace.js";
+import {
+  playwrightTraceFixture,
+  playwrightTracePathFixture,
+} from "../../../../tests/fixtures/playwrightTrace.js";
 
 it("imports real v10 recorder text with per-stream identity and resource presence, preserving source bytes", async () => {
   const fixture = await playwrightTraceFixture({ resources: true });
@@ -54,6 +57,62 @@ it("imports real v10 recorder text with per-stream identity and resource presenc
         .every((row) => row.state === "present-unread"),
     ).toBe(true);
     expect((await readFile(fixture.path)).equals(bytes)).toBe(true);
+  } finally {
+    await resources.close();
+  }
+});
+
+it("preserves exact ZIP names for resources and paired stream profiles", async () => {
+  const fixture = await playwrightTracePathFixture();
+  const resources = new ArtifactResourceScope();
+  try {
+    const result = await new PlaywrightTraceDecoder(resources).inspect(
+      fixture.path,
+    );
+    if (!result.ok) throw result.error;
+    const report = result.value;
+    expect(report.members.map((member) => member.path)).toContain(
+      "./resources/x",
+    );
+    expect(
+      report.members.find((member) => member.path === "./resources/x"),
+    ).toMatchObject({
+      logical_path: "resources/x",
+      limitations: [expect.stringContaining("leading current-directory")],
+    });
+    expect(
+      report.members.find((member) => member.path === "resources/x"),
+    ).toMatchObject({ logical_path: "resources/x", limitations: [] });
+    expect(report.events).toHaveLength(4);
+    expect(report.streams.map((stream) => stream.state)).toEqual([
+      "supported",
+      "supported",
+      "supported",
+      "supported",
+    ]);
+    const members = new Map(
+      report.members.map((member) => [member.member_id, member]),
+    );
+    for (const event of report.events) {
+      const source = members.get(event.source.member_id)!;
+      const expected = source.path.startsWith("./")
+        ? "./resources/x"
+        : "resources/x";
+      expect(event.resource_references).toEqual([
+        expect.objectContaining({
+          path: expected,
+          state: "present-unread",
+          member_id: report.members.find((row) => row.path === expected)
+            ?.member_id,
+          matching_members: 1,
+        }),
+      ]);
+    }
+    expect(
+      report.events
+        .filter((event) => event.kind === "network")
+        .map((event) => event.status),
+    ).toEqual([200, 201]);
   } finally {
     await resources.close();
   }

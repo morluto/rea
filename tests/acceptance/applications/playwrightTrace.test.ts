@@ -3,7 +3,10 @@ import { join } from "node:path";
 import { expect, onTestFinished } from "vitest";
 import { createServer } from "node:http";
 import { cliTest, type TestCli } from "../../support/cli/cliFixture.js";
-import { playwrightTraceFixture } from "../../fixtures/playwrightTrace.js";
+import {
+  playwrightTraceFixture,
+  playwrightTracePathFixture,
+} from "../../fixtures/playwrightTrace.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { advertisedMcpToolSchemas } from "../../fixtures/advertisedMcpTool.js";
 import { parseEvidence, type Evidence } from "../../../src/domain/evidence.js";
@@ -12,6 +15,76 @@ import { analysisViewResultSchema } from "../../../src/domain/analysisView/analy
 import { evidenceBundleSchema } from "../../../src/domain/evidenceBundle.js";
 
 type McpCall = Awaited<ReturnType<typeof connectLocalToolsMcp>>["call"];
+
+cliTest(
+  "preserves original ZIP paths across CLI/MCP, resource lookup and exact member filters",
+  async ({ cli }) => {
+    const fixture = await playwrightTracePathFixture();
+    const original = await readFile(fixture.path);
+    const { call } = await connectLocalToolsMcp({
+      REA_MCP_TOOL_FAMILIES: "application,session",
+      PLAYWRIGHT_BROWSERS_PATH: "/rea-no-browser-required",
+    });
+    const parent = parseEvidence(
+      (
+        await call("inspect_playwright_trace", {
+          path: fixture.path,
+          detail: "complete",
+        })
+      ).structuredContent,
+    );
+    const report = playwrightTraceSchema.parse(parent.normalized_result);
+    expect(report.events).toHaveLength(4);
+    expect(report.summary.unavailable_references).toBe(0);
+    expect(report.streams.every((stream) => stream.state === "supported")).toBe(
+      true,
+    );
+    const view = {
+      kind: "playwright-trace",
+      collection: "members",
+      paths: ["./resources/x"],
+      fields: [],
+    };
+    const selected = parseEvidence(
+      (
+        await call("inspect_analysis_view", {
+          source: {
+            kind: "retained-evidence",
+            evidence_id: parent.evidence_id,
+          },
+          view,
+        })
+      ).structuredContent,
+    );
+    expect(selected.normalized_result).toMatchObject({
+      kind: "playwright-trace",
+      items: [
+        {
+          path: "./resources/x",
+          logical_path: "resources/x",
+          limitations: [expect.stringContaining("leading current-directory")],
+        },
+      ],
+      coverage: { total: 1, exhausted: true },
+      source_coverage: { interpretation: "partial" },
+    });
+    expect(
+      (await call("inspect_playwright_trace", { path: fixture.path, view }))
+        .structuredContent,
+    ).toEqual(selected);
+    const run = cli.sharedCliRun?.bind(cli) ?? cli.run.bind(cli);
+    const result = await run({
+      arguments: ["inspect-playwright-trace", fixture.path, "--json"],
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    expect(parseEvidence(result.json)).toEqual({
+      ...parent,
+      caller_input_path: fixture.path,
+    });
+    expect((await readFile(fixture.path)).equals(original)).toBe(true);
+  },
+);
+
 const checkCliPublication = async ({
   cli,
   fixture,

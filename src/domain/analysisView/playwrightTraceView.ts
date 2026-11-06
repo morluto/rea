@@ -78,9 +78,11 @@ export const playwrightTraceViewItemsSchema = z.union([
     traceMemberSchema.partial().required({
       member_id: true,
       path: true,
+      logical_path: true,
       kind: true,
       encrypted: true,
       decoded: true,
+      limitations: true,
     }),
   ),
   z.array(
@@ -185,9 +187,11 @@ const selectRows = (
         ),
         member_id: row.member_id,
         path: row.path,
+        logical_path: row.logical_path,
         kind: row.kind,
         encrypted: row.encrypted,
         decoded: row.decoded,
+        limitations: row.limitations,
       }),
     );
   }

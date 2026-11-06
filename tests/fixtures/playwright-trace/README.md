@@ -30,6 +30,8 @@ presence and ambiguity semantics and do not establish valid screenshots,
 response bodies or recorder compatibility beyond the supplied stream facts.
 Separate manual verification uses the original complete recorder archive.
 Tests also create clearly identified malformed and partial variants.
+The path-identity scenario constructs two v10 stream pairs and resource names
+with and without `./`; it is controlled relationship data, not another recorder capture.
 
 The application and recording were created for this repository; no external
 application code, credentials or screenshot binaries are included.

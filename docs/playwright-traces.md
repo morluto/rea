@@ -68,6 +68,12 @@ aligning stream clocks. Counts derive from the retained supported records. Call 
 across streams or imply a successfully completed before/after pair. There is no
 inferred total ordering or clock alignment between `.trace` and `.network`.
 
+Member `path` preserves the reader's original ZIP name; `logical_path` separately
+records its normalized interpretation. Resource references, exact `paths` filters
+and trace/network profile pairing use original names, so `resources/x` and
+`./resources/x` remain distinct. Reader limitations remain attached to each member
+and keep source interpretation partial when present.
+
 `decoder_profile` names the selected interpretation policy, not a verified source version.
 Trace members require an initial numeric v10 context header. Other declared
 versions are refused. Missing, malformed, repeated or ambiguous profiles remain

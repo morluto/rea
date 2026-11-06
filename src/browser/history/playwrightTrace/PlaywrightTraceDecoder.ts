@@ -41,7 +41,7 @@ const readStreams = async (
   const budget = { decodedBytes: 0 };
   const profiles = new Map<string, TraceStream[]>();
   for (const { entry, member } of selected.filter((row) =>
-    row.entry.path.endsWith(".trace"),
+    row.member.path.endsWith(".trace"),
   )) {
     const stream = await readTraceStream({
       inventory,
@@ -53,14 +53,14 @@ const readStreams = async (
       ...(signal === undefined ? {} : { signal }),
     });
     inventory.streams.push(stream);
-    const previous = profiles.get(entry.path) ?? [];
+    const previous = profiles.get(member.path) ?? [];
     previous.push(stream);
-    profiles.set(entry.path, previous);
+    profiles.set(member.path, previous);
   }
   for (const { entry, member } of selected.filter((row) =>
-    row.entry.path.endsWith(".network"),
+    row.member.path.endsWith(".network"),
   )) {
-    const expected = entry.path.slice(0, -".network".length) + ".trace";
+    const expected = member.path.slice(0, -".network".length) + ".trace";
     const paired = profiles.get(expected) ?? [];
     const known =
       paired.length === 1 &&
@@ -169,7 +169,7 @@ class TraceArchiveRead {
       const selected: SelectedMember[] = [];
       for await (const entry of reader.entries(this.signal)) {
         const member = facts.member(entry);
-        if (entry.path.endsWith(".trace") || entry.path.endsWith(".network"))
+        if (member.path.endsWith(".trace") || member.path.endsWith(".network"))
           selected.push({ entry, member });
       }
       if (selected.length === 0)
@@ -178,7 +178,7 @@ class TraceArchiveRead {
           this.path,
           "Archive contains no Playwright trace or network stream members.",
         );
-      if (!selected.some((row) => row.entry.path.endsWith(".network")))
+      if (!selected.some((row) => row.member.path.endsWith(".network")))
         facts.diagnostic(
           null,
           null,

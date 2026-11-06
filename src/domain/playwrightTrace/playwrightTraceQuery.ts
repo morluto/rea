@@ -41,7 +41,10 @@ export const playwrightTraceViewRequestSchema = z.discriminatedUnion(
       ...page,
       collection: z.literal("members"),
       member_ids: z.array(traceMemberSchema.shape.member_id).optional(),
-      paths: z.array(z.string()).optional(),
+      paths: z
+        .array(z.string())
+        .optional()
+        .describe("Exact original ZIP member names; logical_path is separate"),
       fields: z.array(traceMemberSchema.keyof()).optional(),
     }),
     z.strictObject({

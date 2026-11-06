@@ -82,11 +82,11 @@ class TraceStreamRead {
   readonly omitted = new Map<string, number>();
   #headerSeen = false;
   constructor(readonly input: TraceStreamInput) {
-    const { entry, member, profileKnown } = input;
+    const { member, profileKnown } = input;
     this.stream = {
       stream_id: traceIdentity("trace_stream", member.member_id),
       member_id: member.member_id,
-      role: entry.path.endsWith(".network") ? "network" : "trace",
+      role: member.path.endsWith(".network") ? "network" : "trace",
       version: profileKnown ? 10 : null,
       state: profileKnown ? "supported" : "unknown",
       lines: 0,

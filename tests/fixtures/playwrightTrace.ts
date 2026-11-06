@@ -10,6 +10,7 @@ export const playwrightTraceFixture = async (
     trace?: string;
     network?: string;
     level?: 0 | 6;
+    extraMembers?: readonly { path: string; contents: string }[];
   } = {},
 ) => {
   const trace =
@@ -56,6 +57,37 @@ export const playwrightTraceFixture = async (
         ),
       );
   }
+  for (const member of options.extraMembers ?? [])
+    await writer.add(member.path, new TextReader(member.contents));
   await writeFile(path, await writer.close());
   return { root, path, trace, network };
+};
+
+/** Controlled v10 relationships with distinct source names sharing logical paths. */
+export const playwrightTracePathFixture = () => {
+  const trace = (resource: string) =>
+    [
+      { type: "context-options", version: 10 },
+      { type: "screencast-frame", file: resource, timestamp: 1 },
+    ]
+      .map((row) => JSON.stringify(row))
+      .join("\n") + "\n";
+  const network = (resource: string, status: number) =>
+    JSON.stringify({
+      type: "resource-snapshot",
+      snapshot: {
+        request: { method: "GET", url: "http://captured.invalid/value" },
+        response: { status, content: { _file: resource } },
+      },
+    }) + "\n";
+  return playwrightTraceFixture({
+    resources: true,
+    trace: trace("resources/x"),
+    network: network("resources/x", 200),
+    extraMembers: [
+      { path: "./trace.trace", contents: trace("./resources/x") },
+      { path: "./trace.network", contents: network("./resources/x", 201) },
+      { path: "./resources/x", contents: "Alternate unread resource bytes" },
+    ],
+  });
 };
