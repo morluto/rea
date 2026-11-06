@@ -1,5 +1,8 @@
 import { contractsForToolFamilies } from "../../../src/contracts/toolFamilies.js";
-import { progressiveCatalogIdentity } from "../../../src/catalogDiscovery.js";
+import {
+  HOT_TOOL_NAMES,
+  progressiveCatalogIdentity,
+} from "../../../src/catalogDiscovery.js";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { execFile, spawn } from "node:child_process";
@@ -206,8 +209,8 @@ it("recognizes a hot/cold initial catalog and its inventory identity", async () 
   });
   expect(result.healthy).toBe(true);
   expect(result.inventory?.tools).toMatchObject({
-    expected: 6,
-    observed: 6,
+    expected: HOT_TOOL_NAMES.size + 1,
+    observed: HOT_TOOL_NAMES.size + 1,
     missing: [],
     unexpected: [],
   });

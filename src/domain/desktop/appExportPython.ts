@@ -150,14 +150,15 @@ def _load_dconf(home: Path) -> None:
               file=sys.stderr)
 
 
-def _sqlite_text(data: bytes):
-    text = data.decode("utf-8", "replace")
+def _sqlite_text(data: bytes, encoding: str):
+    text = data.decode(encoding, "replace")
     return {"text": text, "bytes_hex": data.hex()} if "�" in text else text
 
 
-def _cell(value):
-    if isinstance(value, bytes):
-        return {"blob_hex": value.hex()}
+def _cell(value, encoding: str):
+    if isinstance(value, str):
+        data = bytes.fromhex(value[1:])
+        return _sqlite_text(data, encoding) if value[0] == "t" else {"blob_hex": data.hex()}
     if isinstance(value, int) and abs(value) > MAX_SAFE_INTEGER:
         return {"integer": str(value)}
     # JSON has no infinities or negative zero; REA's SQLite reader spells them as strings.
@@ -166,25 +167,33 @@ def _cell(value):
     return value
 
 
-def _table(db, name: str, primary_key: list) -> dict:
+def _table(db, name: str, primary_key: list, encoding: str) -> dict:
     quoted = '"' + name.replace('"', '""') + '"'
-    cursor = db.execute(f"select * from main.{quoted} not indexed limit {MAX_ROWS + 1}")
-    rows = [[_cell(value) for value in row] for row in cursor]
-    return {"columns": [column[0] for column in cursor.description], "primary_key": primary_key,
+    columns = [column[0] for column in db.execute(f"select * from main.{quoted} limit 0").description]
+    # SQLite owns TEXT-to-BLOB conversion, so hex retains the database's original encoding.
+    projected = []
+    for name in columns:
+        column = '"' + name.replace('"', '""') + '"'
+        projected.append(f"CASE typeof({column}) WHEN 'text' THEN 't' || hex(CAST({column} AS BLOB)) "
+                         f"WHEN 'blob' THEN 'b' || hex({column}) ELSE {column} END")
+    cursor = db.execute(f"select {', '.join(projected)} from main.{quoted} not indexed limit {MAX_ROWS + 1}")
+    rows = [[_cell(value, encoding) for value in row] for row in cursor]
+    return {"columns": columns, "primary_key": primary_key,
             "rows": rows[:MAX_ROWS], "truncated": len(rows) > MAX_ROWS}
 
 
 def _sqlite(path: Path) -> dict:
     """The database's ordinary tables, in schema order, up to REA's table and row limits."""
     with contextlib.closing(sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True, timeout=SQLITE_BUSY_S)) as db:
-        kinds = dict(db.execute("select name, type from pragma_table_list where schema = 'main'"))
+        kinds = dict(db.execute("select name, type from temp.pragma_table_list where schema = 'main'"))
         names = [name for (name,) in db.execute("select name from sqlite_schema where type = 'table'")
                  if kinds.get(name) == "table"]
         keys = {name: [key for (key,) in db.execute(
-            "select name from pragma_table_info(?, 'main') where pk > 0 order by pk", (name,))]
+            "select name from temp.pragma_table_info(?, 'main') where pk > 0 order by pk", (name,))]
             for name in names[:MAX_TABLES]}
-        db.text_factory = _sqlite_text
-        tables = {name: _table(db, name, keys[name]) for name in names[:MAX_TABLES]}
+        encoding = {"UTF-8": "utf-8", "UTF-16le": "utf-16-le", "UTF-16be": "utf-16-be"}[
+            db.execute("PRAGMA encoding").fetchone()[0]]
+        tables = {name: _table(db, name, keys[name], encoding) for name in names[:MAX_TABLES]}
     cut = len(names) > MAX_TABLES
     return {"format": "sqlite", "view": {"tables": tables, "tables_truncated": cut},
             "truncated": cut or any(table["truncated"] for table in tables.values())}
@@ -206,8 +215,10 @@ def _keyfile_line(raw: str) -> tuple:
     header = GROUP_HEADER.match(line)
     if header:
         return ("group", header.group(1))
-    key, equals, value = line.partition("=")
-    return ("entry", key.strip(), value.strip()) if equals and key else ("other",)
+    key, equals, value = raw.partition("=")
+    key = key.strip()
+    # Only ASCII space and tab immediately after '=' are padding.
+    return ("entry", key, value.lstrip(" \t")) if equals and key else ("other",)
 
 
 def _each_line(text: str):
