@@ -102,6 +102,7 @@ const PATH_SCOPES = {
     "tests/boundary/providers/RizinTimeoutEvidence.test.ts",
     "tests/boundary/providers/RizinDebugSession*.test.ts",
     "tests/boundary/providers/RizinInferiorTty.test.ts",
+    "tests/boundary/providers/RizinDecoderInputs.test.ts",
     "tests/boundary/providers/RizinTestInferiorTty.ts",
     "tests/boundary/process/ownedDebuggerSession.test.ts",
     "tests/boundary/cli/debuggerOneShotExit.test.ts",
@@ -704,7 +705,9 @@ export const CI_LANES = {
   agentenv: sameJobs(PATH_SCOPES.agentenv, ["agentenv"]),
   nativeaot: sameJobs(PATH_SCOPES.nativeaot, ["nativeaot"]),
   ghidra_bridge: sameJobs(PATH_SCOPES.ghidra_bridge, ["ghidra_bridge"]),
-  website: sameJobs(PATH_SCOPES.website, ["website"]),
+  website: sameJobs(PATH_SCOPES.website, ["website"], {
+    earlyInputs: [".agents/skills/reverse-engineer-anything/**"],
+  }),
 };
 // An input owner omitted from the registry must never silently lose a lane.
 for (const [name, paths] of Object.entries(PATH_SCOPES))

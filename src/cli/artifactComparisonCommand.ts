@@ -24,7 +24,7 @@ export const registerArtifactComparisonCommand = (
   const name = CLI_COMMANDS.compareArtifacts;
   cli.command(name, {
     description:
-      'Compare two artifact inventories named as {left, right}: complete Evidence or {kind:"evidence-file",path,evidence_id?}. A one-shot command retains no session Evidence for retained-evidence references.',
+      'Compare two artifact inventories, including FIT and legacy uImage firmware components, named as {left, right}: complete Evidence or {kind:"evidence-file",path,evidence_id?}. A one-shot command retains no session Evidence for retained-evidence references.',
     args: z.object({
       inputJson: z.string().describe("Inline workflow JSON or JSON file path"),
     }),

@@ -168,6 +168,17 @@ it("keeps CPython 3.16 pre-release magics outside standalone decoder coverage", 
   );
 });
 
+it("does not qualify a magic outside the pinned identity table", () => {
+  expect(() => parse(pythonPycHeader(1))).toThrow(
+    expect.objectContaining({
+      kind: "unsupported",
+      message: expect.stringContaining(
+        "is not a pinned CPython identity, so its header cannot be qualified",
+      ),
+    }),
+  );
+});
+
 const withSliceConsts = (magic: number, consts: Buffer[]): Buffer =>
   Buffer.concat([pythonPycHeader(magic), marshalCode("py311", { consts })]);
 const marshalSlice = (

@@ -233,10 +233,21 @@ export const parsePythonPyc = (
     malformed(
       "Selected file is shorter than a 16-byte CPython 3.7+ pyc header.",
     );
-  if (mapped === null || identity === null)
+  if (mapped === null || identity === null) {
+    // A known identity without a pinned code layout is a different outcome from an
+    // unrecognized magic: the header below is still qualified from the same packed
+    // fields every 3.7+ pyc uses, so report it instead of a bare rejection.
+    const flags = bytes.readUInt32LE(4);
+    const hashBased = (flags & PYTHON_PYC_HASH_BASED) !== 0;
+    const headerFacts = `16-byte header, flags 0x${flags.toString(16)}, ${
+      hashBased ? "hash-based" : "timestamp-based"
+    }`;
     return unsupported(
-      `Pyc magic ${magic} is outside the pinned CPython 3.7–3.15 table.`,
+      identity === null
+        ? `Pyc magic ${magic} is not a pinned CPython identity, so its header cannot be qualified; standalone marshal decoding is pinned for CPython 3.7–3.15.`
+        : `CPython ${identity.pythonVersion} header is recognized (magic ${magic}, ${headerFacts}), but no marshal code layout is pinned for that version, so its code objects cannot be decoded. Standalone marshal decoding is pinned for CPython 3.7–3.15.`,
     );
+  }
   const flags = bytes.readUInt32LE(4);
   const hashBased = (flags & PYTHON_PYC_HASH_BASED) !== 0;
   const header = {

@@ -180,8 +180,15 @@ export const valueAt = (
 ): JsonValue | undefined => {
   let value: JsonValue | undefined = body;
   for (const token of pointerTokens(pointer)) {
-    if (Array.isArray(value)) value = value[Number(token)];
-    else if (isObject(value) && Object.hasOwn(value, token))
+    if (Array.isArray(value)) {
+      // JSON Pointer array indexes are canonical decimal tokens; coercing
+      // arbitrary text would make /01 alias /1 and can turn huge indexes into
+      // Infinity.
+      if (!/^(?:0|[1-9]\d*)$/u.test(token)) return undefined;
+      const index = Number(token);
+      if (!Number.isSafeInteger(index)) return undefined;
+      value = value[index];
+    } else if (isObject(value) && Object.hasOwn(value, token))
       value = value[token];
     else return undefined;
   }

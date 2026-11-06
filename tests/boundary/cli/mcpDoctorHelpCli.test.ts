@@ -4,6 +4,47 @@ import { workspaceCliTest } from "../../support/cli/workspaceCliFixture.js";
 
 const CLI_INTEGRATION_TIMEOUT_MS = 60_000;
 
+describe("MCP doctor output routing boundary", () => {
+  workspaceCliTest(
+    "keeps output options from selecting the CLI-derived MCP doctor",
+    async ({ cli }) => {
+      for (const arguments_ of [
+        ["mcp", "doctor", "--json"],
+        ["--json", "mcp", "doctor"],
+        ["mcp", "--json", "doctor"],
+        ["--format", "json", "mcp", "doctor"],
+        ["mcp", "--format", "json", "doctor"],
+        ["--format=json", "mcp", "doctor"],
+        ["mcp", "--format=json", "doctor"],
+        ["--full-output", "mcp", "--json", "doctor"],
+      ]) {
+        const result = await cli.run({
+          arguments: arguments_,
+          environment: { REA_MCP_DOCTOR_DEADLINE_MS: "0" },
+        });
+        expect(result.exitCode, arguments_.join(" ")).toBe(1);
+        const report = {
+          healthy: false,
+          adapter: "production-stdio",
+          checks: [
+            expect.objectContaining({
+              name: "REA_MCP_DOCTOR_DEADLINE_MS",
+              ok: false,
+            }),
+          ],
+        };
+        expect(result.json).toMatchObject(
+          arguments_.includes("--full-output")
+            ? { ok: false, error: report }
+            : report,
+        );
+        expect(result.stderr).toBe("");
+      }
+    },
+    CLI_INTEGRATION_TIMEOUT_MS,
+  );
+});
+
 describe("MCP doctor help boundary", () => {
   workspaceCliTest(
     "answers the advertised help option instead of validating it",
@@ -153,3 +194,31 @@ describe("MCP doctor help boundary", () => {
     CLI_INTEGRATION_TIMEOUT_MS,
   );
 });
+
+workspaceCliTest(
+  "accepts the same timing spellings as the ordinary CLI",
+  async ({ cli }) => {
+    for (const [flag, enabled] of [
+      ["--no-timings", false],
+      ["--timings=false", false],
+      ["--timings=true", true],
+      ["--timings=other", false],
+      ["--timings=", false],
+    ] as const) {
+      const result = await cli.run({
+        arguments: ["mcp", "doctor", "--json", flag],
+      });
+      expect(result.exitCode, result.stdout).toBe(0);
+      expect(JSON.parse(result.stdout)).toMatchObject({
+        healthy: true,
+        adapter: "production-stdio",
+      });
+      if (enabled)
+        expect(JSON.parse(result.stderr)).toMatchObject({
+          rea_timings: { version: 1, command_ms: expect.any(Number) },
+        });
+      else expect(result.stderr).toBe("");
+    }
+  },
+  CLI_INTEGRATION_TIMEOUT_MS,
+);

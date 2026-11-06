@@ -81,7 +81,7 @@ The inline Evidence result contains the artifact path, SHA-256, and byte length.
 
 - `magic`, the 16-bit little-endian field;
 - `python_version` and `code_layout`, mapped from the pinned CPython 3.7–3.15
-  table (`py37`, `py38`, or `py311`); 3.11 alpha magics before 3494 used
+  marshal table (`py37`, `py38`, or `py311`); 3.11 alpha magics before 3494 used
   other code layouts and are unsupported. The 3.7.0a1/a2 magics 3390/3391
   used 12-byte headers and are outside this reader's supported format;
 - `flags`, `hash_based`, and `check_source` from PEP 552;
@@ -192,9 +192,11 @@ name-table entry (`co_names`, varnames, freevars, cellvars, and
 Copied constant tables and each reported nested code relationship count
 against that same object budget. Integer digits and expanded
 set or dictionary keys, including a shared tuple repeated at each level, count
-against the string budget. Magics outside the pinned 3.7–3.15 table,
-truncated headers, trailing marshal bytes, and a non-code top-level object are
-typed failures.
+against the string budget. Magics outside the pinned identity table, truncated
+headers, trailing marshal bytes, and a non-code top-level object are typed
+failures. A recognized magic with no pinned marshal code layout is a typed
+unsupported failure too: the header is qualified from its packed 16-byte
+fields, but no code object is reported and the result is never partial success.
 
 A decoded header does not prove the matching `.py` is present. `python_version`
 is the magic table, not a running interpreter. This workflow does not recover

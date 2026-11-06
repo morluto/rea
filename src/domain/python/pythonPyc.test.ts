@@ -44,7 +44,10 @@ it("keeps pinned CPython identity separate from standalone marshal coverage", ()
     code_layout: "py311",
     negative_code_fields: "rejected",
   });
-  expect(pythonBytecodeIdentity(3666)?.pythonVersion).toBe("3.15");
+  expect(pythonBytecodeIdentity(3666)).toEqual({
+    pythonVersion: "3.15",
+    headerBytes: 16,
+  });
   expect(pythonPycMarshalProfile(3650)?.code_layout).toBe("py311");
   expect(pythonPycMarshalProfile(3666)?.code_layout).toBe("py311");
   // 3.16 pre-release magics and the gaps between series stay unknown.

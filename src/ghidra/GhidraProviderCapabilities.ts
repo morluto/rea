@@ -28,7 +28,7 @@ export const healthLimitations = Object.freeze([
 
 /** Additional limitations applied to the experimental Windows x64 P0 boundary. */
 export const windowsP0Limitations = Object.freeze([
-  "Windows Ghidra P0 accepts native x86, x86-64, ARMNT (Thumb-2) and ARM64 PE applications and DLLs, and explicitly selected raw 6502 images; managed, hostile, sensitive, and mutable-path targets are unsupported.",
+  "Windows Ghidra P0 accepts native x86, x86-64, ARMNT (Thumb-2) and ARM64 PE applications and DLLs, DOS MZ images, and explicitly selected raw 6502 images; managed, hostile, sensitive, and mutable-path targets are unsupported.",
   "The Windows bridge uses authenticated IPv4 loopback because Node path-based IPC does not expose Java AF_UNIX sockets; the endpoint file contains no bearer token.",
   "Windows sessions require the matching packaged Windows x64 native addon, local NTFS targets and runtimes, and Windows 10 or later. Native handles enforce path admission, private DACLs, and Job Object ownership automatically.",
 ]);
@@ -50,6 +50,34 @@ const stringInventoryLimitation =
 
 const searchLimitation =
   "Regex mode uses Java Pattern semantics. Matcher or compiler stack exhaustion returns a resource constraint without closing the session; literal mode avoids regex recursion and returns complete matching values.";
+
+/** Attached to an empty xrefs result: absence of resolved references is not proof. */
+export const ghidraEmptyXrefsLimitation =
+  "Ghidra's ReferenceManager returned no actionable references to this address in this session. An empty list reflects what this analysis resolved, not proof that the address is unreferenced; synthetic entry-point references are omitted. No independent in-product cross-check exists for this empty result: surrounding disassembly can confirm direct references at a code address, and data or string addresses need an external disassembly scan (for example otool -tV, pairing adrp with add or ldr) before concluding there are no xrefs.";
+
+/** Attached to an empty incoming-reference facet of a function result. */
+export const ghidraEmptyIncomingReferencesLimitation =
+  "Ghidra's ReferenceManager returned no actionable incoming references for this function in this session. An empty incoming list reflects what this analysis resolved, not proof that nothing references this function; synthetic entry-point references are omitted. Incoming references have no independent in-product check and require scanning other code (for example an external otool -tV adrp/add pairing) before concluding there are none.";
+
+/**
+ * Attached to an empty incoming-reference facet of an analyzed-function
+ * dossier, which omits synthetic entry-point references and excludes sources
+ * inside the function's own body.
+ */
+export const ghidraEmptyDossierIncomingLimitation =
+  "Ghidra's ReferenceManager returned no actionable incoming references from outside this function's body in this session. An empty incoming list reflects what this analysis resolved, not proof that nothing references this function: synthetic entry-point references are omitted before the dossier's body filter, and sources inside the body are excluded (a self-recursive call is one), so the list can be empty even when such edges exist. In-body edges remain visible in the outgoing references and disassembly, and procedure_references(incoming) reads the same ReferenceManager stream without the in-body exclusion (it omits synthetic entry-point references as well) to separate the cases. Sources outside the program's observed references still require an external scan (for example otool -tV, pairing adrp with add or ldr) before concluding there are none.";
+
+/** Attached to an empty outgoing-reference facet of an external function. */
+export const ghidraEmptyExternalOutgoingLimitation =
+  "Ghidra's ReferenceManager returned no actionable outgoing references for this external function in this session. An external function's defining body is not part of this program database, so its outgoing list cannot describe what the function references: this program's call sites (its incoming references and callers) and the defining artifact are the checks before concluding anything about its behavior.";
+
+/** Attached to an empty outgoing-reference facet of a function result. */
+export const ghidraEmptyOutgoingReferencesLimitation =
+  "Ghidra's ReferenceManager returned no actionable outgoing references for this function in this session. An empty outgoing list reflects what this analysis resolved, not proof that the function references nothing; synthetic entry-point references are omitted. The function's own disassembly is an independent check for direct outgoing references before concluding there are none.";
+
+/** Attached to an empty outgoing-reference list of one instruction result. */
+export const ghidraEmptyInstructionOutgoingLimitation =
+  "Ghidra's ReferenceManager returned no actionable outgoing references from this instruction in this session. An empty list reflects what this analysis resolved, not proof that the instruction references nothing. The instruction's own disassembly is an independent check for direct outgoing references (a direct operand naming a target with no recorded reference contradicts the empty result) before concluding there are none.";
 
 /** Limitation text for one admitted operation, including the common base. */
 export const limitationsFor = (
@@ -95,7 +123,7 @@ export const limitationsFor = (
     case "search_bytes":
       return [
         ...common,
-        "Searches initialized loader-adjusted memory independently per block, in provider address order. Bounds and page coverage ends are inclusive. Uninitialized blocks are listed separately. Overlapping matches are included; patterns never cross block boundaries. A cursor resumes the same target, profile and query. Cancellation discards the active search and returns no successful partial page.",
+        "Searches contiguous eligible initialized loader-adjusted memory in provider address order, including across adjacent blocks. Bounds and page coverage ends are inclusive. Uninitialized blocks are listed separately and break search runs. Overlapping matches are included. A cursor resumes the same target, profile and query. Cancellation discards the active search and returns no successful partial page.",
       ];
     case "address_to_file_offset":
       return [
@@ -248,6 +276,10 @@ export const existingProjectCapabilities = (
         available: false,
         reason: "Existing Ghidra project sessions are read-only.",
         availabilityCode: "open_options_invalid",
+        userMessage:
+          "This Ghidra project session is read-only; the requested edit was not applied.",
+        remediation:
+          "Continue inspecting the selected project. To make session-only edits, start a separate REA session with REA_GHIDRA_PROJECT_PATH and REA_GHIDRA_PROGRAM_NAME unset, then open a fresh Ghidra import. It is a separate ephemeral analysis and does not preserve the selected project's state.",
       };
     return { ...capability, limitations };
   });
