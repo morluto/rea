@@ -55,7 +55,10 @@ import { publishCliAnalysisEvidence } from "../../../src/cli/analysisEvidenceDel
 import { EMPTY_PROCESS_CAPTURE_EXAMPLE } from "../../../src/domain/process/processCaptureExample.js";
 import { PROCESS_PROVIDER } from "../../../src/domain/process/processEvidenceProvider.js";
 import * as processCaptureParsing from "../../../src/domain/process/processCaptureParsing.js";
-import type { JsonValue } from "../../../src/domain/jsonValue.js";
+import {
+  MAX_JSON_DEPTH,
+  type JsonValue,
+} from "../../../src/domain/jsonValue.js";
 
 vi.mock("node:v8", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:v8")>();
@@ -73,6 +76,43 @@ const bundle = (result = true) =>
       { operation: "health", parameters: {}, result },
     ),
   ]);
+
+it("publishes and reimports a mutable bundle with ceiling-depth Evidence", async () => {
+  const root = await createTestTempDirectory("rea-deep-checkpoint-");
+  const path = join(root, "bundle.json");
+  let result: JsonValue = "leaf";
+  for (let depth = 0; depth < MAX_JSON_DEPTH; depth++) result = { result };
+  const evidence = createEvidence(
+    undefined,
+    { id: "fixture", name: "Fixture", version: "1" },
+    {
+      operation: "health",
+      parameters: {},
+      result,
+    },
+  );
+  const value = createEvidenceBundle([evidence]);
+  const published = await writeBundle(value, path, false);
+  if (!published.ok) throw published.error;
+  const original = await readFile(path);
+  const overDeep = createEvidenceBundle([
+    { ...evidence, normalized_result: { result: evidence.normalized_result } },
+  ]);
+  expect(await writeBundle(overDeep, path, true)).toMatchObject({
+    ok: false,
+    error: { _tag: "EvidenceIntegrityError" },
+  });
+  expect((await readFile(path)).equals(original)).toBe(true);
+  const loaded = await readEvidenceBundle(path);
+  if (!loaded.ok) throw loaded.error;
+  const ledger = new EvidenceLedger();
+  const imported = ledger.import(loaded.value);
+  if (!imported.ok) throw imported.error;
+  expect(imported.value.recordsAdded).toBe(1);
+  expect(JSON.stringify(ledger.get(evidence.evidence_id))).toBe(
+    JSON.stringify(evidence),
+  );
+});
 
 it.each(["cycle", "accessor"] as const)(
   "rejects an unowned bundle containing a %s before estimating or publishing it",

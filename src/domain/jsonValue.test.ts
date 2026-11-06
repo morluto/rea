@@ -9,7 +9,10 @@ import {
   jsonValueValidationIssue,
   jsonValueValidationSteps,
   MAX_JSON_DEPTH,
+  type JsonValue,
 } from "./jsonValue.js";
+
+import { freezeJsonSnapshot } from "./immutableJson.js";
 
 const values = [
   "text",
@@ -268,3 +271,34 @@ describe("inert JSON data boundaries", () => {
     expect(jsonValueSchema.parse(value)).toEqual([1, { nested: "preserved" }]);
   });
 });
+
+it.each([true, false])(
+  "keeps immutable depth verdicts separate from envelope allowances (default first: %s)",
+  (defaultFirst) => {
+    const value = freezeJsonSnapshot(
+      deepObject(MAX_JSON_DEPTH + 1) as JsonValue,
+    );
+    const rejectDefault = () =>
+      expect(jsonValueValidationIssue(value)).toContain(
+        `maximum nesting depth of ${MAX_JSON_DEPTH}`,
+      );
+    const admitEnvelope = () =>
+      expect(
+        jsonValueValidationIssue(value, MAX_JSON_DEPTH + 1),
+      ).toBeUndefined();
+    if (defaultFirst) {
+      rejectDefault();
+      admitEnvelope();
+    } else {
+      admitEnvelope();
+      rejectDefault();
+    }
+    rejectDefault();
+    expect(
+      jsonValueValidationIssue(
+        deepObject(MAX_JSON_DEPTH + 2),
+        MAX_JSON_DEPTH + 1,
+      ),
+    ).toContain(`maximum nesting depth of ${MAX_JSON_DEPTH + 1}`);
+  },
+);
