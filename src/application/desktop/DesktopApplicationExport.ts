@@ -269,7 +269,7 @@ export const seedLimitation = (syntheticSeed: boolean): string =>
     : "The seed is the user's real state at the seed checkpoint; keep the bundle local.";
 
 const SCRUB_LIMITATION =
-  "Binary state files are seeded as captured; only text files, UTF-8 or UTF-16 with a byte-order mark, have the capture host's name, user@host and home path replaced.";
+  "Binary state files are seeded as captured; only text files, UTF-8 or UTF-16 with a byte-order mark, and gzip documents, scrubbed inside, have the capture host's name, user@host and home path replaced.";
 
 /** The bundle's generated files, the class module flagged when its dconf keys hold the identity, and its README, made once the seeds' scrub is known. */
 const bundleText = (
