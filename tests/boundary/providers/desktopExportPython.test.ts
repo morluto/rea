@@ -1,4 +1,9 @@
-import { execFileSync } from "node:child_process";
+import {
+  execFileSync,
+  type ExecFileSyncOptionsWithStringEncoding,
+} from "node:child_process";
+import { mkdtempSync, writeFileSync, unlinkSync, rmdirSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { chmod, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -10,12 +15,40 @@ import {
 } from "../../../src/domain/desktop/appExportPython.js";
 import {
   detectStateFormat,
+  keyfileView,
   isJsonText,
   jsonView,
   textualView,
 } from "../../../src/domain/desktop/stateFormats.js";
 import { safeParseJson } from "../../../src/domain/safeJson.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+
+/** Keep the exported Python helpers out of the host command-line size limit. */
+const execPython = (
+  args: string[],
+  options: ExecFileSyncOptionsWithStringEncoding,
+): string => {
+  const directory = mkdtempSync(join(tmpdir(), "rea-export-python-"));
+  const script = join(directory, "fixture.py");
+  const codeIndex = args.indexOf("-c");
+  try {
+    writeFileSync(script, args[codeIndex + 1]!, "utf8");
+    return execFileSync(
+      "python3",
+      [
+        "-X",
+        "utf8",
+        ...args.slice(0, codeIndex),
+        script,
+        ...args.slice(codeIndex + 2),
+      ],
+      options,
+    );
+  } finally {
+    unlinkSync(script);
+    rmdirSync(directory);
+  }
+};
 
 /** The exported module's view format for each file, run with only its standard library imports. */
 const pythonFormats = (files: readonly (readonly [string, string])[]) => {
@@ -26,12 +59,12 @@ const pythonFormats = (files: readonly (readonly [string, string])[]) => {
 for name, text in json.load(sys.stdin):
     print(_text_view(name, text, len(text.encode()))["format"])
 `;
-  return execFileSync("python3", ["-I", "-B", "-c", program], {
+  return execPython(["-I", "-B", "-c", program], {
     input: JSON.stringify(files),
     encoding: "utf8",
   })
     .trim()
-    .split("\n");
+    .split(/\r?\n/u);
 };
 
 it("detects key files by the state view's rule rather than a name or any group header", () => {
@@ -78,17 +111,18 @@ const pythonUtf16Respelled = (files: readonly string[]) => {
     .filter((line) => !line.includes("agentenv_protocol"))
     .join("\n");
   const program = `${imports}
+from pathlib import PurePosixPath
 SEED_HOME = "/home/ada"
 ${PYTHON_HELPERS}
 for data in json.load(sys.stdin):
-    print(_respelled_utf16(bytes.fromhex(data), Path("/home/user")).hex())
+    print(_respelled_utf16(bytes.fromhex(data), PurePosixPath("/home/user")).hex())
 `;
-  return execFileSync("python3", ["-I", "-B", "-c", program], {
+  return execPython(["-I", "-B", "-c", program], {
     input: JSON.stringify(files),
     encoding: "utf8",
   })
     .trim()
-    .split("\n");
+    .split(/\r?\n/u);
 };
 
 const utf16 = (text: string, order: "le" | "be") => {
@@ -142,13 +176,13 @@ const taskbarWindow = (bin: string, windowClass: string): string => {
   const imports = PYTHON_IMPORTS.split("\n")
     .filter((line) => !line.includes("agentenv_protocol"))
     .join("\n");
-  return execFileSync(
-    "python3",
+  return execPython(
     [
       "-I",
       "-B",
       "-c",
-      `${imports}\nSEED_HOME = "/home/ada"\n${PYTHON_HELPERS}\nprint(_taskbar_window(sys.argv[1]))`,
+      `${imports}\nfrom pathlib import PurePosixPath
+SEED_HOME = "/home/ada"\n${PYTHON_HELPERS}\nprint(_taskbar_window(sys.argv[1]))`,
       windowClass,
     ],
     {
@@ -194,12 +228,12 @@ const pythonJson = (texts: readonly string[]) => {
 for text in json.load(sys.stdin):
     print(json.dumps(_text_view("a.json", text, len(text.encode()))))
 `;
-  return execFileSync("python3", ["-I", "-B", "-c", program], {
+  return execPython(["-I", "-B", "-c", program], {
     input: JSON.stringify(texts),
     encoding: "utf8",
   })
     .trim()
-    .split("\n")
+    .split(/\r?\n/u)
     .map((line) => JSON.parse(line) as { view: unknown; error?: string });
 };
 
@@ -255,7 +289,7 @@ for name, text in json.load(sys.stdin):
     view = _text_view(name, text, len(text.encode()))
     print(json.dumps({"format": view["format"], "view": view["view"], "error": view.get("error")}))
 `;
-  const python = execFileSync("python3", ["-I", "-B", "-c", program], {
+  const python = execPython(["-I", "-B", "-c", program], {
     input: JSON.stringify(files),
     encoding: "utf8",
     maxBuffer: 64 * 1024 * 1024,
@@ -335,8 +369,7 @@ it("checks text for JSON the way REA does, token by token, without parsing it", 
     .join("\n");
 
   const python = JSON.parse(
-    execFileSync(
-      "python3",
+    execPython(
       [
         "-I",
         "-B",
@@ -372,7 +405,7 @@ print(json.dumps({"deep": deep, "peak": peak, "edge": _deeper_than(nested, 501),
 `;
 
   const result = JSON.parse(
-    execFileSync("python3", ["-I", "-B", "-c", program], { encoding: "utf8" }),
+    execPython(["-I", "-B", "-c", program], { encoding: "utf8" }),
   ) as { deep: boolean; peak: number; edge: boolean; over: boolean };
 
   expect(result).toMatchObject({ deep: false, edge: false, over: true });
@@ -384,8 +417,7 @@ it("spells infinite and negative-zero SQLite reals as REA's SQLite reader does",
   const imports = PYTHON_IMPORTS.split("\n")
     .filter((line) => !line.includes("agentenv_protocol"))
     .join("\n");
-  const cells = execFileSync(
-    "python3",
+  const cells = execPython(
     [
       "-I",
       "-B",
@@ -396,4 +428,25 @@ it("spells infinite and negative-zero SQLite reals as REA's SQLite reader does",
   );
 
   expect(JSON.parse(cells)).toEqual(["Infinity", "-Infinity", "-0", 0, 1.5]);
+});
+
+it("keeps the same keyfile whitespace as the retained state view", async () => {
+  const inputs = [
+    "[ui]\nsuffix=hello \nunicode=\u00a0hello\u00a0\npadded=   hello\n",
+    "[ui]\r\nsuffix=hello  \r\nunicode=\u00a0hello\u00a0\u00a0\r\npadded=\thello\r\n",
+  ];
+  const imports = PYTHON_IMPORTS.split("\n")
+    .filter((line) => !line.includes("agentenv_protocol"))
+    .join("\n");
+  const program = `${imports}${PYTHON_HELPERS}
+print(json.dumps([_text_view("settings.ini", text, len(text.encode()))["view"]["groups"] for text in json.load(sys.stdin)]))
+`;
+  const root = await createTestTempDirectory("rea-keyfile-python-");
+  const script = join(root, "fixture.py");
+  await writeFile(script, program, "utf8");
+  const output = execFileSync("python3", ["-I", "-B", "-X", "utf8", script], {
+    input: JSON.stringify(inputs),
+    encoding: "utf8",
+  });
+  expect(JSON.parse(output)).toEqual(inputs.map(keyfileView));
 });

@@ -113,6 +113,12 @@ mcpTest(
       expect(response.isError).toBe(true);
       expect(parseMcpToolError(response).error).toMatchObject({
         code: "resource_constraint",
+        category: "resource_constraint",
+        retryable: false,
+        remediation: {
+          action:
+            "The rustc commit-path inventory is a fixed count. Waiting for an active analysis to finish does not raise it. Repeating the unchanged request fails the same way.",
+        },
         details: {
           operation: "inspect_rust_binary",
           resource: "capacity",
