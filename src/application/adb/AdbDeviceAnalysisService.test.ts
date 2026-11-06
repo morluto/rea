@@ -3,7 +3,10 @@ import { expect, it } from "vitest";
 import { AdbDeviceAnalysisService } from "./AdbDeviceAnalysisService.js";
 import type { AdbDeviceAnalysisPort } from "./AdbDeviceAnalysisPort.js";
 import { createAnalysisExecution } from "../AnalysisProvider.js";
-import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
+import {
+  AnalysisCancelledError,
+  AnalysisInputError,
+} from "../../domain/analysisErrorCore.js";
 import { parseEvidence } from "../../domain/evidence.js";
 import { ok } from "../../domain/result.js";
 
@@ -34,6 +37,7 @@ const refusedPort: AdbDeviceAnalysisPort = {
 };
 
 it.each([
+  [{}],
   [{ serial: "" }],
   [{ serial: "has space" }],
   [{ serial: "emulator-5554", scope: "unknown" }],
@@ -48,9 +52,15 @@ it.each([
 
 it("rejects an unknown operation before any effect", async () => {
   const service = new AdbDeviceAnalysisService(refusedPort);
-  expect(
-    await service.execute("inspect_adb_device" as never, {}),
-  ).toMatchObject({ ok: false, error: { _tag: "AnalysisInputError" } });
+  const result = await service.execute("unknown_adb_operation" as never, {});
+  expect(result.ok).toBe(false);
+  if (result.ok) throw new Error("Expected an unknown operation refusal");
+  expect(result.error).toBeInstanceOf(AnalysisInputError);
+  if (!(result.error instanceof AnalysisInputError)) throw result.error;
+  expect(result.error.operation).toBe("unknown_adb_operation");
+  expect(result.error.issues).toContainEqual(
+    expect.objectContaining({ path: ["operation"] }),
+  );
 });
 
 it("composes observed Evidence with the caller parameters inline", async () => {

@@ -1,10 +1,11 @@
 import { decodeMachoFixedName } from "../AppleMachoNames.js";
 import {
+  isMachoZeroFillSection,
   readMachoSectionHeader,
   type MachoSectionHeader,
 } from "../../domain/apple/machoSectionHeader.js";
 import {
-  admitMachoSegmentMapping,
+  admitMachoSegmentCommand,
   readMachoSegmentHeader,
 } from "../../domain/apple/machoSegmentHeader.js";
 import {
@@ -80,18 +81,18 @@ export const readMachoImage = (bytes: Buffer): BinaryContainer => {
         sectionCount,
         nameBytes,
       } = parsedSegment.value;
-      const admitted = admitMachoSegmentMapping(parsedSegment.value, bits);
+      const admitted = admitMachoSegmentCommand(
+        parsedSegment.value,
+        size,
+        bits,
+        bytes.length,
+      );
       if (!admitted.ok)
         throw new BinaryFormatFailure(
           admitted.error.kind,
           admitted.error.message,
         );
       const { unmapped } = admitted.value;
-      if (sectionCount > Math.floor((size - segmentHeader) / sectionWidth))
-        throw new BinaryFormatFailure(
-          "malformed",
-          "Mach-O section table exceeds its segment command",
-        );
       const fileRange =
         fileSize === 0n
           ? undefined
@@ -203,7 +204,7 @@ const machoImageSection = ({
   const sectionOffset = BigInt(section.offset);
   const sectionName = decodeMachoFixedName(section.nameBytes);
   const name = `${decodeMachoFixedName(section.segmentNameBytes)},${sectionName}`;
-  const zeroFill = [1, 0xc, 0x12].includes(flags & 0xff);
+  const zeroFill = isMachoZeroFillSection(flags);
   const addressDelta = sectionAddress - segmentAddress;
   const fileDelta = sectionOffset - segmentFileOffset;
   const inSegmentMemory =

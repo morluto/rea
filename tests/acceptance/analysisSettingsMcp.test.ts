@@ -2,6 +2,7 @@ import { analysisSettingsResultSchema } from "../../src/contracts/analysisSettin
 import { expect, it } from "vitest";
 import type { AnySchema } from "ajv";
 import { Ajv2020 } from "ajv/dist/2020.js";
+import { createHash } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { join } from "node:path";
@@ -9,6 +10,8 @@ import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
 import { INLINE_EVIDENCE_MCP_ENVIRONMENT } from "../../scripts/lib/mcp-verification-environment.mjs";
 import { asarHeaderBytes } from "../fixtures/asarHeader.js";
 import { nativeMatchingNamedInventory } from "../fixtures/nativeFunctionMatching.js";
+import { artifactInspectionResultSchema } from "../../src/domain/artifactInspection.js";
+import { parseEvidence } from "../../src/domain/evidence.js";
 
 it("advertises exact contracts and recovers a full large-index archive over one MCP connection", async () => {
   const root = await createTestTempDirectory("rea-runtime-settings-");
@@ -83,6 +86,30 @@ it("advertises exact contracts and recovers a full large-index archive over one 
     expect(recovered.structuredContent).toMatchObject({
       normalized_result: { coverage: { status: "complete-within-substeps" } },
     });
+    const inspection = artifactInspectionResultSchema.parse(
+      parseEvidence(recovered.structuredContent).normalized_result,
+    );
+    const inventoryStep = inspection.substeps.find(
+      (substep) => substep.operation === "inventory_artifact",
+    );
+    if (inventoryStep === undefined)
+      throw new Error("Missing inventory substep");
+    const inventory = inventoryStep.evidence.normalized_result;
+    for (const [path, bytes] of [
+      ["main.js", first],
+      ["second.js", second],
+    ] as const) {
+      const occurrence = inventory.occurrences.find(
+        (row) => row.logical_path === path,
+      );
+      expect(occurrence, path).toBeDefined();
+      expect(
+        inventory.nodes.find(
+          (node) => node.artifact_id === occurrence?.artifact_id,
+        )?.sha256,
+        path,
+      ).toBe(createHash("sha256").update(bytes).digest("hex"));
+    }
     const analyzed = await invoke(
       "analyze_javascript_application",
       analysisRequest,

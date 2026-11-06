@@ -2,13 +2,16 @@ import { z } from "zod";
 
 export const searchGuidanceLimitSchema = z.number().int().min(1).max(20);
 
+/** Pointers that locate scattered terms; one term per pointer is the worst case. */
+export const MAX_SUBSECTION_POINTERS = 8;
+
 export const searchGuidanceInputSchema = z.strictObject({
   query: z
     .string()
     .min(1)
     .max(2048)
     .describe(
-      "Lexical query: every non-generic word must occur in the section; generic-only queries return no matches.",
+      "Lexical query: every non-generic word must occur in the section or its subsections; generic-only queries return no matches.",
     )
     .refine((value) => value.trim().length > 0),
   limit: searchGuidanceLimitSchema.default(8),
@@ -32,9 +35,36 @@ export const searchGuidanceOutputSchema = z.discriminatedUnion("status", [
         guide: z.string(),
         heading: z.string(),
         locator: z.string(),
+        match_scope: z
+          .enum(["section", "subsections"])
+          .describe(
+            "section: every term is in this section's own text. subsections: terms are only spread across subsections.",
+          ),
         matched_terms: z.array(z.string()),
         relevance: z.string(),
         context: z.string(),
+        content_length: z
+          .number()
+          .int()
+          .nonnegative()
+          .describe(
+            "UTF-16 length of the complete section read_guidance_section returns.",
+          ),
+        own_text_terms: z.array(z.string()).optional(),
+        subsections: z
+          .array(
+            z.strictObject({
+              heading: z.string(),
+              locator: z.string(),
+              matched_terms: z.array(z.string()),
+            }),
+          )
+          .max(MAX_SUBSECTION_POINTERS)
+          .optional()
+          .describe(
+            "Subsections whose own text holds the terms this section's own text lacks.",
+          ),
+        omitted_subsections: z.number().int().positive().optional(),
       }),
     ),
     total_matches: z.number().int().nonnegative(),
