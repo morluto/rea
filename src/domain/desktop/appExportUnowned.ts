@@ -122,10 +122,13 @@ export const isLockFile = (
   if (LOCK_NAMES.has(name.toLowerCase()) || DOCUMENT_LOCK.test(name))
     return true;
   const folder = folderOf(file);
+  // Each directory on its own, so one nested in another is still found.
   return (
     /\.(?:lock|lck)$/iu.test(name) &&
     folder.length > 0 &&
-    stateDirectoryOf(file, stateDirectories) === folder
+    stateDirectories.some(
+      (directory) => stateDirectoryOf(file, [directory]) === folder,
+    )
   );
 };
 
