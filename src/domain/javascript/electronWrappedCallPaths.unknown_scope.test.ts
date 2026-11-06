@@ -778,6 +778,7 @@ describe("later initializer precision", () => {
     "alias = () => {}; alias.other = 1;",
     "alias = function () {}; alias.other = 1;",
     "alias = class {}; alias.other = 1;",
+    "alias = new (class {})(); alias.other = 1;",
     "alias = /value/; alias.other = 1;",
     "alias = {}; alias[key] = 1;",
     "alias = {}; const replacement = alias; replacement.other = 1;",
@@ -803,6 +804,21 @@ describe("later initializer precision", () => {
         terminal: "electron.ipcRenderer.send",
       }),
     );
+  });
+
+  it("retains uncertainty when a constructed replacement returns the original object", () => {
+    const result = analyzeJavaScriptStaticSource(`
+      const { contextBridge, ipcRenderer } = require("electron");
+      const base = { ping: () => ipcRenderer.send("ping") };
+      let alias = base;
+      alias = new (class { constructor() { return base; } })();
+      alias.other = 1;
+      contextBridge.exposeInMainWorld("api", base);
+    `);
+
+    expect(result.parse_error_count).toBe(0);
+    expect(result.parse_status).toBe("partial");
+    expect(result.limitations).toContainEqual(UNKNOWN_LIMITATION);
   });
 
   it.each([
