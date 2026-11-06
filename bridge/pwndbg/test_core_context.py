@@ -14,9 +14,9 @@ BRIDGE = Path(__file__).with_name("core_context.py")
 
 
 class CoreContextTests(unittest.TestCase):
-    def inspect(self, failure=None, connection="core", symbols=None, architecture="x86_64-little-endian", objfile="recorded-executable"):
+    def inspect(self, failure=None, connection="core", symbols=None, architecture="x86_64-little-endian", plugin_reenables_debuginfod=False, objfile="recorded-executable"):
         commands, reads, queries = [], [], []
-        state = {"executable": None, "symbols": None, "connection": None}
+        state = {"executable": None, "symbols": None, "connection": None, "debuginfod_enabled": False}
         gdb = types.ModuleType("gdb")
         gdb.VERSION = "16.3"
         gdb.selected_inferior = lambda: types.SimpleNamespace(
@@ -28,9 +28,15 @@ class CoreContextTests(unittest.TestCase):
             commands.append(command)
             if command == failure:
                 raise RuntimeError("controlled command failure")
-            if command == "exec-file /proc/self/exe":
+            if command == "set debuginfod enabled on":
+                state["debuginfod_enabled"] = True
+            elif command == "set debuginfod enabled off":
+                state["debuginfod_enabled"] = False
+            elif command == "exec-file /proc/self/exe":
                 state["executable"] = "/proc/self/exe"
             elif command == "core-file ../object.snapshot":
+                if state["debuginfod_enabled"]:
+                    reads.append("debuginfod-network-request")
                 if state["executable"] is None:
                     reads.append("recorded-executable")
                     state["executable"] = state["symbols"] = "recorded-executable"
@@ -60,7 +66,7 @@ class CoreContextTests(unittest.TestCase):
             stage = root / "debugger"
             stage.mkdir()
             plugin = root / "gdbinit.py"
-            plugin.write_text("")
+            plugin.write_text("import gdb; gdb.execute('set debuginfod enabled on', to_string=True)" if plugin_reenables_debuginfod else "")
             request = stage / "request.json"
             reply = stage / "reply.json"
             request.write_text(json.dumps({"gdbinit": str(plugin), "architecture": architecture, "snapshot_path": str(root / "object.snapshot"), "reply_path": str(reply)}))
@@ -78,6 +84,16 @@ class CoreContextTests(unittest.TestCase):
         self.assertLess(commands.index("set debug-file-directory ./no-libraries"), commands.index("core-file ../object.snapshot"))
         self.assertIsNone(result["value"]["executable"])
         self.assertEqual(result["value"]["maps"][0]["current_file_identity"], "unknown")
+
+    def test_plugin_initialization_cannot_enable_network_lookup_for_core_loading(self):
+        result, commands, reads, queries = self.inspect(plugin_reenables_debuginfod=True)
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(reads, [])
+        self.assertEqual(queries, ["maps"])
+        last_disable = max(index for index, command in enumerate(commands) if command == "set debuginfod enabled off")
+        self.assertGreater(last_disable, commands.index("set debuginfod enabled on"))
+        self.assertLess(last_disable, commands.index("exec-file /proc/self/exe"))
+        self.assertLess(last_disable, commands.index("core-file ../object.snapshot"))
 
     def test_failed_guard_core_load_or_discard_never_queries_mappings(self):
         for command in ["exec-file /proc/self/exe", "set architecture i386:x86-64", "core-file ../object.snapshot", "file"]:

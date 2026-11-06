@@ -31,6 +31,9 @@ def inspect(request):
         import pwndbg.lib.version
     except (ImportError, OSError) as error:
         raise ContextFailure("unavailable", "Selected pwndbg could not initialize: " + str(error)) from error
+    # pwndbg enables debuginfod during initialization. Restore offline policy
+    # before selecting any executable or loading the recorded core.
+    gdb.execute("set debuginfod enabled off", to_string=True)
     version = pwndbg.lib.version.__version__
     if version != "2026.09.15" and not version.startswith("2026.09.15 build: "):
         raise ContextFailure("unsupported", "Expected unchanged pwndbg2026.09.15; selected plugin reports " + version + ".")

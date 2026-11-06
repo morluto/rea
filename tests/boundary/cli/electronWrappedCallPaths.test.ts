@@ -1174,6 +1174,8 @@ const analyzeDescriptorFacts = async ({
       observations.push(...page.rows);
       offset = page.coverage.next_offset;
       if (offset === null) {
+        if (page.coverage.total === null)
+          throw new Error("Expected known JavaScript facts coverage");
         expect(page.coverage.exhausted).toBe(true);
         expect(observations).toHaveLength(page.coverage.total);
       }

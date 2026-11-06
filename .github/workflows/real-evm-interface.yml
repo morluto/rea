@@ -9,6 +9,11 @@ on:
         required: false
         type: string
         default: ""
+      windows_native_artifact:
+        description: Matching Windows native controls from the calling CI run.
+        required: false
+        type: string
+        default: ""
       remote_cache_write:
         description: Trusted release qualification may publish the remote cache.
         required: false
@@ -34,6 +39,54 @@ env:
   TURBO_CACHE: "${{ (inputs.remote_cache_write == true || (github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'))) && 'local:rw,remote:rw' || 'local:rw' }}"
 
 jobs:
+  compiler-artifact-portability:
+    name: Compiler artifact contracts (${{ matrix.os }})
+    needs: real-evm-interface
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .nvmrc
+      - name: Cache npm package downloads
+        id: npm-cache
+        uses: ./.github/actions/npm-cache
+      - run: npm ci
+      - if: runner.os == 'Windows'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ${{ inputs.windows_native_artifact || 'evm-windows-native-controls' }}
+          path: native/windows/build/
+      - if: runner.os == 'Windows'
+        run: npm run verify:windows-native:artifact
+      - uses: ./.github/actions/portable-build-cache
+        with:
+          build_cache_artifact: ${{ inputs.build_cache_artifact }}
+      - name: Verify portable parsing, Evidence and unsupported-host semantics
+        run: >-
+          npm run test:focused --
+          src/domain/evm/solcArtifactSelection.test.ts
+          src/domain/evm/evmInterface.test.ts
+          src/evm/EvmCompilerArtifactView.test.ts
+          tests/boundary/evm/evmoleInterfaceProvider.test.ts
+      - name: Verify public CLI refuses unsupported EVM hosts
+        run: >-
+          node --input-type=module -e "import assert from 'node:assert/strict';
+          import { spawnSync } from 'node:child_process';
+          assert.ok(['darwin', 'win32'].includes(process.platform));
+          const result = spawnSync(process.execPath,
+          ['scripts/rea.mjs', 'inspect-evm-interface', 'selected.json', 'solc-json',
+          '--source-unit', 'source.sol', '--contract-name', 'C', '--bytecode-kind', 'creation', '--json'],
+          { encoding: 'utf8' });
+          assert.equal(result.error, undefined);
+          assert.equal(result.status, 1);
+          assert.equal(JSON.parse(result.stdout).code, 'capability_unavailable');"
+
   real-evm-interface:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -49,6 +102,19 @@ jobs:
       - uses: ./.github/actions/portable-build-cache
         with:
           build_cache_artifact: ${{ inputs.build_cache_artifact }}
+      - name: Prepare standalone Windows cross compiler
+        if: inputs.windows_native_artifact == ''
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y g++-mingw-w64-x86-64
+      - if: inputs.windows_native_artifact == ''
+        run: npm run build:windows-native && npm run verify:windows-native:artifact
+      - if: inputs.windows_native_artifact == ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: evm-windows-native-controls
+          path: native/windows/build/
+          if-no-files-found: error
       - name: Acquire unchanged fixture compiler in isolated runner storage
         shell: bash
         run: |
@@ -63,3 +129,5 @@ jobs:
         run: npm run verify:evm:interface
       - name: Verify content-hash-free and CBOR-free owned compiler artifacts
         run: npm run verify:solidity:metadata
+      - name: Verify exact compiler artifacts through public CLI and MCP
+        run: npm run verify:solc:artifacts

@@ -100,7 +100,10 @@ mcpTest(
     });
     const server = createServer(
       { kind: "session", session },
-      { evmInterface: service },
+      {
+        evmInterface: service,
+        environment: { ...process.env, REA_MCP_INPUT_SCHEMA_PROFILE: "full" },
+      },
     );
     ownArtifactSession(session, onTestFinished);
     const client = await mcp.connect(server, {
@@ -115,6 +118,52 @@ mcpTest(
     expect(
       ajv.validate(inputSchema, { path: value.artifact.path, encoding: "hex" }),
     ).toBe(true);
+    expect(
+      ajv.validate(inputSchema, { path: value.artifact.path, encoding: "raw" }),
+    ).toBe(true);
+    const compilerEncoding = {
+      kind: "solc-json",
+      source_unit: "contracts/Example.sol",
+      contract_name: "Example",
+      bytecode_kind: "deployed",
+    };
+    expect(
+      ajv.validate(inputSchema, {
+        path: value.artifact.path,
+        encoding: compilerEncoding,
+      }),
+      JSON.stringify(ajv.errors),
+    ).toBe(true);
+    for (const missing of [
+      "source_unit",
+      "contract_name",
+      "bytecode_kind",
+    ] as const) {
+      const incomplete: Record<string, string> = { ...compilerEncoding };
+      delete incomplete[missing];
+      expect(
+        ajv.validate(inputSchema, {
+          path: value.artifact.path,
+          encoding: incomplete,
+        }),
+      ).toBe(false);
+    }
+    for (const encoding of [
+      "solc-json",
+      { ...compilerEncoding, bytecode_kind: "runtime" },
+      { ...compilerEncoding, extra: true },
+      { ...compilerEncoding, kind: "raw" },
+    ])
+      expect(
+        ajv.validate(inputSchema, { path: value.artifact.path, encoding }),
+      ).toBe(false);
+    expect(
+      ajv.validate(inputSchema, {
+        path: value.artifact.path,
+        encoding: "hex",
+        compiler_selection: compilerEncoding,
+      }),
+    ).toBe(false);
     expect(
       ajv.validate(inputSchema, {
         path: value.artifact.path,
@@ -151,6 +200,47 @@ mcpTest(
         })
       ).isError,
     ).toBe(true);
+  },
+);
+
+mcpTest(
+  "rejects incomplete compiler selections before provider access with compact advertisement",
+  async ({ mcp }) => {
+    const inspect = vi.fn(async () => {
+      throw new Error("Invalid input must not invoke the provider");
+    });
+    const service = new EvmInterfaceService({ inspect });
+    const server = new EvidenceMcpServer(
+      { name: "evm-compact", version: "1" },
+      {},
+      undefined,
+      createToolResultDelivery(undefined),
+      { budgetBytes: 13 * 1024 },
+    );
+    registerEvmTools(server, service, silentLogger);
+    const client = await mcp.connect(server, {
+      name: "evm-compact",
+      version: "1",
+    });
+    const { inputSchema } = await advertisedMcpToolSchemas(
+      client,
+      "inspect_evm_interface",
+    );
+    expect(inputSchema.description).toContain("Advertised in reduced form");
+    const arguments_ = {
+      path: "/selected.json",
+      encoding: {
+        kind: "solc-json",
+        contract_name: "C",
+        bytecode_kind: "creation",
+      },
+    };
+    const response = await client.callTool({
+      name: "inspect_evm_interface",
+      arguments: arguments_,
+    });
+    expect(parseMcpToolError(response).error.code).toBe("invalid_request");
+    expect(inspect).not.toHaveBeenCalled();
   },
 );
 
@@ -483,7 +573,10 @@ it.each(["valid", "wrong-subject", "no-subject"])(
       {
         operation: "inspect_evm_interface",
         parameters: { path: value.artifact.path, encoding: "hex" },
-        result: { ...value, bytecode: historicalBytecode },
+        result: {
+          ...value,
+          bytecode: historicalBytecode,
+        },
         confidence: "inferred",
         rawResult: { original: true },
       },

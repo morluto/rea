@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { expect, it } from "vitest";
 import { EvmInterfaceService } from "./EvmInterfaceService.js";
 import type { EvmInterfaceExecution } from "./EvmInterfacePort.js";
@@ -12,6 +13,7 @@ import {
   AnalysisOutputError,
 } from "../../domain/analysisErrorCore.js";
 import { parseEvidence } from "../../domain/evidence.js";
+import { selectSolcArtifact } from "../../domain/evm/solcArtifactSelection.js";
 
 it.each([
   { path: "relative.hex", encoding: "hex" },
@@ -141,6 +143,68 @@ it("keeps malformed interface output ahead of a late cancellation", async () => 
   expect(result.ok).toBe(false);
   if (!result.ok) expect(result.error).toBeInstanceOf(AnalysisOutputError);
 });
+
+it.each([false, true])(
+  "retains compiler selection through late cancellation, rejecting mismatches first: %s",
+  async (mismatched) => {
+    const selection = {
+      source_unit: "source.sol",
+      contract_name: "C",
+      bytecode_kind: "creation" as const,
+    };
+    const fixture = evmInterfaceFixture();
+    const carrier = new TextEncoder().encode(
+      JSON.stringify({
+        contracts: {
+          "source.sol": {
+            C: { evm: { bytecode: { object: fixture.bytecode.hex } } },
+          },
+        },
+      }),
+    );
+    const selected = selectSolcArtifact(carrier, selection);
+    if (!selected.ok) throw selected.error;
+    const report = {
+      ...fixture,
+      artifact: {
+        ...fixture.artifact,
+        encoding: "solc-json" as const,
+        bytes: carrier.byteLength,
+        sha256: createHash("sha256").update(carrier).digest("hex"),
+      },
+      bytecode: { ...fixture.bytecode, kind: "creation" as const },
+      compiler_artifact: selected.value.artifact,
+      inference_status: "examined" as const,
+    };
+    const controller = new AbortController();
+    const result = await new EvmInterfaceService({
+      inspect: () => {
+        controller.abort("completed compiler inspection");
+        return Promise.resolve(ok(evmInterfaceExecution(report)));
+      },
+    }).inspect(
+      {
+        path: fixture.artifact.path,
+        encoding: {
+          kind: "solc-json",
+          ...selection,
+          ...(mismatched ? { contract_name: "Other" } : {}),
+        },
+      },
+      { signal: controller.signal },
+    );
+    if (result.ok) throw new Error("Expected typed failure");
+    if (mismatched) {
+      expect(result.error).toBeInstanceOf(AnalysisOutputError);
+    } else {
+      expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+      expect(parseEvidence(result.error.partialObservation)).toMatchObject({
+        parameters: { encoding: { kind: "solc-json", ...selection } },
+        normalized_result: report,
+      });
+    }
+  },
+);
 
 it("keeps an omitted timeout at the default and records a selected one", async () => {
   const value = evmInterfaceFixture();
