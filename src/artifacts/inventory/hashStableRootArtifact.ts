@@ -66,11 +66,16 @@ export const openRootArtifact = async (
   path: string,
   resourceScope: ArtifactResourceScope,
   signal?: AbortSignal,
+  environment?: Readonly<NodeJS.ProcessEnv>,
 ): Promise<
   StableRegularFileDescriptor & { readonly owner: OwnedFileHandle }
 > => {
   try {
-    const source = await openRegularFile(path, { symlinks: "reject", signal });
+    const source = await openRegularFile(path, {
+      symlinks: "reject",
+      signal,
+      environment,
+    });
     return { ...source, owner: new OwnedFileHandle(source.handle) };
   } catch (cause: unknown) {
     const primary =
@@ -111,11 +116,13 @@ export const hashStableRootArtifact = async (
   path: string,
   resourceScope: ArtifactResourceScope,
   signal?: AbortSignal,
+  environment?: Readonly<NodeJS.ProcessEnv>,
 ): Promise<HashResult> => {
   const { handle, initial, owner } = await openRootArtifact(
     path,
     resourceScope,
     signal,
+    environment,
   );
   let outcome:
     | { readonly kind: "completed"; readonly value: HashResult }

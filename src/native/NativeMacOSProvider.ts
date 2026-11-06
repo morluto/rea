@@ -1068,6 +1068,7 @@ class NativeMacOSClient implements AnalysisClient {
               return result.value;
             },
             signal,
+            this.environment,
           );
           return ok(observation);
         } catch (cause: unknown) {

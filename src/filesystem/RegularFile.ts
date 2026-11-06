@@ -112,6 +112,8 @@ export const openRegularFile = async (
   options: {
     readonly symlinks: "follow" | "reject";
     readonly signal?: AbortSignal | undefined;
+    /** Owner-selected launch environment; omission reads process.env. */
+    readonly environment?: Readonly<NodeJS.ProcessEnv> | undefined;
     /** Omission settles. Private files REA just wrote pass "as-written". */
     readonly changeTime?: ChangeTimeAdmission | undefined;
   },
@@ -152,6 +154,7 @@ export const openRegularFile = async (
       options.changeTime === "as-written"
         ? await readMetadata()
         : await settleChangeTimeBaseline(readMetadata, {
+            environment: options.environment,
             signal: options.signal,
             // Callers match on this type to tell cancellation from a read fault.
             cancellationError: (reason) =>
