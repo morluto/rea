@@ -429,7 +429,9 @@ absent when no finalization was attempted:
   exited.
   An `unverified` attempt may carry a `reason` string naming why: an unavailable
   identity and its reason, an inspection or signal error, or delivery that did
-  not settle within the bound (1000 ms). An attempt recorded `unverified` after
+  not settle within the fixed bound (1000 ms). That bound is implementation
+  policy with no runtime override, and a larger `finalization_ms` does not
+  extend it. An attempt recorded `unverified` after
   that bound can still complete later; it stays identity-checked, and its late
   result is not added to the record.
 - `elapsed_ms` is when REA observed the exit, relative to the start of
