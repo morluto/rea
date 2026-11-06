@@ -5,6 +5,7 @@ import {
   aptListFileName,
   entryForTarget,
   isUbuntuProRepository,
+  parseAptConfigShell,
   parseAptIndexTargets,
   parseDeb822Sources,
   parseOneLineSources,
@@ -28,6 +29,44 @@ export const APT_LOCATIONS: AptLocations = {
   trustedParts: "/etc/apt/trusted.gpg.d",
   trusted: "/etc/apt/trusted.gpg",
   lists: "/var/lib/apt/lists",
+};
+
+/**
+ * apt's folders as `apt-config` resolves them under `Dir`, which an
+ * `APT_CONFIG` file can move, as a user-space `apt-get update` does with its
+ * lists. Each is the fallback's when apt-config is missing, fails or does not
+ * name it.
+ */
+export const resolveAptLocations = async (
+  runQuery: QueryRunner,
+  signal: AbortSignal | undefined,
+  fallback: AptLocations = APT_LOCATIONS,
+): Promise<AptLocations> => {
+  const output = succeeded(
+    await runQuery(
+      "apt-config",
+      [
+        "shell",
+        "LISTS",
+        "Dir::State::Lists/d",
+        "PARTS",
+        "Dir::Etc::TrustedParts/d",
+        "TRUSTED",
+        "Dir::Etc::Trusted/f",
+      ],
+      signal,
+    ),
+  );
+  const values = parseAptConfigShell(output ?? "");
+  const value = (name: string) => {
+    const found = values.get(name);
+    return found?.startsWith("/") === true ? found : undefined;
+  };
+  return {
+    lists: value("LISTS") ?? fallback.lists,
+    trustedParts: value("PARTS") ?? fallback.trustedParts,
+    trusted: value("TRUSTED") ?? fallback.trusted,
+  };
 };
 
 /** The host commands and apt folders the repository check reads. */

@@ -291,6 +291,33 @@ export const declaredPackageFiles = (
   );
 };
 
+/** The packages of `supplied` whose declared sources include one of the repository's package files, sorted. */
+export const repositorySupplies = (
+  repository: Pick<AptRepository, "uri" | "suite" | "components">,
+  supplied: ReadonlyMap<string, readonly string[]>,
+  targets: readonly AptIndexTarget[],
+): readonly string[] => {
+  const files = declaredPackageFiles([repository], targets);
+  return [...supplied]
+    .filter(([, sources]) => sources.some((source) => files.has(source)))
+    .map(([name]) => name)
+    .sort();
+};
+
+/** The `NAME='value'` lines `apt-config shell` prints, by name; apt writes a quote in a value as `'\''`. */
+export const parseAptConfigShell = (
+  output: string,
+): ReadonlyMap<string, string> =>
+  new Map(
+    output.split("\n").flatMap((line) => {
+      const match = /^(?<name>[A-Za-z_]\w*)='(?<value>.*)'$/u.exec(line);
+      const { name, value } = match?.groups ?? {};
+      return name === undefined || value === undefined
+        ? []
+        : [[name, value.replaceAll(`'\\''`, "'")] as const];
+    }),
+  );
+
 const QUOTED = new Set('\\|{}[]<>"^~_=!@#$%^&*');
 
 /** apt's file name for a URI in its lists directory: no scheme or credentials, special characters quoted, `/` as `_`. */
