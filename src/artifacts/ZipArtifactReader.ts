@@ -28,6 +28,7 @@ import {
   type DecompressionStreamOptions,
   type Entry,
   type FileEntry,
+  type ZipReaderConstructorOptions,
 } from "@zip.js/zip.js";
 
 import {
@@ -77,6 +78,18 @@ registerCodec({
   format: "rea-zip-zstd",
   DecompressionStream: ZipZstandardDecompressionStream,
 });
+
+/** zip.js reader options: CRC and overlap checks, and names decoded as REA reads them. */
+export const ZIP_READER_OPTIONS = {
+  checkSignature: true,
+  checkOverlappingEntry: true,
+  // Unflagged names use the ZIP legacy encoding (CP437); the UTF-8 flag
+  // and validated Unicode Path extra fields remain authoritative.
+  filenameEncoding: "cp437",
+  // REA applies its own provider-neutral path validation in scanReader and
+  // must preserve that typed failure instead of zip.js rejecting first.
+  filenameValidation: "tolerant",
+} as const satisfies ZipReaderConstructorOptions;
 
 class NodeFileReader extends Reader<string> {
   #handle: FileHandle | undefined;
@@ -169,16 +182,7 @@ export class ZipArtifactReader implements ArtifactReader {
   ) {
     this.format = format;
     this.#source = new NodeFileReader(path, maximumMetadataReadBytes, admitted);
-    this.#reader = new ZipReader(this.#source, {
-      checkSignature: true,
-      checkOverlappingEntry: true,
-      // Unflagged names use the ZIP legacy encoding (CP437); the UTF-8 flag
-      // and validated Unicode Path extra fields remain authoritative.
-      filenameEncoding: "cp437",
-      // REA applies its own provider-neutral path validation in scanReader and
-      // must preserve that typed failure instead of zip.js rejecting first.
-      filenameValidation: "tolerant",
-    });
+    this.#reader = new ZipReader(this.#source, ZIP_READER_OPTIONS);
   }
 
   async *entries(signal?: AbortSignal): AsyncIterable<ArtifactEntry> {
@@ -368,7 +372,8 @@ const legacyNameLimitations = (entry: Entry): readonly string[] => {
   ];
 };
 
-const decodeZipEntryText = (
+/** Decode an entry name as zip.js reports it: strict UTF-8 when flagged, CP437 otherwise. */
+export const decodeZipEntryText = (
   bytes: Uint8Array,
   encoding: string,
   type: "filename" | "comment",
@@ -396,7 +401,8 @@ const decodeCp437 = (bytes: Uint8Array): string =>
       : CP437_HIGH_HALF.charAt(byte - 0x80),
   ).join("");
 
-const zipEntryPath = (entry: Entry): string => {
+/** An entry's name, from a valid Unicode Path extra field when it has one. */
+export const zipEntryPath = (entry: Entry): string => {
   const field = entry.extraFieldUnicodePath;
   if (field?.valid !== true) return entry.filename;
   return decodeStrictZipUtf8(
