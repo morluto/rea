@@ -111,13 +111,33 @@ describe("ELF exports declared by PT_DYNAMIC", () => {
     expect(result.coverage.status).toBe("partial");
   });
 
-  it("applies the existing local-version exclusion to dynamic version indices", () => {
-    const result = parse(elfDynamicExportsImage({ versions: [0, 0, 1] }));
-    expect(result.exports).toMatchObject([
-      { name: "exported_state", version: null },
-    ]);
-    expect(result.coverage).toMatchObject({ status: "complete", exports: 1 });
-  });
+  it.each([
+    { binding: "global", info: 0x12, exported: true },
+    { binding: "weak", info: 0x22, exported: true },
+    { binding: "local", info: 0x02, exported: false },
+  ])(
+    "uses the $binding symbol binding when DT_VERSYM reports index zero",
+    ({ binding, info, exported }) => {
+      const bytes = elfDynamicExportsImage({ versions: [0, 0, 1] });
+      // st_info of the first non-null Elf64_Sym: change the binding, keep STT_FUNC.
+      bytes[0x200 + 24 + 4] = info;
+      const exports = [
+        ...(exported
+          ? [{ name: "exported_answer", binding, version: null }]
+          : []),
+        { name: "exported_state", binding: "global", version: null },
+      ];
+      expect(parse(bytes)).toMatchObject({
+        exports,
+        coverage: {
+          status: "complete",
+          examined_entries: 2,
+          exports: exports.length,
+        },
+        issues: [],
+      });
+    },
+  );
 
   it("keeps a readable sibling when a symbol names bytes outside DT_STRSZ", () => {
     const bytes = elfDynamicExportsImage();
