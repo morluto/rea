@@ -55,7 +55,9 @@ export const registerApiContractCommand = (
     options: z.object({
       ...analysisEvidenceDeliveryOptions,
       maxFileBytes: apiContractFileBytesSchema,
-      contractFormat: apiContractFormatSchema.default("openapi-json"),
+      contractFormat: apiContractFormatSchema
+        .default("openapi-json")
+        .describe("Input API contract syntax: OpenAPI JSON or GraphQL SDL"),
       operationsPath: localPathStringSchema
         .optional()
         .describe(

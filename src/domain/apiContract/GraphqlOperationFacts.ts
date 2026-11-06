@@ -1,11 +1,12 @@
 import {
   Kind,
   TypeInfo,
-  visit,
+  isExecutableDefinitionNode,
   type DocumentNode,
   type GraphQLSchema,
   type FieldNode,
   type FragmentSpreadNode,
+  type SelectionSetNode,
 } from "graphql";
 import type {
   GraphqlDefinition,
@@ -20,6 +21,7 @@ import {
 } from "./GraphqlInventory.js";
 
 interface DefinitionContext {
+  readonly progress: { examined: number };
   readonly definitionId: string;
   readonly input: GraphqlSourceDocument;
   readonly inventory: GraphqlInventory;
@@ -98,6 +100,43 @@ const spread = (
   inventory.spreads.push(row);
 };
 
+/** Only output selections affect field binding; input values/directives remain outside this profile. */
+function* collectSelections(
+  set: SelectionSetNode,
+  context: DefinitionContext,
+  parentId: string | null,
+): Generator<void> {
+  const { info, inventory } = context;
+  info?.enter(set);
+  try {
+    for (const node of set.selections) {
+      info?.enter(node);
+      try {
+        let childParent = parentId;
+        if (node.kind === Kind.FIELD) {
+          const row = reference(node, parentId, context);
+          inventory.retain(row);
+          inventory.references.push(row);
+          childParent = row.reference_id;
+        } else if (node.kind === Kind.FRAGMENT_SPREAD) {
+          spread(node, parentId, context);
+        }
+        // Bound hashing/binding work within one wide query or fragment, too.
+        if (++context.progress.examined % 128 === 0) yield;
+        if (
+          node.kind !== Kind.FRAGMENT_SPREAD &&
+          node.selectionSet !== undefined
+        )
+          yield* collectSelections(node.selectionSet, context, childParent);
+      } finally {
+        info?.leave(node);
+      }
+    }
+  } finally {
+    info?.leave(set);
+  }
+}
+
 /** Record each definition once; fragment edges never recursively expand its body. */
 export function* collectGraphqlOperationFacts(
   document: DocumentNode,
@@ -109,10 +148,7 @@ export function* collectGraphqlOperationFacts(
   const fragments = new Map<string, GraphqlDefinition[]>();
   const owners = new Map<number, GraphqlDefinition>();
   for (const definition of document.definitions) {
-    if (
-      definition.kind !== Kind.OPERATION_DEFINITION &&
-      definition.kind !== Kind.FRAGMENT_DEFINITION
-    ) {
+    if (!isExecutableDefinitionNode(definition)) {
       inventory.diagnostic(
         "non-operation-definition",
         "This operation input contains a definition outside operation/fragment interpretation.",
@@ -145,7 +181,9 @@ export function* collectGraphqlOperationFacts(
     }
     yield;
   }
+  const progress = { examined: 0 };
   for (const definition of document.definitions) {
+    if (!isExecutableDefinitionNode(definition)) continue;
     const owner =
       definition.loc === undefined
         ? undefined
@@ -153,30 +191,19 @@ export function* collectGraphqlOperationFacts(
     if (owner === undefined) continue;
     const info = model === undefined ? undefined : new TypeInfo(model);
     const context = {
+      progress,
       definitionId: owner.definition_id,
       input,
       inventory,
       info,
       fragments,
     };
-    const parents: string[] = [];
-    visit(definition, {
-      enter(node) {
-        info?.enter(node);
-        if (node.kind === Kind.FIELD) {
-          const row = reference(node, parents.at(-1) ?? null, context);
-          inventory.retain(row);
-          inventory.references.push(row);
-          parents.push(row.reference_id);
-        } else if (node.kind === Kind.FRAGMENT_SPREAD) {
-          spread(node, parents.at(-1) ?? null, context);
-        }
-      },
-      leave(node) {
-        if (node.kind === Kind.FIELD) parents.pop();
-        info?.leave(node);
-      },
-    });
+    info?.enter(definition);
+    try {
+      yield* collectSelections(definition.selectionSet, context, null);
+    } finally {
+      info?.leave(definition);
+    }
     yield;
   }
   inventory.operations = "complete";

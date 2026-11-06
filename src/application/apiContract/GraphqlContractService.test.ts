@@ -1,3 +1,4 @@
+import * as operationParser from "../../domain/apiContract/GraphqlOperationFacts.js";
 import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -247,3 +248,57 @@ it("applies the selected file allowance to the auxiliary document and retains it
     expect(partial.source_coverage.operations).toBe("unavailable");
   });
 });
+
+it.each(["query Q", "fragment Q on Query"])(
+  "cancels within one wide definition after a bounded field-binding chunk: %s",
+  async (definition) => {
+    const count = 4096;
+    const input = await files(
+      "type Query { value: String }",
+      definition +
+        " { " +
+        Array.from({ length: count }, (_, index) => `a${index}: value`).join(
+          " ",
+        ) +
+        " }",
+    );
+    const controller = new AbortController();
+    const real = operationParser.collectGraphqlOperationFacts;
+    const observed = vi
+      .spyOn(operationParser, "collectGraphqlOperationFacts")
+      .mockImplementationOnce(function* (...args) {
+        const steps = real(...args);
+        let scheduled = false;
+        try {
+          for (;;) {
+            const next = steps.next();
+            if (next.done) return next.value;
+            if (!scheduled && args[2].references.length > 0) {
+              scheduled = true;
+              setImmediate(() => controller.abort("within-wide-operation"));
+            }
+            yield;
+          }
+        } finally {
+          steps.return(undefined);
+        }
+      });
+    try {
+      await withScope(async (resources) => {
+        const result = await inspectApiContractEvidence(input, resources, {
+          signal: controller.signal,
+        });
+        if (result.ok)
+          throw new Error("Expected cancellation within selections");
+        expect(result.error._tag).toBe("AnalysisCancelledError");
+        expect(result.error.cause).toBe("within-wide-operation");
+        const report = reportOf(result.error.partialObservation);
+        expect(report.references.length).toBeGreaterThan(0);
+        expect(report.references.length).toBeLessThan(count);
+        expect(report.source_coverage.operations).toBe("partial");
+      });
+    } finally {
+      observed.mockRestore();
+    }
+  },
+);

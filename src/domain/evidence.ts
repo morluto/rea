@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from "node:util";
 import { basename } from "node:path";
 import { z } from "zod";
 
@@ -286,6 +287,16 @@ export const parseEvidence = (input: unknown): Evidence => {
   return authenticatedEvidenceSchema.parse(input);
 };
 
+/** Evidence owns all presentation metadata excluded from its semantic identity. */
+export const evidenceDisplayMetadataAgree = (
+  left: Evidence,
+  right: Evidence,
+): boolean =>
+  left.subject?.name === right.subject?.name &&
+  left.subject?.local_path === right.subject?.local_path &&
+  left.caller_input_path === right.caller_input_path &&
+  isDeepStrictEqual(left.caller_input_paths, right.caller_input_paths);
+
 /** Recognize authenticated Evidence in a union of partial observations. */
 export const tryParseEvidence = (input: unknown): Evidence | undefined => {
   if (typeof input !== "object" || input === null || !("evidence_id" in input))
@@ -350,13 +361,7 @@ export const withEvidenceCallerInputPath = (
       ? undefined
       : callerInputPathsSchema.parse(additionalPaths);
   const samePaths =
-    paths === undefined ||
-    (owned.caller_input_paths !== undefined &&
-      Object.keys(paths).length ===
-        Object.keys(owned.caller_input_paths).length &&
-      Object.entries(paths).every(
-        ([name, value]) => owned.caller_input_paths?.[name] === value,
-      ));
+    paths === undefined || isDeepStrictEqual(owned.caller_input_paths, paths);
   if (owned.caller_input_path === callerInputPath && samePaths) return owned;
   // The authenticated source owns its immutable payloads. Only this small
   // envelope changes, so replay does not copy a document-sized result.

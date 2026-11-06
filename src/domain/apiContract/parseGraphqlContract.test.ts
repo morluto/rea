@@ -1,3 +1,10 @@
+import {
+  buildASTSchema,
+  parse as parseNative,
+  TypeInfo,
+  visit,
+  visitWithTypeInfo,
+} from "graphql";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { expect, it } from "vitest";
@@ -298,4 +305,36 @@ it("retains a bounded prefix when expanded field facts exceed the shared allowan
     status: "partial",
     schema_declarations: "partial",
   });
+});
+
+it("matches full SDK field scope while pruning variable defaults, arguments and directive payloads", () => {
+  const schema =
+    "directive @choice(values: [Int!]) on FIELD | QUERY input Filter { name: String } type Query { user(filter: Filter): User } type User { id: ID! name: String }";
+  const operations =
+    'query Q($filter: Filter = {name:"default"}) @choice(values:[1,2]) { first: user(filter:$filter) @choice(values:[3]) { id } user(filter:{name:"x"}) { id ... on User { name } ...Names } } fragment Names on User { name }';
+  const info = new TypeInfo(buildASTSchema(parseNative(schema)));
+  const expected: unknown[] = [];
+  visit(
+    parseNative(operations),
+    visitWithTypeInfo(info, {
+      Field(node) {
+        expected.push([
+          node.name.value,
+          node.alias?.value ?? node.name.value,
+          info.getParentType()?.name ?? null,
+          String(info.getType()),
+        ]);
+      },
+    }),
+  );
+  const report = successful(schema, operations);
+  expect(
+    report.references.map((row) => [
+      row.field_name,
+      row.response_key,
+      row.parent_type_name,
+      row.result_type,
+    ]),
+  ).toEqual(expected);
+  expect(report.references.every((row) => row.state === "resolved")).toBe(true);
 });

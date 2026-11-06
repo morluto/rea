@@ -1,3 +1,4 @@
+import { expectCliMcpEvidenceParity } from "../../fixtures/cliMcpEvidenceParity.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createHash } from "node:crypto";
 import { readFile, rm, writeFile } from "node:fs/promises";
@@ -48,10 +49,8 @@ const checkCliPublication = async (
     arguments: [...args, "--json"],
   });
   expect(cliComplete.exitCode, cliComplete.stderr).toBe(0);
-  expect(parseEvidence(cliComplete.json)).toEqual({
-    ...parent,
-    caller_input_path: "./SDL 雪.graphql",
-    caller_input_paths: { operations_path: "./queries file.graphql" },
+  expectCliMcpEvidenceParity(cliComplete.json, parent, "./SDL 雪.graphql", {
+    operations_path: "./queries file.graphql",
   });
   const bundlePath = join(root, "graphql.evidence.json");
   const cliSelected = await run({
