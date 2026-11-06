@@ -583,6 +583,77 @@ describe("draftTaskFiles archive elements by identity", () => {
   });
 });
 
+/** The checks drafted for `list.xml` in an archive whose `item` elements change. */
+const itemChecks = (before: JsonValue[], after: JsonValue[]) => {
+  const list = (items: JsonValue[]) =>
+    listing([
+      zipEntry("list.xml", "xml", {
+        root: xmlElement("list", {}, items),
+        truncated: false,
+      }),
+    ]);
+  const [file] = draft({
+    "Documents/list.zip": path("document", "zip", list(before), list(after)),
+  });
+  return file?.suggested;
+};
+
+const ITEMS = "/entries/[name=list.xml]/view/root/children";
+
+describe("draftTaskFiles archive elements beside identified ones", () => {
+  it("counts an identified element's other attributes, so a selector it shares is not taken for absent", () => {
+    expect(
+      itemChecks(
+        [
+          xmlElement("item", { id: "1", color: "red" }),
+          xmlElement("item", { color: "blue" }),
+        ],
+        [
+          xmlElement("item", { id: "1", color: "blue" }),
+          xmlElement("item", { color: "red" }),
+        ],
+      ),
+    ).toEqual([
+      {
+        kind: "value_equals",
+        file: "Documents/list.zip",
+        pointer: `${ITEMS}/[name=item][@id=1]/attributes/color`,
+        value: "blue",
+      },
+    ]);
+  });
+
+  it("keys an element by a selector naming it alone, not one an identified sibling also matches", () => {
+    const body = (text: string) =>
+      xmlElement("item", { color: "red", role: "body" }, [text]);
+    const id = xmlElement("item", { id: "1", color: "red" });
+
+    expect(itemChecks([id, body("old")], [id, body("new")])).toEqual([
+      {
+        kind: "value_equals",
+        file: "Documents/list.zip",
+        pointer: `${ITEMS}/[name=item][@role=body]/children/0`,
+        value: "new",
+      },
+    ]);
+  });
+
+  it("passes over a selector an identified sibling shares for one naming the element alone", () => {
+    const second = (color: string) =>
+      xmlElement("item", { class: "common", role: "second", color });
+    const id = xmlElement("item", { id: "1", class: "common" });
+
+    expect(itemChecks([id, second("red")], [id, second("blue")])).toEqual([
+      {
+        kind: "value_equals",
+        file: "Documents/list.zip",
+        pointer: `${ITEMS}/[name=item][@role=second]/attributes/color`,
+        value: "blue",
+      },
+    ]);
+  });
+});
+
 describe("draftTaskFiles archive entries without a view, and type changes", () => {
   it("checks no entry whose view could not be read, though JSON null is a value", () => {
     const [file] = draft({
