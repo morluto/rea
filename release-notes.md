@@ -127,6 +127,7 @@
 * **native:** retain decompile export source facts ([#8805](https://github.com/morluto/rea/issues/8805)) ([b970238](https://github.com/morluto/rea/commit/b97023809f7990e798fa27fc1f20a8c824dd9a30))
 * **native:** select retained batch decompile results through analysis views ([#8629](https://github.com/morluto/rea/issues/8629)) ([dec8d2d](https://github.com/morluto/rea/commit/dec8d2d58898c71abb17a37c338935f32bd14210))
 * **plugins:** make Claude Code and Codex installs self-contained ([#7514](https://github.com/morluto/rea/issues/7514)) ([0cd7ef4](https://github.com/morluto/rea/commit/0cd7ef456bf960da265e04b341e82a24b1e377d5))
+* **python:** qualify a recognized 3.14/3.15 pyc header ([#8927](https://github.com/morluto/rea/issues/8927)) ([fe9797b](https://github.com/morluto/rea/commit/fe9797b48734e0742dc703893a16615809af6092))
 * **setup:** register LM Studio during setup ([#8611](https://github.com/morluto/rea/issues/8611)) ([398eb0d](https://github.com/morluto/rea/commit/398eb0d1f16b410b64a96615c6463fbf2ab2f38d))
 * **web:** page retained bundle endpoint observations and inferences ([#7259](https://github.com/morluto/rea/issues/7259)) ([6d5532a](https://github.com/morluto/rea/commit/6d5532a204b338a6c770fcbae61e0d55bda70793))
 * **website:** publish agent discovery and Markdown responses ([eef8f44](https://github.com/morluto/rea/commit/eef8f44003e6bf781baf4f885f84d03b31ea6c3a))
