@@ -879,7 +879,14 @@ it.each([
   ["install.sh", { code: true, runtime: true, package: true, evm: false }],
   [
     ".agents/skills/reverse-engineer-anything/SKILL.md",
-    { code: true, runtime: true, docs: true, package: false, evm: false },
+    {
+      code: true,
+      runtime: true,
+      docs: true,
+      website: true,
+      package: false,
+      evm: false,
+    },
   ],
   [
     "scripts/verify-real-ghidra.mjs",

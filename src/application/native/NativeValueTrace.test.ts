@@ -1,6 +1,10 @@
 import { createAnalysisExecutionEvidence } from "../../domain/analysisObservation.js";
 import { describe, expect, it } from "vitest";
-import { traceNativeValues } from "./NativeValueTrace.js";
+import {
+  traceNativeValues as traceNativeValuesCore,
+  UNRECORDED_NATIVE_VALUE_FLOW,
+} from "./NativeValueTrace.js";
+import { executeComposedWorkflow } from "../WorkflowEvidence.js";
 import {
   createAnalysisExecution,
   type AnalysisOperationPort,
@@ -26,6 +30,27 @@ import {
   valueTraceProvider as provider,
   valueTraceSubject as subject,
 } from "./NativeValueTrace.fixture.js";
+
+const traceNativeValues: typeof traceNativeValuesCore = async (
+  source,
+  parameters,
+  signal,
+) => {
+  const result = await executeComposedWorkflow(source, (observed) =>
+    traceNativeValuesCore(observed, parameters, signal),
+  );
+  return result.ok ? ok(result.value.result) : result;
+};
+
+it("does not return a source ID without an Evidence owner", async () => {
+  const result = await traceNativeValuesCore(valueTraceDiamond().port, {
+    procedure: "0x1000",
+  });
+  expect(result.ok).toBe(false);
+  if (!result.ok)
+    expect(result.error._tag).toBe("AnalysisCapabilityUnavailableError");
+});
+
 const analysis: AnalysisOperationPort = {
   execute: async (operation, parameters) => {
     if (operation === "resolve_native_call_targets")
@@ -168,11 +193,47 @@ describe("native value trace seed admission", () => {
         expect.objectContaining({ address: base.procedure.address }),
       ],
       unknowns: [
-        expect.objectContaining({
-          reason: "Provider has no native def-use model",
-        }),
+        {
+          procedure: base.procedure.address,
+          address: null,
+          reason: UNRECORDED_NATIVE_VALUE_FLOW,
+        },
       ],
     });
+  });
+
+  it("preserves an explicit unavailable reason for that procedure", async () => {
+    const base = functionDossierSchema.parse(ghidraFunctionDossier());
+    const providerReason = "selected procedure has no p-code model";
+    const result = await traceNativeValues(
+      {
+        execute: async () =>
+          ok(
+            createAnalysisExecution(
+              {
+                ...base,
+                native_value_flow: {
+                  available: false,
+                  reason: providerReason,
+                  limitations: [],
+                },
+              },
+              provider,
+              { subject },
+            ),
+          ),
+      },
+      { procedure: base.procedure.address },
+    );
+    if (!result.ok) throw result.error;
+    expect(nativeValueTraceSchema.parse(result.value).unknowns).toEqual([
+      {
+        procedure: base.procedure.address,
+        address: null,
+        related_procedure: null,
+        reason: providerReason,
+      },
+    ]);
   });
 });
 
@@ -997,8 +1058,7 @@ describe("native value validation failure provenance", () => {
     "retains the exact provider observation for invalid %s",
     async (failure) => {
       let expected:
-        | ReturnType<typeof createAnalysisExecutionEvidence>
-        | undefined;
+        ReturnType<typeof createAnalysisExecutionEvidence> | undefined;
       const result = await traceNativeValues(
         {
           execute: async (operation, parameters, options) => {
@@ -1566,7 +1626,7 @@ describe("native value trace thunk targets", () => {
         procedure: "0xc000",
         address: null,
         related_procedure: null,
-        reason: "Provider has no native def-use model",
+        reason: UNRECORDED_NATIVE_VALUE_FLOW,
       },
       externalTargetUnknown,
     ]);

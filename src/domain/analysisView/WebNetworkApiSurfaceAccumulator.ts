@@ -22,6 +22,7 @@ import {
   textBytes,
   type RouteRule,
   type RouteTemplate,
+  type RecordedRequestLine,
 } from "./webNetworkRouteTemplates.js";
 
 type ApiSurfaceFields = {
@@ -35,6 +36,8 @@ interface GroupState {
   readonly method: string;
   readonly origin: string;
   readonly path_template: string;
+  readonly rules: string;
+  readonly paths?: Map<string, number>;
   readonly segments: readonly {
     readonly segment_index: number;
     readonly rule: RouteRule;
@@ -47,6 +50,20 @@ interface GroupState {
 }
 type Buckets = Map<string, Map<string, Map<string, Map<string, GroupState>>>>;
 
+/** Borrowed group facts; exact membership retains whole paths, never segment products. */
+export interface ApiSurfaceComparisonGroup {
+  readonly method: string;
+  readonly origin: string;
+  readonly path_template: string;
+  readonly rules: string;
+  readonly templated_segments: readonly {
+    readonly segment_index: number;
+    readonly rule: RouteRule;
+  }[];
+  readonly record_ordinals: readonly number[];
+  readonly exactPathOrdinal: (path: string) => number | undefined;
+}
+
 /** Own group identity, deduplication and admission for the entire projection. */
 export class WebNetworkApiSurfaceAccumulator extends WebNetworkProjectionAccumulator {
   readonly #buckets: Buckets = new Map();
@@ -57,8 +74,11 @@ export class WebNetworkApiSurfaceAccumulator extends WebNetworkProjectionAccumul
   constructor(
     maximumBytes = WEB_NETWORK_CAPTURE_LIMITS.outputBytes,
     readonly includeQueryParameterNames = false,
+    private readonly comparison?: {
+      readonly operation: string;
+    },
   ) {
-    super(maximumBytes, "API-surface");
+    super(maximumBytes, "API-surface", comparison?.operation);
   }
 
   #exclude(
@@ -87,15 +107,7 @@ export class WebNetworkApiSurfaceAccumulator extends WebNetworkProjectionAccumul
       if (route === null) return this.overBudget();
       const queryNames = readQueryParameterNames(line.query, this.scratch);
       if (queryNames === null) return this.overBudget();
-      return this.#append(
-        record.ordinal,
-        line.method,
-        line.origin,
-        route,
-        line.status,
-        mediaTypeEssence(line.rawMime),
-        queryNames,
-      );
+      return this.#append(record.ordinal, line, route, queryNames);
     } finally {
       this.releaseTemporary();
     }
@@ -103,19 +115,20 @@ export class WebNetworkApiSurfaceAccumulator extends WebNetworkProjectionAccumul
 
   #append(
     ordinal: number,
-    method: string,
-    origin: string,
+    line: Extract<RecordedRequestLine, { readonly kind: "line" }>,
     route: RouteTemplate,
-    status: number | null,
-    mime: string | null,
     queryNames: ReadonlySet<string> | undefined,
   ): Result<void, AnalysisError> {
+    const { method, origin, path, status } = line;
+    const mime = mediaTypeEssence(line.rawMime);
     let group = this.#buckets
       .get(method)
       ?.get(origin)
       ?.get(route.template)
       ?.get(route.rules);
     let bytes = ENTRY_BYTES; // One retained record ordinal, including page output.
+    if (this.comparison !== undefined && !group?.paths?.has(path))
+      bytes += ENTRY_BYTES + textBytes(path.length);
     if (group === undefined) {
       bytes +=
         GROUP_BYTES +
@@ -150,6 +163,10 @@ export class WebNetworkApiSurfaceAccumulator extends WebNetworkProjectionAccumul
         method,
         origin,
         path_template: route.template,
+        rules: route.rules,
+        ...(this.comparison === undefined
+          ? {}
+          : { paths: new Map<string, number>() }),
         segments: route.segments.map((segment) => ({
           segment_index: segment.segment_index,
           rule: segment.rule,
@@ -173,6 +190,8 @@ export class WebNetworkApiSurfaceAccumulator extends WebNetworkProjectionAccumul
         group.segments[index]!.values.add(segment.value);
     }
     group.ordinals.push(ordinal);
+    if (group.paths !== undefined && !group.paths.has(path))
+      group.paths.set(path, ordinal);
     if (status === null || mime === null) this.#unavailableResponse = true;
     if (status !== null) group.statuses.add(status);
     if (mime !== null) group.contentTypes.add(mime);
@@ -184,6 +203,35 @@ export class WebNetworkApiSurfaceAccumulator extends WebNetworkProjectionAccumul
       }
     }
     return ok(undefined);
+  }
+
+  /** Comparison-only inventory, borrowing admitted ordinals without page serialization. */
+  *comparisonGroups(): IterableIterator<ApiSurfaceComparisonGroup> {
+    if (this.comparison === undefined)
+      throw new Error(
+        "Exact paths must be retained when admitting comparison records",
+      );
+    for (const group of this.#groups)
+      yield {
+        method: group.method,
+        origin: group.origin,
+        path_template: group.path_template,
+        rules: group.rules,
+        templated_segments: group.segments.map(({ segment_index, rule }) => ({
+          segment_index,
+          rule,
+        })),
+        record_ordinals: group.ordinals,
+        exactPathOrdinal: (path) => group.paths!.get(path),
+      };
+  }
+
+  /** Counts do not allocate the existing view's complete page or exclusion list. */
+  comparisonCoverage() {
+    return {
+      groups: this.#groups.length,
+      excluded_records: this.#excluded.length,
+    };
   }
 
   page(offset: number, limit: number) {

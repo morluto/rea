@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AnalysisOperationPort } from "../AnalysisProvider.js";
+import { ok } from "../../domain/result.js";
 import {
   AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
@@ -34,6 +35,21 @@ describe("native value trace child stops", () => {
       0,
       VALUE_TRACE_DIAMOND_READS.indexOf(read) + 1,
     );
+  // The trace cites each completed dossier. These cases cover stop behavior,
+  // so the fixture only has to satisfy that precondition.
+  const withSourceEvidence = (
+    port: AnalysisOperationPort,
+  ): AnalysisOperationPort => ({
+    execute: async (operation, parameters, options) => {
+      const execution = await port.execute(operation, parameters, options);
+      if (!execution.ok || execution.value.evidenceId !== undefined)
+        return execution;
+      return ok({
+        ...execution.value,
+        evidenceId: `ev_${"ab".repeat(32)}`,
+      });
+    },
+  });
 
   it.each(childReads)(
     "returns a cancelled %s read without a partial trace",
@@ -43,7 +59,7 @@ describe("native value trace child stops", () => {
         [read]: cancelled,
       });
 
-      const result = await traceNativeValues(port, {
+      const result = await traceNativeValues(withSourceEvidence(port), {
         procedure: "0x1000",
         max_depth: 1,
       });
@@ -86,7 +102,7 @@ describe("native value trace child stops", () => {
       };
 
       const result = await traceNativeValues(
-        aborting,
+        withSourceEvidence(aborting),
         { procedure: "0x1000", max_depth: 1 },
         controller.signal,
       );
@@ -114,7 +130,7 @@ describe("native value trace child stops", () => {
       "resolve_native_call_targets:0x1008": failure,
     });
 
-    const result = await traceNativeValues(port, {
+    const result = await traceNativeValues(withSourceEvidence(port), {
       procedure: "0x1000",
       max_depth: 1,
     });
@@ -133,6 +149,7 @@ describe("native value trace child stops", () => {
         {
           procedure: "0x1000",
           address: "0x1008",
+          related_procedure: null,
           reason: CLEANUP_STOPPED_VALUE_TRACE,
         },
       ],

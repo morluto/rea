@@ -7,6 +7,7 @@ import {
 import { createAnalysisExecutionEvidence } from "../../domain/analysisObservation.js";
 import {
   AnalysisCancelledError,
+  AnalysisCapabilityUnavailableError,
   AnalysisOutputError,
 } from "../../domain/analysisErrorCore.js";
 import { err, ok } from "../../domain/result.js";
@@ -55,6 +56,10 @@ const thunkTargetUnknown = (procedure: string, target: string) => ({
 /** The located unknown where unconfirmed provider cleanup stopped a trace. */
 export const CLEANUP_STOPPED_VALUE_TRACE =
   "Trace stopped because the provider did not confirm cleanup of resources it owns";
+
+/** Fallback when a dossier has no native value-flow facet for this procedure. */
+export const UNRECORDED_NATIVE_VALUE_FLOW =
+  "Native def-use was not recorded for this procedure.";
 
 /** Compose bounded high-p-code def-use graphs across exactly referenced call destinations. */
 export const traceNativeValues = async (
@@ -156,6 +161,7 @@ export const traceNativeValues = async (
       {
         ...(signal === undefined ? {} : { signal }),
         ...(next.depth > 0 ? { selectorOrigin: "provider" as const } : {}),
+        retainEvidence: true,
       },
     );
     decompilations++;
@@ -169,12 +175,13 @@ export const traceNativeValues = async (
       }
       continue;
     }
-    const evidence = createAnalysisExecutionEvidence(
-      "analyze_function",
-      { procedure: next.procedure },
-      execution.value,
-      "observed",
-    );
+    const partialEvidence = () =>
+      createAnalysisExecutionEvidence(
+        "analyze_function",
+        { procedure: next.procedure },
+        execution.value,
+        "observed",
+      );
     const parsed = functionDossierSchema.safeParse(execution.value.result);
     if (!parsed.success || execution.value.subject == null)
       return err(
@@ -182,7 +189,7 @@ export const traceNativeValues = async (
           "trace_native_values",
           "Function dossier lacks validated facts or artifact identity",
           parsed.success ? undefined : { cause: parsed.error },
-        ).retainPartialObservation(evidence),
+        ).retainPartialObservation(partialEvidence()),
       );
     const dossier = parsed.data;
     const address = dossier.procedure.address;
@@ -195,9 +202,17 @@ export const traceNativeValues = async (
         new AnalysisOutputError(
           "trace_native_values",
           "Cross-function target digest mismatch",
-        ).retainPartialObservation(evidence),
+        ).retainPartialObservation(partialEvidence()),
       );
-    const evidenceId = evidence.evidence_id;
+    const evidenceId = execution.value.evidenceId;
+    if (evidenceId === undefined)
+      return err(
+        new AnalysisCapabilityUnavailableError(
+          "rea",
+          "trace_native_values",
+          "The function observation has no Evidence retention owner.",
+        ).retainPartialObservation(partialEvidence()),
+      );
     procedures.push({
       address,
       depth: next.depth,
@@ -211,7 +226,7 @@ export const traceNativeValues = async (
         procedure: address,
         address: null,
         related_procedure: null,
-        reason: flow?.reason ?? "Provider has no native def-use model",
+        reason: flow?.reason ?? UNRECORDED_NATIVE_VALUE_FLOW,
       });
       const thunkTarget = unexaminedThunkTarget(dossier, () => false);
       if (thunkTarget !== null)
