@@ -1,8 +1,8 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { expect, onTestFinished } from "vitest";
+import { expect } from "vitest";
 import { cliTest } from "../../support/cli/cliFixture.js";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { otlpTraceSchema } from "../../../src/domain/otlpTrace/otlpTrace.js";
@@ -49,10 +49,9 @@ const exportDocument = {
 };
 
 const writeExport = async (): Promise<{ root: string; path: string }> => {
-  const root = await mkdtemp(join(tmpdir(), "rea-otlp-"));
+  const root = await createTestTempDirectory("rea-otlp-");
   const path = join(root, "traces.json");
   await writeFile(path, JSON.stringify(exportDocument));
-  onTestFinished(() => rm(root, { recursive: true, force: true }));
   return { root, path };
 };
 
