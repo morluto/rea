@@ -40,6 +40,7 @@ import { artifactInspectionResultSchema } from "../../../src/domain/artifactInsp
 import type { JsonValue } from "../../../src/domain/jsonValue.js";
 import { z } from "zod";
 import { ghidraFunctionDossier } from "../../../src/domain/ghidraValues.fixture.js";
+import { evidenceBundleSummarySchema } from "../../../src/domain/evidenceRecordSummary.js";
 import {
   createEvidenceBundle,
   parseEvidenceBundle,
@@ -732,6 +733,28 @@ cliTest(
     const expected = inspectEvidenceBundle(bundle, options);
     if (!expected.ok) throw expected.error;
     expect(result.json).toEqual(expected.value);
+    const summary = evidenceBundleSummarySchema.parse(result.json);
+    expect(summary).not.toHaveProperty("page");
+    for (const offset of [0, 1]) {
+      const paged = await cli.run({
+        arguments: [
+          "inspect-evidence-bundle",
+          JSON.stringify({ path, ...options, offset, limit: 1 }),
+          "--json",
+        ],
+        environment: {
+          HOME: root,
+          XDG_CONFIG_HOME: root,
+          XDG_CACHE_HOME: root,
+        },
+      });
+      expect(paged.exitCode).toBe(0);
+      expect(paged.json).toEqual({
+        ...summary,
+        records: offset === 0 ? summary.records : [],
+        page: { offset, limit: 1, next_offset: null },
+      });
+    }
     // The same shared owner selects the complete record from the portable file.
     const records = await cli.run({
       arguments: [

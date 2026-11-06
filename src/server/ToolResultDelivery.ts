@@ -17,9 +17,9 @@ import type { Result } from "../domain/result.js";
 import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
 import {
   MCP_TRANSPORT_EVIDENCE_DISCOVERY,
-  MCP_TRANSPORT_EVIDENCE_EXPORT,
   MCP_TRANSPORT_EVIDENCE_LINKS,
   MCP_TRANSPORT_EVIDENCE_RECORDS,
+  MCP_TRANSPORT_EVIDENCE_SUMMARY,
 } from "../domain/analysisErrorPresentation.js";
 import {
   nodeStringCeilingRecovery,
@@ -85,9 +85,8 @@ const evidenceBundleProjection = (value: JsonValue): JsonValue | undefined => {
 
 const evidenceBundleOverflowStep = (value: JsonValue): string => {
   const projection = evidenceBundleProjection(value);
-  // A summary already used detail: summary; export writes outside one frame.
   if (projection === "evidence-bundle-summary")
-    return MCP_TRANSPORT_EVIDENCE_EXPORT;
+    return MCP_TRANSPORT_EVIDENCE_SUMMARY;
   if (projection === "evidence-link-inspection")
     return MCP_TRANSPORT_EVIDENCE_LINKS;
   return projection === "evidence-record-selection"
