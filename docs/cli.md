@@ -349,7 +349,10 @@ unknown names, resource limits and retained views. Compressed bytes stay stored.
 Zstandard (standard method 93). They retain the shared ZIP CRC, declared-size,
 overlap and archive expansion checks. The native streaming decoder keeps the
 existing 128 MiB Zstandard window cap; frames requiring a larger window are
-refused. Deprecated method 20 and other unregistered ZIP codecs remain unsupported.
+reported as a resource limit (`reason: limit`, `boundary: memory`), rather than
+as archive corruption. The cap cannot be raised at runtime: recompress with a
+window of at most 128 MiB, or decompress externally before retrying.
+Deprecated method 20 and other unregistered ZIP codecs remain unsupported.
 
 Inventory and extract UF2 or DfuSe regions:
 
