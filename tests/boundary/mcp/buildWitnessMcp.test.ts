@@ -93,6 +93,17 @@ const parsed = (result: unknown) =>
     (result as { structuredContent: unknown }).structuredContent,
   );
 
+/** A stage its checks leave undecided: refused as a request naming the stage and what left each check undecided, in any wording. */
+const expectUndecided = (
+  result: CallToolResult,
+  stage: string,
+  facts: readonly string[],
+) => {
+  const { error } = parseMcpToolError(result);
+  expect(error.code).toBe("invalid_request");
+  for (const fact of [stage, ...facts]) expect(error.message).toContain(fact);
+};
+
 it("witnesses a task: the seed fails, the edit passes, a near miss fails and so does the reset seed", async () => {
   const { app, computer, directory, check, act } = await witnessed();
 
@@ -102,15 +113,17 @@ it("witnesses a task: the seed fails, the edit passes, a near miss fails and so 
     task: "add-eggs",
     passed: 0,
     failed: 1,
-    results: [
-      {
-        id: "check-1",
-        passed: false,
-        description: 'Documents/today.txt has no line "eggs"',
-      },
-    ],
     witness: null,
   });
+  expect(
+    plain.results.map(({ id, passed, undecided }) => ({
+      id,
+      passed,
+      undecided,
+    })),
+  ).toEqual([{ id: "check-1", passed: false }]);
+  for (const fact of ["Documents/today.txt", '"eggs"'])
+    expect(plain.results[0]?.description).toContain(fact);
 
   const seed = parsed(await check({ stage: "seed", directory }));
   expect(seed.witness).toMatchObject({
@@ -303,9 +316,8 @@ it("files no seed or near miss whose only failing check could not read its file,
     },
   };
   app.state = locked;
-  const seed = parseMcpToolError(await check({ stage: "seed", directory }));
-  expect(seed.error.message).toContain("cannot decide seed");
-  expect(seed.error.message).toContain("database is locked");
+  const unread = ["Documents/today.txt", "database is locked"];
+  expectUndecided(await check({ stage: "seed", directory }), "seed", unread);
   app.state = lines("milk");
   expect(
     parsed(await check({ stage: "seed", directory })).witness,
@@ -313,9 +325,7 @@ it("files no seed or near miss whose only failing check could not read its file,
   await edit(witness, lines("milk", "eggs"));
   await check({ stage: "after_edit" });
   await edit(witness, locked);
-  expect(
-    parseMcpToolError(await check({ stage: "near_miss" })).error.message,
-  ).toContain("cannot decide near_miss");
+  expectUndecided(await check({ stage: "near_miss" }), "near_miss", unread);
   app.state = lines("milk", "egg");
   const nearMiss = parsed(await check({ stage: "near_miss" }));
   expect(nearMiss.witness).toMatchObject({
@@ -349,10 +359,8 @@ it("files no seed or near miss whose only failing check misses a line its cut vi
     },
   };
   app.state = cut;
-  const seed = parseMcpToolError(await check({ stage: "seed", directory }));
-  expect(seed.error.message).toContain("cannot decide seed");
-  expect(seed.error.message).toContain("cut short");
-  expect(seed.error.message).toContain('has no line "eggs"');
+  const missing = ["Documents/today.txt", '"eggs"'];
+  expectUndecided(await check({ stage: "seed", directory }), "seed", missing);
   app.state = lines("milk");
   expect(
     parsed(await check({ stage: "seed", directory })).witness,
@@ -360,9 +368,7 @@ it("files no seed or near miss whose only failing check misses a line its cut vi
   await edit(witness, lines("milk", "eggs"));
   await check({ stage: "after_edit" });
   await edit(witness, cut);
-  expect(
-    parseMcpToolError(await check({ stage: "near_miss" })).error.message,
-  ).toContain("cannot decide near_miss");
+  expectUndecided(await check({ stage: "near_miss" }), "near_miss", missing);
   app.state = lines("milk", "egg");
   expect(parsed(await check({ stage: "near_miss" })).witness).toMatchObject({
     stage: "near_miss",

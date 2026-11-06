@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
+import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
 import { exportDesktopApplication } from "./DesktopApplicationExport.js";
 import { draftDesktopApplicationTask } from "./DesktopTaskDraft.js";
 import {
@@ -134,7 +135,12 @@ describe("exportDesktopApplication with a task's seed", () => {
       path,
       JSON.stringify(
         task([
-          { id: "milk", kind: "lines_present", file: NOTE, lines: ["milk"] },
+          {
+            id: "has-milk",
+            kind: "lines_present",
+            file: NOTE,
+            lines: ["milk"],
+          },
         ]),
       ),
     );
@@ -153,10 +159,12 @@ describe("exportDesktopApplication with a task's seed", () => {
       readers,
     );
 
-    expect(result).toBeInstanceOf(Error);
-    const message = (result as Error & { userMessage: string }).userMessage;
-    expect(message).toContain("cut short");
-    expect(message).toContain(`"milk": ${NOTE} has no line "milk"`);
+    expect(result).toBeInstanceOf(AnalysisInputError);
+    const { issues, userMessage } = result as AnalysisInputError;
+    expect(issues.map(({ path }) => path)).toEqual([["task"]]);
+    // The undecided check by id, with its file and line, in any wording.
+    for (const fact of [JSON.stringify("has-milk"), NOTE, '"milk"'])
+      expect(userMessage).toContain(fact);
     expect(await exists(directory)).toBe(false);
 
     // A failure on what the seed's view shows still keeps it, and only that one counts.
@@ -164,7 +172,12 @@ describe("exportDesktopApplication with a task's seed", () => {
       path,
       JSON.stringify(
         task([
-          { id: "milk", kind: "lines_present", file: NOTE, lines: ["milk"] },
+          {
+            id: "has-milk",
+            kind: "lines_present",
+            file: NOTE,
+            lines: ["milk"],
+          },
           {
             id: "row",
             kind: "row_present",
