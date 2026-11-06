@@ -54,7 +54,9 @@ and the recording and writes the record as Evidence.
   A draft with no files carries `notes`, coded `no_change`,
   `unowned_changes` (up to five changed home paths with their roles, and a
   count of the rest), `uncheckable_changes` (dconf databases whose app keys
-  changed, which no check reads) and `no_document`.
+  were read and changed, which no check reads), `unreadable_changes` (dconf
+  databases that changed but could not be read, with the read `error`) and
+  `no_document`.
 - `export_build_environment` writes the agent's task under `~/.rea-build`,
   runs `export-desktop-application` with it and the same checkpoints into a
   new folder there, reports a refused task with the export's own reason,

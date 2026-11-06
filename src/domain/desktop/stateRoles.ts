@@ -112,8 +112,8 @@ export interface DesktopRoleFacts {
   readonly stateDirectories: readonly string[];
   readonly stateTails: readonly string[];
   readonly selectedRoots: readonly string[];
-  /** Selected paths a link leads elsewhere, as named and walked, innermost walked path first. */
-  readonly linkedSelections: readonly {
+  /** Every selected path as named and as walked, innermost walked path first. */
+  readonly selections: readonly {
     readonly path: string;
     readonly physical: string;
   }[];
@@ -145,9 +145,9 @@ export const roleFacts = (
         (relative === null || !stateTails.includes(relative))
       );
     }),
-    linkedSelections: (state.selected_paths ?? [])
-      .filter(({ path, physical }) => path !== physical)
-      .sort((left, right) => right.physical.length - left.physical.length),
+    selections: [...(state.selected_paths ?? [])].sort(
+      (left, right) => right.physical.length - left.physical.length,
+    ),
     titles: session.windows
       .filter((window) => window.application)
       .flatMap((window) => window.titles),
@@ -220,23 +220,24 @@ export const stateReasons = (
 };
 
 /**
- * A path's home-relative spelling as the caller selected it: under a selected
- * path a link leads elsewhere, the name the caller gave it, so a file in
- * `~/settings/MuseScore` selected as `~/.config/MuseScore` lies under
- * `.config/MuseScore`; otherwise its own.
+ * A path's home-relative spelling as the caller selected it: the name given
+ * to the innermost selected path holding it, directly or through a link, so
+ * a file in `~/settings/MuseScore` selected as `~/.config/MuseScore` lies
+ * under `.config/MuseScore`, while a score selected itself keeps its own
+ * name; otherwise its own.
  */
 export const selectedHomePath = (
   facts: DesktopRoleFacts,
   path: string,
 ): string | null => {
-  const linked = facts.linkedSelections.find(({ physical }) =>
+  const selection = facts.selections.find(({ physical }) =>
     isWithinAny(path, [physical]),
   );
   return (
-    (linked === undefined
+    (selection === undefined
       ? null
       : homePath(
-          `${linked.path}${path.slice(linked.physical.length)}`,
+          `${selection.path}${path.slice(selection.physical.length)}`,
           facts.home,
         )) ?? homePath(path, facts.home)
   );

@@ -202,6 +202,9 @@ the first source that has the app:
      its preferences, and no check reads dconf. Saving again does not help:
      choose a change the app saves in a file, and capture again on a new
      build computer.
+   - `unreadable_changes`: a dconf database changed but REA could not read
+     it; `error` says why. This is not evidence the app saved there: report
+     the error rather than changing the task.
 
 ## Write the task
 

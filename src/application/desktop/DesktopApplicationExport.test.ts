@@ -1080,6 +1080,45 @@ const exportSeeded = async (
 const launchLimitations = (limitations: readonly string[]) =>
   limitations.filter((line) => line.includes(NO_LAUNCH_DOCUMENT));
 
+/**
+ * The seed-then-end capture of an app whose titles name no file, given the
+ * note and `~/.config/MuseScore`, a link to `target`, as state paths, with
+ * MuseScore's settings there from the start.
+ */
+const linkedSettingsCapture = (target: string): DesktopApplicationCapture => {
+  const base = seedEndCapture();
+  const [baseline, ...later] = base.state.checkpoints;
+  if (baseline === undefined) throw new Error("the fixture has a baseline");
+  return {
+    ...base,
+    session: {
+      ...base.session,
+      windows: base.session.windows.map((window) => ({
+        ...window,
+        titles: ["Untitled - Notes"],
+      })),
+    },
+    state: {
+      ...base.state,
+      content_roots: [...base.state.content_roots, target, NOTE],
+      selected_paths: [
+        { path: `${HOME}/.config/MuseScore`, physical: target },
+        { path: NOTE, physical: NOTE },
+      ],
+      checkpoints: [
+        {
+          ...baseline,
+          retained: [
+            ...baseline.retained,
+            retained(`${target}/MuseScore3.ini`, "[ui]\nwrap=false\n"),
+          ],
+        },
+        ...later,
+      ],
+    },
+  };
+};
+
 describe("exportDesktopApplication launch document", () => {
   it("opens the seed's one document when the desktop entry takes files", async () => {
     const { result, module, readme } = await exportSeeded("notes %U");
@@ -1096,56 +1135,32 @@ describe("exportDesktopApplication launch document", () => {
     expect(launchLimitations(result.limitations)).toEqual([]);
   });
 
-  it("opens the selected document beside a selected settings folder that is a link elsewhere in the home", async () => {
-    const base = seedEndCapture();
-    const linked = `${HOME}/.config/MuseScore`;
-    const physical = `${HOME}/settings/MuseScore`;
-    const settings = `${physical}/MuseScore3.ini`;
-    const [baseline, ...later] = base.state.checkpoints;
-    if (baseline === undefined) throw new Error("the fixture has a baseline");
-    const recorded: DesktopApplicationCapture = {
-      ...base,
-      session: {
-        ...base.session,
-        // No title names the note, so only the selection makes it a document.
-        windows: base.session.windows.map((window) => ({
-          ...window,
-          titles: ["Untitled - Notes"],
-        })),
-      },
-      state: {
-        ...base.state,
-        content_roots: [...base.state.content_roots, physical, NOTE],
-        selected_paths: [
-          { path: linked, physical },
-          { path: NOTE, physical: NOTE },
-        ],
-        checkpoints: [
-          {
-            ...baseline,
-            retained: [
-              ...baseline.retained,
-              retained(settings, "[ui]\nwrap=false\n"),
-            ],
-          },
-          ...later,
-        ],
-      },
-    };
+  it.each([
+    ["elsewhere in the home", "settings/MuseScore"],
+    [
+      "to the note's own folder, where the note's deeper selection decides",
+      "Documents",
+    ],
+  ])(
+    "opens the selected note when a selected settings link leads %s",
+    async (_, target) => {
+      const { result, module } = await exportSeeded("notes %U", {
+        recorded: linkedSettingsCapture(`${HOME}/${target}`),
+      });
 
-    const { result, module } = await exportSeeded("notes %U", { recorded });
-
-    expect(result.normalized_result).toMatchObject({
-      seed_files: expect.arrayContaining([
-        "Documents/today.txt",
-        "settings/MuseScore/MuseScore3.ini",
-      ]),
-    });
-    expect(module).toContain(
-      `exec 'notes' \\"$HOME\\"/'Documents/today.txt'"]`,
-    );
-    expect(launchLimitations(result.limitations)).toEqual([]);
-  });
+      // The settings keep the link's meaning, so the note is the one document.
+      expect(result.normalized_result).toMatchObject({
+        seed_files: expect.arrayContaining([
+          "Documents/today.txt",
+          `${target}/MuseScore3.ini`,
+        ]),
+      });
+      expect(module).toContain(
+        `exec 'notes' \\"$HOME\\"/'Documents/today.txt'"]`,
+      );
+      expect(launchLimitations(result.limitations)).toEqual([]);
+    },
+  );
 
   it.each(["notes", null])(
     "launches as captured, and says why in the README and limitations, when Exec is %j",

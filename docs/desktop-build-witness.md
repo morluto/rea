@@ -80,8 +80,11 @@ See [desktop builds](https://github.com/morluto/rea/blob/main/.agents/skills/rev
    the app's dconf keys; `unowned_changes` when files changed but none under
    the owned paths, listing up to five in `files` with their roles, desktop
    files last, and counting the rest in `more`; `uncheckable_changes` when
-   the app's keys in dconf changed, listing the database in `files`, since no
-   check reads dconf; and `no_document` when no file has the document role.
+   the app's keys in dconf were read and changed, listing the database in
+   `files`, since no check reads dconf; `unreadable_changes` when a dconf
+   database changed but REA could not read it, such as without `dconf-cli`,
+   with the read `error`, so whose keys changed is unknown; and
+   `no_document` when no file has the document role.
    `unowned_changes` and `no_document` point at `state_paths`.
 6. Write the task: its name, the prompt in the user's own words, and checks
    that hold after the change and not on the seed.

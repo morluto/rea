@@ -216,7 +216,8 @@ one-line warning and the app starts without the captured keys. `data/reset` does
 not restore them. No file of the bundle holds them, so `data/get` does not
 return them and no task check reads them; a draft whose only change between
 its checkpoints is to the application's dconf keys says so with
-`uncheckable_changes`.
+`uncheckable_changes`, and one whose dconf database changed but could not be
+read says so with `unreadable_changes`.
 
 ## The seed checkpoint
 

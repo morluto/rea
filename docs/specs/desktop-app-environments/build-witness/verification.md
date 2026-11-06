@@ -376,6 +376,14 @@ and their fixtures added, and passes now.
   caches and browser-engine storage last, even one the app held open or in a
   state directory, so ten KDE service-cache files no longer push the saved
   document past the cut, as they did in a held-out Tellico build.
+- `DesktopApplicationExport.test.ts`: with `~/.config/MuseScore` selected as
+  a link to `~/Documents` and the note inside it selected itself, the
+  launch opens the note while the settings beside it stay the app's; before,
+  the link's hidden name made the note application state and the launch
+  opened none.
+- `DesktopTaskDraftNotes.test.ts`: a dconf database that changed but could
+  not be read gives `unreadable_changes` with the reader's error, not
+  `uncheckable_changes`.
 - `LinuxApplicationInventory.test.ts`: the inventory lists KDE's
   `~/.config/<name>rc` before it exists, so a Tellico capture owns
   `~/.config/tellicorc`, whose absence brought back Tip of the Day at boot;

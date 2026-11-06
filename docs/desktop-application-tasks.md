@@ -75,7 +75,10 @@ operation `describe_desktop_application_task` and predicate type
   `uncheckable_changes` when the application's keys in a dconf database
   changed, with the database in `files`: no check reads dconf, and the
   export only writes the keys as they were at the seed checkpoint, so make
-  the task's change one the app saves in a file; and `no_document` when no
+  the task's change one the app saves in a file; `unreadable_changes` when a
+  dconf database changed but REA could not read it, with the read failure in
+  `error` (install `dconf-cli` or set `REA_DCONF_COMMAND` when it is missing),
+  since whose keys changed is then unknown; and `no_document` when no
   file has the document role, as when no
   window title shows the file's name. A capture again with `--state-path`
   naming the file, or `state_paths` on a build computer's

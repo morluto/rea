@@ -288,7 +288,7 @@ export const DESKTOP_BUILD_TOOL_CONTRACTS = [
     name: "stop_build_capture",
     ...toolContractMetadata("stop_build_capture"),
     kind: "application",
-    description: `Stop the capture: the app is closed and the capture finishes inside the computer. Returns its checkpoints, the package and sources it found, its limitations and, when ${SEED_CHECKPOINT} and ${END_CHECKPOINT} were marked, the task draft between them: the files that changed under the paths the bundle owns, with their net change, and suggested checks. A draft with no files says why in notes: nothing changed, the changes lie outside the owned paths (listed with their roles), the app saved its change only in dconf, which no check reads, or REA recognized no document; capture again with state_paths naming the file, or make a change the app saves in a file. Write the task from the draft, its prompt in the user's words, and give it to export_build_environment.`,
+    description: `Stop the capture: the app is closed and the capture finishes inside the computer. Returns its checkpoints, the package and sources it found, its limitations and, when ${SEED_CHECKPOINT} and ${END_CHECKPOINT} were marked, the task draft between them: the files that changed under the paths the bundle owns, with their net change, and suggested checks. A draft with no files says why in notes: nothing changed, the changes lie outside the owned paths (listed with their roles), the app saved its change only in dconf, which no check reads, a dconf database changed that REA could not read, or REA recognized no document; capture again with state_paths naming the file, or make a change the app saves in a file. Write the task from the draft, its prompt in the user's words, and give it to export_build_environment.`,
     inputSchema: z.strictObject({ computer_id: computerId }),
     outputSchema: z.strictObject({
       computer_id: z.uuid(),
@@ -333,13 +333,19 @@ export const DESKTOP_BUILD_TOOL_CONTRACTS = [
                   .array(z.strictObject({ file: z.string(), role: z.string() }))
                   .optional()
                   .describe(
-                    "unowned_changes: changed home paths outside the owned paths, up to 5. uncheckable_changes: dconf databases whose app keys changed.",
+                    "unowned_changes: changed home paths outside the owned paths, up to 5. uncheckable_changes: dconf databases whose app keys changed. unreadable_changes: dconf databases that changed but could not be read.",
                   ),
                 more: z
                   .int()
                   .nonnegative()
                   .optional()
                   .describe("unowned_changes: how many more changed."),
+                error: z
+                  .string()
+                  .optional()
+                  .describe(
+                    "unreadable_changes: why REA could not read the dconf database.",
+                  ),
               }),
             )
             .describe("Why the draft has no files; empty when it has some."),

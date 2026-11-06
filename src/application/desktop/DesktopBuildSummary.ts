@@ -46,6 +46,7 @@ const draftResultSchema = z.looseObject({
           .array(z.looseObject({ file: z.string(), role: z.string() }))
           .optional(),
         more: z.int().nonnegative().optional(),
+        error: z.string().optional(),
       }),
     )
     .default([]),

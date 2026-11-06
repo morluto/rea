@@ -27,6 +27,7 @@ const draftSchema = z.looseObject({
         .array(z.object({ file: z.string(), role: z.string() }))
         .optional(),
       more: z.int().optional(),
+      error: z.string().optional(),
     }),
   ),
 });
@@ -189,6 +190,12 @@ describe("draftDesktopApplicationTask notes", () => {
       Object.keys(dumps),
       dconfReaders,
     );
+    // The reader fails on this database, as it does when dconf-cli is missing.
+    const unread = await notesOf(
+      savedInDconf("GVariant unknown"),
+      [...Object.keys(dumps), "GVariant unknown"],
+      dconfReaders,
+    );
 
     expect(saved.files).toEqual([]);
     expect(saved.notes.map(({ code }) => code)).toEqual([
@@ -199,5 +206,13 @@ describe("draftDesktopApplicationTask notes", () => {
     ]);
     // Only the desktop's own keys changed, so nothing the app saved did.
     expect(desktop.notes.map(({ code }) => code)).toEqual(["no_change"]);
+    // A database REA could not read changed: whose keys is unknown, and the read error is kept.
+    expect(unread.notes).toMatchObject([
+      {
+        code: "unreadable_changes",
+        files: [{ file: ".config/dconf/user", role: "application_state" }],
+        error: "not a fixture database",
+      },
+    ]);
   });
 });
