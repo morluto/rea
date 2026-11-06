@@ -10,6 +10,9 @@ import { cliIntegerArgument } from "./options.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
 
+/** The selected map's path and URL fields, as the domain schema admits them. */
+const sourceMapInputSchema = webSourceLocationInputSchema.shape.source_map;
+
 /** Expose the same explicit selected map/point contract through the CLI. */
 export const registerWebSourceLocationCommands = (
   cli: CliInstance,
@@ -21,16 +24,16 @@ export const registerWebSourceLocationCommands = (
     description:
       "Trace one retained script position through an explicitly selected local source map",
     args: z.object({
-      manifestPath: z
-        .string()
-        .describe("Absolute export_web_scripts manifest path"),
+      manifestPath: webSourceLocationInputSchema.shape.manifest_path,
       scriptIndex: cliIntegerArgument(0).describe(
         "Zero-based manifest script index",
       ),
-      sourceMapPath: z.string().describe("Absolute local source-map path"),
-      sourceMapUrl: z
-        .string()
-        .describe("Absolute source-map URL context; no fetch"),
+      sourceMapPath: sourceMapInputSchema.shape.path.describe(
+        "Absolute local source-map path",
+      ),
+      sourceMapUrl: sourceMapInputSchema.shape.url.describe(
+        "Absolute source-map URL context; no fetch",
+      ),
       line: cliIntegerArgument(1).describe("One-based generated line"),
       column: cliIntegerArgument(0).describe(
         "Zero-based UTF-16 generated column",
