@@ -735,6 +735,30 @@ const TOOL_EFFECT_AUDIT: Readonly<Record<string, EffectAudit>> = {
     writesFilesystem: true,
     idempotent: false,
   }),
+  // Builds and boots a container that installs and runs the requested app.
+  start_build_computer: effects({
+    mutatesSession: true,
+    writesFilesystem: true,
+    launchesProcess: true,
+    accessesNetwork: true,
+    executesForeignCode: true,
+    idempotent: false,
+  }),
+  // Drives the app through the computer's driver on a loopback port.
+  act_on_build_computer: effects({
+    mutatesSession: true,
+    accessesNetwork: true,
+    changesUiState: true,
+    executesForeignCode: true,
+    idempotent: false,
+  }),
+  close_build_computer: effects({
+    mutatesSession: true,
+    launchesProcess: true,
+    accessesNetwork: true,
+    mayDiscardData: true,
+    idempotent: false,
+  }),
   reconcile_javascript_runtime: evidence,
   recover_javascript_sources: effects({
     mutatesSession: true,
