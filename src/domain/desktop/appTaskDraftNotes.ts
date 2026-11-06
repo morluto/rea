@@ -97,7 +97,8 @@ type Version = DesktopStatePath["versions"][number];
 /**
  * How a changed dconf database's application keys differ between two
  * versions: why one could not be read, whether its application groups
- * differ, or undefined when only other groups changed.
+ * differ, or undefined when only other groups changed. A version kept without
+ * its bytes, as the first walk leaves the database, counts as holding none.
  */
 const dconfKeysChange = (
   baseline: Version,
@@ -106,6 +107,7 @@ const dconfKeysChange = (
   const unread = [baseline, final].find(
     (version) =>
       version.present &&
+      version.sha256 !== null &&
       (version.view_error !== null || version.format !== "dconf"),
   );
   if (unread !== undefined)

@@ -545,18 +545,19 @@ describe("draftTaskFiles for runs with attributes", () => {
   });
 });
 
-/** Whether each check a draft suggests passes on an XML view of its file. */
+/** Whether each check a draft suggests passes on a view of its file, XML unless another format is given. */
 const passing = (
   file: string,
   suggested: TaskDraftFile["suggested"] | undefined,
   view: JsonValue,
+  format: Format = "xml",
 ) =>
   evaluateTaskChecks(
     (suggested ?? []).map((check, index) => ({
       ...check,
       id: `c${String(index)}`,
     })) as DesktopTaskCheck[],
-    new Map([[file, { format: "xml", view }]]),
+    new Map([[file, { format, view }]]),
   ).map(({ passed }) => passed);
 
 describe("draftTaskFiles for runs added or removed whole", () => {
@@ -911,6 +912,147 @@ describe("draftTaskFiles for elements added whole holding text", () => {
             ),
         ),
       ).toEqual([[true], [false], [false]]);
+    }
+  });
+});
+
+describe("draftTaskFiles for elements without text beside a text edit", () => {
+  it("checks an image added or removed in an archive's paragraph whose text changed, which its text check never reads", () => {
+    const file = "Documents/notes.odt";
+    const content = (paragraph: JsonValue[]) =>
+      listing([
+        zipEntry("content.xml", "xml", {
+          root: xmlElement("office:text", {}, [
+            xmlElement("text:p", { n: "a" }, paragraph),
+            xmlElement("text:p", { n: "b" }, ["Agenda"]),
+          ]),
+          truncated: false,
+        }),
+      ]);
+    const image = xmlElement("draw:frame", { "draw:name": "Image1" }, [
+      xmlElement("draw:image", { "xlink:href": "Pictures/1.png" }),
+    ]);
+    const paragraph =
+      "/entries/[name=content.xml]/view/root/children/[name=text:p][@n=a]";
+    const edits = [
+      {
+        old: ["Hello"],
+        edited: ["Hello there", image],
+        imageCheck: {
+          kind: "value_equals",
+          pointer: `${paragraph}/children/[name=draw:frame]/name`,
+          value: "draw:frame",
+        },
+        textOnly: ["Hello there"],
+      },
+      {
+        old: ["Hello", image],
+        edited: ["Hello there"],
+        imageCheck: {
+          kind: "value_absent",
+          pointer: `${paragraph}/children/[name=draw:frame]`,
+        },
+        textOnly: ["Hello there", image],
+      },
+    ];
+
+    for (const { old, edited, imageCheck, textOnly } of edits) {
+      const [draftFile] = draft({
+        [file]: path("document", "zip", content(old), content(edited)),
+      });
+
+      expect(draftFile?.suggested).toEqual([
+        {
+          kind: "text_equals",
+          file,
+          pointer: paragraph,
+          value: "Hello there",
+        },
+        { ...imageCheck, file },
+      ]);
+      expect(
+        [edited, textOnly].map((saved) =>
+          passing(file, draftFile?.suggested, content(saved), "zip"),
+        ),
+      ).toEqual([
+        [true, true],
+        [true, false],
+      ]);
+    }
+  });
+
+  it("checks an image or break added or removed in an XML paragraph whose text changed, while a run holding text stays covered", () => {
+    const file = "Documents/note.abw";
+    const note = (sixth: JsonValue[]): JsonValue => ({
+      root: xmlElement("abiword", {}, [
+        xmlElement("section", { xid: "1" }, [
+          xmlElement("p", { xid: "5" }, ["Agenda"]),
+          xmlElement("p", { xid: "6" }, sixth),
+        ]),
+      ]),
+      truncated: false,
+    });
+    const sixth =
+      "/root/children/[name=section][@xid=1]/children/[name=p][@xid=6]";
+    const image = xmlElement("image", { dataid: "image_1" });
+    const brk = xmlElement("br");
+    const edits = [
+      {
+        old: ["Meeting at 2:00"],
+        edited: ["Meeting at 3:30", image],
+        others: [
+          {
+            kind: "value_equals",
+            pointer: `${sixth}/children/[name=image]/name`,
+            value: "image",
+          },
+        ],
+        textOnly: ["Meeting at 3:30"],
+      },
+      {
+        old: ["Meeting at 2:00", brk],
+        edited: ["Meeting at 3:30"],
+        others: [
+          { kind: "value_absent", pointer: `${sixth}/children/[name=br]` },
+        ],
+        textOnly: ["Meeting at 3:30", brk],
+      },
+      {
+        old: ["Meeting at 2:00"],
+        edited: ["Meeting at ", xmlElement("c", {}, ["3:30"]), brk],
+        others: [
+          {
+            kind: "value_equals",
+            pointer: `${sixth}/children/[name=br]/name`,
+            value: "br",
+          },
+        ],
+        textOnly: ["Meeting at 3:30"],
+      },
+    ];
+
+    for (const { old, edited, others, textOnly } of edits) {
+      const [draftFile] = draft({
+        [file]: path("document", "xml", note(old), note(edited)),
+      });
+
+      expect(draftFile?.suggested).toEqual([
+        {
+          kind: "text_equals",
+          file,
+          pointer: sixth,
+          value: "Meeting at 3:30",
+        },
+        ...others.map((check) => ({ ...check, file })),
+      ]);
+      expect(
+        [edited, textOnly].map((saved) =>
+          passing(file, draftFile?.suggested, note(saved)),
+        ),
+      ).toEqual([
+        [true, true],
+        [true, false],
+      ]);
     }
   });
 });

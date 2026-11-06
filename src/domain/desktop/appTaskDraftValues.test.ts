@@ -82,6 +82,23 @@ describe("draftTaskFiles values", () => {
     expect(cut?.before).toBe(`${"x".repeat(600)}…`);
   });
 
+  it("notes a run of text added or removed in mixed content as by position, since only its index reaches it", () => {
+    const document = (lead: string) =>
+      `<abiword><section><p xid="1" style="Normal">${lead}<c props="font-weight:bold">Budget</c> is due Friday.</p></section></abiword>`;
+    const paragraph =
+      "/root/children/[name=section]/children/[name=p]/children";
+
+    const file = xmlDraft(document("Reminder: "), document(""));
+
+    expect(
+      file.values.map(({ kind, pointer, note }) => [kind, pointer, note]),
+    ).toEqual([
+      ["added", `${paragraph}/1`, "by_position"],
+      ["removed", `${paragraph}/0`, "by_position"],
+      ["removed", `${paragraph}/2`, "by_position"],
+    ]);
+  });
+
   it("lists at most 20 values and 8 KB a file and 24 KB a draft, saying when it left any out", () => {
     const items = (count: number, value: (index: number) => string) =>
       `<doc>${Array.from({ length: count }, (_, index) => `<p id="${String(index)}" v="${value(index)}"/>`).join("")}</doc>`;

@@ -457,7 +457,7 @@ export const draftTaskFiles = (
     ? "document"
     : "application_state";
   // The app's logs, which the export leaves out of the seed, never hold a check.
-  const { isLeftOutLog } = leftOutFiles(files, [], new Set());
+  const { isLeftOutLog } = leftOutFiles(files, [], []);
   return withinDraftBudget(
     changed.map(({ home, path, baseline, final, change }) => {
       const drafted = path.role === role && !isLeftOutLog(home);

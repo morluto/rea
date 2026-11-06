@@ -13,7 +13,7 @@ export const decimalOf = (value: JsonValue | undefined): number | undefined => {
   return Number.isFinite(number) ? number : undefined;
 };
 
-/** Whether a decimal's number is within the tolerance of a baseline value, read as the evaluator reads a number, `"10"` and `"1e1"` included, so a check by number would pass there too. */
+/** Whether a decimal's number is within the tolerance of a baseline value, read as the evaluators read a number, `"10"` and `"1e1"` included, so a check by number would pass there too. */
 const nearBaseline = (number: number, before: JsonValue | undefined) => {
   const old = before === undefined ? undefined : numberOf(before);
   return old !== undefined && Math.abs(old - number) <= DECIMAL_TOLERANCE;

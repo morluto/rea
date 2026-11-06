@@ -449,12 +449,12 @@ const DOCUMENT_LOCK_TEXT =
 
 const exportLocked = async (
   recorded = lockedCapture(),
-  extraContent: readonly string[] = [],
+  content: readonly string[] = [],
 ) => {
   const folder = await writeCaptureFolder(recorded, undefined, [
     PROFILE_LOCK_TEXT,
     DOCUMENT_LOCK_TEXT,
-    ...extraContent,
+    ...content,
   ]);
   const directory = join(
     await createTestTempDirectory("desktop-export-"),
@@ -873,6 +873,32 @@ describe("exportDesktopApplication of the app's logs", () => {
       expect(await exists(join(directory, "envs/notes/seed", log))).toBe(false);
       expect(readme).toContain(`\`~/${log}\``);
     }
+  });
+
+  it("seeds a log under a folder named as a state path, but not a lock there", async () => {
+    const history = `${HOME}/.config/notes/history`;
+    const written = withWritten([
+      [`${history}/2026-11-06.log`, "saved\n", "state", 0o644],
+      [`${history}/notes.txt`, "saved\n", "state", 0o644],
+      [`${history}/.~lock.notes.txt#`, "saved\n", "state", 0o644],
+    ]);
+
+    const { result } = await exportLocked(
+      {
+        ...written,
+        state: {
+          ...written.state,
+          content_roots: [...written.state.content_roots, history],
+        },
+      },
+      ["saved\n"],
+    );
+
+    const seedFiles = z
+      .object({ seed_files: z.array(z.string()) })
+      .parse(result.normalized_result).seed_files;
+    expect(seedFiles).toContain(".config/notes/history/2026-11-06.log");
+    expect(seedFiles).not.toContain(".config/notes/history/.~lock.notes.txt#");
   });
 });
 
@@ -1692,6 +1718,66 @@ describe("exportDesktopApplication launch document", () => {
     }
     expect(made.readme).toContain("`envs/notes/seed/`");
     expect(captured.readme).not.toContain("`envs/notes/seed/`");
+  });
+});
+
+describe("exportDesktopApplication launch document beside its lock", () => {
+  it("leaves LibreOffice's lock out of a selected folder's seed, so the document beside it is the one the launch opens", async () => {
+    const base = seedEndCapture();
+    const [baseline, seed, ...later] = base.state.checkpoints;
+    if (baseline === undefined || seed === undefined)
+      throw new Error("the fixture has a baseline and a seed");
+    const documents = `${HOME}/Documents`;
+    const recorded: DesktopApplicationCapture = {
+      ...base,
+      session: {
+        ...base.session,
+        windows: base.session.windows.map((window) => ({
+          ...window,
+          titles: ["Untitled - Notes"],
+        })),
+      },
+      state: {
+        ...base.state,
+        content_roots: [...base.state.content_roots, documents],
+        selected_paths: [{ path: documents, physical: documents }],
+        checkpoints: [
+          baseline,
+          {
+            ...seed,
+            changes: [
+              ...seed.changes,
+              change(DOCUMENT_LOCK, { after: DOCUMENT_LOCK_TEXT }),
+            ],
+            retained: [
+              ...seed.retained,
+              retained(DOCUMENT_LOCK, DOCUMENT_LOCK_TEXT),
+            ],
+          },
+          ...later,
+        ],
+      },
+    };
+
+    const { result, module } = await exportSeeded("notes %U", {
+      recorded,
+      content: [DOCUMENT_LOCK_TEXT],
+    });
+
+    const seedFiles = z
+      .object({ seed_files: z.array(z.string()) })
+      .parse(result.normalized_result).seed_files;
+    expect(seedFiles).toContain("Documents/today.txt");
+    expect(seedFiles).not.toContain("Documents/.~lock.today.txt#");
+    expect(
+      result.limitations.filter((line) =>
+        line.startsWith("Left out of the seed:"),
+      ),
+    ).toEqual([expect.stringContaining("~/Documents/.~lock.today.txt#")]);
+    expect(module).toContain(
+      `exec 'notes' \\"$HOME\\"/'Documents/today.txt'"]`,
+    );
+    expect(launchLimitations(result.limitations)).toEqual([]);
   });
 });
 

@@ -240,8 +240,8 @@ export const stateFilesByHomePath = (
 /**
  * The state view's files and dconf databases by home path, the paths the app
  * owns, and which home files the seed leaves out as locks the app holds, as
- * the export decides them. A document or a path the caller selected is never
- * left out, whatever its name.
+ * the export decides them. A document, a path the caller selected or a file
+ * under one is never left out, whatever its name.
  */
 export const exportedStateFiles = (
   capture: DesktopApplicationCapture,
@@ -260,10 +260,10 @@ export const exportedStateFiles = (
     ...capture.application.state_directories.map((entry) => entry.path),
     ...(capture.state.state_directories ?? []),
   ]);
-  const usersOwn = new Set([
+  const usersOwn = [
     ...withRole("document"),
     ...homePaths(roleFacts(capture).selectedRoots),
-  ]);
+  ];
   const leftOut = leftOutFiles(files, stateDirectories, usersOwn);
   // A lock or log never makes a path the app's, as Poedit's `~/poedit.lock` would.
   const paths = ownedPaths(

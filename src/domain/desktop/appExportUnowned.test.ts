@@ -270,17 +270,17 @@ describe("the limitations on folders the app held files open in", () => {
 });
 
 describe("isAppLog", () => {
-  it("knows a log by its name, its logs folder or as a log's lock, and nothing else", () => {
+  it("knows a log by its name or as a log's lock, and nothing else", () => {
     const logs = [
       ".config/freeplane/1.7.x/logs/log.0",
       ".config/freeplane/1.7.x/logs/log.0.lck",
       ".qet/20261106.log",
       ".config/app/App.LOG",
-      ".local/share/app/logs/session.txt",
       ".config/app/log.12",
       ".config/app/app.log.lock",
     ];
     const others = [
+      ".local/share/app/logs/session.txt",
       ".config/app/catalog.xml",
       ".config/app/logo.png",
       ".config/app/changelog",
@@ -314,7 +314,26 @@ describe("isAppLog", () => {
       ].map((home) => [home, file("application_state")] as const),
     );
 
-    const { isLeftOut } = leftOutFiles(files, [".config/app"], new Set());
+    const { isLeftOut } = leftOutFiles(files, [".config/app"], []);
+
+    expect([...files.keys()].filter(isLeftOut)).toEqual(left);
+  });
+
+  it("seeds what an app keeps under a logs folder, as Pidgin's conversations and fldigi's logbook", () => {
+    const left = [".config/freeplane/1.7.x/logs/log.0", ".qet/20261106.log"];
+    const files = new Map(
+      [
+        ...left,
+        ".purple/logs/jabber/me@x/bob@y/2024-01-01.120000+0000UTC.html",
+        ".fldigi/logs/logbook.adif",
+      ].map((home) => [home, file("application_state")] as const),
+    );
+
+    const { isLeftOut } = leftOutFiles(
+      files,
+      [".config/freeplane", ".qet", ".purple", ".fldigi"],
+      [],
+    );
 
     expect([...files.keys()].filter(isLeftOut)).toEqual(left);
   });
