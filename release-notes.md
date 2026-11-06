@@ -356,6 +356,7 @@
 * **deps:** patch fast-uri, qs and HTTP/3 certifi ([#7704](https://github.com/morluto/rea/issues/7704)) ([e556134](https://github.com/morluto/rea/commit/e556134302f055936c0295838d72ebcd5454bc96)), closes [#7700](https://github.com/morluto/rea/issues/7700)
 * **deps:** upgrade zod without narrowing timestamp inputs ([e3066c1](https://github.com/morluto/rea/commit/e3066c1705316b53b08f84814ae929eb6563e511))
 * **desktop:** charge retained rows at their measured representation ([#8105](https://github.com/morluto/rea/issues/8105)) ([0ce76e7](https://github.com/morluto/rea/commit/0ce76e70f4b9f9b33a9527239cf58002490d08dd))
+* **desktop:** launch spaced REA archives and Electron apps ([#9085](https://github.com/morluto/rea/issues/9085)) ([8580f14](https://github.com/morluto/rea/commit/8580f1430c76ad62e8e3c5a368e5d7ef26d50ffd))
 * **desktop:** read bounded MZ signature evidence ([df0e2f7](https://github.com/morluto/rea/commit/df0e2f7b3e9f3af0ae0f9065936a341b37c6ec98))
 * **devicetree:** reject duplicate node paths in Evidence ([#8970](https://github.com/morluto/rea/issues/8970)) ([6fceda8](https://github.com/morluto/rea/commit/6fceda83d5cb1a0dac1993c9e6b1e93652668b72))
 * **discovery:** advertise attached IDA navigation effects ([#7017](https://github.com/morluto/rea/issues/7017)) ([dd31958](https://github.com/morluto/rea/commit/dd319587430e01d71362cbca8f53bbc13b08a798))
