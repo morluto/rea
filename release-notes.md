@@ -961,6 +961,7 @@
 * **process:** reuse a verified Darwin ownership helper across processes ([#8318](https://github.com/morluto/rea/issues/8318)) ([c534e24](https://github.com/morluto/rea/commit/c534e249d1838fdb6328e133fa109cc6684cc6da))
 * **setup:** wait directly for prewarm completion ([855eb70](https://github.com/morluto/rea/commit/855eb703af2a7cf8935b6be38b234cc58e7ea73a))
 * **test:** bind deferred runtime calls to advertised schemas ([#8622](https://github.com/morluto/rea/issues/8622)) ([8250bf2](https://github.com/morluto/rea/commit/8250bf2320ea57aab4e664db4b4d44b8abd2004e))
+* **tests:** reuse bounded CLI workers in mobile archive checks ([#9116](https://github.com/morluto/rea/issues/9116)) ([afc9cfe](https://github.com/morluto/rea/commit/afc9cfe9ff63c5ccef2d0a6f6c71d1d26281d431))
 
 
 ### Code Refactoring
