@@ -109,6 +109,50 @@ export const tokenizeDesktopExec = (
   return tokens.length === 0 ? err("empty_command") : ok(tokens);
 };
 
+/** Reserved characters an unquoted `Exec` argument must not contain. */
+const EXEC_RESERVED = /[\t\n\r "'\\><~|&;$*?#()`]/u;
+
+/** Quote `Exec` arguments so `tokenizeDesktopExec` reads them back. */
+export const formatDesktopExec = (argv: readonly string[]): string =>
+  argv
+    .map((argument) =>
+      argument.length > 0 && !EXEC_RESERVED.test(argument)
+        ? argument
+        : `"${argument.replace(/[\\"`$]/gu, (character) => `\\${character}`)}"`,
+    )
+    .join(" ");
+
+const EXEC_LINE = /^Exec\s*=/u;
+
+/** Replace the first `Exec` line of the main group, leaving other groups alone. */
+export const replaceDesktopExec = (
+  text: string,
+  exec: string,
+): Result<string, "missing_exec_line"> => {
+  const newline = text.includes("\r\n") ? "\r\n" : "\n";
+  let group: string | undefined;
+  let replaced = false;
+  const lines = text.split(/\r?\n/u).map((line) => {
+    const trimmed = line.trim();
+    const header = GROUP.exec(trimmed);
+    if (header?.groups?.name !== undefined) {
+      group = header.groups.name;
+      return line;
+    }
+    if (
+      replaced ||
+      group !== "Desktop Entry" ||
+      trimmed.length === 0 ||
+      trimmed.startsWith("#") ||
+      !EXEC_LINE.test(trimmed)
+    )
+      return line;
+    replaced = true;
+    return `Exec=${exec}`;
+  });
+  return replaced ? ok(lines.join(newline)) : err("missing_exec_line");
+};
+
 /** Facts substituted for the `%i`, `%c` and `%k` field codes. */
 export interface DesktopExecContext {
   readonly icon: string | null;

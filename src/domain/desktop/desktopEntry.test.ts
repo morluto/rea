@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   expandDesktopExec,
+  formatDesktopExec,
   parseDesktopEntry,
   tokenizeDesktopExec,
   unwrapDesktopCommand,
@@ -78,6 +79,17 @@ describe("tokenizeDesktopExec", () => {
       ok: false,
       error: "empty_command",
     });
+  });
+});
+
+describe("formatDesktopExec", () => {
+  it("round-trips arguments that contain spaces and quotes", () => {
+    const exec = '"/opt/My App/run" --title "say \\"hi\\"" %F';
+    const tokens = tokenizeDesktopExec(exec);
+    if (!tokens.ok) throw new Error(tokens.error);
+    expect(tokenizeDesktopExec(formatDesktopExec(tokens.value))).toEqual(
+      tokens,
+    );
   });
 });
 
