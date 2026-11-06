@@ -323,6 +323,76 @@ describe("Electron module interop helper results", () => {
     `);
     expect(analysis.electron.browser_windows).toHaveLength(3);
   });
+
+  it("preserves BrowserWindow findings through lexical aliases of proven interop results", () => {
+    const analysis = analyzeJavaScriptStaticSource(`
+      function identity(mod) { return mod; }
+      const electron = identity(require("electron"));
+      const api = electron;
+      new api.BrowserWindow({webPreferences:{preload:"./p.js"}});
+    `);
+    expect(analysis.electron.browser_windows).toMatchObject([
+      { preload_path: "./p.js" },
+    ]);
+  });
+
+  it("preserves BrowserWindow and IPC findings through aliases of Rolldown namespace conversions", () => {
+    const analysis = analyzeJavaScriptStaticSource(`${ROLLDOWN_MODULE_INTEROP}
+      const electron = __toESM(require("electron"), 1);
+      const api = electron;
+      new api.BrowserWindow({webPreferences:{preload:"./p.js"}});
+      api.ipcMain.handle("ping", () => "pong");
+    `);
+    expect(analysis.electron.browser_windows).toMatchObject([
+      { preload_path: "./p.js" },
+    ]);
+    expect(analysis.electron.ipc).toMatchObject([
+      { channel: "ping", side: "main" },
+    ]);
+  });
+});
+
+describe("Electron module interop alias resolution", () => {
+  it("does not infer Electron identity through an alias when the target binding was modified", () => {
+    const analysis = analyzeJavaScriptStaticSource(`
+      ${ROLLDOWN_MODULE_INTEROP}
+      function identity(mod) { return mod; }
+      let electron = identity(require("electron"));
+      eval("electron = { BrowserWindow: class {} }");
+      const api = electron;
+      new api.BrowserWindow({webPreferences:{preload:"./p.js"}});
+    `);
+    expect(analysis.electron.browser_windows).toEqual([]);
+  });
+
+  it("retains possible member writes through uncertain aliases of interop results", () => {
+    const analysis = analyzeJavaScriptStaticSource(`
+      ${ROLLDOWN_MODULE_INTEROP}
+      function identity(mod) { return mod; }
+      const original = identity(require("electron"));
+      let electron = original;
+      eval("noop()");
+      const api = electron;
+      api.BrowserWindow = Fake;
+      new original.BrowserWindow({webPreferences:{preload:"./p.js"}});
+    `);
+    expect(analysis.electron.browser_windows).toEqual([]);
+  });
+
+  it("resolves Electron identity across long alias chains without stack overflow", () => {
+    const lines = [
+      ROLLDOWN_MODULE_INTEROP,
+      'const a0 = __toESM(require("electron"), 1);',
+    ];
+    for (let i = 1; i <= 2000; i++) {
+      lines.push(`const a${i} = a${i - 1};`);
+    }
+    lines.push('new a2000.BrowserWindow({webPreferences:{preload:"./p.js"}});');
+    const analysis = analyzeJavaScriptStaticSource(lines.join("\n"));
+    expect(analysis.electron.browser_windows).toMatchObject([
+      { preload_path: "./p.js" },
+    ]);
+  });
 });
 
 describe("Electron module interop pattern writes", () => {

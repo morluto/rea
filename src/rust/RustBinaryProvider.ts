@@ -1,5 +1,7 @@
+import { RUST_BINARY_PROVIDER_IDENTITY } from "./RustBinaryProviderIdentity.js";
 import {
   projectStableArtifactFailure,
+  stableArtifactInputRecovery,
   projectArtifactCloseFailure,
 } from "../artifacts/StableArtifactFailure.js";
 import { isSelectedRegularFileError } from "../filesystem/RegularFile.js";
@@ -45,12 +47,6 @@ import {
   RustAuditableResourceFailure,
 } from "./RustAuditableReader.js";
 
-/** Bundled reader identity. Embedded package versions are separate observed facts. */
-export const RUST_BINARY_PROVIDER_IDENTITY = {
-  id: "rust-auditable",
-  name: "REA Rust dependency reader",
-  version: "1",
-} as const;
 const OPERATION = "inspect_rust_binary";
 
 /** Stable in-process dependency inspection without subprocesses, temporary files, or a Rust toolchain. */
@@ -166,12 +162,16 @@ const outputLimit = (path: string) =>
     fixedAllowanceOptions("The Rust complete-report allowance", "report"),
   );
 
+/** Resource-guard guidance delivered with every Rust inspection report. */
+export const RUST_RESOURCE_GUARD_LIMITATION =
+  "Resource guards bound the selected file to 256 MiB, the compressed dependency stream to 1 MiB, inflated JSON to the smaller of 8 MiB and 64 times the consumed compressed-stream length, and the complete report to 8 MiB. Package and dependency counts are admitted against that output budget before schema cloning, graph objects, or reverse-edge allocation.";
+
 const limitationsFor = (
   image: ReturnType<typeof readRustBinaryImage>,
 ): string[] => [
   "Embedded dependency metadata is file content. It does not authenticate package names, versions, sources, or the compiler that produced the binary.",
   "Only the .dep-v0 dependency section and read-only compiler path strings are inspected. Functions, types, and runtime behavior are not recovered.",
-  "Resource guards bound the selected file to 256 MiB, a dependency section to 1 MiB, inflated JSON to the smaller of 8 MiB and 64 times the section size, and the complete report to 8 MiB. Package and dependency counts are admitted against that output budget before schema cloning, graph objects, or reverse-edge allocation.",
+  RUST_RESOURCE_GUARD_LIMITATION,
   ...(image.section_names_limitation === undefined
     ? []
     : [image.section_names_limitation]),
@@ -344,9 +344,11 @@ const artifactReaderFailure = (
       },
     );
   if (cause.reason === "path")
-    return new AnalysisInputError(OPERATION, { cause }, [
-      { path: ["path"], reason: "invalid_format", message: cause.message },
-    ]);
+    return new AnalysisInputError(
+      OPERATION,
+      { cause, ...stableArtifactInputRecovery(cause) },
+      [{ path: ["path"], reason: "invalid_format", message: cause.message }],
+    );
   return new ProviderAdapterError(RUST_BINARY_PROVIDER_IDENTITY.id, OPERATION, {
     cause,
     diagnostics: { path, reason: cause.message },

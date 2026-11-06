@@ -12,7 +12,10 @@ import { projectReferenceSourceImportError } from "../application/ReferenceSourc
 import type { AnalysisCleanupObservation } from "../domain/analysisErrorBase.js";
 import { parseConfig } from "../config/parseConfig.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
-import { AnalysisInputError } from "../domain/analysisErrorCore.js";
+import {
+  AnalysisInputError,
+  type AnalysisInputIssue,
+} from "../domain/analysisErrorCore.js";
 import { projectInputIssues } from "../domain/inputIssueProjection.js";
 import { safeParseJson } from "../domain/safeJson.js";
 import {
@@ -46,23 +49,28 @@ export const registerUtilityCommands = (
   registerReferenceSourceCommand(cli, logger, environment);
 };
 
+/**
+ * A native deadline option keeps the shared field's bounds but admits only
+ * decimal argv text; Incur's Number() coercion would accept "0x10" or "1e3".
+ */
+const cliNativeDeadline = (field: typeof nativeUiDeadlineField) =>
+  cliIntegerArgument(1)
+    .pipe(field.unwrap())
+    .optional()
+    .describe(field.description ?? "");
+
+// Decimal tokens only, for the same reason as cliNativeDeadline.
 const nativeUiScopeOptions = {
-  pid: z.number().int().positive().describe("Existing application PID"),
-  windowId: z
-    .number()
-    .int()
-    .positive()
-    .describe("Exact selected application window ID"),
+  pid: cliIntegerArgument(1).describe("Existing application PID"),
+  windowId: cliIntegerArgument(1).describe(
+    "Exact selected application window ID",
+  ),
   screenshot: nativeUiObservationInputSchema.shape.screenshot,
   accessibility: nativeUiObservationInputSchema.shape.accessibility,
-  maxNodes: z
-    .number()
-    .int()
-    .positive()
-    .safe()
+  maxNodes: cliIntegerArgument(1)
     .default(500)
     .describe("Maximum accessibility nodes per capture"),
-  nativeUiDeadlineMs: nativeUiDeadlineField,
+  nativeUiDeadlineMs: cliNativeDeadline(nativeUiDeadlineField),
 };
 
 const nativeUiScope = (options: {
@@ -200,7 +208,7 @@ const registerNativeCommands = (
         path: localPathStringSchema.describe("Mach-O or app path"),
       }),
       options: z.object({
-        nativeCommandTimeoutMs: nativeCommandTimeoutField,
+        nativeCommandTimeoutMs: cliNativeDeadline(nativeCommandTimeoutField),
       }),
       run: ({ args, options }) =>
         logCliCommand(logger, command, () =>
@@ -227,7 +235,7 @@ const registerNativeCommands = (
         .describe(
           "Plist path relative to the app root, or an absolute path (default: the bundle's Info.plist)",
         ),
-      nativeCommandTimeoutMs: nativeCommandTimeoutField,
+      nativeCommandTimeoutMs: cliNativeDeadline(nativeCommandTimeoutField),
     }),
     run: ({ args, options }) =>
       logCliCommand(logger, "inspect-plist", () =>
@@ -255,7 +263,7 @@ const registerNativeCommands = (
       symbols: swiftSymbolsSchema.describe("Swift mangled symbols to demangle"),
     }),
     options: z.object({
-      nativeCommandTimeoutMs: nativeCommandTimeoutField,
+      nativeCommandTimeoutMs: cliNativeDeadline(nativeCommandTimeoutField),
     }),
     run: ({ args, options }) =>
       logCliCommand(logger, "demangle-swift", () =>
@@ -274,6 +282,66 @@ const registerNativeCommands = (
   });
 };
 
+const referenceSourceExcludePathsSchema = z.object({
+  excludePaths: z.array(z.string().min(1)),
+});
+
+const EXCLUDE_PATHS_INPUT_MESSAGE =
+  "--exclude-paths must be a JSON array of nonempty Git-ignore rules. Each rule uses Git-ignore syntax, including wildcards, directory suffixes, and negations, rather than a literal path match.";
+
+const invalidReferenceSourceExcludePaths = (
+  issues: readonly AnalysisInputIssue[],
+) => ({
+  error: "Import failed" as const,
+  ...projectAnalysisError(
+    new AnalysisInputError(
+      CLI_COMMANDS.importReferenceSource,
+      { userMessage: EXCLUDE_PATHS_INPUT_MESSAGE },
+      issues,
+    ),
+  ),
+});
+
+/** Parse caller exclusions before the import opens the selected tree. */
+const parseReferenceSourceExcludePaths = (
+  encoded: string | undefined,
+):
+  | {
+      readonly ok: true;
+      readonly rules: readonly string[] | undefined;
+    }
+  | {
+      readonly ok: false;
+      readonly failure: ReturnType<typeof invalidReferenceSourceExcludePaths>;
+    } => {
+  if (encoded === undefined) return { ok: true, rules: undefined };
+  const decoded = safeParseJson(encoded);
+  if (!decoded.ok)
+    return {
+      ok: false,
+      failure: invalidReferenceSourceExcludePaths([
+        {
+          path: ["excludePaths"],
+          reason: "invalid_format",
+          expected: "JSON",
+        },
+      ]),
+    };
+  const parsed = referenceSourceExcludePathsSchema.safeParse({
+    excludePaths: decoded.value,
+  });
+  if (!parsed.success)
+    return {
+      ok: false,
+      failure: invalidReferenceSourceExcludePaths(
+        projectInputIssues(parsed.error.issues, {
+          excludePaths: decoded.value,
+        }),
+      ),
+    };
+  return { ok: true, rules: parsed.data.excludePaths };
+};
+
 const registerReferenceSourceCommand = (
   cli: CliInstance,
   logger: Logger,
@@ -287,6 +355,12 @@ const registerReferenceSourceCommand = (
         .describe("Local source directory to import as historical reference"),
     }),
     options: z.object({
+      excludePaths: z
+        .string()
+        .optional()
+        .describe(
+          "JSON array of Git-ignore rules to exclude. Rules use Git-ignore syntax, including wildcards, directory suffixes, and negations; they are not literal path matches. An empty array adds no caller exclusions.",
+        ),
       detail: z
         .enum(["full", "summary"])
         .default("full")
@@ -304,6 +378,10 @@ const registerReferenceSourceCommand = (
         logger,
         "import-reference-source",
         async () => {
+          const excludePaths = parseReferenceSourceExcludePaths(
+            options.excludePaths,
+          );
+          if (!excludePaths.ok) return excludePaths.failure;
           if (
             options.outlineDepth !== undefined &&
             options.detail !== "summary"
@@ -333,6 +411,7 @@ const registerReferenceSourceCommand = (
           return runReferenceSourceImport(
             args.root,
             config.value.referenceSourcePolicy,
+            excludePaths.rules,
             options.detail === "summary"
               ? (options.outlineDepth ?? 2)
               : undefined,
@@ -346,6 +425,7 @@ const registerReferenceSourceCommand = (
 const runReferenceSourceImport = async (
   root: string,
   policy: ReferenceSourcePolicy,
+  excludePaths: readonly string[] | undefined,
   outlineDepth: number | undefined,
 ): Promise<unknown> => {
   const resources = new ArtifactResourceScope();
@@ -365,6 +445,7 @@ const runReferenceSourceImport = async (
           policy,
           importer: PRODUCT_IDENTITY.packageName,
           importerVersion: PRODUCT_IDENTITY.packageVersion,
+          ...(excludePaths === undefined ? {} : { excludePaths }),
         },
         resources,
       ),

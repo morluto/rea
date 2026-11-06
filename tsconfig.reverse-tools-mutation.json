@@ -18,6 +18,7 @@
     "tests/boundary/providers/RizinTimeoutEvidence.test.ts",
     "tests/boundary/mcp/rizinPendingOutput.test.ts",
     "tests/boundary/providers/RizinInferiorTty.test.ts",
+    "tests/boundary/providers/RizinDecoderInputs.test.ts",
     "tests/boundary/providers/RizinTestInferiorTty.ts",
     "tests/boundary/providers/RizinCommandTimeout.test.ts",
     "tests/boundary/providers/CutterBridgeClient.test.ts",

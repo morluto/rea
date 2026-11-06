@@ -1,3 +1,4 @@
+import { ADB_PROVIDER_IDENTITY } from "./AdbProviderIdentity.js";
 import {
   absoluteCallerPath,
   appendCallerPath,
@@ -94,6 +95,7 @@ import {
 import {
   adbCommandOutputFailure,
   adbArguments,
+  adbSpawnCapacityError,
   runAdb,
   runAdbCapture,
   packageChangeRefusal,
@@ -112,8 +114,6 @@ import {
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import {
   displayDevicePath,
-  parseAdbDevicesOutput,
-  parseGetpropOutput,
   parsePackageListOutput,
   parsePmPathOutput,
 } from "./AdbDeviceOutput.js";
@@ -141,19 +141,20 @@ import {
   parseWmDensityOutput,
   parseWmSizeOutput,
 } from "./AdbShellOutput.js";
-import type { AdbUnparsedLines } from "./AdbUnparsedLines.js";
+import {
+  clientIdentityResult,
+  parsedListingExecution,
+  type AdbClientResult,
+  type AdbProviderIdentity,
+} from "./AdbOperationResults.js";
+import {
+  inspectAdbClientOperation,
+  inspectAdbDeviceOperation,
+  listAdbDevicesOperation,
+  type AdbCommandContext,
+} from "./AdbDeviceOperations.js";
 
-/** Stable identity for the ADB device-acquisition provider. */
-export const ADB_PROVIDER_IDENTITY = {
-  id: "adb",
-  name: "Android Debug Bridge",
-  version: null,
-} as const;
-
-const DEVICES_TIMEOUT_MS = 20_000;
-const DEVICES_MAX_OUTPUT_BYTES = 1024 * 1024;
 const SHELL_TIMEOUT_MS = 30_000;
-const GETPROP_MAX_OUTPUT_BYTES = 2 * 1024 * 1024;
 const PACKAGE_LIST_TIMEOUT_MS = 60_000;
 const PACKAGE_LIST_MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
 const PM_PATH_TIMEOUT_MS = 30_000;
@@ -402,49 +403,6 @@ const syncStagedAdbFile = async (
   }
   if (primary !== undefined) throw primary;
 };
-
-const clientIdentityResult = (
-  selection: AdbBinarySelection,
-  identity: AdbClientIdentity,
-) => ({
-  binary_path: selection.binary,
-  path_source: selection.pathSource,
-  version: identity.version,
-  installed_path: identity.installedPath,
-});
-
-type ClientIdentity = ReturnType<typeof clientIdentityResult>;
-type ProviderIdentity = { id: string; name: string; version: string | null };
-
-/**
- * Build a parsed-listing execution whose `unparsed_lines`, coverage, and
- * truncation limitation all derive from the parser's unrecognized-line facts,
- * so the limitation can never describe a field the result does not carry.
- */
-const parsedListingExecution = (
-  result: Readonly<Record<string, unknown>>,
-  unparsed: AdbUnparsedLines,
-  provider: ProviderIdentity,
-  limitations: readonly string[] = [],
-) =>
-  createAnalysisExecution(
-    {
-      ...result,
-      unparsed_lines: unparsed.sample,
-      coverage: unparsed.total > 0 ? "partial" : "complete",
-    },
-    provider,
-    {
-      limitations: [
-        ...limitations,
-        ...(unparsed.total > unparsed.sample.length
-          ? [
-              `unparsed_lines reports the first ${String(unparsed.sample.length)} of ${String(unparsed.total)} unrecognized lines`,
-            ]
-          : []),
-      ],
-    },
-  );
 
 /** Materialize the caller's output directory, refusing existing files inside. */
 const prepareOutputDirectory = async (
@@ -1360,6 +1318,18 @@ export class AdbProvider {
             { prerequisite_operation: "inspect_adb_client" },
           ),
         );
+      if (
+        cause instanceof AdbConfigurationFailure &&
+        cause.code === "host_capacity"
+      )
+        return err(
+          adbSpawnCapacityError(
+            request.operation,
+            String(cause.diagnostics.filesystem_error),
+            cause,
+            cause.diagnostics,
+          ),
+        );
       if (cause instanceof AdbConfigurationFailure)
         return err(
           providerConfigurationRefusal(
@@ -1376,7 +1346,7 @@ export class AdbProvider {
       );
     }
     const client = clientIdentityResult(selection, identity);
-    const provider: ProviderIdentity = {
+    const provider: AdbProviderIdentity = {
       ...ADB_PROVIDER_IDENTITY,
       version: identity.version,
     };
@@ -1395,87 +1365,22 @@ export class AdbProvider {
         { ...limits, volatileOutput: true },
         signal,
       );
+    const context: AdbCommandContext = {
+      operation,
+      request,
+      selection,
+      client,
+      provider,
+      signal,
+      shell,
+    };
     switch (operation) {
       case "inspect_adb_client":
-        return ok(
-          createAnalysisExecution(
-            { client, contacted_adb_server: false },
-            provider,
-          ),
-        );
-      case "list_adb_devices": {
-        const ran = await runAdb(
-          operation,
-          { device: "adb-devices" },
-          selection,
-          ["devices", "-l"],
-          {
-            timeoutMs: DEVICES_TIMEOUT_MS,
-            maxOutputBytes: DEVICES_MAX_OUTPUT_BYTES,
-            volatileOutput: true,
-          },
-          signal,
-        );
-        if (!ran.ok) return ran;
-        const { devices, unparsedLines, daemonStarted } = parseAdbDevicesOutput(
-          ran.value.stdout,
-          ran.value.stderr,
-        );
-        if (unparsedLines.total > 0)
-          return err(
-            new AnalysisProtocolError(
-              `adb devices reported an unrecognized line: ${unparsedLines.sample[0]!}`,
-            ),
-          );
-        return ok(
-          createAnalysisExecution(
-            { client, devices, may_have_started_adb_server: daemonStarted },
-            provider,
-            {
-              limitations: [
-                "Device kind is inferred from the emulator serial prefix and USB transport metadata, not from device attestation",
-                "Kind stays unknown for TCP transports unless the serial is an emulator port",
-              ],
-            },
-          ),
-        );
-      }
-      case "inspect_adb_device": {
-        const ran = await runAdb(
-          operation,
-          { device: request.input.serial },
-          selection,
-          adbArguments(request.input.serial, ["shell", "getprop"]),
-          {
-            timeoutMs: SHELL_TIMEOUT_MS,
-            maxOutputBytes: GETPROP_MAX_OUTPUT_BYTES,
-            volatileOutput: true,
-          },
-          signal,
-        );
-        if (!ran.ok) return ran;
-        const { properties, emulatorObserved } = parseGetpropOutput(
-          ran.value.stdout,
-        );
-        return ok(
-          createAnalysisExecution(
-            {
-              client,
-              serial: request.input.serial,
-              properties,
-              property_count: properties.length,
-              emulator_observed: emulatorObserved,
-            },
-            provider,
-            {
-              limitations: [
-                "Properties are a fixed whitelist of build identity facts, not the full getprop dump",
-                "emulator_observed is null when the build does not report ro.kernel.qemu",
-              ],
-            },
-          ),
-        );
-      }
+        return inspectAdbClientOperation(context);
+      case "list_adb_devices":
+        return listAdbDevicesOperation(context);
+      case "inspect_adb_device":
+        return inspectAdbDeviceOperation(context);
       case "list_adb_packages": {
         const scopeFlag =
           request.input.scope === "third_party"
@@ -1976,8 +1881,8 @@ export class AdbProvider {
   private async pullPackage(
     operation: "pull_adb_package",
     selection: AdbBinarySelection,
-    client: ClientIdentity,
-    provider: ProviderIdentity,
+    client: AdbClientResult,
+    provider: AdbProviderIdentity,
     input: {
       readonly serial: string;
       readonly package: string;
@@ -2373,8 +2278,8 @@ export class AdbProvider {
   private async pullFile(
     operation: "pull_adb_file",
     selection: AdbBinarySelection,
-    client: ClientIdentity,
-    provider: ProviderIdentity,
+    client: AdbClientResult,
+    provider: AdbProviderIdentity,
     input: {
       readonly serial: string;
       readonly device_path: string;
@@ -2470,8 +2375,8 @@ export class AdbProvider {
   private async pushFile(
     operation: "push_adb_file",
     selection: AdbBinarySelection,
-    client: ClientIdentity,
-    provider: ProviderIdentity,
+    client: AdbClientResult,
+    provider: AdbProviderIdentity,
     input: {
       readonly serial: string;
       readonly local_path: string;
@@ -2515,7 +2420,7 @@ export class AdbProvider {
           signal,
         );
         if (!directoryProbe.ok) return directoryProbe;
-        const devicePath = directoryProbe.value
+        const devicePath = directoryProbe.value.matches
           ? `${input.device_path}${input.device_path.endsWith("/") ? "" : "/"}${basename(localPath)}`
           : input.device_path;
         const existsProbe = await probeAdbPathExistence(
@@ -2527,7 +2432,7 @@ export class AdbProvider {
           signal,
         );
         if (!existsProbe.ok) return existsProbe;
-        const deviceExists = existsProbe.value;
+        const deviceExists = existsProbe.value.matches;
         if (deviceExists && !input.overwrite)
           return err(
             new AnalysisOutputError(
@@ -2548,6 +2453,17 @@ export class AdbProvider {
           signal,
         );
         if (!pushed.ok) return pushed;
+        const observedProbeStartup =
+          directoryProbe.value.capturedOutput.stderr !== "" ||
+          existsProbe.value.capturedOutput.stderr !== "";
+        const probeOutput = observedProbeStartup
+          ? {
+              device_path_probes: {
+                directory: { ...directoryProbe.value.capturedOutput },
+                existence: { ...existsProbe.value.capturedOutput },
+              },
+            }
+          : undefined;
         const receipt = (
           deviceDigest: AdbDeviceDigest,
           rawResult?: {
@@ -2571,7 +2487,9 @@ export class AdbProvider {
             },
             provider,
             {
-              ...(rawResult === undefined ? {} : { rawResult }),
+              ...(rawResult === undefined && probeOutput === undefined
+                ? {}
+                : { rawResult: { ...rawResult, ...probeOutput } }),
               limitations: [
                 "Push writes a private snapshot of the caller's file to the device",
                 ...(deviceDigest.device_digest_source === "unavailable"
@@ -2585,16 +2503,27 @@ export class AdbProvider {
           { device: input.serial, path: devicePath },
           selection,
           adbArguments(input.serial, ["shell", "sha256sum", devicePath]),
-          { timeoutMs: SHELL_TIMEOUT_MS, maxOutputBytes: 1024 },
+          {
+            timeoutMs: SHELL_TIMEOUT_MS,
+            // sha256sum echoes the path, escaping special characters, so a
+            // long path must not exhaust the budget for the digest line.
+            maxOutputBytes: 1024 + 2 * Buffer.byteLength(devicePath),
+          },
           signal,
         );
         if (!deviceDigest.ok) {
           const cancelled =
             deviceDigest.error instanceof AnalysisCancelledError;
+          // The check never started and the push already completed, so a
+          // retryable error would invite a repeat that overwrite=false refuses.
+          const hostCapacity =
+            deviceDigest.error instanceof AnalysisResourceConstraintError &&
+            deviceDigest.error.resource === "capacity";
           const verificationFailed =
             cancelled ||
-            deviceDigest.error instanceof AnalysisResourceConstraintError ||
-            deviceDigest.error instanceof AnalysisTimeoutError;
+            (!hostCapacity &&
+              (deviceDigest.error instanceof AnalysisResourceConstraintError ||
+                deviceDigest.error instanceof AnalysisTimeoutError));
           const completed = receipt({
             device_sha256: null,
             device_digest_source: "unavailable",
@@ -2602,7 +2531,9 @@ export class AdbProvider {
               ? "The device-side digest check was cancelled after push completed"
               : verificationFailed
                 ? `Device-side digest verification failed after push completed: ${deviceDigest.error.message}`
-                : "The device did not answer sha256sum, so the transfer is not device-side verified",
+                : hostCapacity
+                  ? `Push completed, but the transfer is not device-side verified: ${deviceDigest.error.reason}`
+                  : "The device did not answer sha256sum, so the transfer is not device-side verified",
           });
           if (verificationFailed)
             deviceDigest.error.retainPartialObservation(
@@ -2674,8 +2605,8 @@ export class AdbProvider {
   private async installPackage(
     operation: "install_adb_package",
     selection: AdbBinarySelection,
-    client: ClientIdentity,
-    provider: ProviderIdentity,
+    client: AdbClientResult,
+    provider: AdbProviderIdentity,
     input: {
       readonly serial: string;
       readonly apk_path: string;
@@ -2775,8 +2706,8 @@ export class AdbProvider {
   private async uninstallPackage(
     operation: "uninstall_adb_package",
     selection: AdbBinarySelection,
-    client: ClientIdentity,
-    provider: ProviderIdentity,
+    client: AdbClientResult,
+    provider: AdbProviderIdentity,
     input: { readonly serial: string; readonly package: string },
     signal: AbortSignal | undefined,
   ): Promise<Result<AnalysisExecution, AnalysisError>> {
@@ -2842,8 +2773,8 @@ export class AdbProvider {
   private async startApp(
     operation: "start_adb_app",
     selection: AdbBinarySelection,
-    client: ClientIdentity,
-    provider: ProviderIdentity,
+    client: AdbClientResult,
+    provider: AdbProviderIdentity,
     input: { readonly serial: string; readonly package: string },
     signal: AbortSignal | undefined,
   ): Promise<Result<AnalysisExecution, AnalysisError>> {
@@ -2898,8 +2829,8 @@ export class AdbProvider {
   private async startActivity(
     operation: "start_adb_activity",
     selection: AdbBinarySelection,
-    client: ClientIdentity,
-    provider: ProviderIdentity,
+    client: AdbClientResult,
+    provider: AdbProviderIdentity,
     input: {
       readonly serial: string;
       readonly action: string;
@@ -2960,8 +2891,8 @@ export class AdbProvider {
   private async runAmStart(
     operation: "start_adb_app" | "start_adb_activity",
     selection: AdbBinarySelection,
-    client: ClientIdentity,
-    provider: ProviderIdentity,
+    client: AdbClientResult,
+    provider: AdbProviderIdentity,
     serial: string,
     arguments_: readonly string[],
     resultFields: Record<string, unknown>,
@@ -3050,8 +2981,8 @@ export class AdbProvider {
   private async stopApp(
     operation: "stop_adb_app",
     selection: AdbBinarySelection,
-    client: ClientIdentity,
-    provider: ProviderIdentity,
+    client: AdbClientResult,
+    provider: AdbProviderIdentity,
     input: { readonly serial: string; readonly package: string },
     signal: AbortSignal | undefined,
   ): Promise<Result<AnalysisExecution, AnalysisError>> {
@@ -3084,8 +3015,8 @@ export class AdbProvider {
   private async captureScreen(
     operation: "capture_adb_screen",
     selection: AdbBinarySelection,
-    client: ClientIdentity,
-    provider: ProviderIdentity,
+    client: AdbClientResult,
+    provider: AdbProviderIdentity,
     input: { readonly serial: string; readonly output_directory: string },
     signal: AbortSignal | undefined,
   ): Promise<Result<AnalysisExecution, AnalysisError>> {
@@ -3210,8 +3141,8 @@ export class AdbProvider {
   private async collectBugreport(
     operation: "collect_adb_bugreport",
     selection: AdbBinarySelection,
-    client: ClientIdentity,
-    provider: ProviderIdentity,
+    client: AdbClientResult,
+    provider: AdbProviderIdentity,
     input: { readonly serial: string; readonly output_directory: string },
     signal: AbortSignal | undefined,
   ): Promise<Result<AnalysisExecution, AnalysisError>> {
