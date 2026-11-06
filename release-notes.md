@@ -1177,6 +1177,7 @@
 * **cli:** cover literal Markdown heading output ([#7866](https://github.com/morluto/rea/issues/7866)) ([c2cc7e6](https://github.com/morluto/rea/commit/c2cc7e6eb0979303ae78c7146b2705b7181e8dd6))
 * **cutter:** synchronize peer descriptor close before cancellation ([#9082](https://github.com/morluto/rea/issues/9082)) ([34b954e](https://github.com/morluto/rea/commit/34b954ec8a97d5e250c5f1291edd64688f40baca))
 * **desktop:** cover ENOTDIR intermediate path refusal ([#8692](https://github.com/morluto/rea/issues/8692)) ([a56cc93](https://github.com/morluto/rea/commit/a56cc93cabe81242dcadaee85a129a14fc05bd2a))
+* **desktop:** make Python output fixtures portable ([#9066](https://github.com/morluto/rea/issues/9066)) ([f624c3b](https://github.com/morluto/rea/commit/f624c3b8e3bb2afbcd176244707bdf0d2fde1f97))
 * **electron:** consolidate handler presence coverage in public workflows ([19082ac](https://github.com/morluto/rea/commit/19082acddbb3ddab5e381274ca38dcecbc292723))
 * **electron:** remove duplicate graph protocol fixture ([e8cb717](https://github.com/morluto/rea/commit/e8cb71740b40a574a328d3cc778784662090c2ac))
 * **elf:** cover big-endian ABI notes through CLI and MCP ([#8803](https://github.com/morluto/rea/issues/8803)) ([9a68ce5](https://github.com/morluto/rea/commit/9a68ce57a0891551c3494bcdb945f81a987aadd6))
