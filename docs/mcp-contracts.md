@@ -572,6 +572,18 @@ that the response budget accounts for. It does not alter `content` or
 such as requiring approval for process-launching or device-mutating tools
 after target content was read.
 
+## Offline API contract declarations
+
+`inspect_api_contract` reads a local OpenAPI 3.0/3.1/3.2 JSON document without
+an active target or any requests to declared servers or references. Default
+summary delivery retains complete declaration Evidence; an optional
+`api-contract` view selects operations, unresolved Path Items or diagnostics in
+this call. Exact filters, field selection and paging share the retained
+`inspect_analysis_view` projector. Coverage describes inline paths only and
+never establishes runtime implementation or full specification conformance.
+See [offline API contracts](api-contracts.md) for identities, source pointers,
+resource bounds and CLI publication.
+
 ## Retained application Evidence inputs
 
 `analyze_javascript_application`, `inspect_binary_layout`, `inspect_artifact`,
@@ -2001,14 +2013,19 @@ profile and the advertised form that profile produces. `full`, `compact`, and
 bounded schemas clients receive; `off` keeps the canonical output contracts in
 the digest while advertising nothing.
 
-Some stdio hosts reject a complete `tools/list` frame before they load any
-tools. The opt-in `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` setting bounds every
-advertised output schema to 4,096 bytes; `off` omits `outputSchema` entirely
+Some clients reject a complete `tools/list` frame or HTTP SSE event before
+they load any tools. The opt-in `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact`
+setting bounds every advertised output schema to 4,096 bytes; `off` omits `outputSchema` entirely
 (the measured pi-web-ui failure and catalog breakdown are in
 [#2512](https://github.com/morluto/rea/issues/2512)). The default `full` profile
 is unchanged. Both settings keep the same named canonical tool contract for
 server-side result validation, and both still return complete
 `structuredContent` and text results.
+
+For the 1 MiB FastMCP SSE limit reported by Unsloth in
+[#9093](https://github.com/morluto/rea/issues/9093), see the
+[tested catalog configuration](client-configuration.md#fastmcp-and-unsloth-sse-catalog-limits).
+Hot/cold selection alone does not bound later catalog refreshes.
 
 `compact` keeps the complete validation structure when it fits the budget.
 Otherwise it advertises the root property shape, first-level reference-resolved

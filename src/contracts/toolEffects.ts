@@ -158,6 +158,7 @@ const TOOL_EFFECT_AUDIT: Readonly<Record<string, EffectAudit>> = {
   inspect_go_binary: evidence,
   inspect_il2cpp_metadata: evidence,
   inspect_model_artifact: evidence,
+  inspect_api_contract: evidence,
   inspect_gpu_code_objects: evidence,
   inspect_rust_binary: evidence,
   inspect_apk_signature: evidence,
