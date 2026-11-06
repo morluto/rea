@@ -504,6 +504,24 @@ with the function.
   element's last `>` through CRLF and astral characters, the outermost
   picked element only, and a malformed source is refused.
 
+## Titles that show a folder's path
+
+Run on macOS with source tests and gates. Each test below failed on the old
+title rule and passes now.
+
+- `stateRoles.test.ts`: CherryTree's title names `home-notebook.ctd` but not
+  `~/.cache/dconf/user`, `~/.config/dconf/user`, a file named `Documents` or
+  a `.ctd` under `~/.cache`; `Makefile - Editor` and `~/src/Makefile - Editor`
+  name `~/src/Makefile`, and `/srv/Makefile - Editor` names no `~/Makefile`.
+- `DesktopApplicationExport.test.ts`: with that title shape and both dconf
+  files changed, the export has one document and the launch opens it.
+- `desktopCapture.test.ts`: the checkpoint leads with the document, not
+  `.cache/dconf/user`.
+- `appExportUnowned.test.ts`: `plan.vym.lock` beside `plan.vym` and
+  `household.gsb.lock` beside `household.gsb` are locks; a lone
+  `notes.txt.lock`, and `Gemfile.lock` and `Cargo.lock` beside `Gemfile` and
+  `Cargo.toml`, are not.
+
 ## Limits of this verification
 
 - The witness acts were scripted by this agent from the task's prompt; no

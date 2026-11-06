@@ -153,13 +153,16 @@ describe("isLockFile", () => {
     expect(others.filter(isLock)).toEqual([]);
   });
 
-  it("knows a <file>.lck or .<file>.lock beside a file the capture recorded, as GnuCash's and Grisbi's, but not a lone one", () => {
+  it("knows a <file>.lck, .<file>.lock or <file>.<ext>.lock beside a file the capture recorded, as GnuCash's, Grisbi's and VYM's, but not a lone one or a project's", () => {
     const recorded = new Set([
       "Documents/household.gnucash",
       "Documents/household.gnucash.LCK",
       "Documents/household.gsb",
+      "Documents/plan.vym",
       "Documents/notes.lck",
       "Documents/.notes.lock",
+      "Projects/app/Gemfile",
+      "Projects/app/Cargo.toml",
     ]);
     const isLock = (file: string) => isLockFile(file, [], recorded);
 
@@ -170,13 +173,19 @@ describe("isLockFile", () => {
         // Grisbi's hidden lock beside its file.
         "Documents/.household.gsb.lock",
         "Documents/.household.gsb.lck",
+        // VYM's lock beside the map it has open.
+        "Documents/plan.vym.lock",
+        "Documents/household.gsb.lock",
       ].filter(isLock),
-    ).toHaveLength(4);
+    ).toHaveLength(6);
     expect(
       [
         "Documents/notes.lck",
         "Documents/.notes.lock",
-        "Documents/household.gsb.lock",
+        "Documents/notes.txt.lock",
+        // A project's lock files pin dependencies, beside a file without an extension or of another name.
+        "Projects/app/Gemfile.lock",
+        "Projects/app/Cargo.lock",
       ].filter(isLock),
     ).toEqual([]);
     // The file it locks lies in its own folder.
