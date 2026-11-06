@@ -8,7 +8,10 @@ import { AnalysisCapabilityUnavailableError } from "../../../src/domain/analysis
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { DESKTOP_CAPTURE_DEFAULTS } from "../../../src/domain/desktop/desktopCapture.js";
 
+let originalExitCode: typeof process.exitCode;
+
 beforeEach(() => {
+  originalExitCode = process.exitCode;
   vi.spyOn(capture, "captureDesktopApplication").mockResolvedValue({
     error: "Desktop capture failed",
     ...projectAnalysisError(
@@ -20,7 +23,10 @@ beforeEach(() => {
     ),
   });
 });
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => {
+  process.exitCode = originalExitCode;
+  vi.restoreAllMocks();
+});
 
 const serve = async (options: string[]) => {
   const cli = Cli.create("desktop-options-test", { sync: false });
