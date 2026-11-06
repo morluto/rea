@@ -4,9 +4,9 @@ import {
   electronLaunchArguments,
   exportInstall,
   fromUbuntuNobleArchive,
-  installLimitations,
   repositoryRefusal,
 } from "./appExportInstall.js";
+import { installLimitations } from "./appExportInstallLimitations.js";
 import {
   VARICAD_FILE,
   VARICAD_URL,
@@ -210,6 +210,165 @@ describe("exportInstall", () => {
         libraryPackages: [],
         architectures: ["amd64", "arm64"],
       },
+    });
+  });
+});
+
+describe("exportInstall with the program in another package", () => {
+  const archive: DesktopPackage = {
+    ...typora(undefined),
+    name: "vim-common",
+    executable_package: "vim",
+    sources: ["http://archive.ubuntu.com/ubuntu noble/main amd64 Packages"],
+    source_origins: ["Ubuntu"],
+  };
+
+  it("installs the program's package beside the entry's from the archive, a vendor repository or a package file", () => {
+    const fromVendor = exportInstall(
+      { ...typora([repository()]), executable_package: "typora-bin" },
+      "typora",
+      "arm64",
+    );
+    const fromFile = exportInstall(
+      varicadPackage({ executable_package: "varicad-bin" }),
+      "varicad",
+      "x64",
+      VARICAD_URL,
+    );
+
+    expect(exportInstall(archive, "vim", "arm64")).toMatchObject({
+      ok: true,
+      value: { aptPackage: "vim-common", executablePackage: "vim" },
+    });
+    expect(fromVendor).toMatchObject({
+      ok: true,
+      value: { aptPackage: "typora", executablePackage: "typora-bin" },
+    });
+    expect(fromFile).toMatchObject({
+      ok: true,
+      value: {
+        packageFile: { url: VARICAD_URL },
+        executablePackage: "varicad-bin",
+      },
+    });
+  });
+
+  it("refuses when no package owns the program the entry runs", () => {
+    const { executable_package: _program, ...entryOnly } = archive;
+
+    expect(
+      exportInstall(
+        {
+          ...entryOnly,
+          executable_package_reason: "no package owns /home/ada/.local/bin/vim",
+        },
+        "vim",
+        "arm64",
+      ),
+    ).toEqual({
+      ok: false,
+      error: {
+        field: "capture",
+        reason:
+          "The desktop entry belongs to vim-common, but the computer cannot install the program it runs: no package owns /home/ada/.local/bin/vim.",
+        remediation:
+          "Capture again with the packaged program first on PATH, or with --executable naming it.",
+      },
+    });
+  });
+
+  it("refuses when the computer cannot install the program's package", () => {
+    const reason =
+      "neither the Ubuntu 24.04 archive nor a vendor repository the export declares offers vim";
+
+    expect(
+      exportInstall(
+        { ...archive, executable_package_reason: reason },
+        "vim",
+        "arm64",
+      ),
+    ).toEqual({
+      ok: false,
+      error: expect.objectContaining({
+        field: "capture",
+        reason: `The desktop entry belongs to vim-common, but the program it runs belongs to vim, which the computer cannot install: ${reason}.`,
+      }),
+    });
+  });
+});
+
+describe("exportInstall with repositories the export leaves out", () => {
+  const mirror = (supplies: readonly string[]) =>
+    repository({
+      source: "https://mirror.typora.example/linux ./ Packages",
+      uri: "https://mirror.typora.example/linux",
+      signing_key: { ...KEY, sha256: "c".repeat(64) },
+      supplies: [...supplies],
+    });
+  // The capture could not retain this repository's key, so the export leaves it out.
+  const dropped = (supplies: readonly string[]) =>
+    repository({
+      signing_key: null,
+      signing_key_reason:
+        "the verified key /etc/apt/trusted.gpg.d/typora.gpg did not fit the capture's content budget, so it was not retained",
+      supplies: [...supplies],
+    });
+  const installed = (
+    repositories: readonly AptRepository[],
+    extra: Partial<DesktopPackage> = {},
+  ): DesktopPackage => ({
+    ...typora(repositories),
+    library_packages: ["libgbm1", "libvendor1", "libshared1"],
+    ...extra,
+  });
+
+  it("refuses the program's package when only a repository it leaves out supplies it", () => {
+    const refused = exportInstall(
+      installed([dropped(["typora-bin"]), mirror([])], {
+        executable_package: "typora-bin",
+      }),
+      "typora",
+      "arm64",
+    );
+
+    expect(refused).toEqual({
+      ok: false,
+      error: expect.objectContaining({
+        reason:
+          "The desktop entry belongs to typora, but the program it runs belongs to typora-bin, which the computer cannot install: only apt repositories the export leaves out offer it.",
+      }),
+    });
+  });
+
+  it("installs only the library packages a declared repository or the archive still offers, and says which it left out", () => {
+    const vendor = exportInstall(
+      installed([
+        dropped(["libshared1", "libvendor1"]),
+        mirror(["libshared1"]),
+      ]),
+      "typora",
+      "arm64",
+    );
+    const fromFile = exportInstall(
+      varicadPackage({ apt_repositories: [dropped(["libxt6t64"])] }),
+      "varicad",
+      "x64",
+      VARICAD_URL,
+    );
+
+    if (!vendor.ok) throw new Error(vendor.error.reason);
+    expect(vendor.value).toMatchObject({
+      libraryPackages: ["libgbm1", "libshared1"],
+      strandedPackages: ["libvendor1"],
+    });
+    expect(
+      installLimitations(vendor.value, installed([]), false).join("\n"),
+    ).toContain(
+      "in packages only the apt repositories left out offer: libvendor1",
+    );
+    expect(fromFile).toMatchObject({
+      ok: true,
+      value: { libraryPackages: ["libgl1"], strandedPackages: ["libxt6t64"] },
     });
   });
 });
