@@ -175,7 +175,7 @@ operation `describe_desktop_application_task` and predicate type
   `pointers`; `long_text` when an element's text changed past the 2,000
   characters a text check compares, the elements in `pointers`; `cut_view`
   when the views hold only part of the file; and `unreadable_view` when no
-  check can read it, as a compressed document REA reads as binary.
+  check can read it, as a document REA reads as binary.
 
 The suggestions are a starting point. Keep the ones that say what the user
 did; drop the ones that only follow from how the app saves its file. Read
@@ -239,7 +239,9 @@ The rules both evaluators follow:
   `{"groups": {"GROUP": {"KEY": "VALUE"}}}`, so a setting is
   `/groups/GROUP/KEY`; XML as `{"root": {"name", "attributes", "children"}}`;
   SQLite as `{"tables": {"TABLE": {"columns", "rows"}}}`; a zip archive as
-  `{"entries": [{"name", "format", "view", …}]}`.
+  `{"entries": [{"name", "format", "view", …}]}`; a gzip file, such as a
+  Gnumeric `.gnumeric`, as the document inside it, so its pointers are those
+  of the same document uncompressed.
 - With `tolerance`, a non-negative number, `value` must be a number, and the
   value found passes when it is a number, or a string that is a decimal
   numeral such as `"5.0000000000000000"`, at most `tolerance` from `value`.

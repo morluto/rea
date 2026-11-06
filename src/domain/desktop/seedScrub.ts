@@ -1,4 +1,5 @@
 import type { JsonValue } from "../jsonValue.js";
+import { gunzip, gzipDeterministic, isGzip } from "./gzipDocument.js";
 import {
   identityLeftIn,
   identitySpellings,
@@ -397,7 +398,7 @@ const holdsIdentity = (bytes: Buffer, identity: HostIdentity): boolean => {
  * syntax changes. Other bytes ship as captured. Either way what ships is
  * searched, its escapes decoded, for what is left.
  */
-export const scrubSeed = (
+const scrubDocument = (
   bytes: Buffer,
   seed: Seed,
   identity: HostIdentity,
@@ -415,4 +416,24 @@ export const scrubSeed = (
     bytes: scrub.text === decoded.text ? undefined : decoded.encode(scrub.text),
     holdsIdentity: identityLeftIn(scrub.decoded, identity) !== undefined,
   };
+};
+
+/**
+ * Scrub a seed as `scrubDocument` does; a gzip file's document is scrubbed as
+ * the format the state view read it as, then compressed again alike on every
+ * host. One that does not decompress within the size decoded ships as captured.
+ */
+export const scrubSeed = (
+  bytes: Buffer,
+  seed: Seed,
+  identity: HostIdentity,
+): SeedScrub => {
+  if (!isGzip(bytes)) return scrubDocument(bytes, seed, identity);
+  const document = gunzip(bytes, MAX_SCRUBBED_BYTES);
+  if (!document.ok)
+    return { bytes: undefined, holdsIdentity: holdsIdentity(bytes, identity) };
+  const scrub = scrubDocument(document.value, seed, identity);
+  return scrub.bytes === undefined
+    ? scrub
+    : { ...scrub, bytes: gzipDeterministic(scrub.bytes) };
 };

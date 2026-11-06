@@ -278,6 +278,13 @@ export removes them from what the bundle ships:
   boot, as it did the captured home before. The replacements read as the
   computer's own: its user is `user`, with its home in `/home/user`, and
   `localhost` is the name every host has for itself.
+- A gzip-compressed seed, such as a Gnumeric workbook, is decompressed, up to
+  256 MiB, scrubbed as the format the state view read its document as, and
+  compressed again with no file name, modification time 0 and the operating
+  system unknown, so the same seed gives the same bytes on every host. The
+  class copies it at boot as it is, so the home it holds stays `/home/user`.
+  One that does not decompress ships as captured, and one the state view did
+  not read is only searched.
 - Binary files, SQLite databases among them, and text files over 256 MiB are
   copied as captured. Then every file the bundle ships, the class module with
   its dconf keys and the README included, is searched by a looser rule than
@@ -391,7 +398,10 @@ as their entries, read with Python's `zipfile` from the file in place, with
 REA's entry, size, compression ratio and archive limits and its wording for an
 entry it does not read. The module reads the central directory itself, as REA
 does, and shows `zipfile` only the records it lists, reading each entry in
-bounded chunks no further than a byte past its declared size. A JSON file
+bounded chunks no further than a byte past its declared size. A gzip file is
+the view of the document inside it, with `"compression": "gzip"` beside its
+format, decompressed with Python's `zlib` within the same entry size and ratio
+limits, its members joined as REA joins them. A JSON file
 holding a number JavaScript cannot read exactly, such as an integer above 2^53,
 or nested more than 500 levels deep, gets an `error` instead of a view, as in
 REA, while text that is not one JSON

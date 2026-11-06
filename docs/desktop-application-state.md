@@ -77,6 +77,9 @@ whether the file was present, the SHA-256 of its retained bytes, and a view:
 | `text`    | Other UTF-8 text                                                       | Lines, up to 5,000                                                                     |
 | `binary`  | NUL bytes or invalid UTF-8                                             | None                                                                                   |
 
+A gzip file is read as the document inside it; see
+[compressed documents](#compressed-documents).
+
 A JSON value holding a number JavaScript would round, such as an integer above
 2^53, is not read rather than shown rounded.
 
@@ -183,6 +186,37 @@ as Python's `zipfile` does, and hands the zip reader only the records it lists,
 so an archive of hundreds of thousands of entries costs no more to read
 than one of a thousand. An archive whose central directory cannot be read has a
 `view_error` of its own.
+
+## Compressed documents
+
+Gnumeric's `.gnumeric`, Dia's `.dia`, Xournal++'s `.xopp`, GnuCash's default
+book and Inkscape's `.svgz` are XML compressed with gzip. A file that starts
+with gzip's magic bytes, `1f 8b 08`, whatever its name, is read as the
+document inside it: its members joined, then given a format and view by the
+rules above under the file's own name, so a pointer or check into it is
+written exactly as for the same document uncompressed, and the task draft is
+the same. The version records the compression beside the format:
+
+```json
+{
+  "format": "xml",
+  "compression": "gzip",
+  "view": {
+    "root": { "name": "gnm:Workbook", "attributes": {}, "children": [] },
+    "truncated": false
+  },
+  "view_error": null
+}
+```
+
+The document is read only when it is at most 16 MiB and at most 100 times the
+file's size, an archive entry's limits, so decompressing stops there; past
+them, or when the stream is damaged or cut short, the version has `format`
+null and a `view_error`, and a check into it is undecided. A SQLite or dconf
+database inside keeps its format and has a `view_error`, an archive inside is
+read as an archive, and another gzip stream inside is binary. A gzip file
+inside an archive reads as binary. Other compression, such as xz, Zstandard
+or bzip2, is not read: such a file is binary.
 
 ## Kinds of change
 

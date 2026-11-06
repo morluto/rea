@@ -182,10 +182,12 @@ the first source that has the app:
      checkpoint, such as `probe-1`, and read its `changed_files`: up to ten
      files that changed since the checkpoint before, those the app held
      open first, with `more_changed_files` counting the rest.
-   - When the app's own format is compressed, such as Gnumeric's
-     `.gnumeric` (gzip XML), REA reads it as binary and no check can look
-     inside. Save in an uncompressed format the app offers, such as
-     Gnumeric XML, then reopen the file once and check that a plain Ctrl+S
+   - The app's own compressed format works when it is gzip, such as
+     Gnumeric's `.gnumeric`, Dia's `.dia` or Inkscape's `.svgz`: REA reads
+     the document inside, and checks point into it as into the same
+     document uncompressed. A format REA reads as binary, such as one
+     compressed with xz, has no view: save in a format the app offers that
+     REA reads, then reopen the file once and check that a plain Ctrl+S
      keeps that format.
 4. Only once the seed is saved, `mark_build_checkpoint` with name `seed`.
 5. Make the change the task asks for, as a user would, and save it.
@@ -215,7 +217,7 @@ the first source that has the app:
    - `long_text`: the element's text is too long to check whole; check a
      phrase in it with `text_contains`.
    - `cut_view` or `unreadable_view`: REA's view holds only part of the
-     file, or none a check can read, such as a compressed format (below).
+     file, or none a check can read, such as a binary format (step 3).
 
 ## Write the task
 
