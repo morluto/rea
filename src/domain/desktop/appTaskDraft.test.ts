@@ -886,6 +886,208 @@ describe("draftTaskFiles for elements added whole holding text", () => {
   });
 });
 
+describe("draftTaskFiles with nullable SQLite keys", () => {
+  it("suggests checks for distinct NULL-key rows and ignores a reorder", () => {
+    const file = ".local/share/app/items.db";
+    const table = (rows: (string | null)[][]) => ({
+      tables: {
+        items: {
+          columns: ["id", "body"],
+          primary_key: ["id"],
+          rows,
+          truncated: false,
+        },
+      },
+      tables_truncated: false,
+    });
+    expect(
+      draft({
+        [file]: path(
+          "application_state",
+          "sqlite",
+          table([
+            [null, "alpha"],
+            [null, "beta"],
+          ]),
+          table([
+            [null, "beta"],
+            [null, "alpha"],
+          ]),
+        ),
+      }),
+    ).toEqual([]);
+    const [database] = draft({
+      [file]: path(
+        "application_state",
+        "sqlite",
+        table([
+          [null, "alpha"],
+          [null, "beta"],
+        ]),
+        table([
+          [null, "gamma"],
+          [null, "beta"],
+        ]),
+      ),
+    });
+    expect(database?.suggested).toEqual([
+      {
+        kind: "row_present",
+        file,
+        table: "items",
+        where: { id: null, body: "gamma" },
+      },
+      {
+        kind: "row_absent",
+        file,
+        table: "items",
+        where: { id: null, body: "alpha" },
+      },
+    ]);
+  });
+});
+
+describe("draftTaskFiles with unkeyed row conditions", () => {
+  const file = "Documents/items.db";
+  const table = (rows: JsonValue[][]) => ({
+    tables: {
+      items: {
+        columns: ["id", "body", "at"],
+        primary_key: ["id"],
+        rows,
+        truncated: false,
+      },
+    },
+    tables_truncated: false,
+  });
+
+  it("does not contradict itself when only a NULL-key row timestamp changes", () => {
+    const [database] = draft({
+      [file]: path(
+        "document",
+        "sqlite",
+        table([[null, "alpha", "2026-11-04 09:00:00"]]),
+        table([[null, "alpha", "2026-11-04 10:00:00"]]),
+      ),
+    });
+    expect(database?.suggested).toEqual([]);
+  });
+
+  it("counts repeated row conditions even when the total row count stays equal", () => {
+    const before = table([
+      [null, "alpha", null],
+      [null, "alpha", null],
+      [null, "beta", null],
+    ]);
+    const after = table([
+      [null, "alpha", null],
+      [null, "beta", null],
+      [null, "beta", null],
+    ]);
+    const [database] = draft({
+      [file]: path("document", "sqlite", before, after),
+    });
+    expect(database?.suggested).toEqual([
+      {
+        kind: "row_count",
+        file,
+        table: "items",
+        where: { id: null, body: "alpha", at: null },
+        equals: 1,
+      },
+      {
+        kind: "row_count",
+        file,
+        table: "items",
+        where: { id: null, body: "beta", at: null },
+        equals: 2,
+      },
+    ]);
+    const checks = (database?.suggested ?? []).map((check, index) => ({
+      ...check,
+      id: String(index),
+    }));
+    expect(
+      evaluateTaskChecks(
+        checks,
+        new Map([[file, { format: "sqlite", view: after }]]),
+      ).map((outcome) => outcome.passed),
+    ).toEqual([true, true]);
+    expect(
+      evaluateTaskChecks(
+        checks,
+        new Map([[file, { format: "sqlite", view: before }]]),
+      ).map((outcome) => outcome.passed),
+    ).toEqual([false, false]);
+  });
+
+  it.each([
+    {
+      name: "counts all rows matching an overlapping predicate",
+      before: [
+        [null, "alpha", "2026-11-04 09:00:00"],
+        [null, "alpha", null],
+      ],
+      after: [
+        [null, "alpha", "2026-11-04 09:00:00"],
+        [null, "alpha", null],
+        [null, "alpha", "2026-11-04 10:00:00"],
+      ],
+      expected: [
+        { kind: "row_count", where: { id: null, body: "alpha" }, equals: 3 },
+        { kind: "row_count", equals: 3 },
+      ],
+    },
+    {
+      name: "does not suggest absence when a broader predicate still matches",
+      before: [
+        [null, "alpha", "2026-11-04 09:00:00"],
+        [null, "alpha", null],
+      ],
+      after: [[null, "alpha", null]],
+      expected: [
+        { kind: "row_count", where: { id: null, body: "alpha" }, equals: 1 },
+        { kind: "row_count", equals: 1 },
+      ],
+    },
+    {
+      name: "keeps the surviving broad predicate when a timestamp becomes NULL",
+      before: [[null, "alpha", "2026-11-04 09:00:00"]],
+      after: [[null, "alpha", null]],
+      expected: [
+        { kind: "row_present", where: { id: null, body: "alpha", at: null } },
+      ],
+    },
+  ])("$name", ({ before, after, expected }) => {
+    for (const key of [["id"], []]) {
+      const baseline = table(before);
+      const final = table(after);
+      baseline.tables.items.primary_key = key;
+      final.tables.items.primary_key = key;
+      const [database] = draft({
+        [file]: path("document", "sqlite", baseline, final),
+      });
+      expect(database?.suggested).toEqual(
+        expected.map((check) => ({ ...check, file, table: "items" })),
+      );
+      const checks = (database?.suggested ?? []).map((check, index) => ({
+        ...check,
+        id: String(index),
+      }));
+      for (const [view, passed] of [
+        [final, true],
+        [baseline, false],
+      ] as const)
+        expect(
+          evaluateTaskChecks(
+            checks,
+            new Map([[file, { format: "sqlite", view }]]),
+          ).map((outcome) => outcome.passed),
+        ).toEqual(checks.map(() => passed));
+    }
+  });
+});
+
 describe("draftTaskFiles with partial evidence", () => {
   const notes = (...rows: JsonValue[][]) => ({
     tables: {
