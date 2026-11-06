@@ -59,23 +59,75 @@ const CREDENTIAL_PAIRS = new Set([
   "ssh key",
 ]);
 
-/** Split a member name into lowercase segments at case changes and separators. */
-const nameSegments = (name: string): string[] =>
-  name
-    .replaceAll(/([a-z0-9])([A-Z])/gu, "$1 $2")
-    .replaceAll(/([A-Z]+)([A-Z][a-z])/gu, "$1 $2")
-    .toLowerCase()
-    .split(/[^a-z0-9]+/u)
-    .filter((segment) => segment.length > 0);
+/** A segment longer than every credential word matches none, so it is not kept. */
+const LONGEST_SEGMENT = Math.max(
+  ...[
+    ...CREDENTIAL_SEGMENTS,
+    ...[...CREDENTIAL_PAIRS].join(" ").split(" "),
+  ].map((segment) => segment.length),
+);
 
-/** Whether a member, header or query name looks like it holds a credential. */
+const upper = (code: number): boolean => code >= 0x41 && code <= 0x5a;
+const lower = (code: number): boolean => code >= 0x61 && code <= 0x7a;
+const digit = (code: number): boolean => code >= 0x30 && code <= 0x39;
+
+/**
+ * Whether a member, header or query name looks like it holds a credential: a
+ * lowercase segment, split at separators and case changes (`apiKey`,
+ * `APIToken`, `api_key`), is a credential word, or follows the segment it
+ * pairs with. The name is read once in place, keeping at most two short
+ * segments, so a name of any length allocates no copies or segment list.
+ * Lowercasing follows `toLowerCase`: U+212A KELVIN SIGN reads as `k`, and
+ * U+0130 as `i` followed by a combining dot that ends the segment.
+ */
 export const credentialNamed = (name: string): boolean => {
-  const segments = nameSegments(name);
-  return segments.some(
-    (segment, index) =>
-      CREDENTIAL_SEGMENTS.has(segment) ||
-      (index > 0 && CREDENTIAL_PAIRS.has(`${segments[index - 1]} ${segment}`)),
-  );
+  /** The segment before this one, or null when there is none or it was too long. */
+  let previous: string | null = null;
+  let segment = "";
+  let open = false;
+  let long = false;
+  const close = (): boolean => {
+    if (!open) return false;
+    const word = long ? null : segment;
+    const found =
+      word !== null &&
+      (CREDENTIAL_SEGMENTS.has(word) ||
+        (previous !== null && CREDENTIAL_PAIRS.has(`${previous} ${word}`)));
+    previous = word;
+    segment = "";
+    open = false;
+    long = false;
+    return found;
+  };
+  const append = (letter: string): void => {
+    open = true;
+    if (long) return;
+    if (segment.length === LONGEST_SEGMENT) {
+      long = true;
+      segment = "";
+    } else segment += letter;
+  };
+  for (let index = 0; index < name.length; index++) {
+    const code = name.charCodeAt(index);
+    if (upper(code)) {
+      // `aB` and `1B` start a segment at `B`; so does `C` in `ABCd`.
+      const before = name.charCodeAt(index - 1);
+      if (
+        (lower(before) ||
+          digit(before) ||
+          (upper(before) && lower(name.charCodeAt(index + 1)))) &&
+        close()
+      )
+        return true;
+      append(String.fromCharCode(code + 0x20));
+    } else if (lower(code) || digit(code)) append(name[index]!);
+    else if (code === 0x212a) append("k");
+    else if (code === 0x130) {
+      append("i");
+      if (close()) return true;
+    } else if (close()) return true;
+  }
+  return close();
 };
 
 /** Bodies larger than this are not scanned. */
@@ -105,6 +157,8 @@ type ScannedBody =
   | { readonly kind: "skipped" };
 
 const FORM_MEDIA_TYPE = "application/x-www-form-urlencoded";
+/** Space, tab, line feed and carriage return, the only whitespace JSON allows around a value. */
+const JSON_WHITESPACE = new Set([0x20, 0x09, 0x0a, 0x0d]);
 
 /** The parser a recorded media type names; otherwise JSON by its first character, or a form when it has `=` and no whitespace, which form encoding never leaves raw. */
 const bodyFormat = (
@@ -122,23 +176,37 @@ const bodyFormat = (
 
 /**
  * An upper bound on the values the text holds, counted no further than one
- * past `limit`. Each `[`, `{` and `,` starts at most one JSON value and each
- * `&` at most one form field, so the count bounds the parse before it
- * allocates; one inside a string only loosens the bound.
+ * past `limit`. JSON text holds its first value only once it has a
+ * non-whitespace character, and each later `[`, `{` and `,` starts at most one
+ * more; one inside a string only loosens the bound. A form holds one field per
+ * non-empty `&`-separated piece after an optional leading `?`, exactly as
+ * `URLSearchParams` and the query reader split it. The count bounds the parse
+ * before it allocates, and text that holds nothing, such as an empty query or
+ * a bare `?`, charges nothing.
  */
 const valueBound = (
   text: string,
   format: "json" | "form",
   limit: number,
 ): number => {
-  let values = 1;
-  for (let index = 0; index < text.length && values <= limit; index++) {
+  let values = 0;
+  let pieceStart = true;
+  for (
+    let index = format === "form" && text.startsWith("?") ? 1 : 0;
+    index < text.length && values <= limit;
+    index++
+  ) {
     const code = text.charCodeAt(index);
-    const starts =
-      format === "json"
-        ? code === 0x5b || code === 0x7b || code === 0x2c
-        : code === 0x26;
-    if (starts) values++;
+    if (format === "form") {
+      if (code === 0x26) pieceStart = true;
+      else if (pieceStart) {
+        values++;
+        pieceStart = false;
+      }
+      continue;
+    }
+    if (values === 0 && !JSON_WHITESPACE.has(code)) values++;
+    if (code === 0x5b || code === 0x7b || code === 0x2c) values++;
   }
   return values;
 };
