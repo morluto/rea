@@ -76,7 +76,7 @@ and the recording and writes the record as Evidence.
   checks with `evaluateTaskChecks`, one result per check. With `stage`, the
   checks file a witness stage: `seed` (with `directory`) starts a recording
   and must fail a check; `after_edit` must pass all; `near_miss` must fail
-  one; `after_reset` must fail one. Stages come in order, for one task; the
+  one; `after_reset` must give each check its seed result. Stages come in order, for one task; the
   edit and the near miss each need an applied input action since the stage
   before, `after_reset` a reset as the last change. A stage that does not hold,
   or the last, ends the witness: the recording ends, its segments are fetched
@@ -102,7 +102,8 @@ and the recording and writes the record as Evidence.
 - A `.deb` app's file is kept in the build layer for `--package-file`, and
   its URL reaches the export's `--package-url` only when the capture's
   package facts say apt does not install it, as the export itself decides.
-  A failed `apt-get update` reports its status and last lines. The bundle is
+  A failed `apt-get update` reports its status and last lines, and the next
+  start runs it again. The bundle is
   written as it arrives.
 - Gaps of a blind validation run: the desktop Trash is never the app's state
   or a document, so a file the builder trashed is neither owned nor seeded,

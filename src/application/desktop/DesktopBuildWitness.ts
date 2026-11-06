@@ -1,7 +1,9 @@
 import { createHash, randomUUID } from "node:crypto";
 import { readdir } from "node:fs/promises";
+import { join } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 
-import type { z } from "zod";
+import { z } from "zod";
 
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
@@ -16,18 +18,26 @@ import {
   type TaskCheckOutcome,
 } from "../../domain/desktop/appTaskChecks.js";
 import {
+  renderTaskSteps,
+  renderTaskVerifier,
+  taskVerifierArtifact,
+} from "../../domain/desktop/appTaskPython.js";
+import {
   admitWitnessStage,
   appStateViews,
   stageExpectation,
   stageVerdict,
+  unrestoredChecks,
   WITNESS_STAGES,
   type WitnessStage,
   type WitnessStageRecord,
 } from "../../domain/desktop/buildWitness.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { err, ok, type Result } from "../../domain/result.js";
+import { safeParseUtf8Json } from "../../domain/safeJson.js";
 import type { AgentEnvComputer } from "../../desktop/AgentEnvComputer.js";
 import { AGENTENV_PROVIDER } from "../../desktop/AgentEnvComputerHelper.js";
+import { readHostFile } from "../../desktop/HostFileRead.js";
 import { isPortableBundleName } from "../environment/environmentBundle.js";
 import {
   silentProgressReporter,
@@ -99,6 +109,42 @@ const usableFolder = async (directory: string): Promise<boolean> =>
       (cause as NodeJS.ErrnoException | undefined)?.code === "ENOENT",
   );
 
+/** The most bytes REA reads of each of the bundle's files for the task. */
+const BUNDLE_FILE_BYTES = 1024 * 1024;
+const stepsSchema = z.array(
+  z.looseObject({ type: z.string(), env_id: z.string().optional() }),
+);
+
+/** Why the bundle's steps and verifier for the task are not what the export writes for it; undefined when they are. */
+const bundleTaskDifference = async (
+  bundle: string,
+  task: DesktopTask,
+  signal: AbortSignal,
+): Promise<string | undefined> => {
+  const stepsPath = `tasks/${task.name}.json`;
+  const verifierPath = `artifacts/${taskVerifierArtifact(task)}/verify.py`;
+  const [steps, verifier] = await Promise.all(
+    [stepsPath, verifierPath].map((path) =>
+      readHostFile(join(bundle, path), BUNDLE_FILE_BYTES, signal),
+    ),
+  );
+  if (!Buffer.isBuffer(steps) || !Buffer.isBuffer(verifier))
+    return `the bundle at ${bundle} has no readable ${Buffer.isBuffer(steps) ? verifierPath : stepsPath}.`;
+  const parsed = safeParseUtf8Json(steps);
+  const listed = parsed.ok ? parsed.value : undefined;
+  const app = stepsSchema
+    .safeParse(listed)
+    .data?.find((step) => step.type === "deploy_env")?.env_id;
+  if (
+    app === undefined ||
+    !isDeepStrictEqual(listed, JSON.parse(renderTaskSteps(task, app)))
+  )
+    return `the bundle's ${stepsPath} differs from this task's steps.`;
+  return verifier.toString("utf8") === renderTaskVerifier(task, app)
+    ? undefined
+    : `the bundle's ${verifierPath} differs from this task's checks.`;
+};
+
 /**
  * A witness from its seed on: `open` while stages are checked, `saving`
  * once a stage ended it and until its record is written, which a repeat of
@@ -151,10 +197,12 @@ export class DesktopBuildWitness {
    */
   readonly #recordingRequest = `rea-witness:${randomUUID()}`;
 
+  /** `bundle` is the folder the computer was started from, if it was; the witness takes only the task it holds. */
   constructor(
     private readonly computer: WitnessedComputer,
     private readonly actions: ReadonlyActionLog,
     private readonly settle: BuildSettle = SETTLE_TIMING,
+    private readonly bundle?: string,
   ) {}
 
   async check(
@@ -251,7 +299,7 @@ export class DesktopBuildWitness {
   ): Promise<Result<WitnessSummary, AnalysisError>> {
     const witness = this.#witness;
     if (witness === undefined) throw new TypeError("the stage was admitted");
-    const verdict = stageVerdict(stage, results);
+    const verdict = stageVerdict(stage, results, witness.stages);
     if (verdict === "undecided")
       return err(
         refused(
@@ -264,7 +312,11 @@ export class DesktopBuildWitness {
         ),
       );
     const held = verdict === "held";
-    const filed = {
+    const unrestored =
+      stage === "after_reset" && !held
+        ? unrestoredChecks(witness.stages, results).map((result) => result.id)
+        : [];
+    const filed: WitnessStageRecord = {
       stage,
       actions_before: actionsBefore,
       checked_at: new Date().toISOString(),
@@ -273,6 +325,11 @@ export class DesktopBuildWitness {
       settled,
       read_cut,
       results,
+      ...(unrestored.length === 0
+        ? {}
+        : {
+            remediation: `The reset did not restore the seed: ${unrestored.join(", ")} came out unlike on the seed. Find what the app's data/reset leaves changed, export again and witness a fresh computer of the new bundle.`,
+          }),
     };
     witness.stages.push(filed);
     if (held && stage !== WITNESS_STAGES.at(-1))
@@ -411,6 +468,17 @@ export class DesktopBuildWitness {
         refused(
           `${directory} exists and is not empty.`,
           "Give a new or empty folder.",
+        ),
+      );
+    const differs =
+      this.bundle === undefined
+        ? undefined
+        : await bundleTaskDifference(this.bundle, task, signal);
+    if (differs !== undefined)
+      return err(
+        refused(
+          `The task is not the bundle's ${task.name} task: ${differs}`,
+          "Give the task exactly as export_build_environment took it for this bundle.",
         ),
       );
     try {
