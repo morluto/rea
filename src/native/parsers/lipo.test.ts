@@ -129,13 +129,25 @@ describe("lipo numeric field observations", () => {
   );
 });
 
-describe("lipo architecture facts", () => {
+describe("lipo CPU-name identity", () => {
   it.each([
-    ["constructor", "CPU_SUBTYPE_ARM64_ALL", null, 0],
-    ["CPU_TYPE_ARM64", "toString", 0x0100000c, null],
+    {
+      type: "constructor",
+      subtype: "CPU_SUBTYPE_ARM64_ALL",
+      typeCode: null,
+      subtypeCode: 0,
+      subtypeBase: 0,
+    },
+    {
+      type: "CPU_TYPE_ARM64",
+      subtype: "toString",
+      typeCode: 0x0100000c,
+      subtypeCode: null,
+      subtypeBase: null,
+    },
   ])(
-    "keeps CPU names without inventing numeric codes: %s / %s",
-    (type, subtype, typeCode, subtypeCode) => {
+    "keeps CPU names without inventing numeric codes: $type / $subtype",
+    ({ type, subtype, typeCode, subtypeCode, subtypeBase }) => {
       const { architectures } = parseLipoOutput(
         fatRecords
           .replace("CPU_TYPE_ARM64", type)
@@ -146,10 +158,13 @@ describe("lipo architecture facts", () => {
         cpu_type_code: typeCode,
         cpu_subtype: subtype,
         cpu_subtype_code: subtypeCode,
+        cpu_subtype_base: subtypeBase,
       });
     },
   );
+});
 
+describe("lipo architecture facts", () => {
   it("preserves Apple's declared and hidden ARM64 architecture scopes", () => {
     const output = parseLipoOutput(`fat_magic 0xcafebabe
 nfat_arch 1 (+1 hidden)

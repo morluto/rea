@@ -82,6 +82,49 @@ describe("diffStateViews", () => {
       changed: ["notes:[1]"],
     });
   });
+
+  it("compares NULL primary-key rows as a multiset while retaining keyed matches", () => {
+    const table = (rows: (string | null)[][]) => ({
+      tables: {
+        items: { columns: ["id", "body"], primary_key: ["id"], rows },
+      },
+    });
+    const before = table([
+      [null, "alpha"],
+      [null, "beta"],
+      ["fixed", "old"],
+    ]);
+    expect(
+      diffStateViews(
+        "sqlite",
+        before,
+        table([
+          ["fixed", "old"],
+          [null, "beta"],
+          [null, "alpha"],
+        ]),
+      ),
+    ).toMatchObject({
+      added_count: 0,
+      removed_count: 0,
+      changed_count: 0,
+    });
+    expect(
+      diffStateViews(
+        "sqlite",
+        before,
+        table([
+          [null, "gamma"],
+          [null, "beta"],
+          ["fixed", "new"],
+        ]),
+      ),
+    ).toMatchObject({
+      added: ['items:[null,"gamma"]'],
+      removed: ['items:[null,"alpha"]'],
+      changed: ['items:["fixed"]'],
+    });
+  });
 });
 
 describe("diffStateViews fidelity", () => {
