@@ -183,6 +183,20 @@ describe("pairMembers", () => {
     });
   });
 
+  it("counts an identified sibling's other attributes, keying a group by its label rather than a fill both share", () => {
+    const note = (transform: string) =>
+      element("g", { fill: "red", "inkscape:label": "note", transform });
+    const layer = element("g", { fill: "red", id: "layer" });
+
+    const keys = ["[name=g][@inkscape:label=note]", "[name=g][@id=layer]"];
+    expect(
+      pairMembers([note("scale(2)"), layer], [note("scale(1)"), layer]),
+    ).toEqual({
+      newer: { keys, partners: [0, 1] },
+      older: { keys, partners: [0, 1] },
+    });
+  });
+
   it("pairs an element with identifiers by those alone, so one replaced by another of its type is removed and added", () => {
     const object = (name: string, id: string) =>
       element("Object", { type: "Part::Cylinder", name, id });

@@ -153,7 +153,13 @@ after it:
   `[name=item][@id=1]`, in the diff and the draft, rather than one element
   removed and another added. A FreeCAD `Hole` deleted and a `Hole001` added,
   both `Part::Cylinder`, stay one removal and one addition rather than a
-  rename found by their shared `type`. The real FreeCAD 0.21
+  rename found by their shared `type`. An identified element's other
+  attributes still count against its siblings' selectors: `[@color=blue]` is
+  not reported removed when it moves to the identified `item`, and
+  `[@role=body]`, `[@role=second]` and an Inkscape group's
+  `[@inkscape:label=note]` key their elements rather than a `color`, `class`
+  or `fill` an identified sibling shares, which would match both. The real
+  FreeCAD 0.21
   and 1.0 documents, and the Inkscape, LibreOffice and AbiWord ones of the
   branches built on this one, zipped as entries, give the same diffs, drafts
   and member keys as before.

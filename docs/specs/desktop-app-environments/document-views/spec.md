@@ -60,11 +60,13 @@ tolerance. Both evaluators, REA's and the exported verifier's, agree.
   member left unpaired is keyed by a selector naming it alone and nothing in
   the other version. Identity comes first: an element with identifying
   attributes (`name`, `id`, `xid`, or a prefixed `id` such as `xml:id`) is
-  selected by its tag and those alone, so one whose identifiers name nothing
-  in the other version is added or removed; its other attributes (`type`,
-  `color`) are tried only for elements without one. Selectors are spelled
-  only once chosen, so a long tag is not copied per attribute. A comparison
-  is incomplete when either view leaves something out.
+  keyed by its tag and those alone, so one whose identifiers name nothing in
+  the other version is added or removed; its other attributes (`type`,
+  `color`) key only elements without one. A selector is used only when it
+  matches one sibling, counted over every attribute of every sibling,
+  identified ones included. Selectors are spelled only once chosen, so a
+  long tag is not copied per attribute. A comparison is incomplete when
+  either view leaves something out.
 - Draft: for a zip document, checks inside its entries' JSON, key file and
   namespace-free XML views, through no object or array by position and no
   array a view may cut: an element added whole exists, one removed whole is

@@ -248,11 +248,15 @@ const selectable = (value: string) =>
 /** An attribute name a selector can carry. */
 const attributeName = (key: string) => key !== "" && !/[=[\]]/u.test(key);
 
-/** A member's candidate selectors as its name and the conditions after it, and the ids they are counted by. */
+/**
+ * A member's selectors as its name and the conditions after it, the ids they
+ * are counted by, and how many of them, from the first, may key it.
+ */
 interface Candidates {
   readonly name: string;
   readonly suffixes: readonly string[];
   readonly ids: readonly string[];
+  readonly choosable: number;
 }
 
 /** An attribute that identifies its element: `name`, `id`, `xid`, or a prefixed `id` such as `xml:id`. */
@@ -261,10 +265,11 @@ const identifying = (key: string) => /^(?:name|id|xid|.+:id)$/iu.test(key);
 /**
  * The selectors that could name a member, most general first: `[name=N]`, then
  * `[name=N][@A=V]` for each attribute, a `name` attribute before the others.
- * An element with identifying attributes is named by those alone, so one whose
- * identifiers are new is another element, whatever else it shares. Their ids
- * number the name among those seen, so a name is spelled into a selector only
- * once one is chosen, not once per attribute.
+ * All are counted, so a selector several siblings match is never taken for one
+ * naming a member alone; but an element with identifying attributes is keyed
+ * by those alone, so one whose identifiers are new is another element,
+ * whatever else it shares. The ids number the name among those seen, so a
+ * name is spelled into a selector only once one is chosen, not per attribute.
  */
 const candidatesOf = (
   member: JsonValue,
@@ -282,20 +287,22 @@ const candidatesOf = (
       : [],
   );
   const identities = usable.filter(({ key }) => identifying(key));
-  const conditions = identities.length > 0 ? identities : usable;
   const named = (key: string) => key.toLowerCase() === "name";
   const suffixes = [
     "",
     ...[
-      ...conditions.filter(({ key }) => named(key)),
-      ...conditions.filter(({ key }) => !named(key)),
+      ...identities.filter(({ key }) => named(key)),
+      ...identities.filter(({ key }) => !named(key)),
+      ...usable.filter(({ key }) => !identifying(key)),
     ].map(({ key, value }) => `[@${key}=${value}]`),
   ];
   const number = names.get(name) ?? names.size;
   names.set(name, number);
   // A suffix is empty or opens with `[`, so the number before it cannot run into it.
   const ids = suffixes.map((suffix) => `${String(number)}${suffix}`);
-  return { name, suffixes, ids };
+  const choosable =
+    identities.length > 0 ? identities.length + 1 : suffixes.length;
+  return { name, suffixes, ids, choosable };
 };
 
 /** The selector a member's candidate at `index` spells. */
@@ -336,7 +343,7 @@ export const pairMembers = (
     counts.get(id) ?? 0;
   const oldById = new Map<string, number>();
   oldCandidates.forEach((candidates, index) => {
-    for (const id of candidates?.ids ?? [])
+    for (const id of candidates?.ids.slice(0, candidates.choosable) ?? [])
       if (count(oldCounts, id) === 1) oldById.set(id, index);
   });
   const newKeys: (string | undefined)[] = newer.map(() => undefined);
@@ -345,7 +352,9 @@ export const pairMembers = (
   const oldPartners: (number | undefined)[] = older.map(() => undefined);
   newCandidates.forEach((candidates, index) => {
     if (candidates === undefined) return;
-    for (const [at, id] of candidates.ids.entries()) {
+    for (const [at, id] of candidates.ids
+      .slice(0, candidates.choosable)
+      .entries()) {
       const match = count(newCounts, id) === 1 ? oldById.get(id) : undefined;
       if (match === undefined || oldPartners[match] !== undefined) continue;
       newKeys[index] = oldKeys[match] = selectorAt(candidates, at);
@@ -360,12 +369,11 @@ export const pairMembers = (
     here: ReadonlyMap<string, number>,
     there: ReadonlyMap<string, number>,
   ) => {
-    const at = (candidates?.ids ?? []).findIndex(
-      (id) => count(here, id) === 1 && count(there, id) === 0,
-    );
-    return candidates === undefined || at < 0
-      ? undefined
-      : selectorAt(candidates, at);
+    if (candidates === undefined) return undefined;
+    const at = candidates.ids
+      .slice(0, candidates.choosable)
+      .findIndex((id) => count(here, id) === 1 && count(there, id) === 0);
+    return at < 0 ? undefined : selectorAt(candidates, at);
   };
   newCandidates.forEach((candidates, index) => {
     newKeys[index] ??= unmatched(candidates, newCounts, oldCounts);
