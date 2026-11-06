@@ -507,3 +507,46 @@ cliTest(
   },
   180_000,
 );
+
+cliTest(
+  "admits only a decimal source-map decode deadline",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-source-map-deadline-");
+    const fixture = webSourceLocationFixture();
+    await mkdir(join(root, "files", "modules"), { recursive: true });
+    await writeFile(join(root, "files", "modules", "main.js"), fixture.source);
+    const manifest = join(root, "manifest.json").replaceAll("\\", "/");
+    await writeFile(manifest, JSON.stringify(fixture.manifest));
+    const map = join(root, "app.js.map");
+    await writeFile(map, fixture.sourceMap.text);
+    const trace = (deadline: string) =>
+      cli.run({
+        arguments: [
+          "trace-web-source-location",
+          manifest,
+          "0",
+          map,
+          fixture.sourceMap.url,
+          "1",
+          "0",
+          `--decode-timeout-ms=${deadline}`,
+          "--json",
+        ],
+        environment: { REA_LOG_LEVEL: "silent" },
+        timeoutMs: 45_000,
+      });
+    // Numeric coercion would run the codec with a 1 ms deadline.
+    const hex = await trace("0x1");
+    expect(hex.exitCode).toBe(1);
+    expect(hex.json).toMatchObject({
+      code: "VALIDATION_ERROR",
+      fieldErrors: [expect.objectContaining({ path: "decodeTimeoutMs" })],
+    });
+    const decimal = await trace("020000");
+    expect(decimal.exitCode, decimal.stdout + decimal.stderr).toBe(0);
+    expect(decimal.json).toMatchObject({
+      normalized_result: { generated_offset: 0 },
+    });
+  },
+  180_000,
+);
