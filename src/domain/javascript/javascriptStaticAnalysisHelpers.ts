@@ -728,9 +728,34 @@ const storageKind = (
   return undefined;
 };
 
-/** Produce a dotted callee name through type-erased expression wrappers. */
-export const calleeName = (node: t.Node): string => {
+/**
+ * Bundlers call an import as `(0, ns.name)(...)`, which drops only the
+ * receiver. Read the final operand only when every discarded operand is an
+ * exact literal: any other operand may replace the callee before it is read.
+ */
+const receiverlessCallee = (node: t.Node): t.Node => {
   node = unwrapJavaScriptExpression(node).node;
+  while (t.isSequenceExpression(node)) {
+    const final = node.expressions.at(-1);
+    if (
+      final === undefined ||
+      !node.expressions
+        .slice(0, -1)
+        .every((operand) => readExactJavaScriptLiteral(operand).found)
+    )
+      return node;
+    node = unwrapJavaScriptExpression(final).node;
+  }
+  return node;
+};
+
+/**
+ * Produce a dotted callee name through type-erased expression wrappers and
+ * receiverless bundler calls. The name is spelling only; receiver and global
+ * identity proofs read the original callee.
+ */
+export const calleeName = (node: t.Node): string => {
+  node = receiverlessCallee(node);
   const segments: string[] = [];
   while (t.isMemberExpression(node) || t.isOptionalMemberExpression(node)) {
     // Dynamic keys retain their syntax identity instead of inventing a name.

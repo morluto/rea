@@ -121,25 +121,12 @@ const objectKeys = (node: t.Node | undefined): readonly string[] =>
       })
     : [];
 
-/** Bundlers use `(0, imported.factory)` to call an import without a receiver. */
-const rpcFactoryName = (callee: t.Node): string => {
-  let current = unwrapJavaScriptExpression(callee).node;
-  while (t.isSequenceExpression(current)) {
-    const last = current.expressions.at(-1);
-    if (last === undefined) return "";
-    current = unwrapJavaScriptExpression(last).node;
-  }
-  return calleeName(current);
-};
-
 /** Whether an initializer has the syntax of a documented tRPC client factory. */
 export const isJavaScriptRpcClientFactory = (node: t.Node): boolean => {
   const call = unwrapJavaScriptExpression(node).node;
   return (
     (t.isCallExpression(call) || t.isOptionalCallExpression(call)) &&
-    TRPC_CLIENT_FACTORIES.has(
-      rpcFactoryName(call.callee).split(".").pop() ?? "",
-    )
+    TRPC_CLIENT_FACTORIES.has(calleeName(call.callee).split(".").pop() ?? "")
   );
 };
 
@@ -147,7 +134,7 @@ export const isJavaScriptRpcClientFactory = (node: t.Node): boolean => {
 const trpcLinkUrl = (
   node: t.CallExpression | t.OptionalCallExpression,
 ): JavaScriptRpcEndpoint | undefined => {
-  const name = rpcFactoryName(node.callee);
+  const name = calleeName(node.callee);
   const factory = name.slice(name.lastIndexOf(".") + 1);
   if (!TRPC_URL_LINKS.has(factory)) return undefined;
   const options = node.arguments[0];
