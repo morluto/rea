@@ -576,6 +576,7 @@
 * **javascript:** accept retained empty endpoint seeds ([#6462](https://github.com/morluto/rea/issues/6462)) ([b912ec1](https://github.com/morluto/rea/commit/b912ec184ca2ecbd5b59d046187be5b4a59ca3c1))
 * **javascript:** apply package type scope to application sources ([#7883](https://github.com/morluto/rea/issues/7883)) ([55ee368](https://github.com/morluto/rea/commit/55ee36809d2fc15c25fd25b342757348413206dd))
 * **javascript:** bind defaulted and destructured Webpack factory roles ([#7117](https://github.com/morluto/rea/issues/7117)) ([aa79f59](https://github.com/morluto/rea/commit/aa79f59478c6a912823d18136d2e116a60f43bcd))
+* **javascript:** bound symbolic property and member queries ([#8876](https://github.com/morluto/rea/issues/8876)) ([abfccc0](https://github.com/morluto/rea/commit/abfccc0683e73ee396087309ab98c78c9f6dde4b))
 * **javascript:** close member-path cycles through self stores ([#7131](https://github.com/morluto/rea/issues/7131)) ([25f0f99](https://github.com/morluto/rea/commit/25f0f9934d226caa62fb89d68e7bacad74f4fe73)), closes [#7130](https://github.com/morluto/rea/issues/7130)
 * **javascript:** distinguish bundled script locations ([#7909](https://github.com/morluto/rea/issues/7909)) ([086abf3](https://github.com/morluto/rea/commit/086abf3996404c395c31d78ec674350ef569da1a))
 * **javascript:** distinguish HTML script loads from data ([83b2d16](https://github.com/morluto/rea/commit/83b2d16ee9e11f5e9ec21acde1bb03ddb7c23409))
