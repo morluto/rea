@@ -61,9 +61,19 @@ the first source that has the app:
   `suite` `noble`, `components` `["main"]`. `key_file` is the repository's
   signing key saved on this host; for a PPA, fetch it from
   keyserver.ubuntu.com by the fingerprint its Launchpad page shows.
-- For a `.deb`, ask the requester for its URL and SHA-256; do not fetch a
-  vendor's download page yourself. List its `Depends` as `dependencies`:
-  it installs with the network off.
+- When the app exits at launch for want of a runtime piece its package does
+  not install, start a new build computer with that package in
+  `extra_packages`, up to 16 archive names; the export installs them too.
+  MyPaint needs
+  `{"kind": "archive", "package": "mypaint", "extra_packages": ["librsvg2-common"]}`
+  for its SVG icons, and Freeplane `["openjdk-17-jre"]`, since its launcher
+  refuses noble's Java 21. Name one up front, too, when a package the app
+  only recommends holds its content, such as QElectroTech's element library
+  `qelectrotech-data`, without which no component can be placed.
+- Take the `.deb` path only when the app is not in the archive at all, not
+  to add a package. Ask the requester for its URL and SHA-256; do not fetch
+  a vendor's download page yourself. List its `Depends` as `dependencies`,
+  with any runtime piece it lacks: it installs with the network off.
 - Flatpak, AppImage and snaps are not supported yet: say so and stop. An
   archive package that only installs a snap, such as noble's `firefox`,
   counts as a snap. A package with no build for this host's architecture
@@ -88,8 +98,10 @@ the first source that has the app:
   [the build-computer guide](https://github.com/morluto/rea/blob/main/docs/desktop-build-computer.md).
 - Take a `screenshot` before pointing: points are pixels of the latest
   frame. If a response is too large, ask for a `region`, or `jpeg` with a
-  lower `quality`. A region crops the latest frame and becomes it: take a
-  full screenshot before pointing again.
+  lower `quality`. A screenshot with `region` does not capture the screen
+  again; it crops the latest frame, so take a full screenshot, or a `wait`
+  with `screenshot: true`, first. The crop then becomes the latest frame:
+  take a full screenshot before pointing again.
 - A drawn caret does not prove keyboard focus. After using a toolbar
   control, click into the document, then type a few characters and look
   before a long text.
@@ -114,7 +126,9 @@ the first source that has the app:
   `~/Documents` and its sidebar has no Documents entry. Type only the file
   name. A dialog taller than the 1280×800 screen hides its buttons:
   maximize it from its title bar, or confirm it with `key` Return, as when
-  HomeBank's Save button is off-screen.
+  HomeBank's Save button is off-screen. When a GTK Save dialog ignores
+  clicks or runs off the screen, type `~/Documents/<name>` in its Name field
+  and press Return.
 - Answer the app's save questions, such as keeping the format, then check
   the saved path in the title or status bar, or the dialog's folder when
   the app shows only the name, and that it shows no unsaved mark, before
@@ -123,6 +137,38 @@ the first source that has the app:
   files, confirms the save.
 - Qt spin boxes change their value on scroll: move the pointer off them
   before you scroll.
+- gLabels edits an object's text in Object properties → Text, not on the
+  canvas.
+- In Grisbi's transaction form Return moves to the next field; only Return
+  in the last field, Notes, records the transaction.
+- ghostwriter autosaves a new document as `~/Documents/untitled-1.md`: name
+  it with File → Rename, not Save As; Ctrl+Shift+S does nothing, and Enter
+  after a checklist item starts another `- [ ]` item.
+- KMyMoney's first launch opens the New File Setup wizard; Finish asks for a
+  storage type (XML), then a Save As where typing `Documents/<name>.kmy`
+  works. Its date field is a sectioned Qt editor: double-click the month and
+  type each part, since Ctrl+A garbles it. A new transaction's payee comes
+  prefilled and selected. Amounts are saved as reduced fractions, such as
+  `-1749/20`, so compare them exactly. Untick Help → Tip of the Day → "Show
+  tips on startup" before `seed`, or the tip appears at every boot.
+- QElectroTech: an element dropped from Collections follows the pointer until
+  a click on the folio places it. Its title shows only the app, so it needs
+  `state_paths`; its settings are in `~/.qet`.
+- Rosegarden: after a dialog its Transport window can take keyboard focus,
+  so save with File → Save.
+- Pencil2D: the Tools dock is too narrow for its buttons, so use shortcuts
+  (B for the brush); double-click a layer's name to rename it.
+- Umbrello: the title shows no unsaved mark, so confirm a save with a probe
+  checkpoint. An Untitled document autosaves `~/autosave.xmi`: delete it
+  before `seed`. Add attributes from the tree: right-click the class → New →
+  Attribute.
+- Hydrogen: the computer has no audio device, so Hydrogen falls back to a
+  null driver and its BPM field snaps back to 120 within about 100 ms.
+  Before `seed`, set Preferences → Audio System → ALSA with device `null`
+  and click "Apply and restart output", which `~/.hydrogen/hydrogen.conf`
+  keeps for the seed; also set autosaves per hour to 0, and dismiss the
+  development-version dialog with "Don't show again". `pulseaudio` as an
+  extra package does not help.
 - What the app saved under the home before `seed`, such as a document in
   `~/Documents` or its settings, is part of the seed. A file you move to the
   Trash is left out, and the export lists it in `limitations`. Trash a stray
@@ -150,8 +196,10 @@ the first source that has the app:
    `package_lists_error` may stop the capture finding the package's
    sources; the export says when that matters. When the app exits before
    its window opens, the error gives its exit code and the end of its
-   stderr, which may name what it lacks, such as a Java runtime: try
-   another install source, or stop as for an install this flow cannot do.
+   stderr, which may name what it lacks, such as an icon loader or a Java
+   runtime: close the computer and start a new one with that package in
+   `extra_packages` (see Choose the install), or stop as for an install
+   this flow cannot do.
    - REA counts a file as the app's document only when the app's window
      title shows its file name or `~/` path. When the title shows something
      else, such as MuseScore's score title, pass the path you will save the
@@ -160,7 +208,9 @@ the first source that has the app:
      It need not exist yet. Add the app's settings folder when its name
      differs from the app's, such as `.config/MuseScore`, so the seed keeps
      the dismissed first-run dialogs. Do not pass the document as a launch
-     argument to make REA see it: `state_paths` is the way.
+     argument to make REA see it: `state_paths` is the way. gLabels' title
+     leaves out the file's extension and Grisbi's shows the entity's name,
+     so both need it.
    - An app whose document is a folder of pages, such as a Zim notebook
      (`Notebooks/Notes`, a `.txt` file per page), never shows a file in its
      title: pass the folder in `state_paths`. Every page in it is then a
@@ -180,9 +230,9 @@ the first source that has the app:
      document: that state is the seed. Build it in the app and mark `seed`
      once the app has written. To see whether it has, mark a throwaway
      checkpoint, such as `probe-1`, and read its `changed_files`: up to ten
-     files that changed since the checkpoint before, those under
-     `state_paths` first, then those the app held open, caches last, with
-     `more_changed_files` counting the rest.
+     files that changed since the checkpoint before, those a window title
+     named first, then those under `state_paths` and those the app held
+     open, caches last, with `more_changed_files` counting the rest.
    - The app's own compressed format works when it is gzip, such as
      Gnumeric's `.gnumeric`, Dia's `.dia` or Inkscape's `.svgz`: REA reads
      the document inside, and checks point into it as into the same
@@ -236,9 +286,11 @@ Write `{"name", "prompt", "checks"}` from the draft and what you did.
 
 - `name`: lowercase letters, digits and hyphens, not `smoke`.
 - `prompt`: what the requester wants, in their words and the app's terms,
-  naming the document as a user would and ending with saving it: "Change the
-  poster's headline in Documents/poster.svg to Summer Bake Sale and save
-  it." Leave saving out for an app that saves on its own, after every change
+  starting with the app's name, naming the document as a user would and
+  ending with saving it: "In Inkscape, change the poster's headline in
+  Documents/poster.svg to Summer Bake Sale and save it." Name the app: the
+  solving agent's own shell cannot see the computer's files, and the app's
+  name sends it to the screen. Leave saving out for an app that saves on its own, after every change
   or a few seconds after the last one, such as Osmo or Gnote: grading waits
   until the app's files have held for 3 s, so the solving agent need not
   wait for the save. A save more than 3 s after the agent stops is still
@@ -338,10 +390,23 @@ expect its first-run wizard, a tour or a "restore session?" question at every
 boot. If the witness shows one, capture again on a new build computer with
 those folders in `state_paths`, and dismiss the dialogs before `seed`. Lock
 files the app holds while it runs, such as LibreOffice's `.lock` and
-`.~lock.<name>#`, are left out of the seed and listed after "Left out of the
-seed", so you need not close the document or delete them before `seed`. The
-limitations also name seeded WebKit or Chromium storage and caches; when the
-witness's boot is clean, list them in the report.
+`.~lock.<name>#`, GnuCash's `<book>.LCK` or Grisbi's `.<file>.lock`, are
+left out of the seed and listed after "Left out of the seed". An app can
+still start fine yet refuse every save when a lock was seeded, so close the
+document before `seed` where the app lets you (apps other than LibreOffice,
+such as Rosegarden, also write `.~lock.<name>#` and autosaves beside a
+document, and closing it covers them too), and treat "file is locked"
+on a save in the witness as a seeded lock: delete it from the bundle's seed
+and witness again in a new computer. In LibreOffice, own the profile
+(`state_paths: [".config/libreoffice"]`) for a clean boot, and close the
+document before `seed`, then reopen it from Recent Documents to make the
+change: the export also leaves out the recovery list LibreOffice writes while
+a document is open, which would start the bundle into document recovery. A
+limitation naming `~/.config/dconf/user` as unread means the app's dconf
+settings, such as a first-run tip you turned off, are not seeded: capture
+again on a new build computer. The limitations also name seeded WebKit,
+Chromium or QtWebEngine storage and caches; when the witness's boot is clean,
+list them in the report.
 
 Keep the build computer open until the witness holds: a task fix exports
 again from it.

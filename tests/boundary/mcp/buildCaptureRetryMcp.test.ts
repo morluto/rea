@@ -1,4 +1,4 @@
-import { mkdir, readdir, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import type { Client } from "@modelcontextprotocol/client";
@@ -166,31 +166,32 @@ it("returns the bundle an export saved when the computer closes while it commits
   await closed;
 }, 60_000);
 
-/** Capture and export an app the request installs from a .deb at `url`; the stand-in's argv for capture and export. */
-const captureDebRequest = async (
-  fakeSet: Awaited<ReturnType<typeof fakes>>,
-  url: string,
+/** Capture and export an app the request installs with `install`; the start's result, the bundle's folder and the stand-in's argv for a command. */
+const captureRequest = async (
+  { rea, client }: Awaited<ReturnType<typeof fakes>>,
+  install: Record<string, unknown>,
 ) => {
-  const { rea, client } = fakeSet;
-  const id = await startBuildComputer(client, {
-    kind: "request",
-    desktop_entry: "org.example.notes",
-    install: {
-      kind: "package_file",
-      url,
-      sha256: "0".repeat(64),
-      architecture: "amd64",
-      dependencies: [],
-    },
-  });
+  const started = toolContract("start_build_computer").outputSchema.parse(
+    (
+      await callOk(client, "start_build_computer", {
+        source: {
+          kind: "request",
+          desktop_entry: "org.example.notes",
+          install,
+        },
+      })
+    ).structuredContent,
+  );
+  const id = started.computer_id;
   await captureSeedAndEnd(client, id);
   await callOk(client, "stop_build_capture", { computer_id: id });
+  const directory = join(await createTestTempDirectory("build-out-"), "bundle");
   const exported = toolContract("export_build_environment").outputSchema.parse(
     (
       await callOk(client, "export_build_environment", {
         computer_id: id,
         task: BUILD_TASK,
-        directory: join(await createTestTempDirectory("build-out-"), "bundle"),
+        directory,
       })
     ).structuredContent,
   );
@@ -199,11 +200,38 @@ const captureDebRequest = async (
   );
   const argv = (command: string) =>
     calls.find((candidate) => candidate[0] === command) ?? [];
+  return { started, exported, directory, argv };
+};
+
+/** Capture and export an app the request installs from a .deb at `url` after `dependencies`; the stand-in's export argv. */
+const captureDebRequest = async (
+  fakeSet: Awaited<ReturnType<typeof fakes>>,
+  url: string,
+  dependencies: readonly string[] = [],
+) => {
+  const { started, exported, directory, argv } = await captureRequest(fakeSet, {
+    kind: "package_file",
+    url,
+    sha256: "0".repeat(64),
+    architecture: "amd64",
+    dependencies,
+  });
   expect(argv("capture-desktop-application")).toEqual(
     expect.arrayContaining(["--package-file", "/opt/rea/package.deb"]),
   );
-  return { exported, exportArgv: argv("export-desktop-application") };
+  return {
+    started,
+    exported,
+    directory,
+    exportArgv: argv("export-desktop-application"),
+  };
 };
+
+/** The values given to each `--extra-package` in an argv, in order. */
+const extraPackageFlags = (argv: readonly string[]) =>
+  argv.flatMap((value, index) =>
+    value === "--extra-package" ? [argv[index + 1]] : [],
+  );
 
 it("exports an app from its .deb file, at the request's URL, when no apt source offers it", async () => {
   const { exported, exportArgv } = await captureDebRequest(
@@ -219,15 +247,41 @@ it("exports an app from its .deb file, at the request's URL, when no apt source 
   expect(exported.files).toBeGreaterThan(0);
 });
 
-it("exports an app from apt, without the .deb's URL, when an apt source offers the captured version too", async () => {
-  // The capture found notes in noble/universe, so the export installs it by name.
-  const { exported, exportArgv } = await captureDebRequest(
-    await fakes(),
+it("exports an app from apt, without the .deb's URL, when an apt source offers the captured version too, keeping its dependencies beside it", async () => {
+  // The capture found notes in noble/universe, so the export installs it by
+  // name; as MyPaint's, its request named librsvg2-common, which GTK only recommends.
+  const { started, exported, directory, exportArgv } = await captureDebRequest(
+    await fakes({ install: { extraPackages: ["librsvg2-common"] } }),
     "https://downloads.example.com/notes_1.0_amd64.deb",
+    ["librsvg2-common"],
   );
 
+  expect(started.extra_packages).toEqual(["librsvg2-common"]);
   expect(exportArgv).not.toContain("--package-url");
-  expect(exported.files).toBeGreaterThan(0);
+  expect(extraPackageFlags(exportArgv)).toEqual(["librsvg2-common"]);
+  expect(
+    await readFile(join(directory, "envs/notes/notes_app.py"), "utf8"),
+  ).toContain('packages=Packages(apt=["notes", "librsvg2-common"])');
+  expect(
+    exported.limitations.filter((line) => line.includes("librsvg2-common")),
+  ).toHaveLength(1);
+});
+
+it("passes an archive request's extra packages to the export, whose bundle installs them beside the app", async () => {
+  const { exported, directory, argv } = await captureRequest(
+    await fakes({ install: { extraPackages: ["openjdk-17-jre"] } }),
+    { kind: "archive", package: "notes", extra_packages: ["openjdk-17-jre"] },
+  );
+
+  expect(extraPackageFlags(argv("export-desktop-application"))).toEqual([
+    "openjdk-17-jre",
+  ]);
+  expect(
+    await readFile(join(directory, "envs/notes/notes_app.py"), "utf8"),
+  ).toContain('packages=Packages(apt=["notes", "openjdk-17-jre"])');
+  expect(
+    exported.limitations.filter((line) => line.includes("openjdk-17-jre")),
+  ).toHaveLength(1);
 });
 
 it("brings back a bundle whose file list outgrows a command's 1 MiB of output", async () => {

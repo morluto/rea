@@ -1,8 +1,10 @@
 /** What a file an app keeps for its own running, rather than as the user's data, is. */
 export type RuntimeFileKind = "web_storage" | "cache";
 
-/** Folders WebKit and Chromium keep pages' storage in, lowercase. */
+/** Folders WebKit and Chromium keep pages' storage in, lowercase; QtWebEngine's is its whole profile. */
 const WEB_STORAGE_FOLDERS = new Set([
+  "qtwebengine",
+  "platform notifications",
   "local storage",
   "session storage",
   "indexeddb",
@@ -25,6 +27,7 @@ const WEB_STORAGE_FILES = new Set([
   "transportsecurity",
   "trust tokens",
   "trust tokens-journal",
+  "visited links",
 ]);
 
 /**
@@ -37,7 +40,6 @@ export const runtimeFile = (
 ): { readonly kind: RuntimeFileKind; readonly path: string } | undefined => {
   const segments = file.split("/");
   const name = (segments.at(-1) ?? "").toLowerCase();
-  if (WEB_STORAGE_FILES.has(name)) return { kind: "web_storage", path: file };
   const folders = segments.slice(0, -1);
   const upTo = (index: number) => segments.slice(0, index + 1).join("/");
   // WebKit keeps each origin's storage under storage/, beside a salt.
@@ -47,6 +49,7 @@ export const runtimeFile = (
       (folder === "storage" && (name === "salt" || name === "origin")),
   );
   if (storage >= 0) return { kind: "web_storage", path: upTo(storage) };
+  if (WEB_STORAGE_FILES.has(name)) return { kind: "web_storage", path: file };
   const cache = folders.findIndex((folder) =>
     /(?:cache|^caches)$/iu.test(folder),
   );

@@ -6,6 +6,7 @@ import {
   fromUbuntuNobleArchive,
   installsFromPackageFile,
   repositoryRefusal,
+  withExtraPackages,
 } from "./appExportInstall.js";
 import { installLimitations } from "./appExportInstallLimitations.js";
 import {
@@ -729,6 +730,65 @@ describe("installsFromPackageFile", () => {
     expect(exportInstall(varicad(), "varicad", "x64", VARICAD_URL).ok).toBe(
       true,
     );
+  });
+});
+
+describe("withExtraPackages", () => {
+  const archive = varicad({
+    sources: ["http://archive.ubuntu.com/ubuntu noble/universe amd64 Packages"],
+    source_origins: ["Ubuntu"],
+  });
+  const extra = (
+    installed: DesktopPackage,
+    packageUrl: string | undefined,
+    names: readonly string[],
+  ) => {
+    const install = exportInstall(installed, "varicad", "x64", packageUrl);
+    if (!install.ok) throw new Error(install.error.reason);
+    return withExtraPackages(install.value, names);
+  };
+
+  it("installs them beside a package apt offers, leaving out only the package, even one its captured file names as an alternative", () => {
+    // apt may satisfy `openjdk-17-jre | java-runtime` with another Java, so the one the request named stays.
+    const installed = varicad({
+      sources: [
+        "http://archive.ubuntu.com/ubuntu noble/universe amd64 Packages",
+      ],
+      source_origins: ["Ubuntu"],
+      package_file: {
+        ...VARICAD_FILE,
+        depends: ["openjdk-17-jre | java-runtime"],
+      },
+    });
+    const install = extra(installed, undefined, [
+      "librsvg2-common",
+      "openjdk-17-jre",
+      "varicad2026-en",
+      "librsvg2-common",
+    ]);
+
+    if (!install.ok) throw new Error(install.error.reason);
+    expect(install.value.packageFile).toBeNull();
+    expect(install.value.extraPackages).toEqual([
+      "librsvg2-common",
+      "openjdk-17-jre",
+    ]);
+  });
+
+  it("installs them beside a package file", () => {
+    const install = extra(varicad(), VARICAD_URL, ["libgl1", "openjdk-17-jre"]);
+
+    if (!install.ok) throw new Error(install.error.reason);
+    expect(install.value.packageFile?.dependencies).toContain("libgl1");
+    expect(install.value.extraPackages).toEqual(["openjdk-17-jre"]);
+  });
+
+  it("refuses a name that is not a Debian package's", () => {
+    const install = extra(archive, undefined, ["librsvg2-common", "Java17"]);
+
+    if (install.ok) throw new Error("expected a refusal");
+    expect(install.error.field).toBe("extra_package");
+    expect(install.error.reason).toContain("Java17");
   });
 });
 

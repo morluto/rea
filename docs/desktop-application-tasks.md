@@ -232,7 +232,7 @@ and `CIRCLE`, and only `CIRCLE` going from 5 to 9 is the user's change.
 ```json
 {
   "name": "add-milk",
-  "prompt": "Add buy milk to my to-do list in Mousepad and save it.",
+  "prompt": "In Mousepad, add buy milk to my to-do list and save it.",
   "checks": [
     {
       "id": "milk",
@@ -245,7 +245,9 @@ and `CIRCLE`, and only `CIRCLE` going from 5 to 9 is the user's change.
 ```
 
 `name` is a portable bundle name other than `smoke` (lowercase letters, digits
-and hyphens); `prompt` is what the user asks for; `checks` holds 1 to 32
+and hyphens); `prompt` is what the user asks for, naming the app, since a
+solving agent's own shell cannot see the computer's files and the app's name
+sends it to the screen; `checks` holds 1 to 32
 checks. Each check has a `kind`, a `file` given as a path under the home such as
 `Documents/todo.txt`, and an optional `id` (`check-1`, `check-2` and so on by
 position otherwise). A check reads the typed view `data/get` returns for that
@@ -353,7 +355,7 @@ FreeCAD 0.21 and 1.0 alike:
 ```json
 {
   "name": "cut-hole",
-  "prompt": "Cut a 10 mm hole through the middle of the plate and save it.",
+  "prompt": "In FreeCAD, cut a 10 mm hole through the middle of the plate and save it.",
   "checks": [
     {
       "id": "cut",

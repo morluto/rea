@@ -261,13 +261,14 @@ const recordCapture = async (
     store,
   );
   const recorder = new CheckpointRecorder(scope, store);
-  const acknowledge = async () => {
+  const acknowledge = async (titles: readonly string[] = []) => {
     const taken = recorder.checkpoints.at(-1);
     if (taken === undefined) return;
     const event = checkpointTaken(
       taken,
       home,
       context.scope.selectedPaths.map(({ physical }) => physical),
+      titles,
     );
     await host.report(
       `Recorded checkpoint ${taken.name}: ${String(event.changes)} change(s), ${String(event.retained_files)} file(s) retained.`,
@@ -288,11 +289,11 @@ const recordCapture = async (
     maxDurationMs: request.maxDurationSeconds * 1000,
     pollIntervalMs: POLL_INTERVAL_MS,
     nextRequest: host.nextRequest,
-    checkpoint: async (name, trigger, atMs, openedFiles) => {
+    checkpoint: async (name, trigger, atMs, seen) => {
       await host.report(`Recording checkpoint ${name}.`);
-      recorder.openedFiles = openedFiles;
+      recorder.openedFiles = seen.openedFiles;
       await recorder.record(name, trigger, atMs, signal);
-      await acknowledge();
+      await acknowledge(seen.titles);
     },
     report: host.report,
     signal,

@@ -149,18 +149,27 @@ it("renders a build bundle from a request with REA's payload and starts it", asy
       source: {
         kind: "request",
         desktop_entry: "org.xfce.mousepad",
-        install: { kind: "archive", package: "mousepad" },
+        install: {
+          kind: "archive",
+          package: "mousepad",
+          extra_packages: ["librsvg2-common"],
+        },
       },
     },
   });
   expect(started.isError, JSON.stringify(started)).not.toBe(true);
-  expect(started.structuredContent).toMatchObject({ environment: "mousepad" });
+  expect(started.structuredContent).toMatchObject({
+    environment: "mousepad",
+    extra_packages: ["librsvg2-common"],
+  });
   const env = join(runner.state, "bundle", "envs", "mousepad");
   expect(await readFile(join(env, "rea-payload.tar"), "utf8")).toBe(
     "a packed REA build",
   );
-  expect(await readFile(join(env, "mousepad_app.py"), "utf8")).toContain(
-    'Launch(at="demand"',
+  const module = await readFile(join(env, "mousepad_app.py"), "utf8");
+  expect(module).toContain('Launch(at="demand"');
+  expect(module).toContain(
+    'packages=Packages(apt=["mousepad", "librsvg2-common", "libgtk-3-bin", "dconf-cli"])',
   );
   const { computer_id: computerId } = toolContract(
     "start_build_computer",
@@ -173,6 +182,36 @@ it("renders a build bundle from a request with REA's payload and starts it", asy
     "computer_screenshot",
   ]);
 });
+
+it.each([
+  ["glabels-3.0", "glabels"],
+  ["com.github.xournalpp.xournalpp", "xournalpp"],
+  ["mousepad", "mousepad"],
+])(
+  "names the environment of desktop entry %s %s",
+  async (entry, environment) => {
+    const { runner } = await fakes();
+    const payload = join(runner.state, "rea-prod.tar.xz");
+    await writeFile(payload, "a packed REA build");
+    const client = await connect({
+      ...runner.environment,
+      REA_BUILD_COMPUTER_REA_ARCHIVE: payload,
+    });
+
+    const started = await callOk(client, "start_build_computer", {
+      source: {
+        kind: "request",
+        desktop_entry: entry,
+        install: { kind: "archive", package: environment },
+      },
+    });
+
+    expect(started.structuredContent).toMatchObject({ environment });
+    expect(await readdir(join(runner.state, "bundle", "envs"))).toEqual([
+      environment,
+    ]);
+  },
+);
 
 it("names what a request needs when REA's payload is not configured", async () => {
   const { runner } = await fakes();
@@ -192,6 +231,51 @@ it("names what a request needs when REA's payload is not configured", async () =
   );
   expect(await runner.notes("runs.jsonl")).toEqual([]);
 });
+
+it.each([
+  [
+    ["Java17"],
+    {
+      path: ["source", "install", "extra_packages", 0],
+      reason: "invalid_format",
+    },
+  ],
+  [
+    Array.from({ length: 17 }, (_, index) => `lib${String(index)}`),
+    {
+      path: ["source", "install", "extra_packages"],
+      reason: "out_of_range",
+      maximum: 16,
+    },
+  ],
+])(
+  "refuses extra packages %j before rendering a bundle",
+  async (extra, issue) => {
+    const { runner } = await fakes();
+    const client = await connect(runner.environment);
+    const refused = parseMcpToolError(
+      await client.callTool({
+        name: "start_build_computer",
+        arguments: {
+          source: {
+            kind: "request",
+            desktop_entry: "freeplane",
+            install: {
+              kind: "archive",
+              package: "freeplane",
+              extra_packages: extra,
+            },
+          },
+        },
+      }),
+    );
+    expect(refused.error.code).toBe("invalid_request");
+    expect(refused.error.details?.issues).toEqual([
+      expect.objectContaining(issue),
+    ]);
+    expect(await runner.notes("runs.jsonl")).toEqual([]);
+  },
+);
 
 it("reports the runner's failure with its output and leaves no helper behind", async () => {
   const { runner } = await fakes();
@@ -229,6 +313,9 @@ it("points a bundle's start that never got ready at the lock files its seed hold
   await writeFile(join(seed, ".config/libreoffice/4/.lock"), "[Lockdata]\n");
   await writeFile(join(seed, "Documents/.~lock.q1.ods#"), ",user,localhost;\n");
   await writeFile(join(seed, "Documents/q1.ods"), "PK");
+  // A lock named for the file beside it, as GnuCash's <book>.LCK; a lone one is no lock.
+  await writeFile(join(seed, "Documents/q1.ods.LCK"), "");
+  await writeFile(join(seed, "Documents/notes.lck"), "");
   const notReady =
     "envs/calc: container/amd64: failed at probe: it didn't boot: the computer wasn't ready within 180 s (not ready: app calc: no window with class 'libreoffice-calc')";
 
@@ -241,7 +328,7 @@ it("points a bundle's start that never got ready at the lock files its seed hold
 
   expect(pointed).toContain(notReady);
   expect(pointed).toContain(
-    "seed holds lock files, which can keep the app from starting when it finds its profile or document in use: envs/calc/seed/.config/libreoffice/4/.lock, envs/calc/seed/Documents/.~lock.q1.ods#.",
+    "seed holds lock files, which can keep the app from starting when it finds its profile or document in use: envs/calc/seed/.config/libreoffice/4/.lock, envs/calc/seed/Documents/.~lock.q1.ods#, envs/calc/seed/Documents/q1.ods.LCK.",
   );
   for (const message of [unlocked, otherFailure])
     expect(message).not.toContain("lock files");

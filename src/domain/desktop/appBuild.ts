@@ -17,6 +17,7 @@ import {
 } from "./appExport.js";
 import { INSTALL_SCRIPT, type ExportPackageFile } from "./appExportInstall.js";
 import { isArmoredKey } from "./aptRepositories.js";
+import { DEBIAN_PACKAGE_NAME } from "./debianPackageFile.js";
 
 /** The Node.js release the build layer runs REA with: the one REA pins. */
 export const BUILD_NODE_VERSION = "24.22.1";
@@ -36,6 +37,8 @@ const NODE_TARBALLS = [
 const COMPUTER_ARCHITECTURES = ["amd64", "arm64"] as const;
 /** The package of `gtk-launch`, which opens the app from its desktop entry. */
 const LAUNCHER_PACKAGE = "libgtk-3-bin";
+/** The package of `dconf`, which the capture reads the app's dconf settings with. */
+const DCONF_PACKAGE = "dconf-cli";
 const REA_INSTALL_SCRIPT = "install-rea.sh";
 /** Where the build layer keeps a `.deb` the app came from, for the capture's `--package-file`. */
 export const BUILD_PACKAGE_FILE = "/opt/rea/package.deb";
@@ -54,15 +57,24 @@ const downloadUrlSchema = z
   );
 const aptPackageSchema = z
   .string()
-  .regex(/^[a-z0-9][a-z0-9+.-]+$/u)
+  .regex(DEBIAN_PACKAGE_NAME)
   .describe("A Debian package name.");
 const sha256Schema = z.string().regex(/^[0-9a-f]{64}$/u);
+/** How many packages an archive install may name beside the app. */
+const MAX_EXTRA_PACKAGES = 16;
 
 /** Where the computer installs the app from, chosen before anything is captured. */
 export const buildInstallSchema = z.discriminatedUnion("kind", [
   z.strictObject({
     kind: z.literal("archive"),
     package: aptPackageSchema,
+    extra_packages: z
+      .array(aptPackageSchema)
+      .max(MAX_EXTRA_PACKAGES)
+      .default([])
+      .describe(
+        "Archive packages installed beside the app, and by its export, such as a runtime piece it needs that its package does not install.",
+      ),
   }),
   z.strictObject({
     kind: z.literal("apt_repository"),
@@ -116,6 +128,16 @@ export const buildSourceSchema = z.discriminatedUnion("kind", [
 ]);
 export type BuildSource = z.output<typeof buildSourceSchema>;
 export type BuildRequest = Extract<BuildSource, { kind: "request" }>;
+
+/** The packages a request names beside the app, which its export installs beside it too: an archive install's extra packages, or a package file's dependencies; none for a bundle. */
+export const extraPackagesOf = (source: BuildSource): readonly string[] =>
+  source.kind === "bundle"
+    ? []
+    : source.install.kind === "archive"
+      ? source.install.extra_packages
+      : source.install.kind === "package_file"
+        ? source.install.dependencies
+        : [];
 
 /** Where the build layer gets REA from: a tar archive with one top folder holding `scripts/rea.mjs`. */
 export type ReaPayload =
@@ -240,10 +262,12 @@ const buildInstall = (
   return {
     architectures,
     packages: [
-      ...(install.kind === "package_file"
-        ? install.dependencies
-        : [install.package]),
-      LAUNCHER_PACKAGE,
+      ...new Set([
+        ...(install.kind === "package_file" ? [] : [install.package]),
+        ...extraPackagesOf(request),
+        LAUNCHER_PACKAGE,
+        DCONF_PACKAGE,
+      ]),
     ],
     key,
     packageFile,

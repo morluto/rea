@@ -15,13 +15,25 @@ agent-env run ./mousepad-bundle --dry-run
 
 The export reads the capture and its [state view](desktop-application-state.md);
 it does not run the application. `--name` sets the environment name; otherwise
-it comes from the desktop entry id or the program, with an `app-` prefix when
+it comes from the desktop entry id or the program: a reverse-DNS id's last
+part (`org.xfce.mousepad` gives `mousepad`), or else the whole id without a
+trailing version (`glabels-3.0` gives `glabels`), with an `app-` prefix when
 that name would not be a portable bundle name (for example all digits). The
 output directory must be new or empty. `--task` adds a task an agent wrote for
 the capture, once REA has validated it against the capture; see
 [desktop application tasks](desktop-application-tasks.md). `--package-url`
 says where the computer downloads the package of an application installed from
 a `.deb` file; see [Applications from a .deb file](#applications-from-a-deb-file).
+`--extra-package NAME`, repeatable, installs another Ubuntu 24.04 archive
+package beside the application, such as a runtime piece its package does not
+install; a [build computer](desktop-build-witness.md) passes its request's
+`extra_packages`, or a `.deb` request's `dependencies`, this way. A name that
+is not a Debian package name is refused (`extra_package`). Names the bundle
+installs anyway, the application's own package and the dependencies it names
+for a package installed from its `.deb` file, are not repeated; the rest are
+listed in the limitations and the README. A package the captured `.deb` lists
+as one alternative, such as `openjdk-17-jre | java-runtime`, is kept when apt
+installs the application by name, since apt may satisfy it with another.
 `--seed-checkpoint` names the checkpoint whose state seeds the bundle, the
 baseline by default, and `--end-checkpoint` the one a task must pass on, the
 capture's last by default; see [The seed checkpoint](#the-seed-checkpoint).
@@ -64,9 +76,10 @@ an `App` suffix.
 
 The class declares:
 
-- `Packages(apt=[...])` with the package the capture found. A vendor package
-  is named `<package>/<release>`, its repository's release (the Suite apt
-  reports as `a=`, or else its Codename), so apt takes it from that repository
+- `Packages(apt=[...])` with the package the capture found, then the
+  `--extra-package` names. A vendor package is named `<package>/<release>`,
+  its repository's release (the Suite apt reports as `a=`, or else its
+  Codename), so apt takes it from that repository
   even when the Ubuntu archive offers a higher version or epoch, as noble's
   transitional `firefox` does over packages.mozilla.org's; it is named alone
   when the release names neither, or when the capture was written before
@@ -191,8 +204,12 @@ Lock files the app holds while it runs are left out of the seed: a copied one
 makes the app find its profile or document in use, and a LibreOffice Calc
 bundle whose seed held its profile's `.lock` showed no window at boot. They
 are `lockfile`, `lock`, `.lock`, `.parentlock`, `parent.lock` and
-`SingletonLock` anywhere, LibreOffice's document lock `.~lock.<name>#`, and
-`*.lock` or `*.lck` directly in one of the application's state directories.
+`SingletonLock` anywhere, LibreOffice's document lock `.~lock.<name>#`, a
+`<file>.lck`, `.<file>.lock` or `.<file>.lck` beside a file the capture
+recorded in the same folder, such as GnuCash's `household.gnucash.LCK` and
+Grisbi's empty `.household.gsb.lock`, which made it refuse every save, and
+`*.lock` or `*.lck` directly in one of the application's state directories;
+a lone `notes.lck` or `.notes.lock` elsewhere is seeded.
 Elsewhere such a file may be a project's own, such as `Cargo.lock` or
 `yarn.lock`, which pin dependencies, and is seeded, even under a folder whose
 name starts with a dot. A file the state view makes a document, or one named
@@ -200,12 +217,30 @@ itself by `--state-path` or an absolute `--argument`, is never left out,
 whatever its name. A limitation and the README list them, up to
 eight and a count, after "Left out of the seed". They stay under the owned
 paths, so `data/get` returns the lock the running app holds, and `data/reset`
-restores the seed without them. Other seed files the app keeps for its own
+restores the seed without them.
+
+The app's logs are left out of the seed the same way, since they record facts
+about the capture host that the host scrub does not catch, such as Freeplane's
+`os_version` with the host's kernel, or QElectroTech's CPU model, memory and
+disk sizes, and no app needs its old log to start. A log is a file named
+`*.log` or `log.<n>`, or any file under a `logs` folder, with the `.lck` or
+`.lock` beside such a file, that is in the app's own state: application state
+in the state view, or under one of its state directories. A document or a path
+named itself by `--state-path` is seeded even when it ends in `.log`, since a
+user's own log may be the document. A limitation and the README list them
+apart from the lock files, after "Left out of the seed".
+
+Other seed files the app keeps for its own
 running are seeded as captured and named, collapsed to the folder that holds
 them: WebKit or Chromium storage (such as `hsts-storage.sqlite`, `storage/`,
-`mediakeys/`, `Local Storage/`, `IndexedDB/`, `Cookies`), which may hold the
-app's own data, and caches (a folder whose name ends in `cache`); a stale one
-can change how the app starts.
+`mediakeys/`, `Local Storage/`, `IndexedDB/`, `Cookies`, `Visited Links`,
+`Platform Notifications/`, and a whole `QtWebEngine/`
+profile), which may hold the app's own data, and caches (a folder whose name ends in `cache`); a stale one
+can change how the app starts. A seeded LibreOffice profile's
+`registrymodifications.xcu` ships without its `RecoveryList` items, which
+LibreOffice writes for the documents it has open and which would start the
+bundle into document recovery instead of its window; a limitation and the
+README name the file.
 
 The application's dconf keys at the seed, if any, are written once when the
 app first starts, also for an application that owns no files, and the class adds
@@ -219,7 +254,10 @@ not restore them. No file of the bundle holds them, so `data/get` does not
 return them and no task check reads them; a draft whose only change between
 its checkpoints is to the application's dconf keys says so with
 `uncheckable_changes`, and one whose dconf database changed but could not be
-read says so with `unreadable_changes`.
+read says so with `unreadable_changes`. When a dconf database changed by the
+seed checkpoint but its version there could not be read, as without
+`dconf-cli`, the export seeds no keys from it and a limitation names it with
+the read error.
 
 ## The seed checkpoint
 

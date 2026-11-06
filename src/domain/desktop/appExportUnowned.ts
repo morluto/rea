@@ -2,7 +2,7 @@ import {
   STATE_PATH_INPUTS,
   STATE_PATH_INPUTS_MARKDOWN,
 } from "./buildCapture.js";
-import type { DesktopStatePath } from "./desktopState.js";
+import { versionAt, type DesktopStatePath } from "./desktopState.js";
 import { isWithinAny } from "./desktopStateDiff.js";
 import { runtimeFile, type RuntimeFileKind } from "./runtimeFiles.js";
 import { stateDirectoryOf } from "./stateRoles.js";
@@ -106,22 +106,35 @@ const LOCK_NAMES = new Set([
 ]);
 /** LibreOffice's lock beside a document it has open: `.~lock.<name>#`. */
 const DOCUMENT_LOCK = /^\.~lock\..+#$/u;
+/** Locks named for the file beside them, by the name they lock: GnuCash's `<file>.LCK`, Grisbi's `.<file>.lock`. */
+const SIBLING_LOCKS = [/^(.+)\.lck$/iu, /^\.(.+)\.(?:lock|lck)$/iu];
 
 /**
  * Whether a home file is a lock an app holds while it runs: a profile lock's
- * name anywhere, LibreOffice's document lock, or a `*.lock` or `*.lck` file
- * directly in one of the app's state directories, home-relative. Elsewhere
- * such a file may be a project's own, such as `Cargo.lock`, which pins
- * dependencies rather than marking a profile in use.
+ * name anywhere, LibreOffice's document lock, a `<file>.lck`, `.<file>.lock`
+ * or `.<file>.lck` beside a file of the `recorded` home paths, as GnuCash's
+ * `<book>.LCK` and Grisbi's `.<file>.lock`, or a `*.lock` or `*.lck` file
+ * directly in one of the app's state directories, home-relative.
+ * Elsewhere such a file may be a project's own, such as `Cargo.lock`, which
+ * pins dependencies rather than marking a profile in use.
  */
 export const isLockFile = (
   file: string,
   stateDirectories: readonly string[],
+  recorded: ReadonlySet<string> = new Set(),
 ): boolean => {
   const name = file.split("/").at(-1) ?? "";
   if (LOCK_NAMES.has(name.toLowerCase()) || DOCUMENT_LOCK.test(name))
     return true;
   const folder = folderOf(file);
+  const besideItsFile = SIBLING_LOCKS.some((lock) => {
+    const locked = lock.exec(name)?.[1];
+    return (
+      locked !== undefined &&
+      recorded.has(folder.length === 0 ? locked : `${folder}/${locked}`)
+    );
+  });
+  if (besideItsFile) return true;
   // Each directory on its own, so one nested in another is still found.
   return (
     /\.(?:lock|lck)$/iu.test(name) &&
@@ -129,6 +142,24 @@ export const isLockFile = (
     stateDirectories.some(
       (directory) => stateDirectoryOf(file, [directory]) === folder,
     )
+  );
+};
+
+/** A log's own name: `*.log`, or `log.<n>` as Freeplane's `log.0`. */
+const LOG_NAME = /(?:\.log|^log\.\d+)$/iu;
+
+/**
+ * Whether a home file is a log by its name: `*.log` or `log.<n>`, a file
+ * under a `logs` folder, or the `.lck` or `.lock` beside such a log. An app
+ * writes facts about the host into its log, such as the kernel, CPU and
+ * memory, and none needs its old log to start.
+ */
+export const isAppLog = (file: string): boolean => {
+  const segments = file.split("/");
+  const name = (segments.at(-1) ?? "").replace(/\.(?:lck|lock)$/iu, "");
+  return (
+    LOG_NAME.test(name) ||
+    segments.slice(0, -1).some((folder) => folder.toLowerCase() === "logs")
   );
 };
 
@@ -223,13 +254,99 @@ export const leftOutLocksLimitation = (
     ? undefined
     : `Left out of the seed: lock files the app holds while it runs, since a copied one makes the app find its profile or document in use and can keep it from starting: ${listed(locks, false)}. data/reset restores the seed without them.`;
 
+/**
+ * The limitation naming dconf databases that changed by the seed checkpoint,
+ * whose version there REA could not read, so the app's settings in them are
+ * not seeded; none when there are none.
+ */
+export const unreadDconfLimitation = (
+  databases: ReadonlyMap<string, DesktopStatePath>,
+  seed: number,
+): string | undefined => {
+  const unread = [...databases].flatMap(([home, path]) => {
+    const version = versionAt(path, seed);
+    // A version after the baseline means the database changed by the seed.
+    return version?.present === true &&
+      version.checkpoint_index > 0 &&
+      version.view_error !== null
+      ? [{ home, error: version.view_error }]
+      : [];
+  });
+  if (unread.length === 0) return undefined;
+  const names = listed(
+    unread.map(({ home }) => home),
+    false,
+  );
+  const errors = [...new Set(unread.map(({ error }) => error))].join("; ");
+  return `${names} changed by the seed checkpoint but could not be read (${errors}), so the app's settings stored in dconf, if any, are not seeded. Export where dconf-cli is installed, or with REA_DCONF_COMMAND naming dconf; a build computer installs it, so capture again on a new one.`;
+};
+
+/** Files in the desktop Trash at the seed, which the state view never makes the app's, so the seed leaves them out. */
+export const trashedFiles = (
+  files: ReadonlyMap<string, DesktopStatePath>,
+  seed: number,
+): readonly string[] =>
+  [...files]
+    .filter(
+      ([, path]) =>
+        path.reasons.includes("desktop_trash") &&
+        versionAt(path, seed)?.present === true,
+    )
+    .map(([home]) => home)
+    .sort();
+
+/**
+ * Which home files the seed leaves out: the app's logs in its own state
+ * (application state, or under one of its state directories), and lock
+ * files; never one of `kept`, such as a document or a selected path.
+ */
+export const leftOutFiles = (
+  files: ReadonlyMap<string, DesktopStatePath>,
+  stateDirectories: readonly string[],
+  kept: ReadonlySet<string>,
+) => {
+  const recorded = new Set(files.keys());
+  const isLeftOutLog = (home: string) =>
+    !kept.has(home) &&
+    isAppLog(home) &&
+    (files.get(home)?.role === "application_state" ||
+      stateDirectoryOf(home, stateDirectories) !== undefined);
+  const isLeftOut = (home: string) =>
+    isLeftOutLog(home) ||
+    (!kept.has(home) && isLockFile(home, stateDirectories, recorded));
+  return { isLeftOut, isLeftOutLog };
+};
+
+/** The files left out of the seed, once each and by path: the app's logs apart from its lock files. */
+export const leftOutSeeds = (
+  files: readonly string[],
+  isLog: (home: string) => boolean,
+): {
+  readonly leftOutLocks: readonly string[];
+  readonly leftOutLogs: readonly string[];
+} => {
+  const sorted = [...new Set(files)].sort();
+  return {
+    leftOutLocks: sorted.filter((file) => !isLog(file)),
+    leftOutLogs: sorted.filter(isLog),
+  };
+};
+
+/** The limitation naming the app's logs left out of the seed; none when there were none. */
+export const leftOutLogsLimitation = (
+  logs: readonly string[],
+): string | undefined =>
+  logs.length === 0
+    ? undefined
+    : `Left out of the seed: the app's logs in its own state (*.log, log.<n>, files under a logs folder, and their locks), which record facts about the capture host, such as its kernel, CPU and memory, and which no app needs to start: ${listed(logs, false)}. A log that is a document or a path named in ${STATE_PATH_INPUTS} is seeded.`;
+
 /** The limitation naming unowned folders the capture saw change; none when there are none. */
 export const unownedFoldersLimitation = (
   folders: readonly string[],
 ): string | undefined =>
   folders.length === 0
     ? undefined
-    : `Files changed during the capture in ${String(folders.length)} folder(s) under the home that the bundle neither owns nor seeds, so the app starts without what it saved there, such as settings a first-run dialog writes: ${listed(folders, false)}. To own them, capture again naming them with ${STATE_PATH_INPUTS}.`;
+    : `${String(folders.length)} file(s) or folder(s) under the home changed during the capture, which the bundle neither owns nor seeds, so the app starts without what it saved there, such as settings a first-run dialog writes: ${listed(folders, false)}. To own them, capture again naming them with ${STATE_PATH_INPUTS}.`;
 
 /** The limitation naming seeded web engine storage and caches; none when the seed holds none. */
 export const runtimeSeedsLimitation = (
@@ -239,18 +356,21 @@ export const runtimeSeedsLimitation = (
     ? undefined
     : `The seed holds files the app keeps for its own running, seeded as captured: ${seeds.map(({ kind, paths }) => `${KIND_LABELS[kind]} ${listed(paths, false)}`).join("; ")}. A stale one can change how the app starts.`;
 
-/** The README lines on unowned folders, runtime seeds and left-out locks, each starting on a new line; empty when there are none. */
+/** The README lines on unowned folders, runtime seeds and left-out locks and logs, each starting on a new line; empty when there are none. */
 export const unownedReadmeNotes = (
   folders: readonly string[],
   seeds: readonly RuntimeSeeds[],
-  locks: readonly string[],
+  leftOut: {
+    readonly locks: readonly string[];
+    readonly logs: readonly string[];
+  },
 ): string =>
   [
     ...(folders.length === 0
       ? []
       : [
-          `- Neither owned nor seeded, so the app starts without what it saved there: files changed during the capture in
-  ${listed(folders, true)}.
+          `- Neither owned nor seeded, so the app starts without what it saved there: these files or folders, which changed
+  during the capture, ${listed(folders, true)}.
   To own them, capture again naming them with ${STATE_PATH_INPUTS_MARKDOWN}.`,
         ]),
     ...(seeds.length === 0
@@ -259,11 +379,17 @@ export const unownedReadmeNotes = (
           `- Seeded as captured, though the app keeps them for its own running, so a stale one can change how it starts:
   ${seeds.map(({ kind, paths }) => `${KIND_LABELS[kind]} ${listed(paths, true)}`).join("; ")}.`,
         ]),
-    ...(locks.length === 0
+    ...(leftOut.locks.length === 0
       ? []
       : [
           `- Left out of the seed: lock files the app holds while it runs, since a copied one can make it find its profile or document
-  in use and keep it from starting: ${listed(locks, true)}.`,
+  in use and keep it from starting: ${listed(leftOut.locks, true)}.`,
+        ]),
+    ...(leftOut.logs.length === 0
+      ? []
+      : [
+          `- Left out of the seed: the app's logs, which record facts about the capture host, such as its kernel, CPU and memory,
+  and which it does not need to start: ${listed(leftOut.logs, true)}.`,
         ]),
   ]
     .map((line) => `\n${line}`)

@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { runtimeFile } from "./runtimeFiles.js";
+import { namedInTitles } from "./stateRoles.js";
 
 const sha256 = z.string().regex(/^[0-9a-f]{64}$/u);
 const milliseconds = z.int().min(0);
@@ -105,30 +106,30 @@ export type DesktopCaptureProgress = z.infer<
 
 /**
  * The acknowledgement of a taken checkpoint, from what it recorded, naming
- * changed files relative to the home. Files under a path the caller selected
- * come first, then those the app held open, then those in its state
- * directories, then the rest; caches and WebKit or Chromium storage come
- * last unless selected, since an app may rewrite many of them on any save.
+ * changed files relative to the home: first those an application window's
+ * `titles` so far name, as a document saved and no longer held open is, then
+ * those the caller selected themselves, then those the app held open, those
+ * under a selected folder and those in its state directories, then the rest,
+ * and caches and WebKit, Chromium or QtWebEngine storage last, since an app
+ * may rewrite many of them on any save.
  */
 export const checkpointTaken = (
   checkpoint: DesktopCheckpoint,
   home: string,
   selectedPaths: readonly string[] = [],
+  titles: readonly string[] = [],
 ): Extract<DesktopCaptureEvent, { kind: "checkpoint" }> => {
   const relative = (path: string) =>
     path.startsWith(`${home}/`) ? path.slice(home.length + 1) : path;
-  const rank = (change: DesktopStateChange) =>
-    selectedPaths.some(
-      (root) => change.path === root || change.path.startsWith(`${root}/`),
-    )
-      ? 0
-      : runtimeFile(relative(change.path)) !== undefined
-        ? 4
-        : change.opened_by_application
-          ? 1
-          : change.in_state_directory
-            ? 2
-            : 3;
+  const rank = (change: DesktopStateChange): number => {
+    if (namedInTitles(change.path, home, titles)) return 0;
+    if (selectedPaths.includes(change.path)) return 1;
+    if (runtimeFile(relative(change.path)) !== undefined) return 6;
+    if (change.opened_by_application) return 2;
+    if (selectedPaths.some((root) => change.path.startsWith(`${root}/`)))
+      return 3;
+    return change.in_state_directory ? 4 : 5;
+  };
   const files = checkpoint.changes
     .filter((change) => (change.after ?? change.before)?.type !== "directory")
     .map((change) => ({ path: change.path, rank: rank(change) }))

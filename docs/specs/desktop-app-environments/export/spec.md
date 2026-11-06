@@ -16,9 +16,10 @@ state through `data/add`, `data/get` and `data/reset`.
   shared safe output tree.
 - It refuses applications not installed from a Debian package archive, captures
   without an application window, and environment names that are not portable.
-- The class declares the apt package, and the package of the program the
-  desktop entry runs when another one owns it (refused when the capture found
-  no source the computer can install that package from, or only repositories
+- The class declares the apt package, the packages `--extra-package` names
+  beside it (refused unless each is a Debian package name), and the package of
+  the program the desktop entry runs when another one owns it (refused when
+  the capture found no source the computer can install that package from, or only repositories
   the export leaves out supply it, as library packages so supplied are left
   out; a capture whose entry runs a program no package owns is refused), the
   captured launch

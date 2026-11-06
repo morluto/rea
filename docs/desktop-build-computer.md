@@ -49,7 +49,9 @@ framework's folder for the app, and keeps no seed and no data hooks. The app is 
 `start_build_capture` opens it under REA's capture. When no capture is under
 way, open it from the desktop's Applications menu, where agentenv lists it
 under Other by the environment's name, such as `mousepad`; that entry launches
-it through the app's server.
+it through the app's server. The name is the desktop entry's last part when it
+is reverse-DNS (`com.github.xournalpp.xournalpp` gives `xournalpp`), or else
+the whole entry without a trailing version (`glabels-3.0` gives `glabels`).
 
 ```json
 {
@@ -66,16 +68,28 @@ it through the app's server.
 
 | `kind`           | Installs                                                                                                   |
 | ---------------- | ---------------------------------------------------------------------------------------------------------- |
-| `archive`        | `package` from the Ubuntu 24.04 archive, on amd64 and arm64                                                |
+| `archive`        | `package` from the Ubuntu 24.04 archive, on amd64 and arm64, with its optional `extra_packages` beside it  |
 | `apt_repository` | `package` from the repository at `uri` with `suite` and `components`, trusting the key file `key_file`     |
 | `package_file`   | The `.deb` at `url`, checked against `sha256`, for one `architecture`, after its apt `dependencies` are in |
 
 Build steps run with the network off, so a `.deb`'s dependencies must be
-listed. The bundle adds REA in a build-only layer: Node.js
+listed. `extra_packages` names up to 16 more archive packages, by the same
+name rules as `package`, for a runtime piece the app needs that its package
+does not install: apt here skips Recommends, so MyPaint 2.0.1 exits at launch
+without `librsvg2-common`, GTK's SVG icon loader, and Freeplane 1.7.10 needs
+`openjdk-17-jre`, since its launcher refuses noble's default Java 21. The
+export installs them beside the app too, as it does a `.deb`'s
+`dependencies` when apt offers the `.deb`'s package; see
+[build and witness](desktop-build-witness.md).
+
+The bundle adds REA in a build-only layer: Node.js
 24.22.1, downloaded per architecture and checked against its release checksum,
 and REA from `REA_BUILD_COMPUTER_REA_ARCHIVE`, both unpacked into `/opt/rea` by
-a root build step, with `node` and `rea` on `PATH`. An exported bundle carries
-none of it.
+a root build step, with `node` and `rea` on `PATH`. It also installs
+`libgtk-3-bin`, for `gtk-launch`, and `dconf-cli`, so the capture reads the
+app's settings in dconf, such as GnuCash's "Show tips at startup", and the
+seed keeps them. An exported bundle carries none of it but `dconf-cli`, which
+it installs when it loads the app's dconf keys.
 
 From a bundle folder, such as one `export-desktop-application` wrote, REA
 starts that bundle's `tasks/smoke.json` as it is:
@@ -104,9 +118,12 @@ while it is one colour throughout. The retries share 10 s, each given only
 what is left of it, and when that runs out REA returns the latest frame;
 progress notifications continue meanwhile. Given `screenshot` with a
 `region`, `format` or `quality`, REA then takes one with them, a `region`
-cropping that frame. The result holds
+cropping that frame rather than capturing the screen again. The result holds
 `computer_id`, agentenv's `sandbox_id`, the environment name or bundle folder,
-and the screenshot's frame as structured content beside its image.
+`extra_packages`, what the request named beside the app for the export to
+install too (an archive install's `extra_packages` or a `.deb`'s
+`dependencies`, empty otherwise), and the screenshot's frame as structured
+content beside its image.
 
 A failed start returns the last 16 KiB of the helper's stderr, where a failing
 build prints its error, and its exit status; a cancelled one stops the helper,
@@ -120,16 +137,16 @@ progress and waits for them before closing every computer.
 `act_on_build_computer` takes `computer_id`, an `action` and the driver's own
 arguments for `computer_<action>`, which REA passes through:
 
-| `action`     | Arguments                                                       |
-| ------------ | --------------------------------------------------------------- |
-| `screenshot` | `region`, `format` (`png` or `jpeg`), `quality`                 |
-| `click`      | `x`, `y`, `button`, `count` (2 double-clicks), `modifiers`      |
-| `drag`       | `path` of `[x, y]` points, `button`, `duration_ms`, `modifiers` |
-| `scroll`     | `direction`, `x`, `y`, `amount`, `modifiers`                    |
-| `type`       | `text`, where `\n` presses Enter and `\t` Tab                   |
-| `key`        | `keys`, one chord pressed in order, and `repeat`                |
-| `wait`       | `ms`                                                            |
-| `reset`      | `screenshot`                                                    |
+| `action`     | Arguments                                                               |
+| ------------ | ----------------------------------------------------------------------- |
+| `screenshot` | `region`, `format` (`png` or `jpeg`), `quality`                         |
+| `click`      | `x`, `y`, `button`, `count` (2 double-clicks), `modifiers`              |
+| `drag`       | `path` of 2 to 50 `[x, y]` points, `button`, `duration_ms`, `modifiers` |
+| `scroll`     | `direction`, `x`, `y`, `amount`, `modifiers`                            |
+| `type`       | `text`, where `\n` presses Enter and `\t` Tab                           |
+| `key`        | `keys`, one chord pressed in order, and `repeat`                        |
+| `wait`       | `ms`                                                                    |
+| `reset`      | `screenshot`                                                            |
 
 `reset` is not a driver tool: REA calls the app's `data/reset`, which restores
 the bundle's seed and relaunches the app, then waits until the computer's
@@ -153,7 +170,9 @@ The result carries the driver's content unchanged, its text and images, after
 REA's own JSON: `action_index` and the driver's structured result. A refusal,
 such as a stale frame, is an error carrying the computer's message. A response
 larger than the MCP budget is refused with how to ask for a smaller image: a
-`region`, or `jpeg` with a lower `quality`. That error keeps REA's own result,
+`region`, or `jpeg` with a lower `quality`. A screenshot with `region` does not
+capture the screen again; it crops the latest frame, so take a full
+screenshot, or a `wait` with `screenshot: true`, first. That error keeps REA's own result,
 `computer_id` included, as `details.result`, since the action or start has
 happened.
 

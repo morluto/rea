@@ -243,6 +243,47 @@ describe("documents saved gzip-compressed", () => {
       ).toBe(`<template name="${path.slice("envs/notes/seed/".length)}"/>`);
   });
 
+  it("lists a gzip seed recompressed, and a LibreOffice registry both scrubbed and left without its recovery list, each in its own list", async () => {
+    const template = ".local/share/notes/templates/blank.xml.gz";
+    const registry = ".config/notes/registrymodifications.xcu";
+    const kept = {
+      [template]: gzipSync('<template name="blank"/>'),
+      [registry]: Buffer.from(
+        [
+          '<?xml version="1.0" encoding="UTF-8"?>',
+          '<oor:items xmlns:oor="http://openoffice.org/2001/registry">',
+          `<item oor:path="/org.openoffice.UserProfile/Data"><prop oor:name="o" oor:op="fuse"><value>ada@${HOSTNAME}</value></prop></item>`,
+          `<item oor:path="/org.openoffice.Office.Recovery/RecoveryList"><node oor:name="recovery_item_1" oor:op="replace"><prop oor:name="OriginalURL" oor:op="fuse"><value>file://${HOME}/${BUDGET}</value></prop></node></item>`,
+          "</oor:items>",
+          "",
+        ].join("\n"),
+      ),
+    };
+
+    const { result, directory } = await exportBudget(
+      await budgetCapture(gzipped, "", kept),
+    );
+
+    if (result instanceof Error) throw result;
+    expect(result.normalized_result).toMatchObject({
+      scrubbed_files: [`envs/notes/seed/${registry}`, SEED],
+      recompressed_files: [`envs/notes/seed/${template}`],
+      unscrubbed_files: [],
+    });
+    const shipped = await readFile(
+      join(directory, "envs/notes/seed", registry),
+      "utf8",
+    );
+    expect(shipped).not.toContain("RecoveryList");
+    expect(shipped).toContain("<value>user@localhost</value>");
+    expect(
+      result.limitations.filter((line) => line.includes(`~/${registry}`)),
+    ).toHaveLength(1);
+    const readme = await readFile(join(directory, "README.md"), "utf8");
+    expect(readme).toMatch(/\b1 gzip file\(s\)/u);
+    expect(readme).toContain(`\`~/${registry}\``);
+  });
+
   it("keeps a seed the app stored uncompressed readable once scrubbed, where deflating it would pass the 100 times a view reads", async () => {
     const stored = (text: string) => gzipSync(text, { level: 0 });
     const comment = "x".repeat(60_000);
