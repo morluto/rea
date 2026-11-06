@@ -7,6 +7,7 @@ import { evidenceInputSchema } from "../evidenceReference.js";
 import {
   cliMetadataGuidSchema,
   managedMetadataTokenSchema,
+  managedMemberInspectionSchema,
   type ManagedMemberInspection,
 } from "./managedArtifact.js";
 import {
@@ -173,6 +174,26 @@ const fieldComparisonItemSchema = comparisonItemSchema(
   memberIdentitySchema.omit({ normalized_il_sha256: true }),
 );
 
+const comparisonSideSchema = z.strictObject({
+  evidence_id: evidenceIdSchema,
+  artifact_sha256: digestSchema,
+  mvid: cliMetadataGuidSchema.nullable(),
+  module_name: z.string().nullable(),
+  metadata_status: z.enum(["absent", "complete", "partial", "malformed"]),
+  methods_total: z.int().min(0),
+  fields_total: z.int().min(0),
+  resource_limits: z
+    .array(
+      managedMemberInspectionSchema.shape.coverage.shape.issues.element.extend({
+        code: z.literal("resource-limit"),
+      }),
+    )
+    .optional()
+    .describe(
+      "Resource-limit diagnostics reported by this source; an empty array means none were reported. Historical comparisons omit this field; omission does not establish that no resource limit occurred.",
+    ),
+});
+
 /** Obfuscation-resistant, execution-free managed member comparison. */
 export const managedMemberComparisonResultSchema = z.strictObject({
   comparison_id: prefixedDigestSchema("mmc"),
@@ -181,24 +202,8 @@ export const managedMemberComparisonResultSchema = z.strictObject({
     token_identity: z.literal("build-local"),
     name_matching: z.literal("exact-signature-fallback"),
   }),
-  left: z.strictObject({
-    evidence_id: evidenceIdSchema,
-    artifact_sha256: digestSchema,
-    mvid: cliMetadataGuidSchema.nullable(),
-    module_name: z.string().nullable(),
-    metadata_status: z.enum(["absent", "complete", "partial", "malformed"]),
-    methods_total: z.int().min(0),
-    fields_total: z.int().min(0),
-  }),
-  right: z.strictObject({
-    evidence_id: evidenceIdSchema,
-    artifact_sha256: digestSchema,
-    mvid: cliMetadataGuidSchema.nullable(),
-    module_name: z.string().nullable(),
-    metadata_status: z.enum(["absent", "complete", "partial", "malformed"]),
-    methods_total: z.int().min(0),
-    fields_total: z.int().min(0),
-  }),
+  left: comparisonSideSchema,
+  right: comparisonSideSchema,
   summary: z.strictObject({
     unchanged: z.int().min(0),
     changed: z.int().min(0),
