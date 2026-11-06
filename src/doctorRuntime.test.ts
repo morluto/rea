@@ -610,3 +610,39 @@ test("lets a selected client keep the terminal settings its registration omits",
     await host.close?.();
   }
 });
+
+test("does not fill a registration's unresolvable expression from the terminal", async () => {
+  const home = await createTestTempDirectory("rea-dsh-doctor-expression-");
+  // Harness keeps a Cordis expression in the patch, so this process cannot
+  // know what the client passes on; the terminal is not that value.
+  await mkdir(join(home, ".dsh"), { recursive: true });
+  await writeFile(
+    join(home, ".dsh/cordis.patch.yml"),
+    [
+      "- insert:",
+      "    - id: rea-mcp",
+      '      name: "@deepseek-ai/dsh-mcp-client"',
+      "      config:",
+      "        serverName: rea",
+      "        transport: stdio",
+      "        command: rea",
+      "        args: [mcp]",
+      "        env:",
+      "          GHIDRA_INSTALL_DIR: !!js caller.ghidra",
+      "",
+    ].join("\n"),
+    { flag: "w" },
+  );
+  const host = createSystemDoctorHost({
+    HOME: home,
+    GHIDRA_INSTALL_DIR: "/opt/ghidra",
+  });
+  try {
+    const inspections = await host.providerInspections?.(["dsh"]);
+    expect(inspections?.find(({ id }) => id === "ghidra")?.configured).toBe(
+      false,
+    );
+  } finally {
+    await host.close?.();
+  }
+});
