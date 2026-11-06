@@ -42,6 +42,14 @@ import {
 } from "./analysisEvidenceDelivery.js";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
 import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
+import { cliIntegerArgument } from "./options.js";
+
+// Decimal tokens only: numeric coercion would read "0x10" as a 16 ms
+// deadline and "1e3" as 1000 ms. The shared field keeps its bounds.
+const cliCommandTimeout = cliIntegerArgument(1)
+  .pipe(reverseCommandTimeoutSchema.unwrap())
+  .optional()
+  .describe(reverseCommandTimeoutSchema.description ?? "");
 
 const executeWithCleanup = async (
   service: ReverseEngineeringService,
@@ -217,7 +225,7 @@ export const registerReverseEngineeringCommands = (
         .describe(
           "Follow local DWARF debug links. External debug-file identity is not bound to Evidence.",
         ),
-      commandTimeoutMs: reverseCommandTimeoutSchema,
+      commandTimeoutMs: cliCommandTimeout,
     }),
     run: ({ args, options }) =>
       withCommandCancellation((signal) =>
@@ -260,7 +268,7 @@ export const registerReverseEngineeringCommands = (
     args: z.object({}),
     options: z.object({
       ...analysisEvidenceDeliveryOptions,
-      commandTimeoutMs: reverseCommandTimeoutSchema,
+      commandTimeoutMs: cliCommandTimeout,
     }),
     run: ({ options }) =>
       withCommandCancellation((signal) =>
@@ -309,7 +317,7 @@ export const registerReverseEngineeringCommands = (
       command: z.string().min(1).describe("One caller-selected Rizin command."),
     }),
     options: z.object({
-      commandTimeoutMs: reverseCommandTimeoutSchema,
+      commandTimeoutMs: cliCommandTimeout,
     }),
     run: ({ args, options }) =>
       withCommandCancellation((signal) =>

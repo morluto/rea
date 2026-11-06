@@ -301,3 +301,43 @@ describe("artifact decimal options", () => {
     });
   });
 });
+
+describe("objdump and Rizin command timeouts", () => {
+  // The three commands share one parser, so one takes every malformed
+  // spelling. Numeric coercion reads "0x10" as a 16 ms deadline.
+  const missing = "/nonexistent/missing.bin";
+  for (const [command, values] of [
+    [["list-objdump-architectures"], NON_INTEGER_OPTION_TEXT],
+    [["inspect-with-objdump", missing, "file_headers"], ["0x10"]],
+    [["execute-rizin-command", missing, "i"], ["1e3"]],
+  ] as const) {
+    cliTest.for(values)(
+      `rejects %j as ${command[0]} --command-timeout-ms`,
+      async (value, { cli }) => {
+        const result = await runFileCli(cli, {
+          arguments: [...command, `--command-timeout-ms=${value}`, "--json"],
+        });
+
+        expectCliValidationError(result, "commandTimeoutMs");
+      },
+    );
+  }
+
+  cliTest("keeps a decimal Rizin command timeout", async ({ cli }) => {
+    const result = await runFileCli(cli, {
+      arguments: [
+        "execute-rizin-command",
+        missing,
+        "i",
+        "--command-timeout-ms=016",
+        "--json",
+      ],
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      code: "invalid_request",
+      details: { issues: [expect.objectContaining({ path: ["path"] })] },
+    });
+  });
+});
