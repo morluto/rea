@@ -395,6 +395,11 @@ const walkResourceSpans = (
   ] of envelope.resourceSpans.entries()) {
     if (!isRecord(resourceSpans)) {
       walked.droppedRecords += 1;
+      walked.problems.push({
+        code: "invalid-record",
+        pointer: `/resourceSpans/${resourceIndex}`,
+        message: `Resource group at /resourceSpans/${resourceIndex} is not an object and was not inventoried.`,
+      });
       continue;
     }
     const serviceName = resourceServiceName(resourceSpans.resource);
@@ -403,11 +408,21 @@ const walkResourceSpans = (
     if (resourceDropped > 0) walked.resourceAttributesTruncated = true;
     if (!Array.isArray(resourceSpans.scopeSpans)) {
       walked.droppedRecords += 1;
+      walked.problems.push({
+        code: "invalid-record",
+        pointer: `/resourceSpans/${resourceIndex}/scopeSpans`,
+        message: `Resource group at /resourceSpans/${resourceIndex} has no scopeSpans array; its spans were not inventoried.`,
+      });
       continue;
     }
     for (const [scopeIndex, scopeSpans] of resourceSpans.scopeSpans.entries()) {
       if (!isRecord(scopeSpans)) {
         walked.droppedRecords += 1;
+        walked.problems.push({
+          code: "invalid-record",
+          pointer: `/resourceSpans/${resourceIndex}/scopeSpans/${scopeIndex}`,
+          message: `Scope group at /resourceSpans/${resourceIndex}/scopeSpans/${scopeIndex} is not an object and was not inventoried.`,
+        });
         continue;
       }
       const scopeRecord = isRecord(scopeSpans.scope)
@@ -420,6 +435,11 @@ const walkResourceSpans = (
       };
       if (!Array.isArray(scopeSpans.spans)) {
         walked.droppedRecords += 1;
+        walked.problems.push({
+          code: "invalid-record",
+          pointer: `/resourceSpans/${resourceIndex}/scopeSpans/${scopeIndex}/spans`,
+          message: `Scope at /resourceSpans/${resourceIndex}/scopeSpans/${scopeIndex} has no spans array; its spans were not inventoried.`,
+        });
         continue;
       }
       for (const [spanIndex, record] of scopeSpans.spans.entries()) {

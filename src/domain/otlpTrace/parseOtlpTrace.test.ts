@@ -460,3 +460,24 @@ describe("parseOtlpTrace resource attribute bound", () => {
     );
   });
 });
+
+describe("parseOtlpTrace unreadable groups", () => {
+  it("names a scope whose spans are not an array instead of returning empty", () => {
+    const report = parse({
+      resourceSpans: [
+        {
+          resource: {},
+          scopeSpans: [{ scope: { name: "lib" }, spans: { oops: true } }],
+        },
+      ],
+    });
+    expect(report.summary.spans).toBe(0);
+    const diagnostic = report.diagnostics.find(
+      (entry) => entry.code === "invalid-record",
+    );
+    expect(diagnostic?.source_pointer).toBe(
+      "/resourceSpans/0/scopeSpans/0/spans",
+    );
+    expect(diagnostic?.message).toContain("no spans array");
+  });
+});
