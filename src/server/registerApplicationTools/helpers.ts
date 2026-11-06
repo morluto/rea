@@ -63,10 +63,17 @@ export const deliverApplicationEvidence = async (
             id === parent.evidence_id ? parent : options.evidenceById?.(id),
         );
   await setImmediate();
+  // The parent below is a completed observation. A cancellation arriving after
+  // it must name it as partial Evidence rather than discard it, so the caller
+  // can still recover the inventory that finished.
   if (signal.aborted)
-    return delivery.toErrorToolResult(
-      new AnalysisCancelledError(contract.name, { cause: signal.reason }),
+    return delivery.toPartialErrorToolResult(
+      new AnalysisCancelledError(contract.name, {
+        cause: signal.reason,
+        partialObservation: parent,
+      }),
       contract.returnsTargetContent,
+      options.recordEvidence,
     );
   if (!selected.ok) return delivery.toCallToolResult(selected, contract);
   const sources = recordEvidenceSources(
