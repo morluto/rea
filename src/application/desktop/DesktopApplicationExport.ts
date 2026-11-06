@@ -4,7 +4,6 @@ import {
   appModuleFile,
   className,
   exportedStateFiles,
-  launchCommand,
   launchDocumentLimitation,
   renderAppClass,
   renderEnvToml,
@@ -16,10 +15,7 @@ import {
   type HomePathCollision,
   type SeedScrubReport,
 } from "../../domain/desktop/appExport.js";
-import {
-  INSTALL_SCRIPT,
-  electronLaunchArguments,
-} from "../../domain/desktop/appExportInstall.js";
+import { INSTALL_SCRIPT } from "../../domain/desktop/appExportInstall.js";
 import { installLimitations } from "../../domain/desktop/appExportInstallLimitations.js";
 import type { DesktopApplicationCapture } from "../../domain/desktop/desktopCapture.js";
 import {
@@ -29,9 +25,7 @@ import {
 } from "../../domain/desktop/desktopState.js";
 import { isWithinAny } from "../../domain/desktop/desktopStateDiff.js";
 import type { HostIdentity } from "../../domain/desktop/hostIdentity.js";
-import { openSeedDocument } from "../../domain/desktop/seedDocument.js";
 import { scrubDconf } from "../../domain/desktop/seedScrub.js";
-import { isTextualFormat } from "../../domain/desktop/stateFormats.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
 import {
@@ -58,6 +52,7 @@ import {
   type SeedVersion,
 } from "./DesktopExportFiles.js";
 import { withRetainedContent } from "./DesktopRetainedContent.js";
+import { planLaunch, seedVersions } from "./DesktopExportLaunch.js";
 import { selectStateEnds } from "./DesktopStateVersions.js";
 import { admitDesktopTask, type AdmittedTask } from "./DesktopTaskExport.js";
 
@@ -201,27 +196,8 @@ const planExport = (
     context.seed,
     context.identity,
   );
-  const seeds = new Map<string, SeedVersion>();
-  const textSeeds: string[] = [];
-  for (const [home, path] of files) {
-    const version = versionAt(path, context.seed);
-    if (!isWithinAny(home, paths) || version?.present !== true) continue;
-    if (version.sha256 === null) continue;
-    seeds.set(home, { sha256: version.sha256, format: version.format });
-    if (isTextualFormat(version.format)) textSeeds.push(home);
-  }
-  const launch = openSeedDocument(
-    electronLaunchArguments(application.argv, electron),
-    {
-      home: host.home,
-      workingDirectory: application.working_directory,
-      exec: application.desktop_entry?.exec ?? null,
-      documents: [...seeds.keys()]
-        .filter((home) => files.get(home)?.role === "document")
-        .sort(),
-      isDocument: (home) => files.get(home)?.role === "document",
-    },
-  );
+  const { seeds, textSeeds } = seedVersions(files, paths, context.seed);
+  const launch = planLaunch(capture, electron, seeds, files);
   const plan: DesktopAppExportPlan = {
     name: source,
     className: className(source),
@@ -237,11 +213,7 @@ const planExport = (
       ? {}
       : { executablePackage: install.executablePackage }),
     electron,
-    command: launchCommand(
-      launch.argv,
-      host.home,
-      application.working_directory,
-    ),
+    command: launch.command,
     opens: launch.opens,
     windowClass,
     paths,
@@ -249,7 +221,7 @@ const planExport = (
     seedCheckpoint: state.capture.checkpoints[context.seed] ?? "baseline",
     syntheticSeed: request.syntheticSeed === true,
     seedFiles: [...seeds.keys()].sort(),
-    textSeeds: textSeeds.sort(),
+    textSeeds,
     unseededFiles: unseededFiles(capture, homePath, files, {
       paths,
       seed: context.seed,
