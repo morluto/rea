@@ -44,10 +44,11 @@ export async function evaluatePack(pack, call) {
   for (const task of pack.tasks) {
     let stage = task.comparison.operation;
     let compared;
+    let input;
     try {
       compared = await checkedCall(call, stage, task.comparison.arguments);
       stage = "verify_reconstruction";
-      const input = {
+      input = {
         specification: {
           name: task.id,
           claims: task.claims.map((claim) => ({
@@ -63,6 +64,8 @@ export async function evaluatePack(pack, call) {
         id: task.id,
         execution: "completed",
         comparison_input: task.comparison,
+        task_input: task,
+        verification_input: input,
         comparison: compared,
         verification: verified,
       });
@@ -72,8 +75,11 @@ export async function evaluatePack(pack, call) {
         execution: "error",
         stage,
         comparison_input: task.comparison,
+        task_input: task,
+        verification_input: input,
         ...(compared ? { comparison: compared } : {}),
         error: error instanceof Error ? error.message : String(error),
+        ...(error?.recovery ? { recovery: error.recovery } : {}),
       });
       // Stop: a failed tool may have left session state uncertain. Preserve prior results.
       break;
@@ -98,9 +104,76 @@ export async function evaluatePack(pack, call) {
 
 async function checkedCall(call, name, arguments_) {
   const response = await call(name, arguments_);
-  if (response?.isError)
-    throw new Error(
+  if (response?.isError) {
+    const error = new Error(
       `${name} returned a tool error: ${JSON.stringify(response)}`,
     );
+    const payloads = [response.structuredContent];
+    for (const item of response.content ?? []) {
+      if (item.type !== "text") continue;
+      try {
+        payloads.push(JSON.parse(item.text));
+      } catch {
+        /* Non-JSON errors remain in the original response. */
+      }
+    }
+    const reference = payloads
+      .filter(
+        (item) =>
+          item?.error?.code === "resource_constraint" &&
+          item?.error?.details?.reported_limits?.boundary === "mcp-response",
+      )
+      .map((item) => item.error.details.reported_limits.evidence_reference)
+      .find(
+        (item) =>
+          item?.kind === "retained-evidence" &&
+          /^ev_[a-f0-9]{64}$/.test(item.evidence_id),
+      );
+    if (reference) {
+      error.recovery = { reference, state: "unavailable" };
+      try {
+        const input = {
+          detail: "records",
+          filters: { evidence_id: reference.evidence_id },
+          offset: 0,
+          limit: 1,
+        };
+        toolContract("get_evidence_bundle").inputSchema.parse(input);
+        // One bounded read only: never retry the completed comparison or recurse on overflow.
+        const recovered = await call("get_evidence_bundle", input);
+        if (recovered?.isError)
+          throw new Error(
+            `Retained Evidence read failed: ${JSON.stringify(recovered)}`,
+          );
+        const result = toolContract("get_evidence_bundle").outputSchema.parse(
+          recovered?.structuredContent,
+        ).result;
+        const record =
+          result.kind === "evidence-record-selection" &&
+          result.records.length === 1
+            ? result.records[0]
+            : undefined;
+        if (
+          !record ||
+          record.evidence_id !== reference.evidence_id ||
+          record.operation !== name
+        )
+          throw new Error(
+            "Referenced Evidence was not returned by the session.",
+          );
+        error.recovery = {
+          reference,
+          state: "recovered",
+          evidence: toolContract(name).outputSchema.parse(record),
+        };
+      } catch (recoveryError) {
+        error.recovery.error =
+          recoveryError instanceof Error
+            ? recoveryError.message
+            : String(recoveryError);
+      }
+    }
+    throw error;
+  }
   return toolContract(name).outputSchema.parse(response?.structuredContent);
 }

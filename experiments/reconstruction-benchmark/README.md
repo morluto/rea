@@ -63,11 +63,13 @@ analysis edits; this is not a clean-main or current-upstream qualification. The 
 digest in the output identifies the actual artifact tested. No runtime rebuild or dependency install
 was performed for this exploration.
 
-The initial public stdio MCP run returned the expected three statuses. Six adapter boundary tests
+The initial public stdio MCP run returned the expected three statuses. Eleven adapter boundary tests
 cover invalid task IDs, disallowed operations, invalid claims, tool errors, malformed success replies,
-and preservation of a comparison when verification fails. After the independent read-only review fixes, the same six tests and all three public stdio MCP calibration cases passed again; child-close observation and scratch cleanup completed.
+and preservation of a comparison when verification fails. After the independent read-only review fixes, the same eleven tests and all three public stdio MCP calibration cases passed again; child-close observation and scratch cleanup completed.
 
 Not yet verified: structural-function and structural-artifact task packs, independent scientific
 scoring validity, a real agent completing a task, external task-pack formats, real target/provider
 behavior, Windows/macOS lifecycle, and repository-wide checks. These are proposal limits, not
 passing coverage. A `pass` remains a result for declared finite claims, not global equivalence.
+
+Overflow recovery reads the exact retained Evidence ID once using `get_evidence_bundle` in the same session. It preserves the original execution error even when recovery succeeds. A record that still exceeds the response budget, is missing, or has the wrong operation remains explicitly unavailable; there is no recursive retry or file export. Failed reports retain the complete task and attempted verification request.

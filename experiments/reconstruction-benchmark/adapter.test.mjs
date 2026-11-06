@@ -85,3 +85,96 @@ test("verification errors identify their stage", async () => {
   assert.match(report.tasks[0].error, /simulated transport failure/);
   assert.equal(report.completed, 0);
 });
+
+test("failed verification retains claims and exact request", async () => {
+  const pack = calibrationPack();
+  let request;
+  const report = await evaluatePack(pack, async (name, args) => {
+    if (name === "compare_process_captures")
+      return {
+        structuredContent: compareProcessCaptureEvidence(
+          { record: args.left, capture: args.left.normalized_result },
+          { record: args.right, capture: args.right.normalized_result },
+        ).evidence,
+      };
+    request = args;
+    throw new Error("verification failed");
+  });
+  assert.deepEqual(report.tasks[0].task_input, pack.tasks[0]);
+  assert.deepEqual(report.tasks[0].verification_input, request);
+});
+
+for (const mode of ["success", "overflow", "wrong-record", "wrong-operation"]) {
+  test(`retained Evidence recovery: ${mode}`, async () => {
+    const pack = calibrationPack();
+    const args = pack.tasks[0].comparison.arguments;
+    const record = compareProcessCaptureEvidence(
+      { record: args.left, capture: args.left.normalized_result },
+      { record: args.right, capture: args.right.normalized_result },
+    ).evidence;
+    const calls = [];
+    const error = {
+      error: {
+        code: "resource_constraint",
+        details: {
+          reported_limits: {
+            boundary: "mcp-response",
+            evidence_reference: {
+              kind: "retained-evidence",
+              evidence_id: record.evidence_id,
+            },
+          },
+        },
+      },
+    };
+    const report = await evaluatePack(pack, async (name, input) => {
+      calls.push(name);
+      if (name !== "get_evidence_bundle" || mode === "overflow")
+        return {
+          isError: true,
+          content: [{ type: "text", text: JSON.stringify(error) }],
+        };
+      assert.deepEqual(input.filters, { evidence_id: record.evidence_id });
+      return {
+        structuredContent: {
+          result: {
+            kind: "evidence-record-selection",
+            filters: input.filters,
+            total_retained_records: 1,
+            matching_records: 1,
+            offset: 0,
+            limit: 1,
+            next_offset: null,
+            records:
+              mode === "wrong-record"
+                ? []
+                : [
+                    {
+                      ...record,
+                      operation:
+                        mode === "wrong-operation"
+                          ? "mcp_tool_error"
+                          : record.operation,
+                    },
+                  ],
+            missing_evidence_links: [],
+            limitations: [],
+          },
+        },
+      };
+    });
+    assert.deepEqual(calls, [
+      "compare_process_captures",
+      "get_evidence_bundle",
+    ]);
+    assert.equal(report.tasks[0].execution, "error");
+    assert.equal(report.completed, 0);
+    assert.equal(
+      report.tasks[0].recovery.state,
+      mode === "success" ? "recovered" : "unavailable",
+    );
+    if (mode === "success")
+      assert.deepEqual(report.tasks[0].recovery.evidence, record);
+    else assert.ok(report.tasks[0].recovery.error);
+  });
+}
