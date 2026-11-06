@@ -494,6 +494,15 @@ The workflow reports IFF chunk names, atom tables, exports, imports, lambdas,
 and the Code chunk header. Missing optional tables stay null. See
 [Erlang BEAM files](erlang-beam.md).
 
+Complete `rea decompile --json` Evidence can be saved and inspected through
+`inspect-analysis-view` with an inline source and
+`view: {kind: "native", facet: "pseudocode", offset: 0, limit: 20000}`.
+The projection reads that saved observation without starting a provider;
+offsets/limits count UTF-16 code units. A summary view preserves the original
+selector and distinguishes null from empty text. The MCP tool additionally
+supports `detail: "summary"` on its first call to retain the complete source
+without returning the body inline; see [native investigation](native-investigation.md).
+
 Configure [Hopper or Ghidra](installation.md#hopper), the
 [IDA adapter](ida-provider.md), or [Kuna](kuna-provider.md) before analyzing a
 native target. Substitute
@@ -1420,6 +1429,16 @@ rea inspect-pe-load-config /absolute/path/to/application.exe --json
 Reports TLS callbacks and size-covered load-config fields without execution.
 Use `--max-callbacks` and `--max-file-bytes` to set read budgets. See
 [PE TLS and load configuration](pe-load-config.md).
+
+### Binary hardening
+
+```sh
+rea inspect-binary-hardening /absolute/path/to/program --json
+```
+
+Reports ELF, PE, and Mach-O hardening rows without execution. A missing import
+is `unknown`, not `disabled`. Use `--max-file-bytes` to set the read budget. See
+[binary hardening](binary-hardening.md).
 
 Bun standalone executables use the existing `inspect-artifact` and
 `extract-artifact` commands to inventory and materialize embedded source,

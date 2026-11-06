@@ -13,6 +13,8 @@ import {
 import type { DesktopApplicationCapture } from "./desktopCapture.js";
 import type { DesktopApplicationState } from "./desktopState.js";
 import { isWithinAny } from "./desktopStateDiff.js";
+import { SEED_HOME } from "./hostIdentity.js";
+import { stateDirectoryOf } from "./stateRoles.js";
 
 /** agentenv-framework release the exported class was checked against. */
 export const DESKTOP_EXPORT_FRAMEWORK_VERSION = "0.9.1431";
@@ -35,6 +37,8 @@ export interface DesktopAppExportPlan {
   readonly architectures: readonly string[];
   /** The package file downloaded and installed in place of the app's apt package; null when apt installs it. */
   readonly packageFile: ExportPackageFile | null;
+  /** The package of the program the desktop entry runs, installed by name after the app's; absent when the app's package owns it. */
+  readonly executablePackage?: string;
   /** Whether the app is Electron, whose launch then runs without Chromium's sandbox. */
   readonly electron: boolean;
   readonly command: readonly string[];
@@ -42,13 +46,15 @@ export interface DesktopAppExportPlan {
   /** Home-relative paths the app owns for data add, get and reset. */
   readonly paths: readonly string[];
   readonly capturedHome: string;
+  /** The checkpoint whose state the seed holds. */
+  readonly seedCheckpoint: string;
   /** Home-relative files copied into the computer's home before the first launch. */
   readonly seedFiles: readonly string[];
-  /** Seed files read as text, which get the captured home path respelled. */
+  /** Seed files read as text, which get the seed's home path respelled. */
   readonly textSeeds: readonly string[];
   /** Files under the owned paths that existed before the capture but whose bytes were not retained. */
   readonly unseededFiles: readonly string[];
-  /** `dconf dump` key file of the application's groups at the baseline, or empty. */
+  /** `dconf dump` key file of the application's groups at the seed, or empty. */
   readonly dconf: string;
   readonly captureEvidenceId: string;
 }
@@ -101,9 +107,10 @@ const SHARED_FOLDERS = new Set([
 ]);
 
 /**
- * The paths the app owns: the state directory holding each state file, or
- * a document's folder; a file directly in the home or a shared folder is
- * owned as itself. Nested paths collapse into the outermost one.
+ * The paths the app owns: the state directory holding each state file, in
+ * the file's letter case, or a document's folder; a file directly in the home
+ * or a shared folder is owned as itself. Nested paths collapse into the
+ * outermost one.
  */
 export const ownedPaths = (
   stateFiles: readonly string[],
@@ -114,12 +121,10 @@ export const ownedPaths = (
   const owner = (file: string, folder: string) =>
     SHARED_FOLDERS.has(folder) ? file : folder;
   const folderOf = (file: string) => file.split("/").slice(0, -1).join("/");
-  for (const file of stateFiles) {
-    const directory = stateDirectories.find((candidate) =>
-      isWithinAny(file, [candidate]),
+  for (const file of stateFiles)
+    folders.add(
+      owner(file, stateDirectoryOf(file, stateDirectories) ?? folderOf(file)),
     );
-    folders.add(owner(file, directory ?? folderOf(file)));
-  }
   for (const file of documents) folders.add(owner(file, folderOf(file)));
   const sorted = [...folders].filter((folder) => folder.length > 0).sort();
   return sorted.filter(
@@ -319,10 +324,11 @@ const installName = (plan: DesktopAppExportPlan): string =>
     ? plan.aptPackage
     : `${plan.aptPackage}/${plan.aptRelease}`;
 
-/** The app's package, or a package file's dependencies, then its library packages and dconf-cli when settings are loaded. */
+/** The app's package, or a package file's dependencies, then its program's package, its library packages and dconf-cli when settings are loaded. */
 const aptPackages = (plan: DesktopAppExportPlan): readonly string[] => [
   ...new Set([
     ...(plan.packageFile?.dependencies ?? [installName(plan)]),
+    ...(plan.executablePackage === undefined ? [] : [plan.executablePackage]),
     ...plan.libraryPackages,
     ...(plan.dconf.length === 0 ? [] : ["dconf-cli"]),
   ]),
@@ -360,12 +366,12 @@ export const renderAppClass = (plan: DesktopAppExportPlan): string => {
   return `"""${docText(plan.title)} as an agentenv computer app, exported by REA from a desktop application capture.
 
 Package: ${plan.aptPackage}${plan.packageVersion === null ? "" : ` (captured at ${plan.packageVersion})`}. Capture Evidence: ${plan.captureEvidenceId}.
-The seed is the user's state before the capture: keep this bundle local.
+The seed is the user's state at checkpoint ${docText(plan.seedCheckpoint)}: keep this bundle local.
 """
 
 ${PYTHON_IMPORTS}
 HERE = Path(__file__).resolve().parent
-CAPTURED_HOME = ${py(plan.capturedHome)}
+SEED_HOME = ${py(SEED_HOME)}
 PATHS = ${pyList(plan.paths)}
 DCONF = ${py(plan.dconf)}
 TEXT_SEEDS = frozenset(${pyList(plan.textSeeds)})
@@ -430,6 +436,11 @@ const packageFileNotes = ({ packageFile: file }: DesktopAppExportPlan) =>
 const installNotes = (plan: DesktopAppExportPlan): string =>
   [
     ...packageFileNotes(plan),
+    ...(plan.executablePackage === undefined
+      ? []
+      : [
+          `- \`${plan.executablePackage}\`, which owns the program the desktop entry runs, is installed with it.`,
+        ]),
     ...(plan.libraryPackages.length === 0
       ? []
       : [
@@ -445,10 +456,36 @@ const installNotes = (plan: DesktopAppExportPlan): string =>
     .map((line) => `\n${line}`)
     .join("");
 
+/** Bundle files: seeds the export rewrote to remove the capture host's identity, and files that still hold it. */
+export interface SeedScrubReport {
+  readonly scrubbed: readonly string[];
+  readonly unscrubbed: readonly string[];
+}
+
+const homeList = (paths: readonly string[]) =>
+  paths.map((path) => `\`~/${path}\``).join(", ");
+
+const bundleList = (paths: readonly string[]) =>
+  paths.map((path) => `\`${path}\``).join(", ");
+
+const scrubNotes = ({ scrubbed, unscrubbed }: SeedScrubReport): string =>
+  [
+    ...(scrubbed.length === 0
+      ? []
+      : [`\n  Rewritten: ${bundleList(scrubbed)}.`]),
+    ...(unscrubbed.length === 0
+      ? []
+      : [
+          `\n- Still holding the capture host's name, user@host or home, in their name or in content REA does not rewrite:
+  ${bundleList(unscrubbed)}. Read them before sharing the bundle.`,
+        ]),
+  ].join("");
+
 /** The bundle README: what was exported, how to run it, and what to keep in mind; a task's section follows. */
 export const renderReadme = (
   plan: DesktopAppExportPlan,
   taskSection = "",
+  scrub: SeedScrubReport = { scrubbed: [], unscrubbed: [] },
 ): string =>
   `# ${plan.title} computer app
 
@@ -461,12 +498,13 @@ ${DESKTOP_EXPORT_FRAMEWORK_VERSION}.
   when a window of class \`${plan.windowClass}\` appears.${installNotes(plan)}
 - Owned paths: ${plan.paths.length === 0 ? "none" : plan.paths.map((path) => `\`~/${path}\``).join(", ")}.
   \`data/get\` returns their files and a typed JSON view of each; \`data/reset\` restores the seed.
-- Seed: ${plan.seedFiles.length} file(s) from the user's home before the capture, with the captured home path
-  respelled in text files${plan.dconf.length === 0 ? "" : ", and the application's dconf keys"}.${
+- Seed: ${plan.seedFiles.length} file(s) from the user's home at checkpoint \`${plan.seedCheckpoint}\`${plan.dconf.length === 0 ? "" : ", and the application's dconf keys"}.
+  Text files and dconf keys spell the capture host's name as \`localhost\`, \`user@host\` as \`user@localhost\`
+  and the home as \`${SEED_HOME}\`, which the computer respells to its own at boot.${scrubNotes(scrub)}${
     plan.unseededFiles.length === 0
       ? ""
       : `
-- Not seeded, because the capture did not retain their starting bytes: ${plan.unseededFiles.map((path) => `\`~/${path}\``).join(", ")}.
+- Not seeded, because the capture did not retain their bytes at the seed: ${homeList(plan.unseededFiles)}.
   Capture again with \`--state-path\` naming them, or a larger \`--max-file-bytes\`, to include them.`
   }
 - \`tasks/smoke.json\` deploys the app.
