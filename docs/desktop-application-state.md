@@ -76,6 +76,12 @@ whether the file was present, the SHA-256 of its retained bytes, and a view:
 A JSON value holding a number JavaScript would round, such as an integer above
 2^53, is not read rather than shown rounded.
 
+Keyfile line framing and key padding use the same ECMAScript whitespace
+classification in REA and the exported reader. U+0085 is data here, so a key
+ending in it stays distinct from the key without it; U+FEFF padding follows
+the retained reader's rule. Values keep their content, dropping only ASCII
+space and tab immediately after `=`.
+
 An XML view names elements and attributes as the document spells them, prefix
 included: a saved Inkscape drawing's root is `svg`, in its default namespace,
 with `sodipodi:docname` and the declarations `xmlns` and `xmlns:sodipodi`
