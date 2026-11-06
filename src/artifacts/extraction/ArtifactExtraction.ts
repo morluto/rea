@@ -634,6 +634,7 @@ const requireExtractableFormat = async (
     | "inputPath"
     | "selectedPath"
     | "inputFormat"
+    | "environment"
     | "resourceScope"
     | "expectedRootSha256"
   >,
@@ -673,6 +674,8 @@ const requireExtractableFormat = async (
         }
         return { pack, probeFacts: probes.completedFacts() };
       },
+      "reject",
+      input.environment,
     );
     if (!detected.pack)
       throw new AnalysisUnsupportedTargetError(

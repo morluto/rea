@@ -257,6 +257,7 @@ export const withArtifactRegularFile = async <Value>(
   signal: AbortSignal | undefined,
   operation: (source: StableRegularFileDescriptor) => Promise<Value>,
   symlinks: "follow" | "reject" = "reject",
+  environment?: Readonly<NodeJS.ProcessEnv>,
 ): Promise<Value> => {
   let cleanupLease: AnalysisCleanupLease | undefined;
   assertArtifactReadActive(signal);
@@ -265,6 +266,7 @@ export const withArtifactRegularFile = async <Value>(
       path,
       {
         symlinks,
+        environment,
         ...(signal === undefined ? {} : { signal }),
         retainFailedClose: (owner) => {
           cleanupLease = new AnalysisCleanupLease(() => owner.close(), [path]);
