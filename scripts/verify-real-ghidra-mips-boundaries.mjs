@@ -142,11 +142,13 @@ try {
         assert.equal(reply.ok, false);
         assert.match(JSON.stringify(reply), pattern);
       }
+      const providerRuns = [];
       for (const [path, expected] of [
         [legacyPath, legacy],
         [recordlessMips1Path, recordlessMips1],
       ]) {
         await call("open_binary", { path, provider_id: "ghidra" });
+        // Composite open/health does not launch Ghidra; analyze_function does.
         const dossier = functionDossierSchema.parse(
           await call("analyze_function", {
             procedure: original.entry,
@@ -154,6 +156,40 @@ try {
           }),
         );
         assert.ok(dossier.pseudocode.length > 0);
+        const status = await call("binary_session");
+        assert.equal(status.analysis_provider_binding?.provider.id, "ghidra");
+        assert.equal(typeof status.analysis_run?.run_id, "string");
+        // The session owner generated this ID, and the launcher installs it on
+        // Ghidra in place of the surrounding verifier's process-run token.
+        assert.equal(status.open, true);
+        const providerLineage =
+          status.analysis_run.process_lineage.snapshots?.find(
+            ({ provider }) => provider.id === "ghidra",
+          )?.observation;
+        const providerScope =
+          providerLineage?.status === "verified"
+            ? {
+                leaderPid: providerLineage.launcher_pid,
+                processGroupId: providerLineage.process_group_id,
+                sampledProcessGroupIds: providerLineage.descendants.map(
+                  ({ process_group_id }) => process_group_id,
+                ),
+              }
+            : undefined;
+        // Capture native token-verified identities while the provider is live;
+        // A public lineage snapshot is optional; native ownership is mandatory.
+        await cleanup.retainProviderRun(
+          status.analysis_run.run_id,
+          providerScope,
+        );
+        providerRuns.push({
+          control:
+            path === legacyPath ? "recordless_mips32" : "recordless_mips1",
+          run_id: status.analysis_run.run_id,
+          ...(providerScope === undefined
+            ? { public_lineage: "not_observed" }
+            : providerScope),
+        });
         const loaded = await call("read_bytes", {
           address: original.entry,
           length: 24,
@@ -170,6 +206,7 @@ try {
       assert.deepEqual(await readFile(recordlessMips1Path), recordlessMips1);
       reports.push({
         byte_order: byteOrder,
+        provider_runs: providerRuns,
         declared_o32_mips1: "refused by CLI and MCP",
         recordless_mips1:
           "real Ghidra dossier and exact loaded bytes; instruction subset/load-delay semantics unverified",

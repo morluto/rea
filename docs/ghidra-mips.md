@@ -16,7 +16,9 @@ Ghidra dossiers and exact loaded bytes. These observations do not establish
 MIPS I instruction-subset or load-delay correctness. Supply existing Ghidra/Java
 and GNU readelf (`REA_READELF`). Source hashes are checked after inspection,
 and no target is executed. Cleanup checks both process lineage and an independent
-run-token sweep, so reparenting cannot hide an owned survivor.
+run-token sweep using each provider run ID retained from `binary_session` before
+closing the target. Ghidra overrides the outer verifier token with that session
+ID; checking the outer token alone cannot detect a reparented engine.
 
 ELF `EM_MIPS` is retained as the provider-neutral `mips` family. The target also
 retains class, byte order, `e_type`, raw `e_flags`, and inspected ABI declarations.
