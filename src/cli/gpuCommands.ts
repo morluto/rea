@@ -39,10 +39,10 @@ export const registerGpuCommands = (cli: CliInstance, logger: Logger): void => {
         .enum(["inventory", "kernels"])
         .default("inventory")
         .describe("Inventory GPU targets or decode selected kernel metadata"),
-      expected_sha256: z
-        .string()
-        .optional()
-        .describe("Inventory SHA-256; required with --object_ids"),
+      expected_sha256:
+        inspectGpuCodeObjectsInputSchema.shape.expected_sha256.describe(
+          "Inventory SHA-256 as 64 lowercase hex digits; required with --object_ids",
+        ),
       object_ids: z
         .string()
         .optional()

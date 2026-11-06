@@ -114,6 +114,9 @@ attributes and declares no entities. A DOCTYPE with an internal subset
 a document that refers to any entity but XML's five (`&amp;`, `&lt;`, `&gt;`,
 `&apos;`, `&quot;`); such a file is text.
 
+Exported XML views use REA's same formatting-whitespace classification, so
+retained XML text and the task checks that address it stay aligned.
+
 SQLite databases are read through REA's SQLite worker from a private copy,
 with any retained `-wal` or `-journal` file staged beside it; the worker
 accepts an inactive rollback journal and refuses a hot one. A version is not
